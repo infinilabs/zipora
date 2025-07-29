@@ -1,11 +1,5 @@
 # Infini-Zip Rust
 
-[![CI](https://github.com/infinilabs/infini-zip-rs/workflows/CI/badge.svg)](https://github.com/infinilabs/infini-zip-rs/actions/workflows/ci.yml)
-[![Release](https://github.com/infinilabs/infini-zip-rs/workflows/Release/badge.svg)](https://github.com/infinilabs/infini-zip-rs/actions/workflows/release.yml)
-[![Benchmarks](https://github.com/infinilabs/infini-zip-rs/workflows/Benchmarks/badge.svg)](https://github.com/infinilabs/infini-zip-rs/actions/workflows/benchmark.yml)
-[![codecov](https://codecov.io/gh/infinilabs/infini-zip-rs/branch/main/graph/badge.svg)](https://codecov.io/gh/infinilabs/infini-zip-rs)
-[![Crates.io](https://img.shields.io/crates/v/infini-zip.svg)](https://crates.io/crates/infini-zip)
-[![Documentation](https://docs.rs/infini-zip/badge.svg)](https://docs.rs/infini-zip)
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
 [![Rust Version](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org)
 
