@@ -1,0 +1,74 @@
+[package]
+name = "infini-zip"
+version = "0.1.0"
+edition = "2021"
+authors = ["InfiniLabs"]
+description = "High-performance data structures and compression algorithms (Rust port of topling-zip)"
+license = "BSD-3-Clause"
+repository = "https://github.com/infinilabs/infini-zip-rs"
+keywords = ["compression", "data-structures", "trie", "succinct", "blob-store"]
+categories = ["compression", "data-structures", "algorithms"]
+
+[lib]
+name = "infini_zip"
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = ["simd", "mmap", "zstd"]
+simd = []
+mmap = ["dep:memmap2"]
+zstd = ["dep:zstd"]
+lz4 = ["dep:lz4_flex"]
+ffi = ["dep:cbindgen"]
+
+[dependencies]
+# Core functionality
+memmap2 = { version = "0.9", optional = true }
+bytemuck = "1.0"
+thiserror = "1.0"
+log = "0.4"
+
+# Performance
+ahash = "0.8"
+rayon = "1.0"
+
+# Compression (optional)
+zstd = { version = "0.13", optional = true }
+lz4_flex = { version = "0.11", optional = true }
+
+# Serialization (optional)
+serde = { version = "1.0", features = ["derive"], optional = true }
+bincode = { version = "1.0", optional = true }
+
+# FFI support (optional)
+cbindgen = { version = "0.26", optional = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.0"
+tempfile = "3.0"
+
+[build-dependencies]
+cbindgen = { version = "0.26", optional = true }
+
+[[bench]]
+name = "benchmark"
+harness = false
+
+[[bench]]
+name = "cpp_comparison"
+harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+
+[profile.bench]
+lto = true
+codegen-units = 1
+opt-level = 3
+debug = true
+
+[package.metadata.docs.rs]
+features = ["simd", "mmap", "zstd", "lz4", "serde"]

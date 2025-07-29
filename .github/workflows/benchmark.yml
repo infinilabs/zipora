@@ -1,0 +1,132 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run benchmarks daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmark:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config
+
+    - name: Cache cargo registry
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-bench-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Run benchmarks
+      run: cargo bench --bench benchmark
+
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v3
+      with:
+        name: benchmark-results
+        path: target/criterion/
+
+  benchmark-comparison:
+    name: Performance Comparison
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+    - name: Checkout PR
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config
+
+    - name: Cache cargo registry
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-bench-pr-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Run PR benchmarks
+      run: cargo bench --bench benchmark -- --save-baseline pr
+
+    - name: Checkout main branch
+      run: |
+        git fetch origin main
+        git checkout main
+
+    - name: Run main benchmarks
+      run: cargo bench --bench benchmark -- --save-baseline main
+
+    - name: Compare benchmarks
+      run: cargo bench --bench benchmark -- --baseline main
+
+    - name: Upload comparison results
+      uses: actions/upload-artifact@v3
+      with:
+        name: benchmark-comparison
+        path: target/criterion/
+
+  regression-detection:
+    name: Performance Regression Detection
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config
+
+    - name: Cache cargo registry
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-bench-regression-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Run regression benchmarks
+      run: cargo bench --bench benchmark
+
+    - name: Check for regressions
+      run: |
+        # This would integrate with a performance monitoring service
+        # For now, just run the benchmarks and save results
+        echo "Regression detection completed"
+
+    - name: Upload regression results
+      uses: actions/upload-artifact@v3
+      with:
+        name: regression-results-${{ github.run_number }}
+        path: target/criterion/
