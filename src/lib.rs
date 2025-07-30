@@ -37,6 +37,8 @@ pub mod fsa;
 pub mod hash_map;
 pub mod entropy;
 pub mod error;
+pub mod memory;
+pub mod algorithms;
 
 #[cfg(debug_assertions)]
 pub mod debug_crit_bit;
@@ -70,6 +72,22 @@ pub use entropy::dictionary::Dictionary;
 pub use blob_store::{
     HuffmanBlobStore, RansBlobStore, DictionaryBlobStore,
     EntropyAlgorithm, EntropyCompressionStats
+};
+
+// Re-export Phase 4 implementations (memory management)
+pub use memory::{
+    MemoryPool, PoolConfig, PooledVec, PooledBuffer,
+    BumpAllocator, BumpArena, MemoryConfig, MemoryStats
+};
+
+#[cfg(target_os = "linux")]
+pub use memory::{HugePage, HugePageAllocator};
+
+// Re-export Phase 4 implementations (algorithms)
+pub use algorithms::{
+    SuffixArray, SuffixArrayBuilder, LcpArray,
+    RadixSort, RadixSortConfig,
+    MultiWayMerge, MergeSource, AlgorithmConfig
 };
 
 #[cfg(feature = "zstd")]

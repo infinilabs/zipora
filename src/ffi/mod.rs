@@ -4,12 +4,47 @@
 //! gradually from the C++ implementation.
 
 #[cfg(feature = "ffi")]
-mod ffi_impl {
-    // Imports for future FFI implementation
-    // use std::ffi::{CStr, CString};
-    // use std::os::raw::{c_char, c_int, c_uint, c_void};
+pub mod c_api;
+
+#[cfg(feature = "ffi")]
+pub mod types;
+
+#[cfg(feature = "ffi")]
+pub mod containers;
+
+#[cfg(feature = "ffi")]
+pub mod blob_store;
+
+#[cfg(feature = "ffi")]
+pub mod algorithms;
+
+// Re-export main C API when FFI feature is enabled
+#[cfg(feature = "ffi")]
+pub use c_api::*;
+
+// Basic error handling for C FFI
+#[cfg(feature = "ffi")]
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub enum CResult {
+    Success = 0,
+    InvalidInput = -1,
+    MemoryError = -2,
+    IoError = -3,
+    UnsupportedOperation = -4,
+    InternalError = -5,
 }
 
-// TODO: Implement C FFI bindings
-// #[cfg(feature = "ffi")]
-// pub mod c_api;
+#[cfg(feature = "ffi")]
+impl From<crate::Result<()>> for CResult {
+    fn from(result: crate::Result<()>) -> Self {
+        match result {
+            Ok(_) => CResult::Success,
+            Err(crate::ToplingError::InvalidData(_)) => CResult::InvalidInput,
+            Err(crate::ToplingError::MemoryExhausted(_)) => CResult::MemoryError,
+            Err(crate::ToplingError::IoError(_)) => CResult::IoError,
+            Err(crate::ToplingError::NotSupported { .. }) => CResult::UnsupportedOperation,
+            _ => CResult::InternalError,
+        }
+    }
+}
