@@ -164,6 +164,41 @@ impl BitVector {
         Ok(())
     }
 
+    /// Insert a bit at the specified position
+    pub fn insert(&mut self, index: usize, value: bool) -> Result<()> {
+        if index > self.len {
+            return Err(ToplingError::out_of_bounds(index, self.len));
+        }
+
+        // For simplicity, we'll implement this by pushing a bit and then
+        // shifting everything after the insertion point
+        self.push(false)?; // Extend by one bit
+        
+        // Shift bits to the right starting from the end
+        for i in (index + 1..self.len).rev() {
+            let bit = self.get(i - 1).unwrap_or(false);
+            self.set(i, bit)?;
+        }
+        
+        // Set the bit at the insertion position
+        self.set(index, value)?;
+        
+        Ok(())
+    }
+
+    /// Get a mutable reference to the bit at the specified position
+    /// Returns a helper struct that can be used to modify the bit
+    pub fn get_mut(&mut self, index: usize) -> Option<BitRef<'_>> {
+        if index >= self.len {
+            return None;
+        }
+        
+        Some(BitRef {
+            bit_vector: self,
+            index,
+        })
+    }
+
     /// Pop a bit from the end of the vector
     pub fn pop(&mut self) -> Option<bool> {
         if self.len == 0 {
@@ -293,6 +328,38 @@ impl BitVector {
         }
         
         Ok(())
+    }
+}
+
+/// Helper struct for mutable bit access
+pub struct BitRef<'a> {
+    bit_vector: &'a mut BitVector,
+    index: usize,
+}
+
+impl<'a> BitRef<'a> {
+    /// Get the current value of the bit
+    pub fn get(&self) -> bool {
+        self.bit_vector.get(self.index).unwrap_or(false)
+    }
+    
+    /// Set the value of the bit
+    pub fn set(&mut self, value: bool) -> Result<()> {
+        self.bit_vector.set(self.index, value)
+    }
+}
+
+impl<'a> std::ops::Deref for BitRef<'a> {
+    type Target = bool;
+    
+    fn deref(&self) -> &Self::Target {
+        // We can't return a reference to a bool that doesn't exist,
+        // so we use a static value. This is a limitation of the design.
+        if self.get() {
+            &true
+        } else {
+            &false
+        }
     }
 }
 

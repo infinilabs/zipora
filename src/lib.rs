@@ -42,6 +42,14 @@ pub use string::FastStr;
 pub use succinct::{BitVector, RankSelect256, RankSelectSe256};
 pub use error::{ToplingError, Result};
 
+// Re-export Phase 1 implementations
+pub use blob_store::{BlobStore, MemoryBlobStore, PlainBlobStore};
+pub use io::{DataInput, DataOutput, VarInt};
+pub use fsa::{LoudsTrie, Trie, FiniteStateAutomaton};
+
+#[cfg(feature = "zstd")]
+pub use blob_store::ZstdBlobStore;
+
 // Type aliases for compatibility
 /// State identifier type for FSA operations
 pub type StateId = u32;

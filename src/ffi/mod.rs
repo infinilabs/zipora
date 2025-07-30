@@ -4,11 +4,11 @@
 //! gradually from the C++ implementation.
 
 #[cfg(feature = "ffi")]
-// Imports for future FFI implementation
-// use std::ffi::{CStr, CString};
-#[cfg(feature = "ffi")]
-// Imports for future FFI implementation
-// use std::os::raw::{c_char, c_int, c_uint, c_void};
+mod ffi_impl {
+    // Imports for future FFI implementation
+    // use std::ffi::{CStr, CString};
+    // use std::os::raw::{c_char, c_int, c_uint, c_void};
+}
 
 // TODO: Implement C FFI bindings
 // #[cfg(feature = "ffi")]

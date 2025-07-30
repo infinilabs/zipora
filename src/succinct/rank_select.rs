@@ -30,6 +30,7 @@ use std::fmt;
 /// let pos = rs.select1(10)?; // Position of the 10th set bit
 /// # Ok::<(), infini_zip::ToplingError>(())
 /// ```
+#[derive(Clone)]
 pub struct RankSelect256 {
     bit_vector: BitVector,
     rank_blocks: FastVec<u32>,    // Cumulative rank at each 256-bit block

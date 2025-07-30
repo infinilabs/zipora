@@ -128,6 +128,16 @@ impl ToplingError {
         Self::NotSupported { feature: feature.into() }
     }
     
+    /// Create an I/O error from a message
+    pub fn io_error<S: Into<String>>(message: S) -> Self {
+        Self::Io(std::io::Error::new(std::io::ErrorKind::Other, message.into()))
+    }
+    
+    /// Create a not found error (convenience method for I/O errors)
+    pub fn not_found<S: Into<String>>(message: S) -> Self {
+        Self::Io(std::io::Error::new(std::io::ErrorKind::NotFound, message.into()))
+    }
+    
     /// Create a configuration error
     pub fn configuration<S: Into<String>>(message: S) -> Self {
         Self::Configuration { message: message.into() }
