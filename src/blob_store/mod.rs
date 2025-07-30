@@ -7,6 +7,7 @@ pub mod traits;
 pub mod memory;
 pub mod plain;
 pub mod compressed;
+pub mod entropy;
 
 // Re-export core types
 pub use traits::{
@@ -16,6 +17,10 @@ pub use traits::{
 pub use memory::MemoryBlobStore;
 pub use plain::PlainBlobStore;
 pub use compressed::CompressionAlgorithm;
+pub use entropy::{
+    HuffmanBlobStore, RansBlobStore, DictionaryBlobStore,
+    EntropyAlgorithm, EntropyCompressionStats
+};
 
 #[cfg(feature = "zstd")]
 pub use compressed::ZstdBlobStore;

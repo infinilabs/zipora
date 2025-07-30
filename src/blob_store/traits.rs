@@ -84,7 +84,7 @@ pub trait BlobStore {
 }
 
 /// Statistics about blob store usage
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct BlobStoreStats {
     /// Total number of blobs

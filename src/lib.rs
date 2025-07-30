@@ -35,6 +35,7 @@ pub mod io;
 pub mod blob_store;
 pub mod fsa;
 pub mod hash_map;
+pub mod entropy;
 pub mod error;
 
 #[cfg(debug_assertions)]
@@ -57,6 +58,19 @@ pub use hash_map::GoldHashMap;
 // Re-export Phase 2.5 implementations (memory mapping)
 #[cfg(feature = "mmap")]
 pub use io::{MemoryMappedInput, MemoryMappedOutput};
+
+// Re-export Phase 3 implementations (entropy coding)
+pub use entropy::{
+    EntropyStats, HuffmanEncoder, HuffmanDecoder, HuffmanTree,
+    RansEncoder, RansDecoder, RansState,
+    DictionaryCompressor, DictionaryBuilder
+};
+pub use entropy::rans::RansSymbol;
+pub use entropy::dictionary::Dictionary;
+pub use blob_store::{
+    HuffmanBlobStore, RansBlobStore, DictionaryBlobStore,
+    EntropyAlgorithm, EntropyCompressionStats
+};
 
 #[cfg(feature = "zstd")]
 pub use blob_store::ZstdBlobStore;
