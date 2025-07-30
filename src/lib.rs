@@ -54,6 +54,10 @@ pub use fsa::{LoudsTrie, CritBitTrie, PatriciaTrie, Trie, FiniteStateAutomaton};
 // Re-export Phase 2 implementations
 pub use hash_map::GoldHashMap;
 
+// Re-export Phase 2.5 implementations (memory mapping)
+#[cfg(feature = "mmap")]
+pub use io::{MemoryMappedInput, MemoryMappedOutput};
+
 #[cfg(feature = "zstd")]
 pub use blob_store::ZstdBlobStore;
 

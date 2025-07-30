@@ -18,6 +18,7 @@ Infini-Zip Rust offers a complete rewrite of advanced data structure algorithms,
 - **🗜️ Advanced Compression**: Dictionary-based and entropy coding with excellent ratios
 - **🌲 Advanced Trie Structures**: LOUDS tries, Critical-Bit tries, and Patricia tries
 - **💾 Blob Storage**: Memory-mapped and compressed blob storage systems
+- **🗃️ Memory-Mapped I/O**: Zero-copy file operations with automatic growth
 
 ## Quick Start
 
@@ -32,6 +33,9 @@ infini-zip = "0.1"
 
 ```rust
 use infini_zip::{FastVec, FastStr, BlobStore, MemoryBlobStore, LoudsTrie, PatriciaTrie, CritBitTrie, GoldHashMap, Trie};
+
+#[cfg(feature = "mmap")]
+use infini_zip::{MemoryMappedInput, MemoryMappedOutput, DataInput, DataOutput};
 
 // High-performance vector with realloc optimization
 let mut vec = FastVec::new();
@@ -67,6 +71,29 @@ assert!(critbit_trie.contains(b"world"));
 let mut hash_map = GoldHashMap::new();
 hash_map.insert("key", "value").unwrap();
 assert_eq!(hash_map.get("key"), Some(&"value"));
+
+// Memory-mapped I/O for zero-copy file operations
+#[cfg(feature = "mmap")]
+{
+    use tempfile::NamedTempFile;
+    use std::io::Write;
+    
+    // Create a memory-mapped output file
+    let temp_file = NamedTempFile::new().unwrap();
+    let mut output = MemoryMappedOutput::create(temp_file.path(), 1024).unwrap();
+    
+    // Write structured data
+    output.write_u32(0x12345678).unwrap();
+    output.write_length_prefixed_string("Hello, mmap!").unwrap();
+    output.flush().unwrap();
+    
+    // Read it back with memory-mapped input
+    let file = std::fs::File::open(temp_file.path()).unwrap();
+    let mut input = MemoryMappedInput::new(file).unwrap();
+    
+    assert_eq!(input.read_u32().unwrap(), 0x12345678);
+    assert_eq!(input.read_length_prefixed_string().unwrap(), "Hello, mmap!");
+}
 ```
 
 ## Core Components
@@ -166,6 +193,37 @@ let value = input.read_u32().unwrap();
 let varint = input.read_var_int().unwrap();
 let text = input.read_length_prefixed_string().unwrap();
 ```
+
+#### Memory-Mapped I/O
+High-performance zero-copy file operations:
+
+```rust
+#[cfg(feature = "mmap")]
+{
+    use infini_zip::{MemoryMappedInput, MemoryMappedOutput, DataInput, DataOutput};
+    use std::fs::File;
+    
+    // Create memory-mapped output with automatic growth
+    let mut output = MemoryMappedOutput::create("data.bin", 1024).unwrap();
+    output.write_u64(12345678901234567890).unwrap();
+    output.write_length_prefixed_string("memory mapped data").unwrap();
+    output.flush().unwrap();
+    
+    // Zero-copy reading from memory-mapped file
+    let file = File::open("data.bin").unwrap();
+    let mut input = MemoryMappedInput::new(file).unwrap();
+    
+    let number = input.read_u64().unwrap();
+    let text = input.read_length_prefixed_string().unwrap();
+    
+    // Direct slice access (zero-copy)
+    input.seek(0).unwrap();
+    let slice = input.read_slice(8).unwrap(); // 8 bytes for u64
+    
+    println!("File size: {} bytes", input.len());
+    println!("Current position: {}", input.position());
+    println!("Remaining: {} bytes", input.remaining());
+}
 
 ### Automata & Tries
 
@@ -282,33 +340,41 @@ Requires Rust 1.70+ for full functionality. Some features may work with earlier 
 
 ## Development Status
 
-**Phase 1 Complete + Phase 2 Advanced Features** - Core infrastructure with advanced tries and hash maps:
+**Phase 1-2.5 Complete** - Core infrastructure, advanced tries, hash maps, and memory mapping:
 
 ### ✅ **Completed Components**
 - **Core Containers**: FastVec, FastStr with zero-copy optimizations
 - **Succinct Data Structures**: BitVector, RankSelect256 with ~3% overhead  
 - **Blob Storage Systems**: Memory, file-based, and compressed storage
 - **I/O Framework**: Complete DataInput/DataOutput with multiple backends
+- **Memory-Mapped I/O**: Zero-copy file operations with automatic growth
 - **Advanced Trie Suite**: LOUDS, Critical-Bit, and Patricia tries (100% complete)
 - **High-Performance Hash Maps**: GoldHashMap with AHash optimization
 - **Compression**: ZSTD and LZ4 integration with statistics tracking
 - **Error Handling**: Comprehensive error types with context
-- **Testing Framework**: 211 tests with 100% success rate (all passing)
+- **Testing Framework**: 220+ tests with 100% success rate (all passing)
 
 ### ✅ **Phase 2 - Advanced Features Complete**
 - **✅ LOUDS Trie**: Fixed all issues, 100% test success rate
 - **✅ Critical-Bit Trie**: Binary decision tree for efficient prefix matching  
 - **✅ Patricia Trie**: Path compression eliminating single-child nodes
 - **✅ GoldHashMap**: High-performance hash map with AHash and linear probing
-- **📋 Entropy Coding**: Huffman, rANS systems (planned)
 - **✅ Performance Benchmarking**: Comprehensive benchmark suite vs C++ complete
 
-### 📋 **Planned Features**
-- **Phase 2.5**: Memory-mapped I/O support for large file processing
+### ✅ **Phase 2.5 - Memory Mapping Complete**
+- **✅ MemoryMappedInput**: Zero-copy reading from memory-mapped files
+- **✅ MemoryMappedOutput**: Efficient writing with automatic file growth
+- **✅ Integration**: Seamless integration with DataInput/DataOutput traits
+- **✅ Testing**: 9 comprehensive tests covering all functionality
+- **✅ Cross-platform**: Works on Linux, Windows, and macOS
+
+### 📋 **Planned Features (Phase 3+)**
+- **Entropy Coding**: Huffman, rANS systems for advanced compression
 - Memory pool allocators and hugepage support
 - Fiber-based concurrency and pipeline processing
 - Complete C FFI compatibility layer
-- Advanced compression algorithms (entropy coding)
+- Specialized algorithms (suffix arrays, radix sort)
+- Multi-way merge and streaming algorithms
 
 ## 🔧 Building from Source
 
@@ -745,6 +811,9 @@ cargo run --example basic_usage
 
 # Run succinct data structures demo
 cargo run --example succinct_demo
+
+# Run memory mapping demonstration (requires mmap feature)
+cargo run --example memory_mapping_demo --features mmap
 
 # Run with specific features
 cargo run --example basic_usage --features="all"

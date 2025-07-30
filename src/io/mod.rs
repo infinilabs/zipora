@@ -6,6 +6,7 @@
 pub mod data_input;
 pub mod data_output;
 pub mod var_int;
+pub mod mmap;
 
 // Re-export core types
 pub use data_input::{DataInput, SliceDataInput, ReaderDataInput};
@@ -14,6 +15,8 @@ pub use var_int::{VarInt, SignedVarInt};
 
 #[cfg(feature = "mmap")]
 pub use data_input::MmapDataInput;
+#[cfg(feature = "mmap")]
+pub use mmap::{MemoryMappedInput, MemoryMappedOutput};
 
 // Convenience functions
 pub use data_input::{from_slice, from_reader};
