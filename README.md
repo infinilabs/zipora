@@ -1,7 +1,7 @@
 # Infini-Zip Rust
 
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
-[![Rust Version](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org)
+[![Rust Version](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
 
 A high-performance Rust implementation inspired by the [topling-zip](https://github.com/topling/topling-zip) C++ library, providing advanced data structures and compression algorithms with memory safety guarantees.
 
@@ -920,7 +920,7 @@ The C API provides:
 
 ### Rust Version
 
-Requires Rust 1.70+ for full functionality. Some features may work with earlier versions.
+Requires Rust 1.75+ for full functionality. Some features may work with earlier versions.
 
 ## Development Status
 
@@ -1001,7 +1001,7 @@ Requires Rust 1.70+ for full functionality. Some features may work with earlier 
 
 ### Prerequisites
 
-- **Rust 1.70+** (MSRV - Minimum Supported Rust Version)
+- **Rust 1.75+** (MSRV - Minimum Supported Rust Version)
 - **Cargo** (comes with Rust)
 - **Git** for cloning the repository
 
@@ -1417,7 +1417,7 @@ cargo clean
 cargo update
 
 # Check Rust version
-rustc --version  # Should be 1.70+
+rustc --version  # Should be 1.75+
 ```
 
 #### Test Failures

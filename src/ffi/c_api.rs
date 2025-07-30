@@ -365,7 +365,7 @@ pub unsafe extern "C" fn radix_sort_u32(data: *mut u32, size: usize) -> CResult 
         return CResult::InvalidInput;
     }
     
-    let data_slice = std::slice::from_raw_parts_mut(data, size);
+    let data_slice = unsafe { std::slice::from_raw_parts_mut(data, size) };
     let mut sorter = crate::algorithms::RadixSort::new();
     
     match sorter.sort_u32(data_slice) {

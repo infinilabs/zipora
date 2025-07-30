@@ -306,7 +306,7 @@ impl CBuffer {
             return Vec::new();
         }
         
-        Vec::from_raw_parts(self.data, self.size, self.capacity)
+        unsafe { Vec::from_raw_parts(self.data, self.size, self.capacity) }
     }
     
     /// Get the data as a slice
@@ -319,7 +319,7 @@ impl CBuffer {
             return &[];
         }
         
-        std::slice::from_raw_parts(self.data, self.size)
+        unsafe { std::slice::from_raw_parts(self.data, self.size) }
     }
     
     /// Get the data as a mutable slice
@@ -332,7 +332,7 @@ impl CBuffer {
             return &mut [];
         }
         
-        std::slice::from_raw_parts_mut(self.data, self.size)
+        unsafe { std::slice::from_raw_parts_mut(self.data, self.size) }
     }
 }
 
@@ -380,7 +380,7 @@ impl CString {
             return Ok(String::new());
         }
         
-        let cstring = std::ffi::CString::from_raw(self.data);
+        let cstring = unsafe { std::ffi::CString::from_raw(self.data) };
         cstring.to_str().map(|s| s.to_owned())
     }
     
@@ -394,7 +394,7 @@ impl CString {
             return Ok("");
         }
         
-        let cstr = std::ffi::CStr::from_ptr(self.data);
+        let cstr = unsafe { std::ffi::CStr::from_ptr(self.data) };
         cstr.to_str()
     }
 }
