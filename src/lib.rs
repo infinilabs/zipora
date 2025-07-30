@@ -39,6 +39,8 @@ pub mod entropy;
 pub mod error;
 pub mod memory;
 pub mod algorithms;
+pub mod concurrency;
+pub mod compression;
 
 #[cfg(debug_assertions)]
 pub mod debug_crit_bit;
@@ -88,6 +90,23 @@ pub use algorithms::{
     SuffixArray, SuffixArrayBuilder, LcpArray,
     RadixSort, RadixSortConfig,
     MultiWayMerge, MergeSource, AlgorithmConfig
+};
+
+// Re-export Phase 5 implementations (concurrency)
+pub use concurrency::{
+    FiberPool, FiberPoolConfig, FiberHandle, FiberStats,
+    Pipeline, PipelineStage, PipelineBuilder, PipelineStats,
+    ParallelTrieBuilder, ParallelLoudsTrie,
+    AsyncBlobStore, AsyncMemoryBlobStore, AsyncFileStore,
+    WorkStealingQueue, WorkStealingExecutor, Task,
+    Fiber, FiberId, ConcurrencyConfig
+};
+
+// Re-export Phase 5 implementations (compression)
+pub use compression::{
+    AdaptiveCompressor, CompressionProfile, AdaptiveConfig,
+    RealtimeCompressor, RealtimeConfig, CompressionMode,
+    Algorithm, Compressor, CompressorFactory, PerformanceRequirements, CompressionStats
 };
 
 #[cfg(feature = "zstd")]
