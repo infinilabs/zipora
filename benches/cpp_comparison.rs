@@ -356,7 +356,7 @@ fn benchmark_performance_regression(c: &mut Criterion) {
     // String hash baseline
     let large_string = "x".repeat(4096);
     group.bench_function("string_hash_4kb", |b| {
-        let fast_str = FastStr::from_str(&large_string);
+        let fast_str = FastStr::from_string(&large_string);
         b.iter(|| black_box(fast_str.hash_fast()));
     });
     

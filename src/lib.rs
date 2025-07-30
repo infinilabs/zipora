@@ -34,7 +34,11 @@ pub mod succinct;
 pub mod io;
 pub mod blob_store;
 pub mod fsa;
+pub mod hash_map;
 pub mod error;
+
+#[cfg(debug_assertions)]
+pub mod debug_crit_bit;
 
 // Re-export core types
 pub use containers::FastVec;
@@ -45,7 +49,10 @@ pub use error::{ToplingError, Result};
 // Re-export Phase 1 implementations
 pub use blob_store::{BlobStore, MemoryBlobStore, PlainBlobStore};
 pub use io::{DataInput, DataOutput, VarInt};
-pub use fsa::{LoudsTrie, Trie, FiniteStateAutomaton};
+pub use fsa::{LoudsTrie, CritBitTrie, PatriciaTrie, Trie, FiniteStateAutomaton};
+
+// Re-export Phase 2 implementations
+pub use hash_map::GoldHashMap;
 
 #[cfg(feature = "zstd")]
 pub use blob_store::ZstdBlobStore;

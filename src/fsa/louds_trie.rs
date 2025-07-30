@@ -1,10 +1,6 @@
-//! LOUDS (Level-Order Unary Degree Sequence) Trie implementation
-//!
-//! This module provides a space-efficient trie implementation using the LOUDS
-//! representation for the tree structure. LOUDS tries offer excellent space
-//! efficiency and fast traversal while supporting all standard trie operations.
+//! Fixed LOUDS Trie implementation with proper dynamic insertion
 
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashMap};
 
 use crate::error::Result;
 use crate::fsa::traits::{
@@ -14,31 +10,18 @@ use crate::fsa::traits::{
 use crate::succinct::{BitVector, RankSelect256};
 use crate::{StateId, FastVec};
 
+/// Internal node representation for building the trie
+#[derive(Debug, Clone)]
+struct TrieNode {
+    children: HashMap<u8, usize>,  // label -> child node index
+    is_final: bool,
+}
 
 /// LOUDS Trie implementation using succinct data structures
-///
-/// The LOUDS (Level-Order Unary Degree Sequence) trie represents the tree structure
-/// using a succinct bit vector encoding. This provides excellent space efficiency
-/// while maintaining fast access times for trie operations.
-///
-/// # Structure
-/// - `louds_bits`: LOUDS bit sequence representing tree structure
-/// - `labels`: Edge labels in level order
-/// - `is_final`: Bit vector marking final states
-/// - `rank_select`: Rank/select structure for navigation
-///
-/// # Examples
-///
-/// ```rust
-/// use infini_zip::fsa::{LoudsTrie, Trie, TrieBuilder};
-///
-/// let keys = vec![b"cat".to_vec(), b"car".to_vec(), b"card".to_vec()];
-/// let trie = LoudsTrie::build_from_sorted(keys).unwrap();
-///
-/// assert!(trie.contains(b"car"));
-/// assert!(trie.contains(b"card"));
-/// assert!(!trie.contains(b"care"));
-/// ```
+/// 
+/// This implementation uses a hybrid approach:
+/// - Internal tree representation for dynamic construction
+/// - LOUDS representation for efficient querying
 #[derive(Debug, Clone)]
 pub struct LoudsTrie {
     /// LOUDS bit sequence representing the tree structure
@@ -51,28 +34,103 @@ pub struct LoudsTrie {
     is_final: BitVector,
     /// Number of keys stored in the trie
     num_keys: usize,
+    /// Internal tree representation for dynamic construction
+    nodes: Vec<TrieNode>,
+    /// Next available node index
+    next_node_id: usize,
 }
 
 impl LoudsTrie {
     /// Create a new empty LOUDS trie
     pub fn new() -> Self {
         let louds_bits = BitVector::new();
-        let mut is_final = BitVector::new();
-        
-        // Initialize with empty LOUDS sequence
-        // Root exists as state 0 but has no children initially
-        // LOUDS sequence starts empty - we'll build it as we add children
-        is_final.push(false).unwrap(); // Root is not final by default
-        
         let rank_select = RankSelect256::new(louds_bits.clone()).unwrap();
+        
+        // Initialize with root node
+        let mut nodes = Vec::new();
+        nodes.push(TrieNode {
+            children: HashMap::new(),
+            is_final: false,
+        });
         
         Self {
             louds_bits,
             rank_select,
             labels: FastVec::new(),
-            is_final,
+            is_final: BitVector::new(),
             num_keys: 0,
+            nodes,
+            next_node_id: 1,
         }
+    }
+    
+    /// Rebuild the LOUDS representation from the tree structure
+    fn rebuild_louds(&mut self) -> Result<()> {
+        // Clear existing LOUDS structures
+        self.louds_bits = BitVector::new();
+        self.labels = FastVec::new();
+        self.is_final = BitVector::new();
+        
+        if self.nodes.is_empty() {
+            return Ok(());
+        }
+        
+        // Build level-order traversal with correct state ID assignment
+        let mut queue = VecDeque::new();
+        let mut nodes_in_order = Vec::new(); // nodes in the order they should appear in LOUDS
+        
+        // Start with root
+        queue.push_back(0usize); // root node_id
+        nodes_in_order.push(0usize);
+        
+        while !queue.is_empty() {
+            let level_size = queue.len();
+            
+            // Process all nodes at current level
+            for _ in 0..level_size {
+                if let Some(node_id) = queue.pop_front() {
+                    if let Some(node) = self.nodes.get(node_id) {
+                        // Get children in sorted order
+                        let mut children: Vec<_> = node.children.iter().collect();
+                        children.sort_by_key(|(label, _)| *label);
+                        
+                        // Add children to the order and queue
+                        for (_label, &child_node_id) in &children {
+                            nodes_in_order.push(child_node_id);
+                            queue.push_back(child_node_id);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Now build LOUDS structures based on the correct ordering
+        for (_state_id, &node_id) in nodes_in_order.iter().enumerate() {
+            if let Some(node) = self.nodes.get(node_id) {
+                // Add final state info
+                self.is_final.push(node.is_final)?;
+                
+                // Get children in sorted order for LOUDS bits and labels
+                let mut children: Vec<_> = node.children.iter().collect();
+                children.sort_by_key(|(label, _)| *label);
+                
+                // Add LOUDS bits and labels for children
+                for (label, _child_node_id) in &children {
+                    self.louds_bits.push(true)?; // 1 for each child
+                    self.labels.push(**label)?;
+                }
+                
+                // Add terminating 0 if node has children
+                if !children.is_empty() {
+                    self.louds_bits.push(false)?;
+                }
+            }
+        }
+        
+        // Rebuild rank-select structure
+        self.rank_select = RankSelect256::new(self.louds_bits.clone())?;
+        
+        Ok(())
     }
     
     /// Get the position in LOUDS sequence for a state
@@ -81,55 +139,27 @@ impl LoudsTrie {
             0 // Root starts at position 0
         } else {
             // For state > 0, find the position where this state's children start
-            // This is the position after the (state-1)th '0' bit in LOUDS sequence
-            if state as usize <= self.count_states() {
-                self.rank_select.select1(state as usize).unwrap_or(self.louds_bits.len())
-            } else {
-                self.louds_bits.len()
+            // This is the position after the (state)th '0' bit in LOUDS sequence
+            let mut zeros_seen = 0;
+            for i in 0..self.louds_bits.len() {
+                if let Some(bit) = self.louds_bits.get(i) {
+                    if !bit {
+                        zeros_seen += 1;
+                        if zeros_seen == state as usize {
+                            return i + 1;
+                        }
+                    }
+                }
             }
-        }
-    }
-    
-    /// Count the number of states (nodes) in the trie
-    fn count_states(&self) -> usize {
-        // Number of states = number of '0' bits in LOUDS sequence + 1 (for root)
-        self.louds_bits.len() - self.rank_select.rank1(self.louds_bits.len()) + 1
-    }
-    
-    /// Get the parent state of a given state
-    fn parent(&self, state: StateId) -> Option<StateId> {
-        if state == 0 {
-            return None; // Root has no parent
-        }
-        
-        let pos = self.state_to_louds_pos(state);
-        if pos == 0 {
-            return None;
-        }
-        
-        // Find the parent by counting 1s before this position
-        let parent_rank = self.rank_select.rank1(pos.saturating_sub(1));
-        if parent_rank > 0 {
-            Some(parent_rank as StateId - 1)
-        } else {
-            Some(0)
+            self.louds_bits.len()
         }
     }
     
     /// Get the first child position in the labels array
     fn first_child_label_pos(&self, state: StateId) -> usize {
-        if state == 0 {
-            0 // Root's children start at position 0 in labels array
-        } else {
-            // Count the number of '1' bits before this state's position in LOUDS
-            // This gives us the number of edges (labels) that come before this state's children
-            let pos = self.state_to_louds_pos(state);
-            if pos > 0 {
-                self.rank_select.rank1(pos)
-            } else {
-                0
-            }
-        }
+        // Count all '1' bits before this state's children start position
+        let pos = self.state_to_louds_pos(state);
+        self.rank_select.rank1(pos)
     }
     
     /// Get the number of children for a state
@@ -138,7 +168,6 @@ impl LoudsTrie {
         let mut count = 0;
         
         // Count consecutive 1s starting from start_pos
-        // If LOUDS sequence is empty, root has no children
         if start_pos >= self.louds_bits.len() {
             return 0;
         }
@@ -158,12 +187,6 @@ impl LoudsTrie {
         count
     }
     
-    /// Rebuild the rank-select structure after modifications
-    fn rebuild_rank_select(&mut self) -> Result<()> {
-        self.rank_select = RankSelect256::new(self.louds_bits.clone())?;
-        Ok(())
-    }
-    
     /// Navigate to a child state with the given label
     fn goto_child(&self, state: StateId, label: u8) -> Option<StateId> {
         let child_count = self.child_count(state);
@@ -173,67 +196,22 @@ impl LoudsTrie {
         
         let first_label_pos = self.first_child_label_pos(state);
         
-        // Linear search through children (could be optimized with binary search)
+        // Linear search through children
         for i in 0..child_count {
             if let Some(&child_label) = self.labels.get(first_label_pos + i) {
                 if child_label == label {
-                    // In LOUDS, child state IDs are assigned sequentially
-                    // The first child of root is state 1, second child is state 2, etc.
-                    // We need to count how many states come before this child
-                    
+                    // Calculate child state ID based on the position of its '1' bit
                     let parent_pos = self.state_to_louds_pos(state);
-                    let child_1bit_pos = parent_pos + i; // Position of the i-th '1' bit for this child
+                    let child_1bit_pos = parent_pos + i;
                     
-                    // Count total number of '1' bits before this position
-                    // Each '1' bit represents a node in the trie (except the conceptual root)
-                    let ones_before = self.rank_select.rank1(child_1bit_pos);
-                    return Some((ones_before + 1) as StateId);
+                    // Count total number of '1' bits up to and including this position
+                    let ones_up_to = self.rank_select.rank1(child_1bit_pos + 1);
+                    return Some(ones_up_to as StateId);
                 }
             }
         }
         
         None
-    }
-    
-    /// Add a new state as a child of the given parent with the specified label
-    fn add_child(&mut self, parent: StateId, label: u8, is_final: bool) -> Result<StateId> {
-        // Add new child using append-only approach to maintain state ID stability
-        let current_child_count = self.child_count(parent);
-        
-        if current_child_count == 0 {
-            // Parent has no children yet - add "10" pattern
-            self.louds_bits.push(true)?;   // 1 for new child
-            self.louds_bits.push(false)?;  // 0 to terminate parent's children
-        } else {
-            // Parent already has children - extend the 1s sequence
-            // Find the terminating 0 and insert before it
-            let parent_start = self.state_to_louds_pos(parent);
-            let terminator_pos = parent_start + current_child_count;
-            
-            // Insert new 1 before the terminating 0
-            self.louds_bits.insert(terminator_pos, true)?;
-        }
-        
-        // Add label in the correct position
-        let label_insert_pos = self.first_child_label_pos(parent) + current_child_count;
-        if label_insert_pos >= self.labels.len() {
-            self.labels.push(label)?;
-        } else {
-            self.labels.insert(label_insert_pos, label)?;
-        }
-        
-        // Add new state to is_final array
-        let new_state_id = self.is_final.len() as StateId;
-        self.is_final.push(is_final)?;
-        
-        // Rebuild rank-select structure
-        self.rebuild_rank_select()?;
-        
-        if is_final {
-            self.num_keys += 1;
-        }
-        
-        Ok(new_state_id)
     }
 }
 
@@ -271,18 +249,50 @@ impl FiniteStateAutomaton for LoudsTrie {
         
         Box::new(iter)
     }
+    
+    fn longest_prefix(&self, input: &[u8]) -> Option<usize> {
+        let mut state = self.root();
+        let mut last_final = None;
+        let mut consumed = 0;
+        
+        for (i, &symbol) in input.iter().enumerate() {
+            if self.is_final(state) {
+                last_final = Some(i);
+            }
+            
+            match self.transition(state, symbol) {
+                Some(next_state) => {
+                    state = next_state;
+                    consumed = i + 1;
+                },
+                None => break,
+            }
+        }
+        
+        // Check if final state after consuming input is final
+        // Only if we consumed ALL input characters
+        if consumed == input.len() && self.is_final(state) {
+            Some(input.len())
+        } else {
+            last_final
+        }
+    }
 }
 
 impl Trie for LoudsTrie {
     fn insert(&mut self, key: &[u8]) -> Result<StateId> {
-        let mut state = self.root();
+        let mut node_id = 0usize; // Start at root in tree representation
         
-        // Traverse as far as possible
+        // Traverse as far as possible in tree representation
         let mut i = 0;
         while i < key.len() {
-            if let Some(next_state) = self.transition(state, key[i]) {
-                state = next_state;
-                i += 1;
+            if let Some(node) = self.nodes.get(node_id) {
+                if let Some(&child_node_id) = node.children.get(&key[i]) {
+                    node_id = child_node_id;
+                    i += 1;
+                } else {
+                    break;
+                }
             } else {
                 break;
             }
@@ -291,22 +301,41 @@ impl Trie for LoudsTrie {
         // Add remaining suffix
         while i < key.len() {
             let is_final = i == key.len() - 1;
-            state = self.add_child(state, key[i], is_final)?;
+            let new_node_id = self.next_node_id;
+            self.next_node_id += 1;
+            
+            self.nodes.push(TrieNode {
+                children: HashMap::new(),
+                is_final,
+            });
+            
+            // Add child to current node
+            if let Some(current_node) = self.nodes.get_mut(node_id) {
+                current_node.children.insert(key[i], new_node_id);
+            }
+            
+            if is_final {
+                self.num_keys += 1;
+            }
+            
+            node_id = new_node_id;
             i += 1;
         }
         
         // Mark final state if we traversed the entire key
-        if i == key.len() && !self.is_final(state) {
-            // Update the final state marker
-            if let Some(mut final_bit) = self.is_final.get_mut(state as usize) {
-                if !final_bit.get() {
-                    final_bit.set(true)?;
+        if i == key.len() {
+            if let Some(node) = self.nodes.get_mut(node_id) {
+                if !node.is_final {
+                    node.is_final = true;
                     self.num_keys += 1;
                 }
             }
         }
         
-        Ok(state)
+        // Rebuild LOUDS representation
+        self.rebuild_louds()?;
+        
+        Ok(node_id as StateId)
     }
     
     fn len(&self) -> usize {
@@ -331,10 +360,10 @@ impl StateInspectable for LoudsTrie {
 
 impl StatisticsProvider for LoudsTrie {
     fn stats(&self) -> TrieStats {
-        let louds_memory = self.louds_bits.len() / 8 + 1; // Approximate
+        let louds_memory = self.louds_bits.len() / 8 + 1;
         let labels_memory = self.labels.len();
-        let final_memory = self.is_final.len() / 8 + 1; // Approximate
-        let rank_select_memory = 256; // Approximate overhead
+        let final_memory = self.is_final.len() / 8 + 1;
+        let rank_select_memory = 256;
         
         let memory_usage = louds_memory + labels_memory + final_memory + rank_select_memory;
         
@@ -342,8 +371,8 @@ impl StatisticsProvider for LoudsTrie {
             num_states: self.is_final.len(),
             num_keys: self.num_keys,
             num_transitions: self.labels.len(),
-            max_depth: 0, // Would require traversal to calculate
-            avg_depth: 0.0, // Would require traversal to calculate
+            max_depth: 0,
+            avg_depth: 0.0,
             memory_usage,
             bits_per_key: 0.0,
         };
@@ -504,18 +533,39 @@ mod tests {
         // Debug: Insert first key
         println!("=== Inserting 'hello' ===");
         trie.insert(b"hello").unwrap();
-        println!("After 'hello': LOUDS len={}, labels len={}, is_final len={}", 
-                 trie.louds_bits.len(), trie.labels.len(), trie.is_final.len());
+        println!("After 'hello': LOUDS bits={:?}", 
+                 (0..trie.louds_bits.len()).map(|i| if trie.louds_bits.get(i).unwrap_or(false) { '1' } else { '0' }).collect::<String>());
+        println!("After 'hello': labels={:?}", 
+                 (0..trie.labels.len()).map(|i| trie.labels.get(i).copied().unwrap_or(0) as char).collect::<String>());
         assert!(trie.accepts(b"hello"));
         println!("'hello' lookup: OK");
         
         // Debug: Insert second key
         println!("=== Inserting 'world' ===");
         trie.insert(b"world").unwrap();
-        println!("After 'world': LOUDS len={}, labels len={}, is_final len={}", 
-                 trie.louds_bits.len(), trie.labels.len(), trie.is_final.len());
+        println!("After 'world': LOUDS bits={:?}", 
+                 (0..trie.louds_bits.len()).map(|i| if trie.louds_bits.get(i).unwrap_or(false) { '1' } else { '0' }).collect::<String>());
+        println!("After 'world': labels={:?}", 
+                 (0..trie.labels.len()).map(|i| trie.labels.get(i).copied().unwrap_or(0) as char).collect::<String>());
         
         println!("Testing 'hello' after inserting 'world'...");
+        
+        // Debug the lookup process for 'hello'
+        let mut state = trie.root();
+        println!("Root state: {}", state);
+        for (_i, &byte) in b"hello".iter().enumerate() {
+            let ch = byte as char;
+            println!("Looking for '{}' from state {}", ch, state);
+            if let Some(next_state) = trie.transition(state, byte) {
+                println!("  Found transition to state {}", next_state);
+                state = next_state;
+            } else {
+                println!("  No transition found for '{}'", ch);
+                break;
+            }
+        }
+        println!("Final state: {}, is_final: {}", state, trie.is_final(state));
+        
         assert!(trie.accepts(b"hello"));
         assert!(trie.accepts(b"world"));
         assert!(!trie.accepts(b"hell"));
@@ -533,7 +583,7 @@ mod tests {
         assert_eq!(trie.longest_prefix(b"car"), Some(3));
         assert_eq!(trie.longest_prefix(b"card"), Some(4));
         assert_eq!(trie.longest_prefix(b"cards"), Some(4));
-        assert_eq!(trie.longest_prefix(b"caring"), Some(4));
+        assert_eq!(trie.longest_prefix(b"careless"), Some(4)); // "care" is a 4-char prefix
         assert_eq!(trie.longest_prefix(b"cat"), None);
     }
 
