@@ -131,9 +131,10 @@ impl WorkStealingQueue {
         Ok(())
     }
     
-    /// Pop a task from the local queue (LIFO for cache locality)
+    /// Pop a task from the local queue (highest priority first)
     pub fn pop_local(&self) -> Option<Box<dyn Task>> {
-        self.local_queue.lock().unwrap().pop_back()
+        // Pop from front since tasks are sorted by priority (highest first)
+        self.local_queue.lock().unwrap().pop_front()
     }
     
     /// Steal a task from this queue (FIFO for load balancing)
@@ -147,13 +148,17 @@ impl WorkStealingQueue {
         let mut local_queue = self.local_queue.lock().unwrap();
         if local_queue.len() > 1 {
             // Only steal if there's more than one task
-            if let Some(task) = local_queue.pop_front() {
+            // Try to find a stealable task from the back (lowest priority)
+            let mut found_index = None;
+            for (i, task) in local_queue.iter().enumerate().rev() {
                 if task.is_stealable() {
-                    return Some(task);
-                } else {
-                    // Put it back if not stealable
-                    local_queue.push_front(task);
+                    found_index = Some(i);
+                    break;
                 }
+            }
+            
+            if let Some(index) = found_index {
+                return local_queue.remove(index);
             }
         }
         
@@ -171,11 +176,12 @@ impl WorkStealingQueue {
         if local_len > steal_len + 1 {
             let to_move = (local_len - steal_len) / 2;
             for _ in 0..to_move {
-                if let Some(task) = local_queue.pop_front() {
+                // Move from back (lower priority) to maintain priority ordering
+                if let Some(task) = local_queue.pop_back() {
                     if task.is_stealable() {
                         steal_queue.push_back(task);
                     } else {
-                        local_queue.push_front(task);
+                        local_queue.push_back(task);
                         break;
                     }
                 }
@@ -320,10 +326,13 @@ impl WorkStealingExecutor {
             // If this fails, the task is consumed but we have an error
             return Err(ToplingError::configuration("local queue push failed"));
         } else {
-            // Go straight to global queue
+            // Go straight to global queue with priority ordering
             let mut global_queue = self.global_queue.lock().unwrap();
             if global_queue.len() < 10000 { // Arbitrary limit
-                global_queue.push_back(task);
+                // Insert based on priority (highest first)
+                let priority = task.priority();
+                let pos = global_queue.iter().position(|t| t.priority() < priority).unwrap_or(global_queue.len());
+                global_queue.insert(pos, task);
                 Ok(())
             } else {
                 Err(ToplingError::configuration("all queues full"))
@@ -538,7 +547,6 @@ mod tests {
     }
     
     #[tokio::test]
-    #[ignore] // TODO: Fix work stealing task priority ordering issue  
     async fn test_task_priority() {
         let queue = WorkStealingQueue::new(0, 100);
         
