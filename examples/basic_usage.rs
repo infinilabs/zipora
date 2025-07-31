@@ -1,4 +1,7 @@
-use infini_zip::{FastVec, FastStr, Result};
+use infini_zip::{
+    FastVec, FastStr, Result, MemoryBlobStore, BlobStore, 
+    LoudsTrie, Trie, GoldHashMap, HuffmanEncoder
+};
 
 fn main() -> Result<()> {
     println!("=== Infini-Zip Rust Demo ===\n");
@@ -70,6 +73,54 @@ fn main() -> Result<()> {
              std::mem::size_of::<FastStr>());
     println!("   FastVec<i32> overhead: {} bytes", 
              std::mem::size_of::<FastVec<i32>>());
+    
+    // Demonstrate Blob Storage
+    println!("\n6. Blob Storage:");
+    let mut store = MemoryBlobStore::new();
+    let data = b"Hello, Blob Store!";
+    let id = store.put(data)?;
+    println!("   Stored {} bytes with ID: {}", data.len(), id);
+    
+    let retrieved = store.get(id)?;
+    println!("   Retrieved: {:?}", String::from_utf8_lossy(&retrieved));
+    println!("   Store contains {} blobs", store.len());
+    
+    // Demonstrate Trie
+    println!("\n7. LOUDS Trie:");
+    let mut trie = LoudsTrie::new();
+    let words = ["cat", "car", "card", "care", "careful"];
+    
+    for word in &words {
+        trie.insert(word.as_bytes())?;
+        println!("   Inserted: '{}'", word);
+    }
+    
+    println!("   Trie contains {} keys", trie.len());
+    println!("   Contains 'car': {}", trie.contains(b"car"));
+    println!("   Contains 'dog': {}", trie.contains(b"dog"));
+    
+    // Demonstrate Hash Map
+    println!("\n8. GoldHashMap:");
+    let mut map = GoldHashMap::new();
+    map.insert("name", "Infini-Zip")?;
+    map.insert("version", "0.1.0")?;
+    map.insert("language", "Rust")?;
+    
+    println!("   Map contains {} entries", map.len());
+    if let Some(name) = map.get("name") {
+        println!("   Project name: {}", name);
+    }
+    
+    // Demonstrate Huffman Encoding
+    println!("\n9. Huffman Compression:");
+    let sample_text = b"hello world! this text will be compressed using huffman coding.";
+    let encoder = HuffmanEncoder::new(sample_text)?;
+    let compressed = encoder.encode(sample_text)?;
+    let ratio = encoder.estimate_compression_ratio(sample_text);
+    
+    println!("   Original: {} bytes", sample_text.len());
+    println!("   Compressed: {} bytes", compressed.len());
+    println!("   Compression ratio: {:.3}", ratio);
     
     println!("\n=== Demo Complete ===");
     Ok(())

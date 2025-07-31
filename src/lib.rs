@@ -1,28 +1,64 @@
 //! # Infini-Zip: High-Performance Data Structures and Compression
 //!
-//! This crate provides a Rust implementation of advanced data structures and compression algorithms,
+//! This crate provides a comprehensive Rust implementation of advanced data structures and compression algorithms,
 //! offering high-performance solutions originally inspired by the topling-zip C++ library.
 //!
 //! ## Key Features
 //!
 //! - **Fast Containers**: Optimized vector and string types with zero-copy semantics
 //! - **Succinct Data Structures**: Rank-select operations with SIMD optimizations  
-//! - **Advanced Tries**: LOUDS tries, compressed sparse Patricia tries
+//! - **Advanced Tries**: LOUDS, Critical-Bit, and Patricia tries with full FSA support
 //! - **Blob Storage**: Memory-mapped and compressed blob storage systems
+//! - **Entropy Coding**: Huffman, rANS, and dictionary-based compression algorithms
+//! - **Memory Management**: Advanced allocators including memory pools and bump allocators
+//! - **Specialized Algorithms**: Suffix arrays, radix sort, and multi-way merge
+//! - **Fiber-based Concurrency**: High-performance async/await with work-stealing execution
+//! - **Real-time Compression**: Adaptive algorithms with strict latency guarantees
+//! - **C FFI Support**: Complete C API compatibility layer for gradual migration
 //! - **Memory Safety**: All the performance of C++ with Rust's memory safety guarantees
 //!
 //! ## Quick Start
 //!
 //! ```rust
-//! use infini_zip::{FastVec, FastStr};
+//! use infini_zip::{
+//!     FastVec, FastStr, MemoryBlobStore, BlobStore, 
+//!     LoudsTrie, Trie, GoldHashMap, HuffmanEncoder,
+//!     MemoryPool, SuffixArray, FiberPool
+//! };
 //!
 //! // High-performance vector with realloc optimization
 //! let mut vec = FastVec::new();
-//! vec.push(42);
+//! vec.push(42).unwrap();
 //! 
 //! // Zero-copy string operations
 //! let s = FastStr::from_string("hello world");
-//! println!("Length: {}", s.len());
+//! println!("Hash: {:x}", s.hash_fast());
+//!
+//! // Blob storage with compression
+//! let mut store = MemoryBlobStore::new();
+//! let id = store.put(b"Hello, World!").unwrap();
+//! let data = store.get(id).unwrap();
+//!
+//! // Advanced trie operations
+//! let mut trie = LoudsTrie::new();
+//! trie.insert(b"hello").unwrap();
+//! assert!(trie.contains(b"hello"));
+//!
+//! // High-performance hash map
+//! let mut map = GoldHashMap::new();
+//! map.insert("key", "value").unwrap();
+//! 
+//! // Entropy coding
+//! let encoder = HuffmanEncoder::new(b"sample data").unwrap();
+//! let compressed = encoder.encode(b"sample data").unwrap();
+//!
+//! // Memory pool allocation
+//! let pool = MemoryPool::new(Default::default()).unwrap();
+//! let chunk = pool.allocate().unwrap();
+//!
+//! // Suffix array construction
+//! let sa = SuffixArray::new(b"banana").unwrap();
+//! let (pos, count) = sa.search(b"banana", b"ana");
 //! ```
 
 #![warn(missing_docs)]

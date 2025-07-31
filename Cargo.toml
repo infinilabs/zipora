@@ -3,11 +3,11 @@ name = "infini-zip"
 version = "0.1.0"
 edition = "2021"
 authors = ["InfiniLabs"]
-description = "High-performance data structures and compression algorithms (Rust port of topling-zip)"
+description = "High-performance data structures and compression algorithms with fiber-based concurrency and real-time compression (Rust port of topling-zip)"
 license = "BSD-3-Clause"
 repository = "https://github.com/infinilabs/infini-zip-rs"
-keywords = ["compression", "data-structures", "trie", "succinct", "blob-store"]
-categories = ["compression", "data-structures", "algorithms"]
+keywords = ["compression", "data-structures", "trie", "succinct", "concurrency"]
+categories = ["compression", "data-structures", "algorithms", "concurrency", "memory-management"]
 
 [lib]
 name = "infini_zip"
@@ -81,4 +81,5 @@ opt-level = 3
 debug = true
 
 [package.metadata.docs.rs]
-features = ["simd", "mmap", "zstd", "lz4", "serde"]
+features = ["simd", "mmap", "zstd", "lz4", "serde", "ffi"]
+all-features = true
