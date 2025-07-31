@@ -393,6 +393,7 @@ mod tests {
     }
     
     #[tokio::test]
+    #[cfg(feature = "lz4")]
     async fn test_realtime_compression() {
         let compressor = RealtimeCompressor::with_mode(CompressionMode::LowLatency).unwrap();
         let data = b"test data for real-time compression";
@@ -407,6 +408,7 @@ mod tests {
     }
     
     #[tokio::test]
+    #[cfg(feature = "lz4")]
     async fn test_deadline_compression() {
         let compressor = RealtimeCompressor::with_mode(CompressionMode::LowLatency).unwrap();
         let data = b"test data for deadline-based compression";
@@ -419,6 +421,7 @@ mod tests {
     }
     
     #[tokio::test]
+    #[cfg(feature = "lz4")]
     async fn test_batch_compression() {
         let compressor = RealtimeCompressor::with_mode(CompressionMode::LowLatency).unwrap();
         let items = vec![

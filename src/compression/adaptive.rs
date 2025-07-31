@@ -507,6 +507,7 @@ mod tests {
     }
     
     #[test]
+    #[cfg(feature = "lz4")]
     fn test_adaptive_compression() {
         let requirements = PerformanceRequirements::default();
         let compressor = AdaptiveCompressor::default_with_requirements(requirements).unwrap();
@@ -547,6 +548,7 @@ mod tests {
     }
     
     #[test]
+    #[cfg(feature = "lz4")]
     fn test_performance_tracking() {
         let requirements = PerformanceRequirements::default();
         let compressor = AdaptiveCompressor::default_with_requirements(requirements).unwrap();

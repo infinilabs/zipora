@@ -542,12 +542,13 @@ mod tests {
     #[tokio::test]
     async fn test_filter_stage() {
         let pipeline = Pipeline::new(PipelineConfig::default());
-        let stage = FilterStage::new("even_only".to_string(), |x: &i32| *x % 2 == 0);
         
-        let result1 = pipeline.execute_single(&stage, 4).await.unwrap();
+        let stage1 = FilterStage::new("even_only".to_string(), |x: &i32| *x % 2 == 0);
+        let result1 = pipeline.execute_single(stage1, 4).await.unwrap();
         assert_eq!(result1, Some(4));
         
-        let result2 = pipeline.execute_single(&stage, 5).await.unwrap();
+        let stage2 = FilterStage::new("even_only".to_string(), |x: &i32| *x % 2 == 0);
+        let result2 = pipeline.execute_single(stage2, 5).await.unwrap();
         assert_eq!(result2, None);
     }
     

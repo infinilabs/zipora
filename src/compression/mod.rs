@@ -487,6 +487,7 @@ mod tests {
     }
     
     #[test]
+    #[cfg(feature = "lz4")]
     fn test_compressor_suitability() {
         let compressor = Lz4Compressor;
         let req = PerformanceRequirements::default();

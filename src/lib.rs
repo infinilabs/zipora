@@ -23,7 +23,7 @@
 //! use infini_zip::{
 //!     FastVec, FastStr, MemoryBlobStore, BlobStore, 
 //!     LoudsTrie, Trie, GoldHashMap, HuffmanEncoder,
-//!     MemoryPool, SuffixArray, FiberPool
+//!     MemoryPool, PoolConfig, SuffixArray, FiberPool
 //! };
 //!
 //! // High-performance vector with realloc optimization
@@ -53,7 +53,7 @@
 //! let compressed = encoder.encode(b"sample data").unwrap();
 //!
 //! // Memory pool allocation
-//! let pool = MemoryPool::new(Default::default()).unwrap();
+//! let pool = MemoryPool::new(PoolConfig::small()).unwrap();
 //! let chunk = pool.allocate().unwrap();
 //!
 //! // Suffix array construction

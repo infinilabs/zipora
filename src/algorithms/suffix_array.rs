@@ -130,7 +130,14 @@ impl SuffixArray {
             }
         }
         
-        suffix.len().cmp(&pattern.len())
+        // If we reach here, the pattern matches the beginning of the suffix
+        // For prefix search, we consider this equal if pattern fits within suffix
+        if pattern.len() <= suffix.len() {
+            Ordering::Equal
+        } else {
+            // Pattern is longer than suffix, so suffix comes first
+            Ordering::Less
+        }
     }
     
     /// Get performance statistics

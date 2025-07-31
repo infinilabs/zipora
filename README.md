@@ -36,52 +36,43 @@ infini-zip = "0.1"
 
 ```rust
 use infini_zip::{
-    FastVec, FastStr, BlobStore, MemoryBlobStore, LoudsTrie, PatriciaTrie, CritBitTrie, GoldHashMap, Trie,
-    HuffmanEncoder, HuffmanBlobStore, EntropyStats, RansEncoder, DictionaryBuilder,
-    MemoryPool, BumpAllocator, SuffixArray, RadixSort, MultiWayMerge,
-    FiberPool, Pipeline, AsyncMemoryBlobStore, AdaptiveCompressor, RealtimeCompressor
+    FastVec, FastStr, MemoryBlobStore, BlobStore, 
+    LoudsTrie, Trie, GoldHashMap, HuffmanEncoder,
+    MemoryPool, PoolConfig, SuffixArray, FiberPool
 };
-
-#[cfg(feature = "mmap")]
-use infini_zip::{MemoryMappedInput, MemoryMappedOutput, DataInput, DataOutput};
-
-#[cfg(target_os = "linux")]
-use infini_zip::{HugePage, HugePageAllocator};
 
 // High-performance vector with realloc optimization
 let mut vec = FastVec::new();
 vec.push(42).unwrap();
-vec.push(84).unwrap();
-println!("Length: {}", vec.len());
-
+ 
 // Zero-copy string operations
-let text = "hello world";
-let s = FastStr::from_str(text);
+let s = FastStr::from_string("hello world");
 println!("Hash: {:x}", s.hash_fast());
 
 // Blob storage with compression
 let mut store = MemoryBlobStore::new();
-let data = b"Hello, compressed world!";
-let id = store.put(data).unwrap();
-let retrieved = store.get(id).unwrap();
+let id = store.put(b"Hello, World!").unwrap();
+let data = store.get(id).unwrap();
 
-// Multiple trie implementations available
-let mut louds_trie = LoudsTrie::new();
-louds_trie.insert(b"cat").unwrap();
-assert!(louds_trie.contains(b"cat"));
-
-let mut patricia_trie = PatriciaTrie::new();
-patricia_trie.insert(b"hello").unwrap();
-assert!(patricia_trie.contains(b"hello"));
-
-let mut critbit_trie = CritBitTrie::new();
-critbit_trie.insert(b"world").unwrap();
-assert!(critbit_trie.contains(b"world"));
+// Advanced trie operations
+let mut trie = LoudsTrie::new();
+trie.insert(b"hello").unwrap();
+assert!(trie.contains(b"hello"));
 
 // High-performance hash map
-let mut hash_map = GoldHashMap::new();
-hash_map.insert("key", "value").unwrap();
-assert_eq!(hash_map.get("key"), Some(&"value"));
+let mut map = GoldHashMap::new();
+map.insert("key", "value").unwrap();
+ 
+// Entropy coding
+let encoder = HuffmanEncoder::new(b"sample data").unwrap();
+let compressed = encoder.encode(b"sample data").unwrap();
+
+// Memory pool allocation
+let pool = MemoryPool::new(PoolConfig::small()).unwrap();
+let chunk = pool.allocate().unwrap();
+
+// Suffix array construction
+let sa = SuffixArray::new(b"banana").unwrap();
 
 // Memory-mapped I/O for zero-copy file operations
 #[cfg(feature = "mmap")]
@@ -143,8 +134,8 @@ let id = huffman_store.put(test_data).unwrap();
 let stats = huffman_store.compression_stats();
 println!("Stored with {} compressions performed", stats.compressions);
 
-// Phase 4: Advanced Memory Management
-let pool_config = infini_zip::PoolConfig::new(64 * 1024, 100, 8);
+// Phase 4: Advanced Memory Management  
+let pool_config = PoolConfig::new(64 * 1024, 100, 8);
 let memory_pool = MemoryPool::new(pool_config).unwrap();
 let chunk = memory_pool.allocate().unwrap();
 memory_pool.deallocate(chunk).unwrap();
