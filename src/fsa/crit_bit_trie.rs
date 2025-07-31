@@ -143,11 +143,9 @@ impl CritBitTrie {
         // If one key is a prefix of the other
         if byte_pos == min_len {
             if key1.len() != key2.len() {
-                // Different lengths - use a virtual "end-of-string" bit
-                // We'll use bit position 8 (beyond normal byte range) to indicate 
-                // that we're distinguishing based on string length
-                // The shorter key will have bit=1 (end-of-string), longer key will have bit=0
-                return (byte_pos, 8);
+                // Different lengths - use the position where they differ in length
+                // The critical bit will be at the first byte position where the shorter string ends
+                return (min_len, 8); // Use bit 8 to indicate end-of-string vs continuation
             } else {
                 // Same keys - shouldn't happen in practice
                 return (byte_pos, 0);
@@ -169,8 +167,8 @@ impl CritBitTrie {
     fn test_bit(key: &[u8], byte_pos: usize, bit_pos: u8) -> bool {
         if bit_pos == 8 {
             // Special case: bit position 8 represents "end-of-string"
-            // Return true if we're at or beyond the end of the key (shorter key)
-            // Return false if the key continues (longer key)
+            // Return true if we're at or beyond the end of the key (shorter key ends here)
+            // Return false if the key continues beyond this position (longer key)
             byte_pos >= key.len()
         } else if byte_pos >= key.len() {
             false // Treat missing bytes as 0

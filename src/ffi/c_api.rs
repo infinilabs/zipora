@@ -209,7 +209,7 @@ pub unsafe extern "C" fn blob_store_new() -> *mut CBlobStore {
 #[no_mangle]
 pub unsafe extern "C" fn blob_store_free(store: *mut CBlobStore) {
     if !store.is_null() {
-        let _store = Box::from_raw(store as *mut crate::blob_store::MemoryBlobStore);
+        let _store = unsafe { Box::from_raw(store as *mut crate::blob_store::MemoryBlobStore) };
         // Automatic cleanup when Box is dropped
     }
 }
@@ -230,12 +230,12 @@ pub unsafe extern "C" fn blob_store_put(
         return CResult::InvalidInput;
     }
     
-    let blob_store = &mut *(store as *mut crate::blob_store::MemoryBlobStore);
-    let data_slice = std::slice::from_raw_parts(data, size);
+    let blob_store = unsafe { &mut *(store as *mut crate::blob_store::MemoryBlobStore) };
+    let data_slice = unsafe { std::slice::from_raw_parts(data, size) };
     
     match blob_store.put(data_slice) {
         Ok(id) => {
-            *record_id = id;
+            unsafe { *record_id = id; }
             CResult::Success
         }
         Err(_) => CResult::InternalError,
@@ -247,7 +247,7 @@ pub unsafe extern "C" fn blob_store_put(
 /// # Safety
 /// 
 /// The store pointer must be valid. The data and size pointers will be set to
-/// point to internal storage that is valid until the blob store is modified or freed.
+/// point to allocated memory that must be freed with `infini_zip_free_blob_data`.
 #[no_mangle]
 pub unsafe extern "C" fn blob_store_get(
     store: *const CBlobStore,
@@ -259,18 +259,28 @@ pub unsafe extern "C" fn blob_store_get(
         return CResult::InvalidInput;
     }
     
-    let blob_store = &*(store as *const crate::blob_store::MemoryBlobStore);
+    let blob_store = unsafe { &*(store as *const crate::blob_store::MemoryBlobStore) };
     
     match blob_store.get(record_id) {
         Ok(blob_data) => {
-            // This is a potential memory safety issue - we're returning a pointer
-            // to data that might be deallocated. In a real implementation, we'd need
-            // a different approach, perhaps with reference counting or copying.
-            *data = blob_data.as_ptr();
-            *size = blob_data.len();
-            // We're leaking the Vec here to keep the data alive
-            // In practice, you'd want a better memory management strategy
-            std::mem::forget(blob_data);
+            // Allocate memory for the data that can be properly freed later
+            let data_len = blob_data.len();
+            let data_ptr = unsafe { 
+                std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(data_len, 1))
+            };
+            if data_ptr.is_null() {
+                return CResult::MemoryError;
+            }
+            
+            // Copy the data into the allocated memory
+            unsafe {
+                std::ptr::copy_nonoverlapping(blob_data.as_ptr(), data_ptr, data_len);
+            }
+            
+            unsafe { 
+                *data = data_ptr;
+                *size = data_len;
+            }
             CResult::Success
         }
         Err(_) => CResult::InvalidInput,
@@ -289,7 +299,7 @@ pub unsafe extern "C" fn suffix_array_new(text: *const u8, size: usize) -> *mut 
         return ptr::null_mut();
     }
     
-    let text_slice = std::slice::from_raw_parts(text, size);
+    let text_slice = unsafe { std::slice::from_raw_parts(text, size) };
     match crate::algorithms::SuffixArray::new(text_slice) {
         Ok(sa) => Box::into_raw(Box::new(sa)) as *mut CSuffixArray,
         Err(_) => ptr::null_mut(),
@@ -304,7 +314,7 @@ pub unsafe extern "C" fn suffix_array_new(text: *const u8, size: usize) -> *mut 
 #[no_mangle]
 pub unsafe extern "C" fn suffix_array_free(sa: *mut CSuffixArray) {
     if !sa.is_null() {
-        let _sa = Box::from_raw(sa as *mut crate::algorithms::SuffixArray);
+        let _sa = unsafe { Box::from_raw(sa as *mut crate::algorithms::SuffixArray) };
         // Automatic cleanup when Box is dropped
     }
 }
@@ -320,7 +330,7 @@ pub unsafe extern "C" fn suffix_array_len(sa: *const CSuffixArray) -> usize {
         return 0;
     }
     
-    let suffix_array = &*(sa as *const crate::algorithms::SuffixArray);
+    let suffix_array = unsafe { &*(sa as *const crate::algorithms::SuffixArray) };
     suffix_array.text_len()
 }
 
@@ -343,13 +353,15 @@ pub unsafe extern "C" fn suffix_array_search(
         return CResult::InvalidInput;
     }
     
-    let suffix_array = &*(sa as *const crate::algorithms::SuffixArray);
-    let text_slice = std::slice::from_raw_parts(text, text_size);
-    let pattern_slice = std::slice::from_raw_parts(pattern, pattern_size);
+    let suffix_array = unsafe { &*(sa as *const crate::algorithms::SuffixArray) };
+    let text_slice = unsafe { std::slice::from_raw_parts(text, text_size) };
+    let pattern_slice = unsafe { std::slice::from_raw_parts(pattern, pattern_size) };
     
     let (search_start, search_count) = suffix_array.search(text_slice, pattern_slice);
-    *start = search_start;
-    *count = search_count;
+    unsafe {
+        *start = search_start;
+        *count = search_count;
+    }
     
     CResult::Success
 }
@@ -400,6 +412,23 @@ pub unsafe extern "C" fn infini_zip_set_error_callback(
     // Store the callback for future error reporting
     // This would be implemented with thread-local or global state
     let _ = callback; // Placeholder
+}
+
+/// Free blob data returned by blob_store_get
+/// 
+/// # Safety
+/// 
+/// The data pointer must be a pointer returned by `blob_store_get`.
+/// The size must match the size returned by `blob_store_get`.
+/// The pointer becomes invalid after this call.
+#[no_mangle]
+pub unsafe extern "C" fn infini_zip_free_blob_data(data: *mut u8, size: usize) {
+    if !data.is_null() && size > 0 {
+        unsafe {
+            let layout = std::alloc::Layout::from_size_align_unchecked(size, 1);
+            std::alloc::dealloc(data, layout);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -486,6 +515,13 @@ mod tests {
             assert_eq!(result, CResult::Success);
             assert!(!data_ptr.is_null());
             assert_eq!(size, test_data.len());
+            
+            // Verify the data content
+            let retrieved_data = std::slice::from_raw_parts(data_ptr, size);
+            assert_eq!(retrieved_data, test_data);
+            
+            // Free the blob data
+            infini_zip_free_blob_data(data_ptr as *mut u8, size);
             
             blob_store_free(store);
         }

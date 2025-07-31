@@ -195,7 +195,8 @@ impl RadixSort {
         }
         
         // Split into chunks and sort in parallel
-        let chunk_size = data.len() / rayon::current_num_threads();
+        let num_threads = rayon::current_num_threads();
+        let chunk_size = (data.len() + num_threads - 1) / num_threads; // Round up
         
         data.par_chunks_mut(chunk_size).for_each(|chunk| {
             let mut temp_sorter = RadixSort::with_config(RadixSortConfig {
@@ -205,9 +206,8 @@ impl RadixSort {
             let _ = temp_sorter.sort_u32_sequential(chunk);
         });
         
-        // Merge sorted chunks (simplified merge)
-        // In a real implementation, this would be a proper parallel merge
-        data.sort_unstable();
+        // Use proper multi-way merge instead of sort_unstable()
+        self.multiway_merge_u32_chunks(data, chunk_size)?;
         
         Ok(())
     }
@@ -258,7 +258,8 @@ impl RadixSort {
             return self.sort_u64_sequential(data);
         }
         
-        let chunk_size = data.len() / rayon::current_num_threads();
+        let num_threads = rayon::current_num_threads();
+        let chunk_size = (data.len() + num_threads - 1) / num_threads; // Round up
         
         data.par_chunks_mut(chunk_size).for_each(|chunk| {
             let mut temp_sorter = RadixSort::with_config(RadixSortConfig {
@@ -268,7 +269,9 @@ impl RadixSort {
             let _ = temp_sorter.sort_u64_sequential(chunk);
         });
         
-        data.sort_unstable();
+        // Use proper multi-way merge instead of sort_unstable()
+        self.multiway_merge_u64_chunks(data, chunk_size)?;
+        
         Ok(())
     }
     
@@ -334,6 +337,62 @@ impl RadixSort {
         let radix = 1usize << self.config.radix_bits;
         len * std::mem::size_of::<u64>() + // buffer
         radix * std::mem::size_of::<usize>() // counts
+    }
+    
+    /// Multi-way merge for u32 chunks
+    fn multiway_merge_u32_chunks(&self, data: &mut [u32], chunk_size: usize) -> Result<()> {
+        use crate::algorithms::multiway_merge::{MultiWayMerge, VectorSource};
+        
+        // Create vector sources from each sorted chunk
+        let mut sources = Vec::new();
+        let mut chunks_vec = Vec::new();
+        
+        // Collect chunks into owned vectors
+        for chunk in data.chunks(chunk_size) {
+            chunks_vec.push(chunk.to_vec());
+        }
+        
+        // Create sources from the chunks
+        for chunk in chunks_vec {
+            sources.push(VectorSource::new(chunk));
+        }
+        
+        // Merge all sources
+        let mut merger = MultiWayMerge::new();
+        let merged = merger.merge(sources)?;
+        
+        // Copy merged result back to original data
+        data.copy_from_slice(&merged);
+        
+        Ok(())
+    }
+    
+    /// Multi-way merge for u64 chunks
+    fn multiway_merge_u64_chunks(&self, data: &mut [u64], chunk_size: usize) -> Result<()> {
+        use crate::algorithms::multiway_merge::{MultiWayMerge, VectorSource};
+        
+        // Create vector sources from each sorted chunk
+        let mut sources = Vec::new();
+        let mut chunks_vec = Vec::new();
+        
+        // Collect chunks into owned vectors
+        for chunk in data.chunks(chunk_size) {
+            chunks_vec.push(chunk.to_vec());
+        }
+        
+        // Create sources from the chunks
+        for chunk in chunks_vec {
+            sources.push(VectorSource::new(chunk));
+        }
+        
+        // Merge all sources
+        let mut merger = MultiWayMerge::new();
+        let merged = merger.merge(sources)?;
+        
+        // Copy merged result back to original data
+        data.copy_from_slice(&merged);
+        
+        Ok(())
     }
 }
 

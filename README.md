@@ -1297,14 +1297,8 @@ chmod +x build.sh
 
 #### Running C++ Comparison
 ```bash
-# Set library path and run comparison benchmarks
-export LD_LIBRARY_PATH=$PWD/cpp_benchmark:$LD_LIBRARY_PATH
-
-# Run C++ vs Rust comparison (requires manual linking)
-# Note: Due to linker constraints, the comparison requires 
-# manual compilation with specific flags:
-RUSTFLAGS="-L cpp_benchmark -l dylib=topling_zip_wrapper" \
-  cargo bench --bench cpp_comparison
+# Run main benchmark suite
+cargo bench --bench benchmark
 ```
 
 #### Benchmark Categories

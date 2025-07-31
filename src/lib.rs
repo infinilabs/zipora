@@ -42,9 +42,6 @@ pub mod algorithms;
 pub mod concurrency;
 pub mod compression;
 
-#[cfg(debug_assertions)]
-pub mod debug_crit_bit;
-
 // Re-export core types
 pub use containers::FastVec;
 pub use string::FastStr;
