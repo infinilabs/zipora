@@ -5,6 +5,11 @@
 
 pub mod huffman;
 pub mod rans;
+pub mod rans_simple;
+pub mod rans_minimal;
+pub mod rans_reference;
+pub mod rans_simple_debug;
+pub mod rans_fixed;
 pub mod dictionary;
 
 // Re-export main types
