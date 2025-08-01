@@ -4,9 +4,51 @@
 //! allowing seamless integration with existing C/C++ codebases.
 
 use std::ffi::{CStr, CString};
-use std::os::raw::{c_char, c_int, c_uint, c_void};
+use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
+use std::cell::RefCell;
+use std::sync::Mutex;
 use super::{CResult, types::*};
+use crate::blob_store::traits::BlobStore;
+
+// Thread-local storage for error messages
+thread_local! {
+    static LAST_ERROR: RefCell<Option<CString>> = RefCell::new(None);
+}
+
+// Global error callback storage
+static ERROR_CALLBACK: Mutex<Option<unsafe extern "C" fn(*const c_char)>> = Mutex::new(None);
+
+/// Set the last error message for the current thread
+fn set_last_error(msg: &str) {
+    LAST_ERROR.with(|error| {
+        if let Ok(cstring) = CString::new(msg) {
+            // Store a clone for thread-local storage
+            *error.borrow_mut() = Some(cstring.clone());
+            
+            // Also call the error callback if one is set
+            if let Ok(callback_guard) = ERROR_CALLBACK.lock() {
+                if let Some(callback) = *callback_guard {
+                    unsafe {
+                        callback(cstring.as_ptr());
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// Convert CResult to error message
+fn cresult_to_error_msg(result: CResult) -> &'static str {
+    match result {
+        CResult::Success => "Success",
+        CResult::InvalidInput => "Invalid input parameter",
+        CResult::MemoryError => "Memory allocation error",
+        CResult::IoError => "I/O operation failed",
+        CResult::InternalError => "Internal library error",
+        CResult::UnsupportedOperation => "Unsupported operation",
+    }
+}
 
 /// Initialize the infini-zip library
 /// 
@@ -29,15 +71,17 @@ pub unsafe extern "C" fn infini_zip_init() -> CResult {
 pub unsafe extern "C" fn infini_zip_version() -> *const c_char {
     static mut VERSION_CSTRING: Option<CString> = None;
     
-    if VERSION_CSTRING.is_none() {
-        if let Ok(cstring) = CString::new(crate::VERSION) {
-            VERSION_CSTRING = Some(cstring);
-        } else {
-            return ptr::null();
+    unsafe {
+        if VERSION_CSTRING.is_none() {
+            if let Ok(cstring) = CString::new(crate::VERSION) {
+                VERSION_CSTRING = Some(cstring);
+            } else {
+                return ptr::null();
+            }
         }
+        
+        VERSION_CSTRING.as_ref().unwrap().as_ptr()
     }
-    
-    VERSION_CSTRING.as_ref().unwrap().as_ptr()
 }
 
 /// Check if SIMD optimizations are available
@@ -66,7 +110,7 @@ pub unsafe extern "C" fn fast_vec_new() -> *mut CFastVec {
 #[no_mangle]
 pub unsafe extern "C" fn fast_vec_free(vec: *mut CFastVec) {
     if !vec.is_null() {
-        let _vec = Box::from_raw(vec as *mut crate::FastVec<u8>);
+        let _vec = unsafe { Box::from_raw(vec as *mut crate::FastVec<u8>) };
         // Automatic cleanup when Box is dropped
     }
 }
@@ -79,13 +123,17 @@ pub unsafe extern "C" fn fast_vec_free(vec: *mut CFastVec) {
 #[no_mangle]
 pub unsafe extern "C" fn fast_vec_push(vec: *mut CFastVec, value: u8) -> CResult {
     if vec.is_null() {
+        set_last_error("FastVec pointer is null");
         return CResult::InvalidInput;
     }
     
-    let fast_vec = &mut *(vec as *mut crate::FastVec<u8>);
+    let fast_vec = unsafe { &mut *(vec as *mut crate::FastVec<u8>) };
     match fast_vec.push(value) {
         Ok(_) => CResult::Success,
-        Err(_) => CResult::MemoryError,
+        Err(e) => {
+            set_last_error(&format!("Failed to push to FastVec: {}", e));
+            CResult::MemoryError
+        },
     }
 }
 
@@ -100,7 +148,7 @@ pub unsafe extern "C" fn fast_vec_len(vec: *const CFastVec) -> usize {
         return 0;
     }
     
-    let fast_vec = &*(vec as *const crate::FastVec<u8>);
+    let fast_vec = unsafe { &*(vec as *const crate::FastVec<u8>) };
     fast_vec.len()
 }
 
@@ -116,7 +164,7 @@ pub unsafe extern "C" fn fast_vec_data(vec: *const CFastVec) -> *const u8 {
         return ptr::null();
     }
     
-    let fast_vec = &*(vec as *const crate::FastVec<u8>);
+    let fast_vec = unsafe { &*(vec as *const crate::FastVec<u8>) };
     fast_vec.as_ptr()
 }
 
@@ -142,7 +190,7 @@ pub unsafe extern "C" fn memory_pool_new(chunk_size: usize, max_chunks: usize) -
 #[no_mangle]
 pub unsafe extern "C" fn memory_pool_free(pool: *mut CMemoryPool) {
     if !pool.is_null() {
-        let _pool = Box::from_raw(pool as *mut crate::memory::MemoryPool);
+        let _pool = unsafe { Box::from_raw(pool as *mut crate::memory::MemoryPool) };
         // Automatic cleanup when Box is dropped
     }
 }
@@ -159,7 +207,7 @@ pub unsafe extern "C" fn memory_pool_allocate(pool: *mut CMemoryPool) -> *mut c_
         return ptr::null_mut();
     }
     
-    let memory_pool = &*(pool as *const crate::memory::MemoryPool);
+    let memory_pool = unsafe { &*(pool as *const crate::memory::MemoryPool) };
     match memory_pool.allocate() {
         Ok(ptr) => ptr.as_ptr() as *mut c_void,
         Err(_) => ptr::null_mut(),
@@ -175,18 +223,25 @@ pub unsafe extern "C" fn memory_pool_allocate(pool: *mut CMemoryPool) -> *mut c_
 #[no_mangle]
 pub unsafe extern "C" fn memory_pool_deallocate(pool: *mut CMemoryPool, ptr: *mut c_void) -> CResult {
     if pool.is_null() || ptr.is_null() {
+        set_last_error("Memory pool or pointer is null");
         return CResult::InvalidInput;
     }
     
-    let memory_pool = &*(pool as *const crate::memory::MemoryPool);
+    let memory_pool = unsafe { &*(pool as *const crate::memory::MemoryPool) };
     let non_null_ptr = match std::ptr::NonNull::new(ptr as *mut u8) {
         Some(p) => p,
-        None => return CResult::InvalidInput,
+        None => {
+            set_last_error("Failed to create NonNull pointer from raw pointer");
+            return CResult::InvalidInput;
+        }
     };
     
     match memory_pool.deallocate(non_null_ptr) {
         Ok(_) => CResult::Success,
-        Err(_) => CResult::InternalError,
+        Err(e) => {
+            set_last_error(&format!("Failed to deallocate memory: {}", e));
+            CResult::InternalError
+        },
     }
 }
 
@@ -227,6 +282,7 @@ pub unsafe extern "C" fn blob_store_put(
     record_id: *mut u32,
 ) -> CResult {
     if store.is_null() || data.is_null() || record_id.is_null() {
+        set_last_error("Blob store, data, or record_id pointer is null");
         return CResult::InvalidInput;
     }
     
@@ -238,7 +294,10 @@ pub unsafe extern "C" fn blob_store_put(
             unsafe { *record_id = id; }
             CResult::Success
         }
-        Err(_) => CResult::InternalError,
+        Err(e) => {
+            set_last_error(&format!("Failed to put data in blob store: {}", e));
+            CResult::InternalError
+        },
     }
 }
 
@@ -394,10 +453,15 @@ pub unsafe extern "C" fn radix_sort_u32(data: *mut u32, size: usize) -> CResult 
 /// The caller should not free the returned pointer.
 #[no_mangle]
 pub unsafe extern "C" fn infini_zip_last_error() -> *const c_char {
-    // This would require a thread-local error storage system
-    // For now, return a placeholder
-    static ERROR_MSG: &[u8] = b"No error information available\0";
-    ERROR_MSG.as_ptr() as *const c_char
+    LAST_ERROR.with(|error| {
+        match error.borrow().as_ref() {
+            Some(cstring) => cstring.as_ptr(),
+            None => {
+                static NO_ERROR_MSG: &[u8] = b"No error information available\0";
+                NO_ERROR_MSG.as_ptr() as *const c_char
+            }
+        }
+    })
 }
 
 /// Set a custom error callback
@@ -405,13 +469,14 @@ pub unsafe extern "C" fn infini_zip_last_error() -> *const c_char {
 /// # Safety
 /// 
 /// The callback function pointer must be valid for the lifetime of the library usage.
+/// The callback will be called from the thread that generates the error.
 #[no_mangle]
 pub unsafe extern "C" fn infini_zip_set_error_callback(
     callback: Option<unsafe extern "C" fn(*const c_char)>,
 ) {
-    // Store the callback for future error reporting
-    // This would be implemented with thread-local or global state
-    let _ = callback; // Placeholder
+    if let Ok(mut callback_guard) = ERROR_CALLBACK.lock() {
+        *callback_guard = callback;
+    }
 }
 
 /// Free blob data returned by blob_store_get
@@ -547,5 +612,147 @@ mod tests {
             // Should not panic, return 0 or 1
             assert!(has_simd == 0 || has_simd == 1);
         }
+    }
+
+    #[test]
+    fn test_error_handling() {
+        unsafe {
+            // Test initial state - no error
+            let error_ptr = infini_zip_last_error();
+            assert!(!error_ptr.is_null());
+            let error_msg = CStr::from_ptr(error_ptr).to_str().unwrap();
+            assert_eq!(error_msg, "No error information available");
+            
+            // Test setting an error message directly
+            set_last_error("Test error message");
+            
+            // Check that error message was set
+            let error_ptr = infini_zip_last_error();
+            assert!(!error_ptr.is_null());
+            let error_msg = CStr::from_ptr(error_ptr).to_str().unwrap();
+            assert_eq!(error_msg, "Test error message");
+        }
+    }
+
+    #[test]
+    fn test_error_callback() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        
+        static CALLBACK_CALLED: AtomicBool = AtomicBool::new(false);
+        static mut CALLBACK_MESSAGE: Option<String> = None;
+        
+        unsafe extern "C" fn test_callback(msg: *const c_char) {
+            CALLBACK_CALLED.store(true, Ordering::SeqCst);
+            let c_str = unsafe { CStr::from_ptr(msg) };
+            if let Ok(str_slice) = c_str.to_str() {
+                unsafe {
+                    CALLBACK_MESSAGE = Some(str_slice.to_string());
+                }
+            }
+        }
+        
+        unsafe {
+            // Set the error callback
+            infini_zip_set_error_callback(Some(test_callback));
+            
+            // Reset callback state
+            CALLBACK_CALLED.store(false, Ordering::SeqCst);
+            CALLBACK_MESSAGE = None;
+            
+            // Trigger an error by setting one directly
+            set_last_error("Test callback message");
+            
+            // Check that callback was called
+            assert!(CALLBACK_CALLED.load(Ordering::SeqCst));
+            assert!(CALLBACK_MESSAGE.is_some());
+            assert_eq!(CALLBACK_MESSAGE.as_ref().unwrap(), "Test callback message");
+            
+            // Clear the callback
+            infini_zip_set_error_callback(None);
+            
+            // Reset state and trigger another error
+            CALLBACK_CALLED.store(false, Ordering::SeqCst);
+            CALLBACK_MESSAGE = None;
+            
+            set_last_error("Another test message");
+            
+            // Callback should not have been called this time
+            assert!(!CALLBACK_CALLED.load(Ordering::SeqCst));
+            assert!(CALLBACK_MESSAGE.is_none());
+        }
+    }
+
+    #[test]
+    fn test_thread_local_errors() {
+        use std::thread;
+        use std::sync::{Arc, Mutex};
+        
+        let results = Arc::new(Mutex::new(Vec::new()));
+        let mut handles = Vec::new();
+        
+        // Create multiple threads that each generate different errors
+        for i in 0..3 {
+            let results_clone = Arc::clone(&results);
+            let handle = thread::spawn(move || {
+                unsafe {
+                    // Each thread sets a different error message
+                    let error_msg = match i {
+                        0 => "Thread 0 error",
+                        1 => "Thread 1 error", 
+                        2 => "Thread 2 error",
+                        _ => "Unknown thread error",
+                    };
+                    
+                    set_last_error(error_msg);
+                    
+                    // Get the error message from this thread
+                    let error_ptr = infini_zip_last_error();
+                    let retrieved_msg = if !error_ptr.is_null() {
+                        CStr::from_ptr(error_ptr).to_str().unwrap_or("Invalid UTF-8").to_string()
+                    } else {
+                        "Null pointer".to_string()
+                    };
+                    
+                    // Store the result
+                    let mut results_guard = results_clone.lock().unwrap();
+                    results_guard.push((i, retrieved_msg));
+                }
+            });
+            handles.push(handle);
+        }
+        
+        // Wait for all threads to complete
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        
+        // Check that each thread got its own error message
+        let results_guard = results.lock().unwrap();
+        assert_eq!(results_guard.len(), 3);
+        
+        // Check that we got the expected error messages (order may vary due to threading)
+        let mut found_thread0 = false;
+        let mut found_thread1 = false;
+        let mut found_thread2 = false;
+        
+        for (thread_id, error_msg) in results_guard.iter() {
+            match *thread_id {
+                0 => {
+                    assert_eq!(error_msg, "Thread 0 error");
+                    found_thread0 = true;
+                }
+                1 => {
+                    assert_eq!(error_msg, "Thread 1 error");
+                    found_thread1 = true;
+                }
+                2 => {
+                    assert_eq!(error_msg, "Thread 2 error");
+                    found_thread2 = true;
+                }
+                _ => {}
+            }
+        }
+        
+        assert!(found_thread0 && found_thread1 && found_thread2);
     }
 }

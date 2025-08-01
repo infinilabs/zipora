@@ -22,6 +22,7 @@ Infini-Zip Rust offers a complete rewrite of advanced data structure algorithms,
 - **⚡ Fiber-based Concurrency**: High-performance async/await with work-stealing execution
 - **🔄 Real-time Compression**: Adaptive algorithms with strict latency guarantees
 - **🌐 Async I/O**: Non-blocking blob storage and pipeline processing
+- **🔌 C FFI Support**: Complete C API with thread-safe error handling and callback system
 
 ## Quick Start
 
@@ -837,7 +838,7 @@ Available features:
 - `mmap` (default): Memory-mapped file support
 - `zstd` (default): ZSTD compression integration
 - `lz4`: LZ4 compression support
-- `ffi`: C FFI compatibility layer for migration from C++
+- `ffi`: C FFI compatibility layer with thread-safe error handling for migration from C++
 - `serde` (default): Serialization support for data structures
 
 ## Compatibility
@@ -871,6 +872,21 @@ CMemoryPool* pool = memory_pool_new(64 * 1024, 100);
 void* chunk = memory_pool_allocate(pool);
 memory_pool_deallocate(pool, chunk);
 memory_pool_free(pool);
+
+// Error handling with thread-local storage and callbacks
+void error_callback(const char* msg) {
+    fprintf(stderr, "Library error: %s\n", msg);
+}
+
+// Set global error callback for centralized error handling
+infini_zip_set_error_callback(error_callback);
+
+// Check for errors after operations
+CResult result = fast_vec_push(NULL, 42);  // This will fail
+if (result != CResult_Success) {
+    const char* error_msg = infini_zip_last_error();
+    printf("Error: %s\n", error_msg);  // "FastVec pointer is null"
+}
 
 // Blob storage
 CBlobStore* store = blob_store_new();

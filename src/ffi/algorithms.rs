@@ -27,7 +27,7 @@ pub unsafe extern "C" fn suffix_array_new(data: *const u8, size: usize) -> *mut 
 #[no_mangle]
 pub unsafe extern "C" fn suffix_array_free(sa: *mut CSuffixArray) {
     if !sa.is_null() {
-        drop(Box::from_raw(sa));
+        unsafe { drop(Box::from_raw(sa)) };
     }
 }
 

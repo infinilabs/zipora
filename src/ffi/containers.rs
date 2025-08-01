@@ -17,7 +17,7 @@ pub unsafe extern "C" fn fast_vec_new() -> *mut CFastVec {
 #[no_mangle]
 pub unsafe extern "C" fn fast_vec_free(vec: *mut CFastVec) {
     if !vec.is_null() {
-        drop(Box::from_raw(vec));
+        unsafe { drop(Box::from_raw(vec)) };
     }
 }
 

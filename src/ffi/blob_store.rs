@@ -17,7 +17,7 @@ pub unsafe extern "C" fn blob_store_new() -> *mut CBlobStore {
 #[no_mangle]
 pub unsafe extern "C" fn blob_store_free(store: *mut CBlobStore) {
     if !store.is_null() {
-        drop(Box::from_raw(store));
+        unsafe { drop(Box::from_raw(store)) };
     }
 }
 
