@@ -1,8 +1,11 @@
 /**
- * C++ Implementation of benchmark wrapper for topling-zip
+ * Enhanced C++ Implementation of benchmark wrapper for topling-zip
  * 
- * This file implements C-compatible wrappers around the original topling-zip
- * C++ classes to enable fair performance comparisons with the Rust implementation.
+ * This file implements comprehensive C-compatible wrappers around the original 
+ * topling-zip C++ classes to enable detailed performance comparisons with the 
+ * Rust implementation.
+ * 
+ * Includes advanced memory tracking, cache analysis, and statistical benchmarking.
  */
 
 #include "wrapper.hpp"
@@ -10,9 +13,33 @@
 #include <memory>
 #include <atomic>
 #include <vector>
+#include <unordered_map>
 #include <cstring>
 #include <cstdlib>
 #include <algorithm>
+#include <random>
+#include <numeric>
+#include <cmath>
+#include <fstream>
+#include <sstream>
+#include <thread>
+
+// System-specific headers for hardware detection and cache control
+#ifdef __linux__
+#include <sys/sysinfo.h>
+#include <unistd.h>
+#include <cpuid.h>
+#endif
+
+#ifdef _WIN32
+#include <windows.h>
+#include <intrin.h>
+#endif
+
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#include <sys/types.h>
+#endif
 
 // Include the original topling-zip headers
 // Note: These paths may need adjustment based on actual topling-zip installation
@@ -76,17 +103,150 @@ using valvec = ValVecStub<T>;
 using fstring = FStringStub;
 #endif
 
-// Global counters for memory tracking
+// ============================================================================
+// Enhanced Memory Tracking and Statistics
+// ============================================================================
+
 static std::atomic<uint64_t> g_memory_usage{0};
 static std::atomic<uint64_t> g_allocation_count{0};
+static std::atomic<uint64_t> g_deallocation_count{0};
+static std::atomic<uint64_t> g_peak_memory_usage{0};
+static std::atomic<uint64_t> g_total_allocated{0};
+static std::atomic<uint64_t> g_total_deallocated{0};
+
+// Thread-local storage for detailed tracking
+thread_local std::vector<size_t> g_allocation_sizes;
+thread_local std::chrono::high_resolution_clock::time_point g_last_allocation_time;
+
+// Memory tracking utilities
+static void track_allocation(size_t size) {
+    g_allocation_count++;
+    g_total_allocated += size;
+    uint64_t current = g_memory_usage += size;
+    
+    // Update peak if necessary
+    uint64_t peak = g_peak_memory_usage.load();
+    while (current > peak && !g_peak_memory_usage.compare_exchange_weak(peak, current)) {
+        // Retry until successful or current is no longer greater than peak
+    }
+    
+    g_allocation_sizes.push_back(size);
+}
+
+static void track_deallocation(size_t size) {
+    g_deallocation_count++;
+    g_total_deallocated += size;
+    g_memory_usage -= size;
+}
+
+// ============================================================================
+// Stub Implementations for Enhanced Features
+// ============================================================================
+
+#ifndef HAVE_TOPLING_ZIP
+// Enhanced stub implementations
+
+class BitVectorStub {
+public:
+    std::vector<bool> bits;
+    
+    void push_back(bool bit) { bits.push_back(bit); }
+    bool operator[](size_t i) const { return i < bits.size() ? bits[i] : false; }
+    size_t size() const { return bits.size(); }
+};
+
+class HashMapStub {
+public:
+    std::unordered_map<std::string, int32_t> data;
+    
+    bool insert(const std::string& key, int32_t value) {
+        data[key] = value;
+        return true;
+    }
+    
+    bool get(const std::string& key, int32_t& value) const {
+        auto it = data.find(key);
+        if (it != data.end()) {
+            value = it->second;
+            return true;
+        }
+        return false;
+    }
+    
+    bool remove(const std::string& key) {
+        return data.erase(key) > 0;
+    }
+    
+    size_t size() const { return data.size(); }
+    void clear() { data.clear(); }
+};
+
+class MemoryPoolStub {
+public:
+    size_t block_size;
+    std::vector<void*> free_blocks;
+    std::vector<void*> allocated_blocks;
+    
+    MemoryPoolStub(size_t bs, size_t initial) : block_size(bs) {
+        for (size_t i = 0; i < initial; ++i) {
+            free_blocks.push_back(std::malloc(block_size));
+        }
+    }
+    
+    ~MemoryPoolStub() {
+        for (void* ptr : free_blocks) std::free(ptr);
+        for (void* ptr : allocated_blocks) std::free(ptr);
+    }
+    
+    void* alloc() {
+        if (free_blocks.empty()) {
+            void* ptr = std::malloc(block_size);
+            allocated_blocks.push_back(ptr);
+            return ptr;
+        } else {
+            void* ptr = free_blocks.back();
+            free_blocks.pop_back();
+            allocated_blocks.push_back(ptr);
+            return ptr;
+        }
+    }
+    
+    void free(void* ptr) {
+        auto it = std::find(allocated_blocks.begin(), allocated_blocks.end(), ptr);
+        if (it != allocated_blocks.end()) {
+            allocated_blocks.erase(it);
+            free_blocks.push_back(ptr);
+        }
+    }
+    
+    size_t allocated_count() const { return allocated_blocks.size(); }
+    size_t free_count() const { return free_blocks.size(); }
+};
+
+using BitVector = BitVectorStub;
+using HashMap = HashMapStub;
+using MemoryPool = MemoryPoolStub;
+
+#endif
 
 extern "C" {
 
-// Vector operations
+// ============================================================================
+// Enhanced Vector Operations
+// ============================================================================
+
 void* cpp_valvec_create() {
-    g_allocation_count++;
-    g_memory_usage += sizeof(valvec<int32_t>);
+    size_t size = sizeof(valvec<int32_t>);
+    track_allocation(size);
     return new valvec<int32_t>();
+}
+
+void* cpp_valvec_create_with_capacity(size_t capacity) {
+    size_t size = sizeof(valvec<int32_t>) + capacity * sizeof(int32_t);
+    track_allocation(size);
+    auto* vec = new valvec<int32_t>();
+    vec->reserve(capacity);
+    return vec;
 }
 
 void cpp_valvec_destroy(void* vec) {

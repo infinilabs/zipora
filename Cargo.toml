@@ -70,6 +70,10 @@ cbindgen = { version = "0.27", optional = true }
 name = "benchmark"
 harness = false
 
+[[bench]]
+name = "cpp_comparison"
+harness = false
+
 [profile.release]
 lto = true
 codegen-units = 1

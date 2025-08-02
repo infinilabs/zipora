@@ -45,6 +45,7 @@ endif()
 # Create the benchmark wrapper library
 add_library(topling_zip_wrapper SHARED
     wrapper.cpp
+    enhanced_wrapper.cpp
 )
 
 target_include_directories(topling_zip_wrapper PUBLIC
@@ -66,6 +67,7 @@ set_target_properties(topling_zip_wrapper PROPERTIES
 # Create a static version as well for easier linking
 add_library(topling_zip_wrapper_static STATIC
     wrapper.cpp
+    enhanced_wrapper.cpp
 )
 
 target_include_directories(topling_zip_wrapper_static PUBLIC
