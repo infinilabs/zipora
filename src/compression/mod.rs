@@ -12,6 +12,8 @@ pub use realtime::{RealtimeCompressor, RealtimeConfig, CompressionMode};
 
 use crate::error::{ToplingError, Result};
 use crate::entropy::huffman::{HuffmanEncoder, HuffmanDecoder, HuffmanTree};
+use crate::entropy::rans::{RansEncoder, RansDecoder};
+use crate::entropy::dictionary::{DictionaryCompressor, DictionaryBuilder};
 use std::time::Duration;
 
 /// Compression algorithm types
@@ -367,6 +369,222 @@ impl Compressor for HuffmanCompressor {
     }
 }
 
+/// rANS-based compressor
+pub struct RansCompressor {
+    encoder: RansEncoder,
+}
+
+impl RansCompressor {
+    pub fn new(training_data: &[u8]) -> Result<Self> {
+        if training_data.is_empty() {
+            return Err(ToplingError::invalid_data("rANS compressor requires training data"));
+        }
+        
+        // Count symbol frequencies
+        let mut frequencies = [0u32; 256];
+        for &byte in training_data {
+            frequencies[byte as usize] += 1;
+        }
+        
+        // Ensure no zero frequencies for symbols that appear in training data
+        let mut symbol_exists = [false; 256];
+        for &byte in training_data {
+            symbol_exists[byte as usize] = true;
+        }
+        
+        for (i, freq) in frequencies.iter_mut().enumerate() {
+            if *freq == 0 && symbol_exists[i] {
+                *freq = 1; // Minimum frequency for existing symbols
+            }
+        }
+        
+        let encoder = RansEncoder::new(&frequencies)?;
+        Ok(Self { encoder })
+    }
+}
+
+impl Compressor for RansCompressor {
+    fn compress(&self, data: &[u8]) -> Result<Vec<u8>> {
+        if data.is_empty() {
+            return Ok(Vec::new());
+        }
+        
+        let mut result = Vec::new();
+        
+        // Store frequencies table (4 bytes per frequency)
+        for i in 0..=255u8 {
+            let freq = self.encoder.get_symbol(i).freq;
+            result.extend_from_slice(&freq.to_le_bytes());
+        }
+        
+        // Store original data size
+        let original_size = data.len() as u32;
+        result.extend_from_slice(&original_size.to_le_bytes());
+        
+        // Encode data
+        let compressed_data = self.encoder.encode(data)?;
+        result.extend_from_slice(&compressed_data);
+        
+        Ok(result)
+    }
+    
+    fn decompress(&self, data: &[u8]) -> Result<Vec<u8>> {
+        if data.is_empty() {
+            return Ok(Vec::new());
+        }
+        
+        if data.len() < 256 * 4 + 4 {
+            return Err(ToplingError::invalid_data("Invalid rANS compressed data format"));
+        }
+        
+        // Read frequencies table
+        let mut frequencies = [0u32; 256];
+        for i in 0..256 {
+            let start = i * 4;
+            frequencies[i] = u32::from_le_bytes([
+                data[start], data[start + 1], data[start + 2], data[start + 3]
+            ]);
+        }
+        
+        // Read original size
+        let size_offset = 256 * 4;
+        let original_size = u32::from_le_bytes([
+            data[size_offset], data[size_offset + 1], 
+            data[size_offset + 2], data[size_offset + 3]
+        ]) as usize;
+        
+        // Decode data
+        let compressed_data = &data[size_offset + 4..];
+        let temp_encoder = RansEncoder::new(&frequencies)?;
+        let decoder = RansDecoder::new(&temp_encoder);
+        decoder.decode(compressed_data, original_size)
+    }
+    
+    fn estimate_ratio(&self, _data: &[u8]) -> f64 {
+        0.6 // rANS typically achieves good compression
+    }
+    
+    fn algorithm(&self) -> Algorithm {
+        Algorithm::Rans
+    }
+}
+
+/// Dictionary-based compressor
+pub struct DictCompressor {
+    dictionary: DictionaryCompressor,
+}
+
+impl DictCompressor {
+    pub fn new(training_data: &[u8]) -> Result<Self> {
+        if training_data.is_empty() {
+            return Err(ToplingError::invalid_data("Dictionary compressor requires training data"));
+        }
+        
+        let builder = DictionaryBuilder::new();
+        let dict = builder.build(training_data);
+        let dictionary = DictionaryCompressor::new(dict);
+        
+        Ok(Self { dictionary })
+    }
+}
+
+impl Compressor for DictCompressor {
+    fn compress(&self, data: &[u8]) -> Result<Vec<u8>> {
+        if data.is_empty() {
+            return Ok(Vec::new());
+        }
+        
+        self.dictionary.compress(data)
+    }
+    
+    fn decompress(&self, data: &[u8]) -> Result<Vec<u8>> {
+        if data.is_empty() {
+            return Ok(Vec::new());
+        }
+        
+        self.dictionary.decompress(data)
+    }
+    
+    fn estimate_ratio(&self, _data: &[u8]) -> f64 {
+        0.7 // Dictionary compression ratio estimate
+    }
+    
+    fn algorithm(&self) -> Algorithm {
+        Algorithm::Dictionary
+    }
+}
+
+/// Hybrid compressor that combines multiple algorithms
+pub struct HybridCompressor {
+    compressors: Vec<Box<dyn Compressor>>,
+}
+
+impl HybridCompressor {
+    pub fn new(training_data: &[u8]) -> Result<Self> {
+        let mut compressors: Vec<Box<dyn Compressor>> = Vec::new();
+        
+        // Add available compressors
+        compressors.push(Box::new(HuffmanCompressor::new(training_data)?));
+        compressors.push(Box::new(RansCompressor::new(training_data)?));
+        compressors.push(Box::new(DictCompressor::new(training_data)?));
+        
+        Ok(Self { compressors })
+    }
+}
+
+impl Compressor for HybridCompressor {
+    fn compress(&self, data: &[u8]) -> Result<Vec<u8>> {
+        if data.is_empty() {
+            return Ok(Vec::new());
+        }
+        
+        let mut best_result = data.to_vec();
+        let mut best_algorithm = 0u8;
+        
+        // Try each compressor and pick the best result
+        for (i, compressor) in self.compressors.iter().enumerate() {
+            if let Ok(compressed) = compressor.compress(data) {
+                if compressed.len() < best_result.len() {
+                    best_result = compressed;
+                    best_algorithm = i as u8;
+                }
+            }
+        }
+        
+        // Prepend algorithm identifier
+        let mut result = vec![best_algorithm];
+        result.extend_from_slice(&best_result);
+        Ok(result)
+    }
+    
+    fn decompress(&self, data: &[u8]) -> Result<Vec<u8>> {
+        if data.is_empty() {
+            return Ok(Vec::new());
+        }
+        
+        let algorithm_id = data[0] as usize;
+        let compressed_data = &data[1..];
+        
+        if algorithm_id >= self.compressors.len() {
+            return Err(ToplingError::invalid_data("Invalid algorithm identifier in hybrid data"));
+        }
+        
+        self.compressors[algorithm_id].decompress(compressed_data)
+    }
+    
+    fn estimate_ratio(&self, data: &[u8]) -> f64 {
+        // Return the best estimate from all compressors
+        self.compressors
+            .iter()
+            .map(|c| c.estimate_ratio(data))
+            .fold(1.0, f64::min)
+    }
+    
+    fn algorithm(&self) -> Algorithm {
+        Algorithm::Hybrid
+    }
+}
+
 /// Factory for creating compressors
 pub struct CompressorFactory;
 
@@ -384,7 +602,27 @@ impl CompressorFactory {
                     Err(ToplingError::invalid_data("Huffman compressor requires training data"))
                 }
             }
-            _ => Err(ToplingError::not_supported(&format!("algorithm not implemented: {:?}", algorithm))),
+            Algorithm::Rans => {
+                if let Some(data) = training_data {
+                    Ok(Box::new(RansCompressor::new(data)?))
+                } else {
+                    Err(ToplingError::invalid_data("rANS compressor requires training data"))
+                }
+            }
+            Algorithm::Dictionary => {
+                if let Some(data) = training_data {
+                    Ok(Box::new(DictCompressor::new(data)?))
+                } else {
+                    Err(ToplingError::invalid_data("Dictionary compressor requires training data"))
+                }
+            }
+            Algorithm::Hybrid => {
+                if let Some(data) = training_data {
+                    Ok(Box::new(HybridCompressor::new(data)?))
+                } else {
+                    Err(ToplingError::invalid_data("Hybrid compressor requires training data"))
+                }
+            }
         }
     }
     
@@ -398,6 +636,9 @@ impl CompressorFactory {
             Algorithm::Zstd(6),
             Algorithm::Zstd(9),
             Algorithm::Huffman,
+            Algorithm::Rans,
+            Algorithm::Dictionary,
+            Algorithm::Hybrid,
         ]
     }
     

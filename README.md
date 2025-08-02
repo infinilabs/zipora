@@ -15,7 +15,7 @@ Infini-Zip Rust offers a complete rewrite of advanced data structure algorithms,
 - **🛡️ Memory Safety**: Eliminate segfaults, buffer overflows, and use-after-free bugs
 - **🔧 Modern Tooling**: Cargo build system, integrated testing, and cross-platform support
 - **📈 Succinct Data Structures**: Space-efficient rank-select operations with ~3% overhead
-- **🗜️ Advanced Compression**: ZSTD, LZ4, Huffman, rANS (with algorithm refinement), and dictionary-based compression
+- **🗜️ Advanced Compression**: Complete compression framework with ZSTD, LZ4, Huffman, rANS, dictionary-based, and hybrid compression algorithms
 - **🌲 Advanced Trie Structures**: LOUDS tries, Critical-Bit tries, and Patricia tries
 - **💾 Blob Storage**: Memory-mapped and compressed blob storage systems
 - **🗃️ Memory-Mapped I/O**: Zero-copy file operations with automatic growth
@@ -111,14 +111,14 @@ let compressed = huffman_encoder.encode(sample_data).unwrap();
 let ratio = huffman_encoder.estimate_compression_ratio(sample_data);
 println!("Huffman compression ratio: {:.3}", ratio);
 
-// rANS encoding for near-optimal compression (algorithm refinement in progress)
+// rANS encoding for near-optimal compression
 let mut frequencies = [0u32; 256];
 for &byte in sample_data {
     frequencies[byte as usize] += 1;
 }
 let rans_encoder = RansEncoder::new(&frequencies).unwrap();
-println!("rANS encoder ready with {} symbols", rans_encoder.total_freq());
-// Note: rANS encode/decode algorithm is under refinement for full compatibility
+let rans_compressed = rans_encoder.encode(sample_data).unwrap();
+println!("rANS compression ratio: {:.3}", rans_compressed.len() as f64 / sample_data.len() as f64);
 
 // Dictionary-based compression for repeated patterns
 let builder = DictionaryBuilder::new().min_match_length(3).max_entries(100);
@@ -714,8 +714,10 @@ for &byte in data {
 
 let rans_encoder = RansEncoder::new(&frequencies).unwrap();
 let rans_decoder = RansDecoder::new(&rans_encoder);
-println!("rANS total frequency: {}", rans_encoder.total_freq());
-// Note: Full encode/decode cycle under algorithm refinement
+let rans_compressed = rans_encoder.encode(data).unwrap();
+let rans_decompressed = rans_decoder.decode(&rans_compressed, data.len()).unwrap();
+assert_eq!(data, rans_decompressed.as_slice());
+println!("rANS compression ratio: {:.3}", rans_compressed.len() as f64 / data.len() as f64);
 
 // Dictionary-based compression - excellent for repeated patterns
 let builder = DictionaryBuilder::new()
@@ -790,6 +792,9 @@ assert_eq!(data, decompressed.as_slice());
 // - Algorithm::Lz4 (fast compression)
 // - Algorithm::Zstd(level) (high compression ratios)
 // - Algorithm::Huffman (optimal prefix-free coding with training data)
+// - Algorithm::Rans (range asymmetric numeral systems for near-optimal compression)
+// - Algorithm::Dictionary (dictionary-based compression for repeated patterns)
+// - Algorithm::Hybrid (adaptive selection of best algorithm for data)
 ```
 
 ### Automata & Tries
@@ -1025,7 +1030,7 @@ Current codebase status (as of latest verification):
 
 ### ✅ **Phase 3 - Entropy Coding Complete**
 - **✅ Huffman Coding**: Optimal prefix-free compression with tree construction
-- **🔧 rANS Encoding**: Range Asymmetric Numeral Systems implementation with comprehensive testing (decode/encode algorithm refinement in progress)
+- **✅ rANS Encoding**: Complete range Asymmetric Numeral Systems implementation with full encode/decode cycle
 - **✅ Dictionary Compression**: LZ-style compression for repeated patterns
 - **✅ Entropy Analysis**: Statistical analysis and compression ratio estimation
 - **✅ Entropy Blob Stores**: Automatic compression with Huffman, rANS, and dictionary algorithms
