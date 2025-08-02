@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
 
-use crate::error::{ToplingError, Result};
+use crate::error::{Result, ToplingError};
 
 /// Standard hugepage size on x86_64 Linux (2MB)
 pub const HUGEPAGE_SIZE_2MB: usize = 2 * 1024 * 1024;
@@ -71,93 +71,91 @@ impl HugePage {
         {
             Self::allocate_linux(size, page_size)
         }
-        
+
         #[cfg(not(target_os = "linux"))]
         {
             let _ = (size, page_size);
-            Err(ToplingError::not_supported("hugepages only supported on Linux"))
+            Err(ToplingError::not_supported(
+                "hugepages only supported on Linux",
+            ))
         }
     }
-    
+
     /// Allocate memory using 2MB hugepages
     pub fn new_2mb(size: usize) -> Result<Self> {
         Self::new(size, HUGEPAGE_SIZE_2MB)
     }
-    
+
     /// Allocate memory using 1GB hugepages
     pub fn new_1gb(size: usize) -> Result<Self> {
         Self::new(size, HUGEPAGE_SIZE_1GB)
     }
-    
+
     /// Get the memory as a slice
     pub fn as_slice(&self) -> &[u8] {
         #[cfg(target_os = "linux")]
         {
-            unsafe {
-                std::slice::from_raw_parts(self.ptr.as_ptr(), self.size)
-            }
+            unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.size) }
         }
-        
+
         #[cfg(not(target_os = "linux"))]
         {
             &[]
         }
     }
-    
+
     /// Get the memory as a mutable slice
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         #[cfg(target_os = "linux")]
         {
-            unsafe {
-                std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.size)
-            }
+            unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.size) }
         }
-        
+
         #[cfg(not(target_os = "linux"))]
         {
             &mut []
         }
     }
-    
+
     /// Get the size of the allocation
     pub fn size(&self) -> usize {
         #[cfg(target_os = "linux")]
         {
             self.size
         }
-        
+
         #[cfg(not(target_os = "linux"))]
         {
             0
         }
     }
-    
+
     /// Get the hugepage size used for this allocation
     pub fn page_size(&self) -> usize {
         #[cfg(target_os = "linux")]
         {
             self.page_size
         }
-        
+
         #[cfg(not(target_os = "linux"))]
         {
             0
         }
     }
-    
+
     #[cfg(target_os = "linux")]
     fn allocate_linux(size: usize, page_size: usize) -> Result<Self> {
         if size == 0 {
             return Err(ToplingError::invalid_data("allocation size cannot be zero"));
         }
-        
+
         if page_size != HUGEPAGE_SIZE_2MB && page_size != HUGEPAGE_SIZE_1GB {
             return Err(ToplingError::invalid_data("invalid hugepage size"));
         }
-        
+
         // Round up size to multiple of page size
         let aligned_size = (size + page_size - 1) & !(page_size - 1);
-        
+
         // Try to allocate using mmap with MAP_HUGETLB
         let ptr = unsafe {
             libc::mmap(
@@ -169,23 +167,23 @@ impl HugePage {
                 0,
             )
         };
-        
+
         if ptr == libc::MAP_FAILED {
             return Err(ToplingError::out_of_memory(aligned_size));
         }
-        
+
         let ptr = unsafe { NonNull::new_unchecked(ptr as *mut u8) };
-        
+
         // Track the allocation
         let allocation = HugePageAllocation {
             ptr: ptr.as_ptr(),
             size: aligned_size,
             page_size,
         };
-        
+
         HUGEPAGE_ALLOCATIONS.lock().unwrap().push(allocation);
         HUGEPAGE_COUNT.fetch_add(aligned_size / page_size, Ordering::Relaxed);
-        
+
         Ok(Self {
             ptr,
             size,
@@ -199,15 +197,15 @@ impl Drop for HugePage {
     fn drop(&mut self) {
         // Unmap the memory
         let aligned_size = (self.size + self.page_size - 1) & !(self.page_size - 1);
-        
+
         unsafe {
             libc::munmap(self.ptr.as_ptr() as *mut libc::c_void, aligned_size);
         }
-        
+
         // Remove from tracking
         let mut allocations = HUGEPAGE_ALLOCATIONS.lock().unwrap();
         allocations.retain(|alloc| alloc.ptr != self.ptr.as_ptr());
-        
+
         HUGEPAGE_COUNT.fetch_sub(aligned_size / self.page_size, Ordering::Relaxed);
     }
 }
@@ -232,13 +230,15 @@ impl HugePageAllocator {
                 preferred_page_size: HUGEPAGE_SIZE_2MB,
             })
         }
-        
+
         #[cfg(not(target_os = "linux"))]
         {
-            Err(ToplingError::not_supported("hugepages only supported on Linux"))
+            Err(ToplingError::not_supported(
+                "hugepages only supported on Linux",
+            ))
         }
     }
-    
+
     /// Create a new hugepage allocator with custom settings
     pub fn with_config(min_size: usize, page_size: usize) -> Result<Self> {
         #[cfg(target_os = "linux")]
@@ -246,20 +246,22 @@ impl HugePageAllocator {
             if page_size != HUGEPAGE_SIZE_2MB && page_size != HUGEPAGE_SIZE_1GB {
                 return Err(ToplingError::invalid_data("invalid hugepage size"));
             }
-            
+
             Ok(Self {
                 min_allocation_size: min_size,
                 preferred_page_size: page_size,
             })
         }
-        
+
         #[cfg(not(target_os = "linux"))]
         {
             let _ = (min_size, page_size);
-            Err(ToplingError::not_supported("hugepages only supported on Linux"))
+            Err(ToplingError::not_supported(
+                "hugepages only supported on Linux",
+            ))
         }
     }
-    
+
     /// Allocate memory, using hugepages for large allocations
     pub fn allocate(&self, size: usize) -> Result<HugePage> {
         #[cfg(target_os = "linux")]
@@ -267,24 +269,28 @@ impl HugePageAllocator {
             if size >= self.min_allocation_size {
                 HugePage::new(size, self.preferred_page_size)
             } else {
-                Err(ToplingError::invalid_data("allocation too small for hugepages"))
+                Err(ToplingError::invalid_data(
+                    "allocation too small for hugepages",
+                ))
             }
         }
-        
+
         #[cfg(not(target_os = "linux"))]
         {
             let _ = size;
-            Err(ToplingError::not_supported("hugepages only supported on Linux"))
+            Err(ToplingError::not_supported(
+                "hugepages only supported on Linux",
+            ))
         }
     }
-    
+
     /// Check if hugepages should be used for the given allocation size
     pub fn should_use_hugepages(&self, size: usize) -> bool {
         #[cfg(target_os = "linux")]
         {
             size >= self.min_allocation_size
         }
-        
+
         #[cfg(not(target_os = "linux"))]
         {
             let _ = size;
@@ -303,7 +309,7 @@ impl Default for HugePageAllocator {
                     preferred_page_size: HUGEPAGE_SIZE_2MB,
                 }
             }
-            
+
             #[cfg(not(target_os = "linux"))]
             {
                 Self {
@@ -323,11 +329,11 @@ pub fn get_hugepage_info(page_size: usize) -> Result<HugePageInfo> {
             HUGEPAGE_SIZE_1GB => "/sys/kernel/mm/hugepages/hugepages-1048576kB",
             _ => return Err(ToplingError::invalid_data("unsupported hugepage size")),
         };
-        
+
         let total_pages = read_hugepage_value(&format!("{}/nr_hugepages", path))?;
         let free_pages = read_hugepage_value(&format!("{}/free_hugepages", path))?;
         let reserved_pages = read_hugepage_value(&format!("{}/resv_hugepages", path))?;
-        
+
         Ok(HugePageInfo {
             page_size,
             total_pages,
@@ -335,11 +341,13 @@ pub fn get_hugepage_info(page_size: usize) -> Result<HugePageInfo> {
             reserved_pages,
         })
     }
-    
+
     #[cfg(not(target_os = "linux"))]
     {
         let _ = page_size;
-        Err(ToplingError::not_supported("hugepages only supported on Linux"))
+        Err(ToplingError::not_supported(
+            "hugepages only supported on Linux",
+        ))
     }
 }
 
@@ -347,8 +355,10 @@ pub fn get_hugepage_info(page_size: usize) -> Result<HugePageInfo> {
 fn read_hugepage_value(path: &str) -> Result<usize> {
     let content = fs::read_to_string(path)
         .map_err(|_| ToplingError::io_error("failed to read hugepage information"))?;
-    
-    content.trim().parse()
+
+    content
+        .trim()
+        .parse()
         .map_err(|_| ToplingError::invalid_data("invalid hugepage value"))
 }
 
@@ -359,11 +369,14 @@ pub fn init_hugepage_support() -> Result<()> {
         // Check if hugepages are available
         let info_2mb = get_hugepage_info(HUGEPAGE_SIZE_2MB);
         let info_1gb = get_hugepage_info(HUGEPAGE_SIZE_1GB);
-        
+
         match (info_2mb, info_1gb) {
             (Ok(info), _) | (_, Ok(info)) => {
-                log::debug!("Hugepage support initialized: {} pages of {} bytes", 
-                           info.total_pages, info.page_size);
+                log::debug!(
+                    "Hugepage support initialized: {} pages of {} bytes",
+                    info.total_pages,
+                    info.page_size
+                );
                 Ok(())
             }
             (Err(_), Err(_)) => {
@@ -372,10 +385,12 @@ pub fn init_hugepage_support() -> Result<()> {
             }
         }
     }
-    
+
     #[cfg(not(target_os = "linux"))]
     {
-        Err(ToplingError::not_supported("hugepages only supported on Linux"))
+        Err(ToplingError::not_supported(
+            "hugepages only supported on Linux",
+        ))
     }
 }
 
@@ -385,7 +400,7 @@ pub fn get_hugepage_count() -> usize {
     {
         HUGEPAGE_COUNT.load(Ordering::Relaxed)
     }
-    
+
     #[cfg(not(target_os = "linux"))]
     {
         0
@@ -396,10 +411,9 @@ pub fn get_hugepage_count() -> usize {
 pub fn hugepages_available() -> bool {
     #[cfg(target_os = "linux")]
     {
-        get_hugepage_info(HUGEPAGE_SIZE_2MB).is_ok() ||
-        get_hugepage_info(HUGEPAGE_SIZE_1GB).is_ok()
+        get_hugepage_info(HUGEPAGE_SIZE_2MB).is_ok() || get_hugepage_info(HUGEPAGE_SIZE_1GB).is_ok()
     }
-    
+
     #[cfg(not(target_os = "linux"))]
     {
         false
@@ -420,13 +434,13 @@ mod tests {
     fn test_hugepage_availability() {
         // Should not panic
         let available = hugepages_available();
-        
+
         #[cfg(target_os = "linux")]
         {
             // On Linux, this depends on system configuration
             println!("Hugepages available: {}", available);
         }
-        
+
         #[cfg(not(target_os = "linux"))]
         {
             assert!(!available);
@@ -436,7 +450,7 @@ mod tests {
     #[test]
     fn test_hugepage_info() {
         let result = get_hugepage_info(HUGEPAGE_SIZE_2MB);
-        
+
         #[cfg(target_os = "linux")]
         {
             // On Linux, this might succeed or fail depending on system config
@@ -450,7 +464,7 @@ mod tests {
                 }
             }
         }
-        
+
         #[cfg(not(target_os = "linux"))]
         {
             assert!(result.is_err());
@@ -460,7 +474,7 @@ mod tests {
     #[test]
     fn test_hugepage_allocator_creation() {
         let result = HugePageAllocator::new();
-        
+
         #[cfg(target_os = "linux")]
         {
             // Might succeed or fail depending on system
@@ -474,7 +488,7 @@ mod tests {
                 }
             }
         }
-        
+
         #[cfg(not(target_os = "linux"))]
         {
             assert!(result.is_err());
@@ -484,7 +498,7 @@ mod tests {
     #[test]
     fn test_hugepage_allocator_config() {
         let result = HugePageAllocator::with_config(HUGEPAGE_SIZE_2MB, HUGEPAGE_SIZE_2MB);
-        
+
         #[cfg(target_os = "linux")]
         {
             // Should succeed on Linux
@@ -498,7 +512,7 @@ mod tests {
                 }
             }
         }
-        
+
         #[cfg(not(target_os = "linux"))]
         {
             assert!(result.is_err());
@@ -508,7 +522,7 @@ mod tests {
     #[test]
     fn test_init_hugepage_support() {
         let result = init_hugepage_support();
-        
+
         #[cfg(target_os = "linux")]
         {
             // Might succeed or fail depending on system
@@ -521,7 +535,7 @@ mod tests {
                 }
             }
         }
-        
+
         #[cfg(not(target_os = "linux"))]
         {
             assert!(result.is_err());

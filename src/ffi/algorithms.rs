@@ -1,7 +1,7 @@
 //! C FFI bindings for algorithm types
 
 use super::types::*;
-use crate::algorithms::{SuffixArray, RadixSort};
+use crate::algorithms::{RadixSort, SuffixArray};
 use crate::ffi::CResult;
 
 /// Create a new suffix array
@@ -10,7 +10,7 @@ pub unsafe extern "C" fn suffix_array_new(data: *const u8, size: usize) -> *mut 
     if data.is_null() {
         return std::ptr::null_mut();
     }
-    
+
     let data_slice = std::slice::from_raw_parts(data, size);
     match SuffixArray::new(data_slice) {
         Ok(sa) => {
@@ -43,15 +43,15 @@ pub unsafe extern "C" fn suffix_array_search(
     if sa.is_null() || text.is_null() || pattern.is_null() || start.is_null() || count.is_null() {
         return CResult::InvalidInput;
     }
-    
+
     let sa = &*sa;
     let text_slice = std::slice::from_raw_parts(text, text_size);
     let pattern_slice = std::slice::from_raw_parts(pattern, pattern_size);
-    
+
     let (search_start, search_count) = sa.search(text_slice, pattern_slice);
     *start = search_start;
     *count = search_count;
-    
+
     CResult::Success
 }
 
@@ -61,7 +61,7 @@ pub unsafe extern "C" fn radix_sort_u32(data: *mut u32, size: usize) -> CResult 
     if data.is_null() {
         return CResult::InvalidInput;
     }
-    
+
     let data_slice = unsafe { std::slice::from_raw_parts_mut(data, size) };
     let mut sorter = RadixSort::new();
     match sorter.sort_u32(data_slice) {

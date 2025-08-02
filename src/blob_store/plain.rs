@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use crate::blob_store::traits::{BlobStore, BlobStoreStats, IterableBlobStore, BatchBlobStore};
+use crate::blob_store::traits::{BatchBlobStore, BlobStore, BlobStoreStats, IterableBlobStore};
 use crate::error::{Result, ToplingError};
 use crate::RecordId;
 
@@ -56,7 +56,7 @@ impl PlainBlobStore {
     /// * `Err(ToplingError)` - If directory creation or initialization fails
     pub fn new<P: AsRef<Path>>(base_dir: P) -> Result<Self> {
         let base_dir = base_dir.as_ref().to_path_buf();
-        
+
         // Create directory if it doesn't exist
         if !base_dir.exists() {
             fs::create_dir_all(&base_dir).map_err(|e| {
@@ -77,14 +77,17 @@ impl PlainBlobStore {
     /// Create a new plain blob store and ensure the directory is empty
     pub fn create_new<P: AsRef<Path>>(base_dir: P) -> Result<Self> {
         let base_dir = base_dir.as_ref().to_path_buf();
-        
+
         // Remove directory if it exists and recreate it
         if base_dir.exists() {
             fs::remove_dir_all(&base_dir).map_err(|e| {
-                ToplingError::io_error(format!("Failed to remove existing directory {:?}: {}", base_dir, e))
+                ToplingError::io_error(format!(
+                    "Failed to remove existing directory {:?}: {}",
+                    base_dir, e
+                ))
             })?;
         }
-        
+
         fs::create_dir_all(&base_dir).map_err(|e| {
             ToplingError::io_error(format!("Failed to create directory {:?}: {}", base_dir, e))
         })?;
@@ -125,7 +128,7 @@ impl PlainBlobStore {
             // Try to parse filename as record ID
             if let Ok(id) = filename_str.parse::<u32>() {
                 max_id = max_id.max(id);
-                
+
                 // Get file size for stats
                 if let Ok(metadata) = entry.metadata() {
                     if metadata.is_file() {
@@ -157,9 +160,12 @@ impl PlainBlobStore {
     /// Get all existing blob IDs by scanning the directory
     fn scan_blob_ids(&self) -> Result<Vec<RecordId>> {
         let mut ids = Vec::new();
-        
+
         let entries = fs::read_dir(&self.base_dir).map_err(|e| {
-            ToplingError::io_error(format!("Failed to read directory {:?}: {}", self.base_dir, e))
+            ToplingError::io_error(format!(
+                "Failed to read directory {:?}: {}",
+                self.base_dir, e
+            ))
         })?;
 
         for entry in entries {
@@ -186,7 +192,7 @@ impl PlainBlobStore {
 impl BlobStore for PlainBlobStore {
     fn get(&self, id: RecordId) -> Result<Vec<u8>> {
         let path = self.file_path(id);
-        
+
         let mut file = File::open(&path).map_err(|e| {
             ToplingError::not_found(format!("Blob file {:?} not found: {}", path, e))
         })?;
@@ -221,11 +227,9 @@ impl BlobStore for PlainBlobStore {
 
     fn remove(&mut self, id: RecordId) -> Result<()> {
         let path = self.file_path(id);
-        
+
         // Get file size before removal for stats
-        let size = fs::metadata(&path)
-            .map(|m| m.len() as usize)
-            .unwrap_or(0);
+        let size = fs::metadata(&path).map(|m| m.len() as usize).unwrap_or(0);
 
         fs::remove_file(&path).map_err(|e| {
             ToplingError::not_found(format!("Failed to remove blob file {:?}: {}", path, e))
@@ -241,7 +245,7 @@ impl BlobStore for PlainBlobStore {
 
     fn size(&self, id: RecordId) -> Result<Option<usize>> {
         let path = self.file_path(id);
-        
+
         match fs::metadata(&path) {
             Ok(metadata) => Ok(Some(metadata.len() as usize)),
             Err(_) => Ok(None),
@@ -321,46 +325,46 @@ mod tests {
     fn test_plain_blob_store_basic_operations() {
         let temp_dir = tempdir().unwrap();
         let mut store = PlainBlobStore::new(temp_dir.path()).unwrap();
-        
+
         // Test empty store
         assert_eq!(store.len(), 0);
         assert!(store.is_empty());
-        
+
         // Test put operation
         let data1 = b"hello world";
         let id1 = store.put(data1).unwrap();
         assert_eq!(store.len(), 1);
         assert!(!store.is_empty());
         assert!(store.contains(id1));
-        
+
         // Verify file was created
         let file_path = store.file_path(id1);
         assert!(file_path.exists());
-        
+
         // Test get operation
         let retrieved = store.get(id1).unwrap();
         assert_eq!(data1, &retrieved[..]);
-        
+
         // Test size operation
         let size = store.size(id1).unwrap();
         assert_eq!(size, Some(data1.len()));
-        
+
         // Test put another blob
         let data2 = b"goodbye world";
         let id2 = store.put(data2).unwrap();
         assert_eq!(store.len(), 2);
         assert_ne!(id1, id2);
-        
+
         // Test remove operation
         store.remove(id1).unwrap();
         assert_eq!(store.len(), 1);
         assert!(!store.contains(id1));
         assert!(store.contains(id2));
-        
+
         // Verify file was removed
         let file_path = store.file_path(id1);
         assert!(!file_path.exists());
-        
+
         // Test get after remove
         assert!(store.get(id1).is_err());
         let retrieved2 = store.get(id2).unwrap();
@@ -371,23 +375,23 @@ mod tests {
     fn test_plain_blob_store_persistence() {
         let temp_dir = tempdir().unwrap();
         let dir_path = temp_dir.path().to_path_buf();
-        
+
         let data1 = b"persistent data";
         let id1;
-        
+
         // Create store and add data
         {
             let mut store = PlainBlobStore::new(&dir_path).unwrap();
             id1 = store.put(data1).unwrap();
             assert_eq!(store.len(), 1);
         }
-        
+
         // Create new store instance and verify data persists
         {
             let store = PlainBlobStore::new(&dir_path).unwrap();
             assert_eq!(store.len(), 1);
             assert!(store.contains(id1));
-            
+
             let retrieved = store.get(id1).unwrap();
             assert_eq!(data1, &retrieved[..]);
         }
@@ -397,14 +401,14 @@ mod tests {
     fn test_plain_blob_store_create_new() {
         let temp_dir = tempdir().unwrap();
         let dir_path = temp_dir.path().to_path_buf();
-        
+
         // Create initial store with data
         {
             let mut store = PlainBlobStore::new(&dir_path).unwrap();
             store.put(b"old data").unwrap();
             assert_eq!(store.len(), 1);
         }
-        
+
         // Create new store that should clear existing data
         {
             let store = PlainBlobStore::create_new(&dir_path).unwrap();
@@ -417,15 +421,15 @@ mod tests {
     fn test_plain_blob_store_errors() {
         let temp_dir = tempdir().unwrap();
         let mut store = PlainBlobStore::new(temp_dir.path()).unwrap();
-        
+
         // Test get non-existent blob
         let result = store.get(999);
         assert!(result.is_err());
-        
+
         // Test remove non-existent blob
         let result = store.remove(999);
         assert!(result.is_err());
-        
+
         // Test size of non-existent blob
         let size = store.size(999).unwrap();
         assert_eq!(size, None);
@@ -435,23 +439,23 @@ mod tests {
     fn test_plain_blob_store_iteration() {
         let temp_dir = tempdir().unwrap();
         let mut store = PlainBlobStore::new(temp_dir.path()).unwrap();
-        
+
         // Add some blobs
         let data1 = b"blob1";
         let data2 = b"blob2";
         let data3 = b"blob3";
-        
+
         let id1 = store.put(data1).unwrap();
         let id2 = store.put(data2).unwrap();
         let id3 = store.put(data3).unwrap();
-        
+
         // Test ID iteration
         let ids: Vec<RecordId> = store.iter_ids().collect();
         assert_eq!(ids.len(), 3);
         assert!(ids.contains(&id1));
         assert!(ids.contains(&id2));
         assert!(ids.contains(&id3));
-        
+
         // Test blob iteration
         let blobs: Result<Vec<(RecordId, Vec<u8>)>> = store.iter_blobs().collect();
         let blobs = blobs.unwrap();
@@ -462,17 +466,13 @@ mod tests {
     fn test_plain_blob_store_batch_operations() {
         let temp_dir = tempdir().unwrap();
         let mut store = PlainBlobStore::new(temp_dir.path()).unwrap();
-        
+
         // Test batch put
-        let blobs = vec![
-            b"blob1".to_vec(),
-            b"blob2".to_vec(),
-            b"blob3".to_vec(),
-        ];
+        let blobs = vec![b"blob1".to_vec(), b"blob2".to_vec(), b"blob3".to_vec()];
         let ids = store.put_batch(blobs.clone()).unwrap();
         assert_eq!(ids.len(), 3);
         assert_eq!(store.len(), 3);
-        
+
         // Test batch get
         let retrieved = store.get_batch(ids.clone()).unwrap();
         assert_eq!(retrieved.len(), 3);
@@ -480,7 +480,7 @@ mod tests {
             assert!(blob_opt.is_some());
             assert_eq!(blob_opt.as_ref().unwrap(), &blobs[i]);
         }
-        
+
         // Test batch remove
         let removed_count = store.remove_batch(ids).unwrap();
         assert_eq!(removed_count, 3);
@@ -491,14 +491,14 @@ mod tests {
     fn test_plain_blob_store_large_data() {
         let temp_dir = tempdir().unwrap();
         let mut store = PlainBlobStore::new(temp_dir.path()).unwrap();
-        
+
         // Test with large blob (1MB)
-        let large_data: Vec<u8> = (0..1024*1024).map(|i| (i % 256) as u8).collect();
+        let large_data: Vec<u8> = (0..1024 * 1024).map(|i| (i % 256) as u8).collect();
         let id = store.put(&large_data).unwrap();
-        
+
         let retrieved = store.get(id).unwrap();
         assert_eq!(large_data, retrieved);
-        
+
         let size = store.size(id).unwrap();
         assert_eq!(size, Some(large_data.len()));
     }
@@ -507,11 +507,11 @@ mod tests {
     fn test_plain_blob_store_concurrent_access() {
         use std::sync::{Arc, Mutex};
         use std::thread;
-        
+
         let temp_dir = tempdir().unwrap();
         let store = Arc::new(Mutex::new(PlainBlobStore::new(temp_dir.path()).unwrap()));
         let mut handles = vec![];
-        
+
         // Spawn multiple threads to add blobs concurrently
         for i in 0..10 {
             let store_clone = Arc::clone(&store);
@@ -522,17 +522,17 @@ mod tests {
             });
             handles.push(handle);
         }
-        
+
         // Collect all IDs
         let mut ids = Vec::new();
         for handle in handles {
             ids.push(handle.join().unwrap());
         }
-        
+
         // Verify all blobs can be retrieved
         let store = store.lock().unwrap();
         assert_eq!(store.len(), 10);
-        
+
         for (i, id) in ids.iter().enumerate() {
             let data = store.get(*id).unwrap();
             let expected = format!("blob{}", i);
@@ -544,18 +544,18 @@ mod tests {
     fn test_scan_directory_with_existing_files() {
         let temp_dir = tempdir().unwrap();
         let dir_path = temp_dir.path();
-        
+
         // Create some files manually
         std::fs::write(dir_path.join("5"), b"data1").unwrap();
         std::fs::write(dir_path.join("10"), b"data2").unwrap();
         std::fs::write(dir_path.join("invalid_name"), b"data3").unwrap(); // Should be ignored
-        
+
         let store = PlainBlobStore::new(dir_path).unwrap();
-        
+
         // Next ID should be 11 (max existing ID + 1)
         let next_id = store.next_id.load(Ordering::Relaxed);
         assert_eq!(next_id, 11);
-        
+
         // Should find 2 valid blobs
         assert_eq!(store.len(), 2);
         assert!(store.contains(5));

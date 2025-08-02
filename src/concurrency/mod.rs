@@ -3,19 +3,19 @@
 //! This module provides high-performance async/await based concurrency primitives
 //! optimized for data processing pipelines and parallel algorithms.
 
-pub mod fiber_pool;
-pub mod pipeline;
-pub mod parallel_trie;
 pub mod async_blob_store;
+pub mod fiber_pool;
+pub mod parallel_trie;
+pub mod pipeline;
 pub mod work_stealing;
 
-pub use fiber_pool::{FiberPool, FiberPoolConfig, FiberHandle, FiberStats};
-pub use pipeline::{Pipeline, PipelineStage, PipelineBuilder, PipelineStats};
-pub use parallel_trie::{ParallelTrieBuilder, ParallelLoudsTrie};
-pub use async_blob_store::{AsyncBlobStore, AsyncMemoryBlobStore, AsyncFileStore};
-pub use work_stealing::{WorkStealingQueue, WorkStealingExecutor, Task};
+pub use async_blob_store::{AsyncBlobStore, AsyncFileStore, AsyncMemoryBlobStore};
+pub use fiber_pool::{FiberHandle, FiberPool, FiberPoolConfig, FiberStats};
+pub use parallel_trie::{ParallelLoudsTrie, ParallelTrieBuilder};
+pub use pipeline::{Pipeline, PipelineBuilder, PipelineStage, PipelineStats};
+pub use work_stealing::{Task, WorkStealingExecutor, WorkStealingQueue};
 
-use crate::error::{ToplingError, Result};
+use crate::error::{Result, ToplingError};
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -49,7 +49,7 @@ impl<T> Fiber<T> {
             id: FiberId::new(),
         }
     }
-    
+
     /// Get the fiber's unique ID
     pub fn id(&self) -> FiberId {
         self.id
@@ -58,7 +58,7 @@ impl<T> Fiber<T> {
 
 impl<T> Future for Fiber<T> {
     type Output = Result<T>;
-    
+
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.future.as_mut().poll(cx)
     }
@@ -94,14 +94,14 @@ pub async fn init_concurrency(config: ConcurrencyConfig) -> Result<()> {
     if config.max_fibers == 0 {
         return Err(ToplingError::invalid_data("max_fibers cannot be zero"));
     }
-    
+
     if config.queue_size == 0 {
         return Err(ToplingError::invalid_data("queue_size cannot be zero"));
     }
-    
+
     // Initialize the global executor
     WorkStealingExecutor::init(config).await?;
-    
+
     Ok(())
 }
 
@@ -113,7 +113,7 @@ where
 {
     let fiber = Fiber::new(future);
     let _id = fiber.id();
-    
+
     // Submit to the global executor
     WorkStealingExecutor::spawn(fiber)
 }
@@ -124,11 +124,11 @@ where
     T: Send + 'static,
 {
     let mut results = Vec::with_capacity(handles.len());
-    
+
     for handle in handles {
         results.push(handle.await?);
     }
-    
+
     Ok(results)
 }
 
@@ -144,10 +144,7 @@ where
 }
 
 /// Parallel map operation over an iterator
-pub async fn parallel_map<I, F, T, R>(
-    iter: I,
-    f: F,
-) -> Result<Vec<R>>
+pub async fn parallel_map<I, F, T, R>(iter: I, f: F) -> Result<Vec<R>>
 where
     I: IntoIterator<Item = T> + Send,
     I::IntoIter: Send,
@@ -157,22 +154,18 @@ where
 {
     let items: Vec<T> = iter.into_iter().collect();
     let mut handles = Vec::with_capacity(items.len());
-    
+
     for item in items {
         let f = f.clone();
         let handle = spawn(async move { f(item) });
         handles.push(handle);
     }
-    
+
     join_all(handles).await
 }
 
-/// Parallel reduce operation 
-pub async fn parallel_reduce<I, F, T>(
-    iter: I,
-    identity: T,
-    f: F,
-) -> Result<T>
+/// Parallel reduce operation
+pub async fn parallel_reduce<I, F, T>(iter: I, identity: T, f: F) -> Result<T>
 where
     I: IntoIterator<Item = T> + Send,
     I::IntoIter: Send,
@@ -180,21 +173,21 @@ where
     T: Send + Clone + 'static,
 {
     let items: Vec<T> = iter.into_iter().collect();
-    
+
     if items.is_empty() {
         return Ok(identity);
     }
-    
+
     // Divide into chunks for parallel processing
     let chunk_size = (items.len() + num_cpus::get() - 1) / num_cpus::get();
     let chunks: Vec<Vec<T>> = items.chunks(chunk_size).map(|c| c.to_vec()).collect();
-    
+
     let mut handles = Vec::with_capacity(chunks.len());
-    
+
     for chunk in chunks {
         let f = f.clone();
         let identity = identity.clone();
-        
+
         let handle = spawn(async move {
             let mut acc = identity;
             for item in chunk {
@@ -202,18 +195,18 @@ where
             }
             Ok(acc)
         });
-        
+
         handles.push(handle);
     }
-    
+
     let partial_results = join_all(handles).await?;
-    
+
     // Reduce the partial results
     let mut final_result = identity;
     for partial in partial_results {
         final_result = f(final_result, partial)?;
     }
-    
+
     Ok(final_result)
 }
 
@@ -221,20 +214,20 @@ where
 mod tests {
     use super::*;
     use tokio;
-    
+
     #[tokio::test]
     async fn test_fiber_creation() {
         let fiber = Fiber::new(async { Ok(42i32) });
         let id = fiber.id();
-        
+
         let result = fiber.await.unwrap();
         assert_eq!(result, 42);
-        
+
         // IDs should be unique
         let fiber2 = Fiber::new(async { Ok(24i32) });
         assert_ne!(id, fiber2.id());
     }
-    
+
     #[tokio::test]
     async fn test_concurrency_config() {
         let config = ConcurrencyConfig::default();
@@ -242,32 +235,34 @@ mod tests {
         assert!(config.queue_size > 0);
         assert!(config.stack_size > 0);
     }
-    
+
     #[tokio::test]
     async fn test_parallel_map() {
         let input = vec![1, 2, 3, 4, 5];
         let f = |x: i32| -> Result<i32> { Ok(x * 2) };
-        
+
         let result = parallel_map(input, f).await.unwrap();
         assert_eq!(result, vec![2, 4, 6, 8, 10]);
     }
-    
+
     #[tokio::test]
     async fn test_parallel_reduce() {
         let input = vec![1, 2, 3, 4, 5];
         let f = |acc: i32, x: i32| -> Result<i32> { Ok(acc + x) };
-        
+
         let result = parallel_reduce(input, 0, f).await.unwrap();
         assert_eq!(result, 15);
     }
-    
+
     #[tokio::test]
     async fn test_spawn_blocking() {
         let result = spawn_blocking(|| {
             std::thread::sleep(std::time::Duration::from_millis(10));
             Ok(42)
-        }).await.unwrap();
-        
+        })
+        .await
+        .unwrap();
+
         assert_eq!(result, 42);
     }
 }

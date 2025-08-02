@@ -113,9 +113,11 @@ impl BlobStoreStats {
     pub fn record_get(&mut self, hit: bool) {
         self.get_count += 1;
         if hit {
-            self.cache_hit_ratio = (self.cache_hit_ratio * (self.get_count - 1) as f64 + 1.0) / self.get_count as f64;
+            self.cache_hit_ratio =
+                (self.cache_hit_ratio * (self.get_count - 1) as f64 + 1.0) / self.get_count as f64;
         } else {
-            self.cache_hit_ratio = (self.cache_hit_ratio * (self.get_count - 1) as f64) / self.get_count as f64;
+            self.cache_hit_ratio =
+                (self.cache_hit_ratio * (self.get_count - 1) as f64) / self.get_count as f64;
         }
     }
 
@@ -175,9 +177,9 @@ impl<'a, S: BlobStore + ?Sized> Iterator for BlobIterator<'a, S> {
     type Item = Result<(RecordId, Vec<u8>)>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.ids.next().map(|id| {
-            self.store.get(id).map(|data| (id, data))
-        })
+        self.ids
+            .next()
+            .map(|id| self.store.get(id).map(|data| (id, data)))
     }
 }
 
@@ -269,7 +271,7 @@ mod tests {
     #[test]
     fn test_blob_store_stats() {
         let mut stats = BlobStoreStats::new();
-        
+
         // Test put recording
         stats.record_put(100);
         assert_eq!(stats.blob_count, 1);
@@ -290,11 +292,11 @@ mod tests {
         assert_eq!(stats.remove_count, 1);
 
         // Test get recording
-        stats.record_get(true);  // hit
+        stats.record_get(true); // hit
         stats.record_get(false); // miss
-        stats.record_get(true);  // hit
+        stats.record_get(true); // hit
         assert_eq!(stats.get_count, 3);
-        assert!((stats.cache_hit_ratio - 2.0/3.0).abs() < 0.001);
+        assert!((stats.cache_hit_ratio - 2.0 / 3.0).abs() < 0.001);
     }
 
     #[test]

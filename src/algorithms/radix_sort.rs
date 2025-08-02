@@ -3,10 +3,10 @@
 //! This module provides radix sort implementations for various data types,
 //! including optimizations for specific use cases and parallel processing.
 
-use std::time::Instant;
-use rayon::prelude::*;
-use crate::error::Result;
 use crate::algorithms::{Algorithm, AlgorithmStats};
+use crate::error::Result;
+use rayon::prelude::*;
+use std::time::Instant;
 
 /// Configuration for radix sort
 #[derive(Debug, Clone)]
@@ -46,7 +46,7 @@ impl RadixSort {
     pub fn new() -> Self {
         Self::with_config(RadixSortConfig::default())
     }
-    
+
     /// Create a radix sort instance with custom configuration
     pub fn with_config(config: RadixSortConfig) -> Self {
         Self {
@@ -60,23 +60,24 @@ impl RadixSort {
             },
         }
     }
-    
+
     /// Sort a slice of unsigned 32-bit integers
     pub fn sort_u32(&mut self, data: &mut [u32]) -> Result<()> {
         let start_time = Instant::now();
-        
+
         if data.is_empty() {
             return Ok(());
         }
-        
-        let used_parallel = data.len() >= self.config.parallel_threshold && self.config.use_parallel;
-        
+
+        let used_parallel =
+            data.len() >= self.config.parallel_threshold && self.config.use_parallel;
+
         if used_parallel {
             self.sort_u32_parallel(data)?;
         } else {
             self.sort_u32_sequential(data)?;
         }
-        
+
         let elapsed = start_time.elapsed();
         self.stats = AlgorithmStats {
             items_processed: data.len(),
@@ -85,26 +86,27 @@ impl RadixSort {
             used_parallel,
             used_simd: self.config.use_simd,
         };
-        
+
         Ok(())
     }
-    
+
     /// Sort a slice of unsigned 64-bit integers
     pub fn sort_u64(&mut self, data: &mut [u64]) -> Result<()> {
         let start_time = Instant::now();
-        
+
         if data.is_empty() {
             return Ok(());
         }
-        
-        let used_parallel = data.len() >= self.config.parallel_threshold && self.config.use_parallel;
-        
+
+        let used_parallel =
+            data.len() >= self.config.parallel_threshold && self.config.use_parallel;
+
         if used_parallel {
             self.sort_u64_parallel(data)?;
         } else {
             self.sort_u64_sequential(data)?;
         }
-        
+
         let elapsed = start_time.elapsed();
         self.stats = AlgorithmStats {
             items_processed: data.len(),
@@ -113,23 +115,23 @@ impl RadixSort {
             used_parallel,
             used_simd: self.config.use_simd,
         };
-        
+
         Ok(())
     }
-    
+
     /// Sort a slice of byte arrays by their content
     pub fn sort_bytes(&mut self, data: &mut Vec<Vec<u8>>) -> Result<()> {
         let start_time = Instant::now();
-        
+
         if data.is_empty() {
             return Ok(());
         }
-        
+
         self.sort_bytes_msd(data, 0)?;
-        
+
         let elapsed = start_time.elapsed();
         let total_bytes: usize = data.iter().map(|v| v.len()).sum();
-        
+
         self.stats = AlgorithmStats {
             items_processed: data.len(),
             processing_time_us: elapsed.as_micros() as u64,
@@ -137,33 +139,33 @@ impl RadixSort {
             used_parallel: false, // MSD radix sort is inherently sequential for strings
             used_simd: false,
         };
-        
+
         Ok(())
     }
-    
+
     fn sort_u32_sequential(&self, data: &mut [u32]) -> Result<()> {
         if data.len() <= self.config.use_counting_sort_threshold {
             self.counting_sort_u32(data);
             return Ok(());
         }
-        
+
         let radix = 1usize << self.config.radix_bits;
         let mask = (radix - 1) as u32;
         let mut buffer = vec![0u32; data.len()];
         let mut counts = vec![0usize; radix];
-        
+
         let max_passes = (32 + self.config.radix_bits - 1) / self.config.radix_bits;
-        
+
         for pass in 0..max_passes {
             let shift = pass * self.config.radix_bits;
-            
+
             // Count occurrences
             counts.fill(0);
             for &value in data.iter() {
                 let digit = ((value >> shift) & mask) as usize;
                 counts[digit] += 1;
             }
-            
+
             // Convert counts to positions
             let mut pos = 0;
             for count in counts.iter_mut() {
@@ -171,33 +173,33 @@ impl RadixSort {
                 *count = pos;
                 pos += old_count;
             }
-            
+
             // Distribute elements
             for &value in data.iter() {
                 let digit = ((value >> shift) & mask) as usize;
                 buffer[counts[digit]] = value;
                 counts[digit] += 1;
             }
-            
+
             // Copy back
             data.copy_from_slice(&buffer);
         }
-        
+
         Ok(())
     }
-    
+
     fn sort_u32_parallel(&self, data: &mut [u32]) -> Result<()> {
         // For very large datasets, use parallel radix sort
         // This is a simplified version - full parallel radix sort is quite complex
-        
+
         if data.len() < 2 * self.config.parallel_threshold {
             return self.sort_u32_sequential(data);
         }
-        
+
         // Split into chunks and sort in parallel
         let num_threads = rayon::current_num_threads();
         let chunk_size = (data.len() + num_threads - 1) / num_threads; // Round up
-        
+
         data.par_chunks_mut(chunk_size).for_each(|chunk| {
             let temp_sorter = RadixSort::with_config(RadixSortConfig {
                 use_parallel: false,
@@ -205,31 +207,31 @@ impl RadixSort {
             });
             let _ = temp_sorter.sort_u32_sequential(chunk);
         });
-        
+
         // Use proper multi-way merge instead of sort_unstable()
         self.multiway_merge_u32_chunks(data, chunk_size)?;
-        
+
         Ok(())
     }
-    
+
     fn sort_u64_sequential(&self, data: &mut [u64]) -> Result<()> {
         let radix = 1usize << self.config.radix_bits;
         let mask = (radix - 1) as u64;
         let mut buffer = vec![0u64; data.len()];
         let mut counts = vec![0usize; radix];
-        
+
         let max_passes = (64 + self.config.radix_bits - 1) / self.config.radix_bits;
-        
+
         for pass in 0..max_passes {
             let shift = pass * self.config.radix_bits;
-            
+
             // Count occurrences
             counts.fill(0);
             for &value in data.iter() {
                 let digit = ((value >> shift) & mask) as usize;
                 counts[digit] += 1;
             }
-            
+
             // Convert counts to positions
             let mut pos = 0;
             for count in counts.iter_mut() {
@@ -237,30 +239,30 @@ impl RadixSort {
                 *count = pos;
                 pos += old_count;
             }
-            
+
             // Distribute elements
             for &value in data.iter() {
                 let digit = ((value >> shift) & mask) as usize;
                 buffer[counts[digit]] = value;
                 counts[digit] += 1;
             }
-            
+
             // Copy back
             data.copy_from_slice(&buffer);
         }
-        
+
         Ok(())
     }
-    
+
     fn sort_u64_parallel(&self, data: &mut [u64]) -> Result<()> {
         // Similar to u32 parallel sort
         if data.len() < 2 * self.config.parallel_threshold {
             return self.sort_u64_sequential(data);
         }
-        
+
         let num_threads = rayon::current_num_threads();
         let chunk_size = (data.len() + num_threads - 1) / num_threads; // Round up
-        
+
         data.par_chunks_mut(chunk_size).for_each(|chunk| {
             let temp_sorter = RadixSort::with_config(RadixSortConfig {
                 use_parallel: false,
@@ -268,26 +270,26 @@ impl RadixSort {
             });
             let _ = temp_sorter.sort_u64_sequential(chunk);
         });
-        
+
         // Use proper multi-way merge instead of sort_unstable()
         self.multiway_merge_u64_chunks(data, chunk_size)?;
-        
+
         Ok(())
     }
-    
+
     fn counting_sort_u32(&self, data: &mut [u32]) {
         if data.is_empty() {
             return;
         }
-        
+
         let max_val = *data.iter().max().unwrap() as usize;
         let mut counts = vec![0usize; max_val + 1];
-        
+
         // Count occurrences
         for &value in data.iter() {
             counts[value as usize] += 1;
         }
-        
+
         // Reconstruct sorted array
         let mut index = 0;
         for (value, &count) in counts.iter().enumerate() {
@@ -297,15 +299,15 @@ impl RadixSort {
             }
         }
     }
-    
+
     fn sort_bytes_msd(&self, data: &mut Vec<Vec<u8>>, depth: usize) -> Result<()> {
         if data.len() <= 1 {
             return Ok(());
         }
-        
+
         // Most Significant Digit radix sort for byte strings
         let mut buckets: Vec<Vec<Vec<u8>>> = vec![Vec::new(); 257]; // 256 bytes + end marker
-        
+
         // Distribute into buckets based on character at current depth
         for item in data.drain(..) {
             let bucket_index = if depth < item.len() {
@@ -315,83 +317,84 @@ impl RadixSort {
             };
             buckets[bucket_index].push(item);
         }
-        
+
         // Recursively sort each bucket and collect results
         for (i, mut bucket) in buckets.into_iter().enumerate() {
-            if bucket.len() > 1 && i > 0 { // Skip empty bucket (i=0) for short strings
+            if bucket.len() > 1 && i > 0 {
+                // Skip empty bucket (i=0) for short strings
                 self.sort_bytes_msd(&mut bucket, depth + 1)?;
             }
             data.extend(bucket);
         }
-        
+
         Ok(())
     }
-    
+
     fn estimate_memory_u32(&self, len: usize) -> usize {
         let radix = 1usize << self.config.radix_bits;
         len * std::mem::size_of::<u32>() + // buffer
         radix * std::mem::size_of::<usize>() // counts
     }
-    
+
     fn estimate_memory_u64(&self, len: usize) -> usize {
         let radix = 1usize << self.config.radix_bits;
         len * std::mem::size_of::<u64>() + // buffer
         radix * std::mem::size_of::<usize>() // counts
     }
-    
+
     /// Multi-way merge for u32 chunks
     fn multiway_merge_u32_chunks(&self, data: &mut [u32], chunk_size: usize) -> Result<()> {
         use crate::algorithms::multiway_merge::{MultiWayMerge, VectorSource};
-        
+
         // Create vector sources from each sorted chunk
         let mut sources = Vec::new();
         let mut chunks_vec = Vec::new();
-        
+
         // Collect chunks into owned vectors
         for chunk in data.chunks(chunk_size) {
             chunks_vec.push(chunk.to_vec());
         }
-        
+
         // Create sources from the chunks
         for chunk in chunks_vec {
             sources.push(VectorSource::new(chunk));
         }
-        
+
         // Merge all sources
         let mut merger = MultiWayMerge::new();
         let merged = merger.merge(sources)?;
-        
+
         // Copy merged result back to original data
         data.copy_from_slice(&merged);
-        
+
         Ok(())
     }
-    
+
     /// Multi-way merge for u64 chunks
     fn multiway_merge_u64_chunks(&self, data: &mut [u64], chunk_size: usize) -> Result<()> {
         use crate::algorithms::multiway_merge::{MultiWayMerge, VectorSource};
-        
+
         // Create vector sources from each sorted chunk
         let mut sources = Vec::new();
         let mut chunks_vec = Vec::new();
-        
+
         // Collect chunks into owned vectors
         for chunk in data.chunks(chunk_size) {
             chunks_vec.push(chunk.to_vec());
         }
-        
+
         // Create sources from the chunks
         for chunk in chunks_vec {
             sources.push(VectorSource::new(chunk));
         }
-        
+
         // Merge all sources
         let mut merger = MultiWayMerge::new();
         let merged = merger.merge(sources)?;
-        
+
         // Copy merged result back to original data
         data.copy_from_slice(&merged);
-        
+
         Ok(())
     }
 }
@@ -406,25 +409,25 @@ impl Algorithm for RadixSort {
     type Config = RadixSortConfig;
     type Input = Vec<u32>;
     type Output = Vec<u32>;
-    
+
     fn execute(&self, config: &Self::Config, mut input: Self::Input) -> Result<Self::Output> {
         let mut sorter = Self::with_config(config.clone());
         sorter.sort_u32(&mut input)?;
         Ok(input)
     }
-    
+
     fn stats(&self) -> AlgorithmStats {
         self.stats.clone()
     }
-    
+
     fn estimate_memory(&self, input_size: usize) -> usize {
         self.estimate_memory_u32(input_size)
     }
-    
+
     fn supports_parallel(&self) -> bool {
         true
     }
-    
+
     fn supports_simd(&self) -> bool {
         cfg!(feature = "simd")
     }
@@ -448,41 +451,41 @@ where
             _phantom: std::marker::PhantomData,
         }
     }
-    
+
     /// Sort key-value pairs by key
     pub fn sort_by_key(&self, data: &mut [(K, V)]) -> Result<()> {
         if data.is_empty() {
             return Ok(());
         }
-        
+
         // Extract keys and create index mapping
         let indices: Vec<(u64, usize)> = data
             .iter()
             .enumerate()
             .map(|(i, (k, _))| ((*k).into(), i))
             .collect();
-        
+
         // Sort indices by key
         let mut keys: Vec<u64> = indices.iter().map(|(k, _)| *k).collect();
         let mut sorter = RadixSort::with_config(self.config.clone());
-        
+
         // Create a mapping from old key to sorted position
         let mut key_positions = vec![0usize; keys.len()];
         for (new_pos, &(_, old_pos)) in indices.iter().enumerate() {
             key_positions[old_pos] = new_pos;
         }
-        
+
         sorter.sort_u64(&mut keys)?;
-        
+
         // Rearrange data based on sorted keys
         let original_data: Vec<(K, V)> = data.iter().cloned().collect();
-        
+
         for (new_pos, &key) in keys.iter().enumerate() {
             // Find original position of this key
             let old_pos = indices.iter().position(|(k, _)| *k == key).unwrap();
             data[new_pos] = original_data[indices[old_pos].1].clone();
         }
-        
+
         Ok(())
     }
 }
@@ -505,7 +508,7 @@ mod tests {
     fn test_radix_sort_u32_empty() {
         let mut sorter = RadixSort::new();
         let mut data: Vec<u32> = vec![];
-        
+
         let result = sorter.sort_u32(&mut data);
         assert!(result.is_ok());
         assert!(data.is_empty());
@@ -515,11 +518,11 @@ mod tests {
     fn test_radix_sort_u32_simple() {
         let mut sorter = RadixSort::new();
         let mut data = vec![5, 2, 8, 1, 9, 3, 7, 4, 6];
-        
+
         let result = sorter.sort_u32(&mut data);
         assert!(result.is_ok());
         assert_eq!(data, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
-        
+
         let stats = sorter.stats();
         assert_eq!(stats.items_processed, 9);
         assert!(stats.processing_time_us > 0);
@@ -529,7 +532,7 @@ mod tests {
     fn test_radix_sort_u32_large_numbers() {
         let mut sorter = RadixSort::new();
         let mut data = vec![u32::MAX, 1000000, 500000, 0, 999999];
-        
+
         let result = sorter.sort_u32(&mut data);
         assert!(result.is_ok());
         assert_eq!(data, vec![0, 500000, 999999, 1000000, u32::MAX]);
@@ -539,7 +542,7 @@ mod tests {
     fn test_radix_sort_u64() {
         let mut sorter = RadixSort::new();
         let mut data = vec![5u64, 2, 8, 1, 9, 3, 7, 4, 6];
-        
+
         let result = sorter.sort_u64(&mut data);
         assert!(result.is_ok());
         assert_eq!(data, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
@@ -554,37 +557,33 @@ mod tests {
             b"cherry".to_vec(),
             b"date".to_vec(),
         ];
-        
+
         let result = sorter.sort_bytes(&mut data);
         assert!(result.is_ok());
-        
-        assert_eq!(data, vec![
-            b"apple".to_vec(),
-            b"banana".to_vec(),
-            b"cherry".to_vec(),
-            b"date".to_vec(),
-        ]);
+
+        assert_eq!(
+            data,
+            vec![
+                b"apple".to_vec(),
+                b"banana".to_vec(),
+                b"cherry".to_vec(),
+                b"date".to_vec(),
+            ]
+        );
     }
 
     #[test]
     fn test_radix_sort_bytes_different_lengths() {
         let mut sorter = RadixSort::new();
-        let mut data = vec![
-            b"a".to_vec(),
-            b"abc".to_vec(),
-            b"ab".to_vec(),
-            b"".to_vec(),
-        ];
-        
+        let mut data = vec![b"a".to_vec(), b"abc".to_vec(), b"ab".to_vec(), b"".to_vec()];
+
         let result = sorter.sort_bytes(&mut data);
         assert!(result.is_ok());
-        
-        assert_eq!(data, vec![
-            b"".to_vec(),
-            b"a".to_vec(),
-            b"ab".to_vec(),
-            b"abc".to_vec(),
-        ]);
+
+        assert_eq!(
+            data,
+            vec![b"".to_vec(), b"a".to_vec(), b"ab".to_vec(), b"abc".to_vec(),]
+        );
     }
 
     #[test]
@@ -596,10 +595,10 @@ mod tests {
             use_counting_sort_threshold: 10,
             use_simd: false,
         };
-        
+
         let mut sorter = RadixSort::with_config(config);
         let mut data = vec![5u32, 2, 8, 1, 9];
-        
+
         let result = sorter.sort_u32(&mut data);
         assert!(result.is_ok());
         assert_eq!(data, vec![1, 2, 5, 8, 9]);
@@ -612,10 +611,10 @@ mod tests {
             use_counting_sort_threshold: 100,
             ..Default::default()
         };
-        
+
         let mut sorter = RadixSort::with_config(config);
         let mut data = vec![3u32, 1, 4, 1, 5, 9, 2, 6]; // Small dataset
-        
+
         let result = sorter.sort_u32(&mut data);
         assert!(result.is_ok());
         assert_eq!(data, vec![1, 1, 2, 3, 4, 5, 6, 9]);
@@ -630,10 +629,10 @@ mod tests {
             (8, "eight".to_string()),
             (1, "one".to_string()),
         ];
-        
+
         let result = sorter.sort_by_key(&mut data);
         assert!(result.is_ok());
-        
+
         let expected = vec![
             (1, "one".to_string()),
             (2, "two".to_string()),
@@ -646,17 +645,17 @@ mod tests {
     #[test]
     fn test_algorithm_trait() {
         let sorter = RadixSort::new();
-        
+
         assert!(sorter.supports_parallel());
-        
+
         let memory_estimate = sorter.estimate_memory(1000);
         assert!(memory_estimate > 1000 * std::mem::size_of::<u32>());
-        
+
         let input = vec![3u32, 1, 4, 1, 5];
         let config = RadixSortConfig::default();
         let result = sorter.execute(&config, input);
         assert!(result.is_ok());
-        
+
         let sorted = result.unwrap();
         assert_eq!(sorted, vec![1, 1, 3, 4, 5]);
     }

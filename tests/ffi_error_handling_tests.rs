@@ -1,16 +1,16 @@
 //! Integration tests for FFI error handling functionality
-//! 
+//!
 //! These tests verify that the error handling system implemented in the C API
 //! works correctly without depending on the full FFI compilation.
 
 #[cfg(feature = "ffi")]
 mod ffi_error_tests {
+    use std::cell::RefCell;
     use std::ffi::{CStr, CString};
     use std::os::raw::c_char;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::thread;
-    use std::cell::RefCell;
 
     // Re-create the same error handling structure from c_api.rs for testing
     thread_local! {
@@ -23,7 +23,7 @@ mod ffi_error_tests {
         LAST_ERROR.with(|error| {
             if let Ok(cstring) = CString::new(msg) {
                 *error.borrow_mut() = Some(cstring.clone());
-                
+
                 if let Ok(callback_guard) = ERROR_CALLBACK.lock() {
                     if let Some(callback) = *callback_guard {
                         unsafe {
@@ -36,13 +36,11 @@ mod ffi_error_tests {
     }
 
     unsafe fn get_last_error() -> *const c_char {
-        LAST_ERROR.with(|error| {
-            match error.borrow().as_ref() {
-                Some(cstring) => cstring.as_ptr(),
-                None => {
-                    static NO_ERROR_MSG: &[u8] = b"No error information available\0";
-                    NO_ERROR_MSG.as_ptr() as *const c_char
-                }
+        LAST_ERROR.with(|error| match error.borrow().as_ref() {
+            Some(cstring) => cstring.as_ptr(),
+            None => {
+                static NO_ERROR_MSG: &[u8] = b"No error information available\0";
+                NO_ERROR_MSG.as_ptr() as *const c_char
             }
         })
     }
@@ -61,10 +59,10 @@ mod ffi_error_tests {
             assert!(!error_ptr.is_null());
             let error_msg = CStr::from_ptr(error_ptr).to_str().unwrap();
             assert_eq!(error_msg, "No error information available");
-            
+
             // Test setting an error message
             set_last_error("Test error message");
-            
+
             // Check that error message was set
             let error_ptr = get_last_error();
             assert!(!error_ptr.is_null());
@@ -77,7 +75,7 @@ mod ffi_error_tests {
     fn test_error_callback() {
         static CALLBACK_CALLED: AtomicBool = AtomicBool::new(false);
         static mut CALLBACK_MESSAGE: Option<String> = None;
-        
+
         unsafe extern "C" fn test_callback(msg: *const c_char) {
             CALLBACK_CALLED.store(true, Ordering::SeqCst);
             let c_str = unsafe { CStr::from_ptr(msg) };
@@ -87,32 +85,32 @@ mod ffi_error_tests {
                 }
             }
         }
-        
+
         unsafe {
             // Set the error callback
             set_error_callback(Some(test_callback));
-            
+
             // Reset callback state
             CALLBACK_CALLED.store(false, Ordering::SeqCst);
             CALLBACK_MESSAGE = None;
-            
+
             // Trigger an error
             set_last_error("Test callback message");
-            
+
             // Check that callback was called
             assert!(CALLBACK_CALLED.load(Ordering::SeqCst));
             assert!(CALLBACK_MESSAGE.is_some());
             assert_eq!(CALLBACK_MESSAGE.as_ref().unwrap(), "Test callback message");
-            
+
             // Clear the callback
             set_error_callback(None);
-            
+
             // Reset state and trigger another error
             CALLBACK_CALLED.store(false, Ordering::SeqCst);
             CALLBACK_MESSAGE = None;
-            
+
             set_last_error("Another test message");
-            
+
             // Callback should not have been called this time
             assert!(!CALLBACK_CALLED.load(Ordering::SeqCst));
             assert!(CALLBACK_MESSAGE.is_none());
@@ -123,7 +121,7 @@ mod ffi_error_tests {
     fn test_thread_local_errors() {
         let results = Arc::new(Mutex::new(Vec::new()));
         let mut handles = Vec::new();
-        
+
         // Create multiple threads that each generate different errors
         for i in 0..3 {
             let results_clone = Arc::clone(&results);
@@ -132,21 +130,24 @@ mod ffi_error_tests {
                     // Each thread sets a different error message
                     let error_msg = match i {
                         0 => "Thread 0 error",
-                        1 => "Thread 1 error", 
+                        1 => "Thread 1 error",
                         2 => "Thread 2 error",
                         _ => "Unknown thread error",
                     };
-                    
+
                     set_last_error(error_msg);
-                    
+
                     // Get the error message from this thread
                     let error_ptr = get_last_error();
                     let retrieved_msg = if !error_ptr.is_null() {
-                        CStr::from_ptr(error_ptr).to_str().unwrap_or("Invalid UTF-8").to_string()
+                        CStr::from_ptr(error_ptr)
+                            .to_str()
+                            .unwrap_or("Invalid UTF-8")
+                            .to_string()
                     } else {
                         "Null pointer".to_string()
                     };
-                    
+
                     // Store the result
                     let mut results_guard = results_clone.lock().unwrap();
                     results_guard.push((i, retrieved_msg));
@@ -154,21 +155,21 @@ mod ffi_error_tests {
             });
             handles.push(handle);
         }
-        
+
         // Wait for all threads to complete
         for handle in handles {
             handle.join().unwrap();
         }
-        
+
         // Check that each thread got its own error message
         let results_guard = results.lock().unwrap();
         assert_eq!(results_guard.len(), 3);
-        
+
         // Check that we got the expected error messages (order may vary due to threading)
         let mut found_thread0 = false;
         let mut found_thread1 = false;
         let mut found_thread2 = false;
-        
+
         for (thread_id, error_msg) in results_guard.iter() {
             match *thread_id {
                 0 => {
@@ -186,7 +187,7 @@ mod ffi_error_tests {
                 _ => {}
             }
         }
-        
+
         assert!(found_thread0 && found_thread1 && found_thread2);
     }
 
@@ -195,13 +196,13 @@ mod ffi_error_tests {
         unsafe {
             // Set an error and verify it persists
             set_last_error("Persistent error");
-            
+
             let error_ptr1 = get_last_error();
             let error_msg1 = CStr::from_ptr(error_ptr1).to_str().unwrap();
-            
+
             let error_ptr2 = get_last_error();
             let error_msg2 = CStr::from_ptr(error_ptr2).to_str().unwrap();
-            
+
             assert_eq!(error_msg1, "Persistent error");
             assert_eq!(error_msg2, "Persistent error");
             assert_eq!(error_ptr1, error_ptr2); // Same pointer
@@ -216,7 +217,7 @@ mod ffi_error_tests {
             let error_ptr = get_last_error();
             let error_msg = CStr::from_ptr(error_ptr).to_str().unwrap();
             assert_eq!(error_msg, "First error");
-            
+
             // Replace with second error
             set_last_error("Second error");
             let error_ptr = get_last_error();

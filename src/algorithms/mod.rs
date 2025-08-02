@@ -3,14 +3,14 @@
 //! This module provides implementations of advanced algorithms commonly used
 //! in data compression, indexing, and sorting applications.
 
-pub mod suffix_array;
-pub mod radix_sort;
 pub mod multiway_merge;
+pub mod radix_sort;
+pub mod suffix_array;
 
 // Re-export main types
-pub use suffix_array::{SuffixArray, SuffixArrayBuilder, LcpArray};
+pub use multiway_merge::{MergeSource, MultiWayMerge};
 pub use radix_sort::{RadixSort, RadixSortConfig};
-pub use multiway_merge::{MultiWayMerge, MergeSource};
+pub use suffix_array::{LcpArray, SuffixArray, SuffixArrayBuilder};
 
 /// Configuration for algorithm behavior
 #[derive(Debug, Clone)]
@@ -59,7 +59,7 @@ impl AlgorithmStats {
         }
         (self.items_processed as f64) / (self.processing_time_us as f64 / 1_000_000.0)
     }
-    
+
     /// Calculate memory efficiency in items per byte
     pub fn items_per_byte(&self) -> f64 {
         if self.memory_used == 0 {
@@ -73,27 +73,27 @@ impl AlgorithmStats {
 pub trait Algorithm {
     /// Configuration type for this algorithm
     type Config;
-    
+
     /// Input type for this algorithm
     type Input;
-    
+
     /// Output type for this algorithm
     type Output;
-    
+
     /// Execute the algorithm with the given configuration and input
     fn execute(&self, config: &Self::Config, input: Self::Input) -> crate::Result<Self::Output>;
-    
+
     /// Get performance statistics from the last execution
     fn stats(&self) -> AlgorithmStats;
-    
+
     /// Estimate memory requirements for the given input size
     fn estimate_memory(&self, input_size: usize) -> usize;
-    
+
     /// Check if the algorithm supports parallel execution
     fn supports_parallel(&self) -> bool {
         false
     }
-    
+
     /// Check if the algorithm supports SIMD optimizations
     fn supports_simd(&self) -> bool {
         false
@@ -109,10 +109,10 @@ mod tests {
         let config = AlgorithmConfig::default();
         assert_eq!(config.parallel_threshold, 10_000);
         assert_eq!(config.memory_budget, 64 * 1024 * 1024);
-        
+
         #[cfg(feature = "simd")]
         assert!(config.use_simd);
-        
+
         #[cfg(not(feature = "simd"))]
         assert!(!config.use_simd);
     }
@@ -126,7 +126,7 @@ mod tests {
             used_parallel: false,
             used_simd: false,
         };
-        
+
         assert_eq!(stats.items_per_second(), 1_000_000.0); // 1M items/sec
         assert_eq!(stats.items_per_byte(), 1000.0 / 1024.0);
     }
@@ -140,7 +140,7 @@ mod tests {
             used_parallel: false,
             used_simd: false,
         };
-        
+
         assert_eq!(stats.items_per_second(), 0.0);
         assert_eq!(stats.items_per_byte(), 0.0);
     }

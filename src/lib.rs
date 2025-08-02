@@ -21,7 +21,7 @@
 //!
 //! ```rust
 //! use infini_zip::{
-//!     FastVec, FastStr, MemoryBlobStore, BlobStore, 
+//!     FastVec, FastStr, MemoryBlobStore, BlobStore,
 //!     LoudsTrie, Trie, GoldHashMap, HuffmanEncoder,
 //!     MemoryPool, PoolConfig, SuffixArray, FiberPool
 //! };
@@ -29,7 +29,7 @@
 //! // High-performance vector with realloc optimization
 //! let mut vec = FastVec::new();
 //! vec.push(42).unwrap();
-//! 
+//!
 //! // Zero-copy string operations
 //! let s = FastStr::from_string("hello world");
 //! println!("Hash: {:x}", s.hash_fast());
@@ -47,7 +47,7 @@
 //! // High-performance hash map
 //! let mut map = GoldHashMap::new();
 //! map.insert("key", "value").unwrap();
-//! 
+//!
 //! // Entropy coding
 //! let encoder = HuffmanEncoder::new(b"sample data").unwrap();
 //! let compressed = encoder.encode(b"sample data").unwrap();
@@ -64,30 +64,30 @@
 #![warn(missing_docs)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
-pub mod containers;
-pub mod string;
-pub mod succinct;
-pub mod io;
+pub mod algorithms;
 pub mod blob_store;
-pub mod fsa;
-pub mod hash_map;
+pub mod compression;
+pub mod concurrency;
+pub mod containers;
 pub mod entropy;
 pub mod error;
+pub mod fsa;
+pub mod hash_map;
+pub mod io;
 pub mod memory;
-pub mod algorithms;
-pub mod concurrency;
-pub mod compression;
+pub mod string;
+pub mod succinct;
 
 // Re-export core types
 pub use containers::FastVec;
+pub use error::{Result, ToplingError};
 pub use string::FastStr;
 pub use succinct::{BitVector, RankSelect256, RankSelectSe256};
-pub use error::{ToplingError, Result};
 
 // Re-export Phase 1 implementations
 pub use blob_store::{BlobStore, MemoryBlobStore, PlainBlobStore};
+pub use fsa::{CritBitTrie, FiniteStateAutomaton, LoudsTrie, PatriciaTrie, Trie};
 pub use io::{DataInput, DataOutput, VarInt};
-pub use fsa::{LoudsTrie, CritBitTrie, PatriciaTrie, Trie, FiniteStateAutomaton};
 
 // Re-export Phase 2 implementations
 pub use hash_map::GoldHashMap;
@@ -97,22 +97,20 @@ pub use hash_map::GoldHashMap;
 pub use io::{MemoryMappedInput, MemoryMappedOutput};
 
 // Re-export Phase 3 implementations (entropy coding)
-pub use entropy::{
-    EntropyStats, HuffmanEncoder, HuffmanDecoder, HuffmanTree,
-    RansEncoder, RansDecoder, RansState,
-    DictionaryCompressor, DictionaryBuilder
-};
-pub use entropy::rans::RansSymbol;
-pub use entropy::dictionary::Dictionary;
 pub use blob_store::{
-    HuffmanBlobStore, RansBlobStore, DictionaryBlobStore,
-    EntropyAlgorithm, EntropyCompressionStats
+    DictionaryBlobStore, EntropyAlgorithm, EntropyCompressionStats, HuffmanBlobStore, RansBlobStore,
+};
+pub use entropy::dictionary::Dictionary;
+pub use entropy::rans::RansSymbol;
+pub use entropy::{
+    DictionaryBuilder, DictionaryCompressor, EntropyStats, HuffmanDecoder, HuffmanEncoder,
+    HuffmanTree, RansDecoder, RansEncoder, RansState,
 };
 
 // Re-export Phase 4 implementations (memory management)
 pub use memory::{
-    MemoryPool, PoolConfig, PooledVec, PooledBuffer,
-    BumpAllocator, BumpArena, MemoryConfig, MemoryStats
+    BumpAllocator, BumpArena, MemoryConfig, MemoryPool, MemoryStats, PoolConfig, PooledBuffer,
+    PooledVec,
 };
 
 #[cfg(target_os = "linux")]
@@ -120,26 +118,23 @@ pub use memory::{HugePage, HugePageAllocator};
 
 // Re-export Phase 4 implementations (algorithms)
 pub use algorithms::{
-    SuffixArray, SuffixArrayBuilder, LcpArray,
-    RadixSort, RadixSortConfig,
-    MultiWayMerge, MergeSource, AlgorithmConfig
+    AlgorithmConfig, LcpArray, MergeSource, MultiWayMerge, RadixSort, RadixSortConfig, SuffixArray,
+    SuffixArrayBuilder,
 };
 
 // Re-export Phase 5 implementations (concurrency)
 pub use concurrency::{
-    FiberPool, FiberPoolConfig, FiberHandle, FiberStats,
-    Pipeline, PipelineStage, PipelineBuilder, PipelineStats,
-    ParallelTrieBuilder, ParallelLoudsTrie,
-    AsyncBlobStore, AsyncMemoryBlobStore, AsyncFileStore,
-    WorkStealingQueue, WorkStealingExecutor, Task,
-    Fiber, FiberId, ConcurrencyConfig
+    AsyncBlobStore, AsyncFileStore, AsyncMemoryBlobStore, ConcurrencyConfig, Fiber, FiberHandle,
+    FiberId, FiberPool, FiberPoolConfig, FiberStats, ParallelLoudsTrie, ParallelTrieBuilder,
+    Pipeline, PipelineBuilder, PipelineStage, PipelineStats, Task, WorkStealingExecutor,
+    WorkStealingQueue,
 };
 
 // Re-export Phase 5 implementations (compression)
 pub use compression::{
-    AdaptiveCompressor, CompressionProfile, AdaptiveConfig,
-    RealtimeCompressor, RealtimeConfig, CompressionMode,
-    Algorithm, Compressor, CompressorFactory, PerformanceRequirements, CompressionStats
+    AdaptiveCompressor, AdaptiveConfig, Algorithm, CompressionMode, CompressionProfile,
+    CompressionStats, Compressor, CompressorFactory, PerformanceRequirements, RealtimeCompressor,
+    RealtimeConfig,
 };
 
 #[cfg(feature = "zstd")]
@@ -197,11 +192,11 @@ mod tests {
     fn test_simd_support() {
         // Test that function doesn't panic
         let has_simd = has_simd_support();
-        
+
         // On most platforms, this will be false unless specifically compiled with AVX2
         #[cfg(target_feature = "avx2")]
         assert!(has_simd);
-        
+
         #[cfg(not(target_feature = "avx2"))]
         assert!(!has_simd);
     }
@@ -211,7 +206,7 @@ mod tests {
         // Test that type aliases are properly defined
         let _state_id: StateId = 42;
         let _record_id: RecordId = 123;
-        
+
         // Verify they're u32 as expected
         assert_eq!(std::mem::size_of::<StateId>(), 4);
         assert_eq!(std::mem::size_of::<RecordId>(), 4);
@@ -223,13 +218,13 @@ mod tests {
         let _vec = FastVec::<i32>::new();
         let _str = FastStr::from_string("test");
         let _bv = BitVector::new();
-        
+
         // Test error types
         let _err = ToplingError::invalid_data("test");
         assert!(std::any::type_name::<Result<()>>().contains("ToplingError"));
     }
 
-    #[test] 
+    #[test]
     fn test_multiple_init_calls() {
         // Calling init multiple times should be safe
         init();

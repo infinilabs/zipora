@@ -10,7 +10,7 @@ fn main() -> Result<()> {
 
     // Create a bit vector with a known pattern
     let mut bit_vector = BitVector::new();
-    
+
     println!("Creating bit vector with pattern (every 3rd bit set):");
     for i in 0..32 {
         let bit = i % 3 == 0;
@@ -46,9 +46,12 @@ fn main() -> Result<()> {
     // Create RankSelect256 for advanced operations
     println!("Building RankSelect256 index...");
     let rank_select = RankSelect256::new(bit_vector.clone())?;
-    
+
     println!("RankSelect256 statistics:");
-    println!("  Space overhead: {:.2}%", rank_select.space_overhead_percent());
+    println!(
+        "  Space overhead: {:.2}%",
+        rank_select.space_overhead_percent()
+    );
     println!("  Total set bits: {}", rank_select.count_ones());
     println!();
 
@@ -56,8 +59,13 @@ fn main() -> Result<()> {
     println!("Select operations (position of nth set bit):");
     for n in 0..rank_select.count_ones().min(8) {
         match rank_select.select1(n) {
-            Ok(pos) => println!("  select1({}) = {} ({}th set bit at position {})", 
-                               n, pos, n + 1, pos),
+            Ok(pos) => println!(
+                "  select1({}) = {} ({}th set bit at position {})",
+                n,
+                pos,
+                n + 1,
+                pos
+            ),
             Err(e) => println!("  select1({}) = Error: {}", n, e),
         }
     }
@@ -70,8 +78,10 @@ fn main() -> Result<()> {
         let bv_rank = bit_vector.rank1(pos);
         let rs_rank = rank_select.rank1(pos);
         if bv_rank != rs_rank {
-            println!("  Mismatch at pos {}: BitVector={}, RankSelect={}", 
-                     pos, bv_rank, rs_rank);
+            println!(
+                "  Mismatch at pos {}: BitVector={}, RankSelect={}",
+                pos, bv_rank, rs_rank
+            );
             mismatches += 1;
         }
     }
@@ -86,13 +96,16 @@ fn main() -> Result<()> {
     for i in 0..100_000 {
         large_bv.push(i % 7 == 0)?; // Every 7th bit set
     }
-    
+
     println!("  Created bit vector with {} bits", large_bv.len());
     println!("  Set bits: {}", large_bv.count_ones());
-    
+
     let large_rs = RankSelect256::new(large_bv)?;
-    println!("  RankSelect256 space overhead: {:.2}%", large_rs.space_overhead_percent());
-    
+    println!(
+        "  RankSelect256 space overhead: {:.2}%",
+        large_rs.space_overhead_percent()
+    );
+
     // Time some operations
     let start = std::time::Instant::now();
     let mut sum = 0;
@@ -100,8 +113,11 @@ fn main() -> Result<()> {
         sum += large_rs.rank1(i);
     }
     let elapsed = start.elapsed();
-    println!("  100 rank operations took: {:?} (checksum: {})", elapsed, sum);
-    
+    println!(
+        "  100 rank operations took: {:?} (checksum: {})",
+        elapsed, sum
+    );
+
     // Test select operations
     let set_bits = large_rs.count_ones();
     if set_bits > 0 {
@@ -113,8 +129,11 @@ fn main() -> Result<()> {
             }
         }
         let elapsed = start.elapsed();
-        println!("  10 select operations took: {:?} (found {} positions)", 
-                 elapsed, positions.len());
+        println!(
+            "  10 select operations took: {:?} (found {} positions)",
+            elapsed,
+            positions.len()
+        );
     }
 
     println!("\n=== Demo completed successfully! ===");

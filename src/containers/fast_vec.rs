@@ -6,28 +6,28 @@
 
 use crate::error::{Result, ToplingError};
 use std::alloc::{self, Layout};
-use std::ptr::{self, NonNull};
+use std::fmt;
 use std::mem;
 use std::ops::{Deref, DerefMut, Index, IndexMut};
+use std::ptr::{self, NonNull};
 use std::slice;
-use std::fmt;
 
 /// High-performance vector using realloc for growth
-/// 
+///
 /// FastVec is designed for maximum performance when dealing with types that are
 /// memmove-safe (most primitive types and simple structs). It uses realloc()
 /// for growth which can avoid memory copying in many cases.
-/// 
+///
 /// # Safety
-/// 
+///
 /// FastVec is safe to use with any type T, but performs best with types that
 /// are `Copy` or have trivial move semantics.
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```rust
 /// use infini_zip::FastVec;
-/// 
+///
 /// let mut vec = FastVec::new();
 /// vec.push(42);
 /// vec.push(84);
@@ -59,7 +59,7 @@ impl<T> FastVec<T> {
 
         let layout = Layout::array::<T>(cap)
             .map_err(|_| ToplingError::out_of_memory(cap * mem::size_of::<T>()))?;
-        
+
         let ptr = unsafe { alloc::alloc(layout) as *mut T };
         if ptr.is_null() {
             return Err(ToplingError::out_of_memory(layout.size()));
@@ -140,9 +140,11 @@ impl<T> FastVec<T> {
 
     /// Reserve space for at least `additional` more elements
     pub fn reserve(&mut self, additional: usize) -> Result<()> {
-        let required = self.len.checked_add(additional)
+        let required = self
+            .len
+            .checked_add(additional)
             .ok_or_else(|| ToplingError::out_of_memory(usize::MAX))?;
-        
+
         if required <= self.cap {
             return Ok(());
         }
@@ -163,7 +165,7 @@ impl<T> FastVec<T> {
     fn realloc(&mut self, new_cap: usize) -> Result<()> {
         // Use exponential growth with a minimum increase
         let target_cap = new_cap.max(self.cap.saturating_mul(2));
-        
+
         let new_layout = Layout::array::<T>(target_cap)
             .map_err(|_| ToplingError::out_of_memory(target_cap * mem::size_of::<T>()))?;
 
@@ -174,16 +176,13 @@ impl<T> FastVec<T> {
                     unsafe { alloc::alloc(new_layout) as *mut T }
                 } else {
                     let old_layout = Layout::array::<T>(self.cap).unwrap();
-                    unsafe { 
-                        alloc::realloc(
-                            ptr.as_ptr() as *mut u8, 
-                            old_layout, 
-                            new_layout.size()
-                        ) as *mut T 
+                    unsafe {
+                        alloc::realloc(ptr.as_ptr() as *mut u8, old_layout, new_layout.size())
+                            as *mut T
                     }
                 }
             }
-            None => unsafe { alloc::alloc(new_layout) as *mut T }
+            None => unsafe { alloc::alloc(new_layout) as *mut T },
         };
 
         if new_ptr.is_null() {
@@ -312,12 +311,8 @@ impl<T> FastVec<T> {
 
         let new_ptr = if let Some(ptr) = self.ptr {
             let old_layout = Layout::array::<T>(self.cap).unwrap();
-            unsafe { 
-                alloc::realloc(
-                    ptr.as_ptr() as *mut u8, 
-                    old_layout, 
-                    new_layout.size()
-                ) as *mut T 
+            unsafe {
+                alloc::realloc(ptr.as_ptr() as *mut u8, old_layout, new_layout.size()) as *mut T
             }
         } else {
             return Ok(()); // Nothing to shrink
@@ -333,9 +328,9 @@ impl<T> FastVec<T> {
     }
 
     /// Get a reference to the element at the specified index without bounds checking
-    /// 
+    ///
     /// # Safety
-    /// 
+    ///
     /// The caller must ensure that `index < self.len()`
     #[inline]
     pub unsafe fn get_unchecked(&self, index: usize) -> &T {
@@ -344,9 +339,9 @@ impl<T> FastVec<T> {
     }
 
     /// Get a mutable reference to the element at the specified index without bounds checking
-    /// 
+    ///
     /// # Safety
-    /// 
+    ///
     /// The caller must ensure that `index < self.len()`
     #[inline]
     pub unsafe fn get_unchecked_mut(&mut self, index: usize) -> &mut T {
@@ -479,7 +474,7 @@ mod tests {
         vec.push(1).unwrap();
         vec.push(2).unwrap();
         vec.push(3).unwrap();
-        
+
         assert_eq!(vec.len(), 3);
         assert_eq!(vec.pop(), Some(3));
         assert_eq!(vec.pop(), Some(2));
@@ -491,10 +486,10 @@ mod tests {
         let mut vec = FastVec::new();
         vec.push(42).unwrap();
         vec.push(84).unwrap();
-        
+
         assert_eq!(vec[0], 42);
         assert_eq!(vec[1], 84);
-        
+
         vec[0] = 100;
         assert_eq!(vec[0], 100);
     }
@@ -504,10 +499,10 @@ mod tests {
         let mut vec = FastVec::new();
         vec.push(1).unwrap();
         vec.push(3).unwrap();
-        
+
         vec.insert(1, 2).unwrap();
         assert_eq!(vec.as_slice(), &[1, 2, 3]);
-        
+
         let removed = vec.remove(1).unwrap();
         assert_eq!(removed, 2);
         assert_eq!(vec.as_slice(), &[1, 3]);
@@ -519,7 +514,7 @@ mod tests {
         vec.resize(5, 42).unwrap();
         assert_eq!(vec.len(), 5);
         assert_eq!(vec.as_slice(), &[42, 42, 42, 42, 42]);
-        
+
         vec.resize(3, 0).unwrap();
         assert_eq!(vec.len(), 3);
         assert_eq!(vec.as_slice(), &[42, 42, 42]);
@@ -530,7 +525,7 @@ mod tests {
         let mut vec = FastVec::new();
         vec.push(1).unwrap();
         vec.push(2).unwrap();
-        
+
         let cloned = vec.clone();
         assert_eq!(vec.as_slice(), cloned.as_slice());
     }
@@ -540,7 +535,7 @@ mod tests {
         let mut vec = FastVec::new();
         vec.push(1).unwrap();
         vec.push(2).unwrap();
-        
+
         vec.clear();
         assert_eq!(vec.len(), 0);
         assert!(vec.is_empty());
@@ -566,18 +561,18 @@ mod tests {
     #[test]
     fn test_pointers() {
         let mut vec: FastVec<i32> = FastVec::new();
-        
+
         // Test empty vector pointers
         assert!(vec.as_ptr().is_null());
         assert!(vec.as_mut_ptr().is_null());
-        
+
         vec.push(42).unwrap();
         vec.push(84).unwrap();
-        
+
         // Test non-empty vector pointers
         assert!(!vec.as_ptr().is_null());
         assert!(!vec.as_mut_ptr().is_null());
-        
+
         unsafe {
             assert_eq!(*vec.as_ptr(), 42);
             assert_eq!(*vec.as_ptr().add(1), 84);
@@ -590,10 +585,10 @@ mod tests {
         vec.push(1).unwrap();
         vec.push(2).unwrap();
         vec.push(3).unwrap();
-        
+
         let slice = vec.as_slice();
         assert_eq!(slice, &[1, 2, 3]);
-        
+
         let mut_slice = vec.as_mut_slice();
         mut_slice[1] = 20;
         assert_eq!(vec[1], 20);
@@ -605,11 +600,11 @@ mod tests {
         vec.push(10).unwrap();
         vec.push(20).unwrap();
         vec.push(30).unwrap();
-        
+
         unsafe {
             assert_eq!(*vec.get_unchecked(0), 10);
             assert_eq!(*vec.get_unchecked(2), 30);
-            
+
             *vec.get_unchecked_mut(1) = 200;
             assert_eq!(vec[1], 200);
         }
@@ -620,10 +615,10 @@ mod tests {
         let mut vec = FastVec::new();
         vec.push(1).unwrap();
         vec.push(2).unwrap();
-        
+
         let data = vec![3, 4, 5];
         vec.extend(data).unwrap();
-        
+
         assert_eq!(vec.as_slice(), &[1, 2, 3, 4, 5]);
     }
 
@@ -631,10 +626,10 @@ mod tests {
     fn test_reserve() {
         let mut vec: FastVec<i32> = FastVec::new();
         assert_eq!(vec.capacity(), 0);
-        
+
         vec.reserve(10).unwrap();
         assert!(vec.capacity() >= 10);
-        
+
         // Test reserve when already has capacity
         let old_cap = vec.capacity();
         vec.reserve(5).unwrap();
@@ -646,7 +641,7 @@ mod tests {
         let mut vec: FastVec<i32> = FastVec::new();
         vec.ensure_capacity(15).unwrap();
         assert!(vec.capacity() >= 15);
-        
+
         // Test ensure when already has capacity
         let old_cap = vec.capacity();
         vec.ensure_capacity(10).unwrap();
@@ -659,12 +654,12 @@ mod tests {
         vec.push(1).unwrap();
         vec.push(2).unwrap();
         vec.push(3).unwrap();
-        
+
         assert!(vec.capacity() >= 100);
         vec.shrink_to_fit().unwrap();
         assert_eq!(vec.capacity(), 3);
         assert_eq!(vec.as_slice(), &[1, 2, 3]);
-        
+
         // Test shrink empty vector
         let mut empty_vec: FastVec<i32> = FastVec::with_capacity(50).unwrap();
         empty_vec.shrink_to_fit().unwrap();
@@ -677,13 +672,13 @@ mod tests {
         let mut vec = FastVec::new();
         vec.push(1).unwrap();
         vec.push(2).unwrap();
-        
+
         // Test out of bounds insert
         assert!(vec.insert(5, 100).is_err());
-        
+
         // Test out of bounds remove
         assert!(vec.remove(5).is_err());
-        
+
         // Test out of bounds set (not available, but remove from bounds)
         assert!(vec.remove(2).is_err());
     }
@@ -691,13 +686,13 @@ mod tests {
     #[test]
     fn test_memory_management() {
         let mut vec = FastVec::new();
-        
+
         // Test growth pattern
         for i in 0..1000 {
             vec.push(i).unwrap();
         }
         assert_eq!(vec.len(), 1000);
-        
+
         // Test that capacity grows efficiently
         assert!(vec.capacity() >= 1000);
         assert!(vec.capacity() < 2000); // Not too much over-allocation
@@ -705,43 +700,48 @@ mod tests {
 
     #[test]
     fn test_drop_elements() {
-        use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
-        
+        use std::sync::Arc;
+
         let counter = Arc::new(AtomicUsize::new(0));
-        
+
         #[derive(Clone)]
         struct DropCounter {
             counter: Arc<AtomicUsize>,
         }
-        
+
         impl Drop for DropCounter {
             fn drop(&mut self) {
                 self.counter.fetch_add(1, Ordering::SeqCst);
             }
         }
-        
+
         {
             let mut vec = FastVec::new();
             for _ in 0..5 {
-                vec.push(DropCounter { counter: counter.clone() }).unwrap();
+                vec.push(DropCounter {
+                    counter: counter.clone(),
+                })
+                .unwrap();
             }
-            
+
             // Remove one element
             vec.remove(2).unwrap();
             assert_eq!(counter.load(Ordering::SeqCst), 1);
-            
+
             // Resize down - this will drop the extra elements beyond index 2
-            let resize_value = DropCounter { counter: counter.clone() };
+            let resize_value = DropCounter {
+                counter: counter.clone(),
+            };
             vec.resize(2, resize_value).unwrap();
             // 1 from remove + 2 from resize down (dropped 2 elements) + 1 from resize_value going out of scope = 4
             assert_eq!(counter.load(Ordering::SeqCst), 4);
-            
+
             // Clear all
             vec.clear();
             assert_eq!(counter.load(Ordering::SeqCst), 6); // 4 previous + 2 from clear
         }
-        
+
         // Final drops should not happen since we already cleared
         assert_eq!(counter.load(Ordering::SeqCst), 6);
     }
@@ -758,20 +758,20 @@ mod tests {
     fn test_equality_and_debug() {
         let mut vec1 = FastVec::new();
         let mut vec2 = FastVec::new();
-        
+
         vec1.push(1).unwrap();
         vec1.push(2).unwrap();
         vec1.push(3).unwrap();
-        
+
         vec2.push(1).unwrap();
         vec2.push(2).unwrap();
         vec2.push(3).unwrap();
-        
+
         assert_eq!(vec1, vec2);
-        
+
         vec2.push(4).unwrap();
         assert_ne!(vec1, vec2);
-        
+
         // Test debug output
         let debug_str = format!("{:?}", vec1);
         assert!(debug_str.contains("1"));
@@ -785,11 +785,11 @@ mod tests {
         vec.push(1).unwrap();
         vec.push(2).unwrap();
         vec.push(3).unwrap();
-        
+
         // Test Deref to slice
         let slice: &[i32] = &vec;
         assert_eq!(slice, &[1, 2, 3]);
-        
+
         // Test DerefMut to slice
         let mut_slice: &mut [i32] = &mut vec;
         mut_slice[1] = 20;
@@ -800,7 +800,7 @@ mod tests {
     fn test_send_sync() {
         fn assert_send<T: Send>() {}
         fn assert_sync<T: Sync>() {}
-        
+
         assert_send::<FastVec<i32>>();
         assert_sync::<FastVec<i32>>();
     }
@@ -813,15 +813,15 @@ mod tests {
         vec.push(3).unwrap();
         vec.insert(0, 1).unwrap();
         assert_eq!(vec.as_slice(), &[1, 2, 3]);
-        
+
         // Test inserting at end
         vec.insert(3, 4).unwrap();
         assert_eq!(vec.as_slice(), &[1, 2, 3, 4]);
-        
+
         // Test removing from beginning
         assert_eq!(vec.remove(0).unwrap(), 1);
         assert_eq!(vec.as_slice(), &[2, 3, 4]);
-        
+
         // Test removing from end
         assert_eq!(vec.remove(2).unwrap(), 4);
         assert_eq!(vec.as_slice(), &[2, 3]);

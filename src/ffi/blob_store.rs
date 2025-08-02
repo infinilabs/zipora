@@ -30,10 +30,10 @@ pub unsafe extern "C" fn blob_store_put(
     if store.is_null() || data.is_null() || record_id.is_null() {
         return CResult::InvalidInput;
     }
-    
+
     let store = &mut *store;
     let data_slice = std::slice::from_raw_parts(data, size);
-    
+
     match store.put(data_slice) {
         Ok(id) => {
             *record_id = id;
@@ -54,7 +54,7 @@ pub unsafe extern "C" fn blob_store_get(
     if store.is_null() || data.is_null() || size.is_null() {
         return CResult::InvalidInput;
     }
-    
+
     let store = &*store;
     match store.get(record_id) {
         Ok(retrieved_data) => {

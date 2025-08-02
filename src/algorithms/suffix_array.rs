@@ -3,10 +3,10 @@
 //! This module implements the SA-IS (Suffix Array - Induced Sorting) algorithm
 //! for linear-time suffix array construction, along with LCP array computation.
 
+use crate::algorithms::{Algorithm, AlgorithmStats};
+use crate::error::Result;
 use std::cmp::Ordering;
 use std::time::Instant;
-use crate::error::Result;
-use crate::algorithms::{Algorithm, AlgorithmStats};
 
 /// Configuration for suffix array construction
 #[derive(Debug, Clone)]
@@ -47,89 +47,89 @@ impl SuffixArray {
     pub fn new(text: &[u8]) -> Result<Self> {
         Self::with_config(text, &SuffixArrayConfig::default())
     }
-    
+
     /// Create a suffix array with custom configuration
     pub fn with_config(text: &[u8], config: &SuffixArrayConfig) -> Result<Self> {
         let builder = SuffixArrayBuilder::new(config.clone());
         builder.build(text)
     }
-    
+
     /// Get the suffix array
     pub fn as_slice(&self) -> &[usize] {
         &self.sa
     }
-    
+
     /// Get the length of the original text
     pub fn text_len(&self) -> usize {
         self.text_len
     }
-    
+
     /// Get the suffix at the given rank
     pub fn suffix_at_rank(&self, rank: usize) -> Option<usize> {
         self.sa.get(rank).copied()
     }
-    
+
     /// Binary search for a pattern in the suffix array
     pub fn search(&self, text: &[u8], pattern: &[u8]) -> (usize, usize) {
         let (left, right) = self.search_range(text, pattern);
         (left, right.saturating_sub(left))
     }
-    
+
     /// Find the range of suffixes that start with the given pattern
     pub fn search_range(&self, text: &[u8], pattern: &[u8]) -> (usize, usize) {
         let left = self.lower_bound(text, pattern);
         let right = self.upper_bound(text, pattern);
         (left, right)
     }
-    
+
     fn lower_bound(&self, text: &[u8], pattern: &[u8]) -> usize {
         let mut left = 0;
         let mut right = self.sa.len();
-        
+
         while left < right {
             let mid = left + (right - left) / 2;
             let suffix_start = self.sa[mid];
             let suffix = &text[suffix_start..];
-            
+
             if Self::compare_suffix_pattern(suffix, pattern) == Ordering::Less {
                 left = mid + 1;
             } else {
                 right = mid;
             }
         }
-        
+
         left
     }
-    
+
     fn upper_bound(&self, text: &[u8], pattern: &[u8]) -> usize {
         let mut left = 0;
         let mut right = self.sa.len();
-        
+
         while left < right {
             let mid = left + (right - left) / 2;
             let suffix_start = self.sa[mid];
             let suffix = &text[suffix_start..];
-            
+
             if Self::compare_suffix_pattern(suffix, pattern) != Ordering::Greater {
                 left = mid + 1;
             } else {
                 right = mid;
             }
         }
-        
+
         left
     }
-    
+
     fn compare_suffix_pattern(suffix: &[u8], pattern: &[u8]) -> Ordering {
         let min_len = suffix.len().min(pattern.len());
-        
+
         for i in 0..min_len {
             match suffix[i].cmp(&pattern[i]) {
                 Ordering::Equal => continue,
                 other => return other,
             }
         }
-        
+
         // If we reach here, the pattern matches the beginning of the suffix
         // For prefix search, we consider this equal if pattern fits within suffix
         if pattern.len() <= suffix.len() {
@@ -139,7 +139,7 @@ impl SuffixArray {
             Ordering::Less
         }
     }
-    
+
     /// Get performance statistics
     pub fn stats(&self) -> &AlgorithmStats {
         &self.stats
@@ -156,11 +156,11 @@ impl SuffixArrayBuilder {
     pub fn new(config: SuffixArrayConfig) -> Self {
         Self { config }
     }
-    
+
     /// Build a suffix array from the given text
     pub fn build(&self, text: &[u8]) -> Result<SuffixArray> {
         let start_time = Instant::now();
-        
+
         if text.is_empty() {
             return Ok(SuffixArray {
                 sa: Vec::new(),
@@ -174,41 +174,40 @@ impl SuffixArrayBuilder {
                 },
             });
         }
-        
+
         let sa = if text.len() >= self.config.parallel_threshold && self.config.use_parallel {
             self.build_parallel(text)?
         } else {
             self.build_sequential(text)?
         };
-        
+
         let elapsed = start_time.elapsed();
         let memory_used = sa.len() * std::mem::size_of::<usize>();
-        
+
         Ok(SuffixArray {
             text_len: text.len(),
             stats: AlgorithmStats {
                 items_processed: text.len(),
                 processing_time_us: elapsed.as_micros() as u64,
                 memory_used,
-                used_parallel: text.len() >= self.config.parallel_threshold && self.config.use_parallel,
+                used_parallel: text.len() >= self.config.parallel_threshold
+                    && self.config.use_parallel,
                 used_simd: false,
             },
             sa,
         })
     }
-    
+
     fn build_sequential(&self, text: &[u8]) -> Result<Vec<usize>> {
         // For simplicity, we'll use a basic suffix array construction algorithm
         // A full SA-IS implementation would be much more complex
         let mut suffixes: Vec<usize> = (0..text.len()).collect();
-        
-        suffixes.sort_by(|&a, &b| {
-            text[a..].cmp(&text[b..])
-        });
-        
+
+        suffixes.sort_by(|&a, &b| text[a..].cmp(&text[b..]));
+
         Ok(suffixes)
     }
-    
+
     fn build_parallel(&self, text: &[u8]) -> Result<Vec<usize>> {
         // For now, fall back to sequential - full parallel SA-IS is very complex
         self.build_sequential(text)
@@ -219,12 +218,12 @@ impl Algorithm for SuffixArrayBuilder {
     type Config = SuffixArrayConfig;
     type Input = Vec<u8>;
     type Output = SuffixArray;
-    
+
     fn execute(&self, config: &Self::Config, input: Self::Input) -> Result<Self::Output> {
         let builder = Self::new(config.clone());
         builder.build(&input)
     }
-    
+
     fn stats(&self) -> AlgorithmStats {
         // Return default stats - actual stats come from the built suffix array
         AlgorithmStats {
@@ -235,12 +234,12 @@ impl Algorithm for SuffixArrayBuilder {
             used_simd: false,
         }
     }
-    
+
     fn estimate_memory(&self, input_size: usize) -> usize {
         // Suffix array requires one usize per character
         input_size * std::mem::size_of::<usize>()
     }
-    
+
     fn supports_parallel(&self) -> bool {
         true
     }
@@ -258,12 +257,12 @@ impl LcpArray {
     /// Compute LCP array from suffix array and original text
     pub fn new(text: &[u8], suffix_array: &SuffixArray) -> Result<Self> {
         let start_time = Instant::now();
-        
+
         let lcp = Self::compute_lcp_kasai(text, suffix_array.as_slice())?;
-        
+
         let elapsed = start_time.elapsed();
         let memory_used = lcp.len() * std::mem::size_of::<usize>();
-        
+
         Ok(Self {
             stats: AlgorithmStats {
                 items_processed: text.len(),
@@ -275,54 +274,54 @@ impl LcpArray {
             lcp,
         })
     }
-    
+
     /// Get the LCP array
     pub fn as_slice(&self) -> &[usize] {
         &self.lcp
     }
-    
+
     /// Get the LCP value at the given index
     pub fn lcp_at(&self, index: usize) -> Option<usize> {
         self.lcp.get(index).copied()
     }
-    
+
     /// Get performance statistics
     pub fn stats(&self) -> &AlgorithmStats {
         &self.stats
     }
-    
+
     // Kasai's algorithm for computing LCP array in linear time
     fn compute_lcp_kasai(text: &[u8], sa: &[usize]) -> Result<Vec<usize>> {
         let n = text.len();
         if n == 0 {
             return Ok(Vec::new());
         }
-        
+
         // Compute inverse suffix array
         let mut rank = vec![0; n];
         for i in 0..n {
             rank[sa[i]] = i;
         }
-        
+
         let mut lcp = vec![0; n];
         let mut h = 0;
-        
+
         for i in 0..n {
             if rank[i] > 0 {
                 let j = sa[rank[i] - 1];
-                
+
                 while i + h < n && j + h < n && text[i + h] == text[j + h] {
                     h += 1;
                 }
-                
+
                 lcp[rank[i]] = h;
-                
+
                 if h > 0 {
                     h -= 1;
                 }
             }
         }
-        
+
         Ok(lcp)
     }
 }
@@ -344,47 +343,39 @@ impl EnhancedSuffixArray {
             compute_lcp: true,
             ..Default::default()
         };
-        
+
         let sa = SuffixArray::with_config(text, &config)?;
         let lcp = Some(LcpArray::new(text, &sa)?);
-        
-        Ok(Self {
-            sa,
-            lcp,
-            bwt: None,
-        })
+
+        Ok(Self { sa, lcp, bwt: None })
     }
-    
+
     /// Create an enhanced suffix array with BWT
     pub fn with_bwt(text: &[u8]) -> Result<Self> {
         let sa = SuffixArray::new(text)?;
         let bwt = Some(Self::compute_bwt(text, sa.as_slice()));
-        
-        Ok(Self {
-            sa,
-            lcp: None,
-            bwt,
-        })
+
+        Ok(Self { sa, lcp: None, bwt })
     }
-    
+
     /// Get the suffix array
     pub fn suffix_array(&self) -> &SuffixArray {
         &self.sa
     }
-    
+
     /// Get the LCP array if available
     pub fn lcp_array(&self) -> Option<&LcpArray> {
         self.lcp.as_ref()
     }
-    
+
     /// Get the BWT if available
     pub fn bwt(&self) -> Option<&[u8]> {
         self.bwt.as_ref().map(|v| v.as_slice())
     }
-    
+
     fn compute_bwt(text: &[u8], sa: &[usize]) -> Vec<u8> {
         let mut bwt = Vec::with_capacity(text.len());
-        
+
         for &suffix_start in sa {
             if suffix_start == 0 {
                 bwt.push(text[text.len() - 1]);
@@ -392,7 +383,7 @@ impl EnhancedSuffixArray {
                 bwt.push(text[suffix_start - 1]);
             }
         }
-        
+
         bwt
     }
 }
@@ -412,14 +403,14 @@ mod tests {
     fn test_suffix_array_simple() {
         let text = b"banana";
         let sa = SuffixArray::new(text).unwrap();
-        
+
         assert_eq!(sa.as_slice().len(), 6);
         assert_eq!(sa.text_len(), 6);
-        
+
         // Check that it's properly sorted
         let suffixes = sa.as_slice();
         for i in 1..suffixes.len() {
-            let suffix1 = &text[suffixes[i-1]..];
+            let suffix1 = &text[suffixes[i - 1]..];
             let suffix2 = &text[suffixes[i]..];
             assert!(suffix1 <= suffix2);
         }
@@ -429,10 +420,10 @@ mod tests {
     fn test_suffix_array_search() {
         let text = b"banana";
         let sa = SuffixArray::new(text).unwrap();
-        
+
         let (start, count) = sa.search(text, b"an");
         assert!(count > 0);
-        
+
         // Verify all found suffixes start with "an"
         for i in start..start + count {
             let suffix_idx = sa.suffix_at_rank(i).unwrap();
@@ -445,7 +436,7 @@ mod tests {
     fn test_suffix_array_search_not_found() {
         let text = b"banana";
         let sa = SuffixArray::new(text).unwrap();
-        
+
         let (_, count) = sa.search(text, b"xyz");
         assert_eq!(count, 0);
     }
@@ -455,9 +446,9 @@ mod tests {
         let text = b"banana";
         let sa = SuffixArray::new(text).unwrap();
         let lcp = LcpArray::new(text, &sa).unwrap();
-        
+
         assert_eq!(lcp.as_slice().len(), 6);
-        
+
         // First element should be 0
         assert_eq!(lcp.lcp_at(0), Some(0));
     }
@@ -466,7 +457,7 @@ mod tests {
     fn test_enhanced_suffix_array() {
         let text = b"banana";
         let esa = EnhancedSuffixArray::with_lcp(text).unwrap();
-        
+
         assert_eq!(esa.suffix_array().text_len(), 6);
         assert!(esa.lcp_array().is_some());
         assert!(esa.bwt().is_none());
@@ -476,7 +467,7 @@ mod tests {
     fn test_enhanced_suffix_array_with_bwt() {
         let text = b"banana";
         let esa = EnhancedSuffixArray::with_bwt(text).unwrap();
-        
+
         assert_eq!(esa.suffix_array().text_len(), 6);
         assert!(esa.lcp_array().is_none());
         assert!(esa.bwt().is_some());
@@ -491,7 +482,7 @@ mod tests {
             compute_lcp: true,
             optimize_small_alphabet: false,
         };
-        
+
         let text = b"test";
         let sa = SuffixArray::with_config(text, &config).unwrap();
         assert_eq!(sa.text_len(), 4);
@@ -501,10 +492,10 @@ mod tests {
     #[test]
     fn test_algorithm_trait() {
         let builder = SuffixArrayBuilder::new(SuffixArrayConfig::default());
-        
+
         assert!(builder.supports_parallel());
         assert!(!builder.supports_simd());
-        
+
         let memory_estimate = builder.estimate_memory(1000);
         assert_eq!(memory_estimate, 1000 * std::mem::size_of::<usize>());
     }

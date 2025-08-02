@@ -24,7 +24,7 @@ pub unsafe extern "C" fn fast_vec_push(vec: *mut CFastVec, value: u32) -> CResul
     if vec.is_null() {
         return CResult::InvalidInput;
     }
-    
+
     let vec = &mut *vec;
     match vec.push(value) {
         Ok(_) => CResult::Success,
@@ -38,18 +38,22 @@ pub unsafe extern "C" fn fast_vec_len(vec: *const CFastVec) -> usize {
     if vec.is_null() {
         return 0;
     }
-    
+
     let vec = &*vec;
     vec.len()
 }
 
 /// Get element at index
 #[no_mangle]
-pub unsafe extern "C" fn fast_vec_get(vec: *const CFastVec, index: usize, value: *mut u32) -> CResult {
+pub unsafe extern "C" fn fast_vec_get(
+    vec: *const CFastVec,
+    index: usize,
+    value: *mut u32,
+) -> CResult {
     if vec.is_null() || value.is_null() {
         return CResult::InvalidInput;
     }
-    
+
     let vec = &*vec;
     if let Some(val) = vec.get(index) {
         *value = *val;

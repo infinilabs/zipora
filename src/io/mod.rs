@@ -5,13 +5,13 @@
 
 pub mod data_input;
 pub mod data_output;
-pub mod var_int;
 pub mod mmap;
+pub mod var_int;
 
 // Re-export core types
-pub use data_input::{DataInput, SliceDataInput, ReaderDataInput};
-pub use data_output::{DataOutput, VecDataOutput, WriterDataOutput, FileDataOutput};
-pub use var_int::{VarInt, SignedVarInt};
+pub use data_input::{DataInput, ReaderDataInput, SliceDataInput};
+pub use data_output::{DataOutput, FileDataOutput, VecDataOutput, WriterDataOutput};
+pub use var_int::{SignedVarInt, VarInt};
 
 #[cfg(feature = "mmap")]
 pub use data_input::MmapDataInput;
@@ -19,8 +19,8 @@ pub use data_input::MmapDataInput;
 pub use mmap::{MemoryMappedInput, MemoryMappedOutput};
 
 // Convenience functions
-pub use data_input::{from_slice, from_reader};
-pub use data_output::{to_vec, to_vec_with_capacity, to_writer, to_file, to_file_append};
+pub use data_input::{from_reader, from_slice};
+pub use data_output::{to_file, to_file_append, to_vec, to_vec_with_capacity, to_writer};
 
 #[cfg(feature = "mmap")]
 pub use data_input::from_file;

@@ -23,14 +23,14 @@ use memmap2::{Mmap, MmapMut, MmapOptions};
 /// use infini_zip::DataInput;
 /// use std::fs::File;
 /// use std::io::Write;
-/// 
+///
 /// # use tempfile::NamedTempFile;
 /// # let mut temp_file = NamedTempFile::new().unwrap();
 /// # temp_file.write_all(&[0x01, 0x02, 0x03, 0x04]).unwrap();
 /// # let temp_path = temp_file.path();
 /// let file = File::open(temp_path).unwrap();
 /// let mut input = MemoryMappedInput::new(file).unwrap();
-/// 
+///
 /// let value = input.read_u32().unwrap();
 /// assert_eq!(value, 0x04030201); // Little-endian
 /// ```
@@ -49,11 +49,8 @@ impl MemoryMappedInput {
                 .map(&file)
                 .map_err(|e| ToplingError::io_error(format!("Failed to memory-map file: {}", e)))?
         };
-        
-        Ok(MemoryMappedInput {
-            mmap,
-            position: 0,
-        })
+
+        Ok(MemoryMappedInput { mmap, position: 0 })
     }
 
     /// Creates a new memory-mapped input from a file path
@@ -119,10 +116,7 @@ impl MemoryMappedInput {
 impl DataInput for MemoryMappedInput {
     fn read_u8(&mut self) -> Result<u8> {
         if self.position >= self.mmap.len() {
-            return Err(ToplingError::out_of_bounds(
-                self.position,
-                self.mmap.len(),
-            ));
+            return Err(ToplingError::out_of_bounds(self.position, self.mmap.len()));
         }
 
         let value = self.mmap[self.position];
@@ -143,8 +137,7 @@ impl DataInput for MemoryMappedInput {
     fn read_u64(&mut self) -> Result<u64> {
         let bytes = self.read_slice(8)?;
         Ok(u64::from_le_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3],
-            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
         ]))
     }
 
@@ -155,11 +148,11 @@ impl DataInput for MemoryMappedInput {
         for _ in 0..VarInt::MAX_ENCODED_LEN {
             let byte = self.read_u8()?;
             result |= ((byte & 0x7F) as u64) << shift;
-            
+
             if byte & 0x80 == 0 {
                 return Ok(result);
             }
-            
+
             shift += 7;
             if shift >= 64 {
                 return Err(ToplingError::invalid_data("Variable integer overflow"));
@@ -185,10 +178,7 @@ impl DataInput for MemoryMappedInput {
     fn skip(&mut self, n: usize) -> Result<()> {
         let new_pos = self.position + n;
         if new_pos > self.mmap.len() {
-            return Err(ToplingError::out_of_bounds(
-                new_pos,
-                self.mmap.len(),
-            ));
+            return Err(ToplingError::out_of_bounds(new_pos, self.mmap.len()));
         }
         self.position = new_pos;
         Ok(())
@@ -260,7 +250,8 @@ impl MemoryMappedOutput {
             .open(path)
             .map_err(|e| ToplingError::io_error(format!("Failed to open file: {}", e)))?;
 
-        let file_size = file.metadata()
+        let file_size = file
+            .metadata()
             .map_err(|e| ToplingError::io_error(format!("Failed to get file metadata: {}", e)))?
             .len() as usize;
 
@@ -296,10 +287,7 @@ impl MemoryMappedOutput {
     /// Seeks to a specific position in the mapped region
     pub fn seek(&mut self, pos: usize) -> Result<()> {
         if pos > self.capacity {
-            return Err(ToplingError::out_of_bounds(
-                pos,
-                self.capacity,
-            ));
+            return Err(ToplingError::out_of_bounds(pos, self.capacity));
         }
         self.position = pos;
         Ok(())
@@ -315,9 +303,13 @@ impl MemoryMappedOutput {
         let new_size = std::cmp::max(required, self.capacity + (self.capacity / 2));
 
         // Flush current mmap and grow the file
-        drop(std::mem::replace(&mut self.mmap, MmapMut::map_anon(0).unwrap()));
+        drop(std::mem::replace(
+            &mut self.mmap,
+            MmapMut::map_anon(0).unwrap(),
+        ));
 
-        self.file.set_len(new_size as u64)
+        self.file
+            .set_len(new_size as u64)
             .map_err(|e| ToplingError::io_error(format!("Failed to grow file: {}", e)))?;
 
         self.mmap = unsafe {
@@ -343,21 +335,26 @@ impl MemoryMappedOutput {
     /// Truncates the file to the current position
     pub fn truncate(&mut self) -> Result<()> {
         // Flush to ensure all data is written
-        self.mmap.flush()
+        self.mmap
+            .flush()
             .map_err(|e| ToplingError::io_error(format!("Failed to flush mmap: {}", e)))?;
 
         // Unmap before truncating
-        drop(std::mem::replace(&mut self.mmap, MmapMut::map_anon(0).unwrap()));
+        drop(std::mem::replace(
+            &mut self.mmap,
+            MmapMut::map_anon(0).unwrap(),
+        ));
 
         // Truncate the file
-        self.file.set_len(self.position as u64)
+        self.file
+            .set_len(self.position as u64)
             .map_err(|e| ToplingError::io_error(format!("Failed to truncate file: {}", e)))?;
 
         // Remap with new size
         self.mmap = unsafe {
-            MmapOptions::new()
-                .map_mut(&self.file)
-                .map_err(|e| ToplingError::io_error(format!("Failed to remap truncated file: {}", e)))?
+            MmapOptions::new().map_mut(&self.file).map_err(|e| {
+                ToplingError::io_error(format!("Failed to remap truncated file: {}", e))
+            })?
         };
 
         self.capacity = self.position;
@@ -398,8 +395,9 @@ impl DataOutput for MemoryMappedOutput {
     }
 
     fn flush(&mut self) -> Result<()> {
-        self.mmap.flush()
-            .map_err(|e| ToplingError::io_error(format!("Failed to flush memory-mapped file: {}", e)))
+        self.mmap.flush().map_err(|e| {
+            ToplingError::io_error(format!("Failed to flush memory-mapped file: {}", e))
+        })
     }
 }
 
@@ -411,13 +409,13 @@ pub struct MemoryMappedInput;
 impl MemoryMappedInput {
     pub fn new(_file: File) -> Result<Self> {
         Err(ToplingError::invalid_operation(
-            "Memory mapping is not available. Enable the 'mmap' feature to use MemoryMappedInput."
+            "Memory mapping is not available. Enable the 'mmap' feature to use MemoryMappedInput.",
         ))
     }
 
     pub fn from_path<P: AsRef<Path>>(_path: P) -> Result<Self> {
         Err(ToplingError::invalid_operation(
-            "Memory mapping is not available. Enable the 'mmap' feature to use MemoryMappedInput."
+            "Memory mapping is not available. Enable the 'mmap' feature to use MemoryMappedInput.",
         ))
     }
 }
@@ -429,13 +427,13 @@ pub struct MemoryMappedOutput;
 impl MemoryMappedOutput {
     pub fn create<P: AsRef<Path>>(_path: P, _initial_size: usize) -> Result<Self> {
         Err(ToplingError::invalid_operation(
-            "Memory mapping is not available. Enable the 'mmap' feature to use MemoryMappedOutput."
+            "Memory mapping is not available. Enable the 'mmap' feature to use MemoryMappedOutput.",
         ))
     }
 
     pub fn open<P: AsRef<Path>>(_path: P) -> Result<Self> {
         Err(ToplingError::invalid_operation(
-            "Memory mapping is not available. Enable the 'mmap' feature to use MemoryMappedOutput."
+            "Memory mapping is not available. Enable the 'mmap' feature to use MemoryMappedOutput.",
         ))
     }
 }
@@ -443,8 +441,8 @@ impl MemoryMappedOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::{NamedTempFile, TempDir};
     use std::io::Write;
+    use tempfile::{NamedTempFile, TempDir};
 
     #[cfg(feature = "mmap")]
     #[test]
@@ -491,21 +489,23 @@ mod tests {
     #[test]
     fn test_memory_mapped_input_operations() {
         let mut temp_file = NamedTempFile::new().unwrap();
-        
+
         // Write test data
         temp_file.write_all(&0x12345678u32.to_le_bytes()).unwrap();
-        temp_file.write_all(&0x9ABCDEF012345678u64.to_le_bytes()).unwrap();
-        
+        temp_file
+            .write_all(&0x9ABCDEF012345678u64.to_le_bytes())
+            .unwrap();
+
         // Write variable integer
         let var_bytes = VarInt::encode(300);
         temp_file.write_all(&var_bytes).unwrap();
-        
+
         // Write length-prefixed string
         let test_str = "Hello, Memory Mapping!";
         let str_len_bytes = VarInt::encode(test_str.len() as u64);
         temp_file.write_all(&str_len_bytes).unwrap();
         temp_file.write_all(test_str.as_bytes()).unwrap();
-        
+
         temp_file.flush().unwrap();
 
         let file = File::open(temp_file.path()).unwrap();
@@ -564,7 +564,7 @@ mod tests {
         let file = File::open(&file_path).unwrap();
         let mut input = MemoryMappedInput::new(file).unwrap();
         assert_eq!(input.read_u32().unwrap(), 0x12345678);
-        
+
         let slice = input.read_slice(5).unwrap();
         assert_eq!(slice, b"Hello");
     }
@@ -581,7 +581,7 @@ mod tests {
         // Write more data than initial capacity
         let large_data = vec![0xAB; 20];
         output.write_slice(&large_data).unwrap();
-        
+
         // Capacity should have grown
         assert!(output.capacity() >= 20);
         assert_eq!(output.position(), 20);
@@ -610,7 +610,7 @@ mod tests {
         output.write_u64(0xDEF0123456789ABC).unwrap();
         output.write_var_int(12345).unwrap();
         output.write_length_prefixed_string("Test String").unwrap();
-        
+
         output.flush().unwrap();
 
         // Verify by reading back
@@ -633,10 +633,10 @@ mod tests {
 
         let mut output = MemoryMappedOutput::create(&file_path, 1024).unwrap();
         output.write_slice(b"Hello, World!").unwrap();
-        
+
         let written_len = output.position();
         output.truncate().unwrap();
-        
+
         assert_eq!(output.capacity(), written_len);
 
         // Verify file size
@@ -657,10 +657,10 @@ mod tests {
         // Reading beyond bounds should fail
         assert!(input.read_slice(5).is_err());
         assert!(input.peek_slice(5).is_err());
-        
+
         input.seek(2).unwrap();
         assert!(input.read_u16().is_err()); // Would read beyond end
-        
+
         // Seeking beyond bounds should fail
         assert!(input.seek(10).is_err());
     }
@@ -669,14 +669,14 @@ mod tests {
     #[test]
     fn test_mmap_disabled_error() {
         use std::fs::File;
-        
+
         // When mmap feature is disabled, should return appropriate errors
         let temp_file = NamedTempFile::new().unwrap();
         let file = File::open(temp_file.path()).unwrap();
-        
+
         let result = MemoryMappedInput::new(file);
         assert!(result.is_err());
-        
+
         let result = MemoryMappedOutput::create(temp_file.path(), 1024);
         assert!(result.is_err());
     }

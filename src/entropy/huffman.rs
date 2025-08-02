@@ -4,8 +4,8 @@
 //! Huffman coding is optimal for prefix-free codes when symbol probabilities are known.
 
 use crate::error::{Result, ToplingError};
-use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 
 /// Node in the Huffman tree
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,7 +57,7 @@ impl HuffmanTree {
         // Collect symbols with non-zero frequencies
         let mut heap = BinaryHeap::new();
         let mut symbol_count = 0;
-        
+
         for (symbol, &freq) in frequencies.iter().enumerate() {
             if freq > 0 {
                 heap.push(Reverse(HuffmanNode::Leaf {
@@ -67,7 +67,7 @@ impl HuffmanTree {
                 symbol_count += 1;
             }
         }
-        
+
         if symbol_count == 0 {
             return Ok(Self {
                 root: None,
@@ -75,7 +75,7 @@ impl HuffmanTree {
                 max_code_length: 0,
             });
         }
-        
+
         // Special case: only one symbol
         if symbol_count == 1 {
             let node = heap.pop().unwrap().0;
@@ -89,35 +89,35 @@ impl HuffmanTree {
                 });
             }
         }
-        
+
         // Build Huffman tree
         while heap.len() > 1 {
             let left = heap.pop().unwrap().0;
             let right = heap.pop().unwrap().0;
-            
+
             let merged = HuffmanNode::Internal {
                 frequency: left.frequency() + right.frequency(),
                 left: Box::new(left),
                 right: Box::new(right),
             };
-            
+
             heap.push(Reverse(merged));
         }
-        
+
         let root = heap.pop().unwrap().0;
         let mut codes = HashMap::new();
         let mut max_code_length = 0;
-        
+
         // Generate codes
         Self::generate_codes(&root, Vec::new(), &mut codes, &mut max_code_length);
-        
+
         Ok(Self {
             root: Some(root),
             codes,
             max_code_length,
         })
     }
-    
+
     /// Build Huffman tree from data
     pub fn from_data(data: &[u8]) -> Result<Self> {
         let mut frequencies = [0u32; 256];
@@ -126,7 +126,7 @@ impl HuffmanTree {
         }
         Self::from_frequencies(&frequencies)
     }
-    
+
     /// Generate Huffman codes recursively
     fn generate_codes(
         node: &HuffmanNode,
@@ -143,98 +143,98 @@ impl HuffmanTree {
                 let mut left_code = code.clone();
                 left_code.push(false);
                 Self::generate_codes(left, left_code, codes, max_length);
-                
+
                 let mut right_code = code;
                 right_code.push(true);
                 Self::generate_codes(right, right_code, codes, max_length);
             }
         }
     }
-    
+
     /// Get the code for a symbol
     pub fn get_code(&self, symbol: u8) -> Option<&Vec<bool>> {
         self.codes.get(&symbol)
     }
-    
+
     /// Get maximum code length
     pub fn max_code_length(&self) -> usize {
         self.max_code_length
     }
-    
+
     /// Get the root node for decoding
     pub fn root(&self) -> Option<&HuffmanNode> {
         self.root.as_ref()
     }
-    
+
     /// Serialize the tree for storage
     pub fn serialize(&self) -> Vec<u8> {
         let mut result = Vec::new();
-        
+
         // Store number of symbols
         let symbol_count = self.codes.len() as u16;
         result.extend_from_slice(&symbol_count.to_le_bytes());
-        
+
         // Store symbol -> code mappings
         for (&symbol, code) in &self.codes {
             result.push(symbol);
             result.push(code.len() as u8);
-            
+
             // Pack bits into bytes
             let mut bit_index = 0;
             let mut current_byte = 0u8;
-            
+
             for &bit in code {
                 if bit {
                     current_byte |= 1 << bit_index;
                 }
                 bit_index += 1;
-                
+
                 if bit_index == 8 {
                     result.push(current_byte);
                     current_byte = 0;
                     bit_index = 0;
                 }
             }
-            
+
             // Push remaining bits if any
             if bit_index > 0 {
                 result.push(current_byte);
             }
         }
-        
+
         result
     }
-    
+
     /// Deserialize the tree from storage
     pub fn deserialize(data: &[u8]) -> Result<Self> {
         if data.len() < 2 {
             return Err(ToplingError::invalid_data("Huffman tree data too short"));
         }
-        
+
         let symbol_count = u16::from_le_bytes([data[0], data[1]]) as usize;
         let mut codes = HashMap::new();
         let mut max_code_length = 0;
         let mut offset = 2;
-        
+
         for _ in 0..symbol_count {
             if offset + 2 > data.len() {
                 return Err(ToplingError::invalid_data("Truncated Huffman tree data"));
             }
-            
+
             let symbol = data[offset];
             let code_length = data[offset + 1] as usize;
             offset += 2;
-            
+
             max_code_length = max_code_length.max(code_length);
-            
+
             // Read code bits
             let byte_count = (code_length + 7) / 8;
             if offset + byte_count > data.len() {
                 return Err(ToplingError::invalid_data("Truncated Huffman code data"));
             }
-            
+
             let mut code = Vec::with_capacity(code_length);
-            
+
             for i in 0..code_length {
                 let byte_offset = i / 8;
                 let bit_offset = i % 8;
@@ -242,27 +242,29 @@ impl HuffmanTree {
                 let bit = (byte_value >> bit_offset) & 1 == 1;
                 code.push(bit);
             }
-            
+
             codes.insert(symbol, code);
             offset += byte_count;
         }
-        
+
         // Build decoding tree directly from codes
         let root = Self::build_decoding_tree_from_codes(&codes)?;
-        
+
         Ok(Self {
             root,
             codes,
             max_code_length,
         })
     }
-    
+
     /// Build a decoding tree directly from symbol->code mappings
-    fn build_decoding_tree_from_codes(codes: &HashMap<u8, Vec<bool>>) -> Result<Option<HuffmanNode>> {
+    fn build_decoding_tree_from_codes(
+        codes: &HashMap<u8, Vec<bool>>,
+    ) -> Result<Option<HuffmanNode>> {
         if codes.is_empty() {
             return Ok(None);
         }
-        
+
         // Special case: single symbol
         if codes.len() == 1 {
             let (&symbol, _) = codes.iter().next().unwrap();
@@ -271,24 +273,28 @@ impl HuffmanTree {
                 frequency: 1, // Dummy frequency for leaf node
             }));
         }
-        
+
         // Create root as internal node to start
         let mut root = HuffmanNode::Internal {
             frequency: 0,
-            left: Box::new(HuffmanNode::Leaf { symbol: 0, frequency: 0 }),
-            right: Box::new(HuffmanNode::Leaf { symbol: 0, frequency: 0 }),
+            left: Box::new(HuffmanNode::Leaf {
+                symbol: 0,
+                frequency: 0,
+            }),
+            right: Box::new(HuffmanNode::Leaf {
+                symbol: 0,
+                frequency: 0,
+            }),
         };
-        
+
         // Insert each symbol->code mapping into the tree
         for (&symbol, code) in codes {
             Self::insert_code_into_tree(&mut root, symbol, code)?;
         }
-        
+
         Ok(Some(root))
     }
-    
-    
-    
+
     /// Insert a symbol and its code into the decoding tree
     fn insert_code_into_tree(node: &mut HuffmanNode, symbol: u8, code: &[bool]) -> Result<()> {
         if code.is_empty() {
@@ -299,14 +305,14 @@ impl HuffmanTree {
             };
             return Ok(());
         }
-        
+
         // Ensure this is an internal node
         match node {
             HuffmanNode::Leaf { frequency: 0, .. } => {
                 // This is a placeholder leaf, convert to internal node
                 let next_bit = code[0];
                 let remaining_code = &code[1..];
-                
+
                 if remaining_code.is_empty() {
                     // Final bit, create leaf and keep placeholder
                     let leaf = HuffmanNode::Leaf {
@@ -317,7 +323,7 @@ impl HuffmanTree {
                         symbol: 0,
                         frequency: 0,
                     };
-                    
+
                     if next_bit {
                         *node = HuffmanNode::Internal {
                             frequency: 0,
@@ -337,7 +343,7 @@ impl HuffmanTree {
                         symbol: 0,
                         frequency: 0,
                     };
-                    
+
                     if next_bit {
                         // Create internal node with placeholder on left, continue on right
                         let mut right_child = HuffmanNode::Leaf {
@@ -345,7 +351,7 @@ impl HuffmanTree {
                             frequency: 0,
                         };
                         Self::insert_code_into_tree(&mut right_child, symbol, remaining_code)?;
-                        
+
                         *node = HuffmanNode::Internal {
                             frequency: 0,
                             left: Box::new(placeholder),
@@ -358,7 +364,7 @@ impl HuffmanTree {
                             frequency: 0,
                         };
                         Self::insert_code_into_tree(&mut left_child, symbol, remaining_code)?;
-                        
+
                         *node = HuffmanNode::Internal {
                             frequency: 0,
                             left: Box::new(left_child),
@@ -369,19 +375,21 @@ impl HuffmanTree {
                 return Ok(());
             }
             HuffmanNode::Leaf { .. } => {
-                return Err(ToplingError::invalid_data("Code collision: trying to overwrite existing symbol"));
+                return Err(ToplingError::invalid_data(
+                    "Code collision: trying to overwrite existing symbol",
+                ));
             }
             HuffmanNode::Internal { .. } => {
                 // Already internal, continue
             }
         }
-        
+
         // Navigate to the correct child
         match node {
             HuffmanNode::Internal { left, right, .. } => {
                 let next_bit = code[0];
                 let remaining_code = &code[1..];
-                
+
                 if next_bit {
                     // Go right
                     Self::insert_code_into_tree(right, symbol, remaining_code)?;
@@ -391,10 +399,12 @@ impl HuffmanTree {
                 }
             }
             HuffmanNode::Leaf { .. } => {
-                return Err(ToplingError::invalid_data("Unexpected leaf node during tree construction"));
+                return Err(ToplingError::invalid_data(
+                    "Unexpected leaf node during tree construction",
+                ));
             }
         }
-        
+
         Ok(())
     }
 }
@@ -411,76 +421,77 @@ impl HuffmanEncoder {
         let tree = HuffmanTree::from_data(data)?;
         Ok(Self { tree })
     }
-    
+
     /// Create encoder from frequencies
     pub fn from_frequencies(frequencies: &[u32; 256]) -> Result<Self> {
         let tree = HuffmanTree::from_frequencies(frequencies)?;
         Ok(Self { tree })
     }
-    
+
     /// Encode data using Huffman coding
     pub fn encode(&self, data: &[u8]) -> Result<Vec<u8>> {
         if data.is_empty() {
             return Ok(Vec::new());
         }
-        
+
         let mut bits = Vec::new();
-        
+
         // Encode each symbol
         for &symbol in data {
             if let Some(code) = self.tree.get_code(symbol) {
                 bits.extend_from_slice(code);
             } else {
-                return Err(ToplingError::invalid_data(
-                    format!("Symbol {} not in Huffman tree", symbol)
-                ));
+                return Err(ToplingError::invalid_data(format!(
+                    "Symbol {} not in Huffman tree",
+                    symbol
+                )));
             }
         }
-        
+
         // Pack bits into bytes
         let mut result = Vec::new();
         let mut current_byte = 0u8;
         let mut bit_count = 0;
-        
+
         for bit in bits {
             if bit {
                 current_byte |= 1 << bit_count;
             }
             bit_count += 1;
-            
+
             if bit_count == 8 {
                 result.push(current_byte);
                 current_byte = 0;
                 bit_count = 0;
             }
         }
-        
+
         // Add remaining bits if any
         if bit_count > 0 {
             result.push(current_byte);
         }
-        
+
         Ok(result)
     }
-    
+
     /// Get the Huffman tree
     pub fn tree(&self) -> &HuffmanTree {
         &self.tree
     }
-    
+
     /// Estimate compression ratio
     pub fn estimate_compression_ratio(&self, data: &[u8]) -> f64 {
         if data.is_empty() {
             return 0.0;
         }
-        
+
         let mut total_bits = 0;
         for &symbol in data {
             if let Some(code) = self.tree.get_code(symbol) {
                 total_bits += code.len();
             }
         }
-        
+
         let compressed_bytes = (total_bits + 7) / 8;
         compressed_bytes as f64 / data.len() as f64
     }
@@ -497,29 +508,29 @@ impl HuffmanDecoder {
     pub fn new(tree: HuffmanTree) -> Self {
         Self { tree }
     }
-    
+
     /// Decode Huffman-encoded data
     pub fn decode(&self, encoded_data: &[u8], output_length: usize) -> Result<Vec<u8>> {
         if encoded_data.is_empty() || output_length == 0 {
             return Ok(Vec::new());
         }
-        
+
         let root = match self.tree.root() {
             Some(root) => root,
             None => return Err(ToplingError::invalid_data("Empty Huffman tree")),
         };
-        
+
         let mut result = Vec::with_capacity(output_length);
         let mut current_node = root;
-        
+
         for &byte in encoded_data {
             for bit_pos in 0..8 {
                 if result.len() >= output_length {
                     break;
                 }
-                
+
                 let bit = (byte >> bit_pos) & 1 == 1;
-                
+
                 match current_node {
                     HuffmanNode::Leaf { symbol, .. } => {
                         result.push(*symbol);
@@ -540,33 +551,31 @@ impl HuffmanDecoder {
                         };
                     }
                     HuffmanNode::Internal { left, right, .. } => {
-                        current_node = if bit {
-                            right
-                        } else {
-                            left
-                        };
+                        current_node = if bit { right } else { left };
                     }
                 }
             }
-            
+
             if result.len() >= output_length {
                 break;
             }
         }
-        
+
         // Handle final symbol if we're at a leaf
         if let HuffmanNode::Leaf { symbol, .. } = current_node {
             if result.len() < output_length {
                 result.push(*symbol);
             }
         }
-        
+
         if result.len() != output_length {
-            return Err(ToplingError::invalid_data(
-                format!("Decoded length {} != expected {}", result.len(), output_length)
-            ));
+            return Err(ToplingError::invalid_data(format!(
+                "Decoded length {} != expected {}",
+                result.len(),
+                output_length
+            )));
         }
-        
+
         Ok(result)
     }
 }
@@ -579,7 +588,7 @@ mod tests {
     fn test_huffman_tree_single_symbol() {
         let mut frequencies = [0u32; 256];
         frequencies[65] = 100; // 'A'
-        
+
         let tree = HuffmanTree::from_frequencies(&frequencies).unwrap();
         assert_eq!(tree.max_code_length(), 1);
         assert_eq!(tree.get_code(65).unwrap(), &vec![false]);
@@ -589,10 +598,10 @@ mod tests {
     fn test_huffman_tree_two_symbols() {
         let mut frequencies = [0u32; 256];
         frequencies[65] = 100; // 'A'
-        frequencies[66] = 50;  // 'B'
-        
+        frequencies[66] = 50; // 'B'
+
         let tree = HuffmanTree::from_frequencies(&frequencies).unwrap();
-        
+
         // Should have codes of length 1
         assert!(tree.get_code(65).is_some());
         assert!(tree.get_code(66).is_some());
@@ -602,23 +611,23 @@ mod tests {
     #[test]
     fn test_huffman_encoding_decoding() {
         let data = b"hello world! this is a test message for huffman coding.";
-        
+
         let encoder = HuffmanEncoder::new(data).unwrap();
         let encoded = encoder.encode(data).unwrap();
-        
+
         let decoder = HuffmanDecoder::new(encoder.tree().clone());
         let decoded = decoder.decode(&encoded, data.len()).unwrap();
-        
+
         assert_eq!(data.to_vec(), decoded);
     }
 
     #[test]
     fn test_huffman_compression_ratio() {
         let data = b"aaaaaabbbbcccc"; // Highly compressible
-        
+
         let encoder = HuffmanEncoder::new(data).unwrap();
         let ratio = encoder.estimate_compression_ratio(data);
-        
+
         // Should achieve good compression
         assert!(ratio < 1.0);
     }
@@ -627,10 +636,10 @@ mod tests {
     fn test_huffman_tree_serialization() {
         let data = b"hello world";
         let tree = HuffmanTree::from_data(data).unwrap();
-        
+
         let serialized = tree.serialize();
         let deserialized = HuffmanTree::deserialize(&serialized).unwrap();
-        
+
         // Check that codes match
         for (&symbol, code) in &tree.codes {
             assert_eq!(deserialized.get_code(symbol), Some(code));
@@ -649,13 +658,13 @@ mod tests {
     fn test_large_alphabet() {
         // Test with data containing many different symbols
         let data: Vec<u8> = (0..=255).cycle().take(1000).collect();
-        
+
         let encoder = HuffmanEncoder::new(&data).unwrap();
         let encoded = encoder.encode(&data).unwrap();
-        
+
         let decoder = HuffmanDecoder::new(encoder.tree().clone());
         let decoded = decoder.decode(&encoded, data.len()).unwrap();
-        
+
         assert_eq!(data, decoded);
     }
 
@@ -668,17 +677,17 @@ mod tests {
         frequencies[b'd' as usize] = 16;
         frequencies[b'e' as usize] = 9;
         frequencies[b'f' as usize] = 5;
-        
+
         let tree = HuffmanTree::from_frequencies(&frequencies).unwrap();
-        
+
         // Verify that tree creates valid codes for all symbols
         let code_a = tree.get_code(b'a').unwrap();
         let code_f = tree.get_code(b'f').unwrap();
-        
+
         // Both codes should exist and be non-empty
         assert!(!code_a.is_empty());
         assert!(!code_f.is_empty());
-        
+
         // The tree should respect Huffman property: average code length is minimized
         // But individual codes may vary due to tie-breaking in tree construction
         let max_length = tree.max_code_length();

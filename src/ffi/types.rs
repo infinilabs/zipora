@@ -280,58 +280,58 @@ impl CBuffer {
             capacity: 0,
         }
     }
-    
+
     /// Create a buffer from a Vec<u8>
     pub fn from_vec(mut vec: Vec<u8>) -> Self {
         let data = vec.as_mut_ptr();
         let size = vec.len();
         let capacity = vec.capacity();
         std::mem::forget(vec); // Don't drop the Vec
-        
+
         Self {
             data,
             size,
             capacity,
         }
     }
-    
+
     /// Convert back to a Vec<u8>
-    /// 
+    ///
     /// # Safety
-    /// 
+    ///
     /// The buffer must have been created from a Vec<u8> and not modified
     /// in an incompatible way.
     pub unsafe fn into_vec(self) -> Vec<u8> {
         if self.data.is_null() {
             return Vec::new();
         }
-        
+
         unsafe { Vec::from_raw_parts(self.data, self.size, self.capacity) }
     }
-    
+
     /// Get the data as a slice
-    /// 
+    ///
     /// # Safety
-    /// 
+    ///
     /// The buffer must contain valid data of the specified size.
     pub unsafe fn as_slice(&self) -> &[u8] {
         if self.data.is_null() || self.size == 0 {
             return &[];
         }
-        
+
         unsafe { std::slice::from_raw_parts(self.data, self.size) }
     }
-    
+
     /// Get the data as a mutable slice
-    /// 
+    ///
     /// # Safety
-    /// 
+    ///
     /// The buffer must contain valid data of the specified size.
     pub unsafe fn as_mut_slice(&mut self) -> &mut [u8] {
         if self.data.is_null() || self.size == 0 {
             return &mut [];
         }
-        
+
         unsafe { std::slice::from_raw_parts_mut(self.data, self.size) }
     }
 }
@@ -360,40 +360,40 @@ impl CString {
             len: 0,
         }
     }
-    
+
     /// Create from a Rust string
     pub fn from_string(s: String) -> Result<Self, std::ffi::NulError> {
         let cstring = std::ffi::CString::new(s)?;
         let len = cstring.as_bytes().len();
         let data = cstring.into_raw();
-        
+
         Ok(Self { data, len })
     }
-    
+
     /// Convert back to a Rust string
-    /// 
+    ///
     /// # Safety
-    /// 
+    ///
     /// The data pointer must point to a valid null-terminated string.
     pub unsafe fn into_string(self) -> Result<String, std::str::Utf8Error> {
         if self.data.is_null() {
             return Ok(String::new());
         }
-        
+
         let cstring = unsafe { std::ffi::CString::from_raw(self.data) };
         cstring.to_str().map(|s| s.to_owned())
     }
-    
+
     /// Get as a string slice
-    /// 
+    ///
     /// # Safety
-    /// 
+    ///
     /// The data pointer must point to a valid null-terminated string.
     pub unsafe fn as_str(&self) -> Result<&str, std::str::Utf8Error> {
         if self.data.is_null() {
             return Ok("");
         }
-        
+
         let cstr = unsafe { std::ffi::CStr::from_ptr(self.data) };
         cstr.to_str()
     }
@@ -427,7 +427,7 @@ mod tests {
             max_chunks: 100,
             alignment: 16,
         };
-        
+
         let rust_config: crate::memory::PoolConfig = c_config.into();
         assert_eq!(rust_config.chunk_size, 1024);
         assert_eq!(rust_config.max_chunks, 100);
@@ -443,7 +443,7 @@ mod tests {
             use_counting_sort_threshold: 256,
             use_simd: 0,
         };
-        
+
         let rust_config: crate::algorithms::RadixSortConfig = c_config.into();
         assert!(rust_config.use_parallel);
         assert_eq!(rust_config.parallel_threshold, 10000);
@@ -456,15 +456,15 @@ mod tests {
     fn test_buffer_operations() {
         let vec = vec![1u8, 2, 3, 4, 5];
         let buffer = CBuffer::from_vec(vec);
-        
+
         assert!(!buffer.data.is_null());
         assert_eq!(buffer.size, 5);
         assert!(buffer.capacity >= 5);
-        
+
         unsafe {
             let slice = buffer.as_slice();
             assert_eq!(slice, &[1, 2, 3, 4, 5]);
-            
+
             let recovered_vec = buffer.into_vec();
             assert_eq!(recovered_vec, vec![1, 2, 3, 4, 5]);
         }
@@ -474,14 +474,14 @@ mod tests {
     fn test_cstring_operations() {
         let test_string = "Hello, world!".to_string();
         let c_string = CString::from_string(test_string.clone()).unwrap();
-        
+
         assert!(!c_string.data.is_null());
         assert_eq!(c_string.len, 13);
-        
+
         unsafe {
             let str_ref = c_string.as_str().unwrap();
             assert_eq!(str_ref, "Hello, world!");
-            
+
             let recovered_string = c_string.into_string().unwrap();
             assert_eq!(recovered_string, test_string);
         }
@@ -493,11 +493,11 @@ mod tests {
         assert!(pool_config.chunk_size > 0);
         assert!(pool_config.max_chunks > 0);
         assert!(pool_config.alignment > 0);
-        
+
         let sort_config = CRadixSortConfig::default();
         assert!(sort_config.radix_bits > 0);
         assert!(sort_config.use_counting_sort_threshold > 0);
-        
+
         let memory_config = CMemoryConfig::default();
         assert!(memory_config.pool_chunk_size > 0);
         assert!(memory_config.max_pool_memory > 0);

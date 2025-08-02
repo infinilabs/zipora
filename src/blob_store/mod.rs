@@ -3,23 +3,22 @@
 //! This module provides abstract blob storage with various implementations
 //! including memory-based, file-based, and compressed storage.
 
-pub mod traits;
-pub mod memory;
-pub mod plain;
 pub mod compressed;
 pub mod entropy;
+pub mod memory;
+pub mod plain;
+pub mod traits;
 
 // Re-export core types
-pub use traits::{
-    BlobStore, BlobStoreStats, IterableBlobStore, BatchBlobStore, 
-    CompressedBlobStore, CompressionStats
+pub use compressed::CompressionAlgorithm;
+pub use entropy::{
+    DictionaryBlobStore, EntropyAlgorithm, EntropyCompressionStats, HuffmanBlobStore, RansBlobStore,
 };
 pub use memory::MemoryBlobStore;
 pub use plain::PlainBlobStore;
-pub use compressed::CompressionAlgorithm;
-pub use entropy::{
-    HuffmanBlobStore, RansBlobStore, DictionaryBlobStore,
-    EntropyAlgorithm, EntropyCompressionStats
+pub use traits::{
+    BatchBlobStore, BlobStore, BlobStoreStats, CompressedBlobStore, CompressionStats,
+    IterableBlobStore,
 };
 
 #[cfg(feature = "zstd")]

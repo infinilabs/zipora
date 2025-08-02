@@ -3,11 +3,11 @@
 //! Bump allocators are extremely fast for allocation-heavy workloads where
 //! objects have similar lifetimes and can be freed all at once.
 
+use crate::error::{Result, ToplingError};
 use std::alloc::{alloc, dealloc, Layout};
-use std::ptr::NonNull;
 use std::cell::Cell;
+use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, Ordering};
-use crate::error::{ToplingError, Result};
 
 /// A bump allocator that allocates memory sequentially from a large buffer
 pub struct BumpAllocator {
@@ -23,15 +23,15 @@ impl BumpAllocator {
         if capacity == 0 {
             return Err(ToplingError::invalid_data("capacity cannot be zero"));
         }
-        
+
         let layout = Layout::from_size_align(capacity, 8)
             .map_err(|_| ToplingError::invalid_data("invalid layout for bump allocator"))?;
-        
+
         let ptr = unsafe { alloc(layout) };
         if ptr.is_null() {
             return Err(ToplingError::out_of_memory(capacity));
         }
-        
+
         Ok(Self {
             buffer: unsafe { NonNull::new_unchecked(ptr) },
             capacity,
@@ -39,78 +39,81 @@ impl BumpAllocator {
             allocated_bytes: AtomicU64::new(0),
         })
     }
-    
+
     /// Allocate memory for an object of type T
     pub fn alloc<T>(&self) -> Result<NonNull<T>> {
         let size = std::mem::size_of::<T>();
         let align = std::mem::align_of::<T>();
         self.alloc_bytes(size, align).map(|ptr| ptr.cast())
     }
-    
+
     /// Allocate a slice of objects of type T
     pub fn alloc_slice<T>(&self, count: usize) -> Result<NonNull<[T]>> {
         let size = std::mem::size_of::<T>() * count;
         let align = std::mem::align_of::<T>();
         let ptr = self.alloc_bytes(size, align)?;
-        
+
         // Create a fat pointer for the slice
         let slice_ptr = std::ptr::slice_from_raw_parts_mut(ptr.as_ptr() as *mut T, count);
         Ok(unsafe { NonNull::new_unchecked(slice_ptr) })
     }
-    
+
     /// Allocate raw bytes with specified alignment
     pub fn alloc_bytes(&self, size: usize, align: usize) -> Result<NonNull<u8>> {
         if size == 0 {
             return Err(ToplingError::invalid_data("allocation size cannot be zero"));
         }
-        
+
         if !align.is_power_of_two() {
-            return Err(ToplingError::invalid_data("alignment must be a power of two"));
+            return Err(ToplingError::invalid_data(
+                "alignment must be a power of two",
+            ));
         }
-        
+
         let current = self.current.get();
-        
+
         // Calculate aligned offset
         let aligned_offset = (current + align - 1) & !(align - 1);
         let new_offset = aligned_offset + size;
-        
+
         if new_offset > self.capacity {
             return Err(ToplingError::out_of_memory(size));
         }
-        
+
         self.current.set(new_offset);
-        self.allocated_bytes.fetch_add(size as u64, Ordering::Relaxed);
-        
+        self.allocated_bytes
+            .fetch_add(size as u64, Ordering::Relaxed);
+
         let ptr = unsafe { self.buffer.as_ptr().add(aligned_offset) };
         Ok(unsafe { NonNull::new_unchecked(ptr) })
     }
-    
+
     /// Reset the allocator, making all memory available again
-    /// 
+    ///
     /// # Safety
-    /// 
+    ///
     /// This invalidates all previously allocated pointers. The caller must ensure
     /// that no allocated objects are accessed after calling this function.
     pub unsafe fn reset(&self) {
         self.current.set(0);
         self.allocated_bytes.store(0, Ordering::Relaxed);
     }
-    
+
     /// Get the number of bytes currently allocated
     pub fn allocated_bytes(&self) -> u64 {
         self.allocated_bytes.load(Ordering::Relaxed)
     }
-    
+
     /// Get the total capacity of the allocator
     pub fn capacity(&self) -> usize {
         self.capacity
     }
-    
+
     /// Get the number of bytes remaining
     pub fn remaining_bytes(&self) -> usize {
         self.capacity - self.current.get()
     }
-    
+
     /// Check if the allocator can satisfy an allocation of the given size and alignment
     pub fn can_allocate(&self, size: usize, align: usize) -> bool {
         let current = self.current.get();
@@ -146,7 +149,7 @@ impl BumpArena {
             initial_offset: 0,
         })
     }
-    
+
     /// Create a nested arena that resets to the current position when dropped
     pub fn scope(&self) -> BumpScope<'_> {
         BumpScope {
@@ -154,22 +157,22 @@ impl BumpArena {
             initial_offset: self.allocator.current.get(),
         }
     }
-    
+
     /// Allocate memory for an object of type T
     pub fn alloc<T>(&self) -> Result<NonNull<T>> {
         self.allocator.alloc()
     }
-    
+
     /// Allocate a slice of objects of type T
     pub fn alloc_slice<T>(&self, count: usize) -> Result<NonNull<[T]>> {
         self.allocator.alloc_slice(count)
     }
-    
+
     /// Allocate raw bytes with specified alignment
     pub fn alloc_bytes(&self, size: usize, align: usize) -> Result<NonNull<u8>> {
         self.allocator.alloc_bytes(size, align)
     }
-    
+
     /// Get allocation statistics
     pub fn stats(&self) -> BumpStats {
         BumpStats {
@@ -201,17 +204,17 @@ impl<'a> BumpScope<'a> {
     pub fn alloc<T>(&self) -> Result<NonNull<T>> {
         self.allocator.alloc()
     }
-    
+
     /// Allocate a slice of objects of type T  
     pub fn alloc_slice<T>(&self, count: usize) -> Result<NonNull<[T]>> {
         self.allocator.alloc_slice(count)
     }
-    
+
     /// Allocate raw bytes with specified alignment
     pub fn alloc_bytes(&self, size: usize, align: usize) -> Result<NonNull<u8>> {
         self.allocator.alloc_bytes(size, align)
     }
-    
+
     /// Get allocation statistics
     pub fn stats(&self) -> BumpStats {
         BumpStats {
@@ -226,11 +229,13 @@ impl<'a> Drop for BumpScope<'a> {
     fn drop(&mut self) {
         // Reset to initial position
         self.allocator.current.set(self.initial_offset);
-        
+
         // Update allocated bytes counter
         let current_allocated = self.allocator.allocated_bytes();
         let bytes_to_reset = current_allocated.saturating_sub(self.initial_offset as u64);
-        self.allocator.allocated_bytes.fetch_sub(bytes_to_reset, Ordering::Relaxed);
+        self.allocator
+            .allocated_bytes
+            .fetch_sub(bytes_to_reset, Ordering::Relaxed);
     }
 }
 
@@ -250,7 +255,7 @@ impl BumpStats {
     pub fn utilization(&self) -> f64 {
         self.allocated_bytes as f64 / self.capacity as f64
     }
-    
+
     /// Check if the allocator is nearly full (> 90% utilized)
     pub fn is_nearly_full(&self) -> bool {
         self.utilization() > 0.9
@@ -271,9 +276,9 @@ impl<'a, T> BumpVec<'a, T> {
         if capacity == 0 {
             return Err(ToplingError::invalid_data("capacity cannot be zero"));
         }
-        
+
         let ptr = allocator.alloc_slice::<T>(capacity)?;
-        
+
         Ok(Self {
             ptr: ptr.cast(),
             len: 0,
@@ -281,57 +286,53 @@ impl<'a, T> BumpVec<'a, T> {
             allocator,
         })
     }
-    
+
     /// Push an element to the vector
     pub fn push(&mut self, item: T) -> Result<()> {
         if self.len >= self.capacity {
             return Err(ToplingError::invalid_data("bump vector capacity exceeded"));
         }
-        
+
         unsafe {
             self.ptr.as_ptr().add(self.len).write(item);
         }
         self.len += 1;
         Ok(())
     }
-    
+
     /// Pop an element from the vector
     pub fn pop(&mut self) -> Option<T> {
         if self.len == 0 {
             return None;
         }
-        
+
         self.len -= 1;
         Some(unsafe { self.ptr.as_ptr().add(self.len).read() })
     }
-    
+
     /// Get the length of the vector
     pub fn len(&self) -> usize {
         self.len
     }
-    
+
     /// Check if the vector is empty
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
-    
+
     /// Get the capacity of the vector
     pub fn capacity(&self) -> usize {
         self.capacity
     }
-    
+
     /// Get a slice of the vector's contents
     pub fn as_slice(&self) -> &[T] {
-        unsafe {
-            std::slice::from_raw_parts(self.ptr.as_ptr(), self.len)
-        }
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
-    
+
     /// Get a mutable slice of the vector's contents
     pub fn as_mut_slice(&mut self) -> &mut [T] {
-        unsafe {
-            std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len)
-        }
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }
 }
 
@@ -362,10 +363,10 @@ mod tests {
     #[test]
     fn test_bump_allocation() {
         let allocator = BumpAllocator::new(4096).unwrap();
-        
+
         let ptr1 = allocator.alloc::<u64>().unwrap();
         let ptr2 = allocator.alloc::<u64>().unwrap();
-        
+
         assert_ne!(ptr1.as_ptr(), ptr2.as_ptr());
         assert!(allocator.allocated_bytes() >= 16); // At least 2 * sizeof(u64)
         assert!(allocator.remaining_bytes() < 4096);
@@ -374,17 +375,17 @@ mod tests {
     #[test]
     fn test_bump_slice_allocation() {
         let allocator = BumpAllocator::new(4096).unwrap();
-        
+
         let mut slice_ptr = allocator.alloc_slice::<u32>(10).unwrap();
         let slice = unsafe { slice_ptr.as_mut() };
-        
+
         assert_eq!(slice.len(), 10);
-        
+
         // Initialize and verify the slice
         for (i, item) in slice.iter_mut().enumerate() {
             *item = i as u32;
         }
-        
+
         for (i, item) in slice.iter().enumerate() {
             assert_eq!(*item, i as u32);
         }
@@ -393,13 +394,13 @@ mod tests {
     #[test]
     fn test_bump_alignment() {
         let allocator = BumpAllocator::new(4096).unwrap();
-        
+
         // Allocate a u8 to misalign the allocator
         let _ptr1 = allocator.alloc::<u8>().unwrap();
-        
+
         // Allocate a u64, which requires 8-byte alignment
         let ptr2 = allocator.alloc::<u64>().unwrap();
-        
+
         // Check that the pointer is properly aligned
         assert_eq!(ptr2.as_ptr() as usize % 8, 0);
     }
@@ -407,11 +408,11 @@ mod tests {
     #[test]
     fn test_bump_exhaustion() {
         let allocator = BumpAllocator::new(16).unwrap();
-        
+
         // Allocate until exhausted
         let _ptr1 = allocator.alloc::<u64>().unwrap();
         let _ptr2 = allocator.alloc::<u64>().unwrap();
-        
+
         // Should fail to allocate another u64
         let result = allocator.alloc::<u64>();
         assert!(result.is_err());
@@ -420,17 +421,17 @@ mod tests {
     #[test]
     fn test_bump_reset() {
         let allocator = BumpAllocator::new(4096).unwrap();
-        
+
         let _ptr1 = allocator.alloc::<u64>().unwrap();
         let _ptr2 = allocator.alloc::<u64>().unwrap();
-        
+
         assert!(allocator.allocated_bytes() > 0);
         assert!(allocator.remaining_bytes() < 4096);
-        
+
         unsafe {
             allocator.reset();
         }
-        
+
         assert_eq!(allocator.allocated_bytes(), 0);
         assert_eq!(allocator.remaining_bytes(), 4096);
     }
@@ -438,12 +439,12 @@ mod tests {
     #[test]
     fn test_bump_arena() {
         let arena = BumpArena::new(4096).unwrap();
-        
+
         let ptr1 = arena.alloc::<u64>().unwrap();
         let ptr2 = arena.alloc::<u64>().unwrap();
-        
+
         assert_ne!(ptr1.as_ptr(), ptr2.as_ptr());
-        
+
         let stats = arena.stats();
         assert!(stats.allocated_bytes >= 16);
         assert!(stats.utilization() > 0.0);
@@ -453,21 +454,21 @@ mod tests {
     #[test]
     fn test_bump_scope() {
         let allocator = BumpAllocator::new(4096).unwrap();
-        
+
         let initial_allocated = allocator.allocated_bytes();
-        
+
         {
             let scope = BumpScope {
                 allocator: &allocator,
                 initial_offset: allocator.current.get(),
             };
-            
+
             let _ptr1 = scope.alloc::<u64>().unwrap();
             let _ptr2 = scope.alloc::<u64>().unwrap();
-            
+
             assert!(allocator.allocated_bytes() > initial_allocated);
         }
-        
+
         // After scope ends, allocation should be reset
         assert_eq!(allocator.current.get(), 0);
     }
@@ -476,21 +477,21 @@ mod tests {
     fn test_bump_vec() {
         let allocator = BumpAllocator::new(4096).unwrap();
         let mut vec = BumpVec::new_in(&allocator, 10).unwrap();
-        
+
         assert_eq!(vec.len(), 0);
         assert!(vec.is_empty());
         assert_eq!(vec.capacity(), 10);
-        
+
         vec.push(42).unwrap();
         vec.push(84).unwrap();
-        
+
         assert_eq!(vec.len(), 2);
         assert!(!vec.is_empty());
-        
+
         let slice = vec.as_slice();
         assert_eq!(slice[0], 42);
         assert_eq!(slice[1], 84);
-        
+
         let popped = vec.pop().unwrap();
         assert_eq!(popped, 84);
         assert_eq!(vec.len(), 1);
@@ -499,14 +500,14 @@ mod tests {
     #[test]
     fn test_can_allocate() {
         let allocator = BumpAllocator::new(64).unwrap();
-        
+
         assert!(allocator.can_allocate(8, 8));
         assert!(allocator.can_allocate(64, 1));
         assert!(!allocator.can_allocate(65, 1));
-        
+
         // Allocate some memory
         let _ptr = allocator.alloc::<u64>().unwrap();
-        
+
         assert!(allocator.can_allocate(8, 8));
         assert!(!allocator.can_allocate(64, 1));
     }
@@ -514,7 +515,7 @@ mod tests {
     #[test]
     fn test_invalid_parameters() {
         assert!(BumpAllocator::new(0).is_err());
-        
+
         let allocator = BumpAllocator::new(1024).unwrap();
         assert!(allocator.alloc_bytes(0, 8).is_err());
         assert!(allocator.alloc_bytes(8, 3).is_err()); // Non-power-of-2 alignment

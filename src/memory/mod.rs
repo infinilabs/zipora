@@ -3,13 +3,13 @@
 //! This module provides high-performance memory management features including
 //! memory pools, bump allocators, and hugepage support for optimal performance.
 
-pub mod pool;
 pub mod bump;
 pub mod hugepage;
+pub mod pool;
 
 // Re-export main types
-pub use pool::{MemoryPool, PoolConfig, PooledVec, PooledBuffer};
 pub use bump::{BumpAllocator, BumpArena};
+pub use pool::{MemoryPool, PoolConfig, PooledBuffer, PooledVec};
 
 #[cfg(target_os = "linux")]
 pub use hugepage::{HugePage, HugePageAllocator};
@@ -32,7 +32,7 @@ impl Default for MemoryConfig {
         Self {
             use_pools: true,
             use_hugepages: cfg!(target_os = "linux"),
-            pool_chunk_size: 64 * 1024, // 64KB chunks
+            pool_chunk_size: 64 * 1024,        // 64KB chunks
             max_pool_memory: 16 * 1024 * 1024, // 16MB max
         }
     }
@@ -41,16 +41,16 @@ impl Default for MemoryConfig {
 /// Initialize memory management with the given configuration
 pub fn init_memory_management(config: MemoryConfig) -> crate::Result<()> {
     log::debug!("Initializing memory management with config: {:?}", config);
-    
+
     if config.use_pools {
         pool::init_global_pools(config.pool_chunk_size, config.max_pool_memory)?;
     }
-    
+
     #[cfg(target_os = "linux")]
     if config.use_hugepages {
         hugepage::init_hugepage_support()?;
     }
-    
+
     Ok(())
 }
 
@@ -70,12 +70,12 @@ pub struct MemoryStats {
 /// Get global memory statistics
 pub fn get_memory_stats() -> MemoryStats {
     let pool_stats = pool::get_global_pool_stats();
-    
+
     #[cfg(target_os = "linux")]
     let hugepages_allocated = hugepage::get_hugepage_count();
     #[cfg(not(target_os = "linux"))]
     let hugepages_allocated = 0;
-    
+
     MemoryStats {
         pool_allocated: pool_stats.allocated,
         pool_available: pool_stats.available,
@@ -94,10 +94,10 @@ mod tests {
         assert!(config.use_pools);
         assert_eq!(config.pool_chunk_size, 64 * 1024);
         assert_eq!(config.max_pool_memory, 16 * 1024 * 1024);
-        
+
         #[cfg(target_os = "linux")]
         assert!(config.use_hugepages);
-        
+
         #[cfg(not(target_os = "linux"))]
         assert!(!config.use_hugepages);
     }
@@ -117,7 +117,7 @@ mod tests {
             pool_chunk_size: 4096,
             max_pool_memory: 1024 * 1024,
         };
-        
+
         let result = init_memory_management(config);
         assert!(result.is_ok());
     }

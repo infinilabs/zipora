@@ -11,143 +11,163 @@ pub enum ToplingError {
     /// I/O related errors
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     /// Invalid data format or corruption
     #[error("Invalid data: {message}")]
-    InvalidData { 
+    InvalidData {
         /// Error message describing the issue
-        message: String 
+        message: String,
     },
-    
+
     /// Index out of bounds access
     #[error("Out of bounds: index {index}, size {size}")]
-    OutOfBounds { 
+    OutOfBounds {
         /// The invalid index
-        index: usize, 
+        index: usize,
         /// The valid size/length
-        size: usize 
+        size: usize,
     },
-    
+
     /// Memory allocation failures
     #[error("Memory allocation failed: requested {size} bytes")]
-    OutOfMemory { 
+    OutOfMemory {
         /// Number of bytes requested
-        size: usize 
+        size: usize,
     },
-    
+
     /// Compression/decompression errors
     #[error("Compression error: {message}")]
-    Compression { 
+    Compression {
         /// Error message from compression library
-        message: String 
+        message: String,
     },
-    
+
     /// Blob store related errors
     #[error("Blob store error: {message}")]
-    BlobStore { 
+    BlobStore {
         /// Error message describing the blob store issue
-        message: String 
+        message: String,
     },
-    
+
     /// Trie/FSA related errors
     #[error("Trie error: {message}")]
-    Trie { 
+    Trie {
         /// Error message describing the trie issue
-        message: String 
+        message: String,
     },
-    
+
     /// Checksum validation failures
     #[error("Checksum mismatch: expected {expected:x}, got {actual:x}")]
-    ChecksumMismatch { 
+    ChecksumMismatch {
         /// Expected checksum value
-        expected: u32, 
+        expected: u32,
         /// Actual checksum value
-        actual: u32 
+        actual: u32,
     },
-    
+
     /// Feature not supported or not implemented
     #[error("Not supported: {feature}")]
-    NotSupported { 
+    NotSupported {
         /// Description of the unsupported feature
-        feature: String 
+        feature: String,
     },
-    
+
     /// Configuration or parameter errors
     #[error("Invalid configuration: {message}")]
-    Configuration { 
+    Configuration {
         /// Configuration error message
-        message: String 
+        message: String,
     },
-    
+
     /// Resource already in use or locked
     #[error("Resource busy: {resource}")]
-    ResourceBusy { 
+    ResourceBusy {
         /// Description of the busy resource
-        resource: String 
+        resource: String,
     },
 }
 
 impl ToplingError {
     /// Create an invalid data error
     pub fn invalid_data<S: Into<String>>(message: S) -> Self {
-        Self::InvalidData { message: message.into() }
+        Self::InvalidData {
+            message: message.into(),
+        }
     }
-    
+
     /// Create an out of bounds error
     pub fn out_of_bounds(index: usize, size: usize) -> Self {
         Self::OutOfBounds { index, size }
     }
-    
+
     /// Create an out of memory error
     pub fn out_of_memory(size: usize) -> Self {
         Self::OutOfMemory { size }
     }
-    
+
     /// Create a compression error
     pub fn compression<S: Into<String>>(message: S) -> Self {
-        Self::Compression { message: message.into() }
+        Self::Compression {
+            message: message.into(),
+        }
     }
-    
+
     /// Create a blob store error
     pub fn blob_store<S: Into<String>>(message: S) -> Self {
-        Self::BlobStore { message: message.into() }
+        Self::BlobStore {
+            message: message.into(),
+        }
     }
-    
+
     /// Create a trie error
     pub fn trie<S: Into<String>>(message: S) -> Self {
-        Self::Trie { message: message.into() }
+        Self::Trie {
+            message: message.into(),
+        }
     }
-    
+
     /// Create a checksum mismatch error
     pub fn checksum_mismatch(expected: u32, actual: u32) -> Self {
         Self::ChecksumMismatch { expected, actual }
     }
-    
+
     /// Create a not supported error
     pub fn not_supported<S: Into<String>>(feature: S) -> Self {
-        Self::NotSupported { feature: feature.into() }
+        Self::NotSupported {
+            feature: feature.into(),
+        }
     }
-    
+
     /// Create an I/O error from a message
     pub fn io_error<S: Into<String>>(message: S) -> Self {
-        Self::Io(std::io::Error::new(std::io::ErrorKind::Other, message.into()))
+        Self::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            message.into(),
+        ))
     }
-    
+
     /// Create a not found error (convenience method for I/O errors)
     pub fn not_found<S: Into<String>>(message: S) -> Self {
-        Self::Io(std::io::Error::new(std::io::ErrorKind::NotFound, message.into()))
+        Self::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            message.into(),
+        ))
     }
-    
+
     /// Create a configuration error
     pub fn configuration<S: Into<String>>(message: S) -> Self {
-        Self::Configuration { message: message.into() }
+        Self::Configuration {
+            message: message.into(),
+        }
     }
-    
+
     /// Create a resource busy error
     pub fn resource_busy<S: Into<String>>(resource: S) -> Self {
-        Self::ResourceBusy { resource: resource.into() }
+        Self::ResourceBusy {
+            resource: resource.into(),
+        }
     }
-    
+
     /// Check if this is a recoverable error
     pub fn is_recoverable(&self) -> bool {
         match self {
@@ -164,7 +184,7 @@ impl ToplingError {
             Self::Configuration { .. } => false,
         }
     }
-    
+
     /// Get the error category for logging/metrics
     pub fn category(&self) -> &'static str {
         match self {
@@ -200,9 +220,10 @@ pub fn check_bounds(index: usize, size: usize) -> Result<()> {
 #[inline]
 pub fn check_range(start: usize, end: usize, size: usize) -> Result<()> {
     if start > end {
-        return Err(ToplingError::invalid_data(
-            format!("Invalid range: start {} > end {}", start, end)
-        ));
+        return Err(ToplingError::invalid_data(format!(
+            "Invalid range: start {} > end {}",
+            start, end
+        )));
     }
     if end > size {
         return Err(ToplingError::out_of_bounds(end, size));
@@ -314,10 +335,10 @@ mod tests {
     fn test_from_io_error() {
         let io_error = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
         let topling_error: ToplingError = io_error.into();
-        
+
         assert_eq!(topling_error.category(), "io");
         assert!(topling_error.is_recoverable());
-        
+
         let display = format!("{}", topling_error);
         assert!(display.contains("I/O error"));
     }
@@ -386,7 +407,7 @@ mod tests {
         assert!(check_range(0, 0, 1).is_ok());
         assert!(check_range(5, 5, 5).is_ok());
         assert!(check_range(5, 5, 10).is_ok());
-        
+
         // Invalid ranges
         assert!(check_range(5, 4, 10).is_err()); // start > end
         assert!(check_range(0, 11, 10).is_err()); // end > size

@@ -11,21 +11,21 @@ use crate::error::{Result, ToplingError};
 use ahash::RandomState;
 use std::borrow::Borrow;
 use std::fmt;
-use std::hash::{Hash, Hasher, BuildHasher};
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::marker::PhantomData;
 use std::mem;
 
 /// High-performance hash map using robin hood hashing
-/// 
+///
 /// GoldHashMap is optimized for throughput and low latency operations.
 /// It uses AHash for fast hashing and robin hood probing for efficient
 /// collision resolution.
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```rust
 /// use infini_zip::GoldHashMap;
-/// 
+///
 /// let mut map = GoldHashMap::new();
 /// map.insert("key", "value").unwrap();
 /// assert_eq!(map.get("key"), Some(&"value"));
@@ -77,12 +77,15 @@ impl<K, V> GoldHashMap<K, V> {
     /// Creates a new hash map with specified capacity
     pub fn with_capacity(capacity: usize) -> Result<Self> {
         let bucket_count = capacity.next_power_of_two().max(DEFAULT_CAPACITY);
-        
+
         let mut buckets = FastVec::with_capacity(bucket_count)?;
-        buckets.resize(bucket_count, BucketEntry {
-            entry_index: EMPTY_BUCKET,
-            cached_hash: 0,
-        })?;
+        buckets.resize(
+            bucket_count,
+            BucketEntry {
+                entry_index: EMPTY_BUCKET,
+                cached_hash: 0,
+            },
+        )?;
 
         Ok(GoldHashMap {
             entries: FastVec::with_capacity(capacity)?,
@@ -140,15 +143,17 @@ impl<K, V> GoldHashMap<K, V> {
         let hash = self.hash_key(key);
         let ideal_bucket = self.hash_to_bucket(hash);
         let cached_hash = (hash as u32) | 1; // Ensure non-zero
-        
+
         let mut bucket_idx = ideal_bucket;
         let mut probe_distance = 0u16;
 
         loop {
             let bucket = &self.buckets[bucket_idx];
-            
+
             if bucket.entry_index == EMPTY_BUCKET {
-                return FindResult::NotFound { ideal_bucket: bucket_idx };
+                return FindResult::NotFound {
+                    ideal_bucket: bucket_idx,
+                };
             }
 
             // Quick hash comparison before expensive key comparison
@@ -157,9 +162,9 @@ impl<K, V> GoldHashMap<K, V> {
                 if entry_idx < self.entries.len() {
                     let entry = &self.entries[entry_idx];
                     if entry.key.borrow() == key {
-                        return FindResult::Found { 
+                        return FindResult::Found {
                             bucket_index: bucket_idx,
-                            entry_index: entry_idx 
+                            entry_index: entry_idx,
                         };
                     }
                 }
@@ -169,10 +174,12 @@ impl<K, V> GoldHashMap<K, V> {
 
             probe_distance += 1;
             bucket_idx = (bucket_idx + 1) & (self.buckets.len() - 1);
-            
+
             // Prevent infinite loop
             if probe_distance >= self.buckets.len() as u16 || bucket_idx == ideal_bucket {
-                return FindResult::NotFound { ideal_bucket: bucket_idx };
+                return FindResult::NotFound {
+                    ideal_bucket: bucket_idx,
+                };
             }
         }
     }
@@ -180,11 +187,11 @@ impl<K, V> GoldHashMap<K, V> {
     /// Checks if resize is needed and performs it
     fn maybe_resize(&mut self) -> Result<()> {
         let load_factor = (self.len * 256) / self.buckets.len();
-        
+
         if load_factor as u8 >= self.load_factor_threshold {
             self.resize(self.buckets.len() * 2)?;
         }
-        
+
         Ok(())
     }
 
@@ -192,10 +199,13 @@ impl<K, V> GoldHashMap<K, V> {
     fn resize(&mut self, new_bucket_count: usize) -> Result<()> {
         let _old_buckets = mem::replace(&mut self.buckets, {
             let mut new_buckets = FastVec::with_capacity(new_bucket_count)?;
-            new_buckets.resize(new_bucket_count, BucketEntry {
-                entry_index: EMPTY_BUCKET,
-                cached_hash: 0,
-            })?;
+            new_buckets.resize(
+                new_bucket_count,
+                BucketEntry {
+                    entry_index: EMPTY_BUCKET,
+                    cached_hash: 0,
+                },
+            )?;
             new_buckets
         });
 
@@ -205,10 +215,10 @@ impl<K, V> GoldHashMap<K, V> {
             let entry_hash = self.entries[entry_idx].hash;
             let bucket_idx = self.hash_to_bucket(entry_hash);
             let cached_hash = (entry_hash as u32) | 1;
-            
+
             let mut pos = bucket_idx;
             let mut probe_distance = 0u16;
-            
+
             loop {
                 if self.buckets[pos].entry_index == EMPTY_BUCKET {
                     self.buckets[pos].entry_index = entry_idx as u32;
@@ -216,7 +226,7 @@ impl<K, V> GoldHashMap<K, V> {
                     self.entries[entry_idx].probe_distance = probe_distance;
                     break;
                 }
-                
+
                 probe_distance += 1;
                 pos = (pos + 1) & bucket_mask;
             }
@@ -233,9 +243,9 @@ where
     /// Inserts a key-value pair into the map
     pub fn insert(&mut self, key: K, value: V) -> Result<Option<V>> {
         self.maybe_resize()?;
-        
+
         let hash = self.hash_key(&key);
-        
+
         match self.find_position(&key) {
             FindResult::Found { entry_index, .. } => {
                 // Replace existing value
@@ -246,7 +256,7 @@ where
                 // Insert new entry
                 let entry_index = self.entries.len();
                 let cached_hash = (hash as u32) | 1;
-                
+
                 // Add entry to storage
                 self.entries.push(Entry {
                     key,
@@ -258,20 +268,20 @@ where
                 // Simple linear probing for now (will optimize later)
                 let mut pos = ideal_bucket;
                 let mut probe_distance = 0u16;
-                
+
                 loop {
                     let bucket = &mut self.buckets[pos];
-                    
+
                     if bucket.entry_index == EMPTY_BUCKET {
                         bucket.entry_index = entry_index as u32;
                         bucket.cached_hash = cached_hash;
                         self.entries[entry_index].probe_distance = probe_distance;
                         break;
                     }
-                    
+
                     probe_distance += 1;
                     pos = (pos + 1) & (self.buckets.len() - 1);
-                    
+
                     // Safety check to prevent infinite loop
                     if probe_distance > self.buckets.len() as u16 {
                         return Err(ToplingError::invalid_data("Hash map is full"));
@@ -291,9 +301,7 @@ where
         Q: Hash + Eq + ?Sized,
     {
         match self.find_position(key) {
-            FindResult::Found { entry_index, .. } => {
-                Some(&self.entries[entry_index].value)
-            }
+            FindResult::Found { entry_index, .. } => Some(&self.entries[entry_index].value),
             FindResult::NotFound { .. } => None,
         }
     }
@@ -305,9 +313,7 @@ where
         Q: Hash + Eq + ?Sized,
     {
         match self.find_position(key) {
-            FindResult::Found { entry_index, .. } => {
-                Some(&mut self.entries[entry_index].value)
-            }
+            FindResult::Found { entry_index, .. } => Some(&mut self.entries[entry_index].value),
             FindResult::NotFound { .. } => None,
         }
     }
@@ -328,7 +334,10 @@ where
         Q: Hash + Eq + ?Sized,
     {
         match self.find_position(key) {
-            FindResult::Found { bucket_index, entry_index } => {
+            FindResult::Found {
+                bucket_index,
+                entry_index,
+            } => {
                 // Extract the entry value before swapping
                 let removed_value = if entry_index == self.entries.len() - 1 {
                     // Last entry, just pop it
@@ -337,11 +346,11 @@ where
                     // Need to maintain compactness by moving last entry to this position
                     let last_entry = self.entries.pop().unwrap();
                     let removed_entry = mem::replace(&mut self.entries[entry_index], last_entry);
-                    
+
                     // Now we need to update the bucket that was pointing to the last entry
                     // to point to the new position (entry_index)
                     self.update_bucket_for_moved_entry(self.entries.len(), entry_index);
-                    
+
                     removed_entry.value
                 };
 
@@ -368,7 +377,6 @@ where
             }
         }
     }
-
 
     /// Clears all entries from the map
     pub fn clear(&mut self) {
@@ -402,8 +410,13 @@ where
 /// Result of finding a position in the hash map
 #[derive(Debug)]
 enum FindResult {
-    Found { bucket_index: usize, entry_index: usize },
-    NotFound { ideal_bucket: usize },
+    Found {
+        bucket_index: usize,
+        entry_index: usize,
+    },
+    NotFound {
+        ideal_bucket: usize,
+    },
 }
 
 impl<K, V> Default for GoldHashMap<K, V> {
@@ -502,7 +515,7 @@ mod tests {
     #[test]
     fn test_insert_and_get() {
         let mut map = GoldHashMap::new();
-        
+
         assert_eq!(map.insert("key1", "value1").unwrap(), None);
         assert_eq!(map.insert("key2", "value2").unwrap(), None);
         assert_eq!(map.len(), 2);
@@ -515,7 +528,7 @@ mod tests {
     #[test]
     fn test_insert_replace() {
         let mut map = GoldHashMap::new();
-        
+
         assert_eq!(map.insert("key", "value1").unwrap(), None);
         assert_eq!(map.insert("key", "value2").unwrap(), Some("value1"));
         assert_eq!(map.len(), 1);
@@ -525,10 +538,10 @@ mod tests {
     #[test]
     fn test_remove() {
         let mut map = GoldHashMap::new();
-        
+
         map.insert("key1", "value1").unwrap();
         map.insert("key2", "value2").unwrap();
-        
+
         assert_eq!(map.remove("key1"), Some("value1"));
         assert_eq!(map.remove("key1"), None);
         assert_eq!(map.len(), 1);
@@ -538,7 +551,7 @@ mod tests {
     #[test]
     fn test_contains_key() {
         let mut map = GoldHashMap::new();
-        
+
         assert!(!map.contains_key("key"));
         map.insert("key", "value").unwrap();
         assert!(map.contains_key("key"));
@@ -547,11 +560,11 @@ mod tests {
     #[test]
     fn test_clear() {
         let mut map = GoldHashMap::new();
-        
+
         map.insert("key1", "value1").unwrap();
         map.insert("key2", "value2").unwrap();
         assert_eq!(map.len(), 2);
-        
+
         map.clear();
         assert_eq!(map.len(), 0);
         assert!(map.is_empty());
@@ -561,20 +574,20 @@ mod tests {
     #[test]
     fn test_small_remove() {
         let mut map = GoldHashMap::new();
-        
+
         // Insert a few items
         map.insert("a", 1).unwrap();
         map.insert("b", 2).unwrap();
         map.insert("c", 3).unwrap();
-        
+
         // Verify all are present
         assert_eq!(map.get("a"), Some(&1));
         assert_eq!(map.get("b"), Some(&2));
         assert_eq!(map.get("c"), Some(&3));
-        
+
         // Remove one
         assert_eq!(map.remove("b"), Some(2));
-        
+
         // Verify remaining are still present
         assert_eq!(map.get("a"), Some(&1));
         assert_eq!(map.get("c"), Some(&3));
@@ -584,21 +597,27 @@ mod tests {
     #[test]
     fn test_large_dataset() {
         let mut map = GoldHashMap::new();
-        
+
         // Insert many items to test resizing
-        for i in 0..100 {  // Reduced for easier debugging
+        for i in 0..100 {
+            // Reduced for easier debugging
             let key = format!("key_{}", i);
             let value = format!("value_{}", i);
             map.insert(key, value).unwrap();
         }
-        
+
         assert_eq!(map.len(), 100);
-        
+
         // Verify all items are present before any removals
         for i in 0..100 {
             let key = format!("key_{}", i);
             let expected_value = format!("value_{}", i);
-            assert_eq!(map.get(&key), Some(&expected_value), "Failed to find key_{}", i);
+            assert_eq!(
+                map.get(&key),
+                Some(&expected_value),
+                "Failed to find key_{}",
+                i
+            );
         }
     }
 
@@ -608,10 +627,10 @@ mod tests {
         map.insert("a", 1).unwrap();
         map.insert("b", 2).unwrap();
         map.insert("c", 3).unwrap();
-        
+
         let mut items: Vec<_> = map.iter().collect();
         items.sort_by_key(|(k, _)| *k);
-        
+
         assert_eq!(items, vec![(&"a", &1), (&"b", &2), (&"c", &3)]);
         assert_eq!(map.iter().len(), 3);
     }
@@ -621,11 +640,11 @@ mod tests {
         let mut map = GoldHashMap::new();
         map.insert("a", 1).unwrap();
         map.insert("b", 2).unwrap();
-        
+
         let mut keys: Vec<_> = map.keys().cloned().collect();
         keys.sort();
         assert_eq!(keys, vec!["a", "b"]);
-        
+
         let mut values: Vec<_> = map.values().cloned().collect();
         values.sort();
         assert_eq!(values, vec![1, 2]);
@@ -635,30 +654,30 @@ mod tests {
     fn test_get_mut() {
         let mut map = GoldHashMap::new();
         map.insert("key", 42).unwrap();
-        
+
         if let Some(value) = map.get_mut("key") {
             *value = 84;
         }
-        
+
         assert_eq!(map.get("key"), Some(&84));
     }
 
     #[test]
     fn test_hash_collision_handling() {
         let mut map = GoldHashMap::new();
-        
+
         // Insert many items with potentially colliding hashes
         for i in 0..100 {
             let key = i.to_string();
             map.insert(key.clone(), i).unwrap();
         }
-        
+
         // Verify all items can be retrieved
         for i in 0..100 {
             let key = i.to_string();
             assert_eq!(map.get(&key), Some(&i));
         }
-        
+
         assert_eq!(map.len(), 100);
     }
 
@@ -666,7 +685,7 @@ mod tests {
     fn test_debug_impl() {
         let mut map = GoldHashMap::new();
         map.insert("key", "value").unwrap();
-        
+
         let debug_output = format!("{:?}", map);
         assert!(debug_output.contains("key"));
         assert!(debug_output.contains("value"));

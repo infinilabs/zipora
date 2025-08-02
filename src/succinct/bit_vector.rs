@@ -8,21 +8,21 @@ use crate::FastVec;
 use std::fmt;
 
 /// A compact bit vector supporting efficient bit operations
-/// 
+///
 /// BitVector stores bits in a packed format using u64 blocks for efficient
 /// access and manipulation. It supports dynamic resizing and provides
 /// constant-time access to individual bits.
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```rust
 /// use infini_zip::BitVector;
-/// 
+///
 /// let mut bv = BitVector::new();
 /// bv.push(true)?;
 /// bv.push(false)?;
 /// bv.push(true)?;
-/// 
+///
 /// assert_eq!(bv.get(0), Some(true));
 /// assert_eq!(bv.get(1), Some(false));
 /// assert_eq!(bv.len(), 3);
@@ -88,22 +88,22 @@ impl BitVector {
 
         let block_index = index / BITS_PER_BLOCK;
         let bit_index = index % BITS_PER_BLOCK;
-        
+
         Some((self.blocks[block_index] >> bit_index) & 1 == 1)
     }
 
     /// Get the bit at the specified position without bounds checking
-    /// 
+    ///
     /// # Safety
-    /// 
+    ///
     /// The caller must ensure that `index < self.len()`
     #[inline]
     pub unsafe fn get_unchecked(&self, index: usize) -> bool {
         debug_assert!(index < self.len);
-        
+
         let block_index = index / BITS_PER_BLOCK;
         let bit_index = index % BITS_PER_BLOCK;
-        
+
         (unsafe { self.blocks.get_unchecked(block_index) } >> bit_index) & 1 == 1
     }
 
@@ -115,32 +115,36 @@ impl BitVector {
 
         let block_index = index / BITS_PER_BLOCK;
         let bit_index = index % BITS_PER_BLOCK;
-        
+
         if value {
             self.blocks[block_index] |= 1u64 << bit_index;
         } else {
             self.blocks[block_index] &= !(1u64 << bit_index);
         }
-        
+
         Ok(())
     }
 
     /// Set the bit at the specified position without bounds checking
-    /// 
+    ///
     /// # Safety
-    /// 
+    ///
     /// The caller must ensure that `index < self.len()`
     #[inline]
     pub unsafe fn set_unchecked(&mut self, index: usize, value: bool) {
         debug_assert!(index < self.len);
-        
+
         let block_index = index / BITS_PER_BLOCK;
         let bit_index = index % BITS_PER_BLOCK;
-        
+
         if value {
-            unsafe { *self.blocks.get_unchecked_mut(block_index) |= 1u64 << bit_index; }
+            unsafe {
+                *self.blocks.get_unchecked_mut(block_index) |= 1u64 << bit_index;
+            }
         } else {
-            unsafe { *self.blocks.get_unchecked_mut(block_index) &= !(1u64 << bit_index); }
+            unsafe {
+                *self.blocks.get_unchecked_mut(block_index) &= !(1u64 << bit_index);
+            }
         }
     }
 
@@ -159,7 +163,7 @@ impl BitVector {
         } else {
             self.blocks[block_index] &= !(1u64 << bit_index);
         }
-        
+
         self.len += 1;
         Ok(())
     }
@@ -173,16 +177,16 @@ impl BitVector {
         // For simplicity, we'll implement this by pushing a bit and then
         // shifting everything after the insertion point
         self.push(false)?; // Extend by one bit
-        
+
         // Shift bits to the right starting from the end
         for i in (index + 1..self.len).rev() {
             let bit = self.get(i - 1).unwrap_or(false);
             self.set(i, bit)?;
         }
-        
+
         // Set the bit at the insertion position
         self.set(index, value)?;
-        
+
         Ok(())
     }
 
@@ -192,7 +196,7 @@ impl BitVector {
         if index >= self.len {
             return None;
         }
-        
+
         Some(BitRef {
             bit_vector: self,
             index,
@@ -208,12 +212,12 @@ impl BitVector {
         self.len -= 1;
         let block_index = self.len / BITS_PER_BLOCK;
         let bit_index = self.len % BITS_PER_BLOCK;
-        
+
         let value = (self.blocks[block_index] >> bit_index) & 1 == 1;
-        
+
         // Clear the bit
         self.blocks[block_index] &= !(1u64 << bit_index);
-        
+
         Some(value)
     }
 
@@ -227,19 +231,19 @@ impl BitVector {
         } else if new_len < self.len {
             // Truncate
             self.len = new_len;
-            
+
             // Clear bits in the last partial block
             if new_len > 0 {
                 let last_block_index = (new_len - 1) / BITS_PER_BLOCK;
                 let bits_in_last_block = new_len % BITS_PER_BLOCK;
-                
+
                 if bits_in_last_block > 0 {
                     let mask = (1u64 << bits_in_last_block) - 1;
                     self.blocks[last_block_index] &= mask;
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -252,20 +256,20 @@ impl BitVector {
     /// Count the number of set bits in the entire vector
     pub fn count_ones(&self) -> usize {
         let mut count = 0;
-        
+
         // Count complete blocks
         let complete_blocks = self.len / BITS_PER_BLOCK;
         for i in 0..complete_blocks {
             count += self.blocks[i].count_ones() as usize;
         }
-        
+
         // Count bits in the last partial block
         let remaining_bits = self.len % BITS_PER_BLOCK;
         if remaining_bits > 0 && complete_blocks < self.blocks.len() {
             let mask = (1u64 << remaining_bits) - 1;
             count += (self.blocks[complete_blocks] & mask).count_ones() as usize;
         }
-        
+
         count
     }
 
@@ -280,23 +284,23 @@ impl BitVector {
         if pos == 0 {
             return 0;
         }
-        
+
         let pos = pos.min(self.len);
         let mut count = 0;
-        
+
         // Count complete blocks
         let complete_blocks = pos / BITS_PER_BLOCK;
         for i in 0..complete_blocks {
             count += self.blocks[i].count_ones() as usize;
         }
-        
+
         // Count bits in the partial block
         let remaining_bits = pos % BITS_PER_BLOCK;
         if remaining_bits > 0 && complete_blocks < self.blocks.len() {
             let mask = (1u64 << remaining_bits) - 1;
             count += (self.blocks[complete_blocks] & mask).count_ones() as usize;
         }
-        
+
         count
     }
 
@@ -306,7 +310,7 @@ impl BitVector {
         if pos == 0 {
             return 0;
         }
-        
+
         let pos = pos.min(self.len);
         pos - self.rank1(pos)
     }
@@ -322,11 +326,11 @@ impl BitVector {
         let new_len = self.len + additional;
         let new_block_count = (new_len + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK;
         let additional_blocks = new_block_count.saturating_sub(self.blocks.len());
-        
+
         if additional_blocks > 0 {
             self.blocks.reserve(additional_blocks)?;
         }
-        
+
         Ok(())
     }
 }
@@ -342,7 +346,7 @@ impl<'a> BitRef<'a> {
     pub fn get(&self) -> bool {
         self.bit_vector.get(self.index).unwrap_or(false)
     }
-    
+
     /// Set the value of the bit
     pub fn set(&mut self, value: bool) -> Result<()> {
         self.bit_vector.set(self.index, value)
@@ -351,7 +355,7 @@ impl<'a> BitRef<'a> {
 
 impl<'a> std::ops::Deref for BitRef<'a> {
     type Target = bool;
-    
+
     fn deref(&self) -> &Self::Target {
         // We can't return a reference to a bool that doesn't exist,
         // so we use a static value. This is a limitation of the design.
@@ -396,7 +400,7 @@ impl PartialEq for BitVector {
         if self.len != other.len {
             return false;
         }
-        
+
         // Compare complete blocks
         let complete_blocks = self.len / BITS_PER_BLOCK;
         for i in 0..complete_blocks {
@@ -404,16 +408,19 @@ impl PartialEq for BitVector {
                 return false;
             }
         }
-        
+
         // Compare remaining bits in the last block
         let remaining_bits = self.len % BITS_PER_BLOCK;
-        if remaining_bits > 0 && complete_blocks < self.blocks.len() && complete_blocks < other.blocks.len() {
+        if remaining_bits > 0
+            && complete_blocks < self.blocks.len()
+            && complete_blocks < other.blocks.len()
+        {
             let mask = (1u64 << remaining_bits) - 1;
             if (self.blocks[complete_blocks] & mask) != (other.blocks[complete_blocks] & mask) {
                 return false;
             }
         }
-        
+
         true
     }
 }
@@ -437,12 +444,12 @@ mod tests {
         bv.push(true).unwrap();
         bv.push(false).unwrap();
         bv.push(true).unwrap();
-        
+
         assert_eq!(bv.len(), 3);
         assert_eq!(bv.get(0), Some(true));
         assert_eq!(bv.get(1), Some(false));
         assert_eq!(bv.get(2), Some(true));
-        
+
         assert_eq!(bv.pop(), Some(true));
         assert_eq!(bv.pop(), Some(false));
         assert_eq!(bv.len(), 1);
@@ -451,11 +458,11 @@ mod tests {
     #[test]
     fn test_set_get() {
         let mut bv = BitVector::with_size(10, false).unwrap();
-        
+
         bv.set(0, true).unwrap();
         bv.set(5, true).unwrap();
         bv.set(9, true).unwrap();
-        
+
         assert_eq!(bv.get(0), Some(true));
         assert_eq!(bv.get(1), Some(false));
         assert_eq!(bv.get(5), Some(true));
@@ -469,7 +476,7 @@ mod tests {
         bv.set(0, true).unwrap();
         bv.set(3, true).unwrap();
         bv.set(7, true).unwrap();
-        
+
         assert_eq!(bv.count_ones(), 3);
         assert_eq!(bv.count_zeros(), 7);
     }
@@ -480,13 +487,13 @@ mod tests {
         bv.set(1, true).unwrap();
         bv.set(3, true).unwrap();
         bv.set(7, true).unwrap();
-        
+
         assert_eq!(bv.rank1(0), 0);
         assert_eq!(bv.rank1(2), 1);
         assert_eq!(bv.rank1(4), 2);
         assert_eq!(bv.rank1(8), 3);
         assert_eq!(bv.rank1(10), 3);
-        
+
         assert_eq!(bv.rank0(2), 1);
         assert_eq!(bv.rank0(4), 2);
         assert_eq!(bv.rank0(8), 5);
@@ -495,14 +502,14 @@ mod tests {
     #[test]
     fn test_large_bitvector() {
         let mut bv = BitVector::new();
-        
+
         // Test across multiple blocks
         for i in 0..200 {
             bv.push(i % 3 == 0).unwrap();
         }
-        
+
         assert_eq!(bv.len(), 200);
-        
+
         let mut expected_ones = 0;
         for i in 0..200 {
             if i % 3 == 0 {
@@ -512,7 +519,7 @@ mod tests {
                 assert_eq!(bv.get(i), Some(false));
             }
         }
-        
+
         assert_eq!(bv.count_ones(), expected_ones);
     }
 
@@ -520,14 +527,14 @@ mod tests {
     fn test_resize() {
         let mut bv = BitVector::new();
         bv.resize(5, true).unwrap();
-        
+
         assert_eq!(bv.len(), 5);
         assert_eq!(bv.count_ones(), 5);
-        
+
         bv.resize(3, false).unwrap();
         assert_eq!(bv.len(), 3);
         assert_eq!(bv.count_ones(), 3);
-        
+
         bv.resize(8, false).unwrap();
         assert_eq!(bv.len(), 8);
         assert_eq!(bv.count_ones(), 3);
@@ -537,14 +544,14 @@ mod tests {
     fn test_equality() {
         let mut bv1 = BitVector::new();
         let mut bv2 = BitVector::new();
-        
+
         for &bit in &[true, false, true, true, false] {
             bv1.push(bit).unwrap();
             bv2.push(bit).unwrap();
         }
-        
+
         assert_eq!(bv1, bv2);
-        
+
         bv2.set(2, false).unwrap();
         assert_ne!(bv1, bv2);
     }
@@ -555,15 +562,15 @@ mod tests {
         bv.push(true).unwrap();
         bv.push(false).unwrap();
         bv.push(true).unwrap();
-        
+
         unsafe {
             assert_eq!(bv.get_unchecked(0), true);
             assert_eq!(bv.get_unchecked(1), false);
             assert_eq!(bv.get_unchecked(2), true);
-            
+
             bv.set_unchecked(1, true);
             assert_eq!(bv.get_unchecked(1), true);
-            
+
             bv.set_unchecked(0, false);
             assert_eq!(bv.get_unchecked(0), false);
         }
@@ -575,10 +582,10 @@ mod tests {
         for i in 0..128 {
             bv.push(i % 3 == 0).unwrap();
         }
-        
+
         let blocks = bv.blocks();
         assert!(blocks.len() >= 2); // Should span multiple blocks
-        
+
         // Verify blocks contain expected data
         let first_block = blocks[0];
         let first_bit = first_block & 1;
@@ -589,10 +596,10 @@ mod tests {
     fn test_reserve() {
         let mut bv = BitVector::new();
         bv.reserve(1000).unwrap();
-        
+
         // Should have reserved enough blocks for 1000 bits
         assert!(bv.capacity() >= 1000);
-        
+
         // Fill with data to verify it works
         for i in 0..1000 {
             bv.push(i % 7 == 0).unwrap();
@@ -603,22 +610,22 @@ mod tests {
     #[test]
     fn test_partial_block_operations() {
         let mut bv = BitVector::new();
-        
+
         // Test with exactly one full block (64 bits)
         for i in 0..64 {
             bv.push(i % 2 == 0).unwrap();
         }
         assert_eq!(bv.len(), 64);
         assert_eq!(bv.count_ones(), 32);
-        
+
         // Add a few more bits to create a partial block
         bv.push(true).unwrap();
         bv.push(false).unwrap();
         bv.push(true).unwrap();
-        
+
         assert_eq!(bv.len(), 67);
         assert_eq!(bv.count_ones(), 34); // 32 + 2 from partial block
-        
+
         // Test rank with partial blocks
         assert_eq!(bv.rank1(64), 32);
         assert_eq!(bv.rank1(67), 34);
@@ -627,22 +634,22 @@ mod tests {
     #[test]
     fn test_edge_case_resize() {
         let mut bv = BitVector::new();
-        
+
         // Resize to zero
         bv.resize(0, true).unwrap();
         assert_eq!(bv.len(), 0);
         assert!(bv.is_empty());
-        
+
         // Resize from zero to some value
         bv.resize(10, true).unwrap();
         assert_eq!(bv.len(), 10);
         assert_eq!(bv.count_ones(), 10);
-        
+
         // Resize down with partial bits
         bv.resize(5, false).unwrap();
         assert_eq!(bv.len(), 5);
         assert_eq!(bv.count_ones(), 5);
-        
+
         // Resize up again
         bv.resize(15, false).unwrap();
         assert_eq!(bv.len(), 15);
@@ -652,12 +659,12 @@ mod tests {
     #[test]
     fn test_boundary_conditions() {
         let mut bv = BitVector::new();
-        
+
         // Test exactly at block boundaries (64, 128, etc.)
         for i in 0..128 {
             bv.push(i < 64).unwrap(); // First 64 are true, next 64 are false
         }
-        
+
         assert_eq!(bv.rank1(0), 0);
         assert_eq!(bv.rank1(64), 64);
         assert_eq!(bv.rank1(128), 64);
@@ -670,11 +677,11 @@ mod tests {
         let mut bv = BitVector::new();
         bv.push(true).unwrap();
         bv.push(false).unwrap();
-        
+
         // Test out of bounds set
         assert!(bv.set(5, true).is_err());
         assert!(bv.set(2, true).is_err()); // len is 2, so index 2 is out of bounds
-        
+
         // Valid set should work
         assert!(bv.set(0, false).is_ok());
         assert_eq!(bv.get(0), Some(false));
@@ -683,24 +690,24 @@ mod tests {
     #[test]
     fn test_clone_and_equality_edge_cases() {
         let mut original = BitVector::new();
-        
+
         // Test clone of empty vector
         let cloned_empty = original.clone();
         assert_eq!(original, cloned_empty);
-        
+
         // Add bits across multiple blocks
         for i in 0..130 {
             original.push(i % 5 == 0).unwrap();
         }
-        
+
         let cloned = original.clone();
         assert_eq!(original, cloned);
-        
+
         // Test equality with different lengths
         let mut shorter = original.clone();
         shorter.resize(100, false).unwrap();
         assert_ne!(original, shorter);
-        
+
         // Test equality with same length but different content
         let mut different = original.clone();
         different.set(50, !different.get(50).unwrap()).unwrap();
@@ -713,18 +720,18 @@ mod tests {
         for i in 0..10 {
             bv.push(i % 2 == 0).unwrap();
         }
-        
+
         let debug_str = format!("{:?}", bv);
         assert!(debug_str.contains("BitVector"));
         assert!(debug_str.contains("len: 10"));
         assert!(debug_str.contains("1010101010")); // The pattern
-        
+
         // Test debug output for very long vectors
         let mut long_bv = BitVector::new();
         for i in 0..100 {
             long_bv.push(i % 2 == 0).unwrap();
         }
-        
+
         let long_debug = format!("{:?}", long_bv);
         assert!(long_debug.contains("..."));
         assert!(long_debug.contains("len: 100"));
