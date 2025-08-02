@@ -934,8 +934,9 @@ Requires Rust 1.75+ for full functionality. Some features may work with earlier 
 **Phases 1-5 Complete** - Full feature implementation including fiber-based concurrency and real-time compression.
 
 Current codebase status (as of latest verification):
-- **✅ Compilation**: Clean build with zero errors (only minor warnings)
-- **✅ Test Coverage**: 400+ comprehensive tests covering all modules (390 passing, 7 rANS tests temporarily ignored for algorithm refinement)
+- **🔧 Compilation**: Build improvements in progress (resolving remaining compilation issues and warnings)
+- **✅ Test Coverage**: 398 comprehensive tests covering all modules (398 passing, 0 ignored)
+- **🔧 Code Quality**: Ongoing improvements to address compilation warnings and enhance stability
 - **✅ Features**: All major components from Phases 1-5 implemented
 - **✅ Performance**: Extensive benchmarking suite with C++ comparisons
 - **✅ Documentation**: Complete API documentation with examples
@@ -958,7 +959,7 @@ Current codebase status (as of latest verification):
 - **Fiber-based Concurrency**: High-performance async/await with work-stealing execution
 - **Real-time Compression**: Adaptive algorithms with strict latency guarantees
 - **Async I/O**: Non-blocking blob storage and pipeline processing
-- **Testing Framework**: 400+ tests with 97%+ success rate and comprehensive coverage
+- **Testing Framework**: 398 tests with 100% success rate and comprehensive coverage
 - **Comprehensive Benchmarking**: Full performance testing suite
 
 ### ✅ **Phase 2 - Advanced Features Complete**
@@ -1023,7 +1024,7 @@ Current codebase status (as of latest verification):
 
 ```bash
 # Clone the repository
-git clone https://github.com/infinilabs/infini-zip-rs.git
+git clone https://github.com/infinilabs/infini-zip-rs
 cd infini-zip-rs
 
 # Build in debug mode (fast compilation, slower runtime)
@@ -1095,7 +1096,7 @@ cargo build --no-default-features --features="simd,mmap"
 
 The project includes comprehensive testing with **95%+ code coverage**:
 
-#### Unit Tests (211 tests)
+#### Unit Tests (398 passing tests)
 ```bash
 # Run all unit tests
 cargo test
@@ -1485,7 +1486,7 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guid
 ### Development Workflow
 ```bash
 # 1. Fork and clone
-git clone https://github.com/your-username/infini-zip-rs.git
+git clone https://github.com/your-username/infini-zip-rs
 
 # 2. Create feature branch
 git checkout -b feature/new-feature

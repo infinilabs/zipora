@@ -2,6 +2,7 @@
 name = "infini-zip"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.75"
 authors = ["InfiniLabs"]
 description = "High-performance data structures and compression algorithms with fiber-based concurrency and real-time compression (Rust port of topling-zip)"
 license = "BSD-3-Clause"
