@@ -240,6 +240,7 @@ pub struct AsyncFileStore {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 struct FileMetadata {
     size: usize,
     file_path: PathBuf,

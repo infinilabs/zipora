@@ -175,6 +175,7 @@ impl RansEncoder {
 #[derive(Debug)]
 pub struct RansDecoder {
     symbols: [RansSymbol; 256],
+    #[allow(dead_code)]
     cumulative: [u32; 257],
     total_freq: u32,
 }

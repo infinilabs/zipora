@@ -140,6 +140,7 @@ impl<S: BlobStore> HuffmanBlobStore<S> {
     }
 
     /// Decompress data using Huffman coding
+    #[allow(dead_code)]
     fn decompress_data(&mut self, compressed: &[u8], original_length: usize) -> Result<Vec<u8>> {
         let start = std::time::Instant::now();
 

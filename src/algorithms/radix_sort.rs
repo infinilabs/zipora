@@ -154,7 +154,7 @@ impl RadixSort {
         let mut buffer = vec![0u32; data.len()];
         let mut counts = vec![0usize; radix];
 
-        let max_passes = (32 + self.config.radix_bits - 1) / self.config.radix_bits;
+        let max_passes = 32_usize.div_ceil(self.config.radix_bits);
 
         for pass in 0..max_passes {
             let shift = pass * self.config.radix_bits;

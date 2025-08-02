@@ -267,6 +267,7 @@ pub struct BumpVec<'a, T> {
     ptr: NonNull<T>,
     len: usize,
     capacity: usize,
+    #[allow(dead_code)]
     allocator: &'a BumpAllocator,
 }
 

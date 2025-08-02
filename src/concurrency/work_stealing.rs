@@ -241,6 +241,7 @@ struct ExecutorStatsInner {
     total_execution_time_us: AtomicUsize,
 }
 
+#[allow(dead_code)]
 struct WorkerThread {
     id: usize,
     handle: Option<JoinHandle<()>>,

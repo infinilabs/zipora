@@ -62,6 +62,7 @@ impl CompressionProfile {
 
 /// Performance measurement for a compression operation
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct PerformanceMeasurement {
     algorithm: Algorithm,
     input_size: usize,
@@ -361,6 +362,7 @@ impl AdaptiveCompressor {
     }
 
     /// Switch to a new algorithm
+    #[allow(dead_code)]
     fn switch_algorithm(&mut self, algorithm: Algorithm) -> Result<()> {
         let new_compressor = CompressorFactory::create(algorithm, None)?;
 

@@ -1032,7 +1032,7 @@ mod tests {
             // Sequential bytes
             (0..64).map(|i| (i % 256) as u8).collect::<Vec<_>>(),
             // Random-like pattern
-            vec![0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0].repeat(8),
+            [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0].repeat(8),
         ];
 
         for test_data in test_cases {

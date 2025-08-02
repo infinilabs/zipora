@@ -393,6 +393,7 @@ impl<T> Drop for PooledVec<T> {
 pub struct PooledBuffer {
     ptr: NonNull<u8>,
     len: usize,
+    #[allow(dead_code)]
     capacity: usize,
     pool: Arc<MemoryPool>,
 }
@@ -541,10 +542,8 @@ mod tests {
 
     #[test]
     fn test_global_pool_stats() {
-        let stats = get_global_pool_stats();
-        // Should not panic and have reasonable values
-        assert!(stats.alloc_count >= 0);
-        assert!(stats.dealloc_count >= 0);
+        let _stats = get_global_pool_stats();
+        // Should not panic and return valid stats
     }
 
     #[test]

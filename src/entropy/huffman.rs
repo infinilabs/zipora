@@ -162,7 +162,7 @@ impl HuffmanTree {
     }
 
     /// Get the root node for decoding
-    pub fn root(&self) -> Option<&HuffmanNode> {
+    fn root(&self) -> Option<&HuffmanNode> {
         self.root.as_ref()
     }
 

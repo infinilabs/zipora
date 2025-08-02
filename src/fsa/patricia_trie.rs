@@ -65,6 +65,7 @@ impl PatriciaNode {
     }
 
     /// Check if this node has any children
+    #[allow(dead_code)]
     fn has_children(&self) -> bool {
         !self.children.is_empty()
     }
@@ -80,6 +81,7 @@ impl PatriciaNode {
     }
 
     /// Remove a child node
+    #[allow(dead_code)]
     fn remove_child(&mut self, first_byte: u8) -> Option<usize> {
         self.children.remove(&first_byte)
     }
@@ -335,6 +337,7 @@ impl PatriciaTrie {
     }
 
     /// Calculate the maximum depth of the trie
+    #[allow(dead_code)]
     fn calculate_max_depth(&self, node_idx: usize) -> usize {
         let node = &self.nodes[node_idx];
 

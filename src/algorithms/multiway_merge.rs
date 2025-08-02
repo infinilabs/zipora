@@ -260,7 +260,7 @@ impl MultiWayMerge {
                 }
             }
 
-            if let Some(_) = min_item {
+            if min_item.is_some() {
                 // Take the minimum item
                 if let Some(item) = sources[min_source].next() {
                     result.push(item);

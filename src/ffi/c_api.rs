@@ -6,7 +6,9 @@
 use super::{types::*, CResult};
 use crate::blob_store::traits::BlobStore;
 use std::cell::RefCell;
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
+#[cfg(test)]
+use std::ffi::CStr;
 use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
 use std::sync::Mutex;
@@ -39,6 +41,7 @@ fn set_last_error(msg: &str) {
 }
 
 /// Convert CResult to error message
+#[allow(dead_code)]
 fn cresult_to_error_msg(result: CResult) -> &'static str {
     match result {
         CResult::Success => "Success",
@@ -649,7 +652,7 @@ mod tests {
             let c_str = unsafe { CStr::from_ptr(msg) };
             if let Ok(str_slice) = c_str.to_str() {
                 unsafe {
-                    CALLBACK_MESSAGE = Some(str_slice.to_string());
+                    std::ptr::addr_of_mut!(CALLBACK_MESSAGE).write(Some(str_slice.to_string()));
                 }
             }
         }
@@ -660,28 +663,28 @@ mod tests {
 
             // Reset callback state
             CALLBACK_CALLED.store(false, Ordering::SeqCst);
-            CALLBACK_MESSAGE = None;
+            std::ptr::addr_of_mut!(CALLBACK_MESSAGE).write(None);
 
             // Trigger an error by setting one directly
             set_last_error("Test callback message");
 
             // Check that callback was called
             assert!(CALLBACK_CALLED.load(Ordering::SeqCst));
-            assert!(CALLBACK_MESSAGE.is_some());
-            assert_eq!(CALLBACK_MESSAGE.as_ref().unwrap(), "Test callback message");
+            assert!(std::ptr::addr_of!(CALLBACK_MESSAGE).read().is_some());
+            assert_eq!(std::ptr::addr_of!(CALLBACK_MESSAGE).read().as_ref().unwrap(), "Test callback message");
 
             // Clear the callback
             infini_zip_set_error_callback(None);
 
             // Reset state and trigger another error
             CALLBACK_CALLED.store(false, Ordering::SeqCst);
-            CALLBACK_MESSAGE = None;
+            std::ptr::addr_of_mut!(CALLBACK_MESSAGE).write(None);
 
             set_last_error("Another test message");
 
             // Callback should not have been called this time
             assert!(!CALLBACK_CALLED.load(Ordering::SeqCst));
-            assert!(CALLBACK_MESSAGE.is_none());
+            assert!(std::ptr::addr_of!(CALLBACK_MESSAGE).read().is_none());
         }
     }
 

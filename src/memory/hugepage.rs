@@ -41,6 +41,7 @@ static HUGEPAGE_COUNT: AtomicUsize = AtomicUsize::new(0);
 static HUGEPAGE_ALLOCATIONS: Mutex<Vec<HugePageAllocation>> = Mutex::new(Vec::new());
 
 #[cfg(target_os = "linux")]
+#[allow(dead_code)]
 struct HugePageAllocation {
     ptr: *mut u8,
     size: usize,
@@ -544,8 +545,8 @@ mod tests {
 
     #[test]
     fn test_hugepage_count() {
-        let count = get_hugepage_count();
-        assert!(count >= 0); // Should not panic
+        let _count = get_hugepage_count();
+        // Function should not panic and returns valid usize
     }
 
     // Note: Actual hugepage allocation tests are not included here because

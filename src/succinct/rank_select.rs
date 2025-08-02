@@ -480,14 +480,12 @@ mod tests {
             assert_eq!(
                 rs256.rank1(pos),
                 rs_se.rank1(pos),
-                "Rank1 mismatch at pos {}",
-                pos
+                "Rank1 mismatch at pos {pos}"
             );
             assert_eq!(
                 rs256.rank0(pos),
                 rs_se.rank0(pos),
-                "Rank0 mismatch at pos {}",
-                pos
+                "Rank0 mismatch at pos {pos}"
             );
         }
     }
