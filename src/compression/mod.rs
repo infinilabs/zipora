@@ -11,7 +11,7 @@ pub use adaptive::{AdaptiveCompressor, CompressionProfile, AdaptiveConfig};
 pub use realtime::{RealtimeCompressor, RealtimeConfig, CompressionMode};
 
 use crate::error::{ToplingError, Result};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Compression algorithm types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -224,7 +224,7 @@ impl Compressor for NoCompressor {
 pub struct Lz4Compressor;
 
 impl Compressor for Lz4Compressor {
-    fn compress(&self, data: &[u8]) -> Result<Vec<u8>> {
+    fn compress(&self, #[cfg_attr(not(feature = "lz4"), allow(unused_variables))] data: &[u8]) -> Result<Vec<u8>> {
         #[cfg(feature = "lz4")]
         {
             lz4_flex::compress_prepend_size(data)
@@ -236,7 +236,7 @@ impl Compressor for Lz4Compressor {
         }
     }
     
-    fn decompress(&self, data: &[u8]) -> Result<Vec<u8>> {
+    fn decompress(&self, #[cfg_attr(not(feature = "lz4"), allow(unused_variables))] data: &[u8]) -> Result<Vec<u8>> {
         #[cfg(feature = "lz4")]
         {
             lz4_flex::decompress_size_prepended(data)

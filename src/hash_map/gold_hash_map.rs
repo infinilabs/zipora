@@ -329,12 +329,6 @@ where
     {
         match self.find_position(key) {
             FindResult::Found { bucket_index, entry_index } => {
-                // Mark bucket as empty
-                self.buckets[bucket_index] = BucketEntry {
-                    entry_index: EMPTY_BUCKET,
-                    cached_hash: 0,
-                };
-
                 // Extract the entry value before swapping
                 let removed_value = if entry_index == self.entries.len() - 1 {
                     // Last entry, just pop it
@@ -349,6 +343,12 @@ where
                     self.update_bucket_for_moved_entry(self.entries.len(), entry_index);
                     
                     removed_entry.value
+                };
+
+                // Now mark the bucket as empty - this is safe because we've handled entry compaction
+                self.buckets[bucket_index] = BucketEntry {
+                    entry_index: EMPTY_BUCKET,
+                    cached_hash: 0,
                 };
 
                 self.len -= 1;

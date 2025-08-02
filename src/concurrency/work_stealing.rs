@@ -6,9 +6,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 /// A task that can be executed by the work-stealing scheduler
@@ -573,7 +571,7 @@ mod tests {
     #[tokio::test]
     async fn test_task_stealing() {
         let queue1 = WorkStealingQueue::new(0, 100);
-        let queue2 = WorkStealingQueue::new(1, 100);
+        let _queue2 = WorkStealingQueue::new(1, 100);
         
         // Add stealable and non-stealable tasks
         let stealable = Box::new(ClosureTask::new(|| Box::pin(async { Ok(()) })).with_stealable(true));

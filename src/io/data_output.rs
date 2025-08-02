@@ -222,7 +222,7 @@ impl<W: Write> DataOutput for WriterDataOutput<W> {
     }
     
     fn write_var_int(&mut self, value: u64) -> Result<()> {
-        let start_bytes = self.bytes_written;
+        let _start_bytes = self.bytes_written;
         VarInt::write_to(self, value)?;
         Ok(())
     }

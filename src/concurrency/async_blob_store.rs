@@ -1,6 +1,6 @@
 //! Asynchronous blob storage implementations
 
-use crate::blob_store::{BlobStore, BlobStoreStats};
+use crate::blob_store::BlobStoreStats;
 use crate::RecordId;
 use crate::error::{ToplingError, Result};
 use std::collections::HashMap;
@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::fs::{File, OpenOptions};
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex, RwLock};
 
 /// Asynchronous blob store trait
@@ -98,7 +98,7 @@ impl Default for AsyncMemoryBlobStore {
 #[async_trait::async_trait]
 impl AsyncBlobStore for AsyncMemoryBlobStore {
     async fn put(&self, data: &[u8]) -> Result<RecordId> {
-        let start_time = Instant::now();
+        let _start_time = Instant::now();
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) as RecordId;
         
         {
@@ -115,7 +115,7 @@ impl AsyncBlobStore for AsyncMemoryBlobStore {
     }
     
     async fn get(&self, id: RecordId) -> Result<Vec<u8>> {
-        let start_time = Instant::now();
+        let _start_time = Instant::now();
         
         let result = {
             let store = self.data.read().await;
@@ -139,14 +139,14 @@ impl AsyncBlobStore for AsyncMemoryBlobStore {
     }
     
     async fn remove(&self, id: RecordId) -> Result<()> {
-        let start_time = Instant::now();
+        let _start_time = Instant::now();
         
         let removed = {
             let mut store = self.data.write().await;
             store.remove(&id)
         };
         
-        let mut stats = self.stats.write().await;
+        let _stats = self.stats.write().await;
         
         
         
@@ -183,7 +183,7 @@ impl AsyncBlobStore for AsyncMemoryBlobStore {
     }
     
     async fn put_batch(&self, data: Vec<&[u8]>) -> Result<Vec<RecordId>> {
-        let start_time = Instant::now();
+        let _start_time = Instant::now();
         let mut ids = Vec::with_capacity(data.len());
         let mut total_bytes = 0;
         
@@ -206,7 +206,7 @@ impl AsyncBlobStore for AsyncMemoryBlobStore {
     }
     
     async fn get_batch(&self, ids: Vec<RecordId>) -> Result<Vec<Vec<u8>>> {
-        let start_time = Instant::now();
+        let _start_time = Instant::now();
         let mut results = Vec::with_capacity(ids.len());
         let mut total_bytes = 0;
         let mut misses = 0;
@@ -280,7 +280,7 @@ impl AsyncFileStore {
 #[async_trait::async_trait]
 impl AsyncBlobStore for AsyncFileStore {
     async fn put(&self, data: &[u8]) -> Result<RecordId> {
-        let start_time = Instant::now();
+        let _start_time = Instant::now();
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) as RecordId;
         let file_path = self.get_file_path(id);
         
@@ -321,7 +321,7 @@ impl AsyncBlobStore for AsyncFileStore {
     }
     
     async fn get(&self, id: RecordId) -> Result<Vec<u8>> {
-        let start_time = Instant::now();
+        let _start_time = Instant::now();
         let file_path = self.get_file_path(id);
         
         // Check if file exists in metadata
@@ -361,7 +361,7 @@ impl AsyncBlobStore for AsyncFileStore {
     }
     
     async fn remove(&self, id: RecordId) -> Result<()> {
-        let start_time = Instant::now();
+        let _start_time = Instant::now();
         let file_path = self.get_file_path(id);
         
         // Remove from metadata first
@@ -380,7 +380,7 @@ impl AsyncBlobStore for AsyncFileStore {
         
         // Update statistics
         {
-            let mut stats = self.stats.write().await;
+            let _stats = self.stats.write().await;
             
             
         }

@@ -5,9 +5,9 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::task::{Context, Poll, Waker};
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, Mutex, Semaphore};
+use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
 
 /// Configuration for the fiber pool

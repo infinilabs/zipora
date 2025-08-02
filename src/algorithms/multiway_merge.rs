@@ -6,7 +6,7 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::time::Instant;
-use crate::error::{ToplingError, Result};
+use crate::error::Result;
 use crate::algorithms::{Algorithm, AlgorithmStats};
 
 /// Configuration for multi-way merge operations

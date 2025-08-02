@@ -112,7 +112,7 @@ where
     T: Send + 'static,
 {
     let fiber = Fiber::new(future);
-    let id = fiber.id();
+    let _id = fiber.id();
     
     // Submit to the global executor
     WorkStealingExecutor::spawn(fiber)

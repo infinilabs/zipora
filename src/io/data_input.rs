@@ -3,7 +3,7 @@
 //! This module provides traits and implementations for reading various data types
 //! from different sources including byte slices, files, and memory-mapped regions.
 
-use std::io::{self, Read, Cursor};
+use std::io::Read;
 use std::path::Path;
 use std::fs::File;
 

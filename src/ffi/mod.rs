@@ -25,7 +25,7 @@ pub use c_api::*;
 // Basic error handling for C FFI
 #[cfg(feature = "ffi")]
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CResult {
     Success = 0,
     InvalidInput = -1,

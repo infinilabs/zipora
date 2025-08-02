@@ -4,11 +4,10 @@
 //! as a separate file on disk. It's suitable for scenarios where persistence
 //! is required but advanced features like compression are not needed.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::collections::HashSet;
 
 use crate::blob_store::traits::{BlobStore, BlobStoreStats, IterableBlobStore, BatchBlobStore};
 use crate::error::{Result, ToplingError};

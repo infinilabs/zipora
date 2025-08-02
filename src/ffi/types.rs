@@ -3,7 +3,7 @@
 //! This module defines opaque types and structures that can be safely
 //! passed across the C FFI boundary.
 
-use std::os::raw::{c_char, c_int, c_uint, c_void};
+use std::os::raw::{c_char, c_int};
 
 /// Opaque handle for FastVec
 #[repr(C)]

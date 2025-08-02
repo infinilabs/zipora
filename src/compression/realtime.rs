@@ -1,6 +1,6 @@
 //! Real-time compression with strict latency guarantees
 
-use super::{Algorithm, Compressor, CompressorFactory, PerformanceRequirements, CompressionStats};
+use super::{Algorithm, Compressor, CompressorFactory, CompressionStats};
 use crate::error::{ToplingError, Result};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};

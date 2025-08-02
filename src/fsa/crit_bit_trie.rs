@@ -16,7 +16,6 @@ use crate::fsa::traits::{
     StatisticsProvider, TrieStats, PrefixIterable
 };
 use crate::{StateId, FastVec};
-use std::collections::VecDeque;
 
 /// Node in a critical-bit trie
 #[derive(Debug, Clone)]
@@ -350,7 +349,7 @@ impl FiniteStateAutomaton for CritBitTrie {
         }
     }
     
-    fn transition(&self, state: StateId, symbol: u8) -> Option<StateId> {
+    fn transition(&self, state: StateId, _symbol: u8) -> Option<StateId> {
         let node = self.nodes.get(state as usize)?;
         
         if node.is_leaf() {
@@ -363,7 +362,7 @@ impl FiniteStateAutomaton for CritBitTrie {
         None
     }
     
-    fn transitions(&self, state: StateId) -> Box<dyn Iterator<Item = (u8, StateId)> + '_> {
+    fn transitions(&self, _state: StateId) -> Box<dyn Iterator<Item = (u8, StateId)> + '_> {
         // Critical-bit tries don't have direct symbol transitions
         // This is a fundamental mismatch with the FSA interface
         Box::new(std::iter::empty())
@@ -535,7 +534,7 @@ impl CritBitTrie {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fsa::traits::{Trie, FiniteStateAutomaton, StateInspectable, PrefixIterable};
+    use crate::fsa::traits::{Trie, PrefixIterable};
 
     #[test]
     fn test_crit_bit_trie_basic_operations() {
@@ -563,13 +562,13 @@ mod tests {
     #[test]
     fn test_crit_bit_trie_critical_bit_calculation() {
         // Test critical bit finding
-        let (byte_pos, bit_pos) = CritBitTrie::find_critical_bit(b"cat", b"car");
+        let (byte_pos, _bit_pos) = CritBitTrie::find_critical_bit(b"cat", b"car");
         assert_eq!(byte_pos, 2); // Third byte differs
         
-        let (byte_pos, bit_pos) = CritBitTrie::find_critical_bit(b"hello", b"help");
+        let (byte_pos, _bit_pos) = CritBitTrie::find_critical_bit(b"hello", b"help");
         assert_eq!(byte_pos, 3); // Fourth byte differs
         
-        let (byte_pos, bit_pos) = CritBitTrie::find_critical_bit(b"a", b"ab");
+        let (byte_pos, _bit_pos) = CritBitTrie::find_critical_bit(b"a", b"ab");
         assert_eq!(byte_pos, 1); // Length difference
     }
 
@@ -717,7 +716,7 @@ mod tests {
 
     #[test]
     fn test_crit_bit_trie_various_prefix_relationships() {
-        let mut trie = CritBitTrie::new();
+        let _trie = CritBitTrie::new();
         
         // Test various prefix relationships
         let test_cases = [

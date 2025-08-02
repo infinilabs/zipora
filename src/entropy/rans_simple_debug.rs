@@ -1,6 +1,6 @@
 //! Ultra-simple rANS for debugging the core issue
 
-use crate::error::{Result, ToplingError};
+use crate::error::Result;
 
 /// Extremely simple rANS for debugging
 pub fn simple_rans_test() -> Result<()> {

@@ -1,10 +1,7 @@
 //! C FFI bindings for container types
 
 use super::types::*;
-use crate::containers::{FastVec};
-use crate::error::Result;
 use crate::ffi::CResult;
-use std::os::raw::c_void;
 
 /// Create a new FastVec
 #[no_mangle]

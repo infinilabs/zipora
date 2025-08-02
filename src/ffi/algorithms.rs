@@ -2,9 +2,7 @@
 
 use super::types::*;
 use crate::algorithms::{SuffixArray, RadixSort};
-use crate::error::Result;
 use crate::ffi::CResult;
-use std::os::raw::c_void;
 
 /// Create a new suffix array
 #[no_mangle]

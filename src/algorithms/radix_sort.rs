@@ -5,7 +5,7 @@
 
 use std::time::Instant;
 use rayon::prelude::*;
-use crate::error::{ToplingError, Result};
+use crate::error::Result;
 use crate::algorithms::{Algorithm, AlgorithmStats};
 
 /// Configuration for radix sort
@@ -199,7 +199,7 @@ impl RadixSort {
         let chunk_size = (data.len() + num_threads - 1) / num_threads; // Round up
         
         data.par_chunks_mut(chunk_size).for_each(|chunk| {
-            let mut temp_sorter = RadixSort::with_config(RadixSortConfig {
+            let temp_sorter = RadixSort::with_config(RadixSortConfig {
                 use_parallel: false,
                 ..self.config.clone()
             });
@@ -262,7 +262,7 @@ impl RadixSort {
         let chunk_size = (data.len() + num_threads - 1) / num_threads; // Round up
         
         data.par_chunks_mut(chunk_size).for_each(|chunk| {
-            let mut temp_sorter = RadixSort::with_config(RadixSortConfig {
+            let temp_sorter = RadixSort::with_config(RadixSortConfig {
                 use_parallel: false,
                 ..self.config.clone()
             });
@@ -456,7 +456,7 @@ where
         }
         
         // Extract keys and create index mapping
-        let mut indices: Vec<(u64, usize)> = data
+        let indices: Vec<(u64, usize)> = data
             .iter()
             .enumerate()
             .map(|(i, (k, _))| ((*k).into(), i))

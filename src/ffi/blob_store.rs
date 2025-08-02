@@ -1,10 +1,8 @@
 //! C FFI bindings for blob store types
 
 use super::types::*;
-use crate::blob_store::{BlobStore, MemoryBlobStore};
-use crate::error::Result;
+use crate::blob_store::BlobStore;
 use crate::ffi::CResult;
-use std::os::raw::c_void;
 
 /// Create a new memory blob store
 #[no_mangle]

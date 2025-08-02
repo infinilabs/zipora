@@ -1,7 +1,7 @@
 //! Adaptive compression that automatically selects the best algorithm
 
 use super::{Algorithm, Compressor, CompressorFactory, PerformanceRequirements, CompressionStats};
-use crate::error::{ToplingError, Result};
+use crate::error::Result;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -300,7 +300,7 @@ impl AdaptiveCompressor {
     }
     
     /// Test a new algorithm on sample data
-    fn test_new_algorithm(&self, sample_data: &[u8]) -> Result<Algorithm> {
+    fn test_new_algorithm(&self, _sample_data: &[u8]) -> Result<Algorithm> {
         let available = CompressorFactory::available_algorithms();
         let current = self.current_algorithm;
         
@@ -476,7 +476,7 @@ mod tests {
     
     #[test]
     fn test_compression_profile() {
-        let mut profile = CompressionProfile::new("text".to_string(), Algorithm::Lz4);
+        let profile = CompressionProfile::new("text".to_string(), Algorithm::Lz4);
         assert_eq!(profile.confidence, 0.0);
         assert_eq!(profile.data_type, "text");
         assert_eq!(profile.preferred_algorithm, Algorithm::Lz4);

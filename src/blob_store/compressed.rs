@@ -3,7 +3,6 @@
 //! This module provides blob store implementations with various compression
 //! algorithms including ZSTD, LZ4, and others for space-efficient storage.
 
-use std::io::{self, Read, Write};
 
 use crate::blob_store::traits::{
     BlobStore, BlobStoreStats, IterableBlobStore, BatchBlobStore,

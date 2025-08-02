@@ -234,7 +234,7 @@ impl HuffmanTree {
             }
             
             let mut code = Vec::with_capacity(code_length);
-            let mut bit_index = 0;
+            let _bit_index = 0;
             
             for i in 0..code_length {
                 let byte_offset = i / 8;
