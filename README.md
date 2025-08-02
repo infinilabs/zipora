@@ -746,6 +746,52 @@ println!("Compressions performed: {}", stats.compressions);
 println!("Average compression time: {:.1} μs", stats.avg_compression_time_us());
 ```
 
+### Unified Compression Framework
+
+The compression framework provides a unified interface for different compression algorithms with automatic algorithm selection:
+
+```rust
+use infini_zip::{
+    CompressorFactory, Algorithm, PerformanceRequirements, 
+    HuffmanCompressor, Compressor
+};
+use std::time::Duration;
+
+// Create specific compressors
+let training_data = b"sample data for building Huffman tree";
+let huffman_compressor = HuffmanCompressor::new(training_data).unwrap();
+
+// Test compression with unified interface
+let test_data = b"hello world! this will be compressed using the trained Huffman tree.";
+let compressed = huffman_compressor.compress(test_data).unwrap();
+let decompressed = huffman_compressor.decompress(&compressed).unwrap();
+assert_eq!(test_data, decompressed.as_slice());
+println!("Algorithm: {:?}", huffman_compressor.algorithm());
+
+// Use the factory for algorithm selection
+let performance_reqs = PerformanceRequirements {
+    max_latency: Duration::from_millis(100),
+    speed_vs_quality: 0.7, // Favor quality over speed
+    max_memory: 1024 * 1024, // 1MB max memory
+};
+
+let data = b"data to be compressed with optimal algorithm selection";
+let best_algorithm = CompressorFactory::select_best(&performance_reqs, data);
+println!("Selected algorithm: {:?}", best_algorithm);
+
+// Create compressor from factory
+let compressor = CompressorFactory::create(best_algorithm, Some(training_data)).unwrap();
+let compressed = compressor.compress(data).unwrap();
+let decompressed = compressor.decompress(&compressed).unwrap();
+assert_eq!(data, decompressed.as_slice());
+
+// Available algorithms include:
+// - Algorithm::None (no compression)
+// - Algorithm::Lz4 (fast compression)
+// - Algorithm::Zstd(level) (high compression ratios)
+// - Algorithm::Huffman (optimal prefix-free coding with training data)
+```
+
 ### Automata & Tries
 
 #### Advanced Trie Implementations

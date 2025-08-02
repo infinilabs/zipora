@@ -11,6 +11,7 @@ pub use adaptive::{AdaptiveCompressor, CompressionProfile, AdaptiveConfig};
 pub use realtime::{RealtimeCompressor, RealtimeConfig, CompressionMode};
 
 use crate::error::{ToplingError, Result};
+use crate::entropy::huffman::{HuffmanEncoder, HuffmanDecoder, HuffmanTree};
 use std::time::Duration;
 
 /// Compression algorithm types
@@ -282,26 +283,83 @@ impl Compressor for ZstdCompressor {
 
 /// Huffman compressor wrapper
 pub struct HuffmanCompressor {
-    // For now, we'll use a placeholder since HuffmanEncoder requires different API
-    _phantom: std::marker::PhantomData<()>,
+    encoder: HuffmanEncoder,
+    tree_data: Vec<u8>,
 }
 
 impl HuffmanCompressor {
-    pub fn new(_data: &[u8]) -> Result<Self> {
-        // Placeholder implementation until HuffmanEncoder is available
-        Ok(Self { _phantom: std::marker::PhantomData })
+    pub fn new(training_data: &[u8]) -> Result<Self> {
+        let encoder = HuffmanEncoder::new(training_data)?;
+        let tree_data = encoder.tree().serialize();
+        Ok(Self { encoder, tree_data })
+    }
+    
+    /// Get the serialized tree data for storage with compressed data
+    pub fn tree_data(&self) -> &[u8] {
+        &self.tree_data
     }
 }
 
 impl Compressor for HuffmanCompressor {
     fn compress(&self, data: &[u8]) -> Result<Vec<u8>> {
-        // Placeholder implementation
-        Ok(data.to_vec())
+        if data.is_empty() {
+            return Ok(Vec::new());
+        }
+        
+        // Encode the data
+        let compressed_data = self.encoder.encode(data)?;
+        
+        // Create output with header: tree_size(4) + tree_data + original_size(4) + compressed_data
+        let mut result = Vec::new();
+        
+        // Write tree size and tree data
+        let tree_size = self.tree_data.len() as u32;
+        result.extend_from_slice(&tree_size.to_le_bytes());
+        result.extend_from_slice(&self.tree_data);
+        
+        // Write original data size
+        let original_size = data.len() as u32;
+        result.extend_from_slice(&original_size.to_le_bytes());
+        
+        // Write compressed data
+        result.extend_from_slice(&compressed_data);
+        
+        Ok(result)
     }
     
     fn decompress(&self, data: &[u8]) -> Result<Vec<u8>> {
-        // Placeholder implementation
-        Ok(data.to_vec())
+        if data.is_empty() {
+            return Ok(Vec::new());
+        }
+        
+        if data.len() < 8 {
+            return Err(ToplingError::invalid_data("Huffman compressed data too short"));
+        }
+        
+        // Read tree size
+        let tree_size = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+        
+        if data.len() < 8 + tree_size {
+            return Err(ToplingError::invalid_data("Huffman compressed data truncated"));
+        }
+        
+        // Read tree data and reconstruct tree
+        let tree_data = &data[4..4 + tree_size];
+        let tree = HuffmanTree::deserialize(tree_data)?;
+        let decoder = HuffmanDecoder::new(tree);
+        
+        // Read original data size
+        let size_offset = 4 + tree_size;
+        let original_size = u32::from_le_bytes([
+            data[size_offset],
+            data[size_offset + 1],
+            data[size_offset + 2],
+            data[size_offset + 3],
+        ]) as usize;
+        
+        // Read and decode compressed data
+        let compressed_data = &data[size_offset + 4..];
+        decoder.decode(compressed_data, original_size)
     }
     
     fn algorithm(&self) -> Algorithm {
@@ -486,6 +544,105 @@ mod tests {
         assert!(matches!(algorithm, Algorithm::None | Algorithm::Lz4));
     }
     
+    #[test]
+    fn test_huffman_compressor() {
+        let training_data = b"hello world! this is sample training data for huffman compression.";
+        let compressor = HuffmanCompressor::new(training_data).unwrap();
+        
+        // Test basic compression/decompression
+        let test_data = b"hello world! this uses the same patterns as training.";
+        let compressed = compressor.compress(test_data).unwrap();
+        let decompressed = compressor.decompress(&compressed).unwrap();
+        
+        assert_eq!(decompressed, test_data);
+        assert_eq!(compressor.algorithm(), Algorithm::Huffman);
+        
+        // Compressed data should include header with tree and original size
+        assert!(compressed.len() >= 8); // At least tree_size(4) + original_size(4)
+    }
+    
+    #[test]
+    fn test_huffman_compressor_empty_data() {
+        let training_data = b"sample data";
+        let compressor = HuffmanCompressor::new(training_data).unwrap();
+        
+        let empty_data = b"";
+        let compressed = compressor.compress(empty_data).unwrap();
+        let decompressed = compressor.decompress(&compressed).unwrap();
+        
+        assert_eq!(decompressed, empty_data);
+        assert!(compressed.is_empty());
+    }
+    
+    #[test]
+    fn test_huffman_compressor_single_symbol() {
+        let training_data = b"aaaaaaaaaa"; // Single symbol
+        let compressor = HuffmanCompressor::new(training_data).unwrap();
+        
+        let test_data = b"aaaa";
+        let compressed = compressor.compress(test_data).unwrap();
+        let decompressed = compressor.decompress(&compressed).unwrap();
+        
+        assert_eq!(decompressed, test_data);
+    }
+    
+    #[test]
+    fn test_huffman_compressor_high_entropy() {
+        // Use high-entropy data for training
+        let training_data: Vec<u8> = (0..=255).cycle().take(1000).collect();
+        let compressor = HuffmanCompressor::new(&training_data).unwrap();
+        
+        let test_data: Vec<u8> = (0..100).map(|i| (i * 7) as u8).collect();
+        let compressed = compressor.compress(&test_data).unwrap();
+        let decompressed = compressor.decompress(&compressed).unwrap();
+        
+        assert_eq!(decompressed, test_data);
+    }
+    
+    #[test]
+    fn test_huffman_compressor_repeated_patterns() {
+        let training_data = b"abcdefghijklmnopqrstuvwxyz";
+        let compressor = HuffmanCompressor::new(training_data).unwrap();
+        
+        // Test data with repeated patterns (should compress well)
+        let test_data = b"aaaaaabbbbbbccccccdddddd";
+        let compressed = compressor.compress(test_data).unwrap();
+        let decompressed = compressor.decompress(&compressed).unwrap();
+        
+        assert_eq!(decompressed, test_data);
+        
+        // Should achieve some compression due to repeated patterns
+        // Note: actual compression depends on how well test data matches training data distribution
+    }
+    
+    #[test]
+    fn test_huffman_compressor_invalid_compressed_data() {
+        let training_data = b"sample data";
+        let compressor = HuffmanCompressor::new(training_data).unwrap();
+        
+        // Test with truncated data
+        let invalid_data = b"abc"; // Too short for valid compressed data
+        let result = compressor.decompress(invalid_data);
+        assert!(result.is_err());
+        
+        // Test with malformed header
+        let malformed_data = vec![1, 0, 0, 0, 255]; // tree_size=1, but insufficient data
+        let result = compressor.decompress(&malformed_data);
+        assert!(result.is_err());
+    }
+    
+    #[test]
+    fn test_huffman_compressor_tree_data() {
+        let training_data = b"hello world";
+        let compressor = HuffmanCompressor::new(training_data).unwrap();
+        
+        let tree_data = compressor.tree_data();
+        assert!(!tree_data.is_empty());
+        
+        // Tree data should be serialized Huffman tree
+        assert!(tree_data.len() >= 2); // At least symbol count
+    }
+
     #[test]
     #[cfg(feature = "lz4")]
     fn test_compressor_suitability() {

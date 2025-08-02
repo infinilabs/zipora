@@ -234,7 +234,6 @@ impl HuffmanTree {
             }
             
             let mut code = Vec::with_capacity(code_length);
-            let _bit_index = 0;
             
             for i in 0..code_length {
                 let byte_offset = i / 8;
@@ -248,17 +247,155 @@ impl HuffmanTree {
             offset += byte_count;
         }
         
-        // Reconstruct tree from codes (simplified approach)
-        let mut frequencies = [0u32; 256];
-        for &symbol in codes.keys() {
-            frequencies[symbol as usize] = 1; // Use dummy frequencies
-        }
+        // Build decoding tree directly from codes
+        let root = Self::build_decoding_tree_from_codes(&codes)?;
         
         Ok(Self {
-            root: None, // Would need full reconstruction for decoding
+            root,
             codes,
             max_code_length,
         })
+    }
+    
+    /// Build a decoding tree directly from symbol->code mappings
+    fn build_decoding_tree_from_codes(codes: &HashMap<u8, Vec<bool>>) -> Result<Option<HuffmanNode>> {
+        if codes.is_empty() {
+            return Ok(None);
+        }
+        
+        // Special case: single symbol
+        if codes.len() == 1 {
+            let (&symbol, _) = codes.iter().next().unwrap();
+            return Ok(Some(HuffmanNode::Leaf {
+                symbol,
+                frequency: 1, // Dummy frequency for leaf node
+            }));
+        }
+        
+        // Create root as internal node to start
+        let mut root = HuffmanNode::Internal {
+            frequency: 0,
+            left: Box::new(HuffmanNode::Leaf { symbol: 0, frequency: 0 }),
+            right: Box::new(HuffmanNode::Leaf { symbol: 0, frequency: 0 }),
+        };
+        
+        // Insert each symbol->code mapping into the tree
+        for (&symbol, code) in codes {
+            Self::insert_code_into_tree(&mut root, symbol, code)?;
+        }
+        
+        Ok(Some(root))
+    }
+    
+    
+    
+    /// Insert a symbol and its code into the decoding tree
+    fn insert_code_into_tree(node: &mut HuffmanNode, symbol: u8, code: &[bool]) -> Result<()> {
+        if code.is_empty() {
+            // Replace this node with a leaf
+            *node = HuffmanNode::Leaf {
+                symbol,
+                frequency: 1, // Dummy frequency
+            };
+            return Ok(());
+        }
+        
+        // Ensure this is an internal node
+        match node {
+            HuffmanNode::Leaf { frequency: 0, .. } => {
+                // This is a placeholder leaf, convert to internal node
+                let next_bit = code[0];
+                let remaining_code = &code[1..];
+                
+                if remaining_code.is_empty() {
+                    // Final bit, create leaf and keep placeholder
+                    let leaf = HuffmanNode::Leaf {
+                        symbol,
+                        frequency: 1,
+                    };
+                    let placeholder = HuffmanNode::Leaf {
+                        symbol: 0,
+                        frequency: 0,
+                    };
+                    
+                    if next_bit {
+                        *node = HuffmanNode::Internal {
+                            frequency: 0,
+                            left: Box::new(placeholder),
+                            right: Box::new(leaf),
+                        };
+                    } else {
+                        *node = HuffmanNode::Internal {
+                            frequency: 0,
+                            left: Box::new(leaf),
+                            right: Box::new(placeholder),
+                        };
+                    }
+                } else {
+                    // More bits, create internal structure and continue insertion
+                    let placeholder = HuffmanNode::Leaf {
+                        symbol: 0,
+                        frequency: 0,
+                    };
+                    
+                    if next_bit {
+                        // Create internal node with placeholder on left, continue on right
+                        let mut right_child = HuffmanNode::Leaf {
+                            symbol: 0,
+                            frequency: 0,
+                        };
+                        Self::insert_code_into_tree(&mut right_child, symbol, remaining_code)?;
+                        
+                        *node = HuffmanNode::Internal {
+                            frequency: 0,
+                            left: Box::new(placeholder),
+                            right: Box::new(right_child),
+                        };
+                    } else {
+                        // Create internal node with placeholder on right, continue on left
+                        let mut left_child = HuffmanNode::Leaf {
+                            symbol: 0,
+                            frequency: 0,
+                        };
+                        Self::insert_code_into_tree(&mut left_child, symbol, remaining_code)?;
+                        
+                        *node = HuffmanNode::Internal {
+                            frequency: 0,
+                            left: Box::new(left_child),
+                            right: Box::new(placeholder),
+                        };
+                    }
+                }
+                return Ok(());
+            }
+            HuffmanNode::Leaf { .. } => {
+                return Err(ToplingError::invalid_data("Code collision: trying to overwrite existing symbol"));
+            }
+            HuffmanNode::Internal { .. } => {
+                // Already internal, continue
+            }
+        }
+        
+        // Navigate to the correct child
+        match node {
+            HuffmanNode::Internal { left, right, .. } => {
+                let next_bit = code[0];
+                let remaining_code = &code[1..];
+                
+                if next_bit {
+                    // Go right
+                    Self::insert_code_into_tree(right, symbol, remaining_code)?;
+                } else {
+                    // Go left
+                    Self::insert_code_into_tree(left, symbol, remaining_code)?;
+                }
+            }
+            HuffmanNode::Leaf { .. } => {
+                return Err(ToplingError::invalid_data("Unexpected leaf node during tree construction"));
+            }
+        }
+        
+        Ok(())
     }
 }
 
@@ -374,7 +511,6 @@ impl HuffmanDecoder {
         
         let mut result = Vec::with_capacity(output_length);
         let mut current_node = root;
-        let mut bit_index = 0;
         
         for &byte in encoded_data {
             for bit_pos in 0..8 {
@@ -411,8 +547,6 @@ impl HuffmanDecoder {
                         };
                     }
                 }
-                
-                bit_index += 1;
             }
             
             if result.len() >= output_length {
