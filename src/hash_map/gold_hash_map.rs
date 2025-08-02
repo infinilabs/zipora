@@ -344,7 +344,7 @@ where
                     self.entries.pop().unwrap().value
                 } else {
                     // Need to maintain compactness by moving last entry to this position
-                    let last_entry_index = self.entries.len() - 1;  // Save the index before popping
+                    let last_entry_index = self.entries.len() - 1; // Save the index before popping
                     let last_entry = self.entries.pop().unwrap();
                     let removed_entry = mem::replace(&mut self.entries[entry_index], last_entry);
 

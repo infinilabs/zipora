@@ -11,8 +11,25 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  build-cpp:
+    name: Build C++ Wrapper
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    - name: Build C++ wrapper
+      run: |
+        cd cpp_benchmark
+        ./build.sh
+    - name: Upload C++ wrapper
+      uses: actions/upload-artifact@v3
+      with:
+        name: cpp-wrapper
+        path: cpp_benchmark/libtopling_zip_wrapper.so
+
   test:
     name: Test Suite
+    needs: build-cpp
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -28,6 +45,13 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+
+    - name: Download C++ wrapper
+      if: matrix.os == 'ubuntu-latest'
+      uses: actions/download-artifact@v3
+      with:
+        name: cpp-wrapper
+        path: cpp_benchmark
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@master
@@ -66,9 +90,21 @@ jobs:
       run: cargo build --all-features --verbose
 
     - name: Run tests
+      if: matrix.os == 'ubuntu-latest'
+      env:
+        LD_LIBRARY_PATH: ${{ github.workspace }}/cpp_benchmark
+      run: cargo test --verbose
+    - name: Run tests
+      if: matrix.os != 'ubuntu-latest'
       run: cargo test --verbose
 
     - name: Run tests with all features
+      if: matrix.os == 'ubuntu-latest'
+      env:
+        LD_LIBRARY_PATH: ${{ github.workspace }}/cpp_benchmark
+      run: cargo test --all-features --verbose
+    - name: Run tests with all features
+      if: matrix.os != 'ubuntu-latest'
       run: cargo test --all-features --verbose
 
     - name: Run doc tests
@@ -76,10 +112,17 @@ jobs:
 
   bench:
     name: Benchmarks
+    needs: build-cpp
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+
+    - name: Download C++ wrapper
+      uses: actions/download-artifact@v3
+      with:
+        name: cpp-wrapper
+        path: cpp_benchmark
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -99,6 +142,8 @@ jobs:
         key: ${{ runner.os }}-bench-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Run benchmarks (compile only)
+      env:
+        LD_LIBRARY_PATH: ${{ github.workspace }}/cpp_benchmark
       run: cargo bench --no-run
 
   coverage:
@@ -131,7 +176,7 @@ jobs:
         key: ${{ runner.os }}-coverage-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Generate coverage report
-      run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out xml
+      run: cargo tarpaulin --verbose --all-features --workspace --timeout 240 --out xml --test-threads 1
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
@@ -180,7 +225,7 @@ jobs:
         key: ${{ runner.os }}-minimal-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Install cargo-minimal-versions
-      run: cargo install cargo-minimal-versions
+      run: cargo install cargo-minimal-versions && cargo install cargo-hack
 
     - name: Check minimal versions
       run: cargo minimal-versions check
