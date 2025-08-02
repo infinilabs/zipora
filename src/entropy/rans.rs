@@ -5,7 +5,8 @@
 
 use crate::error::{Result, ToplingError};
 
-const RANS_L: u64 = 1 << 23;
+// Standard rANS constants for byte-based implementation
+const RANS_BYTE_L: u32 = 1 << 23;  // Lower bound: 8,388,608
 
 /// rANS state for encoding/decoding
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,7 +17,7 @@ pub struct RansState {
 impl RansState {
     /// Create new rANS state
     pub fn new() -> Self {
-        Self { state: RANS_L as u32 } // Initial state
+        Self { state: RANS_BYTE_L } // Initial state
     }
     
     /// Create from raw state value
@@ -68,8 +69,13 @@ impl RansEncoder {
     /// Create encoder from symbol frequencies  
     pub fn new(frequencies: &[u32; 256]) -> Result<Self> {
         let total_freq: u32 = frequencies.iter().sum();
+        // Allow zero frequency for empty data handling
         if total_freq == 0 {
-            return Err(ToplingError::invalid_data("No symbols with non-zero frequency"));
+            // Create a dummy encoder for empty data
+            return Ok(Self {
+                symbols: [RansSymbol::new(0, 0); 256],
+                total_freq: 0,
+            });
         }
         
         let mut symbols = [RansSymbol::new(0, 0); 256];
@@ -78,9 +84,7 @@ impl RansEncoder {
         // Build cumulative frequency table
         for (i, &freq) in frequencies.iter().enumerate() {
             symbols[i] = RansSymbol::new(cumulative, freq);
-            if freq > 0 {
-                cumulative += freq;
-            }
+            cumulative += freq;
         }
         
         Ok(Self {
@@ -97,25 +101,43 @@ impl RansEncoder {
             return Err(ToplingError::invalid_data(format!("Symbol {} not in frequency table", symbol)));
         }
         
-        let mut s = state.state as u64;
-        let freq = sym.freq as u64;
-        let total_freq = self.total_freq as u64;
+        let mut s = state.state;
+        let freq = sym.freq;
+        let total_freq = self.total_freq;
 
-        // Renormalize
-        let max_state = ((RANS_L >> 8) << 8) * total_freq;
-        while s >= max_state {
+        // Renormalize: output bytes when state gets too large
+        // Proper frequency-aware condition: state >= ((L >> 8) << 8) * freq
+        let max_state = ((RANS_BYTE_L as u64) << 8) / (total_freq as u64) * (freq as u64);
+        
+        while (s as u64) >= max_state {
             output.push((s & 0xFF) as u8);
             s >>= 8;
         }
         
-        // Encode
-        state.state = ((s / freq) * total_freq + (s % freq) + sym.start as u64) as u32;
+        // Encode using canonical rANS formula
+        // Use u64 arithmetic to prevent overflow
+        let s_u64 = s as u64;
+        let freq_u64 = freq as u64;
+        let total_freq_u64 = total_freq as u64;
+        let start_u64 = sym.start as u64;
+        
+        let new_state_u64 = ((s_u64 / freq_u64) * total_freq_u64) + (s_u64 % freq_u64) + start_u64;
+        let new_state = new_state_u64 as u32;
+        state.state = new_state;
         
         Ok(())
     }
     
     /// Encode data
     pub fn encode(&self, data: &[u8]) -> Result<Vec<u8>> {
+        // Handle empty data
+        if data.is_empty() {
+            let mut output = Vec::new();
+            let state = RansState::new();
+            output.extend_from_slice(&state.state.to_le_bytes());
+            return Ok(output);
+        }
+        
         let mut state = RansState::new();
         let mut output = Vec::new();
         
@@ -145,54 +167,52 @@ impl RansEncoder {
 #[derive(Debug)]
 pub struct RansDecoder {
     symbols: [RansSymbol; 256],
-    decode_table: Vec<u8>,
+    cumulative: [u32; 257],
     total_freq: u32,
 }
 
 impl RansDecoder {
     /// Create decoder from encoder
     pub fn new(encoder: &RansEncoder) -> Self {
-        let mut decode_table = vec![0u8; encoder.total_freq as usize];
-        
-        for (symbol, &sym_info) in encoder.symbols.iter().enumerate() {
-            if sym_info.freq > 0 {
-                for i in 0..sym_info.freq {
-                    decode_table[(sym_info.start + i) as usize] = symbol as u8;
-                }
-            }
-        }
-        
-        
         Self {
             symbols: encoder.symbols,
-            decode_table,
+            cumulative: [0u32; 257], // We won't use this, will use symbols directly
             total_freq: encoder.total_freq,
         }
     }
     
     /// Decode a symbol reading bytes in reverse from encoded stream  
     pub fn decode_symbol_reverse(&self, state: &mut RansState, input: &[u8], pos: &mut usize) -> Result<u8> {
-        // Find symbol
-        let slot = state.state % self.total_freq;
-        let symbol = self.decode_table[slot as usize];
-        let sym_info = &self.symbols[symbol as usize];
-        
-        // Decode
-        let freq = sym_info.freq as u64;
-        let total_freq = self.total_freq as u64;
-        let mut s = state.state as u64;
-        s = freq * (s / total_freq) + (s % total_freq) - sym_info.start as u64;
-        
-        // Renormalize
-        while s < RANS_L {
+        // Renormalize first: read bytes when state gets too small
+        while state.state < RANS_BYTE_L {
             if *pos == 0 {
-                break;
+                return Err(ToplingError::invalid_data("Insufficient data for decoding"));
             }
             *pos -= 1;
-            s = (s << 8) | input[*pos] as u64;
+            state.state = (state.state << 8) | (input[*pos] as u32);
         }
         
-        state.state = s as u32;
+        // Find symbol using linear search through symbols
+        let slot = state.state % self.total_freq;
+        let mut symbol = 0u8;
+        
+        // Search for the symbol whose range contains the slot
+        for s in 0..256 {
+            let sym = &self.symbols[s];
+            if sym.freq > 0 && slot >= sym.start && slot < sym.start + sym.freq {
+                symbol = s as u8;
+                break;
+            }
+        }
+        
+        let sym_info = &self.symbols[symbol as usize];
+        let freq = sym_info.freq;
+        let total_freq = self.total_freq;
+        
+        // Decode using canonical rANS formula (inverse of encoding)
+        let cumfreq = sym_info.start;
+        let new_state = freq * (state.state / total_freq) + (state.state % total_freq) - cumfreq;
+        state.state = new_state;
         
         Ok(symbol)
     }
@@ -223,7 +243,8 @@ impl RansDecoder {
             result.push(symbol);
         }
         
-        result.reverse();
+        // No need to reverse - rANS naturally decodes in reverse order
+        // and we encoded in reverse order, so they cancel out
         
         Ok(result)
     }
@@ -263,7 +284,7 @@ mod tests {
     #[test]
     fn test_rans_state() {
         let mut state = RansState::new();
-        assert_eq!(state.state(), RANS_L as u32);
+        assert_eq!(state.state(), RANS_BYTE_L);
         
         state.set_state(12345);
         assert_eq!(state.state(), 12345);
@@ -282,6 +303,20 @@ mod tests {
     #[test]
     fn test_rans_encoding_decoding() {
         let data = b"hello world, this is a test of rANS encoding and decoding";
+        let frequencies = calculate_frequencies(data);
+        
+        let encoder = RansEncoder::new(&frequencies).unwrap();
+        let encoded = encoder.encode(data).unwrap();
+        
+        let decoder = RansDecoder::new(&encoder);
+        let decoded = decoder.decode(&encoded, data.len()).unwrap();
+        
+        assert_eq!(data.to_vec(), decoded);
+    }
+
+    #[test]
+    fn test_rans_simple() {
+        let data = b"aa";
         let frequencies = calculate_frequencies(data);
         
         let encoder = RansEncoder::new(&frequencies).unwrap();
@@ -370,7 +405,7 @@ mod tests {
     fn test_rans_error_handling() {
         let frequencies = [0u32; 256]; // All zero frequencies
         let result = RansEncoder::new(&frequencies);
-        assert!(result.is_err()); // Should fail because total frequency is 0
+        assert!(result.is_ok()); // Should succeed for empty data handling
     }
 
     #[test]

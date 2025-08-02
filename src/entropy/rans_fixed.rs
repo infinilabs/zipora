@@ -50,8 +50,9 @@ impl FixedRans {
             }
             
             // Renormalize before encoding
-            let max_state = ((RANS_BYTE_L >> 8) << 8) * self.total_freq;
-            while state >= max_state {
+            // Frequency-aware renormalization to prevent overflow
+            let max_state = (((RANS_BYTE_L as u64) << 8) / self.total_freq as u64) * freq as u64;
+            while state as u64 >= max_state {
                 output.push((state & 0xFF) as u8);
                 state >>= 8;
             }
@@ -115,8 +116,8 @@ impl FixedRans {
             result.push(symbol);
         }
         
-        // Reverse result since we decoded in reverse order
-        result.reverse();
+        // No need to reverse - rANS naturally decodes in reverse order
+        // and we encoded in reverse order, so they cancel out
         
         Ok(result)
     }

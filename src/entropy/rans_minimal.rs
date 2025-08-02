@@ -77,8 +77,8 @@ impl MinimalRans {
             println!("  Symbol freq: {}, cumfreq: {}", freq, cumfreq);
             
             // Renormalize: output bytes when state gets too large
-            // Use u64 to prevent overflow
-            let max_state = ((RANS_BYTE_L as u64 >> 8) << 8) * self.total_freq as u64;
+            // Frequency-aware renormalization to prevent overflow
+            let max_state = (((RANS_BYTE_L as u64) << 8) / self.total_freq as u64) * freq as u64;
             println!("  Max state: {}, current state: {}", max_state, state);
             
             while state as u64 >= max_state {
@@ -171,12 +171,12 @@ impl MinimalRans {
             result.push(symbol);
         }
         
-        println!("\nDecoded result before reverse: {:?}", result);
+        println!("\nDecoded result: {:?}", result);
         
-        // Since we encoded in reverse order, we need to reverse the result
-        result.reverse();
+        // No need to reverse - rANS naturally decodes in reverse order
+        // and we encoded in reverse order, so they cancel out
         
-        println!("Decoded result after reverse: {:?}", result);
+        println!("Final result: {:?}", result);
         Ok(result)
     }
 }

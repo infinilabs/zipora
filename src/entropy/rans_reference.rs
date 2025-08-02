@@ -31,15 +31,17 @@ impl ReferenceRans {
             cumulative[i + 1] = cumulative[i] + frequencies[i];
         }
         
-        // Print frequency table for debugging
-        println!("Building frequency table:");
-        for i in 0..256 {
-            if frequencies[i] > 0 {
-                println!("  Symbol {} ('{}'): freq={}, cumulative={}", 
-                    i, i as u8 as char, frequencies[i], cumulative[i]);
+        // Print frequency table for debugging (only when needed)
+        if total_freq <= 50 {
+            println!("Building frequency table:");
+            for i in 0..256 {
+                if frequencies[i] > 0 {
+                    println!("  Symbol {} ('{}'): freq={}, cumfreq_start={}", 
+                        i, i as u8 as char, frequencies[i], cumulative[i]);
+                }
             }
+            println!("Total frequency: {}", total_freq);
         }
-        println!("Total frequency: {}", total_freq);
         
         Ok(Self {
             frequencies: *frequencies,
@@ -71,11 +73,12 @@ impl ReferenceRans {
             println!("  Symbol freq: {}, cumfreq: {}", freq, cumfreq);
             
             // Renormalize: output bytes when state gets too large
-            // Canonical condition: state >= ((L >> 8) << 8) * M
-            let max_state = ((RANS_BYTE_L >> 8) << 8) * self.total_freq;
-            println!("  Max state: {}, current state: {}", max_state, state);
+            // Proper frequency-aware condition: state >= ((L >> 8) << 8) * freq
+            // But simplified to: state >= (L << 8) / total_freq * freq
+            let max_state = ((RANS_BYTE_L as u64) << 8) / (self.total_freq as u64) * (freq as u64);
+            println!("  Max state for freq {}: {}, current state: {}", freq, max_state, state);
             
-            while state >= max_state {
+            while (state as u64) >= max_state {
                 let byte_out = (state & 0xFF) as u8;
                 println!("  Renormalizing: outputting byte {}, state {} -> {}", 
                     byte_out, state, state >> 8);
@@ -84,7 +87,14 @@ impl ReferenceRans {
             }
             
             // rANS encoding step: x_new = (x // freq) * M + (x % freq) + cumfreq
-            let new_state = ((state / freq) * self.total_freq) + (state % freq) + cumfreq;
+            // Use u64 arithmetic to prevent overflow
+            let state_u64 = state as u64;
+            let freq_u64 = freq as u64;
+            let total_freq_u64 = self.total_freq as u64;
+            let cumfreq_u64 = cumfreq as u64;
+            
+            let new_state_u64 = ((state_u64 / freq_u64) * total_freq_u64) + (state_u64 % freq_u64) + cumfreq_u64;
+            let new_state = new_state_u64 as u32;
             println!("  Encoding: state {} -> {}", state, new_state);
             println!("    Formula: (({} / {}) * {}) + ({} % {}) + {} = {}",
                 state, freq, self.total_freq, state, freq, cumfreq, new_state);
@@ -124,17 +134,16 @@ impl ReferenceRans {
             println!("\nDecoding symbol at position {}", i);
             
             // Renormalize: read bytes when state gets too small
-            while state < RANS_BYTE_L && pos > 0 {
+            while state < RANS_BYTE_L {
+                if pos == 0 {
+                    return Err(ToplingError::invalid_data("Insufficient data for decoding"));
+                }
                 pos -= 1;
                 let byte_in = encoded[pos];
                 let new_state = (state << 8) | (byte_in as u32);
                 println!("  Renormalizing: reading byte {} at pos {}, state {} -> {}", 
                     byte_in, pos, state, new_state);
                 state = new_state;
-            }
-            
-            if state < RANS_BYTE_L {
-                return Err(ToplingError::invalid_data("Insufficient data for decoding"));
             }
             
             // Find symbol: which symbol does this state represent?
@@ -166,12 +175,9 @@ impl ReferenceRans {
             result.push(symbol);
         }
         
-        println!("\nDecoded result before reverse: {:?}", result);
+        println!("\nDecoded result: {:?}", result);
         
-        // Reverse result since rANS decodes in reverse order of encoding
-        result.reverse();
-        
-        println!("Decoded result after reverse: {:?}", result);
+        // No need to reverse - the decoding already produces the correct order
         Ok(result)
     }
 }
