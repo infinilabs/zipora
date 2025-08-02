@@ -49,9 +49,9 @@ impl SimpleRans {
             
             let start = self.cum_freq[symbol as usize];
             
-            // Renormalize if needed
-            let max_state = ((RANS_BYTE_L >> 8) << 8) * self.total_freq;
-            while state >= max_state {
+            // Renormalize if needed - frequency-aware to prevent overflow
+            let max_state = (((RANS_BYTE_L as u64) << 8) / self.total_freq as u64) * freq as u64;
+            while state as u64 >= max_state {
                 output.push((state & 0xFF) as u8);
                 state >>= 8;
             }
@@ -63,9 +63,6 @@ impl SimpleRans {
         // Output final state (4 bytes, little endian)
         output.extend_from_slice(&state.to_le_bytes());
         
-        // Data is in reverse order, so reverse it
-        output.reverse();
-        
         Ok(output)
     }
     
@@ -75,23 +72,23 @@ impl SimpleRans {
             return Err(ToplingError::invalid_data("Encoded data too short"));
         }
         
-        // Read initial state from first 4 bytes
+        // Read initial state from last 4 bytes (like other working implementations)
+        let data_len = encoded.len();
         let mut state = u32::from_le_bytes([
-            encoded[0], encoded[1], encoded[2], encoded[3]
+            encoded[data_len - 4], encoded[data_len - 3], encoded[data_len - 2], encoded[data_len - 1]
         ]);
         
-        let mut pos = 4;
+        let mut pos = data_len - 4; // Start reading backwards
         let mut result = Vec::with_capacity(length);
         
         for _ in 0..length {
-            // Renormalize if needed
-            while state < RANS_BYTE_L && pos < encoded.len() {
+            // Renormalize if needed - read bytes backwards
+            while state < RANS_BYTE_L {
+                if pos == 0 {
+                    return Err(ToplingError::invalid_data("Insufficient data for decoding"));
+                }
+                pos -= 1;
                 state = (state << 8) | (encoded[pos] as u32);
-                pos += 1;
-            }
-            
-            if state < RANS_BYTE_L {
-                return Err(ToplingError::invalid_data("Insufficient data for decoding"));
             }
             
             // Find symbol
@@ -115,9 +112,6 @@ impl SimpleRans {
             result.push(symbol);
         }
         
-        // Reverse result since we decoded in reverse
-        result.reverse();
-        
         Ok(result)
     }
 }
@@ -127,7 +121,6 @@ mod tests {
     use super::*;
     
     #[test]
-    #[ignore] // TODO: Fix rANS decode/encode mismatch - complex algorithm issue
     fn test_simple_rans() {
         let data = b"hello world";
         let mut frequencies = [0u32; 256];
