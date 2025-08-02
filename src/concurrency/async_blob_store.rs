@@ -180,7 +180,7 @@ impl AsyncBlobStore for AsyncMemoryBlobStore {
     async fn put_batch(&self, data: Vec<&[u8]>) -> Result<Vec<RecordId>> {
         let _start_time = Instant::now();
         let mut ids = Vec::with_capacity(data.len());
-        let mut total_bytes = 0;
+        let mut _total_bytes = 0;
 
         {
             let mut store = self.data.write().await;
@@ -188,7 +188,7 @@ impl AsyncBlobStore for AsyncMemoryBlobStore {
                 let id = self.next_id.fetch_add(1, Ordering::Relaxed) as RecordId;
                 store.insert(id, item.to_vec());
                 ids.push(id);
-                total_bytes += item.len();
+                _total_bytes += item.len();
             }
         }
 
@@ -201,19 +201,19 @@ impl AsyncBlobStore for AsyncMemoryBlobStore {
     async fn get_batch(&self, ids: Vec<RecordId>) -> Result<Vec<Vec<u8>>> {
         let _start_time = Instant::now();
         let mut results = Vec::with_capacity(ids.len());
-        let mut total_bytes = 0;
-        let mut misses = 0;
+        let mut _total_bytes = 0;
+        let mut _misses = 0;
 
         {
             let store = self.data.read().await;
             for id in ids {
                 match store.get(&id) {
                     Some(data) => {
-                        total_bytes += data.len();
+                        _total_bytes += data.len();
                         results.push(data.clone());
                     }
                     None => {
-                        misses += 1;
+                        _misses += 1;
                         return Err(ToplingError::invalid_data(&format!(
                             "record not found: {}",
                             id

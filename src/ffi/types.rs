@@ -3,12 +3,34 @@
 //! This module defines opaque types and structures that can be safely
 //! passed across the C FFI boundary.
 
+use crate::blob_store::traits::BlobStore;
+use crate::RecordId;
 use std::os::raw::{c_char, c_int};
 
 /// Opaque handle for FastVec
 #[repr(C)]
 pub struct CFastVec {
-    _private: [u8; 0],
+    inner: crate::containers::FastVec<u32>,
+}
+
+impl CFastVec {
+    pub fn new() -> Self {
+        Self {
+            inner: crate::containers::FastVec::new(),
+        }
+    }
+
+    pub fn push(&mut self, value: u32) -> crate::Result<()> {
+        self.inner.push(value)
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn get(&self, index: usize) -> Option<&u32> {
+        self.inner.get(index)
+    }
 }
 
 /// Opaque handle for MemoryPool
@@ -20,13 +42,39 @@ pub struct CMemoryPool {
 /// Opaque handle for BlobStore
 #[repr(C)]
 pub struct CBlobStore {
-    _private: [u8; 0],
+    inner: crate::blob_store::MemoryBlobStore,
+}
+
+impl CBlobStore {
+    pub fn new() -> Self {
+        Self {
+            inner: crate::blob_store::MemoryBlobStore::new(),
+        }
+    }
+
+    pub fn put(&mut self, data: &[u8]) -> crate::Result<RecordId> {
+        self.inner.put(data)
+    }
+
+    pub fn get(&self, id: RecordId) -> crate::Result<Vec<u8>> {
+        self.inner.get(id)
+    }
 }
 
 /// Opaque handle for SuffixArray
 #[repr(C)]
 pub struct CSuffixArray {
-    _private: [u8; 0],
+    inner: crate::algorithms::SuffixArray,
+}
+
+impl CSuffixArray {
+    pub fn new(sa: crate::algorithms::SuffixArray) -> Self {
+        Self { inner: sa }
+    }
+
+    pub fn search(&self, text: &[u8], pattern: &[u8]) -> (usize, usize) {
+        self.inner.search(text, pattern)
+    }
 }
 
 /// Opaque handle for RadixSort
@@ -189,8 +237,8 @@ pub struct CBlobStoreStats {
 impl From<crate::blob_store::BlobStoreStats> for CBlobStoreStats {
     fn from(stats: crate::blob_store::BlobStoreStats) -> Self {
         Self {
-            record_count: stats.record_count,
-            total_bytes: stats.total_bytes,
+            record_count: stats.blob_count,
+            total_bytes: stats.total_size as u64,
             get_count: stats.get_count,
             put_count: stats.put_count,
         }

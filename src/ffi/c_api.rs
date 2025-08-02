@@ -47,6 +47,7 @@ fn cresult_to_error_msg(result: CResult) -> &'static str {
         CResult::IoError => "I/O operation failed",
         CResult::InternalError => "Internal library error",
         CResult::UnsupportedOperation => "Unsupported operation",
+        CResult::NotFound => "Resource not found",
     }
 }
 
@@ -536,7 +537,7 @@ mod tests {
             let data_ptr = fast_vec_data(vec);
             assert!(!data_ptr.is_null());
 
-            let data_slice = std::slice::from_raw_parts(data_ptr, 2);
+            let data_slice = unsafe { std::slice::from_raw_parts(data_ptr, 2) };
             assert_eq!(data_slice, &[42, 84]);
 
             fast_vec_free(vec);
@@ -584,7 +585,7 @@ mod tests {
             assert_eq!(size, test_data.len());
 
             // Verify the data content
-            let retrieved_data = std::slice::from_raw_parts(data_ptr, size);
+            let retrieved_data = unsafe { std::slice::from_raw_parts(data_ptr, size) };
             assert_eq!(retrieved_data, test_data);
 
             // Free the blob data

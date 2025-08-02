@@ -241,8 +241,7 @@ impl Compressor for Lz4Compressor {
     ) -> Result<Vec<u8>> {
         #[cfg(feature = "lz4")]
         {
-            lz4_flex::compress_prepend_size(data)
-                .map_err(|e| ToplingError::compression(&format!("LZ4 compression failed: {}", e)))
+            Ok(lz4_flex::compress_prepend_size(data))
         }
         #[cfg(not(feature = "lz4"))]
         {

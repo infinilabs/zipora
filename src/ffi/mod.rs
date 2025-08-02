@@ -33,6 +33,7 @@ pub enum CResult {
     IoError = -3,
     UnsupportedOperation = -4,
     InternalError = -5,
+    NotFound = -6,
 }
 
 #[cfg(feature = "ffi")]
@@ -40,9 +41,9 @@ impl From<crate::Result<()>> for CResult {
     fn from(result: crate::Result<()>) -> Self {
         match result {
             Ok(_) => CResult::Success,
-            Err(crate::ToplingError::InvalidData(_)) => CResult::InvalidInput,
-            Err(crate::ToplingError::MemoryExhausted(_)) => CResult::MemoryError,
-            Err(crate::ToplingError::IoError(_)) => CResult::IoError,
+            Err(crate::ToplingError::InvalidData { message: _ }) => CResult::InvalidInput,
+            Err(crate::ToplingError::OutOfMemory { .. }) => CResult::MemoryError,
+            Err(crate::ToplingError::Io(_)) => CResult::IoError,
             Err(crate::ToplingError::NotSupported { .. }) => CResult::UnsupportedOperation,
             _ => CResult::InternalError,
         }
