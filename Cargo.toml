@@ -27,7 +27,7 @@ serde = ["dep:serde", "dep:bincode"]
 # Core functionality
 memmap2 = { version = "0.9.4", optional = true }
 bytemuck = "1.18"
-thiserror = "1.0.40"
+thiserror = "2.0.12"
 log = "0.4.17"
 
 # Performance
