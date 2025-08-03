@@ -565,42 +565,50 @@ pub struct PipelineBuilder {
 }
 
 impl PipelineBuilder {
+    /// Create a new builder for configuring a pipeline
     pub fn new() -> Self {
         Self {
             config: PipelineConfig::default(),
         }
     }
 
+    /// Set the buffer size for pipeline stages
     pub fn buffer_size(mut self, buffer_size: usize) -> Self {
         self.config.buffer_size = buffer_size;
         self
     }
 
+    /// Set the maximum number of items that can be processed concurrently
     pub fn max_in_flight(mut self, max_in_flight: usize) -> Self {
         self.config.max_in_flight = max_in_flight;
         self
     }
 
+    /// Set the timeout for each pipeline stage
     pub fn stage_timeout(mut self, stage_timeout: Duration) -> Self {
         self.config.stage_timeout = stage_timeout;
         self
     }
 
+    /// Enable or disable batching of pipeline items
     pub fn enable_batching(mut self, enable: bool) -> Self {
         self.config.enable_batching = enable;
         self
     }
 
+    /// Set the batch size for processing multiple items together
     pub fn batch_size(mut self, batch_size: usize) -> Self {
         self.config.batch_size = batch_size;
         self
     }
 
+    /// Set the timeout for collecting items into batches
     pub fn batch_timeout(mut self, batch_timeout: Duration) -> Self {
         self.config.batch_timeout = batch_timeout;
         self
     }
 
+    /// Build the configured pipeline
     pub fn build(self) -> Pipeline {
         Pipeline::new(self.config)
     }
@@ -707,6 +715,7 @@ pub struct MapStage<F> {
 }
 
 impl<F> MapStage<F> {
+    /// Create a new map stage that transforms input using the provided function
     pub fn new(name: String, func: F) -> Self {
         Self { name, func }
     }
@@ -735,6 +744,7 @@ pub struct FilterStage<F> {
 }
 
 impl<F> FilterStage<F> {
+    /// Create a new filter stage that conditionally passes items based on the predicate
     pub fn new(name: String, predicate: F) -> Self {
         Self { name, predicate }
     }

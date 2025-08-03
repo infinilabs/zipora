@@ -324,37 +324,44 @@ pub struct RealtimeCompressorBuilder {
 }
 
 impl RealtimeCompressorBuilder {
+    /// Create a new builder for configuring a real-time compressor
     pub fn new() -> Self {
         Self {
             config: RealtimeConfig::default(),
         }
     }
 
+    /// Set the compression mode (affects performance vs compression ratio trade-off)
     pub fn mode(mut self, mode: CompressionMode) -> Self {
         self.config.mode = mode;
         self
     }
 
+    /// Set the maximum number of concurrent compression tasks
     pub fn max_concurrent(mut self, max_concurrent: usize) -> Self {
         self.config.max_concurrent = max_concurrent;
         self
     }
 
+    /// Enable or disable deadline-based compression timeout
     pub fn enable_deadlines(mut self, enable: bool) -> Self {
         self.config.enable_deadlines = enable;
         self
     }
 
+    /// Enable fallback to faster compression when deadlines are missed
     pub fn fallback_on_timeout(mut self, fallback: bool) -> Self {
         self.config.fallback_on_timeout = fallback;
         self
     }
 
+    /// Set the batch size for processing multiple compression requests
     pub fn batch_size(mut self, size: usize) -> Self {
         self.config.batch_size = size;
         self
     }
 
+    /// Build the configured real-time compressor
     pub fn build(self) -> Result<RealtimeCompressor> {
         RealtimeCompressor::new(self.config)
     }

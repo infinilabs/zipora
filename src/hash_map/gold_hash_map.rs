@@ -338,7 +338,13 @@ where
                 bucket_index,
                 entry_index,
             } => {
-                // Extract the entry value before swapping
+                // Mark the bucket as empty FIRST to avoid overwriting moved entry's bucket
+                self.buckets[bucket_index] = BucketEntry {
+                    entry_index: EMPTY_BUCKET,
+                    cached_hash: 0,
+                };
+                
+                // Extract the entry value and handle compaction
                 let removed_value = if entry_index == self.entries.len() - 1 {
                     // Last entry, just pop it
                     self.entries.pop().unwrap().value
@@ -355,12 +361,6 @@ where
                     removed_entry.value
                 };
 
-                // Now mark the bucket as empty - this is safe because we've handled entry compaction
-                self.buckets[bucket_index] = BucketEntry {
-                    entry_index: EMPTY_BUCKET,
-                    cached_hash: 0,
-                };
-
                 self.len -= 1;
                 Some(removed_value)
             }
@@ -370,13 +370,38 @@ where
 
     /// Updates bucket index after moving an entry from old_index to new_index
     fn update_bucket_for_moved_entry(&mut self, old_index: usize, new_index: usize) {
-        // Find the bucket that was pointing to old_index and update it to new_index
-        for bucket in 0..self.buckets.len() {
-            if self.buckets[bucket].entry_index == old_index as u32 {
-                self.buckets[bucket].entry_index = new_index as u32;
+        // More robust approach: find bucket by rehashing the moved entry's key
+        // This avoids potential optimization issues with linear search
+        let moved_entry = &self.entries[new_index];
+        let hash = moved_entry.hash;
+        let ideal_bucket = self.hash_to_bucket(hash);
+        let cached_hash = (hash as u32) | 1;
+        
+        // Start from ideal position and probe until we find the bucket
+        let mut bucket_idx = ideal_bucket;
+        let old_index_u32 = old_index as u32;
+        let new_index_u32 = new_index as u32;
+        
+        for _ in 0..self.buckets.len() {
+            let bucket = &mut self.buckets[bucket_idx];
+            if bucket.entry_index == old_index_u32 && bucket.cached_hash == cached_hash {
+                bucket.entry_index = new_index_u32;
+                return;
+            }
+            bucket_idx = (bucket_idx + 1) & (self.buckets.len() - 1);
+        }
+        
+        // Fallback to linear search if hash-based approach fails
+        for bucket_idx in 0..self.buckets.len() {
+            let bucket = &mut self.buckets[bucket_idx];
+            if bucket.entry_index == old_index_u32 {
+                bucket.entry_index = new_index_u32;
                 return;
             }
         }
+        
+        // This should never happen in correct operation
+        panic!("Failed to find bucket pointing to moved entry index {}", old_index);
     }
 
     /// Clears all entries from the map

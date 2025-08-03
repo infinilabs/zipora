@@ -18,16 +18,23 @@ use std::sync::{Arc, Mutex};
 use std::thread_local;
 
 /// Size thresholds for different allocation strategies
+/// Maximum size for small object allocations (1KB)
 pub const SMALL_THRESHOLD: usize = 1024;           // 1KB
+/// Maximum size for medium object allocations (16KB)
 pub const MEDIUM_THRESHOLD: usize = 16 * 1024;     // 16KB  
+/// Minimum size for huge page allocations (2MB)
 pub const LARGE_THRESHOLD: usize = 2 * 1024 * 1024; // 2MB
 
 /// A memory allocation that can come from different allocators
 #[derive(Debug)]
 pub enum TieredAllocation {
+    /// Small allocation from memory pool (pointer, size)
     Small(NonNull<u8>, usize),
+    /// Medium allocation from size-classed pools (pointer, size)
     Medium(NonNull<u8>, usize),
+    /// Large allocation using memory mapping
     Large(MmapAllocation),
+    /// Huge allocation using Linux hugepages
     #[cfg(target_os = "linux")]
     Huge(HugePage),
 }
@@ -65,13 +72,21 @@ impl Default for TieredConfig {
 /// Comprehensive statistics for the tiered allocator
 #[derive(Debug, Clone)]
 pub struct TieredStats {
+    /// Number of small allocations made
     pub small_allocations: u64,
+    /// Number of medium allocations made
     pub medium_allocations: u64,
+    /// Number of large allocations made
     pub large_allocations: u64,
+    /// Number of huge allocations made
     pub huge_allocations: u64,
+    /// Total bytes currently allocated
     pub total_allocated_bytes: u64,
+    /// Statistics for the small object pool
     pub small_pool_stats: PoolStats,
+    /// Statistics for each medium object pool (by size class)
     pub medium_pool_stats: Vec<PoolStats>,
+    /// Statistics for memory-mapped allocations
     pub mmap_stats: crate::memory::mmap::MmapStats,
 }
 
@@ -166,11 +181,16 @@ impl AllocationHistory {
     }
 }
 
+/// Detected allocation pattern for adaptive optimization
 #[derive(Debug, Clone, Copy)]
 pub enum AllocationPattern {
+    /// More than 70% of allocations are small (< 1KB)
     SmallDominated,
+    /// More than 70% of allocations are medium (1KB-16KB)
     MediumDominated,
+    /// More than 70% of allocations are large (> 16KB)
     LargeDominated,
+    /// No clear dominant allocation size pattern
     Mixed,
 }
 
@@ -450,6 +470,11 @@ pub fn get_tiered_stats() -> TieredStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+    
+    // Global mutex to serialize tests that use global allocator state
+    // This prevents race conditions that cause segfaults in release mode
+    static GLOBAL_ALLOCATOR_TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_tiered_allocator_creation() {
@@ -594,6 +619,9 @@ mod tests {
 
     #[test]
     fn test_global_tiered_allocator() {
+        // Serialize access to global allocator to prevent race conditions
+        let _guard = GLOBAL_ALLOCATOR_TEST_MUTEX.lock().unwrap();
+        
         let size = 1024;
         
         let allocation = tiered_allocate(size).unwrap();

@@ -35,12 +35,19 @@ pub struct MmapAllocation {
 /// Statistics for memory-mapped allocations
 #[derive(Debug, Clone)]
 pub struct MmapStats {
+    /// Total bytes allocated via mmap
     pub total_allocated: u64,
+    /// Total bytes freed via munmap
     pub total_freed: u64,
+    /// Number of mmap system calls made
     pub mmap_calls: u64,
+    /// Number of munmap system calls made
     pub munmap_calls: u64,
+    /// Number of times a cached region was reused
     pub cache_hits: u64,
+    /// Number of times a new region had to be allocated
     pub cache_misses: u64,
+    /// Number of regions currently in cache
     pub cached_regions: usize,
 }
 

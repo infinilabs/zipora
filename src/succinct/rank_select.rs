@@ -67,8 +67,11 @@ use std::sync::OnceLock;
 /// Runtime CPU feature detection for optimal instruction selection
 #[derive(Debug, Clone, Copy)]
 pub struct CpuFeatures {
+    /// CPU supports POPCNT instruction for fast bit counting
     pub has_popcnt: bool,
+    /// CPU supports BMI2 instruction set for bit manipulation
     pub has_bmi2: bool, 
+    /// CPU supports AVX2 SIMD instructions
     pub has_avx2: bool,
 }
 

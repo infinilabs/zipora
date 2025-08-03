@@ -13,6 +13,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex, RwLock};
 
 /// Asynchronous blob store trait
+/// 
+/// Provides async methods for storing, retrieving, and managing binary data blobs
+/// Uses async_trait to enable async functions in traits
+/// 
+/// This macro transforms async trait methods into regular trait methods returning Pin<Box<dyn Future>>
+#[allow(missing_docs)] // async_trait macro causes false positive
 #[async_trait::async_trait]
 pub trait AsyncBlobStore: Send + Sync {
     /// Store a blob and return its record ID

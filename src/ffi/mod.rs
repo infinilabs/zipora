@@ -22,17 +22,24 @@ pub mod algorithms;
 #[cfg(feature = "ffi")]
 pub use c_api::*;
 
-// Basic error handling for C FFI
+/// C-compatible result codes for FFI operations
 #[cfg(feature = "ffi")]
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CResult {
+    /// Operation completed successfully
     Success = 0,
+    /// Invalid input parameters provided
     InvalidInput = -1,
+    /// Memory allocation or access error
     MemoryError = -2,
+    /// Input/output operation failed
     IoError = -3,
+    /// Operation not supported in current context
     UnsupportedOperation = -4,
+    /// Internal library error occurred
     InternalError = -5,
+    /// Requested item was not found
     NotFound = -6,
 }
 

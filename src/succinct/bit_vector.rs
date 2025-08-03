@@ -11,8 +11,8 @@ use std::fmt;
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 use std::arch::x86_64::{
     __m256i,
-    _mm256_load_si256,
-    _mm256_store_si256, 
+    _mm256_loadu_si256,
+    _mm256_storeu_si256, 
     _mm256_and_si256,
     _mm256_or_si256,
     _mm256_xor_si256,
@@ -379,7 +379,7 @@ impl BitVector {
                     pos_array[i] = pos as u64;
                 }
                 
-                let _positions_vec = _mm256_load_si256(pos_array.as_ptr() as *const __m256i);
+                let _positions_vec = _mm256_loadu_si256(pos_array.as_ptr() as *const __m256i);
                 
                 // Process each position (simplified for demonstration)
                 for &pos in chunk {
@@ -516,8 +516,8 @@ impl BitVector {
                 let other_ptr = other.blocks.as_ptr().add(block_idx) as *const __m256i;
                 let result_ptr = self.blocks.as_mut_ptr().add(block_idx) as *mut __m256i;
                 
-                let self_vec = _mm256_load_si256(self_ptr);
-                let other_vec = _mm256_load_si256(other_ptr);
+                let self_vec = _mm256_loadu_si256(self_ptr);
+                let other_vec = _mm256_loadu_si256(other_ptr);
                 
                 let result_vec = match op {
                     BitwiseOp::And => _mm256_and_si256(self_vec, other_vec),
@@ -525,7 +525,7 @@ impl BitVector {
                     BitwiseOp::Xor => _mm256_xor_si256(self_vec, other_vec),
                 };
                 
-                _mm256_store_si256(result_ptr, result_vec);
+                _mm256_storeu_si256(result_ptr, result_vec);
                 block_idx += avx2_blocks;
             }
         }
@@ -568,8 +568,11 @@ impl BitVector {
 /// Supported bitwise operations for SIMD bulk operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BitwiseOp {
+    /// Bitwise AND operation
     And,
+    /// Bitwise OR operation
     Or,
+    /// Bitwise XOR operation
     Xor,
 }
 

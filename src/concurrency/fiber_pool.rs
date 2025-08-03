@@ -65,6 +65,7 @@ pub struct FiberHandle<T> {
 }
 
 impl<T> FiberHandle<T> {
+    /// Create a new fiber handle with the given join handle and ID
     pub fn new(handle: JoinHandle<Result<T>>, id: u64) -> Self {
         Self {
             inner: handle,
@@ -364,37 +365,44 @@ pub struct FiberPoolBuilder {
 }
 
 impl FiberPoolBuilder {
+    /// Create a new builder for configuring a fiber pool
     pub fn new() -> Self {
         Self {
             config: FiberPoolConfig::default(),
         }
     }
 
+    /// Set the maximum number of concurrent fibers
     pub fn max_fibers(mut self, max_fibers: usize) -> Self {
         self.config.max_fibers = max_fibers;
         self
     }
 
+    /// Set the number of worker threads to start initially
     pub fn initial_workers(mut self, initial_workers: usize) -> Self {
         self.config.initial_workers = initial_workers;
         self
     }
 
+    /// Set the maximum number of worker threads
     pub fn max_workers(mut self, max_workers: usize) -> Self {
         self.config.max_workers = max_workers;
         self
     }
 
+    /// Set the capacity of the work queue
     pub fn queue_capacity(mut self, queue_capacity: usize) -> Self {
         self.config.queue_capacity = queue_capacity;
         self
     }
 
+    /// Set the timeout after which idle workers are terminated
     pub fn idle_timeout(mut self, idle_timeout: Duration) -> Self {
         self.config.idle_timeout = idle_timeout;
         self
     }
 
+    /// Build the configured fiber pool
     pub fn build(self) -> Result<FiberPool> {
         FiberPool::new(self.config)
     }

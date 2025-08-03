@@ -14,20 +14,24 @@ pub struct CFastVec {
 }
 
 impl CFastVec {
+    /// Create a new empty FastVec for C FFI
     pub fn new() -> Self {
         Self {
             inner: crate::containers::FastVec::new(),
         }
     }
 
+    /// Add a value to the vector
     pub fn push(&mut self, value: u32) -> crate::Result<()> {
         self.inner.push(value)
     }
 
+    /// Get the number of elements in the vector
     pub fn len(&self) -> usize {
         self.inner.len()
     }
 
+    /// Get a reference to the element at the given index
     pub fn get(&self, index: usize) -> Option<&u32> {
         self.inner.get(index)
     }
@@ -46,16 +50,19 @@ pub struct CBlobStore {
 }
 
 impl CBlobStore {
+    /// Create a new blob store for C FFI
     pub fn new() -> Self {
         Self {
             inner: crate::blob_store::MemoryBlobStore::new(),
         }
     }
 
+    /// Store data in the blob store and return its ID
     pub fn put(&mut self, data: &[u8]) -> crate::Result<RecordId> {
         self.inner.put(data)
     }
 
+    /// Retrieve data from the blob store by ID
     pub fn get(&self, id: RecordId) -> crate::Result<Vec<u8>> {
         self.inner.get(id)
     }
@@ -68,10 +75,12 @@ pub struct CSuffixArray {
 }
 
 impl CSuffixArray {
+    /// Create a new suffix array wrapper for C FFI
     pub fn new(sa: crate::algorithms::SuffixArray) -> Self {
         Self { inner: sa }
     }
 
+    /// Search for a pattern in the text using the suffix array
     pub fn search(&self, text: &[u8], pattern: &[u8]) -> (usize, usize) {
         self.inner.search(text, pattern)
     }
