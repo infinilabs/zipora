@@ -31,7 +31,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-zipora = "0.1"
+zipora = "1.0.0"
 ```
 
 ### Basic Usage
@@ -920,16 +920,16 @@ Enable specific features based on your needs:
 
 ```toml
 [dependencies]
-infini-zip = { version = "0.1", features = ["simd", "mmap", "zstd"] }
+zipora = { version = "1.0.0", features = ["simd", "mmap", "zstd"] }
 ```
 
 Available features:
 - `simd` (default): SIMD optimizations for hash functions and comparison
-- `mmap` (default): Memory-mapped file support
+- `mmap` (default): Memory-mapped file support via memmap2
 - `zstd` (default): ZSTD compression integration
 - `lz4`: LZ4 compression support
 - `ffi`: C FFI compatibility layer with thread-safe error handling for migration from C++
-- `serde` (default): Serialization support for data structures
+- `serde` (default): Serialization support with bincode for data structures
 
 ## Compatibility
 
@@ -939,7 +939,7 @@ For users migrating from the C++ version, we provide a comprehensive C FFI compa
 
 ```toml
 [dependencies]
-infini-zip = { version = "0.1", features = ["ffi"] }
+zipora = { version = "1.0.0", features = ["ffi"] }
 ```
 
 #### C API Examples
@@ -1164,11 +1164,12 @@ rustup target list
 
 | Feature | Description | Default |
 |---------|-------------|---------|
-| `simd` | SIMD optimizations for hash and comparison | ✅ |
-| `mmap` | Memory-mapped file support | ✅ |
+| `simd` | SIMD optimizations for hash functions and comparisons | ✅ |
+| `mmap` | Memory-mapped file support via memmap2 | ✅ |
 | `zstd` | ZSTD compression integration | ✅ |
-| `lz4` | LZ4 compression support | ❌ |
-| `ffi` | C FFI compatibility layer | ❌ |
+| `serde` | Serialization support with bincode | ✅ |
+| `lz4` | LZ4 compression support via lz4_flex | ❌ |
+| `ffi` | C FFI compatibility layer with cbindgen | ❌ |
 
 ```bash
 # Minimal build (no default features)
