@@ -5,11 +5,15 @@
 
 pub mod bump;
 pub mod hugepage;
+pub mod mmap;
 pub mod pool;
+pub mod tiered;
 
 // Re-export main types
 pub use bump::{BumpAllocator, BumpArena};
+pub use mmap::{MemoryMappedAllocator, MmapAllocation};
 pub use pool::{MemoryPool, PoolConfig, PooledBuffer, PooledVec};
+pub use tiered::{TieredMemoryAllocator, TieredAllocation, TieredConfig, get_tiered_stats, tiered_allocate, tiered_deallocate};
 
 #[cfg(target_os = "linux")]
 pub use hugepage::{HugePage, HugePageAllocator};

@@ -780,8 +780,8 @@ fn benchmark_allocation_patterns(c: &mut Criterion) {
         for count in &allocation_counts {
             group.throughput(Throughput::Elements(*count as u64));
 
-            // Rust allocation pattern
-            group.bench_function(&format!("Rust allocation {}x{}", count, size), |b| {
+            // Rust allocation pattern (FastVec)
+            group.bench_function(&format!("Rust FastVec {}x{}", count, size), |b| {
                 b.iter(|| {
                     let mut vecs = Vec::new();
                     for _ in 0..*count {
@@ -792,6 +792,29 @@ fn benchmark_allocation_patterns(c: &mut Criterion) {
                         vecs.push(vec);
                     }
                     black_box(vecs)
+                });
+            });
+
+            // Rust tiered allocation pattern
+            group.bench_function(&format!("Rust Tiered {}x{}", count, size), |b| {
+                b.iter(|| {
+                    let mut allocations = Vec::new();
+                    for _ in 0..*count {
+                        if let Ok(allocation) = infini_zip::memory::tiered_allocate(size) {
+                            // Touch memory to ensure allocation
+                            let slice = allocation.as_slice();
+                            if !slice.is_empty() {
+                                unsafe { *(slice.as_ptr() as *mut u8) = 42; }
+                            }
+                            allocations.push(allocation);
+                        }
+                    }
+                    
+                    // Deallocate all
+                    for allocation in allocations {
+                        let _ = infini_zip::memory::tiered_deallocate(allocation);
+                    }
+                    black_box(())
                 });
             });
 

@@ -72,6 +72,7 @@ pub struct CpuFeatures {
     pub has_avx2: bool,
 }
 
+#[allow(dead_code)]
 static CPU_FEATURES: OnceLock<CpuFeatures> = OnceLock::new();
 
 #[cfg(target_arch = "x86_64")]
@@ -892,6 +893,7 @@ impl RankSelect256 {
     
     /// Search for the k-th set bit within a specific block using hardware acceleration
     #[inline]
+    #[allow(dead_code)]
     fn select1_within_block_hardware_accelerated(&self, start_bit: usize, end_bit: usize, k: usize) -> Result<usize> {
         let blocks = self.bit_vector.blocks();
         let start_word = start_bit / 64;

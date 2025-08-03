@@ -379,7 +379,7 @@ impl BitVector {
                     pos_array[i] = pos as u64;
                 }
                 
-                let positions_vec = _mm256_load_si256(pos_array.as_ptr() as *const __m256i);
+                let _positions_vec = _mm256_load_si256(pos_array.as_ptr() as *const __m256i);
                 
                 // Process each position (simplified for demonstration)
                 for &pos in chunk {

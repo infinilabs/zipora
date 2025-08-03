@@ -54,6 +54,7 @@ unsafe impl Send for HugePageAllocation {}
 unsafe impl Sync for HugePageAllocation {}
 
 /// A hugepage-backed memory allocation
+#[derive(Debug)]
 pub struct HugePage {
     #[cfg(target_os = "linux")]
     ptr: NonNull<u8>,
