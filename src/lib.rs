@@ -82,7 +82,7 @@ pub mod succinct;
 pub use containers::FastVec;
 pub use error::{Result, ToplingError};
 pub use string::FastStr;
-pub use succinct::{BitVector, RankSelect256, RankSelectSe256};
+pub use succinct::{BitVector, BitwiseOp, CpuFeatures, RankSelect256, RankSelectSe256};
 
 // Re-export Phase 1 implementations
 pub use blob_store::{BlobStore, MemoryBlobStore, PlainBlobStore};

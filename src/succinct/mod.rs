@@ -7,5 +7,5 @@
 pub mod bit_vector;
 pub mod rank_select;
 
-pub use bit_vector::BitVector;
-pub use rank_select::{RankSelect256, RankSelectSe256};
+pub use bit_vector::{BitVector, BitwiseOp};
+pub use rank_select::{RankSelect256, RankSelectSe256, CpuFeatures};

@@ -413,6 +413,147 @@ fn benchmark_entropy_blob_store(c: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_optimized_rank_select(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Optimized Rank-Select Performance");
+    
+    // Create test bit vectors of different sizes and patterns
+    let sizes = [10_000, 100_000, 1_000_000];
+    let densities = [0.1, 0.5, 0.9]; // Different bit densities
+    
+    for &size in &sizes {
+        for &density in &densities {
+            let mut bv = BitVector::new();
+            let mut rng_state = 12345u64; // Simple LCG for reproducible results
+            
+            for _ in 0..size {
+                rng_state = rng_state.wrapping_mul(1103515245).wrapping_add(12345);
+                let rand_val = (rng_state >> 16) as f64 / 65536.0;
+                bv.push(rand_val < density).unwrap();
+            }
+            
+            let rs = RankSelect256::new(bv.clone()).unwrap();
+            let ones_count = rs.count_ones();
+            
+            // Benchmark optimized rank1
+            group.bench_function(&format!("rank1_optimized size:{} density:{:.1}", size, density), |b| {
+                b.iter(|| {
+                    let pos = black_box(size / 2);
+                    rs.rank1_optimized(pos)
+                });
+            });
+            
+            // Benchmark optimized select1 (if we have enough ones)
+            if ones_count > 1000 {
+                group.bench_function(&format!("select1_optimized size:{} density:{:.1}", size, density), |b| {
+                    b.iter(|| {
+                        let k = black_box(ones_count / 2);
+                        rs.select1_optimized(k).unwrap_or(0)
+                    });
+                });
+                
+                // Compare with legacy implementation
+                group.bench_function(&format!("select1_legacy size:{} density:{:.1}", size, density), |b| {
+                    b.iter(|| {
+                        let k = black_box(ones_count / 2);
+                        rs.select1_legacy(k).unwrap_or(0)
+                    });
+                });
+            }
+        }
+    }
+    
+    group.finish();
+}
+
+fn benchmark_lookup_table_operations(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Lookup Table Operations");
+    
+    // Test the core lookup table functions - need to make them public for testing
+    group.bench_function("std_u64_count_ones", |b| {
+        b.iter(|| {
+            let val = black_box(0xAAAAAAAAAAAAAAAAu64);
+            val.count_ones()
+        });
+    });
+    
+    // Test with different bit patterns
+    let test_values = [
+        0x0000000000000000u64, // All zeros
+        0xFFFFFFFFFFFFFFFFu64, // All ones  
+        0xAAAAAAAAAAAAAAAAu64, // Alternating
+        0x5555555555555555u64, // Alternating opposite
+        0x123456789ABCDEFu64,  // Mixed pattern
+    ];
+    
+    for (i, &val) in test_values.iter().enumerate() {
+        group.bench_function(&format!("count_ones_pattern_{}", i), |b| {
+            b.iter(|| black_box(val).count_ones());
+        });
+    }
+    
+    group.finish();
+}
+
+fn benchmark_rank_select_comparison(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Rank-Select Method Comparison");
+    
+    // Create a large bit vector for comprehensive testing
+    let mut bv = BitVector::new();
+    for i in 0..500_000 {
+        bv.push((i * 17 + 7) % 23 == 0).unwrap(); // Complex pattern
+    }
+    
+    let rs = RankSelect256::new(bv.clone()).unwrap();
+    let ones_count = rs.count_ones();
+    
+    // Multiple rank operations to test cache effects
+    group.bench_function("rank1_optimized_batch", |b| {
+        b.iter(|| {
+            let mut total = 0;
+            for i in (0..10).map(|x| x * 50_000) {
+                total += rs.rank1_optimized(black_box(i));
+            }
+            total
+        });
+    });
+    
+    // Compare with bit vector's native rank implementation  
+    group.bench_function("bitvector_rank1_batch", |b| {
+        b.iter(|| {
+            let mut total = 0;
+            for i in (0..10).map(|x| x * 50_000) {
+                total += rs.bit_vector().rank1(black_box(i));
+            }
+            total
+        });
+    });
+    
+    if ones_count > 100 {
+        // Multiple select operations
+        group.bench_function("select1_optimized_batch", |b| {
+            b.iter(|| {
+                let mut total = 0;
+                for i in (0..10).map(|x| (ones_count * x / 10).min(ones_count - 1)) {
+                    total += rs.select1_optimized(black_box(i)).unwrap_or(0);
+                }
+                total
+            });
+        });
+        
+        group.bench_function("select1_legacy_batch", |b| {
+            b.iter(|| {
+                let mut total = 0;
+                for i in (0..10).map(|x| (ones_count * x / 10).min(ones_count - 1)) {
+                    total += rs.select1_legacy(black_box(i)).unwrap_or(0);
+                }
+                total
+            });
+        });
+    }
+    
+    group.finish();
+}
+
 criterion_group!(
     benches,
     benchmark_fast_vec_push,
@@ -423,6 +564,9 @@ criterion_group!(
     benchmark_hash_map_comparison,
     benchmark_memory_mapping,
     benchmark_entropy_coding,
-    benchmark_entropy_blob_store
+    benchmark_entropy_blob_store,
+    benchmark_optimized_rank_select,
+    benchmark_lookup_table_operations,
+    benchmark_rank_select_comparison
 );
 criterion_main!(benches);
