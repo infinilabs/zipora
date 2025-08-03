@@ -16,7 +16,7 @@ pub use var_int::{SignedVarInt, VarInt};
 #[cfg(feature = "mmap")]
 pub use data_input::MmapDataInput;
 #[cfg(feature = "mmap")]
-pub use mmap::{MemoryMappedInput, MemoryMappedOutput};
+pub use mmap::{AccessPattern, InputStrategy, MemoryMappedInput, MemoryMappedOutput};
 
 // Convenience functions
 pub use data_input::{from_reader, from_slice};
