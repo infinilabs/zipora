@@ -86,6 +86,9 @@ harness = false
 [[bench]]
 name = "dictionary_optimization_bench"
 harness = false
+[[bench]]
+name = "cache_bench"
+harness = false
 
 [profile.release]
 lto = true

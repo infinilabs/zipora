@@ -109,8 +109,10 @@ pub use entropy::{
 
 // Re-export Phase 4 implementations (memory management)
 pub use memory::{
-    BumpAllocator, BumpArena, MemoryConfig, MemoryPool, MemoryStats, PoolConfig, PooledBuffer,
-    PooledVec,
+    BumpAllocator, BumpArena, CacheAlignedVec, MemoryConfig, MemoryPool, MemoryStats, 
+    NumaStats, NumaPoolStats, PoolConfig, PooledBuffer, PooledVec, CACHE_LINE_SIZE,
+    get_numa_stats, set_current_numa_node, numa_alloc_aligned, numa_dealloc, 
+    get_optimal_numa_node, init_numa_pools, clear_numa_pools,
 };
 
 #[cfg(target_os = "linux")]

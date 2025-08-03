@@ -4,6 +4,7 @@
 //! memory pools, bump allocators, and hugepage support for optimal performance.
 
 pub mod bump;
+pub mod cache;
 pub mod hugepage;
 pub mod mmap;
 pub mod pool;
@@ -11,6 +12,11 @@ pub mod tiered;
 
 // Re-export main types
 pub use bump::{BumpAllocator, BumpArena};
+pub use cache::{
+    CacheAlignedVec, NumaStats, NumaPoolStats, get_numa_stats, set_current_numa_node, 
+    numa_alloc_aligned, numa_dealloc, get_optimal_numa_node, init_numa_pools, 
+    clear_numa_pools, CACHE_LINE_SIZE
+};
 pub use mmap::{MemoryMappedAllocator, MmapAllocation};
 pub use pool::{MemoryPool, PoolConfig, PooledBuffer, PooledVec};
 pub use tiered::{TieredMemoryAllocator, TieredAllocation, TieredConfig, get_tiered_stats, tiered_allocate, tiered_deallocate};
