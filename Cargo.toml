@@ -59,7 +59,7 @@ num_cpus = "1.16"
 cbindgen = { version = "0.27", optional = true }
 
 [dev-dependencies]
-criterion = { version = "0.5.1", features = ["html_reports"] }
+criterion = { version = "0.7.0", features = ["html_reports"] }
 proptest = "1.6"
 tempfile = "3.14"
 
