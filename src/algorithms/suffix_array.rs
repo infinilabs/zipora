@@ -33,6 +33,7 @@ impl Default for SuffixArrayConfig {
 }
 
 /// A suffix array data structure
+#[derive(Debug)]
 pub struct SuffixArray {
     /// The suffix array itself (indices into the original string)
     sa: Vec<usize>,

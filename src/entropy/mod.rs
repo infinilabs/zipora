@@ -13,7 +13,7 @@ pub mod rans_simple;
 pub mod rans_simple_debug;
 
 // Re-export main types
-pub use dictionary::{DictionaryBuilder, DictionaryCompressor};
+pub use dictionary::{DictionaryBuilder, DictionaryCompressor, OptimizedDictionaryCompressor};
 pub use huffman::{HuffmanDecoder, HuffmanEncoder, HuffmanTree};
 pub use rans::{RansDecoder, RansEncoder, RansState};
 

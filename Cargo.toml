@@ -83,6 +83,10 @@ harness = false
 name = "simd_rank_select_bench"
 harness = false
 
+[[bench]]
+name = "dictionary_optimization_bench"
+harness = false
+
 [profile.release]
 lto = true
 codegen-units = 1

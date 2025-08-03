@@ -103,7 +103,7 @@ pub use blob_store::{
 pub use entropy::dictionary::Dictionary;
 pub use entropy::rans::RansSymbol;
 pub use entropy::{
-    DictionaryBuilder, DictionaryCompressor, EntropyStats, HuffmanDecoder, HuffmanEncoder,
+    DictionaryBuilder, DictionaryCompressor, OptimizedDictionaryCompressor, EntropyStats, HuffmanDecoder, HuffmanEncoder,
     HuffmanTree, RansDecoder, RansEncoder, RansState,
 };
 
