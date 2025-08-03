@@ -49,7 +49,7 @@
 //! - `simd`: Enables 16-bit lookup tables for better cache efficiency (recommended)
 //! - Default: Uses 8-bit lookup tables for minimal memory overhead
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;
 use crate::FastVec;
 use std::fmt;
@@ -401,7 +401,7 @@ fn select_u64_lookup(x: u64, k: usize) -> usize {
 /// # Examples
 ///
 /// ```rust
-/// use infini_zip::{BitVector, RankSelect256};
+/// use zipora::{BitVector, RankSelect256};
 ///
 /// let mut bv = BitVector::new();
 /// for i in 0..100 {
@@ -411,7 +411,7 @@ fn select_u64_lookup(x: u64, k: usize) -> usize {
 /// let rs = RankSelect256::new(bv)?;
 /// let rank = rs.rank1(50);  // Count of 1s up to position 50
 /// let pos = rs.select1(10)?; // Position of the 10th set bit
-/// # Ok::<(), infini_zip::ToplingError>(())
+/// # Ok::<(), zipora::ZiporaError>(())
 /// ```
 #[derive(Clone)]
 pub struct RankSelect256 {
@@ -620,7 +620,7 @@ impl RankSelect256 {
     /// - Falls back to hints for very large datasets
     pub fn select1(&self, k: usize) -> Result<usize> {
         if k >= self.total_ones {
-            return Err(ToplingError::out_of_bounds(k, self.total_ones));
+            return Err(ZiporaError::out_of_bounds(k, self.total_ones));
         }
 
         // Use optimized implementation for better performance
@@ -632,7 +632,7 @@ impl RankSelect256 {
     #[inline]
     pub fn select1_optimized(&self, k: usize) -> Result<usize> {
         if k >= self.total_ones {
-            return Err(ToplingError::out_of_bounds(k, self.total_ones));
+            return Err(ZiporaError::out_of_bounds(k, self.total_ones));
         }
 
         let target_rank = k + 1;
@@ -718,7 +718,7 @@ impl RankSelect256 {
             remaining_k = remaining_k.saturating_sub(word_popcount);
         }
         
-        Err(ToplingError::invalid_data(
+        Err(ZiporaError::invalid_data(
             "Select position not found in block".to_string(),
         ))
     }
@@ -727,7 +727,7 @@ impl RankSelect256 {
     /// Modern code should use select1_optimized for better performance
     pub fn select1_legacy(&self, k: usize) -> Result<usize> {
         if k >= self.total_ones {
-            return Err(ToplingError::out_of_bounds(k, self.total_ones));
+            return Err(ZiporaError::out_of_bounds(k, self.total_ones));
         }
 
         // Use select hints to get a good starting position
@@ -764,7 +764,7 @@ impl RankSelect256 {
             }
         }
 
-        Err(ToplingError::invalid_data(
+        Err(ZiporaError::invalid_data(
             "Select position not found".to_string(),
         ))
     }
@@ -773,7 +773,7 @@ impl RankSelect256 {
     pub fn select0(&self, k: usize) -> Result<usize> {
         let total_zeros = self.bit_vector.len() - self.total_ones;
         if k >= total_zeros {
-            return Err(ToplingError::out_of_bounds(k, total_zeros));
+            return Err(ZiporaError::out_of_bounds(k, total_zeros));
         }
 
         // Simple linear search for select0 (could be optimized with additional indexing)
@@ -787,7 +787,7 @@ impl RankSelect256 {
             }
         }
 
-        Err(ToplingError::invalid_data(
+        Err(ZiporaError::invalid_data(
             "Select0 position not found".to_string(),
         ))
     }
@@ -865,7 +865,7 @@ impl RankSelect256 {
         #[cfg(not(test))]
         {
             if k >= self.total_ones {
-                return Err(ToplingError::out_of_bounds(k, self.total_ones));
+                return Err(ZiporaError::out_of_bounds(k, self.total_ones));
             }
 
             let target_rank = k + 1;
@@ -935,7 +935,7 @@ impl RankSelect256 {
             remaining_k = remaining_k.saturating_sub(word_popcount);
         }
         
-        Err(ToplingError::invalid_data(
+        Err(ZiporaError::invalid_data(
             "Select position not found in block".to_string(),
         ))
     }

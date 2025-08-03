@@ -1,15 +1,15 @@
 //! Entropy Coding Demonstration
 //!
-//! This example demonstrates the entropy coding capabilities of infini-zip,
+//! This example demonstrates the entropy coding capabilities of zipora,
 //! including Huffman coding, rANS encoding, and dictionary compression.
 
-use infini_zip::{
+use zipora::{
     BlobStore, DictionaryBuilder, DictionaryCompressor, EntropyStats, HuffmanBlobStore,
     HuffmanEncoder, HuffmanTree, MemoryBlobStore, RansDecoder, RansEncoder,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🔢 Entropy Coding Demo for infini-zip");
+    println!("🔢 Entropy Coding Demo for zipora");
     println!("=====================================\n");
 
     // === PART 1: Entropy Statistics ===

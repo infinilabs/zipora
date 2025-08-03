@@ -1,13 +1,13 @@
-# Infini-Zip Rust
+# Zipora
 
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
 [![Rust Version](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
 
-A high-performance Rust implementation inspired by the [topling-zip](https://github.com/topling/topling-zip) C++ library, providing advanced data structures and compression algorithms with memory safety guarantees.
+A high-performance Rust implementation providing advanced data structures and compression algorithms with memory safety guarantees.
 
 ## Overview
 
-Infini-Zip Rust offers a complete rewrite of advanced data structure algorithms, maintaining high-performance characteristics while leveraging Rust's memory safety and modern tooling ecosystem.
+Zipora offers a complete implementation of advanced data structure algorithms, maintaining high-performance characteristics while leveraging Rust's memory safety and modern tooling ecosystem.
 
 ### Key Features
 
@@ -31,13 +31,13 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-infini-zip = "0.1"
+zipora = "0.1"
 ```
 
 ### Basic Usage
 
 ```rust
-use infini_zip::{
+use zipora::{
     FastVec, FastStr, MemoryBlobStore, BlobStore, 
     LoudsTrie, Trie, GoldHashMap, HuffmanEncoder,
     MemoryPool, PoolConfig, SuffixArray, FiberPool
@@ -248,7 +248,7 @@ println!("Large allocations: {}, Cache hit ratio: {:.1}%",
 Efficient memory pools for high-frequency allocations:
 
 ```rust
-use infini_zip::{MemoryPool, PoolConfig, PooledVec, PooledBuffer};
+use zipora::{MemoryPool, PoolConfig, PooledVec, PooledBuffer};
 
 let config = PoolConfig::new(64 * 1024, 100, 8); // 64KB chunks, max 100 chunks, 8-byte aligned
 let pool = MemoryPool::new(config).unwrap();
@@ -272,7 +272,7 @@ let pooled_buffer = PooledBuffer::new(1024).unwrap();
 Ultra-fast sequential allocation for temporary objects:
 
 ```rust
-use infini_zip::{BumpAllocator, BumpArena, BumpVec};
+use zipora::{BumpAllocator, BumpArena, BumpVec};
 
 let bump = BumpAllocator::new(1024 * 1024).unwrap(); // 1MB arena
 
@@ -297,7 +297,7 @@ Large page allocation for improved performance:
 ```rust
 #[cfg(target_os = "linux")]
 {
-    use infini_zip::{HugePage, HugePageAllocator, HUGEPAGE_SIZE_2MB};
+    use zipora::{HugePage, HugePageAllocator, HUGEPAGE_SIZE_2MB};
 
     // Direct hugepage allocation
     let hugepage = HugePage::new_2mb(2 * 1024 * 1024).unwrap();
@@ -317,7 +317,7 @@ Large page allocation for improved performance:
 Linear-time suffix array construction with LCP arrays:
 
 ```rust
-use infini_zip::{SuffixArray, LcpArray, EnhancedSuffixArray};
+use zipora::{SuffixArray, LcpArray, EnhancedSuffixArray};
 
 let text = b"banana republic banana";
 let sa = SuffixArray::new(text).unwrap();
@@ -343,7 +343,7 @@ if let Some(bwt) = esa_bwt.bwt() {
 Linear-time sorting with parallel processing:
 
 ```rust
-use infini_zip::{RadixSort, RadixSortConfig, KeyValueRadixSort};
+use zipora::{RadixSort, RadixSortConfig, KeyValueRadixSort};
 
 // Basic radix sort
 let mut data = vec![5u32, 2, 8, 1, 9, 3, 7, 4, 6];
@@ -386,7 +386,7 @@ kv_sorter.sort_by_key(&mut kv_data).unwrap();
 Efficient merging of multiple sorted sequences:
 
 ```rust
-use infini_zip::{MultiWayMerge, MultiWayMergeConfig, VectorSource, MergeOperations};
+use zipora::{MultiWayMerge, MultiWayMergeConfig, VectorSource, MergeOperations};
 
 // Basic multi-way merge
 let sources = vec![
@@ -424,7 +424,7 @@ MergeOperations::merge_in_place(&mut data, 4);
 Async/await based concurrency with work-stealing execution:
 
 ```rust
-use infini_zip::{FiberPool, FiberPoolConfig};
+use zipora::{FiberPool, FiberPoolConfig};
 
 // Create a fiber pool with custom configuration
 let pool = FiberPoolBuilder::new()
@@ -452,7 +452,7 @@ println!("Active fibers: {}, Total completed: {}", stats.active_fibers, stats.co
 Streaming data processing with multiple stages:
 
 ```rust
-use infini_zip::{Pipeline, PipelineBuilder, MapStage, FilterStage};
+use zipora::{Pipeline, PipelineBuilder, MapStage, FilterStage};
 
 let pipeline = PipelineBuilder::new()
     .buffer_size(1000)
@@ -477,7 +477,7 @@ println!("Throughput: {:.1} items/sec", stats.throughput_per_sec);
 Concurrent trie construction and operations:
 
 ```rust
-use infini_zip::{ParallelTrieBuilder, ParallelLoudsTrie};
+use zipora::{ParallelTrieBuilder, ParallelLoudsTrie};
 
 // Build trie in parallel
 let builder = ParallelTrieBuilder::new().chunk_size(1000);
@@ -501,7 +501,7 @@ println!("Inserted {} keys", state_ids.len());
 Automatically selects the best compression algorithm:
 
 ```rust
-use infini_zip::{AdaptiveCompressor, AdaptiveConfig, PerformanceRequirements};
+use zipora::{AdaptiveCompressor, AdaptiveConfig, PerformanceRequirements};
 
 // Configure performance requirements
 let requirements = PerformanceRequirements {
@@ -537,7 +537,7 @@ println!("Compression ratio: {:.3}", stats.compression_ratio());
 Strict latency guarantees with fallback mechanisms:
 
 ```rust
-use infini_zip::{RealtimeCompressor, CompressionMode, RealtimeConfig};
+use zipora::{RealtimeCompressor, CompressionMode, RealtimeConfig};
 
 // Create real-time compressor with ultra-low latency
 let compressor = RealtimeCompressor::with_mode(CompressionMode::UltraLowLatency).unwrap();
@@ -562,7 +562,7 @@ println!("95th percentile: {} μs", stats.p95_latency_us);
 Non-blocking blob storage operations:
 
 ```rust
-use infini_zip::{AsyncMemoryBlobStore, AsyncBlobStore, AsyncFileStore};
+use zipora::{AsyncMemoryBlobStore, AsyncBlobStore, AsyncFileStore};
 
 async fn async_storage_example() {
     // Async memory blob store
@@ -628,7 +628,7 @@ if let Some(pos) = s.find(FastStr::from_str("fox")) {
 Space-efficient bit vectors with rank-select operations:
 
 ```rust
-use infini_zip::{BitVector, RankSelect256};
+use zipora::{BitVector, RankSelect256};
 
 let mut bv = BitVector::new();
 for i in 0..1000 {
@@ -646,7 +646,7 @@ let pos = rs.select1(10).unwrap(); // Position of 10th set bit
 Multiple blob storage implementations with unified interface:
 
 ```rust
-use infini_zip::{BlobStore, MemoryBlobStore, PlainBlobStore};
+use zipora::{BlobStore, MemoryBlobStore, PlainBlobStore};
 
 // In-memory storage
 let mut mem_store = MemoryBlobStore::new();
@@ -668,7 +668,7 @@ let id = file_store.put(b"persistent data").unwrap();
 Structured data serialization with multiple backends:
 
 ```rust
-use infini_zip::{DataInput, DataOutput, VarInt};
+use zipora::{DataInput, DataOutput, VarInt};
 
 // Write structured data
 let mut output = infini_zip::io::to_vec();
@@ -689,7 +689,7 @@ High-performance zero-copy file operations:
 ```rust
 #[cfg(feature = "mmap")]
 {
-    use infini_zip::{MemoryMappedInput, MemoryMappedOutput, DataInput, DataOutput};
+    use zipora::{MemoryMappedInput, MemoryMappedOutput, DataInput, DataOutput};
     use std::fs::File;
     
     // Create memory-mapped output with automatic growth
@@ -719,7 +719,7 @@ High-performance zero-copy file operations:
 Advanced compression algorithms for optimal data compression:
 
 ```rust
-use infini_zip::{
+use zipora::{
     EntropyStats, HuffmanEncoder, HuffmanDecoder, HuffmanTree,
     RansEncoder, RansDecoder, DictionaryBuilder, DictionaryCompressor,
     HuffmanBlobStore, MemoryBlobStore, BlobStore
@@ -790,7 +790,7 @@ println!("Average compression time: {:.1} μs", stats.avg_compression_time_us())
 The compression framework provides a unified interface for different compression algorithms with automatic algorithm selection:
 
 ```rust
-use infini_zip::{
+use zipora::{
     CompressorFactory, Algorithm, PerformanceRequirements, 
     HuffmanCompressor, Compressor
 };
@@ -840,7 +840,7 @@ assert_eq!(data, decompressed.as_slice());
 Multiple trie variants optimized for different use cases:
 
 ```rust
-use infini_zip::{LoudsTrie, PatriciaTrie, CritBitTrie, Trie, FiniteStateAutomaton};
+use zipora::{LoudsTrie, PatriciaTrie, CritBitTrie, Trie, FiniteStateAutomaton};
 
 // LOUDS Trie - Space-efficient with succinct data structures
 let mut louds_trie = LoudsTrie::new();

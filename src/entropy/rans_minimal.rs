@@ -2,7 +2,7 @@
 //!
 //! This is a reference implementation that follows the exact canonical algorithm.
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 
 const RANS_BYTE_L: u32 = 1 << 23; // Lower bound for renormalization
 
@@ -20,7 +20,7 @@ impl MinimalRans {
     pub fn new(frequencies: &[u32; 256]) -> Result<Self> {
         let total_freq: u32 = frequencies.iter().sum();
         if total_freq == 0 {
-            return Err(ToplingError::invalid_data("No symbols with frequency"));
+            return Err(ZiporaError::invalid_data("No symbols with frequency"));
         }
 
         // Build cumulative frequency table
@@ -75,7 +75,7 @@ impl MinimalRans {
             let cumfreq = self.cumulative[symbol as usize];
 
             if freq == 0 {
-                return Err(ToplingError::invalid_data(format!(
+                return Err(ZiporaError::invalid_data(format!(
                     "Symbol {} not in table",
                     symbol
                 )));
@@ -122,7 +122,7 @@ impl MinimalRans {
     /// Decode data
     pub fn decode(&self, encoded: &[u8], length: usize) -> Result<Vec<u8>> {
         if encoded.len() < 4 {
-            return Err(ToplingError::invalid_data("Encoded data too short"));
+            return Err(ZiporaError::invalid_data("Encoded data too short"));
         }
 
         println!("\n=== DECODING ===");
@@ -159,7 +159,7 @@ impl MinimalRans {
             }
 
             if state < RANS_BYTE_L {
-                return Err(ToplingError::invalid_data("Insufficient data for decoding"));
+                return Err(ZiporaError::invalid_data("Insufficient data for decoding"));
             }
 
             // Find symbol
@@ -170,7 +170,7 @@ impl MinimalRans {
             let symbol = if slot < self.decode_table.len() as u32 {
                 self.decode_table[slot as usize]
             } else {
-                return Err(ToplingError::invalid_data("Invalid slot value"));
+                return Err(ZiporaError::invalid_data("Invalid slot value"));
             };
 
             let freq = self.frequencies[symbol as usize];

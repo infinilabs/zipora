@@ -2,7 +2,7 @@
 //!
 //! This implements the exact canonical rANS algorithm for debugging purposes
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 
 const RANS_BYTE_L: u32 = 1 << 23; // Lower bound for renormalization (16M)
 
@@ -22,7 +22,7 @@ impl ReferenceRans {
     pub fn new(frequencies: &[u32; 256]) -> Result<Self> {
         let total_freq: u32 = frequencies.iter().sum();
         if total_freq == 0 {
-            return Err(ToplingError::invalid_data("No symbols with frequency"));
+            return Err(ZiporaError::invalid_data("No symbols with frequency"));
         }
 
         // Build cumulative frequency table
@@ -71,7 +71,7 @@ impl ReferenceRans {
             let cumfreq = self.cumulative[symbol as usize];
 
             if freq == 0 {
-                return Err(ToplingError::invalid_data(format!(
+                return Err(ZiporaError::invalid_data(format!(
                     "Symbol {} not in table",
                     symbol
                 )));
@@ -129,7 +129,7 @@ impl ReferenceRans {
     /// Decode data using canonical rANS
     pub fn decode(&self, encoded: &[u8], length: usize) -> Result<Vec<u8>> {
         if encoded.len() < 4 {
-            return Err(ToplingError::invalid_data("Encoded data too short"));
+            return Err(ZiporaError::invalid_data("Encoded data too short"));
         }
 
         println!("\n=== REFERENCE DECODING ===");
@@ -156,7 +156,7 @@ impl ReferenceRans {
             // Renormalize: read bytes when state gets too small
             while state < RANS_BYTE_L {
                 if pos == 0 {
-                    return Err(ToplingError::invalid_data("Insufficient data for decoding"));
+                    return Err(ZiporaError::invalid_data("Insufficient data for decoding"));
                 }
                 pos -= 1;
                 let byte_in = encoded[pos];

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::blob_store::traits::{BatchBlobStore, BlobStore, BlobStoreStats, IterableBlobStore};
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use crate::RecordId;
 
 #[cfg(feature = "serde")]
@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 /// # Examples
 ///
 /// ```rust
-/// use infini_zip::blob_store::{BlobStore, PlainBlobStore};
+/// use zipora::blob_store::{BlobStore, PlainBlobStore};
 /// use tempfile::tempdir;
 ///
 /// let temp_dir = tempdir().unwrap();
@@ -53,14 +53,14 @@ impl PlainBlobStore {
     ///
     /// # Returns
     /// * `Ok(PlainBlobStore)` - Successfully created store
-    /// * `Err(ToplingError)` - If directory creation or initialization fails
+    /// * `Err(ZiporaError)` - If directory creation or initialization fails
     pub fn new<P: AsRef<Path>>(base_dir: P) -> Result<Self> {
         let base_dir = base_dir.as_ref().to_path_buf();
 
         // Create directory if it doesn't exist
         if !base_dir.exists() {
             fs::create_dir_all(&base_dir).map_err(|e| {
-                ToplingError::io_error(format!("Failed to create directory {:?}: {}", base_dir, e))
+                ZiporaError::io_error(format!("Failed to create directory {:?}: {}", base_dir, e))
             })?;
         }
 
@@ -81,7 +81,7 @@ impl PlainBlobStore {
         // Remove directory if it exists and recreate it
         if base_dir.exists() {
             fs::remove_dir_all(&base_dir).map_err(|e| {
-                ToplingError::io_error(format!(
+                ZiporaError::io_error(format!(
                     "Failed to remove existing directory {:?}: {}",
                     base_dir, e
                 ))
@@ -89,7 +89,7 @@ impl PlainBlobStore {
         }
 
         fs::create_dir_all(&base_dir).map_err(|e| {
-            ToplingError::io_error(format!("Failed to create directory {:?}: {}", base_dir, e))
+            ZiporaError::io_error(format!("Failed to create directory {:?}: {}", base_dir, e))
         })?;
 
         Ok(Self {
@@ -114,12 +114,12 @@ impl PlainBlobStore {
         }
 
         let entries = fs::read_dir(base_dir).map_err(|e| {
-            ToplingError::io_error(format!("Failed to read directory {:?}: {}", base_dir, e))
+            ZiporaError::io_error(format!("Failed to read directory {:?}: {}", base_dir, e))
         })?;
 
         for entry in entries {
             let entry = entry.map_err(|e| {
-                ToplingError::io_error(format!("Failed to read directory entry: {}", e))
+                ZiporaError::io_error(format!("Failed to read directory entry: {}", e))
             })?;
 
             let filename = entry.file_name();
@@ -162,7 +162,7 @@ impl PlainBlobStore {
         let mut ids = Vec::new();
 
         let entries = fs::read_dir(&self.base_dir).map_err(|e| {
-            ToplingError::io_error(format!(
+            ZiporaError::io_error(format!(
                 "Failed to read directory {:?}: {}",
                 self.base_dir, e
             ))
@@ -170,7 +170,7 @@ impl PlainBlobStore {
 
         for entry in entries {
             let entry = entry.map_err(|e| {
-                ToplingError::io_error(format!("Failed to read directory entry: {}", e))
+                ZiporaError::io_error(format!("Failed to read directory entry: {}", e))
             })?;
 
             let filename = entry.file_name();
@@ -194,12 +194,12 @@ impl BlobStore for PlainBlobStore {
         let path = self.file_path(id);
 
         let mut file = File::open(&path).map_err(|e| {
-            ToplingError::not_found(format!("Blob file {:?} not found: {}", path, e))
+            ZiporaError::not_found(format!("Blob file {:?} not found: {}", path, e))
         })?;
 
         let mut data = Vec::new();
         file.read_to_end(&mut data).map_err(|e| {
-            ToplingError::io_error(format!("Failed to read blob file {:?}: {}", path, e))
+            ZiporaError::io_error(format!("Failed to read blob file {:?}: {}", path, e))
         })?;
 
         Ok(data)
@@ -210,15 +210,15 @@ impl BlobStore for PlainBlobStore {
         let path = self.file_path(id);
 
         let mut file = File::create(&path).map_err(|e| {
-            ToplingError::io_error(format!("Failed to create blob file {:?}: {}", path, e))
+            ZiporaError::io_error(format!("Failed to create blob file {:?}: {}", path, e))
         })?;
 
         file.write_all(data).map_err(|e| {
-            ToplingError::io_error(format!("Failed to write blob file {:?}: {}", path, e))
+            ZiporaError::io_error(format!("Failed to write blob file {:?}: {}", path, e))
         })?;
 
         file.sync_all().map_err(|e| {
-            ToplingError::io_error(format!("Failed to sync blob file {:?}: {}", path, e))
+            ZiporaError::io_error(format!("Failed to sync blob file {:?}: {}", path, e))
         })?;
 
         self.stats.record_put(data.len());
@@ -232,7 +232,7 @@ impl BlobStore for PlainBlobStore {
         let size = fs::metadata(&path).map(|m| m.len() as usize).unwrap_or(0);
 
         fs::remove_file(&path).map_err(|e| {
-            ToplingError::not_found(format!("Failed to remove blob file {:?}: {}", path, e))
+            ZiporaError::not_found(format!("Failed to remove blob file {:?}: {}", path, e))
         })?;
 
         self.stats.record_remove(size);

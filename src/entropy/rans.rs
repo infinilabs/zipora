@@ -3,7 +3,7 @@
 //! This module provides rANS encoding, a modern entropy coding technique that
 //! achieves better compression than Huffman coding for many data types.
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 
 // Standard rANS constants for byte-based implementation
 const RANS_BYTE_L: u32 = 1 << 23; // Lower bound: 8,388,608
@@ -103,7 +103,7 @@ impl RansEncoder {
         let sym = &self.symbols[symbol as usize];
 
         if sym.freq == 0 {
-            return Err(ToplingError::invalid_data(format!(
+            return Err(ZiporaError::invalid_data(format!(
                 "Symbol {} not in frequency table",
                 symbol
             )));
@@ -200,7 +200,7 @@ impl RansDecoder {
         // Renormalize first: read bytes when state gets too small
         while state.state < RANS_BYTE_L {
             if *pos == 0 {
-                return Err(ToplingError::invalid_data("Insufficient data for decoding"));
+                return Err(ZiporaError::invalid_data("Insufficient data for decoding"));
             }
             *pos -= 1;
             state.state = (state.state << 8) | (input[*pos] as u32);
@@ -238,7 +238,7 @@ impl RansDecoder {
         }
 
         if encoded_data.len() < 4 {
-            return Err(ToplingError::invalid_data("rANS data too short"));
+            return Err(ZiporaError::invalid_data("rANS data too short"));
         }
 
         // Read initial state from last 4 bytes (little endian)

@@ -3,7 +3,7 @@
 //! Provides a compact representation of bit arrays with efficient operations
 //! for setting, getting, and manipulating individual bits.
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use crate::FastVec;
 use std::fmt;
 
@@ -27,7 +27,7 @@ use std::arch::x86_64::{
 /// # Examples
 ///
 /// ```rust
-/// use infini_zip::BitVector;
+/// use zipora::BitVector;
 ///
 /// let mut bv = BitVector::new();
 /// bv.push(true)?;
@@ -37,7 +37,7 @@ use std::arch::x86_64::{
 /// assert_eq!(bv.get(0), Some(true));
 /// assert_eq!(bv.get(1), Some(false));
 /// assert_eq!(bv.len(), 3);
-/// # Ok::<(), infini_zip::ToplingError>(())
+/// # Ok::<(), zipora::ZiporaError>(())
 /// ```
 pub struct BitVector {
     blocks: FastVec<u64>,
@@ -121,7 +121,7 @@ impl BitVector {
     /// Set the bit at the specified position
     pub fn set(&mut self, index: usize, value: bool) -> Result<()> {
         if index >= self.len {
-            return Err(ToplingError::out_of_bounds(index, self.len));
+            return Err(ZiporaError::out_of_bounds(index, self.len));
         }
 
         let block_index = index / BITS_PER_BLOCK;
@@ -182,7 +182,7 @@ impl BitVector {
     /// Insert a bit at the specified position
     pub fn insert(&mut self, index: usize, value: bool) -> Result<()> {
         if index > self.len {
-            return Err(ToplingError::out_of_bounds(index, self.len));
+            return Err(ZiporaError::out_of_bounds(index, self.len));
         }
 
         // For simplicity, we'll implement this by pushing a bit and then
@@ -402,7 +402,7 @@ impl BitVector {
     #[cfg(all(target_arch = "x86_64", feature = "simd"))]
     pub fn set_range_simd(&mut self, start: usize, end: usize, value: bool) -> Result<()> {
         if start > end || end > self.len {
-            return Err(ToplingError::out_of_bounds(end, self.len));
+            return Err(ZiporaError::out_of_bounds(end, self.len));
         }
         
         if is_x86_feature_detected!("avx2") {
@@ -461,7 +461,7 @@ impl BitVector {
     pub fn set_range_simd(&mut self, start: usize, end: usize, value: bool) -> Result<()> {
         // Fallback implementation for non-SIMD platforms
         if start > end || end > self.len {
-            return Err(ToplingError::out_of_bounds(end, self.len));
+            return Err(ZiporaError::out_of_bounds(end, self.len));
         }
         
         for i in start..end {
@@ -478,7 +478,7 @@ impl BitVector {
     #[cfg(all(target_arch = "x86_64", feature = "simd"))]
     pub fn bulk_bitwise_op_simd(&mut self, other: &BitVector, op: BitwiseOp, start: usize, end: usize) -> Result<()> {
         if start > end || end > self.len || end > other.len {
-            return Err(ToplingError::invalid_data("Invalid range for bulk operation".to_string()));
+            return Err(ZiporaError::invalid_data("Invalid range for bulk operation".to_string()));
         }
         
         if is_x86_feature_detected!("avx2") {
@@ -547,7 +547,7 @@ impl BitVector {
     pub fn bulk_bitwise_op_simd(&mut self, other: &BitVector, op: BitwiseOp, start: usize, end: usize) -> Result<()> {
         // Fallback implementation for non-SIMD platforms
         if start > end || end > self.len || end > other.len {
-            return Err(ToplingError::invalid_data("Invalid range for bulk operation".to_string()));
+            return Err(ZiporaError::invalid_data("Invalid range for bulk operation".to_string()));
         }
         
         for i in start..end {

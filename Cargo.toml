@@ -1,17 +1,17 @@
 [package]
-name = "infini-zip"
+name = "zipora"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
 authors = ["InfiniLabs"]
-description = "High-performance data structures and compression algorithms with fiber-based concurrency and real-time compression (Rust port of topling-zip)"
+description = "High-performance data structures and compression algorithms with fiber-based concurrency and real-time compression"
 license = "BSD-3-Clause"
-repository = "https://github.com/infinilabs/infini-zip-rs"
+repository = "https://github.com/infinilabs/zipora"
 keywords = ["compression", "data-structures", "trie", "succinct", "concurrency"]
 categories = ["compression", "data-structures", "algorithms", "concurrency", "memory-management"]
 
 [lib]
-name = "infini_zip"
+name = "zipora"
 crate-type = ["rlib", "cdylib"]
 
 [features]

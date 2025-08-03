@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-This document reports the implementation and performance results of the **Advanced Memory Pool Architecture** for infini-zip, designed to achieve C++-competitive performance for large memory allocations.
+This document reports the implementation and performance results of the **Advanced Memory Pool Architecture** for zipora, designed to achieve C++-competitive performance for large memory allocations.
 
 ### Key Implementation Features ✅ **COMPLETED**
 
@@ -171,7 +171,7 @@ cargo bench --bench benchmark
 
 ### Basic Tiered Allocation
 ```rust
-use infini_zip::memory::{tiered_allocate, tiered_deallocate};
+use zipora::memory::{tiered_allocate, tiered_deallocate};
 
 // Automatic optimal allocation based on size
 let allocation = tiered_allocate(64 * 1024)?; // Uses mmap for large allocation
@@ -182,7 +182,7 @@ tiered_deallocate(allocation)?;
 
 ### Custom Configuration
 ```rust
-use infini_zip::memory::{TieredMemoryAllocator, TieredConfig};
+use zipora::memory::{TieredMemoryAllocator, TieredConfig};
 
 let config = TieredConfig {
     enable_hugepages: true,
@@ -197,7 +197,7 @@ let allocation = allocator.allocate(size)?;
 
 ### Performance Monitoring
 ```rust
-use infini_zip::memory::get_tiered_stats;
+use zipora::memory::get_tiered_stats;
 
 let stats = get_tiered_stats();
 println!("Large allocations: {}", stats.large_allocations);
@@ -227,7 +227,7 @@ This implementation directly addresses the critical performance gaps identified 
    - Validate performance improvements meet targets
 
 2. **Integration Testing**
-   - Test with real infini-zip workloads
+   - Test with real zipora workloads
    - Verify no performance regressions in existing code
    - Measure memory usage patterns in production scenarios
 

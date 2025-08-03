@@ -1,7 +1,7 @@
 #pragma once
 
 /**
- * Enhanced C++ Wrapper for topling-zip library benchmarking
+ * Enhanced C++ Wrapper for zipora library benchmarking
  * 
  * This header provides comprehensive C-compatible interfaces to the original 
  * topling-zip C++ library for detailed performance comparison benchmarks.

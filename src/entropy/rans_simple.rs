@@ -2,7 +2,7 @@
 //!
 //! This is a reference implementation that prioritizes correctness over performance.
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 
 const RANS_BYTE_L: u32 = 1 << 23; // Lower bound for renormalization
 
@@ -19,7 +19,7 @@ impl SimpleRans {
     pub fn new(frequencies: &[u32; 256]) -> Result<Self> {
         let total_freq: u32 = frequencies.iter().sum();
         if total_freq == 0 {
-            return Err(ToplingError::invalid_data("No symbols with frequency"));
+            return Err(ZiporaError::invalid_data("No symbols with frequency"));
         }
 
         // Build cumulative frequency table
@@ -44,7 +44,7 @@ impl SimpleRans {
         for &symbol in data.iter().rev() {
             let freq = self.freq_table[symbol as usize];
             if freq == 0 {
-                return Err(ToplingError::invalid_data(format!(
+                return Err(ZiporaError::invalid_data(format!(
                     "Symbol {} not in table",
                     symbol
                 )));
@@ -72,7 +72,7 @@ impl SimpleRans {
     /// Decode data
     pub fn decode(&self, encoded: &[u8], length: usize) -> Result<Vec<u8>> {
         if encoded.len() < 4 {
-            return Err(ToplingError::invalid_data("Encoded data too short"));
+            return Err(ZiporaError::invalid_data("Encoded data too short"));
         }
 
         // Read initial state from last 4 bytes (like other working implementations)
@@ -91,7 +91,7 @@ impl SimpleRans {
             // Renormalize if needed - read bytes backwards
             while state < RANS_BYTE_L {
                 if pos == 0 {
-                    return Err(ToplingError::invalid_data("Insufficient data for decoding"));
+                    return Err(ZiporaError::invalid_data("Insufficient data for decoding"));
                 }
                 pos -= 1;
                 state = (state << 8) | (encoded[pos] as u32);

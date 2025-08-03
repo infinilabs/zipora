@@ -1,6 +1,6 @@
 //! Work-stealing task scheduler for efficient load balancing
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
@@ -78,7 +78,7 @@ where
         if let Some(closure) = self.closure.take() {
             closure()
         } else {
-            Box::pin(async { Err(ToplingError::configuration("task already executed")) })
+            Box::pin(async { Err(ZiporaError::configuration("task already executed")) })
         }
     }
 
@@ -118,7 +118,7 @@ impl WorkStealingQueue {
         let mut queue = self.local_queue.lock().unwrap();
 
         if queue.len() >= self.capacity {
-            return Err(ToplingError::configuration("local queue full"));
+            return Err(ZiporaError::configuration("local queue full"));
         }
 
         // Insert based on priority
@@ -252,7 +252,7 @@ impl WorkStealingExecutor {
     /// Create a new work-stealing executor
     pub fn new(num_workers: usize, queue_capacity: usize) -> Result<Arc<Self>> {
         if num_workers == 0 {
-            return Err(ToplingError::invalid_data("num_workers cannot be zero"));
+            return Err(ZiporaError::invalid_data("num_workers cannot be zero"));
         }
 
         let mut workers = Vec::with_capacity(num_workers);
@@ -326,7 +326,7 @@ impl WorkStealingExecutor {
                 return Ok(());
             }
             // If this fails, the task is consumed but we have an error
-            return Err(ToplingError::configuration("local queue push failed"));
+            return Err(ZiporaError::configuration("local queue push failed"));
         } else {
             // Go straight to global queue with priority ordering
             let mut global_queue = self.global_queue.lock().unwrap();
@@ -341,7 +341,7 @@ impl WorkStealingExecutor {
                 global_queue.insert(pos, task);
                 Ok(())
             } else {
-                Err(ToplingError::configuration("all queues full"))
+                Err(ZiporaError::configuration("all queues full"))
             }
         }
     }

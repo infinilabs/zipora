@@ -1,6 +1,6 @@
 //! Debug the zero byte issue in critical-bit trie
 
-use infini_zip::{CritBitTrie, Result, Trie};
+use zipora::{CritBitTrie, Result, Trie};
 
 fn analyze_key_bits(key: &[u8]) {
     println!(

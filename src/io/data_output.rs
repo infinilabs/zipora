@@ -7,7 +7,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use crate::io::var_int::VarInt;
 
 /// Trait for writing structured data to various destinations
@@ -190,7 +190,7 @@ impl<W: Write> DataOutput for WriterDataOutput<W> {
     fn write_u8(&mut self, value: u8) -> Result<()> {
         self.writer
             .write_all(&[value])
-            .map_err(|e| ToplingError::io_error(format!("Failed to write u8: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write u8: {}", e)))?;
         self.bytes_written += 1;
         Ok(())
     }
@@ -198,7 +198,7 @@ impl<W: Write> DataOutput for WriterDataOutput<W> {
     fn write_u16(&mut self, value: u16) -> Result<()> {
         self.writer
             .write_all(&value.to_le_bytes())
-            .map_err(|e| ToplingError::io_error(format!("Failed to write u16: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write u16: {}", e)))?;
         self.bytes_written += 2;
         Ok(())
     }
@@ -206,7 +206,7 @@ impl<W: Write> DataOutput for WriterDataOutput<W> {
     fn write_u32(&mut self, value: u32) -> Result<()> {
         self.writer
             .write_all(&value.to_le_bytes())
-            .map_err(|e| ToplingError::io_error(format!("Failed to write u32: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write u32: {}", e)))?;
         self.bytes_written += 4;
         Ok(())
     }
@@ -214,7 +214,7 @@ impl<W: Write> DataOutput for WriterDataOutput<W> {
     fn write_u64(&mut self, value: u64) -> Result<()> {
         self.writer
             .write_all(&value.to_le_bytes())
-            .map_err(|e| ToplingError::io_error(format!("Failed to write u64: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write u64: {}", e)))?;
         self.bytes_written += 8;
         Ok(())
     }
@@ -228,7 +228,7 @@ impl<W: Write> DataOutput for WriterDataOutput<W> {
     fn write_bytes(&mut self, data: &[u8]) -> Result<()> {
         self.writer
             .write_all(data)
-            .map_err(|e| ToplingError::io_error(format!("Failed to write bytes: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write bytes: {}", e)))?;
         self.bytes_written += data.len() as u64;
         Ok(())
     }
@@ -236,7 +236,7 @@ impl<W: Write> DataOutput for WriterDataOutput<W> {
     fn flush(&mut self) -> Result<()> {
         self.writer
             .flush()
-            .map_err(|e| ToplingError::io_error(format!("Failed to flush: {}", e)))
+            .map_err(|e| ZiporaError::io_error(format!("Failed to flush: {}", e)))
     }
 
     fn position(&self) -> Option<u64> {
@@ -271,7 +271,7 @@ impl FileDataOutput {
     /// Create a new file for writing, truncating if it exists
     pub fn create<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = File::create(path)
-            .map_err(|e| ToplingError::io_error(format!("Failed to create file: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to create file: {}", e)))?;
 
         Ok(Self {
             file,
@@ -286,7 +286,7 @@ impl FileDataOutput {
             .append(true)
             .open(path)
             .map_err(|e| {
-                ToplingError::io_error(format!("Failed to open file for append: {}", e))
+                ZiporaError::io_error(format!("Failed to open file for append: {}", e))
             })?;
 
         let bytes_written = file.metadata().map(|m| m.len()).unwrap_or(0);
@@ -306,14 +306,14 @@ impl FileDataOutput {
     pub fn sync_all(&mut self) -> Result<()> {
         self.file
             .sync_all()
-            .map_err(|e| ToplingError::io_error(format!("Failed to sync file: {}", e)))
+            .map_err(|e| ZiporaError::io_error(format!("Failed to sync file: {}", e)))
     }
 
     /// Sync data (but not metadata) to disk
     pub fn sync_data(&mut self) -> Result<()> {
         self.file
             .sync_data()
-            .map_err(|e| ToplingError::io_error(format!("Failed to sync file data: {}", e)))
+            .map_err(|e| ZiporaError::io_error(format!("Failed to sync file data: {}", e)))
     }
 }
 
@@ -321,7 +321,7 @@ impl DataOutput for FileDataOutput {
     fn write_u8(&mut self, value: u8) -> Result<()> {
         self.file
             .write_all(&[value])
-            .map_err(|e| ToplingError::io_error(format!("Failed to write u8: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write u8: {}", e)))?;
         self.bytes_written += 1;
         Ok(())
     }
@@ -329,7 +329,7 @@ impl DataOutput for FileDataOutput {
     fn write_u16(&mut self, value: u16) -> Result<()> {
         self.file
             .write_all(&value.to_le_bytes())
-            .map_err(|e| ToplingError::io_error(format!("Failed to write u16: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write u16: {}", e)))?;
         self.bytes_written += 2;
         Ok(())
     }
@@ -337,7 +337,7 @@ impl DataOutput for FileDataOutput {
     fn write_u32(&mut self, value: u32) -> Result<()> {
         self.file
             .write_all(&value.to_le_bytes())
-            .map_err(|e| ToplingError::io_error(format!("Failed to write u32: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write u32: {}", e)))?;
         self.bytes_written += 4;
         Ok(())
     }
@@ -345,7 +345,7 @@ impl DataOutput for FileDataOutput {
     fn write_u64(&mut self, value: u64) -> Result<()> {
         self.file
             .write_all(&value.to_le_bytes())
-            .map_err(|e| ToplingError::io_error(format!("Failed to write u64: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write u64: {}", e)))?;
         self.bytes_written += 8;
         Ok(())
     }
@@ -358,7 +358,7 @@ impl DataOutput for FileDataOutput {
     fn write_bytes(&mut self, data: &[u8]) -> Result<()> {
         self.file
             .write_all(data)
-            .map_err(|e| ToplingError::io_error(format!("Failed to write bytes: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write bytes: {}", e)))?;
         self.bytes_written += data.len() as u64;
         Ok(())
     }
@@ -366,7 +366,7 @@ impl DataOutput for FileDataOutput {
     fn flush(&mut self) -> Result<()> {
         self.file
             .flush()
-            .map_err(|e| ToplingError::io_error(format!("Failed to flush: {}", e)))
+            .map_err(|e| ZiporaError::io_error(format!("Failed to flush: {}", e)))
     }
 
     fn position(&self) -> Option<u64> {

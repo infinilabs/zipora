@@ -1,5 +1,5 @@
 /**
- * Enhanced C++ Implementation of benchmark wrapper for topling-zip
+ * Enhanced C++ Implementation of benchmark wrapper for zipora
  * 
  * This file implements comprehensive C-compatible wrappers around the original 
  * topling-zip C++ classes to enable detailed performance comparisons with the 

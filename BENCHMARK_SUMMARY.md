@@ -5,7 +5,7 @@
 ## Completed Tasks
 
 ### 1. ✅ C++ Benchmark Library Build and Verification
-- Successfully verified pre-built `libtopling_zip_wrapper.so` 
+- Successfully verified pre-built `libzipora_wrapper.so` 
 - Library includes stub implementations for topling-zip operations
 - Configured with O3 optimization and native architecture targeting
 - ✅ **Re-verified**: C++ wrapper functional and ready for benchmarks
@@ -55,16 +55,16 @@
 
 ## Files Generated
 
-1. `/usr/local/google/home/binwu/go/src/infini.sh/infini-zip/cpp_benchmark_results.txt` - Raw benchmark output
-2. `/usr/local/google/home/binwu/go/src/infini.sh/infini-zip/rust_benchmark_results.txt` - Rust-only benchmark results
-3. `/usr/local/google/home/binwu/go/src/infini.sh/infini-zip/COMPREHENSIVE_PERFORMANCE_REPORT.md` - Detailed analysis report
-4. `/usr/local/google/home/binwu/go/src/infini.sh/infini-zip/.cargo/config.toml` - Build configuration for library linking
+1. `/usr/local/google/home/binwu/go/src/zipora/cpp_benchmark_results.txt` - Raw benchmark output
+2. `/usr/local/google/home/binwu/go/src/zipora/rust_benchmark_results.txt` - Rust-only benchmark results
+3. `/usr/local/google/home/binwu/go/src/zipora/COMPREHENSIVE_PERFORMANCE_REPORT.md` - Detailed analysis report
+4. `/usr/local/google/home/binwu/go/src/zipora/.cargo/config.toml` - Build configuration for library linking
 
 ## Reproduction Instructions
 
 ```bash
 # Ensure C++ library is available
-cd /usr/local/google/home/binwu/go/src/infini.sh/infini-zip
+cd /usr/local/google/home/binwu/go/src/zipora
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/cpp_benchmark
 
 # Run C++ vs Rust comparison

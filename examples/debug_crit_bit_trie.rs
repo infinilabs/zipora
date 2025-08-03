@@ -3,7 +3,7 @@
 //! This example demonstrates the critical-bit trie functionality
 //! and provides detailed debugging information.
 
-use infini_zip::{CritBitTrie, Result, Trie};
+use zipora::{CritBitTrie, Result, Trie};
 
 fn analyze_key_bits(key: &[u8]) {
     println!(

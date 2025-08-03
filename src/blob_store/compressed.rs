@@ -7,7 +7,7 @@ use crate::blob_store::traits::{
     BatchBlobStore, BlobStore, BlobStoreStats, CompressedBlobStore, CompressionStats,
     IterableBlobStore,
 };
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use crate::RecordId;
 
 #[cfg(feature = "serde")]
@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 /// # Examples
 ///
 /// ```rust
-/// use infini_zip::blob_store::{BlobStore, MemoryBlobStore, ZstdBlobStore};
+/// use zipora::blob_store::{BlobStore, MemoryBlobStore, ZstdBlobStore};
 ///
 /// let inner_store = MemoryBlobStore::new();
 /// let mut compressed_store = ZstdBlobStore::new(inner_store, 3);
@@ -84,13 +84,13 @@ impl<S: BlobStore> ZstdBlobStore<S> {
     /// Compress data using ZSTD
     fn compress(&self, data: &[u8]) -> Result<Vec<u8>> {
         zstd::encode_all(data, self.compression_level)
-            .map_err(|e| ToplingError::io_error(format!("ZSTD compression failed: {}", e)))
+            .map_err(|e| ZiporaError::io_error(format!("ZSTD compression failed: {}", e)))
     }
 
     /// Decompress data using ZSTD
     fn decompress(&self, compressed_data: &[u8]) -> Result<Vec<u8>> {
         zstd::decode_all(compressed_data)
-            .map_err(|e| ToplingError::io_error(format!("ZSTD decompression failed: {}", e)))
+            .map_err(|e| ZiporaError::io_error(format!("ZSTD decompression failed: {}", e)))
     }
 
     /// Update compression statistics
@@ -302,7 +302,7 @@ impl<S: BlobStore> Lz4BlobStore<S> {
     /// Decompress data using LZ4
     fn decompress(&self, compressed_data: &[u8]) -> Result<Vec<u8>> {
         lz4_flex::decompress_size_prepended(compressed_data)
-            .map_err(|e| ToplingError::io_error(format!("LZ4 decompression failed: {}", e)))
+            .map_err(|e| ZiporaError::io_error(format!("LZ4 decompression failed: {}", e)))
     }
 
     /// Update compression statistics

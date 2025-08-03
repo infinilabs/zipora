@@ -3,7 +3,7 @@
 //! This module provides memory pools that can significantly reduce allocation
 //! overhead for frequently allocated objects of similar sizes.
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use std::alloc::{alloc, dealloc, Layout};
 use std::collections::VecDeque;
 use std::ptr::NonNull;
@@ -99,11 +99,11 @@ impl MemoryPool {
     /// Create a new memory pool with the given configuration
     pub fn new(config: PoolConfig) -> Result<Self> {
         if config.chunk_size == 0 {
-            return Err(ToplingError::invalid_data("chunk_size cannot be zero"));
+            return Err(ZiporaError::invalid_data("chunk_size cannot be zero"));
         }
 
         if config.alignment == 0 || !config.alignment.is_power_of_two() {
-            return Err(ToplingError::invalid_data(
+            return Err(ZiporaError::invalid_data(
                 "alignment must be a power of two",
             ));
         }
@@ -198,12 +198,12 @@ impl MemoryPool {
 
     fn allocate_new_chunk(&self) -> Result<NonNull<u8>> {
         let layout = Layout::from_size_align(self.config.chunk_size, self.config.alignment)
-            .map_err(|_| ToplingError::invalid_data("invalid layout for chunk allocation"))?;
+            .map_err(|_| ZiporaError::invalid_data("invalid layout for chunk allocation"))?;
 
         let ptr = unsafe { alloc(layout) };
 
         if ptr.is_null() {
-            return Err(ToplingError::out_of_memory(self.config.chunk_size));
+            return Err(ZiporaError::out_of_memory(self.config.chunk_size));
         }
 
         self.update_stats_on_alloc(false);
@@ -282,11 +282,11 @@ pub fn init_global_pools(chunk_size: usize, max_memory: usize) -> Result<()> {
     // This would re-initialize global pools in a real implementation
     // For now, we just validate the parameters
     if chunk_size == 0 {
-        return Err(ToplingError::invalid_data("chunk_size cannot be zero"));
+        return Err(ZiporaError::invalid_data("chunk_size cannot be zero"));
     }
 
     if max_memory == 0 {
-        return Err(ToplingError::invalid_data("max_memory cannot be zero"));
+        return Err(ZiporaError::invalid_data("max_memory cannot be zero"));
     }
 
     log::debug!(
@@ -344,7 +344,7 @@ impl<T> PooledVec<T> {
     /// Push an element to the vector
     pub fn push(&mut self, item: T) -> Result<()> {
         if self.len >= self.capacity {
-            return Err(ToplingError::invalid_data("vector capacity exceeded"));
+            return Err(ZiporaError::invalid_data("vector capacity exceeded"));
         }
 
         unsafe {

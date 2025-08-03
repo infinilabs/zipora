@@ -35,7 +35,7 @@ use std::arch::x86_64::*;
 /// # Examples
 ///
 /// ```rust
-/// use infini_zip::FastStr;
+/// use zipora::FastStr;
 ///
 /// let s = FastStr::from_string("hello world");
 /// assert_eq!(s.len(), 11);
@@ -234,7 +234,7 @@ impl<'a> FastStr<'a> {
     /// # Examples
     ///
     /// ```rust
-    /// use infini_zip::FastStr;
+    /// use zipora::FastStr;
     ///
     /// let s1 = FastStr::from_string("hello");
     /// let s2 = FastStr::from_string("hello");

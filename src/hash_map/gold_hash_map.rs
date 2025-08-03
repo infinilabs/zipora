@@ -7,7 +7,7 @@
 //! - Cache-friendly data structures
 
 use crate::containers::FastVec;
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use ahash::RandomState;
 use std::borrow::Borrow;
 use std::fmt;
@@ -24,7 +24,7 @@ use std::mem;
 /// # Examples
 ///
 /// ```rust
-/// use infini_zip::GoldHashMap;
+/// use zipora::GoldHashMap;
 ///
 /// let mut map = GoldHashMap::new();
 /// map.insert("key", "value").unwrap();
@@ -284,7 +284,7 @@ where
 
                     // Safety check to prevent infinite loop
                     if probe_distance > self.buckets.len() as u16 {
-                        return Err(ToplingError::invalid_data("Hash map is full"));
+                        return Err(ZiporaError::invalid_data("Hash map is full"));
                     }
                 }
 

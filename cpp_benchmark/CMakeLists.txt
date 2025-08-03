@@ -1,6 +1,6 @@
-# CMakeLists.txt for C++ topling-zip benchmark wrapper
+# CMakeLists.txt for C++ zipora benchmark wrapper
 cmake_minimum_required(VERSION 3.12)
-project(topling_zip_benchmark_wrapper)
+project(zipora_benchmark_wrapper)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -43,49 +43,49 @@ else()
 endif()
 
 # Create the benchmark wrapper library
-add_library(topling_zip_wrapper SHARED
+add_library(zipora_wrapper SHARED
     wrapper.cpp
     enhanced_wrapper.cpp
 )
 
-target_include_directories(topling_zip_wrapper PUBLIC
+target_include_directories(zipora_wrapper PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${TOPLING_ZIP_INCLUDE_DIR}
 )
 
-target_link_libraries(topling_zip_wrapper
+target_link_libraries(zipora_wrapper
     ${TOPLING_ZIP_LIBS}
 )
 
 # Set library properties
-set_target_properties(topling_zip_wrapper PROPERTIES
+set_target_properties(zipora_wrapper PROPERTIES
     VERSION 1.0
     SOVERSION 1
     POSITION_INDEPENDENT_CODE ON
 )
 
 # Create a static version as well for easier linking
-add_library(topling_zip_wrapper_static STATIC
+add_library(zipora_wrapper_static STATIC
     wrapper.cpp
     enhanced_wrapper.cpp
 )
 
-target_include_directories(topling_zip_wrapper_static PUBLIC
+target_include_directories(zipora_wrapper_static PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${TOPLING_ZIP_INCLUDE_DIR}
 )
 
-target_link_libraries(topling_zip_wrapper_static
+target_link_libraries(zipora_wrapper_static
     ${TOPLING_ZIP_LIBS}
 )
 
-set_target_properties(topling_zip_wrapper_static PROPERTIES
-    OUTPUT_NAME topling_zip_wrapper
+set_target_properties(zipora_wrapper_static PROPERTIES
+    OUTPUT_NAME zipora_wrapper
     POSITION_INDEPENDENT_CODE ON
 )
 
 # Install targets
-install(TARGETS topling_zip_wrapper topling_zip_wrapper_static
+install(TARGETS zipora_wrapper zipora_wrapper_static
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
     RUNTIME DESTINATION bin
@@ -97,7 +97,7 @@ install(FILES wrapper.hpp
 
 # Create a test executable to verify the wrapper works
 add_executable(wrapper_test test_wrapper.cpp)
-target_link_libraries(wrapper_test topling_zip_wrapper_static)
+target_link_libraries(wrapper_test zipora_wrapper_static)
 
 # Enable testing
 enable_testing()

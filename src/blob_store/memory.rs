@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::blob_store::traits::{BatchBlobStore, BlobStore, BlobStoreStats, IterableBlobStore};
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use crate::RecordId;
 
 #[cfg(feature = "serde")]
@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 /// # Examples
 ///
 /// ```rust
-/// use infini_zip::blob_store::{BlobStore, MemoryBlobStore};
+/// use zipora::blob_store::{BlobStore, MemoryBlobStore};
 ///
 /// let mut store = MemoryBlobStore::new();
 /// let data = b"hello world";
@@ -133,7 +133,7 @@ impl BlobStore for MemoryBlobStore {
         self.data
             .get(&id)
             .cloned()
-            .ok_or_else(|| ToplingError::not_found(format!("Blob with ID {} not found", id)))
+            .ok_or_else(|| ZiporaError::not_found(format!("Blob with ID {} not found", id)))
     }
 
     fn put(&mut self, data: &[u8]) -> Result<RecordId> {
@@ -150,7 +150,7 @@ impl BlobStore for MemoryBlobStore {
                 self.stats.record_remove(data.len());
                 Ok(())
             }
-            None => Err(ToplingError::not_found(format!(
+            None => Err(ZiporaError::not_found(format!(
                 "Blob with ID {} not found",
                 id
             ))),

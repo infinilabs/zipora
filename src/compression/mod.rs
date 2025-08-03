@@ -13,7 +13,7 @@ pub use realtime::{CompressionMode, RealtimeCompressor, RealtimeConfig};
 use crate::entropy::dictionary::{DictionaryBuilder, DictionaryCompressor};
 use crate::entropy::huffman::{HuffmanDecoder, HuffmanEncoder, HuffmanTree};
 use crate::entropy::rans::{RansDecoder, RansEncoder};
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use std::time::Duration;
 
 /// Compression algorithm types
@@ -245,7 +245,7 @@ impl Compressor for Lz4Compressor {
         }
         #[cfg(not(feature = "lz4"))]
         {
-            Err(ToplingError::not_supported("LZ4 compression not enabled"))
+            Err(ZiporaError::not_supported("LZ4 compression not enabled"))
         }
     }
 
@@ -256,11 +256,11 @@ impl Compressor for Lz4Compressor {
         #[cfg(feature = "lz4")]
         {
             lz4_flex::decompress_size_prepended(data)
-                .map_err(|e| ToplingError::compression(&format!("LZ4 decompression failed: {}", e)))
+                .map_err(|e| ZiporaError::compression(&format!("LZ4 decompression failed: {}", e)))
         }
         #[cfg(not(feature = "lz4"))]
         {
-            Err(ToplingError::not_supported("LZ4 decompression not enabled"))
+            Err(ZiporaError::not_supported("LZ4 decompression not enabled"))
         }
     }
 
@@ -283,12 +283,12 @@ impl ZstdCompressor {
 impl Compressor for ZstdCompressor {
     fn compress(&self, data: &[u8]) -> Result<Vec<u8>> {
         zstd::bulk::compress(data, self.level)
-            .map_err(|e| ToplingError::compression(&format!("ZSTD compression failed: {}", e)))
+            .map_err(|e| ZiporaError::compression(&format!("ZSTD compression failed: {}", e)))
     }
 
     fn decompress(&self, data: &[u8]) -> Result<Vec<u8>> {
         zstd::bulk::decompress(data, 100 * 1024 * 1024) // 100MB limit
-            .map_err(|e| ToplingError::compression(&format!("ZSTD decompression failed: {}", e)))
+            .map_err(|e| ZiporaError::compression(&format!("ZSTD decompression failed: {}", e)))
     }
 
     fn algorithm(&self) -> Algorithm {
@@ -348,7 +348,7 @@ impl Compressor for HuffmanCompressor {
         }
 
         if data.len() < 8 {
-            return Err(ToplingError::invalid_data(
+            return Err(ZiporaError::invalid_data(
                 "Huffman compressed data too short",
             ));
         }
@@ -357,7 +357,7 @@ impl Compressor for HuffmanCompressor {
         let tree_size = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
 
         if data.len() < 8 + tree_size {
-            return Err(ToplingError::invalid_data(
+            return Err(ZiporaError::invalid_data(
                 "Huffman compressed data truncated",
             ));
         }
@@ -394,7 +394,7 @@ pub struct RansCompressor {
 impl RansCompressor {
     pub fn new(training_data: &[u8]) -> Result<Self> {
         if training_data.is_empty() {
-            return Err(ToplingError::invalid_data(
+            return Err(ZiporaError::invalid_data(
                 "rANS compressor requires training data",
             ));
         }
@@ -453,7 +453,7 @@ impl Compressor for RansCompressor {
         }
 
         if data.len() < 256 * 4 + 4 {
-            return Err(ToplingError::invalid_data(
+            return Err(ZiporaError::invalid_data(
                 "Invalid rANS compressed data format",
             ));
         }
@@ -503,7 +503,7 @@ pub struct DictCompressor {
 impl DictCompressor {
     pub fn new(training_data: &[u8]) -> Result<Self> {
         if training_data.is_empty() {
-            return Err(ToplingError::invalid_data(
+            return Err(ZiporaError::invalid_data(
                 "Dictionary compressor requires training data",
             ));
         }
@@ -594,7 +594,7 @@ impl Compressor for HybridCompressor {
         let compressed_data = &data[1..];
 
         if algorithm_id >= self.compressors.len() {
-            return Err(ToplingError::invalid_data(
+            return Err(ZiporaError::invalid_data(
                 "Invalid algorithm identifier in hybrid data",
             ));
         }
@@ -632,7 +632,7 @@ impl CompressorFactory {
                 if let Some(data) = training_data {
                     Ok(Box::new(HuffmanCompressor::new(data)?))
                 } else {
-                    Err(ToplingError::invalid_data(
+                    Err(ZiporaError::invalid_data(
                         "Huffman compressor requires training data",
                     ))
                 }
@@ -641,7 +641,7 @@ impl CompressorFactory {
                 if let Some(data) = training_data {
                     Ok(Box::new(RansCompressor::new(data)?))
                 } else {
-                    Err(ToplingError::invalid_data(
+                    Err(ZiporaError::invalid_data(
                         "rANS compressor requires training data",
                     ))
                 }
@@ -650,7 +650,7 @@ impl CompressorFactory {
                 if let Some(data) = training_data {
                     Ok(Box::new(DictCompressor::new(data)?))
                 } else {
-                    Err(ToplingError::invalid_data(
+                    Err(ZiporaError::invalid_data(
                         "Dictionary compressor requires training data",
                     ))
                 }
@@ -659,7 +659,7 @@ impl CompressorFactory {
                 if let Some(data) = training_data {
                     Ok(Box::new(HybridCompressor::new(data)?))
                 } else {
-                    Err(ToplingError::invalid_data(
+                    Err(ZiporaError::invalid_data(
                         "Hybrid compressor requires training data",
                     ))
                 }

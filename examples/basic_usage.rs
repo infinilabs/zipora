@@ -1,10 +1,10 @@
-use infini_zip::{
+use zipora::{
     BlobStore, FastStr, FastVec, GoldHashMap, HuffmanEncoder, LoudsTrie, MemoryBlobStore, Result,
     Trie,
 };
 
 fn main() -> Result<()> {
-    println!("=== Infini-Zip Rust Demo ===\n");
+    println!("=== Zipora Rust Demo ===\n");
 
     // Demonstrate FastVec
     println!("1. FastVec Performance:");
@@ -112,7 +112,7 @@ fn main() -> Result<()> {
     // Demonstrate Hash Map
     println!("\n8. GoldHashMap:");
     let mut map = GoldHashMap::new();
-    map.insert("name", "Infini-Zip")?;
+    map.insert("name", "Zipora")?;
     map.insert("version", "0.1.0")?;
     map.insert("language", "Rust")?;
 

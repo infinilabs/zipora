@@ -4,7 +4,7 @@
 //! (Little Endian Base 128) format. This encoding is space-efficient for small integers
 //! while still supporting the full range of 64-bit values.
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use crate::io::data_input::DataInput;
 use std::io::Write;
 
@@ -23,7 +23,7 @@ impl VarInt {
     ///
     /// # Returns
     /// * `Ok(usize)` - Number of bytes written
-    /// * `Err(ToplingError)` - If writing fails
+    /// * `Err(ZiporaError)` - If writing fails
     pub fn write_to<W: Write>(writer: &mut W, mut value: u64) -> Result<usize> {
         let mut bytes_written = 0;
 
@@ -36,7 +36,7 @@ impl VarInt {
             }
 
             writer.write_all(&[byte]).map_err(|e| {
-                ToplingError::io_error(format!("Failed to write varint byte: {}", e))
+                ZiporaError::io_error(format!("Failed to write varint byte: {}", e))
             })?;
 
             bytes_written += 1;
@@ -57,7 +57,7 @@ impl VarInt {
     ///
     /// # Returns
     /// * `Ok(usize)` - Number of bytes written
-    /// * `Err(ToplingError)` - If writing fails
+    /// * `Err(ZiporaError)` - If writing fails
     pub fn write_to_vec(buffer: &mut Vec<u8>, mut value: u64) -> Result<usize> {
         let mut bytes_written = 0;
 
@@ -100,7 +100,7 @@ impl VarInt {
     ///
     /// # Returns
     /// * `Ok(u64)` - The decoded value
-    /// * `Err(ToplingError)` - If reading fails or encoding is invalid
+    /// * `Err(ZiporaError)` - If reading fails or encoding is invalid
     pub fn read_from<R: DataInput>(reader: &mut R) -> Result<u64> {
         let mut result = 0u64;
         let mut shift = 0;
@@ -110,7 +110,7 @@ impl VarInt {
 
             // Check for overflow
             if shift >= 64 {
-                return Err(ToplingError::invalid_data("Varint too long"));
+                return Err(ZiporaError::invalid_data("Varint too long"));
             }
 
             result |= ((byte & 0x7F) as u64) << shift;
@@ -123,7 +123,7 @@ impl VarInt {
             shift += 7;
         }
 
-        Err(ToplingError::invalid_data("Varint too long"))
+        Err(ZiporaError::invalid_data("Varint too long"))
     }
 
     /// Decode a variable-length integer from a byte slice
@@ -133,19 +133,19 @@ impl VarInt {
     ///
     /// # Returns
     /// * `Ok((value, bytes_consumed))` - The decoded value and number of bytes consumed
-    /// * `Err(ToplingError)` - If decoding fails or encoding is invalid
+    /// * `Err(ZiporaError)` - If decoding fails or encoding is invalid
     pub fn decode(data: &[u8]) -> Result<(u64, usize)> {
         let mut result = 0u64;
         let mut shift = 0;
 
         for (i, &byte) in data.iter().enumerate() {
             if i >= Self::MAX_ENCODED_LEN {
-                return Err(ToplingError::invalid_data("Varint too long"));
+                return Err(ZiporaError::invalid_data("Varint too long"));
             }
 
             // Check for overflow
             if shift >= 64 {
-                return Err(ToplingError::invalid_data("Varint too long"));
+                return Err(ZiporaError::invalid_data("Varint too long"));
             }
 
             result |= ((byte & 0x7F) as u64) << shift;
@@ -158,7 +158,7 @@ impl VarInt {
             shift += 7;
         }
 
-        Err(ToplingError::invalid_data("Incomplete varint"))
+        Err(ZiporaError::invalid_data("Incomplete varint"))
     }
 
     /// Calculate the number of bytes needed to encode a value
@@ -228,7 +228,7 @@ impl VarInt {
     ///
     /// # Returns
     /// * `Ok(Vec<u64>)` - All decoded values
-    /// * `Err(ToplingError)` - If decoding fails
+    /// * `Err(ZiporaError)` - If decoding fails
     pub fn decode_multiple(mut data: &[u8]) -> Result<Vec<u64>> {
         let mut values = Vec::new();
 

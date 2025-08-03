@@ -1,6 +1,6 @@
 //! Main C API interface
 //!
-//! This module provides the primary C-compatible interface for the infini-zip library,
+//! This module provides the primary C-compatible interface for the zipora library,
 //! allowing seamless integration with existing C/C++ codebases.
 
 use super::{types::*, CResult};
@@ -54,13 +54,13 @@ fn cresult_to_error_msg(result: CResult) -> &'static str {
     }
 }
 
-/// Initialize the infini-zip library
+/// Initialize the zipora library
 ///
 /// # Safety
 ///
 /// This function is safe to call multiple times.
 #[no_mangle]
-pub unsafe extern "C" fn infini_zip_init() -> CResult {
+pub unsafe extern "C" fn zipora_init() -> CResult {
     crate::init();
     CResult::Success
 }
@@ -72,7 +72,7 @@ pub unsafe extern "C" fn infini_zip_init() -> CResult {
 /// The returned string is valid until the next call to this function.
 /// The caller should not free the returned pointer.
 #[no_mangle]
-pub unsafe extern "C" fn infini_zip_version() -> *const c_char {
+pub unsafe extern "C" fn zipora_version() -> *const c_char {
     static mut VERSION_CSTRING: Option<CString> = None;
 
     unsafe {
@@ -90,7 +90,7 @@ pub unsafe extern "C" fn infini_zip_version() -> *const c_char {
 
 /// Check if SIMD optimizations are available
 #[no_mangle]
-pub unsafe extern "C" fn infini_zip_has_simd() -> c_int {
+pub unsafe extern "C" fn zipora_has_simd() -> c_int {
     if crate::has_simd_support() {
         1
     } else {
@@ -319,7 +319,7 @@ pub unsafe extern "C" fn blob_store_put(
 /// # Safety
 ///
 /// The store pointer must be valid. The data and size pointers will be set to
-/// point to allocated memory that must be freed with `infini_zip_free_blob_data`.
+/// point to allocated memory that must be freed with `zipora_free_blob_data`.
 #[no_mangle]
 pub unsafe extern "C" fn blob_store_get(
     store: *const CBlobStore,
@@ -465,7 +465,7 @@ pub unsafe extern "C" fn radix_sort_u32(data: *mut u32, size: usize) -> CResult 
 /// The returned string is valid until the next error occurs on this thread.
 /// The caller should not free the returned pointer.
 #[no_mangle]
-pub unsafe extern "C" fn infini_zip_last_error() -> *const c_char {
+pub unsafe extern "C" fn zipora_last_error() -> *const c_char {
     LAST_ERROR.with(|error| match error.borrow().as_ref() {
         Some(cstring) => cstring.as_ptr(),
         None => {
@@ -482,7 +482,7 @@ pub unsafe extern "C" fn infini_zip_last_error() -> *const c_char {
 /// The callback function pointer must be valid for the lifetime of the library usage.
 /// The callback will be called from the thread that generates the error.
 #[no_mangle]
-pub unsafe extern "C" fn infini_zip_set_error_callback(
+pub unsafe extern "C" fn zipora_set_error_callback(
     callback: Option<unsafe extern "C" fn(*const c_char)>,
 ) {
     if let Ok(mut callback_guard) = ERROR_CALLBACK.lock() {
@@ -498,7 +498,7 @@ pub unsafe extern "C" fn infini_zip_set_error_callback(
 /// The size must match the size returned by `blob_store_get`.
 /// The pointer becomes invalid after this call.
 #[no_mangle]
-pub unsafe extern "C" fn infini_zip_free_blob_data(data: *mut u8, size: usize) {
+pub unsafe extern "C" fn zipora_free_blob_data(data: *mut u8, size: usize) {
     if !data.is_null() && size > 0 {
         unsafe {
             let layout = std::alloc::Layout::from_size_align_unchecked(size, 1);
@@ -515,7 +515,7 @@ mod tests {
     #[test]
     fn test_version_api() {
         unsafe {
-            let version_ptr = infini_zip_version();
+            let version_ptr = zipora_version();
             assert!(!version_ptr.is_null());
 
             let version_cstr = CStr::from_ptr(version_ptr);
@@ -592,7 +592,7 @@ mod tests {
             assert_eq!(retrieved_data, test_data);
 
             // Free the blob data
-            infini_zip_free_blob_data(data_ptr as *mut u8, size);
+            zipora_free_blob_data(data_ptr as *mut u8, size);
 
             blob_store_free(store);
         }
@@ -612,9 +612,9 @@ mod tests {
     #[test]
     fn test_init_and_simd() {
         unsafe {
-            assert_eq!(infini_zip_init(), CResult::Success);
+            assert_eq!(zipora_init(), CResult::Success);
 
-            let has_simd = infini_zip_has_simd();
+            let has_simd = zipora_has_simd();
             // Should not panic, return 0 or 1
             assert!(has_simd == 0 || has_simd == 1);
         }
@@ -624,7 +624,7 @@ mod tests {
     fn test_error_handling() {
         unsafe {
             // Test initial state - no error
-            let error_ptr = infini_zip_last_error();
+            let error_ptr = zipora_last_error();
             assert!(!error_ptr.is_null());
             let error_msg = CStr::from_ptr(error_ptr).to_str().unwrap();
             assert_eq!(error_msg, "No error information available");
@@ -633,7 +633,7 @@ mod tests {
             set_last_error("Test error message");
 
             // Check that error message was set
-            let error_ptr = infini_zip_last_error();
+            let error_ptr = zipora_last_error();
             assert!(!error_ptr.is_null());
             let error_msg = CStr::from_ptr(error_ptr).to_str().unwrap();
             assert_eq!(error_msg, "Test error message");
@@ -659,7 +659,7 @@ mod tests {
 
         unsafe {
             // Set the error callback
-            infini_zip_set_error_callback(Some(test_callback));
+            zipora_set_error_callback(Some(test_callback));
 
             // Reset callback state
             CALLBACK_CALLED.store(false, Ordering::SeqCst);
@@ -674,7 +674,7 @@ mod tests {
             assert_eq!(std::ptr::addr_of!(CALLBACK_MESSAGE).read().as_ref().unwrap(), "Test callback message");
 
             // Clear the callback
-            infini_zip_set_error_callback(None);
+            zipora_set_error_callback(None);
 
             // Reset state and trigger another error
             CALLBACK_CALLED.store(false, Ordering::SeqCst);
@@ -712,7 +712,7 @@ mod tests {
                     set_last_error(error_msg);
 
                     // Get the error message from this thread
-                    let error_ptr = infini_zip_last_error();
+                    let error_ptr = zipora_last_error();
                     let retrieved_msg = if !error_ptr.is_null() {
                         CStr::from_ptr(error_ptr)
                             .to_str()

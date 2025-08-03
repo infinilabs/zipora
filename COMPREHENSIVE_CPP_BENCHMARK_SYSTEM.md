@@ -2,7 +2,7 @@
 
 ## Overview
 
-I have created a complete, production-ready C++ vs Rust performance comparison system for the infini-zip library. This system provides comprehensive benchmarking, detailed analysis, and fair head-to-head comparisons between Rust and C++ implementations.
+I have created a complete, production-ready C++ vs Rust performance comparison system for the zipora library. This system provides comprehensive benchmarking, detailed analysis, and fair head-to-head comparisons between Rust and C++ implementations.
 
 ## 🚀 What Has Been Implemented
 
@@ -239,7 +239,7 @@ cargo bench --bench cpp_comparison memory
 ## 📁 File Structure
 
 ```
-infini-zip/
+zipora/
 ├── benches/
 │   └── cpp_comparison.rs          # Comprehensive Rust benchmark suite
 ├── cpp_benchmark/

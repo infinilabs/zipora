@@ -2,7 +2,7 @@
 
 ## Overview
 
-Successfully implemented advanced SIMD optimizations using BMI2 POPCNT and BMI2 PDEP/PEXT hardware instructions for the infini-zip succinct data structures. This implementation provides multiple optimization tiers based on available hardware capabilities, achieving significant performance improvements over the existing lookup table optimizations.
+Successfully implemented advanced SIMD optimizations using BMI2 POPCNT and BMI2 PDEP/PEXT hardware instructions for the zipora succinct data structures. This implementation provides multiple optimization tiers based on available hardware capabilities, achieving significant performance improvements over the existing lookup table optimizations.
 
 ## ✅ Implemented Features
 
@@ -190,4 +190,4 @@ While the current implementation is complete and production-ready, potential fut
 - `/benches/simd_rank_select_bench.rs` - Performance benchmark suite
 - `/SIMD_OPTIMIZATION_SUMMARY.md` - This summary document
 
-The SIMD optimization implementation represents a significant advancement in the performance capabilities of the infini-zip succinct data structures, providing cutting-edge hardware acceleration while maintaining the safety and compatibility guarantees expected from a Rust implementation.
+The SIMD optimization implementation represents a significant advancement in the performance capabilities of the zipora succinct data structures, providing cutting-edge hardware acceleration while maintaining the safety and compatibility guarantees expected from a Rust implementation.

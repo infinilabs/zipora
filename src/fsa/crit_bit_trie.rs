@@ -98,7 +98,7 @@ impl CritBitNode {
 /// # Examples
 ///
 /// ```rust
-/// use infini_zip::fsa::{CritBitTrie, Trie};
+/// use zipora::fsa::{CritBitTrie, Trie};
 ///
 /// let mut trie = CritBitTrie::new();
 /// trie.insert(b"hello").unwrap();

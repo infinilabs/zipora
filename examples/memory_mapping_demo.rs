@@ -1,17 +1,17 @@
 //! Memory-Mapped I/O Demonstration
 //!
-//! This example demonstrates the memory-mapped I/O capabilities of infini-zip,
+//! This example demonstrates the memory-mapped I/O capabilities of zipora,
 //! including zero-copy file operations, automatic file growth, and performance benefits.
 
 #[cfg(feature = "mmap")]
-use infini_zip::{DataInput, DataOutput, MemoryMappedInput, MemoryMappedOutput};
+use zipora::{DataInput, DataOutput, MemoryMappedInput, MemoryMappedOutput};
 use std::fs::File;
 use std::io::Write;
 use tempfile::NamedTempFile;
 
 #[cfg(feature = "mmap")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🗺️  Memory-Mapped I/O Demo for infini-zip");
+    println!("🗺️  Memory-Mapped I/O Demo for zipora");
     println!("==========================================\n");
 
     // Create a temporary file for our demonstration

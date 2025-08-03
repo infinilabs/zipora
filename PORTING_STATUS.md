@@ -1,6 +1,6 @@
-# Porting Status: C++ topling-zip → Rust infini-zip
+# Porting Status: C++ topling-zip → Rust zipora
 
-This document provides a comprehensive analysis of the porting progress from the original C++ topling-zip library to the Rust infini-zip implementation, including current status, gaps, and detailed implementation plans.
+This document provides a comprehensive analysis of the porting progress from the original C++ topling-zip library to the Rust zipora implementation, including current status, gaps, and detailed implementation plans.
 
 ## 📊 Current Implementation Status
 

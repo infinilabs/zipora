@@ -3,7 +3,7 @@
 # Enhanced build script for comprehensive C++ benchmark wrapper
 set -e
 
-echo "Building enhanced C++ benchmark wrapper for comprehensive topling-zip comparison..."
+echo "Building enhanced C++ benchmark wrapper for comprehensive zipora comparison..."
 
 # Check for required tools
 command -v cmake >/dev/null 2>&1 || { echo "ERROR: cmake is required but not installed."; exit 1; }
@@ -38,13 +38,13 @@ echo "Building wrapper library..."
 make -j$(nproc) VERBOSE=1
 
 # Check if the library was built successfully
-if [ -f "libtopling_zip_wrapper.so" ]; then
+if [ -f "libzipora_wrapper.so" ]; then
     echo "✓ Shared library built successfully"
 else
     echo "! Warning: Shared library not found, checking for static library..."
 fi
 
-if [ -f "libtopling_zip_wrapper.a" ]; then
+if [ -f "libzipora_wrapper.a" ]; then
     echo "✓ Static library built successfully"
 fi
 
@@ -58,8 +58,8 @@ else
 fi
 
 # Copy library to parent directory for easy access
-if [ -f "libtopling_zip_wrapper.so" ]; then
-    cp libtopling_zip_wrapper.so ../
+if [ -f "libzipora_wrapper.so" ]; then
+    cp libzipora_wrapper.so ../
     echo "✓ Library copied to cpp_benchmark/ directory"
 fi
 
@@ -132,7 +132,7 @@ echo "  ✓ High-precision timing and statistical analysis"
 echo "  ✓ Comprehensive benchmark suite"
 echo ""
 echo "To use the enhanced wrapper in Rust benchmarks:"
-echo "1. Ensure libtopling_zip_wrapper.so is in LD_LIBRARY_PATH:"
+echo "1. Ensure libzipora_wrapper.so is in LD_LIBRARY_PATH:"
 echo "   export LD_LIBRARY_PATH=\$LD_LIBRARY_PATH:$(pwd)/.."
 echo "2. Run comprehensive C++ vs Rust comparison:"
 echo "   cd .. && cargo bench --bench cpp_comparison"
@@ -140,4 +140,4 @@ echo "3. For detailed analysis, run:"
 echo "   cargo bench --bench cpp_comparison -- --output-format=json"
 echo ""
 echo "To verify the wrapper functionality:"
-echo "   cd .. && g++ -std=c++17 -O3 -o verify_benchmark verify_benchmark.cpp -L. -ltopling_zip_wrapper && ./verify_benchmark"
+echo "   cd .. && g++ -std=c++17 -O3 -o verify_benchmark verify_benchmark.cpp -L. -lzipora_wrapper && ./verify_benchmark"

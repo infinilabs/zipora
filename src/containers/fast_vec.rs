@@ -4,7 +4,7 @@
 //! Unlike std::Vec which uses malloc+memcpy for growth, FastVec uses realloc
 //! which can often avoid copying when the allocator can expand in place.
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use std::alloc::{self, Layout};
 use std::fmt;
 use std::mem;
@@ -26,7 +26,7 @@ use std::slice;
 /// # Examples
 ///
 /// ```rust
-/// use infini_zip::FastVec;
+/// use zipora::FastVec;
 ///
 /// let mut vec = FastVec::new();
 /// vec.push(42);
@@ -58,11 +58,11 @@ impl<T> FastVec<T> {
         }
 
         let layout = Layout::array::<T>(cap)
-            .map_err(|_| ToplingError::out_of_memory(cap * mem::size_of::<T>()))?;
+            .map_err(|_| ZiporaError::out_of_memory(cap * mem::size_of::<T>()))?;
 
         let ptr = unsafe { alloc::alloc(layout) as *mut T };
         if ptr.is_null() {
-            return Err(ToplingError::out_of_memory(layout.size()));
+            return Err(ZiporaError::out_of_memory(layout.size()));
         }
 
         Ok(Self {
@@ -143,7 +143,7 @@ impl<T> FastVec<T> {
         let required = self
             .len
             .checked_add(additional)
-            .ok_or_else(|| ToplingError::out_of_memory(usize::MAX))?;
+            .ok_or_else(|| ZiporaError::out_of_memory(usize::MAX))?;
 
         if required <= self.cap {
             return Ok(());
@@ -167,7 +167,7 @@ impl<T> FastVec<T> {
         let target_cap = new_cap.max(self.cap.saturating_mul(2));
 
         let new_layout = Layout::array::<T>(target_cap)
-            .map_err(|_| ToplingError::out_of_memory(target_cap * mem::size_of::<T>()))?;
+            .map_err(|_| ZiporaError::out_of_memory(target_cap * mem::size_of::<T>()))?;
 
         let new_ptr = match self.ptr {
             Some(ptr) => {
@@ -186,7 +186,7 @@ impl<T> FastVec<T> {
         };
 
         if new_ptr.is_null() {
-            return Err(ToplingError::out_of_memory(new_layout.size()));
+            return Err(ZiporaError::out_of_memory(new_layout.size()));
         }
 
         self.ptr = Some(unsafe { NonNull::new_unchecked(new_ptr) });
@@ -220,7 +220,7 @@ impl<T> FastVec<T> {
     /// Insert an element at the specified index
     pub fn insert(&mut self, index: usize, value: T) -> Result<()> {
         if index > self.len {
-            return Err(ToplingError::out_of_bounds(index, self.len));
+            return Err(ZiporaError::out_of_bounds(index, self.len));
         }
 
         if self.len >= self.cap {
@@ -241,7 +241,7 @@ impl<T> FastVec<T> {
     /// Remove and return the element at the specified index
     pub fn remove(&mut self, index: usize) -> Result<T> {
         if index >= self.len {
-            return Err(ToplingError::out_of_bounds(index, self.len));
+            return Err(ZiporaError::out_of_bounds(index, self.len));
         }
 
         unsafe {
@@ -307,7 +307,7 @@ impl<T> FastVec<T> {
         }
 
         let new_layout = Layout::array::<T>(self.len)
-            .map_err(|_| ToplingError::out_of_memory(self.len * mem::size_of::<T>()))?;
+            .map_err(|_| ZiporaError::out_of_memory(self.len * mem::size_of::<T>()))?;
 
         let new_ptr = if let Some(ptr) = self.ptr {
             let old_layout = Layout::array::<T>(self.cap).unwrap();
@@ -319,7 +319,7 @@ impl<T> FastVec<T> {
         };
 
         if new_ptr.is_null() {
-            return Err(ToplingError::out_of_memory(new_layout.size()));
+            return Err(ZiporaError::out_of_memory(new_layout.size()));
         }
 
         self.ptr = Some(unsafe { NonNull::new_unchecked(new_ptr) });

@@ -1,6 +1,6 @@
 //! Parallel trie construction and operations
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use crate::fsa::traits::PrefixIterable;
 use crate::fsa::{LoudsTrie, Trie};
 use crate::StateId;
@@ -59,7 +59,7 @@ impl ParallelTrieBuilder {
             let trie = tokio::task::spawn_blocking(move || LoudsTrie::build_from_sorted(chunk))
                 .await
                 .map_err(|e| {
-                    ToplingError::configuration(&format!("parallel build failed: {}", e))
+                    ZiporaError::configuration(&format!("parallel build failed: {}", e))
                 })??;
 
             partial_tries.push(trie);
@@ -99,7 +99,7 @@ impl ParallelTrieBuilder {
             tokio::task::spawn_blocking(move || LoudsTrie::build_from_sorted(all_keys))
                 .await
                 .map_err(|e| {
-                    ToplingError::configuration(&format!("final build failed: {}", e))
+                    ZiporaError::configuration(&format!("final build failed: {}", e))
                 })??;
 
         Ok(ParallelLoudsTrie::from_louds_trie(final_trie))

@@ -21,7 +21,7 @@ pub trait BlobStore {
     ///
     /// # Returns
     /// * `Ok(Vec<u8>)` - The blob data if found
-    /// * `Err(ToplingError)` - If the blob doesn't exist or other error
+    /// * `Err(ZiporaError)` - If the blob doesn't exist or other error
     fn get(&self, id: RecordId) -> Result<Vec<u8>>;
 
     /// Store a blob and return its unique ID
@@ -31,7 +31,7 @@ pub trait BlobStore {
     ///
     /// # Returns
     /// * `Ok(RecordId)` - The unique identifier for the stored blob
-    /// * `Err(ToplingError)` - If storage fails
+    /// * `Err(ZiporaError)` - If storage fails
     fn put(&mut self, data: &[u8]) -> Result<RecordId>;
 
     /// Remove a blob by its record ID
@@ -41,7 +41,7 @@ pub trait BlobStore {
     ///
     /// # Returns
     /// * `Ok(())` - If removal was successful
-    /// * `Err(ToplingError)` - If the blob doesn't exist or removal fails
+    /// * `Err(ZiporaError)` - If the blob doesn't exist or removal fails
     fn remove(&mut self, id: RecordId) -> Result<()>;
 
     /// Check if a blob exists
@@ -61,7 +61,7 @@ pub trait BlobStore {
     /// # Returns
     /// * `Ok(Some(size))` - The size of the blob if it exists
     /// * `Ok(None)` - If the blob doesn't exist
-    /// * `Err(ToplingError)` - If size query fails
+    /// * `Err(ZiporaError)` - If size query fails
     fn size(&self, id: RecordId) -> Result<Option<usize>>;
 
     /// Get the total number of blobs stored
@@ -192,7 +192,7 @@ pub trait BatchBlobStore: BlobStore {
     ///
     /// # Returns
     /// * `Ok(Vec<RecordId>)` - The record IDs for all stored blobs
-    /// * `Err(ToplingError)` - If batch operation fails
+    /// * `Err(ZiporaError)` - If batch operation fails
     fn put_batch<I>(&mut self, blobs: I) -> Result<Vec<RecordId>>
     where
         I: IntoIterator<Item = Vec<u8>>;
@@ -204,7 +204,7 @@ pub trait BatchBlobStore: BlobStore {
     ///
     /// # Returns
     /// * `Ok(Vec<Option<Vec<u8>>>)` - The blob data for each ID (None if not found)
-    /// * `Err(ToplingError)` - If batch operation fails
+    /// * `Err(ZiporaError)` - If batch operation fails
     fn get_batch<I>(&self, ids: I) -> Result<Vec<Option<Vec<u8>>>>
     where
         I: IntoIterator<Item = RecordId>;
@@ -216,7 +216,7 @@ pub trait BatchBlobStore: BlobStore {
     ///
     /// # Returns
     /// * `Ok(usize)` - Number of blobs actually removed
-    /// * `Err(ToplingError)` - If batch operation fails
+    /// * `Err(ZiporaError)` - If batch operation fails
     fn remove_batch<I>(&mut self, ids: I) -> Result<usize>
     where
         I: IntoIterator<Item = RecordId>;

@@ -3,7 +3,7 @@
 //! This module provides a sophisticated tiered allocation strategy that routes
 //! allocations to the most appropriate allocator based on size and usage patterns.
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use crate::memory::{
     mmap::{MemoryMappedAllocator, MmapAllocation},
     pool::{MemoryPool, PoolConfig, PoolStats},
@@ -222,7 +222,7 @@ impl TieredMemoryAllocator {
     /// Allocate memory using the optimal strategy for the given size
     pub fn allocate(&self, size: usize) -> Result<TieredAllocation> {
         if size == 0 {
-            return Err(ToplingError::invalid_data("allocation size cannot be zero"));
+            return Err(ZiporaError::invalid_data("allocation size cannot be zero"));
         }
 
         // Record allocation for adaptive optimization
@@ -345,7 +345,7 @@ impl TieredMemoryAllocator {
                 }
             }
             
-            Err(ToplingError::invalid_data("no suitable pool for deallocation"))
+            Err(ZiporaError::invalid_data("no suitable pool for deallocation"))
         })
     }
 

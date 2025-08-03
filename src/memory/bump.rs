@@ -3,7 +3,7 @@
 //! Bump allocators are extremely fast for allocation-heavy workloads where
 //! objects have similar lifetimes and can be freed all at once.
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use std::alloc::{alloc, dealloc, Layout};
 use std::cell::Cell;
 use std::ptr::NonNull;
@@ -21,15 +21,15 @@ impl BumpAllocator {
     /// Create a new bump allocator with the specified capacity
     pub fn new(capacity: usize) -> Result<Self> {
         if capacity == 0 {
-            return Err(ToplingError::invalid_data("capacity cannot be zero"));
+            return Err(ZiporaError::invalid_data("capacity cannot be zero"));
         }
 
         let layout = Layout::from_size_align(capacity, 8)
-            .map_err(|_| ToplingError::invalid_data("invalid layout for bump allocator"))?;
+            .map_err(|_| ZiporaError::invalid_data("invalid layout for bump allocator"))?;
 
         let ptr = unsafe { alloc(layout) };
         if ptr.is_null() {
-            return Err(ToplingError::out_of_memory(capacity));
+            return Err(ZiporaError::out_of_memory(capacity));
         }
 
         Ok(Self {
@@ -61,11 +61,11 @@ impl BumpAllocator {
     /// Allocate raw bytes with specified alignment
     pub fn alloc_bytes(&self, size: usize, align: usize) -> Result<NonNull<u8>> {
         if size == 0 {
-            return Err(ToplingError::invalid_data("allocation size cannot be zero"));
+            return Err(ZiporaError::invalid_data("allocation size cannot be zero"));
         }
 
         if !align.is_power_of_two() {
-            return Err(ToplingError::invalid_data(
+            return Err(ZiporaError::invalid_data(
                 "alignment must be a power of two",
             ));
         }
@@ -77,7 +77,7 @@ impl BumpAllocator {
         let new_offset = aligned_offset + size;
 
         if new_offset > self.capacity {
-            return Err(ToplingError::out_of_memory(size));
+            return Err(ZiporaError::out_of_memory(size));
         }
 
         self.current.set(new_offset);
@@ -275,7 +275,7 @@ impl<'a, T> BumpVec<'a, T> {
     /// Create a new bump vector with the specified initial capacity
     pub fn new_in(allocator: &'a BumpAllocator, capacity: usize) -> Result<Self> {
         if capacity == 0 {
-            return Err(ToplingError::invalid_data("capacity cannot be zero"));
+            return Err(ZiporaError::invalid_data("capacity cannot be zero"));
         }
 
         let ptr = allocator.alloc_slice::<T>(capacity)?;
@@ -291,7 +291,7 @@ impl<'a, T> BumpVec<'a, T> {
     /// Push an element to the vector
     pub fn push(&mut self, item: T) -> Result<()> {
         if self.len >= self.capacity {
-            return Err(ToplingError::invalid_data("bump vector capacity exceeded"));
+            return Err(ZiporaError::invalid_data("bump vector capacity exceeded"));
         }
 
         unsafe {

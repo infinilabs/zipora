@@ -41,10 +41,10 @@ impl From<crate::Result<()>> for CResult {
     fn from(result: crate::Result<()>) -> Self {
         match result {
             Ok(_) => CResult::Success,
-            Err(crate::ToplingError::InvalidData { message: _ }) => CResult::InvalidInput,
-            Err(crate::ToplingError::OutOfMemory { .. }) => CResult::MemoryError,
-            Err(crate::ToplingError::Io(_)) => CResult::IoError,
-            Err(crate::ToplingError::NotSupported { .. }) => CResult::UnsupportedOperation,
+            Err(crate::ZiporaError::InvalidData { message: _ }) => CResult::InvalidInput,
+            Err(crate::ZiporaError::OutOfMemory { .. }) => CResult::MemoryError,
+            Err(crate::ZiporaError::Io(_)) => CResult::IoError,
+            Err(crate::ZiporaError::NotSupported { .. }) => CResult::UnsupportedOperation,
             _ => CResult::InternalError,
         }
     }

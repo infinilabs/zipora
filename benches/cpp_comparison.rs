@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use infini_zip::{
+use zipora::{
     BitVector, EntropyStats, FastStr, FastVec, GoldHashMap, HuffmanEncoder, HuffmanTree,
     RankSelect256,
 };
@@ -7,14 +7,14 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 
 #[cfg(feature = "mmap")]
-use infini_zip::{DataInput, MemoryMappedInput};
+use zipora::{DataInput, MemoryMappedInput};
 
 use std::fs::File;
 use std::io::Write;
 use tempfile::NamedTempFile;
 
 // External C functions from the C++ wrapper
-#[link(name = "topling_zip_wrapper")]
+#[link(name = "zipora_wrapper")]
 extern "C" {
     // Vector operations
     fn cpp_valvec_create() -> *mut c_void;
@@ -800,7 +800,7 @@ fn benchmark_allocation_patterns(c: &mut Criterion) {
                 b.iter(|| {
                     let mut allocations = Vec::new();
                     for _ in 0..*count {
-                        if let Ok(allocation) = infini_zip::memory::tiered_allocate(size) {
+                        if let Ok(allocation) = zipora::memory::tiered_allocate(size) {
                             // Touch memory to ensure allocation
                             let slice = allocation.as_slice();
                             if !slice.is_empty() {
@@ -812,7 +812,7 @@ fn benchmark_allocation_patterns(c: &mut Criterion) {
                     
                     // Deallocate all
                     for allocation in allocations {
-                        let _ = infini_zip::memory::tiered_deallocate(allocation);
+                        let _ = zipora::memory::tiered_deallocate(allocation);
                     }
                     black_box(())
                 });

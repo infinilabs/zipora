@@ -1,7 +1,7 @@
 //! Real-time compression with strict latency guarantees
 
 use super::{Algorithm, CompressionStats, Compressor, CompressorFactory};
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
@@ -197,7 +197,7 @@ impl RealtimeCompressor {
             .semaphore
             .acquire()
             .await
-            .map_err(|_| ToplingError::configuration("semaphore acquire failed"))?;
+            .map_err(|_| ZiporaError::configuration("semaphore acquire failed"))?;
 
         // Check deadline again after acquiring permit
         if Instant::now() >= deadline {
@@ -313,7 +313,7 @@ impl RealtimeCompressor {
             // Use fallback compressor (no-op)
             self.fallback_compressor.compress(data)
         } else {
-            Err(ToplingError::configuration("compression deadline exceeded"))
+            Err(ZiporaError::configuration("compression deadline exceeded"))
         }
     }
 }

@@ -1,7 +1,7 @@
-//! # Infini-Zip: High-Performance Data Structures and Compression
+//! # Zipora: High-Performance Data Structures and Compression
 //!
 //! This crate provides a comprehensive Rust implementation of advanced data structures and compression algorithms,
-//! offering high-performance solutions originally inspired by the topling-zip C++ library.
+//! offering high-performance solutions with modern Rust design.
 //!
 //! ## Key Features
 //!
@@ -20,7 +20,7 @@
 //! ## Quick Start
 //!
 //! ```rust
-//! use infini_zip::{
+//! use zipora::{
 //!     FastVec, FastStr, MemoryBlobStore, BlobStore,
 //!     LoudsTrie, Trie, GoldHashMap, HuffmanEncoder,
 //!     MemoryPool, PoolConfig, SuffixArray, FiberPool
@@ -80,7 +80,7 @@ pub mod succinct;
 
 // Re-export core types
 pub use containers::FastVec;
-pub use error::{Result, ToplingError};
+pub use error::{Result, ZiporaError};
 pub use string::FastStr;
 pub use succinct::{BitVector, BitwiseOp, CpuFeatures, RankSelect256, RankSelectSe256};
 
@@ -166,7 +166,7 @@ pub fn has_simd_support() -> bool {
 
 /// Initialize the library (currently no-op, for future use)
 pub fn init() {
-    log::debug!("Initializing infini-zip v{}", VERSION);
+    log::debug!("Initializing zipora v{}", VERSION);
 }
 
 #[cfg(test)]
@@ -220,8 +220,8 @@ mod tests {
         let _bv = BitVector::new();
 
         // Test error types
-        let _err = ToplingError::invalid_data("test");
-        assert!(std::any::type_name::<Result<()>>().contains("ToplingError"));
+        let _err = ZiporaError::invalid_data("test");
+        assert!(std::any::type_name::<Result<()>>().contains("ZiporaError"));
     }
 
     #[test]

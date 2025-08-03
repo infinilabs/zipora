@@ -102,7 +102,7 @@ impl PatriciaNode {
 /// # Examples
 ///
 /// ```rust
-/// use infini_zip::fsa::{PatriciaTrie, Trie};
+/// use zipora::fsa::{PatriciaTrie, Trie};
 ///
 /// let mut trie = PatriciaTrie::new();
 /// trie.insert(b"hello").unwrap();

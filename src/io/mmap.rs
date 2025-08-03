@@ -3,7 +3,7 @@
 //! This module provides memory-mapped implementations of DataInput and DataOutput
 //! traits for high-performance, zero-copy file operations.
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use crate::io::{DataInput, DataOutput, VarInt};
 use std::fs::{File, OpenOptions};
 use std::path::Path;
@@ -19,8 +19,8 @@ use memmap2::{Mmap, MmapMut, MmapOptions};
 /// # Examples
 ///
 /// ```rust
-/// use infini_zip::io::MemoryMappedInput;
-/// use infini_zip::DataInput;
+/// use zipora::io::MemoryMappedInput;
+/// use zipora::DataInput;
 /// use std::fs::File;
 /// use std::io::Write;
 ///
@@ -47,7 +47,7 @@ impl MemoryMappedInput {
         let mmap = unsafe {
             MmapOptions::new()
                 .map(&file)
-                .map_err(|e| ToplingError::io_error(format!("Failed to memory-map file: {}", e)))?
+                .map_err(|e| ZiporaError::io_error(format!("Failed to memory-map file: {}", e)))?
         };
 
         Ok(MemoryMappedInput { mmap, position: 0 })
@@ -56,7 +56,7 @@ impl MemoryMappedInput {
     /// Creates a new memory-mapped input from a file path
     pub fn from_path<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = File::open(path)
-            .map_err(|e| ToplingError::io_error(format!("Failed to open file: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to open file: {}", e)))?;
         Self::new(file)
     }
 
@@ -78,7 +78,7 @@ impl MemoryMappedInput {
     /// Seeks to a specific position in the mapped region
     pub fn seek(&mut self, pos: usize) -> Result<()> {
         if pos > self.mmap.len() {
-            return Err(ToplingError::out_of_bounds(pos, self.mmap.len()));
+            return Err(ZiporaError::out_of_bounds(pos, self.mmap.len()));
         }
         self.position = pos;
         Ok(())
@@ -93,7 +93,7 @@ impl MemoryMappedInput {
     pub fn read_slice(&mut self, len: usize) -> Result<&[u8]> {
         let end_pos = self.position + len;
         if end_pos > self.mmap.len() {
-            return Err(ToplingError::out_of_bounds(end_pos, self.mmap.len()));
+            return Err(ZiporaError::out_of_bounds(end_pos, self.mmap.len()));
         }
 
         let slice = &self.mmap[self.position..end_pos];
@@ -105,7 +105,7 @@ impl MemoryMappedInput {
     pub fn peek_slice(&self, len: usize) -> Result<&[u8]> {
         let end_pos = self.position + len;
         if end_pos > self.mmap.len() {
-            return Err(ToplingError::out_of_bounds(end_pos, self.mmap.len()));
+            return Err(ZiporaError::out_of_bounds(end_pos, self.mmap.len()));
         }
 
         Ok(&self.mmap[self.position..end_pos])
@@ -116,7 +116,7 @@ impl MemoryMappedInput {
 impl DataInput for MemoryMappedInput {
     fn read_u8(&mut self) -> Result<u8> {
         if self.position >= self.mmap.len() {
-            return Err(ToplingError::out_of_bounds(self.position, self.mmap.len()));
+            return Err(ZiporaError::out_of_bounds(self.position, self.mmap.len()));
         }
 
         let value = self.mmap[self.position];
@@ -155,11 +155,11 @@ impl DataInput for MemoryMappedInput {
 
             shift += 7;
             if shift >= 64 {
-                return Err(ToplingError::invalid_data("Variable integer overflow"));
+                return Err(ZiporaError::invalid_data("Variable integer overflow"));
             }
         }
 
-        Err(ToplingError::invalid_data("Variable integer too long"))
+        Err(ZiporaError::invalid_data("Variable integer too long"))
     }
 
     fn read_bytes(&mut self, buf: &mut [u8]) -> Result<()> {
@@ -172,13 +172,13 @@ impl DataInput for MemoryMappedInput {
         let len = self.read_var_int()? as usize;
         let bytes = self.read_slice(len)?;
         String::from_utf8(bytes.to_vec())
-            .map_err(|e| ToplingError::invalid_data(format!("Invalid UTF-8 string: {}", e)))
+            .map_err(|e| ZiporaError::invalid_data(format!("Invalid UTF-8 string: {}", e)))
     }
 
     fn skip(&mut self, n: usize) -> Result<()> {
         let new_pos = self.position + n;
         if new_pos > self.mmap.len() {
-            return Err(ToplingError::out_of_bounds(new_pos, self.mmap.len()));
+            return Err(ZiporaError::out_of_bounds(new_pos, self.mmap.len()));
         }
         self.position = new_pos;
         Ok(())
@@ -193,8 +193,8 @@ impl DataInput for MemoryMappedInput {
 /// # Examples
 ///
 /// ```rust
-/// use infini_zip::io::MemoryMappedOutput;
-/// use infini_zip::DataOutput;
+/// use zipora::io::MemoryMappedOutput;
+/// use zipora::DataOutput;
 /// use tempfile::NamedTempFile;
 ///
 /// let temp_file = NamedTempFile::new().unwrap();
@@ -222,16 +222,16 @@ impl MemoryMappedOutput {
             .create(true)
             .truncate(true)
             .open(path)
-            .map_err(|e| ToplingError::io_error(format!("Failed to create file: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to create file: {}", e)))?;
 
         // Set the file size
         file.set_len(initial_size as u64)
-            .map_err(|e| ToplingError::io_error(format!("Failed to set file size: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to set file size: {}", e)))?;
 
         let mmap = unsafe {
             MmapOptions::new()
                 .map_mut(&file)
-                .map_err(|e| ToplingError::io_error(format!("Failed to memory-map file: {}", e)))?
+                .map_err(|e| ZiporaError::io_error(format!("Failed to memory-map file: {}", e)))?
         };
 
         Ok(MemoryMappedOutput {
@@ -248,17 +248,17 @@ impl MemoryMappedOutput {
             .read(true)
             .write(true)
             .open(path)
-            .map_err(|e| ToplingError::io_error(format!("Failed to open file: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to open file: {}", e)))?;
 
         let file_size = file
             .metadata()
-            .map_err(|e| ToplingError::io_error(format!("Failed to get file metadata: {}", e)))?
+            .map_err(|e| ZiporaError::io_error(format!("Failed to get file metadata: {}", e)))?
             .len() as usize;
 
         let mmap = unsafe {
             MmapOptions::new()
                 .map_mut(&file)
-                .map_err(|e| ToplingError::io_error(format!("Failed to memory-map file: {}", e)))?
+                .map_err(|e| ZiporaError::io_error(format!("Failed to memory-map file: {}", e)))?
         };
 
         Ok(MemoryMappedOutput {
@@ -287,7 +287,7 @@ impl MemoryMappedOutput {
     /// Seeks to a specific position in the mapped region
     pub fn seek(&mut self, pos: usize) -> Result<()> {
         if pos > self.capacity {
-            return Err(ToplingError::out_of_bounds(pos, self.capacity));
+            return Err(ZiporaError::out_of_bounds(pos, self.capacity));
         }
         self.position = pos;
         Ok(())
@@ -310,12 +310,12 @@ impl MemoryMappedOutput {
 
         self.file
             .set_len(new_size as u64)
-            .map_err(|e| ToplingError::io_error(format!("Failed to grow file: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to grow file: {}", e)))?;
 
         self.mmap = unsafe {
             MmapOptions::new()
                 .map_mut(&self.file)
-                .map_err(|e| ToplingError::io_error(format!("Failed to remap file: {}", e)))?
+                .map_err(|e| ZiporaError::io_error(format!("Failed to remap file: {}", e)))?
         };
 
         self.capacity = new_size;
@@ -337,7 +337,7 @@ impl MemoryMappedOutput {
         // Flush to ensure all data is written
         self.mmap
             .flush()
-            .map_err(|e| ToplingError::io_error(format!("Failed to flush mmap: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to flush mmap: {}", e)))?;
 
         // Unmap before truncating
         drop(std::mem::replace(
@@ -348,12 +348,12 @@ impl MemoryMappedOutput {
         // Truncate the file
         self.file
             .set_len(self.position as u64)
-            .map_err(|e| ToplingError::io_error(format!("Failed to truncate file: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to truncate file: {}", e)))?;
 
         // Remap with new size
         self.mmap = unsafe {
             MmapOptions::new().map_mut(&self.file).map_err(|e| {
-                ToplingError::io_error(format!("Failed to remap truncated file: {}", e))
+                ZiporaError::io_error(format!("Failed to remap truncated file: {}", e))
             })?
         };
 
@@ -396,7 +396,7 @@ impl DataOutput for MemoryMappedOutput {
 
     fn flush(&mut self) -> Result<()> {
         self.mmap.flush().map_err(|e| {
-            ToplingError::io_error(format!("Failed to flush memory-mapped file: {}", e))
+            ZiporaError::io_error(format!("Failed to flush memory-mapped file: {}", e))
         })
     }
 }
@@ -408,13 +408,13 @@ pub struct MemoryMappedInput;
 #[cfg(not(feature = "mmap"))]
 impl MemoryMappedInput {
     pub fn new(_file: File) -> Result<Self> {
-        Err(ToplingError::invalid_operation(
+        Err(ZiporaError::invalid_operation(
             "Memory mapping is not available. Enable the 'mmap' feature to use MemoryMappedInput.",
         ))
     }
 
     pub fn from_path<P: AsRef<Path>>(_path: P) -> Result<Self> {
-        Err(ToplingError::invalid_operation(
+        Err(ZiporaError::invalid_operation(
             "Memory mapping is not available. Enable the 'mmap' feature to use MemoryMappedInput.",
         ))
     }
@@ -426,13 +426,13 @@ pub struct MemoryMappedOutput;
 #[cfg(not(feature = "mmap"))]
 impl MemoryMappedOutput {
     pub fn create<P: AsRef<Path>>(_path: P, _initial_size: usize) -> Result<Self> {
-        Err(ToplingError::invalid_operation(
+        Err(ZiporaError::invalid_operation(
             "Memory mapping is not available. Enable the 'mmap' feature to use MemoryMappedOutput.",
         ))
     }
 
     pub fn open<P: AsRef<Path>>(_path: P) -> Result<Self> {
-        Err(ToplingError::invalid_operation(
+        Err(ZiporaError::invalid_operation(
             "Memory mapping is not available. Enable the 'mmap' feature to use MemoryMappedOutput.",
         ))
     }

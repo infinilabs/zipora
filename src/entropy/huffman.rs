@@ -3,7 +3,7 @@
 //! This module provides classical Huffman coding for entropy compression.
 //! Huffman coding is optimal for prefix-free codes when symbol probabilities are known.
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
@@ -208,7 +208,7 @@ impl HuffmanTree {
     /// Deserialize the tree from storage
     pub fn deserialize(data: &[u8]) -> Result<Self> {
         if data.len() < 2 {
-            return Err(ToplingError::invalid_data("Huffman tree data too short"));
+            return Err(ZiporaError::invalid_data("Huffman tree data too short"));
         }
 
         let symbol_count = u16::from_le_bytes([data[0], data[1]]) as usize;
@@ -218,7 +218,7 @@ impl HuffmanTree {
 
         for _ in 0..symbol_count {
             if offset + 2 > data.len() {
-                return Err(ToplingError::invalid_data("Truncated Huffman tree data"));
+                return Err(ZiporaError::invalid_data("Truncated Huffman tree data"));
             }
 
             let symbol = data[offset];
@@ -230,7 +230,7 @@ impl HuffmanTree {
             // Read code bits
             let byte_count = (code_length + 7) / 8;
             if offset + byte_count > data.len() {
-                return Err(ToplingError::invalid_data("Truncated Huffman code data"));
+                return Err(ZiporaError::invalid_data("Truncated Huffman code data"));
             }
 
             let mut code = Vec::with_capacity(code_length);
@@ -375,7 +375,7 @@ impl HuffmanTree {
                 return Ok(());
             }
             HuffmanNode::Leaf { .. } => {
-                return Err(ToplingError::invalid_data(
+                return Err(ZiporaError::invalid_data(
                     "Code collision: trying to overwrite existing symbol",
                 ));
             }
@@ -399,7 +399,7 @@ impl HuffmanTree {
                 }
             }
             HuffmanNode::Leaf { .. } => {
-                return Err(ToplingError::invalid_data(
+                return Err(ZiporaError::invalid_data(
                     "Unexpected leaf node during tree construction",
                 ));
             }
@@ -441,7 +441,7 @@ impl HuffmanEncoder {
             if let Some(code) = self.tree.get_code(symbol) {
                 bits.extend_from_slice(code);
             } else {
-                return Err(ToplingError::invalid_data(format!(
+                return Err(ZiporaError::invalid_data(format!(
                     "Symbol {} not in Huffman tree",
                     symbol
                 )));
@@ -517,7 +517,7 @@ impl HuffmanDecoder {
 
         let root = match self.tree.root() {
             Some(root) => root,
-            None => return Err(ToplingError::invalid_data("Empty Huffman tree")),
+            None => return Err(ZiporaError::invalid_data("Empty Huffman tree")),
         };
 
         let mut result = Vec::with_capacity(output_length);
@@ -569,7 +569,7 @@ impl HuffmanDecoder {
         }
 
         if result.len() != output_length {
-            return Err(ToplingError::invalid_data(format!(
+            return Err(ZiporaError::invalid_data(format!(
                 "Decoded length {} != expected {}",
                 result.len(),
                 output_length

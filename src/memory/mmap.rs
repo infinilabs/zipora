@@ -3,7 +3,7 @@
 //! This module provides memory-mapped allocation for large objects to achieve
 //! C++-competitive performance for allocations >16KB.
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use std::collections::HashMap;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -67,7 +67,7 @@ impl MemoryMappedAllocator {
     /// Allocate memory using mmap for optimal large allocation performance
     pub fn allocate(&self, size: usize) -> Result<MmapAllocation> {
         if size < self.min_mmap_size {
-            return Err(ToplingError::invalid_data(
+            return Err(ZiporaError::invalid_data(
                 "allocation too small for memory mapping",
             ));
         }
@@ -108,7 +108,7 @@ impl MemoryMappedAllocator {
         };
 
         if ptr == libc::MAP_FAILED {
-            return Err(ToplingError::out_of_memory(size));
+            return Err(ZiporaError::out_of_memory(size));
         }
 
         // Use madvise for better performance hints
@@ -148,7 +148,7 @@ impl MemoryMappedAllocator {
         self.munmap_calls.fetch_add(1, Ordering::Relaxed);
         unsafe {
             if libc::munmap(allocation.ptr.as_ptr() as *mut libc::c_void, allocation.actual_size) != 0 {
-                return Err(ToplingError::io_error("failed to unmap memory"));
+                return Err(ZiporaError::io_error("failed to unmap memory"));
             }
         }
 

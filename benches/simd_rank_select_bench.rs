@@ -8,7 +8,7 @@
 //! - SIMD bulk operations
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use infini_zip::{BitVector, RankSelect256, BitwiseOp, CpuFeatures};
+use zipora::{BitVector, RankSelect256, BitwiseOp, CpuFeatures};
 
 fn create_benchmark_data(size: usize, density: f64) -> BitVector {
     let mut bv = BitVector::new();

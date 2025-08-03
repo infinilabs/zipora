@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-The hardware-accelerated bit operations have been successfully implemented in the infini-zip succinct data structures. The implementation leverages modern CPU features including POPCNT, BMI2, and AVX2 instructions when available, with automatic fallback to optimized lookup tables for compatibility.
+The hardware-accelerated bit operations have been successfully implemented in the zipora succinct data structures. The implementation leverages modern CPU features including POPCNT, BMI2, and AVX2 instructions when available, with automatic fallback to optimized lookup tables for compatibility.
 
 ## CPU Feature Detection Results
 

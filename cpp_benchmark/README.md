@@ -1,6 +1,6 @@
 # C++ Comparison Benchmark Framework
 
-This directory contains a comprehensive benchmarking framework for comparing the Rust infini-zip implementation with the original C++ topling-zip library.
+This directory contains a comprehensive benchmarking framework for comparing the Rust zipora implementation with the original C++ topling-zip library.
 
 ## Quick Start
 
@@ -16,16 +16,16 @@ export LD_LIBRARY_PATH=$PWD:$LD_LIBRARY_PATH
 cd ..
 
 # Run comparison benchmarks (requires manual compilation due to linking)
-RUSTFLAGS="-L cpp_benchmark -l dylib=topling_zip_wrapper" \
+RUSTFLAGS="-L cpp_benchmark -l dylib=zipora_wrapper" \
   cargo bench --bench cpp_comparison
 ```
 
 ## Architecture
 
 ### C++ Wrapper Library (`wrapper.cpp`, `wrapper.hpp`)
-- **Purpose**: Provides C-compatible interface to topling-zip C++ classes
+- **Purpose**: Provides C-compatible interface to topling C++ classes
 - **Features**: 
-  - Automatic fallback to stub implementations when topling-zip is unavailable
+  - Automatic fallback to stub implementations when topling is unavailable
   - Memory tracking and performance measurement utilities
   - Support for vector operations, string operations, and rank-select structures
 - **Build**: CMake-based with optimization flags (`-O3 -march=native`)
@@ -57,14 +57,14 @@ Based on preliminary testing with stub implementations:
 | String hash computation | ~488ns | ~600-800ns | 20-40% faster |
 | Memory allocation | Lower overhead | Higher overhead | ~15% reduction |
 
-*Note: Actual results depend on the real topling-zip library integration*
+*Note: Actual results depend on the real topling library integration*
 
-## Integration with topling-zip
+## Integration with topling
 
-The framework automatically detects and links against the original topling-zip library:
+The framework automatically detects and links against the original topling library:
 
 1. **Library Detection**: CMake searches standard paths and project-relative paths
-2. **Automatic Fallback**: Uses stub implementations when topling-zip is unavailable  
+2. **Automatic Fallback**: Uses stub implementations when topling is unavailable  
 3. **Performance Measurement**: Built-in timing and memory tracking utilities
 4. **Fair Comparison**: Same compiler flags and optimization levels
 
@@ -73,10 +73,10 @@ The framework automatically detects and links against the original topling-zip l
 ### Build Issues
 - Ensure g++ and make are installed
 - Check that cmake is available (or use direct g++ compilation)
-- Verify topling-zip library paths in CMakeLists.txt
+- Verify topling library paths in CMakeLists.txt
 
 ### Linking Issues  
-- Confirm libtopling_zip_wrapper.so is built successfully
+- Confirm libzipora_wrapper.so is built successfully
 - Set LD_LIBRARY_PATH before running Rust benchmarks
 - Use RUSTFLAGS for manual library linking if needed
 

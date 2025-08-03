@@ -8,7 +8,7 @@
 //!
 //! Run with: cargo run --example simd_optimization_demo --features simd
 
-use infini_zip::{BitVector, RankSelect256, CpuFeatures, BitwiseOp};
+use zipora::{BitVector, RankSelect256, CpuFeatures, BitwiseOp};
 use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

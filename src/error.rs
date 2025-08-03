@@ -1,13 +1,13 @@
-//! Error handling for the infini-zip library
+//! Error handling for the zipora library
 //!
 //! This module provides comprehensive error handling with detailed error information
 //! for all library operations.
 
 use thiserror::Error;
 
-/// Main error type for the infini-zip library
+/// Main error type for the zipora library
 #[derive(Error, Debug)]
-pub enum ToplingError {
+pub enum ZiporaError {
     /// I/O related errors
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
@@ -87,7 +87,7 @@ pub enum ToplingError {
     },
 }
 
-impl ToplingError {
+impl ZiporaError {
     /// Create an invalid data error
     pub fn invalid_data<S: Into<String>>(message: S) -> Self {
         Self::InvalidData {
@@ -204,13 +204,13 @@ impl ToplingError {
 }
 
 /// Result type alias for convenience
-pub type Result<T> = std::result::Result<T, ToplingError>;
+pub type Result<T> = std::result::Result<T, ZiporaError>;
 
 /// Assert that an index is within bounds
 #[inline]
 pub fn check_bounds(index: usize, size: usize) -> Result<()> {
     if index >= size {
-        Err(ToplingError::out_of_bounds(index, size))
+        Err(ZiporaError::out_of_bounds(index, size))
     } else {
         Ok(())
     }
@@ -220,13 +220,13 @@ pub fn check_bounds(index: usize, size: usize) -> Result<()> {
 #[inline]
 pub fn check_range(start: usize, end: usize, size: usize) -> Result<()> {
     if start > end {
-        return Err(ToplingError::invalid_data(format!(
+        return Err(ZiporaError::invalid_data(format!(
             "Invalid range: start {} > end {}",
             start, end
         )));
     }
     if end > size {
-        return Err(ToplingError::out_of_bounds(end, size));
+        return Err(ZiporaError::out_of_bounds(end, size));
     }
     Ok(())
 }
@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_error_creation() {
-        let err = ToplingError::invalid_data("test message");
+        let err = ZiporaError::invalid_data("test message");
         assert_eq!(err.category(), "data");
         assert!(!err.is_recoverable());
     }
@@ -258,11 +258,11 @@ mod tests {
 
     #[test]
     fn test_error_categories() {
-        let io_err = ToplingError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "test"));
+        let io_err = ZiporaError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, "test"));
         assert_eq!(io_err.category(), "io");
         assert!(io_err.is_recoverable());
 
-        let data_err = ToplingError::invalid_data("corrupt");
+        let data_err = ZiporaError::invalid_data("corrupt");
         assert_eq!(data_err.category(), "data");
         assert!(!data_err.is_recoverable());
     }
@@ -270,61 +270,61 @@ mod tests {
     #[test]
     fn test_all_error_types() {
         // Test all error constructor functions
-        let invalid_data = ToplingError::invalid_data("test data error");
+        let invalid_data = ZiporaError::invalid_data("test data error");
         assert_eq!(invalid_data.category(), "data");
         assert!(!invalid_data.is_recoverable());
 
-        let bounds_err = ToplingError::out_of_bounds(5, 3);
+        let bounds_err = ZiporaError::out_of_bounds(5, 3);
         assert_eq!(bounds_err.category(), "bounds");
         assert!(!bounds_err.is_recoverable());
 
-        let memory_err = ToplingError::out_of_memory(1024);
+        let memory_err = ZiporaError::out_of_memory(1024);
         assert_eq!(memory_err.category(), "memory");
         assert!(memory_err.is_recoverable());
 
-        let compression_err = ToplingError::compression("ZSTD error");
+        let compression_err = ZiporaError::compression("ZSTD error");
         assert_eq!(compression_err.category(), "compression");
         assert!(!compression_err.is_recoverable());
 
-        let blob_err = ToplingError::blob_store("blob not found");
+        let blob_err = ZiporaError::blob_store("blob not found");
         assert_eq!(blob_err.category(), "blob_store");
         assert!(!blob_err.is_recoverable());
 
-        let trie_err = ToplingError::trie("invalid trie structure");
+        let trie_err = ZiporaError::trie("invalid trie structure");
         assert_eq!(trie_err.category(), "trie");
         assert!(!trie_err.is_recoverable());
 
-        let checksum_err = ToplingError::checksum_mismatch(0x12345678, 0x87654321);
+        let checksum_err = ZiporaError::checksum_mismatch(0x12345678, 0x87654321);
         assert_eq!(checksum_err.category(), "checksum");
         assert!(!checksum_err.is_recoverable());
 
-        let unsupported_err = ToplingError::not_supported("GPU acceleration");
+        let unsupported_err = ZiporaError::not_supported("GPU acceleration");
         assert_eq!(unsupported_err.category(), "unsupported");
         assert!(!unsupported_err.is_recoverable());
 
-        let config_err = ToplingError::configuration("invalid block size");
+        let config_err = ZiporaError::configuration("invalid block size");
         assert_eq!(config_err.category(), "config");
         assert!(!config_err.is_recoverable());
 
-        let busy_err = ToplingError::resource_busy("file lock");
+        let busy_err = ZiporaError::resource_busy("file lock");
         assert_eq!(busy_err.category(), "resource");
         assert!(busy_err.is_recoverable());
     }
 
     #[test]
     fn test_error_display() {
-        let err = ToplingError::invalid_data("test message");
+        let err = ZiporaError::invalid_data("test message");
         let display = format!("{}", err);
         assert!(display.contains("Invalid data"));
         assert!(display.contains("test message"));
 
-        let bounds_err = ToplingError::out_of_bounds(10, 5);
+        let bounds_err = ZiporaError::out_of_bounds(10, 5);
         let bounds_display = format!("{}", bounds_err);
         assert!(bounds_display.contains("Out of bounds"));
         assert!(bounds_display.contains("10"));
         assert!(bounds_display.contains("5"));
 
-        let checksum_err = ToplingError::checksum_mismatch(0xDEADBEEF, 0xCAFEBABE);
+        let checksum_err = ZiporaError::checksum_mismatch(0xDEADBEEF, 0xCAFEBABE);
         let checksum_display = format!("{}", checksum_err);
         assert!(checksum_display.contains("Checksum mismatch"));
         assert!(checksum_display.contains("deadbeef"));
@@ -334,18 +334,18 @@ mod tests {
     #[test]
     fn test_from_io_error() {
         let io_error = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
-        let topling_error: ToplingError = io_error.into();
+        let zipora_error: ZiporaError = io_error.into();
 
-        assert_eq!(topling_error.category(), "io");
-        assert!(topling_error.is_recoverable());
+        assert_eq!(zipora_error.category(), "io");
+        assert!(zipora_error.is_recoverable());
 
-        let display = format!("{}", topling_error);
+        let display = format!("{}", zipora_error);
         assert!(display.contains("I/O error"));
     }
 
     #[test]
     fn test_error_debug() {
-        let err = ToplingError::invalid_data("debug test");
+        let err = ZiporaError::invalid_data("debug test");
         let debug_str = format!("{:?}", err);
         assert!(debug_str.contains("InvalidData"));
         assert!(debug_str.contains("debug test"));
@@ -354,41 +354,41 @@ mod tests {
     #[test]
     fn test_recoverable_errors() {
         // Test recoverable errors
-        let io_err = ToplingError::Io(std::io::Error::new(std::io::ErrorKind::Interrupted, "test"));
+        let io_err = ZiporaError::Io(std::io::Error::new(std::io::ErrorKind::Interrupted, "test"));
         assert!(io_err.is_recoverable());
 
-        let memory_err = ToplingError::out_of_memory(1000);
+        let memory_err = ZiporaError::out_of_memory(1000);
         assert!(memory_err.is_recoverable());
 
-        let busy_err = ToplingError::resource_busy("test resource");
+        let busy_err = ZiporaError::resource_busy("test resource");
         assert!(busy_err.is_recoverable());
     }
 
     #[test]
     fn test_non_recoverable_errors() {
         // Test non-recoverable errors
-        let compression_err = ToplingError::compression("test");
+        let compression_err = ZiporaError::compression("test");
         assert!(!compression_err.is_recoverable());
 
-        let data_err = ToplingError::invalid_data("test");
+        let data_err = ZiporaError::invalid_data("test");
         assert!(!data_err.is_recoverable());
 
-        let bounds_err = ToplingError::out_of_bounds(1, 0);
+        let bounds_err = ZiporaError::out_of_bounds(1, 0);
         assert!(!bounds_err.is_recoverable());
 
-        let blob_err = ToplingError::blob_store("test");
+        let blob_err = ZiporaError::blob_store("test");
         assert!(!blob_err.is_recoverable());
 
-        let trie_err = ToplingError::trie("test");
+        let trie_err = ZiporaError::trie("test");
         assert!(!trie_err.is_recoverable());
 
-        let checksum_err = ToplingError::checksum_mismatch(1, 2);
+        let checksum_err = ZiporaError::checksum_mismatch(1, 2);
         assert!(!checksum_err.is_recoverable());
 
-        let unsupported_err = ToplingError::not_supported("test");
+        let unsupported_err = ZiporaError::not_supported("test");
         assert!(!unsupported_err.is_recoverable());
 
-        let config_err = ToplingError::configuration("test");
+        let config_err = ZiporaError::configuration("test");
         assert!(!config_err.is_recoverable());
     }
 

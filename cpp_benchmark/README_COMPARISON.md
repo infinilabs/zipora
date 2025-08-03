@@ -1,6 +1,6 @@
 # Comprehensive C++ vs Rust Performance Comparison System
 
-This directory contains a comprehensive benchmark comparison system that enables detailed performance analysis between the Rust `infini-zip` library and equivalent C++ implementations (including the original `topling-zip` library when available).
+This directory contains a comprehensive benchmark comparison system that enables detailed performance analysis between the Rust `zipora` library and equivalent C++ implementations (including the original `topling-zip` library when available).
 
 ## Overview
 
@@ -71,14 +71,14 @@ This will:
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)
 
 # Verify the wrapper works
-g++ -std=c++17 -O3 -o verify_benchmark verify_benchmark.cpp -L. -ltopling_zip_wrapper
+g++ -std=c++17 -O3 -o verify_benchmark verify_benchmark.cpp -L. -lzipora_wrapper
 ./verify_benchmark
 ```
 
 ### 3. Run Comprehensive Benchmarks
 
 ```bash
-cd ..  # Back to infini-zip root
+cd ..  # Back to zipora root
 cargo bench --bench cpp_comparison
 ```
 
@@ -227,10 +227,10 @@ The build system automatically detects and enables:
 3. **Library Linking Issues**:
    ```bash
    # Check library exists
-   ls -la libtopling_zip_wrapper.so
+   ls -la libzipora_wrapper.so
    
    # Verify symbols
-   nm -D libtopling_zip_wrapper.so | grep cpp_valvec
+   nm -D libzipora_wrapper.so | grep cpp_valvec
    ```
 
 ### Runtime Issues
@@ -323,4 +323,4 @@ To add new benchmark comparisons:
 
 ## License
 
-This benchmark comparison system is part of the infini-zip project and follows the same licensing terms.
+This benchmark comparison system is part of the zipora project and follows the same licensing terms.

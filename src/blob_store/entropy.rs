@@ -7,7 +7,7 @@ use crate::entropy::{
     DictionaryBuilder, DictionaryCompressor, EntropyStats, HuffmanDecoder, HuffmanEncoder,
     HuffmanTree, RansEncoder,
 };
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 
 /// Compression algorithm type for entropy blob store
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,7 +101,7 @@ impl<S: BlobStore> HuffmanBlobStore<S> {
     /// Build Huffman tree from training data
     pub fn build_tree(&mut self) -> Result<()> {
         if self.training_data.is_empty() {
-            return Err(ToplingError::invalid_data("No training data provided"));
+            return Err(ZiporaError::invalid_data("No training data provided"));
         }
 
         let tree = HuffmanTree::from_data(&self.training_data)?;
@@ -125,7 +125,7 @@ impl<S: BlobStore> HuffmanBlobStore<S> {
         let encoder = self
             .encoder
             .as_ref()
-            .ok_or_else(|| ToplingError::invalid_data("Huffman tree not built"))?;
+            .ok_or_else(|| ZiporaError::invalid_data("Huffman tree not built"))?;
 
         let compressed = encoder.encode(data)?;
 
@@ -147,7 +147,7 @@ impl<S: BlobStore> HuffmanBlobStore<S> {
         let tree = self
             .tree
             .as_ref()
-            .ok_or_else(|| ToplingError::invalid_data("Huffman tree not built"))?;
+            .ok_or_else(|| ZiporaError::invalid_data("Huffman tree not built"))?;
 
         let decoder = HuffmanDecoder::new(tree.clone());
         let decompressed = decoder.decode(compressed, original_length)?;

@@ -1,12 +1,12 @@
-//! Demonstration of succinct data structures in infini-zip
+//! Demonstration of succinct data structures in zipora
 //!
 //! This example shows how to use BitVector and RankSelect256 for efficient
 //! bit operations with constant-time rank and select queries.
 
-use infini_zip::{BitVector, RankSelect256, Result};
+use zipora::{BitVector, RankSelect256, Result};
 
 fn main() -> Result<()> {
-    println!("=== Infini-Zip Succinct Data Structures Demo ===\n");
+    println!("=== Zipora Succinct Data Structures Demo ===\n");
 
     // Create a bit vector with a known pattern
     let mut bit_vector = BitVector::new();

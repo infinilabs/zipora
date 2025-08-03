@@ -2,7 +2,7 @@
 //!
 //! This implements the correct rANS algorithm based on Jarek Duda's specification
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 
 const RANS_BYTE_L: u32 = 1 << 23; // 8388608
 
@@ -19,7 +19,7 @@ impl FixedRans {
     pub fn new(frequencies: &[u32; 256]) -> Result<Self> {
         let total_freq: u32 = frequencies.iter().sum();
         if total_freq == 0 {
-            return Err(ToplingError::invalid_data("No symbols with frequency"));
+            return Err(ZiporaError::invalid_data("No symbols with frequency"));
         }
 
         // Build cumulative frequency table: cumulative[i] = sum of freq[0..i]
@@ -46,7 +46,7 @@ impl FixedRans {
             let cumfreq = self.cumulative[symbol as usize];
 
             if freq == 0 {
-                return Err(ToplingError::invalid_data(format!(
+                return Err(ZiporaError::invalid_data(format!(
                     "Symbol {} not in table",
                     symbol
                 )));
@@ -73,7 +73,7 @@ impl FixedRans {
     /// Decode data
     pub fn decode(&self, encoded: &[u8], length: usize) -> Result<Vec<u8>> {
         if encoded.len() < 4 {
-            return Err(ToplingError::invalid_data("Encoded data too short"));
+            return Err(ZiporaError::invalid_data("Encoded data too short"));
         }
 
         // Read initial state from last 4 bytes
@@ -97,7 +97,7 @@ impl FixedRans {
             }
 
             if state < RANS_BYTE_L {
-                return Err(ToplingError::invalid_data("Insufficient data"));
+                return Err(ZiporaError::invalid_data("Insufficient data"));
             }
 
             // Find symbol: determine slot and look up symbol

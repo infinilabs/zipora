@@ -1,8 +1,8 @@
-# Performance Comparison: Rust infini-zip vs C++ topling-zip
+# Performance Comparison: Rust zipora vs C++ topling-zip
 
 ## Executive Summary
 
-This comprehensive performance analysis compares the Rust implementation of infini-zip with C++ topling-zip wrapper implementations across critical data structure operations and memory management patterns. The results demonstrate that **Rust infini-zip achieves superior performance in most operational domains** while maintaining memory safety guarantees.
+This comprehensive performance analysis compares the Rust implementation of zipora with C++ topling-zip wrapper implementations across critical data structure operations and memory management patterns. The results demonstrate that **Rust zipora achieves superior performance in most operational domains** while maintaining memory safety guarantees.
 
 ### Key Findings (Updated 2025-08-03)
 - **Vector Operations**: Rust is 3.5-4.7x faster than C++ (confirmed in latest benchmarks)
@@ -25,7 +25,7 @@ This comprehensive performance analysis compares the Rust implementation of infi
 - **Sample Size**: 100 iterations per benchmark with outlier detection
 
 ### Test Infrastructure
-- **C++ Wrapper**: Custom FFI layer providing C-compatible interface to topling-zip classes
+- **C++ Wrapper**: Custom FFI layer providing C-compatible interface to topling classes
 - **Fair Comparison**: Identical test data, iteration counts, and compiler optimization levels
 - **Memory Tracking**: Built-in allocation counting and memory usage monitoring
 - **Statistical Validation**: Multiple runs with confidence intervals and variance analysis
@@ -217,7 +217,7 @@ File I/O and memory mapping comparison shows interesting patterns.
 
 ## Use Case Recommendations
 
-### Choose Rust infini-zip for:
+### Choose Rust zipora for:
 
 #### ✅ **General-Purpose Applications**
 - Web services and APIs with mixed workloads
@@ -606,7 +606,7 @@ static RANK_LOOKUP: [u8; 256] = generate_rank_table();
 ```bash
 # Clone repository
 git clone <repository-url>
-cd infini-zip
+cd zipora
 
 # Install dependencies
 rustup update
@@ -672,7 +672,7 @@ Benchmarks demonstrate that memory safety features in Rust impose **negligible p
 
 ## Conclusion
 
-The comprehensive performance analysis reveals that **Rust infini-zip significantly outperforms C++ implementations in the majority of common operations** while providing superior memory safety guarantees.
+The comprehensive performance analysis reveals that **Rust zipora significantly outperforms C++ implementations in the majority of common operations** while providing superior memory safety guarantees.
 
 ### Key Takeaways (Updated 2025-08-02)
 
@@ -705,7 +705,7 @@ The comprehensive performance analysis reveals that **Rust infini-zip significan
 
 ### Final Recommendation
 
-**For new projects and most use cases, Rust infini-zip is the superior choice**, providing excellent performance, memory safety, and modern development experience. The C++ implementation should be considered only for specialized scenarios requiring massive large allocations or legacy integration requirements.
+**For new projects and most use cases, Rust zipora is the superior choice**, providing excellent performance, memory safety, and modern development experience. The C++ implementation should be considered only for specialized scenarios requiring massive large allocations or legacy integration requirements.
 
 The performance gap in large allocations, while significant, affects a minority of use cases and can be addressed through targeted optimizations in the Rust implementation.
 

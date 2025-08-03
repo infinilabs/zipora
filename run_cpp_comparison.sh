@@ -58,7 +58,7 @@ fi
 
 ./build.sh
 
-if [ ! -f "libtopling_zip_wrapper.so" ]; then
+if [ ! -f "libzipora_wrapper.so" ]; then
     echo "❌ ERROR: Failed to build C++ wrapper library"
     exit 1
 fi

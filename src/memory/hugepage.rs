@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 
 /// Standard hugepage size on x86_64 Linux (2MB)
 pub const HUGEPAGE_SIZE_2MB: usize = 2 * 1024 * 1024;
@@ -77,7 +77,7 @@ impl HugePage {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = (size, page_size);
-            Err(ToplingError::not_supported(
+            Err(ZiporaError::not_supported(
                 "hugepages only supported on Linux",
             ))
         }
@@ -148,11 +148,11 @@ impl HugePage {
     #[cfg(target_os = "linux")]
     fn allocate_linux(size: usize, page_size: usize) -> Result<Self> {
         if size == 0 {
-            return Err(ToplingError::invalid_data("allocation size cannot be zero"));
+            return Err(ZiporaError::invalid_data("allocation size cannot be zero"));
         }
 
         if page_size != HUGEPAGE_SIZE_2MB && page_size != HUGEPAGE_SIZE_1GB {
-            return Err(ToplingError::invalid_data("invalid hugepage size"));
+            return Err(ZiporaError::invalid_data("invalid hugepage size"));
         }
 
         // Round up size to multiple of page size
@@ -171,7 +171,7 @@ impl HugePage {
         };
 
         if ptr == libc::MAP_FAILED {
-            return Err(ToplingError::out_of_memory(aligned_size));
+            return Err(ZiporaError::out_of_memory(aligned_size));
         }
 
         let ptr = unsafe { NonNull::new_unchecked(ptr as *mut u8) };
@@ -235,7 +235,7 @@ impl HugePageAllocator {
 
         #[cfg(not(target_os = "linux"))]
         {
-            Err(ToplingError::not_supported(
+            Err(ZiporaError::not_supported(
                 "hugepages only supported on Linux",
             ))
         }
@@ -246,7 +246,7 @@ impl HugePageAllocator {
         #[cfg(target_os = "linux")]
         {
             if page_size != HUGEPAGE_SIZE_2MB && page_size != HUGEPAGE_SIZE_1GB {
-                return Err(ToplingError::invalid_data("invalid hugepage size"));
+                return Err(ZiporaError::invalid_data("invalid hugepage size"));
             }
 
             Ok(Self {
@@ -258,7 +258,7 @@ impl HugePageAllocator {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = (min_size, page_size);
-            Err(ToplingError::not_supported(
+            Err(ZiporaError::not_supported(
                 "hugepages only supported on Linux",
             ))
         }
@@ -271,7 +271,7 @@ impl HugePageAllocator {
             if size >= self.min_allocation_size {
                 HugePage::new(size, self.preferred_page_size)
             } else {
-                Err(ToplingError::invalid_data(
+                Err(ZiporaError::invalid_data(
                     "allocation too small for hugepages",
                 ))
             }
@@ -280,7 +280,7 @@ impl HugePageAllocator {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = size;
-            Err(ToplingError::not_supported(
+            Err(ZiporaError::not_supported(
                 "hugepages only supported on Linux",
             ))
         }
@@ -329,7 +329,7 @@ pub fn get_hugepage_info(page_size: usize) -> Result<HugePageInfo> {
         let path = match page_size {
             HUGEPAGE_SIZE_2MB => "/sys/kernel/mm/hugepages/hugepages-2048kB",
             HUGEPAGE_SIZE_1GB => "/sys/kernel/mm/hugepages/hugepages-1048576kB",
-            _ => return Err(ToplingError::invalid_data("unsupported hugepage size")),
+            _ => return Err(ZiporaError::invalid_data("unsupported hugepage size")),
         };
 
         let total_pages = read_hugepage_value(&format!("{}/nr_hugepages", path))?;
@@ -347,7 +347,7 @@ pub fn get_hugepage_info(page_size: usize) -> Result<HugePageInfo> {
     #[cfg(not(target_os = "linux"))]
     {
         let _ = page_size;
-        Err(ToplingError::not_supported(
+        Err(ZiporaError::not_supported(
             "hugepages only supported on Linux",
         ))
     }
@@ -356,12 +356,12 @@ pub fn get_hugepage_info(page_size: usize) -> Result<HugePageInfo> {
 #[cfg(target_os = "linux")]
 fn read_hugepage_value(path: &str) -> Result<usize> {
     let content = fs::read_to_string(path)
-        .map_err(|_| ToplingError::io_error("failed to read hugepage information"))?;
+        .map_err(|_| ZiporaError::io_error("failed to read hugepage information"))?;
 
     content
         .trim()
         .parse()
-        .map_err(|_| ToplingError::invalid_data("invalid hugepage value"))
+        .map_err(|_| ZiporaError::invalid_data("invalid hugepage value"))
 }
 
 /// Initialize hugepage support
@@ -383,14 +383,14 @@ pub fn init_hugepage_support() -> Result<()> {
             }
             (Err(_), Err(_)) => {
                 log::warn!("Hugepages not available on this system");
-                Err(ToplingError::not_supported("hugepages not available"))
+                Err(ZiporaError::not_supported("hugepages not available"))
             }
         }
     }
 
     #[cfg(not(target_os = "linux"))]
     {
-        Err(ToplingError::not_supported(
+        Err(ZiporaError::not_supported(
             "hugepages only supported on Linux",
         ))
     }

@@ -15,7 +15,7 @@ pub use parallel_trie::{ParallelLoudsTrie, ParallelTrieBuilder};
 pub use pipeline::{Pipeline, PipelineBuilder, PipelineStage, PipelineStats};
 pub use work_stealing::{Task, WorkStealingExecutor, WorkStealingQueue};
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -92,11 +92,11 @@ impl Default for ConcurrencyConfig {
 pub async fn init_concurrency(config: ConcurrencyConfig) -> Result<()> {
     // Verify configuration
     if config.max_fibers == 0 {
-        return Err(ToplingError::invalid_data("max_fibers cannot be zero"));
+        return Err(ZiporaError::invalid_data("max_fibers cannot be zero"));
     }
 
     if config.queue_size == 0 {
-        return Err(ToplingError::invalid_data("queue_size cannot be zero"));
+        return Err(ZiporaError::invalid_data("queue_size cannot be zero"));
     }
 
     // Initialize the global executor
@@ -140,7 +140,7 @@ where
 {
     tokio::task::spawn_blocking(f)
         .await
-        .map_err(|e| ToplingError::configuration(&format!("spawn_blocking failed: {}", e)))?
+        .map_err(|e| ZiporaError::configuration(&format!("spawn_blocking failed: {}", e)))?
 }
 
 /// Parallel map operation over an iterator

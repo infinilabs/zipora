@@ -1,7 +1,7 @@
 //! Asynchronous blob storage implementations
 
 use crate::blob_store::BlobStoreStats;
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use crate::RecordId;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -125,7 +125,7 @@ impl AsyncBlobStore for AsyncMemoryBlobStore {
 
         match result {
             Some(data) => Ok(data),
-            None => Err(ToplingError::invalid_data(&format!(
+            None => Err(ZiporaError::invalid_data(&format!(
                 "record not found: {}",
                 id
             ))),
@@ -145,7 +145,7 @@ impl AsyncBlobStore for AsyncMemoryBlobStore {
         if removed.is_some() {
             Ok(())
         } else {
-            Err(ToplingError::invalid_data(&format!(
+            Err(ZiporaError::invalid_data(&format!(
                 "record not found: {}",
                 id
             )))
@@ -214,7 +214,7 @@ impl AsyncBlobStore for AsyncMemoryBlobStore {
                     }
                     None => {
                         _misses += 1;
-                        return Err(ToplingError::invalid_data(&format!(
+                        return Err(ZiporaError::invalid_data(&format!(
                             "record not found: {}",
                             id
                         )));
@@ -255,7 +255,7 @@ impl AsyncFileStore {
         // Create directory if it doesn't exist
         tokio::fs::create_dir_all(&base_path)
             .await
-            .map_err(|e| ToplingError::io_error(&format!("failed to create directory: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(&format!("failed to create directory: {}", e)))?;
 
         Ok(Self {
             base_path,
@@ -286,15 +286,15 @@ impl AsyncBlobStore for AsyncFileStore {
             .truncate(true)
             .open(&file_path)
             .await
-            .map_err(|e| ToplingError::io_error(&format!("failed to create file: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(&format!("failed to create file: {}", e)))?;
 
         file.write_all(data)
             .await
-            .map_err(|e| ToplingError::io_error(&format!("failed to write data: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(&format!("failed to write data: {}", e)))?;
 
         file.flush()
             .await
-            .map_err(|e| ToplingError::io_error(&format!("failed to flush file: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(&format!("failed to flush file: {}", e)))?;
 
         // Update metadata
         {
@@ -334,7 +334,7 @@ impl AsyncBlobStore for AsyncFileStore {
                 let mut stats = self.stats.write().await;
                 stats.get_count += 1;
 
-                return Err(ToplingError::invalid_data(&format!(
+                return Err(ZiporaError::invalid_data(&format!(
                     "record not found: {}",
                     id
                 )));
@@ -344,12 +344,12 @@ impl AsyncBlobStore for AsyncFileStore {
         // Read data from file
         let mut file = File::open(&file_path)
             .await
-            .map_err(|e| ToplingError::io_error(&format!("failed to open file: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(&format!("failed to open file: {}", e)))?;
 
         let mut data = vec![0u8; size];
         file.read_exact(&mut data)
             .await
-            .map_err(|e| ToplingError::io_error(&format!("failed to read data: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(&format!("failed to read data: {}", e)))?;
 
         // Update statistics
         {
@@ -371,7 +371,7 @@ impl AsyncBlobStore for AsyncFileStore {
         };
 
         if !existed {
-            return Err(ToplingError::invalid_data(&format!(
+            return Err(ZiporaError::invalid_data(&format!(
                 "record not found: {}",
                 id
             )));
@@ -380,7 +380,7 @@ impl AsyncBlobStore for AsyncFileStore {
         // Remove file
         tokio::fs::remove_file(&file_path)
             .await
-            .map_err(|e| ToplingError::io_error(&format!("failed to remove file: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(&format!("failed to remove file: {}", e)))?;
 
         // Update statistics
         {
@@ -411,7 +411,7 @@ impl AsyncBlobStore for AsyncFileStore {
         for file in handles.values_mut() {
             file.flush()
                 .await
-                .map_err(|e| ToplingError::io_error(&format!("failed to flush file: {}", e)))?;
+                .map_err(|e| ZiporaError::io_error(&format!("failed to flush file: {}", e)))?;
         }
         Ok(())
     }
@@ -444,10 +444,10 @@ impl<S: AsyncBlobStore> AsyncCompressedBlobStore<S> {
 
         tokio::task::spawn_blocking(move || {
             zstd::bulk::compress(&data, level)
-                .map_err(|e| ToplingError::configuration(&format!("compression failed: {}", e)))
+                .map_err(|e| ZiporaError::configuration(&format!("compression failed: {}", e)))
         })
         .await
-        .map_err(|e| ToplingError::configuration(&format!("compression task failed: {}", e)))?
+        .map_err(|e| ZiporaError::configuration(&format!("compression task failed: {}", e)))?
     }
 
     /// Decompress data using zstd
@@ -456,10 +456,10 @@ impl<S: AsyncBlobStore> AsyncCompressedBlobStore<S> {
 
         tokio::task::spawn_blocking(move || {
             zstd::bulk::decompress(&data, 10 * 1024 * 1024) // 10MB limit
-                .map_err(|e| ToplingError::configuration(&format!("decompression failed: {}", e)))
+                .map_err(|e| ZiporaError::configuration(&format!("decompression failed: {}", e)))
         })
         .await
-        .map_err(|e| ToplingError::configuration(&format!("decompression task failed: {}", e)))?
+        .map_err(|e| ZiporaError::configuration(&format!("decompression task failed: {}", e)))?
     }
 }
 

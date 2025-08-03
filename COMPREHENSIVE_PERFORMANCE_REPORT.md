@@ -1,8 +1,8 @@
-# Comprehensive C++ vs Rust Performance Report - infini-zip
+# Comprehensive C++ vs Rust Performance Report - zipora
 
 ## Executive Summary
 
-This report presents a comprehensive performance comparison between the Rust implementation of infini-zip and C++ topling-zip wrapper implementations. The benchmarks cover various data structures and operations including vector operations, string processing, succinct data structures, memory allocation patterns, and hash functions.
+This report presents a comprehensive performance comparison between the Rust implementation of zipora and C++ topling-zip wrapper implementations. The benchmarks cover various data structures and operations including vector operations, string processing, succinct data structures, memory allocation patterns, and hash functions.
 
 ## Benchmark Environment
 
@@ -140,7 +140,7 @@ cargo bench --bench benchmark
 
 ## Conclusion
 
-The Rust implementation of infini-zip demonstrates excellent performance characteristics, particularly excelling in:
+The Rust implementation of zipora demonstrates excellent performance characteristics, particularly excelling in:
 - Vector operations (3-4x faster)
 - String search operations (4-5x faster)
 - Small to medium memory allocations

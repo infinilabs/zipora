@@ -7,7 +7,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use crate::io::var_int::VarInt;
 
 #[cfg(feature = "mmap")]
@@ -50,14 +50,14 @@ pub trait DataInput {
     fn read_string(&mut self, len: usize) -> Result<String> {
         let bytes = self.read_vec(len)?;
         String::from_utf8(bytes)
-            .map_err(|e| ToplingError::invalid_data(format!("Invalid UTF-8 string: {}", e)))
+            .map_err(|e| ZiporaError::invalid_data(format!("Invalid UTF-8 string: {}", e)))
     }
 
     /// Read a length-prefixed string (length as varint, UTF-8 encoded)
     fn read_length_prefixed_string(&mut self) -> Result<String> {
         let bytes = self.read_length_prefixed_bytes()?;
         String::from_utf8(bytes)
-            .map_err(|e| ToplingError::invalid_data(format!("Invalid UTF-8 string: {}", e)))
+            .map_err(|e| ZiporaError::invalid_data(format!("Invalid UTF-8 string: {}", e)))
     }
 
     /// Skip the specified number of bytes
@@ -110,7 +110,7 @@ impl<'a> SliceDataInput<'a> {
 impl<'a> DataInput for SliceDataInput<'a> {
     fn read_u8(&mut self) -> Result<u8> {
         if self.position >= self.data.len() {
-            return Err(ToplingError::io_error("Unexpected end of data"));
+            return Err(ZiporaError::io_error("Unexpected end of data"));
         }
         let value = self.data[self.position];
         self.position += 1;
@@ -119,7 +119,7 @@ impl<'a> DataInput for SliceDataInput<'a> {
 
     fn read_u16(&mut self) -> Result<u16> {
         if self.position + 2 > self.data.len() {
-            return Err(ToplingError::io_error("Unexpected end of data"));
+            return Err(ZiporaError::io_error("Unexpected end of data"));
         }
         let bytes = &self.data[self.position..self.position + 2];
         self.position += 2;
@@ -128,7 +128,7 @@ impl<'a> DataInput for SliceDataInput<'a> {
 
     fn read_u32(&mut self) -> Result<u32> {
         if self.position + 4 > self.data.len() {
-            return Err(ToplingError::io_error("Unexpected end of data"));
+            return Err(ZiporaError::io_error("Unexpected end of data"));
         }
         let bytes = &self.data[self.position..self.position + 4];
         self.position += 4;
@@ -137,7 +137,7 @@ impl<'a> DataInput for SliceDataInput<'a> {
 
     fn read_u64(&mut self) -> Result<u64> {
         if self.position + 8 > self.data.len() {
-            return Err(ToplingError::io_error("Unexpected end of data"));
+            return Err(ZiporaError::io_error("Unexpected end of data"));
         }
         let bytes = &self.data[self.position..self.position + 8];
         self.position += 8;
@@ -152,7 +152,7 @@ impl<'a> DataInput for SliceDataInput<'a> {
 
     fn read_bytes(&mut self, buf: &mut [u8]) -> Result<()> {
         if self.position + buf.len() > self.data.len() {
-            return Err(ToplingError::io_error("Unexpected end of data"));
+            return Err(ZiporaError::io_error("Unexpected end of data"));
         }
         buf.copy_from_slice(&self.data[self.position..self.position + buf.len()]);
         self.position += buf.len();
@@ -161,7 +161,7 @@ impl<'a> DataInput for SliceDataInput<'a> {
 
     fn skip(&mut self, n: usize) -> Result<()> {
         if self.position + n > self.data.len() {
-            return Err(ToplingError::io_error("Cannot skip past end of data"));
+            return Err(ZiporaError::io_error("Cannot skip past end of data"));
         }
         self.position += n;
         Ok(())
@@ -207,7 +207,7 @@ impl<R: Read> DataInput for ReaderDataInput<R> {
         let mut buf = [0u8; 1];
         self.reader
             .read_exact(&mut buf)
-            .map_err(|e| ToplingError::io_error(format!("Failed to read u8: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to read u8: {}", e)))?;
         self.position += 1;
         Ok(buf[0])
     }
@@ -216,7 +216,7 @@ impl<R: Read> DataInput for ReaderDataInput<R> {
         let mut buf = [0u8; 2];
         self.reader
             .read_exact(&mut buf)
-            .map_err(|e| ToplingError::io_error(format!("Failed to read u16: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to read u16: {}", e)))?;
         self.position += 2;
         Ok(u16::from_le_bytes(buf))
     }
@@ -225,7 +225,7 @@ impl<R: Read> DataInput for ReaderDataInput<R> {
         let mut buf = [0u8; 4];
         self.reader
             .read_exact(&mut buf)
-            .map_err(|e| ToplingError::io_error(format!("Failed to read u32: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to read u32: {}", e)))?;
         self.position += 4;
         Ok(u32::from_le_bytes(buf))
     }
@@ -234,7 +234,7 @@ impl<R: Read> DataInput for ReaderDataInput<R> {
         let mut buf = [0u8; 8];
         self.reader
             .read_exact(&mut buf)
-            .map_err(|e| ToplingError::io_error(format!("Failed to read u64: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to read u64: {}", e)))?;
         self.position += 8;
         Ok(u64::from_le_bytes(buf))
     }
@@ -246,7 +246,7 @@ impl<R: Read> DataInput for ReaderDataInput<R> {
     fn read_bytes(&mut self, buf: &mut [u8]) -> Result<()> {
         self.reader
             .read_exact(buf)
-            .map_err(|e| ToplingError::io_error(format!("Failed to read bytes: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to read bytes: {}", e)))?;
         self.position += buf.len() as u64;
         Ok(())
     }
@@ -259,7 +259,7 @@ impl<R: Read> DataInput for ReaderDataInput<R> {
             let to_read = remaining.min(buf.len());
             self.reader
                 .read_exact(&mut buf[..to_read])
-                .map_err(|e| ToplingError::io_error(format!("Failed to skip bytes: {}", e)))?;
+                .map_err(|e| ZiporaError::io_error(format!("Failed to skip bytes: {}", e)))?;
             remaining -= to_read;
         }
 
@@ -284,11 +284,11 @@ impl MmapDataInput {
     /// Create a new MmapDataInput from a file path
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let file = File::open(path)
-            .map_err(|e| ToplingError::io_error(format!("Failed to open file: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to open file: {}", e)))?;
 
         let mmap = unsafe {
             Mmap::map(&file)
-                .map_err(|e| ToplingError::io_error(format!("Failed to memory map file: {}", e)))?
+                .map_err(|e| ZiporaError::io_error(format!("Failed to memory map file: {}", e)))?
         };
 
         Ok(Self { mmap, position: 0 })
@@ -334,7 +334,7 @@ impl MmapDataInput {
 impl DataInput for MmapDataInput {
     fn read_u8(&mut self) -> Result<u8> {
         if self.position >= self.mmap.len() {
-            return Err(ToplingError::io_error("Unexpected end of data"));
+            return Err(ZiporaError::io_error("Unexpected end of data"));
         }
         let value = self.mmap[self.position];
         self.position += 1;
@@ -343,7 +343,7 @@ impl DataInput for MmapDataInput {
 
     fn read_u16(&mut self) -> Result<u16> {
         if self.position + 2 > self.mmap.len() {
-            return Err(ToplingError::io_error("Unexpected end of data"));
+            return Err(ZiporaError::io_error("Unexpected end of data"));
         }
         let bytes = &self.mmap[self.position..self.position + 2];
         self.position += 2;
@@ -352,7 +352,7 @@ impl DataInput for MmapDataInput {
 
     fn read_u32(&mut self) -> Result<u32> {
         if self.position + 4 > self.mmap.len() {
-            return Err(ToplingError::io_error("Unexpected end of data"));
+            return Err(ZiporaError::io_error("Unexpected end of data"));
         }
         let bytes = &self.mmap[self.position..self.position + 4];
         self.position += 4;
@@ -361,7 +361,7 @@ impl DataInput for MmapDataInput {
 
     fn read_u64(&mut self) -> Result<u64> {
         if self.position + 8 > self.mmap.len() {
-            return Err(ToplingError::io_error("Unexpected end of data"));
+            return Err(ZiporaError::io_error("Unexpected end of data"));
         }
         let bytes = &self.mmap[self.position..self.position + 8];
         self.position += 8;
@@ -376,7 +376,7 @@ impl DataInput for MmapDataInput {
 
     fn read_bytes(&mut self, buf: &mut [u8]) -> Result<()> {
         if self.position + buf.len() > self.mmap.len() {
-            return Err(ToplingError::io_error("Unexpected end of data"));
+            return Err(ZiporaError::io_error("Unexpected end of data"));
         }
         buf.copy_from_slice(&self.mmap[self.position..self.position + buf.len()]);
         self.position += buf.len();
@@ -385,7 +385,7 @@ impl DataInput for MmapDataInput {
 
     fn skip(&mut self, n: usize) -> Result<()> {
         if self.position + n > self.mmap.len() {
-            return Err(ToplingError::io_error("Cannot skip past end of data"));
+            return Err(ZiporaError::io_error("Cannot skip past end of data"));
         }
         self.position += n;
         Ok(())

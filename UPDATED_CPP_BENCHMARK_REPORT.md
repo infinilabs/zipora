@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-This comprehensive benchmark comparison demonstrates that **Rust infini-zip consistently outperforms the C++ topling-zip equivalent** across all major data structure and algorithm categories. The Rust implementation shows significant performance advantages while maintaining memory safety guarantees.
+This comprehensive benchmark comparison demonstrates that **Rust zipora consistently outperforms the C++ topling-zip equivalent** across all major data structure and algorithm categories. The Rust implementation shows significant performance advantages while maintaining memory safety guarantees.
 
 ## Vector Operations Performance
 
@@ -123,7 +123,7 @@ Succinct data structures show the most dramatic performance differences:
 ## Conclusions and Recommendations
 
 ### Performance Verdict
-**Rust infini-zip demonstrates superior performance** in the majority of tested operations, particularly excelling in:
+**Rust zipora demonstrates superior performance** in the majority of tested operations, particularly excelling in:
 - High-frequency vector operations (3.5-4.7x faster)
 - String processing and hashing (1.5-4.7x faster)
 - Zero-copy operations (20x+ faster)

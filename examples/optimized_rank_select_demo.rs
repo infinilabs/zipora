@@ -3,7 +3,7 @@
 /// This example showcases the dramatic performance improvements achieved through
 /// pre-computed lookup tables for bit manipulation operations.
 
-use infini_zip::{BitVector, RankSelect256};
+use zipora::{BitVector, RankSelect256};
 use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -1,6 +1,6 @@
 //! High-performance fiber pool for concurrent execution
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -100,7 +100,7 @@ impl<T> Future for FiberHandle<T> {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match Pin::new(&mut self.inner).poll(cx) {
             Poll::Ready(Ok(result)) => Poll::Ready(result),
-            Poll::Ready(Err(e)) => Poll::Ready(Err(ToplingError::configuration(&format!(
+            Poll::Ready(Err(e)) => Poll::Ready(Err(ZiporaError::configuration(&format!(
                 "fiber join error: {}",
                 e
             )))),
@@ -143,7 +143,7 @@ impl FiberPool {
     /// Create a new fiber pool with the given configuration
     pub fn new(config: FiberPoolConfig) -> Result<Self> {
         let runtime = tokio::runtime::Handle::try_current()
-            .map_err(|_| ToplingError::configuration("no tokio runtime found"))?;
+            .map_err(|_| ZiporaError::configuration("no tokio runtime found"))?;
 
         let semaphore = Arc::new(Semaphore::new(config.max_fibers));
         let stats = Arc::new(FiberPoolStats::new());
@@ -181,7 +181,7 @@ impl FiberPool {
             let _permit = semaphore
                 .acquire()
                 .await
-                .map_err(|_| ToplingError::configuration("semaphore acquire failed"))?;
+                .map_err(|_| ZiporaError::configuration("semaphore acquire failed"))?;
 
             stats.active_fibers.fetch_add(1, Ordering::Relaxed);
             let start_time = Instant::now();
@@ -341,7 +341,7 @@ impl FiberPool {
         let _permits = semaphore
             .acquire_many(self.config.max_fibers as u32)
             .await
-            .map_err(|_| ToplingError::configuration("shutdown acquire failed"))?;
+            .map_err(|_| ZiporaError::configuration("shutdown acquire failed"))?;
 
         Ok(())
     }

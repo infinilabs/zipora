@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use infini_zip::{
+use zipora::{
     BitVector, BlobStore, DictionaryBuilder, DictionaryCompressor, EntropyStats, FastStr, FastVec,
     GoldHashMap, HuffmanBlobStore, HuffmanEncoder, HuffmanTree, MemoryBlobStore, RankSelect256,
     RansEncoder,
@@ -7,7 +7,7 @@ use infini_zip::{
 use std::collections::HashMap;
 
 #[cfg(feature = "mmap")]
-use infini_zip::{DataInput, DataOutput, MemoryMappedInput, MemoryMappedOutput};
+use zipora::{DataInput, DataOutput, MemoryMappedInput, MemoryMappedOutput};
 
 use std::fs::File;
 use std::io::Write;

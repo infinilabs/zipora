@@ -22,8 +22,8 @@
 //! ## Example Usage
 //!
 //! ```rust
-//! use infini_zip::concurrency::pipeline::{Pipeline, PipelineBuilder, BatchMapStage, BatchCollector};
-//! use infini_zip::error::{ToplingError, Result};
+//! use zipora::concurrency::pipeline::{Pipeline, PipelineBuilder, BatchMapStage, BatchCollector};
+//! use zipora::error::{ZiporaError, Result};
 //! use std::time::Duration;
 //!
 //! // Create a pipeline with batching enabled
@@ -46,7 +46,7 @@
 //! let collector: BatchCollector<i32> = BatchCollector::new(50, Duration::from_millis(100));
 //! ```
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
@@ -310,7 +310,7 @@ impl Pipeline {
 
         let result = timeout(self.config.stage_timeout, stage.process(input))
             .await
-            .map_err(|_| ToplingError::configuration("stage timeout"))?;
+            .map_err(|_| ZiporaError::configuration("stage timeout"))?;
 
         let processing_time = start_time.elapsed().as_micros() as u64;
         self.stats
@@ -351,7 +351,7 @@ impl Pipeline {
         T: Send + 'static,
     {
         if stages.is_empty() {
-            return Err(ToplingError::invalid_data("no stages provided"));
+            return Err(ZiporaError::invalid_data("no stages provided"));
         }
 
         // Initialize stage statistics
@@ -477,14 +477,14 @@ impl Pipeline {
         let result = if stage.supports_batching() && self.config.enable_batching {
             timeout(self.config.stage_timeout, stage.process_batch(inputs))
                 .await
-                .map_err(|_| ToplingError::configuration("batch processing timeout"))?
+                .map_err(|_| ZiporaError::configuration("batch processing timeout"))?
         } else {
             // Process individually
             let mut results = Vec::with_capacity(batch_size);
             for input in inputs {
                 let output = timeout(self.config.stage_timeout, stage.process(input))
                     .await
-                    .map_err(|_| ToplingError::configuration("stage timeout"))??;
+                    .map_err(|_| ZiporaError::configuration("stage timeout"))??;
                 results.push(output);
             }
             Ok(results)
@@ -1278,7 +1278,7 @@ mod tests {
             "error_prone".to_string(),
             |x: i32| {
                 if x < 0 {
-                    Err(ToplingError::invalid_data("negative value"))
+                    Err(ZiporaError::invalid_data("negative value"))
                 } else {
                     Ok(x * 2)
                 }
@@ -1286,7 +1286,7 @@ mod tests {
             |batch: Vec<i32>| {
                 for &x in &batch {
                     if x < 0 {
-                        return Err(ToplingError::invalid_data("negative value in batch"));
+                        return Err(ZiporaError::invalid_data("negative value in batch"));
                     }
                 }
                 Ok(batch.into_iter().map(|x| x * 2).collect())
@@ -1624,7 +1624,7 @@ mod tests {
             "error_on_zero".to_string(),
             |x: i32| {
                 if x == 0 {
-                    Err(ToplingError::invalid_data("zero not allowed"))
+                    Err(ZiporaError::invalid_data("zero not allowed"))
                 } else {
                     Ok(x * 2)
                 }
@@ -1632,7 +1632,7 @@ mod tests {
             |batch: Vec<i32>| {
                 for &x in &batch {
                     if x == 0 {
-                        return Err(ToplingError::invalid_data("zero in batch"));
+                        return Err(ZiporaError::invalid_data("zero in batch"));
                     }
                 }
                 Ok(batch.into_iter().map(|x| x * 2).collect())
@@ -1644,7 +1644,7 @@ mod tests {
             "error_on_zero_success".to_string(),
             |x: i32| {
                 if x == 0 {
-                    Err(ToplingError::invalid_data("zero not allowed"))
+                    Err(ZiporaError::invalid_data("zero not allowed"))
                 } else {
                     Ok(x * 2)
                 }
@@ -1652,7 +1652,7 @@ mod tests {
             |batch: Vec<i32>| {
                 for &x in &batch {
                     if x == 0 {
-                        return Err(ToplingError::invalid_data("zero in batch"));
+                        return Err(ZiporaError::invalid_data("zero in batch"));
                     }
                 }
                 Ok(batch.into_iter().map(|x| x * 2).collect())
@@ -1935,7 +1935,7 @@ mod tests {
             "error_propagation".to_string(),
             |x: i32| {
                 if x == 13 {
-                    Err(ToplingError::invalid_data("unlucky number"))
+                    Err(ZiporaError::invalid_data("unlucky number"))
                 } else {
                     Ok(x * 2)
                 }
@@ -1943,7 +1943,7 @@ mod tests {
             |batch: Vec<i32>| {
                 for &x in &batch {
                     if x == 13 {
-                        return Err(ToplingError::invalid_data("unlucky number in batch"));
+                        return Err(ZiporaError::invalid_data("unlucky number in batch"));
                     }
                 }
                 Ok(batch.into_iter().map(|x| x * 2).collect())
@@ -1955,7 +1955,7 @@ mod tests {
             "error_propagation_individual".to_string(),
             |x: i32| {
                 if x == 13 {
-                    Err(ToplingError::invalid_data("unlucky number"))
+                    Err(ZiporaError::invalid_data("unlucky number"))
                 } else {
                     Ok(x * 2)
                 }
@@ -1963,7 +1963,7 @@ mod tests {
             |batch: Vec<i32>| {
                 for &x in &batch {
                     if x == 13 {
-                        return Err(ToplingError::invalid_data("unlucky number in batch"));
+                        return Err(ZiporaError::invalid_data("unlucky number in batch"));
                     }
                 }
                 Ok(batch.into_iter().map(|x| x * 2).collect())
@@ -1982,7 +1982,7 @@ mod tests {
             "error_propagation_success".to_string(),
             |x: i32| {
                 if x == 13 {
-                    Err(ToplingError::invalid_data("unlucky number"))
+                    Err(ZiporaError::invalid_data("unlucky number"))
                 } else {
                     Ok(x * 2)
                 }
@@ -1990,7 +1990,7 @@ mod tests {
             |batch: Vec<i32>| {
                 for &x in &batch {
                     if x == 13 {
-                        return Err(ToplingError::invalid_data("unlucky number in batch"));
+                        return Err(ZiporaError::invalid_data("unlucky number in batch"));
                     }
                 }
                 Ok(batch.into_iter().map(|x| x * 2).collect())
@@ -2005,7 +2005,7 @@ mod tests {
             "error_propagation_batch_error".to_string(),
             |x: i32| {
                 if x == 13 {
-                    Err(ToplingError::invalid_data("unlucky number"))
+                    Err(ZiporaError::invalid_data("unlucky number"))
                 } else {
                     Ok(x * 2)
                 }
@@ -2013,7 +2013,7 @@ mod tests {
             |batch: Vec<i32>| {
                 for &x in &batch {
                     if x == 13 {
-                        return Err(ToplingError::invalid_data("unlucky number in batch"));
+                        return Err(ZiporaError::invalid_data("unlucky number in batch"));
                     }
                 }
                 Ok(batch.into_iter().map(|x| x * 2).collect())
@@ -2076,9 +2076,9 @@ mod tests {
             "complex_errors".to_string(),
             |x: String| {
                 if x.is_empty() {
-                    Err(ToplingError::invalid_data("empty string"))
+                    Err(ZiporaError::invalid_data("empty string"))
                 } else if x.len() > 10 {
-                    Err(ToplingError::configuration("string too long"))
+                    Err(ZiporaError::configuration("string too long"))
                 } else {
                     Ok(x.to_uppercase())
                 }
@@ -2087,9 +2087,9 @@ mod tests {
                 let mut results = Vec::new();
                 for s in batch {
                     if s.is_empty() {
-                        return Err(ToplingError::invalid_data("empty string in batch"));
+                        return Err(ZiporaError::invalid_data("empty string in batch"));
                     } else if s.len() > 10 {
-                        return Err(ToplingError::configuration("string too long in batch"));
+                        return Err(ZiporaError::configuration("string too long in batch"));
                     } else {
                         results.push(s.to_uppercase());
                     }

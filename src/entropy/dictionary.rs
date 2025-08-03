@@ -3,7 +3,7 @@
 //! This module provides LZ-style dictionary compression algorithms that find
 //! and encode repeated substrings for efficient compression.
 
-use crate::error::{Result, ToplingError};
+use crate::error::{Result, ZiporaError};
 use std::collections::HashMap;
 
 /// Dictionary entry for compression
@@ -194,7 +194,7 @@ impl Dictionary {
     /// Deserialize dictionary
     pub fn deserialize(data: &[u8]) -> Result<Self> {
         if data.len() < 4 {
-            return Err(ToplingError::invalid_data("Dictionary data too short"));
+            return Err(ZiporaError::invalid_data("Dictionary data too short"));
         }
 
         let num_entries = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
@@ -203,7 +203,7 @@ impl Dictionary {
 
         for _ in 0..num_entries {
             if offset + 2 > data.len() {
-                return Err(ToplingError::invalid_data("Truncated dictionary data"));
+                return Err(ZiporaError::invalid_data("Truncated dictionary data"));
             }
 
             // Read sequence length
@@ -211,7 +211,7 @@ impl Dictionary {
             offset += 2;
 
             if offset + seq_len + 8 > data.len() {
-                return Err(ToplingError::invalid_data("Truncated dictionary sequence"));
+                return Err(ZiporaError::invalid_data("Truncated dictionary sequence"));
             }
 
             // Read sequence
@@ -351,7 +351,7 @@ impl DictionaryCompressor {
             if flag == 0 {
                 // Literal byte
                 if pos >= compressed_data.len() {
-                    return Err(ToplingError::invalid_data(
+                    return Err(ZiporaError::invalid_data(
                         "Unexpected end of compressed data",
                     ));
                 }
@@ -360,7 +360,7 @@ impl DictionaryCompressor {
             } else if flag == 1 {
                 // Dictionary match
                 if pos + 8 > compressed_data.len() {
-                    return Err(ToplingError::invalid_data("Truncated match data"));
+                    return Err(ZiporaError::invalid_data("Truncated match data"));
                 }
 
                 let offset = u32::from_le_bytes([
@@ -383,7 +383,7 @@ impl DictionaryCompressor {
                 // offset = distance back from current position
                 // length = number of bytes to copy
                 if offset == 0 || result.len() < offset as usize {
-                    return Err(ToplingError::invalid_data("Invalid back-reference offset"));
+                    return Err(ZiporaError::invalid_data("Invalid back-reference offset"));
                 }
 
                 let start_pos = result.len() - offset as usize;
@@ -403,14 +403,14 @@ impl DictionaryCompressor {
                             let byte = result[wrapped_pos];
                             result.push(byte);
                         } else {
-                            return Err(ToplingError::invalid_data(
+                            return Err(ZiporaError::invalid_data(
                                 "Back-reference calculation error",
                             ));
                         }
                     }
                 }
             } else {
-                return Err(ToplingError::invalid_data(format!(
+                return Err(ZiporaError::invalid_data(format!(
                     "Invalid compression flag: {}",
                     flag
                 )));

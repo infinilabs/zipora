@@ -4,7 +4,7 @@
 //! allocator against standard allocation and compares with C++ performance.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use infini_zip::memory::{
+use zipora::memory::{
     tiered_allocate, tiered_deallocate, TieredMemoryAllocator, TieredConfig,
     MemoryMappedAllocator, MemoryPool, PoolConfig,
 };
