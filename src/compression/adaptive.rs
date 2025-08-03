@@ -50,6 +50,11 @@ pub struct CompressionProfile {
 }
 
 impl CompressionProfile {
+    /// Create a new compression profile for a specific data type
+    /// 
+    /// # Arguments
+    /// * `data_type` - Identifier for the type of data (e.g., "text", "binary")
+    /// * `algorithm` - The preferred compression algorithm for this data type
     pub fn new(data_type: String, algorithm: Algorithm) -> Self {
         Self {
             data_type,

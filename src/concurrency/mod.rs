@@ -31,6 +31,7 @@ pub struct Fiber<T> {
 pub struct FiberId(u64);
 
 impl FiberId {
+    /// Generate a new unique fiber identifier
     pub fn new() -> Self {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);

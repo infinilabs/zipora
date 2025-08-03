@@ -45,6 +45,7 @@ impl<F> ClosureTask<F>
 where
     F: FnOnce() -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send + 'static,
 {
+    /// Create a new work item with the provided closure
     pub fn new(closure: F) -> Self {
         Self {
             closure: Some(closure),
@@ -54,16 +55,19 @@ where
         }
     }
 
+    /// Set the priority of this work item (higher values = higher priority)
     pub fn with_priority(mut self, priority: u8) -> Self {
         self.priority = priority;
         self
     }
 
+    /// Set whether this work item can be stolen by other workers
     pub fn with_stealable(mut self, stealable: bool) -> Self {
         self.stealable = stealable;
         self
     }
 
+    /// Set the estimated duration for this work item (helps with scheduling)
     pub fn with_estimated_duration(mut self, duration: Duration) -> Self {
         self.estimated_duration = duration;
         self
@@ -104,6 +108,7 @@ pub struct WorkStealingQueue {
 }
 
 impl WorkStealingQueue {
+    /// Create a new work-stealing queue for the specified worker
     pub fn new(worker_id: usize, capacity: usize) -> Self {
         Self {
             local_queue: Mutex::new(VecDeque::with_capacity(capacity)),
@@ -499,29 +504,28 @@ impl WorkStealingExecutor {
 }
 
 // Global executor instance for convenient access
-static mut GLOBAL_EXECUTOR: Option<Arc<WorkStealingExecutor>> = None;
-static EXECUTOR_INIT: std::sync::Once = std::sync::Once::new();
+use std::sync::OnceLock;
+static GLOBAL_EXECUTOR: OnceLock<Arc<WorkStealingExecutor>> = OnceLock::new();
 
 impl WorkStealingExecutor {
     /// Initialize the global executor
     pub async fn init(config: super::ConcurrencyConfig) -> Result<()> {
-        EXECUTOR_INIT.call_once(|| {
-            let rt = tokio::runtime::Handle::current();
-            rt.spawn(async move {
-                let executor =
-                    WorkStealingExecutor::new(config.max_fibers, config.queue_size).unwrap();
-                unsafe {
-                    GLOBAL_EXECUTOR = Some(executor);
-                }
-            });
-        });
-
-        // Wait for initialization
-        while unsafe { GLOBAL_EXECUTOR.is_none() } {
-            tokio::time::sleep(Duration::from_millis(1)).await;
+        // Try to initialize the global executor
+        let executor = WorkStealingExecutor::new(config.max_fibers, config.queue_size)?;
+        
+        // This will only succeed the first time it's called
+        match GLOBAL_EXECUTOR.set(executor) {
+            Ok(_) => Ok(()),
+            Err(_) => {
+                // Already initialized, which is fine
+                Ok(())
+            }
         }
+    }
 
-        Ok(())
+    /// Get a reference to the global executor
+    pub fn global() -> Option<&'static Arc<WorkStealingExecutor>> {
+        GLOBAL_EXECUTOR.get()
     }
 
     /// Spawn a task on the global executor

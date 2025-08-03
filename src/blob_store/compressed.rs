@@ -390,12 +390,16 @@ impl<S: BlobStore> CompressedBlobStore for Lz4BlobStore<S> {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum CompressionAlgorithm {
+    /// ZSTD compression with configurable level
     #[cfg(feature = "zstd")]
     Zstd {
+        /// Compression level (1-22, higher is better compression but slower)
         level: i32,
     },
+    /// LZ4 compression (fast compression/decompression)
     #[cfg(feature = "lz4")]
     Lz4,
+    /// No compression
     None,
 }
 
