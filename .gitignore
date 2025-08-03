@@ -1,3 +1,5 @@
+release-artifacts
+
 # Rust/Cargo
 /target/
 **/*.rs.bk
