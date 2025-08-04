@@ -21,7 +21,7 @@ High-performance Rust data structures and compression algorithms with memory saf
 
 ```toml
 [dependencies]
-zipora = "1.0.0"
+zipora = "1.0.2"
 ```
 
 ### Basic Usage
@@ -184,7 +184,7 @@ Current performance on Intel i7-10700K:
 
 ```toml
 [dependencies]
-zipora = { version = "1.0.0", features = ["ffi"] }
+zipora = { version = "1.0.2", features = ["ffi"] }
 ```
 
 ```c
