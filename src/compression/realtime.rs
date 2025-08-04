@@ -35,8 +35,14 @@ impl CompressionMode {
         match self {
             CompressionMode::UltraLowLatency => Algorithm::None,
             CompressionMode::LowLatency => Algorithm::Lz4,
+            #[cfg(feature = "zstd")]
             CompressionMode::Balanced => Algorithm::Zstd(3),
+            #[cfg(not(feature = "zstd"))]
+            CompressionMode::Balanced => Algorithm::Lz4,
+            #[cfg(feature = "zstd")]
             CompressionMode::HighCompression => Algorithm::Zstd(9),
+            #[cfg(not(feature = "zstd"))]
+            CompressionMode::HighCompression => Algorithm::Lz4,
         }
     }
 

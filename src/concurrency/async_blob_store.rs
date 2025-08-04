@@ -444,6 +444,7 @@ impl<S: AsyncBlobStore> AsyncCompressedBlobStore<S> {
     }
 
     /// Compress data using zstd
+    #[cfg(feature = "zstd")]
     async fn compress(&self, data: &[u8]) -> Result<Vec<u8>> {
         let level = self.compression_level;
         let data = data.to_vec();
@@ -456,7 +457,14 @@ impl<S: AsyncBlobStore> AsyncCompressedBlobStore<S> {
         .map_err(|e| ZiporaError::configuration(&format!("compression task failed: {}", e)))?
     }
 
+    /// Compress data using zstd
+    #[cfg(not(feature = "zstd"))]
+    async fn compress(&self, _data: &[u8]) -> Result<Vec<u8>> {
+        Err(ZiporaError::configuration("ZSTD compression not available - enable 'zstd' feature"))
+    }
+
     /// Decompress data using zstd
+    #[cfg(feature = "zstd")]
     async fn decompress(&self, data: &[u8]) -> Result<Vec<u8>> {
         let data = data.to_vec();
 
@@ -466,6 +474,12 @@ impl<S: AsyncBlobStore> AsyncCompressedBlobStore<S> {
         })
         .await
         .map_err(|e| ZiporaError::configuration(&format!("decompression task failed: {}", e)))?
+    }
+
+    /// Decompress data using zstd
+    #[cfg(not(feature = "zstd"))]
+    async fn decompress(&self, _data: &[u8]) -> Result<Vec<u8>> {
+        Err(ZiporaError::configuration("ZSTD decompression not available - enable 'zstd' feature"))
     }
 }
 
@@ -576,6 +590,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "zstd")]
     async fn test_compressed_blob_store() {
         let inner = AsyncMemoryBlobStore::new();
         let store = AsyncCompressedBlobStore::new(inner, 3);

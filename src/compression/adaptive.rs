@@ -535,6 +535,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "zstd")]
     fn test_algorithm_switching() {
         let requirements = PerformanceRequirements::default();
         let mut compressor = AdaptiveCompressor::default_with_requirements(requirements).unwrap();

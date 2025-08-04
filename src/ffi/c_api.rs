@@ -40,6 +40,14 @@ fn set_last_error(msg: &str) {
     });
 }
 
+/// Clear the last error message for the current thread (for testing)
+#[cfg(test)]
+fn clear_last_error() {
+    LAST_ERROR.with(|error| {
+        *error.borrow_mut() = None;
+    });
+}
+
 /// Convert CResult to error message
 #[allow(dead_code)]
 fn cresult_to_error_msg(result: CResult) -> &'static str {
@@ -59,7 +67,7 @@ fn cresult_to_error_msg(result: CResult) -> &'static str {
 /// # Safety
 ///
 /// This function is safe to call multiple times.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn zipora_init() -> CResult {
     crate::init();
     CResult::Success
@@ -71,25 +79,20 @@ pub unsafe extern "C" fn zipora_init() -> CResult {
 ///
 /// The returned string is valid until the next call to this function.
 /// The caller should not free the returned pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn zipora_version() -> *const c_char {
-    static mut VERSION_CSTRING: Option<CString> = None;
+    use std::sync::OnceLock;
+    static VERSION_CSTRING: OnceLock<CString> = OnceLock::new();
 
-    unsafe {
-        if VERSION_CSTRING.is_none() {
-            if let Ok(cstring) = CString::new(crate::VERSION) {
-                VERSION_CSTRING = Some(cstring);
-            } else {
-                return ptr::null();
-            }
-        }
-
-        VERSION_CSTRING.as_ref().unwrap().as_ptr()
-    }
+    let cstring = VERSION_CSTRING.get_or_init(|| {
+        CString::new(crate::VERSION).unwrap_or_else(|_| CString::new("unknown").unwrap())
+    });
+    
+    cstring.as_ptr()
 }
 
 /// Check if SIMD optimizations are available
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn zipora_has_simd() -> c_int {
     if crate::has_simd_support() {
         1
@@ -103,7 +106,7 @@ pub unsafe extern "C" fn zipora_has_simd() -> c_int {
 /// # Safety
 ///
 /// The returned pointer must be freed with `fast_vec_free`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn fast_vec_new() -> *mut CFastVec {
     let fast_vec = Box::new(crate::FastVec::<u8>::new());
     Box::into_raw(fast_vec) as *mut CFastVec
@@ -115,7 +118,7 @@ pub unsafe extern "C" fn fast_vec_new() -> *mut CFastVec {
 ///
 /// The pointer must be a valid CFastVec pointer returned from `fast_vec_new`.
 /// The pointer becomes invalid after this call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn fast_vec_free(vec: *mut CFastVec) {
     if !vec.is_null() {
         let _vec = unsafe { Box::from_raw(vec as *mut crate::FastVec<u8>) };
@@ -128,7 +131,7 @@ pub unsafe extern "C" fn fast_vec_free(vec: *mut CFastVec) {
 /// # Safety
 ///
 /// The vec pointer must be a valid CFastVec pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn fast_vec_push(vec: *mut CFastVec, value: u8) -> CResult {
     if vec.is_null() {
         set_last_error("FastVec pointer is null");
@@ -150,7 +153,7 @@ pub unsafe extern "C" fn fast_vec_push(vec: *mut CFastVec, value: u8) -> CResult
 /// # Safety
 ///
 /// The vec pointer must be a valid CFastVec pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn fast_vec_len(vec: *const CFastVec) -> usize {
     if vec.is_null() {
         return 0;
@@ -166,7 +169,7 @@ pub unsafe extern "C" fn fast_vec_len(vec: *const CFastVec) -> usize {
 ///
 /// The vec pointer must be a valid CFastVec pointer.
 /// The returned pointer is valid until the FastVec is modified or freed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn fast_vec_data(vec: *const CFastVec) -> *const u8 {
     if vec.is_null() {
         return ptr::null();
@@ -181,7 +184,7 @@ pub unsafe extern "C" fn fast_vec_data(vec: *const CFastVec) -> *const u8 {
 /// # Safety
 ///
 /// The returned pointer must be freed with `memory_pool_free`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn memory_pool_new(chunk_size: usize, max_chunks: usize) -> *mut CMemoryPool {
     let config = crate::memory::PoolConfig::new(chunk_size, max_chunks, 8);
     match crate::memory::MemoryPool::new(config) {
@@ -195,7 +198,7 @@ pub unsafe extern "C" fn memory_pool_new(chunk_size: usize, max_chunks: usize) -
 /// # Safety
 ///
 /// The pointer must be a valid CMemoryPool pointer returned from `memory_pool_new`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn memory_pool_free(pool: *mut CMemoryPool) {
     if !pool.is_null() {
         let _pool = unsafe { Box::from_raw(pool as *mut crate::memory::MemoryPool) };
@@ -209,7 +212,7 @@ pub unsafe extern "C" fn memory_pool_free(pool: *mut CMemoryPool) {
 ///
 /// The pool pointer must be a valid CMemoryPool pointer.
 /// The returned pointer must be freed with `memory_pool_deallocate`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn memory_pool_allocate(pool: *mut CMemoryPool) -> *mut c_void {
     if pool.is_null() {
         return ptr::null_mut();
@@ -228,7 +231,7 @@ pub unsafe extern "C" fn memory_pool_allocate(pool: *mut CMemoryPool) -> *mut c_
 ///
 /// Both pointers must be valid, and the memory pointer must have been
 /// allocated from the specified pool.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn memory_pool_deallocate(
     pool: *mut CMemoryPool,
     ptr: *mut c_void,
@@ -261,7 +264,7 @@ pub unsafe extern "C" fn memory_pool_deallocate(
 /// # Safety
 ///
 /// The returned pointer must be freed with `blob_store_free`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn blob_store_new() -> *mut CBlobStore {
     let store = Box::new(crate::blob_store::MemoryBlobStore::new());
     Box::into_raw(store) as *mut CBlobStore
@@ -272,7 +275,7 @@ pub unsafe extern "C" fn blob_store_new() -> *mut CBlobStore {
 /// # Safety
 ///
 /// The pointer must be a valid CBlobStore pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn blob_store_free(store: *mut CBlobStore) {
     if !store.is_null() {
         let _store = unsafe { Box::from_raw(store as *mut crate::blob_store::MemoryBlobStore) };
@@ -285,7 +288,7 @@ pub unsafe extern "C" fn blob_store_free(store: *mut CBlobStore) {
 /// # Safety
 ///
 /// The store pointer must be valid, and data must point to a valid buffer of the specified size.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn blob_store_put(
     store: *mut CBlobStore,
     data: *const u8,
@@ -320,7 +323,7 @@ pub unsafe extern "C" fn blob_store_put(
 ///
 /// The store pointer must be valid. The data and size pointers will be set to
 /// point to allocated memory that must be freed with `zipora_free_blob_data`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn blob_store_get(
     store: *const CBlobStore,
     record_id: u32,
@@ -365,7 +368,7 @@ pub unsafe extern "C" fn blob_store_get(
 ///
 /// The text pointer must point to a valid buffer of the specified size.
 /// The returned pointer must be freed with `suffix_array_free`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn suffix_array_new(text: *const u8, size: usize) -> *mut CSuffixArray {
     if text.is_null() || size == 0 {
         return ptr::null_mut();
@@ -383,7 +386,7 @@ pub unsafe extern "C" fn suffix_array_new(text: *const u8, size: usize) -> *mut 
 /// # Safety
 ///
 /// The pointer must be a valid CSuffixArray pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn suffix_array_free(sa: *mut CSuffixArray) {
     if !sa.is_null() {
         let _sa = unsafe { Box::from_raw(sa as *mut crate::algorithms::SuffixArray) };
@@ -396,7 +399,7 @@ pub unsafe extern "C" fn suffix_array_free(sa: *mut CSuffixArray) {
 /// # Safety
 ///
 /// The sa pointer must be a valid CSuffixArray pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn suffix_array_len(sa: *const CSuffixArray) -> usize {
     if sa.is_null() {
         return 0;
@@ -411,7 +414,7 @@ pub unsafe extern "C" fn suffix_array_len(sa: *const CSuffixArray) -> usize {
 /// # Safety
 ///
 /// All pointers must be valid, and pattern must point to a buffer of the specified size.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn suffix_array_search(
     sa: *const CSuffixArray,
     text: *const u8,
@@ -443,7 +446,7 @@ pub unsafe extern "C" fn suffix_array_search(
 /// # Safety
 ///
 /// The data pointer must point to a valid array of the specified size.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn radix_sort_u32(data: *mut u32, size: usize) -> CResult {
     if data.is_null() || size == 0 {
         return CResult::InvalidInput;
@@ -464,7 +467,7 @@ pub unsafe extern "C" fn radix_sort_u32(data: *mut u32, size: usize) -> CResult 
 ///
 /// The returned string is valid until the next error occurs on this thread.
 /// The caller should not free the returned pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn zipora_last_error() -> *const c_char {
     LAST_ERROR.with(|error| match error.borrow().as_ref() {
         Some(cstring) => cstring.as_ptr(),
@@ -481,7 +484,7 @@ pub unsafe extern "C" fn zipora_last_error() -> *const c_char {
 ///
 /// The callback function pointer must be valid for the lifetime of the library usage.
 /// The callback will be called from the thread that generates the error.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn zipora_set_error_callback(
     callback: Option<unsafe extern "C" fn(*const c_char)>,
 ) {
@@ -497,7 +500,7 @@ pub unsafe extern "C" fn zipora_set_error_callback(
 /// The data pointer must be a pointer returned by `blob_store_get`.
 /// The size must match the size returned by `blob_store_get`.
 /// The pointer becomes invalid after this call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn zipora_free_blob_data(data: *mut u8, size: usize) {
     if !data.is_null() && size > 0 {
         unsafe {
@@ -540,7 +543,7 @@ mod tests {
             let data_ptr = fast_vec_data(vec);
             assert!(!data_ptr.is_null());
 
-            let data_slice = unsafe { std::slice::from_raw_parts(data_ptr, 2) };
+            let data_slice = std::slice::from_raw_parts(data_ptr, 2);
             assert_eq!(data_slice, &[42, 84]);
 
             fast_vec_free(vec);
@@ -588,7 +591,7 @@ mod tests {
             assert_eq!(size, test_data.len());
 
             // Verify the data content
-            let retrieved_data = unsafe { std::slice::from_raw_parts(data_ptr, size) };
+            let retrieved_data = std::slice::from_raw_parts(data_ptr, size);
             assert_eq!(retrieved_data, test_data);
 
             // Free the blob data
@@ -643,48 +646,60 @@ mod tests {
     #[test]
     fn test_error_callback() {
         use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Mutex;
 
         static CALLBACK_CALLED: AtomicBool = AtomicBool::new(false);
-        static mut CALLBACK_MESSAGE: Option<String> = None;
+        static CALLBACK_MESSAGE: Mutex<Option<String>> = Mutex::new(None);
 
         unsafe extern "C" fn test_callback(msg: *const c_char) {
             CALLBACK_CALLED.store(true, Ordering::SeqCst);
             let c_str = unsafe { CStr::from_ptr(msg) };
             if let Ok(str_slice) = c_str.to_str() {
-                unsafe {
-                    std::ptr::addr_of_mut!(CALLBACK_MESSAGE).write(Some(str_slice.to_string()));
+                if let Ok(mut callback_msg) = CALLBACK_MESSAGE.lock() {
+                    *callback_msg = Some(str_slice.to_string());
                 }
             }
         }
 
         unsafe {
+            // Clear any previous error state
+            clear_last_error();
+            
             // Set the error callback
             zipora_set_error_callback(Some(test_callback));
 
             // Reset callback state
             CALLBACK_CALLED.store(false, Ordering::SeqCst);
-            std::ptr::addr_of_mut!(CALLBACK_MESSAGE).write(None);
+            if let Ok(mut callback_msg) = CALLBACK_MESSAGE.lock() {
+                *callback_msg = None;
+            }
 
             // Trigger an error by setting one directly
             set_last_error("Test callback message");
 
             // Check that callback was called
             assert!(CALLBACK_CALLED.load(Ordering::SeqCst));
-            assert!(std::ptr::addr_of!(CALLBACK_MESSAGE).read().is_some());
-            assert_eq!(std::ptr::addr_of!(CALLBACK_MESSAGE).read().as_ref().unwrap(), "Test callback message");
+            if let Ok(callback_msg) = CALLBACK_MESSAGE.lock() {
+                assert!(callback_msg.is_some());
+                assert_eq!(callback_msg.as_ref().unwrap(), "Test callback message");
+            }
 
             // Clear the callback
             zipora_set_error_callback(None);
 
             // Reset state and trigger another error
             CALLBACK_CALLED.store(false, Ordering::SeqCst);
-            std::ptr::addr_of_mut!(CALLBACK_MESSAGE).write(None);
+            if let Ok(mut callback_msg) = CALLBACK_MESSAGE.lock() {
+                *callback_msg = None;
+            }
 
             set_last_error("Another test message");
 
             // Callback should not have been called this time
             assert!(!CALLBACK_CALLED.load(Ordering::SeqCst));
-            assert!(std::ptr::addr_of!(CALLBACK_MESSAGE).read().is_none());
+            if let Ok(callback_msg) = CALLBACK_MESSAGE.lock() {
+                assert!(callback_msg.is_none());
+            }
         }
     }
 

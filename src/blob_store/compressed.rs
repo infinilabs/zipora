@@ -82,12 +82,14 @@ impl<S: BlobStore> ZstdBlobStore<S> {
     }
 
     /// Compress data using ZSTD
+    #[cfg(feature = "zstd")]
     fn compress(&self, data: &[u8]) -> Result<Vec<u8>> {
         zstd::encode_all(data, self.compression_level)
             .map_err(|e| ZiporaError::io_error(format!("ZSTD compression failed: {}", e)))
     }
 
     /// Decompress data using ZSTD
+    #[cfg(feature = "zstd")]
     fn decompress(&self, compressed_data: &[u8]) -> Result<Vec<u8>> {
         zstd::decode_all(compressed_data)
             .map_err(|e| ZiporaError::io_error(format!("ZSTD decompression failed: {}", e)))
