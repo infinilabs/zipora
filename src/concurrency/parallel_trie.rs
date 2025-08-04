@@ -346,7 +346,7 @@ impl ParallelTrieOps {
         let counts = prefix_counts.lock().unwrap();
         let mut common_prefixes: Vec<Vec<u8>> = counts
             .iter()
-            .filter(|(_, &count)| count >= min_support)
+            .filter(|&(_, &count)| count >= min_support)
             .map(|(prefix, _)| prefix.clone())
             .collect();
 

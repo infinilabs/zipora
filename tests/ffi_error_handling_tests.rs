@@ -73,15 +73,17 @@ mod ffi_error_tests {
 
     #[test]
     fn test_error_callback() {
+        use std::sync::atomic::{AtomicPtr, Ordering};
+        
         static CALLBACK_CALLED: AtomicBool = AtomicBool::new(false);
-        static mut CALLBACK_MESSAGE: Option<String> = None;
+        static CALLBACK_MESSAGE: Mutex<Option<String>> = Mutex::new(None);
 
         unsafe extern "C" fn test_callback(msg: *const c_char) {
             CALLBACK_CALLED.store(true, Ordering::SeqCst);
             let c_str = unsafe { CStr::from_ptr(msg) };
             if let Ok(str_slice) = c_str.to_str() {
-                unsafe {
-                    CALLBACK_MESSAGE = Some(str_slice.to_string());
+                if let Ok(mut callback_msg) = CALLBACK_MESSAGE.lock() {
+                    *callback_msg = Some(str_slice.to_string());
                 }
             }
         }
@@ -92,28 +94,36 @@ mod ffi_error_tests {
 
             // Reset callback state
             CALLBACK_CALLED.store(false, Ordering::SeqCst);
-            CALLBACK_MESSAGE = None;
+            if let Ok(mut callback_msg) = CALLBACK_MESSAGE.lock() {
+                *callback_msg = None;
+            }
 
             // Trigger an error
             set_last_error("Test callback message");
 
             // Check that callback was called
             assert!(CALLBACK_CALLED.load(Ordering::SeqCst));
-            assert!(CALLBACK_MESSAGE.is_some());
-            assert_eq!(CALLBACK_MESSAGE.as_ref().unwrap(), "Test callback message");
+            if let Ok(callback_msg) = CALLBACK_MESSAGE.lock() {
+                assert!(callback_msg.is_some());
+                assert_eq!(callback_msg.as_ref().unwrap(), "Test callback message");
+            }
 
             // Clear the callback
             set_error_callback(None);
 
             // Reset state and trigger another error
             CALLBACK_CALLED.store(false, Ordering::SeqCst);
-            CALLBACK_MESSAGE = None;
+            if let Ok(mut callback_msg) = CALLBACK_MESSAGE.lock() {
+                *callback_msg = None;
+            }
 
             set_last_error("Another test message");
 
             // Callback should not have been called this time
             assert!(!CALLBACK_CALLED.load(Ordering::SeqCst));
-            assert!(CALLBACK_MESSAGE.is_none());
+            if let Ok(callback_msg) = CALLBACK_MESSAGE.lock() {
+                assert!(callback_msg.is_none());
+            }
         }
     }
 

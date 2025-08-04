@@ -95,7 +95,7 @@ impl LoudsTrie {
                         children.sort_by_key(|(label, _)| *label);
 
                         // Add children to the order and queue
-                        for (_label, &child_node_id) in &children {
+                        for &(ref _label, &child_node_id) in &children {
                             nodes_in_order.push(child_node_id);
                             queue.push_back(child_node_id);
                         }

@@ -269,11 +269,13 @@ impl Compressor for Lz4Compressor {
     }
 }
 
+#[cfg(feature = "zstd")]
 /// ZSTD compressor wrapper
 pub struct ZstdCompressor {
     level: i32,
 }
 
+#[cfg(feature = "zstd")]
 impl ZstdCompressor {
     /// Create a new ZSTD compressor with the specified compression level
     /// 
@@ -284,6 +286,7 @@ impl ZstdCompressor {
     }
 }
 
+#[cfg(feature = "zstd")]
 impl Compressor for ZstdCompressor {
     fn compress(&self, data: &[u8]) -> Result<Vec<u8>> {
         zstd::bulk::compress(data, self.level)
@@ -651,7 +654,10 @@ impl CompressorFactory {
         match algorithm {
             Algorithm::None => Ok(Box::new(NoCompressor)),
             Algorithm::Lz4 => Ok(Box::new(Lz4Compressor)),
+            #[cfg(feature = "zstd")]
             Algorithm::Zstd(level) => Ok(Box::new(ZstdCompressor::new(level))),
+            #[cfg(not(feature = "zstd"))]
+            Algorithm::Zstd(_) => Err(ZiporaError::configuration("ZSTD compression not available - enable 'zstd' feature")),
             Algorithm::Huffman => {
                 if let Some(data) = training_data {
                     Ok(Box::new(HuffmanCompressor::new(data)?))
@@ -693,18 +699,32 @@ impl CompressorFactory {
 
     /// Get all available algorithms
     pub fn available_algorithms() -> Vec<Algorithm> {
-        vec![
-            Algorithm::None,
-            Algorithm::Lz4,
-            Algorithm::Zstd(1),
-            Algorithm::Zstd(3),
-            Algorithm::Zstd(6),
-            Algorithm::Zstd(9),
-            Algorithm::Huffman,
-            Algorithm::Rans,
-            Algorithm::Dictionary,
-            Algorithm::Hybrid,
-        ]
+        #[cfg(feature = "zstd")]
+        {
+            vec![
+                Algorithm::None,
+                Algorithm::Lz4,
+                Algorithm::Zstd(1),
+                Algorithm::Zstd(3),
+                Algorithm::Zstd(6),
+                Algorithm::Zstd(9),
+                Algorithm::Huffman,
+                Algorithm::Rans,
+                Algorithm::Dictionary,
+                Algorithm::Hybrid,
+            ]
+        }
+        #[cfg(not(feature = "zstd"))]
+        {
+            vec![
+                Algorithm::None,
+                Algorithm::Lz4,
+                Algorithm::Huffman,
+                Algorithm::Rans,
+                Algorithm::Dictionary,
+                Algorithm::Hybrid,
+            ]
+        }
     }
 
     /// Select the best algorithm for given requirements and data
@@ -814,6 +834,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "zstd")]
     fn test_zstd_compressor() {
         let compressor = ZstdCompressor::new(3);
         let data = b"test data that should compress well with repeated patterns and more text";

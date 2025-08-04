@@ -1,8 +1,8 @@
 [package]
 name = "zipora"
 version = "1.0.2"
-edition = "2021"
-rust-version = "1.75"
+edition = "2024"
+rust-version = "1.88"
 authors = ["InfiniLabs"]
 description = "High-performance Rust implementation providing advanced data structures and compression algorithms with memory safety guarantees. Features fiber-based concurrency, real-time compression, memory pools, SIMD optimizations, and complete C FFI for migration from C++."
 license = "BSD-3-Clause"
