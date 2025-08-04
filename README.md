@@ -7,7 +7,7 @@ High-performance Rust data structures and compression algorithms with memory saf
 
 ## Features
 
-- **🚀 High Performance**: Zero-copy operations, SIMD optimizations, cache-friendly layouts
+- **🚀 High Performance**: Zero-copy operations, SIMD optimizations (AVX2/AVX-512), cache-friendly layouts
 - **🛡️ Memory Safety**: Eliminates segfaults, buffer overflows, use-after-free bugs
 - **🧠 Advanced Memory Management**: Tiered allocators, memory pools, hugepage support
 - **🗜️ Compression Framework**: Huffman, rANS, dictionary-based, and hybrid compression
@@ -22,6 +22,9 @@ High-performance Rust data structures and compression algorithms with memory saf
 ```toml
 [dependencies]
 zipora = "1.0.2"
+
+# Or with optional features
+zipora = { version = "1.0.2", features = ["avx512", "lz4", "ffi"] }
 ```
 
 ### Basic Usage
@@ -163,6 +166,14 @@ let compressed = rans_encoder.encode(b"sample data").unwrap();
 // Dictionary compression
 let dictionary = DictionaryBuilder::new().build(b"sample data");
 
+// LZ4 compression (requires "lz4" feature)
+#[cfg(feature = "lz4")]
+{
+    use zipora::Lz4Compressor;
+    let compressor = Lz4Compressor::new();
+    let compressed = compressor.compress(b"sample data").unwrap();
+}
+
 // Automatic algorithm selection
 let algorithm = CompressorFactory::select_best(&requirements, data);
 let compressor = CompressorFactory::create(algorithm, Some(training_data)).unwrap();
@@ -213,7 +224,8 @@ if (fast_vec_push(NULL, 42) != CResult_Success) {
 
 | Feature | Description | Default |
 |---------|-------------|---------|
-| `simd` | SIMD optimizations | ✅ |
+| `simd` | SIMD optimizations (AVX2, BMI2, POPCNT) | ✅ |
+| `avx512` | AVX-512 optimizations | ❌ |
 | `mmap` | Memory-mapped file support | ✅ |
 | `zstd` | ZSTD compression | ✅ |
 | `serde` | Serialization support | ✅ |
@@ -226,11 +238,21 @@ if (fast_vec_push(NULL, 42) != CResult_Success) {
 # Build
 cargo build --release
 
+# Build with optional features
+cargo build --release --features avx512          # Enable AVX-512 optimizations
+cargo build --release --features lz4             # Enable LZ4 compression
+cargo build --release --features ffi             # Enable C FFI compatibility
+cargo build --release --features avx512,lz4,ffi  # Multiple optional features
+
 # Test (398 tests, 97%+ coverage)
 cargo test --all-features
 
 # Benchmark
 cargo bench
+
+# Benchmark with specific features
+cargo bench --features avx512
+cargo bench --features lz4
 
 # Examples
 cargo run --example basic_usage

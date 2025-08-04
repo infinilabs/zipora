@@ -18,6 +18,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `cargo build` - Debug build (fast compilation, includes debug info)
 - `cargo build --release` - Release build with optimizations
 - `cargo build --all-features` - Build with all optional features enabled
+- `cargo build --release --features avx512` - Build with AVX-512 optimizations
+- `cargo build --release --features lz4` - Build with LZ4 compression
+- `cargo build --release --features ffi` - Build with C FFI compatibility
+- `cargo build --release --features avx512,lz4,ffi` - Build with multiple optional features
 - `cargo check` - Quick syntax and type check without building
 
 ### Testing
@@ -30,6 +34,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Benchmarking
 - `cargo bench` - Run all benchmarks
 - `cargo bench --bench benchmark` - Run main benchmark suite
+- `cargo bench --features avx512` - Run benchmarks with AVX-512 optimizations
+- `cargo bench --features lz4` - Run benchmarks with LZ4 compression
 - `cargo bench vector_comparison` - Run specific benchmark group
 
 ### Code Quality
@@ -94,7 +100,8 @@ The project is organized into specialized modules representing different algorit
 The project uses Cargo features to control functionality:
 
 - `default = ["simd", "mmap", "zstd", "serde"]` - Default feature set
-- `simd` - SIMD optimizations for hash functions and comparisons
+- `simd` - SIMD optimizations (AVX2, BMI2, POPCNT) for hash functions and comparisons
+- `avx512` - AVX-512 optimizations (optional, requires explicit enable)
 - `mmap` - Memory-mapped file support via memmap2
 - `zstd` - ZSTD compression integration
 - `lz4` - LZ4 compression support (optional)
@@ -137,7 +144,7 @@ This is a high-performance library where benchmarks and optimization matter:
 - ✅ **rANS Implementation**: Complete range Asymmetric Numeral Systems implementation with full encode/decode cycle
 - ✅ **Dictionary Compression**: Complete LZ-style compression with pattern matching and automatic compression wrappers
 - ✅ **Hybrid Compression**: Adaptive algorithm selection that automatically chooses the best compression method for given data
-- ✅ **Advanced SIMD Optimization**: AVX-512 and ARM NEON support with runtime detection and adaptive algorithm selection
+- ✅ **Advanced SIMD Optimization**: AVX-512 and ARM NEON support with runtime detection and adaptive algorithm selection (AVX-512 requires explicit `avx512` feature flag)
 - ✅ **Cross-Platform Performance**: Optimal performance on both x86_64 and ARM64 architectures
 
 ### ✅ **Completed Phases**
@@ -220,6 +227,15 @@ Use feature flags for optional functionality:
 ```rust
 #[cfg(feature = "simd")]
 fn simd_optimized_function() { ... }
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+fn avx512_optimized_function() { ... }
+
+#[cfg(feature = "lz4")]
+fn lz4_compression_function() { ... }
+
+#[cfg(feature = "ffi")]
+pub extern "C" fn c_api_function() { ... }
 
 #[cfg(not(feature = "simd"))]
 fn fallback_function() { ... }
