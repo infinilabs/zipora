@@ -18,7 +18,8 @@ crate-type = ["rlib", "cdylib"]
 default = ["simd", "mmap", "zstd", "serde"]
 simd = []
 # AVX-512 support requires nightly Rust due to experimental intrinsics
-# Enable when stable: avx512 = ["simd"]
+# Currently disabled by default for stable Rust compatibility
+avx512 = ["simd"]
 mmap = ["dep:memmap2"]
 zstd = ["dep:zstd"]
 lz4 = ["dep:lz4_flex"]

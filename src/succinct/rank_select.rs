@@ -66,9 +66,6 @@ use std::arch::x86_64::{
 use std::arch::x86_64::{
     _mm512_loadu_si512,
     _mm512_storeu_si512, 
-    _mm512_set1_epi32,
-    _mm512_and_si512,
-    _mm512_srli_epi32,
     __m512i,
 };
 
@@ -323,13 +320,13 @@ unsafe fn popcount_bulk_avx512(words: &[u64; 8]) -> [u32; 8] {
     #[target_feature(enable = "avx512f")]
     unsafe fn avx512_popcount_impl(words: &[u64; 8]) -> [u32; 8] {
         // Load 512 bits (8 x u64) into AVX-512 register
-        let data = _mm512_loadu_si512(words.as_ptr() as *const __m512i);
+        let data = unsafe { _mm512_loadu_si512(words.as_ptr() as *const __m512i) };
         
         // Since AVX-512VPOPCNTDQ might not be available everywhere,
         // we'll extract and count using standard popcount
         let mut result = [0u32; 8];
         let mut extracted_words = [0u64; 8];
-        _mm512_storeu_si512(extracted_words.as_mut_ptr() as *mut __m512i, data);
+        unsafe { _mm512_storeu_si512(extracted_words.as_mut_ptr() as *mut __m512i, data) };
         
         for (i, &word) in extracted_words.iter().enumerate() {
             result[i] = word.count_ones();
@@ -338,7 +335,7 @@ unsafe fn popcount_bulk_avx512(words: &[u64; 8]) -> [u32; 8] {
         result
     }
     
-    avx512_popcount_impl(words)
+    unsafe { avx512_popcount_impl(words) }
 }
 
 /// AVX-512 bulk rank operation for processing multiple positions efficiently
@@ -435,7 +432,7 @@ unsafe fn rank1_bulk_avx512_impl(blocks: &[u64], positions: &[usize]) -> Vec<usi
             aligned_words.copy_from_slice(&blocks[start_idx..start_idx + 8]);
             
             // Process 8 words in parallel
-            let popcounts = popcount_bulk_avx512(&aligned_words);
+            let popcounts = unsafe { popcount_bulk_avx512(&aligned_words) };
             count += popcounts.iter().map(|&c| c as usize).sum::<usize>();
         }
         

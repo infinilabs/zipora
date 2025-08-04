@@ -7,7 +7,7 @@ High-performance Rust data structures and compression algorithms with memory saf
 
 ## Features
 
-- **🚀 High Performance**: Zero-copy operations, SIMD optimizations (AVX2/AVX-512), cache-friendly layouts
+- **🚀 High Performance**: Zero-copy operations, SIMD optimizations (AVX2, AVX-512*), cache-friendly layouts
 - **🛡️ Memory Safety**: Eliminates segfaults, buffer overflows, use-after-free bugs
 - **🧠 Advanced Memory Management**: Tiered allocators, memory pools, hugepage support
 - **🗜️ Compression Framework**: Huffman, rANS, dictionary-based, and hybrid compression
@@ -24,7 +24,10 @@ High-performance Rust data structures and compression algorithms with memory saf
 zipora = "1.0.2"
 
 # Or with optional features
-zipora = { version = "1.0.2", features = ["avx512", "lz4", "ffi"] }
+zipora = { version = "1.0.2", features = ["lz4", "ffi"] }
+
+# AVX-512 requires nightly Rust (experimental intrinsics)
+zipora = { version = "1.0.2", features = ["avx512", "lz4", "ffi"] }  # nightly only
 ```
 
 ### Basic Usage
@@ -183,6 +186,8 @@ let compressor = CompressorFactory::create(algorithm, Some(training_data)).unwra
 
 Current performance on Intel i7-10700K:
 
+> **Note**: *AVX-512 optimizations require nightly Rust due to experimental intrinsics. All other SIMD optimizations (AVX2, BMI2, POPCNT) work with stable Rust.
+
 | Operation | Performance | vs std::Vec | vs C++ |
 |-----------|-------------|-------------|--------|
 | FastVec push 10k | 6.78µs | +48% faster | +20% faster |
@@ -222,15 +227,15 @@ if (fast_vec_push(NULL, 42) != CResult_Success) {
 
 ## Features
 
-| Feature | Description | Default |
-|---------|-------------|---------|
-| `simd` | SIMD optimizations (AVX2, BMI2, POPCNT) | ✅ |
-| `avx512` | AVX-512 optimizations | ❌ |
-| `mmap` | Memory-mapped file support | ✅ |
-| `zstd` | ZSTD compression | ✅ |
-| `serde` | Serialization support | ✅ |
-| `lz4` | LZ4 compression | ❌ |
-| `ffi` | C FFI compatibility | ❌ |
+| Feature | Description | Default | Requirements |
+|---------|-------------|---------|--------------|
+| `simd` | SIMD optimizations (AVX2, BMI2, POPCNT) | ✅ | Stable Rust |
+| `avx512` | AVX-512 optimizations (experimental) | ❌ | **Nightly Rust** |
+| `mmap` | Memory-mapped file support | ✅ | Stable Rust |
+| `zstd` | ZSTD compression | ✅ | Stable Rust |
+| `serde` | Serialization support | ✅ | Stable Rust |
+| `lz4` | LZ4 compression | ❌ | Stable Rust |
+| `ffi` | C FFI compatibility | ❌ | Stable Rust |
 
 ## Build & Test
 
@@ -239,10 +244,13 @@ if (fast_vec_push(NULL, 42) != CResult_Success) {
 cargo build --release
 
 # Build with optional features
-cargo build --release --features avx512          # Enable AVX-512 optimizations
 cargo build --release --features lz4             # Enable LZ4 compression
 cargo build --release --features ffi             # Enable C FFI compatibility
-cargo build --release --features avx512,lz4,ffi  # Multiple optional features
+cargo build --release --features lz4,ffi         # Multiple optional features
+
+# AVX-512 requires nightly Rust (experimental intrinsics)
+cargo +nightly build --release --features avx512  # Enable AVX-512 optimizations
+cargo +nightly build --release --features avx512,lz4,ffi  # AVX-512 + other features
 
 # Test (398 tests, 97%+ coverage)
 cargo test --all-features
@@ -251,8 +259,10 @@ cargo test --all-features
 cargo bench
 
 # Benchmark with specific features
-cargo bench --features avx512
 cargo bench --features lz4
+
+# AVX-512 benchmarks (nightly Rust required)
+cargo +nightly bench --features avx512
 
 # Examples
 cargo run --example basic_usage
