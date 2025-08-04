@@ -246,7 +246,7 @@ impl<'a> FastStr<'a> {
             return None;
         }
 
-        let first_byte = needle_data[0];
+        let _first_byte = needle_data[0];
         let needle_len = needle_data.len();
         
         // Use AVX-512 to find potential first byte matches
@@ -525,11 +525,11 @@ impl<'a> FastStr<'a> {
             use std::arch::x86_64::{_mm512_loadu_si512, _mm512_storeu_si512, __m512i};
             
             // Load 64 bytes as 8 x 64-bit integers using AVX-512
-            let data_vec = _mm512_loadu_si512(chunk.as_ptr() as *const __m512i);
+            let data_vec = unsafe { _mm512_loadu_si512(chunk.as_ptr() as *const __m512i) };
 
             // Convert to individual 64-bit values for processing
             let mut vals = [0u64; 8];
-            _mm512_storeu_si512(vals.as_mut_ptr() as *mut __m512i, data_vec);
+            unsafe { _mm512_storeu_si512(vals.as_mut_ptr() as *mut __m512i, data_vec) };
 
             // Process each 64-bit value with the same mixing as other implementations
             // This ensures hash consistency across SIMD variants
@@ -550,9 +550,9 @@ impl<'a> FastStr<'a> {
 
         for chunk in chunks_32 {
             // Use AVX2 for 32-byte chunks if available
-            let data_vec = _mm256_loadu_si256(chunk.as_ptr() as *const __m256i);
+            let data_vec = unsafe { _mm256_loadu_si256(chunk.as_ptr() as *const __m256i) };
             let mut vals = [0u64; 4];
-            _mm256_storeu_si256(vals.as_mut_ptr() as *mut __m256i, data_vec);
+            unsafe { _mm256_storeu_si256(vals.as_mut_ptr() as *mut __m256i, data_vec) };
 
             for val in vals {
                 h = h.wrapping_add(val);
