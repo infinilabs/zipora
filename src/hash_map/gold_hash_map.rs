@@ -370,32 +370,15 @@ where
 
     /// Updates bucket index after moving an entry from old_index to new_index
     fn update_bucket_for_moved_entry(&mut self, old_index: usize, new_index: usize) {
-        // More robust approach: find bucket by rehashing the moved entry's key
-        // This avoids potential optimization issues with linear search
-        let moved_entry = &self.entries[new_index];
-        let hash = moved_entry.hash;
-        let ideal_bucket = self.hash_to_bucket(hash);
-        let cached_hash = (hash as u32) | 1;
-        
-        // Start from ideal position and probe until we find the bucket
-        let mut bucket_idx = ideal_bucket;
+        // Simple linear search approach - more reliable than hash-based probing
+        // because bucket positions can be affected by robin hood hashing
         let old_index_u32 = old_index as u32;
         let new_index_u32 = new_index as u32;
         
-        for _ in 0..self.buckets.len() {
-            let bucket = &mut self.buckets[bucket_idx];
-            if bucket.entry_index == old_index_u32 && bucket.cached_hash == cached_hash {
-                bucket.entry_index = new_index_u32;
-                return;
-            }
-            bucket_idx = (bucket_idx + 1) & (self.buckets.len() - 1);
-        }
-        
-        // Fallback to linear search if hash-based approach fails
-        for bucket_idx in 0..self.buckets.len() {
-            let bucket = &mut self.buckets[bucket_idx];
-            if bucket.entry_index == old_index_u32 {
-                bucket.entry_index = new_index_u32;
+        // Linear search through all buckets to find the one pointing to old_index
+        for i in 0..self.buckets.len() {
+            if self.buckets[i].entry_index == old_index_u32 {
+                self.buckets[i].entry_index = new_index_u32;
                 return;
             }
         }
