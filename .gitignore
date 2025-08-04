@@ -288,8 +288,3 @@ tramp
 *.secret
 *.private
 .local/
-
-# AI assistant files
-CLAUDE.md
-GEMINI.md
-sanitychk-*.md
