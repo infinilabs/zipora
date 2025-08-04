@@ -159,11 +159,40 @@ impl RadixSort {
         for pass in 0..max_passes {
             let shift = pass * self.config.radix_bits;
 
-            // Count occurrences
+            // Count occurrences with AVX-512 acceleration when available
             counts.fill(0);
-            for &value in data.iter() {
-                let digit = ((value >> shift) & mask) as usize;
-                counts[digit] += 1;
+            
+            #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+            {
+                if self.config.use_simd && data.len() >= 16 && shift < 24 {
+                    // Use AVX-512 for faster counting when available
+                    if std::arch::is_x86_feature_detected!("avx512f") && std::arch::is_x86_feature_detected!("avx512bw") {
+                        unsafe {
+                            self.count_digits_avx512(data, shift, mask, &mut counts);
+                        }
+                    } else {
+                        // Fallback to sequential counting
+                        for &value in data.iter() {
+                            let digit = ((value >> shift) & mask) as usize;
+                            counts[digit] += 1;
+                        }
+                    }
+                } else {
+                    // Sequential counting for small data or high shifts
+                    for &value in data.iter() {
+                        let digit = ((value >> shift) & mask) as usize;
+                        counts[digit] += 1;
+                    }
+                }
+            }
+            
+            #[cfg(not(all(target_arch = "x86_64", feature = "avx512")))]
+            {
+                // Standard sequential counting
+                for &value in data.iter() {
+                    let digit = ((value >> shift) & mask) as usize;
+                    counts[digit] += 1;
+                }
             }
 
             // Convert counts to positions
@@ -396,6 +425,54 @@ impl RadixSort {
         data.copy_from_slice(&merged);
 
         Ok(())
+    }
+
+    /// AVX-512 accelerated digit counting for radix sort
+    /// 
+    /// Processes multiple integers simultaneously to count digit occurrences,
+    /// providing significant speedup for the counting phase of radix sort.
+    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+    #[target_feature(enable = "avx512f")]
+    unsafe fn count_digits_avx512(&self, data: &[u32], shift: usize, mask: u32, counts: &mut [usize]) {
+        // Import AVX-512 intrinsics locally to avoid unstable feature issues
+        use std::arch::x86_64::{_mm512_loadu_si512, _mm512_storeu_si512, _mm512_set1_epi32, _mm512_and_si512, _mm512_srli_epi32, __m512i};
+        
+        let mut i = 0;
+        
+        // Process 16 u32 values at a time using AVX-512
+        while i + 16 <= data.len() {
+            // Load 16 x u32 values (512 bits)
+            let values = _mm512_loadu_si512(data[i..].as_ptr() as *const __m512i);
+            
+            // Shift all values to extract the desired digit
+            let shifted = if shift > 0 {
+                _mm512_srli_epi32(values, shift as i32)
+            } else {
+                values
+            };
+            
+            // Apply mask to get only the desired bits
+            let mask_vec = _mm512_set1_epi32(mask as i32);
+            let digits = _mm512_and_si512(shifted, mask_vec);
+            
+            // Extract digits and count them
+            // Note: This could be further optimized with gather operations
+            // For now, extract to array and count sequentially
+            let mut digit_array = [0u32; 16];
+            _mm512_storeu_si512(digit_array.as_mut_ptr() as *mut __m512i, digits);
+            
+            for digit in digit_array.iter() {
+                counts[*digit as usize] += 1;
+            }
+            
+            i += 16;
+        }
+        
+        // Handle remaining elements sequentially
+        for &value in &data[i..] {
+            let digit = ((value >> shift) & mask) as usize;
+            counts[digit] += 1;
+        }
     }
 }
 
