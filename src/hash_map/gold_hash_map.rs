@@ -338,7 +338,7 @@ where
                 bucket_index,
                 entry_index,
             } => {
-                // Mark the bucket as empty FIRST to avoid overwriting moved entry's bucket
+                // Mark the bucket as empty first to break the probe chain
                 self.buckets[bucket_index] = BucketEntry {
                     entry_index: EMPTY_BUCKET,
                     cached_hash: 0,
@@ -350,14 +350,18 @@ where
                     self.entries.pop().unwrap().value
                 } else {
                     // Need to maintain compactness by moving last entry to this position
-                    let last_entry_index = self.entries.len() - 1; // Save the index before popping
+                    let last_entry_index = self.entries.len() - 1;
                     let last_entry = self.entries.pop().unwrap();
                     let removed_entry = mem::replace(&mut self.entries[entry_index], last_entry);
-
-                    // Now we need to update the bucket that was pointing to the last entry
-                    // to point to the new position (entry_index)
-                    self.update_bucket_for_moved_entry(last_entry_index, entry_index);
-
+                    
+                    // Find and update ALL buckets that point to the moved entry
+                    // This is more thorough than the previous single-bucket update
+                    for i in 0..self.buckets.len() {
+                        if self.buckets[i].entry_index == last_entry_index as u32 {
+                            self.buckets[i].entry_index = entry_index as u32;
+                        }
+                    }
+                    
                     removed_entry.value
                 };
 
@@ -368,24 +372,6 @@ where
         }
     }
 
-    /// Updates bucket index after moving an entry from old_index to new_index
-    fn update_bucket_for_moved_entry(&mut self, old_index: usize, new_index: usize) {
-        // Simple linear search approach - more reliable than hash-based probing
-        // because bucket positions can be affected by robin hood hashing
-        let old_index_u32 = old_index as u32;
-        let new_index_u32 = new_index as u32;
-        
-        // Linear search through all buckets to find the one pointing to old_index
-        for i in 0..self.buckets.len() {
-            if self.buckets[i].entry_index == old_index_u32 {
-                self.buckets[i].entry_index = new_index_u32;
-                return;
-            }
-        }
-        
-        // This should never happen in correct operation
-        panic!("Failed to find bucket pointing to moved entry index {}", old_index);
-    }
 
     /// Clears all entries from the map
     pub fn clear(&mut self) {
