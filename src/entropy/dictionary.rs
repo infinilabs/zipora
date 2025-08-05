@@ -546,6 +546,7 @@ pub struct OptimizedDictionaryCompressor {
     suffix_array: SuffixArray,
     text: Vec<u8>,
     bloom_filter: BloomFilter,
+    hash_table: HashMap<u64, Vec<usize>>,
     min_match_length: usize,
     max_match_length: usize,
     window_size: usize,
@@ -571,6 +572,22 @@ impl OptimizedDictionaryCompressor {
         let expected_patterns = data.len() / min_match_length;
         let mut bloom_filter = BloomFilter::new(expected_patterns, 0.01); // 1% false positive rate
         
+        // Build rolling hash table for O(1) pattern lookup
+        let mut hash_table: HashMap<u64, Vec<usize>> = HashMap::new();
+        if data.len() >= min_match_length {
+            let mut rolling_hash = RollingHash::new(min_match_length);
+            
+            // Initialize hash for first window
+            let first_hash = rolling_hash.hash_slice(&data[0..min_match_length]);
+            hash_table.entry(first_hash).or_insert_with(Vec::new).push(0);
+            
+            // Roll through remaining positions
+            for i in 1..=data.len().saturating_sub(min_match_length) {
+                let hash = rolling_hash.roll(data[i - 1], data[i + min_match_length - 1]);
+                hash_table.entry(hash).or_insert_with(Vec::new).push(i);
+            }
+        }
+        
         // Populate bloom filter with potential patterns
         for i in 0..data.len().saturating_sub(min_match_length - 1) {
             let pattern = &data[i..i + min_match_length];
@@ -581,17 +598,24 @@ impl OptimizedDictionaryCompressor {
             suffix_array,
             text: data.to_vec(),
             bloom_filter,
+            hash_table,
             min_match_length,
             max_match_length,
             window_size,
         })
     }
 
-    /// Compress data using optimized LZ77-style algorithm
+    /// Compress data using optimized LZ77-style algorithm with rolling hash
     pub fn compress(&self, data: &[u8]) -> Result<Vec<u8>> {
         let mut result = Vec::new();
         let mut pos = 0;
-        let _rolling_hash = RollingHash::new(self.min_match_length);
+        
+        // Create rolling hash for input data if we have enough data
+        let mut rolling_hash = if data.len() >= self.min_match_length {
+            Some(RollingHash::new(self.min_match_length))
+        } else {
+            None
+        };
 
         while pos < data.len() {
             let mut best_match_offset = 0;
@@ -603,15 +627,38 @@ impl OptimizedDictionaryCompressor {
                 
                 // Quick rejection using bloom filter
                 if self.bloom_filter.contains(pattern) {
-                    // Use suffix array to find all occurrences of the pattern
-                    let (start, count) = self.suffix_array.search(&self.text, pattern);
+                    // Use rolling hash for fast candidate lookup
+                    let hash = if let Some(ref mut rh) = rolling_hash {
+                        if pos == 0 {
+                            rh.hash_slice(pattern)
+                        } else {
+                            rh.roll(data[pos - 1], data[pos + self.min_match_length - 1])
+                        }
+                    } else {
+                        0 // Fallback for very small data
+                    };
                     
-                    // Check each occurrence for the best match within the sliding window
-                    for i in start..start + count {
-                        if let Some(suffix_pos) = self.suffix_array.suffix_at_rank(i) {
-                            // Only consider positions that would be in our sliding window
-                            let distance = if pos > suffix_pos { pos - suffix_pos } else { continue };
+                    // Try rolling hash optimization first
+                    if let Some(candidate_positions) = self.hash_table.get(&hash) {
+                        // Check each candidate position for the best match within the sliding window
+                        for &suffix_pos in candidate_positions {
+                            // Only consider positions that came before current position (look backwards)
+                            if suffix_pos >= pos {
+                                continue; // Can't reference future positions
+                            }
+                            
+                            let distance = pos - suffix_pos;
                             if distance > self.window_size || distance == 0 {
+                                continue;
+                            }
+
+                            // Verify the pattern matches (hash collision check)
+                            if suffix_pos + self.min_match_length <= self.text.len() {
+                                let training_pattern = &self.text[suffix_pos..suffix_pos + self.min_match_length];
+                                if training_pattern != pattern {
+                                    continue; // Hash collision, skip
+                                }
+                            } else {
                                 continue;
                             }
 
@@ -626,10 +673,50 @@ impl OptimizedDictionaryCompressor {
                                 match_length += 1;
                             }
 
-                            // Update best match if this is better
-                            if match_length >= self.min_match_length && match_length > best_match_length {
+                            // Update best match if this is better and meets minimum length requirement
+                            // Apply the same minimum length threshold as original algorithm
+                            if match_length >= self.min_match_length.max(10) && match_length > best_match_length {
                                 best_match_offset = distance;
                                 best_match_length = match_length;
+                            }
+                        }
+                    }
+                    
+                    // Fallback to suffix array search if rolling hash didn't find good matches
+                    // This ensures we don't miss any matches due to hash table limitations
+                    if best_match_length == 0 {
+                        // Use suffix array to find all occurrences of the pattern
+                        let (start, count) = self.suffix_array.search(&self.text, pattern);
+                        
+                        // Check each occurrence for the best match within the sliding window
+                        for i in start..start + count {
+                            if let Some(suffix_pos) = self.suffix_array.suffix_at_rank(i) {
+                                // Only consider positions that came before current position (look backwards)
+                                if suffix_pos >= pos {
+                                    continue; // Can't reference future positions
+                                }
+                                
+                                let distance = pos - suffix_pos;
+                                if distance > self.window_size || distance == 0 {
+                                    continue;
+                                }
+
+                                // Extend the match as far as possible
+                                let max_possible = (data.len() - pos).min(self.max_match_length);
+                                let mut match_length = self.min_match_length;
+                                
+                                while match_length < max_possible
+                                    && suffix_pos + match_length < self.text.len()
+                                    && self.text[suffix_pos + match_length] == data[pos + match_length]
+                                {
+                                    match_length += 1;
+                                }
+
+                                // Update best match if this is better and meets minimum length requirement
+                                if match_length >= self.min_match_length.max(10) && match_length > best_match_length {
+                                    best_match_offset = distance;
+                                    best_match_length = match_length;
+                                }
                             }
                         }
                     }
@@ -637,7 +724,7 @@ impl OptimizedDictionaryCompressor {
             }
 
             // Encode the best match or literal
-            if best_match_length >= self.min_match_length {
+            if best_match_length >= self.min_match_length.max(10) {
                 // Encode as match: flag(1) + offset + length
                 result.push(1);
                 result.extend_from_slice(&(best_match_offset as u32).to_le_bytes());
