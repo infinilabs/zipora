@@ -432,12 +432,14 @@ impl CString {
     /// # Safety
     ///
     /// The data pointer must point to a valid null-terminated string.
-    pub unsafe fn into_string(self) -> Result<String, std::str::Utf8Error> {
+    pub unsafe fn into_string(mut self) -> Result<String, std::str::Utf8Error> {
         if self.data.is_null() {
             return Ok(String::new());
         }
 
         let cstring = unsafe { std::ffi::CString::from_raw(self.data) };
+        // Prevent double-free by nulling the pointer
+        self.data = std::ptr::null_mut();
         cstring.to_str().map(|s| s.to_owned())
     }
 
