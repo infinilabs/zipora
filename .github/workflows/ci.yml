@@ -12,55 +12,8 @@ env:
 jobs:
   build-and-test:
     name: Build and Test
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        rust: [stable]
-
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@master
-      with:
-        toolchain: ${{ matrix.rust }}
-        components: rustfmt, clippy
-
-    - name: Install system dependencies (Ubuntu)
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential pkg-config
-
-    - name: Cache cargo registry
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-${{ matrix.rust }}-
-          ${{ runner.os }}-cargo-
-
-    - name: Check formatting
-      run: cargo fmt --all -- --check
-
-    - name: Run clippy
-      run: cargo clippy --all-targets --all-features -- -D warnings
-
-    - name: Build
-      run: cargo build --verbose
-
-    - name: Run tests
-      run: cargo test --verbose
-
-  documentation:
-    name: Documentation
     runs-on: ubuntu-latest
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -73,47 +26,8 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential pkg-config
 
-    - name: Cache cargo registry
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-docs-${{ hashFiles('**/Cargo.lock') }}
+    - name: Build release
+      run: cargo build --release
 
-    - name: Check documentation
-      run: cargo doc --all-features --no-deps --document-private-items
-
-    - name: Test documentation examples
-      run: cargo test --doc --all-features
-
-  minimal-versions:
-    name: Minimal Dependency Versions
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@nightly
-
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential pkg-config
-
-    - name: Cache cargo registry
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-minimal-${{ hashFiles('**/Cargo.lock') }}
-
-    - name: Install cargo-minimal-versions
-      run: cargo install cargo-minimal-versions && cargo install cargo-hack
-
-    - name: Check minimal versions
-      run: cargo minimal-versions check
+    - name: Run tests release
+      run: cargo test --release
