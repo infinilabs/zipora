@@ -113,6 +113,9 @@ pub use memory::{
     NumaStats, NumaPoolStats, PoolConfig, PooledBuffer, PooledVec, CACHE_LINE_SIZE,
     get_numa_stats, set_current_numa_node, numa_alloc_aligned, numa_dealloc, 
     get_optimal_numa_node, init_numa_pools, clear_numa_pools,
+    // Secure memory management
+    SecureMemoryPool, SecurePoolConfig, SecurePoolStats, SecurePooledPtr,
+    get_global_pool_for_size, get_global_secure_pool_stats, size_to_class,
 };
 
 #[cfg(target_os = "linux")]

@@ -36,6 +36,10 @@ log = "0.4.17"
 # Performance
 ahash = "0.8.8"
 rayon = "1.10"
+crossbeam-utils = "0.8.20"
+dashmap = "6.0"
+thread_local = "1.1"
+fastrand = "2.1"
 
 # Compression (optional)
 zstd = { version = "0.13.2", optional = true }
@@ -95,6 +99,10 @@ harness = false
 
 [[bench]]
 name = "avx512_bench"
+harness = false
+
+[[bench]]
+name = "secure_memory_pool_bench"
 harness = false
 
 [profile.release]
