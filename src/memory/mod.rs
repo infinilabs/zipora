@@ -8,6 +8,7 @@ pub mod cache;
 pub mod hugepage;
 pub mod mmap;
 pub mod pool;
+pub mod secure_pool;
 pub mod tiered;
 
 // Re-export main types
@@ -19,6 +20,10 @@ pub use cache::{
 };
 pub use mmap::{MemoryMappedAllocator, MmapAllocation};
 pub use pool::{MemoryPool, PoolConfig, PooledBuffer, PooledVec};
+pub use secure_pool::{
+    SecureMemoryPool, SecurePoolConfig, SecurePoolStats, SecurePooledPtr,
+    get_global_pool_for_size, get_global_secure_pool_stats, size_to_class
+};
 pub use tiered::{TieredMemoryAllocator, TieredAllocation, TieredConfig, get_tiered_stats, tiered_allocate, tiered_deallocate};
 
 #[cfg(target_os = "linux")]
