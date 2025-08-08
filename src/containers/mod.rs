@@ -2,7 +2,43 @@
 //!
 //! This module provides optimized container types that prioritize performance
 //! while maintaining Rust's safety guarantees.
+//!
+//! ## Core Containers
+//!
+//! - **`FastVec<T>`** - High-performance vector using realloc for growth
+//!
+//! ## Specialized Containers - Phase 1
+//!
+//! - **`ValVec32<T>`** - 32-bit indexed vectors for memory efficiency
+//! - **`SmallMap<K,V>`** - Memory-efficient containers for small collections
+//! - **`FixedCircularQueue<T, N>`** - Fixed-size circular buffer
+//! - **`AutoGrowCircularQueue<T>`** - Dynamically resizing circular buffer
+//!
+//! ## Specialized Containers - Phase 2
+//!
+//! - **`UintVector`** - Compressed integer storage with 60-80% space reduction
+//! - **`FixedLenStrVec<N>`** - Fixed-length string vector with SIMD optimizations
+//! - **`SortableStrVec`** - Arena-based string storage with high-performance sorting
+//!
+//! ## Advanced Containers - Phase 3
+//!
+//! - **`ZoSortedStrVec`** - Zero-overhead sorted string collections with succinct structures
+//! - **`GoldHashIdx<K,V>`** - Hash index for large value indirection and memory efficiency
+//! - **`HashStrMap<V>`** - String-optimized hash map with automatic interning
+//! - **`EasyHashMap<K,V>`** - Simplified hash map interface with builder pattern
 
 mod fast_vec;
+pub mod specialized;
 
 pub use fast_vec::FastVec;
+pub use specialized::{
+    // Phase 1 containers
+    ValVec32, SmallMap, FixedCircularQueue, AutoGrowCircularQueue,
+    // Phase 2 containers
+    UintVector, FixedLenStrVec, FixedStr4Vec, FixedStr8Vec, FixedStr16Vec,
+    FixedStr32Vec, FixedStr64Vec, SortableStrVec, SortableStrIter, SortableStrSortedIter,
+    // Phase 3 advanced containers
+    ZoSortedStrVec, ZoSortedStrVecIter, ZoSortedStrVecRange,
+    GoldHashIdx, HashStrMap, HashStrMapStats,
+    EasyHashMap, EasyHashMapBuilder, EasyHashMapStats
+};

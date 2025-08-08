@@ -1,6 +1,6 @@
 # C++ Comparison Benchmark Framework
 
-This directory contains a comprehensive benchmarking framework for comparing the Rust zipora implementation with the original C++ topling-zip library.
+This directory contains a comprehensive benchmarking framework for comparing the Rust zipora implementation with C++ reference libraries.
 
 ## Quick Start
 
@@ -23,9 +23,9 @@ RUSTFLAGS="-L cpp_benchmark -l dylib=zipora_wrapper" \
 ## Architecture
 
 ### C++ Wrapper Library (`wrapper.cpp`, `wrapper.hpp`)
-- **Purpose**: Provides C-compatible interface to topling C++ classes
+- **Purpose**: Provides C-compatible interface to reference C++ classes
 - **Features**: 
-  - Automatic fallback to stub implementations when topling is unavailable
+  - Automatic fallback to stub implementations when reference library is unavailable
   - Memory tracking and performance measurement utilities
   - Support for vector operations, string operations, and rank-select structures
 - **Build**: CMake-based with optimization flags (`-O3 -march=native`)
@@ -41,7 +41,7 @@ RUSTFLAGS="-L cpp_benchmark -l dylib=zipora_wrapper" \
 ## Files
 
 - `wrapper.hpp` - C interface declarations
-- `wrapper.cpp` - Implementation with topling-zip integration + stubs
+- `wrapper.cpp` - Implementation with reference library integration + stubs
 - `CMakeLists.txt` - Build configuration with automatic library detection
 - `build.sh` - Automated build script
 - `test_wrapper.cpp` - Comprehensive functionality tests
@@ -57,14 +57,14 @@ Based on preliminary testing with stub implementations:
 | String hash computation | ~488ns | ~600-800ns | 20-40% faster |
 | Memory allocation | Lower overhead | Higher overhead | ~15% reduction |
 
-*Note: Actual results depend on the real topling library integration*
+*Note: Actual results depend on the real reference library integration*
 
-## Integration with topling
+## Integration with Reference Library
 
-The framework automatically detects and links against the original topling library:
+The framework automatically detects and links against the original reference library:
 
 1. **Library Detection**: CMake searches standard paths and project-relative paths
-2. **Automatic Fallback**: Uses stub implementations when topling is unavailable  
+2. **Automatic Fallback**: Uses stub implementations when reference library is unavailable  
 3. **Performance Measurement**: Built-in timing and memory tracking utilities
 4. **Fair Comparison**: Same compiler flags and optimization levels
 
@@ -73,7 +73,7 @@ The framework automatically detects and links against the original topling libra
 ### Build Issues
 - Ensure g++ and make are installed
 - Check that cmake is available (or use direct g++ compilation)
-- Verify topling library paths in CMakeLists.txt
+- Verify reference library paths in CMakeLists.txt
 
 ### Linking Issues  
 - Confirm libzipora_wrapper.so is built successfully

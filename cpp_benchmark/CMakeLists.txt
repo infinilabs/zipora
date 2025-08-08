@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native -mtune=native")
 set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG -march=native -mtune=native")
 
-# Try to find the original topling-zip library
+# Try to find the reference library
 find_path(TOPLING_ZIP_INCLUDE_DIR
     NAMES terark/valvec.hpp
     PATHS
@@ -18,7 +18,7 @@ find_path(TOPLING_ZIP_INCLUDE_DIR
         ${CMAKE_SOURCE_DIR}/../topling-zip/src
         ${CMAKE_SOURCE_DIR}/../../topling/topling-zip/src
         /usr/local/google/home/binwu/workspace/topling/topling-zip/src
-    DOC "topling-zip include directory"
+    DOC "reference library include directory"
 )
 
 find_library(TOPLING_ZIP_LIBRARY
@@ -28,17 +28,17 @@ find_library(TOPLING_ZIP_LIBRARY
         /usr/lib
         ${CMAKE_SOURCE_DIR}/../topling-zip/build
         ${CMAKE_SOURCE_DIR}/../../topling/topling-zip/build
-    DOC "topling-zip library"
+    DOC "reference library"
 )
 
-# Configure based on whether we found topling-zip
+# Configure based on whether we found reference library
 if(TOPLING_ZIP_INCLUDE_DIR AND TOPLING_ZIP_LIBRARY)
-    message(STATUS "Found topling-zip at ${TOPLING_ZIP_INCLUDE_DIR}")
+    message(STATUS "Found reference library at ${TOPLING_ZIP_INCLUDE_DIR}")
     add_definitions(-DHAVE_TOPLING_ZIP)
     include_directories(${TOPLING_ZIP_INCLUDE_DIR})
     set(TOPLING_ZIP_LIBS ${TOPLING_ZIP_LIBRARY})
 else()
-    message(WARNING "topling-zip not found, using stub implementations")
+    message(WARNING "reference library not found, using stub implementations")
     set(TOPLING_ZIP_LIBS)
 endif()
 

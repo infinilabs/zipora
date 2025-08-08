@@ -170,7 +170,7 @@ impl<K, V> GoldHashMap<K, V> {
                 }
             }
 
-            // Continue linear probing (removed robin hood logic for now)
+            // Continue linear probing
 
             probe_distance += 1;
             bucket_idx = (bucket_idx + 1) & (self.buckets.len() - 1);
@@ -233,6 +233,51 @@ impl<K, V> GoldHashMap<K, V> {
         }
 
         Ok(())
+    }
+
+    /// Rebuilds the hash table from scratch to maintain probe chain integrity
+    /// 
+    /// This is called after entry removal to ensure all probe chains are correct.
+    /// While not the most efficient approach, it guarantees correctness.
+    fn rebuild_hash_table(&mut self) {
+        // Clear all buckets
+        for i in 0..self.buckets.len() {
+            self.buckets[i] = BucketEntry {
+                entry_index: EMPTY_BUCKET,
+                cached_hash: 0,
+            };
+        }
+        
+        // Re-insert all entries
+        for entry_idx in 0..self.entries.len() {
+            let entry_hash = self.entries[entry_idx].hash;
+            let ideal_bucket = self.hash_to_bucket(entry_hash);
+            let cached_hash = (entry_hash as u32) | 1;
+            
+            let mut bucket_idx = ideal_bucket;
+            let mut probe_distance = 0u16;
+            
+            // Find an empty bucket using linear probing
+            loop {
+                if self.buckets[bucket_idx].entry_index == EMPTY_BUCKET {
+                    self.buckets[bucket_idx] = BucketEntry {
+                        entry_index: entry_idx as u32,
+                        cached_hash,
+                    };
+                    self.entries[entry_idx].probe_distance = probe_distance;
+                    break;
+                }
+                
+                probe_distance += 1;
+                bucket_idx = (bucket_idx + 1) % self.buckets.len();
+                
+                // Safety check to prevent infinite loop
+                if probe_distance > self.buckets.len() as u16 {
+                    // This should never happen if the load factor is reasonable
+                    panic!("Hash table rebuild failed - table is full");
+                }
+            }
+        }
     }
 }
 
@@ -338,13 +383,7 @@ where
                 bucket_index,
                 entry_index,
             } => {
-                // Mark the bucket as empty first to break the probe chain
-                self.buckets[bucket_index] = BucketEntry {
-                    entry_index: EMPTY_BUCKET,
-                    cached_hash: 0,
-                };
-                
-                // Extract the entry value and handle compaction
+                // Extract the entry value first
                 let removed_value = if entry_index == self.entries.len() - 1 {
                     // Last entry, just pop it
                     self.entries.pop().unwrap().value
@@ -355,7 +394,6 @@ where
                     let removed_entry = mem::replace(&mut self.entries[entry_index], last_entry);
                     
                     // Find and update ALL buckets that point to the moved entry
-                    // This is more thorough than the previous single-bucket update
                     for i in 0..self.buckets.len() {
                         if self.buckets[i].entry_index == last_entry_index as u32 {
                             self.buckets[i].entry_index = entry_index as u32;
@@ -364,6 +402,10 @@ where
                     
                     removed_entry.value
                 };
+
+                // Rebuild the hash table to maintain probe chain integrity
+                // This is a simple but correct approach - we can optimize later
+                self.rebuild_hash_table();
 
                 self.len -= 1;
                 Some(removed_value)
