@@ -6,7 +6,7 @@
 
 mod gold_hash_map;
 
-pub use gold_hash_map::GoldHashMap;
+pub use gold_hash_map::{GoldHashMap, Iter};
 
 #[cfg(test)]
 mod tests {

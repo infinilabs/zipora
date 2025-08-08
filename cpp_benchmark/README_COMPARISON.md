@@ -1,6 +1,6 @@
 # Comprehensive C++ vs Rust Performance Comparison System
 
-This directory contains a comprehensive benchmark comparison system that enables detailed performance analysis between the Rust `zipora` library and equivalent C++ implementations (including the original `topling-zip` library when available).
+This directory contains a comprehensive benchmark comparison system that enables detailed performance analysis between the Rust `zipora` library and equivalent C++ implementations (including reference libraries when available).
 
 ## Overview
 
@@ -219,10 +219,10 @@ The build system automatically detects and enables:
    sudo yum install gcc-c++ cmake make
    ```
 
-2. **topling-zip Not Found**:
+2. **Reference Library Not Found**:
    - The system automatically falls back to stub implementations
    - Stub implementations provide baseline C++ performance
-   - For full comparison, install the original topling-zip library
+   - For full comparison, install reference library
 
 3. **Library Linking Issues**:
    ```bash
@@ -317,7 +317,7 @@ To add new benchmark comparisons:
 ## References
 
 - [Criterion.rs Documentation](https://docs.rs/criterion/)
-- [topling-zip Library](https://github.com/topling/topling-zip)
+- Reference libraries for comparison
 - [Rust Performance Book](https://nnethercote.github.io/perf-book/)
 - [C++ Optimization Guidelines](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines)
 

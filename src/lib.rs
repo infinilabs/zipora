@@ -21,23 +21,36 @@
 //!
 //! ```rust
 //! use zipora::{
-//!     FastVec, FastStr, MemoryBlobStore, BlobStore,
-//!     LoudsTrie, Trie, GoldHashMap, HuffmanEncoder,
-//!     MemoryPool, PoolConfig, SuffixArray, FiberPool
+//!     FastVec, ValVec32, SmallMap, FixedCircularQueue, AutoGrowCircularQueue,
+//!     FastStr, MemoryBlobStore, BlobStore, LoudsTrie, Trie, GoldHashMap, 
+//!     HuffmanEncoder, MemoryPool, PoolConfig, SuffixArray, FiberPool
 //! };
 //!
 //! // High-performance vector with realloc optimization
 //! let mut vec = FastVec::new();
 //! vec.push(42).unwrap();
 //!
+//! // Memory-efficient 32-bit indexed vector
+//! let mut vec32 = ValVec32::new();
+//! vec32.push(42).unwrap();
+//! println!("ValVec32 uses u32 indices vs usize for Vec, saving space on large collections");
+//!
+//! // Small map optimized for ≤8 elements
+//! let mut small_map = SmallMap::new();
+//! small_map.insert("key", "value").unwrap();
+//!
+//! // Fixed-size circular queue with lock-free operations
+//! let mut fixed_queue: FixedCircularQueue<i32, 16> = FixedCircularQueue::new();
+//! fixed_queue.push_back(1).unwrap();
+//! assert_eq!(fixed_queue.pop_front(), Some(1));
+//!
+//! // Auto-growing circular queue
+//! let mut auto_queue = AutoGrowCircularQueue::new();
+//! for i in 0..100 { auto_queue.push_back(i).unwrap(); }
+//!
 //! // Zero-copy string operations
 //! let s = FastStr::from_string("hello world");
 //! println!("Hash: {:x}", s.hash_fast());
-//!
-//! // Blob storage with compression
-//! let mut store = MemoryBlobStore::new();
-//! let id = store.put(b"Hello, World!").unwrap();
-//! let data = store.get(id).unwrap();
 //!
 //! // Advanced trie operations
 //! let mut trie = LoudsTrie::new();
@@ -47,18 +60,6 @@
 //! // High-performance hash map
 //! let mut map = GoldHashMap::new();
 //! map.insert("key", "value").unwrap();
-//!
-//! // Entropy coding
-//! let encoder = HuffmanEncoder::new(b"sample data").unwrap();
-//! let compressed = encoder.encode(b"sample data").unwrap();
-//!
-//! // Memory pool allocation
-//! let pool = MemoryPool::new(PoolConfig::small()).unwrap();
-//! let chunk = pool.allocate().unwrap();
-//!
-//! // Suffix array construction
-//! let sa = SuffixArray::new(b"banana").unwrap();
-//! let (pos, count) = sa.search(b"banana", b"ana");
 //! ```
 
 #![warn(missing_docs)]
@@ -79,7 +80,19 @@ pub mod string;
 pub mod succinct;
 
 // Re-export core types
-pub use containers::FastVec;
+pub use containers::{
+    // Core containers
+    FastVec,
+    // Phase 1 specialized containers
+    ValVec32, SmallMap, FixedCircularQueue, AutoGrowCircularQueue,
+    // Phase 2 specialized containers  
+    UintVector, FixedLenStrVec, FixedStr4Vec, FixedStr8Vec, FixedStr16Vec,
+    FixedStr32Vec, FixedStr64Vec, SortableStrVec, SortableStrIter, SortableStrSortedIter,
+    // Phase 3 advanced containers
+    ZoSortedStrVec, ZoSortedStrVecIter, ZoSortedStrVecRange,
+    GoldHashIdx, HashStrMap, HashStrMapStats,
+    EasyHashMap, EasyHashMapBuilder, EasyHashMapStats
+};
 pub use error::{Result, ZiporaError};
 pub use string::FastStr;
 pub use succinct::{BitVector, BitwiseOp, CpuFeatures, RankSelect256, RankSelectSe256};

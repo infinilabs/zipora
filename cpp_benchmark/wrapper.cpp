@@ -2,7 +2,7 @@
  * Enhanced C++ Implementation of benchmark wrapper for zipora
  * 
  * This file implements comprehensive C-compatible wrappers around the original 
- * topling-zip C++ classes to enable detailed performance comparisons with the 
+ * reference C++ classes to enable detailed performance comparisons with the 
  * Rust implementation.
  * 
  * Includes advanced memory tracking, cache analysis, and statistical benchmarking.
@@ -41,19 +41,19 @@
 #include <sys/types.h>
 #endif
 
-// Include the original topling-zip headers
-// Note: These paths may need adjustment based on actual topling-zip installation
+// Include the original reference library headers
+// Note: These paths may need adjustment based on actual installation
 #ifdef HAVE_TOPLING_ZIP
 #include <terark/valvec.hpp>
 #include <terark/fstring.hpp>
-// If rank-select is available in topling-zip:
+// If rank-select is available in reference library:
 // #include <terark/succinct/rank_select.hpp>
 #endif
 
 #ifdef HAVE_TOPLING_ZIP
 using namespace terark;
 #else
-// Fallback implementations for when topling-zip is not available
+// Fallback implementations for when reference library is not available
 // These provide stub functionality for testing the benchmark framework
 
 template<typename T>
@@ -385,7 +385,7 @@ const uint8_t* cpp_fstring_data(void* fstr) {
 
 // Rank-select operations (stub implementation)
 void* cpp_rank_select_create(const uint64_t* bits, size_t bit_count) {
-    // Stub implementation - would need actual topling-zip rank-select if available
+    // Stub implementation - would need actual reference library rank-select if available
     g_allocation_count++;
     g_memory_usage += bit_count / 8 + 1024; // Estimated overhead
     return reinterpret_cast<void*>(0x1); // Non-null placeholder

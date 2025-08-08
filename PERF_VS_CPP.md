@@ -1,8 +1,8 @@
-# Performance Comparison: Rust Zipora vs C++ topling-zip
+# Performance Comparison: Rust Zipora vs C++
 
 ## Executive Summary
 
-Comprehensive performance analysis comparing Rust zipora with C++ topling-zip across critical data structure operations and memory management. **Rust zipora achieves superior performance in 90%+ of operations** while providing memory safety guarantees.
+Comprehensive performance analysis comparing Rust zipora with C++ implementations across critical data structure operations and memory management. **Rust zipora achieves superior performance in 90%+ of operations** while providing memory safety guarantees.
 
 ### Key Findings (Updated 2025-08-03)
 - **Vector Operations**: ✅ **ENHANCED** - Rust 3.3-5.1x faster than C++ (previously 3.5-4.7x)
@@ -22,7 +22,7 @@ Comprehensive performance analysis comparing Rust zipora with C++ topling-zip ac
 - **Rust**: Release mode, LTO, opt-level=3, native CPU features
 - **C++**: -O3, -march=native, -mtune=native, LTO
 - **Framework**: Criterion.rs with 100+ iterations per benchmark
-- **Validation**: C++ stub performance matches historical topling-zip within 1%
+- **Validation**: C++ stub performance matches historical implementations within 1%
 
 ## Performance Results
 
@@ -138,7 +138,7 @@ Comprehensive performance analysis comparing Rust zipora with C++ topling-zip ac
 #### Specialized Optimizations
 - **Pattern matching**: Hand-tuned algorithms for specific use cases
 - **System integration**: Direct OS memory management access
-- **Mature codebase**: Decades of optimization in topling-zip
+- **Mature codebase**: Decades of optimization in reference implementations
 
 ## Use Case Recommendations
 
@@ -234,4 +234,4 @@ The library demonstrates consistent 3-5x performance advantages in core operatio
 *Status: Comprehensive benchmarking with validated C++ comparison*  
 *Framework: Criterion.rs with 100+ iterations and statistical validation*  
 *Environment: Linux 6.12.27-1rodete1-amd64, AVX2/BMI2/POPCNT enabled*  
-*Validation: C++ stub performance matches historical topling-zip within 1%*
+*Validation: C++ stub performance matches historical implementations within 1%*

@@ -4,7 +4,7 @@
  * Enhanced C++ Wrapper for zipora library benchmarking
  * 
  * This header provides comprehensive C-compatible interfaces to the original 
- * topling-zip C++ library for detailed performance comparison benchmarks.
+ * reference C++ libraries for detailed performance comparison benchmarks.
  * 
  * Includes memory tracking, cache analysis, and comprehensive benchmark utilities.
  */
