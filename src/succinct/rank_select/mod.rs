@@ -20,6 +20,15 @@
 //! - **`RankSelectMixedSE512`**: Dual-dimension separated (2 bit vectors)
 //! - **`RankSelectMixedXL256`**: Multi-dimension extended (2-4 bit vectors)
 //!
+//! ## Advanced Optimization Variants
+//! - **`RankSelectFragmented`**: Fragment-based compression with adaptive encoding
+//! - **`RankSelectHierarchical`**: Multi-level caching with configurable density
+//! - **`RankSelectStandard`**: 3-level hierarchy (balanced space/time)
+//! - **`RankSelectFast`**: 4-level hierarchy (speed optimized)
+//! - **`RankSelectCompact`**: 2-level hierarchy (space optimized)
+//! - **`RankSelectBalanced`**: 3-level hierarchy (optimal balance)
+//! - **`RankSelectSelectOptimized`**: Dense select caches for frequent select queries
+//!
 //! # Performance Characteristics
 //!
 //! | Variant | Memory Overhead | Rank Time | Select Time | Best Use Case |
@@ -31,13 +40,31 @@
 //! | Few | <5% | O(log n) | O(1) | Sparse data |
 //! | Mixed variants | ~30% | O(1) | O(1) | Multi-dimensional |
 //!
-//! # SIMD Optimizations
+//! # Hardware Acceleration
 //!
-//! All variants include SIMD optimizations with runtime feature detection:
-//! - **BMI2**: Ultra-fast select using PDEP/PEXT instructions
-//! - **POPCNT**: Hardware-accelerated popcount
-//! - **AVX-512**: Bulk operations with vectorized popcount
-//! - **ARM NEON**: Cross-platform SIMD support
+//! All variants include comprehensive hardware acceleration with runtime detection:
+//! - **BMI2**: Ultra-fast select using PDEP/PEXT instructions (5-10x speedup)
+//! - **BMI1**: Fast bit manipulation with LZCNT/TZCNT/POPCNT
+//! - **BZHI**: Zero high bits for efficient range operations
+//! - **AVX2**: Vectorized operations for bulk processing
+//! - **AVX-512**: Ultra-wide vectorization (8x parallel, nightly Rust)
+//! - **ARM NEON**: Cross-platform SIMD support for ARM64
+//!
+//! # Fragment-Based Compression
+//!
+//! Advanced compression techniques for optimal space/time trade-offs:
+//! - **Variable-Width Encoding**: Adaptive bit-width per fragment
+//! - **Multiple Compression Modes**: Delta, run-length, bit-plane, dictionary
+//! - **Hierarchical Compression**: Multi-level indexing
+//! - **Cache-Aware Fragments**: 256-bit alignment for SIMD
+//!
+//! # Multi-Level Hierarchies
+//!
+//! Configurable cache hierarchies for different workloads:
+//! - **2-5 Cache Levels**: From 256-bit blocks to 1M-bit ultra-blocks
+//! - **Adaptive Cache Density**: Q parameters for space/time tuning
+//! - **Template Specialization**: Compile-time optimization
+//! - **Select Cache Optimization**: Dense caches for frequent select operations
 //!
 //! # Feature Flags
 //!
@@ -83,6 +110,11 @@ pub mod mixed;
 pub mod simd;
 pub mod builder;
 
+// Import advanced optimization modules
+pub mod fragment;
+pub mod hierarchical;
+pub mod bmi2_acceleration;
+
 // Re-export all variants for convenient access
 pub use simple::RankSelectSimple;
 pub use separated::{RankSelectSeparated256, RankSelectSeparated512};
@@ -95,6 +127,19 @@ pub use mixed::{
     MixedDimensionView,
 };
 pub use simd::{SimdOps, bulk_rank1_simd, bulk_select1_simd, bulk_popcount_simd, SimdCapabilities};
+
+// Re-export advanced optimization variants
+pub use fragment::{RankSelectFragmented, CompressionStats};
+pub use hierarchical::{
+    RankSelectHierarchical, HierarchicalConfig, HierarchicalCacheStats,
+    StandardConfig, FastConfig, CompactConfig, BalancedConfig, SelectOptimizedConfig,
+    RankSelectStandard, RankSelectFast, RankSelectCompact, RankSelectBalanced, RankSelectSelectOptimized,
+    CacheDensity,
+};
+pub use bmi2_acceleration::{
+    Bmi2Accelerator, Bmi2Capabilities, Bmi2Stats,
+    Bmi2RankOps, Bmi2SelectOps, Bmi2BitOps, Bmi2RangeOps, Bmi2BlockOps,
+};
 
 /// Common trait for all rank/select operations
 ///
