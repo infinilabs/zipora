@@ -410,7 +410,7 @@ where
     /// Resize to a specific capacity
     fn resize_to(&mut self, new_capacity: usize) -> Result<()> {
         let old_table = mem::replace(&mut self.table, vec![None; new_capacity]);
-        let old_capacity = self.capacity;
+        let _old_capacity = self.capacity;
         self.capacity = new_capacity;
         self.len = 0;
         self.key_memory = 0;

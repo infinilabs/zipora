@@ -3,8 +3,10 @@
 //! This module provides traits and implementations for reading various data types
 //! from different sources including byte slices, files, and memory-mapped regions.
 
-use std::fs::File;
 use std::io::Read;
+#[cfg(feature = "mmap")]
+use std::fs::File;
+#[cfg(feature = "mmap")]
 use std::path::Path;
 
 use crate::error::{Result, ZiporaError};

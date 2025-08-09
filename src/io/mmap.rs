@@ -4,15 +4,20 @@
 //! traits for high-performance, zero-copy file operations.
 
 use crate::error::{Result, ZiporaError};
+#[cfg(feature = "mmap")]
 use crate::io::{DataInput, DataOutput, VarInt};
+#[cfg(feature = "mmap")]
 use std::fs::{File, OpenOptions};
+#[cfg(feature = "mmap")]
 use std::path::Path;
+#[cfg(feature = "mmap")]
 use std::io::{BufReader, Read as StdRead, Seek, SeekFrom};
 
 #[cfg(feature = "mmap")]
 use memmap2::{Mmap, MmapMut, MmapOptions};
 
 #[cfg(target_os = "linux")]
+#[cfg(feature = "mmap")]
 use crate::memory::hugepage::{HugePage, HUGEPAGE_SIZE_2MB, HUGEPAGE_SIZE_1GB};
 
 /// Thresholds for adaptive memory mapping strategy
