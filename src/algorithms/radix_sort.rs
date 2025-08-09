@@ -8,6 +8,10 @@ use crate::error::Result;
 use rayon::prelude::*;
 use std::time::Instant;
 
+// AVX-512 intrinsics (nightly-only feature)
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+use std::arch::x86_64::{_mm512_loadu_si512, _mm512_storeu_si512, _mm512_set1_epi32, _mm512_and_si512, _mm512_srlv_epi32, __m512i};
+
 /// Configuration for radix sort
 #[derive(Debug, Clone)]
 pub struct RadixSortConfig {
@@ -434,33 +438,30 @@ impl RadixSort {
     #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
     #[target_feature(enable = "avx512f")]
     unsafe fn count_digits_avx512(&self, data: &[u32], shift: usize, mask: u32, counts: &mut [usize]) {
-        // Import AVX-512 intrinsics locally to avoid unstable feature issues
-        use std::arch::x86_64::{_mm512_loadu_si512, _mm512_storeu_si512, _mm512_set1_epi32, _mm512_and_si512, _mm512_srlv_epi32, __m512i};
-        
         let mut i = 0;
-        let shift_vec = unsafe { _mm512_set1_epi32(shift as i32) };
+        let shift_vec = _mm512_set1_epi32(shift as i32);
         
         // Process 16 u32 values at a time using AVX-512
         while i + 16 <= data.len() {
             // Load 16 x u32 values (512 bits)
-            let values = unsafe { _mm512_loadu_si512(data[i..].as_ptr() as *const __m512i) };
+            let values = _mm512_loadu_si512(data[i..].as_ptr() as *const __m512i);
             
             // Shift all values to extract the desired digit
             let shifted = if shift > 0 {
-                unsafe { _mm512_srlv_epi32(values, shift_vec) }  // Variable shift per element
+                _mm512_srlv_epi32(values, shift_vec)  // Variable shift per element
             } else {
                 values
             };
             
             // Apply mask to get only the desired bits
-            let mask_vec = unsafe { _mm512_set1_epi32(mask as i32) };
-            let digits = unsafe { _mm512_and_si512(shifted, mask_vec) };
+            let mask_vec = _mm512_set1_epi32(mask as i32);
+            let digits = _mm512_and_si512(shifted, mask_vec);
             
             // Extract digits and count them
             // Note: This could be further optimized with gather operations
             // For now, extract to array and count sequentially
             let mut digit_array = [0u32; 16];
-            unsafe { _mm512_storeu_si512(digit_array.as_mut_ptr() as *mut __m512i, digits) };
+            _mm512_storeu_si512(digit_array.as_mut_ptr() as *mut __m512i, digits);
             
             for digit in digit_array.iter() {
                 counts[*digit as usize] += 1;

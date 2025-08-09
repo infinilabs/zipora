@@ -380,7 +380,7 @@ where
     {
         match self.find_position(key) {
             FindResult::Found {
-                bucket_index,
+                bucket_index: _,
                 entry_index,
             } => {
                 // Extract the entry value first

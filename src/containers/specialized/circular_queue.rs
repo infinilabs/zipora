@@ -12,9 +12,6 @@ use std::marker::PhantomData;
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-// CPU cache prefetching for x86_64 platforms
-#[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::_mm_prefetch;
 
 // Branch prediction hints for performance (stable fallback)
 // In stable Rust, these are identity functions but help document intent
@@ -728,7 +725,7 @@ impl<T> AutoGrowCircularQueue<T> {
     }
     
     /// Reorganize elements after realloc for optimal layout
-    fn reorganize_after_realloc(&mut self, new_buffer: *mut T, new_capacity: usize) -> Result<()> {
+    fn reorganize_after_realloc(&mut self, new_buffer: *mut T, _new_capacity: usize) -> Result<()> {
         if self.len == 0 {
             return Ok(());
         }

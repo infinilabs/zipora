@@ -317,6 +317,7 @@ fn popcount_u64_hardware_accelerated(x: u64) -> u32 {
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 unsafe fn popcount_bulk_avx512(words: &[u64; 8]) -> [u32; 8] {
     // SAFETY: Caller ensures AVX-512VPOPCNTDQ is available and words are aligned
+    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
     #[target_feature(enable = "avx512f")]
     unsafe fn avx512_popcount_impl(words: &[u64; 8]) -> [u32; 8] {
         // Load 512 bits (8 x u64) into AVX-512 register

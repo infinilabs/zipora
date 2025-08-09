@@ -8,4 +8,15 @@ pub mod bit_vector;
 pub mod rank_select;
 
 pub use bit_vector::{BitVector, BitwiseOp};
-pub use rank_select::{RankSelect256, RankSelectSe256, CpuFeatures};
+pub use rank_select::{
+    RankSelect256, RankSelectSe256, CpuFeatures,
+    // New rank/select variants
+    RankSelectOps, RankSelectPerformanceOps, RankSelectMultiDimensional, RankSelectSparse,
+    RankSelectBuilder, BuilderOptions, PerformanceStats,
+    RankSelectSimple, RankSelectSeparated256, RankSelectSeparated512,
+    RankSelectInterleaved256, RankSelectFew, RankSelectFewBuilder,
+    RankSelectMixedIL256, RankSelectMixedSE512, RankSelectMixedXL256,
+    MixedDimensionView,
+    // SIMD operations
+    SimdOps, bulk_rank1_simd, bulk_select1_simd, bulk_popcount_simd, SimdCapabilities,
+};

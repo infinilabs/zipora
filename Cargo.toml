@@ -109,6 +109,10 @@ harness = false
 name = "specialized_containers_bench"
 harness = false
 
+[[bench]]
+name = "rank_select_bench"
+harness = false
+
 [profile.release]
 opt-level = 3           # Maximum optimization level
 lto = "fat"            # Full link-time optimization (better than "thin")

@@ -95,7 +95,18 @@ pub use containers::{
 };
 pub use error::{Result, ZiporaError};
 pub use string::FastStr;
-pub use succinct::{BitVector, BitwiseOp, CpuFeatures, RankSelect256, RankSelectSe256};
+pub use succinct::{
+    BitVector, BitwiseOp, CpuFeatures, RankSelect256, RankSelectSe256,
+    // Advanced rank/select variants (Phase 7A)
+    RankSelectOps, RankSelectPerformanceOps, RankSelectMultiDimensional, RankSelectSparse,
+    RankSelectBuilder, BuilderOptions, PerformanceStats,
+    RankSelectSimple, RankSelectSeparated256, RankSelectSeparated512,
+    RankSelectInterleaved256, RankSelectFew, RankSelectFewBuilder,
+    RankSelectMixedIL256, RankSelectMixedSE512, RankSelectMixedXL256,
+    MixedDimensionView,
+    // SIMD operations
+    SimdOps, bulk_rank1_simd, bulk_select1_simd, bulk_popcount_simd, SimdCapabilities,
+};
 
 // Re-export Phase 1 implementations
 pub use blob_store::{BlobStore, MemoryBlobStore, PlainBlobStore};
