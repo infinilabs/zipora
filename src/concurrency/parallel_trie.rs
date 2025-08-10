@@ -1,9 +1,9 @@
 //! Parallel trie construction and operations
 
+use crate::StateId;
 use crate::error::{Result, ZiporaError};
 use crate::fsa::traits::PrefixIterable;
 use crate::fsa::{LoudsTrie, Trie};
-use crate::StateId;
 use rayon::prelude::*;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -98,9 +98,7 @@ impl ParallelTrieBuilder {
         let final_trie =
             tokio::task::spawn_blocking(move || LoudsTrie::build_from_sorted(all_keys))
                 .await
-                .map_err(|e| {
-                    ZiporaError::configuration(&format!("final build failed: {}", e))
-                })??;
+                .map_err(|e| ZiporaError::configuration(&format!("final build failed: {}", e)))??;
 
         Ok(ParallelLoudsTrie::from_louds_trie(final_trie))
     }

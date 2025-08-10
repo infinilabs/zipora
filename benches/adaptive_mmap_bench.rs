@@ -1,9 +1,9 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use zipora::{DataInput, MemoryMappedInput};
-use zipora::io::AccessPattern;
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use std::fs::File;
-use std::io::{Write as StdWrite, BufReader, Read as StdRead};
+use std::io::{BufReader, Read as StdRead, Write as StdWrite};
 use tempfile::NamedTempFile;
+use zipora::io::AccessPattern;
+use zipora::{DataInput, MemoryMappedInput};
 
 fn create_test_file(size: usize) -> NamedTempFile {
     let mut temp_file = NamedTempFile::new().unwrap();
@@ -15,7 +15,7 @@ fn create_test_file(size: usize) -> NamedTempFile {
 
 fn benchmark_small_file_performance(c: &mut Criterion) {
     let mut group = c.benchmark_group("Small File Performance (2KB)");
-    
+
     // Test with 2KB file - should use buffered I/O strategy
     let temp_file = create_test_file(2048);
     let file_path = temp_file.path();
@@ -53,7 +53,7 @@ fn benchmark_small_file_performance(c: &mut Criterion) {
 
 fn benchmark_medium_file_performance(c: &mut Criterion) {
     let mut group = c.benchmark_group("Medium File Performance (64KB)");
-    
+
     // Test with 64KB file - should use standard memory mapping
     let temp_file = create_test_file(64 * 1024);
     let file_path = temp_file.path();
@@ -91,7 +91,7 @@ fn benchmark_medium_file_performance(c: &mut Criterion) {
 
 fn benchmark_access_pattern_optimization(c: &mut Criterion) {
     let mut group = c.benchmark_group("Access Pattern Optimization (16KB)");
-    
+
     let temp_file = create_test_file(16 * 1024);
     let file_path = temp_file.path();
 
@@ -99,7 +99,8 @@ fn benchmark_access_pattern_optimization(c: &mut Criterion) {
     group.bench_function("Sequential Access", |b| {
         b.iter(|| {
             let file = File::open(file_path).unwrap();
-            let mut input = MemoryMappedInput::new_with_pattern(file, AccessPattern::Sequential).unwrap();
+            let mut input =
+                MemoryMappedInput::new_with_pattern(file, AccessPattern::Sequential).unwrap();
             let mut sum = 0u64;
             // Sequential read
             while input.remaining() > 0 {
@@ -113,9 +114,10 @@ fn benchmark_access_pattern_optimization(c: &mut Criterion) {
     group.bench_function("Random Access", |b| {
         b.iter(|| {
             let file = File::open(file_path).unwrap();
-            let mut input = MemoryMappedInput::new_with_pattern(file, AccessPattern::Random).unwrap();
+            let mut input =
+                MemoryMappedInput::new_with_pattern(file, AccessPattern::Random).unwrap();
             let mut sum = 0u64;
-            
+
             // Random access pattern - seek to different positions
             let positions = [100, 8000, 2000, 15000, 500, 12000, 1000, 10000];
             for &pos in &positions {
@@ -133,11 +135,11 @@ fn benchmark_access_pattern_optimization(c: &mut Criterion) {
 
 fn benchmark_threshold_boundaries(c: &mut Criterion) {
     let mut group = c.benchmark_group("Threshold Boundary Performance");
-    
+
     let test_sizes = vec![
-        (4095, "Just below 4KB"),    // Should use buffered I/O
-        (4096, "Exactly 4KB"),       // Should use buffered I/O 
-        (4097, "Just above 4KB"),    // Should use standard mmap
+        (4095, "Just below 4KB"),            // Should use buffered I/O
+        (4096, "Exactly 4KB"),               // Should use buffered I/O
+        (4097, "Just above 4KB"),            // Should use standard mmap
         (1024 * 1024 - 1, "Just below 1MB"), // Should use standard mmap
     ];
 
@@ -149,7 +151,7 @@ fn benchmark_threshold_boundaries(c: &mut Criterion) {
             b.iter(|| {
                 let file = File::open(file_path).unwrap();
                 let mut input = MemoryMappedInput::new(file).unwrap();
-                
+
                 // Read first 100 bytes to test strategy efficiency
                 let mut sum = 0u64;
                 for _ in 0..std::cmp::min(100, input.len()) {
@@ -165,7 +167,7 @@ fn benchmark_threshold_boundaries(c: &mut Criterion) {
 
 fn benchmark_zero_copy_vs_copy(c: &mut Criterion) {
     let mut group = c.benchmark_group("Zero-Copy vs Copy Performance (32KB)");
-    
+
     let temp_file = create_test_file(32 * 1024);
     let file_path = temp_file.path();
 
@@ -175,7 +177,7 @@ fn benchmark_zero_copy_vs_copy(c: &mut Criterion) {
             let file = File::open(file_path).unwrap();
             let mut input = MemoryMappedInput::new(file).unwrap();
             let mut sum = 0u64;
-            
+
             // Read in 1KB chunks using zero-copy
             while input.remaining() >= 1024 {
                 let slice = input.read_slice_zero_copy(1024).unwrap();
@@ -187,13 +189,13 @@ fn benchmark_zero_copy_vs_copy(c: &mut Criterion) {
         });
     });
 
-    // Test copying read 
+    // Test copying read
     group.bench_function("Copying Read", |b| {
         b.iter(|| {
             let file = File::open(file_path).unwrap();
             let mut input = MemoryMappedInput::new(file).unwrap();
             let mut sum = 0u64;
-            
+
             // Read in 1KB chunks using copying
             while input.remaining() >= 1024 {
                 let data = input.read_slice(1024).unwrap();

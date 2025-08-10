@@ -1,7 +1,7 @@
 //! Comprehensive rank-select hardware acceleration benchmarks
 
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
-use zipora::{BitVector, RankSelect256, CpuFeatures};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use zipora::{BitVector, CpuFeatures, RankSelect256};
 
 fn create_test_bitvector(size: usize, density: f64) -> BitVector {
     let mut bv = BitVector::new();
@@ -15,24 +15,33 @@ fn create_test_bitvector(size: usize, density: f64) -> BitVector {
 fn benchmark_rank_operations(c: &mut Criterion) {
     // Detect CPU features
     let features = CpuFeatures::get();
-    println!("CPU Features - POPCNT: {}, BMI2: {}, AVX2: {}", 
-             features.has_popcnt, features.has_bmi2, features.has_avx2);
-    
+    println!(
+        "CPU Features - POPCNT: {}, BMI2: {}, AVX2: {}",
+        features.has_popcnt, features.has_bmi2, features.has_avx2
+    );
+
     let mut group = c.benchmark_group("Rank Operations");
-    
+
     let sizes = vec![1_000, 10_000, 100_000];
     let densities = vec![0.1, 0.5, 0.9];
-    
+
     for &size in &sizes {
         for &density in &densities {
             let bv = create_test_bitvector(size, density);
             let rs = RankSelect256::new(bv).unwrap();
-            
+
             let test_positions: Vec<usize> = (0..size).step_by((size / 100).max(1)).collect();
-            
+
             // Benchmark optimized rank
             group.bench_with_input(
-                BenchmarkId::new(format!("optimized_size_{}_density_{}", size, (density * 100.0) as u32), size),
+                BenchmarkId::new(
+                    format!(
+                        "optimized_size_{}_density_{}",
+                        size,
+                        (density * 100.0) as u32
+                    ),
+                    size,
+                ),
                 &(&rs, &test_positions),
                 |b, (rs, positions)| {
                     b.iter(|| {
@@ -44,10 +53,17 @@ fn benchmark_rank_operations(c: &mut Criterion) {
                     })
                 },
             );
-            
+
             // Benchmark hardware-accelerated rank
             group.bench_with_input(
-                BenchmarkId::new(format!("hardware_size_{}_density_{}", size, (density * 100.0) as u32), size),
+                BenchmarkId::new(
+                    format!(
+                        "hardware_size_{}_density_{}",
+                        size,
+                        (density * 100.0) as u32
+                    ),
+                    size,
+                ),
                 &(&rs, &test_positions),
                 |b, (rs, positions)| {
                     b.iter(|| {
@@ -59,10 +75,17 @@ fn benchmark_rank_operations(c: &mut Criterion) {
                     })
                 },
             );
-            
+
             // Benchmark adaptive rank
             group.bench_with_input(
-                BenchmarkId::new(format!("adaptive_size_{}_density_{}", size, (density * 100.0) as u32), size),
+                BenchmarkId::new(
+                    format!(
+                        "adaptive_size_{}_density_{}",
+                        size,
+                        (density * 100.0) as u32
+                    ),
+                    size,
+                ),
                 &(&rs, &test_positions),
                 |b, (rs, positions)| {
                     b.iter(|| {
@@ -76,29 +99,38 @@ fn benchmark_rank_operations(c: &mut Criterion) {
             );
         }
     }
-    
+
     group.finish();
 }
 
 fn benchmark_select_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("Select Operations");
-    
+
     let sizes = vec![1_000, 10_000, 100_000];
     let densities = vec![0.1, 0.5, 0.9];
-    
+
     for &size in &sizes {
         for &density in &densities {
             let bv = create_test_bitvector(size, density);
             let rs = RankSelect256::new(bv).unwrap();
-            
+
             let ones_count = rs.count_ones();
-            if ones_count == 0 { continue; }
-            
+            if ones_count == 0 {
+                continue;
+            }
+
             let test_ks: Vec<usize> = (0..ones_count).step_by((ones_count / 20).max(1)).collect();
-            
+
             // Benchmark optimized select
             group.bench_with_input(
-                BenchmarkId::new(format!("optimized_size_{}_density_{}", size, (density * 100.0) as u32), size),
+                BenchmarkId::new(
+                    format!(
+                        "optimized_size_{}_density_{}",
+                        size,
+                        (density * 100.0) as u32
+                    ),
+                    size,
+                ),
                 &(&rs, &test_ks),
                 |b, (rs, ks)| {
                     b.iter(|| {
@@ -110,10 +142,17 @@ fn benchmark_select_operations(c: &mut Criterion) {
                     })
                 },
             );
-            
+
             // Benchmark hardware-accelerated select
             group.bench_with_input(
-                BenchmarkId::new(format!("hardware_size_{}_density_{}", size, (density * 100.0) as u32), size),
+                BenchmarkId::new(
+                    format!(
+                        "hardware_size_{}_density_{}",
+                        size,
+                        (density * 100.0) as u32
+                    ),
+                    size,
+                ),
                 &(&rs, &test_ks),
                 |b, (rs, ks)| {
                     b.iter(|| {
@@ -125,10 +164,17 @@ fn benchmark_select_operations(c: &mut Criterion) {
                     })
                 },
             );
-            
+
             // Benchmark adaptive select
             group.bench_with_input(
-                BenchmarkId::new(format!("adaptive_size_{}_density_{}", size, (density * 100.0) as u32), size),
+                BenchmarkId::new(
+                    format!(
+                        "adaptive_size_{}_density_{}",
+                        size,
+                        (density * 100.0) as u32
+                    ),
+                    size,
+                ),
                 &(&rs, &test_ks),
                 |b, (rs, ks)| {
                     b.iter(|| {
@@ -142,38 +188,41 @@ fn benchmark_select_operations(c: &mut Criterion) {
             );
         }
     }
-    
+
     group.finish();
 }
 
 fn benchmark_construction(c: &mut Criterion) {
     let mut group = c.benchmark_group("Construction Performance");
-    
+
     let sizes = vec![1_000, 10_000, 100_000];
     let densities = vec![0.1, 0.5, 0.9];
-    
+
     for &size in &sizes {
         for &density in &densities {
             let bv = create_test_bitvector(size, density);
-            
+
             group.bench_with_input(
-                BenchmarkId::new(format!("construction_size_{}_density_{}", size, (density * 100.0) as u32), size),
+                BenchmarkId::new(
+                    format!(
+                        "construction_size_{}_density_{}",
+                        size,
+                        (density * 100.0) as u32
+                    ),
+                    size,
+                ),
                 &bv,
-                |b, bv| {
-                    b.iter(|| {
-                        RankSelect256::new(bv.clone()).unwrap()
-                    })
-                },
+                |b, bv| b.iter(|| RankSelect256::new(bv.clone()).unwrap()),
             );
         }
     }
-    
+
     group.finish();
 }
 
 fn benchmark_bit_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("Bit-level Operations");
-    
+
     let test_values = [
         0x0000000000000000u64,
         0xFFFFFFFFFFFFFFFFu64,
@@ -181,7 +230,7 @@ fn benchmark_bit_operations(c: &mut Criterion) {
         0x5555555555555555u64,
         0x123456789ABCDEFu64,
     ];
-    
+
     group.bench_function("bitvector_rank1_64", |b| {
         b.iter(|| {
             let mut total_ones = 0u64;
@@ -195,7 +244,7 @@ fn benchmark_bit_operations(c: &mut Criterion) {
             total_ones
         })
     });
-    
+
     group.finish();
 }
 

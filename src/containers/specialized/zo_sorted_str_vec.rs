@@ -2,13 +2,13 @@
 //!
 //! A specialized container for sorted string collections that achieves 60% memory
 //! reduction compared to Vec<String> through succinct data structure integration.
-//! 
+//!
 //! The ZoSortedStrVec uses BitVector and RankSelect256 structures to efficiently
 //! store and query string collections with zero-copy access patterns.
 
-use crate::error::{ZiporaError, Result};
-use crate::succinct::{BitVector, RankSelect256};
 use crate::containers::SortableStrVec;
+use crate::error::{Result, ZiporaError};
+use crate::succinct::{BitVector, RankSelect256};
 use std::cmp::Ordering;
 
 #[cfg(feature = "mmap")]
@@ -24,14 +24,14 @@ use std::fs::File;
 /// - Zero-copy string access through calculated offsets
 ///
 /// # Memory Layout
-/// 
+///
 /// ```text
 /// [BitVector: string boundaries] [RankSelect256: fast rank/select]
 /// [String Data: concatenated strings with null terminators]
 /// ```
 ///
 /// # Performance Characteristics
-/// 
+///
 /// - **Memory**: 60% reduction vs Vec<String>
 /// - **Search**: O(log n) with succinct optimizations
 /// - **Access**: O(1) with zero-copy string views
@@ -87,7 +87,7 @@ impl ZoSortedStrVec {
         for i in 1..strings.len() {
             if strings[i - 1] > strings[i] {
                 return Err(ZiporaError::invalid_data(
-                    "Strings must be sorted in ascending order"
+                    "Strings must be sorted in ascending order",
                 ));
             }
         }
@@ -114,7 +114,7 @@ impl ZoSortedStrVec {
         strings.sort();
         // Remove duplicates while preserving order
         strings.dedup();
-        
+
         Self::from_sorted_strings(strings)
     }
 
@@ -131,7 +131,7 @@ impl ZoSortedStrVec {
     pub fn from_sortable_str_vec(mut vec: SortableStrVec) -> Result<Self> {
         // Sort the vector lexicographically if not already sorted
         vec.sort_lexicographic()?;
-        
+
         // Extract strings and convert
         let strings: Vec<String> = (0..vec.len())
             .filter_map(|i| vec.get_sorted(i).map(|s| s.to_string()))
@@ -146,7 +146,7 @@ impl ZoSortedStrVec {
             // Fallback for empty BitVector - this shouldn't fail in practice
             RankSelect256::new(BitVector::new()).unwrap()
         });
-        
+
         Self {
             boundaries,
             rank_select,
@@ -166,7 +166,10 @@ impl ZoSortedStrVec {
 
         // Calculate total size needed
         let total_data_size: usize = strings.iter().map(|s| s.len() + 1).sum(); // +1 for null terminator
-        let original_size = strings.iter().map(|s| s.capacity() + std::mem::size_of::<String>()).sum();
+        let original_size = strings
+            .iter()
+            .map(|s| s.capacity() + std::mem::size_of::<String>())
+            .sum();
 
         // Build concatenated data and boundaries
         let mut data = Vec::with_capacity(total_data_size);
@@ -175,7 +178,7 @@ impl ZoSortedStrVec {
         for string in strings.iter() {
             // Mark the start of this string as a boundary
             boundaries.push(true);
-            
+
             // Add all string bytes
             if string.is_empty() {
                 // For empty strings, just add the null terminator
@@ -183,7 +186,7 @@ impl ZoSortedStrVec {
             } else {
                 // Add the first byte
                 data.push(string.as_bytes()[0]);
-                
+
                 // Add remaining bytes of the string (if any)
                 if string.len() > 1 {
                     for &byte in &string.as_bytes()[1..] {
@@ -191,7 +194,7 @@ impl ZoSortedStrVec {
                         data.push(byte);
                     }
                 }
-                
+
                 // Add null terminator
                 boundaries.push(false);
                 data.push(0);
@@ -203,13 +206,13 @@ impl ZoSortedStrVec {
         for &bit in &boundaries {
             bit_vector.push(bit)?;
         }
-        
+
         // Build RankSelect structure
         let rank_select = RankSelect256::new(bit_vector.clone())?;
 
         let memory_usage = bit_vector.len() / 8 + // Approximate BitVector memory
                           (rank_select.len() / 256) * 4 + // Approximate RankSelect256 memory
-                          data.capacity() + 
+                          data.capacity() +
                           std::mem::size_of::<Self>();
 
         Ok(Self {
@@ -286,15 +289,13 @@ impl ZoSortedStrVec {
 
         while left < right {
             let mid = left + (right - left) / 2;
-            
+
             match self.get(mid) {
-                Some(mid_str) => {
-                    match mid_str.cmp(needle) {
-                        Ordering::Equal => return Ok(mid),
-                        Ordering::Less => left = mid + 1,
-                        Ordering::Greater => right = mid,
-                    }
-                }
+                Some(mid_str) => match mid_str.cmp(needle) {
+                    Ordering::Equal => return Ok(mid),
+                    Ordering::Less => left = mid + 1,
+                    Ordering::Greater => right = mid,
+                },
                 None => return Err(mid), // Should not happen with valid indices
             }
         }
@@ -374,7 +375,9 @@ impl ZoSortedStrVec {
     /// The file must contain a valid ZoSortedStrVec format
     pub fn from_mmap(_file: File) -> Result<Self> {
         // TODO: Implement memory-mapped format loading
-        Err(ZiporaError::not_supported("Memory-mapped loading not yet implemented"))
+        Err(ZiporaError::not_supported(
+            "Memory-mapped loading not yet implemented",
+        ))
     }
 
     #[cfg(feature = "mmap")]
@@ -387,7 +390,9 @@ impl ZoSortedStrVec {
     /// Ok(()) on success, error on failure
     pub fn save_to_file(&self, _path: &std::path::Path) -> Result<()> {
         // TODO: Implement binary format serialization
-        Err(ZiporaError::not_supported("File saving not yet implemented"))
+        Err(ZiporaError::not_supported(
+            "File saving not yet implemented",
+        ))
     }
 }
 
@@ -517,11 +522,7 @@ mod tests {
 
     #[test]
     fn test_iterator() -> Result<()> {
-        let strings = vec![
-            "alpha".to_string(),
-            "beta".to_string(),
-            "gamma".to_string(),
-        ];
+        let strings = vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()];
         let vec = ZoSortedStrVec::from_sorted_strings(strings)?;
 
         let collected: Vec<&str> = vec.iter().collect();
@@ -559,23 +560,29 @@ mod tests {
 
     #[test]
     fn test_memory_efficiency() -> Result<()> {
-        let strings: Vec<String> = (0..1000)
-            .map(|i| format!("string_{:06}", i))
-            .collect();
-        
-        let original_size: usize = strings.iter()
+        let strings: Vec<String> = (0..1000).map(|i| format!("string_{:06}", i)).collect();
+
+        let original_size: usize = strings
+            .iter()
             .map(|s| s.capacity() + std::mem::size_of::<String>())
             .sum();
 
         let vec = ZoSortedStrVec::from_sorted_strings(strings)?;
-        
+
         // Should achieve significant memory reduction
         let compression_ratio = vec.compression_ratio();
-        assert!(compression_ratio < 0.6, "Expected >40% memory reduction, got {:.2}% reduction", 
-                (1.0 - compression_ratio) * 100.0);
-        
-        println!("Memory usage: {} bytes (original: {} bytes, ratio: {:.2})", 
-                vec.memory_usage(), original_size, compression_ratio);
+        assert!(
+            compression_ratio < 0.6,
+            "Expected >40% memory reduction, got {:.2}% reduction",
+            (1.0 - compression_ratio) * 100.0
+        );
+
+        println!(
+            "Memory usage: {} bytes (original: {} bytes, ratio: {:.2})",
+            vec.memory_usage(),
+            original_size,
+            compression_ratio
+        );
         Ok(())
     }
 
@@ -587,7 +594,7 @@ mod tests {
         sortable.push("banana".to_string())?;
 
         let zo_vec = ZoSortedStrVec::from_sortable_str_vec(sortable)?;
-        
+
         assert_eq!(zo_vec.len(), 3);
         assert_eq!(zo_vec.get(0), Some("apple"));
         assert_eq!(zo_vec.get(1), Some("banana"));
@@ -614,11 +621,7 @@ mod tests {
 
     #[test]
     fn test_empty_strings() -> Result<()> {
-        let strings = vec![
-            "".to_string(),
-            "a".to_string(),
-            "b".to_string(),
-        ];
+        let strings = vec!["".to_string(), "a".to_string(), "b".to_string()];
         let vec = ZoSortedStrVec::from_sorted_strings(strings)?;
 
         assert_eq!(vec.len(), 3);

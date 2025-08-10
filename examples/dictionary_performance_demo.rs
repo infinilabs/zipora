@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let original_compressed = original_compressor.compress(&data)?;
         let original_time = start.elapsed();
 
-        // Test optimized implementation  
+        // Test optimized implementation
         let start = Instant::now();
         let optimized_compressor = OptimizedDictionaryCompressor::new(&data)?;
         let optimized_compressed = optimized_compressor.compress(&data)?;
@@ -38,16 +38,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let optimized_ratio = optimized_compressed.len() as f64 / data.len() as f64;
         let speedup = original_time.as_nanos() as f64 / optimized_time.as_nanos() as f64;
 
-        println!("Original:  {:8.2}ms, ratio: {:.3}", original_time.as_secs_f64() * 1000.0, original_ratio);
-        println!("Optimized: {:8.2}ms, ratio: {:.3}", optimized_time.as_secs_f64() * 1000.0, optimized_ratio);
+        println!(
+            "Original:  {:8.2}ms, ratio: {:.3}",
+            original_time.as_secs_f64() * 1000.0,
+            original_ratio
+        );
+        println!(
+            "Optimized: {:8.2}ms, ratio: {:.3}",
+            optimized_time.as_secs_f64() * 1000.0,
+            optimized_ratio
+        );
         println!("Speedup:   {:.1}x faster", speedup);
 
         // Verify correctness
         let original_decompressed = original_compressor.decompress(&original_compressed)?;
         let optimized_decompressed = optimized_compressor.decompress(&optimized_compressed)?;
-        
+
         assert_eq!(data, original_decompressed, "Original decompression failed");
-        assert_eq!(data, optimized_decompressed, "Optimized decompression failed");
+        assert_eq!(
+            data, optimized_decompressed,
+            "Optimized decompression failed"
+        );
         println!("✓ Correctness verified");
     }
 
@@ -73,8 +84,8 @@ fn generate_biased_data(size: usize) -> Vec<u8> {
     let mut data = Vec::with_capacity(size);
     for i in 0..size {
         let byte = match i % 100 {
-            0..=79 => b'A',  // 80% A's
-            80..=94 => b'B', // 15% B's  
+            0..=79 => b'A',            // 80% A's
+            80..=94 => b'B',           // 15% B's
             _ => b'C' + (i % 3) as u8, // 5% C, D, E
         };
         data.push(byte);
@@ -86,11 +97,11 @@ fn generate_mixed_data(size: usize) -> Vec<u8> {
     let mut data = Vec::with_capacity(size);
     let patterns = [
         b"pattern1".as_slice(),
-        b"another_pattern".as_slice(), 
+        b"another_pattern".as_slice(),
         b"third_pattern_longer".as_slice(),
         b"short".as_slice(),
     ];
-    
+
     for i in 0..size {
         let pattern = patterns[i % patterns.len()];
         data.push(pattern[i % pattern.len()]);

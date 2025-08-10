@@ -1,6 +1,6 @@
 //! Fragment-Based Compression for Succinct Data Structures
 //!
-//! This module implements advanced fragment-based compression techniques for 
+//! This module implements advanced fragment-based compression techniques for
 //! rank/select operations, inspired by research from high-performance succinct
 //! data structure libraries. The key innovation is adaptive compression that
 //! adjusts to local data patterns within fragments.
@@ -32,7 +32,10 @@
 //! - **SIMD Throughput**: Up to 8x parallel operations with AVX-512
 
 use crate::error::{Result, ZiporaError};
-use crate::succinct::{BitVector, rank_select::{RankSelectOps, RankSelectPerformanceOps, SimdCapabilities}};
+use crate::succinct::{
+    BitVector,
+    rank_select::{RankSelectOps, RankSelectPerformanceOps, SimdCapabilities},
+};
 use std::mem;
 
 /// Fragment size in bits (256-bit SIMD-friendly)
@@ -143,20 +146,26 @@ struct CompressedFragment {
 
 impl CompressedFragment {
     /// Create a new fragment from raw bit data
-    fn from_bits(fragment_bits: &[u64], global_rank: u32, fragment_index: usize, start_position: usize) -> Result<Self> {
+    fn from_bits(
+        fragment_bits: &[u64],
+        global_rank: u32,
+        fragment_index: usize,
+        start_position: usize,
+    ) -> Result<Self> {
         if fragment_bits.is_empty() {
             return Err(ZiporaError::invalid_data("Empty fragment"));
         }
 
         // Analyze fragment characteristics
         let analysis = FragmentAnalysis::analyze(fragment_bits);
-        
+
         // Choose optimal compression mode
         let compression_mode = Self::choose_compression_mode(&analysis);
-        
+
         // Compress the fragment
-        let (compressed_data, bit_width) = Self::compress_fragment(fragment_bits, compression_mode)?;
-        
+        let (compressed_data, bit_width) =
+            Self::compress_fragment(fragment_bits, compression_mode)?;
+
         // Build select cache if beneficial
         let select_cache = if analysis.should_build_select_cache() {
             Some(Self::build_select_cache(fragment_bits, compression_mode)?)
@@ -200,15 +209,15 @@ impl CompressedFragment {
             CompressionMode::Dictionary => Self::compress_dictionary(bits),
             CompressionMode::HybridDelta => Self::compress_hybrid_delta(bits),
             CompressionMode::Hierarchical => Self::compress_hierarchical(bits),
-            CompressionMode::Reserved => Err(ZiporaError::invalid_data("Reserved compression mode")),
+            CompressionMode::Reserved => {
+                Err(ZiporaError::invalid_data("Reserved compression mode"))
+            }
         }
     }
 
     /// Raw compression (no compression, just store bits)
     fn compress_raw(bits: &[u64]) -> Result<(Vec<u8>, u8)> {
-        let bytes = bits.iter()
-            .flat_map(|&word| word.to_le_bytes())
-            .collect();
+        let bytes = bits.iter().flat_map(|&word| word.to_le_bytes()).collect();
         Ok((bytes, 64)) // 64 bits per value
     }
 
@@ -226,7 +235,7 @@ impl CompressedFragment {
         let mut runs = Vec::new();
         let mut current_run = 0u32;
         let mut current_bit = false;
-        
+
         for &word in bits {
             for bit_pos in 0..64 {
                 let bit = (word >> bit_pos) & 1 == 1;
@@ -241,19 +250,23 @@ impl CompressedFragment {
                 }
             }
         }
-        
+
         if current_run > 0 {
             runs.push(current_run);
         }
 
         // Find optimal bit width for run lengths
         let max_run = runs.iter().max().unwrap_or(&0);
-        let bit_width = if *max_run == 0 { 1 } else { 32 - max_run.leading_zeros() } as u8;
-        
+        let bit_width = if *max_run == 0 {
+            1
+        } else {
+            32 - max_run.leading_zeros()
+        } as u8;
+
         // Pack run lengths
         let run_u64s: Vec<u64> = runs.into_iter().map(|r| r as u64).collect();
         let packed_runs = Self::pack_values(&run_u64s, bit_width)?;
-        
+
         Ok((packed_runs, bit_width))
     }
 
@@ -261,7 +274,7 @@ impl CompressedFragment {
     fn compress_bit_plane(bits: &[u64]) -> Result<(Vec<u8>, u8)> {
         // Transpose bits into bit planes
         let mut bit_planes = [0u64; 64];
-        
+
         for (word_idx, &word) in bits.iter().enumerate() {
             for bit_pos in 0..64 {
                 if (word >> bit_pos) & 1 == 1 {
@@ -282,7 +295,7 @@ impl CompressedFragment {
     /// Dictionary compression for repeated patterns
     fn compress_dictionary(bits: &[u64]) -> Result<(Vec<u8>, u8)> {
         use std::collections::HashMap;
-        
+
         let mut dictionary = HashMap::new();
         let mut indices = Vec::new();
         let mut next_id = 0u8;
@@ -307,22 +320,26 @@ impl CompressedFragment {
 
         // Serialize dictionary + indices
         let mut compressed = Vec::new();
-        
+
         // Dictionary size
         compressed.push(dictionary.len() as u8);
-        
+
         // Dictionary entries (value -> id mapping)
         let mut dict_entries: Vec<_> = dictionary.into_iter().collect();
         dict_entries.sort_by_key(|&(_, id)| id);
-        
+
         for (value, _) in dict_entries {
             compressed.extend_from_slice(&value.to_le_bytes());
         }
 
         // Find bit width for indices
         let max_index = next_id.saturating_sub(1) as u64;
-        let bit_width = if max_index == 0 { 1 } else { 64 - max_index.leading_zeros() } as u8;
-        
+        let bit_width = if max_index == 0 {
+            1
+        } else {
+            64 - max_index.leading_zeros()
+        } as u8;
+
         // Pack indices
         let packed_indices = Self::pack_values(&indices, bit_width)?;
         compressed.extend_from_slice(&packed_indices);
@@ -340,8 +357,8 @@ impl CompressedFragment {
     fn compress_hierarchical(bits: &[u64]) -> Result<(Vec<u8>, u8)> {
         // Create a hierarchical bitmap with multiple levels
         let level0 = bits.to_vec(); // Original data
-        let mut level1 = Vec::new();    // 4:1 compression summary
-        let mut level2 = Vec::new();    // 16:1 compression summary
+        let mut level1 = Vec::new(); // 4:1 compression summary
+        let mut level2 = Vec::new(); // 16:1 compression summary
 
         // Build level 1 (every 4 bits -> 1 bit)
         for chunk in level0.chunks(4) {
@@ -357,30 +374,30 @@ impl CompressedFragment {
 
         // Serialize all levels
         let mut compressed = Vec::new();
-        
+
         // Level 2 (top level)
         compressed.push(level2.len() as u8);
         for &word in &level2 {
             compressed.extend_from_slice(&word.to_le_bytes());
         }
-        
+
         // Level 1 (middle level)
         compressed.push(level1.len() as u8);
         for &word in &level1 {
             compressed.extend_from_slice(&word.to_le_bytes());
         }
-        
+
         // Level 0 (original data) - only store non-zero words
         let mut non_zero_positions = Vec::new();
         let mut non_zero_values = Vec::new();
-        
+
         for (i, &word) in level0.iter().enumerate() {
             if word != 0 {
                 non_zero_positions.push(i as u16);
                 non_zero_values.push(word);
             }
         }
-        
+
         compressed.extend_from_slice(&(non_zero_positions.len() as u16).to_le_bytes());
         for &pos in &non_zero_positions {
             compressed.extend_from_slice(&pos.to_le_bytes());
@@ -434,7 +451,8 @@ impl CompressedFragment {
         for (word_idx, &word) in bits.iter().enumerate() {
             for bit_pos in 0..64 {
                 if (word >> bit_pos) & 1 == 1 {
-                    if ones_count % 64 == 0 { // Sample every 64 ones
+                    if ones_count % 64 == 0 {
+                        // Sample every 64 ones
                         let position = word_idx * 64 + bit_pos;
                         if position <= u16::MAX as usize {
                             cache.push(position as u16);
@@ -465,15 +483,15 @@ impl CompressedFragment {
         let words_needed = ((pos - 1) / 64) + 1;
         let words_needed = words_needed.min(self.original_word_count);
         let decompressed = self.decompress_partial(words_needed)?;
-        
+
         // Count bits up to position (exclusive) - rank1(pos) counts [0, pos)
         let mut count = 0;
-        
+
         // Process each bit position up to pos-1 (inclusive)
         for bit_pos in 0..(pos.min(decompressed.len() * 64)) {
             let word_idx = bit_pos / 64;
             let bit_idx = bit_pos % 64;
-            
+
             if word_idx < decompressed.len() {
                 if (decompressed[word_idx] >> bit_idx) & 1 == 1 {
                     count += 1;
@@ -503,7 +521,7 @@ impl CompressedFragment {
     /// Decompress fragment data up to a specific number of words
     fn decompress_partial(&self, words_needed: usize) -> Result<Vec<u64>> {
         let mode = CompressionMode::from(self.header.metadata.compression_mode);
-        
+
         match mode {
             CompressionMode::Raw => self.decompress_raw_partial(words_needed),
             CompressionMode::Delta => self.decompress_delta_partial(words_needed),
@@ -512,7 +530,9 @@ impl CompressedFragment {
             CompressionMode::Dictionary => self.decompress_dictionary_partial(words_needed),
             CompressionMode::HybridDelta => self.decompress_hybrid_delta_partial(words_needed),
             CompressionMode::Hierarchical => self.decompress_hierarchical_partial(words_needed),
-            CompressionMode::Reserved => Err(ZiporaError::invalid_data("Reserved compression mode")),
+            CompressionMode::Reserved => {
+                Err(ZiporaError::invalid_data("Reserved compression mode"))
+            }
         }
     }
 
@@ -532,7 +552,7 @@ impl CompressedFragment {
     fn decompress_raw_partial(&self, words_needed: usize) -> Result<Vec<u64>> {
         let mut result = Vec::with_capacity(words_needed);
         let bytes_needed = words_needed * 8;
-        
+
         for i in 0..words_needed {
             let byte_start = i * 8;
             if byte_start + 8 <= self.compressed_data.len() {
@@ -543,7 +563,7 @@ impl CompressedFragment {
                 result.push(0); // Pad with zeros
             }
         }
-        
+
         Ok(result)
     }
 
@@ -557,7 +577,7 @@ impl CompressedFragment {
     fn decompress_run_length_partial(&self, words_needed: usize) -> Result<Vec<u64>> {
         let bit_width = self.header.metadata.bit_width;
         let runs = self.unpack_values(bit_width)?;
-        
+
         let mut result = Vec::new();
         let mut current_bit = false;
         let mut bit_position = 0;
@@ -566,26 +586,26 @@ impl CompressedFragment {
 
         for &run_length in &runs {
             let run_len = run_length as usize;
-            
+
             for _ in 0..run_len {
                 if bit_position >= target_bits {
                     break;
                 }
-                
+
                 if current_bit {
                     current_word |= 1u64 << (bit_position % 64);
                 }
-                
+
                 bit_position += 1;
-                
+
                 if bit_position % 64 == 0 {
                     result.push(current_word);
                     current_word = 0;
                 }
             }
-            
+
             current_bit = !current_bit;
-            
+
             if bit_position >= target_bits {
                 break;
             }
@@ -611,14 +631,14 @@ impl CompressedFragment {
         }
 
         let mut result = vec![0u64; words_needed];
-        
+
         // Read bit planes
         for plane_idx in 0..64 {
             let byte_start = plane_idx * 8;
             if byte_start + 8 <= self.compressed_data.len() {
                 let bytes = &self.compressed_data[byte_start..byte_start + 8];
                 let plane = u64::from_le_bytes(bytes.try_into().unwrap());
-                
+
                 // Distribute bits from this plane to result words
                 for word_idx in 0..words_needed.min(64) {
                     if (plane >> word_idx) & 1 == 1 {
@@ -627,7 +647,7 @@ impl CompressedFragment {
                 }
             }
         }
-        
+
         Ok(result)
     }
 
@@ -645,7 +665,7 @@ impl CompressedFragment {
         // Read dictionary
         let mut dictionary = Vec::with_capacity(dict_size);
         let mut offset = 1;
-        
+
         for _ in 0..dict_size {
             if offset + 8 <= self.compressed_data.len() {
                 let bytes = &self.compressed_data[offset..offset + 8];
@@ -661,7 +681,7 @@ impl CompressedFragment {
         let bit_width = self.header.metadata.bit_width;
         let indices_data = &self.compressed_data[offset..];
         let indices = self.unpack_values_from_data(indices_data, bit_width)?;
-        
+
         let mut result = Vec::with_capacity(words_needed);
         for i in 0..words_needed {
             if i < indices.len() {
@@ -675,7 +695,7 @@ impl CompressedFragment {
                 result.push(0);
             }
         }
-        
+
         Ok(result)
     }
 
@@ -692,11 +712,11 @@ impl CompressedFragment {
         }
 
         let mut offset = 0;
-        
+
         // Read level 2 (top level)
         let level2_size = self.compressed_data[offset] as usize;
         offset += 1;
-        
+
         let mut level2 = Vec::with_capacity(level2_size);
         for _ in 0..level2_size {
             if offset + 8 <= self.compressed_data.len() {
@@ -713,10 +733,10 @@ impl CompressedFragment {
         if offset >= self.compressed_data.len() {
             return Ok(vec![0; words_needed]);
         }
-        
+
         let level1_size = self.compressed_data[offset] as usize;
         offset += 1;
-        
+
         let mut level1 = Vec::with_capacity(level1_size);
         for _ in 0..level1_size {
             if offset + 8 <= self.compressed_data.len() {
@@ -733,29 +753,29 @@ impl CompressedFragment {
         if offset + 2 > self.compressed_data.len() {
             return Ok(vec![0; words_needed]);
         }
-        
+
         let non_zero_count = u16::from_le_bytes([
             self.compressed_data[offset],
-            self.compressed_data[offset + 1]
+            self.compressed_data[offset + 1],
         ]) as usize;
         offset += 2;
 
         let mut result = vec![0u64; words_needed];
-        
+
         // Read positions and values
         for _ in 0..non_zero_count {
             if offset + 2 <= self.compressed_data.len() {
                 let pos = u16::from_le_bytes([
                     self.compressed_data[offset],
-                    self.compressed_data[offset + 1]
+                    self.compressed_data[offset + 1],
                 ]) as usize;
                 offset += 2;
-                
+
                 if offset + 8 <= self.compressed_data.len() {
                     let bytes = &self.compressed_data[offset..offset + 8];
                     let value = u64::from_le_bytes(bytes.try_into().unwrap());
                     offset += 8;
-                    
+
                     if pos < result.len() {
                         result[pos] = value;
                     }
@@ -766,7 +786,7 @@ impl CompressedFragment {
                 break;
             }
         }
-        
+
         Ok(result)
     }
 
@@ -817,7 +837,7 @@ impl CompressedFragment {
                 // The k-th one is in this word
                 let target_in_word = k - ones_count;
                 let mut current_ones = 0;
-                
+
                 for bit_pos in 0..64 {
                     if (word >> bit_pos) & 1 == 1 {
                         if current_ones == target_in_word {
@@ -835,7 +855,12 @@ impl CompressedFragment {
     }
 
     /// Select operation from a specific position
-    fn select1_from_position(&self, decompressed: &[u64], remaining_k: usize, start_pos: usize) -> Result<Option<usize>> {
+    fn select1_from_position(
+        &self,
+        decompressed: &[u64],
+        remaining_k: usize,
+        start_pos: usize,
+    ) -> Result<Option<usize>> {
         let start_word = start_pos / 64;
         let mut ones_count = 0;
 
@@ -848,7 +873,7 @@ impl CompressedFragment {
                 }
                 let target_in_word = remaining_k - ones_count;
                 let mut current_ones = 0;
-                
+
                 for bit_pos in 0..64 {
                     if (word >> bit_pos) & 1 == 1 {
                         if current_ones == target_in_word {
@@ -903,25 +928,25 @@ impl FragmentAnalysis {
         let total_bits = bits.len() * 64;
         let ones_count: usize = bits.iter().map(|w| w.count_ones() as usize).sum();
         let density = ones_count as f64 / total_bits as f64;
-        
+
         // Classify density tier
         let density_tier = match density {
-            d if d < 0.01 => 0,   // Very sparse
-            d if d < 0.05 => 1,   // Sparse
-            d if d < 0.2 => 2,    // Low
-            d if d < 0.4 => 3,    // Medium-low
-            d if d < 0.6 => 4,    // Medium
-            d if d < 0.8 => 5,    // Medium-high
-            d if d < 0.95 => 6,   // Dense
-            _ => 7,               // Very dense
+            d if d < 0.01 => 0, // Very sparse
+            d if d < 0.05 => 1, // Sparse
+            d if d < 0.2 => 2,  // Low
+            d if d < 0.4 => 3,  // Medium-low
+            d if d < 0.6 => 4,  // Medium
+            d if d < 0.8 => 5,  // Medium-high
+            d if d < 0.95 => 6, // Dense
+            _ => 7,             // Very dense
         };
 
         // Analyze run lengths
         let (has_long_runs, max_run_length) = Self::analyze_run_lengths(bits);
-        
+
         // Analyze patterns
         let (has_patterns, unique_words) = Self::analyze_patterns(bits);
-        
+
         // Decide on select cache
         let build_select_cache = ones_count > 64 && density > 0.1 && density < 0.9;
 
@@ -941,7 +966,7 @@ impl FragmentAnalysis {
         let mut max_run = 0;
         let mut current_run = 0;
         let mut last_bit = false;
-        
+
         for &word in bits {
             for bit_pos in 0..64 {
                 let bit = (word >> bit_pos) & 1 == 1;
@@ -955,17 +980,17 @@ impl FragmentAnalysis {
             }
         }
         max_run = max_run.max(current_run);
-        
+
         (max_run > 32, max_run)
     }
 
     /// Analyze patterns and repetition
     fn analyze_patterns(bits: &[u64]) -> (bool, usize) {
         use std::collections::HashSet;
-        
+
         let unique_words = bits.iter().collect::<HashSet<_>>().len();
         let has_patterns = unique_words < bits.len() / 2;
-        
+
         (has_patterns, unique_words)
     }
 
@@ -993,35 +1018,38 @@ impl RankSelectFragmented {
     pub fn new(bit_vector: BitVector) -> Result<Self> {
         let total_bits = bit_vector.len();
         let total_ones = bit_vector.count_ones();
-        
+
         // Convert bit vector to 64-bit words
         let words = bit_vector.blocks();
-        
+
         // Split into fragments
         let mut fragments = Vec::new();
         let mut cumulative_rank = 0u32;
         let mut start_position = 0;
-        
+
         for (fragment_idx, chunk) in words.chunks(FRAGMENT_WORDS).enumerate() {
             // global_rank is the cumulative rank BEFORE this fragment starts
-            let fragment = CompressedFragment::from_bits(chunk, cumulative_rank, fragment_idx, start_position)?;
-            
+            let fragment = CompressedFragment::from_bits(
+                chunk,
+                cumulative_rank,
+                fragment_idx,
+                start_position,
+            )?;
+
             // Update cumulative rank for next fragment
-            let fragment_ones: u32 = chunk.iter()
-                .map(|w| w.count_ones())
-                .sum();
+            let fragment_ones: u32 = chunk.iter().map(|w| w.count_ones()).sum();
             cumulative_rank += fragment_ones;
-            
+
             // Update start position for next fragment
             start_position += chunk.len() * 64;
-            
+
             fragments.push(fragment);
         }
 
         let simd_caps = SimdCapabilities::detect();
 
         let fragment_count = fragments.len();
-        
+
         Ok(Self {
             fragments,
             total_bits,
@@ -1036,14 +1064,14 @@ impl RankSelectFragmented {
         if pos >= self.total_bits {
             return None;
         }
-        
+
         // Use simple calculation for better performance and correctness
         let fragment_idx = pos / FRAGMENT_BITS;
         if fragment_idx < self.fragment_count {
             let fragment_pos = pos % FRAGMENT_BITS;
             return Some((fragment_idx, fragment_pos));
         }
-        
+
         None
     }
 
@@ -1061,17 +1089,17 @@ impl RankSelectFragmented {
         if pos >= self.total_bits {
             return self.total_ones;
         }
-        
+
         // Use direct fragment calculation for better correctness
         let fragment_idx = (pos - 1) / FRAGMENT_BITS;
         if fragment_idx < self.fragment_count {
             let fragment = &self.fragments[fragment_idx];
             let base_rank = fragment.header.global_rank as usize;
             let fragment_pos = (pos - 1) % FRAGMENT_BITS;
-            
+
             match fragment.rank1(fragment_pos + 1) {
                 Ok(local_rank) => base_rank + local_rank,
-                Err(_) => base_rank
+                Err(_) => base_rank,
             }
         } else {
             self.total_ones
@@ -1088,17 +1116,17 @@ impl RankSelectFragmented {
         // Binary search for the fragment containing the k-th one
         let fragment_idx = self.find_fragment_for_select(k)?;
         let fragment = &self.fragments[fragment_idx];
-        
+
         // Calculate how many ones we need to find within this fragment
         let ones_before_fragment = fragment.header.global_rank as usize;
         let k_in_fragment = k - ones_before_fragment;
-        
+
         match fragment.select1(k_in_fragment)? {
             Some(fragment_pos) => {
                 // Calculate the global position using the fragment index
                 let global_pos = fragment_idx * FRAGMENT_BITS + fragment_pos;
                 Ok(global_pos)
-            },
+            }
             None => Err(ZiporaError::invalid_data("Select failed in fragment")),
         }
     }
@@ -1108,32 +1136,37 @@ impl RankSelectFragmented {
         // Linear search for correctness first, can optimize later
         for fragment_idx in 0..self.fragment_count {
             let rank_before_fragment = self.fragments[fragment_idx].header.global_rank as usize;
-            
+
             // Calculate rank at end of this fragment
             let rank_at_end = if fragment_idx + 1 < self.fragment_count {
                 self.fragments[fragment_idx + 1].header.global_rank as usize
             } else {
                 self.total_ones
             };
-            
+
             if rank_before_fragment <= k && k < rank_at_end {
                 return Ok(fragment_idx);
             }
         }
-        
+
         Err(ZiporaError::invalid_data("Fragment not found for select"))
     }
 
     /// Get compression statistics
     pub fn compression_stats(&self) -> CompressionStats {
         let original_size = self.total_bits / 8; // Original bit vector size in bytes
-        let compressed_size: usize = self.fragments.iter()
-            .map(|f| mem::size_of::<FragmentHeader>() + f.compressed_data.len() + 
-                     f.select_cache.as_ref().map_or(0, |c| c.len() * 2))
+        let compressed_size: usize = self
+            .fragments
+            .iter()
+            .map(|f| {
+                mem::size_of::<FragmentHeader>()
+                    + f.compressed_data.len()
+                    + f.select_cache.as_ref().map_or(0, |c| c.len() * 2)
+            })
             .sum();
-        
+
         let compression_ratio = compressed_size as f64 / original_size as f64;
-        
+
         CompressionStats {
             original_size,
             compressed_size,
@@ -1162,14 +1195,14 @@ impl RankSelectOps for RankSelectFragmented {
         if pos >= self.total_bits {
             return self.total_ones;
         }
-        
+
         #[cfg(target_arch = "x86_64")]
         {
             if self.simd_caps.cpu_features.has_bmi2 {
                 return self.rank1_hardware_accelerated_impl(pos);
             }
         }
-        
+
         self.rank1_fallback(pos)
     }
 
@@ -1181,14 +1214,14 @@ impl RankSelectOps for RankSelectFragmented {
         if k >= self.total_ones {
             return Err(ZiporaError::invalid_data("Select index out of bounds"));
         }
-        
+
         #[cfg(target_arch = "x86_64")]
         {
             if self.simd_caps.cpu_features.has_bmi2 {
                 return self.select1_hardware_accelerated_impl(k);
             }
         }
-        
+
         // Fallback implementation
         self.select1_hardware_accelerated_impl(k)
     }
@@ -1198,22 +1231,22 @@ impl RankSelectOps for RankSelectFragmented {
         if k >= total_zeros {
             return Err(ZiporaError::invalid_data("Select0 index out of bounds"));
         }
-        
+
         // Binary search for select0
         let mut left = 0;
         let mut right = self.total_bits;
-        
+
         while left < right {
             let mid = (left + right) / 2;
             let zeros_before = self.rank0(mid);
-            
+
             if zeros_before <= k {
                 left = mid + 1;
             } else {
                 right = mid;
             }
         }
-        
+
         Ok(left)
     }
 
@@ -1229,7 +1262,7 @@ impl RankSelectOps for RankSelectFragmented {
         if index >= self.total_bits {
             return None;
         }
-        
+
         // Get bit from appropriate fragment
         if let Some((fragment_idx, fragment_pos)) = self.get_fragment_for_position(index) {
             // This would require implementing get() for fragments
@@ -1247,7 +1280,9 @@ impl RankSelectOps for RankSelectFragmented {
         if stats.original_size == 0 {
             0.0
         } else {
-            ((stats.compressed_size as f64 - stats.original_size as f64) / stats.original_size as f64) * 100.0
+            ((stats.compressed_size as f64 - stats.original_size as f64)
+                / stats.original_size as f64)
+                * 100.0
         }
     }
 }
@@ -1274,9 +1309,7 @@ impl RankSelectPerformanceOps for RankSelectFragmented {
     }
 
     fn select1_bulk(&self, indices: &[usize]) -> Result<Vec<usize>> {
-        indices.iter()
-            .map(|&k| self.select1(k))
-            .collect()
+        indices.iter().map(|&k| self.select1(k)).collect()
     }
 }
 
@@ -1324,13 +1357,21 @@ mod tests {
     #[test]
     fn test_fragment_analysis() {
         // Test sparse fragment
-        let sparse_bits = vec![0x0000000000000001u64, 0x0000000000000000u64, 0x0000000000000000u64];
+        let sparse_bits = vec![
+            0x0000000000000001u64,
+            0x0000000000000000u64,
+            0x0000000000000000u64,
+        ];
         let analysis = FragmentAnalysis::analyze(&sparse_bits);
         assert!(analysis.density < 0.1);
         assert_eq!(analysis.density_tier, 0);
 
         // Test dense fragment
-        let dense_bits = vec![0xFFFFFFFFFFFFFFFFu64, 0xFFFFFFFFFFFFFFFFu64, 0xFFFFFFFFFFFFFFFEu64];
+        let dense_bits = vec![
+            0xFFFFFFFFFFFFFFFFu64,
+            0xFFFFFFFFFFFFFFFFu64,
+            0xFFFFFFFFFFFFFFFEu64,
+        ];
         let analysis = FragmentAnalysis::analyze(&dense_bits);
         assert!(analysis.density > 0.9);
         assert_eq!(analysis.density_tier, 7);
@@ -1340,7 +1381,7 @@ mod tests {
     fn test_compressed_fragment_creation() {
         let fragment_bits = vec![0xAAAAAAAAAAAAAAAAu64, 0x5555555555555555u64];
         let fragment = CompressedFragment::from_bits(&fragment_bits, 64, 0, 0).unwrap();
-        
+
         assert_eq!(fragment.header.global_rank, 64);
         assert!(!fragment.compressed_data.is_empty());
     }
@@ -1349,17 +1390,17 @@ mod tests {
     fn test_rank_select_fragmented_basic() {
         let bv = create_test_bitvector(1000, |i| i % 3 == 0);
         let rs = RankSelectFragmented::new(bv.clone()).unwrap();
-        
+
         // Test basic properties
         assert_eq!(rs.len(), 1000);
         assert_eq!(rs.count_ones(), bv.count_ones());
-        
+
         // Test rank operations
         assert_eq!(rs.rank1(0), 0);
         assert_eq!(rs.rank1(1), 1); // 0 is divisible by 3
         assert_eq!(rs.rank1(3), 1); // Only 0 is before position 3
         assert_eq!(rs.rank1(4), 2); // 0 and 3 are divisible by 3
-        
+
         // Test select operations
         if rs.count_ones() > 0 {
             assert_eq!(rs.select1(0).unwrap(), 0);
@@ -1372,28 +1413,28 @@ mod tests {
     #[test]
     fn test_fragment_compression_modes() {
         // Test different compression modes with appropriate data
-        
+
         // Sparse data for run-length
         let sparse_bits = vec![0x0000000000000001u64, 0x0000000000000000u64];
         let sparse_fragment = CompressedFragment::from_bits(&sparse_bits, 0, 0, 0).unwrap();
-        
+
         // Dense data for bit-plane
         let dense_bits = vec![0xFFFFFFFFFFFFFFFFu64, 0xFFFFFFFFFFFFFFFEu64];
         let dense_fragment = CompressedFragment::from_bits(&dense_bits, 0, 1, 128).unwrap();
-        
+
         // Pattern data for dictionary
         let pattern_bits = vec![0xAAAAAAAAAAAAAAAAu64, 0xAAAAAAAAAAAAAAAAu64];
         let pattern_fragment = CompressedFragment::from_bits(&pattern_bits, 0, 2, 256).unwrap();
-        
+
         // Verify fragments were created successfully
         assert!(!sparse_fragment.compressed_data.is_empty());
         assert!(!dense_fragment.compressed_data.is_empty());
         assert!(!pattern_fragment.compressed_data.is_empty());
-        
+
         // Test decompression
         let sparse_decompressed = sparse_fragment.decompress_full().unwrap();
         assert_eq!(sparse_decompressed.len(), sparse_bits.len());
-        
+
         let dense_decompressed = dense_fragment.decompress_full().unwrap();
         assert_eq!(dense_decompressed.len(), dense_bits.len());
     }
@@ -1402,28 +1443,28 @@ mod tests {
     fn test_performance_operations() {
         let bv = create_test_bitvector(2000, |i| i % 7 == 0);
         let rs = RankSelectFragmented::new(bv).unwrap();
-        
+
         // Test hardware accelerated operations
         let pos = 1000;
         let rank_hw = rs.rank1_hardware_accelerated(pos);
         let rank_normal = rs.rank1(pos);
         assert_eq!(rank_hw, rank_normal);
-        
+
         // Test bulk operations
         let positions = vec![0, 100, 500, 1000, 1999];
         let bulk_ranks = rs.rank1_bulk(&positions);
         assert_eq!(bulk_ranks.len(), positions.len());
-        
+
         for (i, &pos) in positions.iter().enumerate() {
             assert_eq!(bulk_ranks[i], rs.rank1(pos));
         }
-        
+
         // Test bulk select
         let ones_count = rs.count_ones();
         if ones_count > 0 {
             let indices = vec![0, ones_count / 4, ones_count / 2];
             let bulk_selects = rs.select1_bulk(&indices).unwrap();
-            
+
             for (i, &k) in indices.iter().enumerate() {
                 if k < ones_count {
                     assert_eq!(bulk_selects[i], rs.select1(k).unwrap());
@@ -1436,13 +1477,13 @@ mod tests {
     fn test_compression_stats() {
         let bv = create_test_bitvector(10000, |i| i % 13 == 0);
         let rs = RankSelectFragmented::new(bv).unwrap();
-        
+
         let stats = rs.compression_stats();
         assert!(stats.original_size > 0);
         assert!(stats.compressed_size > 0);
         assert!(stats.compression_ratio > 0.0);
         assert!(stats.fragment_count > 0);
-        
+
         println!("Compression ratio: {:.3}", stats.compression_ratio);
         println!("Fragment count: {}", stats.fragment_count);
         println!("Space overhead: {:.2}%", rs.space_overhead_percent());
@@ -1452,19 +1493,23 @@ mod tests {
     fn test_large_dataset() {
         let bv = create_test_bitvector(100000, |i| (i * 17 + 23) % 71 == 0);
         let rs = RankSelectFragmented::new(bv.clone()).unwrap();
-        
+
         // Test consistency with reference implementation
         assert_eq!(rs.len(), bv.len());
         assert_eq!(rs.count_ones(), bv.count_ones());
-        
+
         // Test random positions
         let test_positions = [0, 1000, 25000, 50000, 75000, 99999];
         for &pos in &test_positions {
             let expected_rank = bv.rank1(pos);
             let actual_rank = rs.rank1(pos);
-            assert_eq!(actual_rank, expected_rank, "Rank mismatch at position {}", pos);
+            assert_eq!(
+                actual_rank, expected_rank,
+                "Rank mismatch at position {}",
+                pos
+            );
         }
-        
+
         // Test select operations
         let ones_count = rs.count_ones();
         let test_indices = [0, ones_count / 10, ones_count / 2, ones_count * 9 / 10];
@@ -1472,7 +1517,7 @@ mod tests {
             if k < ones_count {
                 let result = rs.select1(k);
                 assert!(result.is_ok(), "Select failed for k={}", k);
-                
+
                 let pos = result.unwrap();
                 assert_eq!(rs.rank1(pos), k, "Select result verification failed");
             }
@@ -1486,7 +1531,7 @@ mod tests {
         let empty_rs = RankSelectFragmented::new(empty_bv).unwrap();
         assert_eq!(empty_rs.len(), 0);
         assert_eq!(empty_rs.count_ones(), 0);
-        
+
         // Single bit
         let mut single_bv = BitVector::new();
         single_bv.push(true).unwrap();
@@ -1496,14 +1541,14 @@ mod tests {
         assert_eq!(single_rs.rank1(0), 0);
         assert_eq!(single_rs.rank1(1), 1);
         assert_eq!(single_rs.select1(0).unwrap(), 0);
-        
+
         // All zeros
         let zeros_bv = BitVector::with_size(1000, false).unwrap();
         let zeros_rs = RankSelectFragmented::new(zeros_bv).unwrap();
         assert_eq!(zeros_rs.count_ones(), 0);
         assert_eq!(zeros_rs.rank1(500), 0);
         assert!(zeros_rs.select1(0).is_err());
-        
+
         // All ones
         let ones_bv = BitVector::with_size(1000, true).unwrap();
         let ones_rs = RankSelectFragmented::new(ones_bv).unwrap();
@@ -1516,7 +1561,7 @@ mod tests {
     fn test_value_packing_unpacking() {
         let values = vec![0, 1, 7, 15, 31, 63];
         let bit_width = 6;
-        
+
         let fragment = CompressedFragment {
             header: FragmentHeader {
                 global_rank: 0,
@@ -1533,10 +1578,12 @@ mod tests {
             original_word_count: 1,
             start_position: 0,
         };
-        
+
         let packed = CompressedFragment::pack_values(&values, bit_width).unwrap();
-        let unpacked = fragment.unpack_values_from_data(&packed, bit_width).unwrap();
-        
+        let unpacked = fragment
+            .unpack_values_from_data(&packed, bit_width)
+            .unwrap();
+
         assert_eq!(unpacked.len(), values.len());
         for i in 0..values.len() {
             assert_eq!(unpacked[i], values[i], "Value mismatch at index {}", i);

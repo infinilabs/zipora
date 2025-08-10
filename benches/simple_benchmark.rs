@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 fn simple_benchmark(c: &mut Criterion) {
     c.bench_function("simple test", |b| {

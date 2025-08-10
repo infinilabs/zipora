@@ -3,8 +3,8 @@
 //! This module defines the fundamental traits for various automaton types
 //! including tries, DAWGs, and other finite state structures.
 
-use crate::error::Result;
 use crate::StateId;
+use crate::error::Result;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

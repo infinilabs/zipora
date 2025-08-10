@@ -236,7 +236,7 @@ impl<K, V> GoldHashMap<K, V> {
     }
 
     /// Rebuilds the hash table from scratch to maintain probe chain integrity
-    /// 
+    ///
     /// This is called after entry removal to ensure all probe chains are correct.
     /// While not the most efficient approach, it guarantees correctness.
     fn rebuild_hash_table(&mut self) {
@@ -247,16 +247,16 @@ impl<K, V> GoldHashMap<K, V> {
                 cached_hash: 0,
             };
         }
-        
+
         // Re-insert all entries
         for entry_idx in 0..self.entries.len() {
             let entry_hash = self.entries[entry_idx].hash;
             let ideal_bucket = self.hash_to_bucket(entry_hash);
             let cached_hash = (entry_hash as u32) | 1;
-            
+
             let mut bucket_idx = ideal_bucket;
             let mut probe_distance = 0u16;
-            
+
             // Find an empty bucket using linear probing
             loop {
                 if self.buckets[bucket_idx].entry_index == EMPTY_BUCKET {
@@ -267,10 +267,10 @@ impl<K, V> GoldHashMap<K, V> {
                     self.entries[entry_idx].probe_distance = probe_distance;
                     break;
                 }
-                
+
                 probe_distance += 1;
                 bucket_idx = (bucket_idx + 1) % self.buckets.len();
-                
+
                 // Safety check to prevent infinite loop
                 if probe_distance > self.buckets.len() as u16 {
                     // This should never happen if the load factor is reasonable
@@ -392,14 +392,14 @@ where
                     let last_entry_index = self.entries.len() - 1;
                     let last_entry = self.entries.pop().unwrap();
                     let removed_entry = mem::replace(&mut self.entries[entry_index], last_entry);
-                    
+
                     // Find and update ALL buckets that point to the moved entry
                     for i in 0..self.buckets.len() {
                         if self.buckets[i].entry_index == last_entry_index as u32 {
                             self.buckets[i].entry_index = entry_index as u32;
                         }
                     }
-                    
+
                     removed_entry.value
                 };
 
@@ -413,7 +413,6 @@ where
             FindResult::NotFound { .. } => None,
         }
     }
-
 
     /// Clears all entries from the map
     pub fn clear(&mut self) {

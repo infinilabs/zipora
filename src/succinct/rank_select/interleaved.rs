@@ -42,34 +42,33 @@
 //! }
 //!
 //! let rs = RankSelectInterleaved256::new(bv)?;
-//! 
+//!
 //! // Cache-optimized operations
 //! let rank = rs.rank1(500);        // Single cache line access
 //! let pos = rs.select1(50)?;       // Fast binary search + cache lookup
-//! 
+//!
 //! println!("Rank at 500: {}, 50th bit at: {}", rank, pos);
 //! # Ok::<(), zipora::ZiporaError>(())
 //! ```
 
+use super::{
+    BuilderOptions, CpuFeatures, RankSelectBuilder, RankSelectOps, RankSelectPerformanceOps,
+};
+use crate::FastVec;
 use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;
-use crate::FastVec;
-use super::{
-    RankSelectOps, RankSelectPerformanceOps, RankSelectBuilder, BuilderOptions,
-    CpuFeatures
-};
 use std::fmt;
 
 // Hardware acceleration imports
 #[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::{_popcnt64, _mm_prefetch, _MM_HINT_T0};
+use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch, _popcnt64};
 
 /// Cache-optimized interleaved line containing rank metadata and bit data
 ///
 /// This structure is carefully designed to fit within 1-2 cache lines for
 /// optimal memory access patterns. The rank metadata and corresponding bit
 /// data are co-located for maximum cache efficiency.
-#[repr(C, align(32))]  // 32-byte alignment for cache efficiency
+#[repr(C, align(32))] // 32-byte alignment for cache efficiency
 #[derive(Clone, Debug)]
 struct InterleavedLine {
     /// Cumulative rank1 up to the start of this line
@@ -120,23 +119,26 @@ impl InterleavedLine {
     fn rank1_within_line(&self, bit_offset: usize) -> usize {
         let word_idx = bit_offset / BITS_PER_WORD;
         let bit_in_word = bit_offset % BITS_PER_WORD;
-        
+
         let mut rank = self.rlev2[word_idx] as usize;
-        
+
         // Count bits in the partial word
         if bit_in_word > 0 {
             let word = self.bit64[word_idx];
             let mask = (1u64 << bit_in_word) - 1;
             rank += (word & mask).count_ones() as usize;
         }
-        
+
         rank
     }
 
     /// Count total set bits in this line
     #[inline]
     fn count_ones(&self) -> usize {
-        self.bit64.iter().map(|&word| word.count_ones() as usize).sum()
+        self.bit64
+            .iter()
+            .map(|&word| word.count_ones() as usize)
+            .sum()
     }
 
     /// Get bit at specific offset within this line
@@ -144,7 +146,7 @@ impl InterleavedLine {
     fn get_bit(&self, bit_offset: usize) -> bool {
         let word_idx = bit_offset / BITS_PER_WORD;
         let bit_in_word = bit_offset % BITS_PER_WORD;
-        
+
         if word_idx < WORDS_PER_LINE {
             (self.bit64[word_idx] >> bit_in_word) & 1 == 1
         } else {
@@ -161,7 +163,7 @@ impl InterleavedLine {
             {
                 x.count_ones()
             }
-            
+
             #[cfg(not(test))]
             {
                 if CpuFeatures::get().has_popcnt {
@@ -171,7 +173,7 @@ impl InterleavedLine {
                 }
             }
         }
-        
+
         #[cfg(not(target_arch = "x86_64"))]
         {
             x.count_ones()
@@ -184,10 +186,7 @@ impl InterleavedLine {
         #[cfg(target_arch = "x86_64")]
         {
             unsafe {
-                _mm_prefetch(
-                    self as *const InterleavedLine as *const i8,
-                    _MM_HINT_T0
-                );
+                _mm_prefetch(self as *const InterleavedLine as *const i8, _MM_HINT_T0);
             }
         }
     }
@@ -212,14 +211,18 @@ impl RankSelectInterleaved256 {
     ) -> Result<Self> {
         let mut rs = Self {
             lines: FastVec::new(),
-            select_cache: if enable_select_cache { Some(FastVec::new()) } else { None },
+            select_cache: if enable_select_cache {
+                Some(FastVec::new())
+            } else {
+                None
+            },
             total_ones: 0,
             total_bits: bit_vector.len(),
             select_sample_rate,
         };
 
         rs.build_interleaved_cache(bit_vector)?;
-        
+
         if rs.select_cache.is_some() && rs.total_ones > 0 {
             rs.build_select_cache()?;
         }
@@ -248,21 +251,21 @@ impl RankSelectInterleaved256 {
             let line_end_bit = ((line_idx + 1) * LINE_BITS).min(self.total_bits);
 
             // Fill the bit data and compute rank metadata
-            let mut line_rank = 0u8;
-            
+            let mut line_rank = 0u16;
+
             for word_idx in 0..WORDS_PER_LINE {
                 let word_start_bit = line_start_bit + word_idx * BITS_PER_WORD;
                 let word_end_bit = (word_start_bit + BITS_PER_WORD).min(line_end_bit);
-                
-                line.rlev2[word_idx] = line_rank;
-                
+
+                line.rlev2[word_idx] = line_rank as u8;
+
                 if word_start_bit < self.total_bits {
                     // Extract word from bit vector
                     let word = self.extract_word_from_blocks(blocks, word_start_bit, word_end_bit);
                     line.bit64[word_idx] = word;
-                    
+
                     // Count set bits in this word
-                    let word_popcount = line.popcount_hardware_accelerated(word) as u8;
+                    let word_popcount = line.popcount_hardware_accelerated(word) as u16;
                     line_rank += word_popcount;
                 }
             }
@@ -279,7 +282,7 @@ impl RankSelectInterleaved256 {
     fn extract_word_from_blocks(&self, blocks: &[u64], start_bit: usize, end_bit: usize) -> u64 {
         let start_word = start_bit / BITS_PER_WORD;
         let end_word = (end_bit + BITS_PER_WORD - 1) / BITS_PER_WORD;
-        
+
         if start_word >= blocks.len() {
             return 0;
         }
@@ -287,59 +290,59 @@ impl RankSelectInterleaved256 {
         if start_word + 1 >= end_word && end_bit <= (start_word + 1) * BITS_PER_WORD {
             // Simple case: entirely within one block
             let mut word = blocks[start_word];
-            
+
             // Handle partial word at the beginning
             let start_bit_in_word = start_bit % BITS_PER_WORD;
             if start_bit_in_word > 0 {
                 word >>= start_bit_in_word;
             }
-            
+
             // Handle partial word at the end
             let valid_bits = end_bit - start_bit;
             if valid_bits < BITS_PER_WORD {
                 let mask = (1u64 << valid_bits) - 1;
                 word &= mask;
             }
-            
+
             word
         } else {
             // Complex case: spans multiple blocks
             let mut result = 0u64;
             let mut bits_written = 0;
-            
+
             for block_idx in start_word..end_word.min(blocks.len()) {
                 let block_start_bit = block_idx * BITS_PER_WORD;
                 let block_end_bit = (block_idx + 1) * BITS_PER_WORD;
-                
+
                 let copy_start = start_bit.max(block_start_bit);
                 let copy_end = end_bit.min(block_end_bit);
-                
+
                 if copy_start < copy_end {
                     let mut block_word = blocks[block_idx];
-                    
+
                     // Shift to align with copy range
                     let shift_right = copy_start - block_start_bit;
                     if shift_right > 0 {
                         block_word >>= shift_right;
                     }
-                    
+
                     // Mask to copy range size
                     let bits_to_copy = copy_end - copy_start;
                     if bits_to_copy < BITS_PER_WORD {
                         let mask = (1u64 << bits_to_copy) - 1;
                         block_word &= mask;
                     }
-                    
+
                     // Place in result
                     result |= block_word << bits_written;
                     bits_written += bits_to_copy;
                 }
-                
+
                 if bits_written >= BITS_PER_WORD {
                     break;
                 }
             }
-            
+
             result
         }
     }
@@ -392,7 +395,7 @@ impl RankSelectInterleaved256 {
 
         let line_idx = pos / LINE_BITS;
         let bit_in_line = pos % LINE_BITS;
-        
+
         if line_idx < self.lines.len() {
             self.lines[line_idx].get_bit(bit_in_line)
         } else {
@@ -414,23 +417,23 @@ impl RankSelectInterleaved256 {
         }
 
         let pos = pos.min(self.total_bits);
-        
+
         let line_idx = pos / LINE_BITS;
         let bit_in_line = pos % LINE_BITS;
-        
+
         if line_idx >= self.lines.len() {
             return self.total_ones;
         }
 
         let line = &self.lines[line_idx];
-        
+
         // Prefetch hint for sequential access patterns
         line.prefetch_hint();
-        
+
         // Single cache line access for rank calculation
         let rank_before_line = line.rlev1 as usize;
         let rank_in_line = line.rank1_within_line(bit_in_line);
-        
+
         rank_before_line + rank_in_line
     }
 
@@ -454,11 +457,11 @@ impl RankSelectInterleaved256 {
 
         // Binary search on cache lines
         let line_idx = self.binary_search_lines(target_rank);
-        
+
         let line = &self.lines[line_idx];
         let rank_before_line = line.rlev1 as usize;
         let remaining_ones = target_rank - rank_before_line;
-        
+
         self.select1_within_line(line_idx, remaining_ones)
     }
 
@@ -487,7 +490,9 @@ impl RankSelectInterleaved256 {
             }
         }
 
-        Err(ZiporaError::invalid_data("Select position not found".to_string()))
+        Err(ZiporaError::invalid_data(
+            "Select position not found".to_string(),
+        ))
     }
 
     /// Binary search to find which line contains the target rank
@@ -495,7 +500,7 @@ impl RankSelectInterleaved256 {
     fn binary_search_lines(&self, target_rank: usize) -> usize {
         let mut left = 0;
         let mut right = self.lines.len();
-        
+
         while left < right {
             let mid = left + (right - left) / 2;
             if self.lines[mid].rlev1 < target_rank as u32 {
@@ -504,41 +509,46 @@ impl RankSelectInterleaved256 {
                 right = mid;
             }
         }
-        
-        left.saturating_sub(1).min(self.lines.len().saturating_sub(1))
+
+        left.saturating_sub(1)
+            .min(self.lines.len().saturating_sub(1))
     }
 
     /// Find select position within a specific line
     fn select1_within_line(&self, line_idx: usize, remaining_ones: usize) -> Result<usize> {
         if line_idx >= self.lines.len() {
-            return Err(ZiporaError::invalid_data("Line index out of bounds".to_string()));
+            return Err(ZiporaError::invalid_data(
+                "Line index out of bounds".to_string(),
+            ));
         }
 
         let line = &self.lines[line_idx];
         let line_start_bit = line_idx * LINE_BITS;
-        
+
         // Search within the line for the remaining set bits
         let mut found_ones = 0;
-        
+
         for word_idx in 0..WORDS_PER_LINE {
             let _word_start_rank = line.rlev2[word_idx] as usize;
             let word = line.bit64[word_idx];
             let word_popcount = line.popcount_hardware_accelerated(word) as usize;
-            
+
             if found_ones + word_popcount >= remaining_ones {
                 // The target bit is in this word
                 let needed_in_word = remaining_ones - found_ones;
                 let bit_pos = self.select_u64_within_word(word, needed_in_word);
-                
+
                 if bit_pos < BITS_PER_WORD {
                     return Ok(line_start_bit + word_idx * BITS_PER_WORD + bit_pos);
                 }
             }
-            
+
             found_ones += word_popcount;
         }
-        
-        Err(ZiporaError::invalid_data("Select position not found in line".to_string()))
+
+        Err(ZiporaError::invalid_data(
+            "Select position not found in line".to_string(),
+        ))
     }
 
     /// Find the k-th set bit within a 64-bit word
@@ -547,14 +557,14 @@ impl RankSelectInterleaved256 {
         if k == 0 || k > word.count_ones() as usize {
             return BITS_PER_WORD;
         }
-        
+
         let mut remaining_k = k;
-        
+
         // Process each byte
         for byte_idx in 0..8 {
             let byte = ((word >> (byte_idx * 8)) & 0xFF) as u8;
             let byte_popcount = byte.count_ones() as usize;
-            
+
             if remaining_k <= byte_popcount {
                 // The k-th bit is in this byte
                 let mut bit_count = 0;
@@ -567,10 +577,10 @@ impl RankSelectInterleaved256 {
                     }
                 }
             }
-            
+
             remaining_k = remaining_k.saturating_sub(byte_popcount);
         }
-        
+
         BITS_PER_WORD
     }
 }
@@ -597,35 +607,40 @@ impl RankSelectOps for RankSelectInterleaved256 {
 
     fn select0(&self, k: usize) -> Result<usize> {
         if k >= (self.total_bits - self.total_ones) {
-            return Err(ZiporaError::out_of_bounds(k, self.total_bits - self.total_ones));
+            return Err(ZiporaError::out_of_bounds(
+                k,
+                self.total_bits - self.total_ones,
+            ));
         }
 
         // For select0, we need to find the k-th zero bit
         // Use binary search on positions to find the k-th zero
         let mut left = 0;
         let mut right = self.total_bits;
-        
+
         while left < right {
             let mid = left + (right - left) / 2;
             let rank0_mid = mid - self.rank1_cache_optimized(mid);
-            
+
             if rank0_mid <= k {
                 left = mid + 1;
             } else {
                 right = mid;
             }
         }
-        
+
         // Linear search backward to find exact position
         let mut pos = left;
         while pos > 0 && !self.get_bit_internal(pos - 1) {
             pos -= 1;
         }
-        
+
         if pos < self.total_bits && !self.get_bit_internal(pos) {
             Ok(pos)
         } else {
-            Err(ZiporaError::invalid_data("Select0 position not found".to_string()))
+            Err(ZiporaError::invalid_data(
+                "Select0 position not found".to_string(),
+            ))
         }
     }
 
@@ -652,15 +667,17 @@ impl RankSelectOps for RankSelectInterleaved256 {
         if self.total_bits == 0 {
             return 0.0;
         }
-        
+
         let bit_data_bytes = (self.total_bits + 7) / 8;
         let cache_bytes = self.lines.len() * std::mem::size_of::<InterleavedLine>();
-        let select_cache_bytes = self.select_cache.as_ref()
+        let select_cache_bytes = self
+            .select_cache
+            .as_ref()
             .map(|cache| cache.len() * 4)
             .unwrap_or(0);
-        
+
         let total_overhead = cache_bytes + select_cache_bytes;
-        
+
         (total_overhead as f64 / bit_data_bytes as f64) * 100.0
     }
 }
@@ -683,7 +700,7 @@ impl RankSelectBuilder<RankSelectInterleaved256> for RankSelectInterleaved256 {
 
     fn from_bytes(bytes: &[u8], bit_len: usize) -> Result<RankSelectInterleaved256> {
         let mut bit_vector = BitVector::new();
-        
+
         // Convert bytes to bits and push to bit vector
         for (byte_idx, &byte) in bytes.iter().enumerate() {
             for bit_idx in 0..8 {
@@ -698,14 +715,17 @@ impl RankSelectBuilder<RankSelectInterleaved256> for RankSelectInterleaved256 {
                 break;
             }
         }
-        
+
         Self::new(bit_vector)
     }
 
-    fn with_optimizations(bit_vector: BitVector, opts: BuilderOptions) -> Result<RankSelectInterleaved256> {
+    fn with_optimizations(
+        bit_vector: BitVector,
+        opts: BuilderOptions,
+    ) -> Result<RankSelectInterleaved256> {
         let enable_select_cache = opts.optimize_select;
         let select_sample_rate = opts.select_sample_rate;
-        
+
         Self::with_options(bit_vector, enable_select_cache, select_sample_rate)
     }
 }
@@ -736,11 +756,17 @@ impl RankSelectPerformanceOps for RankSelectInterleaved256 {
     }
 
     fn rank1_bulk(&self, positions: &[usize]) -> Vec<usize> {
-        positions.iter().map(|&pos| self.rank1_cache_optimized(pos)).collect()
+        positions
+            .iter()
+            .map(|&pos| self.rank1_cache_optimized(pos))
+            .collect()
     }
 
     fn select1_bulk(&self, indices: &[usize]) -> Result<Vec<usize>> {
-        indices.iter().map(|&k| self.select1_cache_optimized(k)).collect()
+        indices
+            .iter()
+            .map(|&k| self.select1_cache_optimized(k))
+            .collect()
     }
 }
 
@@ -750,7 +776,10 @@ impl fmt::Debug for RankSelectInterleaved256 {
             .field("total_bits", &self.total_bits)
             .field("total_ones", &self.total_ones)
             .field("lines", &self.lines.len())
-            .field("select_cache_size", &self.select_cache.as_ref().map(|c| c.len()).unwrap_or(0))
+            .field(
+                "select_cache_size",
+                &self.select_cache.as_ref().map(|c| c.len()).unwrap_or(0),
+            )
             .field("select_sample_rate", &self.select_sample_rate)
             .field("space_overhead_percent", &self.space_overhead_percent())
             .finish()
@@ -772,35 +801,35 @@ mod tests {
 
         // Test basic construction
         let rs = RankSelectInterleaved256::new(bv)?;
-        
+
         assert_eq!(rs.len(), 100);
         assert_eq!(rs.count_ones(), 20); // 100/5 = 20 ones
-        
+
         // Test rank operations
         assert_eq!(rs.rank1(0), 0);
         assert_eq!(rs.rank1(5), 1);
         assert_eq!(rs.rank1(10), 2);
         assert_eq!(rs.rank1(25), 5);
-        
+
         // Test rank0 + rank1 = position
         for pos in [0, 5, 10, 25, 50, 99] {
             assert_eq!(rs.rank0(pos) + rs.rank1(pos), pos);
         }
-        
+
         // Test select operations
         assert_eq!(rs.select1(0)?, 0);
         assert_eq!(rs.select1(1)?, 5);
         assert_eq!(rs.select1(2)?, 10);
-        
+
         // Test get operations
         assert_eq!(rs.get(0), Some(true));
         assert_eq!(rs.get(1), Some(false));
         assert_eq!(rs.get(5), Some(true));
         assert_eq!(rs.get(100), None);
-        
+
         // Test space overhead is reasonable (interleaved has higher overhead for small sizes)
         assert!(rs.space_overhead_percent() < 2000.0); // Allow higher overhead for small test data
-        
+
         Ok(())
     }
 
@@ -808,13 +837,13 @@ mod tests {
     fn test_rank_select_interleaved256_empty() -> Result<()> {
         let bv = BitVector::new();
         let rs = RankSelectInterleaved256::new(bv)?;
-        
+
         assert_eq!(rs.len(), 0);
         assert_eq!(rs.count_ones(), 0);
         assert_eq!(rs.rank1(0), 0);
         assert_eq!(rs.rank0(0), 0);
         assert_eq!(rs.get(0), None);
-        
+
         Ok(())
     }
 
@@ -824,19 +853,19 @@ mod tests {
         for _ in 0..50 {
             bv.push(true)?;
         }
-        
+
         let rs = RankSelectInterleaved256::new(bv)?;
-        
+
         assert_eq!(rs.len(), 50);
         assert_eq!(rs.count_ones(), 50);
         assert_eq!(rs.rank1(50), 50);
         assert_eq!(rs.rank0(50), 0);
-        
+
         for i in 0..50 {
             assert_eq!(rs.select1(i)?, i);
             assert_eq!(rs.get(i), Some(true));
         }
-        
+
         Ok(())
     }
 
@@ -846,21 +875,21 @@ mod tests {
         for _ in 0..50 {
             bv.push(false)?;
         }
-        
+
         let rs = RankSelectInterleaved256::new(bv)?;
-        
+
         assert_eq!(rs.len(), 50);
         assert_eq!(rs.count_ones(), 0);
         assert_eq!(rs.rank1(50), 0);
         assert_eq!(rs.rank0(50), 50);
-        
+
         for i in 0..50 {
             assert_eq!(rs.get(i), Some(false));
         }
-        
+
         // Select1 should fail with no ones
         assert!(rs.select1(0).is_err());
-        
+
         Ok(())
     }
 }

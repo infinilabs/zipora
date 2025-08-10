@@ -54,36 +54,35 @@
 //! - Advanced data structure integration (succinct structures, string interning)
 
 // Phase 1 containers
-mod valvec32;
-mod small_map;
 mod circular_queue;
+mod small_map;
+mod valvec32;
 
 // Phase 2 containers
-mod uint_vector;
 mod fixed_len_str_vec;
 pub mod sortable_str_vec;
+mod uint_vector;
 
 // Phase 3 advanced containers
-mod zo_sorted_str_vec;
+mod easy_hash_map;
 mod gold_hash_idx;
 mod hash_str_map;
-mod easy_hash_map;
+mod zo_sorted_str_vec;
 
 // Phase 1 exports
-pub use valvec32::ValVec32;
+pub use circular_queue::{AutoGrowCircularQueue, FixedCircularQueue};
 pub use small_map::SmallMap;
-pub use circular_queue::{FixedCircularQueue, AutoGrowCircularQueue};
+pub use valvec32::ValVec32;
 
 // Phase 2 exports
-pub use uint_vector::UintVector;
 pub use fixed_len_str_vec::{
-    FixedLenStrVec, FixedStr4Vec, FixedStr8Vec, FixedStr16Vec, 
-    FixedStr32Vec, FixedStr64Vec
+    FixedLenStrVec, FixedStr4Vec, FixedStr8Vec, FixedStr16Vec, FixedStr32Vec, FixedStr64Vec,
 };
-pub use sortable_str_vec::{SortableStrVec, SortableStrIter, SortableStrSortedIter};
+pub use sortable_str_vec::{SortableStrIter, SortableStrSortedIter, SortableStrVec};
+pub use uint_vector::UintVector;
 
 // Phase 3 exports
-pub use zo_sorted_str_vec::{ZoSortedStrVec, ZoSortedStrVecIter, ZoSortedStrVecRange};
+pub use easy_hash_map::{EasyHashMap, EasyHashMapBuilder, EasyHashMapStats};
 pub use gold_hash_idx::GoldHashIdx;
 pub use hash_str_map::{HashStrMap, HashStrMapStats};
-pub use easy_hash_map::{EasyHashMap, EasyHashMapBuilder, EasyHashMapStats};
+pub use zo_sorted_str_vec::{ZoSortedStrVec, ZoSortedStrVecIter, ZoSortedStrVecRange};

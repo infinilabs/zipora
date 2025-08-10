@@ -4,7 +4,7 @@
 //! objects have similar lifetimes and can be freed all at once.
 
 use crate::error::{Result, ZiporaError};
-use std::alloc::{alloc, dealloc, Layout};
+use std::alloc::{Layout, alloc, dealloc};
 use std::cell::Cell;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, Ordering};

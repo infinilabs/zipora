@@ -32,13 +32,30 @@ pub mod specialized;
 
 pub use fast_vec::FastVec;
 pub use specialized::{
-    // Phase 1 containers
-    ValVec32, SmallMap, FixedCircularQueue, AutoGrowCircularQueue,
+    AutoGrowCircularQueue,
+    EasyHashMap,
+    EasyHashMapBuilder,
+    EasyHashMapStats,
+    FixedCircularQueue,
+    FixedLenStrVec,
+    FixedStr4Vec,
+    FixedStr8Vec,
+    FixedStr16Vec,
+    FixedStr32Vec,
+    FixedStr64Vec,
+    GoldHashIdx,
+    HashStrMap,
+    HashStrMapStats,
+    SmallMap,
+    SortableStrIter,
+    SortableStrSortedIter,
+    SortableStrVec,
     // Phase 2 containers
-    UintVector, FixedLenStrVec, FixedStr4Vec, FixedStr8Vec, FixedStr16Vec,
-    FixedStr32Vec, FixedStr64Vec, SortableStrVec, SortableStrIter, SortableStrSortedIter,
+    UintVector,
+    // Phase 1 containers
+    ValVec32,
     // Phase 3 advanced containers
-    ZoSortedStrVec, ZoSortedStrVecIter, ZoSortedStrVecRange,
-    GoldHashIdx, HashStrMap, HashStrMapStats,
-    EasyHashMap, EasyHashMapBuilder, EasyHashMapStats
+    ZoSortedStrVec,
+    ZoSortedStrVecIter,
+    ZoSortedStrVecRange,
 };

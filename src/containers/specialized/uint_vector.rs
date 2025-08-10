@@ -19,16 +19,16 @@ enum CompressionStrategy {
 }
 
 /// Constants for optimization
-const MIN_COMPRESSION_ELEMENTS: usize = 4;  // Don't compress tiny datasets
-const MIN_COMPRESSION_RATIO: f64 = 0.8;     // Only compress if <80% of raw size
-const MIN_ALLOCATION_SIZE: usize = 32;      // Minimum allocation to avoid overhead
-const GOLDEN_RATIO_NUMERATOR: usize = 103;  // Golden ratio growth pattern
+const MIN_COMPRESSION_ELEMENTS: usize = 4; // Don't compress tiny datasets
+const MIN_COMPRESSION_RATIO: f64 = 0.8; // Only compress if <80% of raw size
+const MIN_ALLOCATION_SIZE: usize = 32; // Minimum allocation to avoid overhead
+const GOLDEN_RATIO_NUMERATOR: usize = 103; // Golden ratio growth pattern
 const GOLDEN_RATIO_DENOMINATOR: usize = 64; // 103/64 ≈ 1.609
 
 /// Compressed integer vector with specialized optimizations
-/// 
+///
 /// # Key Optimizations
-/// 
+///
 /// 1. **Min-Max Compression**: Store only (value - min_value) using minimal bits
 /// 2. **Efficient Bit Packing**: Pack multiple values into aligned bytes  
 /// 3. **Fast Unaligned Access**: Direct memory loads for performance
@@ -38,14 +38,14 @@ const GOLDEN_RATIO_DENOMINATOR: usize = 64; // 103/64 ≈ 1.609
 ///
 /// ```rust
 /// use zipora::UintVector;
-/// 
+///
 /// // Build from slice with repetitive pattern for optimal compression
 /// let values: Vec<u32> = (0..1000).map(|i| i % 100).collect(); // 0-99 repeated
 /// let mut vec = UintVector::new();
 /// for &val in &values {
 ///     vec.push(val)?;
 /// }
-/// 
+///
 /// // Or use efficient batch build
 /// let compressed = UintVector::build_from(&values)?;
 /// assert!(compressed.compression_ratio() < 0.5); // >50% space saving with repetitive data
@@ -110,7 +110,7 @@ impl UintVector {
     ///
     /// let values = (1000..2000).collect::<Vec<u32>>();
     /// let compressed = UintVector::build_from(&values)?;
-    /// 
+    ///
     /// // Should achieve significant compression for range-limited data
     /// assert!(compressed.compression_ratio() < 0.4);
     /// assert_eq!(compressed.len(), 1000);
@@ -123,14 +123,14 @@ impl UintVector {
 
         let mut result = Self::new();
         result.len = values.len();
-        
+
         // Analyze data for optimal compression strategy
         let strategy = Self::analyze_optimal_strategy(values);
         result.strategy = strategy;
-        
+
         // Compress data using selected strategy
         result.compress_with_strategy(values, strategy)?;
-        
+
         // Update statistics
         result.stats.original_size = values.len() * 4;
         result.stats.compressed_size = result.data.len();
@@ -248,7 +248,7 @@ impl UintVector {
 
         let mut runs = 0;
         let mut current_run = 1;
-        
+
         for i in 1..values.len() {
             if values[i] == values[i - 1] {
                 current_run += 1;
@@ -259,11 +259,11 @@ impl UintVector {
                 current_run = 1;
             }
         }
-        
+
         if current_run > 1 {
             runs += current_run;
         }
-        
+
         runs as f64 / values.len() as f64
     }
 
@@ -280,7 +280,8 @@ impl UintVector {
 
         // Check for run-length encoding potential (needs long consecutive runs)
         let run_ratio = Self::calculate_run_ratio(values);
-        if run_ratio > 0.5 {  // Need >50% of data in runs to be worthwhile
+        if run_ratio > 0.5 {
+            // Need >50% of data in runs to be worthwhile
             let raw_bytes = values.len() * 4;
             let rle_estimate = Self::estimate_run_length_size(values);
             if Self::should_compress(values.len(), raw_bytes, rle_estimate) {
@@ -291,25 +292,32 @@ impl UintVector {
         // Min-max compression analysis
         let min_val = *values.iter().min().unwrap();
         let max_val = *values.iter().max().unwrap();
-        
+
         if min_val == max_val {
             // All values are the same - check if single-bit storage is worthwhile
             let raw_bytes = values.len() * 4;
             let compressed_estimate = Self::compute_compressed_size(1, values.len());
             if Self::should_compress(values.len(), raw_bytes, compressed_estimate) {
-                return CompressionStrategy::MinMaxBitPacked { min_val, bit_width: 1 };
+                return CompressionStrategy::MinMaxBitPacked {
+                    min_val,
+                    bit_width: 1,
+                };
             } else {
                 return CompressionStrategy::Raw;
             }
         }
 
         let range = max_val - min_val;
-        let bit_width = if range == 0 { 1 } else { 32 - range.leading_zeros() as u8 };
-        
+        let bit_width = if range == 0 {
+            1
+        } else {
+            32 - range.leading_zeros() as u8
+        };
+
         // Compression decision
         let raw_bytes = values.len() * 4;
         let compressed_estimate = Self::compute_compressed_size(bit_width, values.len());
-        
+
         if Self::should_compress(values.len(), raw_bytes, compressed_estimate) {
             CompressionStrategy::MinMaxBitPacked { min_val, bit_width }
         } else {
@@ -330,7 +338,7 @@ impl UintVector {
     fn compute_compressed_size(bit_width: u8, num_elements: usize) -> usize {
         let total_bits = bit_width as usize * num_elements;
         let using_size = (total_bits + 7) / 8;
-        let touch_size = using_size + 8 - 1;  // for unaligned access
+        let touch_size = using_size + 8 - 1; // for unaligned access
         let aligned_size = (touch_size + 15) & !15; // 16-byte alignment
         std::cmp::max(aligned_size, MIN_ALLOCATION_SIZE)
     }
@@ -347,26 +355,26 @@ impl UintVector {
                 runs += 1;
             }
         }
-        
+
         // Each run takes 8 bytes (value + length)
         let estimated_size = runs * 8;
         std::cmp::max(estimated_size, MIN_ALLOCATION_SIZE)
     }
 
     /// Compress data using the specified strategy
-    fn compress_with_strategy(&mut self, values: &[u32], strategy: CompressionStrategy) -> Result<()> {
+    fn compress_with_strategy(
+        &mut self,
+        values: &[u32],
+        strategy: CompressionStrategy,
+    ) -> Result<()> {
         self.data.clear();
 
         match strategy {
-            CompressionStrategy::Raw => {
-                self.compress_raw(values)
-            }
+            CompressionStrategy::Raw => self.compress_raw(values),
             CompressionStrategy::MinMaxBitPacked { min_val, bit_width } => {
                 self.compress_min_max_bit_packed(values, min_val, bit_width)
             }
-            CompressionStrategy::RunLength => {
-                self.compress_run_length(values)
-            }
+            CompressionStrategy::RunLength => self.compress_run_length(values),
         }
     }
 
@@ -380,7 +388,12 @@ impl UintVector {
     }
 
     /// Min-max compression with bit packing
-    fn compress_min_max_bit_packed(&mut self, values: &[u32], min_val: u32, bit_width: u8) -> Result<()> {
+    fn compress_min_max_bit_packed(
+        &mut self,
+        values: &[u32],
+        min_val: u32,
+        bit_width: u8,
+    ) -> Result<()> {
         if bit_width == 0 || bit_width > 32 {
             return Err(ZiporaError::invalid_data("Invalid bit width"));
         }
@@ -390,12 +403,12 @@ impl UintVector {
         self.data.resize(aligned_size, 0);
 
         let mut bit_offset = 0;
-        
+
         for &value in values {
             if value < min_val {
                 return Err(ZiporaError::invalid_data("Value below minimum"));
             }
-            
+
             let offset_value = value - min_val;
             self.write_bits_fast(offset_value, bit_offset, bit_width)?;
             bit_offset += bit_width as usize;
@@ -420,7 +433,7 @@ impl UintVector {
                 // Write run: value (4 bytes) + length (4 bytes)
                 self.data.extend_from_slice(&current_value.to_le_bytes());
                 self.data.extend_from_slice(&run_length.to_le_bytes());
-                
+
                 current_value = value;
                 run_length = 1;
             }
@@ -437,14 +450,18 @@ impl UintVector {
     fn write_bits_fast(&mut self, value: u32, bit_offset: usize, bits: u8) -> Result<()> {
         let byte_offset = bit_offset / 8;
         let bit_in_byte = bit_offset % 8;
-        
-        let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+
+        let mask = if bits == 32 {
+            u32::MAX
+        } else {
+            (1u32 << bits) - 1
+        };
         let masked_value = value & mask;
-        
+
         // Calculate how many bytes we need to span
         let bits_needed = bit_in_byte + bits as usize;
         let bytes_needed = (bits_needed + 7) / 8;
-        
+
         if byte_offset + bytes_needed > self.data.len() {
             return Err(ZiporaError::invalid_data("Bit offset out of bounds"));
         }
@@ -456,13 +473,14 @@ impl UintVector {
             let available = std::cmp::min(8, self.data.len() - byte_offset);
             bytes[..available].copy_from_slice(&self.data[byte_offset..byte_offset + available]);
             let current = u64::from_le_bytes(bytes);
-            
+
             let shifted_value = (masked_value as u64) << bit_in_byte;
             let result = current | shifted_value;
-            
+
             let result_bytes = result.to_le_bytes();
             let copy_len = std::cmp::min(8, self.data.len() - byte_offset);
-            self.data[byte_offset..byte_offset + copy_len].copy_from_slice(&result_bytes[..copy_len]);
+            self.data[byte_offset..byte_offset + copy_len]
+                .copy_from_slice(&result_bytes[..copy_len]);
         } else {
             // Fallback for edge cases or when buffer too small
             self.write_bits_slow(masked_value, bit_offset, bits)?;
@@ -477,11 +495,11 @@ impl UintVector {
             let bit_pos = bit_offset + i as usize;
             let byte_idx = bit_pos / 8;
             let bit_idx = bit_pos % 8;
-            
+
             if byte_idx >= self.data.len() {
                 return Err(ZiporaError::invalid_data("Bit position out of bounds"));
             }
-            
+
             if (value >> i) & 1 == 1 {
                 self.data[byte_idx] |= 1 << bit_idx;
             }
@@ -495,7 +513,7 @@ impl UintVector {
         if byte_index + 4 <= self.data.len() {
             let bytes = [
                 self.data[byte_index],
-                self.data[byte_index + 1], 
+                self.data[byte_index + 1],
                 self.data[byte_index + 2],
                 self.data[byte_index + 3],
             ];
@@ -508,7 +526,7 @@ impl UintVector {
     /// Fast decompression for min-max bit packed data
     fn get_min_max_bit_packed(&self, index: usize, min_val: u32, bit_width: u8) -> Option<u32> {
         let bit_offset = index * bit_width as usize;
-        
+
         match self.read_bits_fast(bit_offset, bit_width) {
             Ok(offset_value) => Some(min_val + offset_value),
             Err(_) => None,
@@ -519,7 +537,7 @@ impl UintVector {
     fn read_bits_fast(&self, bit_offset: usize, bits: u8) -> Result<u32> {
         let byte_offset = bit_offset / 8;
         let bit_in_byte = bit_offset % 8;
-        
+
         if byte_offset >= self.data.len() || bits > 32 {
             return self.read_bits_slow(bit_offset, bits);
         }
@@ -528,11 +546,15 @@ impl UintVector {
         let mut bytes = [0u8; 8];
         let available = std::cmp::min(8, self.data.len() - byte_offset);
         bytes[..available].copy_from_slice(&self.data[byte_offset..byte_offset + available]);
-        
+
         let value = u64::from_le_bytes(bytes);
         let shifted = value >> bit_in_byte;
-        let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
-        
+        let mask = if bits == 32 {
+            u32::MAX
+        } else {
+            (1u32 << bits) - 1
+        };
+
         Ok((shifted as u32) & mask)
     }
 
@@ -540,7 +562,7 @@ impl UintVector {
     fn read_bits_slow(&self, bit_offset: usize, bits: u8) -> Result<u32> {
         let byte_offset = bit_offset / 8;
         let bit_in_byte = bit_offset % 8;
-        
+
         if byte_offset >= self.data.len() || bits > 32 {
             return Err(ZiporaError::invalid_data("Invalid bit read parameters"));
         }
@@ -548,16 +570,16 @@ impl UintVector {
         let mut result = 0u32;
         let mut bits_read = 0;
         let mut current_byte_offset = byte_offset;
-        
+
         while bits_read < bits && current_byte_offset < self.data.len() {
             let byte_value = self.data[current_byte_offset] as u32;
             let bits_available_in_byte = 8 - if bits_read == 0 { bit_in_byte } else { 0 };
             let bits_to_read = cmp::min(bits - bits_read, bits_available_in_byte as u8) as usize;
-            
+
             let shift_amount = if bits_read == 0 { bit_in_byte } else { 0 };
             let mask = ((1u32 << bits_to_read) - 1) << shift_amount;
             let extracted_bits = (byte_value & mask) >> shift_amount;
-            
+
             result |= extracted_bits << bits_read;
             bits_read += bits_to_read as u8;
             current_byte_offset += 1;
@@ -579,7 +601,7 @@ impl UintVector {
                 self.data[byte_offset + 3],
             ];
             let value = u32::from_le_bytes(value_bytes);
-            
+
             let length_bytes = [
                 self.data[byte_offset + 4],
                 self.data[byte_offset + 5],
@@ -587,11 +609,11 @@ impl UintVector {
                 self.data[byte_offset + 7],
             ];
             let length = u32::from_le_bytes(length_bytes);
-            
+
             if index < current_index + length as usize {
                 return Some(value);
             }
-            
+
             current_index += length as usize;
             byte_offset += 8;
         }
@@ -615,7 +637,7 @@ impl UintVector {
 
         // Collect all values
         let mut all_values = Vec::with_capacity(self.len);
-        
+
         // Extract existing compressed values
         match self.strategy {
             CompressionStrategy::Raw => {
@@ -640,18 +662,18 @@ impl UintVector {
                 }
             }
         }
-        
+
         // Add temporary values
         all_values.extend_from_slice(&self.temp_values);
-        
+
         // Recompress with optimal strategy
         let new_strategy = Self::analyze_optimal_strategy(&all_values);
         self.strategy = new_strategy;
         self.compress_with_strategy(&all_values, new_strategy)?;
-        
+
         // Clear temporary values
         self.temp_values.clear();
-        
+
         // Update statistics
         self.stats.original_size = self.len * 4;
         self.stats.compressed_size = self.data.len();
@@ -688,17 +710,20 @@ mod tests {
         // Test data that should compress very well (range 1000-1999)
         let values: Vec<u32> = (1000..2000).collect();
         let compressed = UintVector::build_from(&values).unwrap();
-        
+
         // Verify all values are correct
         for (i, &expected) in values.iter().enumerate() {
             assert_eq!(compressed.get(i), Some(expected), "Mismatch at index {}", i);
         }
-        
+
         // Should achieve excellent compression (10 bits instead of 32)
         let ratio = compressed.compression_ratio();
         assert!(ratio < 0.4, "Compression ratio {} should be < 0.4", ratio);
-        
-        println!("Min-max compression test: {:.1}% space savings", (1.0 - ratio) * 100.0);
+
+        println!(
+            "Min-max compression test: {:.1}% space savings",
+            (1.0 - ratio) * 100.0
+        );
     }
 
     #[test]
@@ -706,17 +731,24 @@ mod tests {
         // Test data with very small range (should use minimal bits)
         let values = vec![42u32; 1000];
         let compressed = UintVector::build_from(&values).unwrap();
-        
+
         // Verify all values
         for i in 0..1000 {
             assert_eq!(compressed.get(i), Some(42));
         }
-        
+
         // Should achieve excellent compression (1 bit per value)
         let ratio = compressed.compression_ratio();
-        assert!(ratio < 0.1, "Compression ratio {} should be < 0.1 for identical values", ratio);
-        
-        println!("Small range compression test: {:.1}% space savings", (1.0 - ratio) * 100.0);
+        assert!(
+            ratio < 0.1,
+            "Compression ratio {} should be < 0.1 for identical values",
+            ratio
+        );
+
+        println!(
+            "Small range compression test: {:.1}% space savings",
+            (1.0 - ratio) * 100.0
+        );
     }
 
     #[test]
@@ -724,26 +756,32 @@ mod tests {
         // Test the specific pattern used in benchmarks: (i % 1000)
         let size = 100000;
         let test_data: Vec<u32> = (0..size).map(|i| (i % 1000) as u32).collect();
-        
+
         let compressed = UintVector::build_from(&test_data).unwrap();
-        
+
         // Debug output
         println!("Strategy: {:?}", compressed.strategy);
         println!("Data len: {} bytes", compressed.data.len());
         println!("Original size: {} bytes", size * 4);
-        println!("Compressed size: {} bytes", compressed.stats.compressed_size);
+        println!(
+            "Compressed size: {} bytes",
+            compressed.stats.compressed_size
+        );
         let ratio = compressed.compression_ratio();
         println!("Compression ratio: {:.3}", ratio);
-        
+
         // Verify first 100 values
         for i in 0..100 {
             assert_eq!(compressed.get(i), Some((i % 1000) as u32));
         }
-        
+
         // Should achieve target compression (60-80% space reduction)
         assert!(ratio < 0.5, "Compression ratio {} should be < 0.5", ratio);
-        
-        println!("Benchmark pattern compression: {:.1}% space savings", (1.0 - ratio) * 100.0);
+
+        println!(
+            "Benchmark pattern compression: {:.1}% space savings",
+            (1.0 - ratio) * 100.0
+        );
         println!("Original size: {} bytes", size * 4);
         println!("Compressed size: {} bytes", compressed.memory_usage());
     }
@@ -751,22 +789,22 @@ mod tests {
     #[test]
     fn test_incremental_vs_batch() {
         let values: Vec<u32> = (500..600).collect();
-        
+
         // Build incrementally
         let mut incremental = UintVector::new();
         for &val in &values {
             incremental.push(val).unwrap();
         }
-        
+
         // Build in batch
         let batch = UintVector::build_from(&values).unwrap();
-        
+
         // Both should have same results
         assert_eq!(incremental.len(), batch.len());
         for i in 0..values.len() {
             assert_eq!(incremental.get(i), batch.get(i));
         }
-        
+
         // Batch should achieve better compression
         assert!(batch.compression_ratio() <= incremental.compression_ratio());
     }
@@ -775,15 +813,18 @@ mod tests {
     fn test_large_values() {
         let values = vec![u32::MAX - 10, u32::MAX - 5, u32::MAX];
         let compressed = UintVector::build_from(&values).unwrap();
-        
+
         for (i, &expected) in values.iter().enumerate() {
             assert_eq!(compressed.get(i), Some(expected));
         }
-        
+
         // Small datasets with small ranges should use raw storage
         let ratio = compressed.compression_ratio();
         // For only 3 large values with small range (10), raw storage is more efficient
-        assert!(ratio <= 1.0, "Should use raw storage or achieve compression for large values");
+        assert!(
+            ratio <= 1.0,
+            "Should use raw storage or achieve compression for large values"
+        );
         println!("Large values compression test: ratio = {:.3}", ratio);
     }
 
@@ -796,9 +837,9 @@ mod tests {
                 values.push(i);
             }
         }
-        
+
         let compressed = UintVector::build_from(&values).unwrap();
-        
+
         // Verify all values
         let mut expected_idx = 0;
         for i in 0..10 {
@@ -807,10 +848,13 @@ mod tests {
                 expected_idx += 1;
             }
         }
-        
+
         // Should achieve good compression with run-length encoding
         let ratio = compressed.compression_ratio();
-        println!("Run-length compression: {:.1}% space savings", (1.0 - ratio) * 100.0);
+        println!(
+            "Run-length compression: {:.1}% space savings",
+            (1.0 - ratio) * 100.0
+        );
     }
 
     #[test]
@@ -829,7 +873,10 @@ mod tests {
         assert_eq!(compressed.get(0), Some(42));
         // Single values use raw storage to avoid expansion
         let ratio = compressed.compression_ratio();
-        assert!(ratio <= 1.0, "Single value should use raw storage to avoid expansion");
+        assert!(
+            ratio <= 1.0,
+            "Single value should use raw storage to avoid expansion"
+        );
         println!("Single value compression test: ratio = {:.3}", ratio);
     }
 
@@ -837,18 +884,23 @@ mod tests {
     fn test_incremental_push_debug() {
         // Test incremental push with the benchmark pattern to debug the issue
         let mut vec = UintVector::new();
-        
+
         // Push first 100 values to trigger recompression
         for i in 0..100 {
             let value = (i % 1000) as u32;
             vec.push(value).unwrap();
         }
-        
+
         // Verify all values are correct
         for i in 0..100 {
-            assert_eq!(vec.get(i), Some((i % 1000) as u32), "Mismatch at index {}", i);
+            assert_eq!(
+                vec.get(i),
+                Some((i % 1000) as u32),
+                "Mismatch at index {}",
+                i
+            );
         }
-        
+
         println!("Incremental push test passed for 100 values");
     }
 
@@ -856,12 +908,15 @@ mod tests {
     fn test_memory_usage() {
         let values: Vec<u32> = (0..1000).collect();
         let compressed = UintVector::build_from(&values).unwrap();
-        
+
         let memory_usage = compressed.memory_usage();
         let original_size = values.len() * 4;
-        
-        println!("Memory usage: {} bytes vs {} bytes original", memory_usage, original_size);
-        
+
+        println!(
+            "Memory usage: {} bytes vs {} bytes original",
+            memory_usage, original_size
+        );
+
         // Should use significantly less memory than original
         assert!(memory_usage < original_size);
     }

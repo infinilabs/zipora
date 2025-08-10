@@ -36,12 +36,12 @@
 //! - **Cache efficiency**: Sequential array access patterns
 //! - **SIMD optimizations**: Bulk character processing for long keys
 
+use crate::StateId;
 use crate::error::{Result, ZiporaError};
 use crate::fsa::traits::{
     FiniteStateAutomaton, PrefixIterable, StateInspectable, StatisticsProvider, Trie, TrieStats,
 };
 use crate::memory::{SecureMemoryPool, SecurePoolConfig};
-use crate::StateId;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -89,9 +89,9 @@ impl Default for DoubleArrayTrieConfig {
             growth_factor: 1.5,    // 3/2 growth ratio for cache efficiency
             use_memory_pool: true,
             enable_simd: cfg!(feature = "simd"),
-            pool_size_class: 8192, // 8KB chunks
-            auto_shrink: true,     // Enable auto-shrinking for small datasets
-            cache_aligned: true,   // Enable cache-line alignment
+            pool_size_class: 8192,               // 8KB chunks
+            auto_shrink: true,                   // Enable auto-shrinking for small datasets
+            cache_aligned: true,                 // Enable cache-line alignment
             heuristic_collision_avoidance: true, // Enable smart collision avoidance
         }
     }
@@ -136,7 +136,7 @@ impl DoubleArrayTrie {
         if key_count == 0 {
             return 64;
         }
-        
+
         // Use heuristic: key_count * avg_depth * 1.3 + safety margin
         let estimated = (key_count as f32 * avg_depth * 1.3) as usize + 64;
         Self::align_capacity(std::cmp::max(estimated, 64))
@@ -157,14 +157,14 @@ impl DoubleArrayTrie {
     /// ```
     pub fn new() -> Self {
         let mut config = DoubleArrayTrieConfig::default();
-        
+
         // Optimize initial capacity based on cache efficiency
         // Use power-of-2 alignment for better memory access patterns
         config.initial_capacity = Self::align_capacity(config.initial_capacity);
-        
+
         Self::with_config(config)
     }
-    
+
     /// Create a new Double Array Trie optimized for small datasets
     ///
     /// This constructor uses minimal initial capacity and aggressive
@@ -181,8 +181,8 @@ impl DoubleArrayTrie {
     /// ```
     pub fn new_compact() -> Self {
         let config = DoubleArrayTrieConfig {
-            initial_capacity: 64,  // Compact but still reasonable capacity
-            growth_factor: 1.3,    // Smaller growth for compact datasets
+            initial_capacity: 64, // Compact but still reasonable capacity
+            growth_factor: 1.3,   // Smaller growth for compact datasets
             auto_shrink: true,
             cache_aligned: true,
             heuristic_collision_avoidance: true,
@@ -335,12 +335,12 @@ impl DoubleArrayTrie {
     pub fn state_move(&self, state: StateId, symbol: u8) -> Option<StateId> {
         if let Some(base) = self.base.get(state as usize) {
             let next_state = base.wrapping_add(symbol as u32);
-            
+
             // Avoid self-loops unless explicitly created (not the case for root)
             if next_state == state {
                 return None;
             }
-            
+
             // Check if next_state is valid according to double array algorithm
             if let Some(check_val) = self.check.get(next_state as usize) {
                 // For double array: check[next_state] should equal current state
@@ -361,11 +361,11 @@ impl DoubleArrayTrie {
 
         // Implement cache-efficient growth strategy
         let current_capacity = self.capacity();
-        
+
         // Use 3/2 growth with optimized bit operations
         let growth_capacity = current_capacity + (current_capacity >> 1);
         let target_capacity = std::cmp::max(min_capacity, growth_capacity);
-        
+
         // Align to cache-friendly boundaries for optimal memory access
         let new_capacity = if self.config.cache_aligned {
             Self::align_capacity(target_capacity)
@@ -389,7 +389,7 @@ impl DoubleArrayTrie {
         if !self.config.auto_shrink {
             return;
         }
-        
+
         // Find the highest used state
         let mut highest_used = 0;
         for i in (0..self.capacity()).rev() {
@@ -398,14 +398,14 @@ impl DoubleArrayTrie {
                 break;
             }
         }
-        
+
         // Leave some margin but don't over-allocate
         let optimal_capacity = std::cmp::max(highest_used + 16, 64);
-        
+
         if optimal_capacity < self.capacity() {
             self.base.resize(optimal_capacity, 0);
             self.check.resize(optimal_capacity, FREE_FLAG);
-            
+
             // Explicitly shrink to fit to minimize memory usage
             self.base.shrink_to_fit();
             self.check.shrink_to_fit();
@@ -427,7 +427,7 @@ impl DoubleArrayTrie {
         while pos + 16 <= key.len() {
             unsafe {
                 let chunk = _mm_loadu_si128(key.as_ptr().add(pos) as *const __m128i);
-                
+
                 // Process each byte in the chunk using const indices
                 let bytes = std::mem::transmute::<__m128i, [u8; 16]>(chunk);
                 for i in 0..16 {
@@ -474,7 +474,7 @@ impl DoubleArrayTrie {
         if self.config.enable_simd {
             return self.process_key_simd(key);
         }
-        
+
         self.process_key_standard(key)
     }
 }
@@ -492,8 +492,17 @@ impl std::fmt::Debug for DoubleArrayTrie {
             .field("check", &format!("Vec<u32> len={}", self.check.len()))
             .field("num_keys", &self.num_keys)
             .field("config", &self.config)
-            .field("pool", &format!("Option<Arc<SecureMemoryPool>>: {}", 
-                if self.pool.is_some() { "Some(_)" } else { "None" }))
+            .field(
+                "pool",
+                &format!(
+                    "Option<Arc<SecureMemoryPool>>: {}",
+                    if self.pool.is_some() {
+                        "Some(_)"
+                    } else {
+                        "None"
+                    }
+                ),
+            )
             .finish()
     }
 }
@@ -548,7 +557,7 @@ impl DoubleArrayTrie {
         }
 
         let mut state = ROOT_STATE;
-        
+
         for &symbol in key {
             // Check if transition exists
             if let Some(next_state) = self.state_move(state, symbol) {
@@ -559,13 +568,13 @@ impl DoubleArrayTrie {
                 state = target_state;
             }
         }
-        
+
         // Mark final state as terminal
         if !self.is_terminal(state) {
             self.set_terminal(state, true);
             self.num_keys += 1;
         }
-        
+
         Ok(state)
     }
 
@@ -575,12 +584,12 @@ impl DoubleArrayTrie {
         if from_state as usize >= self.base.len() {
             self.ensure_capacity((from_state + 1) as usize)?;
         }
-        
+
         // Check if transition already exists (defensive check)
         if let Some(existing_target) = self.state_move(from_state, symbol) {
             return Ok(existing_target);
         }
-        
+
         // Get all existing transitions for this state - but only if base is set
         let old_base = self.base[from_state as usize];
         let existing_symbols: Vec<u8> = if old_base == 0 {
@@ -589,36 +598,36 @@ impl DoubleArrayTrie {
         } else {
             self.out_symbols(from_state)
         };
-        
+
         // Combine with new symbol
         let mut all_symbols = existing_symbols.clone();
         all_symbols.push(symbol);
         all_symbols.sort();
         all_symbols.dedup();
-        
+
         // Find a base that works for all symbols
         let base = self.find_base_for_symbols(from_state, &all_symbols)?;
-        
+
         // If base changed and we have existing transitions, relocate them
         if base != old_base && !existing_symbols.is_empty() {
             self.relocate_transitions(from_state, &existing_symbols, base)?;
         }
-        
+
         // Set the new base
         self.base[from_state as usize] = base;
-        
+
         // Add the new transition
         let target_state = base.wrapping_add(symbol as u32);
         self.ensure_capacity((target_state + 1) as usize)?;
-        
+
         // Initialize the new state properly
         self.base[target_state as usize] = 0; // New state has no transitions yet
-        self.set_free(target_state, false);   // Clear FREE flag first
+        self.set_free(target_state, false); // Clear FREE flag first
         self.set_parent(target_state, from_state); // Then set parent
-        
+
         Ok(target_state)
     }
-    
+
     /// Find a base value that works for all given symbols with improved collision avoidance
     fn find_base_for_symbols(&self, state: StateId, symbols: &[u8]) -> Result<u32> {
         if symbols.is_empty() {
@@ -627,183 +636,213 @@ impl DoubleArrayTrie {
 
         // Special case: if symbol 0 is in the set, we need base >= 1 to avoid collision with root
         let min_base = if symbols.contains(&0) { 1u32 } else { 1u32 };
-        
+
         // Calculate dynamic MAX_ATTEMPTS based on array density and symbol count
-        let capacity = self.capacity() as u32;
+        let _capacity = self.capacity() as u32;
         let density = self.calculate_array_density();
         let symbol_count = symbols.len() as u32;
-        
+
         // Scale MAX_ATTEMPTS based on density and complexity
         let base_attempts = 10000u32;
-        let density_multiplier = if density > 0.15 { 3 } else if density > 0.10 { 2 } else { 1 };
+        let density_multiplier = if density > 0.15 {
+            3
+        } else if density > 0.10 {
+            2
+        } else {
+            1
+        };
         let symbol_multiplier = ((symbol_count + 7) / 8).max(1); // More attempts for complex symbol sets
         let max_attempts = base_attempts * density_multiplier * symbol_multiplier;
-        
+
         // Try different base selection strategies in order of efficiency
-        
+
         // Strategy 1: Gap-based selection for better distribution
         if let Ok(base) = self.find_base_with_gap_strategy(symbols, min_base, max_attempts / 4) {
             return Ok(base);
         }
-        
+
         // Strategy 2: Improved heuristic with better collision prediction
-        if let Ok(base) = self.find_base_with_improved_heuristic(state, symbols, min_base, max_attempts / 2) {
+        if let Ok(base) =
+            self.find_base_with_improved_heuristic(state, symbols, min_base, max_attempts / 2)
+        {
             return Ok(base);
         }
-        
+
         // Strategy 3: Fallback to original algorithm with increased attempts
         self.find_base_linear_search(symbols, min_base, max_attempts)
     }
-    
+
     /// Calculate current array density for adaptive algorithm selection
     fn calculate_array_density(&self) -> f64 {
         let capacity = self.capacity();
         if capacity == 0 {
             return 0.0;
         }
-        
+
         // Sample up to 10,000 states to estimate density efficiently
         let sample_size = std::cmp::min(capacity, 10000);
         let mut free_count = 0;
-        
+
         for state_id in 0..sample_size {
             if self.is_free(state_id as u32) {
                 free_count += 1;
             }
         }
-        
+
         1.0 - (free_count as f64 / sample_size as f64)
     }
-    
+
     /// Gap-based base selection strategy - finds gaps in the array for better distribution
-    fn find_base_with_gap_strategy(&self, symbols: &[u8], min_base: u32, max_attempts: u32) -> Result<u32> {
+    fn find_base_with_gap_strategy(
+        &self,
+        symbols: &[u8],
+        min_base: u32,
+        max_attempts: u32,
+    ) -> Result<u32> {
         let capacity = self.capacity() as u32;
-        let symbol_range = if symbols.is_empty() { 
-            0 
-        } else { 
-            (*symbols.iter().max().unwrap() as u32).saturating_sub(*symbols.iter().min().unwrap() as u32) + 1
+        let symbol_range = if symbols.is_empty() {
+            0
+        } else {
+            (*symbols.iter().max().unwrap() as u32)
+                .saturating_sub(*symbols.iter().min().unwrap() as u32)
+                + 1
         };
-        
+
         // Look for gaps in the array that can accommodate all symbols
         let mut base = min_base;
         let mut attempts = 0;
-        
+
         // Skip ahead by symbol_range to reduce clustering
         let skip_size = std::cmp::max(symbol_range, 16);
-        
+
         while attempts < max_attempts && base < capacity.saturating_sub(256) {
             attempts += 1;
-            
+
             // Check if this base works for all symbols
             if self.base_fits_all_symbols(base, symbols)? {
                 return Ok(base);
             }
-            
+
             // Find next potential gap by skipping ahead
             base += skip_size;
-            
+
             // Add a small prime-based offset to break clustering patterns
             base += (base % 17) + 1;
         }
-        
+
         Err(ZiporaError::trie("Gap strategy failed to find valid base"))
     }
-    
+
     /// Improved heuristic with better collision prediction
-    fn find_base_with_improved_heuristic(&self, state: StateId, symbols: &[u8], min_base: u32, max_attempts: u32) -> Result<u32> {
+    fn find_base_with_improved_heuristic(
+        &self,
+        state: StateId,
+        symbols: &[u8],
+        min_base: u32,
+        max_attempts: u32,
+    ) -> Result<u32> {
         // Start with an improved heuristic base estimation
         let mut base = self.improved_heuristic_base_estimation(state, symbols, min_base);
         let mut attempts = 0;
-        
+
         while attempts < max_attempts {
             attempts += 1;
-            
+
             if base >= u32::MAX - 256 {
                 return Err(ZiporaError::trie("Cannot find valid base - overflow"));
             }
-            
+
             // Check if this base works for all symbols
             let mut collision_found = false;
             let mut collision_targets = Vec::new();
-            
+
             for &symbol in symbols {
                 let target = base.wrapping_add(symbol as u32);
-                
+
                 // Check if target state is available
                 if target as usize >= self.capacity() {
                     continue; // Can extend capacity
                 }
-                
+
                 if !self.is_free(target) || (target == 0 && symbol != 0) {
                     collision_found = true;
                     collision_targets.push(target);
                 }
             }
-            
+
             if !collision_found {
                 return Ok(base);
             }
-            
+
             // Smart collision avoidance: jump past the highest collision point
             if let Some(&max_collision) = collision_targets.iter().max() {
                 let jump_distance = std::cmp::max(max_collision.saturating_sub(base) + 1, 8);
                 base = base.saturating_add(jump_distance);
-                
+
                 // Add entropy to break collision patterns
                 base += ((base * 31) % 23) + 1; // Better distribution than simple modulo
             } else {
                 base += 1;
             }
-            
+
             if base == 0 {
                 return Err(ZiporaError::trie("Base overflow"));
             }
         }
-        
-        Err(ZiporaError::trie("Improved heuristic failed to find valid base"))
+
+        Err(ZiporaError::trie(
+            "Improved heuristic failed to find valid base",
+        ))
     }
-    
+
     /// Original linear search algorithm with error handling
-    fn find_base_linear_search(&self, symbols: &[u8], min_base: u32, max_attempts: u32) -> Result<u32> {
+    fn find_base_linear_search(
+        &self,
+        symbols: &[u8],
+        min_base: u32,
+        max_attempts: u32,
+    ) -> Result<u32> {
         let mut base = min_base;
         let mut attempts = 0;
-        
+
         while attempts < max_attempts {
             attempts += 1;
-            
+
             if base >= u32::MAX - 256 {
                 return Err(ZiporaError::trie("Cannot find valid base - overflow"));
             }
-            
+
             // Check if this base works for all symbols
             if self.base_fits_all_symbols(base, symbols)? {
                 return Ok(base);
             }
-            
+
             base += 1;
             if base == 0 {
                 return Err(ZiporaError::trie("Base overflow"));
             }
         }
-        
-        Err(ZiporaError::trie("Cannot find valid base - too many collisions"))
+
+        Err(ZiporaError::trie(
+            "Cannot find valid base - too many collisions",
+        ))
     }
-    
+
     /// Check if a base value fits all symbols without collisions
     fn base_fits_all_symbols(&self, base: u32, symbols: &[u8]) -> Result<bool> {
         for &symbol in symbols {
             let target = base.wrapping_add(symbol as u32);
-            
+
             // Ensure we don't go out of bounds
             if target >= u32::MAX - 256 {
                 return Ok(false);
             }
-            
+
             // Check if target state is available
             if target as usize >= self.capacity() {
                 continue; // Can extend capacity
             }
-            
+
             // Check if target state is free and not the root state (unless base != target)
             if !self.is_free(target) || (target == 0 && symbol != 0) {
                 return Ok(false);
@@ -811,9 +850,14 @@ impl DoubleArrayTrie {
         }
         Ok(true)
     }
-    
+
     /// Improved heuristic base estimation with better distribution
-    fn improved_heuristic_base_estimation(&self, _state: StateId, symbols: &[u8], min_base: u32) -> u32 {
+    fn improved_heuristic_base_estimation(
+        &self,
+        _state: StateId,
+        symbols: &[u8],
+        min_base: u32,
+    ) -> u32 {
         if symbols.is_empty() {
             return min_base;
         }
@@ -822,52 +866,56 @@ impl DoubleArrayTrie {
         let min_symbol = *symbols.iter().min().unwrap_or(&0) as u32;
         let symbol_range = max_symbol.saturating_sub(min_symbol) + 1;
         let capacity = self.capacity() as u32;
-        
+
         // Estimate a good starting position based on multiple factors
         let density = self.calculate_array_density();
-        
+
         // For low density, use simple spacing
         if density < 0.05 {
             return std::cmp::max(min_base, symbol_range * 2);
         }
-        
+
         // For medium density, look for less dense regions
         let probe_start = std::cmp::max(min_base, capacity / 4);
         let probe_end = std::cmp::min(capacity.saturating_sub(256), capacity * 3 / 4);
         let probe_step = std::cmp::max(symbol_range + 8, 32);
-        
+
         let mut best_base = min_base;
         let mut lowest_collision_count = u32::MAX;
-        
+
         // Sample several positions to find the least dense area
         for probe in (probe_start..probe_end).step_by(probe_step as usize) {
             let mut collision_count = 0;
-            
+
             for &symbol in symbols {
                 let target = probe.wrapping_add(symbol as u32);
                 if target < capacity && !self.is_free(target) {
                     collision_count += 1;
                 }
             }
-            
+
             if collision_count < lowest_collision_count {
                 lowest_collision_count = collision_count;
                 best_base = probe;
-                
+
                 if collision_count == 0 {
                     break; // Found perfect spot
                 }
             }
         }
-        
+
         std::cmp::max(best_base, min_base)
     }
 
-    
     /// Relocate existing transitions to use a new base
-    fn relocate_transitions(&mut self, from_state: StateId, symbols: &[u8], new_base: u32) -> Result<()> {
+    fn relocate_transitions(
+        &mut self,
+        from_state: StateId,
+        symbols: &[u8],
+        new_base: u32,
+    ) -> Result<()> {
         let old_base = self.base[from_state as usize];
-        
+
         // Save the old transitions with their complete state
         let mut old_transitions = Vec::new();
         for &symbol in symbols {
@@ -878,12 +926,12 @@ impl DoubleArrayTrie {
                 old_transitions.push((symbol, old_target, is_terminal, target_base));
             }
         }
-        
+
         // Create new transitions and preserve subtree structure
         for (symbol, old_target, is_terminal, target_base) in old_transitions {
             let new_target = new_base.wrapping_add(symbol as u32);
             self.ensure_capacity((new_target + 1) as usize)?;
-            
+
             // Copy the complete state to new location
             self.base[new_target as usize] = target_base;
             self.set_parent(new_target, from_state);
@@ -891,7 +939,7 @@ impl DoubleArrayTrie {
             if is_terminal {
                 self.set_terminal(new_target, true);
             }
-            
+
             // Update children to point to new parent
             for child_symbol in 0u8..=255u8 {
                 let child = target_base.wrapping_add(child_symbol as u32);
@@ -902,21 +950,20 @@ impl DoubleArrayTrie {
                     }
                 }
             }
-            
+
             // Free the old target state after copying
             self.set_free(old_target, true);
             self.set_terminal(old_target, false);
         }
-        
+
         Ok(())
     }
-
 }
 
 impl Trie for DoubleArrayTrie {
     fn insert(&mut self, key: &[u8]) -> Result<StateId> {
         let result = self.simple_insert(key);
-        
+
         // Optimize memory usage for small tries after insertions
         if self.config.auto_shrink && self.num_keys > 0 && self.num_keys % 10 == 0 {
             // Periodically optimize memory usage during construction
@@ -924,7 +971,7 @@ impl Trie for DoubleArrayTrie {
                 self.shrink_to_fit();
             }
         }
-        
+
         result
     }
 
@@ -969,21 +1016,23 @@ impl StatisticsProvider for DoubleArrayTrie {
                 bits_per_key: 0.0,
             };
         }
-        
+
         // Count actual used states with bounds checking
         let total_states = std::cmp::min(self.base.len(), self.check.len());
-        let free_states = self.check.iter()
+        let free_states = self
+            .check
+            .iter()
             .take(total_states)
             .filter(|&&c| c & FREE_FLAG != 0)
             .count();
         let used_states = total_states.saturating_sub(free_states);
-        
+
         // Use actual length, not capacity, to avoid inflated memory usage
         // Apply reference implementation pattern: sum of component sizes
         let base_memory = self.base.len() * std::mem::size_of::<u32>();
         let check_memory = self.check.len() * std::mem::size_of::<u32>();
         let actual_memory_usage = base_memory + check_memory;
-        
+
         let mut stats = TrieStats {
             num_states: used_states,
             num_keys: self.num_keys,
@@ -993,7 +1042,7 @@ impl StatisticsProvider for DoubleArrayTrie {
             memory_usage: actual_memory_usage,
             bits_per_key: 0.0,
         };
-        
+
         // Calculate transitions only for used states with bounds checking
         for state in 0..total_states {
             if !self.is_free(state as StateId) {
@@ -1004,12 +1053,12 @@ impl StatisticsProvider for DoubleArrayTrie {
                 }
             }
         }
-        
+
         // Only calculate bits per key if we have keys
         if self.num_keys > 0 {
             stats.calculate_bits_per_key();
         }
-        
+
         stats
     }
 }
@@ -1021,15 +1070,15 @@ impl DoubleArrayTrie {
         if self.config.cache_aligned {
             self.align_for_cache_efficiency()?;
         }
-        
+
         // Shrink to optimal size
         if self.config.auto_shrink {
             self.shrink_to_fit();
         }
-        
+
         // Validate construction consistency (defensive programming)
         self.validate_construction_integrity()?;
-        
+
         Ok(())
     }
 
@@ -1037,11 +1086,11 @@ impl DoubleArrayTrie {
     fn align_for_cache_efficiency(&mut self) -> Result<()> {
         let current_capacity = self.capacity();
         let aligned_capacity = Self::align_capacity(current_capacity);
-        
+
         if aligned_capacity != current_capacity {
             self.ensure_capacity(aligned_capacity)?;
         }
-        
+
         Ok(())
     }
 
@@ -1051,14 +1100,15 @@ impl DoubleArrayTrie {
         if self.base.len() != self.check.len() {
             return Err(ZiporaError::trie("Array length mismatch"));
         }
-        
+
         // Validate root state
         if self.is_free(ROOT_STATE) {
             return Err(ZiporaError::trie("Root state incorrectly marked as free"));
         }
-        
+
         // Validate non-free states have proper parent relationships
-        for state in 0..std::cmp::min(self.capacity(), 1000) { // Limit validation for performance
+        for state in 0..std::cmp::min(self.capacity(), 1000) {
+            // Limit validation for performance
             if !self.is_free(state as StateId) && state != ROOT_STATE as usize {
                 let parent = self.get_parent(state as StateId);
                 if parent != NULL_STATE && parent >= self.capacity() as StateId {
@@ -1066,7 +1116,7 @@ impl DoubleArrayTrie {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -1075,21 +1125,27 @@ impl DoubleArrayTrie {
         // Use consistent calculations with stats() method
         let total_length = std::cmp::min(self.base.len(), self.check.len());
         let used_states = if total_length > 0 {
-            total_length - self.check.iter().take(total_length).filter(|&&c| c & FREE_FLAG != 0).count()
+            total_length
+                - self
+                    .check
+                    .iter()
+                    .take(total_length)
+                    .filter(|&&c| c & FREE_FLAG != 0)
+                    .count()
         } else {
             0
         };
-        
+
         // Memory usage based on actual lengths, not capacities
         let actual_memory = self.base.len() * 4 + self.check.len() * 4;
-        
+
         // Memory efficiency calculation with bounds checking
         let memory_efficiency = if actual_memory > 0 {
             (used_states * 8) as f64 / actual_memory as f64
         } else {
             0.0
         };
-        
+
         let base_memory = self.base.len() * 4;
         let check_memory = self.check.len() * 4;
         (base_memory, check_memory, memory_efficiency)
@@ -1147,66 +1203,68 @@ impl DoubleArrayTrieBuilder {
         I: IntoIterator<Item = Vec<u8>>,
     {
         let keys_vec: Vec<_> = keys.into_iter().collect();
-        
+
         if keys_vec.is_empty() {
             return Ok(DoubleArrayTrie::with_config(self.config));
         }
 
         // Advanced capacity estimation based on key characteristics
         let total_chars: usize = keys_vec.iter().map(|k| k.len()).sum();
-        let avg_depth = if keys_vec.is_empty() { 
-            1.0 
-        } else { 
-            total_chars as f32 / keys_vec.len() as f32 
+        let avg_depth = if keys_vec.is_empty() {
+            1.0
+        } else {
+            total_chars as f32 / keys_vec.len() as f32
         };
-        
+
         let estimated_capacity = DoubleArrayTrie::estimate_capacity(keys_vec.len(), avg_depth);
         let mut config = self.config.clone();
         config.initial_capacity = estimated_capacity;
-        
+
         // Use BFS construction for better cache locality and collision reduction
         Self::build_with_bfs_construction_static(keys_vec, config)
     }
 
     /// Optimized BFS construction algorithm for sorted keys
     fn build_with_bfs_construction_static(
-        keys: Vec<Vec<u8>>, 
-        config: DoubleArrayTrieConfig
+        keys: Vec<Vec<u8>>,
+        config: DoubleArrayTrieConfig,
     ) -> Result<DoubleArrayTrie> {
         let mut trie = DoubleArrayTrie::with_config(config);
-        
+
         if keys.is_empty() {
             return Ok(trie);
         }
 
         // Multi-layered error handling and validation
         Self::validate_keys_static(&keys)?;
-        
+
         // For now, fall back to the proven simple insertion method
         // The BFS approach can be optimized in a future iteration
         for key in keys {
             trie.insert(&key)?;
         }
-        
+
         // Post-construction optimizations
         trie.post_construction_optimize()?;
-        
+
         Ok(trie)
     }
-    
+
     /// Validate input keys for construction
     fn validate_keys_static(keys: &[Vec<u8>]) -> Result<()> {
         if keys.len() > u32::MAX as usize / 4 {
             return Err(ZiporaError::trie("Too many keys for construction"));
         }
-        
+
         // Verify keys are actually sorted (defensive check)
         for window in keys.windows(2) {
             if window[0] > window[1] {
-                return Err(ZiporaError::trie("Keys must be sorted for optimized construction"));
+                return Err(ZiporaError::trie(
+                    "Keys must be sorted for optimized construction",
+                ));
             }
         }
-        
+
         Ok(())
     }
 
@@ -1228,12 +1286,12 @@ impl DoubleArrayTrieBuilder {
         let mut sorted_keys: Vec<Vec<u8>> = keys.into_iter().collect();
         sorted_keys.sort();
         sorted_keys.dedup();
-        
+
         // Pre-optimize capacity based on actual key count
         let mut config = self.config;
         let estimated_capacity = std::cmp::max(sorted_keys.len() * 2 + 64, 64);
         config.initial_capacity = std::cmp::min(config.initial_capacity, estimated_capacity);
-        
+
         let builder = DoubleArrayTrieBuilder::with_config(config);
         builder.build_from_sorted(sorted_keys)
     }
@@ -1246,7 +1304,7 @@ impl Default for DoubleArrayTrieBuilder {
 }
 
 /// Thread-safe iterator for traversing all keys with a given prefix
-/// 
+///
 /// This implementation uses lazy evaluation with independent state per iterator
 /// to ensure thread safety during concurrent access, following patterns from
 /// the reference implementation for concurrent FSA operations.
@@ -1298,26 +1356,27 @@ impl<'a> Iterator for DoubleArrayTriePrefixIterator<'a> {
                 self.stack.push((current_state, current_path.clone(), 1));
                 return Some(current_path);
             }
-            
+
             // Get all transitions from current state using thread-safe operation
             let transitions: Vec<_> = self.trie.transitions(current_state).collect();
-            
+
             // Find next unvisited child
             if child_index > 0 {
                 let child_idx = child_index - 1;
                 if child_idx < transitions.len() {
                     let (symbol, next_state) = transitions[child_idx];
-                    
+
                     // Push next sibling for later exploration
                     if child_index < transitions.len() {
-                        self.stack.push((current_state, current_path.clone(), child_index + 1));
+                        self.stack
+                            .push((current_state, current_path.clone(), child_index + 1));
                     }
-                    
+
                     // Create path to child and push for exploration
                     let mut child_path = current_path;
                     child_path.push(symbol);
                     self.stack.push((next_state, child_path, 0));
-                } 
+                }
             } else if !transitions.is_empty() {
                 // Start exploring first child
                 self.stack.push((current_state, current_path, 1));
@@ -1349,14 +1408,14 @@ mod tests {
     #[test]
     fn test_basic_insertion_and_lookup() {
         let mut trie = DoubleArrayTrie::new();
-        
+
         // Insert some keys
         assert!(trie.insert(b"hello").is_ok());
         assert!(trie.insert(b"world").is_ok());
         assert!(trie.insert(b"help").is_ok());
-        
+
         assert_eq!(trie.len(), 3);
-        
+
         // Test lookups
         assert!(trie.contains(b"hello"));
         assert!(trie.contains(b"world"));
@@ -1368,11 +1427,11 @@ mod tests {
     #[test]
     fn test_prefix_relationships() {
         let mut trie = DoubleArrayTrie::new();
-        
+
         trie.insert(b"app").unwrap();
         trie.insert(b"apple").unwrap();
         trie.insert(b"application").unwrap();
-        
+
         assert!(trie.contains(b"app"));
         assert!(trie.contains(b"apple"));
         assert!(trie.contains(b"application"));
@@ -1383,7 +1442,7 @@ mod tests {
     #[test]
     fn test_empty_key() {
         let mut trie = DoubleArrayTrie::new();
-        
+
         trie.insert(b"").unwrap();
         assert!(trie.contains(b""));
         assert_eq!(trie.len(), 1);
@@ -1393,10 +1452,10 @@ mod tests {
     fn test_state_transitions() {
         let mut trie = DoubleArrayTrie::new();
         trie.insert(b"hello").unwrap();
-        
+
         let mut state = trie.root();
         assert_eq!(state, ROOT_STATE);
-        
+
         // Follow the path for "hello"
         for &symbol in b"hello" {
             if let Some(next_state) = trie.transition(state, symbol) {
@@ -1405,7 +1464,7 @@ mod tests {
                 panic!("Transition failed for symbol {}", symbol as char);
             }
         }
-        
+
         assert!(trie.is_final(state));
     }
 
@@ -1414,7 +1473,7 @@ mod tests {
         let mut trie = DoubleArrayTrie::new();
         trie.insert(b"test").unwrap();
         trie.insert(b"testing").unwrap();
-        
+
         assert!(trie.accepts(b"test"));
         assert!(trie.accepts(b"testing"));
         assert!(!trie.accepts(b"tes"));
@@ -1430,11 +1489,11 @@ mod tests {
             b"cat".to_vec(),
             b"dog".to_vec(),
         ];
-        
+
         let trie = DoubleArrayTrieBuilder::new()
             .build_from_sorted(keys.clone())
             .unwrap();
-        
+
         assert_eq!(trie.len(), 5);
         for key in keys {
             assert!(trie.contains(&key));
@@ -1450,11 +1509,11 @@ mod tests {
             b"application".to_vec(),
             b"apply".to_vec(),
         ];
-        
+
         let trie = DoubleArrayTrieBuilder::new()
             .build_from_unsorted(keys.clone())
             .unwrap();
-        
+
         assert_eq!(trie.len(), 5);
         for key in keys {
             assert!(trie.contains(&key));
@@ -1469,13 +1528,13 @@ mod tests {
         trie.insert(b"application").unwrap();
         trie.insert(b"apply").unwrap();
         trie.insert(b"banana").unwrap();
-        
+
         let app_prefixed: Vec<Vec<u8>> = trie.iter_prefix(b"app").collect();
         assert_eq!(app_prefixed.len(), 4);
-        
+
         let apple_prefixed: Vec<Vec<u8>> = trie.iter_prefix(b"apple").collect();
         assert_eq!(apple_prefixed.len(), 1);
-        
+
         let all_keys: Vec<Vec<u8>> = trie.iter_all().collect();
         assert_eq!(all_keys.len(), 5);
     }
@@ -1486,12 +1545,12 @@ mod tests {
         trie.insert(b"hello").unwrap();
         trie.insert(b"world").unwrap();
         trie.shrink_to_fit(); // Optimize memory
-        
+
         let stats = trie.stats();
         assert_eq!(stats.num_keys, 2);
         assert!(stats.memory_usage > 0);
         assert!(stats.bits_per_key > 0.0);
-        
+
         // Check memory efficiency
         let (total_memory, used_states, efficiency) = trie.memory_stats();
         assert!(total_memory > 0);
@@ -1504,11 +1563,11 @@ mod tests {
         let mut trie = DoubleArrayTrie::new();
         trie.insert(b"hello").unwrap();
         trie.insert(b"help").unwrap();
-        
+
         let root = trie.root();
         assert!(!trie.is_leaf(root));
         assert!(trie.out_degree(root) > 0);
-        
+
         let symbols = trie.out_symbols(root);
         assert!(symbols.contains(&b'h'));
     }
@@ -1522,14 +1581,14 @@ mod tests {
             auto_shrink: false,
             ..Default::default()
         };
-        
+
         let trie = DoubleArrayTrie::with_config(config);
         assert_eq!(trie.capacity(), 2048);
         assert!(!trie.config().use_memory_pool);
         assert!(!trie.config().enable_simd);
         assert!(!trie.config().auto_shrink);
     }
-    
+
     #[test]
     fn test_compact_constructor() {
         let trie = DoubleArrayTrie::new_compact();
@@ -1537,25 +1596,25 @@ mod tests {
         assert!(trie.config().auto_shrink);
         assert!(trie.is_empty());
     }
-    
+
     #[test]
     fn test_memory_optimization() {
         let mut trie = DoubleArrayTrie::new_compact();
-        
+
         // Insert a few keys
         trie.insert(b"test").unwrap();
         trie.insert(b"testing").unwrap();
         trie.insert(b"tester").unwrap();
-        
+
         let initial_capacity = trie.capacity();
-        
+
         // Manually trigger shrink
         trie.shrink_to_fit();
-        
+
         // Should be more memory efficient
         assert!(trie.capacity() <= initial_capacity);
         assert_eq!(trie.len(), 3);
-        
+
         // Verify functionality is preserved
         assert!(trie.contains(b"test"));
         assert!(trie.contains(b"testing"));
@@ -1566,21 +1625,21 @@ mod tests {
     #[test]
     fn test_large_dataset() {
         let mut trie = DoubleArrayTrie::new();
-        
+
         // Insert 1000 keys
         for i in 0..1000 {
             let key = format!("key_{:06}", i);
             trie.insert(key.as_bytes()).unwrap();
         }
-        
+
         assert_eq!(trie.len(), 1000);
-        
+
         // Verify all keys exist
         for i in 0..1000 {
             let key = format!("key_{:06}", i);
             assert!(trie.contains(key.as_bytes()));
         }
-        
+
         // Verify non-existent keys
         assert!(!trie.contains(b"key_1000000"));
         assert!(!trie.contains(b"nonexistent"));
@@ -1589,34 +1648,34 @@ mod tests {
     #[test]
     fn test_duplicate_insertions() {
         let mut trie = DoubleArrayTrie::new();
-        
+
         trie.insert(b"duplicate").unwrap();
         assert_eq!(trie.len(), 1);
-        
+
         // Insert same key again
         trie.insert(b"duplicate").unwrap();
         assert_eq!(trie.len(), 1); // Should not increase
-        
+
         assert!(trie.contains(b"duplicate"));
     }
 
     #[test]
     fn test_unicode_keys() {
         let mut trie = DoubleArrayTrie::new();
-        
+
         let unicode_keys = vec![
             "hello".as_bytes(),
             "世界".as_bytes(),
             "🌍".as_bytes(),
             "café".as_bytes(),
         ];
-        
+
         for key in &unicode_keys {
             trie.insert(key).unwrap();
         }
-        
+
         assert_eq!(trie.len(), 4);
-        
+
         for key in &unicode_keys {
             assert!(trie.contains(key));
         }

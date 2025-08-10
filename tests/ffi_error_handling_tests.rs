@@ -74,7 +74,7 @@ mod ffi_error_tests {
     #[test]
     fn test_error_callback() {
         use std::sync::atomic::{AtomicPtr, Ordering};
-        
+
         static CALLBACK_CALLED: AtomicBool = AtomicBool::new(false);
         static CALLBACK_MESSAGE: Mutex<Option<String>> = Mutex::new(None);
 

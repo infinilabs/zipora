@@ -8,8 +8,8 @@
 //!
 //! Run with: cargo run --example simd_optimization_demo --features simd
 
-use zipora::{BitVector, RankSelect256, CpuFeatures, BitwiseOp};
 use std::time::Instant;
+use zipora::{BitVector, BitwiseOp, CpuFeatures, RankSelect256};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🚀 SIMD Optimization Demo - Advanced Hardware Acceleration");
@@ -22,7 +22,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let test_data = create_test_data(100_000);
     println!("📊 Created test dataset with {} bits", test_data.len());
     println!("   Set bits: {}", test_data.count_ones());
-    println!("   Density: {:.2}%\n", (test_data.count_ones() as f64 / test_data.len() as f64) * 100.0);
+    println!(
+        "   Density: {:.2}%\n",
+        (test_data.count_ones() as f64 / test_data.len() as f64) * 100.0
+    );
 
     // 3. Build RankSelect256 structure
     let rs = RankSelect256::new(test_data.clone())?;
@@ -45,13 +48,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn demonstrate_cpu_features() {
     println!("🔍 CPU Feature Detection");
     println!("========================");
-    
+
     let features = CpuFeatures::detect();
     println!("Detected CPU features:");
-    println!("  POPCNT: {}", if features.has_popcnt { "✅ Available" } else { "❌ Not available" });
-    println!("  BMI2:   {}", if features.has_bmi2 { "✅ Available" } else { "❌ Not available" });
-    println!("  AVX2:   {}", if features.has_avx2 { "✅ Available" } else { "❌ Not available" });
-    
+    println!(
+        "  POPCNT: {}",
+        if features.has_popcnt {
+            "✅ Available"
+        } else {
+            "❌ Not available"
+        }
+    );
+    println!(
+        "  BMI2:   {}",
+        if features.has_bmi2 {
+            "✅ Available"
+        } else {
+            "❌ Not available"
+        }
+    );
+    println!(
+        "  AVX2:   {}",
+        if features.has_avx2 {
+            "✅ Available"
+        } else {
+            "❌ Not available"
+        }
+    );
+
     println!("\nOptimization levels available:");
     if features.has_popcnt {
         println!("  📈 Hardware POPCNT: 2-5x faster rank operations");
@@ -70,7 +94,7 @@ fn demonstrate_cpu_features() {
 
 fn create_test_data(size: usize) -> BitVector {
     let mut bv = BitVector::new();
-    
+
     // Create varied density patterns to test different scenarios
     for i in 0..size {
         let bit = match i % 10000 {
@@ -81,7 +105,7 @@ fn create_test_data(size: usize) -> BitVector {
         };
         bv.push(bit).unwrap();
     }
-    
+
     bv
 }
 
@@ -93,7 +117,11 @@ fn demonstrate_rank_performance(rs: &RankSelect256) {
     let test_positions: Vec<usize> = (0..rs.len()).step_by(rs.len() / 1000).collect();
     let iterations = 1000;
 
-    println!("Testing {} rank operations across {} iterations...", test_positions.len(), iterations);
+    println!(
+        "Testing {} rank operations across {} iterations...",
+        test_positions.len(),
+        iterations
+    );
 
     // Baseline: Optimized lookup table implementation
     let start = Instant::now();
@@ -123,9 +151,18 @@ fn demonstrate_rank_performance(rs: &RankSelect256) {
     let adaptive_time = start.elapsed();
 
     println!("Results:");
-    println!("  Lookup tables:      {:8.2} ms", lookup_time.as_secs_f64() * 1000.0);
-    println!("  Hardware-accel:     {:8.2} ms", hardware_time.as_secs_f64() * 1000.0);
-    println!("  Adaptive (best):    {:8.2} ms", adaptive_time.as_secs_f64() * 1000.0);
+    println!(
+        "  Lookup tables:      {:8.2} ms",
+        lookup_time.as_secs_f64() * 1000.0
+    );
+    println!(
+        "  Hardware-accel:     {:8.2} ms",
+        hardware_time.as_secs_f64() * 1000.0
+    );
+    println!(
+        "  Adaptive (best):    {:8.2} ms",
+        adaptive_time.as_secs_f64() * 1000.0
+    );
 
     if hardware_time < lookup_time {
         let speedup = lookup_time.as_secs_f64() / hardware_time.as_secs_f64();
@@ -150,7 +187,11 @@ fn demonstrate_select_performance(rs: &RankSelect256) {
     let test_ks: Vec<usize> = (0..ones_count).step_by(ones_count.max(1) / 500).collect();
     let iterations = 500;
 
-    println!("Testing {} select operations across {} iterations...", test_ks.len(), iterations);
+    println!(
+        "Testing {} select operations across {} iterations...",
+        test_ks.len(),
+        iterations
+    );
 
     // Baseline: Optimized lookup table implementation
     let start = Instant::now();
@@ -180,9 +221,18 @@ fn demonstrate_select_performance(rs: &RankSelect256) {
     let adaptive_time = start.elapsed();
 
     println!("Results:");
-    println!("  Lookup tables:      {:8.2} ms", lookup_time.as_secs_f64() * 1000.0);
-    println!("  Hardware-accel:     {:8.2} ms", hardware_time.as_secs_f64() * 1000.0);
-    println!("  Adaptive (best):    {:8.2} ms", adaptive_time.as_secs_f64() * 1000.0);
+    println!(
+        "  Lookup tables:      {:8.2} ms",
+        lookup_time.as_secs_f64() * 1000.0
+    );
+    println!(
+        "  Hardware-accel:     {:8.2} ms",
+        hardware_time.as_secs_f64() * 1000.0
+    );
+    println!(
+        "  Adaptive (best):    {:8.2} ms",
+        adaptive_time.as_secs_f64() * 1000.0
+    );
 
     if hardware_time < lookup_time {
         let speedup = lookup_time.as_secs_f64() / hardware_time.as_secs_f64();
@@ -199,7 +249,10 @@ fn demonstrate_simd_bulk_operations(mut test_data: BitVector) {
 
     // 1. Bulk rank operations
     let positions: Vec<usize> = (0..test_data.len()).step_by(1000).collect();
-    println!("Testing bulk rank operations on {} positions...", positions.len());
+    println!(
+        "Testing bulk rank operations on {} positions...",
+        positions.len()
+    );
 
     let start = Instant::now();
     let bulk_ranks = test_data.rank1_bulk_simd(&positions);
@@ -209,11 +262,20 @@ fn demonstrate_simd_bulk_operations(mut test_data: BitVector) {
     let individual_ranks: Vec<usize> = positions.iter().map(|&pos| test_data.rank1(pos)).collect();
     let individual_time = start.elapsed();
 
-    println!("  Bulk SIMD:     {:8.2} ms", bulk_time.as_secs_f64() * 1000.0);
-    println!("  Individual:    {:8.2} ms", individual_time.as_secs_f64() * 1000.0);
-    
+    println!(
+        "  Bulk SIMD:     {:8.2} ms",
+        bulk_time.as_secs_f64() * 1000.0
+    );
+    println!(
+        "  Individual:    {:8.2} ms",
+        individual_time.as_secs_f64() * 1000.0
+    );
+
     // Verify results match
-    assert_eq!(bulk_ranks, individual_ranks, "Bulk rank results must match individual results");
+    assert_eq!(
+        bulk_ranks, individual_ranks,
+        "Bulk rank results must match individual results"
+    );
     println!("  ✅ Results verified");
 
     if individual_time > bulk_time {
@@ -224,7 +286,7 @@ fn demonstrate_simd_bulk_operations(mut test_data: BitVector) {
     // 2. Range setting operations
     println!("\nTesting SIMD range setting...");
     let mut bv_copy = test_data.clone();
-    
+
     let start = Instant::now();
     bv_copy.set_range_simd(1000, 5000, true).unwrap();
     let simd_time = start.elapsed();
@@ -236,12 +298,23 @@ fn demonstrate_simd_bulk_operations(mut test_data: BitVector) {
     }
     let individual_time = start.elapsed();
 
-    println!("  SIMD range:    {:8.2} ms", simd_time.as_secs_f64() * 1000.0);
-    println!("  Individual:    {:8.2} ms", individual_time.as_secs_f64() * 1000.0);
+    println!(
+        "  SIMD range:    {:8.2} ms",
+        simd_time.as_secs_f64() * 1000.0
+    );
+    println!(
+        "  Individual:    {:8.2} ms",
+        individual_time.as_secs_f64() * 1000.0
+    );
 
     // Verify results match
     for i in 1000..5000 {
-        assert_eq!(bv_copy.get(i), bv_individual.get(i), "Range setting results must match at position {}", i);
+        assert_eq!(
+            bv_copy.get(i),
+            bv_individual.get(i),
+            "Range setting results must match at position {}",
+            i
+        );
     }
     println!("  ✅ Results verified");
 
@@ -259,7 +332,9 @@ fn demonstrate_simd_bulk_operations(mut test_data: BitVector) {
 
     let mut bv_simd = test_data.clone();
     let start = Instant::now();
-    bv_simd.bulk_bitwise_op_simd(&other_bv, BitwiseOp::And, 0, 10000).unwrap();
+    bv_simd
+        .bulk_bitwise_op_simd(&other_bv, BitwiseOp::And, 0, 10000)
+        .unwrap();
     let simd_time = start.elapsed();
 
     let mut bv_individual = test_data.clone();
@@ -271,12 +346,23 @@ fn demonstrate_simd_bulk_operations(mut test_data: BitVector) {
     }
     let individual_time = start.elapsed();
 
-    println!("  SIMD bitwise:  {:8.2} ms", simd_time.as_secs_f64() * 1000.0);
-    println!("  Individual:    {:8.2} ms", individual_time.as_secs_f64() * 1000.0);
+    println!(
+        "  SIMD bitwise:  {:8.2} ms",
+        simd_time.as_secs_f64() * 1000.0
+    );
+    println!(
+        "  Individual:    {:8.2} ms",
+        individual_time.as_secs_f64() * 1000.0
+    );
 
     // Verify results match
     for i in 0..10000 {
-        assert_eq!(bv_simd.get(i), bv_individual.get(i), "Bitwise operation results must match at position {}", i);
+        assert_eq!(
+            bv_simd.get(i),
+            bv_individual.get(i),
+            "Bitwise operation results must match at position {}",
+            i
+        );
     }
     println!("  ✅ Results verified");
 

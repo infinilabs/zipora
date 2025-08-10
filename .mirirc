@@ -1,0 +1,26 @@
+# Miri configuration for enhanced memory safety testing
+# This file configures Miri to provide comprehensive memory safety verification
+
+# Enable all safety checks
+flags = [
+    "-Zmiri-strict-provenance",    # Strict pointer provenance checking
+    "-Zmiri-symbolic-alignment-check",  # Check alignment symbolically
+    "-Zmiri-check-number-validity",     # Check for invalid bit patterns
+    "-Zmiri-disable-isolation",         # Allow file system access for tests
+    "-Zmiri-ignore-leaks",             # Ignore memory leaks in some tests
+]
+
+# Configure stacked borrows for better aliasing detection
+stacked-borrows = true
+
+# Enable tag tracking for better error messages
+track-raw-pointers = true
+
+# Increase stack size for complex tests
+stack-size = "2097152"  # 2MB stack
+
+# Configure seed for reproducible testing
+seed = 42
+
+# Enable backtrace for better debugging
+backtrace = "full"

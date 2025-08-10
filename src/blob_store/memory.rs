@@ -7,9 +7,9 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use crate::RecordId;
 use crate::blob_store::traits::{BatchBlobStore, BlobStore, BlobStoreStats, IterableBlobStore};
 use crate::error::{Result, ZiporaError};
-use crate::RecordId;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

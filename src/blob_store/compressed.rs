@@ -4,14 +4,14 @@
 //! algorithms including ZSTD, LZ4, and others for space-efficient storage.
 
 #[cfg(any(feature = "zstd", feature = "lz4"))]
+use crate::RecordId;
+#[cfg(any(feature = "zstd", feature = "lz4"))]
 use crate::blob_store::traits::{
     BatchBlobStore, BlobStore, BlobStoreStats, CompressedBlobStore, CompressionStats,
     IterableBlobStore,
 };
 #[cfg(any(feature = "zstd", feature = "lz4"))]
 use crate::error::{Result, ZiporaError};
-#[cfg(any(feature = "zstd", feature = "lz4"))]
-use crate::RecordId;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

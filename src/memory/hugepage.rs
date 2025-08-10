@@ -9,9 +9,9 @@ use std::fs;
 #[cfg(target_os = "linux")]
 use std::ptr::NonNull;
 #[cfg(target_os = "linux")]
-use std::sync::atomic::{AtomicUsize, Ordering};
-#[cfg(target_os = "linux")]
 use std::sync::Mutex;
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::error::{Result, ZiporaError};
 

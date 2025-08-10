@@ -62,18 +62,17 @@
 //! # Ok::<(), zipora::ZiporaError>(())
 //! ```
 
+use super::{
+    BuilderOptions, CpuFeatures, RankSelectBuilder, RankSelectMultiDimensional, RankSelectOps,
+};
+use crate::FastVec;
 use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;
-use crate::FastVec;
-use super::{
-    RankSelectOps, RankSelectMultiDimensional, RankSelectBuilder, BuilderOptions,
-    CpuFeatures
-};
 use std::fmt;
 
 // Hardware acceleration imports
 #[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::{_popcnt64, _pdep_u64};
+use std::arch::x86_64::{_pdep_u64, _popcnt64};
 
 // Implementation methods are included inline for now
 
@@ -91,8 +90,12 @@ pub struct MixedDimensionView<'a, const DIM: usize> {
 impl<'a, const DIM: usize> MixedDimensionView<'a, DIM> {
     /// Create a new dimension view for RankSelectMixedIL256
     pub fn new(parent: &'a RankSelectMixedIL256) -> Self {
-        assert!(DIM < 2, "Invalid dimension {} for dual-dimension structure", DIM);
-        Self { 
+        assert!(
+            DIM < 2,
+            "Invalid dimension {} for dual-dimension structure",
+            DIM
+        );
+        Self {
             parent_il256: Some(parent),
             parent_se512: None,
         }
@@ -100,8 +103,12 @@ impl<'a, const DIM: usize> MixedDimensionView<'a, DIM> {
 
     /// Create a new dimension view for RankSelectMixedSE512
     pub fn new_se512(parent: &'a RankSelectMixedSE512) -> Self {
-        assert!(DIM < 2, "Invalid dimension {} for dual-dimension structure", DIM);
-        Self { 
+        assert!(
+            DIM < 2,
+            "Invalid dimension {} for dual-dimension structure",
+            DIM
+        );
+        Self {
             parent_il256: None,
             parent_se512: Some(parent),
         }
@@ -136,7 +143,9 @@ impl<'a, const DIM: usize> MixedDimensionView<'a, DIM> {
         } else if let Some(parent) = self.parent_se512 {
             parent.select1_dimension(k, DIM)
         } else {
-            Err(ZiporaError::invalid_data("No parent structure available".to_string()))
+            Err(ZiporaError::invalid_data(
+                "No parent structure available".to_string(),
+            ))
         }
     }
 
@@ -207,7 +216,7 @@ impl<'a, const DIM: usize> MixedDimensionView<'a, DIM> {
 /// }
 ///
 /// let mixed_rs = RankSelectMixedIL256::new([bv1, bv2])?;
-/// 
+///
 /// // Query specific dimensions
 /// let rank_dim0 = mixed_rs.rank1_dim::<0>(500);
 /// let rank_dim1 = mixed_rs.rank1_dim::<1>(500);
@@ -229,7 +238,7 @@ pub struct RankSelectMixedIL256 {
 }
 
 /// Interleaved cache line for dual-dimension storage
-/// 
+///
 /// Combines rank metadata and bit data for both dimensions in a single
 /// cache-aligned structure for optimal memory access patterns.
 #[repr(C, align(32))]
@@ -255,7 +264,7 @@ const MULTI_BLOCK_SIZE: usize = 256;
 const MULTI_SELECT_SAMPLE_RATE: usize = 512;
 
 /// Interleaved rank metadata for multi-dimensional storage
-/// 
+///
 /// Combines rank information for multiple dimensions in a single
 /// cache-aligned structure for optimal memory access patterns.
 #[repr(C, align(64))]
@@ -291,7 +300,7 @@ struct InterleavedMultiRank<const ARITY: usize> {
 /// # Examples
 ///
 /// ```rust
-/// use zipora::{BitVector, RankSelectMixedSE512}; 
+/// use zipora::{BitVector, RankSelectMixedSE512};
 ///
 /// let mut bv1 = BitVector::new();
 /// let mut bv2 = BitVector::new();
@@ -301,7 +310,7 @@ struct InterleavedMultiRank<const ARITY: usize> {
 /// }
 ///
 /// let mixed_rs = RankSelectMixedSE512::new([bv1, bv2])?;
-/// 
+///
 /// // Efficient bulk operations
 /// let positions = vec![1000, 2000, 3000, 4000, 5000];
 /// let ranks_dim0 = mixed_rs.rank1_bulk_dim::<0>(&positions);
@@ -352,9 +361,9 @@ pub struct RankSelectMixedSE512 {
 ///
 /// // 3-dimensional analysis (e.g., user features: active, premium, mobile)
 /// let mut active_users = BitVector::new();
-/// let mut premium_users = BitVector::new(); 
+/// let mut premium_users = BitVector::new();
 /// let mut mobile_users = BitVector::new();
-/// 
+///
 /// for i in 0..10000 {
 ///     active_users.push(i % 5 != 0)?;    // 80% active
 ///     premium_users.push(i % 10 == 0)?;  // 10% premium
@@ -362,12 +371,12 @@ pub struct RankSelectMixedSE512 {
 /// }
 ///
 /// let mixed_rs = RankSelectMixedXL256::<3>::new([active_users, premium_users, mobile_users])?;
-/// 
+///
 /// // Multi-dimensional queries
 /// let active_count = mixed_rs.rank1_dimension::<0>(5000);
 /// let premium_count = mixed_rs.rank1_dimension::<1>(5000);
 /// let mobile_count = mixed_rs.rank1_dimension::<2>(5000);
-/// 
+///
 /// // Combined analysis
 /// let first_premium_mobile = mixed_rs.find_intersection(&[1, 2], 100)?;
 /// # Ok::<(), zipora::ZiporaError>(())
@@ -414,7 +423,7 @@ impl RankSelectMixedIL256 {
         // Validate input
         if bit_vectors[0].len() != bit_vectors[1].len() {
             return Err(ZiporaError::invalid_data(
-                "Both bit vectors must have the same length".to_string()
+                "Both bit vectors must have the same length".to_string(),
             ));
         }
 
@@ -424,14 +433,22 @@ impl RankSelectMixedIL256 {
             total_ones: [0, 0],
             interleaved_cache: FastVec::new(),
             select_caches: [
-                if enable_select_cache { Some(FastVec::new()) } else { None },
-                if enable_select_cache { Some(FastVec::new()) } else { None },
+                if enable_select_cache {
+                    Some(FastVec::new())
+                } else {
+                    None
+                },
+                if enable_select_cache {
+                    Some(FastVec::new())
+                } else {
+                    None
+                },
             ],
             select_sample_rate,
         };
 
         rs.build_interleaved_cache(&bit_vectors)?;
-        
+
         // Build select caches if enabled
         if enable_select_cache {
             rs.build_select_caches(&bit_vectors)?;
@@ -450,24 +467,24 @@ impl RankSelectMixedIL256 {
         self.interleaved_cache.reserve(num_blocks)?;
 
         let mut cumulative_ranks = [0u32, 0u32];
-        
+
         for block_idx in 0..num_blocks {
             let block_start_bit = block_idx * DUAL_BLOCK_SIZE;
             let block_end_bit = ((block_idx + 1) * DUAL_BLOCK_SIZE).min(self.total_bits);
-            
+
             // Count bits in this block for both dimensions
             let block_ranks = [
                 self.count_bits_in_range(&bit_vectors[0], block_start_bit, block_end_bit),
                 self.count_bits_in_range(&bit_vectors[1], block_start_bit, block_end_bit),
             ];
-            
+
             cumulative_ranks[0] += block_ranks[0] as u32;
             cumulative_ranks[1] += block_ranks[1] as u32;
-            
+
             // Extract bit data for this block
             let bits0 = self.extract_block_bits(&bit_vectors[0], block_start_bit, block_end_bit);
             let bits1 = self.extract_block_bits(&bit_vectors[1], block_start_bit, block_end_bit);
-            
+
             // Create interleaved cache line
             let cache_line = InterleavedDualLine {
                 rank0_lev1: cumulative_ranks[0],
@@ -476,7 +493,7 @@ impl RankSelectMixedIL256 {
                 bits0,
                 bits1,
             };
-            
+
             self.interleaved_cache.push(cache_line)?;
         }
 
@@ -486,7 +503,12 @@ impl RankSelectMixedIL256 {
 
     /// Count bits in a range using hardware acceleration when available
     #[inline]
-    fn count_bits_in_range(&self, bit_vector: &BitVector, start_bit: usize, end_bit: usize) -> usize {
+    fn count_bits_in_range(
+        &self,
+        bit_vector: &BitVector,
+        start_bit: usize,
+        end_bit: usize,
+    ) -> usize {
         let start_word = start_bit / 64;
         let end_word = (end_bit + 63) / 64;
         let blocks = bit_vector.blocks();
@@ -494,13 +516,13 @@ impl RankSelectMixedIL256 {
 
         for word_idx in start_word..end_word.min(blocks.len()) {
             let mut word = blocks[word_idx];
-            
+
             // Handle partial word at the beginning
             if word_idx == start_word && start_bit % 64 != 0 {
                 let start_bit_in_word = start_bit % 64;
                 word &= !((1u64 << start_bit_in_word) - 1);
             }
-            
+
             // Handle partial word at the end
             if word_idx * 64 + 64 > end_bit {
                 let end_bit_in_word = end_bit % 64;
@@ -509,7 +531,7 @@ impl RankSelectMixedIL256 {
                     word &= mask;
                 }
             }
-            
+
             count += self.popcount_hardware_accelerated(word) as usize;
         }
 
@@ -517,23 +539,28 @@ impl RankSelectMixedIL256 {
     }
 
     /// Extract bit data for a block into 3 × 64-bit words
-    fn extract_block_bits(&self, bit_vector: &BitVector, start_bit: usize, end_bit: usize) -> [u64; 3] {
+    fn extract_block_bits(
+        &self,
+        bit_vector: &BitVector,
+        start_bit: usize,
+        end_bit: usize,
+    ) -> [u64; 3] {
         let mut result = [0u64; 3];
         let blocks = bit_vector.blocks();
         let start_word = start_bit / 64;
-        
+
         // Copy up to 3 words (192 bits) for this block
         for i in 0..3 {
             let word_idx = start_word + i;
             if word_idx < blocks.len() {
                 let mut word = blocks[word_idx];
-                
+
                 // Handle partial word at the beginning
                 if i == 0 && start_bit % 64 != 0 {
                     let start_bit_in_word = start_bit % 64;
                     word &= !((1u64 << start_bit_in_word) - 1);
                 }
-                
+
                 // Handle partial word at the end
                 let bit_pos = (word_idx * 64).saturating_sub(start_bit);
                 if start_bit + bit_pos + 64 > end_bit {
@@ -543,11 +570,11 @@ impl RankSelectMixedIL256 {
                         word &= mask;
                     }
                 }
-                
+
                 result[i] = word;
             }
         }
-        
+
         result
     }
 
@@ -560,7 +587,7 @@ impl RankSelectMixedIL256 {
             {
                 x.count_ones()
             }
-            
+
             #[cfg(not(test))]
             {
                 if CpuFeatures::get().has_popcnt {
@@ -570,7 +597,7 @@ impl RankSelectMixedIL256 {
                 }
             }
         }
-        
+
         #[cfg(not(target_arch = "x86_64"))]
         {
             x.count_ones()
@@ -592,7 +619,12 @@ impl RankSelectMixedIL256 {
     }
 
     /// Build select cache for a specific dimension
-    fn build_select_cache_for_dimension(&self, cache: &mut FastVec<u32>, bit_vector: &BitVector, dim: usize) -> Result<()> {
+    fn build_select_cache_for_dimension(
+        &self,
+        cache: &mut FastVec<u32>,
+        bit_vector: &BitVector,
+        dim: usize,
+    ) -> Result<()> {
         let total_ones = self.total_ones[dim];
         if total_ones == 0 {
             return Ok(());
@@ -626,10 +658,12 @@ impl RankSelectMixedIL256 {
     /// Get memory usage in bytes
     pub fn memory_usage_bytes(&self) -> usize {
         let cache_size = self.interleaved_cache.len() * std::mem::size_of::<InterleavedDualLine>();
-        let select_cache_size = self.select_caches.iter()
+        let select_cache_size = self
+            .select_caches
+            .iter()
             .map(|cache| cache.as_ref().map(|c| c.len() * 4).unwrap_or(0))
             .sum::<usize>();
-        
+
         cache_size + select_cache_size + std::mem::size_of::<Self>()
     }
 
@@ -651,17 +685,21 @@ impl RankSelectMixedIL256 {
 
         let block_idx = index / DUAL_BLOCK_SIZE;
         let bit_offset_in_block = index % DUAL_BLOCK_SIZE;
-        
+
         if block_idx >= self.interleaved_cache.len() {
             return None;
         }
 
         let cache_line = &self.interleaved_cache[block_idx];
-        let bits = if dim == 0 { &cache_line.bits0 } else { &cache_line.bits1 };
-        
+        let bits = if dim == 0 {
+            &cache_line.bits0
+        } else {
+            &cache_line.bits1
+        };
+
         let word_idx = bit_offset_in_block / 64;
         let bit_idx = bit_offset_in_block % 64;
-        
+
         if word_idx < bits.len() {
             Some((bits[word_idx] >> bit_idx) & 1 == 1)
         } else {
@@ -676,11 +714,11 @@ impl RankSelectMixedIL256 {
         }
 
         let pos = pos.min(self.total_bits);
-        
+
         // Find containing block
         let block_idx = pos / DUAL_BLOCK_SIZE;
         let bit_offset_in_block = pos % DUAL_BLOCK_SIZE;
-        
+
         // Get rank up to start of this block
         let rank_before_block = if block_idx > 0 {
             let prev_cache_line = &self.interleaved_cache[block_idx - 1];
@@ -692,18 +730,22 @@ impl RankSelectMixedIL256 {
         } else {
             0
         };
-        
+
         // Count bits in current block up to position
         if block_idx < self.interleaved_cache.len() {
             let cache_line = &self.interleaved_cache[block_idx];
-            let bits = if dim == 0 { &cache_line.bits0 } else { &cache_line.bits1 };
-            
+            let bits = if dim == 0 {
+                &cache_line.bits0
+            } else {
+                &cache_line.bits1
+            };
+
             let mut rank_in_block = 0;
             let words_to_process = (bit_offset_in_block + 63) / 64;
-            
+
             for word_idx in 0..words_to_process.min(bits.len()) {
                 let mut word = bits[word_idx];
-                
+
                 // Handle partial word at the end
                 if word_idx == words_to_process - 1 {
                     let remaining_bits = bit_offset_in_block % 64;
@@ -712,10 +754,10 @@ impl RankSelectMixedIL256 {
                         word &= mask;
                     }
                 }
-                
+
                 rank_in_block += self.popcount_hardware_accelerated(word) as usize;
             }
-            
+
             rank_before_block + rank_in_block
         } else {
             rank_before_block
@@ -741,7 +783,7 @@ impl RankSelectMixedIL256 {
 
         // Binary search on rank blocks
         let block_idx = self.binary_search_rank_blocks(target_rank, dim);
-        
+
         let block_start_rank = if block_idx > 0 {
             let prev_cache_line = &self.interleaved_cache[block_idx - 1];
             if dim == 0 {
@@ -756,7 +798,7 @@ impl RankSelectMixedIL256 {
         let remaining_ones = target_rank - block_start_rank;
         let block_start_bit = block_idx * DUAL_BLOCK_SIZE;
         let block_end_bit = ((block_idx + 1) * DUAL_BLOCK_SIZE).min(self.total_bits);
-        
+
         self.select1_within_block(block_start_bit, block_end_bit, remaining_ones, dim)
     }
 
@@ -773,7 +815,13 @@ impl RankSelectMixedIL256 {
     }
 
     /// Linear search for select within a range
-    fn select1_linear_search(&self, start: usize, end: usize, target_rank: usize, dim: usize) -> Result<usize> {
+    fn select1_linear_search(
+        &self,
+        start: usize,
+        end: usize,
+        target_rank: usize,
+        dim: usize,
+    ) -> Result<usize> {
         let mut current_rank = self.rank1_dimension(start, dim);
 
         for pos in start..end {
@@ -785,24 +833,30 @@ impl RankSelectMixedIL256 {
             }
         }
 
-        Err(ZiporaError::invalid_data("Select position not found".to_string()))
+        Err(ZiporaError::invalid_data(
+            "Select position not found".to_string(),
+        ))
     }
 
     /// Get bit from dimension without bounds checking (internal use)
     fn get_dimension_bit_unchecked(&self, index: usize, dim: usize) -> bool {
         let block_idx = index / DUAL_BLOCK_SIZE;
         let bit_offset_in_block = index % DUAL_BLOCK_SIZE;
-        
+
         if block_idx >= self.interleaved_cache.len() {
             return false;
         }
 
         let cache_line = &self.interleaved_cache[block_idx];
-        let bits = if dim == 0 { &cache_line.bits0 } else { &cache_line.bits1 };
-        
+        let bits = if dim == 0 {
+            &cache_line.bits0
+        } else {
+            &cache_line.bits1
+        };
+
         let word_idx = bit_offset_in_block / 64;
         let bit_idx = bit_offset_in_block % 64;
-        
+
         if word_idx < bits.len() {
             (bits[word_idx] >> bit_idx) & 1 == 1
         } else {
@@ -814,7 +868,7 @@ impl RankSelectMixedIL256 {
     fn binary_search_rank_blocks(&self, target_rank: usize, dim: usize) -> usize {
         let mut left = 0;
         let mut right = self.interleaved_cache.len();
-        
+
         while left < right {
             let mid = left + (right - left) / 2;
             let cache_line = &self.interleaved_cache[mid];
@@ -823,38 +877,53 @@ impl RankSelectMixedIL256 {
             } else {
                 cache_line.rank1_lev1 as usize
             };
-            
+
             if rank < target_rank {
                 left = mid + 1;
             } else {
                 right = mid;
             }
         }
-        
+
         left
     }
 
     /// Search for the k-th set bit within a specific block
-    fn select1_within_block(&self, start_bit: usize, end_bit: usize, k: usize, dim: usize) -> Result<usize> {
+    fn select1_within_block(
+        &self,
+        start_bit: usize,
+        end_bit: usize,
+        k: usize,
+        dim: usize,
+    ) -> Result<usize> {
         if start_bit >= self.total_bits {
-            return Err(ZiporaError::invalid_data("Block start beyond bit vector".to_string()));
+            return Err(ZiporaError::invalid_data(
+                "Block start beyond bit vector".to_string(),
+            ));
         }
 
         let block_idx = start_bit / DUAL_BLOCK_SIZE;
         if block_idx >= self.interleaved_cache.len() {
-            return Err(ZiporaError::invalid_data("Block index out of range".to_string()));
+            return Err(ZiporaError::invalid_data(
+                "Block index out of range".to_string(),
+            ));
         }
 
         let cache_line = &self.interleaved_cache[block_idx];
-        let bits = if dim == 0 { &cache_line.bits0 } else { &cache_line.bits1 };
-        
+        let bits = if dim == 0 {
+            &cache_line.bits0
+        } else {
+            &cache_line.bits1
+        };
+
         let mut remaining_k = k;
         let start_word = (start_bit % DUAL_BLOCK_SIZE) / 64;
-        let end_word = ((end_bit - start_bit).min(DUAL_BLOCK_SIZE - (start_bit % DUAL_BLOCK_SIZE)) + 63) / 64;
-        
+        let end_word =
+            ((end_bit - start_bit).min(DUAL_BLOCK_SIZE - (start_bit % DUAL_BLOCK_SIZE)) + 63) / 64;
+
         for word_idx in start_word..end_word.min(bits.len()) {
             let mut word = bits[word_idx];
-            
+
             // Handle partial word at the beginning
             if word_idx == start_word {
                 let start_bit_in_word = start_bit % 64;
@@ -862,7 +931,7 @@ impl RankSelectMixedIL256 {
                     word &= !((1u64 << start_bit_in_word) - 1);
                 }
             }
-            
+
             // Handle partial word at the end
             let word_end_bit = start_bit + (word_idx - start_word + 1) * 64;
             if word_end_bit > end_bit {
@@ -872,9 +941,9 @@ impl RankSelectMixedIL256 {
                     word &= mask;
                 }
             }
-            
+
             let word_popcount = self.popcount_hardware_accelerated(word) as usize;
-            
+
             if remaining_k <= word_popcount {
                 // The k-th bit is in this word
                 let select_pos = self.select_u64_hardware_accelerated(word, remaining_k);
@@ -883,11 +952,13 @@ impl RankSelectMixedIL256 {
                     return Ok(absolute_pos);
                 }
             }
-            
+
             remaining_k = remaining_k.saturating_sub(word_popcount);
         }
-        
-        Err(ZiporaError::invalid_data("Select position not found in block".to_string()))
+
+        Err(ZiporaError::invalid_data(
+            "Select position not found in block".to_string(),
+        ))
     }
 
     /// Hardware-accelerated select using BMI2 when available
@@ -899,7 +970,7 @@ impl RankSelectMixedIL256 {
             {
                 self.select_u64_fallback(x, k)
             }
-            
+
             #[cfg(not(test))]
             {
                 if CpuFeatures::get().has_bmi2 {
@@ -909,7 +980,7 @@ impl RankSelectMixedIL256 {
                 }
             }
         }
-        
+
         #[cfg(not(target_arch = "x86_64"))]
         {
             self.select_u64_fallback(x, k)
@@ -923,15 +994,15 @@ impl RankSelectMixedIL256 {
         if k == 0 || k > self.popcount_hardware_accelerated(x) as usize {
             return 64;
         }
-        
+
         unsafe {
             let select_mask = (1u64 << k) - 1;
             let expanded_mask = _pdep_u64(select_mask, x);
-            
+
             if expanded_mask == 0 {
                 return 64;
             }
-            
+
             expanded_mask.trailing_zeros() as usize
         }
     }
@@ -942,13 +1013,13 @@ impl RankSelectMixedIL256 {
         if k == 0 || k > self.popcount_hardware_accelerated(x) as usize {
             return 64;
         }
-        
+
         let mut remaining_k = k;
-        
+
         for byte_idx in 0..8 {
             let byte = ((x >> (byte_idx * 8)) & 0xFF) as u8;
             let byte_popcount = byte.count_ones() as usize;
-            
+
             if remaining_k <= byte_popcount {
                 let mut bit_count = 0;
                 for bit_idx in 0..8 {
@@ -960,10 +1031,10 @@ impl RankSelectMixedIL256 {
                     }
                 }
             }
-            
+
             remaining_k = remaining_k.saturating_sub(byte_popcount);
         }
-        
+
         64
     }
 }
@@ -1006,7 +1077,9 @@ impl RankSelectOps for RankSelectMixedIL256 {
             }
         }
 
-        Err(ZiporaError::invalid_data("Select0 position not found".to_string()))
+        Err(ZiporaError::invalid_data(
+            "Select0 position not found".to_string(),
+        ))
     }
 
     fn len(&self) -> usize {
@@ -1028,14 +1101,17 @@ impl RankSelectOps for RankSelectMixedIL256 {
             return 0.0;
         }
 
-        let cache_bits = self.interleaved_cache.len() * std::mem::size_of::<InterleavedDualLine>() * 8;
-        let select_cache_bits = self.select_caches.iter()
+        let cache_bits =
+            self.interleaved_cache.len() * std::mem::size_of::<InterleavedDualLine>() * 8;
+        let select_cache_bits = self
+            .select_caches
+            .iter()
             .map(|cache| cache.as_ref().map(|c| c.len() * 32).unwrap_or(0))
             .sum::<usize>();
-        
+
         let total_overhead_bits = cache_bits + select_cache_bits;
         let original_bits = self.total_bits * 2; // Two bit vectors
-        
+
         (total_overhead_bits as f64 / original_bits as f64) * 100.0
     }
 }
@@ -1053,7 +1129,6 @@ impl RankSelectMultiDimensional<2> for RankSelectMixedIL256 {
         self.select1_dimension(k, D)
     }
 }
-
 
 impl RankSelectBuilder<RankSelectMixedIL256> for RankSelectMixedIL256 {
     fn from_bit_vector(bit_vector: BitVector) -> Result<RankSelectMixedIL256> {
@@ -1075,27 +1150,30 @@ impl RankSelectBuilder<RankSelectMixedIL256> for RankSelectMixedIL256 {
 
     fn from_bytes(bytes: &[u8], bit_len: usize) -> Result<RankSelectMixedIL256> {
         let mut bit_vector = BitVector::new();
-        
+
         for (byte_idx, &byte) in bytes.iter().enumerate() {
             for bit_idx in 0..8 {
                 let bit_pos = byte_idx * 8 + bit_idx;
                 if bit_pos >= bit_len {
                     break;
                 }
-                
+
                 let bit = (byte >> bit_idx) & 1 == 1;
                 bit_vector.push(bit)?;
             }
-            
+
             if (byte_idx + 1) * 8 >= bit_len {
                 break;
             }
         }
-        
+
         Self::from_bit_vector(bit_vector)
     }
 
-    fn with_optimizations(bit_vector: BitVector, opts: BuilderOptions) -> Result<RankSelectMixedIL256> {
+    fn with_optimizations(
+        bit_vector: BitVector,
+        opts: BuilderOptions,
+    ) -> Result<RankSelectMixedIL256> {
         let empty_bv = BitVector::with_size(bit_vector.len(), false)?;
         Self::with_options(
             [bit_vector, empty_bv],
@@ -1113,10 +1191,19 @@ impl fmt::Debug for RankSelectMixedIL256 {
             .field("ones_dim0", &self.total_ones[0])
             .field("ones_dim1", &self.total_ones[1])
             .field("cache_lines", &self.interleaved_cache.len())
-            .field("select_cache_dim0", &self.select_caches[0].as_ref().map(|c| c.len()).unwrap_or(0))
-            .field("select_cache_dim1", &self.select_caches[1].as_ref().map(|c| c.len()).unwrap_or(0))
+            .field(
+                "select_cache_dim0",
+                &self.select_caches[0].as_ref().map(|c| c.len()).unwrap_or(0),
+            )
+            .field(
+                "select_cache_dim1",
+                &self.select_caches[1].as_ref().map(|c| c.len()).unwrap_or(0),
+            )
             .field("sample_rate", &self.select_sample_rate)
-            .field("overhead", &format!("{:.2}%", self.space_overhead_percent()))
+            .field(
+                "overhead",
+                &format!("{:.2}%", self.space_overhead_percent()),
+            )
             .finish()
     }
 }
@@ -1147,7 +1234,7 @@ impl RankSelectMixedSE512 {
         // Validate input
         if bit_vectors[0].len() != bit_vectors[1].len() {
             return Err(ZiporaError::invalid_data(
-                "Both bit vectors must have the same length".to_string()
+                "Both bit vectors must have the same length".to_string(),
             ));
         }
 
@@ -1158,14 +1245,22 @@ impl RankSelectMixedSE512 {
             bit_vectors: bit_vectors.clone(),
             rank_caches: [FastVec::new(), FastVec::new()],
             select_caches: [
-                if enable_select_cache { Some(FastVec::new()) } else { None },
-                if enable_select_cache { Some(FastVec::new()) } else { None },
+                if enable_select_cache {
+                    Some(FastVec::new())
+                } else {
+                    None
+                },
+                if enable_select_cache {
+                    Some(FastVec::new())
+                } else {
+                    None
+                },
             ],
             select_sample_rate,
         };
 
         rs.build_separated_caches()?;
-        
+
         // Build select caches if enabled
         if enable_select_cache {
             rs.build_select_caches()?;
@@ -1181,29 +1276,26 @@ impl RankSelectMixedSE512 {
         }
 
         let num_blocks = (self.total_bits + SEP512_BLOCK_SIZE - 1) / SEP512_BLOCK_SIZE;
-        
+
         for dim in 0..2 {
             self.rank_caches[dim].reserve(num_blocks)?;
-            
+
             let mut cumulative_rank = 0u64;
             let blocks = self.bit_vectors[dim].blocks();
-            
+
             // Process each 512-bit block
             for block_idx in 0..num_blocks {
                 let block_start_bit = block_idx * SEP512_BLOCK_SIZE;
                 let block_end_bit = ((block_idx + 1) * SEP512_BLOCK_SIZE).min(self.total_bits);
-                
+
                 // Count bits in this block using hardware acceleration
-                let block_rank = self.count_bits_in_block_512(
-                    blocks, 
-                    block_start_bit, 
-                    block_end_bit
-                );
-                
+                let block_rank =
+                    self.count_bits_in_block_512(blocks, block_start_bit, block_end_bit);
+
                 cumulative_rank += block_rank as u64;
                 self.rank_caches[dim].push(cumulative_rank)?;
             }
-            
+
             self.total_ones[dim] = cumulative_rank as usize;
         }
 
@@ -1212,25 +1304,20 @@ impl RankSelectMixedSE512 {
 
     /// Count bits in a 512-bit block using hardware acceleration
     #[inline]
-    fn count_bits_in_block_512(
-        &self,
-        blocks: &[u64],
-        start_bit: usize,
-        end_bit: usize,
-    ) -> usize {
+    fn count_bits_in_block_512(&self, blocks: &[u64], start_bit: usize, end_bit: usize) -> usize {
         let start_word = start_bit / 64;
         let end_word = (end_bit + 63) / 64;
         let mut count = 0;
 
         for word_idx in start_word..end_word.min(blocks.len()) {
             let mut word = blocks[word_idx];
-            
+
             // Handle partial word at the beginning
             if word_idx == start_word && start_bit % 64 != 0 {
                 let start_bit_in_word = start_bit % 64;
                 word &= !((1u64 << start_bit_in_word) - 1);
             }
-            
+
             // Handle partial word at the end
             if word_idx * 64 + 64 > end_bit {
                 let end_bit_in_word = end_bit % 64;
@@ -1239,7 +1326,7 @@ impl RankSelectMixedSE512 {
                     word &= mask;
                 }
             }
-            
+
             count += self.popcount_hardware_accelerated(word) as usize;
         }
 
@@ -1255,7 +1342,7 @@ impl RankSelectMixedSE512 {
             {
                 x.count_ones()
             }
-            
+
             #[cfg(not(test))]
             {
                 if CpuFeatures::get().has_popcnt {
@@ -1265,7 +1352,7 @@ impl RankSelectMixedSE512 {
                 }
             }
         }
-        
+
         #[cfg(not(target_arch = "x86_64"))]
         {
             x.count_ones()
@@ -1320,16 +1407,22 @@ impl RankSelectMixedSE512 {
 
     /// Get memory usage in bytes
     pub fn memory_usage_bytes(&self) -> usize {
-        let rank_cache_size = self.rank_caches.iter()
+        let rank_cache_size = self
+            .rank_caches
+            .iter()
             .map(|cache| cache.len() * 8) // u64 = 8 bytes
             .sum::<usize>();
-        let select_cache_size = self.select_caches.iter()
+        let select_cache_size = self
+            .select_caches
+            .iter()
             .map(|cache| cache.as_ref().map(|c| c.len() * 4).unwrap_or(0))
             .sum::<usize>();
-        let bit_vector_size = self.bit_vectors.iter()
+        let bit_vector_size = self
+            .bit_vectors
+            .iter()
             .map(|bv| (bv.len() + 7) / 8) // Approximate bit vector size
             .sum::<usize>();
-        
+
         rank_cache_size + select_cache_size + bit_vector_size + std::mem::size_of::<Self>()
     }
 
@@ -1354,28 +1447,25 @@ impl RankSelectMixedSE512 {
         }
 
         let pos = pos.min(self.total_bits);
-        
+
         // Find containing block
         let block_idx = pos / SEP512_BLOCK_SIZE;
         let bit_offset_in_block = pos % SEP512_BLOCK_SIZE;
-        
+
         // Get rank up to start of this block
         let rank_before_block = if block_idx > 0 {
             self.rank_caches[dim][block_idx - 1] as usize
         } else {
             0
         };
-        
+
         // Count bits in current block up to position
         let block_start = block_idx * SEP512_BLOCK_SIZE;
         let block_end = (block_start + bit_offset_in_block).min(self.total_bits);
-        
-        let rank_in_block = self.count_bits_in_block_512(
-            self.bit_vectors[dim].blocks(),
-            block_start,
-            block_end,
-        );
-        
+
+        let rank_in_block =
+            self.count_bits_in_block_512(self.bit_vectors[dim].blocks(), block_start, block_end);
+
         rank_before_block + rank_in_block
     }
 
@@ -1398,7 +1488,7 @@ impl RankSelectMixedSE512 {
 
         // Binary search on rank blocks
         let block_idx = self.binary_search_rank_blocks(target_rank, dim);
-        
+
         let block_start_rank = if block_idx > 0 {
             self.rank_caches[dim][block_idx - 1] as usize
         } else {
@@ -1408,7 +1498,7 @@ impl RankSelectMixedSE512 {
         let remaining_ones = target_rank - block_start_rank;
         let block_start_bit = block_idx * SEP512_BLOCK_SIZE;
         let block_end_bit = ((block_idx + 1) * SEP512_BLOCK_SIZE).min(self.total_bits);
-        
+
         self.select1_within_block(block_start_bit, block_end_bit, remaining_ones, dim)
     }
 
@@ -1425,7 +1515,13 @@ impl RankSelectMixedSE512 {
     }
 
     /// Linear search for select within a range
-    fn select1_linear_search(&self, start: usize, end: usize, target_rank: usize, dim: usize) -> Result<usize> {
+    fn select1_linear_search(
+        &self,
+        start: usize,
+        end: usize,
+        target_rank: usize,
+        dim: usize,
+    ) -> Result<usize> {
         let mut current_rank = self.rank1_dimension(start, dim);
 
         for pos in start..end {
@@ -1437,14 +1533,16 @@ impl RankSelectMixedSE512 {
             }
         }
 
-        Err(ZiporaError::invalid_data("Select position not found".to_string()))
+        Err(ZiporaError::invalid_data(
+            "Select position not found".to_string(),
+        ))
     }
 
     /// Binary search to find which block contains the target rank
     fn binary_search_rank_blocks(&self, target_rank: usize, dim: usize) -> usize {
         let mut left = 0;
         let mut right = self.rank_caches[dim].len();
-        
+
         while left < right {
             let mid = left + (right - left) / 2;
             if self.rank_caches[dim][mid] < target_rank as u64 {
@@ -1453,27 +1551,33 @@ impl RankSelectMixedSE512 {
                 right = mid;
             }
         }
-        
+
         left
     }
 
     /// Search for the k-th set bit within a specific block
-    fn select1_within_block(&self, start_bit: usize, end_bit: usize, k: usize, dim: usize) -> Result<usize> {
+    fn select1_within_block(
+        &self,
+        start_bit: usize,
+        end_bit: usize,
+        k: usize,
+        dim: usize,
+    ) -> Result<usize> {
         let blocks = self.bit_vectors[dim].blocks();
         let start_word = start_bit / 64;
         let end_word = (end_bit + 63) / 64;
-        
+
         let mut remaining_k = k;
-        
+
         for word_idx in start_word..end_word.min(blocks.len()) {
             let mut word = blocks[word_idx];
-            
+
             // Handle partial word at the beginning
             if word_idx == start_word && start_bit % 64 != 0 {
                 let start_bit_in_word = start_bit % 64;
                 word &= !((1u64 << start_bit_in_word) - 1);
             }
-            
+
             // Handle partial word at the end
             if word_idx * 64 + 64 > end_bit {
                 let end_bit_in_word = end_bit % 64;
@@ -1482,9 +1586,9 @@ impl RankSelectMixedSE512 {
                     word &= mask;
                 }
             }
-            
+
             let word_popcount = self.popcount_hardware_accelerated(word) as usize;
-            
+
             if remaining_k <= word_popcount {
                 // The k-th bit is in this word
                 let select_pos = self.select_u64_hardware_accelerated(word, remaining_k);
@@ -1492,11 +1596,13 @@ impl RankSelectMixedSE512 {
                     return Ok(word_idx * 64 + select_pos);
                 }
             }
-            
+
             remaining_k = remaining_k.saturating_sub(word_popcount);
         }
-        
-        Err(ZiporaError::invalid_data("Select position not found in block".to_string()))
+
+        Err(ZiporaError::invalid_data(
+            "Select position not found in block".to_string(),
+        ))
     }
 
     /// Hardware-accelerated select using BMI2 when available
@@ -1508,7 +1614,7 @@ impl RankSelectMixedSE512 {
             {
                 self.select_u64_fallback(x, k)
             }
-            
+
             #[cfg(not(test))]
             {
                 if CpuFeatures::get().has_bmi2 {
@@ -1518,7 +1624,7 @@ impl RankSelectMixedSE512 {
                 }
             }
         }
-        
+
         #[cfg(not(target_arch = "x86_64"))]
         {
             self.select_u64_fallback(x, k)
@@ -1532,15 +1638,15 @@ impl RankSelectMixedSE512 {
         if k == 0 || k > self.popcount_hardware_accelerated(x) as usize {
             return 64;
         }
-        
+
         unsafe {
             let select_mask = (1u64 << k) - 1;
             let expanded_mask = _pdep_u64(select_mask, x);
-            
+
             if expanded_mask == 0 {
                 return 64;
             }
-            
+
             expanded_mask.trailing_zeros() as usize
         }
     }
@@ -1551,13 +1657,13 @@ impl RankSelectMixedSE512 {
         if k == 0 || k > self.popcount_hardware_accelerated(x) as usize {
             return 64;
         }
-        
+
         let mut remaining_k = k;
-        
+
         for byte_idx in 0..8 {
             let byte = ((x >> (byte_idx * 8)) & 0xFF) as u8;
             let byte_popcount = byte.count_ones() as usize;
-            
+
             if remaining_k <= byte_popcount {
                 let mut bit_count = 0;
                 for bit_idx in 0..8 {
@@ -1569,23 +1675,37 @@ impl RankSelectMixedSE512 {
                     }
                 }
             }
-            
+
             remaining_k = remaining_k.saturating_sub(byte_popcount);
         }
-        
+
         64
     }
 
     /// Bulk rank operations for dimension (performance optimization)
     pub fn rank1_bulk_dim<const D: usize>(&self, positions: &[usize]) -> Vec<usize> {
-        assert!(D < 2, "Invalid dimension {} for dual-dimension structure", D);
-        positions.iter().map(|&pos| self.rank1_dimension(pos, D)).collect()
+        assert!(
+            D < 2,
+            "Invalid dimension {} for dual-dimension structure",
+            D
+        );
+        positions
+            .iter()
+            .map(|&pos| self.rank1_dimension(pos, D))
+            .collect()
     }
 
     /// Bulk select operations for dimension (performance optimization)
     pub fn select1_bulk_dim<const D: usize>(&self, indices: &[usize]) -> Result<Vec<usize>> {
-        assert!(D < 2, "Invalid dimension {} for dual-dimension structure", D);
-        indices.iter().map(|&k| self.select1_dimension(k, D)).collect()
+        assert!(
+            D < 2,
+            "Invalid dimension {} for dual-dimension structure",
+            D
+        );
+        indices
+            .iter()
+            .map(|&k| self.select1_dimension(k, D))
+            .collect()
     }
 
     /// Get dimension view for specific dimension
@@ -1603,7 +1723,11 @@ pub struct MixedSeparatedDimensionView<'a, const DIM: usize> {
 impl<'a, const DIM: usize> MixedSeparatedDimensionView<'a, DIM> {
     /// Create a new dimension view
     pub fn new(parent: &'a RankSelectMixedSE512) -> Self {
-        assert!(DIM < 2, "Invalid dimension {} for dual-dimension structure", DIM);
+        assert!(
+            DIM < 2,
+            "Invalid dimension {} for dual-dimension structure",
+            DIM
+        );
         Self { parent }
     }
 
@@ -1680,7 +1804,9 @@ impl RankSelectOps for RankSelectMixedSE512 {
             }
         }
 
-        Err(ZiporaError::invalid_data("Select0 position not found".to_string()))
+        Err(ZiporaError::invalid_data(
+            "Select0 position not found".to_string(),
+        ))
     }
 
     fn len(&self) -> usize {
@@ -1702,16 +1828,20 @@ impl RankSelectOps for RankSelectMixedSE512 {
             return 0.0;
         }
 
-        let rank_cache_bits = self.rank_caches.iter()
+        let rank_cache_bits = self
+            .rank_caches
+            .iter()
             .map(|cache| cache.len() * 64) // u64 = 64 bits
             .sum::<usize>();
-        let select_cache_bits = self.select_caches.iter()
+        let select_cache_bits = self
+            .select_caches
+            .iter()
             .map(|cache| cache.as_ref().map(|c| c.len() * 32).unwrap_or(0))
             .sum::<usize>();
-        
+
         let total_overhead_bits = rank_cache_bits + select_cache_bits;
         let original_bits = self.total_bits * 2; // Two bit vectors
-        
+
         (total_overhead_bits as f64 / original_bits as f64) * 100.0
     }
 }
@@ -1750,27 +1880,30 @@ impl RankSelectBuilder<RankSelectMixedSE512> for RankSelectMixedSE512 {
 
     fn from_bytes(bytes: &[u8], bit_len: usize) -> Result<RankSelectMixedSE512> {
         let mut bit_vector = BitVector::new();
-        
+
         for (byte_idx, &byte) in bytes.iter().enumerate() {
             for bit_idx in 0..8 {
                 let bit_pos = byte_idx * 8 + bit_idx;
                 if bit_pos >= bit_len {
                     break;
                 }
-                
+
                 let bit = (byte >> bit_idx) & 1 == 1;
                 bit_vector.push(bit)?;
             }
-            
+
             if (byte_idx + 1) * 8 >= bit_len {
                 break;
             }
         }
-        
+
         Self::from_bit_vector(bit_vector)
     }
 
-    fn with_optimizations(bit_vector: BitVector, opts: BuilderOptions) -> Result<RankSelectMixedSE512> {
+    fn with_optimizations(
+        bit_vector: BitVector,
+        opts: BuilderOptions,
+    ) -> Result<RankSelectMixedSE512> {
         let empty_bv = BitVector::with_size(bit_vector.len(), false)?;
         Self::with_options(
             [bit_vector, empty_bv],
@@ -1788,10 +1921,19 @@ impl fmt::Debug for RankSelectMixedSE512 {
             .field("ones_dim0", &self.total_ones[0])
             .field("ones_dim1", &self.total_ones[1])
             .field("rank_blocks", &self.rank_caches[0].len())
-            .field("select_cache_dim0", &self.select_caches[0].as_ref().map(|c| c.len()).unwrap_or(0))
-            .field("select_cache_dim1", &self.select_caches[1].as_ref().map(|c| c.len()).unwrap_or(0))
+            .field(
+                "select_cache_dim0",
+                &self.select_caches[0].as_ref().map(|c| c.len()).unwrap_or(0),
+            )
+            .field(
+                "select_cache_dim1",
+                &self.select_caches[1].as_ref().map(|c| c.len()).unwrap_or(0),
+            )
             .field("sample_rate", &self.select_sample_rate)
-            .field("overhead", &format!("{:.2}%", self.space_overhead_percent()))
+            .field(
+                "overhead",
+                &format!("{:.2}%", self.space_overhead_percent()),
+            )
             .finish()
     }
 }
@@ -1827,19 +1969,22 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
     {
         // Validate input
         if ARITY < 2 || ARITY > 4 {
-            return Err(ZiporaError::invalid_data(
-                format!("ARITY must be between 2 and 4, got {}", ARITY)
-            ));
+            return Err(ZiporaError::invalid_data(format!(
+                "ARITY must be between 2 and 4, got {}",
+                ARITY
+            )));
         }
 
         // Validate all bit vectors have same length
         let total_bits = bit_vectors[0].len();
         for (i, bv) in bit_vectors.iter().enumerate().skip(1) {
             if bv.len() != total_bits {
-                return Err(ZiporaError::invalid_data(
-                    format!("All bit vectors must have the same length. Vector 0 has {}, vector {} has {}", 
-                           total_bits, i, bv.len())
-                ));
+                return Err(ZiporaError::invalid_data(format!(
+                    "All bit vectors must have the same length. Vector 0 has {}, vector {} has {}",
+                    total_bits,
+                    i,
+                    bv.len()
+                )));
             }
         }
 
@@ -1853,21 +1998,29 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
                 for _ in 0..ARITY {
                     data.push(FastVec::new());
                 }
-                data.try_into().map_err(|_| ZiporaError::invalid_data("Failed to initialize bit data".to_string()))?
+                data.try_into().map_err(|_| {
+                    ZiporaError::invalid_data("Failed to initialize bit data".to_string())
+                })?
             },
             select_caches: {
                 // Initialize array of select caches
                 let mut caches = Vec::with_capacity(ARITY);
                 for _ in 0..ARITY {
-                    caches.push(if enable_select_cache { Some(FastVec::new()) } else { None });
+                    caches.push(if enable_select_cache {
+                        Some(FastVec::new())
+                    } else {
+                        None
+                    });
                 }
-                caches.try_into().map_err(|_| ZiporaError::invalid_data("Failed to initialize select caches".to_string()))?
+                caches.try_into().map_err(|_| {
+                    ZiporaError::invalid_data("Failed to initialize select caches".to_string())
+                })?
             },
             select_sample_rate,
         };
 
         rs.build_interleaved_multi_cache(&bit_vectors)?;
-        
+
         // Build select caches if enabled
         if enable_select_cache {
             rs.build_select_caches_multi(&bit_vectors)?;
@@ -1892,13 +2045,13 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
         for dim in 0..ARITY {
             let num_words = (self.total_bits + 63) / 64;
             self.bit_data[dim].reserve(num_words)?;
-            
+
             // Copy bit data to our storage
             let blocks = bit_vectors[dim].blocks();
             for &word in blocks.iter().take(num_words) {
                 self.bit_data[dim].push(word)?;
             }
-            
+
             // Pad with zeros if needed
             while self.bit_data[dim].len() < num_words {
                 self.bit_data[dim].push(0u64)?;
@@ -1906,23 +2059,24 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
         }
 
         let mut cumulative_ranks = [0u32; ARITY];
-        
+
         for block_idx in 0..num_blocks {
             let block_start_bit = block_idx * MULTI_BLOCK_SIZE;
             let block_end_bit = ((block_idx + 1) * MULTI_BLOCK_SIZE).min(self.total_bits);
-            
+
             // Count bits in this block for all dimensions
             for dim in 0..ARITY {
-                let block_rank = self.count_bits_in_multi_block(dim, block_start_bit, block_end_bit);
+                let block_rank =
+                    self.count_bits_in_multi_block(dim, block_start_bit, block_end_bit);
                 cumulative_ranks[dim] += block_rank as u32;
             }
-            
+
             // Create interleaved rank entry
             let rank_entry = InterleavedMultiRank::<ARITY> {
                 ranks: cumulative_ranks,
                 _reserved: [0; 16],
             };
-            
+
             self.interleaved_ranks.push(rank_entry)?;
         }
 
@@ -1939,13 +2093,13 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
 
         for word_idx in start_word..end_word.min(self.bit_data[dim].len()) {
             let mut word = self.bit_data[dim][word_idx];
-            
+
             // Handle partial word at the beginning
             if word_idx == start_word && start_bit % 64 != 0 {
                 let start_bit_in_word = start_bit % 64;
                 word &= !((1u64 << start_bit_in_word) - 1);
             }
-            
+
             // Handle partial word at the end
             if word_idx * 64 + 64 > end_bit {
                 let end_bit_in_word = end_bit % 64;
@@ -1954,7 +2108,7 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
                     word &= mask;
                 }
             }
-            
+
             count += word.count_ones() as usize;
         }
 
@@ -1970,7 +2124,11 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
             if self.select_caches[dim].is_some() && self.total_ones[dim] > 0 {
                 // Take ownership temporarily to avoid borrowing conflicts
                 if let Some(mut cache) = self.select_caches[dim].take() {
-                    self.build_select_cache_for_dimension_multi(&mut cache, &bit_vectors[dim], dim)?;
+                    self.build_select_cache_for_dimension_multi(
+                        &mut cache,
+                        &bit_vectors[dim],
+                        dim,
+                    )?;
                     self.select_caches[dim] = Some(cache);
                 }
             }
@@ -1979,7 +2137,12 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
     }
 
     /// Build select cache for a specific dimension
-    fn build_select_cache_for_dimension_multi(&self, cache: &mut FastVec<u32>, bit_vector: &BitVector, dim: usize) -> Result<()> {
+    fn build_select_cache_for_dimension_multi(
+        &self,
+        cache: &mut FastVec<u32>,
+        bit_vector: &BitVector,
+        dim: usize,
+    ) -> Result<()> {
         let total_ones = self.total_ones[dim];
         if total_ones == 0 {
             return Ok(());
@@ -2021,7 +2184,7 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
 
         let word_idx = index / 64;
         let bit_idx = index % 64;
-        
+
         if word_idx < self.bit_data[DIM].len() {
             Some((self.bit_data[DIM][word_idx] >> bit_idx) & 1 == 1)
         } else {
@@ -2039,24 +2202,24 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
         }
 
         let pos = pos.min(self.total_bits);
-        
+
         // Find containing block
         let block_idx = pos / MULTI_BLOCK_SIZE;
         let bit_offset_in_block = pos % MULTI_BLOCK_SIZE;
-        
+
         // Get rank up to start of this block
         let rank_before_block = if block_idx > 0 && block_idx <= self.interleaved_ranks.len() {
             self.interleaved_ranks[block_idx - 1].ranks[DIM] as usize
         } else {
             0
         };
-        
+
         // Count bits in current block up to position
         let block_start = block_idx * MULTI_BLOCK_SIZE;
         let block_end = (block_start + bit_offset_in_block).min(self.total_bits);
-        
+
         let rank_in_block = self.count_bits_in_multi_block(DIM, block_start, block_end);
-        
+
         rank_before_block + rank_in_block
     }
 
@@ -2082,7 +2245,7 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
 
         // Binary search on rank blocks
         let block_idx = self.binary_search_rank_blocks_multi::<DIM>(target_rank);
-        
+
         let block_start_rank = if block_idx > 0 && block_idx <= self.interleaved_ranks.len() {
             self.interleaved_ranks[block_idx - 1].ranks[DIM] as usize
         } else {
@@ -2092,7 +2255,7 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
         let remaining_ones = target_rank - block_start_rank;
         let block_start_bit = block_idx * MULTI_BLOCK_SIZE;
         let block_end_bit = ((block_idx + 1) * MULTI_BLOCK_SIZE).min(self.total_bits);
-        
+
         self.select1_within_block_multi::<DIM>(block_start_bit, block_end_bit, remaining_ones)
     }
 
@@ -2112,7 +2275,12 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
     }
 
     /// Linear search for select within a range
-    fn select1_linear_search_multi<const DIM: usize>(&self, start: usize, end: usize, target_rank: usize) -> Result<usize>
+    fn select1_linear_search_multi<const DIM: usize>(
+        &self,
+        start: usize,
+        end: usize,
+        target_rank: usize,
+    ) -> Result<usize>
     where
         [(); ARITY]: Sized,
     {
@@ -2127,7 +2295,9 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
             }
         }
 
-        Err(ZiporaError::invalid_data("Select position not found".to_string()))
+        Err(ZiporaError::invalid_data(
+            "Select position not found".to_string(),
+        ))
     }
 
     /// Binary search to find which block contains the target rank
@@ -2137,7 +2307,7 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
     {
         let mut left = 0;
         let mut right = self.interleaved_ranks.len();
-        
+
         while left < right {
             let mid = left + (right - left) / 2;
             if self.interleaved_ranks[mid].ranks[DIM] < target_rank as u32 {
@@ -2146,29 +2316,34 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
                 right = mid;
             }
         }
-        
+
         left
     }
 
     /// Search for the k-th set bit within a specific block
-    fn select1_within_block_multi<const DIM: usize>(&self, start_bit: usize, end_bit: usize, k: usize) -> Result<usize>
+    fn select1_within_block_multi<const DIM: usize>(
+        &self,
+        start_bit: usize,
+        end_bit: usize,
+        k: usize,
+    ) -> Result<usize>
     where
         [(); ARITY]: Sized,
     {
         let start_word = start_bit / 64;
         let end_word = (end_bit + 63) / 64;
-        
+
         let mut remaining_k = k;
-        
+
         for word_idx in start_word..end_word.min(self.bit_data[DIM].len()) {
             let mut word = self.bit_data[DIM][word_idx];
-            
+
             // Handle partial word at the beginning
             if word_idx == start_word && start_bit % 64 != 0 {
                 let start_bit_in_word = start_bit % 64;
                 word &= !((1u64 << start_bit_in_word) - 1);
             }
-            
+
             // Handle partial word at the end
             if word_idx * 64 + 64 > end_bit {
                 let end_bit_in_word = end_bit % 64;
@@ -2177,9 +2352,9 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
                     word &= mask;
                 }
             }
-            
+
             let word_popcount = word.count_ones() as usize;
-            
+
             if remaining_k <= word_popcount {
                 // The k-th bit is in this word
                 let select_pos = self.select_u64_multi(word, remaining_k);
@@ -2187,11 +2362,13 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
                     return Ok(word_idx * 64 + select_pos);
                 }
             }
-            
+
             remaining_k = remaining_k.saturating_sub(word_popcount);
         }
-        
-        Err(ZiporaError::invalid_data("Select position not found in block".to_string()))
+
+        Err(ZiporaError::invalid_data(
+            "Select position not found in block".to_string(),
+        ))
     }
 
     /// Select within u64 for multi-dimensional implementation
@@ -2200,13 +2377,13 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
         if k == 0 || k > x.count_ones() as usize {
             return 64;
         }
-        
+
         let mut remaining_k = k;
-        
+
         for byte_idx in 0..8 {
             let byte = ((x >> (byte_idx * 8)) & 0xFF) as u8;
             let byte_popcount = byte.count_ones() as usize;
-            
+
             if remaining_k <= byte_popcount {
                 let mut bit_count = 0;
                 for bit_idx in 0..8 {
@@ -2218,10 +2395,10 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
                     }
                 }
             }
-            
+
             remaining_k = remaining_k.saturating_sub(byte_popcount);
         }
-        
+
         64
     }
 
@@ -2230,14 +2407,19 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
     where
         [(); ARITY]: Sized,
     {
-        let ranks_size = self.interleaved_ranks.len() * std::mem::size_of::<InterleavedMultiRank<ARITY>>();
-        let bit_data_size = self.bit_data.iter()
+        let ranks_size =
+            self.interleaved_ranks.len() * std::mem::size_of::<InterleavedMultiRank<ARITY>>();
+        let bit_data_size = self
+            .bit_data
+            .iter()
             .map(|data| data.len() * 8) // u64 = 8 bytes
             .sum::<usize>();
-        let select_cache_size = self.select_caches.iter()
+        let select_cache_size = self
+            .select_caches
+            .iter()
             .map(|cache| cache.as_ref().map(|c| c.len() * 4).unwrap_or(0))
             .sum::<usize>();
-        
+
         ranks_size + bit_data_size + select_cache_size + std::mem::size_of::<Self>()
     }
 
@@ -2264,9 +2446,11 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
         // Validate dimensions
         for &dim in dimensions {
             if dim >= ARITY {
-                return Err(ZiporaError::invalid_data(
-                    format!("Invalid dimension {}, max is {}", dim, ARITY - 1)
-                ));
+                return Err(ZiporaError::invalid_data(format!(
+                    "Invalid dimension {}, max is {}",
+                    dim,
+                    ARITY - 1
+                )));
             }
         }
 
@@ -2275,18 +2459,18 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
 
         while intersections.len() < limit && pos < self.total_bits {
             let mut all_set = true;
-            
+
             for &dim in dimensions {
                 if !self.get_dimension_bit_runtime(pos, dim).unwrap_or(false) {
                     all_set = false;
                     break;
                 }
             }
-            
+
             if all_set {
                 intersections.push(pos);
             }
-            
+
             pos += 1;
         }
 
@@ -2304,7 +2488,7 @@ impl<const ARITY: usize> RankSelectMixedXL256<ARITY> {
 
         let word_idx = index / 64;
         let bit_idx = index % 64;
-        
+
         if word_idx < self.bit_data[dim].len() {
             Some((self.bit_data[dim][word_idx] >> bit_idx) & 1 == 1)
         } else {

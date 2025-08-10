@@ -1,22 +1,22 @@
 //! Asynchronous blob storage implementations
 
+use crate::RecordId;
 use crate::blob_store::BlobStoreStats;
 use crate::error::{Result, ZiporaError};
-use crate::RecordId;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex, RwLock};
 
 /// Asynchronous blob store trait
-/// 
+///
 /// Provides async methods for storing, retrieving, and managing binary data blobs
 /// Uses async_trait to enable async functions in traits
-/// 
+///
 /// This macro transforms async trait methods into regular trait methods returning Pin<Box<dyn Future>>
 #[allow(missing_docs)] // async_trait macro causes false positive
 #[async_trait::async_trait]
@@ -460,7 +460,9 @@ impl<S: AsyncBlobStore> AsyncCompressedBlobStore<S> {
     /// Compress data using zstd
     #[cfg(not(feature = "zstd"))]
     async fn compress(&self, _data: &[u8]) -> Result<Vec<u8>> {
-        Err(ZiporaError::configuration("ZSTD compression not available - enable 'zstd' feature"))
+        Err(ZiporaError::configuration(
+            "ZSTD compression not available - enable 'zstd' feature",
+        ))
     }
 
     /// Decompress data using zstd
@@ -479,7 +481,9 @@ impl<S: AsyncBlobStore> AsyncCompressedBlobStore<S> {
     /// Decompress data using zstd
     #[cfg(not(feature = "zstd"))]
     async fn decompress(&self, _data: &[u8]) -> Result<Vec<u8>> {
-        Err(ZiporaError::configuration("ZSTD decompression not available - enable 'zstd' feature"))
+        Err(ZiporaError::configuration(
+            "ZSTD decompression not available - enable 'zstd' feature",
+        ))
     }
 }
 

@@ -52,7 +52,7 @@ fn malloc_usable_size(ptr: *mut u8) -> usize {
 
 #[cfg(not(target_os = "linux"))]
 fn malloc_usable_size(_ptr: *mut u8) -> usize {
-    0  // Not available on this platform
+    0 // Not available on this platform
 }
 
 /// Maximum capacity for ValVec32 (2^32 - 1 elements)
@@ -111,13 +111,13 @@ fn cast_aligned_ptr<T>(ptr: *mut u8) -> *mut T {
 /// let mut vec = ValVec32::new();
 /// vec.push(42)?;
 /// vec.push(84)?;
-/// 
+///
 /// assert_eq!(vec.len(), 2);
 /// assert_eq!(vec[0], 42);
 /// assert_eq!(vec[1], 84);
 /// # Ok::<(), zipora::ZiporaError>(())
 /// ```
-#[repr(C)]  // Ensure predictable layout
+#[repr(C)] // Ensure predictable layout
 pub struct ValVec32<T> {
     /// Pointer to the allocated memory
     ptr: NonNull<T>,
@@ -136,7 +136,7 @@ impl<T> ValVec32<T> {
     ///
     /// ```rust
     /// use zipora::ValVec32;
-    /// 
+    ///
     /// let vec: ValVec32<i32> = ValVec32::new();
     /// assert_eq!(vec.len(), 0);
     /// assert_eq!(vec.capacity(), 0);
@@ -165,7 +165,7 @@ impl<T> ValVec32<T> {
     ///
     /// ```rust
     /// use zipora::ValVec32;
-    /// 
+    ///
     /// let vec: ValVec32<i32> = ValVec32::with_capacity(100)?;
     /// assert_eq!(vec.len(), 0);
     /// assert_eq!(vec.capacity(), 100);
@@ -239,10 +239,10 @@ impl<T> ValVec32<T> {
     ///
     /// ```rust
     /// use zipora::ValVec32;
-    /// 
+    ///
     /// let mut vec = ValVec32::new();
     /// assert_eq!(vec.len(), 0);
-    /// 
+    ///
     /// vec.push(42)?;
     /// assert_eq!(vec.len(), 1);
     /// # Ok::<(), zipora::ZiporaError>(())
@@ -258,7 +258,7 @@ impl<T> ValVec32<T> {
     ///
     /// ```rust
     /// use zipora::ValVec32;
-    /// 
+    ///
     /// let vec: ValVec32<i32> = ValVec32::with_capacity(10)?;
     /// assert_eq!(vec.capacity(), 10);
     /// # Ok::<(), zipora::ZiporaError>(())
@@ -274,7 +274,7 @@ impl<T> ValVec32<T> {
     ///
     /// ```rust
     /// use zipora::ValVec32;
-    /// 
+    ///
     /// let vec: ValVec32<i32> = ValVec32::new();
     /// assert!(vec.is_empty());
     /// ```
@@ -294,7 +294,9 @@ impl<T> ValVec32<T> {
     /// Returns `ZiporaError::InvalidData` if new capacity would exceed MAX_CAPACITY
     /// Returns `ZiporaError::MemoryError` if allocation fails
     pub fn reserve(&mut self, additional: u32) -> Result<()> {
-        let required = self.len.checked_add(additional)
+        let required = self
+            .len
+            .checked_add(additional)
             .ok_or_else(|| ZiporaError::invalid_data("Capacity overflow"))?;
 
         if required <= self.capacity {
@@ -325,10 +327,8 @@ impl<T> ValVec32<T> {
         // Golden ratio growth: multiply by 103/64 ≈ 1.609375
         // This provides better memory utilization than doubling (2.0x)
         // while still maintaining amortized O(1) push complexity
-        let golden_growth = self.capacity
-            .saturating_mul(103)
-            .saturating_div(64);
-        
+        let golden_growth = self.capacity.saturating_mul(103).saturating_div(64);
+
         Ok(golden_growth.max(min_capacity).min(MAX_CAPACITY))
     }
 
@@ -350,8 +350,8 @@ impl<T> ValVec32<T> {
         } else {
             let old_layout = Layout::array::<T>(self.capacity as usize)
                 .map_err(|_| ZiporaError::invalid_data("Old layout calculation failed"))?;
-            
-            // SAFETY: 
+
+            // SAFETY:
             // - ptr was allocated with old_layout
             // - new_layout has the same alignment as old_layout
             // - new_layout size is larger than old_layout size
@@ -382,11 +382,11 @@ impl<T> ValVec32<T> {
     ///
     /// ```rust
     /// use zipora::ValVec32;
-    /// 
+    ///
     /// let mut vec = ValVec32::new();
     /// vec.push(42)?;
     /// vec.push(84)?;
-    /// 
+    ///
     /// assert_eq!(vec.len(), 2);
     /// assert_eq!(vec[0], 42);
     /// assert_eq!(vec[1], 84);
@@ -404,14 +404,14 @@ impl<T> ValVec32<T> {
             self.len += 1;
             return Ok(());
         }
-        
+
         // Cold path: needs growth (uncommon)
         self.push_slow(value)
     }
 
     /// Appends an element without checking capacity (safe version)
-    /// 
-    /// This method is optimized for bulk operations where capacity has been 
+    ///
+    /// This method is optimized for bulk operations where capacity has been
     /// pre-reserved. It checks capacity internally but skips overflow checks
     /// for better performance.
     ///
@@ -427,23 +427,25 @@ impl<T> ValVec32<T> {
     ///
     /// ```rust
     /// use zipora::ValVec32;
-    /// 
+    ///
     /// let mut vec = ValVec32::with_capacity(10)?;
-    /// 
+    ///
     /// // Fast bulk insertion when capacity is pre-reserved
     /// for i in 0..10 {
     ///     vec.push_unchecked(i)?;
     /// }
-    /// 
+    ///
     /// assert_eq!(vec.len(), 10);
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
     #[inline(always)]
     pub fn push_unchecked(&mut self, value: T) -> Result<()> {
         if unlikely(self.len >= self.capacity) {
-            return Err(ZiporaError::invalid_data("No capacity available for push_unchecked"));
+            return Err(ZiporaError::invalid_data(
+                "No capacity available for push_unchecked",
+            ));
         }
-        
+
         // SAFETY: We've verified len < capacity
         unsafe {
             ptr::write(self.ptr.as_ptr().add(self.len as usize), value);
@@ -470,28 +472,31 @@ impl<T> ValVec32<T> {
     ///
     /// ```rust
     /// use zipora::ValVec32;
-    /// 
+    ///
     /// let mut vec = ValVec32::with_capacity(10)?;
-    /// 
+    ///
     /// // Safe because we know capacity is available
     /// unsafe {
     ///     vec.push_unchecked_assume_capacity(42);
     ///     vec.push_unchecked_assume_capacity(84);
     /// }
-    /// 
+    ///
     /// assert_eq!(vec.len(), 2);
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
     #[inline(always)]
     pub unsafe fn push_unchecked_assume_capacity(&mut self, value: T) {
-        debug_assert!(self.len < self.capacity, "push_unchecked_assume_capacity called without sufficient capacity");
-        
+        debug_assert!(
+            self.len < self.capacity,
+            "push_unchecked_assume_capacity called without sufficient capacity"
+        );
+
         unsafe {
             ptr::write(self.ptr.as_ptr().add(self.len as usize), value);
         }
         self.len += 1;
     }
-    
+
     /// Slow path for push when growth is needed
     /// Separated to keep the hot path inline and fast
     #[cold]
@@ -500,9 +505,9 @@ impl<T> ValVec32<T> {
         if self.len >= MAX_CAPACITY {
             return Err(ZiporaError::invalid_data("Vector at maximum capacity"));
         }
-        
+
         self.reserve(1)?;
-        
+
         // SAFETY: After reserve, we have space for one more element
         unsafe {
             ptr::write(self.ptr.as_ptr().add(self.len as usize), value);
@@ -521,13 +526,13 @@ impl<T> ValVec32<T> {
     ///
     /// ```rust
     /// use zipora::ValVec32;
-    /// 
+    ///
     /// let mut vec = ValVec32::new();
     /// assert_eq!(vec.pop(), None);
-    /// 
+    ///
     /// vec.push(42)?;
     /// vec.push(84)?;
-    /// 
+    ///
     /// assert_eq!(vec.pop(), Some(84));
     /// assert_eq!(vec.pop(), Some(42));
     /// assert_eq!(vec.pop(), None);
@@ -558,10 +563,10 @@ impl<T> ValVec32<T> {
     ///
     /// ```rust
     /// use zipora::ValVec32;
-    /// 
+    ///
     /// let mut vec = ValVec32::new();
     /// vec.push(42)?;
-    /// 
+    ///
     /// assert_eq!(vec.get(0), Some(&42));
     /// assert_eq!(vec.get(1), None);
     /// # Ok::<(), zipora::ZiporaError>(())
@@ -626,11 +631,11 @@ impl<T> ValVec32<T> {
     ///
     /// ```rust
     /// use zipora::ValVec32;
-    /// 
+    ///
     /// let mut vec = ValVec32::new();
     /// vec.push(42)?;
     /// vec.push(84)?;
-    /// 
+    ///
     /// vec.clear();
     /// assert!(vec.is_empty());
     /// # Ok::<(), zipora::ZiporaError>(())
@@ -652,12 +657,12 @@ impl<T> ValVec32<T> {
     ///
     /// ```rust
     /// use zipora::ValVec32;
-    /// 
+    ///
     /// let mut vec = ValVec32::new();
     /// vec.push(1)?;
     /// vec.push(2)?;
     /// vec.push(3)?;
-    /// 
+    ///
     /// let slice = vec.as_slice();
     /// assert_eq!(slice, &[1, 2, 3]);
     /// # Ok::<(), zipora::ZiporaError>(())
@@ -696,11 +701,11 @@ impl<T> ValVec32<T> {
     ///
     /// ```rust
     /// use zipora::ValVec32;
-    /// 
+    ///
     /// let mut vec = ValVec32::new();
     /// vec.push(1)?;
     /// vec.extend_from_slice(&[2, 3, 4])?;
-    /// 
+    ///
     /// assert_eq!(vec.len(), 4);
     /// assert_eq!(vec.get(0), Some(&1));
     /// assert_eq!(vec.get(3), Some(&4));
@@ -714,26 +719,28 @@ impl<T> ValVec32<T> {
         if slice.is_empty() {
             return Ok(());
         }
-        
+
         let additional = slice.len() as u32;
-        
+
         // Check for overflow
-        let new_len = self.len.checked_add(additional)
+        let new_len = self
+            .len
+            .checked_add(additional)
             .ok_or_else(|| ZiporaError::invalid_data("Length overflow"))?;
-        
+
         if new_len > MAX_CAPACITY {
             return Err(ZiporaError::invalid_data(format!(
                 "Resulting length {} would exceed maximum capacity {}",
                 new_len, MAX_CAPACITY
             )));
         }
-        
+
         self.reserve(additional)?;
-        
+
         // SAFETY: We've reserved enough space
         unsafe {
             let dst = self.ptr.as_ptr().add(self.len as usize);
-            
+
             // Fast path for Copy types - use ptr::copy_nonoverlapping for maximum performance
             if std::mem::size_of::<T>() != 0 && !std::mem::needs_drop::<T>() {
                 // For Copy types, use highly optimized memcpy-like operation
@@ -745,7 +752,7 @@ impl<T> ValVec32<T> {
                 }
             }
         }
-        
+
         self.len = new_len;
         Ok(())
     }
@@ -768,11 +775,11 @@ impl<T> ValVec32<T> {
     ///
     /// ```rust
     /// use zipora::ValVec32;
-    /// 
+    ///
     /// let mut vec = ValVec32::new();
     /// vec.push(1i32)?;
     /// vec.extend_from_slice_copy(&[2, 3, 4])?;
-    /// 
+    ///
     /// assert_eq!(vec.len(), 4);
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
@@ -784,28 +791,30 @@ impl<T> ValVec32<T> {
         if slice.is_empty() {
             return Ok(());
         }
-        
+
         let additional = slice.len() as u32;
-        
+
         // Check for overflow
-        let new_len = self.len.checked_add(additional)
+        let new_len = self
+            .len
+            .checked_add(additional)
             .ok_or_else(|| ZiporaError::invalid_data("Length overflow"))?;
-        
+
         if new_len > MAX_CAPACITY {
             return Err(ZiporaError::invalid_data(format!(
                 "Resulting length {} would exceed maximum capacity {}",
                 new_len, MAX_CAPACITY
             )));
         }
-        
+
         self.reserve(additional)?;
-        
+
         // SAFETY: We've reserved enough space and T is Copy
         unsafe {
             let dst = self.ptr.as_ptr().add(self.len as usize);
             ptr::copy_nonoverlapping(slice.as_ptr(), dst, slice.len());
         }
-        
+
         self.len = new_len;
         Ok(())
     }
@@ -828,11 +837,11 @@ impl<T> ValVec32<T> {
     ///
     /// ```rust
     /// use zipora::ValVec32;
-    /// 
+    ///
     /// let mut vec = ValVec32::new();
     /// vec.append_slice(&[1, 2, 3])?;
     /// vec.append_slice(&[4, 5, 6])?;
-    /// 
+    ///
     /// assert_eq!(vec.len(), 6);
     /// assert_eq!(vec.as_slice(), &[1, 2, 3, 4, 5, 6]);
     /// # Ok::<(), zipora::ZiporaError>(())
@@ -865,13 +874,13 @@ impl<T> ValVec32<T> {
     ///
     /// ```rust
     /// use zipora::ValVec32;
-    /// 
+    ///
     /// let mut vec = ValVec32::new();
     /// vec.resize(5, 42)?;
-    /// 
+    ///
     /// assert_eq!(vec.len(), 5);
     /// assert_eq!(vec.as_slice(), &[42, 42, 42, 42, 42]);
-    /// 
+    ///
     /// vec.resize(3, 0)?;
     /// assert_eq!(vec.len(), 3);
     /// assert_eq!(vec.as_slice(), &[42, 42, 42]);
@@ -905,7 +914,7 @@ impl<T> ValVec32<T> {
                 // Extend with clones of value
                 let additional = new_len - self.len;
                 self.reserve(additional)?;
-                
+
                 // SAFETY: We've reserved enough space
                 unsafe {
                     let start = self.ptr.as_ptr().add(self.len as usize);
@@ -938,10 +947,10 @@ impl<T> ValVec32<T> {
     ///
     /// ```rust
     /// use zipora::ValVec32;
-    /// 
+    ///
     /// let mut vec = ValVec32::new();
     /// vec.resize_with(5, || 42)?;
-    /// 
+    ///
     /// assert_eq!(vec.len(), 5);
     /// assert_eq!(vec.as_slice(), &[42, 42, 42, 42, 42]);
     /// # Ok::<(), zipora::ZiporaError>(())
@@ -974,7 +983,7 @@ impl<T> ValVec32<T> {
                 // Extend with generated elements
                 let additional = new_len - self.len;
                 self.reserve(additional)?;
-                
+
                 // SAFETY: We've reserved enough space
                 unsafe {
                     let start = self.ptr.as_ptr().add(self.len as usize);
@@ -1006,11 +1015,11 @@ impl<T> ValVec32<T> {
     ///
     /// ```rust
     /// use zipora::ValVec32;
-    /// 
+    ///
     /// let mut vec = ValVec32::new();
     /// vec.push(1)?;
     /// vec.append_elements(3, 42)?;
-    /// 
+    ///
     /// assert_eq!(vec.len(), 4);
     /// assert_eq!(vec.as_slice(), &[1, 42, 42, 42]);
     /// # Ok::<(), zipora::ZiporaError>(())
@@ -1024,9 +1033,11 @@ impl<T> ValVec32<T> {
             return Ok(());
         }
 
-        let new_len = self.len.checked_add(n)
+        let new_len = self
+            .len
+            .checked_add(n)
             .ok_or_else(|| ZiporaError::invalid_data("Length overflow"))?;
-        
+
         if new_len > MAX_CAPACITY {
             return Err(ZiporaError::invalid_data(format!(
                 "Resulting length {} would exceed maximum capacity {}",
@@ -1035,7 +1046,7 @@ impl<T> ValVec32<T> {
         }
 
         self.reserve(n)?;
-        
+
         // SAFETY: We've reserved enough space
         unsafe {
             let start = self.ptr.as_ptr().add(self.len as usize);
@@ -1053,12 +1064,12 @@ impl<T> ValVec32<T> {
     ///
     /// ```rust
     /// use zipora::ValVec32;
-    /// 
+    ///
     /// let mut vec = ValVec32::new();
     /// vec.push(1)?;
     /// vec.push(2)?;
     /// vec.push(3)?;
-    /// 
+    ///
     /// let mut iter = vec.iter();
     /// assert_eq!(iter.next(), Some(&1));
     /// assert_eq!(iter.next(), Some(&2));
@@ -1076,15 +1087,15 @@ impl<T> ValVec32<T> {
     ///
     /// ```rust
     /// use zipora::ValVec32;
-    /// 
+    ///
     /// let mut vec = ValVec32::new();
     /// vec.push(1)?;
     /// vec.push(2)?;
-    /// 
+    ///
     /// for item in vec.iter_mut() {
     ///     *item *= 2;
     /// }
-    /// 
+    ///
     /// assert_eq!(vec.get(0), Some(&2));
     /// assert_eq!(vec.get(1), Some(&4));
     /// # Ok::<(), zipora::ZiporaError>(())
@@ -1092,7 +1103,7 @@ impl<T> ValVec32<T> {
     pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, T> {
         self.as_mut_slice().iter_mut()
     }
-    
+
     /// Optimized iteration with prefetching hints for better cache performance
     /// This method provides hints to the CPU to prefetch upcoming data
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -1100,7 +1111,7 @@ impl<T> ValVec32<T> {
     pub fn iter_prefetch(&self) -> impl Iterator<Item = &T> + '_ {
         // Prefetch distance - number of cache lines to prefetch ahead
         const PREFETCH_DISTANCE: usize = 8;
-        
+
         self.as_slice().iter().enumerate().map(move |(i, item)| {
             // Prefetch next elements if available
             if i + PREFETCH_DISTANCE < self.len as usize {
@@ -1109,13 +1120,15 @@ impl<T> ValVec32<T> {
                     #[cfg(target_arch = "x86_64")]
                     {
                         use std::arch::x86_64::_mm_prefetch;
-                        let prefetch_ptr = self.ptr.as_ptr().add(i + PREFETCH_DISTANCE) as *const i8;
+                        let prefetch_ptr =
+                            self.ptr.as_ptr().add(i + PREFETCH_DISTANCE) as *const i8;
                         _mm_prefetch(prefetch_ptr, 0); // _MM_HINT_T0
                     }
                     #[cfg(target_arch = "x86")]
                     {
                         use std::arch::x86::_mm_prefetch;
-                        let prefetch_ptr = self.ptr.as_ptr().add(i + PREFETCH_DISTANCE) as *const i8;
+                        let prefetch_ptr =
+                            self.ptr.as_ptr().add(i + PREFETCH_DISTANCE) as *const i8;
                         _mm_prefetch(prefetch_ptr, 0); // _MM_HINT_T0
                     }
                 }
@@ -1123,7 +1136,7 @@ impl<T> ValVec32<T> {
             item
         })
     }
-    
+
     /// Standard iteration without prefetch for non-x86 architectures
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     #[inline]
@@ -1145,7 +1158,7 @@ impl<T> Drop for ValVec32<T> {
         if self.capacity > 0 {
             let layout = Layout::array::<T>(self.capacity as usize)
                 .expect("Layout should be valid during drop");
-            
+
             // SAFETY: ptr was allocated with this layout
             unsafe {
                 alloc::dealloc(self.ptr.as_ptr() as *mut u8, layout);
@@ -1159,7 +1172,10 @@ impl<T> Index<u32> for ValVec32<T> {
 
     fn index(&self, index: u32) -> &Self::Output {
         self.get(index).unwrap_or_else(|| {
-            panic!("Index {} out of bounds for ValVec32 with length {}", index, self.len)
+            panic!(
+                "Index {} out of bounds for ValVec32 with length {}",
+                index, self.len
+            )
         })
     }
 }
@@ -1168,7 +1184,10 @@ impl<T> IndexMut<u32> for ValVec32<T> {
     fn index_mut(&mut self, index: u32) -> &mut Self::Output {
         let len = self.len; // Capture len before borrow
         self.get_mut(index).unwrap_or_else(|| {
-            panic!("Index {} out of bounds for ValVec32 with length {}", index, len)
+            panic!(
+                "Index {} out of bounds for ValVec32 with length {}",
+                index, len
+            )
         })
     }
 }
@@ -1182,12 +1201,14 @@ impl<T: fmt::Debug> fmt::Debug for ValVec32<T> {
 impl<T: Clone> Clone for ValVec32<T> {
     fn clone(&self) -> Self {
         let mut new_vec = Self::with_capacity(self.len).expect("Failed to allocate during clone");
-        
+
         for i in 0..self.len {
             let value = self.get(i).unwrap().clone();
-            new_vec.push(value).expect("Push should not fail during clone");
+            new_vec
+                .push(value)
+                .expect("Push should not fail during clone");
         }
-        
+
         new_vec
     }
 }
@@ -1203,7 +1224,7 @@ impl<T: Eq> Eq for ValVec32<T> {}
 // SAFETY: ValVec32 is Send if T is Send
 unsafe impl<T: Send> Send for ValVec32<T> {}
 
-// SAFETY: ValVec32 is Sync if T is Sync  
+// SAFETY: ValVec32 is Sync if T is Sync
 unsafe impl<T: Sync> Sync for ValVec32<T> {}
 
 #[cfg(test)]
@@ -1247,17 +1268,17 @@ mod tests {
     #[test]
     fn test_push_and_get() -> Result<()> {
         let mut vec = ValVec32::<i32>::new();
-        
+
         vec.push(42)?;
         vec.push(84)?;
         vec.push(126)?;
-        
+
         assert_eq!(vec.len(), 3);
         assert_eq!(vec.get(0), Some(&42));
         assert_eq!(vec.get(1), Some(&84));
         assert_eq!(vec.get(2), Some(&126));
         assert_eq!(vec.get(3), None);
-        
+
         Ok(())
     }
 
@@ -1266,13 +1287,13 @@ mod tests {
         let mut vec = ValVec32::<i32>::new();
         vec.push(10)?;
         vec.push(20)?;
-        
+
         assert_eq!(vec[0], 10);
         assert_eq!(vec[1], 20);
-        
+
         vec[0] = 15;
         assert_eq!(vec[0], 15);
-        
+
         Ok(())
     }
 
@@ -1286,17 +1307,17 @@ mod tests {
     #[test]
     fn test_pop() -> Result<()> {
         let mut vec = ValVec32::<i32>::new();
-        
+
         assert_eq!(vec.pop(), None);
-        
+
         vec.push(42)?;
         vec.push(84)?;
-        
+
         assert_eq!(vec.pop(), Some(84));
         assert_eq!(vec.pop(), Some(42));
         assert_eq!(vec.pop(), None);
         assert!(vec.is_empty());
-        
+
         Ok(())
     }
 
@@ -1304,13 +1325,13 @@ mod tests {
     fn test_set() -> Result<()> {
         let mut vec = ValVec32::<i32>::new();
         vec.push(42)?;
-        
+
         vec.set(0, 84)?;
         assert_eq!(vec[0], 84);
-        
+
         let result = vec.set(1, 126);
         assert!(result.is_err());
-        
+
         Ok(())
     }
 
@@ -1320,12 +1341,12 @@ mod tests {
         vec.push(1)?;
         vec.push(2)?;
         vec.push(3)?;
-        
+
         assert_eq!(vec.len(), 3);
         vec.clear();
         assert_eq!(vec.len(), 0);
         assert!(vec.is_empty());
-        
+
         Ok(())
     }
 
@@ -1335,10 +1356,10 @@ mod tests {
         vec.push(1)?;
         vec.push(2)?;
         vec.push(3)?;
-        
+
         let slice = vec.as_slice();
         assert_eq!(slice, &[1, 2, 3]);
-        
+
         Ok(())
     }
 
@@ -1348,11 +1369,11 @@ mod tests {
         vec.push(1)?;
         vec.push(2)?;
         vec.push(3)?;
-        
+
         let cloned = vec.clone();
         assert_eq!(vec, cloned);
         assert_eq!(vec.as_slice(), cloned.as_slice());
-        
+
         Ok(())
     }
 
@@ -1360,15 +1381,15 @@ mod tests {
     fn test_equality() -> Result<()> {
         let mut vec1 = ValVec32::new();
         let mut vec2 = ValVec32::new();
-        
+
         assert_eq!(vec1, vec2);
-        
+
         vec1.push(42)?;
         assert_ne!(vec1, vec2);
-        
+
         vec2.push(42)?;
         assert_eq!(vec1, vec2);
-        
+
         Ok(())
     }
 
@@ -1376,19 +1397,19 @@ mod tests {
     fn test_growth() -> Result<()> {
         let mut vec = ValVec32::<i32>::new();
         let initial_capacity = vec.capacity();
-        
+
         // Push enough elements to trigger growth
         for i in 0..10 {
             vec.push(i)?;
         }
-        
+
         assert!(vec.capacity() > initial_capacity);
         assert_eq!(vec.len(), 10);
-        
+
         for i in 0..10 {
             assert_eq!(vec[i], i as i32);
         }
-        
+
         Ok(())
     }
 
@@ -1396,10 +1417,10 @@ mod tests {
     fn test_reserve() -> Result<()> {
         let mut vec = ValVec32::<i32>::new();
         vec.reserve(100)?;
-        
+
         assert!(vec.capacity() >= 100);
         assert_eq!(vec.len(), 0);
-        
+
         Ok(())
     }
 
@@ -1407,67 +1428,67 @@ mod tests {
     fn test_memory_efficiency() -> Result<()> {
         // Test that ValVec32 uses less memory than equivalent std::Vec
         // This is primarily a compile-time verification
-        
+
         let _vec32 = ValVec32::<u64>::new();
         let _std_vec = Vec::<u64>::new();
-        
+
         // ValVec32 core data should be more memory efficient
         // Note: Due to Option<SecureMemoryPool> the struct is larger, but the core indices are smaller
-        
+
         // Verify the struct size - ValVec32 uses u32 for len/capacity vs usize for Vec
         let vec32_size = std::mem::size_of::<ValVec32<u64>>();
         let std_vec_size = std::mem::size_of::<Vec<u64>>();
-        
+
         // The benefit is in the smaller indices (u32 vs usize), not necessarily the full struct
         println!("ValVec32 size: {}, Vec size: {}", vec32_size, std_vec_size);
-        
+
         // The memory efficiency comes from the 32-bit indices, not the total struct size
         assert!(vec32_size > 0);
         assert!(std_vec_size > 0);
-        
+
         Ok(())
     }
 
     #[test]
     fn test_push_unchecked() -> Result<()> {
         let mut vec = ValVec32::with_capacity(10)?;
-        
+
         // Test safe push_unchecked
         for i in 0..5 {
             vec.push_unchecked(i)?;
         }
-        
+
         assert_eq!(vec.len(), 5);
         for i in 0..5 {
             assert_eq!(vec[i], i as i32);
         }
-        
+
         // Test that push_unchecked fails when capacity is exhausted
         let mut small_vec = ValVec32::with_capacity(1)?;
         small_vec.push_unchecked(42)?;
-        
+
         let result = small_vec.push_unchecked(84);
         assert!(result.is_err());
-        
+
         Ok(())
     }
 
     #[test]
     fn test_push_unchecked_assume_capacity() -> Result<()> {
         let mut vec = ValVec32::with_capacity(10)?;
-        
+
         // Test unsafe push_unchecked_assume_capacity
         unsafe {
             for i in 0..5 {
                 vec.push_unchecked_assume_capacity(i);
             }
         }
-        
+
         assert_eq!(vec.len(), 5);
         for i in 0..5 {
             assert_eq!(vec[i], i as i32);
         }
-        
+
         Ok(())
     }
 
@@ -1475,61 +1496,61 @@ mod tests {
     fn test_extend_from_slice_copy() -> Result<()> {
         let mut vec = ValVec32::new();
         vec.push(1i32)?;
-        
+
         // Test extending with Copy types
         vec.extend_from_slice_copy(&[2, 3, 4, 5])?;
-        
+
         assert_eq!(vec.len(), 5);
         assert_eq!(vec.as_slice(), &[1, 2, 3, 4, 5]);
-        
+
         // Test extending empty slice
         vec.extend_from_slice_copy(&[])?;
         assert_eq!(vec.len(), 5);
-        
+
         Ok(())
     }
 
     #[test]
     fn test_append_slice() -> Result<()> {
         let mut vec = ValVec32::new();
-        
+
         vec.append_slice(&[1, 2, 3])?;
         assert_eq!(vec.as_slice(), &[1, 2, 3]);
-        
+
         vec.append_slice(&[4, 5, 6])?;
         assert_eq!(vec.as_slice(), &[1, 2, 3, 4, 5, 6]);
-        
+
         // Test with empty slice
         vec.append_slice(&[])?;
         assert_eq!(vec.len(), 6);
-        
+
         Ok(())
     }
 
     #[test]
     fn test_resize() -> Result<()> {
         let mut vec = ValVec32::new();
-        
+
         // Test resize from empty
         vec.resize(5, 42)?;
         assert_eq!(vec.len(), 5);
         assert_eq!(vec.as_slice(), &[42, 42, 42, 42, 42]);
-        
+
         // Test resize to smaller size
         vec.resize(3, 0)?;
         assert_eq!(vec.len(), 3);
         assert_eq!(vec.as_slice(), &[42, 42, 42]);
-        
+
         // Test resize to same size
         vec.resize(3, 99)?;
         assert_eq!(vec.len(), 3);
         assert_eq!(vec.as_slice(), &[42, 42, 42]);
-        
+
         // Test resize to larger size
         vec.resize(6, 84)?;
         assert_eq!(vec.len(), 6);
         assert_eq!(vec.as_slice(), &[42, 42, 42, 84, 84, 84]);
-        
+
         Ok(())
     }
 
@@ -1537,7 +1558,7 @@ mod tests {
     fn test_resize_with() -> Result<()> {
         let mut vec = ValVec32::new();
         let mut counter = 0;
-        
+
         // Test resize_with from empty
         vec.resize_with(3, || {
             counter += 1;
@@ -1545,7 +1566,7 @@ mod tests {
         })?;
         assert_eq!(vec.len(), 3);
         assert_eq!(vec.as_slice(), &[1, 2, 3]);
-        
+
         // Test resize_with to smaller size
         vec.resize_with(2, || {
             counter += 1;
@@ -1553,7 +1574,7 @@ mod tests {
         })?;
         assert_eq!(vec.len(), 2);
         assert_eq!(vec.as_slice(), &[1, 2]);
-        
+
         // Test resize_with to larger size
         vec.resize_with(5, || {
             counter += 1;
@@ -1561,7 +1582,7 @@ mod tests {
         })?;
         assert_eq!(vec.len(), 5);
         assert_eq!(vec.as_slice(), &[1, 2, 4, 5, 6]);
-        
+
         Ok(())
     }
 
@@ -1569,22 +1590,22 @@ mod tests {
     fn test_append_elements() -> Result<()> {
         let mut vec = ValVec32::new();
         vec.push(1)?;
-        
+
         // Test appending multiple elements
         vec.append_elements(3, 42)?;
         assert_eq!(vec.len(), 4);
         assert_eq!(vec.as_slice(), &[1, 42, 42, 42]);
-        
+
         // Test appending zero elements
         vec.append_elements(0, 99)?;
         assert_eq!(vec.len(), 4);
         assert_eq!(vec.as_slice(), &[1, 42, 42, 42]);
-        
+
         // Test appending more elements
         vec.append_elements(2, 84)?;
         assert_eq!(vec.len(), 6);
         assert_eq!(vec.as_slice(), &[1, 42, 42, 42, 84, 84]);
-        
+
         Ok(())
     }
 
@@ -1600,17 +1621,17 @@ mod tests {
     #[test]
     fn test_small_size_growth() -> Result<()> {
         let mut vec = ValVec32::<i32>::new();
-        
+
         // First push should trigger initial allocation with capacity 4
         vec.push(1)?;
         let initial_capacity = vec.capacity();
-        
+
         // Should be at least 4 (the new minimum) instead of 8
         assert!(initial_capacity >= 4);
-        
+
         // The initial capacity should be reasonable for small vectors
         assert!(initial_capacity <= 8);
-        
+
         Ok(())
     }
 
@@ -1618,23 +1639,23 @@ mod tests {
     fn test_bulk_operations_performance() -> Result<()> {
         // Test that bulk operations work correctly for larger datasets
         let mut vec = ValVec32::with_capacity(1000)?;
-        
+
         // Test push_unchecked performance path
         for i in 0..500 {
             vec.push_unchecked(i)?;
         }
         assert_eq!(vec.len(), 500);
-        
+
         // Test extend_from_slice_copy for Copy types
         let data: Vec<i32> = (500..1000).collect();
         vec.extend_from_slice_copy(&data)?;
         assert_eq!(vec.len(), 1000);
-        
+
         // Verify data integrity
         for i in 0..1000 {
             assert_eq!(vec[i as u32], i);
         }
-        
+
         Ok(())
     }
 }

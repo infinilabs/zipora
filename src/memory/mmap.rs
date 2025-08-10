@@ -88,8 +88,9 @@ impl MemoryMappedAllocator {
             if let Some(regions) = cache.get_mut(&actual_size) {
                 if let Some(ptr) = regions.pop() {
                     self.cache_hits.fetch_add(1, Ordering::Relaxed);
-                    self.total_allocated.fetch_add(size as u64, Ordering::Relaxed);
-                    
+                    self.total_allocated
+                        .fetch_add(size as u64, Ordering::Relaxed);
+
                     return Ok(MmapAllocation {
                         ptr: unsafe { NonNull::new_unchecked(ptr) },
                         size,
@@ -126,7 +127,8 @@ impl MemoryMappedAllocator {
             libc::madvise(ptr, actual_size, libc::MADV_SEQUENTIAL);
         }
 
-        self.total_allocated.fetch_add(size as u64, Ordering::Relaxed);
+        self.total_allocated
+            .fetch_add(size as u64, Ordering::Relaxed);
 
         Ok(MmapAllocation {
             ptr: unsafe { NonNull::new_unchecked(ptr as *mut u8) },
@@ -137,12 +139,13 @@ impl MemoryMappedAllocator {
 
     /// Deallocate memory, potentially caching for reuse
     pub fn deallocate(&self, allocation: MmapAllocation) -> Result<()> {
-        self.total_freed.fetch_add(allocation.size as u64, Ordering::Relaxed);
+        self.total_freed
+            .fetch_add(allocation.size as u64, Ordering::Relaxed);
 
         // Try to cache the region for reuse
         if let Ok(mut cache) = self.region_cache.try_lock() {
             let regions = cache.entry(allocation.actual_size).or_insert_with(Vec::new);
-            
+
             // Limit cache size to prevent memory bloat
             const MAX_CACHED_REGIONS_PER_SIZE: usize = 4;
             if regions.len() < MAX_CACHED_REGIONS_PER_SIZE {
@@ -154,7 +157,11 @@ impl MemoryMappedAllocator {
         // Cache is full or locked, deallocate immediately
         self.munmap_calls.fetch_add(1, Ordering::Relaxed);
         unsafe {
-            if libc::munmap(allocation.ptr.as_ptr() as *mut libc::c_void, allocation.actual_size) != 0 {
+            if libc::munmap(
+                allocation.ptr.as_ptr() as *mut libc::c_void,
+                allocation.actual_size,
+            ) != 0
+            {
                 return Err(ZiporaError::io_error("failed to unmap memory"));
             }
         }
@@ -373,7 +380,7 @@ mod tests {
     #[test]
     fn test_invalid_allocation_size() {
         let allocator = MemoryMappedAllocator::new(16 * 1024);
-        
+
         // Too small for mmap
         let result = allocator.allocate(8 * 1024);
         assert!(result.is_err());

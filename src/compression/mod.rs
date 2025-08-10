@@ -278,7 +278,7 @@ pub struct ZstdCompressor {
 #[cfg(feature = "zstd")]
 impl ZstdCompressor {
     /// Create a new ZSTD compressor with the specified compression level
-    /// 
+    ///
     /// # Arguments
     /// * `level` - Compression level (1-22, higher is better compression but slower)
     pub fn new(level: i32) -> Self {
@@ -311,7 +311,7 @@ pub struct HuffmanCompressor {
 
 impl HuffmanCompressor {
     /// Create a new Huffman compressor trained on the provided data
-    /// 
+    ///
     /// # Arguments
     /// * `training_data` - Sample data to build frequency tables (must not be empty)
     pub fn new(training_data: &[u8]) -> Result<Self> {
@@ -321,7 +321,7 @@ impl HuffmanCompressor {
     }
 
     /// Get the serialized tree data for storage with compressed data
-    /// 
+    ///
     /// This tree data must be stored alongside compressed data for decompression
     pub fn tree_data(&self) -> &[u8] {
         &self.tree_data
@@ -406,7 +406,7 @@ pub struct RansCompressor {
 
 impl RansCompressor {
     /// Create a new rANS compressor trained on the provided data
-    /// 
+    ///
     /// # Arguments
     /// * `training_data` - Sample data to build frequency tables (must not be empty)
     pub fn new(training_data: &[u8]) -> Result<Self> {
@@ -519,7 +519,7 @@ pub struct DictCompressor {
 
 impl DictCompressor {
     /// Create a new dictionary compressor trained on the provided data
-    /// 
+    ///
     /// # Arguments
     /// * `training_data` - Sample data to build dictionary patterns (must not be empty)
     pub fn new(training_data: &[u8]) -> Result<Self> {
@@ -570,9 +570,9 @@ pub struct HybridCompressor {
 
 impl HybridCompressor {
     /// Create a new hybrid compressor that automatically selects the best algorithm
-    /// 
+    ///
     /// The compressor will test multiple algorithms and choose the one with best compression
-    /// 
+    ///
     /// # Arguments
     /// * `training_data` - Sample data for training all component compressors
     pub fn new(training_data: &[u8]) -> Result<Self> {
@@ -657,7 +657,9 @@ impl CompressorFactory {
             #[cfg(feature = "zstd")]
             Algorithm::Zstd(level) => Ok(Box::new(ZstdCompressor::new(level))),
             #[cfg(not(feature = "zstd"))]
-            Algorithm::Zstd(_) => Err(ZiporaError::configuration("ZSTD compression not available - enable 'zstd' feature")),
+            Algorithm::Zstd(_) => Err(ZiporaError::configuration(
+                "ZSTD compression not available - enable 'zstd' feature",
+            )),
             Algorithm::Huffman => {
                 if let Some(data) = training_data {
                     Ok(Box::new(HuffmanCompressor::new(data)?))

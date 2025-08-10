@@ -9,9 +9,9 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use crate::RecordId;
 use crate::blob_store::traits::{BatchBlobStore, BlobStore, BlobStoreStats, IterableBlobStore};
 use crate::error::{Result, ZiporaError};
-use crate::RecordId;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

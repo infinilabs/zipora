@@ -1,7 +1,7 @@
 //! Ultra-Fast Rank-select operations on bit vectors with optimized lookup tables
 //!
-//! This module provides highly optimized succinct data structures that support rank 
-//! (count set bits) and select (find position of nth set bit) operations with 
+//! This module provides highly optimized succinct data structures that support rank
+//! (count set bits) and select (find position of nth set bit) operations with
 //! dramatically improved performance using pre-computed lookup tables.
 //!
 //! # Performance Improvements
@@ -49,33 +49,21 @@
 //! - `simd`: Enables 16-bit lookup tables for better cache efficiency (recommended)
 //! - Default: Uses 8-bit lookup tables for minimal memory overhead
 
+use crate::FastVec;
 use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;
-use crate::FastVec;
 use std::fmt;
 
 // Hardware instruction imports for SIMD optimizations
 #[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::{
-    _popcnt64,
-    _pdep_u64,
-};
+use std::arch::x86_64::{_pdep_u64, _popcnt64};
 
 // AVX-512 intrinsics are experimental, only import when the feature is enabled
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
-use std::arch::x86_64::{
-    _mm512_loadu_si512,
-    _mm512_storeu_si512, 
-    __m512i,
-};
+use std::arch::x86_64::{__m512i, _mm512_loadu_si512, _mm512_storeu_si512};
 
 #[cfg(target_arch = "aarch64")]
-use std::arch::aarch64::{
-    vcntq_u8,
-    vaddvq_u8,
-    vld1q_u8,
-    uint8x16_t,
-};
+use std::arch::aarch64::{uint8x16_t, vaddvq_u8, vcntq_u8, vld1q_u8};
 
 #[cfg(target_arch = "x86_64")]
 use std::sync::OnceLock;
@@ -86,7 +74,7 @@ pub struct CpuFeatures {
     /// CPU supports POPCNT instruction for fast bit counting
     pub has_popcnt: bool,
     /// CPU supports BMI2 instruction set for bit manipulation
-    pub has_bmi2: bool, 
+    pub has_bmi2: bool,
     /// CPU supports AVX2 SIMD instructions
     pub has_avx2: bool,
     /// CPU supports AVX-512F foundation instructions
@@ -113,14 +101,14 @@ impl CpuFeatures {
             has_avx512vpopcntdq: is_x86_feature_detected!("avx512vpopcntdq"),
         }
     }
-    
+
     /// Get the global CPU features instance (cached)
     pub fn get() -> &'static CpuFeatures {
         // In test mode, use a simple fallback to avoid potential recursion during testing
         #[cfg(test)]
         {
             static TEST_FEATURES: CpuFeatures = CpuFeatures {
-                has_popcnt: false,  // Use safe fallback in tests to avoid runtime detection issues
+                has_popcnt: false, // Use safe fallback in tests to avoid runtime detection issues
                 has_bmi2: false,
                 has_avx2: false,
                 has_avx512f: false,
@@ -129,7 +117,7 @@ impl CpuFeatures {
             };
             &TEST_FEATURES
         }
-        
+
         #[cfg(not(test))]
         {
             CPU_FEATURES.get_or_init(Self::detect)
@@ -143,19 +131,19 @@ impl CpuFeatures {
     pub fn detect() -> Self {
         Self {
             has_popcnt: cfg!(feature = "simd") && std::arch::is_aarch64_feature_detected!("neon"),
-            has_bmi2: false,  // ARM doesn't have BMI2
-            has_avx2: false,  // ARM doesn't have AVX2
+            has_bmi2: false, // ARM doesn't have BMI2
+            has_avx2: false, // ARM doesn't have AVX2
             has_avx512f: false,
             has_avx512bw: false,
             has_avx512vpopcntdq: false,
         }
     }
-    
+
     pub fn get() -> &'static CpuFeatures {
         #[cfg(test)]
         {
             static TEST_FEATURES: CpuFeatures = CpuFeatures {
-                has_popcnt: false,  // Safe fallback in tests
+                has_popcnt: false, // Safe fallback in tests
                 has_bmi2: false,
                 has_avx2: false,
                 has_avx512f: false,
@@ -164,7 +152,7 @@ impl CpuFeatures {
             };
             &TEST_FEATURES
         }
-        
+
         #[cfg(not(test))]
         {
             CPU_FEATURES.get_or_init(Self::detect)
@@ -184,13 +172,13 @@ impl CpuFeatures {
             has_avx512vpopcntdq: false,
         }
     }
-    
+
     pub fn get() -> &'static CpuFeatures {
         // In test mode, use a simple fallback to avoid potential recursion during testing
         #[cfg(test)]
         {
             static TEST_FEATURES: CpuFeatures = CpuFeatures {
-                has_popcnt: false,  // Always false for non-x86_64 anyway
+                has_popcnt: false, // Always false for non-x86_64 anyway
                 has_bmi2: false,
                 has_avx2: false,
                 has_avx512f: false,
@@ -199,7 +187,7 @@ impl CpuFeatures {
             };
             &TEST_FEATURES
         }
-        
+
         #[cfg(not(test))]
         {
             CPU_FEATURES.get_or_init(Self::detect)
@@ -261,7 +249,7 @@ const RANK_TABLE_16: [u16; 65536] = {
 };
 
 /// Hardware-accelerated popcount using POPCNT instruction when available
-/// 
+///
 /// This function provides 2-5x additional improvement over lookup tables
 /// by using dedicated CPU instructions for bit counting.
 ///
@@ -283,7 +271,7 @@ fn popcount_u64_hardware_accelerated(x: u64) -> u32 {
     {
         popcount_u64_lookup(x)
     }
-    
+
     #[cfg(not(test))]
     {
         if CpuFeatures::get().has_popcnt {
@@ -296,7 +284,7 @@ fn popcount_u64_hardware_accelerated(x: u64) -> u32 {
 }
 
 /// AVX-512 vectorized popcount for bulk operations
-/// 
+///
 /// Processes 8 x 64-bit words (512 bits) in parallel using AVX-512VPOPCNTDQ
 /// providing 2-4x speedup over sequential hardware popcount.
 ///
@@ -322,25 +310,25 @@ unsafe fn popcount_bulk_avx512(words: &[u64; 8]) -> [u32; 8] {
     unsafe fn avx512_popcount_impl(words: &[u64; 8]) -> [u32; 8] {
         // Load 512 bits (8 x u64) into AVX-512 register
         let data = unsafe { _mm512_loadu_si512(words.as_ptr() as *const __m512i) };
-        
+
         // Since AVX-512VPOPCNTDQ might not be available everywhere,
         // we'll extract and count using standard popcount
         let mut result = [0u32; 8];
         let mut extracted_words = [0u64; 8];
         unsafe { _mm512_storeu_si512(extracted_words.as_mut_ptr() as *mut __m512i, data) };
-        
+
         for (i, &word) in extracted_words.iter().enumerate() {
             result[i] = word.count_ones();
         }
-        
+
         result
     }
-    
+
     unsafe { avx512_popcount_impl(words) }
 }
 
 /// AVX-512 bulk rank operation for processing multiple positions efficiently
-/// 
+///
 /// Processes multiple rank queries in parallel using vectorized popcount,
 /// providing significant speedup for bulk operations.
 ///
@@ -360,27 +348,30 @@ fn rank1_bulk_avx512(blocks: &[u64], positions: &[usize]) -> Vec<usize> {
     // In test mode, use fallback to avoid feature detection issues
     #[cfg(test)]
     {
-        return positions.iter().map(|&pos| {
-            // Simple fallback implementation for testing
-            let word_idx = pos / 64;
-            let bit_idx = pos % 64;
-            let mut count = 0;
-            
-            // Count complete words
-            for i in 0..word_idx.min(blocks.len()) {
-                count += blocks[i].count_ones() as usize;
-            }
-            
-            // Count partial word
-            if word_idx < blocks.len() && bit_idx > 0 {
-                let mask = (1u64 << bit_idx) - 1;
-                count += (blocks[word_idx] & mask).count_ones() as usize;
-            }
-            
-            count
-        }).collect();
+        return positions
+            .iter()
+            .map(|&pos| {
+                // Simple fallback implementation for testing
+                let word_idx = pos / 64;
+                let bit_idx = pos % 64;
+                let mut count = 0;
+
+                // Count complete words
+                for i in 0..word_idx.min(blocks.len()) {
+                    count += blocks[i].count_ones() as usize;
+                }
+
+                // Count partial word
+                if word_idx < blocks.len() && bit_idx > 0 {
+                    let mask = (1u64 << bit_idx) - 1;
+                    count += (blocks[word_idx] & mask).count_ones() as usize;
+                }
+
+                count
+            })
+            .collect();
     }
-    
+
     #[cfg(not(test))]
     {
         let features = CpuFeatures::get();
@@ -388,24 +379,28 @@ fn rank1_bulk_avx512(blocks: &[u64], positions: &[usize]) -> Vec<usize> {
             unsafe { rank1_bulk_avx512_impl(blocks, positions) }
         } else {
             // Fallback to sequential hardware-accelerated operations
-            positions.iter().map(|&pos| {
-                let word_idx = pos / 64;
-                let bit_idx = pos % 64;
-                let mut count = 0;
-                
-                // Count complete words using hardware acceleration
-                for i in 0..word_idx.min(blocks.len()) {
-                    count += popcount_u64_hardware_accelerated(blocks[i]) as usize;
-                }
-                
-                // Count partial word
-                if word_idx < blocks.len() && bit_idx > 0 {
-                    let mask = (1u64 << bit_idx) - 1;
-                    count += popcount_u64_hardware_accelerated(blocks[word_idx] & mask) as usize;
-                }
-                
-                count
-            }).collect()
+            positions
+                .iter()
+                .map(|&pos| {
+                    let word_idx = pos / 64;
+                    let bit_idx = pos % 64;
+                    let mut count = 0;
+
+                    // Count complete words using hardware acceleration
+                    for i in 0..word_idx.min(blocks.len()) {
+                        count += popcount_u64_hardware_accelerated(blocks[i]) as usize;
+                    }
+
+                    // Count partial word
+                    if word_idx < blocks.len() && bit_idx > 0 {
+                        let mask = (1u64 << bit_idx) - 1;
+                        count +=
+                            popcount_u64_hardware_accelerated(blocks[word_idx] & mask) as usize;
+                    }
+
+                    count
+                })
+                .collect()
         }
     }
 }
@@ -415,54 +410,54 @@ fn rank1_bulk_avx512(blocks: &[u64], positions: &[usize]) -> Vec<usize> {
 #[target_feature(enable = "avx512f,avx512vpopcntdq")]
 unsafe fn rank1_bulk_avx512_impl(blocks: &[u64], positions: &[usize]) -> Vec<usize> {
     let mut results = Vec::with_capacity(positions.len());
-    
+
     for &pos in positions {
         let word_idx = pos / 64;
         let bit_idx = pos % 64;
         let mut count = 0usize;
-        
+
         // Process complete words in chunks of 8 using AVX-512
         let complete_words = word_idx.min(blocks.len());
         let chunks_of_8 = complete_words / 8;
-        
+
         for chunk_idx in 0..chunks_of_8 {
             let start_idx = chunk_idx * 8;
-            
+
             // Create aligned array for AVX-512 processing
             let mut aligned_words = [0u64; 8];
             aligned_words.copy_from_slice(&blocks[start_idx..start_idx + 8]);
-            
+
             // Process 8 words in parallel
             let popcounts = unsafe { popcount_bulk_avx512(&aligned_words) };
             count += popcounts.iter().map(|&c| c as usize).sum::<usize>();
         }
-        
+
         // Process remaining complete words sequentially
         for i in (chunks_of_8 * 8)..complete_words {
             count += popcount_u64_hardware_accelerated(blocks[i]) as usize;
         }
-        
+
         // Process partial word
         if word_idx < blocks.len() && bit_idx > 0 {
             let mask = (1u64 << bit_idx) - 1;
             count += popcount_u64_hardware_accelerated(blocks[word_idx] & mask) as usize;
         }
-        
+
         results.push(count);
     }
-    
+
     results
 }
 
 #[inline(always)]
 #[cfg(target_arch = "aarch64")]
 fn popcount_u64_hardware_accelerated(x: u64) -> u32 {
-    // In test mode, use lookup tables to avoid recursion issues  
+    // In test mode, use lookup tables to avoid recursion issues
     #[cfg(test)]
     {
         popcount_u64_lookup(x)
     }
-    
+
     #[cfg(not(test))]
     {
         if CpuFeatures::get().has_popcnt {
@@ -482,7 +477,7 @@ fn popcount_u64_hardware_accelerated(x: u64) -> u32 {
 }
 
 /// NEON-accelerated popcount for ARM processors
-/// 
+///
 /// Uses ARM NEON SIMD instructions for efficient bit counting,
 /// providing improved performance on ARM servers and mobile devices.
 #[cfg(target_arch = "aarch64")]
@@ -490,24 +485,24 @@ fn popcount_u64_hardware_accelerated(x: u64) -> u32 {
 unsafe fn popcount_u64_neon(x: u64) -> u32 {
     // Convert u64 to byte array for NEON processing
     let bytes = x.to_le_bytes();
-    
+
     // Load 8 bytes into NEON register
     // Note: NEON processes 16 bytes at a time, so we load our 8 bytes + padding
     let mut neon_bytes = [0u8; 16];
     neon_bytes[..8].copy_from_slice(&bytes);
-    
+
     // Load into NEON vector
     let vector = vld1q_u8(neon_bytes.as_ptr());
-    
+
     // Count set bits in each byte using NEON population count
     let popcnt_vector = vcntq_u8(vector);
-    
+
     // Sum all the byte counts to get total
     vaddvq_u8(popcnt_vector) as u32
 }
 
 /// Efficiently count set bits in a u64 using optimized lookup tables
-/// 
+///
 /// This function provides 10-100x performance improvement over naive bit counting
 /// by using pre-computed lookup tables instead of iterating through bits.
 ///
@@ -547,7 +542,7 @@ fn popcount_u64_lookup(x: u64) -> u32 {
 }
 
 /// Hardware-accelerated select using BMI2 PDEP/PEXT instructions when available
-/// 
+///
 /// This function provides 5-10x additional improvement over lookup tables
 /// by using parallel bit deposit/extract instructions.
 ///
@@ -570,7 +565,7 @@ fn select_u64_hardware_accelerated(x: u64, k: usize) -> usize {
     {
         select_u64_lookup(x, k)
     }
-    
+
     #[cfg(not(test))]
     {
         if CpuFeatures::get().has_bmi2 {
@@ -588,7 +583,7 @@ fn select_u64_hardware_accelerated(x: u64, k: usize) -> usize {
 }
 
 /// Ultra-fast select using BMI2 PDEP/PEXT instructions
-/// 
+///
 /// This provides 5-10x improvement over lookup tables by using
 /// parallel bit deposit and extract operations.
 #[inline(always)]
@@ -597,33 +592,37 @@ fn select_u64_bmi2(x: u64, k: usize) -> usize {
     if k == 0 {
         return 64;
     }
-    
+
     let popcount = unsafe { _popcnt64(x as i64) } as usize;
     if k > popcount {
         return 64;
     }
-    
+
     // Use PEXT to compress set bits, then find the k-th bit
     // SAFETY: We've verified BMI2 is available
     unsafe {
         // Create a mask with the first k bits set
-        let select_mask = (1u64 << k) - 1;
-        
+        let select_mask = if k >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << k) - 1
+        };
+
         // Use PDEP to expand the select mask according to the bit pattern
         let expanded_mask = _pdep_u64(select_mask, x);
-        
+
         // Find the highest set bit in the expanded mask
         if expanded_mask == 0 {
             return 64;
         }
-        
+
         // Count trailing zeros to get position
         63 - expanded_mask.leading_zeros() as usize
     }
 }
 
 /// Find the position of the k-th set bit in a u64 using optimized lookup tables
-/// 
+///
 /// This function provides 20-50x performance improvement over linear bit scanning
 /// by using pre-computed select tables for each byte.
 ///
@@ -644,15 +643,15 @@ fn select_u64_lookup(x: u64, k: usize) -> usize {
     if k == 0 {
         return 64; // Invalid k
     }
-    
+
     let mut remaining_k = k;
     let mut bit_offset = 0;
-    
+
     // Process each byte using lookup table
     for byte_idx in 0..8 {
         let byte = ((x >> (byte_idx * 8)) & 0xFF) as u8;
         let byte_popcount = RANK_TABLE_8[byte as usize] as usize;
-        
+
         if remaining_k <= byte_popcount {
             // The k-th bit is in this byte
             let select_pos = SELECT_TABLE_8[byte as usize][remaining_k - 1];
@@ -660,11 +659,11 @@ fn select_u64_lookup(x: u64, k: usize) -> usize {
                 return bit_offset + select_pos as usize;
             }
         }
-        
+
         remaining_k = remaining_k.saturating_sub(byte_popcount);
         bit_offset += 8;
     }
-    
+
     64 // Not found
 }
 
@@ -698,8 +697,8 @@ pub struct RankSelect256 {
 }
 
 const BLOCK_SIZE: usize = 256; // 256 bits = 4 u64 words
-                               // Removed unused constant - will be implemented in future versions
-                               // const WORDS_PER_BLOCK: usize = BLOCK_SIZE / 64;
+// Removed unused constant - will be implemented in future versions
+// const WORDS_PER_BLOCK: usize = BLOCK_SIZE / 64;
 const SELECT_SAMPLE_RATE: usize = 512; // Sample every 512 set bits
 
 impl RankSelect256 {
@@ -812,7 +811,7 @@ impl RankSelect256 {
     /// Count the number of set bits up to (but not including) the given position
     ///
     /// This operation runs in O(1) time using the precomputed rank index and lookup tables.
-    /// 
+    ///
     /// # Performance
     /// - Uses pre-computed block ranks for O(1) block lookup
     /// - Uses optimized lookup tables for remainder bits (10-100x faster than linear scan)
@@ -837,42 +836,42 @@ impl RankSelect256 {
         }
 
         let pos = pos.min(self.bit_vector.len());
-        
+
         // Calculate which 256-bit block contains the position
         let block_idx = pos / BLOCK_SIZE;
         let bit_offset_in_block = pos % BLOCK_SIZE;
-        
+
         // Get rank up to the start of this block from precomputed index
         let mut rank = if block_idx > 0 {
             self.rank_blocks[block_idx - 1] as usize
         } else {
             0
         };
-        
+
         // Count bits in the current block up to the position
         let start_bit = block_idx * BLOCK_SIZE;
         let block_end = (start_bit + bit_offset_in_block).min(self.bit_vector.len());
-        
+
         // Use hardware-accelerated block-wise counting with best available implementation
         let blocks = self.bit_vector.blocks();
         let start_word = start_bit / 64;
         let end_word = block_end / 64;
         let end_bit_in_word = block_end % 64;
-        
+
         // Count complete words in the block using hardware acceleration when available
         for word_idx in start_word..end_word {
             if word_idx < blocks.len() {
                 rank += popcount_u64_hardware_accelerated(blocks[word_idx]) as usize;
             }
         }
-        
+
         // Handle the partial word at the end
         if end_word < blocks.len() && end_bit_in_word > 0 {
             let word = blocks[end_word];
             let mask = (1u64 << end_bit_in_word) - 1;
             rank += popcount_u64_hardware_accelerated(word & mask) as usize;
         }
-        
+
         rank
     }
 
@@ -889,7 +888,7 @@ impl RankSelect256 {
     /// Find the position of the k-th set bit (0-indexed)
     ///
     /// Returns an error if k >= total number of set bits.
-    /// 
+    ///
     /// # Performance
     /// - Uses binary search on rank blocks for O(log n) block lookup
     /// - Uses optimized lookup tables for intra-block search (20-50x faster)
@@ -915,7 +914,7 @@ impl RankSelect256 {
 
         // Binary search on rank blocks to find the containing block
         let block_idx = self.binary_search_rank_blocks(target_rank);
-        
+
         // Get the rank at the start of this block
         let block_start_rank = if block_idx > 0 {
             self.rank_blocks[block_idx - 1] as usize
@@ -925,11 +924,11 @@ impl RankSelect256 {
 
         // How many more 1s we need to find within this block
         let remaining_ones = target_rank - block_start_rank;
-        
+
         // Search within the block using lookup tables
         let block_start_bit = block_idx * BLOCK_SIZE;
         let block_end_bit = ((block_idx + 1) * BLOCK_SIZE).min(self.bit_vector.len());
-        
+
         self.select1_within_block(block_start_bit, block_end_bit, remaining_ones)
     }
 
@@ -938,7 +937,7 @@ impl RankSelect256 {
     fn binary_search_rank_blocks(&self, target_rank: usize) -> usize {
         let mut left = 0;
         let mut right = self.rank_blocks.len();
-        
+
         while left < right {
             let mid = left + (right - left) / 2;
             if self.rank_blocks[mid] < target_rank as u32 {
@@ -947,7 +946,7 @@ impl RankSelect256 {
                 right = mid;
             }
         }
-        
+
         left
     }
 
@@ -957,13 +956,13 @@ impl RankSelect256 {
         let blocks = self.bit_vector.blocks();
         let start_word = start_bit / 64;
         let end_word = (end_bit + 63) / 64; // Round up
-        
+
         let mut remaining_k = k;
-        
+
         // Search word by word within the block
         for word_idx in start_word..end_word.min(blocks.len()) {
             let mut word = blocks[word_idx];
-            
+
             // Handle partial word at the beginning
             if word_idx == start_word {
                 let start_bit_in_word = start_bit % 64;
@@ -971,7 +970,7 @@ impl RankSelect256 {
                     word &= !((1u64 << start_bit_in_word) - 1);
                 }
             }
-            
+
             // Handle partial word at the end
             if word_idx * 64 + 64 > end_bit {
                 let end_bit_in_word = end_bit % 64;
@@ -980,9 +979,9 @@ impl RankSelect256 {
                     word &= mask;
                 }
             }
-            
+
             let word_popcount = popcount_u64_hardware_accelerated(word) as usize;
-            
+
             if remaining_k <= word_popcount {
                 // The k-th bit is in this word - use hardware acceleration when available
                 let select_pos = select_u64_hardware_accelerated(word, remaining_k);
@@ -990,10 +989,10 @@ impl RankSelect256 {
                     return Ok(word_idx * 64 + select_pos);
                 }
             }
-            
+
             remaining_k = remaining_k.saturating_sub(word_popcount);
         }
-        
+
         Err(ZiporaError::invalid_data(
             "Select position not found in block".to_string(),
         ))
@@ -1069,7 +1068,7 @@ impl RankSelect256 {
     }
 
     /// Hardware-accelerated rank using POPCNT instruction when available
-    /// 
+    ///
     /// This method provides 2-5x additional improvement over lookup tables
     /// by using dedicated CPU instructions for bit counting.
     #[inline(always)]
@@ -1079,55 +1078,55 @@ impl RankSelect256 {
         {
             return self.rank1_optimized(pos);
         }
-        
+
         #[cfg(not(test))]
         {
-        if pos == 0 || self.bit_vector.is_empty() {
-            return 0;
-        }
-
-        let pos = pos.min(self.bit_vector.len());
-        
-        // Calculate which 256-bit block contains the position
-        let block_idx = pos / BLOCK_SIZE;
-        let bit_offset_in_block = pos % BLOCK_SIZE;
-        
-        // Get rank up to the start of this block from precomputed index
-        let mut rank = if block_idx > 0 {
-            self.rank_blocks[block_idx - 1] as usize
-        } else {
-            0
-        };
-        
-        // Count bits in the current block up to the position using hardware acceleration
-        let start_bit = block_idx * BLOCK_SIZE;
-        let block_end = (start_bit + bit_offset_in_block).min(self.bit_vector.len());
-        
-        let blocks = self.bit_vector.blocks();
-        let start_word = start_bit / 64;
-        let end_word = block_end / 64;
-        let end_bit_in_word = block_end % 64;
-        
-        // Count complete words in the block using hardware acceleration
-        for word_idx in start_word..end_word {
-            if word_idx < blocks.len() {
-                rank += popcount_u64_hardware_accelerated(blocks[word_idx]) as usize;
+            if pos == 0 || self.bit_vector.is_empty() {
+                return 0;
             }
-        }
-        
-        // Handle the partial word at the end
-        if end_word < blocks.len() && end_bit_in_word > 0 {
-            let word = blocks[end_word];
-            let mask = (1u64 << end_bit_in_word) - 1;
-            rank += popcount_u64_hardware_accelerated(word & mask) as usize;
-        }
-        
-        rank
+
+            let pos = pos.min(self.bit_vector.len());
+
+            // Calculate which 256-bit block contains the position
+            let block_idx = pos / BLOCK_SIZE;
+            let bit_offset_in_block = pos % BLOCK_SIZE;
+
+            // Get rank up to the start of this block from precomputed index
+            let mut rank = if block_idx > 0 {
+                self.rank_blocks[block_idx - 1] as usize
+            } else {
+                0
+            };
+
+            // Count bits in the current block up to the position using hardware acceleration
+            let start_bit = block_idx * BLOCK_SIZE;
+            let block_end = (start_bit + bit_offset_in_block).min(self.bit_vector.len());
+
+            let blocks = self.bit_vector.blocks();
+            let start_word = start_bit / 64;
+            let end_word = block_end / 64;
+            let end_bit_in_word = block_end % 64;
+
+            // Count complete words in the block using hardware acceleration
+            for word_idx in start_word..end_word {
+                if word_idx < blocks.len() {
+                    rank += popcount_u64_hardware_accelerated(blocks[word_idx]) as usize;
+                }
+            }
+
+            // Handle the partial word at the end
+            if end_word < blocks.len() && end_bit_in_word > 0 {
+                let word = blocks[end_word];
+                let mask = (1u64 << end_bit_in_word) - 1;
+                rank += popcount_u64_hardware_accelerated(word & mask) as usize;
+            }
+
+            rank
         }
     }
-    
+
     /// Hardware-accelerated select using BMI2 PDEP/PEXT when available
-    /// 
+    ///
     /// This method provides 5-10x additional improvement over lookup tables
     /// by using parallel bit deposit/extract instructions.
     #[inline(always)]
@@ -1137,7 +1136,7 @@ impl RankSelect256 {
         {
             return self.select1_optimized(k);
         }
-        
+
         #[cfg(not(test))]
         {
             if k >= self.total_ones {
@@ -1148,7 +1147,7 @@ impl RankSelect256 {
 
             // Binary search on rank blocks to find the containing block
             let block_idx = self.binary_search_rank_blocks(target_rank);
-            
+
             // Get the rank at the start of this block
             let block_start_rank = if block_idx > 0 {
                 self.rank_blocks[block_idx - 1] as usize
@@ -1158,29 +1157,38 @@ impl RankSelect256 {
 
             // How many more 1s we need to find within this block
             let remaining_ones = target_rank - block_start_rank;
-            
+
             // Search within the block using hardware acceleration
             let block_start_bit = block_idx * BLOCK_SIZE;
             let block_end_bit = ((block_idx + 1) * BLOCK_SIZE).min(self.bit_vector.len());
-            
-            self.select1_within_block_hardware_accelerated(block_start_bit, block_end_bit, remaining_ones)
+
+            self.select1_within_block_hardware_accelerated(
+                block_start_bit,
+                block_end_bit,
+                remaining_ones,
+            )
         }
     }
-    
+
     /// Search for the k-th set bit within a specific block using hardware acceleration
     #[inline]
     #[allow(dead_code)]
-    fn select1_within_block_hardware_accelerated(&self, start_bit: usize, end_bit: usize, k: usize) -> Result<usize> {
+    fn select1_within_block_hardware_accelerated(
+        &self,
+        start_bit: usize,
+        end_bit: usize,
+        k: usize,
+    ) -> Result<usize> {
         let blocks = self.bit_vector.blocks();
         let start_word = start_bit / 64;
         let end_word = (end_bit + 63) / 64; // Round up
-        
+
         let mut remaining_k = k;
-        
+
         // Search word by word within the block using hardware acceleration
         for word_idx in start_word..end_word.min(blocks.len()) {
             let mut word = blocks[word_idx];
-            
+
             // Handle partial word at the beginning
             if word_idx == start_word {
                 let start_bit_in_word = start_bit % 64;
@@ -1188,7 +1196,7 @@ impl RankSelect256 {
                     word &= !((1u64 << start_bit_in_word) - 1);
                 }
             }
-            
+
             // Handle partial word at the end
             if word_idx * 64 + 64 > end_bit {
                 let end_bit_in_word = end_bit % 64;
@@ -1197,9 +1205,9 @@ impl RankSelect256 {
                     word &= mask;
                 }
             }
-            
+
             let word_popcount = popcount_u64_hardware_accelerated(word) as usize;
-            
+
             if remaining_k <= word_popcount {
                 // The k-th bit is in this word - use hardware acceleration
                 let select_pos = select_u64_hardware_accelerated(word, remaining_k);
@@ -1207,17 +1215,17 @@ impl RankSelect256 {
                     return Ok(word_idx * 64 + select_pos);
                 }
             }
-            
+
             remaining_k = remaining_k.saturating_sub(word_popcount);
         }
-        
+
         Err(ZiporaError::invalid_data(
             "Select position not found in block".to_string(),
         ))
     }
-    
+
     /// Adaptive rank method - chooses best available implementation
-    /// 
+    ///
     /// This method automatically selects the fastest rank implementation
     /// based on available CPU features:
     /// - POPCNT: Hardware-accelerated (fastest)
@@ -1229,7 +1237,7 @@ impl RankSelect256 {
         {
             self.rank1_optimized(pos)
         }
-        
+
         #[cfg(not(test))]
         {
             #[cfg(target_arch = "x86_64")]
@@ -1246,9 +1254,9 @@ impl RankSelect256 {
             }
         }
     }
-    
+
     /// Adaptive select method - chooses best available implementation
-    /// 
+    ///
     /// This method automatically selects the fastest select implementation
     /// based on available CPU features:
     /// - BMI2: Hardware-accelerated (fastest)
@@ -1260,7 +1268,7 @@ impl RankSelect256 {
         {
             self.select1_optimized(k)
         }
-        
+
         #[cfg(not(test))]
         {
             #[cfg(target_arch = "x86_64")]
@@ -1279,7 +1287,7 @@ impl RankSelect256 {
     }
 
     /// AVX-512 bulk rank operation for processing multiple positions efficiently
-    /// 
+    ///
     /// Processes multiple rank queries in parallel using vectorized popcount,
     /// providing 2-4x speedup over sequential operations.
     ///
@@ -1305,7 +1313,7 @@ impl RankSelect256 {
     }
 
     /// AVX-512 optimized rank operation with automatic feature detection
-    /// 
+    ///
     /// This method automatically selects the fastest rank implementation:
     /// - **AVX-512**: Vectorized operations (fastest for modern CPUs)
     /// - **POPCNT**: Hardware-accelerated fallback
@@ -1322,7 +1330,7 @@ impl RankSelect256 {
         {
             self.rank1_optimized(pos)
         }
-        
+
         #[cfg(not(test))]
         {
             let features = CpuFeatures::get();
@@ -1339,7 +1347,7 @@ impl RankSelect256 {
     }
 
     /// High-performance bulk select operations using AVX-512 acceleration
-    /// 
+    ///
     /// Processes multiple select queries efficiently by leveraging vectorized
     /// operations and optimized memory access patterns.
     ///
@@ -1356,16 +1364,16 @@ impl RankSelect256 {
     #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
     pub fn select1_bulk_avx512(&self, indices: &[usize]) -> crate::error::Result<Vec<usize>> {
         let mut results = Vec::with_capacity(indices.len());
-        
+
         for &k in indices {
             results.push(self.select1_avx512_adaptive(k)?);
         }
-        
+
         Ok(results)
     }
 
     /// AVX-512 optimized select operation with automatic feature detection
-    /// 
+    ///
     /// Automatically selects the best available select implementation
     /// based on CPU capabilities, providing optimal performance across
     /// different hardware generations.
@@ -1377,7 +1385,7 @@ impl RankSelect256 {
         {
             self.select1_optimized(k)
         }
-        
+
         #[cfg(not(test))]
         {
             let features = CpuFeatures::get();
@@ -1737,23 +1745,33 @@ mod tests {
         for &val in &test_values {
             let lookup_result = super::popcount_u64_lookup(val);
             let std_result = val.count_ones();
-            assert_eq!(lookup_result, std_result, 
-                      "Popcount mismatch for 0x{:016x}: lookup={}, std={}", 
-                      val, lookup_result, std_result);
+            assert_eq!(
+                lookup_result, std_result,
+                "Popcount mismatch for 0x{:016x}: lookup={}, std={}",
+                val, lookup_result, std_result
+            );
         }
 
-        // Test select_u64_lookup 
+        // Test select_u64_lookup
         let val = 0x5555555555555555u64; // Every other bit set (32 bits total)
         for k in 1..=32 {
             let pos = super::select_u64_lookup(val, k);
             assert!(pos < 64, "Select returned invalid position for k={}", k);
-            
+
             // Verify the bit at this position is actually set
-            assert!((val >> pos) & 1 == 1, "Selected bit is not set at position {}", pos);
-            
+            assert!(
+                (val >> pos) & 1 == 1,
+                "Selected bit is not set at position {}",
+                pos
+            );
+
             // Verify this is actually the k-th set bit
             let rank_at_pos = super::popcount_u64_lookup(val & ((1u64 << (pos + 1)) - 1));
-            assert_eq!(rank_at_pos as usize, k, "Selected position doesn't have rank {}", k);
+            assert_eq!(
+                rank_at_pos as usize, k,
+                "Selected position doesn't have rank {}",
+                k
+            );
         }
     }
 
@@ -1766,12 +1784,12 @@ mod tests {
         }
 
         let rs = RankSelect256::new(bv).unwrap();
-        
+
         // Test various rank operations
         assert_eq!(rs.rank1(0), 0);
         assert_eq!(rs.rank1(127), 1);
         assert_eq!(rs.rank1(254), 2);
-        
+
         // Test select operations
         if rs.count_ones() > 0 {
             assert_eq!(rs.select1(0).unwrap(), 0);
@@ -1786,16 +1804,16 @@ mod tests {
         // Test edge cases for optimized methods
         let bv = BitVector::new();
         let rs = RankSelect256::new(bv).unwrap();
-        
+
         // Empty bit vector
         assert_eq!(rs.rank1_optimized(0), 0);
         assert_eq!(rs.rank1_optimized(100), 0);
-        
+
         // Single bit
         let mut bv_single = BitVector::new();
         bv_single.push(true).unwrap();
         let rs_single = RankSelect256::new(bv_single).unwrap();
-        
+
         assert_eq!(rs_single.rank1_optimized(0), 0);
         assert_eq!(rs_single.rank1_optimized(1), 1);
         assert_eq!(rs_single.select1_optimized(0).unwrap(), 0);
@@ -1815,7 +1833,11 @@ mod tests {
         for pos in (0..=1000).step_by(50) {
             let optimized = rs.rank1_optimized(pos);
             let hardware = rs.rank1_hardware_accelerated(pos);
-            assert_eq!(optimized, hardware, "Hardware rank mismatch at position {}", pos);
+            assert_eq!(
+                optimized, hardware,
+                "Hardware rank mismatch at position {}",
+                pos
+            );
         }
     }
 
@@ -1852,7 +1874,11 @@ mod tests {
         for pos in (0..=500).step_by(25) {
             let standard = rs.rank1(pos);
             let adaptive = rs.rank1_adaptive(pos);
-            assert_eq!(standard, adaptive, "Adaptive rank mismatch at position {}", pos);
+            assert_eq!(
+                standard, adaptive,
+                "Adaptive rank mismatch at position {}",
+                pos
+            );
         }
 
         // Test adaptive select
@@ -1869,17 +1895,17 @@ mod tests {
         // Test CPU feature detection
         let features = CpuFeatures::detect();
         println!("Detected CPU features: {:?}", features);
-        
+
         // In test mode, CpuFeatures::get() returns safe fallback features
         // while detect() returns actual hardware features
         let features2 = CpuFeatures::get();
         println!("Test mode features: {:?}", features2);
-        
+
         // In test mode, get() should return all false for safety
         assert_eq!(features2.has_popcnt, false);
         assert_eq!(features2.has_bmi2, false);
         assert_eq!(features2.has_avx2, false);
-        
+
         // detect() should return actual hardware capabilities
         // This test validates that feature detection actually works
         // (we can't assert specific values since they depend on the CPU)
@@ -1891,24 +1917,26 @@ mod tests {
         let test_values = [
             0x5555555555555555u64, // Every other bit set
             0xAAAAAAAAAAAAAAAAu64, // Every other bit set (offset)
-            0x123456789ABCDEFu64,   // Random pattern
-            0xFFFF0000FFFF0000u64,  // Block pattern
-            0x8000000000000001u64,  // Edge bits
+            0x123456789ABCDEFu64,  // Random pattern
+            0xFFFF0000FFFF0000u64, // Block pattern
+            0x8000000000000001u64, // Edge bits
         ];
 
         for &val in &test_values {
             let popcount = val.count_ones() as usize;
-            
+
             for k in 1..=popcount {
                 let lookup_result = super::select_u64_lookup(val, k);
                 #[cfg(target_arch = "x86_64")]
                 let bmi2_result = super::select_u64_bmi2(val, k);
-                
+
                 #[cfg(target_arch = "x86_64")]
                 if CpuFeatures::get().has_bmi2 {
-                    assert_eq!(lookup_result, bmi2_result, 
-                              "BMI2 select mismatch for 0x{:016x} k={}: lookup={}, bmi2={}", 
-                              val, k, lookup_result, bmi2_result);
+                    assert_eq!(
+                        lookup_result, bmi2_result,
+                        "BMI2 select mismatch for 0x{:016x} k={}: lookup={}, bmi2={}",
+                        val, k, lookup_result, bmi2_result
+                    );
                 }
             }
         }
@@ -1933,16 +1961,22 @@ mod tests {
             let lookup_result = super::popcount_u64_lookup(val);
             let hardware_result = super::popcount_u64_hardware_accelerated(val);
             let std_result = val.count_ones();
-            
-            assert_eq!(lookup_result, std_result, 
-                      "Lookup popcount mismatch for 0x{:016x}: lookup={}, std={}", 
-                      val, lookup_result, std_result);
-            assert_eq!(hardware_result, std_result, 
-                      "Hardware popcount mismatch for 0x{:016x}: hardware={}, std={}", 
-                      val, hardware_result, std_result);
-            assert_eq!(lookup_result, hardware_result, 
-                      "Lookup vs hardware popcount mismatch for 0x{:016x}: lookup={}, hardware={}", 
-                      val, lookup_result, hardware_result);
+
+            assert_eq!(
+                lookup_result, std_result,
+                "Lookup popcount mismatch for 0x{:016x}: lookup={}, std={}",
+                val, lookup_result, std_result
+            );
+            assert_eq!(
+                hardware_result, std_result,
+                "Hardware popcount mismatch for 0x{:016x}: hardware={}, std={}",
+                val, hardware_result, std_result
+            );
+            assert_eq!(
+                lookup_result, hardware_result,
+                "Lookup vs hardware popcount mismatch for 0x{:016x}: lookup={}, hardware={}",
+                val, lookup_result, hardware_result
+            );
         }
     }
 
@@ -1951,44 +1985,53 @@ mod tests {
     fn test_simd_bulk_operations() {
         // Test SIMD bulk operations on BitVector
         use crate::succinct::bit_vector::BitwiseOp;
-        
+
         let mut bv1 = BitVector::new();
         let mut bv2 = BitVector::new();
-        
+
         // Create test data
         for i in 0..1000 {
             bv1.push(i % 3 == 0).unwrap();
             bv2.push(i % 5 == 0).unwrap();
         }
-        
+
         // Test bulk rank operations
         let positions: Vec<usize> = (0..1000).step_by(50).collect();
         let bulk_ranks = bv1.rank1_bulk_simd(&positions);
-        
+
         // Verify bulk ranks match individual ranks
         for (i, &pos) in positions.iter().enumerate() {
-            assert_eq!(bulk_ranks[i], bv1.rank1(pos), 
-                      "Bulk rank mismatch at position {}", pos);
+            assert_eq!(
+                bulk_ranks[i],
+                bv1.rank1(pos),
+                "Bulk rank mismatch at position {}",
+                pos
+            );
         }
-        
+
         // Test range setting
         let mut bv3 = bv1.clone();
         bv3.set_range_simd(100, 200, true).unwrap();
-        
+
         // Verify range was set correctly
         for i in 100..200 {
             assert_eq!(bv3.get(i), Some(true), "Range set failed at position {}", i);
         }
-        
+
         // Test bulk bitwise operations
         let mut bv4 = bv1.clone();
-        bv4.bulk_bitwise_op_simd(&bv2, BitwiseOp::And, 0, 500).unwrap();
-        
+        bv4.bulk_bitwise_op_simd(&bv2, BitwiseOp::And, 0, 500)
+            .unwrap();
+
         // Verify bitwise operation was correct
         for i in 0..500 {
             let expected = bv1.get(i).unwrap_or(false) & bv2.get(i).unwrap_or(false);
-            assert_eq!(bv4.get(i), Some(expected), 
-                      "Bulk AND operation failed at position {}", i);
+            assert_eq!(
+                bv4.get(i),
+                Some(expected),
+                "Bulk AND operation failed at position {}",
+                i
+            );
         }
     }
 
@@ -2001,30 +2044,34 @@ mod tests {
         }
 
         let rs = RankSelect256::new(bv).unwrap();
-        
+
         // Test positions
         let test_positions: Vec<usize> = (0..10000).step_by(100).collect();
-        
+
         // Compare all rank implementations
         for &pos in &test_positions {
             let lookup = rs.rank1_optimized(pos);
             let hardware = rs.rank1_hardware_accelerated(pos);
             let adaptive = rs.rank1_adaptive(pos);
-            
+
             assert_eq!(lookup, hardware, "Rank implementation mismatch at {}", pos);
             assert_eq!(lookup, adaptive, "Adaptive rank mismatch at {}", pos);
         }
-        
+
         // Compare all select implementations for available ones
         let ones_count = rs.count_ones();
         let test_ks: Vec<usize> = (0..ones_count).step_by(ones_count.max(1) / 20).collect();
-        
+
         for &k in &test_ks {
             let lookup = rs.select1_optimized(k).unwrap();
             let hardware = rs.select1_hardware_accelerated(k).unwrap();
             let adaptive = rs.select1_adaptive(k).unwrap();
-            
-            assert_eq!(lookup, hardware, "Select implementation mismatch at k={}", k);
+
+            assert_eq!(
+                lookup, hardware,
+                "Select implementation mismatch at k={}",
+                k
+            );
             assert_eq!(lookup, adaptive, "Adaptive select mismatch at k={}", k);
         }
     }
@@ -2033,44 +2080,51 @@ mod tests {
     fn test_large_dataset_hardware_acceleration() {
         // Test hardware acceleration on large datasets
         let mut bv = BitVector::new();
-        
+
         // Create a large dataset with varied patterns
         for i in 0..100_000 {
             let bit = match i % 1000 {
-                0..=100 => i % 7 == 0,      // Dense region
-                101..=500 => i % 137 == 0,  // Sparse region  
-                501..=800 => i % 3 == 0,    // Medium density
-                _ => i % 1013 == 0,         // Very sparse
+                0..=100 => i % 7 == 0,     // Dense region
+                101..=500 => i % 137 == 0, // Sparse region
+                501..=800 => i % 3 == 0,   // Medium density
+                _ => i % 1013 == 0,        // Very sparse
             };
             bv.push(bit).unwrap();
         }
 
         let rs = RankSelect256::new(bv).unwrap();
-        
+
         // Test random positions
         let test_positions = [0, 1000, 10000, 25000, 50000, 75000, 99999];
-        
+
         for &pos in &test_positions {
             let standard = rs.rank1(pos);
             let optimized = rs.rank1_optimized(pos);
             let hardware = rs.rank1_hardware_accelerated(pos);
             let adaptive = rs.rank1_adaptive(pos);
-            
+
             assert_eq!(standard, optimized, "Optimized rank mismatch at {}", pos);
-            assert_eq!(standard, hardware, "Hardware rank mismatch at {}", pos); 
+            assert_eq!(standard, hardware, "Hardware rank mismatch at {}", pos);
             assert_eq!(standard, adaptive, "Adaptive rank mismatch at {}", pos);
         }
-        
+
         // Test select operations
         let ones_count = rs.count_ones();
-        let test_ks = [0, ones_count/10, ones_count/4, ones_count/2, ones_count*3/4, ones_count-1];
-        
+        let test_ks = [
+            0,
+            ones_count / 10,
+            ones_count / 4,
+            ones_count / 2,
+            ones_count * 3 / 4,
+            ones_count - 1,
+        ];
+
         for &k in &test_ks {
             if k < ones_count {
                 let optimized = rs.select1_optimized(k).unwrap();
                 let hardware = rs.select1_hardware_accelerated(k).unwrap();
                 let adaptive = rs.select1_adaptive(k).unwrap();
-                
+
                 assert_eq!(optimized, hardware, "Hardware select mismatch at k={}", k);
                 assert_eq!(optimized, adaptive, "Adaptive select mismatch at k={}", k);
             }

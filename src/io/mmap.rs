@@ -9,16 +9,16 @@ use crate::io::{DataInput, DataOutput, VarInt};
 #[cfg(feature = "mmap")]
 use std::fs::{File, OpenOptions};
 #[cfg(feature = "mmap")]
-use std::path::Path;
-#[cfg(feature = "mmap")]
 use std::io::{BufReader, Read as StdRead, Seek, SeekFrom};
+#[cfg(feature = "mmap")]
+use std::path::Path;
 
 #[cfg(feature = "mmap")]
 use memmap2::{Mmap, MmapMut, MmapOptions};
 
 #[cfg(target_os = "linux")]
 #[cfg(feature = "mmap")]
-use crate::memory::hugepage::{HugePage, HUGEPAGE_SIZE_2MB, HUGEPAGE_SIZE_1GB};
+use crate::memory::hugepage::{HUGEPAGE_SIZE_1GB, HUGEPAGE_SIZE_2MB, HugePage};
 
 /// Thresholds for adaptive memory mapping strategy
 const SMALL_FILE_THRESHOLD: u64 = 4 * 1024; // 4KB - use buffered I/O to avoid mmap overhead
@@ -78,7 +78,7 @@ pub struct MemoryMappedInput {
     file_size: u64,
     position: usize,
     access_pattern: AccessPattern,
-    
+
     // Strategy-specific storage
     mmap: Option<Mmap>,
     buffered_reader: Option<BufReader<File>>,
@@ -95,12 +95,13 @@ impl MemoryMappedInput {
 
     /// Creates a new memory-mapped input with access pattern hint
     pub fn new_with_pattern(file: File, access_pattern: AccessPattern) -> Result<Self> {
-        let file_size = file.metadata()
+        let file_size = file
+            .metadata()
             .map_err(|e| ZiporaError::io_error(format!("Failed to get file metadata: {}", e)))?
             .len();
 
         let strategy = Self::select_strategy(file_size);
-        
+
         let mut input = MemoryMappedInput {
             strategy,
             file_size,
@@ -154,9 +155,9 @@ impl MemoryMappedInput {
 
             InputStrategy::StandardMmap => {
                 let mmap = unsafe {
-                    MmapOptions::new()
-                        .map(&file)
-                        .map_err(|e| ZiporaError::io_error(format!("Failed to memory-map file: {}", e)))?
+                    MmapOptions::new().map(&file).map_err(|e| {
+                        ZiporaError::io_error(format!("Failed to memory-map file: {}", e))
+                    })?
                 };
 
                 // Apply advanced madvise hints
@@ -202,20 +203,18 @@ impl MemoryMappedInput {
     fn copy_file_to_hugepage(&mut self, file: &mut File, hugepage: &HugePage) -> Result<()> {
         file.seek(SeekFrom::Start(0))
             .map_err(|e| ZiporaError::io_error(format!("Failed to seek file: {}", e)))?;
-        
+
         let mut buffer = vec![0u8; 64 * 1024]; // 64KB read buffer
         let mut total_read = 0;
         let hugepage_slice = unsafe {
-            std::slice::from_raw_parts_mut(
-                hugepage.as_slice().as_ptr() as *mut u8,
-                hugepage.size()
-            )
+            std::slice::from_raw_parts_mut(hugepage.as_slice().as_ptr() as *mut u8, hugepage.size())
         };
 
         while total_read < self.file_size as usize {
-            let bytes_read = file.read(&mut buffer)
+            let bytes_read = file
+                .read(&mut buffer)
                 .map_err(|e| ZiporaError::io_error(format!("Failed to read file: {}", e)))?;
-            
+
             if bytes_read == 0 {
                 break;
             }
@@ -242,7 +241,7 @@ impl MemoryMappedInput {
                         // Optimize for sequential access with aggressive readahead
                         libc::madvise(ptr, len, libc::MADV_SEQUENTIAL);
                         libc::madvise(ptr, len, libc::MADV_WILLNEED);
-                        
+
                         // For large sequential files, prefetch the entire file
                         if len > 64 * 1024 {
                             self.prefetch_sequential(ptr, len)?;
@@ -251,7 +250,7 @@ impl MemoryMappedInput {
                     AccessPattern::Random => {
                         // Disable readahead for random access
                         libc::madvise(ptr, len, libc::MADV_RANDOM);
-                        
+
                         // Enable transparent hugepages for better TLB efficiency
                         if len > 2 * 1024 * 1024 {
                             libc::madvise(ptr, len, libc::MADV_HUGEPAGE);
@@ -260,7 +259,7 @@ impl MemoryMappedInput {
                     AccessPattern::Mixed => {
                         // Use normal access pattern with some readahead
                         libc::madvise(ptr, len, libc::MADV_NORMAL);
-                        
+
                         // Conservative prefetch for mixed workloads
                         if len > 2 * 1024 * 1024 {
                             libc::madvise(ptr, len, libc::MADV_HUGEPAGE);
@@ -294,11 +293,15 @@ impl MemoryMappedInput {
             while offset < len {
                 let prefetch_size = std::cmp::min(PREFETCH_WINDOW, len - offset);
                 let prefetch_ptr = (ptr as *const u8).add(offset) as *const libc::c_void;
-                
+
                 // Use POSIX_FADV_WILLNEED for async prefetch
                 // This is more efficient than synchronous readahead
-                libc::madvise(prefetch_ptr as *mut libc::c_void, prefetch_size, libc::MADV_WILLNEED);
-                
+                libc::madvise(
+                    prefetch_ptr as *mut libc::c_void,
+                    prefetch_size,
+                    libc::MADV_WILLNEED,
+                );
+
                 // Hardware prefetch hints for L1/L2 cache
                 for i in (0..prefetch_size).step_by(CACHE_LINE_SIZE) {
                     let cache_line = (prefetch_ptr as *const u8).add(i);
@@ -306,12 +309,12 @@ impl MemoryMappedInput {
                     {
                         // Use PREFETCHNTA for streaming data
                         std::arch::x86_64::_mm_prefetch(
-                            cache_line as *const i8, 
-                            std::arch::x86_64::_MM_HINT_NTA
+                            cache_line as *const i8,
+                            std::arch::x86_64::_MM_HINT_NTA,
                         );
                     }
                 }
-                
+
                 offset += prefetch_size;
             }
         }
@@ -327,7 +330,10 @@ impl MemoryMappedInput {
     }
 
     /// Creates a new memory-mapped input from a file path with access pattern hint
-    pub fn from_path_with_pattern<P: AsRef<Path>>(path: P, access_pattern: AccessPattern) -> Result<Self> {
+    pub fn from_path_with_pattern<P: AsRef<Path>>(
+        path: P,
+        access_pattern: AccessPattern,
+    ) -> Result<Self> {
         let file = File::open(path)
             .map_err(|e| ZiporaError::io_error(format!("Failed to open file: {}", e)))?;
         Self::new_with_pattern(file, access_pattern)
@@ -362,7 +368,8 @@ impl MemoryMappedInput {
         match self.strategy {
             InputStrategy::BufferedIO => {
                 if let Some(ref mut reader) = self.buffered_reader {
-                    reader.seek(SeekFrom::Start(pos as u64))
+                    reader
+                        .seek(SeekFrom::Start(pos as u64))
                         .map_err(|e| ZiporaError::io_error(format!("Failed to seek: {}", e)))?;
                 }
             }
@@ -391,7 +398,8 @@ impl MemoryMappedInput {
             InputStrategy::BufferedIO => {
                 if let Some(ref mut reader) = self.buffered_reader {
                     let mut buffer = vec![0u8; len];
-                    reader.read_exact(&mut buffer)
+                    reader
+                        .read_exact(&mut buffer)
                         .map_err(|e| ZiporaError::io_error(format!("Failed to read: {}", e)))?;
                     buffer
                 } else {
@@ -418,7 +426,9 @@ impl MemoryMappedInput {
 
             #[cfg(not(target_os = "linux"))]
             InputStrategy::HugepageMmap => {
-                return Err(ZiporaError::not_supported("Hugepages not available on this platform"));
+                return Err(ZiporaError::not_supported(
+                    "Hugepages not available on this platform",
+                ));
             }
         };
 
@@ -436,7 +446,7 @@ impl MemoryMappedInput {
         let slice = match self.strategy {
             InputStrategy::BufferedIO => {
                 return Err(ZiporaError::not_supported(
-                    "Zero-copy not available for buffered I/O strategy"
+                    "Zero-copy not available for buffered I/O strategy",
                 ));
             }
 
@@ -459,7 +469,9 @@ impl MemoryMappedInput {
 
             #[cfg(not(target_os = "linux"))]
             InputStrategy::HugepageMmap => {
-                return Err(ZiporaError::not_supported("Hugepages not available on this platform"));
+                return Err(ZiporaError::not_supported(
+                    "Hugepages not available on this platform",
+                ));
             }
         };
 
@@ -478,7 +490,7 @@ impl MemoryMappedInput {
             InputStrategy::BufferedIO => {
                 // For buffered I/O, peek is not efficiently supported
                 Err(ZiporaError::not_supported(
-                    "Peek not efficiently supported for buffered I/O strategy"
+                    "Peek not efficiently supported for buffered I/O strategy",
                 ))
             }
 
@@ -500,9 +512,9 @@ impl MemoryMappedInput {
             }
 
             #[cfg(not(target_os = "linux"))]
-            InputStrategy::HugepageMmap => {
-                Err(ZiporaError::not_supported("Hugepages not available on this platform"))
-            }
+            InputStrategy::HugepageMmap => Err(ZiporaError::not_supported(
+                "Hugepages not available on this platform",
+            )),
         }
     }
 
@@ -514,11 +526,9 @@ impl MemoryMappedInput {
         }
 
         match self.strategy {
-            InputStrategy::BufferedIO => {
-                Err(ZiporaError::not_supported(
-                    "Zero-copy peek not available for buffered I/O strategy"
-                ))
-            }
+            InputStrategy::BufferedIO => Err(ZiporaError::not_supported(
+                "Zero-copy peek not available for buffered I/O strategy",
+            )),
 
             InputStrategy::StandardMmap => {
                 if let Some(ref mmap) = self.mmap {
@@ -538,9 +548,9 @@ impl MemoryMappedInput {
             }
 
             #[cfg(not(target_os = "linux"))]
-            InputStrategy::HugepageMmap => {
-                Err(ZiporaError::not_supported("Hugepages not available on this platform"))
-            }
+            InputStrategy::HugepageMmap => Err(ZiporaError::not_supported(
+                "Hugepages not available on this platform",
+            )),
         }
     }
 }
@@ -1129,7 +1139,7 @@ mod tests {
     }
 
     #[cfg(feature = "mmap")]
-    #[test] 
+    #[test]
     fn test_medium_file_uses_standard_mmap() {
         let mut temp_file = NamedTempFile::new().unwrap();
         let medium_data = vec![0x55u8; 64 * 1024]; // 64KB file - between 4KB and 1MB
@@ -1177,7 +1187,7 @@ mod tests {
         let input = MemoryMappedInput::new_with_pattern(file, AccessPattern::Sequential).unwrap();
         assert_eq!(input.strategy(), InputStrategy::StandardMmap);
 
-        // Test random access pattern  
+        // Test random access pattern
         let file = File::open(temp_file.path()).unwrap();
         let input = MemoryMappedInput::new_with_pattern(file, AccessPattern::Random).unwrap();
         assert_eq!(input.strategy(), InputStrategy::StandardMmap);
@@ -1194,7 +1204,9 @@ mod tests {
         // Test small file with buffered I/O
         let mut temp_file = NamedTempFile::new().unwrap();
         temp_file.write_all(&0x12345678u32.to_le_bytes()).unwrap();
-        temp_file.write_all(&0x9ABCDEF012345678u64.to_le_bytes()).unwrap();
+        temp_file
+            .write_all(&0x9ABCDEF012345678u64.to_le_bytes())
+            .unwrap();
         let var_bytes = VarInt::encode(42);
         temp_file.write_all(&var_bytes).unwrap();
         let test_str = "Adaptive test";
@@ -1238,7 +1250,7 @@ mod tests {
         let peeked = input.peek_slice_zero_copy(512).unwrap();
         assert_eq!(peeked.len(), 512);
         assert!(peeked.iter().all(|&b| b == 0x99));
-        
+
         // Position should not have changed after peek
         assert_eq!(input.position(), 1024);
     }
@@ -1259,7 +1271,7 @@ mod tests {
         // Zero-copy operations should not be available for buffered I/O
         assert!(input.read_slice_zero_copy(100).is_err());
         assert!(input.peek_slice_zero_copy(100).is_err());
-        
+
         // Regular peek should also not be efficiently supported
         assert!(input.peek_slice(100).is_err());
 
@@ -1273,7 +1285,7 @@ mod tests {
     #[test]
     fn test_seek_and_position_adaptive() {
         let mut temp_file = NamedTempFile::new().unwrap();
-        // Create a larger file to force standard mmap strategy for consistent behavior  
+        // Create a larger file to force standard mmap strategy for consistent behavior
         let original_data = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         temp_file.write_all(original_data).unwrap();
         // Pad with zeros to make it larger than 4KB threshold
@@ -1341,10 +1353,16 @@ mod tests {
     fn test_file_size_thresholds() {
         // Test exactly at threshold boundaries
         let threshold_tests = vec![
-            (SMALL_FILE_THRESHOLD as usize - 1, InputStrategy::BufferedIO),      // Just below 4KB
-            (SMALL_FILE_THRESHOLD as usize, InputStrategy::BufferedIO),          // Exactly 4KB  
-            (SMALL_FILE_THRESHOLD as usize + 1, InputStrategy::StandardMmap),    // Just above 4KB
-            (HUGEPAGE_2MB_THRESHOLD as usize - 1, InputStrategy::StandardMmap),  // Just below 1MB
+            (SMALL_FILE_THRESHOLD as usize - 1, InputStrategy::BufferedIO), // Just below 4KB
+            (SMALL_FILE_THRESHOLD as usize, InputStrategy::BufferedIO),     // Exactly 4KB
+            (
+                SMALL_FILE_THRESHOLD as usize + 1,
+                InputStrategy::StandardMmap,
+            ), // Just above 4KB
+            (
+                HUGEPAGE_2MB_THRESHOLD as usize - 1,
+                InputStrategy::StandardMmap,
+            ), // Just below 1MB
         ];
 
         for (size, expected_strategy) in threshold_tests {
@@ -1357,10 +1375,12 @@ mod tests {
             let input = MemoryMappedInput::new(file).unwrap();
 
             assert_eq!(
-                input.strategy(), 
+                input.strategy(),
                 expected_strategy,
                 "File size {} should use strategy {:?}, got {:?}",
-                size, expected_strategy, input.strategy()
+                size,
+                expected_strategy,
+                input.strategy()
             );
         }
     }
@@ -1383,7 +1403,7 @@ mod tests {
             strategy == InputStrategy::HugepageMmap || strategy == InputStrategy::StandardMmap,
             "Large file should attempt hugepages with graceful fallback"
         );
-        
+
         // File should still be readable regardless of strategy
         assert_eq!(input.len(), 5 * 1024 * 1024);
     }

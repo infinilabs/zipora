@@ -50,10 +50,10 @@ use crate::error::{Result, ZiporaError};
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::time::timeout;
 
 /// A stage in a processing pipeline
@@ -1982,10 +1982,12 @@ mod tests {
 
         let individual_error = pipeline.execute_single(error_stage1, 13).await;
         assert!(individual_error.is_err());
-        assert!(individual_error
-            .unwrap_err()
-            .to_string()
-            .contains("unlucky"));
+        assert!(
+            individual_error
+                .unwrap_err()
+                .to_string()
+                .contains("unlucky")
+        );
 
         // Test successful individual
         let error_stage2 = BatchMapStage::with_batch_support(

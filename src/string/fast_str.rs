@@ -178,7 +178,7 @@ impl<'a> FastStr<'a> {
     }
 
     /// Find the position of the first occurrence of a substring
-    /// 
+    ///
     /// Uses AVX-512 acceleration when available for improved performance
     /// on large strings and patterns.
     pub fn find(&self, needle: FastStr) -> Option<usize> {
@@ -218,17 +218,20 @@ impl<'a> FastStr<'a> {
     pub fn find_byte_optimized(&self, byte: u8) -> Option<usize> {
         #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
         {
-            if self.len() >= 64 && is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("avx512bw") {
+            if self.len() >= 64
+                && is_x86_feature_detected!("avx512f")
+                && is_x86_feature_detected!("avx512bw")
+            {
                 return unsafe { self.find_byte_avx512(byte) };
             }
         }
-        
+
         // Fallback to standard implementation
         self.data.iter().position(|&b| b == byte)
     }
 
     /// AVX-512 accelerated substring search
-    /// 
+    ///
     /// Uses vectorized string comparison for significantly improved performance
     /// on large text processing workloads.
     #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
@@ -241,40 +244,42 @@ impl<'a> FastStr<'a> {
     unsafe fn find_avx512_impl(&self, needle: FastStr) -> Option<usize> {
         let haystack = self.data;
         let needle_data = needle.data;
-        
+
         if needle_data.len() > haystack.len() {
             return None;
         }
 
         let _first_byte = needle_data[0];
         let needle_len = needle_data.len();
-        
+
         // Use AVX-512 to find potential first byte matches
         let search_end = haystack.len() - needle_len + 1;
         let mut i = 0;
-        
+
         // Process large chunks efficiently with AVX-512 acceleration
         while i + 64 <= search_end {
             // Process 64 bytes at a time
             let chunk_end = (i + 64).min(search_end);
-            
+
             // Check for needle in this chunk
             for pos in i..chunk_end {
-                if pos + needle_len <= haystack.len() && &haystack[pos..pos + needle_len] == needle_data {
+                if pos + needle_len <= haystack.len()
+                    && &haystack[pos..pos + needle_len] == needle_data
+                {
                     return Some(pos);
                 }
             }
-            
+
             i += 64;
         }
-        
+
         // Handle remaining bytes with standard search
         for pos in i..search_end {
             if &haystack[pos..pos + needle_len] == needle_data {
                 return Some(pos);
             }
         }
-        
+
         None
     }
 
@@ -284,7 +289,7 @@ impl<'a> FastStr<'a> {
     unsafe fn find_byte_avx512(&self, byte: u8) -> Option<usize> {
         let data = self.data;
         let mut i = 0;
-        
+
         // Process 64 bytes at a time using AVX-512 (simplified implementation)
         while i + 64 <= data.len() {
             // Check 64 bytes for the target byte
@@ -295,14 +300,14 @@ impl<'a> FastStr<'a> {
             }
             i += 64;
         }
-        
+
         // Handle remaining bytes
         for pos in i..data.len() {
             if data[pos] == byte {
                 return Some(pos);
             }
         }
-        
+
         None
     }
 
@@ -362,7 +367,7 @@ impl<'a> FastStr<'a> {
                     return self.hash_avx512();
                 }
             }
-            
+
             if is_x86_feature_detected!("avx2") {
                 self.hash_avx2()
             } else if is_x86_feature_detected!("sse2") {
@@ -491,12 +496,12 @@ impl<'a> FastStr<'a> {
     }
 
     /// AVX-512 optimized hash function processing 64 bytes at a time
-    /// 
+    ///
     /// Provides 2-4x speedup over AVX2 for large strings using 512-bit vectors.
-    /// 
+    ///
     /// # Performance
     /// - **AVX-512F + AVX-512BW**: Processes 64 bytes per iteration (2x more than AVX2)
-    /// - **Vectorized operations**: Parallel loading and processing 
+    /// - **Vectorized operations**: Parallel loading and processing
     /// - **Cache efficiency**: Reduced memory access overhead
     /// - **Large strings**: Significant improvement for >64 byte strings
     ///
@@ -504,9 +509,7 @@ impl<'a> FastStr<'a> {
     /// This function uses AVX-512 intrinsics and requires runtime feature detection
     #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
     fn hash_avx512(&self) -> u64 {
-        unsafe {
-            self.hash_avx512_impl()
-        }
+        unsafe { self.hash_avx512_impl() }
     }
 
     #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
@@ -522,8 +525,8 @@ impl<'a> FastStr<'a> {
         // Process 64-byte chunks with AVX-512
         for chunk in chunks_64 {
             // Import AVX-512 intrinsics locally
-            use std::arch::x86_64::{_mm512_loadu_si512, _mm512_storeu_si512, __m512i};
-            
+            use std::arch::x86_64::{__m512i, _mm512_loadu_si512, _mm512_storeu_si512};
+
             // Load 64 bytes as 8 x 64-bit integers using AVX-512
             let data_vec = unsafe { _mm512_loadu_si512(chunk.as_ptr() as *const __m512i) };
 
@@ -585,10 +588,10 @@ impl<'a> FastStr<'a> {
     }
 
     /// ARM NEON optimized hash function processing 16 bytes at a time
-    /// 
+    ///
     /// Provides 2-3x speedup over fallback implementation on ARM processors
     /// using NEON SIMD instructions for parallel data processing.
-    /// 
+    ///
     /// # Performance
     /// - **NEON**: Processes 16 bytes per iteration (2x more than scalar)
     /// - **Vectorized operations**: Parallel loading and basic arithmetic
@@ -596,9 +599,7 @@ impl<'a> FastStr<'a> {
     /// - **Mobile-friendly**: Optimized for power efficiency
     #[cfg(target_arch = "aarch64")]
     fn hash_neon(&self) -> u64 {
-        unsafe {
-            self.hash_neon_impl()
-        }
+        unsafe { self.hash_neon_impl() }
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -624,12 +625,11 @@ impl<'a> FastStr<'a> {
 
             // Process as two 64-bit words
             let val1 = u64::from_le_bytes([
-                bytes[0], bytes[1], bytes[2], bytes[3], 
-                bytes[4], bytes[5], bytes[6], bytes[7]
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
             ]);
             let val2 = u64::from_le_bytes([
-                bytes[8], bytes[9], bytes[10], bytes[11], 
-                bytes[12], bytes[13], bytes[14], bytes[15]
+                bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14],
+                bytes[15],
             ]);
 
             // Apply the same mixing as other implementations for consistency

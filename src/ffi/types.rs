@@ -3,8 +3,8 @@
 //! This module defines opaque types and structures that can be safely
 //! passed across the C FFI boundary.
 
-use crate::blob_store::traits::BlobStore;
 use crate::RecordId;
+use crate::blob_store::traits::BlobStore;
 use std::os::raw::{c_char, c_int};
 
 /// Opaque handle for FastVec

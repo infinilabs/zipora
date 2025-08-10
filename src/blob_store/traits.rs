@@ -3,8 +3,8 @@
 //! This module defines the fundamental abstractions for blob storage systems,
 //! providing a unified interface for different storage backends.
 
-use crate::error::Result;
 use crate::RecordId;
+use crate::error::Result;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

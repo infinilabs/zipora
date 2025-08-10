@@ -6,8 +6,8 @@
 use proptest::prelude::*;
 use std::collections::{HashMap, VecDeque};
 use zipora::containers::specialized::{
-    ValVec32, SmallMap, FixedCircularQueue, AutoGrowCircularQueue, UintVector,
-    FixedStr8Vec, FixedStr16Vec, SortableStrVec
+    AutoGrowCircularQueue, FixedCircularQueue, FixedStr8Vec, FixedStr16Vec, SmallMap,
+    SortableStrVec, UintVector, ValVec32,
 };
 
 // =============================================================================
@@ -29,9 +29,8 @@ pub enum ContainerOp<K, V> {
     Clear,
 }
 
-fn container_ops_strategy<K: Arbitrary + Clone + 'static, V: Arbitrary + Clone + 'static>() 
-    -> impl Strategy<Value = Vec<ContainerOp<K, V>>> 
-{
+fn container_ops_strategy<K: Arbitrary + Clone + 'static, V: Arbitrary + Clone + 'static>()
+-> impl Strategy<Value = Vec<ContainerOp<K, V>>> {
     prop::collection::vec(
         prop_oneof![
             (any::<K>(), any::<V>()).prop_map(|(k, v)| ContainerOp::Insert(k, v)),
@@ -39,7 +38,7 @@ fn container_ops_strategy<K: Arbitrary + Clone + 'static, V: Arbitrary + Clone +
             any::<K>().prop_map(ContainerOp::Get),
             Just(ContainerOp::Clear),
         ],
-        0..1000
+        0..1000,
     )
 }
 
@@ -53,15 +52,15 @@ proptest! {
         elements in prop::collection::vec(any::<i32>(), 0..10000)
     ) {
         let mut vec = ValVec32::new();
-        
+
         // Insert all elements
         for &elem in &elements {
             vec.push(elem).unwrap();
         }
-        
+
         // Length should match input
         prop_assert_eq!(vec.len() as usize, elements.len());
-        
+
         // Each element should be preserved
         for (i, &expected) in elements.iter().enumerate() {
             prop_assert_eq!(vec[i as u32], expected);
@@ -73,18 +72,18 @@ proptest! {
         elements in prop::collection::vec(any::<u64>(), 0..1000)
     ) {
         let mut vec = ValVec32::new();
-        
+
         // Push all elements
         for &elem in &elements {
             vec.push(elem).unwrap();
         }
-        
+
         // Pop all elements in reverse order
         let mut popped = Vec::new();
         while let Some(elem) = vec.pop() {
             popped.push(elem);
         }
-        
+
         // Should get back the same elements in reverse order
         popped.reverse();
         prop_assert_eq!(popped, elements);
@@ -98,14 +97,14 @@ proptest! {
     ) {
         let mut vec = ValVec32::new();
         vec.extend_from_slice(&elements).unwrap();
-        
+
         let len = vec.len();
-        
+
         // Valid indices should work
         for i in 0..len {
             prop_assert_eq!(vec.get(i), Some(&elements[i as usize]));
         }
-        
+
         // Invalid indices should return None
         if bad_index >= len {
             prop_assert_eq!(vec.get(bad_index), None);
@@ -115,21 +114,21 @@ proptest! {
     #[test]
     fn prop_valvec32_capacity_growth(
         batches in prop::collection::vec(
-            prop::collection::vec(any::<i32>(), 1..100), 
+            prop::collection::vec(any::<i32>(), 1..100),
             1..20
         )
     ) {
         let mut vec = ValVec32::new();
         let mut total_elements = 0;
-        
+
         for batch in batches {
             let old_capacity = vec.capacity();
-            
+
             for &elem in &batch {
                 vec.push(elem).unwrap();
                 total_elements += 1;
             }
-            
+
             // Capacity should never decrease
             prop_assert!(vec.capacity() >= old_capacity);
             // Length should match total elements added
@@ -149,7 +148,7 @@ proptest! {
     ) {
         let mut small_map = SmallMap::new();
         let mut hash_map = HashMap::new();
-        
+
         for op in ops {
             match op {
                 ContainerOp::Insert(k, v) => {
@@ -174,7 +173,7 @@ proptest! {
                     hash_map.clear();
                 }
             }
-            
+
             // Invariant: lengths should always match
             prop_assert_eq!(small_map.len(), hash_map.len());
             prop_assert_eq!(small_map.is_empty(), hash_map.is_empty());
@@ -187,11 +186,11 @@ proptest! {
     ) {
         let mut map = SmallMap::new();
         let mut unique_keys = std::collections::HashSet::new();
-        
+
         for (key, value) in pairs {
             map.insert(key, value.clone()).unwrap();
             unique_keys.insert(key);
-            
+
             // Map should contain exactly the unique keys we've inserted
             prop_assert_eq!(map.len(), unique_keys.len());
             prop_assert!(map.contains_key(&key));
@@ -205,23 +204,23 @@ proptest! {
         large_keys in prop::collection::vec(any::<u8>(), 9..50)
     ) {
         let mut map = SmallMap::new();
-        
+
         // Insert small number of elements (should use inline storage)
         for &key in &small_keys {
             map.insert(key, key as i32 * 10).unwrap();
         }
-        
+
         // Verify small elements are accessible
         for &key in &small_keys {
             let expected_value = key as i32 * 10;
             prop_assert_eq!(map.get(&key), Some(&expected_value));
         }
-        
+
         // Insert large number of elements (should transition to heap)
         for &key in &large_keys {
             map.insert(key, key as i32 * 10).unwrap();
         }
-        
+
         // All elements should still be accessible after transition
         for &key in &small_keys {
             let expected_value = key as i32 * 10;
@@ -231,7 +230,7 @@ proptest! {
             let expected_value = key as i32 * 10;
             prop_assert_eq!(map.get(&key), Some(&expected_value));
         }
-        
+
         // Count unique keys since SmallMap doesn't allow duplicates
         let mut all_keys = small_keys.clone();
         all_keys.extend_from_slice(&large_keys);
@@ -258,7 +257,7 @@ proptest! {
     ) {
         let mut auto_queue = AutoGrowCircularQueue::new();
         let mut vec_deque = VecDeque::new();
-        
+
         for (value, is_push) in ops {
             if is_push || vec_deque.is_empty() {
                 auto_queue.push(value).unwrap();
@@ -268,7 +267,7 @@ proptest! {
                 let vec_result = vec_deque.pop_front();
                 prop_assert_eq!(auto_result, vec_result);
             }
-            
+
             prop_assert_eq!(auto_queue.len(), vec_deque.len());
             prop_assert_eq!(auto_queue.is_empty(), vec_deque.is_empty());
         }
@@ -279,17 +278,17 @@ proptest! {
         elements in prop::collection::vec(any::<i32>(), 0..8)
     ) {
         let mut queue: FixedCircularQueue<i32, 8> = FixedCircularQueue::new();
-        
+
         // Fill queue with elements
         for &elem in &elements {
             queue.push(elem).unwrap();
         }
-        
+
         // Pop elements and verify FIFO order
         for &expected in &elements {
             prop_assert_eq!(queue.pop(), Some(expected));
         }
-        
+
         prop_assert!(queue.is_empty());
     }
 
@@ -298,7 +297,7 @@ proptest! {
         elements in prop::collection::vec(any::<i32>(), 0..20)
     ) {
         let mut queue: FixedCircularQueue<i32, 8> = FixedCircularQueue::new();
-        
+
         let mut pushed = 0;
         for &elem in &elements {
             if pushed < 8 {
@@ -309,7 +308,7 @@ proptest! {
                 prop_assert!(queue.push(elem).is_err());
             }
         }
-        
+
         prop_assert_eq!(queue.len(), pushed.min(8));
         if pushed >= 8 {
             prop_assert!(queue.is_full());
@@ -328,16 +327,16 @@ proptest! {
     ) {
         let mut uint_vec = UintVector::new();
         let mut std_vec = Vec::new();
-        
+
         // Insert all values
         for &value in &values {
             uint_vec.push(value).unwrap();
             std_vec.push(value);
         }
-        
+
         // Verify same length and contents
         prop_assert_eq!(uint_vec.len(), std_vec.len());
-        
+
         for (i, &expected) in std_vec.iter().enumerate() {
             prop_assert_eq!(uint_vec.get(i), Some(expected));
         }
@@ -348,21 +347,21 @@ proptest! {
         values in prop::collection::vec(0u32..1000u32, 0..1000)
     ) {
         let mut uint_vec = UintVector::new();
-        
+
         // Test that compression preserves all values correctly
         for &value in &values {
             uint_vec.push(value).unwrap();
         }
-        
+
         // Verify each value is preserved exactly
         for (i, &expected) in values.iter().enumerate() {
             prop_assert_eq!(uint_vec.get(i), Some(expected));
         }
-        
+
         // Test memory usage is reasonable
         let memory_usage = uint_vec.memory_usage();
         let _uncompressed_size = values.len() * std::mem::size_of::<u32>();
-        
+
         // Should use less memory than uncompressed for typical data
         // (This property may not hold for all random data)
         prop_assert!(memory_usage > 0);
@@ -379,13 +378,13 @@ proptest! {
         strings in prop::collection::vec(fixed_string_strategy(8), 0..100)
     ) {
         let mut vec = FixedStr8Vec::new();
-        
+
         for s in &strings {
             prop_assert!(vec.push(s).is_ok());
         }
-        
+
         prop_assert_eq!(vec.len(), strings.len());
-        
+
         for (i, expected) in strings.iter().enumerate() {
             prop_assert_eq!(vec.get(i), Some(expected.as_str()));
         }
@@ -397,14 +396,14 @@ proptest! {
     ) {
         let mut fixed_vec = FixedStr16Vec::new();
         let mut std_vec = Vec::new();
-        
+
         for s in &strings {
             fixed_vec.push(s).unwrap();
             std_vec.push(s.clone());
         }
-        
+
         prop_assert_eq!(fixed_vec.len(), std_vec.len());
-        
+
         for (i, expected) in std_vec.iter().enumerate() {
             prop_assert_eq!(fixed_vec.get(i), Some(expected.as_str()));
         }
@@ -415,14 +414,14 @@ proptest! {
         base_strings in prop::collection::vec(fixed_string_strategy(4), 0..50)
     ) {
         let mut vec = FixedStr8Vec::new();
-        
+
         // Test ASCII strings (should always fit)
         for s in &base_strings {
             if s.len() <= 8 {
                 prop_assert!(vec.push(s).is_ok());
             }
         }
-        
+
         // Test that strings longer than capacity are rejected
         let too_long = "this_is_too_long_for_8_chars";
         prop_assert!(vec.push(too_long).is_err());
@@ -443,22 +442,22 @@ proptest! {
         if strings.is_empty() {
             return Ok(());
         }
-        
+
         let mut sortable_vec = SortableStrVec::new();
         let mut reference_vec = strings.clone();
-        
+
         // Add strings to sortable vector
         for s in &strings {
             sortable_vec.push(s.clone()).unwrap();
         }
-        
+
         // Sort both vectors
         sortable_vec.sort().unwrap();
         reference_vec.sort();
-        
+
         // Results should be identical
         prop_assert_eq!(sortable_vec.len(), reference_vec.len());
-        
+
         let sorted_result: Vec<_> = sortable_vec.iter_sorted().collect();
         prop_assert_eq!(sorted_result, reference_vec);
     }
@@ -472,24 +471,24 @@ proptest! {
         if strings.is_empty() {
             return Ok(());
         }
-        
+
         let mut sortable_vec = SortableStrVec::new();
         let mut reference_vec = strings.clone();
-        
+
         for s in &strings {
             sortable_vec.push(s.clone()).unwrap();
         }
-        
+
         // Sort by length, then lexicographically
         let cmp_fn = |a: &str, b: &str| {
             a.len().cmp(&b.len()).then_with(|| a.cmp(b))
         };
-        
+
         sortable_vec.sort_by(cmp_fn).unwrap();
         reference_vec.sort_by(|a: &String, b: &String| {
             a.len().cmp(&b.len()).then_with(|| a.cmp(b))
         });
-        
+
         let sorted_result: Vec<_> = sortable_vec.iter_sorted().collect();
         prop_assert_eq!(sorted_result, reference_vec);
     }
@@ -506,21 +505,21 @@ proptest! {
     ) {
         let mut val_vec = ValVec32::new();
         let mut small_map = SmallMap::new();
-        
+
         // Use ValVec32 as storage and SmallMap for indexing
         for (key, value) in &data {
             val_vec.push(value.clone()).unwrap();
             let index = val_vec.len() - 1;
             small_map.insert(*key, index).unwrap();
         }
-        
+
         // Verify that we can retrieve values through the index
         for (key, expected_value) in &data {
             if let Some(&index) = small_map.get(key) {
                 prop_assert_eq!(val_vec.get(index), Some(expected_value));
             }
         }
-        
+
         prop_assert_eq!(val_vec.len() as usize, small_map.len());
     }
 }
@@ -542,12 +541,12 @@ proptest! {
             AutoGrowCircularQueue::new(),
             UintVector::new(),
         );
-        
+
         let mut operation_count = 0;
-        
+
         for (container_choice, value, is_add) in operations {
             operation_count += 1;
-            
+
             match container_choice % 4 {
                 0 => {
                     // ValVec32 operations
@@ -582,12 +581,12 @@ proptest! {
                 }
                 _ => unreachable!(),
             }
-            
+
             // All containers should maintain basic invariants
             prop_assert!(containers.0.len() <= containers.0.capacity());
             prop_assert!(containers.2.len() <= containers.2.capacity());
         }
-        
+
         // After stress testing, containers should still be in valid state
         prop_assert!(containers.0.capacity() >= containers.0.len());
         prop_assert_eq!(containers.2.is_empty(), containers.2.len() == 0);

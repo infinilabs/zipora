@@ -26,10 +26,10 @@
 //! - Small datasets where simplicity is preferred over performance
 //! - Baseline for performance comparisons
 
+use super::{BuilderOptions, RankSelectBuilder, RankSelectOps};
+use crate::FastVec;
 use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;
-use crate::FastVec;
-use super::{RankSelectOps, RankSelectBuilder, BuilderOptions};
 use std::fmt;
 
 /// Simple rank/select implementation with basic optimizations
@@ -55,12 +55,12 @@ use std::fmt;
 /// }
 ///
 /// let rs = RankSelectSimple::new(bv)?;
-/// 
+///
 /// // Basic operations
 /// let rank = rs.rank1(50);        // Count 1s up to position 50
 /// let pos = rs.select1(10)?;      // Find position of 10th set bit
 /// let zeros = rs.rank0(25);       // Count 0s up to position 25
-/// 
+///
 /// println!("Ones up to 50: {}", rank);
 /// println!("10th set bit at: {}", pos);
 /// # Ok::<(), zipora::ZiporaError>(())
@@ -121,7 +121,7 @@ impl RankSelectSimple {
     /// rank cache at the end of each block for O(1) rank queries.
     fn build_rank_cache(&mut self) -> Result<()> {
         let total_bits = self.bit_vector.len();
-        
+
         if total_bits == 0 {
             return Ok(());
         }
@@ -130,19 +130,19 @@ impl RankSelectSimple {
         self.rank_cache.reserve(num_blocks)?;
 
         let mut cumulative_rank = 0u32;
-        
+
         // Build rank cache by scanning each block
         for block_idx in 0..num_blocks {
             let block_start = block_idx * self.block_size;
             let block_end = ((block_idx + 1) * self.block_size).min(total_bits);
-            
+
             // Count set bits in this block using simple iteration
             for pos in block_start..block_end {
                 if self.bit_vector.get(pos).unwrap_or(false) {
                     cumulative_rank += 1;
                 }
             }
-            
+
             // Store cumulative rank at end of block
             self.rank_cache.push(cumulative_rank)?;
         }
@@ -164,30 +164,29 @@ impl RankSelectSimple {
         }
 
         let pos = pos.min(self.bit_vector.len());
-        
+
         // Find which block contains this position
         let block_idx = pos / self.block_size;
         let bit_offset_in_block = pos % self.block_size;
-        
+
         // Get rank up to start of this block
         let rank_before_block = if block_idx > 0 {
             self.rank_cache[block_idx - 1] as usize
         } else {
             0
         };
-        
+
         // Count bits in current block up to position
         let block_start = block_idx * self.block_size;
         let mut rank_in_block = 0;
-        
+
         for i in 0..bit_offset_in_block {
             let bit_pos = block_start + i;
-            if bit_pos < self.bit_vector.len() && 
-               self.bit_vector.get(bit_pos).unwrap_or(false) {
+            if bit_pos < self.bit_vector.len() && self.bit_vector.get(bit_pos).unwrap_or(false) {
                 rank_in_block += 1;
             }
         }
-        
+
         rank_before_block + rank_in_block
     }
 
@@ -201,7 +200,7 @@ impl RankSelectSimple {
 
         // Binary search on rank cache to find the containing block
         let block_idx = self.binary_search_blocks(target_rank);
-        
+
         // Get rank at start of this block
         let rank_before_block = if block_idx > 0 {
             self.rank_cache[block_idx - 1] as usize
@@ -211,11 +210,11 @@ impl RankSelectSimple {
 
         // How many more 1s we need to find in this block
         let remaining_ones = target_rank - rank_before_block;
-        
+
         // Linear search within the block
         let block_start = block_idx * self.block_size;
         let block_end = ((block_idx + 1) * self.block_size).min(self.bit_vector.len());
-        
+
         let mut ones_found = 0;
         for pos in block_start..block_end {
             if self.bit_vector.get(pos).unwrap_or(false) {
@@ -225,9 +224,9 @@ impl RankSelectSimple {
                 }
             }
         }
-        
+
         Err(ZiporaError::invalid_data(
-            "Select position not found in block".to_string()
+            "Select position not found in block".to_string(),
         ))
     }
 
@@ -235,7 +234,7 @@ impl RankSelectSimple {
     fn binary_search_blocks(&self, target_rank: usize) -> usize {
         let mut left = 0;
         let mut right = self.rank_cache.len();
-        
+
         while left < right {
             let mid = left + (right - left) / 2;
             if self.rank_cache[mid] < target_rank as u32 {
@@ -244,7 +243,7 @@ impl RankSelectSimple {
                 right = mid;
             }
         }
-        
+
         left
     }
 }
@@ -284,7 +283,7 @@ impl RankSelectOps for RankSelectSimple {
         }
 
         Err(ZiporaError::invalid_data(
-            "Select0 position not found".to_string()
+            "Select0 position not found".to_string(),
         ))
     }
 
@@ -330,27 +329,30 @@ impl RankSelectBuilder<RankSelectSimple> for RankSelectSimple {
 
     fn from_bytes(bytes: &[u8], bit_len: usize) -> Result<RankSelectSimple> {
         let mut bit_vector = BitVector::new();
-        
+
         for (byte_idx, &byte) in bytes.iter().enumerate() {
             for bit_idx in 0..8 {
                 let bit_pos = byte_idx * 8 + bit_idx;
                 if bit_pos >= bit_len {
                     break;
                 }
-                
+
                 let bit = (byte >> bit_idx) & 1 == 1;
                 bit_vector.push(bit)?;
             }
-            
+
             if (byte_idx + 1) * 8 >= bit_len {
                 break;
             }
         }
-        
+
         Self::new(bit_vector)
     }
 
-    fn with_optimizations(bit_vector: BitVector, _opts: BuilderOptions) -> Result<RankSelectSimple> {
+    fn with_optimizations(
+        bit_vector: BitVector,
+        _opts: BuilderOptions,
+    ) -> Result<RankSelectSimple> {
         // Simple implementation ignores optimization options
         Self::new(bit_vector)
     }
@@ -364,7 +366,10 @@ impl fmt::Debug for RankSelectSimple {
             .field("zeros", &self.count_zeros())
             .field("blocks", &self.rank_cache.len())
             .field("block_size", &self.block_size)
-            .field("overhead", &format!("{:.2}%", self.space_overhead_percent()))
+            .field(
+                "overhead",
+                &format!("{:.2}%", self.space_overhead_percent()),
+            )
             .finish()
     }
 }
@@ -419,14 +424,14 @@ mod tests {
         assert_eq!(rs.rank0(0), 0);
 
         // Test rank at specific positions based on pattern
-        assert_eq!(rs.rank1(1), 1);  // First bit is set (position 0)
-        assert_eq!(rs.rank1(2), 1);  // Second bit is clear
-        assert_eq!(rs.rank1(3), 2);  // Third bit is set (position 2)
+        assert_eq!(rs.rank1(1), 1); // First bit is set (position 0)
+        assert_eq!(rs.rank1(2), 1); // Second bit is clear
+        assert_eq!(rs.rank1(3), 2); // Third bit is set (position 2)
 
         // Test rank0
-        assert_eq!(rs.rank0(1), 0);  // No zeros before position 1
-        assert_eq!(rs.rank0(2), 1);  // One zero at position 1
-        assert_eq!(rs.rank0(3), 1);  // Still one zero
+        assert_eq!(rs.rank0(1), 0); // No zeros before position 1
+        assert_eq!(rs.rank0(2), 1); // One zero at position 1
+        assert_eq!(rs.rank0(3), 1); // Still one zero
     }
 
     #[test]
@@ -440,14 +445,14 @@ mod tests {
         let rs = RankSelectSimple::new(bv).unwrap();
 
         if rs.count_ones() > 0 {
-            assert_eq!(rs.select1(0).unwrap(), 0);  // First set bit at position 0
-            
+            assert_eq!(rs.select1(0).unwrap(), 0); // First set bit at position 0
+
             if rs.count_ones() > 1 {
-                assert_eq!(rs.select1(1).unwrap(), 4);  // Second set bit at position 4
+                assert_eq!(rs.select1(1).unwrap(), 4); // Second set bit at position 4
             }
-            
+
             if rs.count_ones() > 2 {
-                assert_eq!(rs.select1(2).unwrap(), 8);  // Third set bit at position 8
+                assert_eq!(rs.select1(2).unwrap(), 8); // Third set bit at position 8
             }
         }
     }
@@ -463,10 +468,10 @@ mod tests {
         let rs = RankSelectSimple::new(bv).unwrap();
 
         if rs.count_zeros() > 0 {
-            assert_eq!(rs.select0(0).unwrap(), 1);  // First clear bit at position 1
-            
+            assert_eq!(rs.select0(0).unwrap(), 1); // First clear bit at position 1
+
             if rs.count_zeros() > 1 {
-                assert_eq!(rs.select0(1).unwrap(), 2);  // Second clear bit at position 2
+                assert_eq!(rs.select0(1).unwrap(), 2); // Second clear bit at position 2
             }
         }
     }
@@ -496,13 +501,13 @@ mod tests {
         assert_eq!(rs.len(), 100);
         assert_eq!(rs.count_ones(), 0);
         assert_eq!(rs.count_zeros(), 100);
-        
+
         assert_eq!(rs.rank1(50), 0);
         assert_eq!(rs.rank0(50), 50);
 
         // select1 should fail on all-zeros
         assert!(rs.select1(0).is_err());
-        
+
         // select0 should work
         assert_eq!(rs.select0(0).unwrap(), 0);
         assert_eq!(rs.select0(99).unwrap(), 99);
@@ -516,14 +521,14 @@ mod tests {
         assert_eq!(rs.len(), 100);
         assert_eq!(rs.count_ones(), 100);
         assert_eq!(rs.count_zeros(), 0);
-        
+
         assert_eq!(rs.rank1(50), 50);
         assert_eq!(rs.rank0(50), 0);
 
         // select1 should work
         assert_eq!(rs.select1(0).unwrap(), 0);
         assert_eq!(rs.select1(99).unwrap(), 99);
-        
+
         // select0 should fail on all-ones
         assert!(rs.select0(0).is_err());
     }
@@ -534,7 +539,7 @@ mod tests {
         let bv = create_test_bitvector();
         let rs1 = RankSelectSimple::from_bit_vector(bv.clone()).unwrap();
         let rs2 = RankSelectSimple::new(bv).unwrap();
-        
+
         assert_eq!(rs1.len(), rs2.len());
         assert_eq!(rs1.count_ones(), rs2.count_ones());
 
@@ -561,8 +566,11 @@ mod tests {
         let ones_count = rs.count_ones();
         for k in 0..ones_count {
             let pos = rs.select1(k).unwrap();
-            assert!(rs.get(pos).unwrap(), "Selected position should have bit set");
-            
+            assert!(
+                rs.get(pos).unwrap(),
+                "Selected position should have bit set"
+            );
+
             // Check that rank up to this position includes this bit
             let rank = rs.rank1(pos + 1);
             assert!(rank > rs.rank1(pos), "Rank should increase after set bit");
@@ -571,7 +579,12 @@ mod tests {
         // Test rank consistency with bit vector
         for pos in 0..=bv.len() {
             let expected_rank = bv.rank1(pos);
-            assert_eq!(rs.rank1(pos), expected_rank, "Rank mismatch at position {}", pos);
+            assert_eq!(
+                rs.rank1(pos),
+                expected_rank,
+                "Rank mismatch at position {}",
+                pos
+            );
         }
     }
 
@@ -584,11 +597,11 @@ mod tests {
 
         let rs = RankSelectSimple::new(bv).unwrap();
         let overhead = rs.space_overhead_percent();
-        
+
         // Should be reasonable overhead (less than 15% for large bit vectors)
         assert!(overhead > 0.0);
         assert!(overhead < 15.0);
-        
+
         println!("Space overhead: {:.2}%", overhead);
     }
 
@@ -601,11 +614,11 @@ mod tests {
         }
 
         let rs = RankSelectSimple::new(bv).unwrap();
-        
+
         // Basic operations should work
         assert!(rs.len() > 0);
         assert!(rs.count_ones() > 0);
-        
+
         // Test some rank operations
         assert_eq!(rs.rank1(0), 0);
         let mid_rank = rs.rank1(50_000);
@@ -627,7 +640,7 @@ mod tests {
         let mut bv_single = BitVector::new();
         bv_single.push(true).unwrap();
         let rs_single = RankSelectSimple::new(bv_single).unwrap();
-        
+
         assert_eq!(rs_single.len(), 1);
         assert_eq!(rs_single.count_ones(), 1);
         assert_eq!(rs_single.rank1(0), 0);
@@ -640,7 +653,7 @@ mod tests {
         bv_small.push(true).unwrap();
         bv_small.push(false).unwrap();
         let rs_small = RankSelectSimple::new(bv_small).unwrap();
-        
+
         assert_eq!(rs_small.len(), 3);
         assert_eq!(rs_small.count_ones(), 1);
         assert_eq!(rs_small.select1(0).unwrap(), 1);

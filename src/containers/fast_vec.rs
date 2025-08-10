@@ -84,7 +84,7 @@ impl<T> FastVec<T> {
         let layout = Layout::array::<T>(cap)
             .map_err(|_| ZiporaError::out_of_memory(cap * mem::size_of::<T>()))?;
 
-        let ptr = unsafe { 
+        let ptr = unsafe {
             let raw_ptr = alloc::alloc(layout);
             if raw_ptr.is_null() {
                 return Err(ZiporaError::out_of_memory(layout.size()));
@@ -200,7 +200,7 @@ impl<T> FastVec<T> {
             Some(ptr) => {
                 if self.cap == 0 {
                     // This shouldn't happen, but handle it safely
-                    unsafe { 
+                    unsafe {
                         let raw_ptr = alloc::alloc(new_layout);
                         if raw_ptr.is_null() {
                             std::ptr::null_mut()
@@ -211,11 +211,8 @@ impl<T> FastVec<T> {
                 } else {
                     let old_layout = Layout::array::<T>(self.cap).unwrap();
                     unsafe {
-                        let raw_ptr = alloc::realloc(
-                            ptr.as_ptr() as *mut u8, 
-                            old_layout, 
-                            new_layout.size()
-                        );
+                        let raw_ptr =
+                            alloc::realloc(ptr.as_ptr() as *mut u8, old_layout, new_layout.size());
                         if raw_ptr.is_null() {
                             std::ptr::null_mut()
                         } else {
@@ -224,7 +221,7 @@ impl<T> FastVec<T> {
                     }
                 }
             }
-            None => unsafe { 
+            None => unsafe {
                 let raw_ptr = alloc::alloc(new_layout);
                 if raw_ptr.is_null() {
                     std::ptr::null_mut()
@@ -361,11 +358,8 @@ impl<T> FastVec<T> {
         let new_ptr = if let Some(ptr) = self.ptr {
             let old_layout = Layout::array::<T>(self.cap).unwrap();
             unsafe {
-                let raw_ptr = alloc::realloc(
-                    ptr.as_ptr() as *mut u8, 
-                    old_layout, 
-                    new_layout.size()
-                );
+                let raw_ptr =
+                    alloc::realloc(ptr.as_ptr() as *mut u8, old_layout, new_layout.size());
                 if raw_ptr.is_null() {
                     std::ptr::null_mut()
                 } else {
@@ -758,8 +752,8 @@ mod tests {
 
     #[test]
     fn test_drop_elements() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         let counter = Arc::new(AtomicUsize::new(0));
 
@@ -943,17 +937,17 @@ mod tests {
         #[test]
         fn test_alignment_1_byte() {
             let mut vec = FastVec::<Align1>::new();
-            
+
             // Test initial allocation
             vec.push(Align1(42)).unwrap();
             verify_alignment(vec.as_ptr());
-            
+
             // Test reallocation with alignment 1
             for i in 0..1000 {
                 vec.push(Align1(i as u8)).unwrap();
                 verify_alignment(vec.as_ptr());
             }
-            
+
             assert_eq!(vec.len(), 1001);
             assert_eq!(vec[0], Align1(42));
             assert_eq!(vec[1000], Align1(231)); // (1000 - 1) % 256 since i starts at 0
@@ -962,17 +956,17 @@ mod tests {
         #[test]
         fn test_alignment_2_byte() {
             let mut vec = FastVec::<Align2>::new();
-            
+
             // Test initial allocation
             vec.push(Align2(42)).unwrap();
             verify_alignment(vec.as_ptr());
-            
+
             // Test reallocation with alignment 2
             for i in 0..1000 {
                 vec.push(Align2(i as u16)).unwrap();
                 verify_alignment(vec.as_ptr());
             }
-            
+
             assert_eq!(vec.len(), 1001);
             assert_eq!(vec[0], Align2(42));
             assert_eq!(vec[1000], Align2(999)); // i goes from 0 to 999, so vec[1000] has value 999
@@ -981,17 +975,17 @@ mod tests {
         #[test]
         fn test_alignment_4_byte() {
             let mut vec = FastVec::<Align4>::new();
-            
+
             // Test initial allocation
             vec.push(Align4(42)).unwrap();
             verify_alignment(vec.as_ptr());
-            
+
             // Test reallocation with alignment 4
             for i in 0..1000 {
                 vec.push(Align4(i as u32)).unwrap();
                 verify_alignment(vec.as_ptr());
             }
-            
+
             assert_eq!(vec.len(), 1001);
             assert_eq!(vec[0], Align4(42));
             assert_eq!(vec[1000], Align4(999)); // i goes from 0 to 999, so vec[1000] has value 999
@@ -1000,17 +994,17 @@ mod tests {
         #[test]
         fn test_alignment_8_byte() {
             let mut vec = FastVec::<Align8>::new();
-            
+
             // Test initial allocation
             vec.push(Align8(42)).unwrap();
             verify_alignment(vec.as_ptr());
-            
+
             // Test reallocation with alignment 8
             for i in 0..1000 {
                 vec.push(Align8(i as u64)).unwrap();
                 verify_alignment(vec.as_ptr());
             }
-            
+
             assert_eq!(vec.len(), 1001);
             assert_eq!(vec[0], Align8(42));
             assert_eq!(vec[1000], Align8(999)); // i goes from 0 to 999, so vec[1000] has value 999
@@ -1019,17 +1013,17 @@ mod tests {
         #[test]
         fn test_alignment_16_byte() {
             let mut vec = FastVec::<Align16>::new();
-            
+
             // Test initial allocation
             vec.push(Align16([42, 84])).unwrap();
             verify_alignment(vec.as_ptr());
-            
+
             // Test reallocation with alignment 16
             for i in 0..500 {
                 vec.push(Align16([i as u64, (i * 2) as u64])).unwrap();
                 verify_alignment(vec.as_ptr());
             }
-            
+
             assert_eq!(vec.len(), 501);
             assert_eq!(vec[0], Align16([42, 84]));
             assert_eq!(vec[500], Align16([499, 998]));
@@ -1038,17 +1032,23 @@ mod tests {
         #[test]
         fn test_alignment_32_byte() {
             let mut vec = FastVec::<Align32>::new();
-            
+
             // Test initial allocation
             vec.push(Align32([1, 2, 3, 4])).unwrap();
             verify_alignment(vec.as_ptr());
-            
+
             // Test reallocation with alignment 32
             for i in 0..200 {
-                vec.push(Align32([i as u64, i as u64 + 1, i as u64 + 2, i as u64 + 3])).unwrap();
+                vec.push(Align32([
+                    i as u64,
+                    i as u64 + 1,
+                    i as u64 + 2,
+                    i as u64 + 3,
+                ]))
+                .unwrap();
                 verify_alignment(vec.as_ptr());
             }
-            
+
             assert_eq!(vec.len(), 201);
             assert_eq!(vec[0], Align32([1, 2, 3, 4]));
             assert_eq!(vec[200], Align32([199, 200, 201, 202]));
@@ -1060,32 +1060,39 @@ mod tests {
             let mut vec8 = FastVec::<Align8>::new();
             let mut vec16 = FastVec::<Align16>::new();
             let mut vec32 = FastVec::<Align32>::new();
-            
+
             // Large allocation that will definitely trigger multiple reallocs
             for i in 0..10000 {
                 vec8.push(Align8(i as u64)).unwrap();
                 verify_alignment(vec8.as_ptr());
-                
+
                 if i % 2 == 0 {
                     vec16.push(Align16([i as u64, i as u64 + 1])).unwrap();
                     verify_alignment(vec16.as_ptr());
                 }
-                
+
                 if i % 4 == 0 {
-                    vec32.push(Align32([i as u64, i as u64 + 1, i as u64 + 2, i as u64 + 3])).unwrap();
+                    vec32
+                        .push(Align32([
+                            i as u64,
+                            i as u64 + 1,
+                            i as u64 + 2,
+                            i as u64 + 3,
+                        ]))
+                        .unwrap();
                     verify_alignment(vec32.as_ptr());
                 }
             }
-            
+
             assert_eq!(vec8.len(), 10000);
             assert_eq!(vec16.len(), 5000);
             assert_eq!(vec32.len(), 2500);
-            
+
             // Verify final values and alignment
             assert_eq!(vec8[9999], Align8(9999));
             assert_eq!(vec16[4999], Align16([9998, 9999]));
             assert_eq!(vec32[2499], Align32([9996, 9997, 9998, 9999]));
-            
+
             verify_alignment(vec8.as_ptr());
             verify_alignment(vec16.as_ptr());
             verify_alignment(vec32.as_ptr());
@@ -1095,14 +1102,14 @@ mod tests {
         fn test_stress_allocation_cycles() {
             // Stress test with many allocation/reallocation cycles
             let mut vec = FastVec::<Align16>::new();
-            
+
             for cycle in 0..100 {
                 // Grow the vector
                 for i in 0..100 {
                     vec.push(Align16([cycle as u64, i as u64])).unwrap();
                     verify_alignment(vec.as_ptr());
                 }
-                
+
                 // Shrink the vector
                 for _ in 0..50 {
                     vec.pop();
@@ -1110,14 +1117,14 @@ mod tests {
                         verify_alignment(vec.as_ptr());
                     }
                 }
-                
+
                 // Verify integrity
                 assert_eq!(vec.len(), (cycle + 1) * 50);
                 if !vec.is_empty() {
                     verify_alignment(vec.as_ptr());
                 }
             }
-            
+
             // Final verification
             assert_eq!(vec.len(), 5000);
             verify_alignment(vec.as_ptr());
@@ -1130,25 +1137,25 @@ mod tests {
             let mut vec8 = FastVec::<Align8>::new();
             let mut vec16 = FastVec::<Align16>::new();
             let mut vec32 = FastVec::<Align32>::new();
-            
+
             // All start with zero capacity
             assert_eq!(vec1.capacity(), 0);
             assert_eq!(vec8.capacity(), 0);
             assert_eq!(vec16.capacity(), 0);
             assert_eq!(vec32.capacity(), 0);
-            
+
             // First push should trigger allocation
             vec1.push(Align1(1)).unwrap();
             vec8.push(Align8(8)).unwrap();
             vec16.push(Align16([16, 17])).unwrap();
             vec32.push(Align32([32, 33, 34, 35])).unwrap();
-            
+
             // Verify alignments after zero-to-nonzero transition
             verify_alignment(vec1.as_ptr());
             verify_alignment(vec8.as_ptr());
             verify_alignment(vec16.as_ptr());
             verify_alignment(vec32.as_ptr());
-            
+
             // Verify values
             assert_eq!(vec1[0], Align1(1));
             assert_eq!(vec8[0], Align8(8));
@@ -1160,26 +1167,29 @@ mod tests {
         fn test_shrink_to_fit_preserves_alignment() {
             // Test that shrink_to_fit preserves alignment
             let mut vec = FastVec::<Align32>::with_capacity(1000).unwrap();
-            
+
             // Add some elements
             for i in 0..10 {
                 vec.push(Align32([i, i + 1, i + 2, i + 3])).unwrap();
             }
-            
+
             verify_alignment(vec.as_ptr());
             assert!(vec.capacity() >= 1000);
-            
+
             // Shrink to fit
             vec.shrink_to_fit().unwrap();
-            
+
             // Verify alignment is preserved
             verify_alignment(vec.as_ptr());
             assert_eq!(vec.capacity(), 10);
             assert_eq!(vec.len(), 10);
-            
+
             // Verify data integrity
             for i in 0..10 {
-                assert_eq!(vec[i], Align32([i as u64, i as u64 + 1, i as u64 + 2, i as u64 + 3]));
+                assert_eq!(
+                    vec[i],
+                    Align32([i as u64, i as u64 + 1, i as u64 + 2, i as u64 + 3])
+                );
             }
         }
 
@@ -1187,20 +1197,20 @@ mod tests {
         fn test_reserve_preserves_alignment() {
             // Test that reserve operations preserve alignment
             let mut vec = FastVec::<Align16>::new();
-            
+
             vec.push(Align16([1, 2])).unwrap();
             verify_alignment(vec.as_ptr());
-            
+
             // Reserve additional space
             vec.reserve(1000).unwrap();
             verify_alignment(vec.as_ptr());
-            
+
             // Add more elements
             for i in 2..100 {
                 vec.push(Align16([i, i + 1])).unwrap();
                 verify_alignment(vec.as_ptr());
             }
-            
+
             assert_eq!(vec.len(), 99); // 1 initial + 98 from loop (2..100)
             assert_eq!(vec[0], Align16([1, 2]));
             assert_eq!(vec[98], Align16([99, 100])); // Last element from loop
@@ -1210,27 +1220,27 @@ mod tests {
         fn test_insert_remove_preserves_alignment() {
             // Test that insert/remove operations preserve alignment
             let mut vec = FastVec::<Align8>::new();
-            
+
             // Build initial vector
             for i in 0..10 {
                 vec.push(Align8(i)).unwrap();
             }
             verify_alignment(vec.as_ptr());
-            
+
             // Insert in middle (may trigger reallocation)
             vec.insert(5, Align8(999)).unwrap();
             verify_alignment(vec.as_ptr());
-            
+
             // Verify data integrity
             assert_eq!(vec[4], Align8(4));
             assert_eq!(vec[5], Align8(999));
             assert_eq!(vec[6], Align8(5));
-            
+
             // Remove from middle
             let removed = vec.remove(5).unwrap();
             assert_eq!(removed, Align8(999));
             verify_alignment(vec.as_ptr());
-            
+
             // Verify data integrity after removal
             assert_eq!(vec[4], Align8(4));
             assert_eq!(vec[5], Align8(5));
@@ -1240,28 +1250,31 @@ mod tests {
         fn test_resize_preserves_alignment() {
             // Test that resize operations preserve alignment
             let mut vec = FastVec::<Align32>::new();
-            
+
             // Initial elements
             for i in 0..5 {
                 vec.push(Align32([i, i + 1, i + 2, i + 3])).unwrap();
             }
             verify_alignment(vec.as_ptr());
-            
+
             // Resize larger
             vec.resize(100, Align32([99, 100, 101, 102])).unwrap();
             verify_alignment(vec.as_ptr());
             assert_eq!(vec.len(), 100);
-            
+
             // Verify original data
             for i in 0..5 {
-                assert_eq!(vec[i], Align32([i as u64, i as u64 + 1, i as u64 + 2, i as u64 + 3]));
+                assert_eq!(
+                    vec[i],
+                    Align32([i as u64, i as u64 + 1, i as u64 + 2, i as u64 + 3])
+                );
             }
-            
+
             // Verify new data
             for i in 5..100 {
                 assert_eq!(vec[i], Align32([99, 100, 101, 102]));
             }
-            
+
             // Resize smaller
             vec.resize(10, Align32([0, 0, 0, 0])).unwrap();
             verify_alignment(vec.as_ptr());
@@ -1272,33 +1285,40 @@ mod tests {
         fn test_mixed_alignment_stress() {
             // Stress test with mixed operations on high-alignment type
             let mut vec = FastVec::<Align32>::new();
-            
+
             for round in 0..50 {
                 // Add elements
                 for i in 0..20 {
-                    vec.push(Align32([round as u64, i as u64, round as u64 + i as u64, 0])).unwrap();
+                    vec.push(Align32([
+                        round as u64,
+                        i as u64,
+                        round as u64 + i as u64,
+                        0,
+                    ]))
+                    .unwrap();
                     verify_alignment(vec.as_ptr());
                 }
-                
+
                 // Insert some elements
                 if vec.len() > 10 {
-                    vec.insert(vec.len() / 2, Align32([888, 888, 888, 888])).unwrap();
+                    vec.insert(vec.len() / 2, Align32([888, 888, 888, 888]))
+                        .unwrap();
                     verify_alignment(vec.as_ptr());
                 }
-                
+
                 // Remove some elements
                 if vec.len() > 5 {
                     vec.remove(vec.len() - 1).unwrap();
                     verify_alignment(vec.as_ptr());
                 }
-                
+
                 // Occasionally resize
                 if round % 10 == 0 && vec.len() > 0 {
                     let new_size = vec.len() + 10;
                     vec.resize(new_size, Align32([777, 777, 777, 777])).unwrap();
                     verify_alignment(vec.as_ptr());
                 }
-                
+
                 // Occasionally shrink
                 if round % 15 == 0 && vec.capacity() > vec.len() * 2 {
                     vec.shrink_to_fit().unwrap();
@@ -1307,7 +1327,7 @@ mod tests {
                     }
                 }
             }
-            
+
             // Final verification
             if !vec.is_empty() {
                 verify_alignment(vec.as_ptr());
@@ -1319,20 +1339,20 @@ mod tests {
             // This test verifies that debug assertions work correctly
             // Note: This will only trigger assertions in debug builds
             let mut vec = FastVec::<Align16>::new();
-            
+
             vec.push(Align16([1, 2])).unwrap();
-            
+
             // In debug mode, this should trigger alignment checks
             // In release mode, checks are optimized out
             let ptr = vec.as_ptr();
             verify_alignment(ptr);
-            
+
             // Test with reallocation
             for i in 0..1000 {
                 vec.push(Align16([i as u64, i as u64 + 1])).unwrap();
                 // Each push may trigger reallocation and alignment checks
             }
-            
+
             verify_alignment(vec.as_ptr());
         }
 
@@ -1340,22 +1360,22 @@ mod tests {
         fn test_pointer_cast_safety() {
             // Test that our alignment checks and casts are safe
             let mut vec = FastVec::<Align32>::new();
-            
+
             // Test empty vector
             assert!(vec.as_ptr().is_null());
             assert!(vec.as_mut_ptr().is_null());
-            
+
             // Add element and verify non-null aligned pointer
             vec.push(Align32([1, 2, 3, 4])).unwrap();
-            
+
             let ptr = vec.as_ptr();
             assert!(!ptr.is_null());
             verify_alignment(ptr);
-            
+
             let mut_ptr = vec.as_mut_ptr();
             assert!(!mut_ptr.is_null());
             verify_alignment(mut_ptr);
-            
+
             // Test after multiple reallocations
             for i in 0..100 {
                 vec.push(Align32([i, i + 1, i + 2, i + 3])).unwrap();
@@ -1364,26 +1384,26 @@ mod tests {
             }
         }
 
-        #[test] 
+        #[test]
         fn test_edge_case_alignment_boundary() {
             // Test alignment at memory boundaries that might be problematic
             let mut vec = FastVec::<Align32>::new();
-            
+
             // Force specific allocation patterns that might expose alignment issues
             vec.reserve(1).unwrap();
             verify_alignment(vec.as_ptr());
-            
+
             vec.push(Align32([1, 2, 3, 4])).unwrap();
             verify_alignment(vec.as_ptr());
-            
+
             // Force reallocation from very small to larger size
             vec.reserve(1000).unwrap();
             verify_alignment(vec.as_ptr());
-            
+
             // Test shrinking back down
             vec.shrink_to_fit().unwrap();
             verify_alignment(vec.as_ptr());
-            
+
             // Verify data integrity throughout
             assert_eq!(vec[0], Align32([1, 2, 3, 4]));
         }

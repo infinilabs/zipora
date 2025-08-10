@@ -58,14 +58,14 @@
 //! # Ok::<(), zipora::ZiporaError>(())
 //! ```
 
+use crate::containers::specialized::UintVector;
 use crate::error::{Result, ZiporaError};
 use crate::fsa::traits::{
     FiniteStateAutomaton, PrefixIterable, StateInspectable, StatisticsProvider, Trie, TrieBuilder,
     TrieStats,
 };
-use crate::succinct::{BitVector, RankSelectOps, RankSelectBuilder};
-use crate::containers::specialized::UintVector;
 use crate::memory::{SecureMemoryPool, SecurePoolConfig};
+use crate::succinct::{BitVector, RankSelectBuilder, RankSelectOps};
 use crate::{FastVec, StateId};
 use std::collections::{HashMap, VecDeque};
 use std::marker::PhantomData;
@@ -120,34 +120,34 @@ impl NestingConfig {
     pub fn validate(&self) -> Result<()> {
         if self.max_levels == 0 || self.max_levels > 8 {
             return Err(ZiporaError::invalid_data(
-                "max_levels must be between 1 and 8"
+                "max_levels must be between 1 and 8",
             ));
         }
-        
+
         if !(0.0..=1.0).contains(&self.fragment_compression_ratio) {
             return Err(ZiporaError::invalid_data(
-                "fragment_compression_ratio must be between 0.0 and 1.0"
+                "fragment_compression_ratio must be between 0.0 and 1.0",
             ));
         }
-        
+
         if self.min_fragment_size == 0 {
             return Err(ZiporaError::invalid_data(
-                "min_fragment_size must be greater than 0"
+                "min_fragment_size must be greater than 0",
             ));
         }
-        
+
         if self.min_fragment_size > self.max_fragment_size {
             return Err(ZiporaError::invalid_data(
-                "min_fragment_size cannot be greater than max_fragment_size"
+                "min_fragment_size cannot be greater than max_fragment_size",
             ));
         }
-        
+
         if ![256, 512, 1024].contains(&self.cache_block_size) {
             return Err(ZiporaError::invalid_data(
-                "cache_block_size must be 256, 512, or 1024"
+                "cache_block_size must be 256, 512, or 1024",
             ));
         }
-        
+
         Ok(())
     }
 }
@@ -164,58 +164,58 @@ impl NestingConfigBuilder {
             config: NestingConfig::default(),
         }
     }
-    
+
     pub fn max_levels(mut self, levels: usize) -> Self {
         self.config.max_levels = levels;
         self
     }
-    
+
     pub fn fragment_compression_ratio(mut self, ratio: f64) -> Self {
         self.config.fragment_compression_ratio = ratio;
         self
     }
-    
+
     pub fn fragment_size_range(mut self, min: usize, max: usize) -> Self {
         self.config.min_fragment_size = min;
         self.config.max_fragment_size = max;
         self
     }
-    
+
     pub fn min_fragment_size(mut self, min: usize) -> Self {
         self.config.min_fragment_size = min;
         self
     }
-    
+
     pub fn max_fragment_size(mut self, max: usize) -> Self {
         self.config.max_fragment_size = max;
         self
     }
-    
+
     pub fn cache_optimization(mut self, enabled: bool) -> Self {
         self.config.cache_optimization = enabled;
         self
     }
-    
+
     pub fn cache_block_size(mut self, size: usize) -> Self {
         self.config.cache_block_size = size;
         self
     }
-    
+
     pub fn density_switch_threshold(mut self, threshold: f64) -> Self {
         self.config.density_switch_threshold = threshold;
         self
     }
-    
+
     pub fn adaptive_backend_selection(mut self, enabled: bool) -> Self {
         self.config.adaptive_backend_selection = enabled;
         self
     }
-    
+
     pub fn memory_pool_size(mut self, size: usize) -> Self {
         self.config.memory_pool_size = size;
         self
     }
-    
+
     pub fn build(self) -> Result<NestingConfig> {
         self.config.validate()?;
         Ok(self.config)
@@ -371,7 +371,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
     pub fn new() -> Result<Self> {
         Self::with_config(NestingConfig::default())
     }
-    
+
     /// Create a builder for constructing nested LOUDS tries
     pub fn builder() -> NestedLoudsTrieBuilder {
         NestedLoudsTrieBuilder
@@ -380,10 +380,10 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
     /// Create a new nested LOUDS trie with specific configuration
     pub fn with_config(config: NestingConfig) -> Result<Self> {
         config.validate()?;
-        
+
         let pool_config = SecurePoolConfig::small_secure();
         let memory_pool = SecureMemoryPool::new(pool_config)?;
-        
+
         // Initialize with root node
         let mut nodes = Vec::new();
         nodes.push(TrieNode {
@@ -405,10 +405,10 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
             stats: NestedTrieStats::default(),
             _phantom: PhantomData,
         };
-        
+
         // Initialize statistics for empty trie
         instance.update_statistics()?;
-        
+
         Ok(instance)
     }
 
@@ -434,26 +434,36 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
 
     /// Get memory usage for each layer
     pub fn layer_memory_usage(&self) -> Vec<usize> {
-        self.layers.iter().map(|layer| layer.stats.memory_usage).collect()
+        self.layers
+            .iter()
+            .map(|layer| layer.stats.memory_usage)
+            .collect()
     }
 
     /// Calculate the total memory footprint
     pub fn total_memory_usage(&self) -> usize {
-        let layer_memory: usize = self.layers.iter()
+        let layer_memory: usize = self
+            .layers
+            .iter()
             .map(|layer| layer.stats.memory_usage)
             .sum();
-        
-        let fragment_memory: usize = self.fragments.values()
+
+        let fragment_memory: usize = self
+            .fragments
+            .values()
             .map(|fragment| fragment.data.len())
             .sum();
-        
+
         // More conservative node memory calculation
         let node_memory = self.nodes.len() * 8; // Approximate 8 bytes per node
-        
+
         // Minimal base overhead - focus on actual data structures
         let base_overhead = 64; // Fixed small overhead
-        
-        std::cmp::max(layer_memory + fragment_memory + node_memory + base_overhead, 1)
+
+        std::cmp::max(
+            layer_memory + fragment_memory + node_memory + base_overhead,
+            1,
+        )
     }
 
     /// Extract common fragments from the current node structure
@@ -468,7 +478,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
         // For now, just update the fragment count
         self.stats.fragment_stats.fragment_count = 0;
         self.stats.fragment_stats.compression_ratio = 1.0; // No compression yet
-        
+
         Ok(())
     }
 
@@ -486,14 +496,14 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
 
         // Build a single layer (will expand to multi-layer in full implementation)
         let mut layer = self.build_layer(0)?;
-        
+
         // Update layer statistics
         layer.stats.node_count = self.nodes.len();
         // Optimized memory calculation based on actual usage patterns
         layer.stats.memory_usage = (layer.louds_bits.len() + 7) / 8 + layer.labels.len() + 16;
-        
+
         self.layers.push(layer);
-        
+
         // Update overall statistics
         self.update_statistics()?;
 
@@ -534,7 +544,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
 
         // Create rank-select structure using the generic backend
         let rank_select = R::from_bit_vector(louds_bits.clone())?;
-        
+
         // Create link indicators (placeholder for now)
         let link_indicators = BitVector::new();
 
@@ -557,7 +567,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
         let final_memory = layer.is_final.len() / 8 + 1;
         let rank_select_memory = 256; // Approximate
         let core_data_memory = layer.core_data.len();
-        
+
         louds_memory + labels_memory + final_memory + rank_select_memory + core_data_memory
     }
 
@@ -565,7 +575,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
     fn update_statistics(&mut self) -> Result<()> {
         // Update fragment statistics
         self.stats.fragment_stats.fragment_count = self.fragments.len();
-        
+
         // Update level statistics
         self.stats.level_stats.clear();
         for (i, layer) in self.layers.iter().enumerate() {
@@ -577,11 +587,11 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
                 memory_usage: layer.stats.memory_usage,
             });
         }
-        
+
         // Update overall statistics
         self.stats.total_memory = self.total_memory_usage();
         self.stats.key_count = self.num_keys;
-        
+
         Ok(())
     }
 
@@ -590,7 +600,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
         if layer_idx >= self.layers.len() {
             return None;
         }
-        
+
         // For the simplified approach, directly look up in the node structure
         // since state ID corresponds to node ID
         if let Some(node) = self.nodes.get(state as usize) {
@@ -598,7 +608,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
                 return Some(child_node_id as StateId);
             }
         }
-        
+
         None
     }
 
@@ -607,10 +617,10 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
         if self.layers.is_empty() {
             return state as usize;
         }
-        
+
         let layer = &self.layers[0];
         if state == 0 {
-            0  // Root state starts at position 0
+            0 // Root state starts at position 0
         } else {
             // Find position after the (state)th '0' bit using select0
             // This gives us the starting position for the state's children
@@ -666,7 +676,8 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> FiniteStateAutomaton for NestedLou
     fn is_final(&self, state: StateId) -> bool {
         // Always use nodes representation for consistency, since our current implementation
         // keeps nodes and layers in sync with the same state IDs
-        self.nodes.get(state as usize)
+        self.nodes
+            .get(state as usize)
             .map(|node| node.is_final)
             .unwrap_or(false)
     }
@@ -674,7 +685,8 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> FiniteStateAutomaton for NestedLou
     fn transition(&self, state: StateId, symbol: u8) -> Option<StateId> {
         // Always use nodes representation for consistency, since our current implementation
         // keeps nodes and layers in sync with the same state IDs
-        self.nodes.get(state as usize)
+        self.nodes
+            .get(state as usize)
             .and_then(|node| node.children.get(&symbol))
             .map(|&child_id| child_id as StateId)
     }
@@ -682,7 +694,9 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> FiniteStateAutomaton for NestedLou
     fn transitions(&self, state: StateId) -> Box<dyn Iterator<Item = (u8, StateId)> + '_> {
         // Always use nodes representation for consistency
         if let Some(node) = self.nodes.get(state as usize) {
-            let transitions: Vec<(u8, StateId)> = node.children.iter()
+            let transitions: Vec<(u8, StateId)> = node
+                .children
+                .iter()
                 .map(|(&label, &child_id)| (label, child_id as StateId))
                 .collect();
             Box::new(transitions.into_iter())
@@ -777,7 +791,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> Trie for NestedLoudsTrie<R> {
 
     fn lookup(&self, key: &[u8]) -> Option<StateId> {
         let mut node_id = 0usize; // Start at root
-        
+
         // Traverse the tree
         for &symbol in key {
             if let Some(node) = self.nodes.get(node_id) {
@@ -790,7 +804,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> Trie for NestedLoudsTrie<R> {
                 return None; // Node doesn't exist
             }
         }
-        
+
         // Check if final node
         if let Some(node) = self.nodes.get(node_id) {
             if node.is_final {
@@ -807,7 +821,8 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> Trie for NestedLoudsTrie<R> {
 impl<R: RankSelectOps + RankSelectBuilder<R>> StateInspectable for NestedLoudsTrie<R> {
     fn out_degree(&self, state: StateId) -> usize {
         // Always use nodes representation for consistency
-        self.nodes.get(state as usize)
+        self.nodes
+            .get(state as usize)
             .map(|node| node.children.len())
             .unwrap_or(0)
     }
@@ -827,10 +842,14 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> StateInspectable for NestedLoudsTr
 impl<R: RankSelectOps + RankSelectBuilder<R>> StatisticsProvider for NestedLoudsTrie<R> {
     fn stats(&self) -> TrieStats {
         let memory_usage = self.total_memory_usage();
-        let num_states = self.layers.get(0)
+        let num_states = self
+            .layers
+            .get(0)
             .map(|layer| layer.is_final.len())
             .unwrap_or(0);
-        let num_transitions = self.layers.get(0)
+        let num_transitions = self
+            .layers
+            .get(0)
             .map(|layer| layer.labels.len())
             .unwrap_or(0);
 
@@ -838,7 +857,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> StatisticsProvider for NestedLouds
             num_states,
             num_keys: self.num_keys,
             num_transitions,
-            max_depth: 0, // Will be calculated
+            max_depth: 0,   // Will be calculated
             avg_depth: 0.0, // Will be calculated
             memory_usage,
             bits_per_key: 0.0,
@@ -873,7 +892,9 @@ impl NestedLoudsTrieBuilder {
     }
 }
 
-impl<R: RankSelectOps + RankSelectBuilder<R>> TrieBuilder<NestedLoudsTrie<R>> for NestedLoudsTrieBuilder {
+impl<R: RankSelectOps + RankSelectBuilder<R>> TrieBuilder<NestedLoudsTrie<R>>
+    for NestedLoudsTrieBuilder
+{
     fn build_from_sorted<I>(keys: I) -> Result<NestedLoudsTrie<R>>
     where
         I: IntoIterator<Item = Vec<u8>>,
@@ -919,7 +940,9 @@ impl<'a, R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTriePrefixIterator<
     }
 }
 
-impl<'a, R: RankSelectOps + RankSelectBuilder<R>> Iterator for NestedLoudsTriePrefixIterator<'a, R> {
+impl<'a, R: RankSelectOps + RankSelectBuilder<R>> Iterator
+    for NestedLoudsTriePrefixIterator<'a, R>
+{
     type Item = Vec<u8>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -975,11 +998,11 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
         I: IntoIterator<Item = Vec<u8>>,
     {
         let mut trie = Self::with_config(config)?;
-        
+
         for key in keys {
             trie.insert(&key)?;
         }
-        
+
         Ok(trie)
     }
 
@@ -987,16 +1010,19 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
     pub fn optimize(&mut self) -> Result<()> {
         // Extract and compress fragments
         self.extract_fragments()?;
-        
+
         // Rebuild with optimizations
         self.rebuild_louds()?;
-        
+
         Ok(())
     }
 
     /// Get detailed statistics about each layer
     pub fn layer_statistics(&self) -> Vec<LayerStats> {
-        self.layers.iter().map(|layer| layer.stats.clone()).collect()
+        self.layers
+            .iter()
+            .map(|layer| layer.stats.clone())
+            .collect()
     }
 
     /// Check if adaptive backend selection is recommended
@@ -1004,7 +1030,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
         if !self.config.adaptive_backend_selection {
             return None;
         }
-        
+
         // Analyze current performance characteristics
         if let Some(layer) = self.layers.first() {
             if layer.stats.louds_density < self.config.density_switch_threshold {
@@ -1044,14 +1070,10 @@ mod tests {
     #[test]
     fn test_nesting_config_validation() {
         // Invalid max levels
-        let result = NestingConfig::builder()
-            .max_levels(0)
-            .build();
+        let result = NestingConfig::builder().max_levels(0).build();
         assert!(result.is_err());
 
-        let result = NestingConfig::builder()
-            .max_levels(10)
-            .build();
+        let result = NestingConfig::builder().max_levels(10).build();
         assert!(result.is_err());
 
         // Invalid compression ratio
@@ -1086,7 +1108,7 @@ mod tests {
         let trie = TestTrie::new().unwrap();
         let initial_memory = trie.total_memory_usage();
         assert!(initial_memory > 0); // Should have some base memory usage
-        
+
         let layer_usage = trie.layer_memory_usage();
         assert_eq!(layer_usage.len(), 0); // No layers initially
     }
@@ -1095,7 +1117,7 @@ mod tests {
     fn test_fragment_stats_initialization() {
         let trie = TestTrie::new().unwrap();
         let stats = trie.fragment_stats();
-        
+
         assert_eq!(stats.fragment_count, 0);
         assert_eq!(stats.bytes_saved, 0);
         assert_eq!(stats.compression_ratio, 0.0);
@@ -1105,7 +1127,7 @@ mod tests {
     fn test_performance_stats() {
         let trie = TestTrie::new().unwrap();
         let stats = trie.performance_stats();
-        
+
         assert_eq!(stats.key_count, 0);
         assert_eq!(stats.level_stats.len(), 0);
         assert!(stats.total_memory > 0);
@@ -1121,7 +1143,7 @@ mod tests {
         trie.insert(b"help").unwrap();
 
         assert_eq!(trie.len(), 3);
-        
+
         // Test lookups
         assert!(trie.contains(b"hello"));
         assert!(trie.contains(b"world"));
@@ -1132,8 +1154,8 @@ mod tests {
 
     #[test]
     fn test_nested_trie_with_different_backends() {
-        use crate::succinct::{RankSelectSeparated256, RankSelectInterleaved256};
-        
+        use crate::succinct::{RankSelectInterleaved256, RankSelectSeparated256};
+
         let config = NestingConfig::builder()
             .max_levels(3)
             .fragment_compression_ratio(0.2)
@@ -1141,11 +1163,12 @@ mod tests {
             .unwrap();
 
         // Test with different backends
-        let mut trie1 = NestedLoudsTrie::<RankSelectSeparated256>::with_config(config.clone()).unwrap();
+        let mut trie1 =
+            NestedLoudsTrie::<RankSelectSeparated256>::with_config(config.clone()).unwrap();
         let mut trie2 = NestedLoudsTrie::<RankSelectInterleaved256>::with_config(config).unwrap();
 
         let keys = vec![b"cat".to_vec(), b"car".to_vec(), b"card".to_vec()];
-        
+
         for key in &keys {
             trie1.insert(key).unwrap();
             trie2.insert(key).unwrap();
@@ -1164,12 +1187,11 @@ mod tests {
     #[test]
     fn test_nested_trie_prefix_operations() {
         let mut trie = TestTrie::new().unwrap();
-        
+
         trie.insert(b"computer").unwrap();
         trie.insert(b"computation").unwrap();
         trie.insert(b"compute").unwrap();
         trie.insert(b"complete").unwrap();
-
 
         // Test longest prefix
         assert_eq!(trie.longest_prefix(b"computer"), Some(8));
@@ -1181,7 +1203,7 @@ mod tests {
         // Test prefix iteration
         let comp_results: Vec<Vec<u8>> = trie.iter_prefix(b"comp").collect();
         assert_eq!(comp_results.len(), 4);
-        
+
         let compute_results: Vec<Vec<u8>> = trie.iter_prefix(b"compute").collect();
         assert_eq!(compute_results.len(), 2); // compute, computer (computation does NOT have "compute" as prefix!)
     }
@@ -1189,13 +1211,13 @@ mod tests {
     #[test]
     fn test_nested_trie_state_inspection() {
         let mut trie = TestTrie::new().unwrap();
-        
+
         trie.insert(b"ab").unwrap();
         trie.insert(b"ac").unwrap();
         trie.insert(b"ad").unwrap();
 
         let root = trie.root();
-        
+
         // Root should have one child ('a')
         assert_eq!(trie.out_degree(root), 1);
         let symbols = trie.out_symbols(root);
@@ -1221,15 +1243,15 @@ mod tests {
             .unwrap();
 
         let mut trie = TestTrie::with_config(config).unwrap();
-        
+
         // Initially no recommendation (no data)
         assert_eq!(trie.should_switch_backend(), None);
-        
+
         // Add some data
         for i in 0..100 {
             trie.insert(format!("key{:03}", i).as_bytes()).unwrap();
         }
-        
+
         // Should provide some recommendation based on density
         let recommendation = trie.should_switch_backend();
         // The exact recommendation depends on the data characteristics
@@ -1241,7 +1263,7 @@ mod tests {
     #[test]
     fn test_nested_trie_large_dataset() {
         let mut trie = TestTrie::new().unwrap();
-        
+
         // Insert a larger dataset to test scalability
         let keys: Vec<Vec<u8>> = (0..1000)
             .map(|i| format!("key_{:06}", i).into_bytes())
@@ -1252,16 +1274,17 @@ mod tests {
         }
 
         assert_eq!(trie.len(), 1000);
-        
+
         // Test random lookups
-        for key in keys.iter().step_by(37) { // Every 37th key
+        for key in keys.iter().step_by(37) {
+            // Every 37th key
             assert!(trie.contains(key));
         }
-        
+
         // Test non-existent keys
         assert!(!trie.contains(b"key_999999"));
         assert!(!trie.contains(b"different_key"));
-        
+
         // Test statistics
         let stats = trie.stats();
         assert_eq!(stats.num_keys, 1000);
@@ -1282,7 +1305,12 @@ mod tests {
 
         // Insert keys with common prefixes for compression testing
         let prefixes = ["http://www.", "https://www.", "ftp://"];
-        let suffixes = ["example.com", "google.com", "github.com", "stackoverflow.com"];
+        let suffixes = [
+            "example.com",
+            "google.com",
+            "github.com",
+            "stackoverflow.com",
+        ];
 
         for prefix in &prefixes {
             for suffix in &suffixes {
@@ -1292,11 +1320,11 @@ mod tests {
         }
 
         assert_eq!(trie.len(), prefixes.len() * suffixes.len());
-        
+
         // Test memory usage - should be efficient due to common prefixes
         let memory_usage = trie.total_memory_usage();
         assert!(memory_usage > 0);
-        
+
         // Test fragment statistics
         let fragment_stats = trie.fragment_stats();
         // Fragment compression is implemented but not fully functional yet
@@ -1319,7 +1347,7 @@ mod tests {
         // Test unsorted builder
         let mut unsorted_keys = sorted_keys.clone();
         unsorted_keys.reverse();
-        
+
         let trie2 = TestTrie::build_from_unsorted(unsorted_keys).unwrap();
         assert_eq!(trie2.len(), 4);
 
@@ -1344,7 +1372,7 @@ mod tests {
     #[test]
     fn test_nested_trie_optimization() {
         let mut trie = TestTrie::new().unwrap();
-        
+
         // Insert data
         let keys = vec![
             b"optimization".to_vec(),
@@ -1359,12 +1387,12 @@ mod tests {
 
         // Test manual optimization
         trie.optimize().unwrap();
-        
+
         // Should still work after optimization
         for key in &keys {
             assert!(trie.contains(key));
         }
-        
+
         assert_eq!(trie.len(), keys.len());
     }
 
@@ -1399,13 +1427,10 @@ mod tests {
 
     #[test]
     fn test_nested_trie_layer_statistics() {
-        let config = NestingConfig::builder()
-            .max_levels(4)
-            .build()
-            .unwrap();
+        let config = NestingConfig::builder().max_levels(4).build().unwrap();
 
         let mut trie = TestTrie::with_config(config).unwrap();
-        
+
         // Insert hierarchical data
         for i in 0..50 {
             let key = format!("level_{}/sublevel_{}/item_{}", i / 20, i / 5, i);
@@ -1414,16 +1439,16 @@ mod tests {
 
         // Check layer statistics
         let layer_stats = trie.layer_statistics();
-        
+
         // Should have at least one layer
         assert!(!layer_stats.is_empty());
-        
+
         // First layer should have nodes
         if let Some(first_layer) = layer_stats.first() {
             assert!(first_layer.node_count > 0);
             assert!(first_layer.memory_usage > 0);
         }
-        
+
         // Test performance statistics
         let perf_stats = trie.performance_stats();
         assert_eq!(perf_stats.key_count, 50);
