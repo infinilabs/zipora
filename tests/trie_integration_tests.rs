@@ -3,7 +3,7 @@
 //! This test suite validates cross-module compatibility, trait implementations,
 //! and comprehensive integration scenarios for all trie implementations in zipora.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
@@ -14,14 +14,14 @@ use zipora::fsa::{
 };
 use zipora::fsa::nested_louds_trie::{NestedLoudsTrie, NestingConfigBuilder};
 use zipora::succinct::rank_select::{RankSelectInterleaved256, RankSelectSimple};
-use zipora::error::{Result, ZiporaError};
 
 // Note: CompressedSparseTrie would be tested here too when available in async context
 
 // =============================================================================
-// TEST DATA GENERATORS
+// ENHANCED TEST DATA GENERATORS
 // =============================================================================
 
+/// Generate keys with realistic patterns for testing
 fn generate_common_test_keys() -> Vec<Vec<u8>> {
     vec![
         b"integration".to_vec(),
@@ -35,6 +35,48 @@ fn generate_common_test_keys() -> Vec<Vec<u8>> {
         b"validation".to_vec(),
         b"comprehensive".to_vec(),
     ]
+}
+
+/// Generate keys with pathological patterns to test edge cases
+fn generate_pathological_test_keys() -> Vec<Vec<u8>> {
+    vec![
+        vec![], // Empty key
+        vec![0], // Single null byte
+        vec![255], // Single max byte
+        vec![0; 1000], // Long repeated null bytes
+        vec![255; 1000], // Long repeated max bytes
+        (0u8..=255u8).collect(), // All byte values
+        (0u8..=255u8).rev().collect(), // All byte values reversed
+        vec![0, 255, 0, 255, 0, 255], // Alternating min/max
+        b"\x00\x01\x02\x03\xFC\xFD\xFE\xFF".to_vec(), // Boundary values
+        b"a\x00b\x00c\x00".to_vec(), // Embedded nulls
+    ]
+}
+
+/// Generate keys with shared prefixes for testing compression
+fn generate_shared_prefix_keys() -> Vec<Vec<u8>> {
+    let mut keys = Vec::new();
+    let prefixes = ["common_prefix_", "shared_", "test_data_", "integration_"];
+    let suffixes = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"];
+    
+    for prefix in &prefixes {
+        for suffix in &suffixes {
+            let mut key = prefix.as_bytes().to_vec();
+            key.extend_from_slice(suffix.as_bytes());
+            keys.push(key);
+            
+            // Add some variations
+            let mut long_key = prefix.as_bytes().to_vec();
+            long_key.extend_from_slice(suffix.as_bytes());
+            long_key.extend_from_slice(b"_extended_version");
+            keys.push(long_key);
+        }
+        
+        // Add prefix itself as a key
+        keys.push(prefix.as_bytes().to_vec());
+    }
+    
+    keys
 }
 
 fn generate_prefix_test_keys() -> Vec<Vec<u8>> {
@@ -622,6 +664,8 @@ fn test_serialization_compatibility() {
 // =============================================================================
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(1000))]
+    
     #[test]
     fn property_test_cross_implementation_consistency(
         keys in prop::collection::vec(prop::collection::vec(any::<u8>(), 0..50), 0..100)
@@ -655,6 +699,120 @@ proptest! {
         // Both should reject the same non-existent keys
         let non_existent = b"definitely_not_inserted_12345";
         prop_assert_eq!(da_trie.contains(non_existent), nested_trie.contains(non_existent));
+    }
+    
+    #[test]
+    fn property_test_advanced_prefix_operations(
+        keys in prop::collection::vec(prop::collection::vec(any::<u8>(), 1..30), 1..50),
+        query_prefixes in prop::collection::vec(prop::collection::vec(any::<u8>(), 0..15), 1..10)
+    ) {
+        let mut da_trie = DoubleArrayTrie::new();
+        let mut nested_trie = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
+        
+        // Insert all keys
+        for key in &keys {
+            let _ = da_trie.insert(key);
+            let _ = nested_trie.insert(key);
+        }
+        
+        // Test prefix operations consistency
+        for prefix in &query_prefixes {
+            let da_prefix_results: Vec<_> = da_trie.iter_prefix(prefix).collect();
+            let nested_prefix_results: Vec<_> = nested_trie.iter_prefix(prefix).collect();
+            
+            // All results should start with the prefix
+            for result in &da_prefix_results {
+                prop_assert!(result.starts_with(prefix),
+                    "DA trie prefix result {:?} doesn't start with prefix {:?}", result, prefix);
+            }
+            
+            for result in &nested_prefix_results {
+                prop_assert!(result.starts_with(prefix),
+                    "Nested trie prefix result {:?} doesn't start with prefix {:?}", result, prefix);
+            }
+            
+            // Convert to sets for comparison (order may differ)
+            let da_set: HashSet<_> = da_prefix_results.into_iter().collect();
+            let nested_set: HashSet<_> = nested_prefix_results.into_iter().collect();
+            
+            prop_assert_eq!(da_set, nested_set,
+                "Prefix results differ for prefix {:?}", prefix);
+        }
+    }
+    
+    #[test]
+    fn property_test_memory_efficiency_bounds(
+        keys in prop::collection::vec(prop::collection::vec(any::<u8>(), 1..20), 10..100)
+    ) {
+        let mut da_trie = DoubleArrayTrie::new();
+        let mut nested_trie = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
+        
+        let mut total_key_bytes = 0;
+        let mut unique_keys = 0;
+        
+        for key in &keys {
+            if da_trie.insert(key).is_ok() {
+                total_key_bytes += key.len();
+                unique_keys += 1;
+            }
+            let _ = nested_trie.insert(key);
+        }
+        
+        if unique_keys > 0 {
+            let da_stats = da_trie.stats();
+            let nested_stats = nested_trie.stats();
+            
+            // Memory efficiency bounds
+            let da_overhead_ratio = da_stats.memory_usage as f64 / total_key_bytes as f64;
+            let nested_overhead_ratio = nested_stats.memory_usage as f64 / total_key_bytes as f64;
+            
+            prop_assert!(da_overhead_ratio < 1000.0,
+                "DA trie overhead ratio {} too high for {} keys", da_overhead_ratio, unique_keys);
+            prop_assert!(nested_overhead_ratio < 1000.0,
+                "Nested trie overhead ratio {} too high for {} keys", nested_overhead_ratio, unique_keys);
+            
+            // Bits per key should be reasonable
+            prop_assert!(da_stats.bits_per_key < 1_000_000.0,
+                "DA trie bits per key {} too high", da_stats.bits_per_key);
+            prop_assert!(nested_stats.bits_per_key < 1_000_000.0,
+                "Nested trie bits per key {} too high", nested_stats.bits_per_key);
+        }
+    }
+    
+    #[test]
+    fn property_test_state_transition_consistency(
+        keys in prop::collection::vec(prop::collection::vec(any::<u8>(), 1..20), 1..30),
+        test_symbols in prop::collection::vec(any::<u8>(), 0..10)
+    ) {
+        let mut da_trie = DoubleArrayTrie::new();
+        let mut nested_trie = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
+        
+        for key in &keys {
+            let _ = da_trie.insert(key);
+            let _ = nested_trie.insert(key);
+        }
+        
+        // Test state transitions from root
+        let root = 0;
+        
+        for &symbol in &test_symbols {
+            let da_transition = da_trie.transition(root, symbol);
+            let nested_transition = nested_trie.transition(root, symbol);
+            
+            // If both have transitions, they should behave consistently
+            if let (Some(da_state), Some(nested_state)) = (da_transition, nested_transition) {
+                // Both should be valid states
+                prop_assert!(da_state < u32::MAX / 2, "DA trie state too large: {}", da_state);
+                prop_assert!(nested_state < u32::MAX / 2, "Nested trie state too large: {}", nested_state);
+                
+                // Test out_degree consistency
+                let da_degree = da_trie.out_degree(da_state);
+                let nested_degree = nested_trie.out_degree(nested_state);
+                
+                prop_assert!(da_degree <= 256, "DA trie out_degree too large: {}", da_degree);
+                prop_assert!(nested_degree <= 256, "Nested trie out_degree too large: {}", nested_degree);
+            }
+        }
     }
     
     #[test]
@@ -694,6 +852,140 @@ proptest! {
             }
         }
     }
+}
+
+// =============================================================================
+// EDGE CASE AND PATHOLOGICAL TESTS
+// =============================================================================
+
+#[test]
+fn test_pathological_key_patterns() {
+    let pathological_keys = generate_pathological_test_keys();
+    
+    let mut da_trie = DoubleArrayTrie::new();
+    let mut nested_trie = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
+    
+    for key in &pathological_keys {
+        let da_result = da_trie.insert(key);
+        let nested_result = nested_trie.insert(key);
+        
+        // Both should handle pathological cases gracefully
+        assert_eq!(da_result.is_ok(), nested_result.is_ok(),
+            "Inconsistent handling of pathological key: {:?}", key);
+        
+        if da_result.is_ok() {
+            assert!(da_trie.contains(key), "Pathological key not found in DA trie: {:?}", key);
+            assert!(nested_trie.contains(key), "Pathological key not found in nested trie: {:?}", key);
+        }
+    }
+}
+
+#[test]
+fn test_shared_prefix_compression_efficiency() {
+    let shared_prefix_keys = generate_shared_prefix_keys();
+    
+    // Test with high compression configuration
+    let config = NestingConfigBuilder::new()
+        .max_levels(6)
+        .fragment_compression_ratio(0.8)
+        .min_fragment_size(4)
+        .build()
+        .unwrap();
+    
+    let mut nested_trie = NestedLoudsTrie::<RankSelectInterleaved256>::with_config(config).unwrap();
+    let mut da_trie = DoubleArrayTrie::new_compact();
+    
+    for key in &shared_prefix_keys {
+        nested_trie.insert(key).unwrap();
+        da_trie.insert(key).unwrap();
+    }
+    
+    // Verify all keys are present
+    for key in &shared_prefix_keys {
+        assert!(nested_trie.contains(key), "Shared prefix key missing from nested trie: {:?}", key);
+        assert!(da_trie.contains(key), "Shared prefix key missing from DA trie: {:?}", key);
+    }
+    
+    // Check compression effectiveness
+    let nested_stats = nested_trie.stats();
+    let da_stats = da_trie.stats();
+    
+    println!("Shared prefix compression test:");
+    println!("  Nested trie memory: {} bytes", nested_stats.memory_usage);
+    println!("  DA trie memory: {} bytes", da_stats.memory_usage);
+    println!("  Nested trie bits/key: {:.1}", nested_stats.bits_per_key);
+    println!("  DA trie bits/key: {:.1}", da_stats.bits_per_key);
+    
+    // With shared prefixes, nested trie should potentially be more efficient
+    // This is a heuristic check
+    assert!(nested_stats.memory_usage > 0);
+    assert!(da_stats.memory_usage > 0);
+}
+
+#[test]
+fn test_extreme_key_lengths() {
+    let mut da_trie = DoubleArrayTrie::new();
+    let mut nested_trie = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
+    
+    // Test very long keys
+    let very_long_key = vec![42u8; 10000];
+    let da_result = da_trie.insert(&very_long_key);
+    let nested_result = nested_trie.insert(&very_long_key);
+    
+    assert_eq!(da_result.is_ok(), nested_result.is_ok());
+    
+    if da_result.is_ok() {
+        assert!(da_trie.contains(&very_long_key));
+        assert!(nested_trie.contains(&very_long_key));
+        
+        // Memory usage should be reasonable even for very long keys
+        let da_stats = da_trie.stats();
+        let nested_stats = nested_trie.stats();
+        
+        assert!(da_stats.memory_usage < 100_000_000); // Less than 100MB
+        assert!(nested_stats.memory_usage < 100_000_000);
+    }
+    
+    // Test many short keys
+    for i in 0..256 {
+        let short_key = vec![i as u8];
+        da_trie.insert(&short_key).unwrap();
+        nested_trie.insert(&short_key).unwrap();
+    }
+    
+    // Should handle many short keys efficiently  
+    assert_eq!(da_trie.len(), nested_trie.len());
+    // With the very long key insertion, total count might exceed 256
+    assert!(da_trie.len() > 0);
+    assert!(da_trie.len() <= 257); // Due to deduplication + potential very long key
+}
+
+#[test]
+fn test_rapid_insertion_patterns() {
+    let mut da_trie = DoubleArrayTrie::new();
+    let mut nested_trie = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
+    
+    // Test rapid insertion of sequential keys
+    for i in 0..5000 {
+        let key = format!("sequential_{:06}", i).into_bytes();
+        da_trie.insert(&key).unwrap();
+        nested_trie.insert(&key).unwrap();
+        
+        // Periodic consistency checks
+        if i % 1000 == 0 {
+            assert_eq!(da_trie.len(), nested_trie.len());
+            
+            // Verify some random earlier keys still exist
+            for j in (0..i).step_by(500) {
+                let check_key = format!("sequential_{:06}", j).into_bytes();
+                assert!(da_trie.contains(&check_key), "Missing key at iteration {}: {:?}", i, check_key);
+                assert!(nested_trie.contains(&check_key), "Missing key at iteration {}: {:?}", i, check_key);
+            }
+        }
+    }
+    
+    assert_eq!(da_trie.len(), 5000);
+    assert_eq!(nested_trie.len(), 5000);
 }
 
 // =============================================================================

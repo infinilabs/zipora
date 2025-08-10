@@ -379,49 +379,76 @@ impl SortableStrVec {
     
     /// Fast comparison sort using direct byte slices
     fn fast_comparison_sort(&mut self) -> Result<()> {
-        // CRITICAL: Pre-capture arena and entries to avoid repeated pointer dereferencing
-        let arena_ptr = self.arena.as_ptr();
-        let entries = &self.entries;
+        #[cfg(debug_assertions)]
+        {
+            // Debug mode: Use slice-based comparison with tuple optimization
+            // This avoids the overhead of unsafe code while maintaining good performance
+            
+            // Create tuples of (index, slice) to minimize repeated offset calculations
+            let mut sort_data: Vec<(usize, &[u8])> = self.sorted_indices
+                .iter()
+                .map(|&idx| {
+                    let entry = &self.entries[idx];
+                    let slice = &self.arena[entry.offset()..entry.offset() + entry.length()];
+                    (idx, slice)
+                })
+                .collect();
+            
+            // Sort by slice comparison
+            sort_data.sort_unstable_by(|a, b| a.1.cmp(&b.1));
+            
+            // Update sorted indices
+            for (i, (idx, _)) in sort_data.into_iter().enumerate() {
+                self.sorted_indices[i] = idx;
+            }
+        }
         
-        // Hot path optimization: Use the fastest possible comparison
-        self.sorted_indices.sort_unstable_by(|&a, &b| {
-            let entry_a = unsafe { entries.get_unchecked(a) };
-            let entry_b = unsafe { entries.get_unchecked(b) };
+        #[cfg(not(debug_assertions))]
+        {
+            // Release mode: Use optimized unsafe comparison
+            let arena_ptr = self.arena.as_ptr();
+            let entries = &self.entries;
             
-            let offset_a = entry_a.offset();
-            let offset_b = entry_b.offset();
-            let len_a = entry_a.length();
-            let len_b = entry_b.length();
-            
-            // Use chunked comparison for maximum speed
-            unsafe { Self::fast_lexicographic_cmp(arena_ptr.add(offset_a), len_a, arena_ptr.add(offset_b), len_b) }
-        });
+            self.sorted_indices.sort_unstable_by(|&a, &b| {
+                let entry_a = unsafe { entries.get_unchecked(a) };
+                let entry_b = unsafe { entries.get_unchecked(b) };
+                
+                let offset_a = entry_a.offset();
+                let offset_b = entry_b.offset();
+                let len_a = entry_a.length();
+                let len_b = entry_b.length();
+                
+                // Use chunked comparison for maximum speed
+                unsafe { Self::fast_lexicographic_cmp(arena_ptr.add(offset_a), len_a, arena_ptr.add(offset_b), len_b) }
+            });
+        }
         
         Ok(())
     }
     
-    /// SIMD-optimized lexicographic comparison
+    /// Optimized lexicographic comparison
     #[inline(always)]
     unsafe fn fast_lexicographic_cmp(a_ptr: *const u8, a_len: usize, b_ptr: *const u8, b_len: usize) -> Ordering {
         let min_len = a_len.min(b_len);
         
-        // Fast path: Process 8 bytes at a time for better performance
+        // Process 8 bytes at a time using byte array comparison
         let chunks = min_len / 8;
         for i in 0..chunks {
-            // SAFETY: We're within bounds due to chunks calculation and pointer arithmetic
-            let a_chunk = unsafe { std::ptr::read_unaligned(a_ptr.add(i * 8) as *const u64) };
-            let b_chunk = unsafe { std::ptr::read_unaligned(b_ptr.add(i * 8) as *const u64) };
+            let offset = i * 8;
+            // Load 8 bytes as a byte array for lexicographic comparison
+            let a_bytes = unsafe { std::ptr::read_unaligned(a_ptr.add(offset) as *const [u8; 8]) };
+            let b_bytes = unsafe { std::ptr::read_unaligned(b_ptr.add(offset) as *const [u8; 8]) };
             
-            if a_chunk != b_chunk {
-                // Use big-endian comparison for lexicographic ordering
-                return a_chunk.to_be().cmp(&b_chunk.to_be());
+            // Direct byte array comparison (no endianness conversion needed)
+            match a_bytes.cmp(&b_bytes) {
+                Ordering::Equal => continue,
+                other => return other,
             }
         }
         
         // Handle remaining bytes
         let remaining_start = chunks * 8;
         for i in remaining_start..min_len {
-            // SAFETY: We're within bounds due to min_len calculation
             let a_byte = unsafe { *a_ptr.add(i) };
             let b_byte = unsafe { *b_ptr.add(i) };
             match a_byte.cmp(&b_byte) {
