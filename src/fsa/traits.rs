@@ -47,10 +47,11 @@ pub trait FiniteStateAutomaton {
 
             match self.transition(state, symbol) {
                 Some(next_state) => state = next_state,
-                None => break,
+                None => return last_final,
             }
         }
 
+        // Check final state after consuming all input
         if self.is_final(state) {
             Some(input.len())
         } else {

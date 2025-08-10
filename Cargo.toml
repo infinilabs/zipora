@@ -40,6 +40,7 @@ crossbeam-utils = "0.8.20"
 dashmap = "6.0"
 thread_local = "1.1"
 fastrand = "2.1"
+parking_lot = "0.12"
 
 # Compression (optional)
 zstd = { version = "0.13.2", optional = true }
@@ -69,6 +70,8 @@ cbindgen = { version = "0.27", optional = true }
 criterion = { version = "0.5.1", features = ["html_reports"] }
 proptest = "1.6"
 tempfile = "3.14"
+arbitrary = { version = "1.3", features = ["derive"] }
+# Note: crossbeam-utils and rayon are already in main dependencies
 
 [build-dependencies]
 cbindgen = { version = "0.27", optional = true }
@@ -111,6 +114,14 @@ harness = false
 
 [[bench]]
 name = "rank_select_bench"
+harness = false
+
+[[bench]]
+name = "compressed_sparse_trie_bench"
+harness = false
+
+[[bench]]
+name = "comprehensive_trie_benchmarks"
 harness = false
 
 [profile.release]
