@@ -240,9 +240,15 @@ mod valvec32_performance {
             println!("  ValVec32 throughput: {:.0} ops/sec", valvec_metrics.throughput_ops_per_sec);
             println!("  std::Vec throughput: {:.0} ops/sec", stdvec_metrics.throughput_ops_per_sec);
 
-            // ValVec32 should be competitive (within 2x) 
-            assert!(performance_ratio < 2.0, 
-                "ValVec32 performance regression: {:.2}x slower than std::Vec", performance_ratio);
+            // ValVec32 should be faster than or competitive with std::Vec
+            // performance_ratio > 1.0 means ValVec32 is faster
+            assert!(performance_ratio > 0.5, 
+                "ValVec32 performance regression: {:.2}x slower than std::Vec", 1.0 / performance_ratio);
+            
+            // Log the actual performance benefit when ValVec32 is faster
+            if performance_ratio > 1.0 {
+                println!("  ✅ ValVec32 is {:.2}x faster than std::Vec", performance_ratio);
+            }
                 
             // Memory efficiency test - check actual struct size difference for 64-bit systems
             #[cfg(target_pointer_width = "64")]

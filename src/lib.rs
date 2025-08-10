@@ -110,7 +110,10 @@ pub use succinct::{
 
 // Re-export Phase 1 implementations
 pub use blob_store::{BlobStore, MemoryBlobStore, PlainBlobStore};
-pub use fsa::{CritBitTrie, FiniteStateAutomaton, LoudsTrie, PatriciaTrie, Trie};
+pub use fsa::{
+    CritBitTrie, DoubleArrayTrie, DoubleArrayTrieBuilder, DoubleArrayTrieConfig,
+    FiniteStateAutomaton, LoudsTrie, PatriciaTrie, Trie,
+};
 pub use io::{DataInput, DataOutput, VarInt};
 
 // Re-export Phase 2 implementations
