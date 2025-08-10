@@ -3,12 +3,12 @@
 //! This benchmark suite tests the performance of the advanced tiered memory
 //! allocator against standard allocation and compares with C++ performance.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::alloc::{Layout, alloc, dealloc};
 use zipora::memory::{
-    tiered_allocate, tiered_deallocate, TieredMemoryAllocator, TieredConfig,
-    MemoryMappedAllocator, MemoryPool, PoolConfig,
+    MemoryMappedAllocator, MemoryPool, PoolConfig, TieredConfig, TieredMemoryAllocator,
+    tiered_allocate, tiered_deallocate,
 };
-use std::alloc::{alloc, dealloc, Layout};
 
 /// Test allocation patterns that match the C++ comparison
 fn benchmark_allocation_patterns_detailed(c: &mut Criterion) {
@@ -37,13 +37,17 @@ fn benchmark_allocation_patterns_detailed(c: &mut Criterion) {
                     if !ptr.is_null() {
                         allocations.push((ptr, layout));
                         // Touch memory to ensure allocation
-                        unsafe { ptr.write(42); }
+                        unsafe {
+                            ptr.write(42);
+                        }
                     }
                 }
-                
+
                 // Deallocate all
                 for (ptr, layout) in allocations {
-                    unsafe { dealloc(ptr, layout); }
+                    unsafe {
+                        dealloc(ptr, layout);
+                    }
                 }
                 black_box(());
             });
@@ -58,12 +62,14 @@ fn benchmark_allocation_patterns_detailed(c: &mut Criterion) {
                         // Touch memory to ensure allocation
                         let slice = allocation.as_slice();
                         if !slice.is_empty() {
-                            unsafe { *(slice.as_ptr() as *mut u8) = 42; }
+                            unsafe {
+                                *(slice.as_ptr() as *mut u8) = 42;
+                            }
                         }
                         allocations.push(allocation);
                     }
                 }
-                
+
                 // Deallocate all
                 for allocation in allocations {
                     let _ = tiered_deallocate(allocation);
@@ -83,7 +89,7 @@ fn benchmark_allocation_patterns_detailed(c: &mut Criterion) {
                 hugepage_threshold: 2 * 1024 * 1024,
             };
             let allocator = TieredMemoryAllocator::new(config).unwrap();
-            
+
             b.iter(|| {
                 let mut allocations = Vec::new();
                 for _ in 0..count {
@@ -91,12 +97,14 @@ fn benchmark_allocation_patterns_detailed(c: &mut Criterion) {
                         // Touch memory to ensure allocation
                         let slice = allocation.as_slice();
                         if !slice.is_empty() {
-                            unsafe { *(slice.as_ptr() as *mut u8) = 42; }
+                            unsafe {
+                                *(slice.as_ptr() as *mut u8) = 42;
+                            }
                         }
                         allocations.push(allocation);
                     }
                 }
-                
+
                 // Deallocate all
                 for allocation in allocations {
                     let _ = allocator.deallocate(allocation);
@@ -116,10 +124,10 @@ fn benchmark_mmap_performance(c: &mut Criterion) {
     let allocator = MemoryMappedAllocator::default();
 
     let sizes = vec![
-        16 * 1024,    // 16KB
-        64 * 1024,    // 64KB
-        256 * 1024,   // 256KB
-        1024 * 1024,  // 1MB
+        16 * 1024,       // 16KB
+        64 * 1024,       // 64KB
+        256 * 1024,      // 256KB
+        1024 * 1024,     // 1MB
         4 * 1024 * 1024, // 4MB
     ];
 
@@ -145,7 +153,7 @@ fn benchmark_mmap_performance(c: &mut Criterion) {
             b.iter(|| {
                 let allocation1 = allocator.allocate(size).unwrap();
                 allocator.deallocate(allocation1).unwrap();
-                
+
                 let allocation2 = allocator.allocate(size).unwrap();
                 allocator.deallocate(allocation2).unwrap();
                 black_box(());
@@ -170,7 +178,7 @@ fn benchmark_pool_performance(c: &mut Criterion) {
     for (name, config) in pool_configs {
         let pool = MemoryPool::new(config).unwrap();
         let chunk_size = pool.config().chunk_size;
-        
+
         group.throughput(Throughput::Bytes(chunk_size as u64));
 
         // Test allocation/deallocation performance
@@ -178,7 +186,9 @@ fn benchmark_pool_performance(c: &mut Criterion) {
             b.iter(|| {
                 let chunk = pool.allocate().unwrap();
                 // Touch memory
-                unsafe { chunk.as_ptr().write(42); }
+                unsafe {
+                    chunk.as_ptr().write(42);
+                }
                 pool.deallocate(chunk).unwrap();
                 black_box(());
             });
@@ -192,7 +202,7 @@ fn benchmark_pool_performance(c: &mut Criterion) {
                     let chunk = pool.allocate().unwrap();
                     chunks.push(chunk);
                 }
-                
+
                 for chunk in chunks {
                     pool.deallocate(chunk).unwrap();
                 }
@@ -212,7 +222,7 @@ fn benchmark_pool_performance(c: &mut Criterion) {
             for chunk in warmup_chunks {
                 let _ = pool.deallocate(chunk);
             }
-            
+
             b.iter(|| {
                 let chunk = pool.allocate().unwrap();
                 pool.deallocate(chunk).unwrap();
@@ -232,10 +242,19 @@ fn benchmark_adaptive_allocation(c: &mut Criterion) {
 
     // Test different allocation patterns
     let patterns = vec![
-        ("small_dominated", vec![128, 256, 512, 256, 128, 512, 256, 128]),
-        ("medium_dominated", vec![2048, 4096, 8192, 4096, 2048, 8192, 4096]),
+        (
+            "small_dominated",
+            vec![128, 256, 512, 256, 128, 512, 256, 128],
+        ),
+        (
+            "medium_dominated",
+            vec![2048, 4096, 8192, 4096, 2048, 8192, 4096],
+        ),
         ("large_dominated", vec![32768, 65536, 131072, 65536, 32768]),
-        ("mixed_pattern", vec![128, 4096, 65536, 256, 8192, 131072, 512]),
+        (
+            "mixed_pattern",
+            vec![128, 4096, 65536, 256, 8192, 131072, 512],
+        ),
     ];
 
     for (pattern_name, sizes) in patterns {
@@ -244,19 +263,19 @@ fn benchmark_adaptive_allocation(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("adaptive", pattern_name), |b| {
             b.iter(|| {
                 let mut allocations = Vec::new();
-                
+
                 // Allocate according to pattern
                 for &size in &sizes {
                     if let Ok(allocation) = allocator.allocate(size) {
                         allocations.push(allocation);
                     }
                 }
-                
+
                 // Deallocate all
                 for allocation in allocations {
                     let _ = allocator.deallocate(allocation);
                 }
-                
+
                 black_box(());
             });
         });
@@ -279,26 +298,28 @@ fn benchmark_concurrent_allocation(c: &mut Criterion) {
 
         group.bench_function(BenchmarkId::new("concurrent", size), |b| {
             b.iter(|| {
-                let handles: Vec<_> = (0..4).map(|_| {
-                    let allocator = allocator.clone();
-                    std::thread::spawn(move || {
-                        let mut allocations = Vec::new();
-                        for _ in 0..10 {
-                            if let Ok(allocation) = allocator.allocate(size) {
-                                allocations.push(allocation);
+                let handles: Vec<_> = (0..4)
+                    .map(|_| {
+                        let allocator = allocator.clone();
+                        std::thread::spawn(move || {
+                            let mut allocations = Vec::new();
+                            for _ in 0..10 {
+                                if let Ok(allocation) = allocator.allocate(size) {
+                                    allocations.push(allocation);
+                                }
                             }
-                        }
-                        
-                        for allocation in allocations {
-                            let _ = allocator.deallocate(allocation);
-                        }
+
+                            for allocation in allocations {
+                                let _ = allocator.deallocate(allocation);
+                            }
+                        })
                     })
-                }).collect();
+                    .collect();
 
                 for handle in handles {
                     handle.join().unwrap();
                 }
-                
+
                 black_box(());
             });
         });

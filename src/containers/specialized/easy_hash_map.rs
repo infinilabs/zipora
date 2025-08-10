@@ -45,8 +45,8 @@ use std::marker::PhantomData;
 /// assert_eq!(map_with_default.get_or_default(&"missing"), &0);
 /// ```
 #[derive(Debug)]
-pub struct EasyHashMap<K, V> 
-where 
+pub struct EasyHashMap<K, V>
+where
     K: Hash + Eq + Clone,
     V: Clone,
 {
@@ -60,8 +60,8 @@ where
     max_load_factor: f64,
 }
 
-impl<K, V> EasyHashMap<K, V> 
-where 
+impl<K, V> EasyHashMap<K, V>
+where
     K: Hash + Eq + Clone,
     V: Clone,
 {
@@ -118,9 +118,9 @@ where
 
     /// Get a reference to the value or the default value if key doesn't exist
     pub fn get_or_default(&self, key: &K) -> &V {
-        self.inner.get(key).unwrap_or_else(|| {
-            self.default_value.as_ref().expect("No default value set")
-        })
+        self.inner
+            .get(key)
+            .unwrap_or_else(|| self.default_value.as_ref().expect("No default value set"))
     }
 
     /// Get a mutable reference to the value, inserting with provided value if missing
@@ -129,22 +129,29 @@ where
         if !key_exists {
             self.put(key.clone(), value);
         }
-        
+
         // This should always succeed since we just inserted
-        Ok(self.inner.get_mut(&key).expect("Key should exist after insertion"))
+        Ok(self
+            .inner
+            .get_mut(&key)
+            .expect("Key should exist after insertion"))
     }
 
     /// Get a mutable reference to the value, inserting with closure result if missing
     pub fn get_or_insert_with<F>(&mut self, key: K, f: F) -> Result<&mut V>
-    where F: FnOnce() -> V
+    where
+        F: FnOnce() -> V,
     {
         let key_exists = self.inner.contains_key(&key);
         if !key_exists {
             let value = f();
             self.put(key.clone(), value);
         }
-        
-        Ok(self.inner.get_mut(&key).expect("Key should exist after insertion"))
+
+        Ok(self
+            .inner
+            .get_mut(&key)
+            .expect("Key should exist after insertion"))
     }
 
     /// Remove a key-value pair
@@ -185,10 +192,12 @@ where
     }
 
     /// Retain only the key-value pairs that satisfy the predicate
-    pub fn retain<F>(&mut self, mut f: F) 
-    where F: FnMut(&K, &mut V) -> bool
+    pub fn retain<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&K, &mut V) -> bool,
     {
-        let keys_to_remove: Vec<K> = self.inner
+        let keys_to_remove: Vec<K> = self
+            .inner
             .iter()
             .filter_map(|(k, v)| {
                 // Simple test - just check if we should keep the item
@@ -242,8 +251,8 @@ where
     }
 
     /// Create a builder for configuring the map
-    pub fn initial_capacity(capacity: usize) -> EasyHashMapBuilder<K, V> 
-    where 
+    pub fn initial_capacity(capacity: usize) -> EasyHashMapBuilder<K, V>
+    where
         K: Hash + Eq + Clone,
         V: Clone,
     {
@@ -251,8 +260,8 @@ where
     }
 
     /// Create a builder with a default value
-    pub fn with_default_value(default: V) -> EasyHashMapBuilder<K, V> 
-    where 
+    pub fn with_default_value(default: V) -> EasyHashMapBuilder<K, V>
+    where
         K: Hash + Eq + Clone,
         V: Clone,
     {
@@ -264,7 +273,7 @@ where
         if self.inner.capacity() == 0 {
             return true;
         }
-        
+
         let load_factor = self.inner.len() as f64 / self.inner.capacity() as f64;
         load_factor >= self.max_load_factor
     }
@@ -284,10 +293,12 @@ where
     pub fn shrink_to_fit(&mut self) {
         // GoldHashMap doesn't have shrink_to_fit, so we rebuild with minimal size
         if self.inner.len() < self.inner.capacity() / 2 {
-            let entries: Vec<(K, V)> = self.inner.iter()
+            let entries: Vec<(K, V)> = self
+                .inner
+                .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
-            
+
             let new_capacity = (entries.len() * 2).max(16);
             if let Ok(mut new_map) = GoldHashMap::with_capacity(new_capacity) {
                 for (key, value) in entries {
@@ -303,10 +314,10 @@ where
         EasyHashMapStats {
             len: self.len(),
             capacity: self.capacity(),
-            load_factor: if self.capacity() > 0 { 
-                self.len() as f64 / self.capacity() as f64 
-            } else { 
-                0.0 
+            load_factor: if self.capacity() > 0 {
+                self.len() as f64 / self.capacity() as f64
+            } else {
+                0.0
             },
             has_default: self.default_value.is_some(),
             auto_grow_enabled: self.auto_grow,
@@ -317,8 +328,8 @@ where
 
 /// Builder for configuring EasyHashMap
 #[derive(Debug)]
-pub struct EasyHashMapBuilder<K, V> 
-where 
+pub struct EasyHashMapBuilder<K, V>
+where
     K: Hash + Eq + Clone,
     V: Clone,
 {
@@ -329,8 +340,8 @@ where
     _phantom: PhantomData<K>,
 }
 
-impl<K, V> EasyHashMapBuilder<K, V> 
-where 
+impl<K, V> EasyHashMapBuilder<K, V>
+where
     K: Hash + Eq + Clone,
     V: Clone,
 {
@@ -381,8 +392,8 @@ where
 }
 
 /// Iterator over mutable values in EasyHashMap
-pub struct ValuesIterMut<'a, K, V> 
-where 
+pub struct ValuesIterMut<'a, K, V>
+where
     K: Hash + Eq + Clone,
     V: Clone,
 {
@@ -392,7 +403,7 @@ where
 }
 
 impl<'a, K, V> Iterator for ValuesIterMut<'a, K, V>
-where 
+where
     K: Hash + Eq + Clone,
     V: Clone,
 {
@@ -402,7 +413,7 @@ where
         while self.current < self.keys.len() {
             let key = &self.keys[self.current];
             self.current += 1;
-            
+
             // SAFETY: We know this key exists since we got it from keys()
             // We need to use unsafe here to extend the lifetime for the iterator
             if let Some(value) = self.map.inner.get_mut(key) {
@@ -430,8 +441,8 @@ pub struct EasyHashMapStats {
     pub max_load_factor: f64,
 }
 
-impl<K, V> Default for EasyHashMap<K, V> 
-where 
+impl<K, V> Default for EasyHashMap<K, V>
+where
     K: Hash + Eq + Clone,
     V: Clone,
 {
@@ -440,8 +451,8 @@ where
     }
 }
 
-impl<K, V> Default for EasyHashMapBuilder<K, V> 
-where 
+impl<K, V> Default for EasyHashMapBuilder<K, V>
+where
     K: Hash + Eq + Clone,
     V: Clone,
 {
@@ -452,7 +463,7 @@ where
 
 // Implement common collection traits
 impl<K, V> std::iter::FromIterator<(K, V)> for EasyHashMap<K, V>
-where 
+where
     K: Hash + Eq + Clone,
     V: Clone,
 {
@@ -464,7 +475,7 @@ where
 }
 
 impl<K, V> std::iter::Extend<(K, V)> for EasyHashMap<K, V>
-where 
+where
     K: Hash + Eq + Clone,
     V: Clone,
 {
@@ -480,7 +491,7 @@ mod tests {
     #[test]
     fn test_basic_operations() {
         let mut map = EasyHashMap::new();
-        
+
         // Put and get
         map.put("key1", 42);
         map.put("key2", 43);
@@ -506,10 +517,10 @@ mod tests {
     #[test]
     fn test_default_value() {
         let mut map = EasyHashMap::with_default(0);
-        
+
         // Should return default for missing keys
         assert_eq!(map.get_or_default(&"missing"), &0);
-        
+
         // Insert a real value
         map.put("real", 42);
         assert_eq!(map.get_or_default(&"real"), &42);
@@ -519,7 +530,7 @@ mod tests {
     #[test]
     fn test_get_or_insert() {
         let mut map = EasyHashMap::new();
-        
+
         // Insert with get_or_insert
         let value = map.get_or_insert("key1", 42).unwrap();
         assert_eq!(*value, 42);
@@ -538,20 +549,24 @@ mod tests {
     fn test_get_or_insert_with() {
         let mut map = EasyHashMap::new();
         let mut call_count = 0;
-        
+
         // Insert with closure
-        let value = map.get_or_insert_with("key1", || {
-            call_count += 1;
-            42
-        }).unwrap();
+        let value = map
+            .get_or_insert_with("key1", || {
+                call_count += 1;
+                42
+            })
+            .unwrap();
         assert_eq!(*value, 42);
         assert_eq!(call_count, 1);
 
         // Should not call closure again
-        let value = map.get_or_insert_with("key1", || {
-            call_count += 1;
-            99
-        }).unwrap();
+        let value = map
+            .get_or_insert_with("key1", || {
+                call_count += 1;
+                99
+            })
+            .unwrap();
         assert_eq!(*value, 42); // Original value
         assert_eq!(call_count, 1); // Closure not called
     }
@@ -559,10 +574,10 @@ mod tests {
     #[test]
     fn test_extend() {
         let mut map = EasyHashMap::new();
-        
+
         let data = vec![("a", 1), ("b", 2), ("c", 3)];
         map.extend(data);
-        
+
         assert_eq!(map.len(), 3);
         assert_eq!(map.get(&"a"), Some(&1));
         assert_eq!(map.get(&"b"), Some(&2));
@@ -572,15 +587,15 @@ mod tests {
     #[test]
     fn test_retain() {
         let mut map = EasyHashMap::new();
-        
+
         map.put("a", 1);
         map.put("b", 2);
         map.put("c", 3);
         map.put("d", 4);
-        
+
         // Retain only even values
         map.retain(|_k, v| *v % 2 == 0);
-        
+
         assert_eq!(map.len(), 2);
         assert_eq!(map.get(&"b"), Some(&2));
         assert_eq!(map.get(&"d"), Some(&4));
@@ -595,7 +610,7 @@ mod tests {
             .auto_grow(false)
             .max_load_factor(0.5)
             .build();
-        
+
         let stats = map.statistics();
         assert!(stats.capacity >= 100);
         assert!(stats.has_default);
@@ -607,7 +622,7 @@ mod tests {
     fn test_from_iterator() {
         let data = vec![("x", 10), ("y", 20), ("z", 30)];
         let map: EasyHashMap<&str, i32> = data.into_iter().collect();
-        
+
         assert_eq!(map.len(), 3);
         assert_eq!(map.get(&"x"), Some(&10));
         assert_eq!(map.get(&"y"), Some(&20));
@@ -620,25 +635,25 @@ mod tests {
         map.put("a", 1);
         map.put("b", 2);
         map.put("c", 3);
-        
+
         // Test keys iterator
         let mut keys: Vec<&str> = map.keys().copied().collect();
         keys.sort();
         assert_eq!(keys, vec!["a", "b", "c"]);
-        
+
         // Test values iterator
         let mut values: Vec<&i32> = map.values().collect();
         values.sort();
         assert_eq!(values, vec![&1, &2, &3]);
-        
+
         // Test iter
         assert_eq!(map.iter().count(), 3);
-        
+
         // Test mutable values
         for value in map.values_mut() {
             *value *= 2;
         }
-        
+
         assert_eq!(map.get(&"a"), Some(&2));
         assert_eq!(map.get(&"b"), Some(&4));
         assert_eq!(map.get(&"c"), Some(&6));
@@ -649,18 +664,18 @@ mod tests {
         let mut map = EasyHashMap::initial_capacity(4)
             .max_load_factor(0.5) // Grow early
             .build();
-        
+
         let initial_capacity = map.capacity();
-        
+
         // Fill beyond load factor
         for i in 0..10 {
             map.put(i, i * 2);
         }
-        
+
         // Should have grown
         assert!(map.capacity() > initial_capacity);
         assert_eq!(map.len(), 10);
-        
+
         // Verify all values
         for i in 0..10 {
             assert_eq!(map.get(&i), Some(&(i * 2)));
@@ -670,20 +685,20 @@ mod tests {
     #[test]
     fn test_clear_and_shrink() {
         let mut map = EasyHashMap::<i32, i32>::initial_capacity(1000).build();
-        
+
         // Fill with some data
         for i in 0..10 {
             map.put(i, i);
         }
-        
+
         assert_eq!(map.len(), 10);
         assert!(map.capacity() >= 1000);
-        
+
         // Clear
         map.clear();
         assert_eq!(map.len(), 0);
         assert!(map.capacity() >= 1000); // Capacity unchanged
-        
+
         // Shrink to fit
         map.shrink_to_fit();
         assert!(map.capacity() < 1000); // Should be smaller now
@@ -695,7 +710,7 @@ mod tests {
             .auto_grow(false)
             .max_load_factor(0.8)
             .build();
-        
+
         let stats = map.statistics();
         assert_eq!(stats.len, 0);
         assert!(stats.capacity > 0);
@@ -708,26 +723,26 @@ mod tests {
     #[test]
     fn test_large_scale() {
         let mut map = EasyHashMap::new();
-        
+
         // Insert many items
         for i in 0..10000 {
             map.put(i, i * 2);
         }
-        
+
         assert_eq!(map.len(), 10000);
-        
+
         // Verify random samples
         for i in (0..10000).step_by(100) {
             assert_eq!(map.get(&i), Some(&(i * 2)));
         }
-        
+
         // Remove half
         for i in 0..5000 {
             map.remove(&i);
         }
-        
+
         assert_eq!(map.len(), 5000);
-        
+
         // Verify remaining
         for i in 5000..10000 {
             assert_eq!(map.get(&i), Some(&(i * 2)));
@@ -737,16 +752,16 @@ mod tests {
     #[test]
     fn test_error_resilience() {
         let mut map = EasyHashMap::new();
-        
+
         // These operations should never panic even if internal errors occur
         map.put("key", 42);
         map.put("key", 43); // Update
-        
+
         assert_eq!(map.get(&"key"), Some(&43));
-        
+
         // Reserve should not panic on failure
         map.reserve(usize::MAX); // This might fail internally but shouldn't panic
-        
+
         // Map should still work
         assert_eq!(map.get(&"key"), Some(&43));
     }

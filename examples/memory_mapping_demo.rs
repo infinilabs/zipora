@@ -3,11 +3,11 @@
 //! This example demonstrates the memory-mapped I/O capabilities of zipora,
 //! including zero-copy file operations, automatic file growth, and performance benefits.
 
-#[cfg(feature = "mmap")]
-use zipora::{DataInput, DataOutput, MemoryMappedInput, MemoryMappedOutput};
 use std::fs::File;
 use std::io::Write;
 use tempfile::NamedTempFile;
+#[cfg(feature = "mmap")]
+use zipora::{DataInput, DataOutput, MemoryMappedInput, MemoryMappedOutput};
 
 #[cfg(feature = "mmap")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {

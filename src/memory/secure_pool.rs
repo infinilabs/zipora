@@ -4,7 +4,7 @@
 //! the security vulnerabilities found in the original MemoryPool implementation.
 //!
 //! # Security Features
-//! 
+//!
 //! - **Memory Safety**: No raw pointers, uses safe Rust abstractions
 //! - **Use-After-Free Prevention**: Generation counters validate pointer lifetime
 //! - **Double-Free Detection**: Cryptographic validation of deallocations
@@ -28,7 +28,7 @@ use crate::error::{Result, ZiporaError};
 use crossbeam_utils::CachePadded;
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
-use std::alloc::{alloc, dealloc, Layout};
+use std::alloc::{Layout, alloc, dealloc};
 use std::cell::RefCell;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering};
@@ -42,8 +42,8 @@ const POOL_MAGIC: u64 = 0xABCDEF0123456789;
 
 /// Size classes for efficient allocation (jemalloc-inspired)
 const SIZE_CLASSES: &[usize] = &[
-    8, 16, 32, 48, 64, 80, 96, 112, 128,          // Small (8-byte increments)
-    160, 192, 224, 256, 320, 384, 448, 512,      // Medium (64-byte increments)  
+    8, 16, 32, 48, 64, 80, 96, 112, 128, // Small (8-byte increments)
+    160, 192, 224, 256, 320, 384, 448, 512, // Medium (64-byte increments)
     640, 768, 896, 1024, 1280, 1536, 1792, 2048, // Large (256-byte increments)
     2560, 3072, 3584, 4096, 5120, 6144, 7168, 8192, // XLarge (512-byte increments)
 ];
@@ -204,7 +204,7 @@ impl SecureChunk {
         let header_size = std::mem::size_of::<ChunkHeader>();
         let footer_size = std::mem::size_of::<ChunkFooter>();
         let total_size = header_size + size + footer_size;
-        
+
         let layout = Layout::from_size_align(total_size, 8)
             .map_err(|_| ZiporaError::invalid_data("Invalid layout for chunk allocation"))?;
 
@@ -338,10 +338,10 @@ impl SecureChunk {
         let header_size = std::mem::size_of::<ChunkHeader>();
         let footer_size = std::mem::size_of::<ChunkFooter>();
         let total_size = header_size + self.size + footer_size;
-        
+
         let raw_ptr = unsafe { self.ptr.as_ptr().sub(header_size) };
         let layout = Layout::from_size_align(total_size, 8).unwrap();
-        
+
         unsafe {
             dealloc(raw_ptr, layout);
         }
@@ -373,34 +373,36 @@ impl<T> LockFreeStack<T> {
             data: item,
             next: std::ptr::null_mut(),
         }));
-        
+
         loop {
             let head = self.head.load(Ordering::Acquire);
-            unsafe { (*new_node).next = head; }
-            
-            if self.head.compare_exchange_weak(
-                head, new_node, 
-                Ordering::Release, 
-                Ordering::Relaxed
-            ).is_ok() {
+            unsafe {
+                (*new_node).next = head;
+            }
+
+            if self
+                .head
+                .compare_exchange_weak(head, new_node, Ordering::Release, Ordering::Relaxed)
+                .is_ok()
+            {
                 break;
             }
         }
     }
-    
+
     fn pop(&self) -> Option<T> {
         loop {
             let head = self.head.load(Ordering::Acquire);
-            if head.is_null() { 
-                return None; 
+            if head.is_null() {
+                return None;
             }
-            
+
             let next = unsafe { (*head).next };
-            if self.head.compare_exchange_weak(
-                head, next,
-                Ordering::Release,
-                Ordering::Relaxed  
-            ).is_ok() {
+            if self
+                .head
+                .compare_exchange_weak(head, next, Ordering::Release, Ordering::Relaxed)
+                .is_ok()
+            {
                 let data = unsafe { Box::from_raw(head).data };
                 return Some(data);
             }
@@ -471,7 +473,7 @@ pub struct SecureMemoryPool {
     global_stack: LockFreeStack<SecureChunk>,
     next_generation: AtomicU32,
     local_caches: thread_local::ThreadLocal<RefCell<LocalCache>>,
-    
+
     // Statistics (lock-free)
     alloc_count: CachePadded<AtomicU64>,
     dealloc_count: CachePadded<AtomicU64>,
@@ -481,7 +483,7 @@ pub struct SecureMemoryPool {
     double_free_detected: CachePadded<AtomicU64>,
     local_cache_hits: CachePadded<AtomicU64>,
     cross_thread_steals: CachePadded<AtomicU64>,
-    
+
     // Allocation tracking for double-free detection (using usize for Send+Sync safety)
     active_allocations: DashMap<usize, (u32, Instant)>, // ptr_addr -> (generation, time)
 }
@@ -494,7 +496,9 @@ impl SecureMemoryPool {
         }
 
         if config.alignment == 0 || !config.alignment.is_power_of_two() {
-            return Err(ZiporaError::invalid_data("alignment must be a power of two"));
+            return Err(ZiporaError::invalid_data(
+                "alignment must be a power of two",
+            ));
         }
 
         static POOL_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
@@ -523,23 +527,26 @@ impl SecureMemoryPool {
         self.alloc_count.fetch_add(1, Ordering::Relaxed);
 
         // Try thread-local cache first
-        let local_cache = self.local_caches.get_or(|| {
-            RefCell::new(LocalCache::new(self.config.local_cache_size))
-        });
+        let local_cache = self
+            .local_caches
+            .get_or(|| RefCell::new(LocalCache::new(self.config.local_cache_size)));
 
         if let Some(chunk) = local_cache.borrow_mut().try_pop() {
             self.local_cache_hits.fetch_add(1, Ordering::Relaxed);
             self.pool_hits.fetch_add(1, Ordering::Relaxed);
-            
+
             // Validate chunk before returning
             if let Err(e) = chunk.validate() {
                 self.corruption_detected.fetch_add(1, Ordering::Relaxed);
                 return Err(e);
             }
-            
+
             // Track allocation
-            self.active_allocations.insert(chunk.as_ptr() as usize, (chunk.generation(), Instant::now()));
-            
+            self.active_allocations.insert(
+                chunk.as_ptr() as usize,
+                (chunk.generation(), Instant::now()),
+            );
+
             return Ok(SecurePooledPtr {
                 chunk: Some(chunk),
                 pool: Arc::downgrade(self),
@@ -550,16 +557,19 @@ impl SecureMemoryPool {
         if let Some(chunk) = self.global_stack.pop() {
             self.cross_thread_steals.fetch_add(1, Ordering::Relaxed);
             self.pool_hits.fetch_add(1, Ordering::Relaxed);
-            
+
             // Validate chunk before returning
             if let Err(e) = chunk.validate() {
                 self.corruption_detected.fetch_add(1, Ordering::Relaxed);
                 return Err(e);
             }
-            
+
             // Track allocation
-            self.active_allocations.insert(chunk.as_ptr() as usize, (chunk.generation(), Instant::now()));
-            
+            self.active_allocations.insert(
+                chunk.as_ptr() as usize,
+                (chunk.generation(), Instant::now()),
+            );
+
             return Ok(SecurePooledPtr {
                 chunk: Some(chunk),
                 pool: Arc::downgrade(self),
@@ -570,10 +580,13 @@ impl SecureMemoryPool {
         self.pool_misses.fetch_add(1, Ordering::Relaxed);
         let generation = self.next_generation.fetch_add(1, Ordering::AcqRel);
         let chunk = SecureChunk::new(self.config.chunk_size, generation, self.pool_id)?;
-        
+
         // Track allocation
-        self.active_allocations.insert(chunk.as_ptr() as usize, (chunk.generation(), Instant::now()));
-        
+        self.active_allocations.insert(
+            chunk.as_ptr() as usize,
+            (chunk.generation(), Instant::now()),
+        );
+
         Ok(SecurePooledPtr {
             chunk: Some(chunk),
             pool: Arc::downgrade(self),
@@ -591,21 +604,27 @@ impl SecureMemoryPool {
         }
 
         // Check for double-free
-        if let Some((_, allocation_info)) = self.active_allocations.remove(&(chunk.as_ptr() as usize)) {
+        if let Some((_, allocation_info)) =
+            self.active_allocations.remove(&(chunk.as_ptr() as usize))
+        {
             let (original_generation, _): (u32, Instant) = allocation_info;
             if original_generation != chunk.generation() {
                 self.double_free_detected.fetch_add(1, Ordering::Relaxed);
-                return Err(ZiporaError::invalid_data("Double-free detected: generation mismatch"));
+                return Err(ZiporaError::invalid_data(
+                    "Double-free detected: generation mismatch",
+                ));
             }
         } else {
             self.double_free_detected.fetch_add(1, Ordering::Relaxed);
-            return Err(ZiporaError::invalid_data("Double-free detected: pointer not allocated"));
+            return Err(ZiporaError::invalid_data(
+                "Double-free detected: pointer not allocated",
+            ));
         }
 
         // Try to return to thread-local cache
-        let local_cache = self.local_caches.get_or(|| {
-            RefCell::new(LocalCache::new(self.config.local_cache_size))
-        });
+        let local_cache = self
+            .local_caches
+            .get_or(|| RefCell::new(LocalCache::new(self.config.local_cache_size)));
 
         if local_cache.borrow_mut().try_push(chunk).is_err() {
             // Local cache full, try global stack
@@ -659,13 +678,13 @@ impl SecureMemoryPool {
         for entry in self.active_allocations.iter() {
             let ptr_addr = *entry.key();
             let (generation, _time) = *entry.value();
-            
+
             // Read canary from the chunk header for validation
             let data_ptr = ptr_addr as *mut u8;
             let header_size = std::mem::size_of::<ChunkHeader>();
             let header_ptr = unsafe { data_ptr.sub(header_size) as *const ChunkHeader };
             let header = unsafe { &*header_ptr };
-            
+
             // Create temporary chunk for validation with correct canary
             let chunk = SecureChunk {
                 ptr: unsafe { NonNull::new_unchecked(data_ptr) },
@@ -674,13 +693,13 @@ impl SecureMemoryPool {
                 pool_id: self.pool_id,
                 canary: header.canary,
             };
-            
+
             if let Err(e) = chunk.validate() {
                 self.corruption_detected.fetch_add(1, Ordering::Relaxed);
                 return Err(e);
             }
         }
-        
+
         Ok(())
     }
 }
@@ -700,7 +719,10 @@ pub struct SecurePooledPtr {
 impl SecurePooledPtr {
     /// Get pointer to allocated memory
     pub fn as_ptr(&self) -> *mut u8 {
-        self.chunk.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null_mut())
+        self.chunk
+            .as_ref()
+            .map(|c| c.as_ptr())
+            .unwrap_or(std::ptr::null_mut())
     }
 
     /// Get non-null pointer to allocated memory
@@ -806,7 +828,7 @@ pub fn get_global_pool_for_size(size: usize) -> &'static Arc<SecureMemoryPool> {
 /// Get aggregated statistics from all global pools
 pub fn get_global_secure_pool_stats() -> SecurePoolStats {
     let mut total_stats = SecurePoolStats::default();
-    
+
     for pool in GLOBAL_SECURE_POOLS.iter() {
         let stats = pool.stats();
         total_stats.allocated += stats.allocated;
@@ -821,7 +843,7 @@ pub fn get_global_secure_pool_stats() -> SecurePoolStats {
         total_stats.local_cache_hits += stats.local_cache_hits;
         total_stats.cross_thread_steals += stats.cross_thread_steals;
     }
-    
+
     total_stats
 }
 
@@ -836,7 +858,7 @@ mod tests {
     fn test_secure_pool_creation() {
         let config = SecurePoolConfig::small_secure();
         let pool = SecureMemoryPool::new(config).unwrap();
-        
+
         let stats = pool.stats();
         assert_eq!(stats.alloc_count, 0);
         assert_eq!(stats.dealloc_count, 0);
@@ -871,7 +893,7 @@ mod tests {
 
         let ptr = pool.allocate().unwrap();
         assert!(ptr.validate().is_ok());
-        
+
         // Validation should still work
         assert!(ptr.validate().is_ok());
     }
@@ -883,14 +905,14 @@ mod tests {
 
         let ptr = pool.allocate().unwrap();
         let _raw_ptr = ptr.as_ptr();
-        
+
         // First deallocation is automatic on drop
         drop(ptr);
 
         // Attempt to manually create and deallocate the same pointer should fail
         // This is prevented by the RAII design - you can't create a SecurePooledPtr
         // from a raw pointer, so double-free is structurally prevented
-        
+
         let stats = pool.stats();
         assert_eq!(stats.double_free_detected, 0); // No double-free attempts possible
     }
@@ -906,7 +928,7 @@ mod tests {
 
         let ptr2 = pool.allocate().unwrap();
         let addr2 = ptr2.as_ptr();
-        
+
         // Memory might be reused (but not guaranteed due to generation counters)
         // What matters is that it works correctly either way
         assert!(!addr2.is_null());
@@ -930,10 +952,10 @@ mod tests {
                     for _ in 0..100 {
                         let _ptr = pool.allocate().unwrap();
                         count.fetch_add(1, Ordering::Relaxed);
-                        
+
                         // Simulate some work
                         thread::sleep(Duration::from_micros(1));
-                        
+
                         // ptr automatically deallocated on scope exit
                     }
                 })
@@ -945,7 +967,7 @@ mod tests {
         }
 
         assert_eq!(allocated_count.load(Ordering::Relaxed), 1000);
-        
+
         let stats = pool.stats();
         assert_eq!(stats.alloc_count, 1000);
         assert_eq!(stats.dealloc_count, 1000);
@@ -1005,7 +1027,7 @@ mod tests {
         let pool = SecureMemoryPool::new(config).unwrap();
 
         let mut ptr = pool.allocate().unwrap();
-        
+
         // Test slice access
         let slice = ptr.as_mut_slice();
         slice[0] = 42;

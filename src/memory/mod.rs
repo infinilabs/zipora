@@ -14,17 +14,20 @@ pub mod tiered;
 // Re-export main types
 pub use bump::{BumpAllocator, BumpArena};
 pub use cache::{
-    CacheAlignedVec, NumaStats, NumaPoolStats, get_numa_stats, set_current_numa_node, 
-    numa_alloc_aligned, numa_dealloc, get_optimal_numa_node, init_numa_pools, 
-    clear_numa_pools, CACHE_LINE_SIZE
+    CACHE_LINE_SIZE, CacheAlignedVec, NumaPoolStats, NumaStats, clear_numa_pools, get_numa_stats,
+    get_optimal_numa_node, init_numa_pools, numa_alloc_aligned, numa_dealloc,
+    set_current_numa_node,
 };
 pub use mmap::{MemoryMappedAllocator, MmapAllocation};
 pub use pool::{MemoryPool, PoolConfig, PooledBuffer, PooledVec};
 pub use secure_pool::{
-    SecureMemoryPool, SecurePoolConfig, SecurePoolStats, SecurePooledPtr,
-    get_global_pool_for_size, get_global_secure_pool_stats, size_to_class
+    SecureMemoryPool, SecurePoolConfig, SecurePoolStats, SecurePooledPtr, get_global_pool_for_size,
+    get_global_secure_pool_stats, size_to_class,
 };
-pub use tiered::{TieredMemoryAllocator, TieredAllocation, TieredConfig, get_tiered_stats, tiered_allocate, tiered_deallocate};
+pub use tiered::{
+    TieredAllocation, TieredConfig, TieredMemoryAllocator, get_tiered_stats, tiered_allocate,
+    tiered_deallocate,
+};
 
 #[cfg(target_os = "linux")]
 pub use hugepage::{HugePage, HugePageAllocator};

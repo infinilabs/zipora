@@ -22,7 +22,7 @@
 //! ```rust
 //! use zipora::{
 //!     FastVec, ValVec32, SmallMap, FixedCircularQueue, AutoGrowCircularQueue,
-//!     FastStr, MemoryBlobStore, BlobStore, LoudsTrie, Trie, GoldHashMap, 
+//!     FastStr, MemoryBlobStore, BlobStore, LoudsTrie, Trie, GoldHashMap,
 //!     HuffmanEncoder, MemoryPool, PoolConfig, SuffixArray, FiberPool
 //! };
 //!
@@ -81,31 +81,67 @@ pub mod succinct;
 
 // Re-export core types
 pub use containers::{
+    AutoGrowCircularQueue,
+    EasyHashMap,
+    EasyHashMapBuilder,
+    EasyHashMapStats,
     // Core containers
     FastVec,
+    FixedCircularQueue,
+    FixedLenStrVec,
+    FixedStr4Vec,
+    FixedStr8Vec,
+    FixedStr16Vec,
+    FixedStr32Vec,
+    FixedStr64Vec,
+    GoldHashIdx,
+    HashStrMap,
+    HashStrMapStats,
+    SmallMap,
+    SortableStrIter,
+    SortableStrSortedIter,
+    SortableStrVec,
+    // Phase 2 specialized containers
+    UintVector,
     // Phase 1 specialized containers
-    ValVec32, SmallMap, FixedCircularQueue, AutoGrowCircularQueue,
-    // Phase 2 specialized containers  
-    UintVector, FixedLenStrVec, FixedStr4Vec, FixedStr8Vec, FixedStr16Vec,
-    FixedStr32Vec, FixedStr64Vec, SortableStrVec, SortableStrIter, SortableStrSortedIter,
+    ValVec32,
     // Phase 3 advanced containers
-    ZoSortedStrVec, ZoSortedStrVecIter, ZoSortedStrVecRange,
-    GoldHashIdx, HashStrMap, HashStrMapStats,
-    EasyHashMap, EasyHashMapBuilder, EasyHashMapStats
+    ZoSortedStrVec,
+    ZoSortedStrVecIter,
+    ZoSortedStrVecRange,
 };
 pub use error::{Result, ZiporaError};
 pub use string::FastStr;
 pub use succinct::{
-    BitVector, BitwiseOp, CpuFeatures, RankSelect256, RankSelectSe256,
-    // Advanced rank/select variants (Phase 7A)
-    RankSelectOps, RankSelectPerformanceOps, RankSelectMultiDimensional, RankSelectSparse,
-    RankSelectBuilder, BuilderOptions, PerformanceStats,
-    RankSelectSimple, RankSelectSeparated256, RankSelectSeparated512,
-    RankSelectInterleaved256, RankSelectFew, RankSelectFewBuilder,
-    RankSelectMixedIL256, RankSelectMixedSE512, RankSelectMixedXL256,
+    BitVector,
+    BitwiseOp,
+    BuilderOptions,
+    CpuFeatures,
     MixedDimensionView,
+    PerformanceStats,
+    RankSelect256,
+    RankSelectBuilder,
+    RankSelectFew,
+    RankSelectFewBuilder,
+    RankSelectInterleaved256,
+    RankSelectMixedIL256,
+    RankSelectMixedSE512,
+    RankSelectMixedXL256,
+    RankSelectMultiDimensional,
+    // Advanced rank/select variants (Phase 7A)
+    RankSelectOps,
+    RankSelectPerformanceOps,
+    RankSelectSe256,
+    RankSelectSeparated256,
+    RankSelectSeparated512,
+    RankSelectSimple,
+    RankSelectSparse,
+    SimdCapabilities,
     // SIMD operations
-    SimdOps, bulk_rank1_simd, bulk_select1_simd, bulk_popcount_simd, SimdCapabilities,
+    SimdOps,
+    bulk_popcount_simd,
+    bulk_rank1_simd,
+    bulk_select1_simd,
 };
 
 // Re-export Phase 1 implementations
@@ -130,19 +166,39 @@ pub use blob_store::{
 pub use entropy::dictionary::Dictionary;
 pub use entropy::rans::RansSymbol;
 pub use entropy::{
-    DictionaryBuilder, DictionaryCompressor, OptimizedDictionaryCompressor, EntropyStats, HuffmanDecoder, HuffmanEncoder,
-    HuffmanTree, RansDecoder, RansEncoder, RansState,
+    DictionaryBuilder, DictionaryCompressor, EntropyStats, HuffmanDecoder, HuffmanEncoder,
+    HuffmanTree, OptimizedDictionaryCompressor, RansDecoder, RansEncoder, RansState,
 };
 
 // Re-export Phase 4 implementations (memory management)
 pub use memory::{
-    BumpAllocator, BumpArena, CacheAlignedVec, MemoryConfig, MemoryPool, MemoryStats, 
-    NumaStats, NumaPoolStats, PoolConfig, PooledBuffer, PooledVec, CACHE_LINE_SIZE,
-    get_numa_stats, set_current_numa_node, numa_alloc_aligned, numa_dealloc, 
-    get_optimal_numa_node, init_numa_pools, clear_numa_pools,
+    BumpAllocator,
+    BumpArena,
+    CACHE_LINE_SIZE,
+    CacheAlignedVec,
+    MemoryConfig,
+    MemoryPool,
+    MemoryStats,
+    NumaPoolStats,
+    NumaStats,
+    PoolConfig,
+    PooledBuffer,
+    PooledVec,
     // Secure memory management
-    SecureMemoryPool, SecurePoolConfig, SecurePoolStats, SecurePooledPtr,
-    get_global_pool_for_size, get_global_secure_pool_stats, size_to_class,
+    SecureMemoryPool,
+    SecurePoolConfig,
+    SecurePoolStats,
+    SecurePooledPtr,
+    clear_numa_pools,
+    get_global_pool_for_size,
+    get_global_secure_pool_stats,
+    get_numa_stats,
+    get_optimal_numa_node,
+    init_numa_pools,
+    numa_alloc_aligned,
+    numa_dealloc,
+    set_current_numa_node,
+    size_to_class,
 };
 
 #[cfg(target_os = "linux")]

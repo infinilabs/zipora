@@ -153,3 +153,19 @@ overflow-checks = true  # Enable overflow checks for safety in tests
 features = ["simd", "mmap", "zstd", "lz4", "serde", "ffi"]
 all-features = true
 
+# Miri configuration for enhanced memory safety testing
+[package.metadata.miri]
+# Flags for comprehensive memory safety verification
+flags = [
+    "-Zmiri-strict-provenance",      # Strict pointer provenance checking
+    "-Zmiri-symbolic-alignment-check", # Check alignment symbolically  
+    "-Zmiri-check-number-validity",   # Check for invalid bit patterns
+    "-Zmiri-disable-isolation",       # Allow file system access for tests
+]
+# Exclude tests that require specific hardware features not available in Miri
+exclude = [
+    "tests/simd_specific_tests.rs",
+    "tests/avx512_tests.rs", 
+    "benchmarks/*",
+]
+

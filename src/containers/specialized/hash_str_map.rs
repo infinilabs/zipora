@@ -44,12 +44,12 @@ impl<V> HashStrMap<V> {
         let key_string = key.to_string();
         let was_new = !self.map.contains_key(&key_string);
         let result = self.map.insert(key_string, value);
-        
+
         self.total_inserts += 1;
         if was_new {
             self.unique_keys += 1;
         }
-        
+
         Ok(result)
     }
 
@@ -57,12 +57,12 @@ impl<V> HashStrMap<V> {
     pub fn insert_string(&mut self, key: String, value: V) -> Result<Option<V>> {
         let was_new = !self.map.contains_key(&key);
         let result = self.map.insert(key, value);
-        
+
         self.total_inserts += 1;
         if was_new {
             self.unique_keys += 1;
         }
-        
+
         Ok(result)
     }
 
@@ -173,7 +173,8 @@ impl<V> HashStrMap<V> {
             unique_strings: self.unique_keys,
             interning_ratio: self.interning_ratio(),
             string_memory: self.string_memory_usage(),
-            map_memory: self.map.capacity() * (std::mem::size_of::<String>() + std::mem::size_of::<V>()),
+            map_memory: self.map.capacity()
+                * (std::mem::size_of::<String>() + std::mem::size_of::<V>()),
         }
     }
 }
@@ -208,7 +209,7 @@ mod tests {
     #[test]
     fn test_basic_operations() -> Result<()> {
         let mut map = HashStrMap::new();
-        
+
         // Insert
         assert_eq!(map.insert("key1", 42)?, None);
         assert_eq!(map.insert("key2", 43)?, None);
@@ -238,71 +239,71 @@ mod tests {
     #[test]
     fn test_string_tracking() -> Result<()> {
         let mut map = HashStrMap::new();
-        
+
         // Insert keys
         map.insert("user/john", 1)?;
         map.insert("user/jane", 2)?;
         map.insert("user/john", 3)?; // Duplicate key
         map.insert("admin/root", 4)?;
-        
+
         let stats = map.statistics();
         assert_eq!(stats.entries, 3); // john was updated
         assert_eq!(stats.total_strings, 4); // 4 insert operations
         assert_eq!(stats.unique_strings, 3); // 3 unique keys
-        
+
         Ok(())
     }
 
     #[test]
     fn test_fast_str_operations() -> Result<()> {
         let mut map = HashStrMap::new();
-        
+
         // Insert using FastStr directly
         let key = FastStr::from_string("fast_key");
         map.insert_fast_str(key, 42)?;
-        
+
         assert_eq!(map.get("fast_key"), Some(&42));
-        
+
         Ok(())
     }
 
     #[test]
     fn test_iterators() -> Result<()> {
         let mut map = HashStrMap::new();
-        
+
         map.insert("a", 1)?;
         map.insert("b", 2)?;
         map.insert("c", 3)?;
-        
+
         // Test iteration
         let mut keys: Vec<&str> = map.keys().map(|k| k.as_str()).collect();
         keys.sort();
         assert_eq!(keys, vec!["a", "b", "c"]);
-        
+
         let mut values: Vec<&i32> = map.values().collect();
         values.sort();
         assert_eq!(values, vec![&1, &2, &3]);
-        
+
         assert_eq!(map.iter().count(), 3);
-        
+
         Ok(())
     }
 
     #[test]
     fn test_statistics() -> Result<()> {
         let mut map = HashStrMap::new();
-        
+
         for i in 0..100 {
             let key = format!("key_{}", i % 10); // Reuse some keys
             map.insert(&key, i)?;
         }
-        
+
         let stats = map.statistics();
         assert_eq!(stats.entries, 10); // Only 10 unique keys
         assert_eq!(stats.total_strings, 100); // 100 insert operations
         assert_eq!(stats.unique_strings, 10); // 10 unique keys
         assert!(stats.interning_ratio > 0.8); // High deduplication ratio
-        
+
         Ok(())
     }
 }

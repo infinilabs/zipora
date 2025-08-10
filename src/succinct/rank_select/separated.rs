@@ -31,18 +31,17 @@
 //! - **Select Time**: O(1) average, O(log n) worst case
 //! - **Best For**: Sequential access, streaming operations, large datasets
 
+use super::{
+    BuilderOptions, CpuFeatures, RankSelectBuilder, RankSelectOps, RankSelectPerformanceOps,
+};
+use crate::FastVec;
 use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;
-use crate::FastVec;
-use super::{
-    RankSelectOps, RankSelectPerformanceOps, RankSelectBuilder, BuilderOptions,
-    CpuFeatures
-};
 use std::fmt;
 
 // Hardware acceleration imports
 #[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::{_popcnt64, _pdep_u64, _tzcnt_u64};
+use std::arch::x86_64::{_pdep_u64, _popcnt64, _tzcnt_u64};
 
 /// High-performance separated rank/select with 256-bit blocks
 ///
@@ -69,12 +68,12 @@ use std::arch::x86_64::{_popcnt64, _pdep_u64, _tzcnt_u64};
 /// }
 ///
 /// let rs = RankSelectSeparated256::new(bv)?;
-/// 
+///
 /// // High-performance operations
 /// let rank = rs.rank1(500);           // Hardware-accelerated
 /// let pos = rs.select1(50)?;          // Select cache optimized
 /// let adaptive = rs.rank1_adaptive(750); // Best available implementation
-/// 
+///
 /// println!("Rank at 500: {}, 50th bit at: {}", rank, pos);
 /// # Ok::<(), zipora::ZiporaError>(())
 /// ```
@@ -108,7 +107,7 @@ pub struct RankSelectSeparated256 {
 /// }
 ///
 /// let rs = RankSelectSeparated512::new(bv)?;
-/// 
+///
 /// // Optimized for large datasets
 /// let bulk_ranks = rs.rank1_bulk(&[1000, 5000, 10000, 50000]);
 /// println!("Bulk ranks: {:?}", bulk_ranks);
@@ -119,7 +118,7 @@ pub struct RankSelectSeparated512 {
     /// The original bit vector
     bit_vector: BitVector,
     /// Separated rank cache with 512-bit blocks
-    rank_cache: FastVec<u64>,  // Use u64 for larger blocks
+    rank_cache: FastVec<u64>, // Use u64 for larger blocks
     /// Optional select cache
     select_cache: Option<FastVec<u32>>,
     /// Total number of set bits
@@ -153,7 +152,11 @@ impl RankSelectSeparated256 {
         let mut rs = Self {
             bit_vector,
             rank_cache: FastVec::new(),
-            select_cache: if enable_select_cache { Some(FastVec::new()) } else { None },
+            select_cache: if enable_select_cache {
+                Some(FastVec::new())
+            } else {
+                None
+            },
             total_ones: 0,
             select_sample_rate,
         };
@@ -165,14 +168,14 @@ impl RankSelectSeparated256 {
     /// Build the rank and optional select caches
     fn build_caches(&mut self) -> Result<()> {
         let total_bits = self.bit_vector.len();
-        
+
         if total_bits == 0 {
             return Ok(());
         }
 
         // Build rank cache using hardware acceleration when available
         self.build_rank_cache_optimized()?;
-        
+
         // Build select cache if enabled
         if self.select_cache.is_some() && self.total_ones > 0 {
             self.build_select_cache()?;
@@ -185,24 +188,21 @@ impl RankSelectSeparated256 {
     fn build_rank_cache_optimized(&mut self) -> Result<()> {
         let total_bits = self.bit_vector.len();
         let num_blocks = (total_bits + SEP256_BLOCK_SIZE - 1) / SEP256_BLOCK_SIZE;
-        
+
         self.rank_cache.reserve(num_blocks)?;
 
         let mut cumulative_rank = 0u32;
         let blocks = self.bit_vector.blocks();
-        
+
         // Process each 256-bit block
         for block_idx in 0..num_blocks {
             let block_start_bit = block_idx * SEP256_BLOCK_SIZE;
             let block_end_bit = ((block_idx + 1) * SEP256_BLOCK_SIZE).min(total_bits);
-            
+
             // Count bits in this block using hardware acceleration
-            let block_rank = self.count_bits_in_block_optimized(
-                blocks, 
-                block_start_bit, 
-                block_end_bit
-            );
-            
+            let block_rank =
+                self.count_bits_in_block_optimized(blocks, block_start_bit, block_end_bit);
+
             cumulative_rank += block_rank as u32;
             self.rank_cache.push(cumulative_rank)?;
         }
@@ -226,13 +226,13 @@ impl RankSelectSeparated256 {
         // Use hardware acceleration when available
         for word_idx in start_word..end_word.min(blocks.len()) {
             let mut word = blocks[word_idx];
-            
+
             // Handle partial word at the beginning
             if word_idx == start_word && start_bit % 64 != 0 {
                 let start_bit_in_word = start_bit % 64;
                 word &= !((1u64 << start_bit_in_word) - 1);
             }
-            
+
             // Handle partial word at the end
             if word_idx * 64 + 64 > end_bit {
                 let end_bit_in_word = end_bit % 64;
@@ -241,7 +241,7 @@ impl RankSelectSeparated256 {
                     word &= mask;
                 }
             }
-            
+
             count += self.popcount_hardware_accelerated(word) as usize;
         }
 
@@ -259,7 +259,7 @@ impl RankSelectSeparated256 {
             {
                 x.count_ones()
             }
-            
+
             #[cfg(not(test))]
             {
                 if CpuFeatures::get().has_popcnt {
@@ -269,7 +269,7 @@ impl RankSelectSeparated256 {
                 }
             }
         }
-        
+
         #[cfg(not(target_arch = "x86_64"))]
         {
             x.count_ones()
@@ -327,28 +327,25 @@ impl RankSelectSeparated256 {
         }
 
         let pos = pos.min(self.bit_vector.len());
-        
+
         // Find containing block
         let block_idx = pos / SEP256_BLOCK_SIZE;
         let bit_offset_in_block = pos % SEP256_BLOCK_SIZE;
-        
+
         // Get rank up to start of this block
         let rank_before_block = if block_idx > 0 {
             self.rank_cache[block_idx - 1] as usize
         } else {
             0
         };
-        
+
         // Count bits in current block up to position
         let block_start = block_idx * SEP256_BLOCK_SIZE;
         let block_end = (block_start + bit_offset_in_block).min(self.bit_vector.len());
-        
-        let rank_in_block = self.count_bits_in_block_optimized(
-            self.bit_vector.blocks(),
-            block_start,
-            block_end,
-        );
-        
+
+        let rank_in_block =
+            self.count_bits_in_block_optimized(self.bit_vector.blocks(), block_start, block_end);
+
         rank_before_block + rank_in_block
     }
 
@@ -372,7 +369,7 @@ impl RankSelectSeparated256 {
 
         // Binary search on rank blocks
         let block_idx = self.binary_search_rank_blocks(target_rank);
-        
+
         let block_start_rank = if block_idx > 0 {
             self.rank_cache[block_idx - 1] as usize
         } else {
@@ -382,7 +379,7 @@ impl RankSelectSeparated256 {
         let remaining_ones = target_rank - block_start_rank;
         let block_start_bit = block_idx * SEP256_BLOCK_SIZE;
         let block_end_bit = ((block_idx + 1) * SEP256_BLOCK_SIZE).min(self.bit_vector.len());
-        
+
         self.select1_within_block_optimized(block_start_bit, block_end_bit, remaining_ones)
     }
 
@@ -413,7 +410,9 @@ impl RankSelectSeparated256 {
             }
         }
 
-        Err(ZiporaError::invalid_data("Select position not found".to_string()))
+        Err(ZiporaError::invalid_data(
+            "Select position not found".to_string(),
+        ))
     }
 
     /// Binary search to find which block contains the target rank
@@ -421,7 +420,7 @@ impl RankSelectSeparated256 {
     fn binary_search_rank_blocks(&self, target_rank: usize) -> usize {
         let mut left = 0;
         let mut right = self.rank_cache.len();
-        
+
         while left < right {
             let mid = left + (right - left) / 2;
             if self.rank_cache[mid] < target_rank as u32 {
@@ -430,28 +429,33 @@ impl RankSelectSeparated256 {
                 right = mid;
             }
         }
-        
+
         left
     }
 
     /// Search for the k-th set bit within a specific block using hardware acceleration
     #[inline]
-    fn select1_within_block_optimized(&self, start_bit: usize, end_bit: usize, k: usize) -> Result<usize> {
+    fn select1_within_block_optimized(
+        &self,
+        start_bit: usize,
+        end_bit: usize,
+        k: usize,
+    ) -> Result<usize> {
         let blocks = self.bit_vector.blocks();
         let start_word = start_bit / 64;
         let end_word = (end_bit + 63) / 64;
-        
+
         let mut remaining_k = k;
-        
+
         for word_idx in start_word..end_word.min(blocks.len()) {
             let mut word = blocks[word_idx];
-            
+
             // Handle partial word at the beginning
             if word_idx == start_word && start_bit % 64 != 0 {
                 let start_bit_in_word = start_bit % 64;
                 word &= !((1u64 << start_bit_in_word) - 1);
             }
-            
+
             // Handle partial word at the end
             if word_idx * 64 + 64 > end_bit {
                 let end_bit_in_word = end_bit % 64;
@@ -460,9 +464,9 @@ impl RankSelectSeparated256 {
                     word &= mask;
                 }
             }
-            
+
             let word_popcount = self.popcount_hardware_accelerated(word) as usize;
-            
+
             if remaining_k <= word_popcount {
                 // The k-th bit is in this word
                 let select_pos = self.select_u64_hardware_accelerated(word, remaining_k);
@@ -470,11 +474,13 @@ impl RankSelectSeparated256 {
                     return Ok(word_idx * 64 + select_pos);
                 }
             }
-            
+
             remaining_k = remaining_k.saturating_sub(word_popcount);
         }
-        
-        Err(ZiporaError::invalid_data("Select position not found in block".to_string()))
+
+        Err(ZiporaError::invalid_data(
+            "Select position not found in block".to_string(),
+        ))
     }
 
     /// Hardware-accelerated select using BMI2 when available
@@ -487,7 +493,7 @@ impl RankSelectSeparated256 {
             {
                 self.select_u64_fallback(x, k)
             }
-            
+
             #[cfg(not(test))]
             {
                 if CpuFeatures::get().has_bmi2 {
@@ -497,7 +503,7 @@ impl RankSelectSeparated256 {
                 }
             }
         }
-        
+
         #[cfg(not(target_arch = "x86_64"))]
         {
             self.select_u64_fallback(x, k)
@@ -511,19 +517,19 @@ impl RankSelectSeparated256 {
         if k == 0 || k > self.popcount_hardware_accelerated(x) as usize {
             return 64;
         }
-        
+
         unsafe {
             // Create a mask with the first k bits set
             let select_mask = (1u64 << k) - 1;
-            
+
             // Use PDEP to expand the select mask according to the bit pattern
             let expanded_mask = _pdep_u64(select_mask, x);
-            
+
             // Find the highest set bit in the expanded mask
             if expanded_mask == 0 {
                 return 64;
             }
-            
+
             // Count trailing zeros to get position
             _tzcnt_u64(expanded_mask) as usize
         }
@@ -535,14 +541,14 @@ impl RankSelectSeparated256 {
         if k == 0 || k > self.popcount_hardware_accelerated(x) as usize {
             return 64;
         }
-        
+
         let mut remaining_k = k;
-        
+
         // Process each byte
         for byte_idx in 0..8 {
             let byte = ((x >> (byte_idx * 8)) & 0xFF) as u8;
             let byte_popcount = byte.count_ones() as usize;
-            
+
             if remaining_k <= byte_popcount {
                 // The k-th bit is in this byte
                 let mut bit_count = 0;
@@ -555,10 +561,10 @@ impl RankSelectSeparated256 {
                     }
                 }
             }
-            
+
             remaining_k = remaining_k.saturating_sub(byte_popcount);
         }
-        
+
         64 // Not found
     }
 }
@@ -597,7 +603,9 @@ impl RankSelectOps for RankSelectSeparated256 {
             }
         }
 
-        Err(ZiporaError::invalid_data("Select0 position not found".to_string()))
+        Err(ZiporaError::invalid_data(
+            "Select0 position not found".to_string(),
+        ))
     }
 
     fn len(&self) -> usize {
@@ -624,7 +632,7 @@ impl RankSelectOps for RankSelectSeparated256 {
         } else {
             0
         };
-        
+
         let total_overhead_bits = rank_cache_bits + select_cache_bits;
         (total_overhead_bits as f64 / original_bits as f64) * 100.0
     }
@@ -676,32 +684,31 @@ impl RankSelectBuilder<RankSelectSeparated256> for RankSelectSeparated256 {
 
     fn from_bytes(bytes: &[u8], bit_len: usize) -> Result<RankSelectSeparated256> {
         let mut bit_vector = BitVector::new();
-        
+
         for (byte_idx, &byte) in bytes.iter().enumerate() {
             for bit_idx in 0..8 {
                 let bit_pos = byte_idx * 8 + bit_idx;
                 if bit_pos >= bit_len {
                     break;
                 }
-                
+
                 let bit = (byte >> bit_idx) & 1 == 1;
                 bit_vector.push(bit)?;
             }
-            
+
             if (byte_idx + 1) * 8 >= bit_len {
                 break;
             }
         }
-        
+
         Self::new(bit_vector)
     }
 
-    fn with_optimizations(bit_vector: BitVector, opts: BuilderOptions) -> Result<RankSelectSeparated256> {
-        Self::with_options(
-            bit_vector,
-            opts.optimize_select,
-            opts.select_sample_rate,
-        )
+    fn with_optimizations(
+        bit_vector: BitVector,
+        opts: BuilderOptions,
+    ) -> Result<RankSelectSeparated256> {
+        Self::with_options(bit_vector, opts.optimize_select, opts.select_sample_rate)
     }
 }
 
@@ -712,9 +719,15 @@ impl fmt::Debug for RankSelectSeparated256 {
             .field("ones", &self.count_ones())
             .field("zeros", &self.count_zeros())
             .field("rank_blocks", &self.rank_cache.len())
-            .field("select_cache_size", &self.select_cache.as_ref().map(|c| c.len()).unwrap_or(0))
+            .field(
+                "select_cache_size",
+                &self.select_cache.as_ref().map(|c| c.len()).unwrap_or(0),
+            )
             .field("select_sample_rate", &self.select_sample_rate)
-            .field("overhead", &format!("{:.2}%", self.space_overhead_percent()))
+            .field(
+                "overhead",
+                &format!("{:.2}%", self.space_overhead_percent()),
+            )
             .finish()
     }
 }
@@ -734,7 +747,11 @@ impl RankSelectSeparated512 {
         let mut rs = Self {
             bit_vector,
             rank_cache: FastVec::new(),
-            select_cache: if enable_select_cache { Some(FastVec::new()) } else { None },
+            select_cache: if enable_select_cache {
+                Some(FastVec::new())
+            } else {
+                None
+            },
             total_ones: 0,
             select_sample_rate,
         };
@@ -746,13 +763,13 @@ impl RankSelectSeparated512 {
     /// Build the rank and optional select caches for 512-bit blocks
     fn build_caches(&mut self) -> Result<()> {
         let total_bits = self.bit_vector.len();
-        
+
         if total_bits == 0 {
             return Ok(());
         }
 
         self.build_rank_cache_512()?;
-        
+
         if self.select_cache.is_some() && self.total_ones > 0 {
             self.build_select_cache_512()?;
         }
@@ -764,23 +781,19 @@ impl RankSelectSeparated512 {
     fn build_rank_cache_512(&mut self) -> Result<()> {
         let total_bits = self.bit_vector.len();
         let num_blocks = (total_bits + SEP512_BLOCK_SIZE - 1) / SEP512_BLOCK_SIZE;
-        
+
         self.rank_cache.reserve(num_blocks)?;
 
         let mut cumulative_rank = 0u64;
         let blocks = self.bit_vector.blocks();
-        
+
         // Process each 512-bit block (8 × 64-bit words)
         for block_idx in 0..num_blocks {
             let block_start_bit = block_idx * SEP512_BLOCK_SIZE;
             let block_end_bit = ((block_idx + 1) * SEP512_BLOCK_SIZE).min(total_bits);
-            
-            let block_rank = self.count_bits_in_block_512(
-                blocks, 
-                block_start_bit, 
-                block_end_bit
-            );
-            
+
+            let block_rank = self.count_bits_in_block_512(blocks, block_start_bit, block_end_bit);
+
             cumulative_rank += block_rank as u64;
             self.rank_cache.push(cumulative_rank)?;
         }
@@ -791,25 +804,20 @@ impl RankSelectSeparated512 {
 
     /// Count bits in a 512-bit block using hardware acceleration
     #[inline]
-    fn count_bits_in_block_512(
-        &self,
-        blocks: &[u64],
-        start_bit: usize,
-        end_bit: usize,
-    ) -> usize {
+    fn count_bits_in_block_512(&self, blocks: &[u64], start_bit: usize, end_bit: usize) -> usize {
         let start_word = start_bit / 64;
         let end_word = (end_bit + 63) / 64;
         let mut count = 0;
 
         for word_idx in start_word..end_word.min(blocks.len()) {
             let mut word = blocks[word_idx];
-            
+
             // Handle partial word at the beginning
             if word_idx == start_word && start_bit % 64 != 0 {
                 let start_bit_in_word = start_bit % 64;
                 word &= !((1u64 << start_bit_in_word) - 1);
             }
-            
+
             // Handle partial word at the end
             if word_idx * 64 + 64 > end_bit {
                 let end_bit_in_word = end_bit % 64;
@@ -818,7 +826,7 @@ impl RankSelectSeparated512 {
                     word &= mask;
                 }
             }
-            
+
             count += self.popcount_512(word) as usize;
         }
 
@@ -834,7 +842,7 @@ impl RankSelectSeparated512 {
             {
                 x.count_ones()
             }
-            
+
             #[cfg(not(test))]
             {
                 if CpuFeatures::get().has_popcnt {
@@ -844,7 +852,7 @@ impl RankSelectSeparated512 {
                 }
             }
         }
-        
+
         #[cfg(not(target_arch = "x86_64"))]
         {
             x.count_ones()
@@ -901,25 +909,22 @@ impl RankSelectSeparated512 {
         }
 
         let pos = pos.min(self.bit_vector.len());
-        
+
         let block_idx = pos / SEP512_BLOCK_SIZE;
         let bit_offset_in_block = pos % SEP512_BLOCK_SIZE;
-        
+
         let rank_before_block = if block_idx > 0 {
             self.rank_cache[block_idx - 1] as usize
         } else {
             0
         };
-        
+
         let block_start = block_idx * SEP512_BLOCK_SIZE;
         let block_end = (block_start + bit_offset_in_block).min(self.bit_vector.len());
-        
-        let rank_in_block = self.count_bits_in_block_512(
-            self.bit_vector.blocks(),
-            block_start,
-            block_end,
-        );
-        
+
+        let rank_in_block =
+            self.count_bits_in_block_512(self.bit_vector.blocks(), block_start, block_end);
+
         rank_before_block + rank_in_block
     }
 
@@ -943,7 +948,7 @@ impl RankSelectSeparated512 {
 
         // Binary search on rank blocks
         let block_idx = self.binary_search_rank_blocks_512(target_rank);
-        
+
         let block_start_rank = if block_idx > 0 {
             self.rank_cache[block_idx - 1] as usize
         } else {
@@ -953,7 +958,7 @@ impl RankSelectSeparated512 {
         let remaining_ones = target_rank - block_start_rank;
         let block_start_bit = block_idx * SEP512_BLOCK_SIZE;
         let block_end_bit = ((block_idx + 1) * SEP512_BLOCK_SIZE).min(self.bit_vector.len());
-        
+
         self.select1_within_block_512(block_start_bit, block_end_bit, remaining_ones)
     }
 
@@ -970,7 +975,12 @@ impl RankSelectSeparated512 {
     }
 
     /// Linear search for 512-bit implementation
-    fn select1_linear_search_512(&self, start: usize, end: usize, target_rank: usize) -> Result<usize> {
+    fn select1_linear_search_512(
+        &self,
+        start: usize,
+        end: usize,
+        target_rank: usize,
+    ) -> Result<usize> {
         let mut current_rank = self.rank1_512(start);
 
         for pos in start..end {
@@ -982,7 +992,9 @@ impl RankSelectSeparated512 {
             }
         }
 
-        Err(ZiporaError::invalid_data("Select position not found".to_string()))
+        Err(ZiporaError::invalid_data(
+            "Select position not found".to_string(),
+        ))
     }
 
     /// Binary search for 512-bit rank blocks
@@ -990,7 +1002,7 @@ impl RankSelectSeparated512 {
     fn binary_search_rank_blocks_512(&self, target_rank: usize) -> usize {
         let mut left = 0;
         let mut right = self.rank_cache.len();
-        
+
         while left < right {
             let mid = left + (right - left) / 2;
             if self.rank_cache[mid] < target_rank as u64 {
@@ -999,28 +1011,33 @@ impl RankSelectSeparated512 {
                 right = mid;
             }
         }
-        
+
         left
     }
 
     /// Select within 512-bit block
     #[inline]
-    fn select1_within_block_512(&self, start_bit: usize, end_bit: usize, k: usize) -> Result<usize> {
+    fn select1_within_block_512(
+        &self,
+        start_bit: usize,
+        end_bit: usize,
+        k: usize,
+    ) -> Result<usize> {
         let blocks = self.bit_vector.blocks();
         let start_word = start_bit / 64;
         let end_word = (end_bit + 63) / 64;
-        
+
         let mut remaining_k = k;
-        
+
         for word_idx in start_word..end_word.min(blocks.len()) {
             let mut word = blocks[word_idx];
-            
+
             // Handle partial word at the beginning
             if word_idx == start_word && start_bit % 64 != 0 {
                 let start_bit_in_word = start_bit % 64;
                 word &= !((1u64 << start_bit_in_word) - 1);
             }
-            
+
             // Handle partial word at the end
             if word_idx * 64 + 64 > end_bit {
                 let end_bit_in_word = end_bit % 64;
@@ -1029,20 +1046,22 @@ impl RankSelectSeparated512 {
                     word &= mask;
                 }
             }
-            
+
             let word_popcount = self.popcount_512(word) as usize;
-            
+
             if remaining_k <= word_popcount {
                 let select_pos = self.select_u64_512(word, remaining_k);
                 if select_pos < 64 {
                     return Ok(word_idx * 64 + select_pos);
                 }
             }
-            
+
             remaining_k = remaining_k.saturating_sub(word_popcount);
         }
-        
-        Err(ZiporaError::invalid_data("Select position not found in block".to_string()))
+
+        Err(ZiporaError::invalid_data(
+            "Select position not found in block".to_string(),
+        ))
     }
 
     /// Select within u64 for 512-bit implementation
@@ -1051,13 +1070,13 @@ impl RankSelectSeparated512 {
         if k == 0 || k > self.popcount_512(x) as usize {
             return 64;
         }
-        
+
         let mut remaining_k = k;
-        
+
         for byte_idx in 0..8 {
             let byte = ((x >> (byte_idx * 8)) & 0xFF) as u8;
             let byte_popcount = byte.count_ones() as usize;
-            
+
             if remaining_k <= byte_popcount {
                 let mut bit_count = 0;
                 for bit_idx in 0..8 {
@@ -1069,10 +1088,10 @@ impl RankSelectSeparated512 {
                     }
                 }
             }
-            
+
             remaining_k = remaining_k.saturating_sub(byte_popcount);
         }
-        
+
         64
     }
 }
@@ -1110,7 +1129,9 @@ impl RankSelectOps for RankSelectSeparated512 {
             }
         }
 
-        Err(ZiporaError::invalid_data("Select0 position not found".to_string()))
+        Err(ZiporaError::invalid_data(
+            "Select0 position not found".to_string(),
+        ))
     }
 
     fn len(&self) -> usize {
@@ -1138,7 +1159,7 @@ impl RankSelectOps for RankSelectSeparated512 {
         } else {
             0
         };
-        
+
         let total_overhead_bits = rank_cache_bits + select_cache_bits;
         (total_overhead_bits as f64 / original_bits as f64) * 100.0
     }
@@ -1188,32 +1209,31 @@ impl RankSelectBuilder<RankSelectSeparated512> for RankSelectSeparated512 {
 
     fn from_bytes(bytes: &[u8], bit_len: usize) -> Result<RankSelectSeparated512> {
         let mut bit_vector = BitVector::new();
-        
+
         for (byte_idx, &byte) in bytes.iter().enumerate() {
             for bit_idx in 0..8 {
                 let bit_pos = byte_idx * 8 + bit_idx;
                 if bit_pos >= bit_len {
                     break;
                 }
-                
+
                 let bit = (byte >> bit_idx) & 1 == 1;
                 bit_vector.push(bit)?;
             }
-            
+
             if (byte_idx + 1) * 8 >= bit_len {
                 break;
             }
         }
-        
+
         Self::new(bit_vector)
     }
 
-    fn with_optimizations(bit_vector: BitVector, opts: BuilderOptions) -> Result<RankSelectSeparated512> {
-        Self::with_options(
-            bit_vector,
-            opts.optimize_select,
-            opts.select_sample_rate,
-        )
+    fn with_optimizations(
+        bit_vector: BitVector,
+        opts: BuilderOptions,
+    ) -> Result<RankSelectSeparated512> {
+        Self::with_options(bit_vector, opts.optimize_select, opts.select_sample_rate)
     }
 }
 
@@ -1224,9 +1244,15 @@ impl fmt::Debug for RankSelectSeparated512 {
             .field("ones", &self.count_ones())
             .field("zeros", &self.count_zeros())
             .field("rank_blocks", &self.rank_cache.len())
-            .field("select_cache_size", &self.select_cache.as_ref().map(|c| c.len()).unwrap_or(0))
+            .field(
+                "select_cache_size",
+                &self.select_cache.as_ref().map(|c| c.len()).unwrap_or(0),
+            )
             .field("select_sample_rate", &self.select_sample_rate)
-            .field("overhead", &format!("{:.2}%", self.space_overhead_percent()))
+            .field(
+                "overhead",
+                &format!("{:.2}%", self.space_overhead_percent()),
+            )
             .finish()
     }
 }
@@ -1262,11 +1288,11 @@ mod tests {
     #[test]
     fn test_separated256_with_options() {
         let bv = create_test_bitvector();
-        
+
         // With select cache
         let rs_with_cache = RankSelectSeparated256::with_options(bv.clone(), true, 256).unwrap();
         assert!(rs_with_cache.select_cache.is_some());
-        
+
         // Without select cache
         let rs_no_cache = RankSelectSeparated256::with_options(bv, false, 256).unwrap();
         assert!(rs_no_cache.select_cache.is_none());
@@ -1282,14 +1308,19 @@ mod tests {
         assert_eq!(rs.rank0(0), 0);
 
         // Test rank at specific positions
-        assert_eq!(rs.rank1(1), 1);  // First bit is set
-        assert_eq!(rs.rank1(2), 1);  // Second bit is clear
-        assert_eq!(rs.rank1(3), 2);  // Third bit is set
+        assert_eq!(rs.rank1(1), 1); // First bit is set
+        assert_eq!(rs.rank1(2), 1); // Second bit is clear
+        assert_eq!(rs.rank1(3), 2); // Third bit is set
 
         // Test rank consistency with original bit vector
         for pos in (0..bv.len()).step_by(50) {
             let expected_rank = bv.rank1(pos);
-            assert_eq!(rs.rank1(pos), expected_rank, "Rank mismatch at position {}", pos);
+            assert_eq!(
+                rs.rank1(pos),
+                expected_rank,
+                "Rank mismatch at position {}",
+                pos
+            );
         }
     }
 
@@ -1304,14 +1335,14 @@ mod tests {
         let rs = RankSelectSeparated256::new(bv).unwrap();
 
         if rs.count_ones() > 0 {
-            assert_eq!(rs.select1(0).unwrap(), 0);  // First set bit at position 0
-            
+            assert_eq!(rs.select1(0).unwrap(), 0); // First set bit at position 0
+
             if rs.count_ones() > 1 {
-                assert_eq!(rs.select1(1).unwrap(), 4);  // Second set bit at position 4
+                assert_eq!(rs.select1(1).unwrap(), 4); // Second set bit at position 4
             }
-            
+
             if rs.count_ones() > 2 {
-                assert_eq!(rs.select1(2).unwrap(), 8);  // Third set bit at position 8
+                assert_eq!(rs.select1(2).unwrap(), 8); // Third set bit at position 8
             }
         }
     }
@@ -1354,11 +1385,11 @@ mod tests {
     #[test]
     fn test_separated256_builder_interface() {
         let bv = create_test_bitvector();
-        
+
         // Test from_bit_vector
         let rs1 = RankSelectSeparated256::from_bit_vector(bv.clone()).unwrap();
         let rs2 = RankSelectSeparated256::new(bv).unwrap();
-        
+
         assert_eq!(rs1.len(), rs2.len());
         assert_eq!(rs1.count_ones(), rs2.count_ones());
 
@@ -1375,9 +1406,10 @@ mod tests {
             ..Default::default()
         };
         let rs4 = RankSelectSeparated256::with_optimizations(
-            BitVector::with_size(100, true).unwrap(), 
-            opts
-        ).unwrap();
+            BitVector::with_size(100, true).unwrap(),
+            opts,
+        )
+        .unwrap();
         assert_eq!(rs4.len(), 100);
         assert_eq!(rs4.count_ones(), 100);
     }
@@ -1397,7 +1429,7 @@ mod tests {
 
         // With cache should have more overhead
         assert!(overhead_with > overhead_without);
-        
+
         // Both should be reasonable (less than 30%)
         assert!(overhead_with < 30.0);
         assert!(overhead_without < 20.0);
@@ -1415,22 +1447,22 @@ mod tests {
         }
 
         let rs = RankSelectSeparated256::new(bv).unwrap();
-        
+
         // Basic operations should work
         assert!(rs.len() > 0);
         assert!(rs.count_ones() > 0);
-        
+
         // Test various rank operations
         let test_positions = [0, 1000, 10000, 25000, 50000, 75000, 99999];
         for &pos in &test_positions {
             let rank = rs.rank1(pos);
             assert!(rank <= rs.count_ones());
-            
+
             // Verify consistency
             if pos > 0 {
                 let prev_rank = rs.rank1(pos - 1);
                 assert!(rank >= prev_rank);
-                
+
                 if rs.get(pos - 1).unwrap_or(false) {
                     assert_eq!(rank, prev_rank + 1);
                 } else {
@@ -1442,13 +1474,20 @@ mod tests {
         // Test select operations
         let ones_count = rs.count_ones();
         if ones_count > 100 {
-            let test_ks = [0, ones_count/10, ones_count/4, ones_count/2, ones_count*3/4, ones_count-1];
+            let test_ks = [
+                0,
+                ones_count / 10,
+                ones_count / 4,
+                ones_count / 2,
+                ones_count * 3 / 4,
+                ones_count - 1,
+            ];
             for &k in &test_ks {
                 if k < ones_count {
                     let pos = rs.select1(k).unwrap();
                     assert!(pos < rs.len());
                     assert!(rs.get(pos).unwrap());
-                    
+
                     // Verify this is actually the k-th set bit
                     let rank = rs.rank1(pos + 1);
                     assert!(rank > k);
@@ -1529,11 +1568,11 @@ mod tests {
     #[test]
     fn test_separated512_with_options() {
         let bv = create_test_bitvector();
-        
+
         // With select cache
         let rs_with_cache = RankSelectSeparated512::with_options(bv.clone(), true, 256).unwrap();
         assert!(rs_with_cache.select_cache.is_some());
-        
+
         // Without select cache
         let rs_no_cache = RankSelectSeparated512::with_options(bv, false, 256).unwrap();
         assert!(rs_no_cache.select_cache.is_none());
@@ -1549,14 +1588,19 @@ mod tests {
         assert_eq!(rs.rank0(0), 0);
 
         // Test rank at specific positions
-        assert_eq!(rs.rank1(1), 1);  // First bit is set
-        assert_eq!(rs.rank1(2), 1);  // Second bit is clear
-        assert_eq!(rs.rank1(3), 2);  // Third bit is set
+        assert_eq!(rs.rank1(1), 1); // First bit is set
+        assert_eq!(rs.rank1(2), 1); // Second bit is clear
+        assert_eq!(rs.rank1(3), 2); // Third bit is set
 
         // Test rank consistency with original bit vector
         for pos in (0..bv.len()).step_by(50) {
             let expected_rank = bv.rank1(pos);
-            assert_eq!(rs.rank1(pos), expected_rank, "Rank mismatch at position {}", pos);
+            assert_eq!(
+                rs.rank1(pos),
+                expected_rank,
+                "Rank mismatch at position {}",
+                pos
+            );
         }
     }
 
@@ -1564,21 +1608,22 @@ mod tests {
     fn test_separated512_select_operations() {
         let mut bv = BitVector::new();
         // Create predictable pattern: every 4th bit is set
-        for i in 0..2000 {  // Use larger size to test 512-bit blocks
+        for i in 0..2000 {
+            // Use larger size to test 512-bit blocks
             bv.push(i % 4 == 0).unwrap();
         }
 
         let rs = RankSelectSeparated512::new(bv).unwrap();
 
         if rs.count_ones() > 0 {
-            assert_eq!(rs.select1(0).unwrap(), 0);  // First set bit at position 0
-            
+            assert_eq!(rs.select1(0).unwrap(), 0); // First set bit at position 0
+
             if rs.count_ones() > 1 {
-                assert_eq!(rs.select1(1).unwrap(), 4);  // Second set bit at position 4
+                assert_eq!(rs.select1(1).unwrap(), 4); // Second set bit at position 4
             }
-            
+
             if rs.count_ones() > 2 {
-                assert_eq!(rs.select1(2).unwrap(), 8);  // Third set bit at position 8
+                assert_eq!(rs.select1(2).unwrap(), 8); // Third set bit at position 8
             }
         }
     }
@@ -1633,14 +1678,17 @@ mod tests {
 
         // With cache should have more overhead
         assert!(overhead_with > overhead_without);
-        
+
         // 512-bit blocks should have lower overhead than 256-bit blocks due to fewer blocks
         // but higher overhead per block (u64 vs u32)
         assert!(overhead_with < 25.0);
         assert!(overhead_without < 15.0);
 
         println!("512-bit overhead with select cache: {:.2}%", overhead_with);
-        println!("512-bit overhead without select cache: {:.2}%", overhead_without);
+        println!(
+            "512-bit overhead without select cache: {:.2}%",
+            overhead_without
+        );
     }
 
     #[test]
@@ -1652,22 +1700,22 @@ mod tests {
         }
 
         let rs = RankSelectSeparated512::new(bv).unwrap();
-        
+
         // Basic operations should work
         assert!(rs.len() > 0);
         assert!(rs.count_ones() > 0);
-        
+
         // Test various rank operations
         let test_positions = [0, 2000, 20000, 50000, 75000, 99999];
         for &pos in &test_positions {
             let rank = rs.rank1(pos);
             assert!(rank <= rs.count_ones());
-            
+
             // Verify rank consistency
             if pos > 0 {
                 let prev_rank = rs.rank1(pos - 1);
                 assert!(rank >= prev_rank);
-                
+
                 if rs.get(pos - 1).unwrap_or(false) {
                     assert_eq!(rank, prev_rank + 1);
                 } else {
@@ -1679,13 +1727,20 @@ mod tests {
         // Test select operations
         let ones_count = rs.count_ones();
         if ones_count > 100 {
-            let test_ks = [0, ones_count/10, ones_count/4, ones_count/2, ones_count*3/4, ones_count-1];
+            let test_ks = [
+                0,
+                ones_count / 10,
+                ones_count / 4,
+                ones_count / 2,
+                ones_count * 3 / 4,
+                ones_count - 1,
+            ];
             for &k in &test_ks {
                 if k < ones_count {
                     let pos = rs.select1(k).unwrap();
                     assert!(pos < rs.len());
                     assert!(rs.get(pos).unwrap());
-                    
+
                     // Verify this is actually the k-th set bit
                     let rank = rs.rank1(pos + 1);
                     assert!(rank > k);
@@ -1739,11 +1794,11 @@ mod tests {
     #[test]
     fn test_separated512_builder_interface() {
         let bv = create_test_bitvector();
-        
+
         // Test from_bit_vector
         let rs1 = RankSelectSeparated512::from_bit_vector(bv.clone()).unwrap();
         let rs2 = RankSelectSeparated512::new(bv).unwrap();
-        
+
         assert_eq!(rs1.len(), rs2.len());
         assert_eq!(rs1.count_ones(), rs2.count_ones());
 
@@ -1760,9 +1815,10 @@ mod tests {
             ..Default::default()
         };
         let rs4 = RankSelectSeparated512::with_optimizations(
-            BitVector::with_size(1000, true).unwrap(), 
-            opts
-        ).unwrap();
+            BitVector::with_size(1000, true).unwrap(),
+            opts,
+        )
+        .unwrap();
         assert_eq!(rs4.len(), 1000);
         assert_eq!(rs4.count_ones(), 1000);
     }
@@ -1800,18 +1856,32 @@ mod tests {
         // Test rank operations
         let test_positions = [0, 1000, 10000, 25000, 49999];
         for &pos in &test_positions {
-            assert_eq!(rs256.rank1(pos), rs512.rank1(pos), "Rank mismatch at position {}", pos);
-            assert_eq!(rs256.rank0(pos), rs512.rank0(pos), "Rank0 mismatch at position {}", pos);
+            assert_eq!(
+                rs256.rank1(pos),
+                rs512.rank1(pos),
+                "Rank mismatch at position {}",
+                pos
+            );
+            assert_eq!(
+                rs256.rank0(pos),
+                rs512.rank0(pos),
+                "Rank0 mismatch at position {}",
+                pos
+            );
         }
 
         // Test select operations
         let ones_count = rs256.count_ones();
         if ones_count > 100 {
-            let test_ks = [0, 10, ones_count/4, ones_count/2, ones_count-1];
+            let test_ks = [0, 10, ones_count / 4, ones_count / 2, ones_count - 1];
             for &k in &test_ks {
                 if k < ones_count {
-                    assert_eq!(rs256.select1(k).unwrap(), rs512.select1(k).unwrap(), 
-                              "Select mismatch at index {}", k);
+                    assert_eq!(
+                        rs256.select1(k).unwrap(),
+                        rs512.select1(k).unwrap(),
+                        "Select mismatch at index {}",
+                        k
+                    );
                 }
             }
         }
@@ -1819,13 +1889,19 @@ mod tests {
         // Compare space overhead - 512 should have lower overhead due to fewer blocks
         let overhead_256 = rs256.space_overhead_percent();
         let overhead_512 = rs512.space_overhead_percent();
-        
-        println!("256-bit overhead: {:.2}%, 512-bit overhead: {:.2}%", overhead_256, overhead_512);
-        
+
+        println!(
+            "256-bit overhead: {:.2}%, 512-bit overhead: {:.2}%",
+            overhead_256, overhead_512
+        );
+
         // For large datasets, 512-bit blocks typically have lower total overhead
         // despite using u64 instead of u32 for rank cache
         if bv.len() > 10_000 {
-            assert!(overhead_512 < overhead_256 * 1.1, "512-bit should have comparable or better space efficiency");
+            assert!(
+                overhead_512 < overhead_256 * 1.1,
+                "512-bit should have comparable or better space efficiency"
+            );
         }
     }
 }

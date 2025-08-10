@@ -39,23 +39,22 @@
 //!
 //! // Sparse optimization for storing 1s
 //! let sparse_rs = RankSelectFew::<true, 64>::from_bit_vector(bv)?;
-//! 
+//!
 //! // Dramatic memory savings
 //! println!("Compression ratio: {:.2}%", sparse_rs.compression_ratio() * 100.0);
-//! 
+//!
 //! // Fast operations on sparse data
 //! let rank = sparse_rs.rank1(5000);
 //! let pos = sparse_rs.select1(50)?;
 //! # Ok::<(), zipora::ZiporaError>(())
 //! ```
 
+use super::{
+    BuilderOptions, RankSelectBuilder, RankSelectOps, RankSelectSeparated256, RankSelectSparse,
+};
+use crate::FastVec;
 use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;
-use crate::FastVec;
-use super::{
-    RankSelectOps, RankSelectSparse, RankSelectBuilder, BuilderOptions,
-    RankSelectSeparated256
-};
 use std::fmt;
 
 /// Memory-efficient rank/select for sparse bit vectors
@@ -114,7 +113,7 @@ pub struct RankSelectFewBuilder<const PIVOT: bool, const WORD_SIZE: usize> {
 impl<const PIVOT: bool, const WORD_SIZE: usize> Default for RankSelectFewBuilder<PIVOT, WORD_SIZE> {
     fn default() -> Self {
         Self {
-            sparsity_threshold: 0.05,  // 5% threshold for better sparse detection
+            sparsity_threshold: 0.05, // 5% threshold for better sparse detection
             block_size: 1024,         // 1024-bit blocks
             enable_dense_fallback: true,
         }
@@ -133,18 +132,22 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectFew<PIVOT, WORD_SIZE> 
 
     /// Create a new RankSelectFew with custom builder options
     pub fn with_builder(
-        bit_vector: BitVector, 
-        builder: RankSelectFewBuilder<PIVOT, WORD_SIZE>
+        bit_vector: BitVector,
+        builder: RankSelectFewBuilder<PIVOT, WORD_SIZE>,
     ) -> Result<Self> {
         let total_bits = bit_vector.len();
         let total_ones = bit_vector.count_ones();
-        
+
         // Calculate sparsity of the pivot value
-        let pivot_count = if PIVOT { total_ones } else { total_bits - total_ones };
-        let sparsity = if total_bits > 0 { 
-            pivot_count as f64 / total_bits as f64 
-        } else { 
-            0.0 
+        let pivot_count = if PIVOT {
+            total_ones
+        } else {
+            total_bits - total_ones
+        };
+        let sparsity = if total_bits > 0 {
+            pivot_count as f64 / total_bits as f64
+        } else {
+            0.0
         };
 
         // Decide on representation mode
@@ -152,7 +155,7 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectFew<PIVOT, WORD_SIZE> 
 
         if use_sparse {
             let sparse_data = Self::build_sparse_representation(&bit_vector, builder.block_size)?;
-            
+
             Ok(Self {
                 total_bits,
                 total_ones,
@@ -165,9 +168,10 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectFew<PIVOT, WORD_SIZE> 
             let dense_fallback = if builder.enable_dense_fallback {
                 Some(RankSelectSeparated256::new(bit_vector)?)
             } else {
-                return Err(ZiporaError::invalid_data(
-                    format!("Data too dense for sparse representation (sparsity: {:.2}%)", sparsity * 100.0)
-                ));
+                return Err(ZiporaError::invalid_data(format!(
+                    "Data too dense for sparse representation (sparsity: {:.2}%)",
+                    sparsity * 100.0
+                )));
             };
 
             Ok(Self {
@@ -185,7 +189,10 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectFew<PIVOT, WORD_SIZE> 
     }
 
     /// Build sparse representation by storing only pivot positions
-    fn build_sparse_representation(bit_vector: &BitVector, block_size: usize) -> Result<SparseData> {
+    fn build_sparse_representation(
+        bit_vector: &BitVector,
+        block_size: usize,
+    ) -> Result<SparseData> {
         let total_bits = bit_vector.len();
         let mut positions = FastVec::new();
         let mut block_ranks = FastVec::new();
@@ -201,10 +208,10 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectFew<PIVOT, WORD_SIZE> 
         // Collect positions of pivot elements
         let mut current_block_rank = 0u16;
         let mut current_block = 0;
-        
+
         for pos in 0..total_bits {
             let bit_value = bit_vector.get(pos).unwrap_or(false);
-            
+
             // Check if we've moved to a new block
             let block_idx = pos / block_size;
             if block_idx > current_block {
@@ -214,7 +221,7 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectFew<PIVOT, WORD_SIZE> 
                     current_block += 1;
                 }
             }
-            
+
             // If this position contains the pivot value, store it
             if bit_value == PIVOT {
                 positions.push(pos as u32)?;
@@ -265,7 +272,7 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectFew<PIVOT, WORD_SIZE> 
         // Binary search to find how many stored positions are < pos
         let mut left = 0;
         let mut right = self.sparse_data.positions.len();
-        
+
         while left < right {
             let mid = left + (right - left) / 2;
             if (self.sparse_data.positions[mid] as usize) < pos {
@@ -274,7 +281,7 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectFew<PIVOT, WORD_SIZE> 
                 right = mid;
             }
         }
-        
+
         left
     }
 
@@ -283,7 +290,10 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectFew<PIVOT, WORD_SIZE> 
         if target_value == PIVOT {
             // Select k-th PIVOT element
             if k >= self.sparse_data.positions.len() {
-                return Err(ZiporaError::out_of_bounds(k, self.sparse_data.positions.len()));
+                return Err(ZiporaError::out_of_bounds(
+                    k,
+                    self.sparse_data.positions.len(),
+                ));
             }
             Ok(self.sparse_data.positions[k] as usize)
         } else {
@@ -292,7 +302,7 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectFew<PIVOT, WORD_SIZE> 
             if k >= total_non_pivot {
                 return Err(ZiporaError::out_of_bounds(k, total_non_pivot));
             }
-            
+
             // Find the k-th position that is not in the sparse positions array
             self.select_non_pivot_sparse(k)
         }
@@ -304,12 +314,12 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectFew<PIVOT, WORD_SIZE> 
         let mut non_pivot_count = 0;
         let mut pos = 0;
         let mut sparse_idx = 0;
-        
+
         while pos < self.total_bits {
             // Check if current position contains a PIVOT element
-            let is_pivot_pos = sparse_idx < self.sparse_data.positions.len() 
+            let is_pivot_pos = sparse_idx < self.sparse_data.positions.len()
                 && self.sparse_data.positions[sparse_idx] as usize == pos;
-            
+
             if is_pivot_pos {
                 sparse_idx += 1;
             } else {
@@ -319,11 +329,13 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectFew<PIVOT, WORD_SIZE> 
                 }
                 non_pivot_count += 1;
             }
-            
+
             pos += 1;
         }
-        
-        Err(ZiporaError::invalid_data("Select position not found".to_string()))
+
+        Err(ZiporaError::invalid_data(
+            "Select position not found".to_string(),
+        ))
     }
 
     /// Get the sparsity ratio
@@ -346,19 +358,21 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectFew<PIVOT, WORD_SIZE> 
         match &self.mode {
             SparseMode::Sparse => {
                 // 4 bytes per position + 2 bytes per block + metadata
-                self.sparse_data.positions.len() * 4 
+                self.sparse_data.positions.len() * 4
                     + self.sparse_data.block_ranks.len() * 2
                     + std::mem::size_of::<Self>()
             }
             SparseMode::Dense => {
-                self.dense_fallback.as_ref()
+                self.dense_fallback
+                    .as_ref()
                     .map(|dense| {
                         // Approximate dense representation size
                         let bit_bytes = (self.total_bits + 7) / 8;
                         let rank_cache = (self.total_bits / 256 + 1) * 4; // 4 bytes per 256-bit block
                         bit_bytes + rank_cache
                     })
-                    .unwrap_or(0) + std::mem::size_of::<Self>()
+                    .unwrap_or(0)
+                    + std::mem::size_of::<Self>()
             }
         }
     }
@@ -368,44 +382,48 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectOps for RankSelectFew<
     fn rank1(&self, pos: usize) -> usize {
         match &self.mode {
             SparseMode::Sparse => self.rank_sparse(pos, true),
-            SparseMode::Dense => {
-                self.dense_fallback.as_ref()
-                    .map(|dense| dense.rank1(pos))
-                    .unwrap_or(0)
-            }
+            SparseMode::Dense => self
+                .dense_fallback
+                .as_ref()
+                .map(|dense| dense.rank1(pos))
+                .unwrap_or(0),
         }
     }
 
     fn rank0(&self, pos: usize) -> usize {
         match &self.mode {
             SparseMode::Sparse => self.rank_sparse(pos, false),
-            SparseMode::Dense => {
-                self.dense_fallback.as_ref()
-                    .map(|dense| dense.rank0(pos))
-                    .unwrap_or(0)
-            }
+            SparseMode::Dense => self
+                .dense_fallback
+                .as_ref()
+                .map(|dense| dense.rank0(pos))
+                .unwrap_or(0),
         }
     }
 
     fn select1(&self, k: usize) -> Result<usize> {
         match &self.mode {
             SparseMode::Sparse => self.select_sparse(k, true),
-            SparseMode::Dense => {
-                self.dense_fallback.as_ref()
-                    .ok_or_else(|| ZiporaError::invalid_data("No dense fallback available".to_string()))?
-                    .select1(k)
-            }
+            SparseMode::Dense => self
+                .dense_fallback
+                .as_ref()
+                .ok_or_else(|| {
+                    ZiporaError::invalid_data("No dense fallback available".to_string())
+                })?
+                .select1(k),
         }
     }
 
     fn select0(&self, k: usize) -> Result<usize> {
         match &self.mode {
             SparseMode::Sparse => self.select_sparse(k, false),
-            SparseMode::Dense => {
-                self.dense_fallback.as_ref()
-                    .ok_or_else(|| ZiporaError::invalid_data("No dense fallback available".to_string()))?
-                    .select0(k)
-            }
+            SparseMode::Dense => self
+                .dense_fallback
+                .as_ref()
+                .ok_or_else(|| {
+                    ZiporaError::invalid_data("No dense fallback available".to_string())
+                })?
+                .select0(k),
         }
     }
 
@@ -425,13 +443,17 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectOps for RankSelectFew<
         match &self.mode {
             SparseMode::Sparse => {
                 // Check if this position contains a PIVOT element
-                let is_pivot = self.sparse_data.positions.binary_search(&(index as u32)).is_ok();
+                let is_pivot = self
+                    .sparse_data
+                    .positions
+                    .binary_search(&(index as u32))
+                    .is_ok();
                 Some(if PIVOT { is_pivot } else { !is_pivot })
             }
-            SparseMode::Dense => {
-                self.dense_fallback.as_ref()
-                    .and_then(|dense| dense.get(index))
-            }
+            SparseMode::Dense => self
+                .dense_fallback
+                .as_ref()
+                .and_then(|dense| dense.get(index)),
         }
     }
 
@@ -448,7 +470,9 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectOps for RankSelectFew<
             }
             SparseMode::Dense => {
                 // Dense representation overhead
-                return self.dense_fallback.as_ref()
+                return self
+                    .dense_fallback
+                    .as_ref()
                     .map(|dense| dense.space_overhead_percent())
                     .unwrap_or(0.0);
             }
@@ -458,7 +482,9 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectOps for RankSelectFew<
     }
 }
 
-impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectSparse for RankSelectFew<PIVOT, WORD_SIZE> {
+impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectSparse
+    for RankSelectFew<PIVOT, WORD_SIZE>
+{
     const PIVOT: bool = PIVOT;
 
     fn compression_ratio(&self) -> f64 {
@@ -486,7 +512,11 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectSparse for RankSelectF
         match &self.mode {
             SparseMode::Sparse => self.sparse_data.positions.len(),
             SparseMode::Dense => {
-                if PIVOT { self.total_ones } else { self.total_bits - self.total_ones }
+                if PIVOT {
+                    self.total_ones
+                } else {
+                    self.total_bits - self.total_ones
+                }
             }
         }
     }
@@ -497,13 +527,17 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectSparse for RankSelectF
         }
 
         match &self.mode {
-            SparseMode::Sparse => {
-                self.sparse_data.positions.binary_search(&(pos as u32)).is_ok()
-            }
+            SparseMode::Sparse => self
+                .sparse_data
+                .positions
+                .binary_search(&(pos as u32))
+                .is_ok(),
             SparseMode::Dense => {
-                self.dense_fallback.as_ref()
+                self.dense_fallback
+                    .as_ref()
                     .and_then(|dense| dense.get(pos))
-                    .unwrap_or(false) == PIVOT
+                    .unwrap_or(false)
+                    == PIVOT
             }
         }
     }
@@ -517,11 +551,14 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectSparse for RankSelectF
         match &self.mode {
             SparseMode::Sparse => {
                 let mut result = Vec::new();
-                
+
                 // Binary search for the start of the range
-                let start_idx = self.sparse_data.positions.binary_search(&(start as u32))
+                let start_idx = self
+                    .sparse_data
+                    .positions
+                    .binary_search(&(start as u32))
                     .unwrap_or_else(|idx| idx);
-                
+
                 // Collect positions in range
                 for i in start_idx..self.sparse_data.positions.len() {
                     let pos = self.sparse_data.positions[i] as usize;
@@ -530,15 +567,18 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectSparse for RankSelectF
                     }
                     result.push(pos);
                 }
-                
+
                 result
             }
             SparseMode::Dense => {
                 let mut result = Vec::new();
                 for pos in start..end {
-                    if self.dense_fallback.as_ref()
+                    if self
+                        .dense_fallback
+                        .as_ref()
                         .and_then(|dense| dense.get(pos))
-                        .unwrap_or(false) == PIVOT 
+                        .unwrap_or(false)
+                        == PIVOT
                     {
                         result.push(pos);
                     }
@@ -549,8 +589,9 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectSparse for RankSelectF
     }
 }
 
-impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectBuilder<RankSelectFew<PIVOT, WORD_SIZE>> 
-for RankSelectFew<PIVOT, WORD_SIZE> {
+impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectBuilder<RankSelectFew<PIVOT, WORD_SIZE>>
+    for RankSelectFew<PIVOT, WORD_SIZE>
+{
     fn from_bit_vector(bit_vector: BitVector) -> Result<RankSelectFew<PIVOT, WORD_SIZE>> {
         Self::from_bit_vector(bit_vector)
     }
@@ -568,33 +609,36 @@ for RankSelectFew<PIVOT, WORD_SIZE> {
 
     fn from_bytes(bytes: &[u8], bit_len: usize) -> Result<RankSelectFew<PIVOT, WORD_SIZE>> {
         let mut bit_vector = BitVector::new();
-        
+
         for (byte_idx, &byte) in bytes.iter().enumerate() {
             for bit_idx in 0..8 {
                 let bit_pos = byte_idx * 8 + bit_idx;
                 if bit_pos >= bit_len {
                     break;
                 }
-                
+
                 let bit = (byte >> bit_idx) & 1 == 1;
                 bit_vector.push(bit)?;
             }
-            
+
             if (byte_idx + 1) * 8 >= bit_len {
                 break;
             }
         }
-        
+
         Self::from_bit_vector(bit_vector)
     }
 
-    fn with_optimizations(bit_vector: BitVector, opts: BuilderOptions) -> Result<RankSelectFew<PIVOT, WORD_SIZE>> {
+    fn with_optimizations(
+        bit_vector: BitVector,
+        opts: BuilderOptions,
+    ) -> Result<RankSelectFew<PIVOT, WORD_SIZE>> {
         let builder = RankSelectFewBuilder {
             sparsity_threshold: if opts.prefer_space { 0.15 } else { 0.1 },
-            block_size: opts.block_size.max(512),  // Ensure reasonable block size
+            block_size: opts.block_size.max(512), // Ensure reasonable block size
             enable_dense_fallback: true,
         };
-        
+
         Self::with_builder(bit_vector, builder)
     }
 }
@@ -608,11 +652,23 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> fmt::Debug for RankSelectFew<PIV
             .field("ones", &self.count_ones())
             .field("zeros", &self.count_zeros())
             .field("mode", &self.mode)
-            .field("sparsity", &format!("{:.3}%", self.sparse_data.sparsity * 100.0))
+            .field(
+                "sparsity",
+                &format!("{:.3}%", self.sparse_data.sparsity * 100.0),
+            )
             .field("sparse_elements", &self.sparse_elements_count())
-            .field("compression_ratio", &format!("{:.3}", self.compression_ratio()))
-            .field("memory_usage", &format!("{} bytes", self.memory_usage_bytes()))
-            .field("overhead", &format!("{:.2}%", self.space_overhead_percent()))
+            .field(
+                "compression_ratio",
+                &format!("{:.3}", self.compression_ratio()),
+            )
+            .field(
+                "memory_usage",
+                &format!("{} bytes", self.memory_usage_bytes()),
+            )
+            .field(
+                "overhead",
+                &format!("{:.2}%", self.space_overhead_percent()),
+            )
             .finish()
     }
 }
@@ -632,7 +688,7 @@ mod tests {
 
     fn create_very_sparse_bitvector() -> BitVector {
         let mut bv = BitVector::new();
-        // Only 1% density - every 100th bit is set  
+        // Only 1% density - every 100th bit is set
         for i in 0..10000 {
             bv.push(i % 100 == 0).unwrap();
         }
@@ -666,19 +722,29 @@ mod tests {
 
         // Test basic rank operations
         assert_eq!(sparse_rs.rank1(0), 0);
-        assert_eq!(sparse_rs.rank1(1), 1);   // First bit (position 0) is set
+        assert_eq!(sparse_rs.rank1(1), 1); // First bit (position 0) is set
         assert_eq!(sparse_rs.rank1(100), 1); // Still only 1 set bit
         assert_eq!(sparse_rs.rank1(101), 2); // Position 100 is set
 
         // Test rank0 operations
         assert_eq!(sparse_rs.rank0(0), 0);
-        assert_eq!(sparse_rs.rank0(1), 0);   // No clear bits before position 1
+        assert_eq!(sparse_rs.rank0(1), 0); // No clear bits before position 1
         assert_eq!(sparse_rs.rank0(100), 99); // 99 clear bits before position 100
 
         // Test consistency with original bit vector
         for pos in (0..bv.len()).step_by(1000) {
-            assert_eq!(sparse_rs.rank1(pos), bv.rank1(pos), "Rank1 mismatch at position {}", pos);
-            assert_eq!(sparse_rs.rank0(pos), bv.rank0(pos), "Rank0 mismatch at position {}", pos);
+            assert_eq!(
+                sparse_rs.rank1(pos),
+                bv.rank1(pos),
+                "Rank1 mismatch at position {}",
+                pos
+            );
+            assert_eq!(
+                sparse_rs.rank0(pos),
+                bv.rank0(pos),
+                "Rank0 mismatch at position {}",
+                pos
+            );
         }
     }
 
@@ -688,14 +754,14 @@ mod tests {
         let sparse_rs = RankSelectFew::<true, 64>::from_bit_vector(bv.clone()).unwrap();
 
         // Test select1 operations (selecting set bits)
-        assert_eq!(sparse_rs.select1(0).unwrap(), 0);     // First set bit at position 0
-        assert_eq!(sparse_rs.select1(1).unwrap(), 100);   // Second set bit at position 100
-        assert_eq!(sparse_rs.select1(2).unwrap(), 200);   // Third set bit at position 200
+        assert_eq!(sparse_rs.select1(0).unwrap(), 0); // First set bit at position 0
+        assert_eq!(sparse_rs.select1(1).unwrap(), 100); // Second set bit at position 100
+        assert_eq!(sparse_rs.select1(2).unwrap(), 200); // Third set bit at position 200
 
         // Test select0 operations (selecting clear bits)
-        assert_eq!(sparse_rs.select0(0).unwrap(), 1);     // First clear bit at position 1
-        assert_eq!(sparse_rs.select0(1).unwrap(), 2);     // Second clear bit at position 2
-        assert_eq!(sparse_rs.select0(98).unwrap(), 99);   // 99th clear bit at position 99
+        assert_eq!(sparse_rs.select0(0).unwrap(), 1); // First clear bit at position 1
+        assert_eq!(sparse_rs.select0(1).unwrap(), 2); // Second clear bit at position 2
+        assert_eq!(sparse_rs.select0(98).unwrap(), 99); // 99th clear bit at position 99
 
         // Test error conditions
         let total_ones = sparse_rs.count_ones();
@@ -711,15 +777,20 @@ mod tests {
         let sparse_rs = RankSelectFew::<true, 64>::from_bit_vector(bv.clone()).unwrap();
 
         // Test get operations
-        assert_eq!(sparse_rs.get(0), Some(true));    // Position 0 is set
-        assert_eq!(sparse_rs.get(1), Some(false));   // Position 1 is clear
-        assert_eq!(sparse_rs.get(100), Some(true));  // Position 100 is set
+        assert_eq!(sparse_rs.get(0), Some(true)); // Position 0 is set
+        assert_eq!(sparse_rs.get(1), Some(false)); // Position 1 is clear
+        assert_eq!(sparse_rs.get(100), Some(true)); // Position 100 is set
         assert_eq!(sparse_rs.get(101), Some(false)); // Position 101 is clear
-        assert_eq!(sparse_rs.get(10000), None);      // Out of bounds
+        assert_eq!(sparse_rs.get(10000), None); // Out of bounds
 
         // Test consistency with original bit vector
         for pos in (0..bv.len()).step_by(50) {
-            assert_eq!(sparse_rs.get(pos), bv.get(pos), "Get mismatch at position {}", pos);
+            assert_eq!(
+                sparse_rs.get(pos),
+                bv.get(pos),
+                "Get mismatch at position {}",
+                pos
+            );
         }
     }
 
@@ -734,9 +805,9 @@ mod tests {
         assert_eq!(sparse_rs.sparse_count(), 100); // 100 set bits
 
         // Test contains_sparse
-        assert!(sparse_rs.contains_sparse(0));    // Position 0 has sparse element (1)
-        assert!(!sparse_rs.contains_sparse(1));   // Position 1 doesn't have sparse element
-        assert!(sparse_rs.contains_sparse(100));  // Position 100 has sparse element
+        assert!(sparse_rs.contains_sparse(0)); // Position 0 has sparse element (1)
+        assert!(!sparse_rs.contains_sparse(1)); // Position 1 doesn't have sparse element
+        assert!(sparse_rs.contains_sparse(100)); // Position 100 has sparse element
 
         // Test sparse_positions_in_range
         let positions = sparse_rs.sparse_positions_in_range(0, 500);
@@ -763,13 +834,22 @@ mod tests {
         println!("Memory usage: {} bytes", memory_usage);
 
         // For 1% density, compression should be good but reasonable
-        assert!(compression_ratio < 0.5, "Compression ratio should be <50% for 1% sparse data");
-        assert!(space_overhead < 50.0, "Space overhead should be <50% for sparse data");
-        
+        assert!(
+            compression_ratio < 0.5,
+            "Compression ratio should be <50% for 1% sparse data"
+        );
+        assert!(
+            space_overhead < 50.0,
+            "Space overhead should be <50% for sparse data"
+        );
+
         // Memory usage should be reasonable
         let original_bits = bv.len();
         let expected_memory = (sparse_rs.sparse_count() * 4) + 1000; // rough estimate
-        assert!(memory_usage < expected_memory, "Memory usage should be reasonable");
+        assert!(
+            memory_usage < expected_memory,
+            "Memory usage should be reasonable"
+        );
     }
 
     #[test]
@@ -796,10 +876,10 @@ mod tests {
     #[test]
     fn test_builder_interface() {
         let bv = create_very_sparse_bitvector();
-        
+
         // Test from_bit_vector
         let rs1 = RankSelectFew::<true, 64>::from_bit_vector(bv.clone()).unwrap();
-        
+
         // Test from_iter
         let bits: Vec<bool> = (0..1000).map(|i| i % 50 == 0).collect();
         let rs2 = RankSelectFew::<true, 64>::from_iter(bits.iter().copied()).unwrap();
@@ -832,7 +912,8 @@ mod tests {
             mostly_ones_bv.push(i % 100 != 0).unwrap(); // Only 1% are zeros
         }
 
-        let rs_few_zeros = RankSelectFew::<false, 64>::from_bit_vector(mostly_ones_bv.clone()).unwrap();
+        let rs_few_zeros =
+            RankSelectFew::<false, 64>::from_bit_vector(mostly_ones_bv.clone()).unwrap();
         assert!(rs_few_zeros.is_sparse_mode()); // Should use sparse mode for few zeros
         assert_eq!(rs_few_zeros.sparse_count(), 10); // 10 zeros
     }
@@ -891,7 +972,7 @@ mod tests {
         }
 
         let sparse_rs = RankSelectFew::<true, 64>::from_bit_vector(large_bv.clone()).unwrap();
-        
+
         assert!(sparse_rs.is_sparse_mode());
         assert_eq!(sparse_rs.len(), 100_000);
         assert_eq!(sparse_rs.count_ones(), 100); // 100 set bits
@@ -908,10 +989,14 @@ mod tests {
         let memory_usage = sparse_rs.memory_usage_bytes();
         let original_bits = large_bv.len();
         let original_bytes = (original_bits + 7) / 8;
-        
-        println!("Original: {} bytes, Compressed: {} bytes, Ratio: {:.3}", 
-                original_bytes, memory_usage, memory_usage as f64 / original_bytes as f64);
-        
+
+        println!(
+            "Original: {} bytes, Compressed: {} bytes, Ratio: {:.3}",
+            original_bytes,
+            memory_usage,
+            memory_usage as f64 / original_bytes as f64
+        );
+
         // Should use much less memory than original
         assert!((memory_usage as f64 / original_bytes as f64) < 0.1);
     }

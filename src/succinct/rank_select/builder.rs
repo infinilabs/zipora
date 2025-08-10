@@ -3,9 +3,9 @@
 //! This module provides utilities and helper functions for constructing
 //! rank/select structures with various optimizations and configurations.
 
+use super::{BuilderOptions, RankSelectOps};
 use crate::error::Result;
 use crate::succinct::BitVector;
-use super::{BuilderOptions, RankSelectOps};
 
 /// Factory for creating optimal rank/select implementations
 pub struct RankSelectFactory;

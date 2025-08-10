@@ -4,7 +4,7 @@
 //! overhead for frequently allocated objects of similar sizes.
 
 use crate::error::{Result, ZiporaError};
-use std::alloc::{alloc, dealloc, Layout};
+use std::alloc::{Layout, alloc, dealloc};
 use std::collections::VecDeque;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -84,13 +84,13 @@ impl Default for PoolStats {
 ///
 /// # Thread Safety Invariants
 ///
-/// **CRITICAL SECURITY WARNING**: This implementation contains multiple thread safety 
+/// **CRITICAL SECURITY WARNING**: This implementation contains multiple thread safety
 /// vulnerabilities that can lead to data races, use-after-free, and memory corruption.
 /// See comprehensive security analysis in `/usr/local/google/home/binwu/go/src/infini.sh/zipora/codereview.md`
 ///
 /// ## Current Thread Safety Issues:
 ///
-/// 1. **UNSAFE Send/Sync Implementation**: Manual implementation bypasses Rust's safety 
+/// 1. **UNSAFE Send/Sync Implementation**: Manual implementation bypasses Rust's safety
 ///    guarantees for raw pointers (*mut u8). Raw pointers can be aliased across threads
 ///    leading to data races and use-after-free conditions.
 ///
@@ -117,7 +117,7 @@ impl Default for PoolStats {
 /// - ❌ Memory correctness: Double-free and use-after-free possible
 /// - ❌ Deadlock freedom: Drop implementation can deadlock during unwinding
 ///
-/// **RECOMMENDATION**: Use established thread-safe allocators like jemalloc, 
+/// **RECOMMENDATION**: Use established thread-safe allocators like jemalloc,
 /// mimalloc, or bumpalo instead of this implementation.
 pub struct MemoryPool {
     config: PoolConfig,
@@ -135,7 +135,7 @@ pub struct MemoryPool {
 //
 // CONFIRMED VULNERABILITIES:
 // - Use-after-free: Freed pointers can be accessed by multiple threads
-// - Data races: Concurrent access to same memory through aliased pointers  
+// - Data races: Concurrent access to same memory through aliased pointers
 // - Double-free: Same pointer can be deallocated multiple times
 //
 // See security analysis for proof-of-concept exploits and recommended fixes.
@@ -169,7 +169,7 @@ impl MemoryPool {
     /// Allocate a chunk from the pool
     ///
     /// # Thread Safety Issues
-    /// 
+    ///
     /// **WARNING**: This method contains TOCTOU race conditions and silent failures:
     /// 1. Statistics update happens after pool modification but before return
     /// 2. try_lock() pattern causes silent failures under high contention

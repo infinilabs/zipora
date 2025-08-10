@@ -3,12 +3,12 @@
 //! This module provides the primary C-compatible interface for the zipora library,
 //! allowing seamless integration with existing C/C++ codebases.
 
-use super::{types::*, CResult};
+use super::{CResult, types::*};
 use crate::blob_store::traits::BlobStore;
 use std::cell::RefCell;
-use std::ffi::CString;
 #[cfg(test)]
 use std::ffi::CStr;
+use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
 use std::sync::Mutex;
@@ -87,18 +87,14 @@ pub unsafe extern "C" fn zipora_version() -> *const c_char {
     let cstring = VERSION_CSTRING.get_or_init(|| {
         CString::new(crate::VERSION).unwrap_or_else(|_| CString::new("unknown").unwrap())
     });
-    
+
     cstring.as_ptr()
 }
 
 /// Check if SIMD optimizations are available
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zipora_has_simd() -> c_int {
-    if crate::has_simd_support() {
-        1
-    } else {
-        0
-    }
+    if crate::has_simd_support() { 1 } else { 0 }
 }
 
 /// Create a new FastVec instance
@@ -645,8 +641,8 @@ mod tests {
 
     #[test]
     fn test_error_callback() {
-        use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Mutex;
+        use std::sync::atomic::{AtomicBool, Ordering};
 
         static CALLBACK_CALLED: AtomicBool = AtomicBool::new(false);
         static CALLBACK_MESSAGE: Mutex<Option<String>> = Mutex::new(None);
@@ -664,7 +660,7 @@ mod tests {
         unsafe {
             // Clear any previous error state
             clear_last_error();
-            
+
             // Set the error callback
             zipora_set_error_callback(Some(test_callback));
 

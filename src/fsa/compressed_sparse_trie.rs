@@ -44,8 +44,7 @@
 
 use crate::error::{Result, ZiporaError};
 use crate::fsa::traits::{
-    FiniteStateAutomaton, StateInspectable, StatisticsProvider, Trie,
-    TrieStats,
+    FiniteStateAutomaton, StateInspectable, StatisticsProvider, Trie, TrieStats,
 };
 use crate::memory::secure_pool::SecureMemoryPool;
 use crate::{FastVec, StateId};
@@ -125,16 +124,14 @@ impl ChildStorage {
     fn new() -> Self {
         ChildStorage::Small(Vec::new())
     }
-    
+
     fn get(&self, key: u8) -> Option<StateId> {
         match self {
-            ChildStorage::Small(vec) => {
-                vec.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
-            }
+            ChildStorage::Small(vec) => vec.iter().find(|(k, _)| *k == key).map(|(_, v)| *v),
             ChildStorage::Large(map) => map.get(&key).copied(),
         }
     }
-    
+
     fn insert(&mut self, key: u8, value: StateId) {
         match self {
             ChildStorage::Small(vec) => {
@@ -142,7 +139,7 @@ impl ChildStorage {
                 vec.retain(|(k, _)| *k != key);
                 vec.push((key, value));
                 vec.sort_by_key(|(k, _)| *k);
-                
+
                 // Convert to HashMap if too many children
                 if vec.len() > 4 {
                     let map: HashMap<u8, StateId> = vec.iter().copied().collect();
@@ -154,21 +151,21 @@ impl ChildStorage {
             }
         }
     }
-    
+
     fn len(&self) -> usize {
         match self {
             ChildStorage::Small(vec) => vec.len(),
             ChildStorage::Large(map) => map.len(),
         }
     }
-    
+
     fn keys(&self) -> Vec<u8> {
         match self {
             ChildStorage::Small(vec) => vec.iter().map(|(k, _)| *k).collect(),
             ChildStorage::Large(map) => map.keys().copied().collect(),
         }
     }
-    
+
     fn iter(&self) -> Box<dyn Iterator<Item = (u8, StateId)> + '_> {
         match self {
             ChildStorage::Small(vec) => Box::new(vec.iter().copied()),
@@ -221,7 +218,7 @@ impl CspNode {
     fn longest_common_prefix(&self, key: &[u8]) -> usize {
         let edge = self.edge_label_slice();
         let min_len = edge.len().min(key.len());
-        
+
         for i in 0..min_len {
             if edge[i] != key[i] {
                 return i;
@@ -250,7 +247,9 @@ impl CspNode {
         // Update current node with prefix - it becomes a non-terminal branching node
         let mut new_edge_label = FastVec::new();
         for i in 0..split_pos.min(self.edge_label.len()) {
-            new_edge_label.push(self.edge_label[i]).map_err(|e| ZiporaError::invalid_data(&format!("Failed to create new edge label: {}", e)))?;
+            new_edge_label.push(self.edge_label[i]).map_err(|e| {
+                ZiporaError::invalid_data(&format!("Failed to create new edge label: {}", e))
+            })?;
         }
         self.edge_label = new_edge_label;
         self.is_final = false; // This node is now just a branching point
@@ -309,11 +308,14 @@ struct CspTrieInner {
 
 impl CspTrieInner {
     /// Create new CSP trie inner structure
-    fn new(concurrency_level: ConcurrencyLevel, memory_pool: Arc<SecureMemoryPool>) -> Result<Self> {
+    fn new(
+        concurrency_level: ConcurrencyLevel,
+        memory_pool: Arc<SecureMemoryPool>,
+    ) -> Result<Self> {
         let nodes = DashMap::new();
         let root_node = Arc::new(RwLock::new(CspNode::new_root()));
         let root_id = 0;
-        
+
         nodes.insert(root_id, root_node);
 
         // Configure semaphores based on concurrency level
@@ -324,7 +326,9 @@ impl CspTrieInner {
             ConcurrencyLevel::SingleThreadStrict => (1, 1),
             ConcurrencyLevel::SingleThreadShared => (MAX_REASONABLE_PERMITS, 1),
             ConcurrencyLevel::OneWriteMultiRead => (MAX_REASONABLE_PERMITS, 1),
-            ConcurrencyLevel::MultiWriteMultiRead => (MAX_REASONABLE_PERMITS, MAX_REASONABLE_PERMITS),
+            ConcurrencyLevel::MultiWriteMultiRead => {
+                (MAX_REASONABLE_PERMITS, MAX_REASONABLE_PERMITS)
+            }
         };
 
         // Generate unique trie ID
@@ -410,15 +414,18 @@ impl CompressedSparseTrie {
     pub async fn acquire_reader_token(&self) -> Result<ReaderToken> {
         // Simple token-based access control without storing permits
         match self.inner.concurrency_level {
-            ConcurrencyLevel::NoWriteReadOnly => {},
+            ConcurrencyLevel::NoWriteReadOnly => {}
             _ => {
                 // Check if we can acquire a permit
                 let _permit = self.inner.reader_semaphore.acquire().await.map_err(|e| {
-                    ZiporaError::concurrency_error(&format!("Failed to acquire reader token: {}", e))
+                    ZiporaError::concurrency_error(&format!(
+                        "Failed to acquire reader token: {}",
+                        e
+                    ))
                 })?;
                 // Immediately release the permit - we're just checking availability
                 drop(_permit);
-            },
+            }
         };
 
         Ok(ReaderToken {
@@ -431,14 +438,25 @@ impl CompressedSparseTrie {
 
     /// Acquire a writer token for safe concurrent access
     pub async fn acquire_writer_token(&self) -> Result<WriterToken> {
-        if matches!(self.inner.concurrency_level, ConcurrencyLevel::NoWriteReadOnly) {
-            return Err(ZiporaError::invalid_operation("Write operations not allowed in read-only mode"));
+        if matches!(
+            self.inner.concurrency_level,
+            ConcurrencyLevel::NoWriteReadOnly
+        ) {
+            return Err(ZiporaError::invalid_operation(
+                "Write operations not allowed in read-only mode",
+            ));
         }
 
         // Acquire and hold a writer permit for the lifetime of the token
-        let permit = self.inner.writer_semaphore.clone().acquire_owned().await.map_err(|e| {
-            ZiporaError::concurrency_error(&format!("Failed to acquire writer token: {}", e))
-        })?;
+        let permit = self
+            .inner
+            .writer_semaphore
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|e| {
+                ZiporaError::concurrency_error(&format!("Failed to acquire writer token: {}", e))
+            })?;
 
         Ok(WriterToken {
             token_id: self.inner.generate_token_id(),
@@ -455,7 +473,9 @@ impl CompressedSparseTrie {
             return Err(ZiporaError::invalid_operation("Reader token is invalid"));
         }
         if token.trie_id != self.inner.trie_id {
-            return Err(ZiporaError::invalid_operation("Reader token belongs to a different trie"));
+            return Err(ZiporaError::invalid_operation(
+                "Reader token belongs to a different trie",
+            ));
         }
         Ok(())
     }
@@ -466,7 +486,9 @@ impl CompressedSparseTrie {
             return Err(ZiporaError::invalid_operation("Writer token is invalid"));
         }
         if token.trie_id != self.inner.trie_id {
-            return Err(ZiporaError::invalid_operation("Writer token belongs to a different trie"));
+            return Err(ZiporaError::invalid_operation(
+                "Writer token belongs to a different trie",
+            ));
         }
         Ok(())
     }
@@ -490,7 +512,11 @@ impl CompressedSparseTrie {
             return false;
         }
         let result = self.contains_internal(key);
-        println!("contains_internal({:?}) = {}", std::str::from_utf8(key).unwrap_or("<invalid>"), result);
+        println!(
+            "contains_internal({:?}) = {}",
+            std::str::from_utf8(key).unwrap_or("<invalid>"),
+            result
+        );
         result
     }
 
@@ -506,7 +532,9 @@ impl CompressedSparseTrie {
     fn insert_internal_concurrent(&self, key: &[u8]) -> Result<StateId> {
         if key.is_empty() {
             // Handle empty key by marking root as terminal
-            let root_arc = self.inner.get_node(self.inner.root_id)
+            let root_arc = self
+                .inner
+                .get_node(self.inner.root_id)
                 .ok_or_else(|| ZiporaError::invalid_data("Invalid root state ID"))?;
             let mut root_node = root_arc.write();
             if !root_node.is_final {
@@ -520,9 +548,11 @@ impl CompressedSparseTrie {
         let mut remaining_key = key;
 
         loop {
-            let node_arc = self.inner.get_node(current_id)
+            let node_arc = self
+                .inner
+                .get_node(current_id)
                 .ok_or_else(|| ZiporaError::invalid_data("Invalid state ID"))?;
-            
+
             let mut node = node_arc.write();
             let edge_label = node.edge_label_slice();
 
@@ -547,10 +577,11 @@ impl CompressedSparseTrie {
                 } else {
                     // Create new child node - edge label should be the remaining key after consuming first byte
                     let mut edge_label = FastVec::new();
-                    for &b in &remaining_key[1..] {  // Skip the first byte that's used as the child key
+                    for &b in &remaining_key[1..] {
+                        // Skip the first byte that's used as the child key
                         edge_label.push(b)?;
                     }
-                    
+
                     let child_node = CspNode::new(edge_label, true);
                     // Key storage removed for memory efficiency
 
@@ -563,7 +594,8 @@ impl CompressedSparseTrie {
                 // Node has edge label - check for common prefix
                 let common_prefix_len = self.longest_common_prefix(edge_label, remaining_key);
 
-                if common_prefix_len == edge_label.len() && common_prefix_len == remaining_key.len() {
+                if common_prefix_len == edge_label.len() && common_prefix_len == remaining_key.len()
+                {
                     // Exact match - mark as final
                     if !node.is_final {
                         node.is_final = true;
@@ -575,7 +607,7 @@ impl CompressedSparseTrie {
                     // Complete match of edge label, but key is longer
                     let remaining = &remaining_key[common_prefix_len..];
                     let first_byte = remaining[0];
-                    
+
                     if let Some(child_id) = node.children.get(first_byte) {
                         drop(node);
                         current_id = child_id;
@@ -587,7 +619,7 @@ impl CompressedSparseTrie {
                         for &b in &remaining[1..] {
                             edge_label.push(b)?;
                         }
-                        
+
                         let child_node = CspNode::new(edge_label, true);
                         // Key storage removed for memory efficiency
 
@@ -603,10 +635,10 @@ impl CompressedSparseTrie {
                     } else {
                         return Err(ZiporaError::invalid_data("Invalid split position"));
                     };
-                    
+
                     let split_node = node.split_at(common_prefix_len, &self.inner.memory_pool)?;
                     let split_id = self.inner.insert_node(split_node);
-                    
+
                     // Add split node as child
                     node.children.insert(split_first_byte, split_id);
 
@@ -623,7 +655,7 @@ impl CompressedSparseTrie {
                         for &b in &remaining[1..] {
                             edge_label.push(b)?;
                         }
-                        
+
                         let new_child = CspNode::new(edge_label, true);
                         // Key storage removed for memory efficiency
 
@@ -641,7 +673,9 @@ impl CompressedSparseTrie {
     fn insert_internal(&mut self, key: &[u8]) -> Result<StateId> {
         if key.is_empty() {
             // Handle empty key by marking root as terminal
-            let root_arc = self.inner.get_node(self.inner.root_id)
+            let root_arc = self
+                .inner
+                .get_node(self.inner.root_id)
                 .ok_or_else(|| ZiporaError::invalid_data("Invalid root state ID"))?;
             let mut root_node = root_arc.write();
             if !root_node.is_final {
@@ -655,9 +689,11 @@ impl CompressedSparseTrie {
         let mut remaining_key = key;
 
         loop {
-            let node_arc = self.inner.get_node(current_id)
+            let node_arc = self
+                .inner
+                .get_node(current_id)
                 .ok_or_else(|| ZiporaError::invalid_data("Invalid state ID"))?;
-            
+
             let mut node = node_arc.write();
             let edge_label = node.edge_label_slice();
 
@@ -682,10 +718,11 @@ impl CompressedSparseTrie {
                 } else {
                     // Create new child node - edge label should be the remaining key after consuming first byte
                     let mut edge_label = FastVec::new();
-                    for &b in &remaining_key[1..] {  // Skip the first byte that's used as the child key
+                    for &b in &remaining_key[1..] {
+                        // Skip the first byte that's used as the child key
                         edge_label.push(b)?;
                     }
-                    
+
                     let child_node = CspNode::new(edge_label, true);
                     // Key storage removed for memory efficiency
 
@@ -698,7 +735,8 @@ impl CompressedSparseTrie {
                 // Node has edge label - check for common prefix
                 let common_prefix_len = self.longest_common_prefix(edge_label, remaining_key);
 
-                if common_prefix_len == edge_label.len() && common_prefix_len == remaining_key.len() {
+                if common_prefix_len == edge_label.len() && common_prefix_len == remaining_key.len()
+                {
                     // Exact match - mark as final
                     if !node.is_final {
                         node.is_final = true;
@@ -710,7 +748,7 @@ impl CompressedSparseTrie {
                     // Complete match of edge label, but key is longer
                     let remaining = &remaining_key[common_prefix_len..];
                     let first_byte = remaining[0];
-                    
+
                     if let Some(child_id) = node.children.get(first_byte) {
                         drop(node);
                         current_id = child_id;
@@ -722,7 +760,7 @@ impl CompressedSparseTrie {
                         for &b in &remaining[1..] {
                             edge_label.push(b)?;
                         }
-                        
+
                         let child_node = CspNode::new(edge_label, true);
                         // Key storage removed for memory efficiency
 
@@ -739,10 +777,10 @@ impl CompressedSparseTrie {
                     } else {
                         return Err(ZiporaError::invalid_data("Invalid split position"));
                     };
-                    
+
                     let split_node = node.split_at(common_prefix_len, &self.inner.memory_pool)?;
                     let split_id = self.inner.insert_node(split_node);
-                    
+
                     // Add split node as child
                     node.children.insert(split_first_byte, split_id);
 
@@ -756,10 +794,11 @@ impl CompressedSparseTrie {
                         // Create new child for remaining key
                         let remaining = &remaining_key[common_prefix_len..];
                         let mut edge_label = FastVec::new();
-                        for &b in &remaining[1..] {  // Skip the first byte that's used as the child key
+                        for &b in &remaining[1..] {
+                            // Skip the first byte that's used as the child key
                             edge_label.push(b)?;
                         }
-                        
+
                         let new_child = CspNode::new(edge_label, true);
                         // Key storage removed for memory efficiency
 
@@ -784,7 +823,11 @@ impl CompressedSparseTrie {
             // Check if root is a terminal state
             let root_arc = self.inner.get_node(self.inner.root_id)?;
             let root_node = root_arc.read();
-            return if root_node.is_final { Some(self.inner.root_id) } else { None };
+            return if root_node.is_final {
+                Some(self.inner.root_id)
+            } else {
+                None
+            };
         }
 
         let mut current_id = self.inner.root_id;
@@ -798,7 +841,11 @@ impl CompressedSparseTrie {
             if edge_label.is_empty() {
                 // Root node or node without edge label
                 if remaining_key.is_empty() {
-                    return if node.is_final { Some(current_id) } else { None };
+                    return if node.is_final {
+                        Some(current_id)
+                    } else {
+                        None
+                    };
                 }
 
                 let first_byte = remaining_key[0];
@@ -828,7 +875,11 @@ impl CompressedSparseTrie {
 
                 if remaining_key.is_empty() {
                     // Key exactly matches this node's path
-                    return if node.is_final { Some(current_id) } else { None };
+                    return if node.is_final {
+                        Some(current_id)
+                    } else {
+                        None
+                    };
                 }
 
                 // Continue with child - find child with next byte
@@ -865,17 +916,17 @@ impl CompressedSparseTrie {
     pub fn memory_usage(&self) -> usize {
         // More conservative memory usage calculation for better compression ratio
         let mut total_memory = 0;
-        
+
         // Count actual used memory, not capacity
         for entry in self.inner.nodes.iter() {
             let node = entry.value().read();
-            
+
             // Base node size (reduced)
             total_memory += 64; // Conservative estimate for the node structure
-            
+
             // Edge label memory (actual length, not capacity)
             total_memory += node.edge_label.len();
-            
+
             // Children storage memory (actual usage)
             match &node.children {
                 ChildStorage::Small(vec) => {
@@ -887,10 +938,10 @@ impl CompressedSparseTrie {
                 }
             }
         }
-        
+
         // Add minimal overhead for the trie structure itself
         total_memory += 128; // Base trie overhead
-        
+
         total_memory
     }
 }
@@ -913,7 +964,7 @@ impl FiniteStateAutomaton for CompressedSparseTrie {
     fn transition(&self, state: StateId, symbol: u8) -> Option<StateId> {
         let node_arc = self.inner.get_node(state)?;
         let node = node_arc.read();
-        
+
         // For FSA transitions, we only look at direct children
         // Edge labels are handled internally during traversal
         node.children.get(symbol)
@@ -985,12 +1036,16 @@ impl StateInspectable for CompressedSparseTrie {
 impl ZiporaError {
     /// Create a concurrency error
     pub fn concurrency_error(message: &str) -> Self {
-        ZiporaError::InvalidData { message: format!("Concurrency error: {}", message) }
+        ZiporaError::InvalidData {
+            message: format!("Concurrency error: {}", message),
+        }
     }
 
     /// Create an invalid operation error
     pub fn invalid_operation(message: &str) -> Self {
-        ZiporaError::InvalidData { message: format!("Invalid operation: {}", message) }
+        ZiporaError::InvalidData {
+            message: format!("Invalid operation: {}", message),
+        }
     }
 }
 
@@ -1002,105 +1057,113 @@ mod tests {
     #[tokio::test]
     async fn test_basic_insertion_and_lookup() -> Result<()> {
         let mut trie = CompressedSparseTrie::new(ConcurrencyLevel::SingleThreadStrict)?;
-        
+
         // Test insertion
         let state_id = trie.insert(b"hello")?;
         assert!(state_id > 0);
-        
+
         // Test lookup
         assert!(trie.contains(b"hello"));
         assert!(!trie.contains(b"world"));
         assert_eq!(trie.lookup(b"hello"), Some(state_id));
         assert_eq!(trie.lookup(b"world"), None);
-        
+
         Ok(())
     }
 
     #[tokio::test]
     async fn test_token_based_access() -> Result<()> {
         let mut trie = CompressedSparseTrie::new(ConcurrencyLevel::OneWriteMultiRead)?;
-        
+
         // Get writer token and insert
         let writer_token = trie.acquire_writer_token().await?;
         let state_id = trie.insert_with_token(b"hello", &writer_token)?;
         assert!(state_id > 0);
-        
+
         // Get reader token and lookup
         let reader_token = trie.acquire_reader_token().await?;
         assert!(trie.contains_with_token(b"hello", &reader_token));
-        assert_eq!(trie.lookup_with_token(b"hello", &reader_token), Some(state_id));
-        
+        assert_eq!(
+            trie.lookup_with_token(b"hello", &reader_token),
+            Some(state_id)
+        );
+
         Ok(())
     }
 
     #[tokio::test]
     async fn test_path_compression() -> Result<()> {
         let mut trie = CompressedSparseTrie::new(ConcurrencyLevel::SingleThreadStrict)?;
-        
+
         // Insert keys with common prefixes
         println!("Inserting 'hello'");
         trie.insert(b"hello")?;
-        println!("After inserting 'hello', contains: {}", trie.contains(b"hello"));
-        
+        println!(
+            "After inserting 'hello', contains: {}",
+            trie.contains(b"hello")
+        );
+
         println!("Inserting 'help'");
         trie.insert(b"help")?;
         println!("After inserting 'help':");
         println!("  contains('hello'): {}", trie.contains(b"hello"));
         println!("  contains('help'): {}", trie.contains(b"help"));
-        
+
         println!("Inserting 'helicopter'");
         trie.insert(b"helicopter")?;
         println!("After inserting 'helicopter':");
         println!("  contains('hello'): {}", trie.contains(b"hello"));
         println!("  contains('help'): {}", trie.contains(b"help"));
         println!("  contains('helicopter'): {}", trie.contains(b"helicopter"));
-        
+
         // All should be found
         assert!(trie.contains(b"hello"));
         assert!(trie.contains(b"help"));
         assert!(trie.contains(b"helicopter"));
-        
+
         // Non-existent keys should not be found
         assert!(!trie.contains(b"he"));
         assert!(!trie.contains(b"world"));
-        
+
         Ok(())
     }
 
     #[tokio::test]
     async fn test_concurrent_access() -> Result<()> {
-        let trie = Arc::new(
-            CompressedSparseTrie::new(ConcurrencyLevel::OneWriteMultiRead)?
-        );
-        
-        let handles = (0..10).map(|i| {
-            let trie_clone = trie.clone();
-            tokio::spawn(async move {
-                let writer_token = trie_clone.acquire_writer_token().await?;
-                let key = format!("key{}", i);
-                println!("Inserting concurrent key: {}", key);
-                let result = trie_clone.insert_token_based(key.as_bytes(), &writer_token)?;
-                println!("Inserted key {} with result: {:?}", key, result);
-                
-                // Immediately verify the insertion
-                let reader_token = trie_clone.acquire_reader_token().await?;
-                let contains = trie_clone.contains_with_token(key.as_bytes(), &reader_token);
-                println!("Immediate check after insert {}: {}", key, contains);
-                
-                Ok::<(), ZiporaError>(())
+        let trie = Arc::new(CompressedSparseTrie::new(
+            ConcurrencyLevel::OneWriteMultiRead,
+        )?);
+
+        let handles = (0..10)
+            .map(|i| {
+                let trie_clone = trie.clone();
+                tokio::spawn(async move {
+                    let writer_token = trie_clone.acquire_writer_token().await?;
+                    let key = format!("key{}", i);
+                    println!("Inserting concurrent key: {}", key);
+                    let result = trie_clone.insert_token_based(key.as_bytes(), &writer_token)?;
+                    println!("Inserted key {} with result: {:?}", key, result);
+
+                    // Immediately verify the insertion
+                    let reader_token = trie_clone.acquire_reader_token().await?;
+                    let contains = trie_clone.contains_with_token(key.as_bytes(), &reader_token);
+                    println!("Immediate check after insert {}: {}", key, contains);
+
+                    Ok::<(), ZiporaError>(())
+                })
             })
-        }).collect::<Vec<_>>();
-        
+            .collect::<Vec<_>>();
+
         // Wait for all insertions
         for handle in handles {
             handle.await.unwrap()?;
         }
-        
+
         println!("All insertions completed. Trie length: {}", trie.len());
-        
+
         // Debug: print all nodes
         println!("Nodes in trie: {:?}", trie.inner.nodes.len());
-        
+
         // Verify all keys were inserted
         let reader_token = trie.acquire_reader_token().await?;
         for i in 0..10 {
@@ -1110,113 +1173,133 @@ mod tests {
             println!("Contains result for {}: {}", key, contains);
             assert!(contains, "Key {} should be found", key);
         }
-        
+
         Ok(())
     }
 
     #[tokio::test]
     async fn test_read_only_mode() -> Result<()> {
         let trie = CompressedSparseTrie::new(ConcurrencyLevel::NoWriteReadOnly)?;
-        
+
         // Should not be able to acquire writer token
         assert!(trie.acquire_writer_token().await.is_err());
-        
+
         // Should be able to acquire reader token
         let reader_token = trie.acquire_reader_token().await?;
         assert!(!trie.contains_with_token(b"test", &reader_token));
-        
+
         Ok(())
     }
 
     #[test]
     fn test_basic_debug() -> Result<()> {
         let mut trie = CompressedSparseTrie::new(ConcurrencyLevel::SingleThreadStrict)?;
-        
+
         println!("Inserting 'hello'...");
         let result = trie.insert(b"hello");
         println!("Insert result: {:?}", result);
         assert!(result.is_ok());
-        
+
         println!("Checking if 'hello' exists...");
         let contains = trie.contains(b"hello");
         println!("Contains result: {}", contains);
-        
+
         println!("Lookup 'hello'...");
         let lookup = trie.lookup(b"hello");
         println!("Lookup result: {:?}", lookup);
-        
+
         println!("Trie length: {}", trie.len());
-        
+
         assert!(contains, "Trie should contain 'hello' after insertion");
-        
+
         Ok(())
     }
 
     #[test]
     fn test_compression_debug() -> Result<()> {
         let mut trie = CompressedSparseTrie::new(ConcurrencyLevel::SingleThreadStrict)?;
-        
+
         let keys = [
             b"abcdefghijklmnop".as_slice(),
             b"abcdefghijklmnopqrstuv".as_slice(),
             b"abcdefghijklmnopqrstuvwxyz".as_slice(),
         ];
-        
+
         for (i, key) in keys.iter().enumerate() {
-            println!("Inserting key {}: {:?}", i, std::str::from_utf8(key).unwrap_or("<invalid>"));
+            println!(
+                "Inserting key {}: {:?}",
+                i,
+                std::str::from_utf8(key).unwrap_or("<invalid>")
+            );
             let result = trie.insert(key);
             println!("Insert result: {:?}", result);
             assert!(result.is_ok(), "Failed to insert key {}", i);
-            
+
             println!("Checking if key {} exists...", i);
             let contains = trie.contains(key);
             println!("Contains result for key {}: {}", i, contains);
             assert!(contains, "Trie should contain key {} after insertion", i);
         }
-        
+
         // Check all keys again
         for (i, key) in keys.iter().enumerate() {
-            println!("Final check for key {}: {:?}", i, std::str::from_utf8(key).unwrap_or("<invalid>"));
+            println!(
+                "Final check for key {}: {:?}",
+                i,
+                std::str::from_utf8(key).unwrap_or("<invalid>")
+            );
             let contains = trie.contains(key);
             println!("Final contains result for key {}: {}", i, contains);
-            assert!(contains, "Trie should still contain key {} after all insertions", i);
+            assert!(
+                contains,
+                "Trie should still contain key {} after all insertions",
+                i
+            );
         }
-        
+
         Ok(())
     }
-    
+
     #[tokio::test]
     async fn test_concurrent_vs_nonconcurrent() -> Result<()> {
-        let trie = Arc::new(CompressedSparseTrie::new(ConcurrencyLevel::OneWriteMultiRead)?);
-        
+        let trie = Arc::new(CompressedSparseTrie::new(
+            ConcurrencyLevel::OneWriteMultiRead,
+        )?);
+
         // Test that concurrent insertion produces same result as non-concurrent lookup
         let writer_token = trie.acquire_writer_token().await?;
         let key = b"key0";
-        
-        println!("Testing concurrent vs non-concurrent with key: {:?}", std::str::from_utf8(key).unwrap());
-        
+
+        println!(
+            "Testing concurrent vs non-concurrent with key: {:?}",
+            std::str::from_utf8(key).unwrap()
+        );
+
         let result = trie.insert_token_based(key, &writer_token)?;
         println!("insert_token_based result: {:?}", result);
-        
+
         // Test without token
         let contains_internal = trie.contains_internal(key);
         println!("contains_internal (no token): {}", contains_internal);
-        
+
         // Test with token
         let reader_token = trie.acquire_reader_token().await?;
         let contains_with_token = trie.contains_with_token(key, &reader_token);
         println!("contains_with_token: {}", contains_with_token);
-        
-        assert_eq!(contains_internal, contains_with_token, "Token-based and internal lookup should match");
+
+        assert_eq!(
+            contains_internal, contains_with_token,
+            "Token-based and internal lookup should match"
+        );
         assert!(contains_internal, "Key should be found");
-        
+
         Ok(())
     }
-    
+
     #[test]
     fn test_external_test_keys() -> Result<()> {
         let mut trie = CompressedSparseTrie::new(ConcurrencyLevel::SingleThreadStrict)?;
-        
+
         let keys = vec![
             b"abcdefghijklmnop".to_vec(),
             b"abcdefghijklmnopqrstuv".to_vec(),
@@ -1226,93 +1309,108 @@ mod tests {
             b"prefix_shared_long_path_3".to_vec(),
             b"another_completely_different_path".to_vec(),
         ];
-        
+
         for (i, key) in keys.iter().enumerate() {
-            println!("Inserting key {}: {:?}", i, std::str::from_utf8(key).unwrap_or("<invalid>"));
+            println!(
+                "Inserting key {}: {:?}",
+                i,
+                std::str::from_utf8(key).unwrap_or("<invalid>")
+            );
             let result = trie.insert(key);
             println!("Insert result: {:?}", result);
             assert!(result.is_ok(), "Failed to insert key {}", i);
-            
-            println!("Checking if key {} exists immediately after insertion...", i);
+
+            println!(
+                "Checking if key {} exists immediately after insertion...",
+                i
+            );
             let contains = trie.contains(key);
             println!("Contains result for key {}: {}", i, contains);
             assert!(contains, "Trie should contain key {} after insertion", i);
         }
-        
+
         // Check all keys again
         for (i, key) in keys.iter().enumerate() {
-            println!("Final check for key {}: {:?}", i, std::str::from_utf8(key).unwrap_or("<invalid>"));
+            println!(
+                "Final check for key {}: {:?}",
+                i,
+                std::str::from_utf8(key).unwrap_or("<invalid>")
+            );
             let contains = trie.contains(key);
             println!("Final contains result for key {}: {}", i, contains);
-            assert!(contains, "Trie should still contain key {} after all insertions", i);
+            assert!(
+                contains,
+                "Trie should still contain key {} after all insertions",
+                i
+            );
         }
-        
+
         Ok(())
     }
 
     #[test]
     fn test_fsa_traits() -> Result<()> {
         let mut trie = CompressedSparseTrie::new(ConcurrencyLevel::SingleThreadStrict)?;
-        
+
         // Test FiniteStateAutomaton trait
         let root = trie.root();
         assert_eq!(root, 0);
         assert!(!trie.is_final(root));
-        
+
         // Insert and test
         let state = trie.insert(b"test")?;
         assert!(trie.is_final(state));
         assert!(trie.accepts(b"test"));
         assert!(!trie.accepts(b"nope"));
-        
+
         // Test Trie trait
         assert_eq!(trie.len(), 1);
         assert!(!trie.is_empty());
-        
+
         Ok(())
     }
 
     #[test]
     fn test_duplicate_key_fix() -> Result<()> {
         let mut trie = CompressedSparseTrie::new(ConcurrencyLevel::SingleThreadStrict)?;
-        
+
         // Test the exact failing case from the property test
         let key = vec![151u8];
-        
+
         // Insert the same key twice
         trie.insert(&key)?;
         trie.insert(&key)?; // This should not increment the count
-        
+
         // Should only count once
         assert_eq!(trie.len(), 1);
         assert!(trie.contains(&key));
-        
+
         // Test with empty key as well
         trie.insert(b"")?;
         trie.insert(b"")?; // This should not increment the count
-        
+
         // Should be 2 total: one for [151] and one for empty key
         assert_eq!(trie.len(), 2);
         assert!(trie.contains(b""));
-        
+
         Ok(())
     }
 
     #[test]
     fn test_statistics() -> Result<()> {
         let mut trie = CompressedSparseTrie::new(ConcurrencyLevel::SingleThreadStrict)?;
-        
+
         // Insert some keys
         for i in 0..100 {
             let key = format!("key{:03}", i);
             trie.insert(key.as_bytes())?;
         }
-        
+
         let stats = trie.stats();
         assert_eq!(stats.num_keys, 100);
         assert!(stats.num_states > 0);
         assert!(stats.memory_usage > 0);
-        
+
         Ok(())
     }
 }

@@ -4,7 +4,7 @@
 //! to optimize performance on modern multi-core systems.
 
 use crate::error::{Result, ZiporaError};
-use std::alloc::{alloc, dealloc, Layout};
+use std::alloc::{Layout, alloc, dealloc};
 use std::collections::HashMap;
 use std::mem;
 use std::ptr::{self, NonNull};
@@ -18,7 +18,7 @@ pub const CACHE_LINE_SIZE: usize = 64;
 pub type NumaNode = usize;
 
 /// Cache-aligned vector that ensures data starts at cache line boundaries
-#[repr(align(64))]  // Cache line alignment
+#[repr(align(64))] // Cache line alignment
 pub struct CacheAlignedVec<T> {
     ptr: NonNull<T>,
     len: usize,
@@ -76,9 +76,11 @@ impl<T> CacheAlignedVec<T> {
 
     /// Reserve capacity for at least `additional` more elements
     pub fn reserve(&mut self, additional: usize) -> Result<()> {
-        let required_cap = self.len.checked_add(additional)
+        let required_cap = self
+            .len
+            .checked_add(additional)
             .ok_or_else(|| ZiporaError::invalid_data("Capacity overflow"))?;
-        
+
         if required_cap <= self.capacity {
             return Ok(());
         }
@@ -108,17 +110,13 @@ impl<T> CacheAlignedVec<T> {
         }
 
         self.len -= 1;
-        unsafe {
-            Some(ptr::read(self.ptr.as_ptr().add(self.len)))
-        }
+        unsafe { Some(ptr::read(self.ptr.as_ptr().add(self.len))) }
     }
 
     /// Get a reference to an element by index
     pub fn get(&self, index: usize) -> Option<&T> {
         if index < self.len {
-            unsafe {
-                Some(&*self.ptr.as_ptr().add(index))
-            }
+            unsafe { Some(&*self.ptr.as_ptr().add(index)) }
         } else {
             None
         }
@@ -127,9 +125,7 @@ impl<T> CacheAlignedVec<T> {
     /// Get a mutable reference to an element by index
     pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
         if index < self.len {
-            unsafe {
-                Some(&mut *self.ptr.as_ptr().add(index))
-            }
+            unsafe { Some(&mut *self.ptr.as_ptr().add(index)) }
         } else {
             None
         }
@@ -137,16 +133,12 @@ impl<T> CacheAlignedVec<T> {
 
     /// Get a slice of all elements
     pub fn as_slice(&self) -> &[T] {
-        unsafe {
-            std::slice::from_raw_parts(self.ptr.as_ptr(), self.len)
-        }
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 
     /// Get a mutable slice of all elements
     pub fn as_mut_slice(&mut self) -> &mut [T] {
-        unsafe {
-            std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len)
-        }
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }
 
     /// Clear all elements
@@ -182,39 +174,36 @@ impl<T> CacheAlignedVec<T> {
         }
 
         // Ensure capacity is aligned to cache line boundaries for optimal access
-        let aligned_capacity = align_to_cache_line(new_capacity * mem::size_of::<T>()) / mem::size_of::<T>();
-        
-        let layout = Layout::from_size_align(
-            aligned_capacity * mem::size_of::<T>(),
-            CACHE_LINE_SIZE,
-        ).map_err(|_| ZiporaError::invalid_data("Invalid layout for cache-aligned allocation"))?;
+        let aligned_capacity =
+            align_to_cache_line(new_capacity * mem::size_of::<T>()) / mem::size_of::<T>();
+
+        let layout =
+            Layout::from_size_align(aligned_capacity * mem::size_of::<T>(), CACHE_LINE_SIZE)
+                .map_err(|_| {
+                    ZiporaError::invalid_data("Invalid layout for cache-aligned allocation")
+                })?;
 
         let new_ptr = if self.capacity == 0 {
             // First allocation - use NUMA-aware allocation if possible
             numa_alloc(layout, self.numa_node)?
         } else {
             // Reallocation - try to preserve NUMA locality
-            let old_layout = Layout::from_size_align(
-                self.capacity * mem::size_of::<T>(),
-                CACHE_LINE_SIZE,
-            ).unwrap();
+            let old_layout =
+                Layout::from_size_align(self.capacity * mem::size_of::<T>(), CACHE_LINE_SIZE)
+                    .unwrap();
 
             let new_ptr = numa_alloc(layout, self.numa_node)?;
-            
+
             // Copy existing data
             unsafe {
-                ptr::copy_nonoverlapping(
-                    self.ptr.as_ptr(),
-                    new_ptr.as_ptr(),
-                    self.len,
-                );
+                ptr::copy_nonoverlapping(self.ptr.as_ptr(), new_ptr.as_ptr(), self.len);
             }
-            
+
             // Deallocate old memory
             unsafe {
                 dealloc(self.ptr.as_ptr() as *mut u8, old_layout);
             }
-            
+
             new_ptr
         };
 
@@ -231,10 +220,9 @@ impl<T> Drop for CacheAlignedVec<T> {
 
         // Deallocate memory
         if self.capacity > 0 {
-            let layout = Layout::from_size_align(
-                self.capacity * mem::size_of::<T>(),
-                CACHE_LINE_SIZE,
-            ).unwrap();
+            let layout =
+                Layout::from_size_align(self.capacity * mem::size_of::<T>(), CACHE_LINE_SIZE)
+                    .unwrap();
 
             unsafe {
                 dealloc(self.ptr.as_ptr() as *mut u8, layout);
@@ -260,7 +248,7 @@ fn align_to_cache_line(size: usize) -> usize {
 /// NUMA-aware memory allocation using node-specific pools
 fn numa_alloc<T>(layout: Layout, preferred_node: Option<NumaNode>) -> Result<NonNull<T>> {
     let node = preferred_node.unwrap_or(0); // Default to node 0
-    
+
     // Try to use NUMA pool for allocation
     if let Ok(mut pools) = NUMA_MANAGER.node_pools.lock() {
         let pool = pools.entry(node).or_insert_with(NumaMemoryPool::new);
@@ -271,7 +259,7 @@ fn numa_alloc<T>(layout: Layout, preferred_node: Option<NumaNode>) -> Result<Non
 
     // Fallback to standard allocation
     let ptr = unsafe { alloc(layout) };
-    
+
     if ptr.is_null() {
         return Err(ZiporaError::out_of_memory(layout.size()));
     }
@@ -293,9 +281,9 @@ struct NumaNodeManager {
 
 /// NUMA-aware memory pool for each node
 struct NumaMemoryPool {
-    small_chunks: Vec<usize>,       // < 1KB allocations (stored as usize for Send/Sync)
-    medium_chunks: Vec<usize>,      // 1KB - 64KB allocations  
-    large_chunks: Vec<usize>,       // > 64KB allocations
+    small_chunks: Vec<usize>, // < 1KB allocations (stored as usize for Send/Sync)
+    medium_chunks: Vec<usize>, // 1KB - 64KB allocations
+    large_chunks: Vec<usize>, // > 64KB allocations
     allocated_bytes: AtomicUsize,
     hit_count: AtomicUsize,
     miss_count: AtomicUsize,
@@ -331,14 +319,15 @@ impl NumaMemoryPool {
         // Allocate new memory bound to NUMA node
         self.miss_count.fetch_add(1, Ordering::Relaxed);
         let ptr = unsafe { alloc(layout) };
-        
+
         if ptr.is_null() {
             return Err(ZiporaError::out_of_memory(layout.size()));
         }
 
         // Bind to NUMA node
         bind_to_numa_node(ptr, layout.size(), node);
-        self.allocated_bytes.fetch_add(layout.size(), Ordering::Relaxed);
+        self.allocated_bytes
+            .fetch_add(layout.size(), Ordering::Relaxed);
 
         Ok(NonNull::new(ptr).unwrap())
     }
@@ -353,14 +342,16 @@ impl NumaMemoryPool {
         };
 
         // Return to pool for reuse (with size limits to prevent unbounded growth)
-        if pool.len() < 100 {  // Limit pool size
+        if pool.len() < 100 {
+            // Limit pool size
             pool.push(ptr.as_ptr() as usize);
         } else {
             // Pool is full, actually deallocate
             unsafe {
                 dealloc(ptr.as_ptr(), layout);
             }
-            self.allocated_bytes.fetch_sub(layout.size(), Ordering::Relaxed);
+            self.allocated_bytes
+                .fetch_sub(layout.size(), Ordering::Relaxed);
         }
     }
 
@@ -370,7 +361,7 @@ impl NumaMemoryPool {
             hit_count: self.hit_count.load(Ordering::Relaxed),
             miss_count: self.miss_count.load(Ordering::Relaxed),
             cached_small: self.small_chunks.len(),
-            cached_medium: self.medium_chunks.len(), 
+            cached_medium: self.medium_chunks.len(),
             cached_large: self.large_chunks.len(),
         }
     }
@@ -381,29 +372,37 @@ impl Drop for NumaMemoryPool {
         // Clean up all cached allocations
         for &ptr_addr in &self.small_chunks {
             unsafe {
-                dealloc(ptr_addr as *mut u8, Layout::from_size_align(1024, 8).unwrap());
+                dealloc(
+                    ptr_addr as *mut u8,
+                    Layout::from_size_align(1024, 8).unwrap(),
+                );
             }
         }
         for &ptr_addr in &self.medium_chunks {
             unsafe {
-                dealloc(ptr_addr as *mut u8, Layout::from_size_align(64 * 1024, 16).unwrap());
+                dealloc(
+                    ptr_addr as *mut u8,
+                    Layout::from_size_align(64 * 1024, 16).unwrap(),
+                );
             }
         }
         for &ptr_addr in &self.large_chunks {
             unsafe {
-                dealloc(ptr_addr as *mut u8, Layout::from_size_align(1024 * 1024, 32).unwrap());
+                dealloc(
+                    ptr_addr as *mut u8,
+                    Layout::from_size_align(1024 * 1024, 32).unwrap(),
+                );
             }
         }
     }
 }
 
-static NUMA_MANAGER: std::sync::LazyLock<NumaNodeManager> = std::sync::LazyLock::new(|| {
-    NumaNodeManager {
+static NUMA_MANAGER: std::sync::LazyLock<NumaNodeManager> =
+    std::sync::LazyLock::new(|| NumaNodeManager {
         node_count: AtomicUsize::new(detect_numa_nodes()),
         thread_nodes: RwLock::new(HashMap::new()),
         node_pools: Mutex::new(HashMap::new()),
-    }
-});
+    });
 
 /// Detect the number of NUMA nodes on the system
 fn detect_numa_nodes() -> usize {
@@ -421,7 +420,7 @@ fn detect_numa_nodes() -> usize {
             return contents.split(',').count();
         }
     }
-    
+
     // Fallback: assume single NUMA node
     1
 }
@@ -429,7 +428,7 @@ fn detect_numa_nodes() -> usize {
 /// Get the current thread's preferred NUMA node
 fn get_current_numa_node() -> Option<NumaNode> {
     let thread_id = std::thread::current().id();
-    
+
     // Check if thread already has a preferred node
     if let Ok(nodes) = NUMA_MANAGER.thread_nodes.read() {
         if let Some(&node) = nodes.get(&thread_id) {
@@ -443,12 +442,12 @@ fn get_current_numa_node() -> Option<NumaNode> {
         // Use thread ID hash for consistent assignment - simplified hash since as_u64 is unstable
         let thread_hash = format!("{:?}", thread_id).len(); // Simple hash based on debug string
         let node = (thread_hash.wrapping_mul(0x9e3779b9)) % node_count;
-        
+
         // Store the assignment
         if let Ok(mut nodes) = NUMA_MANAGER.thread_nodes.write() {
             nodes.insert(thread_id, node);
         }
-        
+
         Some(node)
     } else {
         None
@@ -502,7 +501,9 @@ impl NumaPoolStats {
 pub fn get_numa_stats() -> NumaStats {
     let node_count = NUMA_MANAGER.node_count.load(Ordering::Relaxed);
     let current_node = get_current_numa_node();
-    let thread_assignments = NUMA_MANAGER.thread_nodes.read()
+    let thread_assignments = NUMA_MANAGER
+        .thread_nodes
+        .read()
         .map(|nodes| nodes.len())
         .unwrap_or(0);
 
@@ -527,7 +528,9 @@ pub fn set_current_numa_node(node: NumaNode) -> Result<()> {
     let node_count = NUMA_MANAGER.node_count.load(Ordering::Relaxed);
     if node >= node_count {
         return Err(ZiporaError::invalid_data(&format!(
-            "NUMA node {} is invalid (max: {})", node, node_count - 1
+            "NUMA node {} is invalid (max: {})",
+            node,
+            node_count - 1
         )));
     }
 
@@ -543,7 +546,7 @@ pub fn set_current_numa_node(node: NumaNode) -> Result<()> {
 pub fn numa_alloc_aligned(size: usize, align: usize, node: NumaNode) -> Result<NonNull<u8>> {
     let layout = Layout::from_size_align(size, align.max(CACHE_LINE_SIZE))
         .map_err(|_| ZiporaError::invalid_data("Invalid layout for NUMA allocation"))?;
-    
+
     numa_alloc::<u8>(layout, Some(node))
 }
 
@@ -551,7 +554,7 @@ pub fn numa_alloc_aligned(size: usize, align: usize, node: NumaNode) -> Result<N
 pub fn numa_dealloc(ptr: NonNull<u8>, size: usize, align: usize, node: NumaNode) -> Result<()> {
     let layout = Layout::from_size_align(size, align.max(CACHE_LINE_SIZE))
         .map_err(|_| ZiporaError::invalid_data("Invalid layout for NUMA deallocation"))?;
-    
+
     if let Ok(mut pools) = NUMA_MANAGER.node_pools.lock() {
         if let Some(pool) = pools.get_mut(&node) {
             pool.deallocate(ptr, layout);
@@ -574,13 +577,13 @@ pub fn get_optimal_numa_node() -> NumaNode {
 /// Initialize NUMA pools for all detected nodes
 pub fn init_numa_pools() -> Result<()> {
     let node_count = NUMA_MANAGER.node_count.load(Ordering::Relaxed);
-    
+
     if let Ok(mut pools) = NUMA_MANAGER.node_pools.lock() {
         for node in 0..node_count {
             pools.entry(node).or_insert_with(NumaMemoryPool::new);
         }
     }
-    
+
     Ok(())
 }
 
@@ -659,7 +662,11 @@ mod tests {
     fn test_cache_alignment() {
         let vec = CacheAlignedVec::<u8>::new();
         let ptr = &vec as *const _ as usize;
-        assert_eq!(ptr % CACHE_LINE_SIZE, 0, "CacheAlignedVec should be cache-line aligned");
+        assert_eq!(
+            ptr % CACHE_LINE_SIZE,
+            0,
+            "CacheAlignedVec should be cache-line aligned"
+        );
     }
 
     #[test]
@@ -667,7 +674,10 @@ mod tests {
         assert_eq!(align_to_cache_line(0), 0);
         assert_eq!(align_to_cache_line(1), CACHE_LINE_SIZE);
         assert_eq!(align_to_cache_line(CACHE_LINE_SIZE), CACHE_LINE_SIZE);
-        assert_eq!(align_to_cache_line(CACHE_LINE_SIZE + 1), CACHE_LINE_SIZE * 2);
+        assert_eq!(
+            align_to_cache_line(CACHE_LINE_SIZE + 1),
+            CACHE_LINE_SIZE * 2
+        );
     }
 
     #[test]
@@ -695,7 +705,7 @@ mod tests {
     fn test_set_numa_node() {
         // Should work for valid node 0
         assert!(set_current_numa_node(0).is_ok());
-        
+
         // Should get the node we just set
         assert_eq!(get_current_numa_node(), Some(0));
     }
@@ -707,7 +717,7 @@ mod tests {
             vec.push(i).unwrap();
         }
         assert_eq!(vec.len(), 1000);
-        
+
         // Verify data integrity
         for i in 0..1000u64 {
             assert_eq!(vec.get(i as usize), Some(&i));
@@ -718,10 +728,10 @@ mod tests {
     fn test_numa_alloc_dealloc() {
         let node = 0;
         let ptr = numa_alloc_aligned(1024, 64, node).unwrap();
-        
+
         // Verify alignment
         assert_eq!(ptr.as_ptr() as usize % CACHE_LINE_SIZE, 0);
-        
+
         // Test deallocation
         assert!(numa_dealloc(ptr, 1024, 64, node).is_ok());
     }
@@ -730,7 +740,7 @@ mod tests {
     fn test_numa_pool_initialization() {
         clear_numa_pools().unwrap();
         assert!(init_numa_pools().is_ok());
-        
+
         let stats = get_numa_stats();
         assert!(stats.node_count >= 1);
     }
@@ -739,11 +749,11 @@ mod tests {
     fn test_numa_pool_stats() {
         clear_numa_pools().unwrap();
         init_numa_pools().unwrap();
-        
+
         // Allocate some memory to test stats
         let _ptr1 = numa_alloc_aligned(1024, 64, 0).unwrap();
         let _ptr2 = numa_alloc_aligned(512, 32, 0).unwrap();
-        
+
         let stats = get_numa_stats();
         if let Some(pool_stats) = stats.pools.get(&0) {
             assert!(pool_stats.allocated_bytes > 0 || pool_stats.hit_count > 0);
@@ -760,7 +770,7 @@ mod tests {
             cached_medium: 3,
             cached_large: 1,
         };
-        
+
         assert_eq!(stats.hit_rate(), 0.8);
         assert_eq!(stats.total_cached(), 9);
     }
@@ -777,7 +787,7 @@ mod tests {
         let node = 0;
         let mut vec = CacheAlignedVec::<i32>::with_numa_node(node);
         assert_eq!(vec.numa_node(), Some(node));
-        
+
         vec.push(42).unwrap();
         assert_eq!(vec.get(0), Some(&42));
     }
@@ -788,11 +798,11 @@ mod tests {
         vec.push(1).unwrap();
         vec.push(2).unwrap();
         vec.push(3).unwrap();
-        
+
         if let Some(val) = vec.get_mut(1) {
             *val = 42;
         }
-        
+
         assert_eq!(vec.as_slice(), &[1, 42, 3]);
     }
 
@@ -801,7 +811,7 @@ mod tests {
         let capacity = 100000;
         let vec = CacheAlignedVec::<u8>::with_capacity(capacity).unwrap();
         assert!(vec.capacity() >= capacity);
-        
+
         // Verify the allocation is cache-aligned
         let ptr = vec.as_slice().as_ptr() as usize;
         assert_eq!(ptr % CACHE_LINE_SIZE, 0);
@@ -810,7 +820,7 @@ mod tests {
     #[test]
     fn test_error_handling() {
         let node_count = get_numa_stats().node_count;
-        
+
         // Test invalid NUMA node
         let result = set_current_numa_node(node_count + 100);
         assert!(result.is_err());

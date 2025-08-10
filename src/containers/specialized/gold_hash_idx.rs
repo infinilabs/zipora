@@ -4,13 +4,13 @@
 //! This container separates key storage from value storage for improved cache
 //! efficiency and reduced memory pressure when values are large (>64 bytes).
 
-use crate::error::{ZiporaError, Result};
+use crate::error::{Result, ZiporaError};
 use crate::memory::{SecureMemoryPool, SecurePooledPtr, get_global_pool_for_size};
-use std::hash::{Hash, Hasher};
-use std::mem;
-use std::marker::PhantomData;
-use std::sync::Arc;
 use ahash::AHasher;
+use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
+use std::mem;
+use std::sync::Arc;
 
 /// Hash index for indirect value lookups
 ///
@@ -52,17 +52,17 @@ use ahash::AHasher;
 /// }
 ///
 /// let mut idx = GoldHashIdx::new();
-/// let large_val = LargeValue { 
-///     data: [42; 256], 
-///     metadata: "test".to_string() 
+/// let large_val = LargeValue {
+///     data: [42; 256],
+///     metadata: "test".to_string()
 /// };
-/// 
+///
 /// idx.insert("key1".to_string(), large_val.clone())?;
 /// assert_eq!(idx.get(&"key1".to_string()), Some(&large_val));
 /// # Ok::<(), zipora::error::ZiporaError>(())
 /// ```
-pub struct GoldHashIdx<K, V> 
-where 
+pub struct GoldHashIdx<K, V>
+where
     K: Hash + Eq + Clone,
     V: Clone,
 {
@@ -95,8 +95,8 @@ struct Bucket<K> {
     hash: u64,
 }
 
-impl<K, V> GoldHashIdx<K, V> 
-where 
+impl<K, V> GoldHashIdx<K, V>
+where
     K: Hash + Eq + Clone,
     V: Clone,
 {
@@ -108,7 +108,7 @@ where
     /// Create a new GoldHashIdx with specified initial capacity
     pub fn with_capacity(capacity: usize) -> Self {
         let capacity = capacity.next_power_of_two().max(16);
-        
+
         Self {
             table: vec![None; capacity],
             values: Vec::new(),
@@ -126,7 +126,7 @@ where
     /// Create a GoldHashIdx with a dedicated memory pool for values
     pub fn with_pool(capacity: usize, pool: Arc<SecureMemoryPool>) -> Self {
         let capacity = capacity.next_power_of_two().max(16);
-        
+
         Self {
             table: vec![None; capacity],
             values: Vec::new(),
@@ -168,7 +168,7 @@ where
                     value_index,
                     hash,
                 });
-                
+
                 self.len += 1;
                 self.key_memory += mem::size_of::<K>() + mem::size_of::<Bucket<K>>();
                 return Ok(None);
@@ -180,7 +180,7 @@ where
                     self.store_value(value_index, value)?;
                     return Ok(Some(old_value));
                 }
-                
+
                 // Continue probing
                 index = (index + 1) % self.capacity;
             }
@@ -243,18 +243,18 @@ where
                     if bucket.hash == hash && bucket.key == *key {
                         let value_index = bucket.value_index;
                         let value = self.get_value(value_index).ok()?.clone();
-                        
+
                         // Mark slot as deleted and add value index to free list
                         self.table[index] = None;
                         self.free_value(value_index);
                         self.len -= 1;
-                        self.key_memory = self.key_memory.saturating_sub(
-                            mem::size_of::<K>() + mem::size_of::<Bucket<K>>()
-                        );
+                        self.key_memory = self
+                            .key_memory
+                            .saturating_sub(mem::size_of::<K>() + mem::size_of::<Bucket<K>>());
 
                         // Rehash following entries to maintain probe sequence
                         self.rehash_after_removal(index);
-                        
+
                         return Some(value);
                     }
                     index = (index + 1) % self.capacity;
@@ -292,7 +292,7 @@ where
         for (key, value) in items {
             self.insert(key, value)?;
         }
-        
+
         Ok(())
     }
 
@@ -303,7 +303,9 @@ where
 
     /// Shrink the hash table to fit current elements
     pub fn shrink_to_fit(&mut self) {
-        let min_capacity = ((self.len as f64 / self.load_factor) as usize).next_power_of_two().max(16);
+        let min_capacity = ((self.len as f64 / self.load_factor) as usize)
+            .next_power_of_two()
+            .max(16);
         if min_capacity < self.capacity {
             if let Err(_) = self.resize_to(min_capacity) {
                 // If resize fails, continue with current capacity
@@ -340,7 +342,7 @@ where
         let index = self.values.len();
         self.values.push(Some(value_ptr));
         self.value_memory += mem::size_of::<V>();
-        
+
         Ok(index)
     }
 
@@ -357,7 +359,8 @@ where
 
     /// Get a value reference by index
     fn get_value(&self, index: usize) -> Result<&V> {
-        self.values.get(index)
+        self.values
+            .get(index)
             .and_then(|opt| opt.as_ref())
             .map(|ptr| unsafe { &*(ptr.as_ptr() as *const V) })
             .ok_or_else(|| ZiporaError::invalid_data("Invalid value index"))
@@ -365,7 +368,8 @@ where
 
     /// Get a mutable value reference by index
     fn get_value_mut(&mut self, index: usize) -> Result<&mut V> {
-        self.values.get_mut(index)
+        self.values
+            .get_mut(index)
             .and_then(|opt| opt.as_ref())
             .map(|ptr| unsafe { &mut *(ptr.as_ptr() as *mut V) })
             .ok_or_else(|| ZiporaError::invalid_data("Invalid value index"))
@@ -427,25 +431,25 @@ where
     /// Rehash entries after a removal to maintain probe sequences
     fn rehash_after_removal(&mut self, start_index: usize) {
         let mut index = (start_index + 1) % self.capacity;
-        
+
         while let Some(bucket) = self.table[index].take() {
             // Reinsert this bucket
             let ideal_index = (bucket.hash % self.capacity as u64) as usize;
             let mut new_index = ideal_index;
-            
+
             // Find new position
             while self.table[new_index].is_some() {
                 new_index = (new_index + 1) % self.capacity;
             }
-            
+
             self.table[new_index] = Some(bucket);
             index = (index + 1) % self.capacity;
         }
     }
 }
 
-impl<K, V> Default for GoldHashIdx<K, V> 
-where 
+impl<K, V> Default for GoldHashIdx<K, V>
+where
     K: Hash + Eq + Clone,
     V: Clone,
 {
@@ -455,7 +459,7 @@ where
 }
 
 impl<K, V> std::fmt::Debug for GoldHashIdx<K, V>
-where 
+where
     K: Hash + Eq + Clone + std::fmt::Debug,
     V: Clone + std::fmt::Debug,
 {
@@ -495,11 +499,11 @@ mod tests {
     #[test]
     fn test_basic_operations() -> Result<()> {
         let mut idx = GoldHashIdx::new();
-        
+
         // Insert
         let val1 = LargeValue::new(1);
         let val2 = LargeValue::new(2);
-        
+
         assert_eq!(idx.insert("key1".to_string(), val1.clone())?, None);
         assert_eq!(idx.insert("key2".to_string(), val2.clone())?, None);
         assert_eq!(idx.len(), 2);
@@ -515,7 +519,10 @@ mod tests {
 
         // Update
         let val1_updated = LargeValue::new(11);
-        assert_eq!(idx.insert("key1".to_string(), val1_updated.clone())?, Some(val1));
+        assert_eq!(
+            idx.insert("key1".to_string(), val1_updated.clone())?,
+            Some(val1)
+        );
         assert_eq!(idx.get(&"key1".to_string()), Some(&val1_updated));
 
         // Remove
@@ -530,14 +537,14 @@ mod tests {
     fn test_mutable_access() -> Result<()> {
         let mut idx = GoldHashIdx::new();
         let val = LargeValue::new(42);
-        
+
         idx.insert("key".to_string(), val)?;
-        
+
         {
             let val_mut = idx.get_mut(&"key".to_string()).unwrap();
             val_mut.id = 99;
         }
-        
+
         assert_eq!(idx.get(&"key".to_string()).unwrap().id, 99);
         Ok(())
     }
@@ -545,19 +552,19 @@ mod tests {
     #[test]
     fn test_batch_operations() -> Result<()> {
         let mut idx = GoldHashIdx::new();
-        
+
         // Batch insert
         let items: Vec<(String, LargeValue)> = (0..100)
             .map(|i| (format!("key{}", i), LargeValue::new(i)))
             .collect();
-        
+
         idx.insert_batch(items.clone())?;
         assert_eq!(idx.len(), 100);
 
         // Batch get
         let keys: Vec<String> = (0..100).map(|i| format!("key{}", i)).collect();
         let values = idx.get_batch(&keys);
-        
+
         for (i, value_opt) in values.iter().enumerate() {
             assert!(value_opt.is_some());
             assert_eq!(value_opt.unwrap().id, i as u32);
@@ -571,10 +578,10 @@ mod tests {
         let config = SecurePoolConfig::small_secure();
         let pool = SecureMemoryPool::new(config)?;
         let mut idx = GoldHashIdx::with_pool(32, pool);
-        
+
         let val = LargeValue::new(42);
         idx.insert("test".to_string(), val.clone())?;
-        
+
         assert_eq!(idx.get(&"test".to_string()), Some(&val));
         Ok(())
     }
@@ -582,7 +589,7 @@ mod tests {
     #[test]
     fn test_memory_usage_tracking() -> Result<()> {
         let mut idx = GoldHashIdx::new();
-        
+
         let initial_usage = idx.memory_usage();
         assert_eq!(initial_usage, (0, 0));
 
@@ -594,15 +601,18 @@ mod tests {
         let (key_mem, value_mem) = idx.memory_usage();
         assert!(key_mem > 0);
         assert!(value_mem > 0);
-        
-        println!("Memory usage - Keys: {} bytes, Values: {} bytes", key_mem, value_mem);
+
+        println!(
+            "Memory usage - Keys: {} bytes, Values: {} bytes",
+            key_mem, value_mem
+        );
         Ok(())
     }
 
     #[test]
     fn test_shrink_to_fit() -> Result<()> {
         let mut idx = GoldHashIdx::with_capacity(1024);
-        
+
         // Insert a few items
         for i in 0..10 {
             idx.insert(format!("key{}", i), LargeValue::new(i))?;
@@ -610,11 +620,11 @@ mod tests {
 
         let initial_capacity = idx.capacity;
         idx.shrink_to_fit();
-        
+
         // Should have smaller capacity but same functionality
         assert!(idx.capacity <= initial_capacity);
         assert_eq!(idx.len(), 10);
-        
+
         // Verify all items still accessible
         for i in 0..10 {
             assert!(idx.contains_key(&format!("key{}", i)));
@@ -626,7 +636,7 @@ mod tests {
     #[test]
     fn test_large_scale() -> Result<()> {
         let mut idx = GoldHashIdx::new();
-        
+
         // Insert many items to test resizing
         for i in 0..1000 {
             idx.insert(i.to_string(), LargeValue::new(i))?;
@@ -657,7 +667,7 @@ mod tests {
     #[test]
     fn test_empty_operations() {
         let idx: GoldHashIdx<String, LargeValue> = GoldHashIdx::new();
-        
+
         assert_eq!(idx.len(), 0);
         assert!(idx.is_empty());
         assert_eq!(idx.get(&"key".to_string()), None);

@@ -512,7 +512,7 @@ impl WorkStealingExecutor {
     pub async fn init(config: super::ConcurrencyConfig) -> Result<()> {
         // Try to initialize the global executor
         let executor = WorkStealingExecutor::new(config.max_fibers, config.queue_size)?;
-        
+
         // This will only succeed the first time it's called
         match GLOBAL_EXECUTOR.set(executor) {
             Ok(_) => Ok(()),

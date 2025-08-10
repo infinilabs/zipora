@@ -6,7 +6,7 @@
 //! - SortableStrVec: String vector with specialized sorting capabilities
 
 use std::time::Instant;
-use zipora::containers::{UintVector, FixedStr8Vec, FixedStr16Vec, SortableStrVec};
+use zipora::containers::{FixedStr8Vec, FixedStr16Vec, SortableStrVec, UintVector};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Specialized Containers Demo ===\n");
@@ -42,14 +42,17 @@ fn demonstrate_uint_vector() -> Result<(), Box<dyn std::error::Error>> {
     let retrieval_time = start.elapsed();
 
     let (original_size, compressed_size, ratio) = vec.stats();
-    
+
     println!("✅ Inserted 1000 integers in {:?}", insert_time);
     println!("✅ Retrieved all values in {:?}", retrieval_time);
     println!("✅ Sum verification: {}", sum);
     println!("📊 Original size: {} bytes", original_size);
     println!("📊 Compressed size: {} bytes", compressed_size);
     println!("📊 Compression ratio: {:.2}", ratio);
-    println!("💾 Memory efficiency: {:.1}% of original size\n", ratio * 100.0);
+    println!(
+        "💾 Memory efficiency: {:.1}% of original size\n",
+        ratio * 100.0
+    );
 
     Ok(())
 }
@@ -60,9 +63,11 @@ fn demonstrate_fixed_len_str_vec() -> Result<(), Box<dyn std::error::Error>> {
 
     // Demonstrate with 8-byte strings
     let mut vec8: FixedStr8Vec = FixedStr8Vec::new();
-    
-    let test_strings = vec!["apple", "banana", "cherry", "date", "elderb", "fig", "grape"];
-    
+
+    let test_strings = vec![
+        "apple", "banana", "cherry", "date", "elderb", "fig", "grape",
+    ];
+
     let start = Instant::now();
     for s in &test_strings {
         vec8.push(s)?;
@@ -82,10 +87,20 @@ fn demonstrate_fixed_len_str_vec() -> Result<(), Box<dyn std::error::Error>> {
 
     let (vec_string_size, our_size, savings_ratio) = vec8.memory_savings_vs_vec_string();
 
-    println!("✅ Inserted {} strings in {:?}", test_strings.len(), insert_time);
-    println!("✅ Found 'banana' at index: {:?} in {:?}", found_banana, search_time);
+    println!(
+        "✅ Inserted {} strings in {:?}",
+        test_strings.len(),
+        insert_time
+    );
+    println!(
+        "✅ Found 'banana' at index: {:?} in {:?}",
+        found_banana, search_time
+    );
     println!("✅ 'kiwi' not found: {:?}", found_missing);
-    println!("✅ Strings with prefix 'gr': {} in {:?}", prefix_count, prefix_time);
+    println!(
+        "✅ Strings with prefix 'gr': {} in {:?}",
+        prefix_count, prefix_time
+    );
     println!("📊 Vec<String> equivalent: {} bytes", vec_string_size);
     println!("📊 FixedLenStrVec size: {} bytes", our_size);
     println!("💾 Memory savings: {:.1}%\n", savings_ratio * 100.0);
@@ -93,11 +108,17 @@ fn demonstrate_fixed_len_str_vec() -> Result<(), Box<dyn std::error::Error>> {
     // Demonstrate with 16-byte strings
     println!("📝 FixedStr16Vec - Longer String Support");
     println!("----------------------------------------");
-    
+
     let mut vec16: FixedStr16Vec = FixedStr16Vec::new();
     let longer_strings = vec![
-        "programming", "algorithms", "data_structures", "performance", 
-        "optimization", "benchmarking", "profiling", "memory_layout"
+        "programming",
+        "algorithms",
+        "data_structures",
+        "performance",
+        "optimization",
+        "benchmarking",
+        "profiling",
+        "memory_layout",
     ];
 
     for s in &longer_strings {
@@ -116,10 +137,20 @@ fn demonstrate_sortable_str_vec() -> Result<(), Box<dyn std::error::Error>> {
     println!("==============================================");
 
     let mut vec = SortableStrVec::new();
-    
+
     let test_data = vec![
-        "zebra", "apple", "banana", "cherry", "date", "elderberry", 
-        "fig", "grape", "honeydew", "kiwi", "lemon", "mango"
+        "zebra",
+        "apple",
+        "banana",
+        "cherry",
+        "date",
+        "elderberry",
+        "fig",
+        "grape",
+        "honeydew",
+        "kiwi",
+        "lemon",
+        "mango",
     ];
 
     // Insert strings
@@ -129,7 +160,11 @@ fn demonstrate_sortable_str_vec() -> Result<(), Box<dyn std::error::Error>> {
     }
     let insert_time = start.elapsed();
 
-    println!("✅ Inserted {} strings in {:?}", test_data.len(), insert_time);
+    println!(
+        "✅ Inserted {} strings in {:?}",
+        test_data.len(),
+        insert_time
+    );
 
     // Demonstrate lexicographic sorting
     let start = Instant::now();

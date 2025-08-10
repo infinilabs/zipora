@@ -10,7 +10,7 @@ use crate::memory::{
 };
 
 #[cfg(target_os = "linux")]
-use crate::memory::hugepage::{HugePage, HugePageAllocator, HUGEPAGE_SIZE_2MB};
+use crate::memory::hugepage::{HUGEPAGE_SIZE_2MB, HugePage, HugePageAllocator};
 
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -19,9 +19,9 @@ use std::thread_local;
 
 /// Size thresholds for different allocation strategies
 /// Maximum size for small object allocations (1KB)
-pub const SMALL_THRESHOLD: usize = 1024;           // 1KB
+pub const SMALL_THRESHOLD: usize = 1024; // 1KB
 /// Maximum size for medium object allocations (16KB)
-pub const MEDIUM_THRESHOLD: usize = 16 * 1024;     // 16KB  
+pub const MEDIUM_THRESHOLD: usize = 16 * 1024; // 16KB  
 /// Minimum size for huge page allocations (2MB)
 pub const LARGE_THRESHOLD: usize = 2 * 1024 * 1024; // 2MB
 
@@ -95,7 +95,7 @@ thread_local! {
     static MEDIUM_POOLS: Vec<Arc<MemoryPool>> = {
         // Size classes: 1KB, 2KB, 4KB, 8KB, 16KB
         let size_classes = vec![1024, 2048, 4096, 8192, 16384];
-        
+
         size_classes.into_iter().map(|size| {
             let config = PoolConfig::new(size, 32, 16); // 32 chunks per pool, 16-byte aligned
             Arc::new(MemoryPool::new(config).unwrap())
@@ -106,24 +106,24 @@ thread_local! {
 /// High-performance tiered memory allocator
 pub struct TieredMemoryAllocator {
     config: TieredConfig,
-    
+
     // Small object pool (< 1KB)
     small_pool: Arc<MemoryPool>,
-    
+
     // Memory-mapped allocator for large objects
     mmap_allocator: Arc<MemoryMappedAllocator>,
-    
+
     // Hugepage allocator for very large objects
     #[cfg(target_os = "linux")]
     hugepage_allocator: Arc<HugePageAllocator>,
-    
+
     // Statistics
     small_allocs: AtomicU64,
     medium_allocs: AtomicU64,
     large_allocs: AtomicU64,
     huge_allocs: AtomicU64,
     total_bytes: AtomicU64,
-    
+
     // Adaptive allocation tracking
     allocation_history: Arc<Mutex<AllocationHistory>>,
 }
@@ -143,32 +143,36 @@ impl AllocationHistory {
             max_recent: 1000,
         }
     }
-    
+
     fn record_allocation(&mut self, size: usize) {
         // Update histogram
-        let bucket = if size == 0 { 0 } else { 63 - size.leading_zeros() as usize };
+        let bucket = if size == 0 {
+            0
+        } else {
+            63 - size.leading_zeros() as usize
+        };
         if bucket < 32 {
             self.size_histogram[bucket] += 1;
         }
-        
+
         // Track recent allocations
         if self.recent_sizes.len() >= self.max_recent {
             self.recent_sizes.remove(0);
         }
         self.recent_sizes.push(size);
     }
-    
+
     fn get_allocation_pattern(&self) -> AllocationPattern {
         let total: u64 = self.size_histogram.iter().sum();
         if total == 0 {
             return AllocationPattern::Mixed;
         }
-        
+
         // Analyze dominant allocation sizes
         let small_ratio = self.size_histogram[0..10].iter().sum::<u64>() as f64 / total as f64;
         let medium_ratio = self.size_histogram[10..16].iter().sum::<u64>() as f64 / total as f64;
         let large_ratio = self.size_histogram[16..].iter().sum::<u64>() as f64 / total as f64;
-        
+
         if small_ratio > 0.7 {
             AllocationPattern::SmallDominated
         } else if medium_ratio > 0.7 {
@@ -216,7 +220,10 @@ impl TieredMemoryAllocator {
                 HUGEPAGE_SIZE_2MB,
             )?)
         } else {
-            Arc::new(HugePageAllocator::with_config(usize::MAX, HUGEPAGE_SIZE_2MB)?) // Disabled
+            Arc::new(HugePageAllocator::with_config(
+                usize::MAX,
+                HUGEPAGE_SIZE_2MB,
+            )?) // Disabled
         };
 
         Ok(Self {
@@ -292,9 +299,8 @@ impl TieredMemoryAllocator {
 
     /// Get comprehensive statistics
     pub fn stats(&self) -> TieredStats {
-        let medium_pool_stats = MEDIUM_POOLS.with(|pools| {
-            pools.iter().map(|pool| pool.stats()).collect()
-        });
+        let medium_pool_stats =
+            MEDIUM_POOLS.with(|pools| pools.iter().map(|pool| pool.stats()).collect());
 
         TieredStats {
             small_allocations: self.small_allocs.load(Ordering::Relaxed),
@@ -320,15 +326,15 @@ impl TieredMemoryAllocator {
     /// Optimize allocator based on observed allocation patterns
     pub fn optimize_for_pattern(&self) -> Result<()> {
         let pattern = self.get_allocation_pattern()?;
-        
+
         log::debug!("Optimizing tiered allocator for pattern: {:?}", pattern);
-        
+
         // Pattern-specific optimizations could be implemented here
         // For example:
         // - Pre-warm pools for dominant allocation sizes
         // - Adjust cache sizes based on usage patterns
         // - Tune memory mapping thresholds
-        
+
         Ok(())
     }
 
@@ -340,7 +346,7 @@ impl TieredMemoryAllocator {
 
     fn allocate_medium(&self, size: usize) -> Result<TieredAllocation> {
         self.medium_allocs.fetch_add(1, Ordering::Relaxed);
-        
+
         // Use thread-local medium pools for better performance
         MEDIUM_POOLS.with(|pools| {
             // Find the smallest pool that can accommodate the allocation
@@ -350,7 +356,7 @@ impl TieredMemoryAllocator {
                     return Ok(TieredAllocation::Medium(chunk, size));
                 }
             }
-            
+
             // No suitable pool found, fall back to mmap
             self.allocate_large(size)
         })
@@ -364,8 +370,10 @@ impl TieredMemoryAllocator {
                     return pool.deallocate(ptr);
                 }
             }
-            
-            Err(ZiporaError::invalid_data("no suitable pool for deallocation"))
+
+            Err(ZiporaError::invalid_data(
+                "no suitable pool for deallocation",
+            ))
         })
     }
 
@@ -398,12 +406,12 @@ impl TieredAllocation {
     /// Get the allocated memory as a slice
     pub fn as_slice(&self) -> &[u8] {
         match self {
-            TieredAllocation::Small(ptr, size) => {
-                unsafe { std::slice::from_raw_parts(ptr.as_ptr(), *size) }
-            }
-            TieredAllocation::Medium(ptr, size) => {
-                unsafe { std::slice::from_raw_parts(ptr.as_ptr(), *size) }
-            }
+            TieredAllocation::Small(ptr, size) => unsafe {
+                std::slice::from_raw_parts(ptr.as_ptr(), *size)
+            },
+            TieredAllocation::Medium(ptr, size) => unsafe {
+                std::slice::from_raw_parts(ptr.as_ptr(), *size)
+            },
             TieredAllocation::Large(allocation) => allocation.as_slice(),
             #[cfg(target_os = "linux")]
             TieredAllocation::Huge(hugepage) => hugepage.as_slice(),
@@ -413,12 +421,12 @@ impl TieredAllocation {
     /// Get the allocated memory as a mutable slice
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         match self {
-            TieredAllocation::Small(ptr, size) => {
-                unsafe { std::slice::from_raw_parts_mut(ptr.as_ptr(), *size) }
-            }
-            TieredAllocation::Medium(ptr, size) => {
-                unsafe { std::slice::from_raw_parts_mut(ptr.as_ptr(), *size) }
-            }
+            TieredAllocation::Small(ptr, size) => unsafe {
+                std::slice::from_raw_parts_mut(ptr.as_ptr(), *size)
+            },
+            TieredAllocation::Medium(ptr, size) => unsafe {
+                std::slice::from_raw_parts_mut(ptr.as_ptr(), *size)
+            },
             TieredAllocation::Large(allocation) => allocation.as_mut_slice(),
             #[cfg(target_os = "linux")]
             TieredAllocation::Huge(hugepage) => hugepage.as_mut_slice(),
@@ -471,7 +479,7 @@ pub fn get_tiered_stats() -> TieredStats {
 mod tests {
     use super::*;
     use std::sync::Mutex;
-    
+
     // Global mutex to serialize tests that use global allocator state
     // This prevents race conditions that cause segfaults in release mode
     static GLOBAL_ALLOCATOR_TEST_MUTEX: Mutex<()> = Mutex::new(());
@@ -480,7 +488,7 @@ mod tests {
     fn test_tiered_allocator_creation() {
         let allocator = TieredMemoryAllocator::default().unwrap();
         let stats = allocator.stats();
-        
+
         assert_eq!(stats.small_allocations, 0);
         assert_eq!(stats.medium_allocations, 0);
         assert_eq!(stats.large_allocations, 0);
@@ -491,21 +499,21 @@ mod tests {
     fn test_small_allocation() {
         let allocator = TieredMemoryAllocator::default().unwrap();
         let size = 512; // Small allocation
-        
+
         let mut allocation = allocator.allocate(size).unwrap();
         assert_eq!(allocation.size(), size);
-        
+
         // Test that we can write to the memory
         let slice = allocation.as_mut_slice();
         slice[0] = 42;
         slice[size - 1] = 84;
-        
+
         let slice = allocation.as_slice();
         assert_eq!(slice[0], 42);
         assert_eq!(slice[size - 1], 84);
-        
+
         allocator.deallocate(allocation).unwrap();
-        
+
         let stats = allocator.stats();
         assert_eq!(stats.small_allocations, 1);
         assert_eq!(stats.total_allocated_bytes, 0); // Deallocated
@@ -515,17 +523,17 @@ mod tests {
     fn test_medium_allocation() {
         let allocator = TieredMemoryAllocator::default().unwrap();
         let size = 4 * 1024; // 4KB - medium allocation
-        
+
         let mut allocation = allocator.allocate(size).unwrap();
         assert_eq!(allocation.size(), size);
-        
+
         // Test memory access
         let slice = allocation.as_mut_slice();
         slice[0] = 42;
         slice[size - 1] = 84;
-        
+
         allocator.deallocate(allocation).unwrap();
-        
+
         let stats = allocator.stats();
         assert_eq!(stats.medium_allocations, 1);
     }
@@ -534,17 +542,17 @@ mod tests {
     fn test_large_allocation() {
         let allocator = TieredMemoryAllocator::default().unwrap();
         let size = 64 * 1024; // 64KB - large allocation
-        
+
         let mut allocation = allocator.allocate(size).unwrap();
         assert_eq!(allocation.size(), size);
-        
+
         // Test memory access
         let slice = allocation.as_mut_slice();
         slice[0] = 42;
         slice[size - 1] = 84;
-        
+
         allocator.deallocate(allocation).unwrap();
-        
+
         let stats = allocator.stats();
         assert_eq!(stats.large_allocations, 1);
     }
@@ -553,19 +561,19 @@ mod tests {
     fn test_huge_allocation() {
         let allocator = TieredMemoryAllocator::default().unwrap();
         let size = 4 * 1024 * 1024; // 4MB - huge allocation
-        
+
         // Try allocation, but it might fail on systems without hugepage support
         match allocator.allocate(size) {
             Ok(mut allocation) => {
                 assert_eq!(allocation.size(), size);
-                
+
                 // Test memory access
                 let slice = allocation.as_mut_slice();
                 slice[0] = 42;
                 slice[size - 1] = 84;
-                
+
                 allocator.deallocate(allocation).unwrap();
-                
+
                 let stats = allocator.stats();
                 // Might be huge or large depending on hugepage availability
                 assert!(stats.huge_allocations > 0 || stats.large_allocations > 0);
@@ -581,21 +589,21 @@ mod tests {
     #[test]
     fn test_mixed_allocation_pattern() {
         let allocator = TieredMemoryAllocator::default().unwrap();
-        
+
         let sizes = vec![128, 2048, 32768, 1048576]; // Mix of small, medium, large
         let mut allocations = Vec::new();
-        
+
         // Allocate all sizes
         for size in &sizes {
             let allocation = allocator.allocate(*size).unwrap();
             allocations.push(allocation);
         }
-        
+
         // Deallocate all
         for allocation in allocations {
             allocator.deallocate(allocation).unwrap();
         }
-        
+
         let stats = allocator.stats();
         assert!(stats.small_allocations > 0);
         assert!(stats.medium_allocations > 0);
@@ -605,30 +613,33 @@ mod tests {
     #[test]
     fn test_allocation_pattern_detection() {
         let allocator = TieredMemoryAllocator::default().unwrap();
-        
+
         // Allocate mostly small objects
         for _ in 0..100 {
             let allocation = allocator.allocate(256).unwrap();
             allocator.deallocate(allocation).unwrap();
         }
-        
+
         let pattern = allocator.get_allocation_pattern().unwrap();
         // Should detect small-dominated pattern
-        matches!(pattern, AllocationPattern::SmallDominated | AllocationPattern::Mixed);
+        matches!(
+            pattern,
+            AllocationPattern::SmallDominated | AllocationPattern::Mixed
+        );
     }
 
     #[test]
     fn test_global_tiered_allocator() {
         // Serialize access to global allocator to prevent race conditions
         let _guard = GLOBAL_ALLOCATOR_TEST_MUTEX.lock().unwrap();
-        
+
         let size = 1024;
-        
+
         let allocation = tiered_allocate(size).unwrap();
         assert_eq!(allocation.size(), size);
-        
+
         tiered_deallocate(allocation).unwrap();
-        
+
         let stats = get_tiered_stats();
         assert!(stats.small_allocations > 0 || stats.medium_allocations > 0);
     }
@@ -650,13 +661,13 @@ mod tests {
             mmap_threshold: 512, // Lower threshold to allow small allocations
             hugepage_threshold: usize::MAX,
         };
-        
+
         let allocator = TieredMemoryAllocator::new(config).unwrap();
-        
+
         // Small allocation should fall back to mmap due to disabled pools
         let allocation = allocator.allocate(1024).unwrap(); // Use size above threshold
         allocator.deallocate(allocation).unwrap();
-        
+
         let stats = allocator.stats();
         // Should have used large allocation (mmap) instead of small pool
         assert_eq!(stats.small_allocations, 0);

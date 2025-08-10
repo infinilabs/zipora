@@ -38,7 +38,10 @@
 //! - **Cache Efficiency**: Optimized for modern CPU cache hierarchies
 
 use crate::error::{Result, ZiporaError};
-use crate::succinct::{BitVector, rank_select::{RankSelectOps, RankSelectPerformanceOps, SimdCapabilities}};
+use crate::succinct::{
+    BitVector,
+    rank_select::{RankSelectOps, RankSelectPerformanceOps, SimdCapabilities},
+};
 use std::marker::PhantomData;
 
 /// Level 1 block size (256 bits = 4 words)
@@ -238,7 +241,7 @@ pub struct RankSelectHierarchical<C: HierarchicalConfig> {
     total_bits: usize,
     /// Total number of ones
     total_ones: usize,
-    
+
     /// Level 1 cache (256-bit blocks)
     l1_cache: Vec<L1CacheEntry>,
     /// Level 2 cache (4K-bit blocks)  
@@ -247,13 +250,13 @@ pub struct RankSelectHierarchical<C: HierarchicalConfig> {
     l3_cache: Vec<L3CacheEntry>,
     /// Level 4 cache (1M-bit blocks)
     l4_cache: Vec<L4CacheEntry>,
-    
+
     /// Select cache
     select_cache: Vec<SelectCacheEntry>,
-    
+
     /// SIMD capabilities
     simd_caps: SimdCapabilities,
-    
+
     /// Configuration phantom
     _config: PhantomData<C>,
 }
@@ -268,7 +271,7 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
         let bit_data = bit_vector.blocks().to_vec();
         let total_bits = bit_vector.len();
         let total_ones = bit_vector.count_ones();
-        
+
         let mut structure = Self {
             bit_data,
             total_bits,
@@ -306,23 +309,23 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
     fn build_hierarchical_caches(&mut self) -> Result<()> {
         // Build level 1 cache (always built)
         self.build_l1_cache()?;
-        
+
         if C::LEVELS >= 2 {
             self.build_l2_cache()?;
         }
-        
+
         if C::LEVELS >= 3 {
             self.build_l3_cache()?;
         }
-        
+
         if C::LEVELS >= 4 {
             self.build_l4_cache()?;
         }
-        
+
         if C::OPTIMIZE_SELECT {
             self.build_select_cache()?;
         }
-        
+
         Ok(())
     }
 
@@ -330,17 +333,17 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
     fn build_l1_cache(&mut self) -> Result<()> {
         let num_l1_blocks = (self.bit_data.len() + L1_BLOCK_WORDS - 1) / L1_BLOCK_WORDS;
         let mut l1_cache = Vec::with_capacity(num_l1_blocks);
-        
+
         let mut cumulative_rank = 0u32;
-        
+
         for block_idx in 0..num_l1_blocks {
             let start_word = block_idx * L1_BLOCK_WORDS;
             let end_word = (start_word + L1_BLOCK_WORDS).min(self.bit_data.len());
-            
+
             // Calculate sub-block ranks
             let mut sub_ranks = [0u8; 4];
             let mut block_rank = 0u8;
-            
+
             for sub_block in 0..4 {
                 let word_idx = start_word + sub_block;
                 if word_idx < end_word {
@@ -349,7 +352,7 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
                     block_rank = block_rank.saturating_add(word_ones);
                 }
             }
-            
+
             // Only store cache entry based on density configuration
             if (block_idx % C::L1_Q.as_usize()) == 0 {
                 l1_cache.push(L1CacheEntry {
@@ -357,10 +360,10 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
                     sub_ranks,
                 });
             }
-            
+
             cumulative_rank = cumulative_rank.saturating_add(block_rank as u32);
         }
-        
+
         self.l1_cache = l1_cache;
         Ok(())
     }
@@ -374,16 +377,16 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
 
         let num_l2_blocks = (self.total_bits + L2_BLOCK_BITS - 1) / L2_BLOCK_BITS;
         let mut l2_cache = Vec::new();
-        
+
         let mut cumulative_rank = 0u32;
-        
+
         for block_idx in 0..num_l2_blocks {
             let start_bit = block_idx * L2_BLOCK_BITS;
             let end_bit = (start_bit + L2_BLOCK_BITS).min(self.total_bits);
-            
+
             // Count ones in this super-block
             let block_ones = self.count_ones_in_range(start_bit, end_bit);
-            
+
             // Store cache entry based on density
             if (block_idx % C::L2_Q.as_usize()) == 0 {
                 l2_cache.push(L2CacheEntry {
@@ -391,10 +394,10 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
                     metadata: block_ones as u32, // Store block ones count
                 });
             }
-            
+
             cumulative_rank = cumulative_rank.saturating_add(block_ones as u32);
         }
-        
+
         self.l2_cache = l2_cache;
         Ok(())
     }
@@ -407,16 +410,16 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
 
         let num_l3_blocks = (self.total_bits + L3_BLOCK_BITS - 1) / L3_BLOCK_BITS;
         let mut l3_cache = Vec::new();
-        
+
         let mut cumulative_rank = 0u32;
         let mut ones_seen = 0;
-        
+
         for block_idx in 0..num_l3_blocks {
             let start_bit = block_idx * L3_BLOCK_BITS;
             let end_bit = (start_bit + L3_BLOCK_BITS).min(self.total_bits);
-            
+
             let block_ones = self.count_ones_in_range(start_bit, end_bit);
-            
+
             // Find select sample within this block
             let select_sample = if block_ones > 0 {
                 // Find position of the first one in this block
@@ -425,18 +428,18 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
             } else {
                 start_bit as u32
             };
-            
+
             if (block_idx % C::L3_Q.as_usize()) == 0 {
                 l3_cache.push(L3CacheEntry {
                     rank: cumulative_rank,
                     select_sample,
                 });
             }
-            
+
             cumulative_rank = cumulative_rank.saturating_add(block_ones as u32);
             ones_seen += block_ones;
         }
-        
+
         self.l3_cache = l3_cache;
         Ok(())
     }
@@ -449,25 +452,25 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
 
         let num_l4_blocks = (self.total_bits + L4_BLOCK_BITS - 1) / L4_BLOCK_BITS;
         let mut l4_cache = Vec::new();
-        
+
         let mut cumulative_rank = 0u32;
-        
+
         for block_idx in 0..num_l4_blocks {
             let start_bit = block_idx * L4_BLOCK_BITS;
             let end_bit = (start_bit + L4_BLOCK_BITS).min(self.total_bits);
-            
+
             let block_ones = self.count_ones_in_range(start_bit, end_bit);
-            
+
             if (block_idx % C::L4_Q.as_usize()) == 0 {
                 l4_cache.push(L4CacheEntry {
                     rank: cumulative_rank,
                     select_base: start_bit as u32,
                 });
             }
-            
+
             cumulative_rank = cumulative_rank.saturating_add(block_ones as u32);
         }
-        
+
         self.l4_cache = l4_cache;
         Ok(())
     }
@@ -481,31 +484,31 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
         let sample_rate = C::SELECT_Q.as_usize() * 64; // Sample every Q*64 ones
         let num_samples = (self.total_ones + sample_rate - 1) / sample_rate;
         let mut select_cache = Vec::with_capacity(num_samples);
-        
+
         let mut ones_found = 0;
         let mut target_one = 0;
-        
+
         for (word_idx, &word) in self.bit_data.iter().enumerate() {
             let word_ones = word.count_ones() as usize;
-            
+
             while ones_found + word_ones > target_one && target_one < self.total_ones {
                 // Find the exact position within this word
                 let one_in_word = target_one - ones_found;
                 let position = self.find_nth_one_in_word(word, one_in_word);
-                
+
                 if let Some(bit_pos) = position {
                     select_cache.push(SelectCacheEntry {
                         position: (word_idx * 64 + bit_pos) as u32,
                         one_index: target_one as u32,
                     });
                 }
-                
+
                 target_one += sample_rate;
             }
-            
+
             ones_found += word_ones;
         }
-        
+
         self.select_cache = select_cache;
         Ok(())
     }
@@ -515,14 +518,14 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
         if start_bit >= end_bit || start_bit >= self.total_bits {
             return 0;
         }
-        
+
         let start_word = start_bit / 64;
         let end_word = (end_bit - 1) / 64;
         let mut count = 0;
-        
+
         for word_idx in start_word..=end_word.min(self.bit_data.len().saturating_sub(1)) {
             let word = self.bit_data[word_idx];
-            
+
             if word_idx == start_word && word_idx == end_word {
                 // Same word, mask both ends
                 let start_offset = start_bit % 64;
@@ -548,20 +551,20 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
                 count += word.count_ones() as usize;
             }
         }
-        
+
         count
     }
 
     /// Find the n-th one bit in a range
     fn find_nth_one_in_range(&self, start_bit: usize, end_bit: usize, n: usize) -> Option<u32> {
         let mut ones_seen = 0;
-        
+
         let start_word = start_bit / 64;
         let end_word = (end_bit - 1) / 64;
-        
+
         for word_idx in start_word..=end_word.min(self.bit_data.len().saturating_sub(1)) {
             let word = self.bit_data[word_idx];
-            
+
             let effective_word = if word_idx == start_word && word_idx == end_word {
                 // Same word, mask both ends
                 let start_offset = start_bit % 64;
@@ -585,19 +588,19 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
             } else {
                 word
             };
-            
+
             let word_ones = effective_word.count_ones() as usize;
-            
+
             if ones_seen + word_ones > n {
                 // The n-th one is in this word
                 if let Some(bit_pos) = self.find_nth_one_in_word(effective_word, n - ones_seen) {
                     return Some((word_idx * 64 + bit_pos) as u32);
                 }
             }
-            
+
             ones_seen += word_ones;
         }
-        
+
         None
     }
 
@@ -606,7 +609,7 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
         if word == 0 || n >= word.count_ones() as usize {
             return None;
         }
-        
+
         // Use BMI2 PDEP if available for ultra-fast select
         #[cfg(target_arch = "x86_64")]
         {
@@ -614,7 +617,7 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
                 return Some(self.select_with_pdep(word, n));
             }
         }
-        
+
         // Fallback: linear scan
         let mut ones_found = 0;
         for bit_pos in 0..64 {
@@ -625,7 +628,7 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
                 ones_found += 1;
             }
         }
-        
+
         None
     }
 
@@ -633,7 +636,7 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
     #[cfg(target_arch = "x86_64")]
     fn select_with_pdep(&self, word: u64, n: usize) -> usize {
         use std::arch::x86_64::{_pdep_u64, _tzcnt_u64};
-        
+
         unsafe {
             let mask = 1u64 << n;
             let deposited = _pdep_u64(mask, word);
@@ -665,13 +668,13 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
         if C::OPTIMIZE_SELECT && !self.select_cache.is_empty() {
             let sample_rate = C::SELECT_Q.as_usize() * 64;
             let cache_idx = k / sample_rate;
-            
+
             if cache_idx < self.select_cache.len() {
                 let cache_entry = &self.select_cache[cache_idx];
                 let start_pos = cache_entry.position as usize;
                 let ones_before = cache_entry.one_index as usize;
                 let remaining_k = k - ones_before;
-                
+
                 // Scan forward from cache position
                 return self.select1_from_position(start_pos, remaining_k);
             }
@@ -704,23 +707,23 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
     fn binary_search_l4_cache(&self, k: usize) -> (usize, usize) {
         let mut left = 0;
         let mut right = self.l4_cache.len();
-        
+
         while left < right {
             let mid = (left + right) / 2;
             let rank = self.l4_cache[mid].rank as usize;
-            
+
             if rank <= k {
                 left = mid + 1;
             } else {
                 right = mid;
             }
         }
-        
+
         let block_idx = if left > 0 { left - 1 } else { 0 };
         let actual_block = block_idx * C::L4_Q.as_usize();
         let start_pos = actual_block * L4_BLOCK_BITS;
         let end_pos = ((actual_block + C::L4_Q.as_usize()) * L4_BLOCK_BITS).min(self.total_bits);
-        
+
         (start_pos, end_pos)
     }
 
@@ -728,23 +731,23 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
     fn binary_search_l3_cache(&self, k: usize) -> (usize, usize) {
         let mut left = 0;
         let mut right = self.l3_cache.len();
-        
+
         while left < right {
             let mid = (left + right) / 2;
             let rank = self.l3_cache[mid].rank as usize;
-            
+
             if rank <= k {
                 left = mid + 1;
             } else {
                 right = mid;
             }
         }
-        
+
         let block_idx = if left > 0 { left - 1 } else { 0 };
         let actual_block = block_idx * C::L3_Q.as_usize();
         let start_pos = actual_block * L3_BLOCK_BITS;
         let end_pos = ((actual_block + C::L3_Q.as_usize()) * L3_BLOCK_BITS).min(self.total_bits);
-        
+
         (start_pos, end_pos)
     }
 
@@ -752,40 +755,46 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
     fn binary_search_l2_cache(&self, k: usize) -> (usize, usize) {
         let mut left = 0;
         let mut right = self.l2_cache.len();
-        
+
         while left < right {
             let mid = (left + right) / 2;
             let rank = self.l2_cache[mid].rank as usize;
-            
+
             if rank <= k {
                 left = mid + 1;
             } else {
                 right = mid;
             }
         }
-        
+
         let block_idx = if left > 0 { left - 1 } else { 0 };
         let actual_block = block_idx * C::L2_Q.as_usize();
         let start_pos = actual_block * L2_BLOCK_BITS;
         let end_pos = ((actual_block + C::L2_Q.as_usize()) * L2_BLOCK_BITS).min(self.total_bits);
-        
+
         (start_pos, end_pos)
     }
 
     /// Select in a specific range
     fn select1_in_range(&self, start_pos: usize, end_pos: usize, k: usize) -> Result<usize> {
-        let ones_before_start = if start_pos > 0 { self.rank1(start_pos) } else { 0 };
+        let ones_before_start = if start_pos > 0 {
+            self.rank1(start_pos)
+        } else {
+            0
+        };
         let target_k = k - ones_before_start;
-        
+
         let result = self.find_nth_one_in_range(start_pos, end_pos, target_k);
-        result.map(|pos| pos as usize)
+        result
+            .map(|pos| pos as usize)
             .ok_or_else(|| ZiporaError::invalid_data("Select failed in range"))
     }
 
     /// Select from a specific position (for cache optimization)
     fn select1_from_position(&self, start_pos: usize, remaining_k: usize) -> Result<usize> {
         let result = self.find_nth_one_in_range(start_pos, self.total_bits, remaining_k);
-        result.map(|pos| pos as usize)
+        result
+            .map(|pos| pos as usize)
             .ok_or_else(|| ZiporaError::invalid_data("Select failed from position"))
     }
 
@@ -815,7 +824,7 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
         let l3_size = self.l3_cache.len() * std::mem::size_of::<L3CacheEntry>();
         let l4_size = self.l4_cache.len() * std::mem::size_of::<L4CacheEntry>();
         let select_size = self.select_cache.len() * std::mem::size_of::<SelectCacheEntry>();
-        
+
         l1_size + l2_size + l3_size + l4_size + select_size
     }
 
@@ -824,14 +833,14 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
         if self.total_bits == 0 {
             return 1.0;
         }
-        
+
         let bits_per_l1_cache = L1_BLOCK_BITS * C::L1_Q.as_usize();
         let l1_coverage = if bits_per_l1_cache > 0 {
             self.total_bits as f64 / bits_per_l1_cache as f64
         } else {
             0.0
         };
-        
+
         // Estimate cache hit rate based on level density
         let base_efficiency: f64 = match C::L1_Q {
             CacheDensity::Dense => 0.95,
@@ -840,7 +849,7 @@ impl<C: HierarchicalConfig> RankSelectHierarchical<C> {
             CacheDensity::Eighth => 0.65,
             CacheDensity::Sixteenth => 0.55,
         };
-        
+
         base_efficiency.min(1.0)
     }
 }
@@ -885,18 +894,18 @@ impl<C: HierarchicalConfig> RankSelectOps for RankSelectHierarchical<C> {
         // Binary search for select0
         let mut left = 0;
         let mut right = self.total_bits;
-        
+
         while left < right {
             let mid = (left + right) / 2;
             let zeros_before = self.rank0(mid);
-            
+
             if zeros_before <= k {
                 left = mid + 1;
             } else {
                 right = mid;
             }
         }
-        
+
         Ok(left)
     }
 
@@ -912,10 +921,10 @@ impl<C: HierarchicalConfig> RankSelectOps for RankSelectHierarchical<C> {
         if index >= self.total_bits {
             return None;
         }
-        
+
         let word_idx = index / 64;
         let bit_offset = index % 64;
-        
+
         if word_idx < self.bit_data.len() {
             Some((self.bit_data[word_idx] >> bit_offset) & 1 == 1)
         } else {
@@ -927,10 +936,10 @@ impl<C: HierarchicalConfig> RankSelectOps for RankSelectHierarchical<C> {
         if self.total_bits == 0 {
             return 0.0;
         }
-        
+
         let original_size = (self.total_bits + 7) / 8; // Original bit vector size in bytes
         let cache_size = self.calculate_total_cache_size();
-        
+
         ((cache_size as f64) / (original_size as f64)) * 100.0
     }
 }
@@ -957,9 +966,7 @@ impl<C: HierarchicalConfig> RankSelectPerformanceOps for RankSelectHierarchical<
     }
 
     fn select1_bulk(&self, indices: &[usize]) -> Result<Vec<usize>> {
-        indices.iter()
-            .map(|&k| self.select1(k))
-            .collect()
+        indices.iter().map(|&k| self.select1(k)).collect()
     }
 }
 
@@ -1017,25 +1024,25 @@ mod tests {
     fn test_hierarchical_standard_config() {
         let bv = create_test_bitvector(10000, |i| i % 7 == 0);
         let rs = RankSelectStandard::new(bv.clone()).unwrap();
-        
+
         // Test basic properties
         assert_eq!(rs.len(), bv.len());
         assert_eq!(rs.count_ones(), bv.count_ones());
-        
+
         // Test rank operations
         for pos in [0, 1000, 5000, 9999] {
             let expected = bv.rank1(pos);
             let actual = rs.rank1(pos);
             assert_eq!(actual, expected, "Rank mismatch at position {}", pos);
         }
-        
+
         // Test select operations
         let ones_count = rs.count_ones();
-        for k in [0, ones_count/4, ones_count/2, ones_count*3/4] {
+        for k in [0, ones_count / 4, ones_count / 2, ones_count * 3 / 4] {
             if k < ones_count {
                 let result = rs.select1(k);
                 assert!(result.is_ok(), "Select failed for k={}", k);
-                
+
                 let pos = result.unwrap();
                 assert_eq!(rs.rank1(pos), k, "Select verification failed");
             }
@@ -1046,14 +1053,14 @@ mod tests {
     fn test_hierarchical_fast_config() {
         let bv = create_test_bitvector(20000, |i| i % 11 == 0);
         let rs = RankSelectFast::new(bv.clone()).unwrap();
-        
+
         // Test that fast config has more cache levels
         let stats = rs.cache_stats();
         assert_eq!(stats.levels, 4);
         assert!(stats.l1_entries > 0);
         assert!(stats.l2_entries >= 0); // May be 0 for small datasets
         assert!(stats.select_entries > 0); // Should have select cache
-        
+
         // Test performance
         let test_positions = [0, 1000, 10000, 19999];
         for &pos in &test_positions {
@@ -1067,14 +1074,14 @@ mod tests {
     fn test_hierarchical_compact_config() {
         let bv = create_test_bitvector(5000, |i| i % 13 == 0);
         let rs = RankSelectCompact::new(bv.clone()).unwrap();
-        
+
         // Test that compact config has fewer cache levels
         let stats = rs.cache_stats();
         assert_eq!(stats.levels, 2);
         assert!(stats.l1_entries > 0);
         assert_eq!(stats.l3_entries, 0); // Should not have L3 cache
         assert_eq!(stats.l4_entries, 0); // Should not have L4 cache
-        
+
         // Test space efficiency
         let overhead = rs.space_overhead_percent();
         println!("Compact config overhead: {:.2}%", overhead);
@@ -1085,12 +1092,12 @@ mod tests {
     fn test_hierarchical_balanced_config() {
         let bv = create_test_bitvector(15000, |i| (i * 3 + 7) % 17 == 0);
         let rs = RankSelectBalanced::new(bv.clone()).unwrap();
-        
+
         let stats = rs.cache_stats();
         assert_eq!(stats.levels, 3);
         assert!(stats.l1_entries > 0);
         assert!(stats.select_entries > 0); // Should have select cache
-        
+
         // Test consistency
         for pos in [0, 3000, 7500, 14999] {
             assert_eq!(rs.rank1(pos), bv.rank1(pos));
@@ -1101,16 +1108,16 @@ mod tests {
     fn test_hierarchical_select_optimized_config() {
         let bv = create_test_bitvector(25000, |i| i % 19 == 0);
         let rs = RankSelectSelectOptimized::new(bv.clone()).unwrap();
-        
+
         let stats = rs.cache_stats();
         assert_eq!(stats.levels, 4);
         assert!(stats.select_entries > 0);
         assert_eq!(stats.select_density, 1); // Dense select cache
-        
+
         // Test select performance
         let ones_count = rs.count_ones();
-        let test_indices = [0, ones_count/10, ones_count/2, ones_count*9/10];
-        
+        let test_indices = [0, ones_count / 10, ones_count / 2, ones_count * 9 / 10];
+
         for &k in &test_indices {
             if k < ones_count {
                 let result = rs.select1(k);
@@ -1123,26 +1130,26 @@ mod tests {
     fn test_cache_statistics() {
         let bv = create_test_bitvector(50000, |i| i % 23 == 0);
         let rs = RankSelectStandard::new(bv).unwrap();
-        
+
         let stats = rs.cache_stats();
-        
+
         assert!(stats.total_cache_size > 0);
         assert!(stats.cache_efficiency > 0.0 && stats.cache_efficiency <= 1.0);
         assert_eq!(stats.l1_density, 1); // Dense L1 cache
         assert_eq!(stats.l2_density, 4); // Quarter density L2 cache
-        
+
         println!("Cache stats: {:?}", stats);
     }
 
     #[test]
     fn test_large_dataset_performance() {
         let bv = create_test_bitvector(100000, |i| (i * 13 + 29) % 71 == 0);
-        
+
         // Test multiple configurations on same data
         let standard = RankSelectStandard::new(bv.clone()).unwrap();
         let fast = RankSelectFast::new(bv.clone()).unwrap();
         let compact = RankSelectCompact::new(bv.clone()).unwrap();
-        
+
         // All should give same results
         let test_positions = [0, 10000, 50000, 99999];
         for &pos in &test_positions {
@@ -1151,16 +1158,16 @@ mod tests {
             assert_eq!(fast.rank1(pos), expected);
             assert_eq!(compact.rank1(pos), expected);
         }
-        
+
         // Compare space overhead
         let standard_overhead = standard.space_overhead_percent();
         let fast_overhead = fast.space_overhead_percent();
         let compact_overhead = compact.space_overhead_percent();
-        
+
         println!("Standard overhead: {:.2}%", standard_overhead);
         println!("Fast overhead: {:.2}%", fast_overhead);
         println!("Compact overhead: {:.2}%", compact_overhead);
-        
+
         // Fast should use more space, compact should use less
         assert!(fast_overhead >= standard_overhead);
         assert!(compact_overhead <= standard_overhead);
@@ -1170,21 +1177,21 @@ mod tests {
     fn test_bulk_operations() {
         let bv = create_test_bitvector(30000, |i| i % 37 == 0);
         let rs = RankSelectBalanced::new(bv.clone()).unwrap();
-        
+
         // Test bulk rank operations
         let positions = vec![0, 5000, 15000, 25000, 29999];
         let bulk_ranks = rs.rank1_bulk(&positions);
-        
+
         assert_eq!(bulk_ranks.len(), positions.len());
         for (i, &pos) in positions.iter().enumerate() {
             assert_eq!(bulk_ranks[i], bv.rank1(pos));
         }
-        
+
         // Test bulk select operations
         let ones_count = rs.count_ones();
-        let indices = vec![0, ones_count/10, ones_count/2];
+        let indices = vec![0, ones_count / 10, ones_count / 2];
         let bulk_selects = rs.select1_bulk(&indices).unwrap();
-        
+
         for (i, &k) in indices.iter().enumerate() {
             if k < ones_count {
                 assert_eq!(bulk_selects[i], rs.select1(k).unwrap());
@@ -1199,7 +1206,7 @@ mod tests {
         let empty_rs = RankSelectStandard::new(empty_bv).unwrap();
         assert_eq!(empty_rs.len(), 0);
         assert_eq!(empty_rs.count_ones(), 0);
-        
+
         // Single bit
         let mut single_bv = BitVector::new();
         single_bv.push(true).unwrap();
@@ -1209,14 +1216,14 @@ mod tests {
         assert_eq!(single_rs.rank1(0), 0);
         assert_eq!(single_rs.rank1(1), 1);
         assert_eq!(single_rs.select1(0).unwrap(), 0);
-        
+
         // All zeros
         let zeros_bv = BitVector::with_size(1000, false).unwrap();
         let zeros_rs = RankSelectStandard::new(zeros_bv).unwrap();
         assert_eq!(zeros_rs.count_ones(), 0);
         assert_eq!(zeros_rs.rank1(500), 0);
         assert!(zeros_rs.select1(0).is_err());
-        
+
         // All ones
         let ones_bv = BitVector::with_size(1000, true).unwrap();
         let ones_rs = RankSelectStandard::new(ones_bv).unwrap();
@@ -1228,53 +1235,105 @@ mod tests {
     #[test]
     fn test_configuration_comparison() {
         let bv = create_test_bitvector(40000, |i| (i * 7 + 11) % 43 == 0);
-        
+
         // Test each configuration separately to avoid type mismatch
         let standard = RankSelectStandard::new(bv.clone()).unwrap();
         let fast = RankSelectFast::new(bv.clone()).unwrap();
         let compact = RankSelectCompact::new(bv.clone()).unwrap();
         let balanced = RankSelectBalanced::new(bv.clone()).unwrap();
         let select_optimized = RankSelectSelectOptimized::new(bv.clone()).unwrap();
-        
+
         // All configurations should give identical results
         let test_pos = 20000;
         let expected_rank = bv.rank1(test_pos);
-        
+
         // Test each configuration
-        assert_eq!(standard.rank1(test_pos), expected_rank, "Standard rank mismatch");
+        assert_eq!(
+            standard.rank1(test_pos),
+            expected_rank,
+            "Standard rank mismatch"
+        );
         assert_eq!(fast.rank1(test_pos), expected_rank, "Fast rank mismatch");
-        assert_eq!(compact.rank1(test_pos), expected_rank, "Compact rank mismatch");
-        assert_eq!(balanced.rank1(test_pos), expected_rank, "Balanced rank mismatch");
-        assert_eq!(select_optimized.rank1(test_pos), expected_rank, "SelectOptimized rank mismatch");
-        
+        assert_eq!(
+            compact.rank1(test_pos),
+            expected_rank,
+            "Compact rank mismatch"
+        );
+        assert_eq!(
+            balanced.rank1(test_pos),
+            expected_rank,
+            "Balanced rank mismatch"
+        );
+        assert_eq!(
+            select_optimized.rank1(test_pos),
+            expected_rank,
+            "SelectOptimized rank mismatch"
+        );
+
         // Print statistics for each
         let standard_stats = standard.cache_stats();
         let fast_stats = fast.cache_stats();
         let compact_stats = compact.cache_stats();
         let balanced_stats = balanced.cache_stats();
         let select_optimized_stats = select_optimized.cache_stats();
-        
-        println!("Standard: {} levels, {:.2}% overhead, {:.2} efficiency", 
-                 standard_stats.levels, standard.space_overhead_percent(), standard_stats.cache_efficiency);
-        println!("Fast: {} levels, {:.2}% overhead, {:.2} efficiency", 
-                 fast_stats.levels, fast.space_overhead_percent(), fast_stats.cache_efficiency);
-        println!("Compact: {} levels, {:.2}% overhead, {:.2} efficiency", 
-                 compact_stats.levels, compact.space_overhead_percent(), compact_stats.cache_efficiency);
-        println!("Balanced: {} levels, {:.2}% overhead, {:.2} efficiency", 
-                 balanced_stats.levels, balanced.space_overhead_percent(), balanced_stats.cache_efficiency);
-        println!("SelectOptimized: {} levels, {:.2}% overhead, {:.2} efficiency", 
-                 select_optimized_stats.levels, select_optimized.space_overhead_percent(), select_optimized_stats.cache_efficiency);
-        
+
+        println!(
+            "Standard: {} levels, {:.2}% overhead, {:.2} efficiency",
+            standard_stats.levels,
+            standard.space_overhead_percent(),
+            standard_stats.cache_efficiency
+        );
+        println!(
+            "Fast: {} levels, {:.2}% overhead, {:.2} efficiency",
+            fast_stats.levels,
+            fast.space_overhead_percent(),
+            fast_stats.cache_efficiency
+        );
+        println!(
+            "Compact: {} levels, {:.2}% overhead, {:.2} efficiency",
+            compact_stats.levels,
+            compact.space_overhead_percent(),
+            compact_stats.cache_efficiency
+        );
+        println!(
+            "Balanced: {} levels, {:.2}% overhead, {:.2} efficiency",
+            balanced_stats.levels,
+            balanced.space_overhead_percent(),
+            balanced_stats.cache_efficiency
+        );
+        println!(
+            "SelectOptimized: {} levels, {:.2}% overhead, {:.2} efficiency",
+            select_optimized_stats.levels,
+            select_optimized.space_overhead_percent(),
+            select_optimized_stats.cache_efficiency
+        );
+
         // Test select consistency
         let ones_count = bv.count_ones();
         if ones_count > 100 {
             let k = ones_count / 2;
             let expected_select = standard.select1(k).unwrap();
-            
-            assert_eq!(fast.select1(k).unwrap(), expected_select, "Fast select mismatch");
-            assert_eq!(compact.select1(k).unwrap(), expected_select, "Compact select mismatch");
-            assert_eq!(balanced.select1(k).unwrap(), expected_select, "Balanced select mismatch");
-            assert_eq!(select_optimized.select1(k).unwrap(), expected_select, "SelectOptimized select mismatch");
+
+            assert_eq!(
+                fast.select1(k).unwrap(),
+                expected_select,
+                "Fast select mismatch"
+            );
+            assert_eq!(
+                compact.select1(k).unwrap(),
+                expected_select,
+                "Compact select mismatch"
+            );
+            assert_eq!(
+                balanced.select1(k).unwrap(),
+                expected_select,
+                "Balanced select mismatch"
+            );
+            assert_eq!(
+                select_optimized.select1(k).unwrap(),
+                expected_select,
+                "SelectOptimized select mismatch"
+            );
         }
     }
 
@@ -1285,7 +1344,7 @@ mod tests {
         assert_eq!(std::mem::align_of::<L2CacheEntry>(), 16); // 128-bit alignment
         assert_eq!(std::mem::align_of::<L3CacheEntry>(), 16);
         assert_eq!(std::mem::align_of::<L4CacheEntry>(), 16);
-        
+
         // Test size efficiency
         assert_eq!(std::mem::size_of::<L1CacheEntry>(), 8); // 4 + 4 bytes with 8-byte alignment
         assert_eq!(std::mem::size_of::<L2CacheEntry>(), 16); // 4 + 4 bytes with 16-byte alignment

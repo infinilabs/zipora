@@ -63,7 +63,8 @@ struct BloomFilter {
 
 impl BloomFilter {
     fn new(expected_items: usize, false_positive_rate: f64) -> Self {
-        let size = (-((expected_items as f64) * false_positive_rate.ln()) / (2.0_f64.ln().powi(2))).ceil() as usize;
+        let size = (-((expected_items as f64) * false_positive_rate.ln()) / (2.0_f64.ln().powi(2)))
+            .ceil() as usize;
         let hash_functions = ((size as f64 / expected_items as f64) * 2.0_f64.ln()).ceil() as usize;
         let num_u64s = (size + 63) / 64;
 
@@ -537,7 +538,7 @@ impl DictionaryCompressor {
 }
 
 /// Optimized dictionary compressor using suffix arrays and advanced algorithms
-/// 
+///
 /// This compressor addresses the performance bottleneck in the original implementation
 /// by replacing O(n²) linear search with O(log n) suffix array search, adding rolling
 /// hash for efficient pattern matching, and bloom filters for quick rejection.
@@ -567,27 +568,30 @@ impl OptimizedDictionaryCompressor {
     ) -> Result<Self> {
         // Build suffix array for fast pattern search
         let suffix_array = SuffixArray::new(data)?;
-        
+
         // Create bloom filter for quick rejection
         let expected_patterns = data.len() / min_match_length;
         let mut bloom_filter = BloomFilter::new(expected_patterns, 0.01); // 1% false positive rate
-        
+
         // Build rolling hash table for O(1) pattern lookup
         let mut hash_table: HashMap<u64, Vec<usize>> = HashMap::new();
         if data.len() >= min_match_length {
             let mut rolling_hash = RollingHash::new(min_match_length);
-            
+
             // Initialize hash for first window
             let first_hash = rolling_hash.hash_slice(&data[0..min_match_length]);
-            hash_table.entry(first_hash).or_insert_with(Vec::new).push(0);
-            
+            hash_table
+                .entry(first_hash)
+                .or_insert_with(Vec::new)
+                .push(0);
+
             // Roll through remaining positions
             for i in 1..=data.len().saturating_sub(min_match_length) {
                 let hash = rolling_hash.roll(data[i - 1], data[i + min_match_length - 1]);
                 hash_table.entry(hash).or_insert_with(Vec::new).push(i);
             }
         }
-        
+
         // Populate bloom filter with potential patterns
         for i in 0..data.len().saturating_sub(min_match_length - 1) {
             let pattern = &data[i..i + min_match_length];
@@ -609,7 +613,7 @@ impl OptimizedDictionaryCompressor {
     pub fn compress(&self, data: &[u8]) -> Result<Vec<u8>> {
         let mut result = Vec::new();
         let mut pos = 0;
-        
+
         // Create rolling hash for input data if we have enough data
         let mut rolling_hash = if data.len() >= self.min_match_length {
             Some(RollingHash::new(self.min_match_length))
@@ -624,7 +628,7 @@ impl OptimizedDictionaryCompressor {
             // Only search if we have enough data for minimum match
             if pos + self.min_match_length <= data.len() {
                 let pattern = &data[pos..pos + self.min_match_length];
-                
+
                 // Quick rejection using bloom filter
                 if self.bloom_filter.contains(pattern) {
                     // Use rolling hash for fast candidate lookup
@@ -637,7 +641,7 @@ impl OptimizedDictionaryCompressor {
                     } else {
                         0 // Fallback for very small data
                     };
-                    
+
                     // Try rolling hash optimization first
                     if let Some(candidate_positions) = self.hash_table.get(&hash) {
                         // Check each candidate position for the best match within the sliding window
@@ -646,7 +650,7 @@ impl OptimizedDictionaryCompressor {
                             if suffix_pos >= pos {
                                 continue; // Can't reference future positions
                             }
-                            
+
                             let distance = pos - suffix_pos;
                             if distance > self.window_size || distance == 0 {
                                 continue;
@@ -654,7 +658,8 @@ impl OptimizedDictionaryCompressor {
 
                             // Verify the pattern matches (hash collision check)
                             if suffix_pos + self.min_match_length <= self.text.len() {
-                                let training_pattern = &self.text[suffix_pos..suffix_pos + self.min_match_length];
+                                let training_pattern =
+                                    &self.text[suffix_pos..suffix_pos + self.min_match_length];
                                 if training_pattern != pattern {
                                     continue; // Hash collision, skip
                                 }
@@ -665,7 +670,7 @@ impl OptimizedDictionaryCompressor {
                             // Extend the match as far as possible
                             let max_possible = (data.len() - pos).min(self.max_match_length);
                             let mut match_length = self.min_match_length;
-                            
+
                             while match_length < max_possible
                                 && suffix_pos + match_length < self.text.len()
                                 && self.text[suffix_pos + match_length] == data[pos + match_length]
@@ -675,19 +680,21 @@ impl OptimizedDictionaryCompressor {
 
                             // Update best match if this is better and meets minimum length requirement
                             // Apply the same minimum length threshold as original algorithm
-                            if match_length >= self.min_match_length.max(10) && match_length > best_match_length {
+                            if match_length >= self.min_match_length.max(10)
+                                && match_length > best_match_length
+                            {
                                 best_match_offset = distance;
                                 best_match_length = match_length;
                             }
                         }
                     }
-                    
+
                     // Fallback to suffix array search if rolling hash didn't find good matches
                     // This ensures we don't miss any matches due to hash table limitations
                     if best_match_length == 0 {
                         // Use suffix array to find all occurrences of the pattern
                         let (start, count) = self.suffix_array.search(&self.text, pattern);
-                        
+
                         // Check each occurrence for the best match within the sliding window
                         for i in start..start + count {
                             if let Some(suffix_pos) = self.suffix_array.suffix_at_rank(i) {
@@ -695,7 +702,7 @@ impl OptimizedDictionaryCompressor {
                                 if suffix_pos >= pos {
                                     continue; // Can't reference future positions
                                 }
-                                
+
                                 let distance = pos - suffix_pos;
                                 if distance > self.window_size || distance == 0 {
                                     continue;
@@ -704,16 +711,19 @@ impl OptimizedDictionaryCompressor {
                                 // Extend the match as far as possible
                                 let max_possible = (data.len() - pos).min(self.max_match_length);
                                 let mut match_length = self.min_match_length;
-                                
+
                                 while match_length < max_possible
                                     && suffix_pos + match_length < self.text.len()
-                                    && self.text[suffix_pos + match_length] == data[pos + match_length]
+                                    && self.text[suffix_pos + match_length]
+                                        == data[pos + match_length]
                                 {
                                     match_length += 1;
                                 }
 
                                 // Update best match if this is better and meets minimum length requirement
-                                if match_length >= self.min_match_length.max(10) && match_length > best_match_length {
+                                if match_length >= self.min_match_length.max(10)
+                                    && match_length > best_match_length
+                                {
                                     best_match_offset = distance;
                                     best_match_length = match_length;
                                 }
@@ -1061,7 +1071,11 @@ mod tests {
 
         // Should achieve excellent compression due to long repeated patterns
         let ratio = compressed.len() as f64 / data.len() as f64;
-        assert!(ratio < 0.5, "Compression ratio was {:.3}, expected < 0.5", ratio);
+        assert!(
+            ratio < 0.5,
+            "Compression ratio was {:.3}, expected < 0.5",
+            ratio
+        );
     }
 
     #[test]
@@ -1077,12 +1091,16 @@ mod tests {
         let dict = builder.build(&data);
         let original_compressor = DictionaryCompressor::new(dict);
         let original_compressed = original_compressor.compress(&data).unwrap();
-        let original_decompressed = original_compressor.decompress(&original_compressed).unwrap();
+        let original_decompressed = original_compressor
+            .decompress(&original_compressed)
+            .unwrap();
 
         // Test optimized compressor
         let optimized_compressor = OptimizedDictionaryCompressor::new(&data).unwrap();
         let optimized_compressed = optimized_compressor.compress(&data).unwrap();
-        let optimized_decompressed = optimized_compressor.decompress(&optimized_compressed).unwrap();
+        let optimized_decompressed = optimized_compressor
+            .decompress(&optimized_compressed)
+            .unwrap();
 
         // Both should decompress correctly
         assert_eq!(data, original_decompressed);
@@ -1091,10 +1109,10 @@ mod tests {
         // Optimized version should achieve similar or better compression
         let original_ratio = original_compressed.len() as f64 / data.len() as f64;
         let optimized_ratio = optimized_compressed.len() as f64 / data.len() as f64;
-        
+
         println!("Original compression ratio: {:.3}", original_ratio);
         println!("Optimized compression ratio: {:.3}", optimized_ratio);
-        
+
         // The optimized version should not be significantly worse
         assert!(optimized_ratio <= original_ratio + 0.1);
     }
@@ -1102,7 +1120,7 @@ mod tests {
     #[test]
     fn test_rolling_hash() {
         let mut hasher = RollingHash::new(3);
-        
+
         // Test basic hashing
         let hash1 = hasher.hash_slice(b"abc");
         let hash2 = hasher.hash_slice(b"abc");
@@ -1118,21 +1136,21 @@ mod tests {
     #[test]
     fn test_bloom_filter() {
         let mut filter = BloomFilter::new(1000, 0.01);
-        
+
         // Test basic insertion and lookup
         filter.insert(b"hello");
         assert!(filter.contains(b"hello"));
-        
+
         // False negatives should not occur
         filter.insert(b"world");
         assert!(filter.contains(b"world"));
-        
+
         // Test with multiple items
         let items = [b"foo", b"bar", b"baz", b"qux"];
         for item in &items {
             filter.insert(*item);
         }
-        
+
         for item in &items {
             assert!(filter.contains(*item));
         }
@@ -1151,7 +1169,11 @@ mod tests {
         let ratio = compressor.estimate_compression_ratio(&data);
 
         // Should achieve good compression
-        assert!(ratio < 0.8, "Compression ratio was {:.3}, expected < 0.8", ratio);
+        assert!(
+            ratio < 0.8,
+            "Compression ratio was {:.3}, expected < 0.8",
+            ratio
+        );
         assert!(ratio > 0.0);
     }
 
@@ -1159,10 +1181,10 @@ mod tests {
     fn test_empty_data_handling() {
         let empty_data = b"";
         let compressor = OptimizedDictionaryCompressor::new(empty_data).unwrap();
-        
+
         let compressed = compressor.compress(empty_data).unwrap();
         let decompressed = compressor.decompress(&compressed).unwrap();
-        
+
         assert_eq!(empty_data.to_vec(), decompressed);
     }
 
@@ -1170,10 +1192,10 @@ mod tests {
     fn test_single_byte_data() {
         let data = b"a";
         let compressor = OptimizedDictionaryCompressor::new(data).unwrap();
-        
+
         let compressed = compressor.compress(data).unwrap();
         let decompressed = compressor.decompress(&compressed).unwrap();
-        
+
         assert_eq!(data.to_vec(), decompressed);
     }
 
@@ -1182,12 +1204,12 @@ mod tests {
         // Generate data with no repeated patterns
         let data: Vec<u8> = (0..255).collect();
         let compressor = OptimizedDictionaryCompressor::new(&data).unwrap();
-        
+
         let compressed = compressor.compress(&data).unwrap();
         let decompressed = compressor.decompress(&compressed).unwrap();
-        
+
         assert_eq!(data, decompressed);
-        
+
         // Should not compress well (ratio should be close to 1.0 or higher due to overhead)
         let ratio = compressed.len() as f64 / data.len() as f64;
         assert!(ratio >= 0.9); // Little to no compression expected

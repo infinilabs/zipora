@@ -4,21 +4,20 @@
 //! and rank/select backends to demonstrate the performance characteristics
 //! and optimization opportunities.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use zipora::{
-    NestedLoudsTrie, NestingConfig,
-    succinct::{RankSelectSimple, RankSelectSeparated256, RankSelectInterleaved256, RankSelectSeparated512},
-    fsa::{Trie, FiniteStateAutomaton},
+    fsa::{FiniteStateAutomaton, NestedLoudsTrie, NestingConfig, PrefixIterable, Trie},
+    succinct::{
+        RankSelectInterleaved256, RankSelectSeparated256, RankSelectSeparated512, RankSelectSimple,
+    },
 };
 
 /// Generate test data with different characteristics
 fn generate_test_data(size: usize, pattern: &str) -> Vec<Vec<u8>> {
     match pattern {
-        "random" => {
-            (0..size)
-                .map(|i| format!("random_key_{:08}", i).into_bytes())
-                .collect()
-        }
+        "random" => (0..size)
+            .map(|i| format!("random_key_{:08}", i).into_bytes())
+            .collect(),
         "prefixed" => {
             let prefixes = ["http://", "https://", "ftp://", "file://"];
             (0..size)
@@ -28,18 +27,12 @@ fn generate_test_data(size: usize, pattern: &str) -> Vec<Vec<u8>> {
                 })
                 .collect()
         }
-        "hierarchical" => {
-            (0..size)
-                .map(|i| {
-                    format!("level_{}/sublevel_{}/item_{:04}", i / 100, i / 10, i).into_bytes()
-                })
-                .collect()
-        }
-        "sequential" => {
-            (0..size)
-                .map(|i| format!("{:010}", i).into_bytes())
-                .collect()
-        }
+        "hierarchical" => (0..size)
+            .map(|i| format!("level_{}/sublevel_{}/item_{:04}", i / 100, i / 10, i).into_bytes())
+            .collect(),
+        "sequential" => (0..size)
+            .map(|i| format!("{:010}", i).into_bytes())
+            .collect(),
         _ => vec![b"default".to_vec(); size],
     }
 }
@@ -48,10 +41,10 @@ fn generate_test_data(size: usize, pattern: &str) -> Vec<Vec<u8>> {
 fn bench_insertion_backends(c: &mut Criterion) {
     let mut group = c.benchmark_group("insertion_backends");
     let sizes = vec![100, 500, 1000];
-    
+
     for size in sizes {
         let data = generate_test_data(size, "random");
-        
+
         // Benchmark RankSelectSimple backend
         group.bench_with_input(
             BenchmarkId::new("RankSelectSimple", size),
@@ -112,7 +105,7 @@ fn bench_insertion_backends(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
@@ -121,20 +114,20 @@ fn bench_lookup_backends(c: &mut Criterion) {
     let mut group = c.benchmark_group("lookup_backends");
     let size = 1000;
     let data = generate_test_data(size, "random");
-    
+
     // Pre-build tries with different backends
     let mut trie_simple = NestedLoudsTrie::<RankSelectSimple>::new().unwrap();
     let mut trie_sep256 = NestedLoudsTrie::<RankSelectSeparated256>::new().unwrap();
     let mut trie_int256 = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
     let mut trie_sep512 = NestedLoudsTrie::<RankSelectSeparated512>::new().unwrap();
-    
+
     for key in &data {
         trie_simple.insert(key).unwrap();
         trie_sep256.insert(key).unwrap();
         trie_int256.insert(key).unwrap();
         trie_sep512.insert(key).unwrap();
     }
-    
+
     // Benchmark lookups
     group.bench_function("RankSelectSimple", |b| {
         b.iter(|| {
@@ -143,7 +136,7 @@ fn bench_lookup_backends(c: &mut Criterion) {
             }
         });
     });
-    
+
     group.bench_function("RankSelectSeparated256", |b| {
         b.iter(|| {
             for key in &data {
@@ -151,7 +144,7 @@ fn bench_lookup_backends(c: &mut Criterion) {
             }
         });
     });
-    
+
     group.bench_function("RankSelectInterleaved256", |b| {
         b.iter(|| {
             for key in &data {
@@ -159,7 +152,7 @@ fn bench_lookup_backends(c: &mut Criterion) {
             }
         });
     });
-    
+
     group.bench_function("RankSelectSeparated512", |b| {
         b.iter(|| {
             for key in &data {
@@ -167,7 +160,7 @@ fn bench_lookup_backends(c: &mut Criterion) {
             }
         });
     });
-    
+
     group.finish();
 }
 
@@ -175,35 +168,32 @@ fn bench_lookup_backends(c: &mut Criterion) {
 fn bench_nesting_levels(c: &mut Criterion) {
     let mut group = c.benchmark_group("nesting_levels");
     let data = generate_test_data(500, "hierarchical");
-    
+
     for levels in [1, 2, 3, 4, 5, 6] {
         let config = NestingConfig::builder()
             .max_levels(levels)
             .fragment_compression_ratio(0.3)
             .build()
             .unwrap();
-            
-        group.bench_with_input(
-            BenchmarkId::new("levels", levels),
-            &data,
-            |b, data| {
-                b.iter(|| {
-                    let mut trie = NestedLoudsTrie::<RankSelectSeparated256>::with_config(config.clone()).unwrap();
-                    for key in data {
-                        black_box(trie.insert(key).unwrap());
-                    }
-                    
-                    // Test some lookups
-                    for key in data.iter().step_by(10) {
-                        black_box(trie.contains(key));
-                    }
-                    
-                    black_box(trie)
-                });
-            },
-        );
+
+        group.bench_with_input(BenchmarkId::new("levels", levels), &data, |b, data| {
+            b.iter(|| {
+                let mut trie =
+                    NestedLoudsTrie::<RankSelectSeparated256>::with_config(config.clone()).unwrap();
+                for key in data {
+                    black_box(trie.insert(key).unwrap());
+                }
+
+                // Test some lookups
+                for key in data.iter().step_by(10) {
+                    black_box(trie.contains(key));
+                }
+
+                black_box(trie)
+            });
+        });
     }
-    
+
     group.finish();
 }
 
@@ -211,7 +201,7 @@ fn bench_nesting_levels(c: &mut Criterion) {
 fn bench_compression_ratios(c: &mut Criterion) {
     let mut group = c.benchmark_group("compression_ratios");
     let data = generate_test_data(300, "prefixed"); // Use prefixed data for better compression
-    
+
     for ratio in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5] {
         let config = NestingConfig::builder()
             .max_levels(4)
@@ -219,31 +209,33 @@ fn bench_compression_ratios(c: &mut Criterion) {
             .cache_optimization(true)
             .build()
             .unwrap();
-            
+
         group.bench_with_input(
             BenchmarkId::new("ratio", (ratio * 100.0) as u32),
             &data,
             |b, data| {
                 b.iter(|| {
-                    let mut trie = NestedLoudsTrie::<RankSelectInterleaved256>::with_config(config.clone()).unwrap();
+                    let mut trie =
+                        NestedLoudsTrie::<RankSelectInterleaved256>::with_config(config.clone())
+                            .unwrap();
                     for key in data {
                         black_box(trie.insert(key).unwrap());
                     }
-                    
+
                     // Trigger optimization
                     black_box(trie.optimize().unwrap());
-                    
+
                     // Test lookups after optimization
                     for key in data.iter().step_by(5) {
                         black_box(trie.contains(key));
                     }
-                    
+
                     black_box(trie)
                 });
             },
         );
     }
-    
+
     group.finish();
 }
 
@@ -252,7 +244,7 @@ fn bench_data_patterns(c: &mut Criterion) {
     let mut group = c.benchmark_group("data_patterns");
     let size = 500;
     let patterns = ["random", "prefixed", "hierarchical", "sequential"];
-    
+
     for pattern in patterns {
         let data = generate_test_data(size, pattern);
         let config = NestingConfig::builder()
@@ -261,31 +253,28 @@ fn bench_data_patterns(c: &mut Criterion) {
             .adaptive_backend_selection(true)
             .build()
             .unwrap();
-            
-        group.bench_with_input(
-            BenchmarkId::new("pattern", pattern),
-            &data,
-            |b, data| {
-                b.iter(|| {
-                    let mut trie = NestedLoudsTrie::<RankSelectSeparated256>::with_config(config.clone()).unwrap();
-                    for key in data {
-                        black_box(trie.insert(key).unwrap());
+
+        group.bench_with_input(BenchmarkId::new("pattern", pattern), &data, |b, data| {
+            b.iter(|| {
+                let mut trie =
+                    NestedLoudsTrie::<RankSelectSeparated256>::with_config(config.clone()).unwrap();
+                for key in data {
+                    black_box(trie.insert(key).unwrap());
+                }
+
+                // Test various operations
+                for key in data.iter().step_by(7) {
+                    black_box(trie.contains(key));
+                    if let Some(prefix_len) = trie.longest_prefix(key) {
+                        black_box(prefix_len);
                     }
-                    
-                    // Test various operations
-                    for key in data.iter().step_by(7) {
-                        black_box(trie.contains(key));
-                        if let Some(prefix_len) = trie.longest_prefix(key) {
-                            black_box(prefix_len);
-                        }
-                    }
-                    
-                    black_box(trie)
-                });
-            },
-        );
+                }
+
+                black_box(trie)
+            });
+        });
     }
-    
+
     group.finish();
 }
 
@@ -293,13 +282,13 @@ fn bench_data_patterns(c: &mut Criterion) {
 fn bench_prefix_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("prefix_operations");
     let data = generate_test_data(200, "prefixed");
-    
+
     // Build trie
     let mut trie = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
     for key in &data {
         trie.insert(key).unwrap();
     }
-    
+
     // Benchmark longest prefix
     group.bench_function("longest_prefix", |b| {
         b.iter(|| {
@@ -308,7 +297,7 @@ fn bench_prefix_operations(c: &mut Criterion) {
             }
         });
     });
-    
+
     // Benchmark prefix iteration
     let prefixes = ["http", "https", "ftp"];
     group.bench_function("prefix_iteration", |b| {
@@ -319,7 +308,7 @@ fn bench_prefix_operations(c: &mut Criterion) {
             }
         });
     });
-    
+
     group.finish();
 }
 
@@ -327,45 +316,48 @@ fn bench_prefix_operations(c: &mut Criterion) {
 fn bench_memory_efficiency(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory_efficiency");
     let data = generate_test_data(1000, "prefixed");
-    
+
     // Compare different configurations for memory efficiency
     let configs = [
         ("default", NestingConfig::default()),
-        ("compressed", NestingConfig::builder()
-            .max_levels(5)
-            .fragment_compression_ratio(0.4)
-            .cache_optimization(true)
-            .build()
-            .unwrap()),
-        ("minimal", NestingConfig::builder()
-            .max_levels(2)
-            .fragment_compression_ratio(0.1)
-            .cache_optimization(false)
-            .build()
-            .unwrap()),
+        (
+            "compressed",
+            NestingConfig::builder()
+                .max_levels(5)
+                .fragment_compression_ratio(0.4)
+                .cache_optimization(true)
+                .build()
+                .unwrap(),
+        ),
+        (
+            "minimal",
+            NestingConfig::builder()
+                .max_levels(2)
+                .fragment_compression_ratio(0.1)
+                .cache_optimization(false)
+                .build()
+                .unwrap(),
+        ),
     ];
-    
+
     for (name, config) in configs {
-        group.bench_with_input(
-            BenchmarkId::new("config", name),
-            &data,
-            |b, data| {
-                b.iter(|| {
-                    let mut trie = NestedLoudsTrie::<RankSelectSeparated256>::with_config(config.clone()).unwrap();
-                    for key in data {
-                        trie.insert(key).unwrap();
-                    }
-                    
-                    // Measure memory usage
-                    let memory_usage = trie.total_memory_usage();
-                    let stats = trie.performance_stats();
-                    
-                    black_box((trie, memory_usage, stats))
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("config", name), &data, |b, data| {
+            b.iter(|| {
+                let mut trie =
+                    NestedLoudsTrie::<RankSelectSeparated256>::with_config(config.clone()).unwrap();
+                for key in data {
+                    trie.insert(key).unwrap();
+                }
+
+                // Measure memory usage
+                let memory_usage = trie.total_memory_usage();
+                let stats = trie.performance_stats().clone(); // Clone to avoid borrowing issues
+
+                black_box((trie, memory_usage, stats))
+            });
+        });
     }
-    
+
     group.finish();
 }
 
@@ -375,7 +367,7 @@ fn bench_builder_patterns(c: &mut Criterion) {
     let data = generate_test_data(500, "random");
     let mut sorted_data = data.clone();
     sorted_data.sort();
-    
+
     // Benchmark incremental insertion
     group.bench_function("incremental", |b| {
         b.iter(|| {
@@ -386,23 +378,26 @@ fn bench_builder_patterns(c: &mut Criterion) {
             black_box(trie)
         });
     });
-    
+
     // Benchmark sorted builder
     group.bench_function("sorted_builder", |b| {
         b.iter(|| {
-            let trie = NestedLoudsTrie::<RankSelectSeparated256>::build_from_sorted(sorted_data.clone()).unwrap();
+            let trie =
+                NestedLoudsTrie::<RankSelectSeparated256>::build_from_sorted(sorted_data.clone())
+                    .unwrap();
             black_box(trie)
         });
     });
-    
+
     // Benchmark unsorted builder
     group.bench_function("unsorted_builder", |b| {
         b.iter(|| {
-            let trie = NestedLoudsTrie::<RankSelectSeparated256>::build_from_unsorted(data.clone()).unwrap();
+            let trie = NestedLoudsTrie::<RankSelectSeparated256>::build_from_unsorted(data.clone())
+                .unwrap();
             black_box(trie)
         });
     });
-    
+
     // Benchmark optimized builder
     group.bench_function("optimized_builder", |b| {
         let config = NestingConfig::builder()
@@ -410,13 +405,17 @@ fn bench_builder_patterns(c: &mut Criterion) {
             .fragment_compression_ratio(0.3)
             .build()
             .unwrap();
-            
+
         b.iter(|| {
-            let trie = NestedLoudsTrie::<RankSelectSeparated256>::build_optimized(sorted_data.clone(), config.clone()).unwrap();
+            let trie = NestedLoudsTrie::<RankSelectSeparated256>::build_optimized(
+                sorted_data.clone(),
+                config.clone(),
+            )
+            .unwrap();
             black_box(trie)
         });
     });
-    
+
     group.finish();
 }
 

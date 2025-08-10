@@ -285,9 +285,7 @@ impl FileDataOutput {
             .create(true)
             .append(true)
             .open(path)
-            .map_err(|e| {
-                ZiporaError::io_error(format!("Failed to open file for append: {}", e))
-            })?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to open file for append: {}", e)))?;
 
         let bytes_written = file.metadata().map(|m| m.len()).unwrap_or(0);
 

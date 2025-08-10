@@ -1,10 +1,10 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::collections::HashMap;
+use std::ffi::c_void;
 use zipora::{
     BitVector, EntropyStats, FastStr, FastVec, GoldHashMap, HuffmanEncoder, HuffmanTree,
     RankSelect256,
 };
-use std::collections::HashMap;
-use std::ffi::c_void;
 
 #[cfg(feature = "mmap")]
 use zipora::{DataInput, MemoryMappedInput};
@@ -15,7 +15,7 @@ use tempfile::NamedTempFile;
 
 // External C functions from the C++ wrapper
 #[link(name = "zipora_wrapper")]
-extern "C" {
+unsafe extern "C" {
     // Vector operations
     fn cpp_valvec_create() -> *mut c_void;
     fn cpp_valvec_destroy(vec: *mut c_void);
@@ -804,12 +804,14 @@ fn benchmark_allocation_patterns(c: &mut Criterion) {
                             // Touch memory to ensure allocation
                             let slice = allocation.as_slice();
                             if !slice.is_empty() {
-                                unsafe { *(slice.as_ptr() as *mut u8) = 42; }
+                                unsafe {
+                                    *(slice.as_ptr() as *mut u8) = 42;
+                                }
                             }
                             allocations.push(allocation);
                         }
                     }
-                    
+
                     // Deallocate all
                     for allocation in allocations {
                         let _ = zipora::memory::tiered_deallocate(allocation);
