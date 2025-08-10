@@ -111,7 +111,7 @@ test_release:
 	@echo "🧪 Running release tests with stable features (including benchmarks)..."
 	$(CARGO) test --release $(STABLE_FEATURES) --lib --bins --tests
 	@echo "🧪 Running stable benchmarks (excluding avx512_bench and cpp_comparison)..."
-	$(CARGO) test --release $(STABLE_FEATURES) --bench benchmark --bench dictionary_optimization_bench --bench cache_bench --bench secure_memory_pool_bench --bench specialized_containers_bench --bench rank_select_bench --bench compressed_sparse_trie_bench --bench comprehensive_trie_benchmarks --bench double_array_trie_bench --bench nested_louds_trie_bench --bench sortable_str_vec_bench --bench simd_rank_select_bench --bench benchmark_rank_select || echo "Some benchmarks may require additional setup"
+	$(CARGO) test --release $(STABLE_FEATURES) --bench benchmark --bench dictionary_optimization_bench --bench cache_bench --bench secure_memory_pool_bench --bench specialized_containers_bench --bench rank_select_bench --bench compressed_sparse_trie_bench --bench comprehensive_trie_benchmarks --bench double_array_trie_bench --bench nested_louds_trie_bench --bench sortable_str_vec_bench --bench simd_rank_select_bench --bench benchmark_rank_select --bench fsa_infrastructure_bench || echo "Some benchmarks may require additional setup"
 	@echo "✅ Release tests (stable) completed"
 
 # Individual test targets - Debug mode (nightly, no benchmarks)  
@@ -125,7 +125,7 @@ test_nightly_release:
 	@echo "🌙 Running release tests with nightly features (including benchmarks)..."
 	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) --lib --bins --tests
 	@echo "🧪 Running nightly benchmarks (including avx512_bench, excluding cpp_comparison)..."
-	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) --bench benchmark --bench dictionary_optimization_bench --bench cache_bench --bench avx512_bench --bench secure_memory_pool_bench --bench specialized_containers_bench --bench rank_select_bench --bench compressed_sparse_trie_bench --bench comprehensive_trie_benchmarks --bench double_array_trie_bench --bench nested_louds_trie_bench --bench sortable_str_vec_bench --bench simd_rank_select_bench --bench benchmark_rank_select || echo "Some benchmarks may require additional setup"
+	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) --bench benchmark --bench dictionary_optimization_bench --bench cache_bench --bench avx512_bench --bench secure_memory_pool_bench --bench specialized_containers_bench --bench rank_select_bench --bench compressed_sparse_trie_bench --bench comprehensive_trie_benchmarks --bench double_array_trie_bench --bench nested_louds_trie_bench --bench sortable_str_vec_bench --bench simd_rank_select_bench --bench benchmark_rank_select --bench fsa_infrastructure_bench || echo "Some benchmarks may require additional setup"
 	@echo "✅ Release tests (nightly) completed"
 
 # =============================================================================
@@ -137,6 +137,24 @@ bench:
 	@echo "⚡ Running benchmarks..."
 	$(CARGO) bench $(STABLE_FEATURES)
 	@echo "✅ Benchmarks completed"
+
+# Run FSA infrastructure benchmarks specifically
+bench_fsa:
+	@echo "⚡ Running FSA infrastructure benchmarks..."
+	$(CARGO) bench $(STABLE_FEATURES) --bench fsa_infrastructure_bench
+	@echo "✅ FSA benchmarks completed"
+
+# Run all benchmarks in release mode
+bench_release:
+	@echo "⚡ Running all benchmarks in release mode..."
+	$(CARGO) bench --release $(STABLE_FEATURES)
+	@echo "✅ Release benchmarks completed"
+
+# Run nightly benchmarks with AVX-512
+bench_nightly:
+	@echo "🌙 Running nightly benchmarks with AVX-512..."
+	$(CARGO_NIGHTLY) bench --release $(NIGHTLY_FEATURES)
+	@echo "✅ Nightly benchmarks completed"
 
 # Run enhanced safety tests
 safety_tests:
@@ -309,6 +327,9 @@ help:
 	@echo ""
 	@echo "Specialized Targets:"
 	@echo "  bench                  Run benchmarks"
+	@echo "  bench_fsa              Run FSA infrastructure benchmarks specifically"
+	@echo "  bench_release          Run all benchmarks in release mode"
+	@echo "  bench_nightly          Run nightly benchmarks with AVX-512"
 	@echo "  safety_tests           Run enhanced container safety tests"
 	@echo "  miri_tests             Run Miri memory safety tests"
 	@echo "  miri_full              Run full Miri test suite (using script)"
