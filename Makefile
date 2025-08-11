@@ -16,7 +16,7 @@
 .PHONY: all build test build_nightly test_nightly clean help
 .PHONY: build_debug build_release build_nightly_debug build_nightly_release
 .PHONY: test_debug test_release test_nightly_debug test_nightly_release  
-.PHONY: bench bench_io safety_tests miri_tests format clippy doc
+.PHONY: bench bench_fsa bench_serialization bench_io safety_tests miri_tests format clippy doc
 
 # =============================================================================
 # CONFIGURATION
@@ -114,7 +114,7 @@ test_release:
 	$(CARGO) test --release $(STABLE_FEATURES) test_stream_performance_comparison -- --nocapture || echo "❌ I/O performance tests failed - may require additional setup"
 	$(CARGO) test --release $(STABLE_FEATURES) test_combined_stream_operations -- --nocapture || echo "❌ I/O integration tests failed - may require additional setup"
 	@echo "🧪 Running stable benchmarks (excluding avx512_bench and cpp_comparison)..."
-	$(CARGO) test --release $(STABLE_FEATURES) --bench benchmark --bench dictionary_optimization_bench --bench cache_bench --bench secure_memory_pool_bench --bench specialized_containers_bench --bench rank_select_bench --bench compressed_sparse_trie_bench --bench comprehensive_trie_benchmarks --bench double_array_trie_bench --bench nested_louds_trie_bench --bench sortable_str_vec_bench --bench simd_rank_select_bench --bench benchmark_rank_select --bench fsa_infrastructure_bench || echo "❌ Some benchmarks failed - may require additional setup"
+	$(CARGO) test --release $(STABLE_FEATURES) --bench benchmark --bench dictionary_optimization_bench --bench cache_bench --bench secure_memory_pool_bench --bench specialized_containers_bench --bench rank_select_bench --bench compressed_sparse_trie_bench --bench comprehensive_trie_benchmarks --bench double_array_trie_bench --bench nested_louds_trie_bench --bench sortable_str_vec_bench --bench simd_rank_select_bench --bench benchmark_rank_select --bench fsa_infrastructure_bench --bench stream_buffer_bench --bench range_stream_bench --bench zero_copy_bench --bench endian_bench --bench smart_ptr_bench --bench complex_types_bench --bench versioning_bench --bench var_int_bench || echo "❌ Some benchmarks failed - may require additional setup"
 	@echo "✅ Release tests (stable) completed"
 
 # Individual test targets - Debug mode (nightly, no benchmarks)  
@@ -131,7 +131,7 @@ test_nightly_release:
 	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) test_stream_performance_comparison -- --nocapture || echo "❌ I/O performance tests failed - may require additional setup"
 	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) test_combined_stream_operations -- --nocapture || echo "❌ I/O integration tests failed - may require additional setup"
 	@echo "🧪 Running nightly benchmarks (including avx512_bench, excluding cpp_comparison)..."
-	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) --bench benchmark --bench dictionary_optimization_bench --bench cache_bench --bench avx512_bench --bench secure_memory_pool_bench --bench specialized_containers_bench --bench rank_select_bench --bench compressed_sparse_trie_bench --bench comprehensive_trie_benchmarks --bench double_array_trie_bench --bench nested_louds_trie_bench --bench sortable_str_vec_bench --bench simd_rank_select_bench --bench benchmark_rank_select --bench fsa_infrastructure_bench || echo "❌ Some benchmarks failed - may require additional setup"
+	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) --bench benchmark --bench dictionary_optimization_bench --bench cache_bench --bench avx512_bench --bench secure_memory_pool_bench --bench specialized_containers_bench --bench rank_select_bench --bench compressed_sparse_trie_bench --bench comprehensive_trie_benchmarks --bench double_array_trie_bench --bench nested_louds_trie_bench --bench sortable_str_vec_bench --bench simd_rank_select_bench --bench benchmark_rank_select --bench fsa_infrastructure_bench --bench stream_buffer_bench --bench range_stream_bench --bench zero_copy_bench --bench endian_bench --bench smart_ptr_bench --bench complex_types_bench --bench versioning_bench --bench var_int_bench || echo "❌ Some benchmarks failed - may require additional setup"
 	@echo "✅ Release tests (nightly) completed"
 
 # =============================================================================
@@ -150,13 +150,21 @@ bench_fsa:
 	$(CARGO) bench $(STABLE_FEATURES) --bench fsa_infrastructure_bench
 	@echo "✅ FSA benchmarks completed"
 
+# Run I/O & Serialization benchmarks specifically  
+bench_serialization:
+	@echo "⚡ Running I/O & Serialization benchmarks..."
+	$(CARGO) bench --release $(STABLE_FEATURES) --bench stream_buffer_bench --bench range_stream_bench --bench zero_copy_bench --bench endian_bench --bench smart_ptr_bench --bench complex_types_bench --bench versioning_bench --bench var_int_bench
+	@echo "✅ Serialization benchmarks completed"
+
 # Run I/O & Serialization performance tests specifically
 bench_io:
 	@echo "⚡ Running I/O & Serialization performance tests..."
 	$(CARGO) test --release $(STABLE_FEATURES) test_stream_performance_comparison -- --nocapture
 	$(CARGO) test --release $(STABLE_FEATURES) test_combined_stream_operations -- --nocapture
 	$(CARGO) test --release $(STABLE_FEATURES) test_stress_operations -- --nocapture
-	@echo "✅ I/O performance tests completed"
+	@echo "⚡ Running I/O & Serialization benchmarks..."
+	$(CARGO) bench --release $(STABLE_FEATURES) --bench stream_buffer_bench --bench range_stream_bench --bench zero_copy_bench --bench endian_bench --bench smart_ptr_bench --bench complex_types_bench --bench versioning_bench --bench var_int_bench
+	@echo "✅ I/O performance tests and benchmarks completed"
 
 # Run all benchmarks in release mode
 bench_release:
@@ -312,6 +320,9 @@ pre_commit: format clippy test_debug safety_tests
 release_prep: clean format clippy build_release test_release bench doc audit
 	@echo "🚀 Release preparation completed"
 
+# pre-commit sanity check
+sanity: test_debug test_release test_nightly_debug test_nightly_release
+
 # =============================================================================
 # HELP TARGET
 # =============================================================================
@@ -342,6 +353,7 @@ help:
 	@echo "Specialized Targets:"
 	@echo "  bench                  Run benchmarks"
 	@echo "  bench_fsa              Run FSA infrastructure benchmarks specifically"
+	@echo "  bench_serialization    Run I/O & Serialization benchmarks specifically"
 	@echo "  bench_io               Run I/O & Serialization performance tests specifically"
 	@echo "  bench_release          Run all benchmarks in release mode"
 	@echo "  bench_nightly          Run nightly benchmarks with AVX-512"

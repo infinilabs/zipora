@@ -11,10 +11,24 @@ pub mod stream_buffer;
 pub mod range_stream;
 pub mod zero_copy;
 
+// New advanced serialization features
+pub mod endian;
+pub mod smart_ptr;
+pub mod complex_types;
+pub mod versioning;
+pub mod var_int_variants;
+
 // Re-export core types
 pub use data_input::{DataInput, ReaderDataInput, SliceDataInput};
 pub use data_output::{DataOutput, FileDataOutput, VecDataOutput, WriterDataOutput};
 pub use var_int::{SignedVarInt, VarInt};
+
+// Re-export new advanced serialization features
+pub use endian::{Endianness, EndianConvert, EndianIO, EndianConfig};
+pub use smart_ptr::{SmartPtrSerialize, SerializableType, SerializationContext, DeserializationContext, SmartPtrConfig, SmartPtrSerializer};
+pub use complex_types::{ComplexSerialize, ComplexTypeConfig, ComplexTypeSerializer, NestedSerialize};
+pub use versioning::{Version, VersionProxy, VersionManager, VersionedSerialize, VersionMigration, MigrationRegistry, VersionConfig, VersionedSerializer};
+pub use var_int_variants::{VarIntStrategy, VarIntEncoder, choose_optimal_strategy, choose_optimal_strategy_signed};
 
 // Re-export new I/O & Serialization features
 pub use stream_buffer::{StreamBufferConfig, StreamBufferedReader, StreamBufferedWriter};
