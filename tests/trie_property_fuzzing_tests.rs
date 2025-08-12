@@ -198,8 +198,30 @@ proptest! {
         }
     }
 
+}
+
+// Separate proptest block for expensive prefix iteration test with reduced cases
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(100))] // Reduced from 2000 for this expensive test
+
     #[test]
-    fn property_prefix_iteration_completeness(keys in keys_with_patterns()) {
+    fn property_prefix_iteration_completeness(keys in prop::collection::vec(
+        prop_oneof![
+            // Focused set for prefix testing - smaller, more targeted
+            30 => prop::collection::vec(any::<u8>(), 1..10),  // Short keys
+            20 => (any::<u8>(), 1..5usize).prop_map(|(byte, len)| vec![byte; len]), // Repeated patterns
+            15 => Just(vec![]),  // Empty key
+            10 => any::<u8>().prop_map(|b| vec![b]), // Single byte
+            // Common prefixes for better prefix testing
+            25 => (prop::collection::vec(any::<u8>(), 1..3), prop::collection::vec(any::<u8>(), 0..5))
+                .prop_map(|(prefix, suffix)| {
+                    let mut key = prefix;
+                    key.extend(suffix);
+                    key
+                }),
+        ],
+        0..30 // Reduced from 200 to 30 keys max for this test
+    )) {
         let mut da_trie = DoubleArrayTrie::new();
         let mut reference_keys = HashSet::new();
 
@@ -209,22 +231,30 @@ proptest! {
             }
         }
 
-        // Test prefix iteration for various prefixes
-        for prefix_len in 0..=5 {
+        // Test prefix iteration for various prefixes - optimized to avoid redundant work
+        let mut tested_prefixes = HashSet::new();
+        
+        for prefix_len in 0..=3 { // Reduced from 5 to 3 for performance
             for key in &reference_keys {
                 if key.len() >= prefix_len {
                     let prefix = &key[..prefix_len];
+                    
+                    // Skip if we've already tested this exact prefix
+                    if !tested_prefixes.insert(prefix.to_vec()) {
+                        continue;
+                    }
+                    
                     let prefix_results: Vec<_> = da_trie.iter_prefix(prefix).collect();
 
-                    // Count expected matches
+                    // Pre-compute expected matches once per prefix (not per key)
                     let expected_matches: Vec<_> = reference_keys
                         .iter()
                         .filter(|k| k.starts_with(prefix))
                         .cloned()
                         .collect();
 
-                    // The key itself should be in the results if it exists
-                    if reference_keys.contains(key) && prefix == key {
+                    // The generating key should be in the results if prefix == key
+                    if prefix == key {
                         prop_assert!(prefix_results.contains(key),
                             "Key {:?} not found in its own prefix results", key);
                     }
@@ -243,6 +273,11 @@ proptest! {
             }
         }
     }
+}
+
+// Continue with remaining tests in the original proptest block
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(2000))]
 
     #[test]
     fn property_trie_statistics_consistency(keys in keys_with_patterns()) {

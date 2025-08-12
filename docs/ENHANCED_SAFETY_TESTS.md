@@ -1,10 +1,10 @@
 # Enhanced Container Safety Testing
 
-This document describes the comprehensive memory safety testing infrastructure added to the Zipora project.
+This document describes the comprehensive memory safety testing infrastructure added to the Zipora project, including advanced memory pool safety features.
 
 ## Overview
 
-The enhanced container safety tests provide comprehensive memory safety verification including use-after-free detection, double-free prevention, buffer overflow protection, and advanced concurrency safety testing. These tests are designed to work with Miri for additional memory safety verification.
+The enhanced container safety tests provide comprehensive memory safety verification including use-after-free detection, double-free prevention, buffer overflow protection, and advanced concurrency safety testing. These tests are designed to work with Miri for additional memory safety verification and include specialized testing for the Phase 9A advanced memory pool variants.
 
 ## Test Categories
 
@@ -47,6 +47,31 @@ The enhanced container safety tests provide comprehensive memory safety verifica
 - **Test**: `test_memory_ordering_safety`
 - **Purpose**: Validates memory ordering and prevents data races
 - **Features**: Producer-consumer patterns with memory ordering verification
+
+### 9. Advanced Memory Pool Safety ✅ **NEW (Phase 9A)**
+- **Test**: `test_advanced_memory_pool_safety`
+- **Purpose**: Validates safety across all 4 specialized memory pool variants
+- **Features**: Lock-free, thread-local, fixed-capacity, and memory-mapped pool testing
+
+### 10. Lock-Free Memory Pool Concurrency ✅ **NEW (Phase 9A)**
+- **Test**: `test_lockfree_pool_concurrency`
+- **Purpose**: Tests CAS-based allocation under high concurrency
+- **Features**: Multi-threaded allocation stress testing with false sharing prevention
+
+### 11. Thread-Local Pool Safety ✅ **NEW (Phase 9A)**
+- **Test**: `test_threadlocal_pool_safety`
+- **Purpose**: Validates thread-local caching and cross-thread safety
+- **Features**: Per-thread allocation with global fallback testing
+
+### 12. Fixed-Capacity Pool Bounds ✅ **NEW (Phase 9A)**
+- **Test**: `test_fixed_capacity_bounds`
+- **Purpose**: Ensures deterministic allocation within capacity limits
+- **Features**: Real-time allocation testing with bounded memory usage
+
+### 13. Memory-Mapped Vector Persistence ✅ **NEW (Phase 9A)**
+- **Test**: `test_mmap_vector_persistence`
+- **Purpose**: Validates persistent storage and cross-platform compatibility
+- **Features**: File-backed storage with automatic growth and sync operations
 
 ## Miri Integration
 
@@ -122,6 +147,11 @@ pub struct SafetyTestConfig {
     pub memory_pressure_size: usize,     // Memory pressure test size
     pub use_after_free_attempts: usize,  // Use-after-free test attempts
     pub buffer_overflow_test_size: usize, // Buffer overflow test size
+    // Phase 9A Advanced Memory Pool Configuration
+    pub lockfree_pool_concurrency: usize,    // Lock-free pool thread count
+    pub threadlocal_pool_count: usize,       // Thread-local pool instances
+    pub fixed_capacity_limit: usize,         // Fixed-capacity pool size limit
+    pub mmap_vector_file_size: usize,        // Memory-mapped vector test size
 }
 ```
 
@@ -152,6 +182,13 @@ The enhanced safety tests complement existing container tests:
 - **Buffer overflow protection**
 - **Advanced concurrency safety**
 
+### Phase 9A Memory Pool Safety Categories ✅ **NEW**
+- **Lock-free pool concurrency**: CAS-based allocation safety under high contention
+- **Thread-local pool isolation**: Per-thread caching with cross-thread safety validation
+- **Fixed-capacity pool bounds**: Deterministic allocation within strict memory limits
+- **Memory-mapped vector persistence**: File-backed storage with crash consistency testing
+- **Advanced pool integration**: SecureMemoryPool safety guarantees across all variants
+
 ## Usage Guidelines
 
 ### When to Run Enhanced Safety Tests
@@ -170,11 +207,20 @@ cargo build && cargo test container_safety_tests
 # Run only enhanced memory safety tests
 cargo test enhanced_memory_safety
 
+# Run Phase 9A advanced memory pool safety tests
+cargo test advanced_memory_pool_safety
+
 # Run with Miri for comprehensive checking
 cargo +nightly miri test enhanced_memory_safety
 
 # Run full test suite with release optimizations
 cargo test --release container_safety_tests
+
+# Run specific advanced memory pool tests
+cargo test lockfree_pool_concurrency
+cargo test threadlocal_pool_safety
+cargo test fixed_capacity_bounds
+cargo test mmap_vector_persistence
 ```
 
 ## Performance Characteristics
@@ -182,13 +228,18 @@ cargo test --release container_safety_tests
 ### Test Execution Times
 - **Basic safety tests**: ~50ms
 - **Enhanced memory safety**: ~100ms  
+- **Advanced memory pool tests**: ~150ms (Phase 9A)
 - **Miri execution**: ~5-10x slower (expected)
-- **Full suite**: ~200ms without Miri
+- **Full suite**: ~300ms without Miri
 
 ### Memory Usage
 - **Peak allocation testing**: Up to 1GB test data
 - **Concurrent allocations**: 720+ active allocations tested
 - **Memory pressure**: 10MB+ leak detection threshold
+- **Lock-free pool testing**: Up to 100 concurrent threads
+- **Thread-local pool testing**: 50+ thread-local caches
+- **Fixed-capacity testing**: Bounded 1MB-10MB pools
+- **Memory-mapped testing**: Up to 100MB file-backed storage
 
 ## Future Enhancements
 
@@ -207,10 +258,17 @@ cargo test --release container_safety_tests
 
 ## Conclusion
 
-The enhanced container safety testing provides comprehensive memory safety verification for the Zipora project. Combined with Miri integration, these tests ensure world-class memory safety while maintaining exceptional performance characteristics.
+The enhanced container safety testing provides comprehensive memory safety verification for the Zipora project, including specialized testing for the Phase 9A advanced memory pool variants. Combined with Miri integration, these tests ensure world-class memory safety while maintaining exceptional performance characteristics across all memory allocation patterns.
+
+The Phase 9A memory pool safety tests validate:
+- **Lock-free allocation safety** under high concurrency with CAS operations
+- **Thread-local caching safety** with proper isolation and fallback mechanisms
+- **Real-time allocation bounds** with deterministic behavior in fixed-capacity pools
+- **Persistent storage safety** with crash consistency and cross-platform compatibility
 
 For questions or issues with the safety testing infrastructure, see:
 - `tests/container_safety_tests.rs` - Test implementation
+- `tests/memory_pool_safety_tests.rs` - Advanced memory pool safety tests (Phase 9A)
 - `run_miri_tests.sh` - Miri test runner
 - `.mirirc` - Miri configuration
 - `CLAUDE.md` - Project testing guidelines

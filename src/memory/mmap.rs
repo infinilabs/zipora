@@ -252,6 +252,11 @@ impl MmapAllocation {
     pub fn as_ptr<T>(&self) -> *mut T {
         self.ptr.as_ptr() as *mut T
     }
+    
+    /// Get mutable pointer to the allocation as a raw byte pointer
+    pub fn as_mut_ptr(&mut self) -> *mut u8 {
+        self.ptr.as_ptr()
+    }
 }
 
 #[cfg(test)]
