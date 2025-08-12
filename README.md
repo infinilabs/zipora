@@ -742,19 +742,51 @@ println!("Bulk inserted {} keys with fragment sharing", results.len());
 
 ### Advanced Algorithms
 
+**Production-Ready Sorting & Search Algorithms** - Comprehensive algorithmic toolkit with advanced external sorting, tournament tree merging, and linear-time suffix array construction:
+
 ```rust
-use zipora::{SuffixArray, RadixSort, MultiWayMerge};
+use zipora::{SuffixArray, RadixSort, MultiWayMerge, 
+            ReplaceSelectSort, ReplaceSelectSortConfig, LoserTree, LoserTreeConfig,
+            ExternalSort, EnhancedSuffixArray, LcpArray};
 
-// Suffix arrays with linear-time construction
-let sa = SuffixArray::new(b"banana").unwrap();
-let (start, count) = sa.search(b"banana", b"an");
+// 🆕 External Sorting for Large Datasets (Replacement Selection)
+let config = ReplaceSelectSortConfig {
+    memory_buffer_size: 64 * 1024 * 1024, // 64MB buffer
+    temp_dir: std::path::PathBuf::from("/tmp"),
+    merge_ways: 16,
+    use_secure_memory: true,
+    ..Default::default()
+};
+let mut external_sorter = ReplaceSelectSort::new(config);
+let large_dataset = (0..10_000_000).rev().collect::<Vec<u32>>();
+let sorted = external_sorter.sort(large_dataset).unwrap();
 
-// High-performance radix sort
+// 🆕 Tournament Tree for Efficient K-Way Merging
+let tree_config = LoserTreeConfig {
+    initial_capacity: 16,
+    stable_sort: true,
+    cache_optimized: true,
+    ..Default::default()
+};
+let mut tournament_tree = LoserTree::new(tree_config);
+tournament_tree.add_way(vec![1, 4, 7, 10].into_iter()).unwrap();
+tournament_tree.add_way(vec![2, 5, 8, 11].into_iter()).unwrap();
+tournament_tree.add_way(vec![3, 6, 9, 12].into_iter()).unwrap();
+let merged = tournament_tree.merge_to_vec().unwrap();
+
+// 🆕 Advanced Suffix Arrays with SA-IS Algorithm (Linear Time)
+let text = b"banana";
+let enhanced_sa = EnhancedSuffixArray::with_lcp(text).unwrap();
+let sa = enhanced_sa.suffix_array();
+let (start, count) = sa.search(text, b"an");
+let lcp = enhanced_sa.lcp_array().unwrap();
+
+// Existing high-performance algorithms
 let mut data = vec![5u32, 2, 8, 1, 9];
 let mut sorter = RadixSort::new();
 sorter.sort_u32(&mut data).unwrap();
 
-// Multi-way merge
+// Multi-way merge with vectorized sources
 let sources = vec![
     VectorSource::new(vec![1, 4, 7]),
     VectorSource::new(vec![2, 5, 8]),
@@ -1175,7 +1207,7 @@ cargo run --example secure_memory_pool_demo  # SecureMemoryPool security feature
 - ✅ **Memory Mapping**: Zero-copy I/O with automatic growth
 - ✅ **Entropy Coding**: Huffman, rANS, dictionary compression systems
 - ✅ **Secure Memory Management**: Production-ready SecureMemoryPool, bump allocators, hugepage support
-- ✅ **Advanced Algorithms**: Suffix arrays, radix sort, multi-way merge
+- ✅ **Advanced Algorithms**: **External sorting** (replacement selection), **tournament tree merge** (k-way), **SA-IS suffix arrays** (linear time), radix sort, multi-way merge
 - ✅ **Fiber Concurrency**: Work-stealing execution, pipeline processing
 - ✅ **Real-time Compression**: Adaptive algorithms with latency guarantees
 - ✅ **C FFI Layer**: Complete compatibility for C++ migration

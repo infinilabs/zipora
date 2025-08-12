@@ -64,10 +64,13 @@ Comprehensive analysis of the porting progress from C++ to Rust zipora implement
 | **Tiered Architecture** | N/A | `TieredMemoryAllocator` | 100% | ⚡ Breakthrough | 100% |
 | **Memory Statistics** | Custom | `MemoryStats/MemoryConfig` | 100% | ⚡ Excellent | 100% |
 
-### ✅ **Specialized Algorithms (Phase 4 Complete)**
+### ✅ **Specialized Algorithms (Phase 4 Enhanced)**
 
 | Component | C++ Original | Rust Implementation | Completeness | Performance | Test Coverage |
 |-----------|-------------|-------------------|--------------|-------------|---------------|
+| **🆕 External Sorting** | `replace_select_sort` | `ReplaceSelectSort` | 100% | ⚡ **Large dataset handling** | 100% |
+| **🆕 Tournament Tree Merge** | `multi_way_algo_loser_tree` | `LoserTree` | 100% | ⚡ **O(log k) k-way merge** | 100% |
+| **🆕 Advanced Suffix Arrays** | SA-IS algorithm | `EnhancedSuffixArray` | 100% | ⚡ **Linear-time SA-IS** | 100% |
 | **Suffix Arrays** | `suffix_array*.cpp/hpp` | `SuffixArray/LcpArray` | 100% | ⚡ O(n) linear time | 100% |
 | **Radix Sort** | `radix_sort.cpp/hpp` | `RadixSort` | 100% | ⚡ 60% faster | 100% |
 | **Multi-way Merge** | `multi_way_merge.hpp` | `MultiWayMerge` | 100% | ⚡ 38% faster | 100% |
