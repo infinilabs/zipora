@@ -111,7 +111,12 @@ pub use containers::{
     ZoSortedStrVecRange,
 };
 pub use error::{Result, ZiporaError};
-pub use string::FastStr;
+pub use string::{
+    FastStr, LexicographicIterator, SortedVecLexIterator, StreamingLexIterator,
+    LexIteratorBuilder, UnicodeProcessor, UnicodeAnalysis, Utf8ToUtf32Iterator,
+    LineProcessor, LineProcessorConfig, LineProcessorStats, LineSplitter,
+    utf8_byte_count, validate_utf8_and_count_chars,
+};
 pub use succinct::{
     BitVector,
     BitwiseOp,
