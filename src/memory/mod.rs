@@ -5,10 +5,14 @@
 
 pub mod bump;
 pub mod cache;
+pub mod fixed_capacity_pool;
 pub mod hugepage;
+pub mod lockfree_pool;
 pub mod mmap;
+pub mod mmap_vec;
 pub mod pool;
 pub mod secure_pool;
+pub mod threadlocal_pool;
 pub mod tiered;
 
 // Re-export main types
@@ -18,11 +22,21 @@ pub use cache::{
     get_optimal_numa_node, init_numa_pools, numa_alloc_aligned, numa_dealloc,
     set_current_numa_node,
 };
+pub use fixed_capacity_pool::{
+    FixedCapacityMemoryPool, FixedCapacityPoolConfig, FixedCapacityPoolStats, FixedCapacityAllocation,
+};
+pub use lockfree_pool::{
+    LockFreeMemoryPool, LockFreePoolConfig, LockFreePoolStats, LockFreeAllocation, BackoffStrategy,
+};
 pub use mmap::{MemoryMappedAllocator, MmapAllocation};
+pub use mmap_vec::{MmapVec, MmapVecConfig, MmapVecIter};
 pub use pool::{MemoryPool, PoolConfig, PooledBuffer, PooledVec};
 pub use secure_pool::{
     SecureMemoryPool, SecurePoolConfig, SecurePoolStats, SecurePooledPtr, get_global_pool_for_size,
     get_global_secure_pool_stats, size_to_class,
+};
+pub use threadlocal_pool::{
+    ThreadLocalMemoryPool, ThreadLocalPoolConfig, ThreadLocalPoolStats, ThreadLocalAllocation,
 };
 pub use tiered::{
     TieredAllocation, TieredConfig, TieredMemoryAllocator, get_tiered_stats, tiered_allocate,
