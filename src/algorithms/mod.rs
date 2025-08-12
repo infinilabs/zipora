@@ -3,14 +3,18 @@
 //! This module provides implementations of advanced algorithms commonly used
 //! in data compression, indexing, and sorting applications.
 
+pub mod external_sort;
 pub mod multiway_merge;
 pub mod radix_sort;
 pub mod suffix_array;
+pub mod tournament_tree;
 
 // Re-export main types
+pub use external_sort::{ExternalSort, ReplaceSelectSort, ReplaceSelectSortConfig};
 pub use multiway_merge::{MergeSource, MultiWayMerge};
 pub use radix_sort::{RadixSort, RadixSortConfig};
 pub use suffix_array::{LcpArray, SuffixArray, SuffixArrayBuilder};
+pub use tournament_tree::{LoserTree, LoserTreeConfig, TournamentNode};
 
 /// Configuration for algorithm behavior
 #[derive(Debug, Clone)]

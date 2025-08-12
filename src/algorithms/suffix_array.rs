@@ -200,13 +200,336 @@ impl SuffixArrayBuilder {
     }
 
     fn build_sequential(&self, text: &[u8]) -> Result<Vec<usize>> {
-        // For simplicity, we'll use a basic suffix array construction algorithm
-        // A full SA-IS implementation would be much more complex
-        let mut suffixes: Vec<usize> = (0..text.len()).collect();
+        if text.is_empty() {
+            return Ok(Vec::new());
+        }
 
-        suffixes.sort_by(|&a, &b| text[a..].cmp(&text[b..]));
+        if text.len() == 1 {
+            return Ok(vec![0]);
+        }
 
-        Ok(suffixes)
+        // Use SA-IS algorithm for efficient suffix array construction
+        Ok(self.sais_construct(text)?)
+    }
+
+    /// SA-IS (Suffix Array by Induced Sorting) algorithm implementation
+    fn sais_construct(&self, text: &[u8]) -> Result<Vec<usize>> {
+        let n = text.len();
+        
+        // Find alphabet size
+        let alphabet_size = if self.config.optimize_small_alphabet {
+            256 // Full byte alphabet
+        } else {
+            text.iter().max().unwrap_or(&0).wrapping_add(1) as usize
+        };
+
+        // Step 1: Classify suffixes as L-type or S-type
+        let (suffix_types, is_lms) = self.classify_suffixes(text)?;
+
+        // Step 2: Find LMS suffixes
+        let lms_suffixes = self.find_lms_suffixes(&is_lms);
+
+        if lms_suffixes.is_empty() {
+            // All suffixes are L-type (monotonically decreasing string)
+            return Ok((0..n).rev().collect());
+        }
+
+        // Step 3: Sort LMS suffixes
+        let mut sa = vec![0; n];
+        let mut bucket = vec![0; alphabet_size];
+        let mut bucket_heads = vec![0; alphabet_size];
+        let mut bucket_tails = vec![0; alphabet_size];
+
+        // Count character frequencies
+        for &ch in text {
+            bucket[ch as usize] += 1;
+        }
+
+        // Compute bucket boundaries
+        self.compute_bucket_boundaries(&bucket, &mut bucket_heads, &mut bucket_tails);
+
+        // Initialize SA with sentinel values
+        for i in 0..n {
+            sa[i] = n; // Use n as sentinel (invalid index)
+        }
+
+        // Place LMS suffixes at the end of their buckets
+        for &lms_idx in lms_suffixes.iter().rev() {
+            let ch = text[lms_idx] as usize;
+            if bucket_tails[ch] > 0 {
+                bucket_tails[ch] -= 1;
+                sa[bucket_tails[ch]] = lms_idx;
+            }
+        }
+
+        // Induce L-type suffixes
+        self.induce_l_type(&mut sa, text, &suffix_types, &bucket_heads)?;
+
+        // Induce S-type suffixes
+        self.induce_s_type(&mut sa, text, &suffix_types, &bucket_tails)?;
+
+        // Step 4: Compact LMS suffixes and check if they're unique
+        let lms_sa = self.compact_lms_suffixes(&sa, &is_lms);
+        let lms_names = self.name_lms_substrings(text, &lms_sa, &lms_suffixes)?;
+
+        // Check if all LMS substrings are unique
+        let max_name = lms_names.iter().max().copied().unwrap_or(0);
+        
+        if (max_name as usize) < lms_suffixes.len() {
+            // Not all LMS substrings are unique, recursively sort them
+            let reduced_sa = self.sais_construct(&lms_names)?;
+            
+            // Map back to original indices
+            let mut sorted_lms = Vec::new();
+            for &rank in &reduced_sa {
+                sorted_lms.push(lms_suffixes[rank]);
+            }
+
+            // Rebuild SA with sorted LMS suffixes
+            self.rebuild_sa_with_sorted_lms(text, &sorted_lms, &suffix_types, alphabet_size)
+        } else {
+            // All LMS substrings are unique, SA is complete
+            Ok(sa.into_iter().filter(|&x| x < n).collect())
+        }
+    }
+
+    /// Classify each suffix as L-type or S-type
+    fn classify_suffixes(&self, text: &[u8]) -> Result<(Vec<bool>, Vec<bool>)> {
+        let n = text.len();
+        let mut suffix_types = vec![false; n]; // false = L-type, true = S-type
+        let mut is_lms = vec![false; n];
+
+        if n == 0 {
+            return Ok((suffix_types, is_lms));
+        }
+
+        // Last suffix is S-type by definition
+        suffix_types[n - 1] = true;
+
+        // Classify suffixes from right to left
+        for i in (0..n - 1).rev() {
+            if text[i] < text[i + 1] {
+                suffix_types[i] = true; // S-type
+            } else if text[i] > text[i + 1] {
+                suffix_types[i] = false; // L-type
+            } else {
+                // Same character, inherit from next position
+                suffix_types[i] = suffix_types[i + 1];
+            }
+        }
+
+        // Find LMS positions (Left-Most S-type)
+        for i in 1..n {
+            if suffix_types[i] && !suffix_types[i - 1] {
+                is_lms[i] = true;
+            }
+        }
+
+        Ok((suffix_types, is_lms))
+    }
+
+    /// Find all LMS suffix positions
+    fn find_lms_suffixes(&self, is_lms: &[bool]) -> Vec<usize> {
+        is_lms.iter()
+            .enumerate()
+            .filter_map(|(i, &is_lms_pos)| if is_lms_pos { Some(i) } else { None })
+            .collect()
+    }
+
+    /// Compute bucket head and tail positions
+    fn compute_bucket_boundaries(
+        &self,
+        bucket: &[usize],
+        bucket_heads: &mut [usize],
+        bucket_tails: &mut [usize],
+    ) {
+        let mut sum = 0;
+        for i in 0..bucket.len() {
+            bucket_heads[i] = sum;
+            sum += bucket[i];
+            bucket_tails[i] = sum;
+        }
+    }
+
+    /// Induce L-type suffixes from left to right
+    fn induce_l_type(
+        &self,
+        sa: &mut [usize],
+        text: &[u8],
+        suffix_types: &[bool],
+        bucket_heads: &[usize],
+    ) -> Result<()> {
+        let n = text.len();
+        let mut heads = bucket_heads.to_vec();
+
+        for i in 0..n {
+            if sa[i] == n {
+                continue; // Skip sentinel values
+            }
+
+            let j = sa[i];
+            if j > 0 && !suffix_types[j - 1] {
+                // Predecessor is L-type
+                let ch = text[j - 1] as usize;
+                if heads[ch] < n {
+                    sa[heads[ch]] = j - 1;
+                    heads[ch] += 1;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Induce S-type suffixes from right to left
+    fn induce_s_type(
+        &self,
+        sa: &mut [usize],
+        text: &[u8],
+        suffix_types: &[bool],
+        bucket_tails: &[usize],
+    ) -> Result<()> {
+        let n = text.len();
+        let mut tails = bucket_tails.to_vec();
+
+        for i in (0..n).rev() {
+            if sa[i] == n {
+                continue; // Skip sentinel values
+            }
+
+            let j = sa[i];
+            if j > 0 && suffix_types[j - 1] {
+                // Predecessor is S-type
+                let ch = text[j - 1] as usize;
+                if tails[ch] > 0 {
+                    tails[ch] -= 1;
+                    sa[tails[ch]] = j - 1;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Compact LMS suffixes from the suffix array
+    fn compact_lms_suffixes(&self, sa: &[usize], is_lms: &[bool]) -> Vec<usize> {
+        sa.iter()
+            .filter_map(|&pos| {
+                if pos < is_lms.len() && is_lms[pos] {
+                    Some(pos)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Assign names to LMS substrings based on their lexicographic order
+    fn name_lms_substrings(
+        &self,
+        text: &[u8],
+        lms_sa: &[usize],
+        lms_suffixes: &[usize],
+    ) -> Result<Vec<u8>> {
+        let mut names = vec![0u8; lms_suffixes.len()];
+        let mut current_name = 0u8;
+
+        if !lms_sa.is_empty() {
+            names[0] = current_name;
+
+            for i in 1..lms_sa.len() {
+                if !self.are_lms_substrings_equal(text, lms_sa[i - 1], lms_sa[i], lms_suffixes)? {
+                    current_name = current_name.wrapping_add(1);
+                }
+                
+                // Find position of lms_sa[i] in lms_suffixes
+                let pos = lms_suffixes.iter().position(|&x| x == lms_sa[i])
+                    .ok_or_else(|| crate::error::ZiporaError::invalid_data("LMS suffix not found"))?;
+                names[pos] = current_name;
+            }
+        }
+
+        Ok(names)
+    }
+
+    /// Check if two LMS substrings are equal
+    fn are_lms_substrings_equal(
+        &self,
+        text: &[u8],
+        pos1: usize,
+        pos2: usize,
+        lms_suffixes: &[usize],
+    ) -> Result<bool> {
+        if pos1 >= text.len() || pos2 >= text.len() {
+            return Ok(false);
+        }
+
+        // Find the end of each LMS substring
+        let end1 = self.find_lms_substring_end(pos1, lms_suffixes, text.len());
+        let end2 = self.find_lms_substring_end(pos2, lms_suffixes, text.len());
+
+        let len1 = end1 - pos1;
+        let len2 = end2 - pos2;
+
+        if len1 != len2 {
+            return Ok(false);
+        }
+
+        // Compare character by character
+        for i in 0..len1 {
+            if text[pos1 + i] != text[pos2 + i] {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// Find the end position of an LMS substring
+    fn find_lms_substring_end(&self, start: usize, lms_suffixes: &[usize], text_len: usize) -> usize {
+        // Find next LMS position after start
+        lms_suffixes.iter()
+            .find(|&&pos| pos > start)
+            .copied()
+            .unwrap_or(text_len)
+    }
+
+    /// Rebuild the suffix array with sorted LMS suffixes
+    fn rebuild_sa_with_sorted_lms(
+        &self,
+        text: &[u8],
+        sorted_lms: &[usize],
+        suffix_types: &[bool],
+        alphabet_size: usize,
+    ) -> Result<Vec<usize>> {
+        let n = text.len();
+        let mut sa = vec![n; n]; // Initialize with sentinel values
+        let mut bucket = vec![0; alphabet_size];
+        let mut bucket_heads = vec![0; alphabet_size];
+        let mut bucket_tails = vec![0; alphabet_size];
+
+        // Count character frequencies
+        for &ch in text {
+            bucket[ch as usize] += 1;
+        }
+
+        // Compute bucket boundaries
+        self.compute_bucket_boundaries(&bucket, &mut bucket_heads, &mut bucket_tails);
+
+        // Place sorted LMS suffixes
+        for &lms_pos in sorted_lms.iter().rev() {
+            let ch = text[lms_pos] as usize;
+            if bucket_tails[ch] > 0 {
+                bucket_tails[ch] -= 1;
+                sa[bucket_tails[ch]] = lms_pos;
+            }
+        }
+
+        // Induce L-type and S-type suffixes
+        self.induce_l_type(&mut sa, text, suffix_types, &bucket_heads)?;
+        self.induce_s_type(&mut sa, text, suffix_types, &bucket_tails)?;
+
+        Ok(sa.into_iter().filter(|&x| x < n).collect())
     }
 
     fn build_parallel(&self, text: &[u8]) -> Result<Vec<usize>> {
