@@ -63,6 +63,10 @@ async-trait = "0.1.50"
 futures = "0.3.25"
 num_cpus = "1.16"
 
+# System utilities dependencies
+raw-cpuid = "11.0"
+base64 = "0.22"
+
 # FFI support (optional)
 cbindgen = { version = "0.27", optional = true }
 
