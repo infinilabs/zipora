@@ -17,7 +17,8 @@
 .PHONY: build_debug build_release build_nightly_debug build_nightly_release
 .PHONY: test_debug test_release test_nightly_debug test_nightly_release  
 .PHONY: bench bench_fsa bench_serialization bench_io bench_all bench_all_nightly
-.PHONY: bench_release bench_nightly safety_tests miri_tests miri_full format clippy doc
+.PHONY: bench_release bench_nightly test_simd_base64 test_simd_base64_nightly
+.PHONY: safety_tests miri_tests miri_full format clippy doc
 
 # =============================================================================
 # CONFIGURATION
@@ -49,12 +50,13 @@ all: build test
 	@echo "  ✅ Debug build (stable features)"
 	@echo "  ✅ Release build (stable features)"  
 	@echo "  ✅ Debug tests (stable features, no benchmarks)"
-	@echo "  ✅ Release tests (stable features, with all performance tests and benchmarks)"
+	@echo "  ✅ Release tests (stable features, with SIMD Base64 tests and benchmarks)"
 	@echo ""
-	@echo "💡 Available benchmark targets:"
-	@echo "    make bench_all         # All stable benchmarks"
-	@echo "    make bench_all_nightly # All benchmarks with nightly features"
-	@echo "    make test_nightly      # Build and test with nightly features"
+	@echo "💡 Available targets:"
+	@echo "    make bench_all           # All stable benchmarks"
+	@echo "    make bench_all_nightly   # All benchmarks with nightly features"
+	@echo "    make test_simd_base64    # SIMD Base64 comprehensive tests"
+	@echo "    make test_nightly        # Build and test with nightly features"
 
 # =============================================================================
 # BUILD TARGETS
@@ -114,11 +116,13 @@ test_debug:
 test_release:
 	@echo "🧪 Running release tests with stable features (including benchmarks)..."
 	$(CARGO) test --release $(STABLE_FEATURES) --lib --bins --tests
+	@echo "🧪 Running SIMD Base64 comprehensive tests..."
+	$(CARGO) test --release $(STABLE_FEATURES) --test simd_base64_tests -- --nocapture || echo "❌ SIMD Base64 tests failed - may require additional setup"
 	@echo "🧪 Running I/O & Serialization performance tests..."
 	$(CARGO) test --release $(STABLE_FEATURES) test_stream_performance_comparison -- --nocapture || echo "❌ I/O performance tests failed - may require additional setup"
 	$(CARGO) test --release $(STABLE_FEATURES) test_combined_stream_operations -- --nocapture || echo "❌ I/O integration tests failed - may require additional setup"
 	@echo "🧪 Running stable benchmarks (excluding avx512_bench and cpp_comparison)..."
-	$(CARGO) test --release $(STABLE_FEATURES) --bench benchmark --bench dictionary_optimization_bench --bench cache_bench --bench secure_memory_pool_bench --bench specialized_containers_bench --bench rank_select_bench --bench compressed_sparse_trie_bench --bench comprehensive_trie_benchmarks --bench double_array_trie_bench --bench nested_louds_trie_bench --bench sortable_str_vec_bench --bench simd_rank_select_bench --bench benchmark_rank_select --bench fsa_infrastructure_bench --bench memory_performance --bench memory_pools_bench --bench adaptive_mmap_bench --bench simple_benchmark --bench sortable_str_vec_optimized || echo "❌ Some benchmarks failed - may require additional setup"
+	$(CARGO) test --release $(STABLE_FEATURES) --bench benchmark --bench benchmark_rank_select --bench simd_rank_select_bench --bench dictionary_optimization_bench --bench cache_bench --bench secure_memory_pool_bench --bench specialized_containers_bench --bench rank_select_bench --bench compressed_sparse_trie_bench --bench comprehensive_trie_benchmarks --bench double_array_trie_bench --bench nested_louds_trie_bench --bench sortable_str_vec_bench --bench fsa_infrastructure_bench --bench memory_performance --bench memory_pools_bench --bench adaptive_mmap_bench --bench simple_benchmark --bench sortable_str_vec_optimized || echo "❌ Some benchmarks failed - may require additional setup"
 	@echo "✅ Release tests (stable) completed"
 
 # Individual test targets - Debug mode (nightly, no benchmarks)  
@@ -131,11 +135,13 @@ test_nightly_debug:
 test_nightly_release:
 	@echo "🌙 Running release tests with nightly features (including benchmarks)..."
 	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) --lib --bins --tests
+	@echo "🧪 Running SIMD Base64 comprehensive tests with nightly features..."
+	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) --test simd_base64_tests -- --nocapture || echo "❌ SIMD Base64 tests failed - may require additional setup"
 	@echo "🧪 Running I/O & Serialization performance tests..."
 	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) test_stream_performance_comparison -- --nocapture || echo "❌ I/O performance tests failed - may require additional setup"
 	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) test_combined_stream_operations -- --nocapture || echo "❌ I/O integration tests failed - may require additional setup"
 	@echo "🧪 Running nightly benchmarks (including avx512_bench, excluding cpp_comparison)..."
-	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) --bench benchmark --bench dictionary_optimization_bench --bench cache_bench --bench avx512_bench --bench secure_memory_pool_bench --bench specialized_containers_bench --bench rank_select_bench --bench compressed_sparse_trie_bench --bench comprehensive_trie_benchmarks --bench double_array_trie_bench --bench nested_louds_trie_bench --bench sortable_str_vec_bench --bench simd_rank_select_bench --bench benchmark_rank_select --bench fsa_infrastructure_bench --bench memory_performance --bench memory_pools_bench --bench adaptive_mmap_bench --bench simple_benchmark --bench sortable_str_vec_optimized || echo "❌ Some benchmarks failed - may require additional setup"
+	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) --bench benchmark --bench benchmark_rank_select --bench simd_rank_select_bench --bench dictionary_optimization_bench --bench cache_bench --bench avx512_bench --bench secure_memory_pool_bench --bench specialized_containers_bench --bench rank_select_bench --bench compressed_sparse_trie_bench --bench comprehensive_trie_benchmarks --bench double_array_trie_bench --bench nested_louds_trie_bench --bench sortable_str_vec_bench --bench fsa_infrastructure_bench --bench memory_performance --bench memory_pools_bench --bench adaptive_mmap_bench --bench simple_benchmark --bench sortable_str_vec_optimized || echo "❌ Some benchmarks failed - may require additional setup"
 	@echo "✅ Release tests (nightly) completed"
 
 # =============================================================================
@@ -187,6 +193,8 @@ bench_all:
 	@echo "⚡ Running all available benchmarks..."
 	$(CARGO) bench --release $(STABLE_FEATURES) \
 		--bench benchmark \
+		--bench benchmark_rank_select \
+		--bench simd_rank_select_bench \
 		--bench dictionary_optimization_bench \
 		--bench cache_bench \
 		--bench secure_memory_pool_bench \
@@ -197,21 +205,21 @@ bench_all:
 		--bench double_array_trie_bench \
 		--bench nested_louds_trie_bench \
 		--bench sortable_str_vec_bench \
-		--bench simd_rank_select_bench \
-		--bench benchmark_rank_select \
 		--bench fsa_infrastructure_bench \
 		--bench memory_performance \
 		--bench memory_pools_bench \
 		--bench adaptive_mmap_bench \
 		--bench simple_benchmark \
 		--bench sortable_str_vec_optimized
-	@echo "✅ All benchmarks completed"
+	@echo "✅ All stable benchmarks completed"
 
 # Run all available benchmarks including nightly-only ones
 bench_all_nightly:
 	@echo "🌙 Running all available benchmarks with nightly features..."
 	$(CARGO_NIGHTLY) bench --release $(NIGHTLY_FEATURES) \
 		--bench benchmark \
+		--bench benchmark_rank_select \
+		--bench simd_rank_select_bench \
 		--bench dictionary_optimization_bench \
 		--bench cache_bench \
 		--bench avx512_bench \
@@ -223,8 +231,6 @@ bench_all_nightly:
 		--bench double_array_trie_bench \
 		--bench nested_louds_trie_bench \
 		--bench sortable_str_vec_bench \
-		--bench simd_rank_select_bench \
-		--bench benchmark_rank_select \
 		--bench fsa_infrastructure_bench \
 		--bench memory_performance \
 		--bench memory_pools_bench \
@@ -232,6 +238,18 @@ bench_all_nightly:
 		--bench simple_benchmark \
 		--bench sortable_str_vec_optimized
 	@echo "✅ All nightly benchmarks completed"
+
+# Run SIMD Base64 tests specifically
+test_simd_base64:
+	@echo "🧪 Running SIMD Base64 comprehensive tests..."
+	$(CARGO) test --release $(STABLE_FEATURES) --test simd_base64_tests -- --nocapture
+	@echo "✅ SIMD Base64 tests completed"
+
+# Run SIMD Base64 tests with nightly features
+test_simd_base64_nightly:
+	@echo "🌙 Running SIMD Base64 tests with nightly features..."
+	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) --test simd_base64_tests -- --nocapture
+	@echo "✅ SIMD Base64 nightly tests completed"
 
 # Run enhanced safety tests
 safety_tests:
@@ -414,6 +432,8 @@ help:
 	@echo "  bench_nightly          Run nightly benchmarks with AVX-512"
 	@echo "  bench_all              Run all available benchmarks explicitly (stable)"
 	@echo "  bench_all_nightly      Run all available benchmarks with nightly features"
+	@echo "  test_simd_base64       Run SIMD Base64 comprehensive tests (stable)"
+	@echo "  test_simd_base64_nightly Run SIMD Base64 tests with nightly features"
 	@echo "  safety_tests           Run enhanced container safety tests"
 	@echo "  miri_tests             Run Miri memory safety tests"
 	@echo "  miri_full              Run full Miri test suite (using script)"
