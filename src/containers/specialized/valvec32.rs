@@ -12,6 +12,7 @@ use std::mem;
 use std::ops::{Index, IndexMut};
 use std::ptr::{self, NonNull};
 use std::slice;
+use std::sync::Arc;
 
 /// Branch prediction hints for performance optimization
 /// These help the CPU predict which branches are likely/unlikely to be taken
@@ -126,7 +127,7 @@ pub struct ValVec32<T> {
     /// Allocated capacity in elements (u32 for memory efficiency)  
     capacity: u32,
     /// Optional secure memory pool for allocation
-    _pool: Option<SecureMemoryPool>,
+    _pool: Option<Arc<SecureMemoryPool>>,
 }
 
 impl<T> ValVec32<T> {
@@ -211,7 +212,7 @@ impl<T> ValVec32<T> {
     ///
     /// Returns `ZiporaError::InvalidData` if capacity exceeds MAX_CAPACITY
     /// Returns `ZiporaError::MemoryError` if allocation fails
-    pub fn with_secure_pool(capacity: u32, pool: SecureMemoryPool) -> Result<Self> {
+    pub fn with_secure_pool(capacity: u32, pool: Arc<SecureMemoryPool>) -> Result<Self> {
         if capacity == 0 {
             return Ok(Self {
                 ptr: NonNull::dangling(),

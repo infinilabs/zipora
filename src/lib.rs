@@ -70,6 +70,7 @@ pub mod blob_store;
 pub mod compression;
 pub mod concurrency;
 pub mod containers;
+pub mod dev_infrastructure;
 pub mod entropy;
 pub mod error;
 pub mod fsa;
@@ -245,6 +246,23 @@ pub use system::{
     // Virtual memory management
     VmManager, PageAlignedAlloc, KernelInfo, vm_prefetch, get_kernel_info,
 };
+
+// Re-export Development Infrastructure (Phase 10B)
+pub use dev_infrastructure::{
+    // Factory Pattern
+    FactoryRegistry, GlobalFactory, AutoRegister, Factoryable, FactoryBuilder,
+    global_factory,
+    // Debugging Framework
+    HighPrecisionTimer as DevHighPrecisionTimer, ScopedTimer, BenchmarkSuite as DevBenchmarkSuite,
+    BenchmarkResult, MemoryDebugger, MemoryStats as DevMemoryStats, PerformanceProfiler,
+    global_profiler, global_memory_debugger, format_duration,
+    // Statistical Analysis
+    Histogram, U32Histogram, U64Histogram, HistogramStats,
+    StatAccumulator, AccumulatorStats, MultiDimensionalStats, GlobalStatsRegistry,
+    global_stats, StatIndex,
+};
+
+// Macros are re-exported automatically from dev_infrastructure module
 
 #[cfg(feature = "zstd")]
 pub use blob_store::ZstdBlobStore;
