@@ -4,13 +4,25 @@
 //! optimized for data processing pipelines and parallel algorithms.
 
 pub mod async_blob_store;
+pub mod enhanced_mutex;
+pub mod fiber_aio;
 pub mod fiber_pool;
+pub mod fiber_yield;
 pub mod parallel_trie;
 pub mod pipeline;
 pub mod work_stealing;
 
 pub use async_blob_store::{AsyncBlobStore, AsyncFileStore, AsyncMemoryBlobStore};
+pub use enhanced_mutex::{
+    AdaptiveMutex, AdaptiveMutexGuard, MutexConfig, MutexStats, PriorityRwLock, RwLockConfig,
+    SegmentedMutex, SpinLock, SpinLockGuard,
+};
+pub use fiber_aio::{FiberAio, FiberAioConfig, FiberFile, IoProvider, VectoredIo, FiberIoUtils};
 pub use fiber_pool::{FiberHandle, FiberPool, FiberPoolConfig, FiberStats};
+pub use fiber_yield::{
+    AdaptiveYieldScheduler, CooperativeUtils, FiberYield, FiberYieldHandle, GlobalYield,
+    YieldConfig, YieldPoint, YieldStats, YieldingIterator,
+};
 pub use parallel_trie::{ParallelLoudsTrie, ParallelTrieBuilder};
 pub use pipeline::{Pipeline, PipelineBuilder, PipelineStage, PipelineStats};
 pub use work_stealing::{Task, WorkStealingExecutor, WorkStealingQueue};
