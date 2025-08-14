@@ -3,15 +3,12 @@
 //! This module provides sophisticated yielding mechanisms for fiber-based concurrency,
 //! enabling fine-grained control over task scheduling and preventing fiber starvation.
 
-use crate::error::{Result, ZiporaError};
+use crate::error::Result;
 use std::cell::Cell;
 use std::future::Future;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
-use tokio::time::Sleep;
 
 /// Configuration for fiber yielding behavior
 #[derive(Debug, Clone)]

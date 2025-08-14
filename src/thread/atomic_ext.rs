@@ -9,7 +9,6 @@ use std::sync::atomic::{
     AtomicBool, AtomicPtr, Ordering
 };
 use std::ptr;
-use crate::error::Result;
 
 /// Extended atomic operations trait
 pub trait AtomicExt<T> {

@@ -16,7 +16,7 @@ pub use linux_futex::*;
 pub use instance_tls::*;
 pub use atomic_ext::*;
 
-use crate::error::{Result, ZiporaError};
+use crate::error::Result;
 
 /// Cross-platform synchronization trait
 pub trait PlatformSync {

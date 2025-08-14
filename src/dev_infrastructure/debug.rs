@@ -8,7 +8,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
-use std::fmt;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use crate::error::{ZiporaError, Result};
 
@@ -168,7 +167,7 @@ impl BenchmarkSuite {
     where
         F: FnMut(),
     {
-        let timer = HighPrecisionTimer::named(name);
+        let _timer = HighPrecisionTimer::named(name);
         
         // Warmup
         for _ in 0..std::cmp::min(iterations / 10, 100) {

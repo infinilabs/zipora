@@ -245,13 +245,13 @@ where
 
             if left_child < num_ways && right_child < num_ways {
                 // Compare leaf nodes
-                let (winner, loser) = self.compare_ways(left_child, right_child)?;
+                let (_winner, loser) = self.compare_ways(left_child, right_child)?;
                 self.tree[level] = TournamentNode::new(loser, self.ways[loser].position);
             } else if left_child < self.tree.len() && right_child < self.tree.len() {
                 // Compare internal nodes
                 let left_winner = self.get_node_winner(left_child);
                 let right_winner = self.get_node_winner(right_child);
-                let (winner, loser) = self.compare_ways(left_winner, right_winner)?;
+                let (_winner, loser) = self.compare_ways(left_winner, right_winner)?;
                 self.tree[level] = TournamentNode::new(loser, self.ways[loser].position);
             }
         }
