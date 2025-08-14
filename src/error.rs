@@ -85,6 +85,34 @@ pub enum ZiporaError {
         /// Description of the busy resource
         resource: String,
     },
+
+    /// Operation timed out
+    #[error("Operation timed out: {message}")]
+    Timeout {
+        /// Timeout error message
+        message: String,
+    },
+
+    /// System error (e.g., syscall failures)
+    #[error("System error: {message}")]
+    SystemError {
+        /// System error message
+        message: String,
+    },
+
+    /// Resource exhausted (e.g., no more IDs available)
+    #[error("Resource exhausted: {message}")]
+    ResourceExhausted {
+        /// Resource exhaustion message
+        message: String,
+    },
+
+    /// Invalid parameter provided
+    #[error("Invalid parameter: {message}")]
+    InvalidParameter {
+        /// Parameter error message
+        message: String,
+    },
 }
 
 impl ZiporaError {
@@ -168,12 +196,42 @@ impl ZiporaError {
         }
     }
 
+    /// Create a timeout error
+    pub fn timeout<S: Into<String>>(message: S) -> Self {
+        Self::Timeout {
+            message: message.into(),
+        }
+    }
+
+    /// Create a system error
+    pub fn system_error<S: Into<String>>(message: S) -> Self {
+        Self::SystemError {
+            message: message.into(),
+        }
+    }
+
+    /// Create a resource exhausted error
+    pub fn resource_exhausted<S: Into<String>>(message: S) -> Self {
+        Self::ResourceExhausted {
+            message: message.into(),
+        }
+    }
+
+    /// Create an invalid parameter error
+    pub fn invalid_parameter<S: Into<String>>(message: S) -> Self {
+        Self::InvalidParameter {
+            message: message.into(),
+        }
+    }
+
     /// Check if this is a recoverable error
     pub fn is_recoverable(&self) -> bool {
         match self {
             Self::Io(_) => true,
             Self::OutOfMemory { .. } => true,
             Self::ResourceBusy { .. } => true,
+            Self::Timeout { .. } => true,
+            Self::ResourceExhausted { .. } => true,
             Self::Compression { .. } => false,
             Self::InvalidData { .. } => false,
             Self::OutOfBounds { .. } => false,
@@ -182,6 +240,8 @@ impl ZiporaError {
             Self::ChecksumMismatch { .. } => false,
             Self::NotSupported { .. } => false,
             Self::Configuration { .. } => false,
+            Self::SystemError { .. } => false,
+            Self::InvalidParameter { .. } => false,
         }
     }
 
@@ -199,6 +259,10 @@ impl ZiporaError {
             Self::NotSupported { .. } => "unsupported",
             Self::Configuration { .. } => "config",
             Self::ResourceBusy { .. } => "resource",
+            Self::Timeout { .. } => "timeout",
+            Self::SystemError { .. } => "system",
+            Self::ResourceExhausted { .. } => "exhausted",
+            Self::InvalidParameter { .. } => "parameter",
         }
     }
 }
