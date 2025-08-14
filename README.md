@@ -12,7 +12,7 @@ High-performance Rust data structures and compression algorithms with memory saf
 - **🧠 Secure Memory Management**: Production-ready memory pools with thread safety, RAII, and vulnerability prevention
 - **🗜️ Compression Framework**: Huffman, rANS, dictionary-based, and hybrid compression
 - **🌲 Advanced Tries**: LOUDS, Critical-Bit, and Patricia tries
-- **💾 Blob Storage**: Memory-mapped and compressed storage systems
+- **💾 Blob Storage**: Memory-mapped and compressed storage systems including ZipOffsetBlobStore with block-based compression
 - **⚡ Fiber Concurrency**: High-performance async/await with work-stealing, I/O integration, cooperative multitasking, and enhanced mutex implementations
 - **🔄 Real-time Compression**: Adaptive algorithms with strict latency guarantees
 - **🔌 C FFI Support**: Complete C API for migration from C++
@@ -51,6 +51,12 @@ println!("Hash: {:x}", s.hash_fast());
 // Blob storage with compression
 let mut store = MemoryBlobStore::new();
 let id = store.put(b"Hello, World!").unwrap();
+
+// High-performance offset-based blob storage with compression
+let config = ZipOffsetBlobStoreConfig::performance_optimized();
+let mut builder = ZipOffsetBlobStoreBuilder::with_config(config).unwrap();
+builder.add_record(b"Compressed data").unwrap();
+let store = builder.finish().unwrap();
 
 // Advanced tries
 let mut trie = LoudsTrie::new();
