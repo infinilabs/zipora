@@ -26,13 +26,13 @@ High-performance Rust data structures and compression algorithms with memory saf
 
 ```toml
 [dependencies]
-zipora = "1.0.4"
+zipora = "1.1.0"
 
 # Or with optional features
-zipora = { version = "1.0.4", features = ["lz4", "ffi"] }
+zipora = { version = "1.1.0", features = ["lz4", "ffi"] }
 
 # AVX-512 requires nightly Rust (experimental intrinsics)
-zipora = { version = "1.0.4", features = ["avx512", "lz4", "ffi"] }  # nightly only
+zipora = { version = "1.1.0", features = ["avx512", "lz4", "ffi"] }  # nightly only
 ```
 
 ### Basic Usage
@@ -1818,7 +1818,7 @@ Current performance on Intel i7-10700K:
 
 ```toml
 [dependencies]
-zipora = { version = "1.0.4", features = ["ffi"] }
+zipora = { version = "1.1.0", features = ["ffi"] }
 ```
 
 ```c
