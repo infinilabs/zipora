@@ -73,6 +73,7 @@ use std::sync::Arc;
 
 /// Configuration for nested LOUDS trie construction and optimization
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NestingConfig {
     /// Maximum number of nesting levels (1-8, typically 4-5)
     pub max_levels: usize,
@@ -1042,6 +1043,117 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
             }
         } else {
             None
+        }
+    }
+
+    /// Get all keys stored in the trie
+    ///
+    /// # Returns
+    /// * `Ok(Vec<Vec<u8>>)` - All keys in lexicographic order
+    /// * `Err(ZiporaError)` - If key enumeration fails
+    pub fn keys(&self) -> Result<Vec<Vec<u8>>> {
+        let mut results = Vec::new();
+        self.collect_keys_dfs(0, Vec::new(), &mut results);
+        Ok(results)
+    }
+
+    /// Get all keys with the given prefix
+    ///
+    /// # Arguments
+    /// * `prefix` - Key prefix to search for
+    ///
+    /// # Returns
+    /// * `Ok(Vec<Vec<u8>>)` - All keys with the given prefix
+    /// * `Err(ZiporaError)` - If prefix search fails
+    pub fn keys_with_prefix(&self, prefix: &[u8]) -> Result<Vec<Vec<u8>>> {
+        // Navigate to the prefix state
+        let mut state = self.root();
+        for &symbol in prefix {
+            state = match self.transition(state, symbol) {
+                Some(next_state) => next_state,
+                None => return Ok(Vec::new()), // Prefix doesn't exist
+            };
+        }
+
+        // Collect all keys starting from this state
+        let mut results = Vec::new();
+        self.collect_keys_dfs(state, prefix.to_vec(), &mut results);
+        Ok(results)
+    }
+
+    /// Helper method to collect keys using depth-first search
+    fn collect_keys_dfs(&self, state: StateId, path: Vec<u8>, results: &mut Vec<Vec<u8>>) {
+        // If this is a final state, add the current path to results
+        if self.is_final(state) {
+            results.push(path.clone());
+        }
+
+        // Explore all children
+        for (symbol, child_state) in self.transitions(state) {
+            let mut child_path = path.clone();
+            child_path.push(symbol);
+            self.collect_keys_dfs(child_state, child_path, results);
+        }
+    }
+
+    /// Insert and get the node ID for a key (for blob store integration)
+    pub fn insert_and_get_node_id(&mut self, key: &[u8]) -> Result<usize> {
+        let state_id = self.insert(key)?;
+        Ok(state_id as usize)
+    }
+
+    /// Look up the node ID for a key (for blob store integration)
+    pub fn lookup_node_id(&self, key: &[u8]) -> Option<usize> {
+        self.lookup(key).map(|state_id| state_id as usize)
+    }
+
+    /// Restore a string from a node ID (for blob store integration)
+    pub fn restore_string(&self, node_id: usize) -> Result<Vec<u8>> {
+        // This is a simplified implementation that rebuilds the key by traversing from root
+        // In a production implementation, this would be more efficient
+        
+        // Get all keys and find the one that leads to this node
+        let all_keys = self.keys()?;
+        for key in all_keys {
+            if let Some(found_node_id) = self.lookup_node_id(&key) {
+                if found_node_id == node_id {
+                    return Ok(key);
+                }
+            }
+        }
+        
+        Err(ZiporaError::not_found("node ID not found"))
+    }
+
+    /// Remove a key from the trie (for blob store integration)
+    pub fn remove(&mut self, key: &[u8]) -> Result<()> {
+        // Navigate to the key and mark it as non-final
+        let mut state = self.root();
+        let mut node_ids = vec![state as usize];
+        
+        for &symbol in key {
+            state = match self.transition(state, symbol) {
+                Some(next_state) => next_state,
+                None => return Err(ZiporaError::not_found("key not found in trie")),
+            };
+            node_ids.push(state as usize);
+        }
+
+        // Mark the final node as non-final
+        if let Some(node) = self.nodes.get_mut(state as usize) {
+            if node.is_final {
+                node.is_final = false;
+                self.num_keys -= 1;
+                
+                // Rebuild LOUDS representation
+                self.rebuild_louds()?;
+                
+                Ok(())
+            } else {
+                Err(ZiporaError::not_found("key not found in trie"))
+            }
+        } else {
+            Err(ZiporaError::not_found("key not found in trie"))
         }
     }
 }

@@ -12,7 +12,7 @@ High-performance Rust data structures and compression algorithms with memory saf
 - **🧠 Secure Memory Management**: Production-ready memory pools with thread safety, RAII, and vulnerability prevention
 - **🗜️ Compression Framework**: Huffman, rANS, dictionary-based, and hybrid compression
 - **🌲 Advanced Tries**: LOUDS, Critical-Bit, and Patricia tries
-- **💾 Blob Storage**: Memory-mapped and compressed storage systems including ZipOffsetBlobStore with block-based compression
+- **💾 Blob Storage**: Memory-mapped and compressed storage systems including ZipOffsetBlobStore with block-based compression and NestLoudsTrieBlobStore with trie-based string indexing
 - **⚡ Fiber Concurrency**: High-performance async/await with work-stealing, I/O integration, cooperative multitasking, and enhanced mutex implementations
 - **🔄 Real-time Compression**: Adaptive algorithms with strict latency guarantees
 - **🔌 C FFI Support**: Complete C API for migration from C++
@@ -58,6 +58,16 @@ let mut builder = ZipOffsetBlobStoreBuilder::with_config(config).unwrap();
 builder.add_record(b"Compressed data").unwrap();
 let store = builder.finish().unwrap();
 
+// Trie-based blob storage with string key indexing
+let config = TrieBlobStoreConfig::performance_optimized();
+let mut trie_store = NestLoudsTrieBlobStore::<RankSelectInterleaved256>::new(config).unwrap();
+let id = trie_store.put_with_key(b"user/profile/123", b"User profile data").unwrap();
+let data = trie_store.get_by_key(b"user/profile/123").unwrap();
+
+// Efficient prefix queries with trie indexing
+let prefix_data = trie_store.get_by_prefix(b"user/").unwrap();
+println!("Found {} entries with 'user/' prefix", prefix_data.len());
+
 // Advanced tries
 let mut trie = LoudsTrie::new();
 trie.insert(b"hello").unwrap();
@@ -73,6 +83,142 @@ let compressed = encoder.encode(b"sample data").unwrap();
 ```
 
 ## Core Components
+
+### 🆕 Advanced Blob Storage Systems
+
+**High-Performance Storage Architectures** - Zipora provides multiple specialized blob storage systems optimized for different use cases, including offset-based compression and trie-indexed string keys:
+
+#### **🔥 NestLoudsTrieBlobStore - Trie-Based String Indexing**
+
+```rust
+use zipora::{NestLoudsTrieBlobStore, TrieBlobStoreConfig, TrieBlobStoreConfigBuilder,
+            RankSelectInterleaved256, BlobStore, IterableBlobStore, BatchBlobStore};
+
+// High-performance trie-based blob storage with string key indexing
+let config = TrieBlobStoreConfig::performance_optimized();
+let mut store = NestLoudsTrieBlobStore::<RankSelectInterleaved256>::new(config).unwrap();
+
+// Store data with string keys - automatic prefix compression
+let id1 = store.put_with_key(b"user/john/profile", b"John's profile data").unwrap();
+let id2 = store.put_with_key(b"user/john/settings", b"John's settings").unwrap();
+let id3 = store.put_with_key(b"user/jane/profile", b"Jane's profile data").unwrap();
+
+// Retrieve by key - O(|key|) trie traversal with compressed storage
+let profile = store.get_by_key(b"user/john/profile").unwrap();
+assert_eq!(profile, b"John's profile data");
+
+// Efficient prefix-based queries leveraging trie structure
+let john_data = store.get_by_prefix(b"user/john/").unwrap();
+assert_eq!(john_data.len(), 2);
+
+// Traditional blob store operations also supported
+let data = store.get(id1).unwrap();
+assert_eq!(data, b"John's profile data");
+
+// Configuration variants for different use cases
+let memory_config = TrieBlobStoreConfig::memory_optimized();
+let security_config = TrieBlobStoreConfig::security_optimized();
+
+// Custom configuration with builder pattern
+let custom_config = TrieBlobStoreConfig::builder()
+    .key_compression(true)
+    .batch_optimization(true)
+    .key_cache_size(2048)
+    .statistics(true)
+    .build().unwrap();
+
+// Builder pattern for efficient bulk construction
+let mut builder = NestLoudsTrieBlobStore::<RankSelectInterleaved256>::builder(config).unwrap();
+builder.add(b"key1", b"data1").unwrap();
+builder.add(b"key2", b"data2").unwrap();
+builder.add(b"key3", b"data3").unwrap();
+let optimized_store = builder.finish().unwrap();
+
+// Batch operations for improved performance
+let key_value_pairs = vec![
+    (b"batch/key1".to_vec(), b"batch data 1".to_vec()),
+    (b"batch/key2".to_vec(), b"batch data 2".to_vec()),
+];
+let batch_ids = store.put_batch_with_keys(key_value_pairs).unwrap();
+
+// Advanced features
+let all_keys = store.keys().unwrap(); // Get all stored keys
+let prefix_keys = store.keys_with_prefix(b"user/").unwrap(); // Keys with prefix
+let key_count = store.key_count(); // Number of unique keys
+let trie_stats = store.trie_stats(); // Detailed trie statistics
+
+// Comprehensive statistics and performance monitoring
+let stats = store.stats();
+println!("Blob count: {}", stats.blob_count);
+println!("Cache hit ratio: {:.2}%", stats.cache_hit_ratio * 100.0);
+
+let trie_stats = store.trie_stats();
+println!("Key count: {}", trie_stats.key_count);
+println!("Trie compression ratio: {:.2}%", trie_stats.trie_space_saved_percent());
+```
+
+#### **🔥 ZipOffsetBlobStore - High-Performance Offset-Based Storage**
+
+```rust
+use zipora::{ZipOffsetBlobStore, ZipOffsetBlobStoreBuilder, ZipOffsetBlobStoreConfig,
+            SortedUintVec, SortedUintVecBuilder};
+
+// High-performance offset-based compressed blob storage
+let config = ZipOffsetBlobStoreConfig::performance_optimized();
+let mut builder = ZipOffsetBlobStoreBuilder::with_config(config).unwrap();
+
+// Add records with automatic compression and checksumming
+builder.add_record(b"First record data").unwrap();
+builder.add_record(b"Second record data").unwrap();
+builder.add_record(b"Third record data").unwrap();
+
+// Build the final store with optimized layout
+let store = builder.finish().unwrap();
+
+// Template-based record retrieval with const generics
+let record = store.get(0).unwrap(); // O(1) access to any record
+let size = store.size(1).unwrap().unwrap(); // Compressed size information
+
+// Block-based delta compression for sorted integer sequences
+let mut uint_builder = SortedUintVecBuilder::new();
+uint_builder.push(1000).unwrap();
+uint_builder.push(1010).unwrap(); // Small delta = efficient compression
+uint_builder.push(1025).unwrap();
+
+let compressed_uints = uint_builder.finish().unwrap();
+let value = compressed_uints.get(1).unwrap(); // BMI2-accelerated bit extraction
+
+// File I/O with 128-byte aligned headers
+store.save_to_file("compressed.zob").unwrap();
+let loaded_store = ZipOffsetBlobStore::load_from_file("compressed.zob").unwrap();
+
+// Statistics and compression analysis
+let stats = builder.stats();
+println!("Compression ratio: {:.2}", stats.compression_ratio());
+println!("Space saved: {:.1}%", stats.space_saved_percent());
+```
+
+#### **Blob Storage Performance Summary**
+
+| Storage Type | Memory Efficiency | Throughput | Features | Best Use Case |
+|--------------|------------------|------------|----------|---------------|
+| **NestLoudsTrieBlobStore** | **Trie compression + blob compression** | **O(key) access + O(1) blob retrieval** | **String indexing, prefix queries** | **Hierarchical data, key-value stores** |
+| **ZipOffsetBlobStore** | **Block-based delta compression** | **O(1) offset-based access** | **Template optimization, ZSTD** | **Large datasets, streaming access** |
+
+#### **Advanced Features**
+
+**🔥 NestLoudsTrieBlobStore Advanced Features:**
+- **Trie-Based Indexing**: Efficient string key lookups with O(|key|) complexity
+- **Prefix Compression**: Automatic compression of common key prefixes using trie structure
+- **Compressed Blob Storage**: Leverages ZipOffsetBlobStore for data compression
+- **Batch Operations**: Efficient bulk operations for improved performance
+- **Configurable Optimization**: Performance, memory, or security optimized configurations
+
+**🔥 ZipOffsetBlobStore Advanced Features:**
+- **Block-Based Delta Compression**: Variable bit-width encoding for sorted integer sequences
+- **Template-Based Retrieval**: Const generic optimization for record access
+- **ZSTD Integration**: Industry-standard compression with hardware acceleration
+- **File Format Compatibility**: 128-byte aligned headers for cross-platform support
 
 ### Secure Memory Management
 
