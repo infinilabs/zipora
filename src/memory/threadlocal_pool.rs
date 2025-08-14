@@ -313,8 +313,8 @@ impl ThreadLocalCache {
     }
 
     /// Deallocate to global pool
-    fn deallocate_to_global(&self, ptr: NonNull<u8>, size: usize) -> Result<()> {
-        if let Some(global_pool) = self.global_pool.upgrade() {
+    fn deallocate_to_global(&self, _ptr: NonNull<u8>, _size: usize) -> Result<()> {
+        if let Some(_global_pool) = self.global_pool.upgrade() {
             // We can't properly deallocate to SecureMemoryPool without tracking
             // In a real implementation, we would need to track allocations
             log::warn!("Bypassing secure pool deallocation - potential leak");

@@ -7,8 +7,8 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::{Arc, RwLock};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use crate::error::{ZiporaError, Result};
 
 /// Trait for types that can be used as histogram indices
@@ -360,7 +360,7 @@ impl StatAccumulator {
         let mean = if count > 0 { sum as f64 / count as f64 } else { 0.0 };
         
         let variance = if count > 1 {
-            let mean_squares = (sum_squares as f64 / count as f64);
+            let mean_squares = sum_squares as f64 / count as f64;
             mean_squares - (mean * mean)
         } else {
             0.0

@@ -299,7 +299,7 @@ impl<T: EndianConvert> EndianIO<T> {
 /// SIMD-accelerated bulk endian conversion for supported types
 #[cfg(target_arch = "x86_64")]
 pub mod simd {
-    use super::*;
+    use super::{Endianness, EndianConvert, EndianIO, EndianConfig, detect_endianness_from_magic, ENDIAN_MAGIC_LITTLE, ENDIAN_MAGIC_BIG};
     
     #[cfg(target_feature = "sse2")]
     /// SIMD-accelerated conversion for u16 arrays

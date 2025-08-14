@@ -434,7 +434,7 @@ where
     }
 
     /// Create memory mapping for file
-    fn create_mmap(path: &Path, config: &MmapVecConfig) -> Result<MmapAllocation> {
+    fn create_mmap(path: &Path, _config: &MmapVecConfig) -> Result<MmapAllocation> {
         let file_size = std::fs::metadata(path)
             .map_err(|e| ZiporaError::io_error(&format!("Failed to get file size: {}", e)))?
             .len() as usize;

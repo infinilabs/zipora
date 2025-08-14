@@ -3,15 +3,14 @@
 //! This module provides high-performance async I/O operations optimized for fiber-based
 //! concurrency with adaptive provider selection and hardware-aware optimizations.
 
-use crate::error::{Result, ZiporaError};
+use crate::error::Result;
 use crate::system::RuntimeCpuFeatures;
 use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 use tokio::fs::File;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 
 /// Configuration for async I/O provider selection
 #[derive(Debug, Clone)]
