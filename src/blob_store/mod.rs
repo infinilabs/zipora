@@ -6,6 +6,7 @@
 pub mod compressed;
 pub mod entropy;
 pub mod memory;
+pub mod nest_louds_trie_blob_store;
 pub mod plain;
 pub mod sorted_uint_vec;
 pub mod traits;
@@ -18,6 +19,10 @@ pub use entropy::{
     DictionaryBlobStore, EntropyAlgorithm, EntropyCompressionStats, HuffmanBlobStore, RansBlobStore,
 };
 pub use memory::MemoryBlobStore;
+pub use nest_louds_trie_blob_store::{
+    NestLoudsTrieBlobStore, NestLoudsTrieBlobStoreBuilder, TrieBlobStoreConfig, 
+    TrieBlobStoreConfigBuilder, TrieBlobStoreStats,
+};
 pub use plain::PlainBlobStore;
 pub use sorted_uint_vec::{SortedUintVec, SortedUintVecBuilder, SortedUintVecConfig};
 pub use traits::{
