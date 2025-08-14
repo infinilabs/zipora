@@ -80,6 +80,7 @@ pub mod memory;
 pub mod string;
 pub mod succinct;
 pub mod system;
+pub mod thread;
 
 // Re-export core types
 pub use containers::{
@@ -261,6 +262,27 @@ pub use dev_infrastructure::{
     StatAccumulator, AccumulatorStats, MultiDimensionalStats, GlobalStatsRegistry,
     global_stats, StatIndex,
 };
+
+// Re-export Low-Level Synchronization (Phase 11A)
+pub use thread::{
+    // Linux Futex Integration
+    PlatformSync, DefaultPlatformSync,
+    // Instance-Specific Thread-Local Storage
+    InstanceTls, OwnerTls, TlsPool,
+    // Atomic Operations Framework
+    AtomicExt, AsAtomic, AtomicNode, AtomicStack, AtomicBitOps, spin_loop_hint,
+    memory_ordering,
+};
+
+// Platform-specific re-exports
+#[cfg(target_os = "linux")]
+pub use thread::{LinuxFutex, FutexMutex, FutexCondvar, FutexRwLock, FutexGuard, FutexReadGuard, FutexWriteGuard};
+
+#[cfg(target_arch = "x86_64")]
+pub use thread::x86_64_optimized;
+
+#[cfg(target_arch = "aarch64")]
+pub use thread::aarch64_optimized;
 
 // Macros are re-exported automatically from dev_infrastructure module
 
