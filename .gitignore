@@ -288,3 +288,5 @@ tramp
 *.secret
 *.private
 .local/
+
+tmp
