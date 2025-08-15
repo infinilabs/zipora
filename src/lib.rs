@@ -67,6 +67,7 @@
 
 pub mod algorithms;
 pub mod blob_store;
+pub mod cache;
 pub mod compression;
 pub mod concurrency;
 pub mod containers;
@@ -272,6 +273,23 @@ pub use thread::{
     // Atomic Operations Framework
     AtomicExt, AsAtomic, AtomicNode, AtomicStack, AtomicBitOps, spin_loop_hint,
     memory_ordering,
+};
+
+// Re-export LRU Page Cache (New Feature)
+pub use cache::{
+    // Core cache types
+    LruPageCache, SingleLruPageCache, PageCacheConfig, CacheBuffer,
+    // Configuration types
+    LockingConfig, MemoryConfig as CacheMemoryConfig, KernelAdvice, PerformanceConfig,
+    EvictionConfig, EvictionAlgorithm, WarmingStrategy, MaintenanceConfig,
+    // Statistics and monitoring
+    CacheStatistics, CacheStatsSnapshot, BufferPool, BufferPoolStats,
+    // Cache operation types
+    CacheError, CacheHitType, FileId, PageId, NodeIndex,
+    // Utility functions
+    hash_file_page, get_shard_id, prefetch_hint,
+    // Constants
+    PAGE_SIZE, PAGE_BITS, HUGE_PAGE_SIZE, MAX_SHARDS, CACHE_LINE_SIZE as CACHE_CACHE_LINE_SIZE,
 };
 
 // Platform-specific re-exports
