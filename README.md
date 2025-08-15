@@ -10,30 +10,27 @@ High-performance Rust data structures and compression algorithms with memory saf
 - **🚀 High Performance**: Zero-copy operations, SIMD optimizations (AVX2, AVX-512*), cache-friendly layouts
 - **🛡️ Memory Safety**: Eliminates segfaults, buffer overflows, use-after-free bugs
 - **🧠 Secure Memory Management**: Production-ready memory pools with thread safety, RAII, and vulnerability prevention
+- **💾 Blob Storage**: Advanced storage systems including trie-based indexing and offset-based compression
+- **📦 Specialized Containers**: Production-ready containers with 40-90% memory/performance improvements
+- **🌲 Advanced Tries**: LOUDS, Critical-Bit, and Patricia tries with rank/select operations
+- **🔗 Low-Level Synchronization**: Linux futex integration, thread-local storage, atomic operations framework
+- **⚡ Fiber Concurrency**: High-performance async/await with work-stealing, I/O integration, cooperative multitasking
+- **📡 Advanced Serialization**: Comprehensive components with smart pointers, endian handling, version management
 - **🗜️ Compression Framework**: Huffman, rANS, dictionary-based, and hybrid compression
-- **🌲 Advanced Tries**: LOUDS, Critical-Bit, and Patricia tries
-- **💾 Blob Storage**: Memory-mapped and compressed storage systems including ZipOffsetBlobStore with block-based compression and NestLoudsTrieBlobStore with trie-based string indexing
-- **⚡ Fiber Concurrency**: High-performance async/await with work-stealing, I/O integration, cooperative multitasking, and enhanced mutex implementations
 - **🔄 Real-time Compression**: Adaptive algorithms with strict latency guarantees
 - **🔌 C FFI Support**: Complete C API for migration from C++
-- **📦 Specialized Containers**: **11 production-ready containers** with 40-90% memory/performance improvements ✅
-- **📡 Advanced Serialization**: **8 comprehensive components** with smart pointers, endian handling, version management, variable integer encoding ✅
-- **🚀 Advanced Memory Pools**: **4 specialized memory pool variants** with lock-free allocation, thread-local caching, fixed capacity guarantees, and memory-mapped storage ✅
-- **🔧 Development Infrastructure**: **Factory patterns, debugging framework, statistical analysis** for advanced development and monitoring ✅
-- **🔗 Low-Level Synchronization**: **Linux futex integration, instance-specific thread-local storage, atomic operations framework** for high-performance concurrent programming ✅
-- **💾 LRU Page Cache**: **Sophisticated caching layer for blob operations** with multi-shard architecture, page-aligned memory management, and hardware prefetching ✅
 
 ## Quick Start
 
 ```toml
 [dependencies]
-zipora = "1.1.0"
+zipora = "1.1.1"
 
 # Or with optional features
-zipora = { version = "1.1.0", features = ["lz4", "ffi"] }
+zipora = { version = "1.1.1", features = ["lz4", "ffi"] }
 
 # AVX-512 requires nightly Rust (experimental intrinsics)
-zipora = { version = "1.1.0", features = ["avx512", "lz4", "ffi"] }  # nightly only
+zipora = { version = "1.1.1", features = ["avx512", "lz4", "ffi"] }  # nightly only
 ```
 
 ### Basic Usage
@@ -97,13 +94,84 @@ let blob_store = MemoryBlobStore::new();
 let cached_store = CachedBlobStore::new(blob_store, cache_config).unwrap();
 ```
 
-## Core Components
+## Core Data Structures
 
-### 🆕 Advanced Blob Storage Systems
+### High-Performance Containers
 
-**High-Performance Storage Architectures** - Zipora provides multiple specialized blob storage systems optimized for different use cases, including offset-based compression and trie-indexed string keys:
+Zipora includes specialized containers designed for memory efficiency and performance:
 
-#### **🔥 NestLoudsTrieBlobStore - Trie-Based String Indexing**
+```rust
+use zipora::{FastVec, FastStr, ValVec32, SmallMap, FixedCircularQueue, 
+            AutoGrowCircularQueue, UintVector, FixedLenStrVec, SortableStrVec};
+
+// High-performance vector operations
+let mut vec = FastVec::new();
+vec.push(42).unwrap();
+
+// Zero-copy string with SIMD hashing
+let s = FastStr::from_string("hello world");
+println!("Hash: {:x}", s.hash_fast());
+
+// 32-bit indexed vectors - 50% memory reduction with golden ratio growth
+let mut vec32 = ValVec32::<u64>::new();
+vec32.push(42).unwrap();
+assert_eq!(vec32.get(0), Some(&42));
+// Performance: 1.15x slower push (50% improvement from 2-3x), perfect iteration parity
+
+// Small maps - 90% faster than HashMap for ≤8 elements with cache optimizations
+let mut small_map = SmallMap::<i32, String>::new();
+small_map.insert(1, "one".to_string()).unwrap();
+small_map.insert(2, "two".to_string()).unwrap();
+// Performance: 709K+ ops/sec cache-friendly access in release builds
+
+// Fixed-size circular queue - lock-free, const generic size
+let mut queue = FixedCircularQueue::<i32, 8>::new();
+queue.push_back(1).unwrap();
+queue.push_back(2).unwrap();
+assert_eq!(queue.pop_front(), Some(1));
+
+// Ultra-fast auto-growing circular queue - 1.54x faster than VecDeque (optimized)
+let mut auto_queue = AutoGrowCircularQueue::<String>::new();
+auto_queue.push_back("hello".to_string()).unwrap();
+auto_queue.push_back("world".to_string()).unwrap();
+// Performance: 54% faster than std::collections::VecDeque with optimization patterns
+
+// Compressed integer storage - 60-80% space reduction
+let mut uint_vec = UintVector::new();
+uint_vec.push(42).unwrap();
+uint_vec.push(1000).unwrap();
+println!("Compression ratio: {:.2}", uint_vec.compression_ratio());
+
+// Fixed-length strings - 59.6% memory savings vs Vec<String> (optimized)
+let mut fixed_str_vec = FixedLenStrVec::<32>::new();
+fixed_str_vec.push("hello").unwrap();
+fixed_str_vec.push("world").unwrap();
+assert_eq!(fixed_str_vec.get(0), Some("hello"));
+// Arena-based storage with bit-packed indices for zero-copy access
+
+// Arena-based string sorting with algorithm selection
+let mut sortable = SortableStrVec::new();
+sortable.push_str("cherry").unwrap();
+sortable.push_str("apple").unwrap();
+sortable.push_str("banana").unwrap();
+sortable.sort_lexicographic().unwrap(); // Intelligent algorithm selection (comparison vs radix)
+```
+
+### Container Performance Summary
+
+| Container | Memory Reduction | Performance Gain | Use Case |
+|-----------|------------------|------------------|----------|
+| **ValVec32<T>** | **50% memory reduction** | **1.15x slower push, 1.00x iteration (optimized)** | **Large collections on 64-bit systems** |
+| **SmallMap<K,V>** | No heap allocation | **90% faster + cache optimized** | **≤8 key-value pairs - 709K+ ops/sec** |
+| **FixedCircularQueue** | Zero allocation | 20-30% faster | Lock-free ring buffers |
+| **AutoGrowCircularQueue** | Cache-aligned | **54% faster** | **Ultra-fast vs VecDeque (optimized)** |
+| **UintVector** | **68.7% space reduction** | <20% speed penalty | Compressed integers (optimized) |
+| **FixedLenStrVec** | **59.6% memory reduction (optimized)** | **Zero-copy access** | **Arena-based fixed strings** |
+| **SortableStrVec** | Arena allocation | **Intelligent algorithm selection** | **String collections with optimization patterns** |
+
+## Blob Storage Systems
+
+### Trie-Based String Indexing (NestLoudsTrieBlobStore)
 
 ```rust
 use zipora::{NestLoudsTrieBlobStore, TrieBlobStoreConfig, TrieBlobStoreConfigBuilder,
@@ -172,7 +240,7 @@ println!("Key count: {}", trie_stats.key_count);
 println!("Trie compression ratio: {:.2}%", trie_stats.trie_space_saved_percent());
 ```
 
-#### **🔥 ZipOffsetBlobStore - High-Performance Offset-Based Storage**
+### Offset-Based Compressed Storage (ZipOffsetBlobStore)
 
 ```rust
 use zipora::{ZipOffsetBlobStore, ZipOffsetBlobStoreBuilder, ZipOffsetBlobStoreConfig,
@@ -213,27 +281,55 @@ println!("Compression ratio: {:.2}", stats.compression_ratio());
 println!("Space saved: {:.1}%", stats.space_saved_percent());
 ```
 
-#### **Blob Storage Performance Summary**
+### LRU Page Cache - Sophisticated Caching Layer
+
+```rust
+use zipora::cache::{LruPageCache, PageCacheConfig, CachedBlobStore, CacheBuffer};
+use zipora::blob_store::MemoryBlobStore;
+
+// High-performance page cache with optimal configuration
+let config = PageCacheConfig::performance_optimized()
+    .with_capacity(256 * 1024 * 1024)  // 256MB cache
+    .with_shards(8)                    // 8 shards for reduced contention
+    .with_huge_pages(true);            // Use 2MB huge pages
+
+let cache = LruPageCache::new(config).unwrap();
+
+// Register files for caching
+let file_id = cache.register_file(1).unwrap();
+
+// Direct cache operations
+let buffer = cache.read(file_id, 0, 4096).unwrap();  // Read 4KB page
+cache.prefetch(file_id, 4096, 16384).unwrap();       // Prefetch 16KB
+
+// Batch operations for high throughput
+let requests = vec![
+    (file_id, 0, 4096),
+    (file_id, 4096, 4096),
+    (file_id, 8192, 4096)
+];
+let results = cache.read_batch(requests).unwrap();
+
+// Cache-aware blob store integration
+let blob_store = MemoryBlobStore::new();
+let mut cached_store = CachedBlobStore::new(blob_store, config).unwrap();
+
+let id = cached_store.put(b"Cached data").unwrap();
+let data = cached_store.get(id).unwrap();  // Automatically cached
+let stats = cached_store.cache_stats();    // Performance metrics
+
+println!("Hit ratio: {:.2}%", stats.hit_ratio * 100.0);
+```
+
+### Blob Storage Performance Summary
 
 | Storage Type | Memory Efficiency | Throughput | Features | Best Use Case |
 |--------------|------------------|------------|----------|---------------|
 | **NestLoudsTrieBlobStore** | **Trie compression + blob compression** | **O(key) access + O(1) blob retrieval** | **String indexing, prefix queries** | **Hierarchical data, key-value stores** |
 | **ZipOffsetBlobStore** | **Block-based delta compression** | **O(1) offset-based access** | **Template optimization, ZSTD** | **Large datasets, streaming access** |
+| **LRU Page Cache** | **Page-aligned allocation** | **Reduced contention** | **Multi-shard architecture** | **High-concurrency access** |
 
-#### **Advanced Features**
-
-**🔥 NestLoudsTrieBlobStore Advanced Features:**
-- **Trie-Based Indexing**: Efficient string key lookups with O(|key|) complexity
-- **Prefix Compression**: Automatic compression of common key prefixes using trie structure
-- **Compressed Blob Storage**: Leverages ZipOffsetBlobStore for data compression
-- **Batch Operations**: Efficient bulk operations for improved performance
-- **Configurable Optimization**: Performance, memory, or security optimized configurations
-
-**🔥 ZipOffsetBlobStore Advanced Features:**
-- **Block-Based Delta Compression**: Variable bit-width encoding for sorted integer sequences
-- **Template-Based Retrieval**: Const generic optimization for record access
-- **ZSTD Integration**: Industry-standard compression with hardware acceleration
-- **File Format Compatibility**: 128-byte aligned headers for cross-platform support
+## Memory Management
 
 ### Secure Memory Management
 
@@ -271,559 +367,11 @@ pooled_vec.push(42).unwrap();
 }
 ```
 
-### 🆕 Specialized Containers
+### Advanced Memory Pool Variants
 
-Zipora now includes 11 specialized containers designed for memory efficiency and performance:
+High-Performance Memory Management - Zipora provides 4 specialized memory pool variants with cutting-edge optimizations, lock-free allocation, thread-local caching, and persistent storage capabilities:
 
-```rust
-use zipora::{ValVec32, SmallMap, FixedCircularQueue, AutoGrowCircularQueue, 
-            UintVector, FixedLenStrVec, SortableStrVec};
-
-// 32-bit indexed vectors - 50% memory reduction with golden ratio growth
-let mut vec32 = ValVec32::<u64>::new();
-vec32.push(42).unwrap();
-assert_eq!(vec32.get(0), Some(&42));
-// Performance: 1.15x slower push (50% improvement from 2-3x), perfect iteration parity
-
-// Small maps - 90% faster than HashMap for ≤8 elements with cache optimizations
-let mut small_map = SmallMap::<i32, String>::new();
-small_map.insert(1, "one".to_string()).unwrap();
-small_map.insert(2, "two".to_string()).unwrap();
-// Performance: 709K+ ops/sec cache-friendly access in release builds
-
-// Fixed-size circular queue - lock-free, const generic size
-let mut queue = FixedCircularQueue::<i32, 8>::new();
-queue.push_back(1).unwrap();
-queue.push_back(2).unwrap();
-assert_eq!(queue.pop_front(), Some(1));
-
-// Ultra-fast auto-growing circular queue - 1.54x faster than VecDeque (optimized)
-let mut auto_queue = AutoGrowCircularQueue::<String>::new();
-auto_queue.push_back("hello".to_string()).unwrap();
-auto_queue.push_back("world".to_string()).unwrap();
-// Performance: 54% faster than std::collections::VecDeque with optimization patterns
-
-// Compressed integer storage - 60-80% space reduction
-let mut uint_vec = UintVector::new();
-uint_vec.push(42).unwrap();
-uint_vec.push(1000).unwrap();
-println!("Compression ratio: {:.2}", uint_vec.compression_ratio());
-
-// Fixed-length strings - 59.6% memory savings vs Vec<String> (optimized)
-let mut fixed_str_vec = FixedLenStrVec::<32>::new();
-fixed_str_vec.push("hello").unwrap();
-fixed_str_vec.push("world").unwrap();
-assert_eq!(fixed_str_vec.get(0), Some("hello"));
-// Arena-based storage with bit-packed indices for zero-copy access
-
-// Arena-based string sorting with algorithm selection
-let mut sortable = SortableStrVec::new();
-sortable.push_str("cherry").unwrap();
-sortable.push_str("apple").unwrap();
-sortable.push_str("banana").unwrap();
-sortable.sort_lexicographic().unwrap(); // Intelligent algorithm selection (comparison vs radix)
-```
-
-#### **Container Performance Summary**
-
-| Container | Memory Reduction | Performance Gain | Use Case |
-|-----------|------------------|------------------|----------|
-| **ValVec32<T>** | **50% memory reduction** | **1.15x slower push, 1.00x iteration (optimized)** | **Large collections on 64-bit systems** |
-| **SmallMap<K,V>** | No heap allocation | **90% faster + cache optimized** | **≤8 key-value pairs - 709K+ ops/sec** |
-| **FixedCircularQueue** | Zero allocation | 20-30% faster | Lock-free ring buffers |
-| **AutoGrowCircularQueue** | Cache-aligned | **54% faster** | **Ultra-fast vs VecDeque (optimized)** |
-| **UintVector** | **68.7% space reduction** ✅ | <20% speed penalty | Compressed integers (optimized) |
-| **FixedLenStrVec** | **59.6% memory reduction (optimized)** | **Zero-copy access** | **Arena-based fixed strings** |
-| **SortableStrVec** | Arena allocation | **Intelligent algorithm selection** | **String collections with optimization patterns** |
-
-#### **Production Status**
-- ✅ **Phase 6 COMPLETE**: **All 11 containers production-ready** with comprehensive testing (2025-08-08)
-- ✅ **AutoGrowCircularQueue**: **Ultra-fast implementation - 1.54x VecDeque performance (optimized)!**
-- ✅ **SmallMap Cache Optimization**: **709K+ ops/sec (2025-08-07) - cache-aware memory layout**
-- ✅ **FixedLenStrVec Optimization**: **59.6% memory reduction achieved** - arena-based storage with bit-packed indices (COMPLETE)
-- ✅ **SortableStrVec Algorithm Selection**: **Intelligent sorting** - comparison vs radix selection (Aug 2025)
-- ✅ **Phase 6.3**: **ZoSortedStrVec, GoldHashIdx, HashStrMap, EasyHashMap** - **ALL WORKING** with zero compilation errors
-- ✅ **Testing**: **717 total tests passing** (648 unit/integration + 69 doctests) with 97%+ coverage
-- ✅ **Benchmarks**: Complete performance validation - **all containers exceed targets**
-
-#### **🚀 FixedLenStrVec Inspired Optimizations (August 2025)**
-
-Following comprehensive analysis of string storage patterns, FixedLenStrVec has been completely redesigned:
-
-**Key Innovations:**
-- **Arena-Based Storage**: Single `Vec<u8>` eliminates per-string heap allocations
-- **Bit-Packed Indices**: 32-bit packed (24-bit offset + 8-bit length) reduces metadata overhead by 67%
-- **Zero-Copy Access**: Direct slice references without null-byte searching
-- **Variable-Length Storage**: No padding waste for strings shorter than maximum length
-
-**Performance Results:**
-```
-Benchmark: 10,000 strings × 15 characters each
-FixedStr16Vec (Arena):    190,080 bytes
-Vec<String> equivalent:   470,024 bytes
-Memory efficiency ratio:  0.404x (59.6% savings)
-Target exceeded:         60% memory reduction goal ✓
-```
-
-**Memory Breakdown:**
-- **String Arena**: 150,000 bytes (raw string data)
-- **Bit-packed Indices**: 40,000 bytes (4 bytes each vs 16+ bytes for separate fields)  
-- **Metadata**: 80 bytes (struct overhead)
-- **Total Savings**: 279,944 bytes (59.6% reduction)
-
-### 🆕 Advanced I/O & Serialization Features (Phase 8B Complete ✅)
-
-**High-Performance Stream Processing** - Zipora provides **8 comprehensive serialization components** with cutting-edge optimizations, cross-platform compatibility, and production-ready features:
-
-#### **🔥 Comprehensive Serialization System (August 2025 - Phase 8B Complete)**
-
-```rust
-use zipora::io::{
-    // Smart Pointer Serialization
-    SmartPtrSerializer, SerializationContext, Box, Rc, Arc, Weak,
-    
-    // Complex Type Serialization  
-    ComplexTypeSerializer, ComplexSerialize, VersionProxy,
-    
-    // Endian Handling
-    EndianIO, Endianness, EndianConvert, EndianConfig,
-    
-    // Version Management
-    VersionManager, VersionedSerialize, Version, MigrationRegistry,
-    
-    // Variable Integer Encoding
-    VarIntEncoder, VarIntStrategy, choose_optimal_strategy,
-};
-
-// *** Smart Pointer Serialization - Reference-counted objects ***
-let shared_data = Rc::new("shared value".to_string());
-let clone1 = shared_data.clone();
-let clone2 = shared_data.clone();
-
-let serializer = SmartPtrSerializer::default();
-let bytes = serializer.serialize_to_bytes(&clone1).unwrap();
-let deserialized: Rc<String> = serializer.deserialize_from_bytes(&bytes).unwrap();
-
-// Cycle detection and shared object optimization
-let mut context = SerializationContext::new();
-clone1.serialize_with_context(&mut output, &mut context).unwrap();
-clone2.serialize_with_context(&mut output, &mut context).unwrap(); // References first object
-
-// *** Complex Type Serialization - Tuples, collections, nested types ***
-let complex_data = (
-    vec![1u32, 2, 3],
-    Some("nested".to_string()),
-    HashMap::from([("key".to_string(), 42u32)]),
-);
-
-let serializer = ComplexTypeSerializer::default();
-let bytes = serializer.serialize_to_bytes(&complex_data).unwrap();
-let deserialized = serializer.deserialize_from_bytes(&bytes).unwrap();
-
-// Batch operations for efficiency
-let tuples = vec![(1u32, "first"), (2u32, "second"), (3u32, "third")];
-let batch_bytes = serializer.serialize_batch(&tuples).unwrap();
-let batch_result = serializer.deserialize_batch(&batch_bytes).unwrap();
-
-// *** Comprehensive Endian Handling - Cross-platform compatibility ***
-let io = EndianIO::<u32>::little_endian();
-let value = 0x12345678u32;
-
-// Safe endian conversion with bounds checking
-let mut buffer = [0u8; 4];
-io.write_to_bytes(value, &mut buffer).unwrap();
-let read_value = io.read_from_bytes(&buffer).unwrap();
-
-// SIMD-accelerated bulk conversions
-#[cfg(target_arch = "x86_64")]
-{
-    use zipora::io::endian::simd::convert_u32_slice_simd;
-    let mut values = vec![0x1234u32, 0x5678u32, 0x9abcu32];
-    convert_u32_slice_simd(&mut values, false);
-}
-
-// Cross-platform configuration
-let config = EndianConfig::cross_platform(); // Little endian + auto-detection
-let optimized = EndianConfig::performance_optimized(); // Native + SIMD acceleration
-
-// *** Advanced Version Management - Backward compatibility ***
-#[derive(Debug, PartialEq)]
-struct DataStructV2 {
-    id: u32,
-    name: String,
-    new_field: Option<String>, // Added in v2
-}
-
-impl VersionedSerialize for DataStructV2 {
-    fn current_version() -> Version { Version::new(2, 0, 0) }
-    
-    fn serialize_with_manager<O: DataOutput>(
-        &self,
-        manager: &mut VersionManager,
-        output: &mut O,
-    ) -> Result<()> {
-        output.write_u32(self.id)?;
-        output.write_length_prefixed_string(&self.name)?;
-        
-        // Conditional field serialization based on version
-        manager.serialize_field("new_field", &self.new_field, output)?;
-        Ok(())
-    }
-    
-    fn deserialize_with_manager<I: DataInput>(
-        manager: &mut VersionManager,
-        input: &mut I,
-    ) -> Result<Self> {
-        let id = input.read_u32()?;
-        let name = input.read_length_prefixed_string()?;
-        
-        // Handle missing field in older versions
-        let new_field = manager.deserialize_field("new_field", input)?
-            .unwrap_or(None);
-            
-        Ok(Self { id, name, new_field })
-    }
-}
-
-// Automatic migration between versions
-let mut registry = MigrationRegistry::new();
-registry.register_migration(
-    Version::new(1, 0, 0),
-    Version::new(2, 0, 0),
-    |old_data| {
-        // Transform v1 data to v2 format
-        migrate_v1_to_v2(old_data)
-    }
-);
-
-// *** Variable Integer Encoding - Multiple strategies ***
-let encoder = VarIntEncoder::zigzag(); // For signed integers
-let signed_values = vec![-100i64, -1, 0, 1, 100];
-let encoded = encoder.encode_i64_sequence(&signed_values).unwrap();
-let decoded = encoder.decode_i64_sequence(&encoded).unwrap();
-
-// Delta encoding for sorted sequences
-let delta_encoder = VarIntEncoder::delta();
-let sorted_values = vec![10u64, 12, 15, 20, 22, 25];
-let delta_encoded = delta_encoder.encode_u64_sequence(&sorted_values).unwrap();
-
-// Group varint for bulk operations
-let group_encoder = VarIntEncoder::group_varint();
-let bulk_values = vec![1u64, 256, 65536, 16777216];
-let group_encoded = group_encoder.encode_u64_sequence(&bulk_values).unwrap();
-
-// Automatic strategy selection based on data characteristics
-let optimal_strategy = choose_optimal_strategy(&values);
-let auto_encoder = VarIntEncoder::new(optimal_strategy);
-```
-
-**High-Performance Stream Processing** - Zipora also provides **3 specialized I/O & Serialization components** with cutting-edge optimizations, configurable buffering strategies, and zero-copy operations for maximum throughput:
-
-```rust
-use zipora::io::{
-    StreamBufferedReader, StreamBufferedWriter, StreamBufferConfig,
-    RangeReader, RangeWriter, MultiRangeReader,
-    ZeroCopyReader, ZeroCopyWriter, ZeroCopyBuffer, VectoredIO
-};
-
-// *** Advanced Stream Buffering - Configurable strategies ***
-let config = StreamBufferConfig::performance_optimized();
-let mut reader = StreamBufferedReader::with_config(cursor, config).unwrap();
-
-// Fast byte reading with hot path optimization
-let byte = reader.read_byte_fast().unwrap();
-
-// Bulk read optimization for large data transfers
-let mut large_buffer = vec![0u8; 1024 * 1024];
-let bytes_read = reader.read_bulk(&mut large_buffer).unwrap();
-
-// Read-ahead capabilities for streaming data
-let slice = reader.read_slice(256).unwrap(); // Zero-copy access when available
-
-// *** Range-based Stream Operations - Partial file access ***
-let mut range_reader = RangeReader::new_and_seek(file, 1024, 4096).unwrap(); // Read bytes 1024-5120
-
-// Progress tracking for partial reads
-let progress = range_reader.progress(); // 0.0 to 1.0
-let remaining = range_reader.remaining(); // Bytes left to read
-
-// Multi-range reading for discontinuous data
-let ranges = vec![(0, 1024), (2048, 3072), (4096, 5120)];
-let mut multi_reader = MultiRangeReader::new(file, ranges);
-
-// DataInput trait implementation for structured reading
-let value = range_reader.read_u32().unwrap();
-let var_int = range_reader.read_var_int().unwrap();
-
-// *** Zero-Copy Stream Optimizations - Advanced zero-copy operations ***
-let mut zc_reader = ZeroCopyReader::with_secure_buffer(stream, 128 * 1024).unwrap();
-
-// Direct buffer access without memory copying
-if let Some(zc_data) = zc_reader.zc_read(1024).unwrap() {
-    // Process data directly without copying
-    process_data_in_place(zc_data);
-    zc_reader.zc_advance(1024).unwrap();
-}
-
-// Memory-mapped zero-copy operations (with mmap feature)
-#[cfg(feature = "mmap")]
-{
-    use zipora::io::MmapZeroCopyReader;
-    let mut mmap_reader = MmapZeroCopyReader::new(file).unwrap();
-    let entire_file = mmap_reader.as_slice(); // Zero-copy access to entire file
-}
-
-// Vectored I/O for efficient bulk transfers
-let mut buffers = [IoSliceMut::new(&mut buf1), IoSliceMut::new(&mut buf2)];
-let bytes_read = VectoredIO::read_vectored(&mut reader, &mut buffers).unwrap();
-
-// SIMD-optimized buffer management with hardware acceleration
-let mut buffer = ZeroCopyBuffer::with_secure_pool(1024 * 1024).unwrap();
-buffer.fill_from(&mut reader).unwrap(); // Page-aligned allocation
-let data = buffer.readable_slice(); // Direct slice access
-```
-
-#### **I/O & Serialization Performance Summary (Phase 8B Complete - August 2025)**
-
-| Component | Memory Efficiency | Throughput | Features | Best Use Case |
-|-----------|------------------|------------|----------|---------------|
-| **Comprehensive Serialization** | **Smart pointer optimization** | **Production-ready speed** | **8 serialization components** | **Complex object graphs, cross-platform data** |
-| **Smart Pointer Serialization** | **Cycle detection + shared refs** | **Zero-copy when possible** | **Box, Rc, Arc, Weak support** | **Reference-counted objects, graph structures** |
-| **Complex Type Serialization** | **Metadata validation** | **Batch operations** | **Tuples, collections, nested types** | **Heterogeneous data, API serialization** |
-| **Endian Handling** | **SIMD bulk conversions** | **Hardware acceleration** | **Cross-platform compatibility** | **Network protocols, file formats** |
-| **Version Management** | **Backward compatibility** | **Migration support** | **Schema evolution** | **Long-term data storage, APIs** |
-| **Variable Integer Encoding** | **60-90% space reduction** | **Adaptive strategy selection** | **7 encoding strategies** | **Compressed data, network protocols** |
-| **StreamBuffer** | **Page-aligned allocation** | **Bulk read optimization** | **3 buffering strategies** | **High-performance streaming** |
-| **RangeStream** | **Precise byte control** | **Memory-efficient ranges** | **Progress tracking, multi-range** | **Partial file access, parallel processing** |
-| **Zero-Copy Optimizations** | **Direct buffer access** | **SIMD-optimized transfers** | **Memory-mapped operations** | **Maximum throughput, minimal latency** |
-
-#### **Advanced Features (Phase 8B Complete)**
-
-**🔥 Comprehensive Serialization System:**
-- **Smart Pointer Serialization**: Automatic handling of Box, Rc, Arc, and Weak pointers with cycle detection
-- **Complex Type Serialization**: Support for tuples (up to 12 elements), arrays, Option, Result, and collections
-- **Cross-Platform Endian Handling**: Little/big endian support with SIMD-accelerated bulk conversions
-- **Advanced Version Management**: Schema evolution, backward compatibility, and automatic data migration
-- **Variable Integer Encoding**: 7 strategies (LEB128, Zigzag, Delta, Group Varint, etc.) with adaptive selection
-- **Production-Ready Features**: Comprehensive error handling, memory safety, and extensive test coverage
-
-**🔥 StreamBuffer Advanced Buffering:**
-- **Configurable Strategies**: Performance-optimized, memory-efficient, low-latency modes
-- **Page-aligned Allocation**: 4KB alignment for better memory performance
-- **Read-ahead Optimization**: Configurable read-ahead with golden ratio growth
-- **Bulk Read/Write Optimization**: Direct transfers for large data with 8KB threshold
-- **SecureMemoryPool Integration**: Production-ready memory management
-- **Hot Path Optimization**: Fast byte reading with branch prediction hints
-
-**🔥 RangeStream Partial Access:**
-- **Precise Byte Range Control**: Start/end position management with bounds checking
-- **Multi-Range Operations**: Discontinuous data access with automatic range switching
-- **Progress Tracking**: Real-time progress monitoring (0.0 to 1.0 scale)
-- **DataInput Trait Support**: Structured data reading (u8, u16, u32, u64, var_int)
-- **Memory-Efficient Design**: Minimal overhead for range state management
-- **Seek Operations**: In-range seeking with position validation
-
-**🔥 Zero-Copy Advanced Optimizations:**
-- **Direct Buffer Access**: Zero-copy reading/writing without memory movement
-- **Memory-Mapped Operations**: Full file access with zero system calls
-- **Vectored I/O Support**: Efficient bulk transfers with multiple buffers
-- **SIMD Buffer Management**: 64-byte aligned allocation for vectorized operations
-- **Hardware Acceleration**: Platform-specific optimizations for maximum throughput
-- **Secure Memory Integration**: Optional secure pools for sensitive data
-
-### 🆕 String Processing Features (Phase 9C Complete ✅)
-
-**High-Performance String Processing** - Zipora provides **3 comprehensive string processing components** with Unicode support, hardware acceleration, and efficient line-based text processing:
-
-#### **🔥 Lexicographic String Iterators (Efficient Sorted String Iteration)**
-
-```rust
-use zipora::{LexicographicIterator, SortedVecLexIterator, StreamingLexIterator, 
-            LexIteratorBuilder};
-
-// High-performance iterator for sorted string collections
-let strings = vec![
-    "apple".to_string(),
-    "banana".to_string(), 
-    "cherry".to_string(),
-    "date".to_string(),
-];
-
-let mut iter = SortedVecLexIterator::new(&strings);
-
-// Bidirectional iteration with O(1) access
-assert_eq!(iter.current(), Some("apple"));
-iter.next().unwrap();
-assert_eq!(iter.current(), Some("banana"));
-
-// Binary search operations - O(log n) seeking
-assert!(iter.seek_lower_bound("cherry").unwrap()); // Exact match
-assert_eq!(iter.current(), Some("cherry"));
-
-assert!(!iter.seek_lower_bound("coconut").unwrap()); // No exact match
-assert_eq!(iter.current(), Some("date")); // Positioned at next larger
-
-// Streaming iterator for large datasets that don't fit in memory
-let reader = std::io::Cursor::new("line1\nline2\nline3\n");
-let mut streaming_iter = StreamingLexIterator::new(reader);
-while let Some(line) = streaming_iter.current() {
-    println!("Processing: {}", line);
-    if !streaming_iter.next().unwrap() { break; }
-}
-
-// Builder pattern for different backends
-let iter = LexIteratorBuilder::new()
-    .optimize_for_memory(true)
-    .buffer_size(8192)
-    .build_sorted_vec(&strings);
-
-// Utility functions for common operations
-use zipora::string::utils;
-let common_prefix = utils::find_common_prefix(iter).unwrap();
-let count = utils::count_with_prefix(iter, "app").unwrap(); // Count strings starting with "app"
-```
-
-#### **🔥 Unicode String Processing (Full Unicode Support)**
-
-```rust
-use zipora::{UnicodeProcessor, UnicodeAnalysis, Utf8ToUtf32Iterator,
-            utf8_byte_count, validate_utf8_and_count_chars};
-
-// Hardware-accelerated UTF-8 processing
-let text = "Hello 世界! 🦀 Rust";
-let char_count = validate_utf8_and_count_chars(text.as_bytes()).unwrap();
-println!("Character count: {}", char_count);
-
-// Unicode processor with configurable options
-let mut processor = UnicodeProcessor::new()
-    .with_normalization(true)
-    .with_case_folding(true);
-
-let processed = processor.process("HELLO World!").unwrap();
-assert_eq!(processed, "hello world!");
-
-// Comprehensive Unicode analysis
-let analysis = processor.analyze("Hello 世界! 🦀");
-println!("ASCII ratio: {:.1}%", (analysis.ascii_count as f64 / analysis.char_count as f64) * 100.0);
-println!("Complexity score: {:.2}", analysis.complexity_score());
-println!("Avg bytes per char: {:.2}", analysis.avg_bytes_per_char());
-
-// Bidirectional UTF-8 to UTF-32 iterator
-let mut utf_iter = Utf8ToUtf32Iterator::new(text.as_bytes()).unwrap();
-let mut chars = Vec::new();
-while let Some(ch) = utf_iter.next_char() {
-    chars.push(ch);
-}
-
-// Backward iteration support
-while let Some(ch) = utf_iter.prev_char() {
-    println!("Previous char: {}", ch);
-}
-
-// Utility functions for Unicode operations
-use zipora::string::unicode::utils;
-let display_width = utils::display_width("Hello世界"); // Accounts for wide characters
-let codepoints = utils::extract_codepoints("A世"); // [0x41, 0x4E16]
-assert!(utils::is_printable("Hello\tWorld\n")); // Allows tabs and newlines
-```
-
-#### **🔥 Line-Based Text Processing (Large File Processing)**
-
-```rust
-use zipora::{LineProcessor, LineProcessorConfig, LineProcessorStats, LineSplitter};
-
-// High-performance line processor for large text files
-let text_data = "line1\nline2\nlong line with multiple words\nfield1,field2,field3\n";
-let cursor = std::io::Cursor::new(text_data);
-
-// Configurable processing strategies
-let config = LineProcessorConfig::performance_optimized(); // 256KB buffer
-// Alternative configs: memory_optimized(), secure()
-let mut processor = LineProcessor::with_config(cursor, config);
-
-// Process lines with closure - returns number of lines processed
-let processed_count = processor.process_lines(|line| {
-    println!("Processing: {}", line);
-    Ok(true) // Continue processing
-}).unwrap();
-
-// Split lines by delimiter with field-level processing
-let cursor = std::io::Cursor::new("name,age,city\nJohn,25,NYC\nJane,30,SF\n");
-let mut processor = LineProcessor::new(cursor);
-
-let field_count = processor.split_lines_by(",", |field, line_num, field_num| {
-    println!("Line {}, Field {}: {}", line_num, field_num, field);
-    Ok(true)
-}).unwrap();
-
-// Batch processing for better performance
-let cursor = std::io::Cursor::new("line1\nline2\nline3\nline4\n");
-let mut processor = LineProcessor::new(cursor);
-
-let total_processed = processor.process_batches(2, |batch| {
-    println!("Processing batch of {} lines", batch.len());
-    for line in batch {
-        println!("  - {}", line);
-    }
-    Ok(true)
-}).unwrap();
-
-// Specialized line splitter with SIMD optimization
-let mut splitter = LineSplitter::new().with_optimized_strategy();
-let fields = splitter.split("a\tb\tc", "\t"); // Tab-separated
-assert_eq!(fields, ["a", "b", "c"]);
-
-// Utility functions for text analysis
-use zipora::string::line_processor::utils;
-let cursor = std::io::Cursor::new("hello world\nhello rust\nworld rust\n");
-let processor = LineProcessor::new(cursor);
-
-// Word frequency analysis
-let frequencies = utils::count_word_frequencies(processor).unwrap();
-assert_eq!(frequencies.get("hello"), Some(&2));
-
-// Text statistics
-let cursor = std::io::Cursor::new("line1\nline2\n\nlong line with multiple words\n");
-let processor = LineProcessor::new(cursor);
-let analysis = utils::analyze_text(processor).unwrap();
-println!("Total lines: {}", analysis.total_lines);
-println!("Empty lines: {}", analysis.empty_lines);
-println!("Avg line length: {:.1}", analysis.avg_line_length());
-```
-
-#### **String Processing Performance Summary (Phase 9C Complete - December 2025)**
-
-| Component | Memory Efficiency | Throughput | Features | Best Use Case |
-|-----------|------------------|------------|----------|---------------|
-| **Lexicographic Iterators** | **Zero-copy string access** | **O(1) iteration, O(log n) seeking** | **Bidirectional, binary search** | **Sorted string collections, prefix operations** |
-| **Unicode Processing** | **SIMD UTF-8 validation** | **Hardware-accelerated** | **Normalization, case folding, analysis** | **Multi-language text, internationalization** |
-| **Line Processing** | **Configurable buffering** | **High-throughput streaming** | **Batch processing, field splitting** | **Large file processing, CSV/TSV data** |
-
-#### **Advanced Features (Phase 9C Complete)**
-
-**🔥 Lexicographic Iterator Advanced Features:**
-- **Zero-Copy Operations**: Direct string slice access without memory copying
-- **Binary Search Integration**: O(log n) lower_bound/upper_bound operations
-- **Streaming Support**: Memory-efficient processing of datasets larger than RAM
-- **Builder Pattern**: Configurable backends for different use cases (sorted vector vs streaming)
-
-**🔥 Unicode Processing Advanced Features:**
-- **SIMD Acceleration**: Hardware-accelerated UTF-8 validation and character counting
-- **Comprehensive Analysis**: Character classification, Unicode block detection, complexity scoring
-- **Cross-Platform Optimization**: AVX2 acceleration on x86_64, optimized fallbacks elsewhere
-- **Bidirectional Iteration**: Forward and backward UTF-8 to UTF-32 character traversal
-
-**🔥 Line Processing Advanced Features:**
-- **Multiple Processing Strategies**: Performance-optimized (256KB), memory-optimized (16KB), secure modes
-- **Batch Processing**: Configurable batch sizes for improved throughput
-- **Field Splitting**: SIMD-optimized splitting for common delimiters (comma, tab, space)
-- **Comprehensive Statistics**: Line counts, word frequencies, text analysis with efficiency metrics
-
-### 🆕 Advanced Memory Pool Variants (Phase 9A Complete ✅)
-
-**High-Performance Memory Management** - Zipora provides **4 specialized memory pool variants** with cutting-edge optimizations, lock-free allocation, thread-local caching, and persistent storage capabilities:
-
-#### **🔥 Lock-Free Memory Pool (Lock-Free Concurrent Allocation)**
+#### Lock-Free Memory Pool
 
 ```rust
 use zipora::memory::{LockFreeMemoryPool, LockFreePoolConfig, BackoffStrategy};
@@ -854,7 +402,7 @@ if let Some(stats) = pool.stats() {
 }
 ```
 
-#### **🔥 Thread-Local Memory Pool (Zero-Contention Caching)**
+#### Thread-Local Memory Pool
 
 ```rust
 use zipora::memory::{ThreadLocalMemoryPool, ThreadLocalPoolConfig};
@@ -885,7 +433,7 @@ if let Some(stats) = pool.stats() {
 }
 ```
 
-#### **🔥 Fixed Capacity Memory Pool (Predictable Real-Time Allocation)**
+#### Fixed Capacity Memory Pool
 
 ```rust
 use zipora::memory::{FixedCapacityMemoryPool, FixedCapacityPoolConfig};
@@ -920,7 +468,7 @@ if let Some(stats) = pool.stats() {
 }
 ```
 
-#### **🔥 Memory-Mapped Vectors (Persistent Large Data Storage)**
+#### Memory-Mapped Vectors
 
 ```rust
 use zipora::memory::{MmapVec, MmapVecConfig};
@@ -963,219 +511,15 @@ for &value in &vec {
 }
 ```
 
-#### **Memory Pool Performance Summary (Phase 9A Complete - December 2025)**
+## Algorithms & Data Structures
 
-| Pool Variant | Concurrency | Memory Efficiency | Throughput | Best Use Case |
-|--------------|-------------|------------------|------------|---------------|
-| **Lock-Free Pool** | **Lock-free CAS** | **Offset-based addressing** | **High concurrent throughput** | **Multi-threaded high-frequency allocation** |
-| **Thread-Local Pool** | **Zero contention** | **Hot area + caching** | **Maximum single-thread speed** | **High-performance single-threaded workloads** |
-| **Fixed Capacity Pool** | **Single-threaded** | **Bounded predictable** | **Consistent real-time** | **Real-time systems, embedded applications** |
-| **Memory-Mapped Vectors** | **Process-shared** | **Virtual memory managed** | **Large dataset streaming** | **Persistent storage, large data processing** |
-
-#### **Advanced Features (Phase 9A Complete)**
-
-**🔥 Lock-Free Memory Pool Advanced Concurrency:**
-- **Atomic CAS Operations**: Compare-and-swap loops with exponential backoff for high concurrency
-- **False Sharing Prevention**: Cache-line aligned data structures prevent performance degradation
-- **Offset-Based Addressing**: 32-bit offsets instead of 64-bit pointers improve cache efficiency
-- **Multi-Strategy Backoff**: Linear, exponential, and adaptive backoff strategies for different workloads
-
-**🔥 Thread-Local Pool Zero-Contention Design:**
-- **Hot Area Management**: Sequential allocation from thread-local memory regions
-- **Lazy Synchronization**: Batch updates to global counters reduce inter-thread communication
-- **Size Class Caching**: Per-thread free lists for common allocation sizes
-- **Arena-Based Allocation**: Large chunks divided into smaller allocations
-
-**🔥 Fixed Capacity Pool Real-Time Guarantees:**
-- **Deterministic Allocation**: O(1) allocation/deallocation with bounded memory usage
-- **Size Class Management**: Efficient free list management with minimal fragmentation
-- **Security Features**: Optional memory clearing and corruption detection
-- **Capacity Enforcement**: Hard limits prevent unbounded memory growth
-
-**🔥 Memory-Mapped Vector Persistent Storage:**
-- **Cross-Platform Compatibility**: Works on Unix and Windows with unified API
-- **Automatic Growth**: Dynamic file expansion with configurable growth factors
-- **Version Management**: File format versioning for backward compatibility
-- **Zero-Copy Access**: Direct memory access without buffer copying
-
-### 🆕 Development Infrastructure (Phase 10B Complete ✅)
-
-**Comprehensive Development Framework** - Zipora provides **3 essential development infrastructure components** with factory patterns, debugging utilities, and statistical analysis for advanced development workflows and production monitoring:
-
-#### **🔥 Factory Pattern Implementation (Generic Object Creation)**
-
-```rust
-use zipora::{FactoryRegistry, GlobalFactory, global_factory, Factoryable};
-
-// Generic factory registry for any type
-let factory = FactoryRegistry::<Box<dyn MyTrait>>::new();
-
-// Register creators with automatic type detection
-factory.register_type::<ConcreteImpl, _>(|| {
-    Ok(Box::new(ConcreteImpl::new()) as Box<dyn MyTrait>)
-}).unwrap();
-
-// Create objects by type name
-let obj = factory.create_by_type::<ConcreteImpl>().unwrap();
-
-// Global factory for convenient access
-global_factory::<Box<dyn MyTrait>>().register("my_impl", || {
-    Ok(Box::new(ConcreteImpl::new()) as Box<dyn MyTrait>)
-}).unwrap();
-
-// Factory builder pattern for complex setups
-let factory = FactoryBuilder::new("component_factory")
-    .with_creator("fast_impl", || Ok(FastImpl::new())).unwrap()
-    .with_creator("safe_impl", || Ok(SafeImpl::new())).unwrap()
-    .build();
-
-// Automatic registration with macros
-register_factory_type!(ConcreteImpl, Box<dyn MyTrait>, || {
-    Ok(Box::new(ConcreteImpl::new()) as Box<dyn MyTrait>)
-});
-
-// Use Factoryable trait for convenient creation
-let instance = MyTrait::create("my_impl").unwrap();
-assert!(MyTrait::has_creator("my_impl").unwrap());
-```
-
-#### **🔥 Comprehensive Debugging Framework (Advanced Debugging Utilities)**
-
-```rust
-use zipora::{HighPrecisionTimer, ScopedTimer, BenchmarkSuite, MemoryDebugger, 
-            PerformanceProfiler, global_profiler, measure_time, debug_print};
-
-// High-precision timing with automatic unit selection
-let timer = HighPrecisionTimer::named("operation");
-// ... perform operation ...
-timer.print_elapsed(); // Automatic unit selection (ns/μs/ms/s)
-
-// Scoped timing with automatic reporting
-{
-    let _timer = ScopedTimer::with_message("database_query", "Query completed");
-    // Timer automatically reports when dropped
-}
-
-// Comprehensive benchmark suite
-let mut suite = BenchmarkSuite::new("performance_tests");
-suite.add_benchmark("fast_operation", 10000, || {
-    // Fast operation to benchmark
-});
-suite.run_all(); // Statistics with ops/sec
-
-// Performance profiling with global registry
-global_profiler().profile("critical_path", || {
-    // ... critical operation ...
-    Ok(result)
-}).unwrap();
-
-// Memory debugging for custom allocators
-let debugger = MemoryDebugger::new();
-debugger.record_allocation(ptr as usize, size, "module:function:line");
-let stats = debugger.get_stats();
-println!("Peak usage: {} bytes", stats.peak_usage);
-
-// Convenient timing macro
-measure_time!("algorithm_execution", {
-    complex_algorithm();
-});
-
-// Debug assertions and prints (debug builds only)
-debug_assert_msg!(condition, "Critical invariant violated");
-debug_print!("Debug value: {}", value);
-```
-
-#### **🔥 Statistical Analysis Tools (Built-in Statistics Collection)**
-
-```rust
-use zipora::{Histogram, U32Histogram, StatAccumulator, MultiDimensionalStats, 
-            global_stats, StatIndex};
-
-// Adaptive histogram with dual storage strategy
-let mut hist = U32Histogram::new();
-hist.increment(100);  // Small values: direct array access O(1)
-hist.increment(5000); // Large values: hash map storage
-hist.add(1000, 5);    // Add multiple counts
-
-// Comprehensive statistics
-let stats = hist.stats();
-println!("Mean: {:.2}", stats.mean_key.unwrap());
-println!("Distinct keys: {}", stats.distinct_key_count);
-
-// Percentiles and analysis
-hist.finalize(); // Optimize for analysis
-let median = hist.median().unwrap();
-let p95 = hist.percentile(0.95).unwrap();
-
-// Real-time statistics accumulator (thread-safe)
-let acc = StatAccumulator::new();
-acc.add(42);  // Lock-free atomic operations
-acc.add(100);
-acc.add(75);
-
-let snapshot = acc.snapshot();
-println!("Mean: {:.2}, Std Dev: {:.2}", snapshot.mean, snapshot.std_dev);
-
-// Multi-dimensional statistics
-let mut multi_stats = MultiDimensionalStats::new(
-    "network_metrics",
-    vec!["latency".to_string(), "throughput".to_string(), "errors".to_string()]
-);
-
-multi_stats.add_sample(&[50, 1000, 0]).unwrap(); // latency, throughput, errors
-multi_stats.add_sample(&[75, 950, 1]).unwrap();
-
-let latency_stats = multi_stats.dimension_stats(0).unwrap();
-println!("Average latency: {:.1}ms", latency_stats.mean);
-
-// Global statistics registry
-global_stats().register_histogram("request_sizes", hist).unwrap();
-global_stats().register_accumulator("response_times", acc).unwrap();
-
-// List all registered statistics
-let all_stats = global_stats().list_statistics().unwrap();
-for stat_name in all_stats {
-    println!("Registered: {}", stat_name);
-}
-```
-
-#### **Development Infrastructure Performance Summary (Phase 10B Complete - January 2025)**
-
-| Component | Memory Efficiency | Throughput | Features | Best Use Case |
-|-----------|------------------|------------|----------|---------------|
-| **Factory Pattern** | **Type-safe object creation** | **Zero-cost abstractions** | **Thread-safe global registry** | **Plugin architectures, dependency injection** |
-| **Debugging Framework** | **Minimal overhead** | **Nanosecond precision** | **Production-ready profiling** | **Performance monitoring, development debugging** |
-| **Statistical Analysis** | **Adaptive storage** | **Lock-free operations** | **Real-time collection** | **Performance metrics, data analysis** |
-
-#### **Advanced Features (Phase 10B Complete)**
-
-**🔥 Factory Pattern Advanced Features:**
-- **Type-Safe Registration**: Compile-time type checking with trait object support
-- **Global Factory Management**: Thread-safe singleton pattern with automatic initialization
-- **Builder Pattern Support**: Flexible factory construction with method chaining
-- **Automatic Registration**: Static initialization with macro-based convenience
-
-**🔥 Debugging Framework Advanced Features:**
-- **High-Precision Timing**: Nanosecond accuracy with automatic unit formatting
-- **Global Profiler Integration**: Centralized performance tracking with statistics
-- **Memory Debugging**: Allocation tracking with leak detection and usage reports
-- **Zero-Cost Debug Macros**: Compile-time elimination in release builds
-
-**🔥 Statistical Analysis Advanced Features:**
-- **Dual Storage Strategy**: Efficient handling of both frequent and rare values
-- **Real-Time Processing**: Lock-free atomic operations for concurrent data collection
-- **Multi-Dimensional Analysis**: Correlation tracking across related metrics
-- **Global Registry**: Centralized statistics management with discovery capabilities
-
-### 🆕 Advanced FSA & Trie Implementations (Phase 7B Complete ✅)
-
-**High-Performance Finite State Automata** - Zipora provides **3 specialized trie variants** with cutting-edge optimizations, multi-level concurrency, and adaptive compression strategies:
+### Advanced Tries
 
 ```rust
 use zipora::{DoubleArrayTrie, CompressedSparseTrie, NestedLoudsTrie, 
             ConcurrencyLevel, ReaderToken, WriterToken, RankSelectInterleaved256};
 
-// *** Double Array Trie - Constant-time O(1) state transitions ***
+// Double Array Trie - Constant-time O(1) state transitions
 let mut dat = DoubleArrayTrie::new();
 dat.insert(b"computer").unwrap();
 dat.insert(b"computation").unwrap();
@@ -1187,7 +531,7 @@ assert_eq!(dat.num_keys(), 3);
 let stats = dat.get_statistics();
 println!("Memory usage: {} bytes per key", stats.memory_usage / stats.num_keys);
 
-// *** Compressed Sparse Trie - Multi-level concurrency with token safety ***
+// Compressed Sparse Trie - Multi-level concurrency with token safety
 let mut csp = CompressedSparseTrie::new(ConcurrencyLevel::MultiWriteMultiRead).unwrap();
 
 // Thread-safe operations with tokens
@@ -1203,7 +547,7 @@ assert!(csp.contains_with_token(b"hello", &reader_token));
 let prefix_matches = csp.prefix_search_with_token(b"hel", &reader_token).unwrap();
 println!("Found {} matches for prefix 'hel'", prefix_matches.len());
 
-// *** Nested LOUDS Trie - Configurable nesting with fragment compression ***
+// Nested LOUDS Trie - Configurable nesting with fragment compression
 use zipora::{NestingConfig};
 
 let config = NestingConfig::builder()
@@ -1238,98 +582,15 @@ let results = nested_trie.bulk_insert(&keys).unwrap();
 println!("Bulk inserted {} keys with fragment sharing", results.len());
 ```
 
-#### **FSA & Trie Performance Summary (Phase 7B Complete - August 2025)**
+### Rank/Select Operations
 
-| Variant | Memory Efficiency | Throughput | Concurrency | Best Use Case |
-|---------|------------------|------------|-------------|---------------|
-| **DoubleArrayTrie** | **8 bytes/state** | **O(1) transitions** | Single-thread | **Dense key sets, constant-time access** |
-| **CompressedSparseTrie** | **90% memory reduction** | **Lock-free CAS ops** | **5 concurrency levels** | **Sparse data, multi-threaded applications** |
-| **NestedLoudsTrie** | **50-70% reduction** | **O(1) LOUDS ops** | **Configurable (1-8 levels)** | **Hierarchical data, adaptive compression** |
-
-#### **Advanced Features (Phase 7B Complete)**
-
-**🔥 Double Array Trie Innovations:**
-- **Bit-packed State Representation**: 8-byte per state with integrated flags
-- **SIMD Bulk Operations**: Vectorized character processing for long keys
-- **SecureMemoryPool Integration**: Production-ready memory management
-- **Free List Management**: Efficient state reuse during construction
-
-**🔥 Compressed Sparse Trie Advanced Concurrency:**
-- **Token-based Thread Safety**: Type-safe ReaderToken/WriterToken system
-- **5 Concurrency Levels**: From read-only to full multi-writer support
-- **Lock-free Optimizations**: CAS operations with ABA prevention
-- **Path Compression**: Memory-efficient sparse structure with compressed paths
-
-**🔥 Nested LOUDS Trie Multi-Level Architecture:**
-- **Fragment-based Compression**: 7 compression modes with 5-30% overhead
-- **Configurable Nesting**: 1-8 levels with adaptive backend selection
-- **Cache-optimized Layouts**: 256/512/1024-bit block alignment
-- **Runtime Backend Selection**: Optimal rank/select variant based on data density
-
-### Advanced Algorithms
-
-**Production-Ready Sorting & Search Algorithms** - Comprehensive algorithmic toolkit with advanced external sorting, tournament tree merging, and linear-time suffix array construction:
-
-```rust
-use zipora::{SuffixArray, RadixSort, MultiWayMerge, 
-            ReplaceSelectSort, ReplaceSelectSortConfig, LoserTree, LoserTreeConfig,
-            ExternalSort, EnhancedSuffixArray, LcpArray};
-
-// 🆕 External Sorting for Large Datasets (Replacement Selection)
-let config = ReplaceSelectSortConfig {
-    memory_buffer_size: 64 * 1024 * 1024, // 64MB buffer
-    temp_dir: std::path::PathBuf::from("/tmp"),
-    merge_ways: 16,
-    use_secure_memory: true,
-    ..Default::default()
-};
-let mut external_sorter = ReplaceSelectSort::new(config);
-let large_dataset = (0..10_000_000).rev().collect::<Vec<u32>>();
-let sorted = external_sorter.sort(large_dataset).unwrap();
-
-// 🆕 Tournament Tree for Efficient K-Way Merging
-let tree_config = LoserTreeConfig {
-    initial_capacity: 16,
-    stable_sort: true,
-    cache_optimized: true,
-    ..Default::default()
-};
-let mut tournament_tree = LoserTree::new(tree_config);
-tournament_tree.add_way(vec![1, 4, 7, 10].into_iter()).unwrap();
-tournament_tree.add_way(vec![2, 5, 8, 11].into_iter()).unwrap();
-tournament_tree.add_way(vec![3, 6, 9, 12].into_iter()).unwrap();
-let merged = tournament_tree.merge_to_vec().unwrap();
-
-// 🆕 Advanced Suffix Arrays with SA-IS Algorithm (Linear Time)
-let text = b"banana";
-let enhanced_sa = EnhancedSuffixArray::with_lcp(text).unwrap();
-let sa = enhanced_sa.suffix_array();
-let (start, count) = sa.search(text, b"an");
-let lcp = enhanced_sa.lcp_array().unwrap();
-
-// Existing high-performance algorithms
-let mut data = vec![5u32, 2, 8, 1, 9];
-let mut sorter = RadixSort::new();
-sorter.sort_u32(&mut data).unwrap();
-
-// Multi-way merge with vectorized sources
-let sources = vec![
-    VectorSource::new(vec![1, 4, 7]),
-    VectorSource::new(vec![2, 5, 8]),
-];
-let mut merger = MultiWayMerge::new();
-let result = merger.merge(sources).unwrap();
-```
-
-### 🆕 Advanced Rank/Select Operations (Phase 7A Complete ✅)
-
-**World-Class Succinct Data Structures** - Zipora provides **11 specialized rank/select variants** including 3 cutting-edge implementations with comprehensive SIMD optimizations, hardware acceleration, and multi-dimensional support:
+World-Class Succinct Data Structures - Zipora provides 11 specialized rank/select variants including 3 cutting-edge implementations with comprehensive SIMD optimizations, hardware acceleration, and multi-dimensional support:
 
 ```rust
 use zipora::{BitVector, RankSelectSimple, RankSelectSeparated256, RankSelectSeparated512,
             RankSelectInterleaved256, RankSelectFew, RankSelectMixedIL256, 
             RankSelectMixedSE512, RankSelectMixedXL256,
-            // New Advanced Features:
+            // Advanced Features:
             RankSelectFragment, RankSelectHierarchical, RankSelectBMI2,
             bulk_rank1_simd, bulk_select1_simd, SimdCapabilities};
 
@@ -1364,27 +625,17 @@ let rs_mixed = RankSelectMixedIL256::new([bv1, bv2]).unwrap();
 let rank_dim0 = rs_mixed.rank1_dimension(500, 0);
 let rank_dim1 = rs_mixed.rank1_dimension(500, 1);
 
-// Large dataset optimization with 512-bit blocks  
-let rs_512 = RankSelectSeparated512::new(bv.clone()).unwrap();
-let bulk_ranks = rs_512.rank1_bulk(&[100, 200, 300, 400, 500]);
-
-// Multi-dimensional XL variant (supports 2-4 dimensions)
-let bv3 = BitVector::from_iter((0..1000).map(|i| i % 11 == 0)).unwrap();
-let rs_xl = RankSelectMixedXL256::<3>::new([bv1, bv2, bv3]).unwrap();
-let rank_3d = rs_xl.rank1_dimension::<0>(500);
-let intersections = rs_xl.find_intersection(&[0, 1], 10).unwrap();
-
-// *** NEW: Fragment-Based Compression ***
+// Fragment-Based Compression
 let rs_fragment = RankSelectFragment::new(bv.clone()).unwrap();
 let rank_compressed = rs_fragment.rank1(500);
 println!("Compression ratio: {:.1}%", rs_fragment.compression_ratio() * 100.0);
 
-// *** NEW: Hierarchical Multi-Level Caching ***
+// Hierarchical Multi-Level Caching
 let rs_hierarchical = RankSelectHierarchical::new(bv.clone()).unwrap();
 let rank_fast = rs_hierarchical.rank1(500);  // O(1) with dense caching
 let range_query = rs_hierarchical.rank1_range(100, 200);
 
-// *** NEW: BMI2 Hardware Acceleration ***
+// BMI2 Hardware Acceleration
 let rs_bmi2 = RankSelectBMI2::new(bv.clone()).unwrap();
 let select_ultra_fast = rs_bmi2.select1(50).unwrap();  // 5-10x faster with PDEP/PEXT
 let range_ultra_fast = rs_bmi2.rank1_range(100, 200);  // 2-4x faster bit manipulation
@@ -1399,277 +650,228 @@ let positions = vec![100, 200, 300, 400, 500];
 let simd_ranks = bulk_rank1_simd(&bit_data, &positions);
 ```
 
-#### **Rank/Select Performance Summary (Phase 7A Complete - August 2025)**
-
-| Variant | Memory Overhead | Throughput | SIMD Support | Best Use Case |
-|---------|-----------------|------------|--------------|---------------|
-| **RankSelectSimple** | ~12.8% | **104 Melem/s** | ❌ | Reference/testing |
-| **RankSelectSeparated256** | ~15.6% | **1.16 Gelem/s** | ✅ | General random access |
-| **RankSelectSeparated512** | ~15.6% | **775 Melem/s** | ✅ | Large datasets, streaming |
-| **RankSelectInterleaved256** | ~203% | **🚀 3.3 Gelem/s** | ✅ | **Cache-optimized (fastest)** |
-| **RankSelectFew** | 33.6% compression | **558 Melem/s** | ✅ | Sparse bit vectors (<5%) |
-| **RankSelectMixedIL256** | ~30% | Dual-dimension | ✅ | Two related bit vectors |
-| **RankSelectMixedSE512** | ~25% | Dual-dimension bulk | ✅ | Large dual-dimensional data |
-| **RankSelectMixedXL256** | ~35% | Multi-dimensional | ✅ | 2-4 related bit vectors |
-| **🆕 RankSelectFragment** | **5-30% overhead** | **Variable (data-dependent)** | ✅ | **Adaptive compression** |
-| **🆕 RankSelectHierarchical** | **3-25% overhead** | **O(1) dense, O(log log n) sparse** | ✅ | **Multi-level caching** |
-| **🆕 RankSelectBMI2** | **15.6% overhead** | **5-10x select speedup** | ✅ | **Hardware acceleration** |
-
-#### **Advanced Features (Phase 7A Complete)**
-
-**🔥 Fragment-Based Compression:**
-- **Variable-Width Encoding**: Optimal bit-width per fragment (5-30% overhead)
-- **7 Compression Modes**: Raw, Delta, Run-length, Bit-plane, Dictionary, Hybrid, Hierarchical
-- **Cache-Aware Design**: 256-bit aligned fragments for SIMD operations
-- **Adaptive Sampling**: Fragment-specific rank/select cache density
-
-**🔥 Hierarchical Multi-Level Caching:**
-- **5 Cache Levels**: L1-L5 with different sampling densities (Dense to Sixteenth)
-- **5 Predefined Configs**: Standard, Fast, Compact, Balanced, SelectOptimized
-- **Template Specialization**: Compile-time optimization for configurations
-- **Space Overhead**: 3-25% depending on configuration
-
-**🔥 BMI2 Hardware Acceleration:**
-- **PDEP/PEXT Instructions**: O(1) select operations (5-10x faster)
-- **BZHI Optimization**: Fast trailing population count
-- **Cross-Platform**: BMI2 on x86_64, optimized fallbacks elsewhere
-- **Hardware Detection**: Automatic feature detection and algorithm selection
-
-#### **SIMD Hardware Acceleration**
-
-- **BMI2**: Ultra-fast select using PDEP/PEXT instructions (5-10x faster)
-- **POPCNT**: Hardware-accelerated popcount (2x faster)  
-- **AVX2**: Vectorized bulk operations (4x faster)
-- **AVX-512**: Ultra-wide vectorization (8x faster, nightly Rust)
-- **ARM NEON**: Cross-platform SIMD support (3x faster)
-- **Runtime Detection**: Automatic optimal algorithm selection
-
-### 🆕 Low-Level Synchronization (Phase 11A Complete ✅)
-
-**High-Performance Synchronization Primitives** - Zipora provides **3 essential low-level synchronization components** with Linux futex integration, advanced thread-local storage, and comprehensive atomic operations for maximum concurrency performance:
-
-#### **🔥 Linux Futex Integration (Direct Futex Usage)**
+### Sorting & Search Algorithms
 
 ```rust
-use zipora::{LinuxFutex, FutexMutex, FutexCondvar, FutexRwLock, PlatformSync};
+use zipora::{SuffixArray, RadixSort, MultiWayMerge, 
+            ReplaceSelectSort, ReplaceSelectSortConfig, LoserTree, LoserTreeConfig,
+            ExternalSort, EnhancedSuffixArray, LcpArray};
 
-// High-performance mutex using direct futex syscalls
-let mutex = FutexMutex::new();
-{
-    let guard = mutex.lock().unwrap();
-    // Critical section with zero-overhead synchronization
-}
+// External Sorting for Large Datasets (Replacement Selection)
+let config = ReplaceSelectSortConfig {
+    memory_buffer_size: 64 * 1024 * 1024, // 64MB buffer
+    temp_dir: std::path::PathBuf::from("/tmp"),
+    merge_ways: 16,
+    use_secure_memory: true,
+    ..Default::default()
+};
+let mut external_sorter = ReplaceSelectSort::new(config);
+let large_dataset = (0..10_000_000).rev().collect::<Vec<u32>>();
+let sorted = external_sorter.sort(large_dataset).unwrap();
 
-// Condition variable with futex implementation
-let condvar = FutexCondvar::new();
-let guard = mutex.lock().unwrap();
-let guard = condvar.wait(guard).unwrap(); // Zero-overhead blocking
+// Tournament Tree for Efficient K-Way Merging
+let tree_config = LoserTreeConfig {
+    initial_capacity: 16,
+    stable_sort: true,
+    cache_optimized: true,
+    ..Default::default()
+};
+let mut tournament_tree = LoserTree::new(tree_config);
+tournament_tree.add_way(vec![1, 4, 7, 10].into_iter()).unwrap();
+tournament_tree.add_way(vec![2, 5, 8, 11].into_iter()).unwrap();
+tournament_tree.add_way(vec![3, 6, 9, 12].into_iter()).unwrap();
+let merged = tournament_tree.merge_to_vec().unwrap();
 
-// Reader-writer lock with futex backing
-let rwlock = FutexRwLock::new();
-{
-    let read_guard = rwlock.read().unwrap();
-    // Multiple concurrent readers
-}
-{
-    let write_guard = rwlock.write().unwrap();
-    // Exclusive writer access
-}
+// Advanced Suffix Arrays with SA-IS Algorithm (Linear Time)
+let text = b"banana";
+let enhanced_sa = EnhancedSuffixArray::with_lcp(text).unwrap();
+let sa = enhanced_sa.suffix_array();
+let (start, count) = sa.search(text, b"an");
+let lcp = enhanced_sa.lcp_array().unwrap();
 
-// Platform abstraction for cross-platform code
-use zipora::{DefaultPlatformSync};
-DefaultPlatformSync::futex_wait(&atomic_value, expected_val, timeout).unwrap();
-DefaultPlatformSync::futex_wake(&atomic_value, num_waiters).unwrap();
+// Existing high-performance algorithms
+let mut data = vec![5u32, 2, 8, 1, 9];
+let mut sorter = RadixSort::new();
+sorter.sort_u32(&mut data).unwrap();
+
+// Multi-way merge with vectorized sources
+let sources = vec![
+    VectorSource::new(vec![1, 4, 7]),
+    VectorSource::new(vec![2, 5, 8]),
+];
+let mut merger = MultiWayMerge::new();
+let result = merger.merge(sources).unwrap();
 ```
 
-#### **🔥 Instance-Specific Thread-Local Storage (Advanced TLS Management)**
+## I/O & Serialization
+
+### Advanced Serialization System
+
+High-Performance Stream Processing - Zipora provides 8 comprehensive serialization components with cutting-edge optimizations, cross-platform compatibility, and production-ready features:
 
 ```rust
-use zipora::{InstanceTls, OwnerTls, TlsPool};
+use zipora::io::{
+    // Smart Pointer Serialization
+    SmartPtrSerializer, SerializationContext, Box, Rc, Arc, Weak,
+    
+    // Complex Type Serialization  
+    ComplexTypeSerializer, ComplexSerialize, VersionProxy,
+    
+    // Endian Handling
+    EndianIO, Endianness, EndianConvert, EndianConfig,
+    
+    // Version Management
+    VersionManager, VersionedSerialize, Version, MigrationRegistry,
+    
+    // Variable Integer Encoding
+    VarIntEncoder, VarIntStrategy, choose_optimal_strategy,
+};
 
-// Matrix-based O(1) access thread-local storage
-let tls = InstanceTls::<MyData>::new().unwrap();
+// Smart Pointer Serialization - Reference-counted objects
+let shared_data = Rc::new("shared value".to_string());
+let clone1 = shared_data.clone();
+let clone2 = shared_data.clone();
 
-// Each thread gets its own copy of the data
-tls.set(MyData { value: 42, name: "thread-local".to_string() });
-let data = tls.get(); // O(1) access, automatically creates default if not set
-let optional_data = tls.try_get(); // O(1) access, returns None if not set
+let serializer = SmartPtrSerializer::default();
+let bytes = serializer.serialize_to_bytes(&clone1).unwrap();
+let deserialized: Rc<String> = serializer.deserialize_from_bytes(&bytes).unwrap();
 
-// Owner-based TLS associating data with specific objects
-let mut owner_tls = OwnerTls::<MyData, MyOwner>::new();
-let owner = MyOwner { id: 1 };
-let data = owner_tls.get_or_create(&owner).unwrap();
+// Cycle detection and shared object optimization
+let mut context = SerializationContext::new();
+clone1.serialize_with_context(&mut output, &mut context).unwrap();
+clone2.serialize_with_context(&mut output, &mut context).unwrap(); // References first object
 
-// Thread-local storage pool for managing multiple instances
-let pool = TlsPool::<MyData, 64>::new().unwrap(); // 64 TLS instances
-let data = pool.get_next(); // Round-robin access
-let specific_data = pool.get_slot(5).unwrap(); // Access specific slot
+// Complex Type Serialization - Tuples, collections, nested types
+let complex_data = (
+    vec![1u32, 2, 3],
+    Some("nested".to_string()),
+    HashMap::from([("key".to_string(), 42u32)]),
+);
 
-// Automatic cleanup and ID recycling
-let id = tls.id(); // Unique instance ID
-drop(tls); // ID automatically returned to free pool
-```
+let serializer = ComplexTypeSerializer::default();
+let bytes = serializer.serialize_to_bytes(&complex_data).unwrap();
+let deserialized = serializer.deserialize_from_bytes(&bytes).unwrap();
 
-#### **🔥 Atomic Operations Framework (Lock-Free Programming Utilities)**
+// Batch operations for efficiency
+let tuples = vec![(1u32, "first"), (2u32, "second"), (3u32, "third")];
+let batch_bytes = serializer.serialize_batch(&tuples).unwrap();
+let batch_result = serializer.deserialize_batch(&batch_bytes).unwrap();
 
-```rust
-use zipora::{AtomicExt, AsAtomic, AtomicStack, AtomicNode, AtomicBitOps, 
-            spin_loop_hint, memory_ordering};
+// Comprehensive Endian Handling - Cross-platform compatibility
+let io = EndianIO::<u32>::little_endian();
+let value = 0x12345678u32;
 
-// Extended atomic operations
-use std::sync::atomic::{AtomicU32, Ordering};
-let atomic = AtomicU32::new(10);
+// Safe endian conversion with bounds checking
+let mut buffer = [0u8; 4];
+io.write_to_bytes(value, &mut buffer).unwrap();
+let read_value = io.read_from_bytes(&buffer).unwrap();
 
-// Atomic max/min operations
-let old_max = atomic.atomic_maximize(15, Ordering::Relaxed); // Returns 15
-let old_min = atomic.atomic_minimize(5, Ordering::Relaxed);  // Returns 5
-
-// Optimized compare-and-swap operations
-let result = atomic.cas_weak(5, 10); // Weak CAS with optimized ordering
-let strong_result = atomic.cas_strong(10, 20); // Strong CAS
-
-// Conditional atomic updates
-let updated = atomic.update_if(|val| val % 2 == 0, 100, Ordering::Relaxed);
-
-// Lock-free data structures
-let stack = AtomicStack::<i32>::new();
-stack.push(42); // Lock-free push
-stack.push(84);
-assert_eq!(stack.pop(), Some(84)); // Lock-free pop (LIFO)
-assert_eq!(stack.len(), 1); // Approximate size
-
-// Atomic bit operations
-let bits = AtomicU32::new(0);
-assert!(!bits.set_bit(5)); // Set bit 5, returns previous state
-assert!(bits.test_bit(5)); // Test if bit 5 is set
-assert!(bits.toggle_bit(5)); // Toggle bit 5
-assert_eq!(bits.find_first_set(), None); // Find first set bit
-
-// Safe atomic casting between types
-let mut value = 42u32;
-let atomic_ref = value.as_atomic_mut(); // &mut AtomicU32
-atomic_ref.store(100, Ordering::Relaxed);
-assert_eq!(value, 100);
-
-// Platform-specific optimizations
+// SIMD-accelerated bulk conversions
 #[cfg(target_arch = "x86_64")]
 {
-    use zipora::x86_64_optimized;
-    x86_64_optimized::pause(); // PAUSE instruction for spin loops
-    x86_64_optimized::mfence(); // Memory fence
+    use zipora::io::endian::simd::convert_u32_slice_simd;
+    let mut values = vec![0x1234u32, 0x5678u32, 0x9abcu32];
+    convert_u32_slice_simd(&mut values, false);
 }
 
-// Memory ordering utilities
-memory_ordering::full_barrier(); // Full memory barrier
-memory_ordering::load_barrier(); // Load barrier
-memory_ordering::store_barrier(); // Store barrier
+// Cross-platform configuration
+let config = EndianConfig::cross_platform(); // Little endian + auto-detection
+let optimized = EndianConfig::performance_optimized(); // Native + SIMD acceleration
+
+// Variable Integer Encoding - Multiple strategies
+let encoder = VarIntEncoder::zigzag(); // For signed integers
+let signed_values = vec![-100i64, -1, 0, 1, 100];
+let encoded = encoder.encode_i64_sequence(&signed_values).unwrap();
+let decoded = encoder.decode_i64_sequence(&encoded).unwrap();
+
+// Delta encoding for sorted sequences
+let delta_encoder = VarIntEncoder::delta();
+let sorted_values = vec![10u64, 12, 15, 20, 22, 25];
+let delta_encoded = delta_encoder.encode_u64_sequence(&sorted_values).unwrap();
+
+// Group varint for bulk operations
+let group_encoder = VarIntEncoder::group_varint();
+let bulk_values = vec![1u64, 256, 65536, 16777216];
+let group_encoded = group_encoder.encode_u64_sequence(&bulk_values).unwrap();
+
+// Automatic strategy selection based on data characteristics
+let optimal_strategy = choose_optimal_strategy(&values);
+let auto_encoder = VarIntEncoder::new(optimal_strategy);
 ```
 
-#### **Low-Level Synchronization Performance Summary (Phase 11A Complete - January 2025)**
-
-| Component | Memory Efficiency | Throughput | Features | Best Use Case |
-|-----------|------------------|------------|----------|---------------|
-| **Linux Futex Integration** | **Zero userspace overhead** | **Direct syscall performance** | **Cross-platform abstraction** | **High-performance synchronization** |
-| **Instance-Specific TLS** | **Matrix-based O(1) access** | **Thread-local optimization** | **Automatic cleanup** | **Per-object thread-local data** |
-| **Atomic Operations Framework** | **Lock-free data structures** | **Hardware-accelerated ops** | **Platform optimizations** | **High-concurrency applications** |
-
-#### **Advanced Features (Phase 11A Complete)**
-
-**🔥 Linux Futex Integration Advanced Features:**
-- **Direct Syscall Access**: Bypasses userspace synchronization overhead for maximum performance
-- **Cross-Platform Abstraction**: PlatformSync trait provides unified interface across operating systems
-- **High-Level Primitives**: FutexMutex, FutexCondvar, FutexRwLock with optimal performance characteristics
-- **Error Handling**: Comprehensive error mapping from errno values to structured error types
-
-**🔥 Instance-Specific TLS Advanced Features:**
-- **Matrix-Based Storage**: 2D array structure provides O(1) access time with configurable dimensions
-- **Automatic Resource Management**: RAII-based cleanup with generation counters for safe resource deallocation
-- **Owner-Based TLS**: Associate thread-local data with specific object instances using pointer-based keys
-- **TLS Pools**: Round-robin and slot-based access patterns for managing multiple TLS instances
-
-### 🆕 LRU Page Cache (Production Ready ✅)
-
-**High-Performance Caching Layer** - Zipora provides a sophisticated **LRU Page Cache** system optimized for blob operations with multi-shard architecture, page-aligned memory management, and hardware prefetching for maximum performance:
-
-#### **🔥 LRU Page Cache - Sophisticated Caching Layer**
+### Stream Processing
 
 ```rust
-use zipora::cache::{LruPageCache, PageCacheConfig, CachedBlobStore, CacheBuffer};
-use zipora::blob_store::MemoryBlobStore;
+use zipora::io::{
+    StreamBufferedReader, StreamBufferedWriter, StreamBufferConfig,
+    RangeReader, RangeWriter, MultiRangeReader,
+    ZeroCopyReader, ZeroCopyWriter, ZeroCopyBuffer, VectoredIO
+};
 
-// High-performance page cache with optimal configuration
-let config = PageCacheConfig::performance_optimized()
-    .with_capacity(256 * 1024 * 1024)  // 256MB cache
-    .with_shards(8)                    // 8 shards for reduced contention
-    .with_huge_pages(true);            // Use 2MB huge pages
+// Advanced Stream Buffering - Configurable strategies
+let config = StreamBufferConfig::performance_optimized();
+let mut reader = StreamBufferedReader::with_config(cursor, config).unwrap();
 
-let cache = LruPageCache::new(config).unwrap();
+// Fast byte reading with hot path optimization
+let byte = reader.read_byte_fast().unwrap();
 
-// Register files for caching
-let file_id = cache.register_file(1).unwrap();
+// Bulk read optimization for large data transfers
+let mut large_buffer = vec![0u8; 1024 * 1024];
+let bytes_read = reader.read_bulk(&mut large_buffer).unwrap();
 
-// Direct cache operations
-let buffer = cache.read(file_id, 0, 4096).unwrap();  // Read 4KB page
-cache.prefetch(file_id, 4096, 16384).unwrap();       // Prefetch 16KB
+// Read-ahead capabilities for streaming data
+let slice = reader.read_slice(256).unwrap(); // Zero-copy access when available
 
-// Batch operations for high throughput
-let requests = vec![
-    (file_id, 0, 4096),
-    (file_id, 4096, 4096),
-    (file_id, 8192, 4096)
-];
-let results = cache.read_batch(requests).unwrap();
+// Range-based Stream Operations - Partial file access
+let mut range_reader = RangeReader::new_and_seek(file, 1024, 4096).unwrap(); // Read bytes 1024-5120
 
-// Cache-aware blob store integration
-let blob_store = MemoryBlobStore::new();
-let mut cached_store = CachedBlobStore::new(blob_store, config).unwrap();
+// Progress tracking for partial reads
+let progress = range_reader.progress(); // 0.0 to 1.0
+let remaining = range_reader.remaining(); // Bytes left to read
 
-let id = cached_store.put(b"Cached data").unwrap();
-let data = cached_store.get(id).unwrap();  // Automatically cached
-let stats = cached_store.cache_stats();    // Performance metrics
+// Multi-range reading for discontinuous data
+let ranges = vec![(0, 1024), (2048, 3072), (4096, 5120)];
+let mut multi_reader = MultiRangeReader::new(file, ranges);
 
-println!("Hit ratio: {:.2}%", stats.hit_ratio * 100.0);
+// DataInput trait implementation for structured reading
+let value = range_reader.read_u32().unwrap();
+let var_int = range_reader.read_var_int().unwrap();
+
+// Zero-Copy Stream Optimizations - Advanced zero-copy operations
+let mut zc_reader = ZeroCopyReader::with_secure_buffer(stream, 128 * 1024).unwrap();
+
+// Direct buffer access without memory copying
+if let Some(zc_data) = zc_reader.zc_read(1024).unwrap() {
+    // Process data directly without copying
+    process_data_in_place(zc_data);
+    zc_reader.zc_advance(1024).unwrap();
+}
+
+// Memory-mapped zero-copy operations (with mmap feature)
+#[cfg(feature = "mmap")]
+{
+    use zipora::io::MmapZeroCopyReader;
+    let mut mmap_reader = MmapZeroCopyReader::new(file).unwrap();
+    let entire_file = mmap_reader.as_slice(); // Zero-copy access to entire file
+}
+
+// Vectored I/O for efficient bulk transfers
+let mut buffers = [IoSliceMut::new(&mut buf1), IoSliceMut::new(&mut buf2)];
+let bytes_read = VectoredIO::read_vectored(&mut reader, &mut buffers).unwrap();
+
+// SIMD-optimized buffer management with hardware acceleration
+let mut buffer = ZeroCopyBuffer::with_secure_pool(1024 * 1024).unwrap();
+buffer.fill_from(&mut reader).unwrap(); // Page-aligned allocation
+let data = buffer.readable_slice(); // Direct slice access
 ```
 
-#### **LRU Page Cache Performance Summary**
+## Concurrency & Synchronization
 
-| Component | Memory Efficiency | Throughput | Features | Best Use Case |
-|-----------|------------------|------------|----------|---------------|
-| **Multi-Shard Cache** | **Page-aligned allocation** | **Reduced contention** | **Configurable sharding** | **High-concurrency access** |
-| **Cache-Aware Blob Store** | **Transparent caching** | **O(1) cache lookup** | **BlobStore compatibility** | **Drop-in replacement** |
-| **Hardware Prefetching** | **SIMD prefetch hints** | **Cache line optimization** | **Huge page support** | **Large dataset access** |
+### Fiber Concurrency
 
-#### **Advanced LRU Cache Features:**
+Comprehensive Fiber-Based Concurrency - Zipora provides 3 essential fiber enhancement components with asynchronous I/O integration, cooperative multitasking utilities, and specialized mutex variants for high-performance concurrent applications:
 
-**🔥 Multi-Shard Architecture:**
-- **Reduced Contention**: Configurable number of shards to minimize lock contention
-- **Hash-Based Distribution**: Automatic shard selection based on file ID and page ID
-- **Independent Statistics**: Per-shard and global statistics aggregation
-- **Batch Operations**: Efficient processing of multiple requests across shards
-
-**🔥 Page-Aligned Memory Management:**
-- **4KB Page Alignment**: Standard page size for optimal memory efficiency
-- **Huge Page Support**: 2MB huge pages for large cache allocations
-- **SecureMemoryPool Integration**: Production-ready memory management with RAII
-- **Hardware Prefetching**: SIMD prefetch hints for cache optimization
-
-**🔥 Cache-Aware Blob Store Integration:**
-- **Transparent Caching**: Drop-in replacement for existing blob stores
-- **Write-Through Strategy**: Immediate persistence with cache population
-- **Cache Statistics**: Comprehensive performance monitoring and hit ratio tracking
-- **Prefetch Support**: Intelligent prefetching for sequential access patterns
-
-**🔥 Atomic Operations Framework Advanced Features:**
-- **Extended Atomic Operations**: atomic_maximize, atomic_minimize, conditional updates with predicate functions
-- **Lock-Free Data Structures**: AtomicStack with CAS-based operations and approximate size tracking
-- **Platform-Specific Optimizations**: x86_64 assembly optimizations (PAUSE, MFENCE, XADD) and ARM NEON support
-- **Safe Atomic Casting**: AsAtomic trait for safe reinterpretation between regular and atomic types
-
-### 🆕 Advanced Fiber Concurrency Enhancements (Phase 10C Complete ✅)
-
-**Comprehensive Fiber-Based Concurrency** - Zipora provides **3 essential fiber enhancement components** with asynchronous I/O integration, cooperative multitasking utilities, and specialized mutex variants for high-performance concurrent applications:
-
-#### **🔥 FiberAIO - Asynchronous I/O Integration (Fiber-Based Concurrency)**
+#### FiberAIO - Asynchronous I/O Integration
 
 ```rust
 use zipora::{FiberAio, FiberAioConfig, IoProvider, VectoredIo, FiberIoUtils};
@@ -1713,19 +915,9 @@ let processed = FiberIoUtils::batch_process(
         Ok(results)
     })
 ).await.unwrap();
-
-// Vectored I/O for efficient bulk transfers
-let mut reader = std::io::Cursor::new(b"Hello, Fiber AIO!");
-let mut buf1 = vec![0u8; 8];
-let mut buf2 = vec![0u8; 8];
-let mut read_bufs = [
-    tokio::io::ReadBuf::new(&mut buf1),
-    tokio::io::ReadBuf::new(&mut buf2),
-];
-let total_read = VectoredIo::read_vectored(&mut reader, &mut read_bufs).await.unwrap();
 ```
 
-#### **🔥 FiberYield - Cooperative Multitasking Utilities (Fine-Grained Control)**
+#### FiberYield - Cooperative Multitasking
 
 ```rust
 use zipora::{FiberYield, YieldConfig, GlobalYield, YieldPoint, YieldingIterator, 
@@ -1772,32 +964,9 @@ let processed = yielding_iter.for_each(|x| {
     sum += x;
     Ok(())
 }).await.unwrap();
-
-// Adaptive yield scheduler for managing multiple fibers
-let scheduler = AdaptiveYieldScheduler::new();
-let handle = scheduler.register_fiber();
-
-// Yield with adaptive budget based on global load
-handle.yield_now().await;
-let stats = handle.stats();
-println!("Fiber yields: {}, execution time: {:?}", stats.total_yields, stats.execution_time);
-
-// Cooperative utilities for common patterns
-let result = CooperativeUtils::run_with_yield(1000, 50, |i| {
-    // Operation with automatic yielding every 50 iterations
-    Ok(i * 2)
-}).await.unwrap();
-
-// Concurrent operations with yield control
-let operations = vec![
-    async { Ok(42) },
-    async { Ok(84) },
-    async { Ok(126) },
-];
-let results = CooperativeUtils::concurrent_with_yield(operations, 2).await.unwrap();
 ```
 
-#### **🔥 Enhanced Mutex Implementations (Specialized Mutex Variants)**
+#### Enhanced Mutex Implementations
 
 ```rust
 use zipora::{AdaptiveMutex, MutexConfig, SpinLock, PriorityRwLock, RwLockConfig, 
@@ -1861,44 +1030,459 @@ let mut segment_guard = segmented.lock_segment(3).await;
 // Hash-based segment selection
 let mut key_guard = segmented.lock_for_key(&"my_key").await;
 *key_guard += 10;
-
-// Aggregated statistics across all segments
-let stats = segmented.aggregate_stats();
-println!("Total acquisitions: {}", stats.total_acquisitions);
-println!("Average contention: {:.2}%", stats.contention_ratio * 100.0);
 ```
 
-#### **Fiber Concurrency Performance Summary (Phase 10C Complete - January 2025)**
+### Low-Level Synchronization
 
-| Component | Memory Efficiency | Throughput | Features | Best Use Case |
-|-----------|------------------|------------|----------|---------------|
-| **FiberAIO** | **Adaptive I/O providers** | **High-throughput async I/O** | **Read-ahead, vectored I/O** | **File-intensive applications** |
-| **FiberYield** | **Thread-local optimization** | **Budget-controlled yielding** | **Adaptive scheduling** | **CPU-intensive tasks** |
-| **Enhanced Mutex** | **Lock-free optimizations** | **Adaptive contention handling** | **Statistics, timeouts** | **High-concurrency applications** |
+High-Performance Synchronization Primitives - Zipora provides 3 essential low-level synchronization components with Linux futex integration, advanced thread-local storage, and comprehensive atomic operations for maximum concurrency performance:
 
-#### **Advanced Features (Phase 10C Complete)**
-
-**🔥 FiberAIO Advanced I/O Integration:**
-- **Adaptive Provider Selection**: Automatic selection of optimal I/O provider (Tokio, io_uring, POSIX AIO, IOCP)
-- **Read-Ahead Optimization**: Configurable read-ahead with buffer management and cache-friendly access patterns
-- **Vectored I/O Support**: Efficient bulk data transfers with multiple buffers and scatter-gather operations
-- **Parallel File Processing**: Controlled concurrency with automatic yielding and batch processing capabilities
-
-**🔥 FiberYield Cooperative Multitasking:**
-- **Budget-Controlled Yielding**: Adaptive yield budget with decay rates and threshold-based yielding
-- **Thread-Local Optimizations**: Zero-contention yield controllers with global coordination
-- **Iterator Integration**: Automatic yielding for long-running iterator operations
-- **Load-Aware Scheduling**: Adaptive scheduler that adjusts yielding frequency based on system load
-
-**🔥 Enhanced Mutex Specialized Variants:**
-- **Adaptive Mutex**: Statistics collection, timeout support, and contention monitoring
-- **High-Performance Spin Locks**: Optimized for short critical sections with yielding after spin threshold
-- **Priority Reader-Writer Locks**: Configurable writer priority and reader limits with fair scheduling
-- **Segmented Mutex**: Hash-based segment selection for reduced contention in multi-threaded scenarios
-
-### Fiber Concurrency
+#### Linux Futex Integration
 
 ```rust
+use zipora::{LinuxFutex, FutexMutex, FutexCondvar, FutexRwLock, PlatformSync};
+
+// High-performance mutex using direct futex syscalls
+let mutex = FutexMutex::new();
+{
+    let guard = mutex.lock().unwrap();
+    // Critical section with zero-overhead synchronization
+}
+
+// Condition variable with futex implementation
+let condvar = FutexCondvar::new();
+let guard = mutex.lock().unwrap();
+let guard = condvar.wait(guard).unwrap(); // Zero-overhead blocking
+
+// Reader-writer lock with futex backing
+let rwlock = FutexRwLock::new();
+{
+    let read_guard = rwlock.read().unwrap();
+    // Multiple concurrent readers
+}
+{
+    let write_guard = rwlock.write().unwrap();
+    // Exclusive writer access
+}
+
+// Platform abstraction for cross-platform code
+use zipora::{DefaultPlatformSync};
+DefaultPlatformSync::futex_wait(&atomic_value, expected_val, timeout).unwrap();
+DefaultPlatformSync::futex_wake(&atomic_value, num_waiters).unwrap();
+```
+
+#### Instance-Specific Thread-Local Storage
+
+```rust
+use zipora::{InstanceTls, OwnerTls, TlsPool};
+
+// Matrix-based O(1) access thread-local storage
+let tls = InstanceTls::<MyData>::new().unwrap();
+
+// Each thread gets its own copy of the data
+tls.set(MyData { value: 42, name: "thread-local".to_string() });
+let data = tls.get(); // O(1) access, automatically creates default if not set
+let optional_data = tls.try_get(); // O(1) access, returns None if not set
+
+// Owner-based TLS associating data with specific objects
+let mut owner_tls = OwnerTls::<MyData, MyOwner>::new();
+let owner = MyOwner { id: 1 };
+let data = owner_tls.get_or_create(&owner).unwrap();
+
+// Thread-local storage pool for managing multiple instances
+let pool = TlsPool::<MyData, 64>::new().unwrap(); // 64 TLS instances
+let data = pool.get_next(); // Round-robin access
+let specific_data = pool.get_slot(5).unwrap(); // Access specific slot
+
+// Automatic cleanup and ID recycling
+let id = tls.id(); // Unique instance ID
+drop(tls); // ID automatically returned to free pool
+```
+
+#### Atomic Operations Framework
+
+```rust
+use zipora::{AtomicExt, AsAtomic, AtomicStack, AtomicNode, AtomicBitOps, 
+            spin_loop_hint, memory_ordering};
+
+// Extended atomic operations
+use std::sync::atomic::{AtomicU32, Ordering};
+let atomic = AtomicU32::new(10);
+
+// Atomic max/min operations
+let old_max = atomic.atomic_maximize(15, Ordering::Relaxed); // Returns 15
+let old_min = atomic.atomic_minimize(5, Ordering::Relaxed);  // Returns 5
+
+// Optimized compare-and-swap operations
+let result = atomic.cas_weak(5, 10); // Weak CAS with optimized ordering
+let strong_result = atomic.cas_strong(10, 20); // Strong CAS
+
+// Conditional atomic updates
+let updated = atomic.update_if(|val| val % 2 == 0, 100, Ordering::Relaxed);
+
+// Lock-free data structures
+let stack = AtomicStack::<i32>::new();
+stack.push(42); // Lock-free push
+stack.push(84);
+assert_eq!(stack.pop(), Some(84)); // Lock-free pop (LIFO)
+assert_eq!(stack.len(), 1); // Approximate size
+
+// Atomic bit operations
+let bits = AtomicU32::new(0);
+assert!(!bits.set_bit(5)); // Set bit 5, returns previous state
+assert!(bits.test_bit(5)); // Test if bit 5 is set
+assert!(bits.toggle_bit(5)); // Toggle bit 5
+assert_eq!(bits.find_first_set(), None); // Find first set bit
+
+// Safe atomic casting between types
+let mut value = 42u32;
+let atomic_ref = value.as_atomic_mut(); // &mut AtomicU32
+atomic_ref.store(100, Ordering::Relaxed);
+assert_eq!(value, 100);
+
+// Platform-specific optimizations
+#[cfg(target_arch = "x86_64")]
+{
+    use zipora::x86_64_optimized;
+    x86_64_optimized::pause(); // PAUSE instruction for spin loops
+    x86_64_optimized::mfence(); // Memory fence
+}
+
+// Memory ordering utilities
+memory_ordering::full_barrier(); // Full memory barrier
+memory_ordering::load_barrier(); // Load barrier
+memory_ordering::store_barrier(); // Store barrier
+```
+
+## String Processing
+
+High-Performance String Processing - Zipora provides 3 comprehensive string processing components with Unicode support, hardware acceleration, and efficient line-based text processing:
+
+### Lexicographic String Iterators
+
+```rust
+use zipora::{LexicographicIterator, SortedVecLexIterator, StreamingLexIterator, 
+            LexIteratorBuilder};
+
+// High-performance iterator for sorted string collections
+let strings = vec![
+    "apple".to_string(),
+    "banana".to_string(), 
+    "cherry".to_string(),
+    "date".to_string(),
+];
+
+let mut iter = SortedVecLexIterator::new(&strings);
+
+// Bidirectional iteration with O(1) access
+assert_eq!(iter.current(), Some("apple"));
+iter.next().unwrap();
+assert_eq!(iter.current(), Some("banana"));
+
+// Binary search operations - O(log n) seeking
+assert!(iter.seek_lower_bound("cherry").unwrap()); // Exact match
+assert_eq!(iter.current(), Some("cherry"));
+
+assert!(!iter.seek_lower_bound("coconut").unwrap()); // No exact match
+assert_eq!(iter.current(), Some("date")); // Positioned at next larger
+
+// Streaming iterator for large datasets that don't fit in memory
+let reader = std::io::Cursor::new("line1\nline2\nline3\n");
+let mut streaming_iter = StreamingLexIterator::new(reader);
+while let Some(line) = streaming_iter.current() {
+    println!("Processing: {}", line);
+    if !streaming_iter.next().unwrap() { break; }
+}
+
+// Builder pattern for different backends
+let iter = LexIteratorBuilder::new()
+    .optimize_for_memory(true)
+    .buffer_size(8192)
+    .build_sorted_vec(&strings);
+
+// Utility functions for common operations
+use zipora::string::utils;
+let common_prefix = utils::find_common_prefix(iter).unwrap();
+let count = utils::count_with_prefix(iter, "app").unwrap(); // Count strings starting with "app"
+```
+
+### Unicode String Processing
+
+```rust
+use zipora::{UnicodeProcessor, UnicodeAnalysis, Utf8ToUtf32Iterator,
+            utf8_byte_count, validate_utf8_and_count_chars};
+
+// Hardware-accelerated UTF-8 processing
+let text = "Hello 世界! 🦀 Rust";
+let char_count = validate_utf8_and_count_chars(text.as_bytes()).unwrap();
+println!("Character count: {}", char_count);
+
+// Unicode processor with configurable options
+let mut processor = UnicodeProcessor::new()
+    .with_normalization(true)
+    .with_case_folding(true);
+
+let processed = processor.process("HELLO World!").unwrap();
+assert_eq!(processed, "hello world!");
+
+// Comprehensive Unicode analysis
+let analysis = processor.analyze("Hello 世界! 🦀");
+println!("ASCII ratio: {:.1}%", (analysis.ascii_count as f64 / analysis.char_count as f64) * 100.0);
+println!("Complexity score: {:.2}", analysis.complexity_score());
+println!("Avg bytes per char: {:.2}", analysis.avg_bytes_per_char());
+
+// Bidirectional UTF-8 to UTF-32 iterator
+let mut utf_iter = Utf8ToUtf32Iterator::new(text.as_bytes()).unwrap();
+let mut chars = Vec::new();
+while let Some(ch) = utf_iter.next_char() {
+    chars.push(ch);
+}
+
+// Backward iteration support
+while let Some(ch) = utf_iter.prev_char() {
+    println!("Previous char: {}", ch);
+}
+
+// Utility functions for Unicode operations
+use zipora::string::unicode::utils;
+let display_width = utils::display_width("Hello世界"); // Accounts for wide characters
+let codepoints = utils::extract_codepoints("A世"); // [0x41, 0x4E16]
+assert!(utils::is_printable("Hello\tWorld\n")); // Allows tabs and newlines
+```
+
+### Line-Based Text Processing
+
+```rust
+use zipora::{LineProcessor, LineProcessorConfig, LineProcessorStats, LineSplitter};
+
+// High-performance line processor for large text files
+let text_data = "line1\nline2\nlong line with multiple words\nfield1,field2,field3\n";
+let cursor = std::io::Cursor::new(text_data);
+
+// Configurable processing strategies
+let config = LineProcessorConfig::performance_optimized(); // 256KB buffer
+// Alternative configs: memory_optimized(), secure()
+let mut processor = LineProcessor::with_config(cursor, config);
+
+// Process lines with closure - returns number of lines processed
+let processed_count = processor.process_lines(|line| {
+    println!("Processing: {}", line);
+    Ok(true) // Continue processing
+}).unwrap();
+
+// Split lines by delimiter with field-level processing
+let cursor = std::io::Cursor::new("name,age,city\nJohn,25,NYC\nJane,30,SF\n");
+let mut processor = LineProcessor::new(cursor);
+
+let field_count = processor.split_lines_by(",", |field, line_num, field_num| {
+    println!("Line {}, Field {}: {}", line_num, field_num, field);
+    Ok(true)
+}).unwrap();
+
+// Batch processing for better performance
+let cursor = std::io::Cursor::new("line1\nline2\nline3\nline4\n");
+let mut processor = LineProcessor::new(cursor);
+
+let total_processed = processor.process_batches(2, |batch| {
+    println!("Processing batch of {} lines", batch.len());
+    for line in batch {
+        println!("  - {}", line);
+    }
+    Ok(true)
+}).unwrap();
+
+// Specialized line splitter with SIMD optimization
+let mut splitter = LineSplitter::new().with_optimized_strategy();
+let fields = splitter.split("a\tb\tc", "\t"); // Tab-separated
+assert_eq!(fields, ["a", "b", "c"]);
+
+// Utility functions for text analysis
+use zipora::string::line_processor::utils;
+let cursor = std::io::Cursor::new("hello world\nhello rust\nworld rust\n");
+let processor = LineProcessor::new(cursor);
+
+// Word frequency analysis
+let frequencies = utils::count_word_frequencies(processor).unwrap();
+assert_eq!(frequencies.get("hello"), Some(&2));
+
+// Text statistics
+let cursor = std::io::Cursor::new("line1\nline2\n\nlong line with multiple words\n");
+let processor = LineProcessor::new(cursor);
+let analysis = utils::analyze_text(processor).unwrap();
+println!("Total lines: {}", analysis.total_lines);
+println!("Empty lines: {}", analysis.empty_lines);
+println!("Avg line length: {:.1}", analysis.avg_line_length());
+```
+
+## Development Tools
+
+### Factory Pattern Implementation
+
+```rust
+use zipora::{FactoryRegistry, GlobalFactory, global_factory, Factoryable};
+
+// Generic factory registry for any type
+let factory = FactoryRegistry::<Box<dyn MyTrait>>::new();
+
+// Register creators with automatic type detection
+factory.register_type::<ConcreteImpl, _>(|| {
+    Ok(Box::new(ConcreteImpl::new()) as Box<dyn MyTrait>)
+}).unwrap();
+
+// Create objects by type name
+let obj = factory.create_by_type::<ConcreteImpl>().unwrap();
+
+// Global factory for convenient access
+global_factory::<Box<dyn MyTrait>>().register("my_impl", || {
+    Ok(Box::new(ConcreteImpl::new()) as Box<dyn MyTrait>)
+}).unwrap();
+
+// Factory builder pattern for complex setups
+let factory = FactoryBuilder::new("component_factory")
+    .with_creator("fast_impl", || Ok(FastImpl::new())).unwrap()
+    .with_creator("safe_impl", || Ok(SafeImpl::new())).unwrap()
+    .build();
+
+// Automatic registration with macros
+register_factory_type!(ConcreteImpl, Box<dyn MyTrait>, || {
+    Ok(Box::new(ConcreteImpl::new()) as Box<dyn MyTrait>)
+});
+
+// Use Factoryable trait for convenient creation
+let instance = MyTrait::create("my_impl").unwrap();
+assert!(MyTrait::has_creator("my_impl").unwrap());
+```
+
+### Debugging Framework
+
+```rust
+use zipora::{HighPrecisionTimer, ScopedTimer, BenchmarkSuite, MemoryDebugger, 
+            PerformanceProfiler, global_profiler, measure_time, debug_print};
+
+// High-precision timing with automatic unit selection
+let timer = HighPrecisionTimer::named("operation");
+// ... perform operation ...
+timer.print_elapsed(); // Automatic unit selection (ns/μs/ms/s)
+
+// Scoped timing with automatic reporting
+{
+    let _timer = ScopedTimer::with_message("database_query", "Query completed");
+    // Timer automatically reports when dropped
+}
+
+// Comprehensive benchmark suite
+let mut suite = BenchmarkSuite::new("performance_tests");
+suite.add_benchmark("fast_operation", 10000, || {
+    // Fast operation to benchmark
+});
+suite.run_all(); // Statistics with ops/sec
+
+// Performance profiling with global registry
+global_profiler().profile("critical_path", || {
+    // ... critical operation ...
+    Ok(result)
+}).unwrap();
+
+// Memory debugging for custom allocators
+let debugger = MemoryDebugger::new();
+debugger.record_allocation(ptr as usize, size, "module:function:line");
+let stats = debugger.get_stats();
+println!("Peak usage: {} bytes", stats.peak_usage);
+
+// Convenient timing macro
+measure_time!("algorithm_execution", {
+    complex_algorithm();
+});
+
+// Debug assertions and prints (debug builds only)
+debug_assert_msg!(condition, "Critical invariant violated");
+debug_print!("Debug value: {}", value);
+```
+
+### Statistical Analysis Tools
+
+```rust
+use zipora::{Histogram, U32Histogram, StatAccumulator, MultiDimensionalStats, 
+            global_stats, StatIndex};
+
+// Adaptive histogram with dual storage strategy
+let mut hist = U32Histogram::new();
+hist.increment(100);  // Small values: direct array access O(1)
+hist.increment(5000); // Large values: hash map storage
+hist.add(1000, 5);    // Add multiple counts
+
+// Comprehensive statistics
+let stats = hist.stats();
+println!("Mean: {:.2}", stats.mean_key.unwrap());
+println!("Distinct keys: {}", stats.distinct_key_count);
+
+// Percentiles and analysis
+hist.finalize(); // Optimize for analysis
+let median = hist.median().unwrap();
+let p95 = hist.percentile(0.95).unwrap();
+
+// Real-time statistics accumulator (thread-safe)
+let acc = StatAccumulator::new();
+acc.add(42);  // Lock-free atomic operations
+acc.add(100);
+acc.add(75);
+
+let snapshot = acc.snapshot();
+println!("Mean: {:.2}, Std Dev: {:.2}", snapshot.mean, snapshot.std_dev);
+
+// Multi-dimensional statistics
+let mut multi_stats = MultiDimensionalStats::new(
+    "network_metrics",
+    vec!["latency".to_string(), "throughput".to_string(), "errors".to_string()]
+);
+
+multi_stats.add_sample(&[50, 1000, 0]).unwrap(); // latency, throughput, errors
+multi_stats.add_sample(&[75, 950, 1]).unwrap();
+
+let latency_stats = multi_stats.dimension_stats(0).unwrap();
+println!("Average latency: {:.1}ms", latency_stats.mean);
+
+// Global statistics registry
+global_stats().register_histogram("request_sizes", hist).unwrap();
+global_stats().register_accumulator("response_times", acc).unwrap();
+
+// List all registered statistics
+let all_stats = global_stats().list_statistics().unwrap();
+for stat_name in all_stats {
+    println!("Registered: {}", stat_name);
+}
+```
+
+## Compression Framework
+
+```rust
+use zipora::{HuffmanEncoder, RansEncoder, DictionaryBuilder, CompressorFactory};
+
+// Huffman coding
+let encoder = HuffmanEncoder::new(b"sample data").unwrap();
+let compressed = encoder.encode(b"sample data").unwrap();
+
+// rANS encoding
+let mut frequencies = [0u32; 256];
+for &byte in b"sample data" { frequencies[byte as usize] += 1; }
+let rans_encoder = RansEncoder::new(&frequencies).unwrap();
+let compressed = rans_encoder.encode(b"sample data").unwrap();
+
+// Dictionary compression
+let dictionary = DictionaryBuilder::new().build(b"sample data");
+
+// LZ4 compression (requires "lz4" feature)
+#[cfg(feature = "lz4")]
+{
+    use zipora::Lz4Compressor;
+    let compressor = Lz4Compressor::new();
+    let compressed = compressor.compress(b"sample data").unwrap();
+}
+
+// Automatic algorithm selection
+let algorithm = CompressorFactory::select_best(&requirements, data);
+let compressor = CompressorFactory::create(algorithm, Some(training_data)).unwrap();
+
+// Fiber concurrency
 use zipora::{FiberPool, AdaptiveCompressor, RealtimeCompressor};
 
 async fn example() {
@@ -1954,44 +1538,31 @@ async fn example() {
 }
 ```
 
-### Compression Framework
+## Performance & Security
 
-```rust
-use zipora::{HuffmanEncoder, RansEncoder, DictionaryBuilder, CompressorFactory};
+### Performance
 
-// Huffman coding
-let encoder = HuffmanEncoder::new(b"sample data").unwrap();
-let compressed = encoder.encode(b"sample data").unwrap();
+Current performance on Intel i7-10700K:
 
-// rANS encoding
-let mut frequencies = [0u32; 256];
-for &byte in b"sample data" { frequencies[byte as usize] += 1; }
-let rans_encoder = RansEncoder::new(&frequencies).unwrap();
-let compressed = rans_encoder.encode(b"sample data").unwrap();
+> **Note**: *AVX-512 optimizations require nightly Rust due to experimental intrinsics. All other SIMD optimizations (AVX2, BMI2, POPCNT) work with stable Rust.
 
-// Dictionary compression
-let dictionary = DictionaryBuilder::new().build(b"sample data");
+| Operation | Performance | vs std::Vec | vs C++ | Security |
+|-----------|-------------|-------------|--------|----------|
+| FastVec push 10k | 6.78µs | +48% faster | +20% faster | ✅ Memory safe |
+| **AutoGrowCircularQueue** | **1.54x** | **+54% faster** | **+54% faster** | ✅ **Ultra-fast (optimized)** |
+| SecureMemoryPool alloc | ~18ns | +85% faster | +85% faster | ✅ **Production-ready** |
+| Traditional pool alloc | ~15ns | +90% faster | +90% faster | ❌ Unsafe |
+| Radix sort 1M u32s | ~45ms | +60% faster | +40% faster | ✅ Memory safe |
+| Suffix array build | O(n) | N/A | Linear vs O(n log n) | ✅ Memory safe |
+| Fiber spawn | ~5µs | N/A | New capability | ✅ Memory safe |
 
-// LZ4 compression (requires "lz4" feature)
-#[cfg(feature = "lz4")]
-{
-    use zipora::Lz4Compressor;
-    let compressor = Lz4Compressor::new();
-    let compressed = compressor.compress(b"sample data").unwrap();
-}
+### Security & Memory Safety
 
-// Automatic algorithm selection
-let algorithm = CompressorFactory::select_best(&requirements, data);
-let compressor = CompressorFactory::create(algorithm, Some(training_data)).unwrap();
-```
+#### Production-Ready SecureMemoryPool
 
-## Security & Memory Safety
+The **SecureMemoryPool** eliminates critical security vulnerabilities found in traditional memory pool implementations while maintaining high performance:
 
-### Production-Ready SecureMemoryPool
-
-The new **SecureMemoryPool** eliminates critical security vulnerabilities found in traditional memory pool implementations while maintaining high performance:
-
-#### 🛡️ Security Features
+##### Security Features
 
 - **Use-After-Free Prevention**: Generation counters validate pointer lifetime
 - **Double-Free Detection**: Cryptographic validation prevents duplicate deallocations  
@@ -2000,14 +1571,14 @@ The new **SecureMemoryPool** eliminates critical security vulnerabilities found 
 - **RAII Memory Management**: Automatic cleanup eliminates manual deallocation errors
 - **Zero-on-Free**: Optional memory clearing for sensitive data protection
 
-#### ⚡ Performance Features
+##### Performance Features
 
 - **Thread-Local Caching**: Reduces lock contention with per-thread allocation caches
 - **Lock-Free Fast Paths**: High-performance allocation for common cases
 - **NUMA Awareness**: Optimized allocation for multi-socket systems
 - **Batch Operations**: Amortized overhead for bulk allocations
 
-#### 🔒 Security Guarantees
+##### Security Guarantees
 
 | Vulnerability | Traditional Pools | SecureMemoryPool |
 |---------------|-------------------|------------------|
@@ -2017,7 +1588,7 @@ The new **SecureMemoryPool** eliminates critical security vulnerabilities found 
 | Race conditions | ❌ Manual sync required | ✅ **Thread-safe** |
 | Manual cleanup | ❌ Error-prone | ✅ **RAII automatic** |
 
-#### 📈 Migration Guide
+##### Migration Guide
 
 **Before (MemoryPool)**:
 ```rust
@@ -2037,27 +1608,11 @@ let ptr = pool.allocate()?;
 // Use-after-free and double-free impossible!
 ```
 
-## Performance
-
-Current performance on Intel i7-10700K:
-
-> **Note**: *AVX-512 optimizations require nightly Rust due to experimental intrinsics. All other SIMD optimizations (AVX2, BMI2, POPCNT) work with stable Rust.
-
-| Operation | Performance | vs std::Vec | vs C++ | Security |
-|-----------|-------------|-------------|--------|----------|
-| FastVec push 10k | 6.78µs | +48% faster | +20% faster | ✅ Memory safe |
-| **AutoGrowCircularQueue** | **1.54x** | **+54% faster** | **+54% faster** | ✅ **Ultra-fast (optimized)** |
-| SecureMemoryPool alloc | ~18ns | +85% faster | +85% faster | ✅ **Production-ready** |
-| Traditional pool alloc | ~15ns | +90% faster | +90% faster | ❌ Unsafe |
-| Radix sort 1M u32s | ~45ms | +60% faster | +40% faster | ✅ Memory safe |
-| Suffix array build | O(n) | N/A | Linear vs O(n log n) | ✅ Memory safe |
-| Fiber spawn | ~5µs | N/A | New capability | ✅ Memory safe |
-
 ## C FFI Migration
 
 ```toml
 [dependencies]
-zipora = { version = "1.1.0", features = ["ffi"] }
+zipora = { version = "1.1.1", features = ["ffi"] }
 ```
 
 ```c
@@ -2128,16 +1683,16 @@ cargo bench
 # Benchmark with specific features
 cargo bench --features lz4
 
-# Rank/Select benchmarks (Phase 7A)
+# Rank/Select benchmarks
 cargo bench --bench rank_select_bench
 
-# FSA & Trie benchmarks (Phase 7B)
+# FSA & Trie benchmarks
 cargo bench --bench double_array_trie_bench
 cargo bench --bench compressed_sparse_trie_bench
 cargo bench --bench nested_louds_trie_bench
 cargo bench --bench comprehensive_trie_benchmarks
 
-# I/O & Serialization benchmarks (Phase 8B)
+# I/O & Serialization benchmarks
 cargo bench --bench stream_buffer_bench
 cargo bench --bench range_stream_bench
 cargo bench --bench zero_copy_bench
@@ -2175,7 +1730,6 @@ cargo run --example secure_memory_pool_demo  # SecureMemoryPool security feature
 - **📚 Documentation Tests**: **NEWLY FIXED** - All 81 doctests passing including rank/select trait imports
 - **🧪 Release Mode Tests**: **NEWLY FIXED** - All 755 tests now passing in both debug and release modes
 - **🔥 Advanced Features**: Fragment compression, hierarchical caching, BMI2 acceleration complete
-
 
 ## License
 
