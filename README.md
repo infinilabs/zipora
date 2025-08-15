@@ -1,6 +1,6 @@
 # Zipora
 
-[![Build Status](https://github.com/infini-sh/zipora/workflows/CI/badge.svg)](https://github.com/infini-sh/zipora/actions)
+[![Build Status](https://github.com/infinilabs/zipora/workflows/CI/badge.svg)](https://github.com/infinilabs/zipora/actions)
 [![License](https://img.shields.io/badge/license-BDL--1.0-blue.svg)](LICENSE)
 [![Rust Version](https://img.shields.io/badge/rust-1.88+-orange.svg)](https://www.rust-lang.org)
 
