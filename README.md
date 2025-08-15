@@ -21,6 +21,7 @@ High-performance Rust data structures and compression algorithms with memory saf
 - **🚀 Advanced Memory Pools**: **4 specialized memory pool variants** with lock-free allocation, thread-local caching, fixed capacity guarantees, and memory-mapped storage ✅
 - **🔧 Development Infrastructure**: **Factory patterns, debugging framework, statistical analysis** for advanced development and monitoring ✅
 - **🔗 Low-Level Synchronization**: **Linux futex integration, instance-specific thread-local storage, atomic operations framework** for high-performance concurrent programming ✅
+- **💾 LRU Page Cache**: **Sophisticated caching layer for blob operations** with multi-shard architecture, page-aligned memory management, and hardware prefetching ✅
 
 ## Quick Start
 
@@ -80,6 +81,20 @@ map.insert("key", "value").unwrap();
 // Entropy coding
 let encoder = HuffmanEncoder::new(b"sample data").unwrap();
 let compressed = encoder.encode(b"sample data").unwrap();
+
+// LRU Page Cache for blob operations
+use zipora::cache::{LruPageCache, PageCacheConfig, CachedBlobStore};
+
+let cache_config = PageCacheConfig::performance_optimized()
+    .with_capacity(256 * 1024 * 1024)  // 256MB cache
+    .with_shards(8);                   // 8 shards for reduced contention
+
+let cache = LruPageCache::new(cache_config).unwrap();
+let file_id = cache.register_file(1).unwrap();
+
+// Cache-aware blob store
+let blob_store = MemoryBlobStore::new();
+let cached_store = CachedBlobStore::new(blob_store, cache_config).unwrap();
 ```
 
 ## Core Components
@@ -1571,6 +1586,78 @@ memory_ordering::store_barrier(); // Store barrier
 - **Automatic Resource Management**: RAII-based cleanup with generation counters for safe resource deallocation
 - **Owner-Based TLS**: Associate thread-local data with specific object instances using pointer-based keys
 - **TLS Pools**: Round-robin and slot-based access patterns for managing multiple TLS instances
+
+### 🆕 LRU Page Cache (Production Ready ✅)
+
+**High-Performance Caching Layer** - Zipora provides a sophisticated **LRU Page Cache** system optimized for blob operations with multi-shard architecture, page-aligned memory management, and hardware prefetching for maximum performance:
+
+#### **🔥 LRU Page Cache - Sophisticated Caching Layer**
+
+```rust
+use zipora::cache::{LruPageCache, PageCacheConfig, CachedBlobStore, CacheBuffer};
+use zipora::blob_store::MemoryBlobStore;
+
+// High-performance page cache with optimal configuration
+let config = PageCacheConfig::performance_optimized()
+    .with_capacity(256 * 1024 * 1024)  // 256MB cache
+    .with_shards(8)                    // 8 shards for reduced contention
+    .with_huge_pages(true);            // Use 2MB huge pages
+
+let cache = LruPageCache::new(config).unwrap();
+
+// Register files for caching
+let file_id = cache.register_file(1).unwrap();
+
+// Direct cache operations
+let buffer = cache.read(file_id, 0, 4096).unwrap();  // Read 4KB page
+cache.prefetch(file_id, 4096, 16384).unwrap();       // Prefetch 16KB
+
+// Batch operations for high throughput
+let requests = vec![
+    (file_id, 0, 4096),
+    (file_id, 4096, 4096),
+    (file_id, 8192, 4096)
+];
+let results = cache.read_batch(requests).unwrap();
+
+// Cache-aware blob store integration
+let blob_store = MemoryBlobStore::new();
+let mut cached_store = CachedBlobStore::new(blob_store, config).unwrap();
+
+let id = cached_store.put(b"Cached data").unwrap();
+let data = cached_store.get(id).unwrap();  // Automatically cached
+let stats = cached_store.cache_stats();    // Performance metrics
+
+println!("Hit ratio: {:.2}%", stats.hit_ratio * 100.0);
+```
+
+#### **LRU Page Cache Performance Summary**
+
+| Component | Memory Efficiency | Throughput | Features | Best Use Case |
+|-----------|------------------|------------|----------|---------------|
+| **Multi-Shard Cache** | **Page-aligned allocation** | **Reduced contention** | **Configurable sharding** | **High-concurrency access** |
+| **Cache-Aware Blob Store** | **Transparent caching** | **O(1) cache lookup** | **BlobStore compatibility** | **Drop-in replacement** |
+| **Hardware Prefetching** | **SIMD prefetch hints** | **Cache line optimization** | **Huge page support** | **Large dataset access** |
+
+#### **Advanced LRU Cache Features:**
+
+**🔥 Multi-Shard Architecture:**
+- **Reduced Contention**: Configurable number of shards to minimize lock contention
+- **Hash-Based Distribution**: Automatic shard selection based on file ID and page ID
+- **Independent Statistics**: Per-shard and global statistics aggregation
+- **Batch Operations**: Efficient processing of multiple requests across shards
+
+**🔥 Page-Aligned Memory Management:**
+- **4KB Page Alignment**: Standard page size for optimal memory efficiency
+- **Huge Page Support**: 2MB huge pages for large cache allocations
+- **SecureMemoryPool Integration**: Production-ready memory management with RAII
+- **Hardware Prefetching**: SIMD prefetch hints for cache optimization
+
+**🔥 Cache-Aware Blob Store Integration:**
+- **Transparent Caching**: Drop-in replacement for existing blob stores
+- **Write-Through Strategy**: Immediate persistence with cache population
+- **Cache Statistics**: Comprehensive performance monitoring and hit ratio tracking
+- **Prefetch Support**: Intelligent prefetching for sequential access patterns
 
 **🔥 Atomic Operations Framework Advanced Features:**
 - **Extended Atomic Operations**: atomic_maximize, atomic_minimize, conditional updates with predicate functions

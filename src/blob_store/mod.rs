@@ -3,6 +3,7 @@
 //! This module provides abstract blob storage with various implementations
 //! including memory-based, file-based, and compressed storage.
 
+pub mod cached_store;
 pub mod compressed;
 pub mod entropy;
 pub mod memory;
@@ -14,6 +15,7 @@ pub mod zip_offset;
 pub mod zip_offset_builder;
 
 // Re-export core types
+pub use cached_store::{CachedBlobStore, CacheAwareBlobStore, BlobCacheStats};
 pub use compressed::CompressionAlgorithm;
 pub use entropy::{
     DictionaryBlobStore, EntropyAlgorithm, EntropyCompressionStats, HuffmanBlobStore, RansBlobStore,
