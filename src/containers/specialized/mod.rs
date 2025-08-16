@@ -14,6 +14,7 @@
 //! ## Phase 2 Container Types
 //!
 //! - **`UintVector`** - Compressed integer storage with 60-80% space reduction
+//! - **`IntVec<T>`** - Advanced bit-packed integer storage with variable bit-width, hardware acceleration, and block-based compression
 //! - **`FixedLenStrVec<N>`** - Fixed-length string vector with 60% memory savings and SIMD optimizations
 //! - **`SortableStrVec`** - Arena-based string storage with 25% faster sorting
 //!
@@ -60,6 +61,7 @@ mod valvec32;
 
 // Phase 2 containers
 mod fixed_len_str_vec;
+mod int_vec;
 pub mod sortable_str_vec;
 mod uint_vector;
 
@@ -78,6 +80,7 @@ pub use valvec32::ValVec32;
 pub use fixed_len_str_vec::{
     FixedLenStrVec, FixedStr4Vec, FixedStr8Vec, FixedStr16Vec, FixedStr32Vec, FixedStr64Vec,
 };
+pub use int_vec::{IntVec, PackedInt, CompressionStrategy, BlockSize};
 pub use sortable_str_vec::{SortableStrIter, SortableStrSortedIter, SortableStrVec};
 pub use uint_vector::UintVector;
 

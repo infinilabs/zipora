@@ -14,6 +14,10 @@ use std::ptr::{self, NonNull};
 use std::slice;
 use std::sync::Arc;
 
+// Platform-specific libc imports for malloc_usable_size
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+extern crate libc;
+
 /// Branch prediction hints for performance optimization
 /// Uses the most effective approach available on stable Rust
 /// Mimics GCC's __builtin_expect behavior through code structure
@@ -47,11 +51,43 @@ fn unlikely_path() {
 
 /// Try to get usable size from allocator for better memory utilization
 /// This matches the topling-zip optimization for maximum performance
-/// Simplified version for stable Rust compatibility
+/// Platform-specific implementations for optimal memory usage
+#[cfg(target_os = "linux")]
+fn get_usable_size(ptr: *mut u8) -> usize {
+    if ptr.is_null() {
+        return 0;
+    }
+    // Use libc::malloc_usable_size on Linux
+    unsafe { libc::malloc_usable_size(ptr as *mut libc::c_void) }
+}
+
+#[cfg(target_os = "windows")]
+fn get_usable_size(ptr: *mut u8) -> usize {
+    if ptr.is_null() {
+        return 0;
+    }
+    // Use _msize on Windows
+    extern "C" {
+        fn _msize(ptr: *mut libc::c_void) -> usize;
+    }
+    unsafe { _msize(ptr as *mut libc::c_void) }
+}
+
+#[cfg(target_os = "macos")]
+fn get_usable_size(ptr: *mut u8) -> usize {
+    if ptr.is_null() {
+        return 0;
+    }
+    // Use malloc_size on macOS
+    extern "C" {
+        fn malloc_size(ptr: *const libc::c_void) -> usize;
+    }
+    unsafe { malloc_size(ptr as *const libc::c_void) }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
 fn get_usable_size(_ptr: *mut u8) -> usize {
-    // For now, disable this optimization to focus on core performance
-    // The main gains come from the optimized hot path
-    // TODO: Re-enable with proper platform-specific implementations
+    // Fallback for other platforms
     0
 }
 
@@ -334,9 +370,9 @@ impl<T> ValVec32<T> {
         self.grow_to(new_capacity)
     }
 
-    /// Calculates new capacity with golden ratio growth
-    /// Uses 103/64 ≈ 1.609375 growth factor for better memory utilization
+    /// Calculates new capacity with adaptive growth strategy
     /// Optimized implementation following topling-zip pattern
+    /// Uses different growth factors based on current size for optimal performance
     #[inline]
     fn calculate_new_capacity(&self, min_capacity: u32) -> Result<u32> {
         if unlikely(min_capacity > MAX_CAPACITY) {
@@ -352,19 +388,28 @@ impl<T> ValVec32<T> {
             return Ok(min_capacity.max(4));
         }
 
-        // Golden ratio growth: multiply by 103/64 ≈ 1.609375
-        // This provides better memory utilization than doubling (2.0x)
-        // while still maintaining amortized O(1) push complexity
-        // Use u64 arithmetic to prevent overflow, then cast back
+        // Adaptive growth strategy based on current size
         let current_capacity = self.capacity as u64;
-        let golden_growth = (current_capacity * 103) / 64;
+        let new_capacity = if self.capacity < 64 {
+            // Small vectors: 2x doubling for faster amortization
+            // This matches std::Vec behavior for small sizes
+            (current_capacity * 2).min(64)
+        } else if self.capacity < 4096 {
+            // Medium vectors: Golden ratio (103/64 ≈ 1.609375)
+            // Better memory utilization while maintaining good performance
+            (current_capacity * 103) / 64
+        } else {
+            // Large vectors: Conservative 1.25x growth
+            // Reduces memory waste for large allocations
+            (current_capacity * 5) / 4
+        };
         
         // Ensure we don't overflow u32 and meet minimum requirement
-        let new_capacity = golden_growth
+        let final_capacity = new_capacity
             .max(min_capacity as u64)
             .min(MAX_CAPACITY as u64) as u32;
         
-        Ok(new_capacity)
+        Ok(final_capacity)
     }
 
     /// Grows the vector to the specified capacity
@@ -384,15 +429,19 @@ impl<T> ValVec32<T> {
         }
 
         // First, try to use malloc_usable_size optimization
+        // This can save many reallocations by using already-allocated space
         if self.capacity > 0 {
             let current_ptr = self.ptr.as_ptr() as *mut u8;
             let usable_size = get_usable_size(current_ptr);
-            let required_bytes = new_capacity as usize * mem::size_of::<T>();
             
-            if usable_size >= required_bytes {
-                // We already have enough space! Just update capacity
-                self.capacity = (usable_size / mem::size_of::<T>()) as u32;
-                return Ok(());
+            if usable_size > 0 {
+                let usable_capacity = (usable_size / mem::size_of::<T>()).min(MAX_CAPACITY as usize) as u32;
+                if usable_capacity >= new_capacity {
+                    // We already have enough space! Just update capacity
+                    // This is a huge win - no allocation needed
+                    self.capacity = usable_capacity;
+                    return Ok(());
+                }
             }
         }
 
@@ -420,9 +469,12 @@ impl<T> ValVec32<T> {
         self.ptr = NonNull::new(cast_aligned_ptr::<T>(new_ptr)).unwrap();
         
         // Use actual usable size to reduce future reallocations
+        // This is critical for performance - we might get more memory than requested
         let actual_usable_size = get_usable_size(new_ptr);
-        if actual_usable_size > 0 {
-            self.capacity = (actual_usable_size / mem::size_of::<T>()).min(MAX_CAPACITY as usize) as u32;
+        if actual_usable_size > 0 && actual_usable_size > new_layout.size() {
+            // We got extra memory from the allocator - use it!
+            let bonus_capacity = (actual_usable_size / mem::size_of::<T>()).min(MAX_CAPACITY as usize) as u32;
+            self.capacity = bonus_capacity.max(new_capacity);
         } else {
             self.capacity = new_capacity;
         }
@@ -463,12 +515,16 @@ impl<T> ValVec32<T> {
         
         // Hot path: capacity available (most common case)
         // The likely() hint guides the processor's branch predictor
+        // Use branchless comparison for better performance
         if likely(current_len < self.capacity) {
             // SAFETY: We've verified len < capacity, so this write is safe
             unsafe {
-                ptr::write(self.ptr.as_ptr().add(current_len as usize), value);
+                // Use offset calculation for potentially better codegen
+                let slot = self.ptr.as_ptr().offset(current_len as isize);
+                ptr::write(slot, value);
+                // Increment length after successful write
+                self.len = current_len.wrapping_add(1);
             }
-            self.len = current_len + 1;
             return Ok(());
         }
 
@@ -835,12 +891,14 @@ impl<T> ValVec32<T> {
         unsafe {
             let dst = self.ptr.as_ptr().add(self.len as usize);
 
-            // Fast path for Copy types - use ptr::copy_nonoverlapping for maximum performance
-            if std::mem::size_of::<T>() != 0 && !std::mem::needs_drop::<T>() {
-                // For Copy types, use highly optimized memcpy-like operation
+            // Optimized path selection based on type characteristics
+            // Try to use memcpy for types that don't need drop
+            if !mem::needs_drop::<T>() {
+                // Fast path: use ptr::copy_nonoverlapping (essentially memcpy)
+                // This is optimal for POD types and will be vectorized by LLVM
                 ptr::copy_nonoverlapping(slice.as_ptr(), dst, slice.len());
             } else {
-                // For types that need Drop or have complex Clone, use element-wise cloning
+                // Slow path: element-wise cloning for types with Drop
                 for (i, item) in slice.iter().enumerate() {
                     ptr::write(dst.add(i), item.clone());
                 }

@@ -106,6 +106,10 @@ pub use containers::{
     SortableStrSortedIter,
     SortableStrVec,
     // Phase 2 specialized containers
+    IntVec,
+    PackedInt,
+    CompressionStrategy,
+    BlockSize,
     UintVector,
     // Phase 1 specialized containers
     ValVec32,
