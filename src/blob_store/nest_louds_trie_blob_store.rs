@@ -1131,14 +1131,17 @@ where
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
-    /// # use zipora::blob_store::NestLoudsTrieBlobStoreBuilder;
-    /// # use zipora::RankSelectInterleaved256;
-    /// # let mut builder = NestLoudsTrieBlobStoreBuilder::<RankSelectInterleaved256>::default()?;
-    /// # builder.add(b"key", b"data")?;
+    /// ```rust
+    /// use zipora::blob_store::{NestLoudsTrieBlobStoreBuilder, BlobStore};
+    /// use zipora::RankSelectInterleaved256;
+    /// # use zipora::error::Result;
+    /// # fn example() -> Result<()> {
+    /// let mut builder = NestLoudsTrieBlobStoreBuilder::<RankSelectInterleaved256>::default()?;
+    /// builder.add(b"key", b"data")?;
     /// let store = builder.finish()?;
     /// assert_eq!(store.len(), 1);
-    /// # Ok::<(), zipora::ZiporaError>(())
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn finish(mut self) -> Result<NestLoudsTrieBlobStore<R>> {
         // Sort entries for optimal trie construction if batch optimization is enabled

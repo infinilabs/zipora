@@ -29,7 +29,7 @@ pub use lockfree_pool::{
     LockFreeMemoryPool, LockFreePoolConfig, LockFreePoolStats, LockFreeAllocation, BackoffStrategy,
 };
 pub use mmap::{MemoryMappedAllocator, MmapAllocation};
-pub use mmap_vec::{MmapVec, MmapVecConfig, MmapVecIter};
+pub use mmap_vec::{MmapVec, MmapVecConfig, MmapVecConfigBuilder, MmapVecIter, MmapVecStats};
 pub use pool::{MemoryPool, PoolConfig, PooledBuffer, PooledVec};
 pub use secure_pool::{
     SecureMemoryPool, SecurePoolConfig, SecurePoolStats, SecurePooledPtr, get_global_pool_for_size,
