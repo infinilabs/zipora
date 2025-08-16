@@ -394,7 +394,7 @@ release_prep: clean format clippy build_release test_release bench doc audit
 	@echo "🚀 Release preparation completed"
 
 # pre-commit sanity check
-sanity: test_debug test_release test_nightly_debug test_nightly_release
+sanity: test_debug test_release test_nightly_debug test_nightly_release miri_full
 
 # =============================================================================
 # HELP TARGET
