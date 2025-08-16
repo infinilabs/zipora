@@ -42,6 +42,8 @@
 //!
 //! ```rust
 //! use zipora::cache::{LruPageCache, PageCacheConfig, CacheBuffer};
+//! # use zipora::error::Result;
+//! # fn example() -> Result<()> {
 //!
 //! // Create high-performance page cache
 //! let config = PageCacheConfig::performance_optimized()
@@ -51,13 +53,17 @@
 //!
 //! let cache = LruPageCache::new(config)?;
 //!
+//! // Register files for caching
+//! let file_id = cache.register_file(1)?;
+//!
 //! // Cache-aware blob reading
-//! let mut buffer = CacheBuffer::new();
-//! let data = cache.read(file_id, offset, length, &mut buffer)?;
+//! let data = cache.read(file_id, 0, 1024)?;
 //!
 //! // Batch operations for improved performance
-//! let requests = vec![(file_id1, offset1, len1), (file_id2, offset2, len2)];
+//! let requests = vec![(file_id, 0, 1024), (file_id, 1024, 1024)];
 //! let results = cache.read_batch(requests)?;
+//! # Ok(())
+//! # }
 //! ```
 
 pub mod config;

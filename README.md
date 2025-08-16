@@ -472,7 +472,7 @@ if let Some(stats) = pool.stats() {
 #### Memory-Mapped Vectors
 
 ```rust
-use zipora::memory::{MmapVec, MmapVecConfig};
+use zipora::memory::{MmapVec, MmapVecConfig, MmapVecConfigBuilder, MmapVecStats};
 
 // Persistent vector backed by memory-mapped file
 let config = MmapVecConfig::large_dataset();
@@ -493,17 +493,30 @@ for i in 0..1000 {
 // Cross-process data sharing
 vec.sync().unwrap(); // Force sync to disk
 
-// Configuration for different scenarios
-let config = MmapVecConfig {
-    initial_capacity: 1024 * 1024, // 1M elements
-    growth_factor: 1.5, // Conservative growth
-    read_only: false,
-    populate_pages: true, // Pre-load for performance
-    sync_on_write: true, // Ensure persistence
-};
+// Configuration presets for different use cases
+let performance_config = MmapVecConfig::performance_optimized(); // Golden ratio growth
+let memory_config = MmapVecConfig::memory_optimized();           // Conservative growth
+let realtime_config = MmapVecConfig::realtime();                 // Predictable performance
+
+// Builder pattern for custom configurations
+let config = MmapVecConfig::builder()
+    .initial_capacity(8192)
+    .growth_factor(1.618)  // Golden ratio growth
+    .populate_pages(true)  // Pre-load for performance
+    .use_huge_pages(true)  // 2MB huge pages on Linux
+    .sync_on_write(false)  // Async writes for performance
+    .build();
+
+// Advanced operations
+vec.extend(&[1, 2, 3, 4, 5]).unwrap();
+vec.truncate(100).unwrap();
+vec.resize(200, 0).unwrap();
+vec.shrink_to_fit().unwrap();
 
 // Memory usage statistics
-println!("Memory usage: {} bytes", vec.memory_usage());
+let stats = vec.stats();
+println!("Memory usage: {} bytes", stats.memory_usage);
+println!("Utilization: {:.1}%", stats.utilization * 100.0);
 println!("File path: {}", vec.path().display());
 
 // Iterator support

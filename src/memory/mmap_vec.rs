@@ -137,6 +137,151 @@ impl MmapVecConfig {
             ..Self::default()
         }
     }
+
+    /// Create configuration optimized for performance
+    pub fn performance_optimized() -> Self {
+        Self {
+            initial_capacity: 8192,
+            growth_factor: 1.618, // Golden ratio growth
+            populate_pages: true,
+            use_huge_pages: cfg!(target_os = "linux"),
+            sync_on_write: false,
+            ..Self::default()
+        }
+    }
+
+    /// Create configuration optimized for memory usage
+    pub fn memory_optimized() -> Self {
+        Self {
+            initial_capacity: 256,
+            growth_factor: 1.4, // Conservative growth
+            populate_pages: false,
+            use_huge_pages: false,
+            sync_on_write: false,
+            ..Self::default()
+        }
+    }
+
+    /// Create configuration for real-time systems
+    pub fn realtime() -> Self {
+        Self {
+            initial_capacity: 1024,
+            growth_factor: 1.5, // Predictable growth
+            populate_pages: true, // Avoid page faults
+            use_huge_pages: true, // Reduce TLB misses
+            sync_on_write: false, // Avoid I/O in real-time path
+            ..Self::default()
+        }
+    }
+
+    /// Builder pattern for custom configuration
+    pub fn builder() -> MmapVecConfigBuilder {
+        MmapVecConfigBuilder::new()
+    }
+}
+
+/// Builder for creating custom MmapVec configurations
+#[derive(Debug, Clone)]
+pub struct MmapVecConfigBuilder {
+    config: MmapVecConfig,
+}
+
+impl MmapVecConfigBuilder {
+    /// Create a new builder with default configuration
+    pub fn new() -> Self {
+        Self {
+            config: MmapVecConfig::default(),
+        }
+    }
+
+    /// Set initial capacity
+    pub fn with_initial_capacity(mut self, capacity: usize) -> Self {
+        self.config.initial_capacity = capacity;
+        self
+    }
+
+    /// Set growth factor
+    pub fn with_growth_factor(mut self, factor: f64) -> Self {
+        self.config.growth_factor = factor;
+        self
+    }
+
+    /// Enable or disable read-only mode
+    pub fn with_read_only(mut self, read_only: bool) -> Self {
+        self.config.read_only = read_only;
+        self
+    }
+
+    /// Enable or disable page population
+    pub fn with_populate_pages(mut self, populate: bool) -> Self {
+        self.config.populate_pages = populate;
+        self
+    }
+
+    /// Enable or disable huge pages
+    pub fn with_huge_pages(mut self, enable: bool) -> Self {
+        self.config.use_huge_pages = enable;
+        self
+    }
+
+    /// Enable or disable sync on write
+    pub fn with_sync_on_write(mut self, sync: bool) -> Self {
+        self.config.sync_on_write = sync;
+        self
+    }
+
+    /// Build the final configuration
+    pub fn build(self) -> MmapVecConfig {
+        self.config
+    }
+}
+
+impl Default for MmapVecConfigBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Statistics for memory-mapped vectors
+#[derive(Debug, Clone)]
+pub struct MmapVecStats {
+    /// Number of elements
+    pub len: usize,
+    /// Total capacity
+    pub capacity: usize,
+    /// Size of each element in bytes
+    pub element_size: usize,
+    /// Size of header in bytes
+    pub header_size: usize,
+    /// Size of data section in bytes
+    pub data_size: usize,
+    /// Total size in bytes
+    pub total_size: usize,
+    /// Utilization ratio (len / capacity)
+    pub utilization: f64,
+    /// Path to backing file
+    pub file_path: PathBuf,
+    /// Whether the vector is read-only
+    pub read_only: bool,
+    /// Growth factor
+    pub growth_factor: f64,
+}
+
+impl MmapVecStats {
+    /// Get memory efficiency as a percentage
+    pub fn memory_efficiency(&self) -> f64 {
+        self.utilization * 100.0
+    }
+
+    /// Get wasted space in bytes
+    pub fn wasted_space(&self) -> usize {
+        (self.capacity - self.len) * self.element_size
+    }
+
+    /// Check if the vector needs compaction
+    pub fn needs_compaction(&self, threshold: f64) -> bool {
+        self.utilization < threshold
+    }
 }
 
 /// Memory-mapped vector implementation
@@ -411,6 +556,127 @@ where
     /// Get memory usage statistics
     pub fn memory_usage(&self) -> usize {
         self.capacity() * std::mem::size_of::<T>() + HEADER_SIZE
+    }
+
+    /// Get detailed statistics about the vector
+    pub fn stats(&self) -> MmapVecStats {
+        let len = self.len();
+        let capacity = self.capacity();
+        let element_size = std::mem::size_of::<T>();
+        let header_size = HEADER_SIZE;
+        let data_size = capacity * element_size;
+        let total_size = header_size + data_size;
+        let utilization = if capacity > 0 {
+            len as f64 / capacity as f64
+        } else {
+            0.0
+        };
+
+        MmapVecStats {
+            len,
+            capacity,
+            element_size,
+            header_size,
+            data_size,
+            total_size,
+            utilization,
+            file_path: self.file_path.clone(),
+            read_only: self.config.read_only,
+            growth_factor: self.config.growth_factor,
+        }
+    }
+
+    /// Shrink the vector to fit the current length
+    pub fn shrink_to_fit(&mut self) -> Result<()> {
+        if self.config.read_only {
+            return Err(ZiporaError::invalid_data("Vector is read-only"));
+        }
+
+        let current_len = self.len();
+        let current_capacity = self.capacity();
+
+        if current_len < current_capacity {
+            let new_capacity = current_len.max(1); // At least 1 element capacity
+            self.resize_to_capacity(new_capacity)?;
+        }
+
+        Ok(())
+    }
+
+    /// Extend the vector with the contents of an iterator
+    pub fn extend<I>(&mut self, iter: I) -> Result<()>
+    where
+        I: IntoIterator<Item = T>,
+    {
+        if self.config.read_only {
+            return Err(ZiporaError::invalid_data("Vector is read-only"));
+        }
+
+        let iter = iter.into_iter();
+        let (lower, _) = iter.size_hint();
+        
+        // Reserve space for at least the lower bound
+        if lower > 0 {
+            self.reserve(lower)?;
+        }
+
+        for item in iter {
+            self.push(item)?;
+        }
+
+        Ok(())
+    }
+
+    /// Truncate the vector to the specified length
+    pub fn truncate(&mut self, len: usize) -> Result<()> {
+        if self.config.read_only {
+            return Err(ZiporaError::invalid_data("Vector is read-only"));
+        }
+
+        let current_len = self.len();
+        if len < current_len {
+            self.set_length(len)?;
+
+            if self.config.sync_on_write {
+                self.sync()?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Fill the vector with a specific value up to the given length
+    pub fn resize(&mut self, len: usize, value: T) -> Result<()> {
+        if self.config.read_only {
+            return Err(ZiporaError::invalid_data("Vector is read-only"));
+        }
+
+        let current_len = self.len();
+        
+        if len > current_len {
+            // Need to grow
+            let additional = len - current_len;
+            self.reserve(additional)?;
+            
+            // Fill with the specified value
+            unsafe {
+                let data_ptr = self.data_ptr()?.as_ptr();
+                for i in current_len..len {
+                    std::ptr::write(data_ptr.add(i), value);
+                }
+            }
+            
+            self.set_length(len)?;
+        } else if len < current_len {
+            // Need to shrink
+            self.truncate(len)?;
+        }
+
+        if self.config.sync_on_write {
+            self.sync()?;
+        }
+
+        Ok(())
     }
 
     /// Create backing file with initial size
@@ -860,5 +1126,187 @@ mod tests {
         let config = MmapVecConfig::persistent_cache();
         let vec2 = MmapVec::<u32>::create(&file_path2, config).unwrap();
         assert!(vec2.config.sync_on_write);
+    }
+
+    #[test]
+    fn test_builder_pattern() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("builder.mmap");
+        
+        let config = MmapVecConfig::builder()
+            .with_initial_capacity(5000)
+            .with_growth_factor(1.5)
+            .with_populate_pages(true)
+            .with_sync_on_write(false)
+            .build();
+        
+        let vec = MmapVec::<i32>::create(&file_path, config).unwrap();
+        assert_eq!(vec.capacity(), 5000);
+        assert!(!vec.config.sync_on_write);
+        assert_eq!(vec.config.growth_factor, 1.5);
+    }
+
+    #[test]
+    fn test_stats() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("stats.mmap");
+        
+        let config = MmapVecConfig {
+            initial_capacity: 100,
+            ..MmapVecConfig::default()
+        };
+        let mut vec = MmapVec::<u64>::create(&file_path, config).unwrap();
+        
+        // Add some data
+        for i in 0..50 {
+            vec.push(i).unwrap();
+        }
+        
+        let stats = vec.stats();
+        assert_eq!(stats.len, 50);
+        assert_eq!(stats.capacity, 100);
+        assert_eq!(stats.element_size, 8); // u64 = 8 bytes
+        assert_eq!(stats.utilization, 0.5); // 50/100
+        assert_eq!(stats.memory_efficiency(), 50.0);
+        assert_eq!(stats.wasted_space(), 50 * 8);
+        assert!(stats.needs_compaction(0.7));
+        assert!(!stats.needs_compaction(0.4));
+    }
+
+    #[test]
+    fn test_extend() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("extend.mmap");
+        
+        let config = MmapVecConfig::default();
+        let mut vec = MmapVec::<u16>::create(&file_path, config).unwrap();
+        
+        // Extend with a range
+        vec.extend(1..=10).unwrap();
+        assert_eq!(vec.len(), 10);
+        assert_eq!(vec.get(0), Some(&1));
+        assert_eq!(vec.get(9), Some(&10));
+        
+        // Extend with an iterator
+        let more_data = vec![100, 200, 300];
+        vec.extend(more_data.into_iter()).unwrap();
+        assert_eq!(vec.len(), 13);
+        assert_eq!(vec.get(10), Some(&100));
+        assert_eq!(vec.get(12), Some(&300));
+    }
+
+    #[test]
+    fn test_truncate() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("truncate.mmap");
+        
+        let config = MmapVecConfig::default();
+        let mut vec = MmapVec::<i16>::create(&file_path, config).unwrap();
+        
+        // Fill with data
+        for i in 0..20 {
+            vec.push(i).unwrap();
+        }
+        assert_eq!(vec.len(), 20);
+        
+        // Truncate
+        vec.truncate(10).unwrap();
+        assert_eq!(vec.len(), 10);
+        assert_eq!(vec.get(9), Some(&9));
+        assert_eq!(vec.get(10), None);
+        
+        // Truncate to larger size should not change anything
+        vec.truncate(15).unwrap();
+        assert_eq!(vec.len(), 10);
+    }
+
+    #[test]
+    fn test_resize_with_value() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("resize_val.mmap");
+        
+        let config = MmapVecConfig::default();
+        let mut vec = MmapVec::<i8>::create(&file_path, config).unwrap();
+        
+        // Start with some data
+        vec.push(1).unwrap();
+        vec.push(2).unwrap();
+        assert_eq!(vec.len(), 2);
+        
+        // Resize larger with specific value
+        vec.resize(5, 99).unwrap();
+        assert_eq!(vec.len(), 5);
+        assert_eq!(vec.get(0), Some(&1));
+        assert_eq!(vec.get(1), Some(&2));
+        assert_eq!(vec.get(2), Some(&99));
+        assert_eq!(vec.get(3), Some(&99));
+        assert_eq!(vec.get(4), Some(&99));
+        
+        // Resize smaller
+        vec.resize(3, 0).unwrap();
+        assert_eq!(vec.len(), 3);
+        assert_eq!(vec.get(2), Some(&99));
+        assert_eq!(vec.get(3), None);
+    }
+
+    #[test]
+    fn test_shrink_to_fit() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("shrink.mmap");
+        
+        let config = MmapVecConfig {
+            initial_capacity: 1000,
+            ..MmapVecConfig::default()
+        };
+        let mut vec = MmapVec::<u32>::create(&file_path, config).unwrap();
+        
+        assert_eq!(vec.capacity(), 1000);
+        
+        // Add only a few elements
+        for i in 0..10 {
+            vec.push(i).unwrap();
+        }
+        assert_eq!(vec.len(), 10);
+        assert_eq!(vec.capacity(), 1000);
+        
+        // Shrink to fit
+        vec.shrink_to_fit().unwrap();
+        assert_eq!(vec.len(), 10);
+        assert!(vec.capacity() <= 10);
+        
+        // Verify data is still intact
+        for i in 0..10 {
+            assert_eq!(vec.get(i), Some(&(i as u32)));
+        }
+    }
+
+    #[test]
+    fn test_new_config_presets() {
+        let temp_dir = tempdir().unwrap();
+        
+        // Performance optimized
+        let file_path = temp_dir.path().join("perf.mmap");
+        let config = MmapVecConfig::performance_optimized();
+        let vec = MmapVec::<u64>::create(&file_path, config).unwrap();
+        assert_eq!(vec.capacity(), 8192);
+        assert_eq!(vec.config.growth_factor, 1.618);
+        assert!(vec.config.populate_pages);
+        
+        // Memory optimized
+        let file_path2 = temp_dir.path().join("mem.mmap");
+        let config = MmapVecConfig::memory_optimized();
+        let vec2 = MmapVec::<u64>::create(&file_path2, config).unwrap();
+        assert_eq!(vec2.capacity(), 256);
+        assert_eq!(vec2.config.growth_factor, 1.4);
+        assert!(!vec2.config.populate_pages);
+        
+        // Real-time
+        let file_path3 = temp_dir.path().join("rt.mmap");
+        let config = MmapVecConfig::realtime();
+        let vec3 = MmapVec::<u64>::create(&file_path3, config).unwrap();
+        assert_eq!(vec3.capacity(), 1024);
+        assert_eq!(vec3.config.growth_factor, 1.5);
+        assert!(vec3.config.populate_pages);
+        assert!(!vec3.config.sync_on_write);
     }
 }

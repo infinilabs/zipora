@@ -54,19 +54,23 @@ impl BuilderStats {
 /// # Examples
 ///
 /// ```rust
-/// use zipora::blob_store::{ZipOffsetBlobStoreBuilder, ZipOffsetBlobStoreConfig};
+/// use zipora::blob_store::{ZipOffsetBlobStoreBuilder, ZipOffsetBlobStoreConfig, BlobStore};
+/// # use zipora::error::Result;
+/// # fn example() -> Result<()> {
 ///
 /// let config = ZipOffsetBlobStoreConfig::performance_optimized();
-/// let mut builder = ZipOffsetBlobStoreBuilder::with_config(config);
+/// let mut builder = ZipOffsetBlobStoreBuilder::with_config(config)?;
 ///
 /// // Add records
-/// builder.add_record(b"First record").unwrap();
-/// builder.add_record(b"Second record").unwrap();
-/// builder.add_record(b"Third record").unwrap();
+/// builder.add_record(b"First record")?;
+/// builder.add_record(b"Second record")?;
+/// builder.add_record(b"Third record")?;
 ///
 /// // Build the final store
-/// let store = builder.finish().unwrap();
+/// let store = builder.finish()?;
 /// assert_eq!(store.len(), 3);
+/// # Ok(())
+/// # }
 /// ```
 pub struct ZipOffsetBlobStoreBuilder {
     /// Configuration for the blob store
