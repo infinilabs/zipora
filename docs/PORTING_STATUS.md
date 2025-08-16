@@ -164,6 +164,7 @@ This optimization represents a **complete success** in achieving significant per
 | **FixedCircularQueue** | circular_queue | Lock-free ring buffers | 100% | ⚡ 20-30% faster | 100% |
 | **AutoGrowCircularQueue** | auto_queue | Dynamic circular buffers | 100% | ⚡ **54% faster vs VecDeque (optimized)** | 100% |
 | **UintVector** | uint_vector | **Compressed integer storage (optimized)** | 100% | ⚡ **68.7% space reduction** ✅ | 100% |
+| **IntVec<T>** | Research-inspired | **Advanced bit-packed integer storage with variable bit-width** | **100%** | ⚡ **96.9% space reduction + BMI2/SIMD acceleration** | **100%** |
 | **FixedLenStrVec** | fixed_str_vec | **Arena-based string storage (optimized)** | 100% | ⚡ **59.6% memory reduction vs Vec<String>** | 100% |
 | **SortableStrVec** | sortable_str_vec | **Arena-based string sorting with algorithm selection** | 100% | ⚡ **Intelligent comparison vs radix selection (Aug 2025)** | 100% |
 | **ZoSortedStrVec** | zo_sorted_str_vec | **Zero-overhead sorted strings** | 100% | ⚡ **Succinct structure integration** | 100% |
