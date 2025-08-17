@@ -615,13 +615,13 @@ impl<'a> FastStr<'a> {
         // Process 16-byte chunks with NEON
         for chunk in chunks_16 {
             // Load 16 bytes using NEON - this is more efficient than scalar loads
-            let data_vec = vld1q_u8(chunk.as_ptr());
+            let data_vec = unsafe { vld1q_u8(chunk.as_ptr()) };
 
             // Convert to two 64-bit values for processing
             // Note: ARM NEON doesn't have direct 64-bit integer operations like x86,
             // so we extract bytes and reconstruct u64 values
             let mut bytes = [0u8; 16];
-            vst1q_u8(bytes.as_mut_ptr(), data_vec);
+            unsafe { vst1q_u8(bytes.as_mut_ptr(), data_vec) };
 
             // Process as two 64-bit words
             let val1 = u64::from_le_bytes([

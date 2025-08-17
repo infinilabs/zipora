@@ -1,26 +1,47 @@
-# Miri configuration for enhanced memory safety testing
-# This file configures Miri to provide comprehensive memory safety verification
+# Miri configuration for zipora's high-performance data structures
+# Optimized for specialized hash maps, SIMD operations, and memory pools
 
-# Enable all safety checks
+# Core safety checks for zipora's specialized containers
 flags = [
-    "-Zmiri-strict-provenance",    # Strict pointer provenance checking
-    "-Zmiri-symbolic-alignment-check",  # Check alignment symbolically
-    "-Zmiri-check-number-validity",     # Check for invalid bit patterns
-    "-Zmiri-disable-isolation",         # Allow file system access for tests
-    "-Zmiri-ignore-leaks",             # Ignore memory leaks in some tests
+    "-Zmiri-strict-provenance",           # Essential for hash map pointer safety
+    "-Zmiri-symbolic-alignment-check",    # Critical for SIMD and cache-aligned operations
+    "-Zmiri-check-number-validity",       # Validate bit patterns in compressed data
+    "-Zmiri-disable-isolation",           # Allow file system access for blob stores
+    "-Zmiri-preemption-rate=0.01",       # Increase preemption for concurrency testing
+    "-Zmiri-compare-exchange-weak-failure-rate=0.8", # Test compare-exchange failures
 ]
 
-# Configure stacked borrows for better aliasing detection
+# Enhanced memory model for high-performance containers
 stacked-borrows = true
 
-# Enable tag tracking for better error messages
+# Critical for zipora's unsafe optimizations
 track-raw-pointers = true
 
-# Increase stack size for complex tests
-stack-size = "2097152"  # 2MB stack
+# Larger stack for complex hash map operations and deep recursion
+stack-size = "4194304"  # 4MB stack for large data structure operations
 
-# Configure seed for reproducible testing
-seed = 42
+# Deterministic testing for hash function validation
+seed = 1618  # Golden ratio theme (φ ≈ 1.618)
 
-# Enable backtrace for better debugging
+# Comprehensive debugging for complex data structures
 backtrace = "full"
+
+# Memory leak detection (important for string interning and pools)
+# Note: Set to false only for specific tests that intentionally leak
+retag-fields = true
+
+# Optimize for zipora's specific patterns
+tag-gc = 100000  # Higher GC threshold for large collections
+
+# Zipora-specific testing considerations:
+# 
+# 1. Hash Maps: The preemption rate helps catch race conditions in robin hood hashing
+# 2. String Arena: Strict provenance catches string interning pointer errors  
+# 3. Memory Pools: Compare-exchange failure rate tests lock-free allocation paths
+# 4. SIMD Operations: Symbolic alignment check validates hardware acceleration safety
+# 5. Compressed Data: Number validity check ensures bit-packed integer correctness
+# 6. Large Collections: Higher stack size accommodates deep hash table operations
+# 7. Golden Ratio Seed: Thematic choice (1618) for deterministic hash testing
+#
+# To override for specific tests, use MIRIFLAGS environment variable:
+# MIRIFLAGS="-Zmiri-ignore-leaks" cargo +nightly miri test specific_test

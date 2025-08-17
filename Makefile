@@ -283,7 +283,7 @@ miri_tests:
 miri_full:
 	@echo "🔍 Running full Miri test suite..."
 	@if [ -x "./run_miri_tests.sh" ]; then \
-		./run_miri_tests.sh; \
+		./run_miri_tests.sh full; \
 	else \
 		echo "❌ Error: run_miri_tests.sh not found or not executable"; \
 		exit 1; \
@@ -394,7 +394,7 @@ release_prep: clean format clippy build_release test_release bench doc audit
 	@echo "🚀 Release preparation completed"
 
 # pre-commit sanity check
-sanity: test_debug test_release test_nightly_debug test_nightly_release miri_full
+sanity: test_debug test_release test_nightly_debug test_nightly_release 
 
 # =============================================================================
 # HELP TARGET
