@@ -1230,10 +1230,10 @@ impl AdaptiveBase64 {
             b'w', b'x', b'y', b'z', b'0', b'1', b'2', b'3',
             b'4', b'5', b'6', b'7', b'8', b'9', b'+', b'/',
         ];
-        let lookup_tbl_0 = vld1q_u8(lookup_tbl_0_arr.as_ptr());
-        let lookup_tbl_1 = vld1q_u8(lookup_tbl_1_arr.as_ptr());
-        let lookup_tbl_2 = vld1q_u8(lookup_tbl_2_arr.as_ptr());
-        let lookup_tbl_3 = vld1q_u8(lookup_tbl_3_arr.as_ptr());
+        let lookup_tbl_0 = unsafe { vld1q_u8(lookup_tbl_0_arr.as_ptr()) };
+        let lookup_tbl_1 = unsafe { vld1q_u8(lookup_tbl_1_arr.as_ptr()) };
+        let lookup_tbl_2 = unsafe { vld1q_u8(lookup_tbl_2_arr.as_ptr()) };
+        let lookup_tbl_3 = unsafe { vld1q_u8(lookup_tbl_3_arr.as_ptr()) };
 
         for chunk in 0..full_chunks {
             let in_offset = chunk * 12;
@@ -1247,7 +1247,7 @@ impl AdaptiveBase64 {
                 input_ptr.add(8).read(), input_ptr.add(9).read(), input_ptr.add(10).read(), input_ptr.add(11).read(),
                 0, 0, 0, 0, // Padding
             ];
-            let input_vec = vld1q_u8(input_arr.as_ptr());
+            let input_vec = unsafe { vld1q_u8(input_arr.as_ptr()) };
             
             // Extract 6-bit indices using NEON bit manipulation
             let indices = self.extract_6bit_indices_neon(input_vec);
@@ -1256,7 +1256,7 @@ impl AdaptiveBase64 {
             let result = self.lookup_base64_chars_neon(indices, lookup_tbl_0, lookup_tbl_1, lookup_tbl_2, lookup_tbl_3);
             
             // Store 16 output characters
-            vst1q_u8(output.as_mut_ptr().add(out_offset), result);
+            unsafe { vst1q_u8(output.as_mut_ptr().add(out_offset), result) };
         }
         
         // Handle remainder with scalar implementation
@@ -1311,7 +1311,7 @@ impl AdaptiveBase64 {
             let out_offset = chunk * 12;
             
             // Load 16 input characters
-            let input_chars = vld1q_u8(clean_input.as_ptr().add(in_offset));
+            let input_chars = unsafe { vld1q_u8(clean_input.as_ptr().add(in_offset)) };
             
             // Decode characters to 6-bit values
             let decoded = self.decode_chars_neon(input_chars)?;
@@ -1379,7 +1379,7 @@ impl AdaptiveBase64 {
             }
         }
         
-        vld1q_u8(indices.as_ptr())
+        unsafe { vld1q_u8(indices.as_ptr()) }
     }
 
     /// Lookup Base64 characters using 6-bit indices for NEON
@@ -1405,7 +1405,7 @@ impl AdaptiveBase64 {
             };
         }
         
-        vld1q_u8(result.as_ptr())
+        unsafe { vld1q_u8(result.as_ptr()) }
     }
 
     /// Decode Base64 characters to 6-bit values for NEON
@@ -1430,7 +1430,7 @@ impl AdaptiveBase64 {
             };
         }
         
-        Ok(vld1q_u8(result.as_ptr()))
+        Ok(unsafe { vld1q_u8(result.as_ptr()) })
     }
 
     /// Repack 6-bit values to 8-bit bytes for NEON
@@ -1464,7 +1464,7 @@ impl AdaptiveBase64 {
             out_idx += 3;
         }
         
-        vld1q_u8(output_bytes.as_ptr())
+        unsafe { vld1q_u8(output_bytes.as_ptr()) }
     }
 
     /// Fallback implementations for non-x86_64/aarch64 platforms

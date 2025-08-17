@@ -492,7 +492,7 @@ unsafe fn popcount_u64_neon(x: u64) -> u32 {
     neon_bytes[..8].copy_from_slice(&bytes);
 
     // Load into NEON vector
-    let vector = vld1q_u8(neon_bytes.as_ptr());
+    let vector = unsafe { vld1q_u8(neon_bytes.as_ptr()) };
 
     // Count set bits in each byte using NEON population count
     let popcnt_vector = vcntq_u8(vector);

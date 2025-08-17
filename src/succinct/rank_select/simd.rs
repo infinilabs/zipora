@@ -682,7 +682,7 @@ fn bulk_rank1_neon(bit_data: &[u64], positions: &[usize]) -> Vec<usize> {
                 let ptr = bit_data.as_ptr().add(base_idx) as *const u8;
 
                 // Load 16 bytes (2 u64s)
-                let vec = vld1q_u8(ptr);
+                let vec = unsafe { vld1q_u8(ptr) };
 
                 // Count bits using NEON popcount
                 let popcount_vec = vcntq_u8(vec);
@@ -731,7 +731,7 @@ fn bulk_popcount_neon(bit_data: &[u64]) -> Vec<usize> {
             let ptr = bit_data.as_ptr().add(base_idx) as *const u8;
 
             // Load 16 bytes (2 u64s)
-            let vec = vld1q_u8(ptr);
+            let vec = unsafe { vld1q_u8(ptr) };
 
             // Count bits for each 8-byte chunk
             let popcount_vec = vcntq_u8(vec);

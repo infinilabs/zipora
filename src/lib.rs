@@ -6,6 +6,7 @@
 //! ## Key Features
 //!
 //! - **Fast Containers**: Optimized vector and string types with zero-copy semantics
+//! - **Specialized Hash Maps**: Golden ratio optimized, string-optimized, and small inline maps
 //! - **Succinct Data Structures**: Rank-select operations with SIMD optimizations  
 //! - **Advanced Tries**: LOUDS, Critical-Bit, and Patricia tries with full FSA support
 //! - **Blob Storage**: Memory-mapped and compressed blob storage systems
@@ -22,7 +23,8 @@
 //! ```rust
 //! use zipora::{
 //!     FastVec, ValVec32, SmallMap, FixedCircularQueue, AutoGrowCircularQueue,
-//!     FastStr, MemoryBlobStore, BlobStore, LoudsTrie, Trie, GoldHashMap,
+//!     FastStr, MemoryBlobStore, BlobStore, LoudsTrie, Trie, 
+//!     GoldHashMap, GoldenRatioHashMap, StringOptimizedHashMap, SmallHashMap,
 //!     HuffmanEncoder, MemoryPool, PoolConfig, SuffixArray, FiberPool
 //! };
 //!
@@ -57,9 +59,21 @@
 //! trie.insert(b"hello").unwrap();
 //! assert!(trie.contains(b"hello"));
 //!
-//! // High-performance hash map
+//! // High-performance hash maps
 //! let mut map = GoldHashMap::new();
 //! map.insert("key", "value").unwrap();
+//!
+//! // Golden ratio optimized hash map (15-20% better memory efficiency)
+//! let mut golden_map = GoldenRatioHashMap::new();
+//! golden_map.insert("optimal", "growth").unwrap();
+//!
+//! // String-optimized hash map with interning (memory efficient for string keys)
+//! let mut string_map = StringOptimizedHashMap::new();
+//! string_map.insert("interned", 42).unwrap();
+//!
+//! // Small hash map with inline storage (zero allocations for ≤N elements)
+//! let mut small_hash_map: SmallHashMap<&str, i32, 4> = SmallHashMap::new();
+//! small_hash_map.insert("inline", 1).unwrap();
 //! ```
 
 #![warn(missing_docs)]
@@ -166,7 +180,22 @@ pub use fsa::{
 pub use io::{DataInput, DataOutput, VarInt};
 
 // Re-export Phase 2 implementations
-pub use hash_map::GoldHashMap;
+pub use hash_map::{
+    // Original high-performance hash map
+    GoldHashMap,
+    // New specialized hash map implementations
+    GoldenRatioHashMap, StringOptimizedHashMap, SmallHashMap,
+    // Hash function utilities
+    fabo_hash_combine_u32, fabo_hash_combine_u64, golden_ratio_next_size, optimal_bucket_count,
+    advanced_hash_combine, HashFunctionBuilder, CombineStrategy, HashCombinable,
+    GOLDEN_RATIO_FRAC_NUM, GOLDEN_RATIO_FRAC_DEN, GOLDEN_LOAD_FACTOR,
+    // Iterator types for GoldenRatioHashMap
+    GoldenRatioIter, GoldenRatioKeys, GoldenRatioValues,
+    // Iterator types for StringOptimizedHashMap
+    StringMapIter, StringMapKeys, StringMapValues, StringArenaStats,
+    // Iterator types for SmallHashMap
+    SmallMapIter, SmallMapKeys, SmallMapValues,
+};
 
 // Re-export Phase 2.5 implementations (memory mapping)
 #[cfg(feature = "mmap")]

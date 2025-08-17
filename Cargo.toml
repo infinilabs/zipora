@@ -128,6 +128,10 @@ harness = false
 name = "comprehensive_trie_benchmarks"
 harness = false
 
+[[bench]]
+name = "hash_maps_bench"
+harness = false
+
 [profile.release]
 opt-level = 3           # Maximum optimization level
 lto = "fat"            # Full link-time optimization (better than "thin")
