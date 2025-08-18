@@ -75,6 +75,7 @@ criterion = { version = "0.5.1", features = ["html_reports"] }
 proptest = "1.6"
 tempfile = "3.14"
 arbitrary = { version = "1.3", features = ["derive"] }
+rand = "0.8"
 # Note: crossbeam-utils and rayon are already in main dependencies
 
 [build-dependencies]
@@ -130,6 +131,10 @@ harness = false
 
 [[bench]]
 name = "hash_maps_bench"
+harness = false
+
+[[bench]]
+name = "lru_map_bench"
 harness = false
 
 [profile.release]

@@ -26,6 +26,11 @@
 //! - **`GoldHashIdx<K,V>`** - Hash index for large value indirection and memory efficiency
 //! - **`HashStrMap<V>`** - String-optimized hash map with automatic interning
 //! - **`EasyHashMap<K,V>`** - Simplified hash map interface with builder pattern
+//!
+//! ## LRU Cache Containers - Phase 4
+//!
+//! - **`LruMap<K,V>`** - High-performance LRU cache with O(1) operations
+//! - **`ConcurrentLruMap<K,V>`** - Thread-safe LRU cache with sharding for reduced contention
 
 mod fast_vec;
 pub mod specialized;
@@ -62,4 +67,14 @@ pub use specialized::{
     ZoSortedStrVec,
     ZoSortedStrVecIter,
     ZoSortedStrVecRange,
+    // Phase 4 LRU cache containers
+    LruMap,
+    LruMapConfig,
+    LruMapStatistics,
+    EvictionCallback,
+    NoOpEvictionCallback,
+    ConcurrentLruMap,
+    ConcurrentLruMapConfig,
+    ConcurrentLruMapStatistics,
+    LoadBalancingStrategy,
 };
