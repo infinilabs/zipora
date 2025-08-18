@@ -48,8 +48,13 @@ cargo fmt --check
 - **ZipOffsetBlobStore**: Offset-based compressed storage with block-based delta compression, template optimization, and hardware acceleration (COMPLETE)
 - **LRU Page Cache**: Sophisticated caching layer for blob operations with multi-shard architecture, page-aligned memory management, and hardware prefetching (COMPLETE)
 - **IntVec<T>**: Advanced bit-packed integer storage with variable bit-width, generic type support, hardware acceleration, and revolutionary compression strategies (COMPLETE)
+- **LRU Cache Containers**: High-performance LRU cache implementations with eviction policies, statistics tracking, and concurrent access support (COMPLETE)
 
 ### 🚀 Latest Achievements
+- **LRU Cache Containers Implementation**: High-performance LRU cache implementations with O(1) operations, eviction policies, statistics tracking, and concurrent access support (COMPLETE)
+- **2 LRU Cache Variants**: LruMap (single-threaded with intrusive linked list), ConcurrentLruMap (thread-safe with sharding for reduced contention)
+- **Advanced Cache Features**: Eviction callbacks, comprehensive statistics (hit/miss ratios, memory usage), configurable load balancing strategies, memory-efficient design
+- **Performance Achievement**: O(1) get/put/remove operations, comprehensive benchmarks vs std::HashMap, concurrent access with reduced lock contention
 - **IntVec<T> Implementation**: Advanced bit-packed integer storage with variable bit-width, generic type support (u8-u64, i8-i64), hardware acceleration (BMI2, SIMD, popcount), and revolutionary compression strategies (COMPLETE)
 - **Compression Components**: PackedInt trait (generic integer support), CompressionStrategy (4 adaptive strategies), Block-based architecture (64/128 element blocks), Hardware acceleration (BMI2 bit extraction)
 - **Performance Achievement**: 96.9% space reduction with hardware-accelerated decompression, comprehensive performance tests showing 1M+ accesses/sec random access, 2M+ accesses/sec sequential access
@@ -108,6 +113,8 @@ cargo fmt --check
 - `LruPageCache` - Multi-shard caching layer with page-aligned memory management
 - `CachedBlobStore<T>` - Cache-aware blob store wrapper with transparent caching
 - `IntVec<T>` - Advanced bit-packed integer storage with variable bit-width and hardware acceleration
+- `LruMap<K,V>` - High-performance single-threaded LRU cache with intrusive linked list design and O(1) operations
+- `ConcurrentLruMap<K,V>` - Thread-safe LRU cache with sharding for reduced contention and configurable load balancing
 - `ValVec32<T>`, `SmallMap<K,V>` - Specialized containers (memory efficient)
 - `DoubleArrayTrie` - O(1) state transitions with 8-byte representation
 - `CompressedSparseTrie` - Multi-level concurrency with token-based safety

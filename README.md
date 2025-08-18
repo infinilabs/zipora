@@ -116,7 +116,8 @@ Zipora includes specialized containers designed for memory efficiency and perfor
 
 ```rust
 use zipora::{FastVec, FastStr, ValVec32, SmallMap, FixedCircularQueue, 
-            AutoGrowCircularQueue, UintVector, IntVec, FixedLenStrVec, SortableStrVec};
+            AutoGrowCircularQueue, UintVector, IntVec, FixedLenStrVec, SortableStrVec,
+            LruMap, ConcurrentLruMap};
 
 // High-performance vector operations
 let mut vec = FastVec::new();
@@ -185,7 +186,100 @@ sortable.push_str("cherry").unwrap();
 sortable.push_str("apple").unwrap();
 sortable.push_str("banana").unwrap();
 sortable.sort_lexicographic().unwrap(); // Intelligent algorithm selection (comparison vs radix)
+
+// LRU Cache Containers - High-performance caching with eviction policies
+let mut cache = LruMap::new(256).unwrap(); // Capacity of 256
+cache.put("key1", "value1".to_string()).unwrap();
+cache.put("key2", "value2".to_string()).unwrap();
+assert_eq!(cache.get(&"key1"), Some("value1".to_string()));
+
+// Concurrent LRU map with sharding for thread safety
+let cache = ConcurrentLruMap::new(1024, 8).unwrap(); // 1024 capacity, 8 shards
+cache.put("key1", "value1".to_string()).unwrap();
+cache.put("key2", "value2".to_string()).unwrap();
+assert_eq!(cache.get(&"key1"), Some("value1".to_string()));
 ```
+
+## LRU Cache Containers
+
+Zipora provides high-performance LRU (Least Recently Used) cache implementations with built-in eviction policies, statistics tracking, and concurrent access support:
+
+### Single-Threaded LRU Map
+
+```rust
+use zipora::containers::{LruMap, LruMapConfig, EvictionCallback};
+
+// Basic LRU map with default configuration
+let mut cache = LruMap::new(256).unwrap(); // Capacity of 256
+
+// Insert key-value pairs with automatic eviction
+cache.put("key1", "value1".to_string()).unwrap();
+cache.put("key2", "value2".to_string()).unwrap();
+
+// Access updates LRU order
+assert_eq!(cache.get(&"key1"), Some("value1".to_string()));
+
+// Advanced configuration options
+let config = LruMapConfig::performance_optimized()
+    .with_capacity(1024)
+    .with_statistics(true);
+let cache = LruMap::with_config(config).unwrap();
+
+// Eviction callbacks for custom logic
+struct LoggingCallback;
+impl EvictionCallback<String, String> for LoggingCallback {
+    fn on_evict(&self, key: &String, value: &String) {
+        println!("Evicted: {} => {}", key, value);
+    }
+}
+
+let cache = LruMap::with_eviction_callback(256, LoggingCallback).unwrap();
+
+// Statistics and performance monitoring
+let stats = cache.stats();
+println!("Hit ratio: {:.2}%", stats.hit_ratio() * 100.0);
+println!("Entry count: {}", stats.entry_count.load(Ordering::Relaxed));
+```
+
+### Concurrent LRU Map
+
+```rust
+use zipora::containers::{ConcurrentLruMap, ConcurrentLruMapConfig, LoadBalancingStrategy};
+
+// Thread-safe LRU map with sharding
+let cache = ConcurrentLruMap::new(1024, 8).unwrap(); // 1024 capacity, 8 shards
+
+// Concurrent operations from multiple threads
+cache.put("key1", "value1".to_string()).unwrap();
+cache.put("key2", "value2".to_string()).unwrap();
+assert_eq!(cache.get(&"key1"), Some("value1".to_string()));
+
+// Advanced configuration with load balancing strategies
+let config = ConcurrentLruMapConfig::performance_optimized()
+    .with_load_balancing(LoadBalancingStrategy::Hash);
+let cache = ConcurrentLruMap::with_config(config).unwrap();
+
+// Statistics aggregated across all shards
+let stats = cache.stats();
+println!("Total entries: {}", stats.total_entries());
+println!("Hit ratio: {:.2}%", stats.hit_ratio() * 100.0);
+println!("Load balance ratio: {:.2}", stats.load_balance_ratio());
+
+// Per-shard statistics
+let shard_sizes = cache.shard_sizes();
+println!("Shard distribution: {:?}", shard_sizes);
+```
+
+### LRU Cache Features
+
+- **O(1) Operations**: Get, put, and remove operations in constant time
+- **Generic Support**: Works with any `Hash + Eq` key and value types  
+- **Automatic Eviction**: LRU-based eviction when capacity is exceeded
+- **Statistics Tracking**: Hit/miss ratios, eviction counts, memory usage
+- **Eviction Callbacks**: Custom logic when entries are evicted
+- **Thread Safety**: Concurrent variant with sharding for reduced contention
+- **Load Balancing**: Multiple strategies for optimal shard distribution
+- **Memory Efficient**: Intrusive linked list design minimizes overhead
 
 ### Container Performance Summary
 
@@ -199,6 +293,8 @@ sortable.sort_lexicographic().unwrap(); // Intelligent algorithm selection (comp
 | **IntVec<T>** | **96.9% space reduction** | **Hardware-accelerated** | **Generic bit-packed storage with BMI2/SIMD** |
 | **FixedLenStrVec** | **59.6% memory reduction (optimized)** | **Zero-copy access** | **Arena-based fixed strings** |
 | **SortableStrVec** | Arena allocation | **Intelligent algorithm selection** | **String collections with optimization patterns** |
+| **LruMap<K,V>** | **Intrusive linked list** | **O(1) operations** | **Single-threaded caching with eviction policies** |
+| **ConcurrentLruMap<K,V>** | **Sharded architecture** | **Reduced contention** | **Multi-threaded caching with load balancing** |
 
 ## Specialized Hash Maps
 

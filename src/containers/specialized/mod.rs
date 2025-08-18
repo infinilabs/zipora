@@ -25,6 +25,11 @@
 //! - **`HashStrMap<V>`** - String-optimized hash map with interning (40% memory reduction)
 //! - **`EasyHashMap<K,V>`** - Simplified hash map interface with builder pattern
 //!
+//! ## Phase 4 LRU Cache Container Types
+//!
+//! - **`LruMap<K,V>`** - High-performance LRU cache with O(1) operations
+//! - **`ConcurrentLruMap<K,V>`** - Thread-safe LRU cache with sharding for reduced contention
+//!
 //! ## Performance Goals
 //!
 //! ### Phase 1 Achievements
@@ -71,6 +76,10 @@ mod gold_hash_idx;
 mod hash_str_map;
 mod zo_sorted_str_vec;
 
+// Phase 4 LRU cache containers
+mod lru_map;
+mod concurrent_lru_map;
+
 // Phase 1 exports
 pub use circular_queue::{AutoGrowCircularQueue, FixedCircularQueue};
 pub use small_map::SmallMap;
@@ -89,3 +98,7 @@ pub use easy_hash_map::{EasyHashMap, EasyHashMapBuilder, EasyHashMapStats};
 pub use gold_hash_idx::GoldHashIdx;
 pub use hash_str_map::{HashStrMap, HashStrMapStats};
 pub use zo_sorted_str_vec::{ZoSortedStrVec, ZoSortedStrVecIter, ZoSortedStrVecRange};
+
+// Phase 4 exports
+pub use lru_map::{LruMap, LruMapConfig, LruMapStatistics, EvictionCallback, NoOpEvictionCallback};
+pub use concurrent_lru_map::{ConcurrentLruMap, ConcurrentLruMapConfig, ConcurrentLruMapStatistics, LoadBalancingStrategy};
