@@ -14,7 +14,7 @@ cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --check
 ```
 
 ## Status
-**Phase 11A COMPLETE** - LRU Page Cache + Low-Level Sync + ZipOffsetBlobStore + Enhanced BMI2 Optimizations
+**Phase 11A COMPLETE** - LRU Page Cache + Low-Level Sync + ZipOffsetBlobStore + Enhanced BMI2 Optimizations + Adaptive Strategy Selection
 
 ### Completed (ALL PHASES 1-11A ✅)
 - **Phases 1-5**: Core infrastructure, memory, concurrency
@@ -30,13 +30,14 @@ cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --check
 - **Phase 10B**: 3 development infrastructure
 - **Phase 10C**: 3 fiber concurrency enhancements
 - **Phase 11A**: 3 low-level sync (futex, TLS, atomics)
-- **Latest**: LRU caches, IntVec<T>, ZipOffsetBlobStore
-- **Enhancement**: BMI2 optimizations ported from topling-zip
+- **Latest**: LRU caches, IntVec<T>, ZipOffsetBlobStore, AdaptiveRankSelect
+- **Enhancement**: BMI2 optimizations ported from topling-zip + adaptive strategy selection
 
 ### Performance
 - **Current**: 3.3 Gelem/s rank/select with BMI2 acceleration (5-10x select speedup)
 - **Hardware**: PDEP/PEXT/TZCNT optimizations, hybrid search strategies, prefetch hints
 - **Optimizations**: Topling-zip patterns, sequence length operations, compiler-specific tuning
+- **Adaptive**: Intelligent strategy selection based on data density analysis (sparse/dense/balanced)
 - **Memory**: 50-70% reduction, 96.9% space compression
 - **Safety**: Zero unsafe in public APIs
 - **Tests**: 1,100+ passing, 97%+ coverage
@@ -48,7 +49,7 @@ cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --check
 - **Cache**: `LruMap<K,V>`, `ConcurrentLruMap<K,V>`, `LruPageCache`
 - **Memory**: `SecureMemoryPool`, `LockFreeMemoryPool`, `MmapVec<T>`
 - **Sync**: `FutexMutex`, `InstanceTls<T>`, `AtomicExt`
-- **Search**: `RankSelectInterleaved256`, `DoubleArrayTrie`, `Bmi2Accelerator`
+- **Search**: `RankSelectInterleaved256`, `AdaptiveRankSelect`, `DoubleArrayTrie`, `Bmi2Accelerator`
 - **I/O**: `FiberAio`, `StreamBufferedReader`, `ZeroCopyReader`
 
 ### Features

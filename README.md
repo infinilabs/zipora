@@ -48,6 +48,13 @@ vec.push(42).unwrap();
 let s = FastStr::from_string("hello world");
 println!("Hash: {:x}", s.hash_fast());
 
+// Intelligent rank/select with automatic optimization
+let mut bv = BitVector::new();
+for i in 0..1000 { bv.push(i % 7 == 0).unwrap(); }
+let adaptive_rs = AdaptiveRankSelect::new(bv).unwrap();
+println!("Selected: {}", adaptive_rs.implementation_name());
+let rank = adaptive_rs.rank1(500);
+
 // Blob storage with compression
 let mut store = MemoryBlobStore::new();
 let id = store.put(b"Hello, World!").unwrap();
@@ -778,6 +785,55 @@ println!("Bulk inserted {} keys with fragment sharing", results.len());
 ### Rank/Select Operations
 
 World-Class Succinct Data Structures - Zipora provides 11 specialized rank/select variants including 3 cutting-edge implementations with comprehensive SIMD optimizations, hardware acceleration, and multi-dimensional support:
+
+#### Adaptive Strategy Selection
+
+Zipora features intelligent **Adaptive Strategy Selection** that automatically selects the optimal rank/select implementation based on data density analysis, dataset size, and access patterns. This eliminates the need for manual algorithm selection and ensures optimal performance across diverse workloads.
+
+**Key Benefits:**
+- **Automatic Optimization**: Data density analysis selects optimal implementation (sparse vs dense vs balanced)
+- **Size-Aware Selection**: Small datasets use cache-efficient implementations, large datasets use separated storage
+- **Pattern Recognition**: Access pattern optimization (mixed, rank-heavy, select-heavy, sequential, random)
+- **Zero Configuration**: Works out-of-the-box with sensible defaults, but allows custom criteria when needed
+
+```rust
+use zipora::{BitVector, AdaptiveRankSelect, SelectionCriteria, AccessPattern, 
+            DataProfile, OptimizationStats, PerformanceTier};
+
+// Automatic selection based on data characteristics
+let mut sparse_bv = BitVector::new();
+for i in 0..10000 {
+    sparse_bv.push(i % 100 == 0).unwrap(); // 1% density
+}
+
+// Adaptive selection automatically chooses RankSelectFew for sparse data
+let adaptive = AdaptiveRankSelect::new(sparse_bv).unwrap();
+println!("Selected: {}", adaptive.implementation_name()); // "RankSelectFew<true> (sparse ones)"
+
+// Get detailed optimization information
+let stats = adaptive.optimization_stats();
+println!("Density: {:.1}%, Implementation: {}", 
+         stats.density * 100.0, stats.implementation);
+println!("Performance tier: {:?}", stats.estimated_performance_tier);
+
+// Custom selection criteria for specific requirements
+let criteria = SelectionCriteria {
+    sparse_threshold: 0.01,  // 1% threshold for sparse optimization
+    dense_threshold: 0.95,   // 95% threshold for dense optimization
+    access_pattern: AccessPattern::SelectHeavy,
+    prefer_space: true,      // Prioritize space efficiency
+    ..Default::default()
+};
+
+let mut dense_bv = BitVector::new();
+for i in 0..1000 {
+    dense_bv.push(i % 10 != 0).unwrap(); // 90% density
+}
+
+let custom_adaptive = AdaptiveRankSelect::with_criteria(dense_bv, criteria).unwrap();
+```
+
+#### Manual Selection for Fine-Grained Control
 
 ```rust
 use zipora::{BitVector, RankSelectSimple, RankSelectSeparated256, RankSelectSeparated512,
