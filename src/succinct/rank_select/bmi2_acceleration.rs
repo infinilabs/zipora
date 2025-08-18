@@ -76,6 +76,55 @@ impl Bmi2Capabilities {
 /// Ultra-fast rank operations using BMI2 instructions
 pub struct Bmi2RankOps;
 
+/// Prefetch operations for cache optimization
+pub struct Bmi2PrefetchOps;
+
+impl Bmi2PrefetchOps {
+    /// Prefetch bit data into L1 cache
+    #[inline]
+    pub fn prefetch_bit_data(bit_data: &[u64], word_index: usize) {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if word_index < bit_data.len() {
+                unsafe {
+                    let ptr = bit_data.as_ptr().add(word_index) as *const i8;
+                    std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(ptr);
+                }
+            }
+        }
+    }
+
+    /// Prefetch rank cache data
+    #[inline]
+    pub fn prefetch_rank_cache(rank_cache: &[u32], block_index: usize) {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if block_index < rank_cache.len() {
+                unsafe {
+                    let ptr = rank_cache.as_ptr().add(block_index) as *const i8;
+                    std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(ptr);
+                }
+            }
+        }
+    }
+
+    /// Prefetch multiple cache lines ahead for sequential access
+    #[inline]
+    pub fn prefetch_sequential(bit_data: &[u64], start_word: usize, prefetch_distance: usize) {
+        #[cfg(target_arch = "x86_64")]
+        {
+            let end_word = (start_word + prefetch_distance).min(bit_data.len());
+            for word_idx in (start_word..end_word).step_by(8) {
+                // Prefetch every 8 words (512 bytes = 8 cache lines)
+                unsafe {
+                    let ptr = bit_data.as_ptr().add(word_idx) as *const i8;
+                    std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(ptr);
+                }
+            }
+        }
+    }
+}
+
 impl Bmi2RankOps {
     /// Fast population count using hardware POPCNT
     #[inline]
@@ -235,7 +284,7 @@ impl Bmi2SelectOps {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi2 {
-                return Some(unsafe { Self::select1_pdep(word, k) });
+                return Some(unsafe { Self::select1_pdep_optimized(word, k) });
             }
         }
 
@@ -243,14 +292,60 @@ impl Bmi2SelectOps {
         Self::select1_binary_search(word, k)
     }
 
-    /// Hardware PDEP implementation
+    /// Enhanced select with topling-zip optimizations
+    ///
+    /// Uses the specific pattern and compiler optimizations from topling-zip
+    /// for maximum performance on BMI2-enabled CPUs.
+    #[inline]
+    pub fn select1_u64_enhanced(word: u64, k: u32) -> Option<u32> {
+        if word == 0 || k >= word.count_ones() {
+            return None;
+        }
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            let caps = Bmi2Capabilities::get();
+            if caps.has_bmi2 {
+                return Some(unsafe { Self::select1_pdep_optimized(word, k) });
+            }
+        }
+
+        // Fallback with optimized binary search
+        Self::select1_binary_search_optimized(word, k)
+    }
+
+    /// Hardware PDEP implementation with topling-zip optimization
     #[cfg(target_arch = "x86_64")]
-    #[target_feature(enable = "bmi2")]
+    #[target_feature(enable = "bmi1,bmi2")]
     #[inline]
     unsafe fn select1_pdep(word: u64, k: u32) -> u32 {
-        let mask = 1u64 << k;
-        let deposited = std::arch::x86_64::_pdep_u64(mask, word);
-        unsafe { std::arch::x86_64::_tzcnt_u64(deposited) as u32 }
+        // Topling-zip optimization: use (1ull << r) pattern for better instruction scheduling
+        let deposited = std::arch::x86_64::_pdep_u64(1u64 << k, word);
+        std::arch::x86_64::_tzcnt_u64(deposited) as u32
+    }
+
+    /// Enhanced hardware PDEP implementation with compiler-specific optimizations
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "bmi1,bmi2")]
+    #[inline]
+    unsafe fn select1_pdep_optimized(word: u64, k: u32) -> u32 {
+        debug_assert!(k < word.count_ones());
+        debug_assert!(word != 0);
+        
+        // Use the topling-zip pattern: _pdep_u64(1ull<<r, x) + _tzcnt
+        // This pattern often generates better assembly than separate operations
+        #[cfg(any(target_env = "gnu", target_env = ""))]
+        {
+            // GCC/Clang: __builtin_ctzll often faster than _tzcnt_u64
+            let deposited = std::arch::x86_64::_pdep_u64(1u64 << k, word);
+            deposited.trailing_zeros()
+        }
+        #[cfg(not(any(target_env = "gnu", target_env = "")))]
+        {
+            // MSVC: Use intrinsic directly
+            let deposited = std::arch::x86_64::_pdep_u64(1u64 << k, word);
+            std::arch::x86_64::_tzcnt_u64(deposited) as u32
+        }
     }
 
     /// Binary search fallback for select
@@ -269,11 +364,196 @@ impl Bmi2SelectOps {
         None
     }
 
+    /// Optimized binary search with topling-zip hybrid strategy
+    ///
+    /// Uses linear search for small ranges (< 8 ones) and binary search for larger ranges.
+    /// This follows the topling-zip optimization where linear search is faster for small
+    /// ranges due to better branch prediction and cache locality.
+    fn select1_binary_search_optimized(word: u64, k: u32) -> Option<u32> {
+        let ones_count = word.count_ones();
+        if k >= ones_count {
+            return None;
+        }
+
+        // Topling-zip optimization: use linear search for few ones
+        if ones_count <= 8 {
+            let mut ones_seen = 0;
+            for bit_pos in 0..64 {
+                if (word >> bit_pos) & 1 == 1 {
+                    if ones_seen == k {
+                        return Some(bit_pos);
+                    }
+                    ones_seen += 1;
+                }
+            }
+            return None;
+        }
+
+        // Binary search for denser words
+        let mut low = 0u32;
+        let mut high = 64u32;
+
+        while low < high {
+            let mid = (low + high) / 2;
+            let rank_at_mid = Self::popcount_range(word, 0, mid);
+
+            if rank_at_mid <= k {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+
+        // Verify we found the correct position
+        if low > 0 && (word >> (low - 1)) & 1 == 1 {
+            let rank_before = if low == 1 { 0 } else { Self::popcount_range(word, 0, low - 1) };
+            if rank_before == k {
+                return Some(low - 1);
+            }
+        }
+
+        None
+    }
+
+    /// Count population in a bit range [start, end)
+    #[inline]
+    fn popcount_range(word: u64, start: u32, end: u32) -> u32 {
+        if start >= end || start >= 64 {
+            return 0;
+        }
+
+        let end = end.min(64);
+        let mask = if end == 64 {
+            u64::MAX
+        } else {
+            (1u64 << end) - 1
+        };
+
+        let start_mask = if start == 0 {
+            0
+        } else {
+            (1u64 << start) - 1
+        };
+
+        let range_mask = mask & !start_mask;
+        (word & range_mask).count_ones()
+    }
+
     /// Select0 using inverted PDEP
     #[inline]
     pub fn select0_u64(word: u64, k: u32) -> Option<u32> {
         let inverted = !word;
         Self::select1_u64(inverted, k)
+    }
+
+    /// Hybrid select cache strategy based on topling-zip
+    ///
+    /// Implements intelligent cache lookup with linear search for small ranges
+    /// and binary search for larger ranges, following topling-zip optimizations.
+    pub fn select1_hybrid_cache(
+        rank_cache: &[u32],
+        select_cache: &[u32],
+        bit_data: &[u64],
+        target_rank: u32,
+        cache_density: usize,
+    ) -> Result<u32> {
+        if select_cache.is_empty() {
+            return Err(ZiporaError::invalid_data("Empty select cache"));
+        }
+
+        // Calculate cache index
+        let cache_idx = (target_rank / cache_density as u32) as usize;
+        if cache_idx >= select_cache.len() {
+            return Err(ZiporaError::invalid_data("Cache index out of bounds"));
+        }
+
+        // Get starting position from cache
+        let start_block = if cache_idx == 0 { 0 } else { select_cache[cache_idx - 1] };
+        let end_block = if cache_idx + 1 < select_cache.len() {
+            select_cache[cache_idx + 1]
+        } else {
+            rank_cache.len() as u32
+        };
+
+        // Topling-zip optimization: use linear search for small ranges
+        let search_range = end_block - start_block;
+        
+        if search_range <= 32 {
+            // Linear search for small ranges - better branch prediction
+            for block_idx in start_block..end_block.min(rank_cache.len() as u32) {
+                if rank_cache[block_idx as usize] > target_rank {
+                    return Self::find_select_in_block(bit_data, block_idx as usize, target_rank, rank_cache);
+                }
+            }
+        } else {
+            // Binary search for larger ranges
+            let mut low = start_block;
+            let mut high = end_block.min(rank_cache.len() as u32);
+
+            while low < high {
+                let mid = (low + high) / 2;
+                if rank_cache[mid as usize] <= target_rank {
+                    low = mid + 1;
+                } else {
+                    high = mid;
+                }
+            }
+
+            if low < rank_cache.len() as u32 {
+                return Self::find_select_in_block(bit_data, low as usize, target_rank, rank_cache);
+            }
+        }
+
+        Err(ZiporaError::invalid_data("Select target not found"))
+    }
+
+    /// Find select position within a specific block
+    fn find_select_in_block(
+        bit_data: &[u64],
+        block_idx: usize,
+        target_rank: u32,
+        rank_cache: &[u32],
+    ) -> Result<u32> {
+        let block_start_bit = block_idx * 256; // 256-bit blocks
+        let block_start_word = block_start_bit / 64;
+        
+        // Prefetch the block data
+        #[cfg(target_arch = "x86_64")]
+        {
+            if block_start_word < bit_data.len() {
+                unsafe {
+                    let ptr = bit_data.as_ptr().add(block_start_word) as *const i8;
+                    std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(ptr);
+                }
+            }
+        }
+
+        let rank_before_block = if block_idx == 0 { 0 } else { rank_cache[block_idx - 1] };
+        let target_in_block = target_rank - rank_before_block;
+
+        // Search within the 4 words of this block
+        let mut current_rank = 0;
+        for word_in_block in 0..4 {
+            let word_idx = block_start_word + word_in_block;
+            if word_idx >= bit_data.len() {
+                break;
+            }
+
+            let word = bit_data[word_idx];
+            let word_popcount = word.count_ones();
+
+            if current_rank + word_popcount > target_in_block {
+                // Target is in this word
+                let target_in_word = target_in_block - current_rank;
+                if let Some(bit_pos) = Self::select1_u64_enhanced(word, target_in_word) {
+                    return Ok((word_idx * 64) as u32 + bit_pos);
+                }
+            }
+
+            current_rank += word_popcount;
+        }
+
+        Err(ZiporaError::invalid_data("Select position not found in block"))
     }
 
     /// Bulk select operations with BMI2 optimization
@@ -486,6 +766,207 @@ impl Bmi2RangeOps {
             .iter()
             .map(|&word| Bmi2BitOps::extract_bits(word, field_mask))
             .collect()
+    }
+}
+
+/// Sequence length operations (topling-zip enhancement)
+pub struct Bmi2SequenceOps;
+
+impl Bmi2SequenceOps {
+    /// Length of ones sequence starting at bit position
+    ///
+    /// Counts consecutive ones starting from the given position.
+    /// Based on topling-zip's one_seq_len implementation.
+    #[inline]
+    pub fn one_seq_len(bit_data: &[u64], bit_pos: usize) -> usize {
+        if bit_pos >= bit_data.len() * 64 {
+            return 0;
+        }
+
+        let word_idx = bit_pos / 64;
+        let bit_offset = bit_pos % 64;
+        
+        if word_idx >= bit_data.len() {
+            return 0;
+        }
+
+        let word = bit_data[word_idx];
+        
+        // Check if starting bit is even set
+        if (word >> bit_offset) & 1 == 0 {
+            return 0;
+        }
+
+        // Count consecutive ones in current word
+        let remaining_word = word >> bit_offset;
+        let trailing_ones = Self::count_trailing_ones(remaining_word);
+        
+        if trailing_ones < 64 - bit_offset {
+            // Sequence ends within this word
+            return trailing_ones;
+        }
+
+        // Sequence continues to next words
+        let mut total_ones = 64 - bit_offset;
+        
+        for next_word_idx in (word_idx + 1)..bit_data.len() {
+            let next_word = bit_data[next_word_idx];
+            let ones_in_word = Self::count_trailing_ones(next_word);
+            
+            total_ones += ones_in_word;
+            
+            if ones_in_word < 64 {
+                // Sequence ends in this word
+                break;
+            }
+        }
+
+        total_ones
+    }
+
+    /// Length of zeros sequence starting at bit position
+    ///
+    /// Counts consecutive zeros starting from the given position.
+    /// Based on topling-zip's zero_seq_len implementation.
+    #[inline]
+    pub fn zero_seq_len(bit_data: &[u64], bit_pos: usize) -> usize {
+        if bit_pos >= bit_data.len() * 64 {
+            return 0;
+        }
+
+        let word_idx = bit_pos / 64;
+        let bit_offset = bit_pos % 64;
+        
+        if word_idx >= bit_data.len() {
+            return 0;
+        }
+
+        let word = bit_data[word_idx];
+        
+        // Check if starting bit is set (we want zeros)
+        if (word >> bit_offset) & 1 == 1 {
+            return 0;
+        }
+
+        // Count consecutive zeros in current word (invert and count ones)
+        let remaining_word = (!word) >> bit_offset;
+        let trailing_zeros = Self::count_trailing_ones(remaining_word);
+        
+        if trailing_zeros < 64 - bit_offset {
+            // Sequence ends within this word
+            return trailing_zeros;
+        }
+
+        // Sequence continues to next words
+        let mut total_zeros = 64 - bit_offset;
+        
+        for next_word_idx in (word_idx + 1)..bit_data.len() {
+            let next_word = bit_data[next_word_idx];
+            let zeros_in_word = Self::count_trailing_ones(!next_word);
+            
+            total_zeros += zeros_in_word;
+            
+            if zeros_in_word < 64 {
+                // Sequence ends in this word
+                break;
+            }
+        }
+
+        total_zeros
+    }
+
+    /// Reverse length of ones sequence ending at bit position
+    ///
+    /// Counts consecutive ones ending at the given position.
+    /// Based on topling-zip's one_seq_revlen implementation.
+    #[inline]
+    pub fn one_seq_revlen(bit_data: &[u64], end_pos: usize) -> usize {
+        if end_pos == 0 || end_pos > bit_data.len() * 64 {
+            return 0;
+        }
+
+        let bit_pos = end_pos - 1;
+        let word_idx = bit_pos / 64;
+        let bit_offset = bit_pos % 64;
+        
+        if word_idx >= bit_data.len() {
+            return 0;
+        }
+
+        let word = bit_data[word_idx];
+        
+        // Check if ending bit is set
+        if (word >> bit_offset) & 1 == 0 {
+            return 0;
+        }
+
+        // Count leading ones in the masked word
+        let mask = (1u64 << (bit_offset + 1)) - 1;
+        let masked_word = word & mask;
+        let leading_ones = Self::count_leading_ones_in_mask(masked_word, bit_offset + 1);
+        
+        if leading_ones < bit_offset + 1 {
+            // Sequence starts within this word
+            return leading_ones;
+        }
+
+        // Sequence continues to previous words
+        let mut total_ones = bit_offset + 1;
+        
+        if word_idx > 0 {
+            for prev_word_idx in (0..word_idx).rev() {
+                let prev_word = bit_data[prev_word_idx];
+                let ones_in_word = Self::count_leading_ones_in_mask(prev_word, 64);
+                
+                total_ones += ones_in_word;
+                
+                if ones_in_word < 64 {
+                    // Sequence starts in this word
+                    break;
+                }
+            }
+        }
+
+        total_ones
+    }
+
+    /// Count trailing ones in a word (consecutive ones from LSB)
+    #[inline]
+    fn count_trailing_ones(word: u64) -> usize {
+        if word == u64::MAX {
+            return 64;
+        }
+        
+        // Find first zero bit
+        let inverted = !word;
+        if inverted == 0 {
+            64
+        } else {
+            inverted.trailing_zeros() as usize
+        }
+    }
+
+    /// Count leading ones in a masked word
+    #[inline]
+    fn count_leading_ones_in_mask(word: u64, bit_count: usize) -> usize {
+        if bit_count == 0 {
+            return 0;
+        }
+        
+        if word == (1u64 << bit_count) - 1 {
+            return bit_count;
+        }
+        
+        // Invert and count leading zeros in the masked area
+        let inverted = !word;
+        let shift_amount = 64 - bit_count;
+        let shifted = inverted << shift_amount;
+        
+        if shifted == 0 {
+            bit_count
+        } else {
+            (shifted.leading_zeros() as usize).min(bit_count)
+        }
     }
 }
 
