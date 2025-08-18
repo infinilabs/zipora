@@ -29,6 +29,10 @@
 //! - **`RankSelectBalanced`**: 3-level hierarchy (optimal balance)
 //! - **`RankSelectSelectOptimized`**: Dense select caches for frequent select queries
 //!
+//! ## Adaptive Strategy Selection
+//! - **`AdaptiveRankSelect`**: Automatic implementation selection based on data density
+//! - **`AdaptiveMultiDimensional`**: Adaptive selection for related bit vectors
+//!
 //! # Performance Characteristics
 //!
 //! | Variant | Memory Overhead | Rank Time | Select Time | Best Use Case |
@@ -39,6 +43,7 @@
 //! | Interleaved256 | ~25% | O(1) | O(1) | Random access |
 //! | Few | <5% | O(log n) | O(1) | Sparse data |
 //! | Mixed variants | ~30% | O(1) | O(1) | Multi-dimensional |
+//! | **AdaptiveRankSelect** | **Optimal** | **O(1)** | **O(1)** | **Automatic selection** |
 //!
 //! # Hardware Acceleration
 //!
@@ -74,7 +79,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use zipora::{BitVector, RankSelectOps, RankSelectSeparated256, RankSelectFew};
+//! use zipora::{BitVector, RankSelectOps, RankSelectSeparated256, RankSelectFew, AdaptiveRankSelect};
 //!
 //! // High-performance general-purpose variant
 //! let mut bv = BitVector::new();
@@ -86,8 +91,13 @@
 //! let pos = rs.select1(100)?;
 //!
 //! // Memory-efficient sparse variant
-//! let sparse_rs = RankSelectFew::<false, 64>::from_bit_vector(bv)?;
+//! let sparse_rs = RankSelectFew::<false, 64>::from_bit_vector(bv.clone())?;
 //! let sparse_rank = sparse_rs.rank1(500);
+//!
+//! // Adaptive selection - automatically chooses optimal implementation
+//! let adaptive_rs = AdaptiveRankSelect::new(bv)?;
+//! println!("Selected: {}", adaptive_rs.implementation_name());
+//! let adaptive_rank = adaptive_rs.rank1(500);
 //! # Ok::<(), zipora::ZiporaError>(())
 //! ```
 
@@ -111,6 +121,7 @@ pub mod simple;
 pub mod sparse;
 
 // Import advanced optimization modules
+pub mod adaptive;
 pub mod bmi2_acceleration;
 pub mod fragment;
 pub mod hierarchical;
@@ -126,6 +137,10 @@ pub use simple::RankSelectSimple;
 pub use sparse::{RankSelectFew, RankSelectFewBuilder};
 
 // Re-export advanced optimization variants
+pub use adaptive::{
+    AdaptiveRankSelect, AdaptiveMultiDimensional, DataProfile, SelectionCriteria,
+    AccessPattern, SizeCategory, OptimizationStats, PerformanceTier,
+};
 pub use bmi2_acceleration::{
     Bmi2Accelerator, Bmi2BitOps, Bmi2BlockOps, Bmi2Capabilities, Bmi2PrefetchOps, Bmi2RangeOps, 
     Bmi2RankOps, Bmi2SelectOps, Bmi2SequenceOps, Bmi2Stats,
