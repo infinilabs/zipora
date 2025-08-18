@@ -127,8 +127,8 @@ pub use sparse::{RankSelectFew, RankSelectFewBuilder};
 
 // Re-export advanced optimization variants
 pub use bmi2_acceleration::{
-    Bmi2Accelerator, Bmi2BitOps, Bmi2BlockOps, Bmi2Capabilities, Bmi2RangeOps, Bmi2RankOps,
-    Bmi2SelectOps, Bmi2Stats,
+    Bmi2Accelerator, Bmi2BitOps, Bmi2BlockOps, Bmi2Capabilities, Bmi2PrefetchOps, Bmi2RangeOps, 
+    Bmi2RankOps, Bmi2SelectOps, Bmi2SequenceOps, Bmi2Stats,
 };
 pub use fragment::{CompressionStats, RankSelectFragmented};
 pub use hierarchical::{
