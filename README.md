@@ -134,12 +134,12 @@ vec.push(42).unwrap();
 let s = FastStr::from_string("hello world");
 println!("Hash: {:x}", s.hash_fast());
 
-// 32-bit indexed vectors - 50% memory reduction with performance parity to std::Vec
-// Now with platform-optimized malloc_usable_size and adaptive growth strategy
+// 32-bit indexed vectors - 50% memory reduction with golden ratio growth strategy
+// Optimized with golden ratio growth pattern (103/64 ≈ 1.609375) for memory efficiency
 let mut vec32 = ValVec32::<u64>::new();
 vec32.push(42).unwrap();  // Near-identical performance to std::Vec
 assert_eq!(vec32.get(0), Some(&42));
-// Performance: Now matches or exceeds std::Vec with optimizations!
+// Performance: Golden ratio growth provides optimal memory efficiency!
 
 // Small maps - 90% faster than HashMap for ≤8 elements with cache optimizations
 let mut small_map = SmallMap::<i32, String>::new();
@@ -292,7 +292,7 @@ println!("Shard distribution: {:?}", shard_sizes);
 
 | Container | Memory Reduction | Performance Gain | Use Case |
 |-----------|------------------|------------------|----------|
-| **ValVec32<T>** | **50% memory reduction** | **0.98x-1.03x push (parity), 1.00x iteration** | **Large collections on 64-bit systems** |
+| **ValVec32<T>** | **50% memory reduction** | **Golden ratio growth (103/64), near-parity performance** | **Large collections on 64-bit systems** |
 | **SmallMap<K,V>** | No heap allocation | **90% faster + cache optimized** | **≤8 key-value pairs - 709K+ ops/sec** |
 | **FixedCircularQueue** | Zero allocation | 20-30% faster | Lock-free ring buffers |
 | **AutoGrowCircularQueue** | Cache-aligned | **54% faster** | **Ultra-fast vs VecDeque (optimized)** |
@@ -806,9 +806,15 @@ for i in 0..10000 {
     sparse_bv.push(i % 100 == 0).unwrap(); // 1% density
 }
 
-// Adaptive selection automatically chooses RankSelectFew for sparse data
+// Enhanced Adaptive selection with sophisticated pattern analysis
 let adaptive = AdaptiveRankSelect::new(sparse_bv).unwrap();
 println!("Selected: {}", adaptive.implementation_name()); // "RankSelectFew<true> (sparse ones)"
+
+// Get comprehensive pattern analysis information
+let profile = adaptive.data_profile();
+println!("Density: {:.3}%, Pattern complexity: {:.3}, Clustering: {:.3}, Entropy: {:.3}", 
+         profile.density * 100.0, profile.pattern_complexity, 
+         profile.clustering_coefficient, profile.entropy);
 
 // Get detailed optimization information
 let stats = adaptive.optimization_stats();
@@ -861,11 +867,13 @@ let pos = rs_sep256.select1(50).unwrap();
 let rs_interleaved = RankSelectInterleaved256::new(bv.clone()).unwrap();
 let rank_fast = rs_interleaved.rank1_hardware_accelerated(500);
 
-// Sparse optimization for very sparse data (1% density)
+// Sparse optimization for very sparse data (1% density) - Enhanced with topling-zip optimizations
 let mut sparse_bv = BitVector::new();
 for i in 0..10000 { sparse_bv.push(i % 100 == 0).unwrap(); }
 let rs_sparse = RankSelectFew::<true, 64>::from_bit_vector(sparse_bv).unwrap();
 println!("Compression ratio: {:.1}%", rs_sparse.compression_ratio() * 100.0);
+println!("Hint hit ratio: {:.3}", rs_sparse.hint_hit_ratio());
+println!("Memory usage: {} bytes", rs_sparse.memory_usage_bytes());
 
 // Dual-dimension interleaved for related bit vectors
 let bv1 = BitVector::from_iter((0..1000).map(|i| i % 3 == 0)).unwrap();
@@ -884,19 +892,33 @@ let rs_hierarchical = RankSelectHierarchical::new(bv.clone()).unwrap();
 let rank_fast = rs_hierarchical.rank1(500);  // O(1) with dense caching
 let range_query = rs_hierarchical.rank1_range(100, 200);
 
-// BMI2 Hardware Acceleration
-let rs_bmi2 = RankSelectBMI2::new(bv.clone()).unwrap();
-let select_ultra_fast = rs_bmi2.select1(50).unwrap();  // 5-10x faster with PDEP/PEXT
-let range_ultra_fast = rs_bmi2.rank1_range(100, 200);  // 2-4x faster bit manipulation
+// BMI2 Hardware Acceleration with Enhanced Comprehensive Module
+use zipora::succinct::rank_select::bmi2_comprehensive::{
+    Bmi2Capabilities, Bmi2BitOps, Bmi2BlockOps, Bmi2SequenceOps
+};
+
+let caps = Bmi2Capabilities::get();
+println!("BMI2 tier: {}, BMI1={}, BMI2={}, POPCNT={}, AVX2={}", 
+         caps.optimization_tier, caps.has_bmi1, caps.has_bmi2, 
+         caps.has_popcnt, caps.has_avx2);
+
+// Ultra-fast select with PDEP/PEXT (5-10x speedup)
+let word = 0b1010101010101010u64;
+let position = Bmi2BitOps::select1_ultra_fast(word, 3);
+
+// Bulk operations with hardware acceleration
+let words = vec![0xAAAAAAAAAAAAAAAAu64; 1000];
+let positions = (0..100).step_by(10).collect::<Vec<_>>();
+let bulk_ranks = Bmi2BlockOps::bulk_rank1(&words, &positions);
+
+// Advanced sequence analysis for optimization
+let analysis = Bmi2SequenceOps::analyze_bit_patterns(&words);
+println!("Recommended strategy: {:?}", analysis.recommended_strategy);
 
 // SIMD bulk operations with runtime optimization
-let caps = SimdCapabilities::get();
-println!("SIMD tier: {}, features: BMI2={}, AVX2={}", 
-         caps.optimization_tier, caps.cpu_features.has_bmi2, caps.cpu_features.has_avx2);
-
 let bit_data = bv.blocks().to_vec();
-let positions = vec![100, 200, 300, 400, 500];
-let simd_ranks = bulk_rank1_simd(&bit_data, &positions);
+let test_positions = vec![100, 200, 300, 400, 500];
+let simd_ranks = bulk_rank1_simd(&bit_data, &test_positions);
 ```
 
 ### Sorting & Search Algorithms
@@ -1956,34 +1978,8 @@ cargo run --example entropy_coding_demo
 cargo run --example secure_memory_pool_demo  # SecureMemoryPool security features
 ```
 
-## Test Results Summary
-
-**✅ Edition 2024 Compatible** - Full compatibility with Rust edition 2024 and comprehensive testing across all feature combinations:
-
-| Configuration | Debug Build | Release Build | Debug Tests | Release Tests |
-|---------------|-------------|---------------|-------------|---------------|
-| **Default features** | ✅ Success | ✅ Success | ✅ 770+ tests | ✅ 770+ tests |
-| **+ lz4,ffi** | ✅ Success | ✅ Success | ✅ 770+ tests | ✅ 770+ tests |
-| **No features** | ✅ Success | ✅ Success | ✅ 770+ tests | ✅ Compatible |
-| **Nightly + avx512** | ✅ Success | ✅ Success | ✅ 770+ tests | ✅ 770+ tests |
-| **All features** | ✅ Success | ✅ Success | ✅ Compatible | ✅ Compatible |
-
-### Key Achievements
-
-- **🎯 Edition 2024**: Full compatibility with zero breaking changes
-- **🔧 FFI Memory Safety**: **FULLY RESOLVED** - Complete elimination of double-free errors with CString pointer nullification
-- **⚡ AVX-512 Support**: Full nightly Rust compatibility with 723 tests passing
-- **🔒 Memory Management**: All unsafe operations properly scoped per edition 2024 requirements
-- **🧪 Comprehensive Testing**: 755 tests across all feature combinations (fragment tests partially working)
-- **🔌 LZ4+FFI Compatibility**: All 755 tests passing with lz4,ffi feature combination
-- **📚 Documentation Tests**: **NEWLY FIXED** - All 81 doctests passing including rank/select trait imports
-- **🧪 Release Mode Tests**: **NEWLY FIXED** - All 755 tests now passing in both debug and release modes
-- **🔥 Advanced Features**: Fragment compression, hierarchical caching, BMI2 acceleration complete
 
 ## License
 
 Licensed under The Bindiego License (BDL), Version 1.0. See [LICENSE](LICENSE) for details.
 
-## Acknowledgments
-
-This Rust implementation focuses on memory safety while maintaining high performance.

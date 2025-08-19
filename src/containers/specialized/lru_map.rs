@@ -383,19 +383,19 @@ impl LruList {
 /// # Examples
 ///
 /// ```rust
-/// use zipora::containers::LruMap;
+/// use zipora::containers::specialized::LruMap;
 ///
 /// let mut cache = LruMap::new(3).unwrap(); // Capacity of 3
 ///
-/// cache.put("a", 1).unwrap();
-/// cache.put("b", 2).unwrap();
-/// cache.put("c", 3).unwrap();
+/// cache.put("a".to_string(), 1).unwrap();
+/// cache.put("b".to_string(), 2).unwrap();
+/// cache.put("c".to_string(), 3).unwrap();
 ///
-/// assert_eq!(cache.get(&"a"), Some(&1));
+/// assert_eq!(cache.get(&"a".to_string()), Some(1));
 ///
 /// // Adding a 4th element evicts the least recently used
-/// cache.put("d", 4).unwrap();
-/// assert_eq!(cache.get(&"b"), None); // "b" was evicted
+/// cache.put("d".to_string(), 4).unwrap();
+/// assert_eq!(cache.get(&"b".to_string()), None); // "b" was evicted
 /// ```
 pub struct LruMap<K, V, E = NoOpEvictionCallback>
 where

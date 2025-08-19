@@ -49,6 +49,13 @@ fn unlikely_path() {
     std::hint::black_box(());
 }
 
+/// Inline version of likely for hot paths to avoid call overhead
+macro_rules! likely_inline {
+    ($cond:expr) => {
+        $cond
+    };
+}
+
 /// Try to get usable size from allocator for better memory utilization
 /// This matches the topling-zip optimization for maximum performance
 /// Platform-specific implementations for optimal memory usage
@@ -370,12 +377,12 @@ impl<T> ValVec32<T> {
         self.grow_to(new_capacity)
     }
 
-    /// Calculates new capacity with adaptive growth strategy
-    /// Optimized implementation following topling-zip pattern
-    /// Uses different growth factors based on current size for optimal performance
+
+    /// Calculates new capacity using golden ratio growth strategy
+    /// Simple and effective growth factor of 103/64 ≈ 1.609375
     #[inline]
     fn calculate_new_capacity(&self, min_capacity: u32) -> Result<u32> {
-        if unlikely(min_capacity > MAX_CAPACITY) {
+        if min_capacity > MAX_CAPACITY {
             return Err(ZiporaError::invalid_data(format!(
                 "Required capacity {} exceeds maximum {}",
                 min_capacity, MAX_CAPACITY
@@ -383,34 +390,20 @@ impl<T> ValVec32<T> {
         }
 
         if self.capacity == 0 {
-            // Start with at least 4 elements for better small-size efficiency
-            // This reduces overhead for small vectors while maintaining performance
             return Ok(min_capacity.max(4));
         }
 
-        // Adaptive growth strategy based on current size
+        // Golden ratio growth: 103/64 = 1.609375 ≈ 1.618 (golden ratio)
         let current_capacity = self.capacity as u64;
-        let new_capacity = if self.capacity < 64 {
-            // Small vectors: 2x doubling for faster amortization
-            // This matches std::Vec behavior for small sizes
-            (current_capacity * 2).min(64)
-        } else if self.capacity < 4096 {
-            // Medium vectors: Golden ratio (103/64 ≈ 1.609375)
-            // Better memory utilization while maintaining good performance
-            (current_capacity * 103) / 64
-        } else {
-            // Large vectors: Conservative 1.25x growth
-            // Reduces memory waste for large allocations
-            (current_capacity * 5) / 4
-        };
+        let new_capacity = (current_capacity * 103) / 64;
         
-        // Ensure we don't overflow u32 and meet minimum requirement
         let final_capacity = new_capacity
             .max(min_capacity as u64)
             .min(MAX_CAPACITY as u64) as u32;
         
         Ok(final_capacity)
     }
+
 
     /// Grows the vector to the specified capacity
     /// Marked as cold since growth is the uncommon path
@@ -509,27 +502,23 @@ impl<T> ValVec32<T> {
     /// ```
     #[inline(always)]
     pub fn push(&mut self, value: T) -> Result<()> {
-        // Ultra-fast hot path optimized for maximum performance
-        // This matches the topling-zip approach with minimal overhead
+        // Ultra-optimized hot path - minimize branching and function calls
         let current_len = self.len;
         
         // Hot path: capacity available (most common case)
-        // The likely() hint guides the processor's branch predictor
-        // Use branchless comparison for better performance
-        if likely(current_len < self.capacity) {
+        // Use simple comparison to avoid function call overhead
+        if current_len < self.capacity {
             // SAFETY: We've verified len < capacity, so this write is safe
             unsafe {
-                // Use offset calculation for potentially better codegen
-                let slot = self.ptr.as_ptr().offset(current_len as isize);
-                ptr::write(slot, value);
-                // Increment length after successful write
-                self.len = current_len.wrapping_add(1);
+                // Direct pointer arithmetic for optimal performance
+                ptr::write(self.ptr.as_ptr().add(current_len as usize), value);
+                // Increment length after successful write  
+                self.len = current_len + 1;
             }
             return Ok(());
         }
 
         // Cold path: needs growth (uncommon)
-        // Handle self-reference safety and reallocation
         self.push_slow(value)
     }
 
@@ -621,17 +610,18 @@ impl<T> ValVec32<T> {
         self.len += 1;
     }
 
+
     /// Slow path for push when growth is needed
     /// Separated to keep the hot path inline and fast
-    /// Handles self-reference safety like topling-zip
+    /// Handles self-reference safety and uses golden ratio growth
     #[cold]
     #[inline(never)]
     fn push_slow(&mut self, value: T) -> Result<()> {
-        if unlikely(self.len >= MAX_CAPACITY) {
+        if self.len >= MAX_CAPACITY {
             return Err(ZiporaError::invalid_data("Vector at maximum capacity"));
         }
 
-        // Handle self-reference safety (topling-zip style)
+        // Handle self-reference safety - check if value points into our vector
         let needs_self_ref_check = !mem::needs_drop::<T>() && 
             mem::size_of::<T>() > 0 &&
             self.len > 0;
@@ -644,7 +634,8 @@ impl<T> ValVec32<T> {
             if value_ptr >= start_ptr && value_ptr < end_ptr {
                 // Self-reference detected - copy the value before reallocation
                 let index = unsafe { value_ptr.offset_from(start_ptr) as usize };
-                self.reserve(1)?;
+                let new_capacity = self.calculate_new_capacity(self.len + 1)?;
+                self.grow_to(new_capacity)?;
                 let copied_value = unsafe { ptr::read(self.ptr.as_ptr().add(index)) };
                 
                 let current_len = self.len;
@@ -657,7 +648,8 @@ impl<T> ValVec32<T> {
         }
 
         // Normal case - no self-reference
-        self.reserve(1)?;
+        let new_capacity = self.calculate_new_capacity(self.len + 1)?;
+        self.grow_to(new_capacity)?;
         let current_len = self.len;
         unsafe {
             ptr::write(self.ptr.as_ptr().add(current_len as usize), value);

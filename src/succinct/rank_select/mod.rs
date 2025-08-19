@@ -79,7 +79,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use zipora::{BitVector, RankSelectOps, RankSelectSeparated256, RankSelectFew, AdaptiveRankSelect};
+//! use zipora::succinct::{BitVector, rank_select::{RankSelectOps, RankSelectSeparated256, RankSelectFew, AdaptiveRankSelect}};
 //!
 //! // High-performance general-purpose variant
 //! let mut bv = BitVector::new();
@@ -98,7 +98,7 @@
 //! let adaptive_rs = AdaptiveRankSelect::new(bv)?;
 //! println!("Selected: {}", adaptive_rs.implementation_name());
 //! let adaptive_rank = adaptive_rs.rank1(500);
-//! # Ok::<(), zipora::ZiporaError>(())
+//! # Ok::<(), zipora::error::ZiporaError>(())
 //! ```
 
 use crate::error::{Result, ZiporaError};
@@ -124,6 +124,7 @@ pub mod sparse;
 // Import advanced optimization modules
 pub mod adaptive;
 pub mod bmi2_acceleration;
+pub mod bmi2_comprehensive;
 pub mod fragment;
 pub mod hierarchical;
 
@@ -151,6 +152,11 @@ pub use adaptive::{
 pub use bmi2_acceleration::{
     Bmi2Accelerator, Bmi2BitOps, Bmi2BlockOps, Bmi2Capabilities, Bmi2PrefetchOps, Bmi2RangeOps, 
     Bmi2RankOps, Bmi2SelectOps, Bmi2SequenceOps, Bmi2Stats,
+};
+pub use bmi2_comprehensive::{
+    Bmi2BitOps as Bmi2BitOpsComprehensive, Bmi2BlockOps as Bmi2BlockOpsComprehensive,
+    Bmi2Capabilities as Bmi2CapabilitiesComprehensive, Bmi2SequenceOps as Bmi2SequenceOpsComprehensive,
+    Bmi2Stats as Bmi2StatsComprehensive, OptimizationStrategy, SequenceAnalysis as Bmi2SequenceAnalysis,
 };
 pub use fragment::{CompressionStats, RankSelectFragmented};
 pub use hierarchical::{
