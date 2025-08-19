@@ -144,10 +144,10 @@ pub struct RankSelectSeparated512 {
 /// # Examples
 ///
 /// ```rust
-/// use zipora::{BitVector, RankSelectOps, RankSelectSeparated512BitPacked};
+/// use zipora::succinct::{BitVector, rank_select::{RankSelectOps, separated::RankSelectSeparated512BitPacked}};
 ///
 /// let mut bv = BitVector::new();
-/// for i in 0..100_000 {
+/// for i in 0..10_000 {
 ///     bv.push((i * 17 + 11) % 131 == 0)?; // Complex sparse pattern
 /// }
 ///
@@ -155,9 +155,9 @@ pub struct RankSelectSeparated512 {
 ///
 /// // Significant memory savings with same performance
 /// println!("Memory overhead: {:.2}%", rs.space_overhead_percent());
-/// let rank = rs.rank1(50000);
-/// let pos = rs.select1(1000)?;
-/// # Ok::<(), zipora::ZiporaError>(())
+/// let rank = rs.rank1(5000);
+/// let pos = rs.select1(10)?;
+/// # Ok::<(), zipora::error::ZiporaError>(())
 /// ```
 #[derive(Clone)]
 pub struct RankSelectSeparated512BitPacked {
@@ -235,15 +235,16 @@ impl RankSelectSeparated256 {
     ///
     /// # Examples
     /// ```rust
-    /// use zipora::succinct::rank_select::{RankSelectSeparated256, SeparatedStorageConfig};
+    /// use zipora::succinct::{BitVector, rank_select::{RankSelectSeparated256, SeparatedStorageConfig}};
     ///
+    /// let bit_vector = BitVector::new();
     /// let config = SeparatedStorageConfig::high_performance()
     ///     .block_size(256)
     ///     .enable_select_acceleration(true)
     ///     .build();
     ///
     /// let rs = RankSelectSeparated256::with_config(bit_vector, config)?;
-    /// # Ok::<(), zipora::ZiporaError>(())
+    /// # Ok::<(), zipora::error::ZiporaError>(())
     /// ```
     pub fn with_config(bit_vector: BitVector, config: SeparatedStorageConfig) -> Result<Self> {
         // Validate configuration for 256-bit blocks

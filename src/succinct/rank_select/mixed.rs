@@ -441,27 +441,27 @@ pub struct RankSelectMixedXL256<const ARITY: usize> {
 /// # Examples
 ///
 /// ```rust
-/// use zipora::{BitVector, RankSelectOps, RankSelectMixedXLBitPacked}; 
+/// use zipora::succinct::{BitVector, rank_select::{RankSelectOps, mixed::RankSelectMixedXLBitPacked}}; 
 ///
 /// // 3-dimensional analysis with advanced memory optimization
 /// let mut user_active = BitVector::new();
 /// let mut user_premium = BitVector::new(); 
 /// let mut user_mobile = BitVector::new();
 ///
-/// for i in 0..100_000 {
-///     user_active.push(i % 5 != 0)?;    // 80% active
-///     user_premium.push(i % 20 == 0)?;  // 5% premium  
-///     user_mobile.push(i % 3 == 0)?;    // 33% mobile
+/// for i in 0..100 {
+///     user_active.push(i % 10 != 0)?;   // 90% active
+///     user_premium.push(i % 50 == 0)?;  // 2% premium  
+///     user_mobile.push(i % 4 == 0)?;    // 25% mobile
 /// }
 ///
 /// let mixed_rs = RankSelectMixedXLBitPacked::<3>::new([user_active, user_premium, user_mobile])?;
 ///
 /// // Significant memory savings with same performance
 /// println!("Memory overhead: {:.2}%", mixed_rs.space_overhead_percent());
-/// let active_count = mixed_rs.rank1_dimension::<0>(50000);
-/// let premium_count = mixed_rs.rank1_dimension::<1>(50000);
-/// let mobile_count = mixed_rs.rank1_dimension::<2>(50000);
-/// # Ok::<(), zipora::ZiporaError>(())
+/// let active_count = mixed_rs.rank1_dimension::<0>(50);
+/// let premium_count = mixed_rs.rank1_dimension::<1>(50);
+/// let mobile_count = mixed_rs.rank1_dimension::<2>(50);
+/// # Ok::<(), zipora::error::ZiporaError>(())
 /// ```
 #[derive(Clone)]
 pub struct RankSelectMixedXLBitPacked<const ARITY: usize> {

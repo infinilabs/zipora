@@ -18,10 +18,14 @@
 //!
 //! ```rust
 //! use zipora::succinct::rank_select::{
-//!     SeparatedStorageConfig, RankSelectSeparated256, RankSelectMixedXLBitPacked
+//!     SeparatedStorageConfig, 
+//!     separated::RankSelectSeparated256, 
+//!     mixed::RankSelectMixedXLBitPacked
 //! };
+//! use zipora::succinct::BitVector;
 //!
 //! // High-performance separated storage for large datasets
+//! let bit_vector = BitVector::new();
 //! let config = SeparatedStorageConfig::new()
 //!     .block_size(512)
 //!     .enable_select_acceleration(true)
@@ -30,9 +34,10 @@
 //!     .select_sample_rate(256)
 //!     .build();
 //!
-//! let rs = RankSelectSeparated512::with_config(bit_vector, config)?;
+//! let rs = RankSelectSeparated256::with_config(bit_vector, config)?;
 //!
 //! // Memory-optimized multi-dimensional configuration
+//! let bit_vectors = vec![BitVector::new(); 3];
 //! let multi_config = SeparatedStorageConfig::new()
 //!     .optimize_for_space()
 //!     .enable_bit_packed_ranks(true)
@@ -40,8 +45,8 @@
 //!     .superblock_size(16)
 //!     .build();
 //!
-//! let multi_rs = RankSelectMixedXLBitPacked::<3>::with_config(bit_vectors, multi_config)?;
-//! # Ok::<(), zipora::ZiporaError>(())
+//! let multi_rs = RankSelectMixedXLBitPacked::<3>::new(bit_vectors.try_into().unwrap())?;
+//! # Ok::<(), zipora::error::ZiporaError>(())
 //! ```
 
 use crate::error::{Result, ZiporaError};

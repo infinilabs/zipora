@@ -174,14 +174,14 @@ impl ConcurrentLruMapStatistics {
 /// # Examples
 ///
 /// ```rust
-/// use zipora::containers::ConcurrentLruMap;
+/// use zipora::containers::specialized::ConcurrentLruMap;
 /// 
 /// let cache = ConcurrentLruMap::new(1024, 8).unwrap(); // 1024 capacity, 8 shards
 /// 
-/// cache.put("key1", "value1").unwrap();
-/// cache.put("key2", "value2").unwrap();
+/// cache.put("key1".to_string(), "value1".to_string()).unwrap();
+/// cache.put("key2".to_string(), "value2".to_string()).unwrap();
 /// 
-/// assert_eq!(cache.get(&"key1"), Some("value1".to_string()));
+/// assert_eq!(cache.get(&"key1".to_string()), Some("value1".to_string()));
 /// assert_eq!(cache.len(), 2);
 /// ```
 pub struct ConcurrentLruMap<K, V, E = NoOpEvictionCallback>
