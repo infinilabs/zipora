@@ -113,6 +113,7 @@ pub mod legacy;
 
 // Import the new rank/select variants
 pub mod builder;
+pub mod config;
 pub mod interleaved;
 pub mod mixed;
 pub mod separated;
@@ -132,6 +133,12 @@ pub use mixed::{
     MixedDimensionView, RankSelectMixedIL256, RankSelectMixedSE512, RankSelectMixedXL256,
 };
 pub use separated::{RankSelectSeparated256, RankSelectSeparated512};
+pub use config::{
+    SeparatedStorageConfig, SeparatedStorageConfigBuilder, StorageLayout, MemoryStrategy,
+    CacheAlignment, MultiDimensionalConfig, HardwareOptimizations, PerformanceTuning,
+    AccessFrequency, DataDensity, SelectCacheDensity, FeatureDetection, CacheLevel,
+    ConfigSummary,
+};
 pub use simd::{SimdCapabilities, SimdOps, bulk_popcount_simd, bulk_rank1_simd, bulk_select1_simd};
 pub use simple::RankSelectSimple;
 pub use sparse::{RankSelectFew, RankSelectFewBuilder};

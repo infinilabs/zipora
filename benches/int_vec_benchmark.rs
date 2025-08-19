@@ -250,8 +250,8 @@ fn benchmark_integer_types(c: &mut Criterion) {
     let u32_data: Vec<u32> = (0..size).map(|i| (i % 1000000) as u32).collect();
     let u64_data: Vec<u64> = (0..size).map(|i| (i % 1000000) as u64).collect();
     
-    let i8_data: Vec<i8> = (0..size).map(|i| ((i % 256) as i8) - 128).collect();
-    let i16_data: Vec<i16> = (0..size).map(|i| ((i % 65536) as i16) - 32768).collect();
+    let i8_data: Vec<i8> = (0..size).map(|i| ((i % 256) as i8).wrapping_sub(127)).collect();
+    let i16_data: Vec<i16> = (0..size).map(|i| ((i % 65536) as i16).wrapping_sub(32767)).collect();
     let i32_data: Vec<i32> = (0..size).map(|i| ((i % 1000000) as i32) - 500000).collect();
     let i64_data: Vec<i64> = (0..size).map(|i| ((i % 1000000) as i64) - 500000).collect();
 
@@ -308,14 +308,13 @@ fn benchmark_memory_patterns(c: &mut Criterion) {
                     let compressed = IntVec::<u32>::from_slice(black_box(data)).unwrap();
                     let memory_usage = compressed.memory_usage();
                     let compression_ratio = compressed.compression_ratio();
-                    let stats = compressed.stats();
                     
                     // Validate memory efficiency
                     assert!(memory_usage < original_size, 
                            "Memory usage {} should be less than original {}", 
                            memory_usage, original_size);
                     
-                    black_box((memory_usage, compression_ratio, stats))
+                    black_box((memory_usage, compression_ratio))
                 })
             },
         );
