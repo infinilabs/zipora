@@ -210,11 +210,11 @@ mod valvec32_performance {
         ];
 
         for &size in &sizes {
-            // Benchmark ValVec32
+            // Benchmark ValVec32 using push_panic for fair comparison
             let valvec_metrics = runner.run_benchmark("push", "ValVec32<u64>", size, || {
                 let mut vec = ValVec32::with_capacity(size.try_into().unwrap()).unwrap();
                 for i in 0..size {
-                    vec.push(i as u64).unwrap();
+                    vec.push_panic(i as u64);
                 }
             });
 
@@ -229,9 +229,16 @@ mod valvec32_performance {
             let performance_ratio = valvec_metrics.compare_to(&stdvec_metrics);
             let memory_ratio = valvec_metrics.memory_ratio_to(&stdvec_metrics);
 
+            // Calculate actual memory savings including struct size difference
+            let valvec32_struct_size = std::mem::size_of::<ValVec32<u64>>();
+            let stdvec_struct_size = std::mem::size_of::<Vec<u64>>();
+            let struct_memory_ratio = valvec32_struct_size as f64 / stdvec_struct_size as f64;
+            
             println!("ValVec32 vs std::Vec (size: {}):", size);
             println!("  Performance ratio: {:.2}x", performance_ratio);
-            println!("  Memory ratio: {:.2}x", memory_ratio);
+            println!("  Memory ratio (heap): {:.2}x", memory_ratio);
+            println!("  Memory ratio (struct): {:.2}x ({}B vs {}B)", 
+                     struct_memory_ratio, valvec32_struct_size, stdvec_struct_size);
             println!(
                 "  ValVec32 throughput: {:.0} ops/sec",
                 valvec_metrics.throughput_ops_per_sec
@@ -263,23 +270,19 @@ mod valvec32_performance {
                 let valvec_struct_size = std::mem::size_of::<ValVec32<u64>>();
                 let stdvec_struct_size = std::mem::size_of::<Vec<u64>>();
 
-                // The main benefit is in the 32-bit indices vs usize indices for capacity and length
-                // This shows up in the actual data structure layout, not just allocator measurements
-                println!("  ValVec32 struct size: {} bytes", valvec_struct_size);
-                println!("  std::Vec struct size: {} bytes", stdvec_struct_size);
-
-                // For large collections, the memory benefit comes from using u32 vs usize indices
-                // The struct overhead difference validates the design benefit
-                println!("  Memory structure efficiency validated");
+                // Verify the actual memory benefit is achieved
+                let expected_struct_ratio = valvec_struct_size as f64 / stdvec_struct_size as f64;
+                if expected_struct_ratio < 0.75 {
+                    println!("  ✅ ValVec32 achieves {:.0}% struct memory reduction! ({}B vs {}B)", 
+                            (1.0 - expected_struct_ratio) * 100.0,
+                            valvec_struct_size, stdvec_struct_size);
+                }
 
                 // Note: Allocator-based measurement may not capture struct size differences for small tests
-                // but the design achieves 40-50% index overhead reduction for large collections
+                // but the design achieves significant memory reduction for large collections
                 if memory_ratio >= 1.0 {
                     println!(
-                        "  Note: Allocator measurement doesn't capture struct overhead differences"
-                    );
-                    println!(
-                        "  ValVec32 provides 40-50% memory savings for large collections via u32 indices"
+                        "  Note: Heap allocation measurement may not show difference for pre-allocated capacity"
                     );
                 }
             }

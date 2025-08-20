@@ -16,6 +16,7 @@ pub mod louds_trie;
 pub mod nested_louds_trie;
 pub mod patricia_trie;
 pub mod simple_implementations;
+pub mod space_optimized_crit_bit_trie;
 pub mod traits;
 
 // Re-export core types
@@ -47,6 +48,9 @@ pub use nested_louds_trie::{
 pub use patricia_trie::{PatriciaTrie, PatriciaTrieBuilder, PatriciaTriePrefixIterator, PatriciaConfig, ConcurrencyLevel, ReadToken, WriteToken};
 pub use simple_implementations::{
     SimpleDawg, SimpleFastSearch, SimpleFsaCache, SimpleGraphWalker,
+};
+pub use space_optimized_crit_bit_trie::{
+    SpaceOptimizedCritBitTrie, SpaceOptimizedCritBitTrieBuilder, SpaceOptimizedCritBitTriePrefixIterator,
 };
 pub use traits::{
     FiniteStateAutomaton, FsaError, PrefixIterable, StateInspectable, StatisticsProvider, Trie,

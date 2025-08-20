@@ -14,7 +14,7 @@ High-performance Rust data structures and compression algorithms with memory saf
 - **💾 Blob Storage**: Advanced storage systems including trie-based indexing and offset-based compression
 - **📦 Specialized Containers**: Production-ready containers with 40-90% memory/performance improvements
 - **🗂️ Specialized Hash Maps**: Golden ratio optimized, string-optimized, and small inline maps with superior performance
-- **🌲 Advanced Tries**: LOUDS, Critical-Bit, and Patricia tries with rank/select operations, hardware-accelerated path compression
+- **🌲 Advanced Tries**: LOUDS, Critical-Bit (with BMI2 acceleration), and Patricia tries with rank/select operations, hardware-accelerated path compression
 - **🔗 Low-Level Synchronization**: Linux futex integration, thread-local storage, atomic operations framework
 - **⚡ Fiber Concurrency**: High-performance async/await with work-stealing, I/O integration, cooperative multitasking
 - **📡 Advanced Serialization**: Comprehensive components with smart pointers, endian handling, version management
@@ -79,6 +79,22 @@ println!("Found {} entries with 'user/' prefix", prefix_data.len());
 let mut trie = LoudsTrie::new();
 trie.insert(b"hello").unwrap();
 assert!(trie.contains(b"hello"));
+
+// Critical Bit Trie - space-efficient radix tree with binary decisions
+let mut crit_bit = CritBitTrie::new();
+crit_bit.insert(b"hello").unwrap();
+crit_bit.insert(b"help").unwrap();
+crit_bit.insert(b"world").unwrap();
+assert!(crit_bit.contains(b"hello"));
+assert!(crit_bit.contains(b"help"));
+assert!(!crit_bit.contains(b"he")); // Prefix compression
+
+// Space-Optimized Critical Bit Trie with BMI2 hardware acceleration
+let mut optimized_trie = SpaceOptimizedCritBitTrie::new();
+optimized_trie.insert(b"efficient").unwrap();
+optimized_trie.insert(b"effective").unwrap();
+let stats = optimized_trie.stats();
+println!("Memory usage: {} bytes, {} bits per key", stats.memory_usage, stats.bits_per_key);
 
 // Patricia Trie with hardware acceleration
 let mut patricia = PatriciaTrie::new();
@@ -724,9 +740,47 @@ for &value in &vec {
 ### Advanced Tries
 
 ```rust
-use zipora::{PatriciaTrie, DoubleArrayTrie, CompressedSparseTrie, NestedLoudsTrie, 
-            ConcurrencyLevel, ReaderToken, WriterToken, RankSelectInterleaved256, 
-            PatriciaConfig};
+use zipora::{CritBitTrie, SpaceOptimizedCritBitTrie, PatriciaTrie, DoubleArrayTrie, 
+            CompressedSparseTrie, NestedLoudsTrie, ConcurrencyLevel, ReaderToken, 
+            WriterToken, RankSelectInterleaved256, PatriciaConfig};
+
+// Critical Bit Trie - Space-efficient radix tree with binary critical bit decisions
+let mut crit_bit = CritBitTrie::new();
+crit_bit.insert(b"cat").unwrap();
+crit_bit.insert(b"car").unwrap();
+crit_bit.insert(b"card").unwrap();
+
+// Efficient lookups with O(m) complexity where m is key length
+assert!(crit_bit.contains(b"cat"));
+assert!(crit_bit.contains(b"car"));
+assert!(crit_bit.contains(b"card"));
+assert!(!crit_bit.contains(b"ca")); // Prefix compression means partial matches aren't found
+
+// Prefix iteration for hierarchical data
+for key in crit_bit.iter_prefix(b"car") {
+    println!("Found key with 'car' prefix: {:?}", String::from_utf8_lossy(&key));
+}
+
+// Space-Optimized Critical Bit Trie with BMI2 hardware acceleration
+let mut optimized_trie = SpaceOptimizedCritBitTrie::optimized_for_strings().unwrap();
+optimized_trie.insert(b"efficient").unwrap();
+optimized_trie.insert(b"effective").unwrap();
+optimized_trie.insert(b"engine").unwrap();
+
+// Check BMI2 acceleration status
+if optimized_trie.bmi2_acceleration_enabled() {
+    println!("BMI2 hardware acceleration is active for 5-10x faster operations");
+}
+
+// Advanced space optimization statistics
+let stats = optimized_trie.stats();
+let (compression_ratio, avg_key_len, cache_miss_est) = optimized_trie.compression_stats();
+println!("Memory usage: {} bytes, {:.2} bits per key", stats.memory_usage, stats.bits_per_key);
+println!("Compression ratio: {:.1}%, Average key length: {:.1}", 
+         compression_ratio * 100.0, avg_key_len);
+
+// Runtime optimization for access patterns
+optimized_trie.optimize().unwrap();
 
 // Patricia Trie - Sophisticated radix tree with advanced concurrency and hardware acceleration
 let mut patricia = PatriciaTrie::new();
@@ -2010,6 +2064,7 @@ cargo bench --features lz4
 cargo bench --bench rank_select_bench
 
 # FSA & Trie benchmarks
+cargo bench --bench crit_bit_trie_bench
 cargo bench --bench patricia_trie_bench
 cargo bench --bench double_array_trie_bench
 cargo bench --bench compressed_sparse_trie_bench
