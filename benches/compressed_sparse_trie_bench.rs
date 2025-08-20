@@ -10,7 +10,8 @@
 use criterion::{
     BatchSize, BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
 };
-use zipora::fsa::{CompressedSparseTrie, ConcurrencyLevel, LoudsTrie, PatriciaTrie, Trie, StatisticsProvider};
+use zipora::fsa::{CompressedSparseTrie, LoudsTrie, PatriciaTrie, Trie, StatisticsProvider};
+use zipora::fsa::compressed_sparse_trie::ConcurrencyLevel;
 
 use std::collections::HashSet;
 

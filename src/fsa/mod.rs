@@ -23,7 +23,7 @@ pub use cache::{
     CacheStrategy, CachedState, FsaCache, FsaCacheConfig, FsaCacheStats, ZeroPathData,
 };
 pub use compressed_sparse_trie::{
-    CompressedSparseTrie, ConcurrencyLevel, ReaderToken, WriterToken,
+    CompressedSparseTrie, ConcurrencyLevel as CstConcurrencyLevel, ReaderToken, WriterToken,
 };
 pub use crit_bit_trie::{CritBitTrie, CritBitTrieBuilder, CritBitTriePrefixIterator};
 pub use dawg::{
@@ -44,7 +44,7 @@ pub use nested_louds_trie::{
     FragmentStats, NestedLoudsTrie, NestedLoudsTrieBuilder, NestedLoudsTriePrefixIterator,
     NestedTrieStats, NestingConfig, NestingConfigBuilder,
 };
-pub use patricia_trie::{PatriciaTrie, PatriciaTrieBuilder, PatriciaTriePrefixIterator};
+pub use patricia_trie::{PatriciaTrie, PatriciaTrieBuilder, PatriciaTriePrefixIterator, PatriciaConfig, ConcurrencyLevel, ReadToken, WriteToken};
 pub use simple_implementations::{
     SimpleDawg, SimpleFastSearch, SimpleFsaCache, SimpleGraphWalker,
 };

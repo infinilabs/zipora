@@ -14,7 +14,7 @@ High-performance Rust data structures and compression algorithms with memory saf
 - **💾 Blob Storage**: Advanced storage systems including trie-based indexing and offset-based compression
 - **📦 Specialized Containers**: Production-ready containers with 40-90% memory/performance improvements
 - **🗂️ Specialized Hash Maps**: Golden ratio optimized, string-optimized, and small inline maps with superior performance
-- **🌲 Advanced Tries**: LOUDS, Critical-Bit, and Patricia tries with rank/select operations
+- **🌲 Advanced Tries**: LOUDS, Critical-Bit, and Patricia tries with rank/select operations, hardware-accelerated path compression
 - **🔗 Low-Level Synchronization**: Linux futex integration, thread-local storage, atomic operations framework
 - **⚡ Fiber Concurrency**: High-performance async/await with work-stealing, I/O integration, cooperative multitasking
 - **📡 Advanced Serialization**: Comprehensive components with smart pointers, endian handling, version management
@@ -79,6 +79,14 @@ println!("Found {} entries with 'user/' prefix", prefix_data.len());
 let mut trie = LoudsTrie::new();
 trie.insert(b"hello").unwrap();
 assert!(trie.contains(b"hello"));
+
+// Patricia Trie with hardware acceleration
+let mut patricia = PatriciaTrie::new();
+patricia.insert(b"hello").unwrap();
+patricia.insert(b"help").unwrap();
+assert!(patricia.contains(b"hello"));
+assert!(patricia.contains(b"help"));
+assert!(!patricia.contains(b"he")); // Path compression
 
 // Hash maps - multiple specialized implementations
 let mut map = GoldHashMap::new();
@@ -716,8 +724,52 @@ for &value in &vec {
 ### Advanced Tries
 
 ```rust
-use zipora::{DoubleArrayTrie, CompressedSparseTrie, NestedLoudsTrie, 
-            ConcurrencyLevel, ReaderToken, WriterToken, RankSelectInterleaved256};
+use zipora::{PatriciaTrie, DoubleArrayTrie, CompressedSparseTrie, NestedLoudsTrie, 
+            ConcurrencyLevel, ReaderToken, WriterToken, RankSelectInterleaved256, 
+            PatriciaConfig};
+
+// Patricia Trie - Sophisticated radix tree with advanced concurrency and hardware acceleration
+let mut patricia = PatriciaTrie::new();
+patricia.insert(b"hello").unwrap();
+patricia.insert(b"help").unwrap();
+patricia.insert(b"world").unwrap();
+
+// O(m) lookup performance with path compression and SIMD acceleration
+assert!(patricia.contains(b"hello"));
+assert!(patricia.contains(b"help"));
+assert!(!patricia.contains(b"he")); // Path compression means partial matches aren't found
+
+// Advanced configuration with hardware optimizations
+let config = PatriciaConfig::performance_optimized(); // BMI2 + SIMD + concurrency
+let mut optimized_trie = PatriciaTrie::with_config(config);
+
+// Concurrent operations with token-based safety
+let config = PatriciaConfig {
+    concurrency_level: ConcurrencyLevel::OneWriteMultiRead,
+    use_bmi2: true,        // Hardware acceleration with BMI2 instructions
+    use_simd: true,        // SIMD string comparisons
+    alignment: 64,         // Cache-line alignment for performance
+    ..Default::default()
+};
+let concurrent_trie = PatriciaTrie::with_config(config);
+let read_token = concurrent_trie.acquire_read_token();
+let write_token = concurrent_trie.acquire_write_token();
+
+// Thread-safe operations
+concurrent_trie.lookup_with_token(b"hello", &read_token);
+concurrent_trie.insert_with_token(b"new_key", &write_token).unwrap();
+
+// Prefix iteration with lexicographic ordering
+for key in patricia.iter_prefix(b"hel") {
+    println!("Found key: {:?}", key);
+}
+
+// Comprehensive statistics and performance monitoring
+let stats = patricia.stats();
+println!("Memory usage: {} bytes", stats.memory_usage);
+println!("Keys: {}, Nodes: {}", stats.num_keys, stats.num_states);
+println!("Bits per key: {:.2}", stats.bits_per_key);
+println!("Path compression ratio: {:.1}%", (1.0 - stats.avg_depth / stats.max_depth as f64) * 100.0);
 
 // Double Array Trie - Constant-time O(1) state transitions
 let mut dat = DoubleArrayTrie::new();
@@ -1958,6 +2010,7 @@ cargo bench --features lz4
 cargo bench --bench rank_select_bench
 
 # FSA & Trie benchmarks
+cargo bench --bench patricia_trie_bench
 cargo bench --bench double_array_trie_bench
 cargo bench --bench compressed_sparse_trie_bench
 cargo bench --bench nested_louds_trie_bench
