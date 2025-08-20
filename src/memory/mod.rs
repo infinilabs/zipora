@@ -6,6 +6,7 @@
 pub mod bump;
 pub mod cache;
 pub mod fixed_capacity_pool;
+pub mod five_level_pool;
 pub mod hugepage;
 pub mod lockfree_pool;
 pub mod mmap;
@@ -24,6 +25,11 @@ pub use cache::{
 };
 pub use fixed_capacity_pool::{
     FixedCapacityMemoryPool, FixedCapacityPoolConfig, FixedCapacityPoolStats, FixedCapacityAllocation,
+};
+pub use five_level_pool::{
+    AdaptiveFiveLevelPool, ConcurrencyLevel, FiveLevelPoolConfig, FiveLevelPoolHandle,
+    FixedCapacityPool, LockFreePool, MutexBasedPool, NoLockingPool, ThreadLocalPool, 
+    MemOffset, PoolStats,
 };
 pub use lockfree_pool::{
     LockFreeMemoryPool, LockFreePoolConfig, LockFreePoolStats, LockFreeAllocation, BackoffStrategy,
