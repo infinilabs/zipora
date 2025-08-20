@@ -20,6 +20,8 @@ simd = []
 # AVX-512 support requires nightly Rust due to experimental intrinsics
 # Currently disabled by default for stable Rust compatibility
 avx512 = ["simd"]
+# Nightly features for performance optimizations
+nightly = []
 mmap = ["dep:memmap2"]
 zstd = ["dep:zstd"]
 lz4 = ["dep:lz4_flex"]
@@ -84,10 +86,6 @@ pkg-config = "0.3.27"
 
 [[bench]]
 name = "benchmark"
-harness = false
-
-[[bench]]
-name = "cpp_comparison"
 harness = false
 
 [[bench]]

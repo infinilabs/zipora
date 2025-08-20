@@ -19,41 +19,38 @@ use std::sync::Arc;
 extern crate libc;
 
 /// Branch prediction hints for performance optimization
-/// Uses the most effective approach available on stable Rust
-/// Mimics GCC's __builtin_expect behavior through code structure
+/// Uses intrinsics when available, falls back to cold/hot path separation
+#[cfg(feature = "nightly")]
+use std::intrinsics::{likely, unlikely};
+
+#[cfg(not(feature = "nightly"))]
 #[inline(always)]
 fn likely(b: bool) -> bool {
-    // Use cold/inline(never) on the unlikely path to guide branch prediction
-    // This is the closest we can get to __builtin_expect on stable Rust
+    // On stable, we use cold attribute to hint the optimizer
+    // The compiler should optimize for the true case
+    #[cold]
+    #[inline(never)]
+    fn cold_false() {}
+    
     if !b {
-        unlikely_path();
+        cold_false();
     }
     b
 }
 
+#[cfg(not(feature = "nightly"))]
 #[inline(always)]
 fn unlikely(b: bool) -> bool {
-    // Use cold/inline(never) on the likely path to guide branch prediction
+    // On stable, we use cold attribute to hint the optimizer
+    // The compiler should optimize for the false case
+    #[cold]
+    #[inline(never)]
+    fn cold_true() {}
+    
     if b {
-        unlikely_path();
+        cold_true();
     }
     b
-}
-
-/// Helper function to mark unlikely execution paths
-/// The cold attribute helps the compiler optimize for the common case
-#[cold]
-#[inline(never)]
-fn unlikely_path() {
-    // This function intentionally does nothing but guides the optimizer
-    std::hint::black_box(());
-}
-
-/// Inline version of likely for hot paths to avoid call overhead
-macro_rules! likely_inline {
-    ($cond:expr) => {
-        $cond
-    };
 }
 
 /// Try to get usable size from allocator for better memory utilization
@@ -363,40 +360,48 @@ impl<T> ValVec32<T> {
     ///
     /// Returns `ZiporaError::InvalidData` if new capacity would exceed MAX_CAPACITY
     /// Returns `ZiporaError::MemoryError` if allocation fails
+    #[inline]
     pub fn reserve(&mut self, additional: u32) -> Result<()> {
         let required = self
             .len
             .checked_add(additional)
             .ok_or_else(|| ZiporaError::invalid_data("Capacity overflow"))?;
 
-        if required <= self.capacity {
+        // Fast path: already have enough capacity
+        if likely(required <= self.capacity) {
             return Ok(());
         }
 
+        // Slow path: need to grow
         let new_capacity = self.calculate_new_capacity(required)?;
         self.grow_to(new_capacity)
     }
 
 
     /// Calculates new capacity using golden ratio growth strategy
-    /// Simple and effective growth factor of 103/64 ≈ 1.609375
-    #[inline]
+    /// Optimized implementation matching topling-zip: 103/64 ≈ 1.609375
+    #[inline(always)]
     fn calculate_new_capacity(&self, min_capacity: u32) -> Result<u32> {
-        if min_capacity > MAX_CAPACITY {
+        if unlikely(min_capacity > MAX_CAPACITY) {
             return Err(ZiporaError::invalid_data(format!(
                 "Required capacity {} exceeds maximum {}",
                 min_capacity, MAX_CAPACITY
             )));
         }
 
+        // Match topling-zip's initial capacity strategy
         if self.capacity == 0 {
+            // Start with 4 or min_capacity, whichever is larger
+            // This avoids too many early reallocations
             return Ok(min_capacity.max(4));
         }
 
         // Golden ratio growth: 103/64 = 1.609375 ≈ 1.618 (golden ratio)
+        // Using u64 to avoid overflow on 32-bit platforms
         let current_capacity = self.capacity as u64;
-        let new_capacity = (current_capacity * 103) / 64;
+        let new_capacity = (current_capacity * 103) >> 6; // Bit shift is faster than division
         
+        // Ensure we meet minimum and stay within bounds
         let final_capacity = new_capacity
             .max(min_capacity as u64)
             .min(MAX_CAPACITY as u64) as u32;
@@ -411,12 +416,13 @@ impl<T> ValVec32<T> {
     #[cold]
     #[inline(never)]
     fn grow_to(&mut self, new_capacity: u32) -> Result<()> {
-        if new_capacity <= self.capacity {
+        // Fast path: already have enough capacity
+        if likely(new_capacity <= self.capacity) {
             return Ok(());
         }
 
         // Handle zero-sized types (ZSTs) specially - no allocation needed
-        if mem::size_of::<T>() == 0 {
+        if unlikely(mem::size_of::<T>() == 0) {
             self.capacity = MAX_CAPACITY;
             return Ok(());
         }
@@ -431,20 +437,23 @@ impl<T> ValVec32<T> {
                 let usable_capacity = (usable_size / mem::size_of::<T>()).min(MAX_CAPACITY as usize) as u32;
                 if usable_capacity >= new_capacity {
                     // We already have enough space! Just update capacity
-                    // This is a huge win - no allocation needed
+                    // This is a huge performance win - no allocation needed
                     self.capacity = usable_capacity;
                     return Ok(());
                 }
             }
         }
 
+        // Calculate layouts
         let new_layout = Layout::array::<T>(new_capacity as usize)
             .map_err(|_| ZiporaError::invalid_data("Layout calculation failed"))?;
 
         let new_ptr = if self.capacity == 0 {
+            // Initial allocation
             // SAFETY: Layout is valid and non-zero
             unsafe { alloc::alloc(new_layout) }
         } else {
+            // Reallocation - try to grow in place
             let old_layout = Layout::array::<T>(self.capacity as usize)
                 .map_err(|_| ZiporaError::invalid_data("Old layout calculation failed"))?;
 
@@ -455,17 +464,19 @@ impl<T> ValVec32<T> {
             unsafe { alloc::realloc(self.ptr.as_ptr() as *mut u8, old_layout, new_layout.size()) }
         };
 
-        if new_ptr.is_null() {
+        if unlikely(new_ptr.is_null()) {
             return Err(ZiporaError::out_of_memory(new_layout.size()));
         }
 
+        // Update pointer
         self.ptr = NonNull::new(cast_aligned_ptr::<T>(new_ptr)).unwrap();
         
         // Use actual usable size to reduce future reallocations
         // This is critical for performance - we might get more memory than requested
         let actual_usable_size = get_usable_size(new_ptr);
-        if actual_usable_size > 0 && actual_usable_size > new_layout.size() {
+        if likely(actual_usable_size > 0 && actual_usable_size >= new_layout.size()) {
             // We got extra memory from the allocator - use it!
+            // This reduces future reallocations significantly
             let bonus_capacity = (actual_usable_size / mem::size_of::<T>()).min(MAX_CAPACITY as usize) as u32;
             self.capacity = bonus_capacity.max(new_capacity);
         } else {
@@ -502,17 +513,19 @@ impl<T> ValVec32<T> {
     /// ```
     #[inline(always)]
     pub fn push(&mut self, value: T) -> Result<()> {
-        // Ultra-optimized hot path - minimize branching and function calls
+        // Ultra-optimized hot path matching topling-zip performance
         let current_len = self.len;
         
         // Hot path: capacity available (most common case)
-        // Use simple comparison to avoid function call overhead
-        if current_len < self.capacity {
+        // Use likely() hint for better branch prediction
+        if likely(current_len < self.capacity) {
             // SAFETY: We've verified len < capacity, so this write is safe
             unsafe {
-                // Direct pointer arithmetic for optimal performance
-                ptr::write(self.ptr.as_ptr().add(current_len as usize), value);
-                // Increment length after successful write  
+                // Direct pointer arithmetic with optimal ordering
+                let ptr = self.ptr.as_ptr();
+                ptr::write(ptr.add(current_len as usize), value);
+                // Increment length after successful write
+                // Compiler can optimize this better when separate
                 self.len = current_len + 1;
             }
             return Ok(());
@@ -553,6 +566,8 @@ impl<T> ValVec32<T> {
     /// ```
     #[inline(always)]
     pub fn push_unchecked(&mut self, value: T) -> Result<()> {
+        // This should be used when capacity is pre-reserved
+        // The check should be optimized away in most cases
         if unlikely(self.len >= self.capacity) {
             return Err(ZiporaError::invalid_data(
                 "No capacity available for push_unchecked",
@@ -561,7 +576,8 @@ impl<T> ValVec32<T> {
 
         // SAFETY: We've verified len < capacity
         unsafe {
-            ptr::write(self.ptr.as_ptr().add(self.len as usize), value);
+            let ptr = self.ptr.as_ptr();
+            ptr::write(ptr.add(self.len as usize), value);
         }
         self.len += 1;
         Ok(())
@@ -604,8 +620,11 @@ impl<T> ValVec32<T> {
             "push_unchecked_assume_capacity called without sufficient capacity"
         );
 
+        // Fastest possible push - no checks at all
+        // SAFETY: Caller guarantees capacity is available
         unsafe {
-            ptr::write(self.ptr.as_ptr().add(self.len as usize), value);
+            let ptr = self.ptr.as_ptr();
+            ptr::write(ptr.add(self.len as usize), value);
         }
         self.len += 1;
     }
@@ -613,48 +632,55 @@ impl<T> ValVec32<T> {
 
     /// Slow path for push when growth is needed
     /// Separated to keep the hot path inline and fast
-    /// Handles self-reference safety and uses golden ratio growth
+    /// Optimized to match topling-zip's approach
     #[cold]
     #[inline(never)]
     fn push_slow(&mut self, value: T) -> Result<()> {
-        if self.len >= MAX_CAPACITY {
+        if unlikely(self.len >= MAX_CAPACITY) {
             return Err(ZiporaError::invalid_data("Vector at maximum capacity"));
         }
 
         // Handle self-reference safety - check if value points into our vector
+        // This is relatively rare, so marked unlikely
         let needs_self_ref_check = !mem::needs_drop::<T>() && 
             mem::size_of::<T>() > 0 &&
             self.len > 0;
         
-        if needs_self_ref_check {
+        if unlikely(needs_self_ref_check) {
             let value_ptr = &value as *const T;
             let start_ptr = self.ptr.as_ptr();
             let end_ptr = unsafe { start_ptr.add(self.len as usize) };
             
-            if value_ptr >= start_ptr && value_ptr < end_ptr {
+            if unlikely(value_ptr >= start_ptr && value_ptr < end_ptr) {
                 // Self-reference detected - copy the value before reallocation
                 let index = unsafe { value_ptr.offset_from(start_ptr) as usize };
                 let new_capacity = self.calculate_new_capacity(self.len + 1)?;
                 self.grow_to(new_capacity)?;
+                
+                // Re-read after reallocation
                 let copied_value = unsafe { ptr::read(self.ptr.as_ptr().add(index)) };
                 
-                let current_len = self.len;
+                // Write to the new position
                 unsafe {
-                    ptr::write(self.ptr.as_ptr().add(current_len as usize), copied_value);
+                    let ptr = self.ptr.as_ptr();
+                    ptr::write(ptr.add(self.len as usize), copied_value);
                 }
-                self.len = current_len + 1;
+                self.len += 1;
                 return Ok(());
             }
         }
 
-        // Normal case - no self-reference
+        // Normal case - no self-reference (most common in slow path)
+        // Calculate new capacity and grow
         let new_capacity = self.calculate_new_capacity(self.len + 1)?;
         self.grow_to(new_capacity)?;
-        let current_len = self.len;
+        
+        // Write the value
         unsafe {
-            ptr::write(self.ptr.as_ptr().add(current_len as usize), value);
+            let ptr = self.ptr.as_ptr();
+            ptr::write(ptr.add(self.len as usize), value);
         }
-        self.len = current_len + 1;
+        self.len += 1;
         Ok(())
     }
 
@@ -715,12 +741,13 @@ impl<T> ValVec32<T> {
     /// ```
     #[inline(always)]
     pub fn get(&self, index: u32) -> Option<&T> {
-        if index >= self.len {
-            return None;
+        // Optimize for the common case where index is valid
+        if likely(index < self.len) {
+            // SAFETY: Index is bounds checked
+            Some(unsafe { &*self.ptr.as_ptr().add(index as usize) })
+        } else {
+            None
         }
-
-        // SAFETY: Index is bounds checked
-        Some(unsafe { &*self.ptr.as_ptr().add(index as usize) })
     }
 
     /// Returns a mutable reference to the element at the given index
@@ -734,12 +761,13 @@ impl<T> ValVec32<T> {
     /// `Some(&mut T)` if index is valid, `None` otherwise
     #[inline(always)]
     pub fn get_mut(&mut self, index: u32) -> Option<&mut T> {
-        if index >= self.len {
-            return None;
+        // Optimize for the common case where index is valid
+        if likely(index < self.len) {
+            // SAFETY: Index is bounds checked
+            Some(unsafe { &mut *self.ptr.as_ptr().add(index as usize) })
+        } else {
+            None
         }
-
-        // SAFETY: Index is bounds checked
-        Some(unsafe { &mut *self.ptr.as_ptr().add(index as usize) })
     }
 
     /// Sets the value at the given index
@@ -858,7 +886,8 @@ impl<T> ValVec32<T> {
     where
         T: Clone,
     {
-        if slice.is_empty() {
+        // Fast path: empty slice
+        if unlikely(slice.is_empty()) {
             return Ok(());
         }
 
@@ -870,13 +899,14 @@ impl<T> ValVec32<T> {
             .checked_add(additional)
             .ok_or_else(|| ZiporaError::invalid_data("Length overflow"))?;
 
-        if new_len > MAX_CAPACITY {
+        if unlikely(new_len > MAX_CAPACITY) {
             return Err(ZiporaError::invalid_data(format!(
                 "Resulting length {} would exceed maximum capacity {}",
                 new_len, MAX_CAPACITY
             )));
         }
 
+        // Reserve exactly what we need
         self.reserve(additional)?;
 
         // SAFETY: We've reserved enough space
@@ -884,8 +914,8 @@ impl<T> ValVec32<T> {
             let dst = self.ptr.as_ptr().add(self.len as usize);
 
             // Optimized path selection based on type characteristics
-            // Try to use memcpy for types that don't need drop
-            if !mem::needs_drop::<T>() {
+            // Most common case: types that can be memcpy'd
+            if likely(!mem::needs_drop::<T>()) {
                 // Fast path: use ptr::copy_nonoverlapping (essentially memcpy)
                 // This is optimal for POD types and will be vectorized by LLVM
                 ptr::copy_nonoverlapping(slice.as_ptr(), dst, slice.len());
@@ -927,12 +957,13 @@ impl<T> ValVec32<T> {
     /// assert_eq!(vec.len(), 4);
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
-    #[inline]
+    #[inline(always)]
     pub fn extend_from_slice_copy(&mut self, slice: &[T]) -> Result<()>
     where
         T: Copy,
     {
-        if slice.is_empty() {
+        // Fast path: empty slice
+        if unlikely(slice.is_empty()) {
             return Ok(());
         }
 
@@ -944,18 +975,21 @@ impl<T> ValVec32<T> {
             .checked_add(additional)
             .ok_or_else(|| ZiporaError::invalid_data("Length overflow"))?;
 
-        if new_len > MAX_CAPACITY {
+        if unlikely(new_len > MAX_CAPACITY) {
             return Err(ZiporaError::invalid_data(format!(
                 "Resulting length {} would exceed maximum capacity {}",
                 new_len, MAX_CAPACITY
             )));
         }
 
+        // Reserve exactly what we need
         self.reserve(additional)?;
 
         // SAFETY: We've reserved enough space and T is Copy
+        // This is the hot path for bulk operations
         unsafe {
             let dst = self.ptr.as_ptr().add(self.len as usize);
+            // Use memcpy for maximum performance
             ptr::copy_nonoverlapping(slice.as_ptr(), dst, slice.len());
         }
 

@@ -23,12 +23,10 @@ use zipora::{
     succinct::rank_select::{
         RankSelectOps, RankSelectSeparated256, RankSelectSeparated512,
         RankSelectMixedIL256, RankSelectMixedSE512, RankSelectMixedXL256,
-        SeparatedStorageConfig, StorageLayout, MemoryStrategy, 
-        CacheAlignment, FeatureDetection, CacheLevel, HardwareOptimizations,
+        SeparatedStorageConfig, FeatureDetection, HardwareOptimizations,
         RankSelectSimple, // for baseline comparison
-        RankSelectMultiDimensional, // for multi-dimensional methods
     },
-    system::CpuFeatures,
+    CpuFeatures,
 };
 
 // Benchmark configuration constants
@@ -271,7 +269,7 @@ fn bench_multi_dimensional_configs(c: &mut Criterion) {
     let rs_il = RankSelectMixedIL256::new([bv1.clone(), bv2.clone()]).unwrap();
     let rs_se = RankSelectMixedSE512::new([bv1.clone(), bv2.clone()]).unwrap();
     
-    let multi_configs = vec![
+    let _multi_configs = vec![
         ("interleaved_default", &rs_il as &dyn RankSelectOps),
         ("separated_default", &rs_se as &dyn RankSelectOps),
     ];
@@ -662,8 +660,6 @@ fn bench_baseline_comparison(c: &mut Criterion) {
     group.finish();
 }
 
-// Add import for HardwareOptimizations
-use zipora::succinct::rank_select::HardwareOptimizations;
 
 criterion_group!(
     benches,
