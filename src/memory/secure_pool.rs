@@ -120,6 +120,36 @@ impl SecurePoolConfig {
             batch_size: 4,
         }
     }
+
+    /// Builder method to set alignment
+    pub fn with_alignment(mut self, alignment: usize) -> Self {
+        self.alignment = alignment;
+        self
+    }
+
+    /// Builder method to enable/disable guard pages
+    pub fn with_guard_pages(mut self, use_guard_pages: bool) -> Self {
+        self.use_guard_pages = use_guard_pages;
+        self
+    }
+
+    /// Builder method to enable/disable zero on free
+    pub fn with_zero_on_free(mut self, zero_on_free: bool) -> Self {
+        self.zero_on_free = zero_on_free;
+        self
+    }
+
+    /// Builder method to set local cache size
+    pub fn with_local_cache_size(mut self, size: usize) -> Self {
+        self.local_cache_size = size;
+        self
+    }
+
+    /// Builder method to set batch size
+    pub fn with_batch_size(mut self, size: usize) -> Self {
+        self.batch_size = size;
+        self
+    }
 }
 
 /// Statistics for secure memory pool

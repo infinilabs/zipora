@@ -33,6 +33,7 @@ cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --check
 - **Latest**: LRU caches, IntVec<T>, ZipOffsetBlobStore, AdaptiveRankSelect
 - **Enhancement**: BMI2 optimizations ported from topling-zip + adaptive strategy selection
 - **New**: **Patricia Trie with hardware acceleration, token-based concurrency, comprehensive benchmarks**
+- **Latest**: **Critical Bit Trie implementation with BMI2 hardware acceleration and space optimization**
 
 ### Performance
 - **Current**: 3.3 Gelem/s rank/select with BMI2 acceleration (5-10x select speedup)
@@ -50,7 +51,7 @@ cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --check
 - **Cache**: `LruMap<K,V>`, `ConcurrentLruMap<K,V>`, `LruPageCache`
 - **Memory**: `SecureMemoryPool`, `LockFreeMemoryPool`, `MmapVec<T>`
 - **Sync**: `FutexMutex`, `InstanceTls<T>`, `AtomicExt`
-- **Search**: `RankSelectInterleaved256`, `AdaptiveRankSelect`, `DoubleArrayTrie`, `PatriciaTrie`, `Bmi2Accelerator`
+- **Search**: `RankSelectInterleaved256`, `AdaptiveRankSelect`, `DoubleArrayTrie`, `PatriciaTrie`, `CritBitTrie`, `Bmi2Accelerator`
 - **I/O**: `FiberAio`, `StreamBufferedReader`, `ZeroCopyReader`
 
 ### Features
@@ -72,6 +73,6 @@ cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --check
 **Target**: GPU acceleration, distributed systems, compression
 
 ---
-*Updated: 2025-01-15 - Phase 11A Complete*
+*Updated: 2025-08-20 - Phase 11A Complete + Critical Bit Trie*
 *Tests: 1,100+ passing, 97%+ coverage*
 *Performance: 3.3 Gelem/s rank/select, production-ready*
