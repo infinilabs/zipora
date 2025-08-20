@@ -21,6 +21,77 @@ High-performance Rust data structures and compression algorithms with memory saf
 - **🗜️ Compression Framework**: Huffman, rANS, dictionary-based, and hybrid compression
 - **🔄 Real-time Compression**: Adaptive algorithms with strict latency guarantees
 - **🔌 C FFI Support**: Complete C API for migration from C++
+- **🎚️ Five-Level Concurrency Management**: Graduated concurrency control with adaptive selection
+
+## Five-Level Concurrency Management System
+
+Zipora implements a sophisticated 5-level concurrency management system that provides graduated concurrency control options for different performance and threading requirements. The system automatically selects the optimal level based on CPU core count, allocation patterns, and workload characteristics.
+
+### The 5 Levels of Concurrency Control
+
+1. **Level 1: No Locking** - Pure single-threaded operation with zero synchronization overhead
+2. **Level 2: Mutex-based Locking** - Fine-grained locking with separate mutexes per size class
+3. **Level 3: Lock-free Programming** - Atomic compare-and-swap operations for small allocations
+4. **Level 4: Thread-local Caching** - Per-thread local memory pools to minimize cross-thread contention
+5. **Level 5: Fixed Capacity Variant** - Bounded memory allocation with no expansion
+
+### Key Benefits
+
+- **API Compatibility**: All levels share consistent interfaces
+- **Graduated Complexity**: Each level builds sophistication while maintaining simpler fallbacks
+- **Hardware Awareness**: Cache alignment, atomic operations, prefetching
+- **Adaptive Selection**: Choose appropriate level based on thread count, allocation patterns, and performance requirements
+- **Composability**: Different components can use different concurrency levels
+
+### Usage Examples
+
+```rust
+use zipora::memory::{
+    AdaptiveFiveLevelPool, ConcurrencyLevel, FiveLevelPoolConfig,
+    NoLockingPool, MutexBasedPool, LockFreePool, ThreadLocalPool, FixedCapacityPool,
+};
+
+// Automatic adaptive selection (recommended)
+let config = FiveLevelPoolConfig::performance_optimized();
+let mut pool = AdaptiveFiveLevelPool::new(config).unwrap();
+let offset = pool.alloc(1024).unwrap();
+println!("Selected level: {:?}", pool.current_level());
+
+// Explicit level selection for specific requirements
+let pool = AdaptiveFiveLevelPool::with_level(config, ConcurrencyLevel::ThreadLocal).unwrap();
+
+// Direct use of specific levels
+let mut single_thread_pool = NoLockingPool::new(config.clone()).unwrap();
+let mutex_pool = MutexBasedPool::new(config.clone()).unwrap();
+let lockfree_pool = LockFreePool::new(config.clone()).unwrap();
+let threadlocal_pool = ThreadLocalPool::new(config.clone()).unwrap();
+let mut fixed_pool = FixedCapacityPool::new(config).unwrap();
+
+// Configuration presets for different use cases
+let performance_config = FiveLevelPoolConfig::performance_optimized(); // High throughput
+let memory_config = FiveLevelPoolConfig::memory_optimized();           // Low memory usage
+let realtime_config = FiveLevelPoolConfig::realtime();                 // Predictable latency
+```
+
+### Adaptive Selection Logic
+
+The system intelligently selects the optimal concurrency level:
+
+- **Single-threaded**: Level 1 (No Locking) for maximum performance
+- **2-4 cores**: Level 2 (Mutex) or Level 3 (Lock-free) based on allocation size
+- **5-16 cores**: Level 3 (Lock-free) or Level 4 (Thread-local) based on arena size
+- **16+ cores**: Level 4 (Thread-local) for maximum scalability
+- **Fixed capacity**: Level 5 for real-time and constrained environments
+
+### Performance Characteristics
+
+| Level | Scalability | Overhead | Use Case |
+|-------|-------------|----------|----------|
+| **Level 1** | Single-thread | **Minimal** | Single-threaded applications |
+| **Level 2** | Good (2-8 threads) | Low | General multi-threaded use |
+| **Level 3** | Excellent (8+ threads) | **Minimal** | High-contention scenarios |
+| **Level 4** | **Outstanding** | Low | Very high concurrency |
+| **Level 5** | Variable | **Minimal** | Real-time/embedded systems |
 
 ## Quick Start
 
