@@ -88,7 +88,7 @@ pub struct WriteToken {
 }
 
 /// Configuration for Patricia Trie optimization
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PatriciaConfig {
     /// Enable BMI2 hardware acceleration
     pub use_bmi2: bool,
@@ -480,6 +480,7 @@ impl PatriciaNode {
 /// };
 /// let trie = PatriciaTrie::with_config(config);
 /// ```
+#[derive(Debug)]
 pub struct PatriciaTrie {
     /// Vector of cache-aligned nodes for optimal memory performance
     nodes: Vec<PatriciaNode>,

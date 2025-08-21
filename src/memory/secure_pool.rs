@@ -519,6 +519,16 @@ pub struct SecureMemoryPool {
     active_allocations: DashMap<usize, (u32, Instant)>, // ptr_addr -> (generation, time)
 }
 
+impl std::fmt::Debug for SecureMemoryPool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecureMemoryPool")
+            .field("config", &self.config)
+            .field("pool_id", &self.pool_id)
+            .field("next_generation", &self.next_generation)
+            .finish_non_exhaustive()
+    }
+}
+
 impl SecureMemoryPool {
     /// Create a new secure memory pool
     pub fn new(config: SecurePoolConfig) -> Result<Arc<Self>> {
