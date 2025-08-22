@@ -14,7 +14,7 @@ High-performance Rust data structures and compression algorithms with memory saf
 - **💾 Blob Storage**: Advanced storage systems including trie-based indexing and offset-based compression
 - **📦 Specialized Containers**: Production-ready containers with 40-90% memory/performance improvements
 - **🗂️ Specialized Hash Maps**: Golden ratio optimized, string-optimized, and small inline maps with superior performance
-- **🌲 Advanced Tries**: LOUDS, Critical-Bit (with BMI2 acceleration), and Patricia tries with rank/select operations, hardware-accelerated path compression
+- **🌲 Advanced Tries**: LOUDS, Critical-Bit (with BMI2 acceleration), and Patricia tries with rank/select operations, hardware-accelerated path compression, and sophisticated nesting strategies
 - **🔒 Version-Based Synchronization**: Advanced token and version sequence management for safe concurrent FSA/Trie access
 - **🔗 Low-Level Synchronization**: Linux futex integration, thread-local storage, atomic operations framework
 - **⚡ Fiber Concurrency**: High-performance async/await with work-stealing, I/O integration, cooperative multitasking
