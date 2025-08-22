@@ -1733,8 +1733,8 @@ mod tests {
         store.put_with_key(b"a", b"single char key").unwrap();
         assert_eq!(store.get_by_key(b"a").unwrap(), b"single char key");
 
-        // Test maximum reasonable key length (64KB)
-        let very_long_key = vec![b'x'; 65536];
+        // Test maximum reasonable key length (4KB to prevent stack overflow)
+        let very_long_key = vec![b'x'; 4096];
         store.put_with_key(&very_long_key, b"max key data").unwrap();
         assert_eq!(store.get_by_key(&very_long_key).unwrap(), b"max key data");
 

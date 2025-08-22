@@ -439,8 +439,11 @@ fn test_fragment_compression_detection() {
     assert!(fragment_stats.compression_ratio >= 0.0);
     assert!(fragment_stats.compression_ratio <= 1.0);
 
-    // Even if no fragments are extracted yet, statistics should be initialized
-    assert_eq!(fragment_stats.fragment_count, 0); // Current implementation placeholder
+    // With BFS fragment detection, we should find fragments in the test data
+    assert!(fragment_stats.fragment_count > 0, "BFS fragment detection should find fragments in test data with repeating patterns");
+    
+    // The exact count may vary, but should be reasonable for the test data
+    assert!(fragment_stats.fragment_count <= 500, "Fragment count should be reasonable: found {}", fragment_stats.fragment_count);
 }
 
 #[test]

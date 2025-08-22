@@ -28,7 +28,7 @@ cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --check
 
 ### Search & Algorithms
 - **Rank/Select**: 11 variants with BMI2 acceleration (3.3 Gelem/s peak, 5-10x select speedup)
-- **Tries**: PatriciaTrie, CritBitTrie, DoubleArrayTrie with hardware acceleration
+- **Tries**: PatriciaTrie, CritBitTrie, DoubleArrayTrie, NestedLoudsTrie with hardware acceleration and sophisticated nesting strategies
 - **Search**: AdaptiveRankSelect with intelligent strategy selection
 - **Sorting**: 3 specialized sorting & search algorithms
 
@@ -59,7 +59,7 @@ cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --check
 - **Five-Level Concurrency**: `AdaptiveFiveLevelPool`, `NoLockingPool`, `MutexBasedPool`, `LockFreePool`, `ThreadLocalPool`, `FixedCapacityPool`
 - **Version-Based Sync**: `VersionManager`, `ReaderToken`, `WriterToken`, `TokenManager`, `ConcurrentPatriciaTrie`, `LazyFreeList`, `ConcurrencyLevel`
 - **Sync**: `FutexMutex`, `InstanceTls<T>`, `AtomicExt`
-- **Search**: `RankSelectInterleaved256`, `AdaptiveRankSelect`, `DoubleArrayTrie`, `PatriciaTrie`, `CritBitTrie`, `Bmi2Accelerator`
+- **Search**: `RankSelectInterleaved256`, `AdaptiveRankSelect`, `DoubleArrayTrie`, `PatriciaTrie`, `CritBitTrie`, `NestedLoudsTrie`, `Bmi2Accelerator`
 - **I/O**: `FiberAio`, `StreamBufferedReader`, `ZeroCopyReader`
 
 ### Features
