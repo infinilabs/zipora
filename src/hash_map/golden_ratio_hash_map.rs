@@ -35,6 +35,7 @@ use std::mem;
 /// map.insert("key", "value").unwrap();
 /// assert_eq!(map.get("key"), Some(&"value"));
 /// ```
+#[derive(Clone)]
 pub struct GoldenRatioHashMap<K, V, S = ahash::RandomState> {
     /// Storage for entries using FastVec for efficiency
     entries: FastVec<Entry<K, V>>,
@@ -55,7 +56,7 @@ pub struct GoldenRatioHashMap<K, V, S = ahash::RandomState> {
 }
 
 /// Internal entry storage with probe distance tracking
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Entry<K, V> {
     key: K,
     value: V,

@@ -258,9 +258,6 @@ impl SimdOps {
         let mut max_val = values[0];
 
         unsafe {
-            let mut min_vec = _mm256_set1_epi64x(min_val as i64);
-            let mut max_vec = _mm256_set1_epi64x(max_val as i64);
-
             let chunks = values.chunks_exact(4);
             let remainder = chunks.remainder();
 

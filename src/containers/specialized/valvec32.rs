@@ -19,11 +19,7 @@ use std::sync::Arc;
 extern crate libc;
 
 // Jemalloc detection and imports (matching topling-zip strategy)
-#[cfg(feature = "jemalloc")]
-extern crate jemalloc_sys;
-
-#[cfg(all(feature = "jemalloc", target_os = "linux"))]
-use jemalloc_sys::{mallocx, rallocx, MALLOCX_ALIGN};
+// Note: jemalloc feature not currently available, using standard allocator
 
 // Ensure libc is available for all platforms
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -154,12 +150,7 @@ impl<T> PreferAlignAlloc<T> {
         
         let nature_align = Self::nature_align();
         
-        #[cfg(all(feature = "jemalloc", target_os = "linux"))]
-        {
-            if nature_align > 16 {
-                return mallocx(bytes, MALLOCX_ALIGN(nature_align)) as *mut u8;
-            }
-        }
+        // Note: jemalloc optimization disabled - using standard allocator
         
         // Use aligned allocation for better cache performance when beneficial
         if nature_align > 16 && bytes >= nature_align {
@@ -192,12 +183,7 @@ impl<T> PreferAlignAlloc<T> {
         
         let nature_align = Self::nature_align();
         
-        #[cfg(all(feature = "jemalloc", target_os = "linux"))]
-        {
-            if nature_align > 16 {
-                return rallocx(ptr as *mut libc::c_void, new_size, MALLOCX_ALIGN(nature_align)) as *mut u8;
-            }
-        }
+        // Note: jemalloc optimization disabled - using standard allocator
         
         // Fall back to standard realloc pattern
         unsafe {
@@ -339,12 +325,7 @@ impl<T> ValVec32<T> {
             return Ok(Self::new());
         }
 
-        if capacity > MAX_CAPACITY {
-            return Err(ZiporaError::invalid_data(format!(
-                "Capacity {} exceeds maximum {}",
-                capacity, MAX_CAPACITY
-            )));
-        }
+        // Note: capacity is u32, so it can never exceed u32::MAX
 
         // Topling-zip style: use aligned allocation for optimal cache performance
         // Align to cache line (64 bytes) or at least 16 bytes for better performance
@@ -453,7 +434,6 @@ impl<T> ValVec32<T> {
     #[inline]
     pub fn reserve(&mut self, additional: u32) -> Result<()> {
         // Fast debug assertion for development
-        debug_assert!(additional <= MAX_CAPACITY, "Additional capacity reasonable");
         
         let required = self
             .len
@@ -475,12 +455,7 @@ impl<T> ValVec32<T> {
     #[inline(always)]
     fn calculate_new_capacity(&self, min_capacity: u32) -> Result<u32> {
         // Fast bounds check with unlikely hint
-        if unlikely(min_capacity > MAX_CAPACITY) {
-            return Err(ZiporaError::invalid_data(format!(
-                "Required capacity {} exceeds maximum {}",
-                min_capacity, MAX_CAPACITY
-            )));
-        }
+        // Note: min_capacity is u32, so it can never exceed u32::MAX
 
         // Topling-zip pattern: use larger_capacity and max with min_cap
         let new_cap = if self.capacity == 0 {
@@ -910,7 +885,6 @@ impl<T> ValVec32<T> {
     #[inline(always)]
     pub fn get(&self, index: u32) -> Option<&T> {
         // Topling-zip style bounds check with fast debug assertion
-        debug_assert!(index <= MAX_CAPACITY, "Index within reasonable bounds");
         
         // Optimize for the common case where index is valid (~95% of cases)
         if likely(index < self.len) {
@@ -933,7 +907,6 @@ impl<T> ValVec32<T> {
     #[inline(always)]
     pub fn get_mut(&mut self, index: u32) -> Option<&mut T> {
         // Topling-zip style bounds check with fast debug assertion
-        debug_assert!(index <= MAX_CAPACITY, "Index within reasonable bounds");
         
         // Optimize for the common case where index is valid (~95% of cases)
         if likely(index < self.len) {
@@ -1073,12 +1046,7 @@ impl<T> ValVec32<T> {
             .checked_add(additional)
             .ok_or_else(|| ZiporaError::invalid_data("Length overflow"))?;
 
-        if unlikely(new_len > MAX_CAPACITY) {
-            return Err(ZiporaError::invalid_data(format!(
-                "Resulting length {} would exceed maximum capacity {}",
-                new_len, MAX_CAPACITY
-            )));
-        }
+        // Note: new_len is u32, so it can never exceed u32::MAX
 
         // Reserve exactly what we need
         self.reserve(additional)?;
@@ -1149,12 +1117,7 @@ impl<T> ValVec32<T> {
             .checked_add(additional)
             .ok_or_else(|| ZiporaError::invalid_data("Length overflow"))?;
 
-        if unlikely(new_len > MAX_CAPACITY) {
-            return Err(ZiporaError::invalid_data(format!(
-                "Resulting length {} would exceed maximum capacity {}",
-                new_len, MAX_CAPACITY
-            )));
-        }
+        // Note: new_len is u32, so it can never exceed u32::MAX
 
         // Reserve exactly what we need
         self.reserve(additional)?;

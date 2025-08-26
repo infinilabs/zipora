@@ -75,10 +75,10 @@ impl CacheBuffer {
         self.data_buffer.clear();
         self.data_buffer.reserve(length);
         
-        let start_page = (offset / PAGE_SIZE as u64) as PageId;
+        let _start_page = (offset / PAGE_SIZE as u64) as PageId;
         let page_offset = (offset % PAGE_SIZE as u64) as usize;
-        let mut remaining = length;
-        let mut current_offset = page_offset;
+        let _remaining = length;
+        let _current_offset = page_offset;
         
         // Simplified for basic implementation
         self.data_buffer.resize(length, 0);

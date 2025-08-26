@@ -35,7 +35,9 @@ use crate::succinct::BitVector;
 use super::{
     RankSelectOps, RankSelectSimple, RankSelectSeparated256, RankSelectSeparated512,
     RankSelectInterleaved256, RankSelectFew, RankSelectMixedIL256,
-    bmi2_comprehensive::{Bmi2Capabilities, Bmi2SequenceOps, OptimizationStrategy},
+    bmi2_comprehensive::Bmi2Capabilities,
+    // Additional BMI2 operations (currently unused)
+    // bmi2_comprehensive::{Bmi2SequenceOps, OptimizationStrategy},
 };
 use std::fmt;
 

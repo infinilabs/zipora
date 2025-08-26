@@ -28,7 +28,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use zipora::fsa::{PatriciaTrie, Trie};
+//! use zipora::fsa::{PatriciaTrie, Trie, PatriciaConcurrencyLevel};
 //!
 //! // Basic usage with automatic optimizations
 //! let mut trie = PatriciaTrie::new();
@@ -41,7 +41,7 @@
 //! assert!(!trie.contains(b"he"));
 //!
 //! // Advanced usage with concurrency tokens
-//! let trie = PatriciaTrie::with_concurrency_level(ConcurrencyLevel::MultiWriteMultiRead);
+//! let trie = PatriciaTrie::with_concurrency_level(PatriciaConcurrencyLevel::MultiWriteMultiRead);
 //! let read_token = trie.acquire_read_token();
 //! let result = trie.lookup_with_token(b"hello", &read_token);
 //! ```
@@ -57,8 +57,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-#[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
+// SIMD prefetching (currently unused but available for optimization)
+// #[cfg(target_arch = "x86_64")]
+// use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
 
 /// Concurrency levels for Patricia Trie operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -454,7 +455,7 @@ impl PatriciaNode {
 /// # Examples
 ///
 /// ```rust
-/// use zipora::fsa::{PatriciaTrie, Trie, PatriciaConfig, ConcurrencyLevel};
+/// use zipora::fsa::{PatriciaTrie, Trie, PatriciaConfig, PatriciaConcurrencyLevel};
 ///
 /// // Basic usage with automatic optimizations
 /// let mut trie = PatriciaTrie::new();
@@ -473,7 +474,7 @@ impl PatriciaNode {
 ///
 /// // Concurrent usage with token-based access
 /// let config = PatriciaConfig {
-///     concurrency_level: ConcurrencyLevel::OneWriteMultiRead,
+///     concurrency_level: PatriciaConcurrencyLevel::OneWriteMultiRead,
 ///     use_bmi2: true,
 ///     use_simd: true,
 ///     ..Default::default()

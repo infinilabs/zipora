@@ -122,8 +122,9 @@ impl_atomic_ext!(AtomicIsize, isize);
 /// Platform-specific atomic optimizations
 #[cfg(target_arch = "x86_64")]
 pub mod x86_64_optimized {
-    use super::*;
-    use std::arch::x86_64::*;
+    // x86_64 optimizations (currently unused but available for future implementations)
+    // use super::*;
+    // use std::arch::x86_64::*;
 
     /// x86_64-specific optimized CAS for u64
     #[inline]

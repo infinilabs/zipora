@@ -10,7 +10,7 @@ use crate::blob_store::traits::{
 };
 use crate::containers::FastVec;
 use crate::error::{Result, ZiporaError};
-use crate::memory::{SecureMemoryPool, SecurePoolConfig};
+use crate::memory::SecureMemoryPool;
 use crate::RecordId;
 
 use std::io::{Read, Write};
@@ -230,7 +230,7 @@ impl FileHeader {
     fn from_bytes(bytes: &[u8; HEADER_SIZE]) -> Self {
         let mut magic = [0u8; 20];
         let mut class_name = [0u8; 20];
-        let mut padding = [0u8; 29];
+        let padding = [0u8; 29];
         
         magic.copy_from_slice(&bytes[0..20]);
         class_name.copy_from_slice(&bytes[20..40]);

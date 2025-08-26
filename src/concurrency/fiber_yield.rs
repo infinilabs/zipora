@@ -167,7 +167,7 @@ impl FiberYield {
     }
 }
 
-/// Thread-local yield controller for optimal performance
+// Thread-local yield controller for optimal performance
 thread_local! {
     static THREAD_LOCAL_YIELD: FiberYield = FiberYield::new();
 }

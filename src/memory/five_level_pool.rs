@@ -21,13 +21,18 @@
 //! - **Composability**: Different components can use different concurrency levels
 
 use crate::error::{ZiporaError, Result};
-use crate::memory::SecureMemoryPool;
-use std::sync::{Arc, Mutex, RwLock};
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use std::collections::HashMap;
-use std::marker::PhantomData;
+// Memory pool integration (currently unused in this implementation)  
+// use crate::memory::SecureMemoryPool;
+use std::sync::{Arc, Mutex};
+// Additional sync primitives (currently unused)
+// use std::sync::RwLock;
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+// Additional utilities (currently unused)
+// use std::collections::HashMap;
+// use std::marker::PhantomData;
 use std::ptr::NonNull;
-use std::mem::{MaybeUninit, align_of};
+use std::mem::align_of;
+// use std::mem::MaybeUninit;
 use std::alloc::{Layout, alloc, dealloc};
 
 /// Memory offset type for 32-bit addressing

@@ -38,14 +38,15 @@
 //! }).unwrap();
 //! ```
 
+// Arc used in test code
+#[cfg(test)]
 use std::sync::Arc;
-use std::collections::HashMap;
 
 use crate::error::{ZiporaError, Result};
 use crate::fsa::patricia_trie::{PatriciaTrie, PatriciaConfig};
 use crate::fsa::traits::Trie;
 use crate::StateId;
-use crate::fsa::token::{TokenManager, with_reader_token, with_writer_token, ReaderTokenAccess, WriterTokenAccess, TokenAccess};
+use crate::fsa::token::{TokenManager, with_reader_token, ReaderTokenAccess, WriterTokenAccess};
 use crate::fsa::version_sync::{ConcurrencyLevel, ReaderToken, WriterToken};
 
 /// Configuration for concurrent trie operations.
@@ -458,7 +459,6 @@ impl ConcurrentPatriciaTrie {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
 

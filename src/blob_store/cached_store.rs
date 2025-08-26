@@ -135,7 +135,7 @@ impl<T: BlobStore> CachedBlobStore<T> {
             self.cache.read(self.file_id, offset, length)
         } else {
             // Fallback to direct read
-            let mut data = vec![0u8; length];
+            let data = vec![0u8; length];
             // TODO: This would need actual file I/O integration
             Ok(CacheBuffer::from_data(data))
         }
