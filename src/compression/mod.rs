@@ -5,10 +5,19 @@
 //! performance requirements.
 
 pub mod adaptive;
+pub mod dict_zip;
 pub mod realtime;
+pub mod suffix_array;
 
 pub use adaptive::{AdaptiveCompressor, AdaptiveConfig, CompressionProfile};
+pub use dict_zip::{
+    DictionaryBuilder as PaZipDictionaryBuilder, DictionaryBuilderConfig, SuffixArrayDictionary, SuffixArrayDictionaryConfig,
+    PatternMatcher, DfaCache, Match,
+};
 pub use realtime::{CompressionMode, RealtimeCompressor, RealtimeConfig};
+pub use suffix_array::{
+    EnhancedSuffixArray, SuffixArrayCompressor, SuffixArrayConfig, SuffixArrayStats,
+};
 
 use crate::entropy::dictionary::{DictionaryBuilder, DictionaryCompressor};
 use crate::entropy::huffman::{HuffmanDecoder, HuffmanEncoder, HuffmanTree};

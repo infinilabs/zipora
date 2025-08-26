@@ -392,7 +392,7 @@ impl FragmentPool {
 
 /// Storage strategy decision for mixed storage approach
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-enum StorageStrategy {
+pub enum StorageStrategy {
     /// Use core string storage for simple strings
     #[default]
     Core,
@@ -454,34 +454,34 @@ struct NestedStorageStats {
 
 /// Compression metrics for tracking efficiency per level
 #[derive(Debug, Clone, Default)]
-struct CompressionMetrics {
+pub struct CompressionMetrics {
     /// Original input size in bytes
-    original_size: usize,
+    pub original_size: usize,
     /// Compressed size in bytes
-    compressed_size: usize,
+    pub compressed_size: usize,
     /// Nest scale factor for this level
-    nest_scale: f64,
+    pub nest_scale: f64,
     /// Efficiency ratio (compressed_size / original_size)
-    efficiency_ratio: f64,
+    pub efficiency_ratio: f64,
     /// Per-level breakdown
-    level_breakdown: Vec<LevelMetrics>,
+    pub level_breakdown: Vec<LevelMetrics>,
     /// Fragment compression contribution
-    fragment_savings: usize,
+    pub fragment_savings: usize,
 }
 
 /// Metrics for individual nesting levels
 #[derive(Debug, Clone, Default)]
-struct LevelMetrics {
+pub struct LevelMetrics {
     /// Level index
-    level: usize,
+    pub level: usize,
     /// Input size for this level
-    input_size: usize,
+    pub input_size: usize,
     /// Output size after compression
-    output_size: usize,
+    pub output_size: usize,
     /// Number of fragments extracted
-    fragment_count: usize,
+    pub fragment_count: usize,
     /// Storage strategy used
-    strategy: StorageStrategy,
+    pub strategy: StorageStrategy,
 }
 
 /// Fragment analyzer for sophisticated fragment detection
@@ -1033,16 +1033,13 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
     ) -> usize {
         let mut result = start;
         
-        // SIMD optimization temporarily disabled for stability
-        // TODO: Re-enable after fixing infinite loop issues
-        /*
+        // SIMD optimization for large groups (fixed infinite loop issues)
         #[cfg(target_arch = "x86_64")]
         {
-            if end - start >= 16 {
+            if end - start >= 32 {
                 return self.find_end_of_group_simd(strings, start, end, col, key_byte);
             }
         }
-        */
         
         // Fallback to scalar version
         while result < end {
@@ -1070,61 +1067,43 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
             let key_vec = _mm256_set1_epi8(key_byte as i8);
             let mut result = start;
             
-            // Process in chunks of 32 bytes when possible
+            // Process 32 strings at a time using SIMD
             while result + 32 <= end {
-                let mut all_match = true;
+                // Collect bytes from 32 consecutive strings at position col
+                let mut bytes = [0u8; 32];
+                let mut valid_count = 0;
                 
-                // Check 32 strings at once
-                for chunk_start in (result..result + 32).step_by(32) {
-                    let chunk_end = (chunk_start + 32).min(result + 32).min(end);
-                    let chunk_size = chunk_end - chunk_start;
-                    
-                    if chunk_size < 32 {
-                        // Handle remaining strings with scalar code
-                        for i in chunk_start..chunk_end {
-                            if col >= strings[i].len() || strings[i][col] != key_byte {
-                                return i;
-                            }
+                for i in 0..32 {
+                    let string_idx = result + i;
+                    if string_idx < end && col < strings[string_idx].len() {
+                        bytes[i] = strings[string_idx][col];
+                        valid_count += 1;
+                    } else {
+                        // Hit end of strings or string too short - fall back to scalar
+                        if string_idx >= end || col >= strings[string_idx].len() {
+                            return result + i;
                         }
                         break;
                     }
-                    
-                    // Collect bytes from chunk
-                    let mut bytes = [0u8; 32];
-                    let mut valid_bytes = 0;
-                    
-                    for (idx, i) in (chunk_start..chunk_end).enumerate() {
-                        if col < strings[i].len() {
-                            bytes[idx] = strings[i][col];
-                            valid_bytes += 1;
-                        } else {
-                            all_match = false;
-                            break;
-                        }
-                    }
-                    
-                    if !all_match {
-                        return chunk_start;
-                    }
-                    
-                    // SIMD comparison
-                    let data_vec = _mm256_loadu_si256(bytes.as_ptr() as *const _);
-                    let cmp = _mm256_cmpeq_epi8(key_vec, data_vec);
-                    let mask = _mm256_movemask_epi8(cmp);
-                    
-                    // Check if all valid bytes match (handle overflow)
-                    let expected_mask = if valid_bytes >= 32 {
-                        u32::MAX
-                    } else {
-                        (1u32 << valid_bytes) - 1
-                    };
-                    if (mask as u32 & expected_mask) != expected_mask {
-                        // Find first mismatch
-                        let mismatch_pos = (mask as u32 & expected_mask).trailing_zeros() as usize;
-                        return chunk_start + mismatch_pos;
-                    }
                 }
                 
+                if valid_count < 32 {
+                    // Partial chunk - process remaining with scalar code
+                    break;
+                }
+                
+                // SIMD comparison of all 32 bytes at once
+                let data_vec = _mm256_loadu_si256(bytes.as_ptr() as *const _);
+                let cmp = _mm256_cmpeq_epi8(key_vec, data_vec);
+                let mask = _mm256_movemask_epi8(cmp);
+                
+                if mask != -1i32 {
+                    // Found mismatch - find first non-matching string
+                    let mismatch_pos = (!mask as u32).trailing_zeros() as usize;
+                    return result + mismatch_pos;
+                }
+                
+                // All 32 strings matched - continue to next chunk
                 result += 32;
             }
             
@@ -1168,12 +1147,10 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
         let first_string = &strings[start];
         let mut common_len = col;
         
-        // SIMD optimization temporarily disabled for stability
-        // TODO: Re-enable after fixing performance issues
-        /*
+        // SIMD optimization for large groups (fixed performance issues)
         #[cfg(target_arch = "x86_64")]
         {
-            if end - start >= 8 && first_string.len() - col >= 16 {
+            if end - start >= 4 && first_string.len() - col >= 32 {
                 common_len = self.find_common_prefix_simd(
                     strings, start, end, col, effective_max_len
                 );
@@ -1182,7 +1159,6 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
                 }
             }
         }
-        */
         
         // Fallback to scalar version with prefetch hints
         for pos in col..first_string.len() {
@@ -1244,59 +1220,81 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
     ) -> usize {
         use std::arch::x86_64::*;
         
+        if start + 1 >= end {
+            return col;
+        }
+        
         let first_string = &strings[start];
         let mut common_len = col;
         let search_end = (col + max_len).min(first_string.len());
         
+        // Find minimum string length to avoid bounds checking in inner loop
+        let mut min_len = first_string.len();
+        for idx in (start + 1)..end {
+            min_len = min_len.min(strings[idx].len());
+        }
+        let safe_search_end = search_end.min(min_len);
+        
         unsafe {
-            // Process in 32-byte chunks
-            while common_len + 32 <= search_end {
+            // Process in 32-byte chunks with optimized comparison
+            while common_len + 32 <= safe_search_end {
                 let first_chunk = _mm256_loadu_si256(
                     first_string.as_ptr().add(common_len) as *const _
                 );
                 
-                let mut all_match = true;
-                
-                // Compare with all other strings in the group
+                // Optimized: check all strings in batches rather than one by one
                 for idx in (start + 1)..end {
-                    if common_len + 32 > strings[idx].len() {
-                        all_match = false;
-                        break;
-                    }
-                    
                     let other_chunk = _mm256_loadu_si256(
                         strings[idx].as_ptr().add(common_len) as *const _
                     );
                     
                     let cmp = _mm256_cmpeq_epi8(first_chunk, other_chunk);
-                    let mask = _mm256_movemask_epi8(cmp);
+                    let mask = _mm256_movemask_epi8(cmp) as u32;
                     
-                    if mask != -1 {
-                        // Find first mismatch within this chunk
+                    if mask != u32::MAX {
+                        // Found mismatch - find exact position
                         let mismatch_offset = (!mask).trailing_zeros() as usize;
-                        return common_len + mismatch_offset.min(32);
+                        return common_len + mismatch_offset;
                     }
                 }
                 
-                if !all_match {
-                    break;
-                }
+                // Check for delimiters in the chunk (optimized with SIMD)
+                let delimiter_chunks = [
+                    _mm256_set1_epi8(b'/' as i8),
+                    _mm256_set1_epi8(b'.' as i8),
+                    _mm256_set1_epi8(b'-' as i8),
+                    _mm256_set1_epi8(b'_' as i8),
+                ];
                 
-                // Check for delimiters in the chunk
-                let mut chunk_bytes = [0u8; 32];
-                std::ptr::copy_nonoverlapping(
-                    first_string.as_ptr().add(common_len),
-                    chunk_bytes.as_mut_ptr(),
-                    32
-                );
-                
-                for (i, &byte) in chunk_bytes.iter().enumerate() {
-                    if self.is_delimiter_cut(byte) {
-                        return common_len + i + 1;
+                for delimiter_chunk in &delimiter_chunks {
+                    let cmp = _mm256_cmpeq_epi8(first_chunk, *delimiter_chunk);
+                    let mask = _mm256_movemask_epi8(cmp) as u32;
+                    if mask != 0 {
+                        let delimiter_pos = mask.trailing_zeros() as usize;
+                        return common_len + delimiter_pos + 1;
                     }
                 }
                 
                 common_len += 32;
+            }
+            
+            // Handle remaining bytes with bounds checking
+            while common_len < safe_search_end {
+                let byte_at_pos = first_string[common_len];
+                
+                // Check if all strings match at this position
+                for idx in (start + 1)..end {
+                    if common_len >= strings[idx].len() || strings[idx][common_len] != byte_at_pos {
+                        return common_len;
+                    }
+                }
+                
+                // Check for delimiter cut
+                if self.is_delimiter_cut(byte_at_pos) {
+                    return common_len + 1;
+                }
+                
+                common_len += 1;
             }
         }
         

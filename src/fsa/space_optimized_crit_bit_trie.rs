@@ -27,10 +27,11 @@ use crate::fsa::traits::{
     TrieStats,
 };
 use crate::memory::secure_pool::{SecureMemoryPool, SecurePoolConfig};
-use crate::succinct::rank_select::bmi2_acceleration::{Bmi2Capabilities, Bmi2PrefetchOps};
+use crate::succinct::rank_select::bmi2_acceleration::Bmi2Capabilities;
 use crate::{FastVec, StateId};
 use crossbeam_utils::CachePadded;
-use std::mem::align_of;
+// Memory alignment utilities (currently unused)
+// use std::mem::align_of;
 use std::sync::Arc;
 
 /// Variable-width integer encoding for space optimization
@@ -281,7 +282,14 @@ impl Bmi2CritBitOps {
             if key1[byte_pos] != key2[byte_pos] {
                 let diff = key1[byte_pos] ^ key2[byte_pos];
                 unsafe {
-                    let bit_pos = 7 - _lzcnt_u32(diff as u32) as u8;
+                    // Find the most significant bit position in the byte (0-7)
+                    // _lzcnt_u32 counts leading zeros in 32-bit word, so subtract 24 to get bit position in byte
+                    let leading_zeros = _lzcnt_u32(diff as u32);
+                    let bit_pos = if leading_zeros >= 24 {
+                        7 - (leading_zeros - 24) as u8
+                    } else {
+                        7 // fallback for unexpected case
+                    };
                     return PackedCritPos::new(byte_pos, bit_pos, false, false);
                 }
             }
@@ -421,7 +429,7 @@ struct TrieAdaptiveStats {
 /// # Examples
 ///
 /// ```rust
-/// use zipora::fsa::{SpaceOptimizedCritBitTrie, Trie};
+/// use zipora::fsa::{SpaceOptimizedCritBitTrie, Trie, StatisticsProvider};
 ///
 /// let mut trie = SpaceOptimizedCritBitTrie::new();
 /// trie.insert(b"hello").unwrap();

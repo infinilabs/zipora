@@ -21,7 +21,8 @@
 //! - **Sequential Access**: 90%+ cache hit rate with prefetch optimization
 
 use crate::error::{Result, ZiporaError};
-use crate::succinct::BitVector;
+// BitVector utilities (currently unused in this module)
+// use crate::succinct::BitVector;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Runtime BMI2 capabilities detection and caching

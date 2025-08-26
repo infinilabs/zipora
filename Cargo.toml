@@ -139,6 +139,10 @@ harness = false
 name = "crit_bit_trie_bench"
 harness = false
 
+[[bench]]
+name = "dict_zip_bench"
+harness = false
+
 [profile.release]
 opt-level = 3           # Maximum optimization level
 lto = "fat"            # Full link-time optimization (better than "thin")

@@ -39,7 +39,8 @@
 
 use std::cell::RefCell;
 use std::sync::Arc;
-use std::thread::{self, ThreadId};
+// Thread utilities for token management (self and ThreadId currently unused)
+// use std::thread::{self, ThreadId};
 use std::time::{Duration, Instant};
 
 use crate::error::{ZiporaError, Result};

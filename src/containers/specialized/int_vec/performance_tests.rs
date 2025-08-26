@@ -3,7 +3,9 @@
 //! These tests validate the performance targets and ensure the implementation
 //! meets the compression ratio and speed requirements.
 
+#[cfg(test)]
 use super::*;
+#[cfg(test)]
 use std::time::Instant;
 
 /// Performance test data generator

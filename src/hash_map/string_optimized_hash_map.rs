@@ -13,10 +13,11 @@ use crate::hash_map::hash_functions::{
 };
 use crate::hash_map::simd_string_ops::{get_global_simd_ops, SimdStringOps};
 use crate::memory::SecureMemoryPool;
-use std::borrow::Borrow;
+// Additional traits and utilities (currently unused)
+// use std::borrow::Borrow;
 use std::fmt;
 use std::hash::{BuildHasher, Hash, Hasher};
-use std::ptr::NonNull;
+// use std::ptr::NonNull;
 use std::sync::Arc;
 
 /// String-optimized hash map with interning and SIMD acceleration

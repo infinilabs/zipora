@@ -6,7 +6,7 @@
 //! - Zero heap allocations until fallback threshold
 //! - Automatic fallback to larger hash map when needed
 
-use crate::error::{Result, ZiporaError};
+use crate::error::Result;
 use crate::hash_map::GoldenRatioHashMap;
 use std::borrow::Borrow;
 use std::fmt;

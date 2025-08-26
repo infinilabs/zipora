@@ -10,7 +10,7 @@ use std::mem;
 
 mod int_vec_simd;
 mod performance_tests;
-use int_vec_simd::{BitOps, SimdOps, CpuFeatures, PrefetchOps, CacheOps};
+use int_vec_simd::{BitOps, SimdOps, PrefetchOps};
 
 /// Trait for integer types supported by IntVec
 pub trait PackedInt: 

@@ -7,7 +7,7 @@ use crate::blob_store::sorted_uint_vec::SortedUintVecBuilder;
 use crate::blob_store::zip_offset::{ZipOffsetBlobStore, ZipOffsetBlobStoreConfig};
 use crate::containers::FastVec;
 use crate::error::{Result, ZiporaError};
-use crate::memory::{SecureMemoryPool, SecurePoolConfig};
+use crate::memory::SecureMemoryPool;
 use crate::RecordId;
 
 #[cfg(feature = "serde")]
@@ -261,10 +261,10 @@ impl ZipOffsetBlobStoreBuilder {
         self.offset_builder.push(self.current_offset)?;
         
         // Build compressed offset index
-        let offsets = self.offset_builder.finish()?;
+        let _offsets = self.offset_builder.finish()?;
         
         // Create the blob store
-        let mut store = if let Some(pool) = self.pool {
+        let store = if let Some(pool) = self.pool {
             ZipOffsetBlobStore::with_pool(self.config, pool)?
         } else {
             ZipOffsetBlobStore::with_config(self.config)?

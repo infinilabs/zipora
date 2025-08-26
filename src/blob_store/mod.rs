@@ -34,6 +34,11 @@ pub use traits::{
 pub use zip_offset::{ZipOffsetBlobStore, ZipOffsetBlobStoreConfig};
 pub use zip_offset_builder::{ZipOffsetBlobStoreBuilder, BatchZipOffsetBlobStoreBuilder, BuilderStats};
 
+// Re-export PA-Zip dictionary compression blob store
+pub use crate::compression::dict_zip::{
+    DictZipBlobStore, DictZipBlobStoreBuilder, DictZipBlobStoreStats, DictZipConfig
+};
+
 #[cfg(feature = "zstd")]
 pub use compressed::ZstdBlobStore;
 

@@ -5,6 +5,7 @@
 
 use zipora::{
     fsa::nested_louds_trie::{NestedLoudsTrie, NestingConfig},
+    fsa::{PrefixIterable, Trie},
     succinct::RankSelectSimple,
 };
 

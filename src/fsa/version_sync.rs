@@ -40,14 +40,18 @@
 //! // Tokens are automatically released when dropped (RAII)
 //! ```
 
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+// Additional sync primitives (currently unused)
+// use std::sync::atomic::AtomicU8;
+// use std::sync::RwLock;
 use std::thread::{self, ThreadId};
 use std::time::Instant;
 use std::collections::VecDeque;
 
 use crate::error::{ZiporaError, Result};
-use crate::memory::SecureMemoryPool;
+// Memory pool integration (currently unused in this module)
+// use crate::memory::SecureMemoryPool;
 
 /// Graduated concurrency control levels providing optimal performance across different threading scenarios.
 ///

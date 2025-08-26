@@ -15,6 +15,8 @@ use std::io::{BufReader, BufWriter, Read, Write};
 use std::marker::PhantomData;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+#[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
 /// Configuration for external sorting operations

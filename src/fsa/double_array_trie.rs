@@ -101,6 +101,7 @@ impl Default for DoubleArrayTrieConfig {
 ///
 /// Provides constant-time state transitions with compact memory representation.
 /// Each state uses exactly 8 bytes (4 bytes base + 4 bytes check with flags).
+#[derive(Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct DoubleArrayTrie {
     /// Base array for transition calculations

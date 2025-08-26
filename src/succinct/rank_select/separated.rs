@@ -34,7 +34,9 @@
 use super::{
     BuilderOptions, CpuFeatures, RankSelectBuilder, RankSelectOps, RankSelectPerformanceOps,
 };
-use super::config::{SeparatedStorageConfig, StorageLayout, MemoryStrategy};
+use super::config::SeparatedStorageConfig;
+// Additional config types (currently unused)
+// use super::config::{StorageLayout, MemoryStrategy};
 use crate::FastVec;
 use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;

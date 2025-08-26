@@ -313,8 +313,8 @@ impl LruList {
     fn insert_head<K, V>(&self, nodes: &mut [LruNode<K, V>], node_idx: u32) {
         let old_head = self.head.swap(node_idx, Ordering::Relaxed);
         
-        nodes[(node_idx as usize)].prev.store(INVALID_NODE, Ordering::Relaxed);
-        nodes[(node_idx as usize)].next.store(old_head, Ordering::Relaxed);
+        nodes[node_idx as usize].prev.store(INVALID_NODE, Ordering::Relaxed);
+        nodes[node_idx as usize].next.store(old_head, Ordering::Relaxed);
         
         if old_head != INVALID_NODE {
             nodes[old_head as usize].prev.store(node_idx, Ordering::Relaxed);
@@ -328,8 +328,8 @@ impl LruList {
     
     /// Remove node from anywhere in the list
     fn remove<K, V>(&self, nodes: &mut [LruNode<K, V>], node_idx: u32) {
-        let prev = nodes[(node_idx as usize)].prev.load(Ordering::Relaxed);
-        let next = nodes[(node_idx as usize)].next.load(Ordering::Relaxed);
+        let prev = nodes[node_idx as usize].prev.load(Ordering::Relaxed);
+        let next = nodes[node_idx as usize].next.load(Ordering::Relaxed);
         
         if prev != INVALID_NODE {
             nodes[prev as usize].next.store(next, Ordering::Relaxed);
@@ -345,8 +345,8 @@ impl LruList {
             self.tail.store(prev, Ordering::Relaxed);
         }
         
-        nodes[(node_idx as usize)].prev.store(INVALID_NODE, Ordering::Relaxed);
-        nodes[(node_idx as usize)].next.store(INVALID_NODE, Ordering::Relaxed);
+        nodes[node_idx as usize].prev.store(INVALID_NODE, Ordering::Relaxed);
+        nodes[node_idx as usize].next.store(INVALID_NODE, Ordering::Relaxed);
         
         self.count.fetch_sub(1, Ordering::Relaxed);
     }
@@ -355,13 +355,13 @@ impl LruList {
     fn move_to_head<K, V>(&self, nodes: &mut [LruNode<K, V>], node_idx: u32) {
         // If already at head, just update access info
         if self.head.load(Ordering::Relaxed) == node_idx {
-            nodes[(node_idx as usize)].update_access();
+            nodes[node_idx as usize].update_access();
             return;
         }
         
         self.remove(nodes, node_idx);
         self.insert_head(nodes, node_idx);
-        nodes[(node_idx as usize)].update_access();
+        nodes[node_idx as usize].update_access();
     }
     
     /// Get least recently used node index
@@ -557,14 +557,14 @@ where
         drop(hash_map);
         
         let mut nodes = self.nodes.write().ok()?;
-        if (node_idx as usize) >= nodes.len() || !nodes[(node_idx as usize)].is_valid {
+        if (node_idx as usize) >= nodes.len() || !nodes[node_idx as usize].is_valid {
             return None;
         }
         
         // Move to head of LRU list (mark as most recently used)
         self.lru_list.move_to_head(&mut nodes, node_idx);
         
-        let value = nodes[(node_idx as usize)].value.clone();
+        let value = nodes[node_idx as usize].value.clone();
         
         if self.config.enable_statistics {
             self.stats.record_hit();
@@ -583,8 +583,8 @@ where
             if let Some(&node_idx) = hash_map.get(&key) {
                 // Update existing entry
                 let mut nodes = self.nodes.write().map_err(|_| ZiporaError::out_of_memory(0))?;
-                if (node_idx as usize) < nodes.len() && nodes[(node_idx as usize)].is_valid {
-                    let old_value = std::mem::replace(&mut nodes[(node_idx as usize)].value, value);
+                if (node_idx as usize) < nodes.len() && nodes[node_idx as usize].is_valid {
+                    let old_value = std::mem::replace(&mut nodes[node_idx as usize].value, value);
                     self.lru_list.move_to_head(&mut nodes, node_idx);
                     
                     if self.config.enable_statistics {
@@ -607,7 +607,7 @@ where
         // Initialize new node
         {
             let mut nodes = self.nodes.write().map_err(|_| ZiporaError::out_of_memory(0))?;
-            nodes[(node_idx as usize)] = LruNode::new(key.clone(), value, hash);
+            nodes[node_idx as usize] = LruNode::new(key.clone(), value, hash);
             self.lru_list.insert_head(&mut nodes, node_idx);
         }
         
@@ -632,15 +632,15 @@ where
         drop(hash_map);
         
         let mut nodes = self.nodes.write().ok()?;
-        if (node_idx as usize) >= nodes.len() || !nodes[(node_idx as usize)].is_valid {
+        if (node_idx as usize) >= nodes.len() || !nodes[node_idx as usize].is_valid {
             return None;
         }
         
         // Remove from LRU list
         self.lru_list.remove(&mut nodes, node_idx);
         
-        let value = nodes[(node_idx as usize)].value.clone();
-        nodes[(node_idx as usize)].reset();
+        let value = nodes[node_idx as usize].value.clone();
+        nodes[node_idx as usize].reset();
         
         // Return to free list
         if let Ok(mut free_nodes) = self.free_nodes.lock() {
@@ -747,12 +747,12 @@ where
         let mut nodes = self.nodes.write().map_err(|_| ZiporaError::out_of_memory(0))?;
         
         // Check validity and get key/value for callback before mutations
-        if !(lru_node_idx as usize) < nodes.len() || !nodes[(lru_node_idx as usize)].is_valid {
+        if !(lru_node_idx as usize) < nodes.len() || !nodes[lru_node_idx as usize].is_valid {
             return Err(ZiporaError::out_of_memory(0).into());
         }
         
-        let key = nodes[(lru_node_idx as usize)].key.clone();
-        let value = nodes[(lru_node_idx as usize)].value.clone();
+        let key = nodes[lru_node_idx as usize].key.clone();
+        let value = nodes[lru_node_idx as usize].value.clone();
         
         // Call eviction callback
         self.eviction_callback.on_evict(&key, &value);
@@ -767,7 +767,7 @@ where
         self.lru_list.remove(&mut nodes, lru_node_idx);
         
         // Reset node and return to free list
-        nodes[(lru_node_idx as usize)].reset();
+        nodes[lru_node_idx as usize].reset();
         
         {
             let mut free_nodes = self.free_nodes.lock().map_err(|_| ZiporaError::out_of_memory(0))?;
