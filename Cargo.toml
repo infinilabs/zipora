@@ -124,6 +124,10 @@ name = "compressed_sparse_trie_bench"
 harness = false
 
 [[bench]]
+name = "cache_locality_bench"
+harness = false
+
+[[bench]]
 name = "comprehensive_trie_benchmarks"
 harness = false
 

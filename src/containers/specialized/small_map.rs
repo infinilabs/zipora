@@ -159,7 +159,7 @@ impl<K, V> SmallMap<K, V> {
     }
 }
 
-impl<K: PartialEq + Hash + Eq + 'static, V> SmallMap<K, V> {
+impl<K: PartialEq + Hash + Eq + 'static + Clone, V: Clone> SmallMap<K, V> {
     /// Find the index of a key in the small storage using optimized search
     #[inline(always)]
     fn find_key_index(
@@ -575,7 +575,11 @@ impl<K: PartialEq + Hash + Eq + 'static, V> SmallMap<K, V> {
     /// Promotes the small map to a large map
     ///
     /// This is called automatically when the size threshold is exceeded.
-    fn promote_to_large(&mut self) -> Result<()> {
+    fn promote_to_large(&mut self) -> Result<()> 
+    where
+        K: Clone,
+        V: Clone,
+    {
         if let SmallMapStorage::Small { keys, values, len } = &mut self.storage {
             let mut large_map = GoldHashMap::new();
 
@@ -620,7 +624,7 @@ impl<K, V> Drop for SmallMap<K, V> {
     }
 }
 
-impl<K: fmt::Debug + PartialEq + Hash + Eq + 'static, V: fmt::Debug> fmt::Debug for SmallMap<K, V> {
+impl<K: fmt::Debug + PartialEq + Hash + Eq + 'static + Clone, V: fmt::Debug + Clone> fmt::Debug for SmallMap<K, V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_map().entries(self.iter()).finish()
     }
@@ -640,7 +644,7 @@ impl<K: Clone + PartialEq + Hash + Eq + 'static, V: Clone> Clone for SmallMap<K,
     }
 }
 
-impl<K: PartialEq + Hash + Eq + 'static, V: PartialEq> PartialEq for SmallMap<K, V> {
+impl<K: PartialEq + Hash + Eq + 'static + Clone, V: PartialEq + Clone> PartialEq for SmallMap<K, V> {
     fn eq(&self, other: &Self) -> bool {
         if self.len() != other.len() {
             return false;
@@ -657,7 +661,7 @@ impl<K: PartialEq + Hash + Eq + 'static, V: PartialEq> PartialEq for SmallMap<K,
     }
 }
 
-impl<K: Eq + PartialEq + Hash + 'static, V: Eq> Eq for SmallMap<K, V> {}
+impl<K: Eq + PartialEq + Hash + 'static + Clone, V: Eq + Clone> Eq for SmallMap<K, V> {}
 
 /// Iterator over SmallMap key-value pairs
 pub enum SmallMapIter<'a, K, V> {
@@ -949,7 +953,10 @@ impl<V> SmallMap<u8, V> {
 
     /// Optimized get method using SIMD search for u8 keys
     #[inline(always)]
-    pub fn get_fast(&self, key: &u8) -> Option<&V> {
+    pub fn get_fast(&self, key: &u8) -> Option<&V> 
+    where
+        V: Clone,
+    {
         match &self.storage {
             SmallMapStorage::Small { keys, values, len } => {
                 // SIMD optimization: vectorized search for u8 keys
