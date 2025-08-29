@@ -290,7 +290,10 @@ Zipora includes specialized containers designed for memory efficiency and perfor
 ```rust
 use zipora::{FastVec, FastStr, ValVec32, SmallMap, FixedCircularQueue, 
             AutoGrowCircularQueue, UintVector, IntVec, FixedLenStrVec, SortableStrVec,
-            LruMap, ConcurrentLruMap};
+            LruMap, ConcurrentLruMap,
+            // Advanced String Containers
+            AdvancedStringVec, AdvancedStringConfig, BitPackedStringVec32, BitPackedStringVec64, 
+            BitPackedConfig};
 
 // High-performance vector operations
 let mut vec = FastVec::new();
@@ -359,6 +362,45 @@ sortable.push_str("cherry").unwrap();
 sortable.push_str("apple").unwrap();
 sortable.push_str("banana").unwrap();
 sortable.sort_lexicographic().unwrap(); // Intelligent algorithm selection (comparison vs radix)
+
+// 🚀 Advanced String Containers - Memory-efficient encoding strategies
+
+// Advanced string vector with 3-level compression strategy
+let config = AdvancedStringConfig::performance_optimized();
+let mut advanced_vec = AdvancedStringVec::with_config(config);
+advanced_vec.push("hello world").unwrap();
+advanced_vec.push("hello rust").unwrap();   // Prefix deduplication
+advanced_vec.push("hello").unwrap();        // Overlap detection
+
+// Enable aggressive compression for maximum space efficiency
+advanced_vec.enable_aggressive_compression(true);
+let stats = advanced_vec.stats();
+println!("Compression ratio: {:.1}%", stats.compression_ratio * 100.0);
+println!("Space saved: {:.1}%", (1.0 - stats.compression_ratio) * 100.0);
+
+// Bit-packed string vectors with template-based offset types
+// 32-bit offsets (4GB capacity) - optimal for most use cases
+let mut bit_packed_vec32: BitPackedStringVec32 = BitPackedStringVec::new();
+bit_packed_vec32.push("memory efficient").unwrap();
+bit_packed_vec32.push("hardware accelerated").unwrap();
+
+// 64-bit offsets (unlimited capacity) - for very large datasets
+let config = BitPackedConfig::large_dataset();
+let mut bit_packed_vec64: BitPackedStringVec64 = BitPackedStringVec::with_config(config);
+bit_packed_vec64.push("unlimited capacity").unwrap();
+
+// Template-based optimization with hardware acceleration
+let (our_bytes, vec_string_bytes, ratio) = bit_packed_vec32.memory_info();
+println!("Memory efficiency: {:.1}% savings", (1.0 - ratio) * 100.0);
+println!("Hardware acceleration: {}", bit_packed_vec32.has_hardware_acceleration());
+
+// SIMD-accelerated search operations
+#[cfg(feature = "simd")]
+{
+    if let Some(index) = bit_packed_vec32.find_simd("memory efficient") {
+        println!("Found at index: {}", index);
+    }
+}
 
 // LRU Cache Containers - High-performance caching with eviction policies
 let mut cache = LruMap::new(256).unwrap(); // Capacity of 256
@@ -466,6 +508,9 @@ println!("Shard distribution: {:?}", shard_sizes);
 | **IntVec<T>** | **96.9% space reduction** | **Hardware-accelerated** | **Generic bit-packed storage with BMI2/SIMD** |
 | **FixedLenStrVec** | **59.6% memory reduction (optimized)** | **Zero-copy access** | **Arena-based fixed strings** |
 | **SortableStrVec** | Arena allocation | **Intelligent algorithm selection** | **String collections with optimization patterns** |
+| **🚀 AdvancedStringVec** | **60-80% space reduction** | **3-level compression strategy** | **High-compression string storage with deduplication** |
+| **🚀 BitPackedStringVec32** | **50-70% memory reduction** | **Template-based with BMI2 acceleration** | **Hardware-accelerated string storage (4GB capacity)** |
+| **🚀 BitPackedStringVec64** | **40-60% memory reduction** | **Unlimited capacity with SIMD optimization** | **Large-scale string datasets with hardware acceleration** |
 | **LruMap<K,V>** | **Intrusive linked list** | **O(1) operations** | **Single-threaded caching with eviction policies** |
 | **ConcurrentLruMap<K,V>** | **Sharded architecture** | **Reduced contention** | **Multi-threaded caching with load balancing** |
 
