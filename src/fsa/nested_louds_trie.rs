@@ -323,7 +323,7 @@ struct TrieNode {
 
 /// Fragment data for compression
 #[derive(Debug, Clone)]
-/// Fragment extracted from the trie (topling-zip style memory optimization)
+/// Fragment extracted from the trie (advanced memory optimization)
 #[repr(C, align(8))]  // Cache-line aligned for performance
 struct Fragment {
     /// Fragment ID (32-bit for memory efficiency)
@@ -342,7 +342,7 @@ struct Fragment {
     _reserved: [u8; 7],
 }
 
-/// Compact fragment pool for memory efficiency (topling-zip pattern)
+/// Compact fragment pool for memory efficiency (advanced optimization pattern)
 #[repr(align(64))]  // Cache line alignment
 struct FragmentPool {
     /// Compressed fragment data storage
@@ -365,7 +365,7 @@ impl FragmentPool {
         }
     }
     
-    /// Allocate space for fragment data (topling-zip style)
+    /// Allocate space for fragment data (advanced style)
     fn allocate(&mut self, data: &[u8]) -> u32 {
         let offset = self.data.len() as u32;
         self.data.extend_from_slice(data);
@@ -731,7 +731,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
             .map(|layer| layer.stats.memory_usage)
             .sum();
 
-        // Use compact fragment pool for memory calculation (topling-zip optimization)
+        // Use compact fragment pool for memory calculation (advanced optimization)
         let fragment_memory = self.fragment_pool.allocated_size + 
             (self.fragments.len() * std::mem::size_of::<Fragment>());
 
@@ -747,7 +747,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
         )
     }
 
-    /// Advanced fragment extraction with topling-zip-style analysis
+    /// Advanced fragment extraction with sophisticated analysis
     fn extract_fragments(&mut self) -> Result<()> {
         if !self.config.enable_mixed_storage {
             // Use simple extraction for compatibility
@@ -803,7 +803,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
         Ok(())
     }
 
-    /// Build string pool with recursive nesting loop (core topling-zip algorithm)
+    /// Build string pool with recursive nesting loop (core advanced algorithm)
     fn build_strpool_loop(&mut self, strings: &[Vec<u8>]) -> Result<()> {
         let mut current_strings = strings.to_vec();
         let mut level = 0;
@@ -916,7 +916,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
         Ok((fragments, remaining_strings))
     }
 
-    /// Build comprehensive fragment analysis using topling-zip BFS algorithm
+    /// Build comprehensive fragment analysis using advanced BFS algorithm
     fn build_fragment_analysis(&mut self, strings: &[Vec<u8>]) -> Result<()> {
         // Clear previous analysis
         self.fragment_analyzer.common_substrings.clear();
@@ -927,7 +927,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
         Ok(())
     }
 
-    /// BFS-based fragment detection (core topling-zip algorithm)
+    /// BFS-based fragment detection (core advanced algorithm)
     fn build_fragments_bfs(&mut self, strings: &[Vec<u8>]) -> Result<()> {
         use std::collections::VecDeque;
         
@@ -947,9 +947,9 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
             col: 0,
         });
         
-        // Calculate adaptive fragment lengths using topling-zip formula
+        // Calculate adaptive fragment lengths using advanced formula
         let min_frag_len = self.fragment_analyzer.min_fragment_size;
-        let max_frag_len = self.fragment_analyzer.max_fragment_size.min(253); // topling-zip limit
+        let max_frag_len = self.fragment_analyzer.max_fragment_size.min(253); // standard limit
         let nest_level = self.config.max_levels;
         
         while let Some(range) = queue.pop_front() {
@@ -983,7 +983,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
                     
                     let fragment_len = common_len - range.col;
                     
-                    // Apply topling-zip frequency-based selection criteria
+                    // Apply advanced frequency-based selection criteria
                     if self.should_compress_fragment(frequency, fragment_len, 3) {
                         let fragment_data = strings[child_start][range.col..common_len].to_vec();
                         
@@ -1051,7 +1051,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
         result
     }
     
-    /// SIMD-accelerated group finding (topling-zip optimization)
+    /// SIMD-accelerated group finding (advanced optimization)
     #[cfg(target_arch = "x86_64")]
     fn find_end_of_group_simd(
         &self,
@@ -1134,7 +1134,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
             return col + 1;
         }
         
-        // Calculate adaptive fragment lengths (topling-zip formula)
+        // Calculate adaptive fragment lengths (advanced formula)
         let q = if nest_level > 0 {
             ((max_frag_len as f64) / (min_frag_len as f64)).powf(1.0 / (nest_level as f64 + 1.0))
         } else {
@@ -1142,7 +1142,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
         };
         
         let adaptive_max_len = (min_frag_len as f64 * q).ceil() as usize;
-        let effective_max_len = adaptive_max_len.min(253); // topling-zip limit
+        let effective_max_len = adaptive_max_len.min(253); // standard limit
         
         let first_string = &strings[start];
         let mut common_len = col;
@@ -1208,7 +1208,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
         std::cmp::max(common_len, col + min_frag_len.min(first_string.len() - col))
     }
     
-    /// SIMD-accelerated common prefix finding (topling-zip optimization)
+    /// SIMD-accelerated common prefix finding (advanced optimization)
     #[cfg(target_arch = "x86_64")]
     fn find_common_prefix_simd(
         &self,
@@ -1306,7 +1306,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
         self.fragment_analyzer.delimiters.contains(&byte) || byte.is_ascii_punctuation()
     }
     
-    /// Apply topling-zip frequency-based fragment selection
+    /// Apply advanced frequency-based fragment selection
     fn should_compress_fragment(&self, frequency: usize, fragment_length: usize, min_link_len: usize) -> bool {
         frequency >= fragment_length && fragment_length >= min_link_len
     }
@@ -2568,7 +2568,7 @@ mod tests {
 
     #[test]
     fn test_advanced_nesting_strategies() {
-        // Test advanced nesting strategies with topling-zip-style features
+        // Test advanced nesting strategies with sophisticated features
         let config = NestingConfig::builder()
             .max_levels(3)
             .fragment_compression_ratio(0.4)

@@ -5,8 +5,9 @@
 use crate::blob_store::{BlobStore, BlobStoreStats};
 use crate::entropy::{
     DictionaryBuilder, DictionaryCompressor, EntropyStats, HuffmanDecoder, HuffmanEncoder,
-    HuffmanTree, RansEncoder,
+    HuffmanTree,
 };
+use crate::entropy::rans::{Rans64Encoder, ParallelX1};
 use crate::error::{Result, ZiporaError};
 
 /// Compression algorithm type for entropy blob store
@@ -212,7 +213,7 @@ impl<S: BlobStore> BlobStore for HuffmanBlobStore<S> {
 pub struct RansBlobStore<S: BlobStore> {
     inner: S,
     stats: EntropyCompressionStats,
-    encoder: Option<RansEncoder>,
+    encoder: Option<Rans64Encoder<ParallelX1>>,
 }
 
 impl<S: BlobStore> RansBlobStore<S> {
@@ -232,7 +233,7 @@ impl<S: BlobStore> RansBlobStore<S> {
             frequencies[byte as usize] += 1;
         }
 
-        let encoder = RansEncoder::new(&frequencies)?;
+        let encoder = Rans64Encoder::<ParallelX1>::new(&frequencies)?;
         self.encoder = Some(encoder);
 
         Ok(())

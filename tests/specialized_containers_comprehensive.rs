@@ -1,7 +1,7 @@
 //! Comprehensive test suite for specialized containers
 //!
 //! This module provides exhaustive testing for all 11 specialized containers
-//! from the topling-gap analysis, ensuring 95%+ coverage, correctness,
+//! from advanced gap analysis, ensuring 95%+ coverage, correctness,
 //! and integration with existing zipora components.
 
 use proptest::prelude::*;

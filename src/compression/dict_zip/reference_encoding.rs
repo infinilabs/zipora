@@ -1,6 +1,6 @@
 //! Reference-compliant PA-Zip encoding implementation
 //!
-//! This module implements the exact compression logic from the topling-zip reference
+//! This module implements the exact compression logic from the reference
 //! implementation, using direct bit operations instead of complex object-oriented patterns.
 //! 
 //! The goal is to match the reference implementation bit-for-bit while maintaining
@@ -9,7 +9,7 @@
 use crate::error::{Result, ZiporaError};
 use std::io::Write;
 
-/// DzType enumeration matching topling-zip exactly
+/// DzType enumeration matching the reference implementation exactly
 ///
 /// This represents the 8 compression types with direct u8 conversion,
 /// matching the C++ enum exactly:
@@ -60,7 +60,7 @@ impl DzType {
     }
 }
 
-/// DzEncodingMeta structure matching topling-zip exactly
+/// DzEncodingMeta structure matching the reference implementation exactly
 ///
 /// This matches the C++ structure:
 /// ```cpp
@@ -75,7 +75,7 @@ pub struct DzEncodingMeta {
     pub len: i8, // Encoding length in bytes (can be negative for special cases)
 }
 
-/// GetBackRef_EncodingMeta function matching topling-zip exactly
+/// GetBackRef_EncodingMeta function matching the reference implementation exactly
 ///
 /// This is the exact implementation from the C++ reference:
 /// ```cpp
@@ -214,7 +214,7 @@ pub fn write_var_size_t<W: Write>(writer: &mut W, mut value: usize) -> Result<()
     Ok(())
 }
 
-/// Direct bit-level encoding operations matching topling-zip
+/// Direct bit-level encoding operations matching the reference implementation
 ///
 /// This structure provides the exact bit-level encoding operations used
 /// in the reference implementation, with direct byte writing instead of
@@ -450,7 +450,7 @@ impl<W: Write> ReferenceEncoder<W> {
 
 /// Hash table for local pattern matching (matching reference implementation)
 ///
-/// This implements the same hash table structure used in topling-zip for
+/// This implements the same hash table structure used in the reference implementation for
 /// finding local matches within the sliding window.
 #[derive(Debug)]
 struct LocalMatchHashTable {
@@ -573,10 +573,10 @@ impl LocalMatchHashTable {
     }
 }
 
-/// Core compression engine matching topling-zip zipRecord_impl2
+/// Core compression engine matching the reference zipRecord_impl2
 ///
 /// This function implements the exact compression algorithm from the
-/// topling-zip reference implementation, using direct bit operations
+/// reference implementation, using direct bit operations
 /// and template-like dispatch for different local matching strategies.
 ///
 /// Template parameters from reference:
@@ -1392,7 +1392,7 @@ mod tests {
     }
 
     // ========== COMPREHENSIVE REFERENCE COMPLIANCE TESTS ==========
-    // These tests validate exact compliance with topling-zip reference implementation
+    // These tests validate exact compliance with the reference implementation
 
     #[test]
     fn test_compression_type_boundaries() {

@@ -5,7 +5,8 @@
 
 use zipora::{
     BlobStore, DictionaryBuilder, DictionaryCompressor, EntropyStats, HuffmanBlobStore,
-    HuffmanEncoder, HuffmanTree, MemoryBlobStore, RansDecoder, RansEncoder,
+    HuffmanEncoder, HuffmanTree, MemoryBlobStore, RansDecoder, Rans64Encoder,
+    entropy::{ParallelX1},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -75,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         frequencies[byte as usize] += 1;
     }
 
-    match RansEncoder::new(&frequencies) {
+    match Rans64Encoder::<ParallelX1>::new(&frequencies) {
         Ok(encoder) => {
             println!("✅ Created rANS encoder successfully");
             println!("   Total frequency: {}", encoder.total_freq());

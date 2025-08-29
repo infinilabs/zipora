@@ -302,7 +302,7 @@ impl SuffixArrayDictionary {
         }
 
         let search_slice = &input[position..];
-        let max_search_len = max_length.min(search_slice.len()).min(self.config.max_pattern_length);
+        let _max_search_len = max_length.min(search_slice.len()).min(self.config.max_pattern_length);
 
         // Use advanced two-level pattern matching algorithm
         let match_status = self.da_match_max_length(search_slice);
@@ -659,7 +659,7 @@ impl SuffixArrayDictionary {
             return (lo, lo); // Empty range
         }
         
-        // Use the optimized binary search implementation based on topling-zip
+        // Use the optimized binary search implementation based on optimization patterns
         self.sa_equal_range_binary_optimized(lo, hi, pos, ch)
     }
     
@@ -690,7 +690,7 @@ impl SuffixArrayDictionary {
         }
     }
     
-    /// Optimized binary search implementation based on topling-zip algorithm  
+    /// Optimized binary search implementation based on compression research  
     /// 
     /// FIXED: The original implementation had a bug where Phase 2 could miss matches
     /// at the beginning of the range when the range was small. The fix ensures we
@@ -705,7 +705,7 @@ impl SuffixArrayDictionary {
         }
         
         // Phase 1: Handle boundary cases - advance past suffixes extending beyond text
-        // This mirrors the topling-zip logic: if (terark_unlikely(sa[lo] + depth >= saLen)) { lo++; }
+        // This mirrors the reference logic: if (terark_unlikely(sa[lo] + depth >= saLen)) { lo++; }
         while search_lo < search_hi {
             if let Some(&suffix_idx) = self.suffix_array.as_slice().get(search_lo) {
                 if suffix_idx + pos >= self.dictionary_text.len() {

@@ -5,7 +5,7 @@
 //! - BTreeMap (std::collections::BTreeMap)
 //! - Other trie implementations in zipora
 //!
-//! Performance targets based on topling-zip patterns:
+//! Performance targets based on optimization patterns:
 //! - 3-4x faster than HashMap for dense key sets with path compression
 //! - 50-70% memory reduction through advanced optimizations
 //! - Hardware-accelerated operations with BMI2 and SIMD
@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use zipora::fsa::{
     PatriciaTrie, PrefixIterable, StatisticsProvider, Trie,
-    PatriciaConfig, ConcurrencyLevel,
+    PatriciaConfig, PatriciaConcurrencyLevel as ConcurrencyLevel,
 };
 
 // =============================================================================

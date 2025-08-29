@@ -8,7 +8,7 @@ fn main() {
         env::set_var("SORTABLE_DEBUG", "1");
     }
 
-    println!("\n=== Testing Topling-zip Algorithm Selection Optimization ===\n");
+    println!("\n=== Testing Advanced Algorithm Selection Optimization ===\n");
 
     // Test 1: Short strings (should use comparison sort by default)
     {
@@ -51,7 +51,7 @@ fn main() {
             .map(|i| format!("test_string_{:08}", i))
             .collect();
 
-        // Test SortableStrVec with new algorithm selection
+        // Test SortableStrVec with advanced algorithm selection
         {
             println!("SortableStrVec (intelligent algorithm selection):");
             let mut vec = SortableStrVec::new();

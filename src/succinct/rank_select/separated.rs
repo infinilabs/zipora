@@ -133,7 +133,7 @@ pub struct RankSelectSeparated512 {
 /// High-performance separated rank/select with 512-bit blocks and bit-packed rank cache
 ///
 /// This advanced variant uses bit-packed relative ranks for significant space savings
-/// while maintaining O(1) query performance. Based on research from topling-zip
+/// while maintaining O(1) query performance. Based on advanced research
 /// advanced rank cache encoding techniques.
 ///
 /// # Design

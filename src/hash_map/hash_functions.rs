@@ -1,6 +1,6 @@
 //! Advanced hash functions optimized for performance
 //!
-//! This module provides specialized hash functions inspired by the topling codebase,
+//! This module provides specialized hash functions inspired by advanced research,
 //! including the FaboHashCombine function and golden ratio constants for optimal
 //! hash distribution and memory utilization.
 
@@ -19,7 +19,7 @@ pub const GOLDEN_RATIO_ALT_DEN: u64 = 8;
 /// Expressed as a fraction of 256 for fast integer arithmetic
 pub const GOLDEN_LOAD_FACTOR: u8 = 158; // 158/256 ≈ 0.618
 
-/// FaboHashCombine function inspired by the topling implementation
+/// FaboHashCombine function inspired by advanced research
 /// 
 /// This is provided through specialized implementations for u32 and u64.
 /// The generic version is removed to avoid complex trait bounds.

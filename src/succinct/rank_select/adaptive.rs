@@ -1,7 +1,7 @@
 //! Adaptive Strategy Selection for Rank/Select Operations
 //!
 //! This module implements adaptive selection of optimal rank/select implementations
-//! based on data density analysis, inspired by the topling-zip adaptive system.
+//! based on data density analysis, inspired by advanced adaptive systems.
 //!
 //! The adaptive system analyzes data characteristics and automatically selects
 //! the most appropriate implementation:
@@ -109,7 +109,7 @@ pub struct RunLengthStats {
     pub alternations: usize,
 }
 
-/// Strategy selection criteria based on topling-zip patterns
+/// Strategy selection criteria based on optimization patterns
 #[derive(Debug, Clone)]
 pub struct SelectionCriteria {
     /// Sparsity threshold for RankSelectFew (adaptive: 0.02-0.15 based on complexity)
@@ -392,7 +392,7 @@ impl AdaptiveRankSelect {
         }
     }
 
-    /// Select optimal implementation based on data profile (inspired by topling-zip)
+    /// Select optimal implementation based on data profile (inspired by advanced research)
     fn select_implementation(
         bit_vector: BitVector,
         profile: &DataProfile,

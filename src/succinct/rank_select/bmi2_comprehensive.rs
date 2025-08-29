@@ -1,7 +1,7 @@
 //! Comprehensive BMI2 Hardware Acceleration Module
 //! 
 //! This module implements advanced BMI2 instruction optimizations based on
-//! topling-zip patterns, providing 5-10x speedup for select operations and
+//! optimization patterns, providing 5-10x speedup for select operations and
 //! significant performance improvements for rank operations on modern CPUs.
 //!
 //! # Key Features
@@ -129,7 +129,7 @@ pub struct Bmi2BitOps;
 impl Bmi2BitOps {
     /// Ultra-fast select operation using PDEP instruction
     /// 
-    /// Implements the topling-zip _pdep_u64(1ull<<r, x) + _tzcnt pattern
+    /// Implements the advanced _pdep_u64(1ull<<r, x) + _tzcnt pattern
     /// for 5-10x select speedup on BMI2-capable CPUs.
     #[cfg(target_arch = "x86_64")]
     pub fn select1_ultra_fast(word: u64, rank: usize) -> Option<usize> {
@@ -143,7 +143,7 @@ impl Bmi2BitOps {
         }
         
         unsafe {
-            // Use the topling-zip PDEP pattern for ultra-fast select
+            // Use the advanced PDEP pattern for ultra-fast select
             let mask = 1u64 << (rank - 1);
             let deposited = std::arch::x86_64::_pdep_u64(mask, word);
             if deposited != 0 {

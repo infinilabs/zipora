@@ -3,8 +3,9 @@ use std::collections::HashMap;
 use zipora::{
     BitVector, BlobStore, DictionaryBuilder, DictionaryCompressor, EntropyStats, FastStr, FastVec,
     GoldHashMap, HuffmanBlobStore, HuffmanEncoder, HuffmanTree, MemoryBlobStore, RankSelect256,
-    RansEncoder,
+    Rans64Encoder,
 };
+use zipora::entropy::ParallelX1;
 
 #[cfg(feature = "mmap")]
 use zipora::{DataInput, DataOutput, MemoryMappedInput, MemoryMappedOutput};
@@ -307,7 +308,7 @@ fn benchmark_entropy_coding(c: &mut Criterion) {
                 for &byte in data.iter() {
                     frequencies[byte as usize] += 1;
                 }
-                let encoder = RansEncoder::new(black_box(&frequencies)).unwrap();
+                let encoder: Rans64Encoder<ParallelX1> = Rans64Encoder::new(black_box(&frequencies)).unwrap();
                 black_box(encoder)
             });
         });
