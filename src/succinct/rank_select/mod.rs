@@ -131,7 +131,8 @@ pub mod hierarchical;
 // Re-export all variants for convenient access
 pub use interleaved::RankSelectInterleaved256;
 pub use mixed::{
-    MixedDimensionView, RankSelectMixedIL256, RankSelectMixedSE512, RankSelectMixedXL256,
+    MixedDimensionView, RankSelectMixedIL256, RankSelectMixed_IL_256, RankSelectMixedSE512, 
+    RankSelectMixedXL256, RankSelectMixedXLBitPacked,
 };
 pub use separated::{RankSelectSeparated256, RankSelectSeparated512};
 pub use config::{

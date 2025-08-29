@@ -19,8 +19,10 @@ pub use rank_select::{
     RankSelectFewBuilder,
     RankSelectInterleaved256,
     RankSelectMixedIL256,
+    RankSelectMixed_IL_256,
     RankSelectMixedSE512,
     RankSelectMixedXL256,
+    RankSelectMixedXLBitPacked,
     RankSelectMultiDimensional,
     // New rank/select variants
     RankSelectOps,
