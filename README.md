@@ -19,7 +19,7 @@ High-performance Rust data structures and compression algorithms with memory saf
 - **🔗 Low-Level Synchronization**: Linux futex integration, thread-local storage, atomic operations framework
 - **⚡ Fiber Concurrency**: High-performance async/await with work-stealing, I/O integration, cooperative multitasking
 - **📡 Advanced Serialization**: Comprehensive components with smart pointers, endian handling, version management
-- **🗜️ Compression Framework**: Complete PA-Zip dictionary compression, Huffman, rANS, and hybrid compression
+- **🗜️ Advanced Compression Framework**: PA-Zip dictionary compression, contextual Huffman (Order-1/Order-2), 64-bit rANS with parallel variants, FSE with ZSTD optimizations, hardware-accelerated bit operations
 - **🔄 Real-time Compression**: Adaptive algorithms with strict latency guarantees
 - **🔌 C FFI Support**: Complete C API for migration from C++
 - **🎚️ Five-Level Concurrency Management**: Graduated concurrency control with adaptive selection
@@ -1054,7 +1054,7 @@ for i in 0..10000 {
     sparse_bv.push(i % 100 == 0).unwrap(); // 1% density
 }
 
-// Enhanced Adaptive selection with sophisticated pattern analysis
+// Advanced Adaptive selection with sophisticated pattern analysis
 let adaptive = AdaptiveRankSelect::new(sparse_bv).unwrap();
 println!("Selected: {}", adaptive.implementation_name()); // "RankSelectFew<true> (sparse ones)"
 
@@ -1115,7 +1115,7 @@ let pos = rs_sep256.select1(50).unwrap();
 let rs_interleaved = RankSelectInterleaved256::new(bv.clone()).unwrap();
 let rank_fast = rs_interleaved.rank1_hardware_accelerated(500);
 
-// Sparse optimization for very sparse data (1% density) - Enhanced with topling-zip optimizations
+// Sparse optimization for very sparse data (1% density) - Advanced optimizations
 let mut sparse_bv = BitVector::new();
 for i in 0..10000 { sparse_bv.push(i % 100 == 0).unwrap(); }
 let rs_sparse = RankSelectFew::<true, 64>::from_bit_vector(sparse_bv).unwrap();
@@ -1140,7 +1140,7 @@ let rs_hierarchical = RankSelectHierarchical::new(bv.clone()).unwrap();
 let rank_fast = rs_hierarchical.rank1(500);  // O(1) with dense caching
 let range_query = rs_hierarchical.rank1_range(100, 200);
 
-// BMI2 Hardware Acceleration with Enhanced Comprehensive Module
+// BMI2 Hardware Acceleration with Advanced Comprehensive Module
 use zipora::succinct::rank_select::bmi2_comprehensive::{
     Bmi2Capabilities, Bmi2BitOps, Bmi2BlockOps, Bmi2SequenceOps
 };
@@ -1485,7 +1485,7 @@ let processed = yielding_iter.for_each(|x| {
 }).await.unwrap();
 ```
 
-#### Enhanced Mutex Implementations
+#### Advanced Mutex Implementations
 
 ```rust
 use zipora::{AdaptiveMutex, MutexConfig, SpinLock, PriorityRwLock, RwLockConfig, 
@@ -1991,7 +1991,7 @@ Zipora features a **complete and production-ready** implementation of the PA-Zip
 - **Memory-Safe Implementation**: Zero unsafe operations in public APIs
 - **Flexible Integration**: Full integration with blob store framework and memory pools
 - **Production Ready**: Zero compilation errors, all library tests passing
-- **Comprehensive Testing**: 1,537+ tests passing including complete PA-Zip functionality
+- **Comprehensive Testing**: 1,630+ tests passing including unified entropy coding implementations
 
 ### Usage Examples
 
@@ -2144,7 +2144,7 @@ PA-Zip provides optimized configuration presets for different data types:
 - **Compression Speed**: 50-200 MB/s depending on data characteristics and pattern density
 - **Compression Ratio**: 30-80% size reduction depending on data repetitiveness
 - **Build Status**: All compilation working in debug and release modes
-- **Test Coverage**: 1,537+ tests passing with comprehensive PA-Zip functionality
+- **Test Coverage**: 1,630+ tests passing with unified entropy coding implementations
 
 ### Integration with Zipora Ecosystem
 
@@ -2201,32 +2201,39 @@ println!("Compression ratio: {:.1}%", stats.compression_ratio() * 100.0);
 println!("Dictionary hit rate: {:.2}%", stats.dictionary_hit_rate * 100.0);
 ```
 
-### Traditional Compression Algorithms
+### Advanced Entropy Coding Algorithms
 
 ```rust
-use zipora::{HuffmanEncoder, RansEncoder, DictionaryBuilder, CompressorFactory};
+use zipora::entropy::*;
 
-// Huffman coding
-let encoder = HuffmanEncoder::new(b"sample data").unwrap();
-let compressed = encoder.encode(b"sample data").unwrap();
+// 🚀 Contextual Huffman coding with Order-1/Order-2 models
+let contextual_encoder = ContextualHuffmanEncoder::new(b"training data", HuffmanOrder::Order1).unwrap();
+let compressed = contextual_encoder.encode(b"sample data").unwrap();
 
-// rANS encoding
-let mut frequencies = [0u32; 256];
+// 🚀 64-bit rANS with parallel variants
+let mut frequencies = [1u32; 256];
 for &byte in b"sample data" { frequencies[byte as usize] += 1; }
-let rans_encoder = RansEncoder::new(&frequencies).unwrap();
+let rans_encoder = Rans64Encoder::<ParallelX4>::new(&frequencies).unwrap();
 let compressed = rans_encoder.encode(b"sample data").unwrap();
 
-// LZ4 compression (requires "lz4" feature)
-#[cfg(feature = "lz4")]
-{
-    use zipora::Lz4Compressor;
-    let compressor = Lz4Compressor::new();
-    let compressed = compressor.compress(b"sample data").unwrap();
+// 🚀 FSE with ZSTD optimizations
+let mut fse_encoder = FseEncoder::new(FseConfig::high_compression()).unwrap();
+let compressed = fse_encoder.compress(b"sample data").unwrap();
+
+// 🚀 Parallel encoding with adaptive selection
+let mut parallel_encoder = AdaptiveParallelEncoder::new().unwrap();
+let compressed = parallel_encoder.encode_adaptive(b"sample data").unwrap();
+
+// 🚀 Hardware-optimized bit operations
+let bit_ops = BitOps::new();
+if bit_ops.has_bmi2() {
+    let result = bit_ops.pdep_u64(value, mask); // BMI2 acceleration
 }
 
-// Automatic algorithm selection
-let algorithm = CompressorFactory::select_best(&requirements, data);
-let compressor = CompressorFactory::create(algorithm, Some(training_data)).unwrap();
+// 🚀 Context-aware memory management
+let config = EntropyContextConfig::default();
+let mut context = EntropyContext::new(config);
+let buffer = context.get_buffer(1024).unwrap(); // Efficient buffer pooling
 
 // Fiber concurrency
 use zipora::{FiberPool, AdaptiveCompressor, RealtimeCompressor};
@@ -2417,7 +2424,7 @@ cargo build --release --features lz4,ffi         # Multiple optional features
 cargo +nightly build --release --features avx512  # Enable AVX-512 optimizations
 cargo +nightly build --release --features avx512,lz4,ffi  # AVX-512 + other features
 
-# Test (1,537+ tests, 97%+ coverage - includes complete PA-Zip functionality)
+# Test (1,630+ tests, 97%+ coverage - includes unification of entropy coding implementations)
 cargo test --all-features
 
 # Test documentation examples (69 doctests)

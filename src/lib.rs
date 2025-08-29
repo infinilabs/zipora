@@ -206,10 +206,10 @@ pub use blob_store::{
     DictionaryBlobStore, EntropyAlgorithm, EntropyCompressionStats, HuffmanBlobStore, RansBlobStore,
 };
 pub use entropy::dictionary::Dictionary;
-pub use entropy::rans::RansSymbol;
+pub use entropy::rans::Rans64Symbol;
 pub use entropy::{
     DictionaryBuilder, DictionaryCompressor, EntropyStats, HuffmanDecoder, HuffmanEncoder,
-    HuffmanTree, OptimizedDictionaryCompressor, RansDecoder, RansEncoder, RansState,
+    HuffmanTree, OptimizedDictionaryCompressor, RansDecoder, Rans64Encoder, RansState,
 };
 
 // Re-export Phase 4 implementations (memory management)

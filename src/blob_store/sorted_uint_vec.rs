@@ -263,7 +263,7 @@ impl SortedUintVec {
     
     /// Recommend optimal block size based on data patterns
     fn recommend_optimal_block_size(&self) -> usize {
-        // Based on topling-zip analysis patterns
+        // Based on advanced analysis patterns
         match self.size {
             0..=1000 => 32,
             1001..=10000 => 64,
@@ -384,7 +384,7 @@ impl SortedUintVec {
 
     /// BMI2-accelerated bit extraction using BEXTR instruction
     /// 
-    /// Enhanced with topling-zip optimizations:
+    /// Enhanced with advanced optimizations:
     /// - Compiler-specific tuning for optimal assembly generation
     /// - Prefetch hints for cache line optimization
     /// - Multiple extraction strategies based on data patterns
@@ -428,7 +428,7 @@ impl SortedUintVec {
     
     /// Enhanced BMI2 acceleration with PDEP/PEXT optimizations
     /// 
-    /// Implements topling-zip's advanced bit manipulation patterns:
+    /// Implements advanced bit manipulation patterns:
     /// - PDEP for parallel bit deposit operations
     /// - PEXT for parallel bit extraction  
     /// - TZCNT for trailing zero count optimization
@@ -486,7 +486,7 @@ impl SortedUintVec {
 
     /// Load entire block of offsets for cache optimization
     /// 
-    /// Enhanced with topling-zip block loading strategies:
+    /// Enhanced with advanced block loading strategies:
     /// - Vectorized delta decompression using SIMD
     /// - Cache-friendly sequential access patterns
     /// - Hybrid search strategies for different block densities
@@ -773,7 +773,7 @@ impl SortedUintVecBuilder {
 
     /// Store delta value in data with variable bit-width
     /// 
-    /// Enhanced with topling-zip variable-width encoding optimizations:
+    /// Enhanced with advanced variable-width encoding optimizations:
     /// - Adaptive bit-width selection based on delta distribution
     /// - Run-length encoding for consecutive identical deltas
     /// - Bit-plane compression for sparse delta patterns

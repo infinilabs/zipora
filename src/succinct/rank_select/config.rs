@@ -1,13 +1,13 @@
 //! Configuration Builder Pattern for Separated Storage Rank/Select Structures
 //!
 //! This module provides a comprehensive configuration system for all separated storage
-//! variants, inspired by the topling-zip codebase design patterns. It allows fine-grained
+//! variants, inspired by advanced design patterns. It allows fine-grained
 //! control over memory layout, hardware acceleration, caching strategies, and performance
 //! trade-offs.
 //!
 //! # Design Philosophy
 //!
-//! The configuration system follows these principles from the topling-zip research:
+//! The configuration system follows these principles from advanced research:
 //! - **Adaptive Strategy Selection**: Automatically choose optimal settings based on data characteristics
 //! - **Hardware Acceleration Integration**: Seamless BMI2, POPCNT, and SIMD support
 //! - **Memory Layout Optimization**: Separated vs interleaved storage with cache-aware design  

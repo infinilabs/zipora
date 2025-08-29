@@ -1,7 +1,7 @@
 //! Advanced NestedLoudsTrie Demonstration
 //!
 //! This example demonstrates the enhanced NestedLoudsTrie implementation
-//! with topling-zip-style advanced nesting strategies.
+//! with advanced nesting strategies.
 
 use zipora::{
     fsa::nested_louds_trie::{NestedLoudsTrie, NestingConfig},

@@ -3,25 +3,42 @@
 //! This module provides various entropy coding algorithms for advanced compression,
 //! including Huffman coding, rANS (range Asymmetric Numeral Systems), and dictionary-based compression.
 
+pub mod bit_ops;
+pub mod context;
 pub mod dictionary;
 pub mod fse;
 pub mod huffman;
+pub mod parallel;
 pub mod rans;
-pub mod rans_fixed;
-pub mod rans_minimal;
-pub mod rans_reference;
-pub mod rans_simple;
-pub mod rans_simple_debug;
 
 // Re-export main types
+pub use bit_ops::{BitOps, BitOpsConfig, EntropyBitOps, BitOpsStats};
+pub use context::{EntropyContext, EntropyContextConfig, ContextBuffer, EntropyResult, ContextStats};
 pub use dictionary::{DictionaryBuilder, DictionaryCompressor, OptimizedDictionaryCompressor};
 pub use fse::{
     FseEncoder, FseDecoder, FseConfig, FseTable, 
     fse_compress, fse_decompress, fse_zip, fse_unzip,
-    fse_compress_with_config, fse_decompress_with_config
+    fse_compress_with_config, fse_decompress_with_config,
+    HardwareCapabilities, FastDivision, EntropyNormalizer
 };
-pub use huffman::{HuffmanDecoder, HuffmanEncoder, HuffmanTree};
-pub use rans::{RansDecoder, RansEncoder, RansState};
+
+// Type aliases for benchmark compatibility
+pub type EnhancedFseEncoder = FseEncoder;
+pub type EnhancedFseConfig = FseConfig;
+pub use huffman::{
+    HuffmanDecoder, HuffmanEncoder, HuffmanTree,
+    ContextualHuffmanEncoder, ContextualHuffmanDecoder, HuffmanOrder
+};
+pub use rans::{
+    Rans64Decoder as RansDecoder, Rans64Encoder, Rans64State as RansState, 
+    Rans64Symbol as RansSymbol, AdaptiveRans64Encoder as AdaptiveRansEncoder,
+    ParallelX1, ParallelX2, ParallelX4, ParallelX8
+};
+pub use parallel::{
+    ParallelVariant, ParallelX2Variant, ParallelX4Variant, ParallelX8Variant,
+    ParallelConfig, ParallelHuffmanEncoder, ParallelHuffmanDecoder,
+    AdaptiveParallelEncoder, ParallelBenchmark, BenchmarkResult
+};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

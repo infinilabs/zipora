@@ -21,7 +21,7 @@ pub use suffix_array::{
 
 use crate::entropy::dictionary::{DictionaryBuilder, DictionaryCompressor};
 use crate::entropy::huffman::{HuffmanDecoder, HuffmanEncoder, HuffmanTree};
-use crate::entropy::rans::{RansDecoder, RansEncoder};
+use crate::entropy::rans::{Rans64Decoder, Rans64Encoder, ParallelX1};
 use crate::error::{Result, ZiporaError};
 use std::time::Duration;
 
@@ -410,7 +410,7 @@ impl Compressor for HuffmanCompressor {
 
 /// rANS-based compressor
 pub struct RansCompressor {
-    encoder: RansEncoder,
+    encoder: Rans64Encoder<ParallelX1>,
 }
 
 impl RansCompressor {
@@ -443,7 +443,7 @@ impl RansCompressor {
             }
         }
 
-        let encoder = RansEncoder::new(&frequencies)?;
+        let encoder = Rans64Encoder::<ParallelX1>::new(&frequencies)?;
         Ok(Self { encoder })
     }
 }
@@ -507,8 +507,8 @@ impl Compressor for RansCompressor {
 
         // Decode data
         let compressed_data = &data[size_offset + 4..];
-        let temp_encoder = RansEncoder::new(&frequencies)?;
-        let decoder = RansDecoder::new(&temp_encoder);
+        let temp_encoder = Rans64Encoder::<ParallelX1>::new(&frequencies)?;
+        let decoder = Rans64Decoder::<ParallelX1>::new(&temp_encoder);
         decoder.decode(compressed_data, original_size)
     }
 

@@ -2,7 +2,7 @@
 //!
 //! This benchmark suite validates that the configuration system delivers expected
 //! performance improvements across different data patterns, sizes, and hardware
-//! configurations. Based on topling-zip research and optimization patterns.
+//! configurations. Based on research and optimization patterns.
 //!
 //! # Benchmark Categories
 //!

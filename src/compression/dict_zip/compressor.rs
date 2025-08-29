@@ -107,7 +107,7 @@ pub struct PaZipCompressorConfig {
     /// Enable adaptive threshold adjustment
     pub adaptive_thresholds: bool,
     
-    /// Use reference-compliant encoding matching topling-zip exactly
+    /// Use reference-compliant encoding matching the reference implementation exactly
     pub use_reference_encoding: bool,
     
     /// Use suffix array for local matching (when reference encoding is enabled)
@@ -196,7 +196,7 @@ impl PaZipCompressorConfig {
         }
     }
     
-    /// Configuration for reference-compliant compression matching topling-zip exactly
+    /// Configuration for reference-compliant compression matching the reference implementation exactly
     pub fn reference_compliant() -> Self {
         Self {
             max_local_probe_distance: 30, // Matches reference implementation
@@ -484,7 +484,7 @@ impl PaZipCompressor {
     /// Sequential compression using 8-step PA-Zip algorithm
     fn compress_sequential(&mut self, input: &[u8], output: &mut Vec<u8>) -> Result<()> {
         if self.config.use_reference_encoding {
-            // Use reference-compliant compression matching topling-zip exactly
+            // Use reference-compliant compression matching the reference implementation exactly
             self.compress_sequential_reference(input, output)
         } else {
             // Use legacy compression for backwards compatibility
@@ -492,7 +492,7 @@ impl PaZipCompressor {
         }
     }
     
-    /// Reference-compliant compression using exact topling-zip encoding
+    /// Reference-compliant compression using exact reference implementation encoding
     fn compress_sequential_reference(&mut self, input: &[u8], output: &mut Vec<u8>) -> Result<()> {
         // Extract global dictionary data if available
         let global_dictionary = if self.dictionary.size_in_bytes() > 0 {
@@ -501,7 +501,7 @@ impl PaZipCompressor {
             None
         };
         
-        // Use parameters matching topling-zip reference
+        // Use parameters matching the reference implementation
         let g_offset_bits = 24; // Standard value from reference
         let g_max_short_len = 32; // Standard value from reference
         

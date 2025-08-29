@@ -10,7 +10,7 @@
 //! - Configuration impact analysis
 
 use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkId, Criterion, PlotConfiguration,
+    black_box, criterion_group, criterion_main, BenchmarkId, Criterion,
     Throughput,
 };
 use std::time::Duration;
@@ -207,7 +207,7 @@ fn bench_suffix_array_construction(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(10));
 
     let test_sizes = vec![1_000, 5_000, 10_000, 50_000, 100_000];
-    let data_types = vec![
+    let data_types: Vec<(&str, fn(usize) -> Vec<u8>)> = vec![
         ("repetitive", TestDataGenerator::repetitive_text),
         ("log_data", TestDataGenerator::log_data),
         ("source_code", TestDataGenerator::source_code),
@@ -277,8 +277,8 @@ fn bench_pattern_matching(c: &mut Criterion) {
                         let pattern = &data[pos..pos + pattern_len];
                         
                         // Binary search in suffix array
-                        let result = sa.search(pattern);
-                        if result.is_some() {
+                        let result = sa.search(&sa_data, pattern);
+                        if result.1 > 0 { // Check if any matches found (count > 0)
                             matches += 1;
                         }
                     }
@@ -428,7 +428,7 @@ fn bench_compression_ratio(c: &mut Criterion) {
             &data,
             |b, data| {
                 b.iter(|| {
-                    let compressed = zstd::encode_all(black_box(data), 3).unwrap();
+                    let compressed = zstd::encode_all(black_box(data.as_slice()), 3).unwrap();
                     let compression_ratio = data.len() as f64 / compressed.len() as f64;
                     black_box(compression_ratio)
                 });
@@ -557,7 +557,8 @@ fn bench_scalability(c: &mut Criterion) {
                     for i in (0..10).map(|x| x * data.len() / 10) {
                         if i + 20 <= data.len() {
                             let pattern = &data[i..i + 20];
-                            if sa.search(pattern).is_some() {
+                            let result = sa.search(&sa_data, pattern);
+                            if result.1 > 0 { // Check if any matches found (count > 0)
                                 found += 1;
                             }
                         }
@@ -727,8 +728,7 @@ criterion_group! {
     name = core_benches;
     config = Criterion::default()
         .sample_size(20)
-        .measurement_time(Duration::from_secs(10))
-        .plot_config(PlotConfiguration::default());
+        .measurement_time(Duration::from_secs(10));
     targets = bench_suffix_array_construction,
               bench_pattern_matching,
               bench_compression_ratio

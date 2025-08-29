@@ -160,7 +160,7 @@ impl PatriciaConfig {
     }
 }
 
-/// Node flags for efficient state management (following topling-zip patterns)
+/// Node flags for efficient state management (following advanced research patterns)
 mod node_flags {
     pub const FLAG_FINAL: u8 = 0x1 << 4;      // Node represents a complete key
     pub const FLAG_LAZY_FREE: u8 = 0x1 << 5;  // Node marked for lazy deletion

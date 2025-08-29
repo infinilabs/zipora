@@ -64,6 +64,7 @@
 
 use super::{
     BuilderOptions, CpuFeatures, RankSelectBuilder, RankSelectMultiDimensional, RankSelectOps,
+    RankSelectPerformanceOps,
 };
 use crate::FastVec;
 use crate::error::{Result, ZiporaError};
@@ -345,7 +346,7 @@ pub struct RankSelectMixedSE512 {
 /// optimized storage and query patterns. Uses template specialization
 /// for optimal performance based on the number of dimensions.
 ///
-/// Enhanced with advanced separated storage techniques from topling-zip research:
+/// Enhanced with advanced separated storage techniques from research:
 /// - **Bit-packed rank caching**: Hierarchical superblock + relative rank encoding
 /// - **Adaptive block sizing**: Variable block sizes based on dimension count
 /// - **Hardware acceleration**: BMI2, POPCNT, and AVX-512 optimizations
@@ -418,7 +419,7 @@ pub struct RankSelectMixedXL256<const ARITY: usize> {
 /// rank caching using superblocks and bit-packed relative ranks for significant
 /// memory savings while maintaining O(1) query performance.
 ///
-/// Based on research from topling-zip advanced rank cache encoding techniques
+/// Based on research from advanced rank cache encoding techniques
 /// and adapted for multi-dimensional succinct data structures.
 ///
 /// # Design

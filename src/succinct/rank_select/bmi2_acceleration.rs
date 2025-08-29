@@ -292,9 +292,9 @@ impl Bmi2SelectOps {
         Self::select1_binary_search(word, k)
     }
 
-    /// Enhanced select with topling-zip optimizations
+    /// Enhanced select with advanced optimizations
     ///
-    /// Uses the specific pattern and compiler optimizations from topling-zip
+    /// Uses specific patterns and compiler optimizations from advanced research
     /// for maximum performance on BMI2-enabled CPUs.
     #[inline]
     pub fn select1_u64_enhanced(word: u64, k: u32) -> Option<u32> {
@@ -314,12 +314,12 @@ impl Bmi2SelectOps {
         Self::select1_binary_search_optimized(word, k)
     }
 
-    /// Hardware PDEP implementation with topling-zip optimization
+    /// Hardware PDEP implementation with advanced optimization
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     #[inline]
     unsafe fn select1_pdep(word: u64, k: u32) -> u32 {
-        // Topling-zip optimization: use (1ull << r) pattern for better instruction scheduling
+        // Advanced optimization: use (1ull << r) pattern for better instruction scheduling
         let deposited = std::arch::x86_64::_pdep_u64(1u64 << k, word);
         std::arch::x86_64::_tzcnt_u64(deposited) as u32
     }
@@ -332,7 +332,7 @@ impl Bmi2SelectOps {
         debug_assert!(k < word.count_ones());
         debug_assert!(word != 0);
         
-        // Use the topling-zip pattern: _pdep_u64(1ull<<r, x) + _tzcnt
+        // Use the advanced pattern: _pdep_u64(1ull<<r, x) + _tzcnt
         // This pattern often generates better assembly than separate operations
         #[cfg(any(target_env = "gnu", target_env = ""))]
         {
@@ -364,10 +364,10 @@ impl Bmi2SelectOps {
         None
     }
 
-    /// Optimized binary search with topling-zip hybrid strategy
+    /// Optimized binary search with advanced hybrid strategy
     ///
     /// Uses linear search for small ranges (< 8 ones) and binary search for larger ranges.
-    /// This follows the topling-zip optimization where linear search is faster for small
+    /// This follows advanced optimization patterns where linear search is faster for small
     /// ranges due to better branch prediction and cache locality.
     fn select1_binary_search_optimized(word: u64, k: u32) -> Option<u32> {
         let ones_count = word.count_ones();
@@ -375,7 +375,7 @@ impl Bmi2SelectOps {
             return None;
         }
 
-        // Topling-zip optimization: use linear search for few ones
+        // Advanced optimization: use linear search for few ones
         if ones_count <= 8 {
             let mut ones_seen = 0;
             for bit_pos in 0..64 {
@@ -446,10 +446,10 @@ impl Bmi2SelectOps {
         Self::select1_u64(inverted, k)
     }
 
-    /// Hybrid select cache strategy based on topling-zip
+    /// Hybrid select cache strategy based on advanced research
     ///
     /// Implements intelligent cache lookup with linear search for small ranges
-    /// and binary search for larger ranges, following topling-zip optimizations.
+    /// and binary search for larger ranges, following advanced optimizations.
     pub fn select1_hybrid_cache(
         rank_cache: &[u32],
         select_cache: &[u32],
@@ -475,7 +475,7 @@ impl Bmi2SelectOps {
             rank_cache.len() as u32
         };
 
-        // Topling-zip optimization: use linear search for small ranges
+        // Advanced optimization: use linear search for small ranges
         let search_range = end_block - start_block;
         
         if search_range <= 32 {
@@ -769,14 +769,14 @@ impl Bmi2RangeOps {
     }
 }
 
-/// Sequence length operations (topling-zip enhancement)
+/// Sequence length operations (advanced enhancement)
 pub struct Bmi2SequenceOps;
 
 impl Bmi2SequenceOps {
     /// Length of ones sequence starting at bit position
     ///
     /// Counts consecutive ones starting from the given position.
-    /// Based on topling-zip's one_seq_len implementation.
+    /// Based on advanced one_seq_len implementation.
     #[inline]
     pub fn one_seq_len(bit_data: &[u64], bit_pos: usize) -> usize {
         if bit_pos >= bit_data.len() * 64 {
@@ -827,7 +827,7 @@ impl Bmi2SequenceOps {
     /// Length of zeros sequence starting at bit position
     ///
     /// Counts consecutive zeros starting from the given position.
-    /// Based on topling-zip's zero_seq_len implementation.
+    /// Based on advanced zero_seq_len implementation.
     #[inline]
     pub fn zero_seq_len(bit_data: &[u64], bit_pos: usize) -> usize {
         if bit_pos >= bit_data.len() * 64 {
@@ -878,7 +878,7 @@ impl Bmi2SequenceOps {
     /// Reverse length of ones sequence ending at bit position
     ///
     /// Counts consecutive ones ending at the given position.
-    /// Based on topling-zip's one_seq_revlen implementation.
+    /// Based on advanced one_seq_revlen implementation.
     #[inline]
     pub fn one_seq_revlen(bit_data: &[u64], end_pos: usize) -> usize {
         if end_pos == 0 || end_pos > bit_data.len() * 64 {

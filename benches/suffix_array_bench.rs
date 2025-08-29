@@ -6,7 +6,7 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use zipora::algorithms::suffix_array::{SuffixArray as BaseSuffixArray, SuffixArrayBuilder as BaseBuilder};
-use zipora::compression::suffix_array::{SuffixArrayCompressor, SuffixArrayConfig, EnhancedSuffixArray};
+use zipora::compression::suffix_array::{SuffixArrayCompressor, SuffixArrayConfig};
 use std::time::Duration;
 
 /// Generate test data of various types for benchmarking
@@ -130,7 +130,7 @@ fn bench_pattern_search(c: &mut Criterion) {
         .build_suffix_array(&text)
         .unwrap();
     
-    let patterns = vec![b"abc", b"the", b"tion", b"xyz"];
+    let patterns = vec![b"abc", b"the", b"xyz"];
     
     for pattern in &patterns {
         group.throughput(Throughput::Elements(text.len() as u64));
@@ -141,7 +141,7 @@ fn bench_pattern_search(c: &mut Criterion) {
             pattern,
             |b, pattern| {
                 b.iter(|| {
-                    let (start, count) = base_sa.search(black_box(&text), black_box(pattern));
+                    let (start, count) = base_sa.search(black_box(&text), black_box(*pattern));
                     black_box(start + count)
                 })
             },
@@ -153,7 +153,7 @@ fn bench_pattern_search(c: &mut Criterion) {
             pattern,
             |b, pattern| {
                 b.iter(|| {
-                    let occurrences = enhanced_sa.find_pattern(black_box(&text), black_box(pattern));
+                    let occurrences = enhanced_sa.find_pattern(black_box(&text), black_box(*pattern));
                     black_box(occurrences.len())
                 })
             },
@@ -165,7 +165,7 @@ fn bench_pattern_search(c: &mut Criterion) {
             pattern,
             |b, pattern| {
                 b.iter(|| {
-                    let count = enhanced_sa.count_pattern(black_box(&text), black_box(pattern));
+                    let count = enhanced_sa.count_pattern(black_box(&text), black_box(*pattern));
                     black_box(count)
                 })
             },

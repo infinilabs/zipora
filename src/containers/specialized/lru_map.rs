@@ -1,7 +1,7 @@
 //! LRU (Least Recently Used) Cache Map Implementation
 //!
 //! This module provides a high-performance LRU cache map that combines hash map
-//! lookups with LRU eviction policy. Inspired by topling-zip designs but
+//! lookups with LRU eviction policy. Inspired by advanced research but
 //! implemented with Rust safety guarantees.
 //!
 //! ## Features

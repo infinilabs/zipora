@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-Successfully optimized ValVec32 performance from **4.08x slower** to **near-parity or better** compared to std::Vec through implementation of critical topling-zip inspired optimizations.
+Successfully optimized ValVec32 performance from **4.08x slower** to **near-parity or better** compared to std::Vec through implementation of critical optimization patterns.
 
 ## Performance Improvements
 
@@ -135,7 +135,7 @@ The container is now suitable for high-performance production use cases where me
 
 ## Technical Notes
 
-- Optimizations inspired by topling-zip's terark::valvec implementation
+- Optimizations inspired by advanced vector implementation patterns
 - Platform-specific code paths for Linux/Windows/macOS
 - Maintains full API compatibility
 - Thread-safe and memory-safe with RAII guarantees

@@ -421,7 +421,7 @@ fn test_sorted_uint_vec_correctness() {
             values
         }),
         ("fibonacci_sequence", {
-            // Based on topling-zip's 51-bit delta limit (2^51 - 1 = 2,251,799,813,685,247)
+            // Based on advanced 51-bit delta limit (2^51 - 1 = 2,251,799,813,685,247)
             // F(76) ≈ 3.42e15, F(77) ≈ 5.53e15, so we limit to F(76) to stay within delta bounds
             let mut fib = vec![1u64, 1];
             const MAX_SAFE_FIBONACCI: usize = 76; // Safe limit based on delta width constraints
@@ -429,7 +429,7 @@ fn test_sorted_uint_vec_correctness() {
                 let next = fib[i-1].checked_add(fib[i-2]).unwrap_or_else(|| {
                     panic!("Fibonacci overflow at index {}", i);
                 });
-                // Check if delta would exceed typical compression limits (similar to topling-zip's 51-bit limit)
+                // Check if delta would exceed typical compression limits (similar to advanced 51-bit limit)
                 if i > 2 {
                     let delta = next - fib[i-1];
                     const MAX_DELTA: u64 = (1u64 << 50) - 1; // Conservative 50-bit limit

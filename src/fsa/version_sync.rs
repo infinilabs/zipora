@@ -1,7 +1,7 @@
 //! Version-Based Synchronization for Finite State Automata and Tries
 //!
 //! This module implements advanced token and version sequence management based on
-//! research from topling-zip's concurrent data structure patterns. It provides
+//! research from advanced concurrent data structure patterns. It provides
 //! graduated concurrency control with five distinct levels, from read-only to
 //! full multi-writer scenarios.
 //!
@@ -212,7 +212,7 @@ pub struct LazyFreeList {
 }
 
 impl LazyFreeList {
-    /// Bulk processing threshold (matches topling-zip's BULK_FREE_NUM).
+    /// Bulk processing threshold for optimal batch processing.
     pub const BULK_FREE_NUM: usize = 32;
 
     /// Creates a new lazy free list with default settings.
@@ -281,7 +281,7 @@ impl LazyFreeList {
 
     /// Returns true if bulk processing should be triggered.
     ///
-    /// This implements the topling-zip pattern of processing when the queue
+    /// This implements advanced processing patterns where the queue
     /// reaches 2x the bulk threshold.
     pub fn should_bulk_process(&self) -> bool {
         self.len() >= 2 * self.bulk_threshold

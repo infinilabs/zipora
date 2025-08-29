@@ -34,7 +34,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Sample sorting policy for dictionary construction
-/// Based on topling-zip reference implementation
+/// Based on the reference implementation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum SampleSortPolicy {
@@ -286,7 +286,7 @@ impl BuildStats {
 pub type ProgressCallback = dyn Fn(&BuildProgress) + Send + Sync;
 
 /// Position and length tracking for sample sorting
-/// Based on topling-zip PosLen structure
+/// Based on the reference PosLen structure
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PosLen {
     /// Position in the source data
@@ -302,7 +302,7 @@ impl PosLen {
 }
 
 /// Left comparison for sample sorting (compare from beginning)
-/// Matches topling-zip PosLenCmpLeft behavior exactly
+/// Matches the reference PosLenCmpLeft behavior exactly
 struct PosLenCmpLeft<'a> {
     base: &'a [u8],
 }
@@ -324,13 +324,13 @@ impl<'a> PosLenCmpLeft<'a> {
         }
         
         // If prefixes are equal, longer is "less" (preferred)
-        // This matches the topling-zip behavior: return x.len > y.len
+        // This matches the reference behavior: return x.len > y.len
         y.len.cmp(&x.len)
     }
 }
 
 /// Right comparison for sample sorting (compare from ending)
-/// Matches topling-zip PosLenCmpRight behavior exactly
+/// Matches the reference PosLenCmpRight behavior exactly
 struct PosLenCmpRight<'a> {
     base: &'a [u8],
 }
@@ -356,7 +356,7 @@ impl<'a> PosLenCmpRight<'a> {
         }
         
         // If suffixes are equal, longer is "less" (preferred)
-        // This matches the topling-zip behavior: return x.len > y.len
+        // This matches the reference behavior: return x.len > y.len
         y.len.cmp(&x.len)
     }
 }
@@ -568,7 +568,7 @@ impl DictionaryBuilder {
     }
 
     /// Sample training data based on configured ratio and sorting policy
-    /// Implements topling-zip sample sorting with deduplication
+    /// Implements reference sample sorting with deduplication
     fn sample_data(&self, data: &[u8], _analysis: &DataAnalysis) -> Result<Vec<u8>> {
         let target_size = (data.len() as f64 * self.config.sample_ratio) as usize;
         
@@ -642,7 +642,7 @@ impl DictionaryBuilder {
     }
 
     /// Apply sample sorting policy based on configuration
-    /// Matches topling-zip sorting behavior exactly
+    /// Matches reference sorting behavior exactly
     fn apply_sample_sorting(&self, data: &[u8]) -> Result<Vec<u8>> {
         match self.config.sample_sort_policy {
             SampleSortPolicy::SortNone => {

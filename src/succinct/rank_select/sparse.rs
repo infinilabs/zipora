@@ -60,7 +60,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Hierarchical layer structure for efficient sparse searches
 ///
-/// Based on topling-zip's multi-layer hierarchical design with configurable
+/// Based on advanced multi-layer hierarchical design with configurable
 /// layer boundaries and 256-way branching factors for optimal cache utilization.
 #[derive(Clone)]
 struct LayerStructure {
@@ -76,7 +76,7 @@ struct LayerStructure {
 
 /// Locality-aware hint cache for sequential access optimization
 ///
-/// Implements the topling-zip hint system that achieves 90%+ hit rates
+/// Implements the advanced hint system that achieves 90%+ hit rates
 /// for sequential access patterns by checking ±1, ±2 neighbor positions.
 struct HintCache {
     /// Last accessed position hint
@@ -331,7 +331,7 @@ impl<const PIVOT: bool, const WORD_SIZE: usize> RankSelectFew<PIVOT, WORD_SIZE> 
 
     /// Count PIVOT elements up to position using sparse representation
     ///
-    /// Enhanced with topling-zip optimizations: hint system for locality-aware
+    /// Enhanced with advanced optimizations: hint system for locality-aware
     /// access and hierarchical search for improved cache utilization.
     fn rank_pivot_sparse(&self, pos: usize) -> usize {
         if pos == 0 {
@@ -809,7 +809,7 @@ impl LayerStructure {
     /// Build hierarchical layer structure from sparse positions
     ///
     /// Creates up to 8 layers with 256-way branching factors for optimal
-    /// cache utilization based on topling-zip's design patterns.
+    /// cache utilization based on advanced design patterns.
     fn build_from_positions(positions: &FastVec<u32>) -> Result<Self> {
         let sparse_count = positions.len();
         if sparse_count == 0 {
@@ -845,7 +845,7 @@ impl LayerStructure {
 
     /// Perform hierarchical binary search using layer structure
     ///
-    /// Based on topling-zip's multi-layer search with 256-way branching.
+    /// Based on advanced multi-layer search with 256-way branching.
     /// Returns the index where value should be inserted to maintain sorted order.
     fn hierarchical_lower_bound(&self, positions: &[u32], val: u32, hint: &mut usize) -> usize {
         if positions.is_empty() {
@@ -906,7 +906,7 @@ impl HintCache {
 
     /// Try to use hint for fast lookup (±1, ±2 neighbor check)
     ///
-    /// Implements topling-zip's locality-aware hint system that achieves
+    /// Implements advanced locality-aware hint system that achieves
     /// 90%+ hit rates for sequential access patterns.
     fn try_hint_lookup(&self, positions: &[u32], val: u32) -> Option<usize> {
         if !self.enabled || positions.is_empty() {

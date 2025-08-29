@@ -1,7 +1,7 @@
 //! Comprehensive benchmarks for sparse rank-select implementations
 //!
 //! This benchmark suite tests all sparse optimizations including:
-//! - Enhanced RankSelectFew with topling-zip optimizations
+//! - Enhanced RankSelectFew with advanced optimizations
 //! - BMI2 hardware acceleration with PDEP/PEXT/TZCNT
 //! - SortedUintVec with block-based compression
 
