@@ -1032,7 +1032,7 @@ println!("Bulk inserted {} keys with fragment sharing", results.len());
 
 ### Rank/Select Operations
 
-World-Class Succinct Data Structures - Zipora provides 11 specialized rank/select variants including 3 cutting-edge implementations with comprehensive SIMD optimizations, hardware acceleration, and multi-dimensional support:
+World-Class Succinct Data Structures - Zipora provides 14 specialized rank/select variants including 6 cutting-edge implementations with comprehensive SIMD optimizations, hardware acceleration, multi-dimensional support, and sophisticated mixed implementations:
 
 #### Adaptive Strategy Selection
 
@@ -1093,6 +1093,8 @@ let custom_adaptive = AdaptiveRankSelect::with_criteria(dense_bv, criteria).unwr
 use zipora::{BitVector, RankSelectSimple, RankSelectSeparated256, RankSelectSeparated512,
             RankSelectInterleaved256, RankSelectFew, RankSelectMixedIL256, 
             RankSelectMixedSE512, RankSelectMixedXL256,
+            // 🚀 Sophisticated Mixed Implementations:
+            RankSelectMixed_IL_256, RankSelectMixedXLBitPacked,
             // Advanced Features:
             RankSelectFragment, RankSelectHierarchical, RankSelectBMI2,
             bulk_rank1_simd, bulk_select1_simd, SimdCapabilities};
@@ -1129,6 +1131,17 @@ let bv2 = BitVector::from_iter((0..1000).map(|i| i % 5 == 0)).unwrap();
 let rs_mixed = RankSelectMixedIL256::new([bv1, bv2]).unwrap();
 let rank_dim0 = rs_mixed.rank1_dimension(500, 0);
 let rank_dim1 = rs_mixed.rank1_dimension(500, 1);
+
+// 🚀 Sophisticated Mixed IL256 - Dual-dimension interleaved with base+rlev hierarchical caching
+let sophisticated_mixed = RankSelectMixed_IL_256::new([bv1.clone(), bv2.clone()]).unwrap();
+let hierarchical_rank0 = sophisticated_mixed.rank1_dimension(500, 0);
+let hierarchical_rank1 = sophisticated_mixed.rank1_dimension(500, 1);
+println!("Hierarchical cache efficiency: {:.2}%", sophisticated_mixed.cache_efficiency() * 100.0);
+
+// 🚀 Extended XL BitPacked - Advanced bit-packed hierarchical caching for memory optimization
+let xl_bitpacked = RankSelectMixedXLBitPacked::new([bv1.clone(), bv2.clone()]).unwrap();
+let memory_optimized_rank = xl_bitpacked.rank1_dimension(500, 0);
+println!("Memory overhead: {:.1}%", xl_bitpacked.memory_overhead_percent());
 
 // Fragment-Based Compression
 let rs_fragment = RankSelectFragment::new(bv.clone()).unwrap();
