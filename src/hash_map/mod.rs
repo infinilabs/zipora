@@ -11,7 +11,11 @@ mod hash_functions;
 mod golden_ratio_hash_map;
 mod small_hash_map;
 mod string_optimized_hash_map;
+mod advanced_string_arena;
+mod collision_resolution;
 mod simd_string_ops;
+mod cache_locality;
+mod cache_optimized_hash_map;
 
 // Re-export existing types
 pub use gold_hash_map::{GoldHashMap, Iter};
@@ -26,6 +30,8 @@ pub use golden_ratio_hash_map::{
     Values as GoldenRatioValues
 };
 pub use string_optimized_hash_map::{StringOptimizedHashMap, StringArenaStats, StringMapIter, StringMapKeys, StringMapValues};
+pub use advanced_string_arena::{AdvancedStringArena, ArenaConfig, ArenaStats};
+pub use collision_resolution::{AdvancedHashMap, CollisionStrategy, CollisionStats};
 pub use small_hash_map::{SmallHashMap, SmallMapIter, SmallMapKeys, SmallMapValues};
 
 // Export hash function utilities
@@ -37,6 +43,17 @@ pub use hash_functions::{
 
 // Export SIMD string operations
 pub use simd_string_ops::{SimdStringOps, SimdTier, get_global_simd_ops};
+
+// Export cache locality optimizations
+pub use cache_locality::{
+    CacheMetrics, CacheAligned, PrefetchHint, Prefetcher,
+    CacheLayoutOptimizer, CacheLevel, AccessPattern,
+    HotColdSeparator, NumaAllocator, AccessPatternAnalyzer,
+    CacheConsciousResizer, CACHE_LINE_SIZE,
+};
+
+// Export cache-optimized hash map
+pub use cache_optimized_hash_map::{CacheOptimizedHashMap, CacheOptimizedIter};
 
 #[cfg(test)]
 mod tests {
