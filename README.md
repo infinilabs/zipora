@@ -1266,9 +1266,9 @@ let simd_ranks = bulk_rank1_simd(&bit_data, &test_positions);
 ### Sorting & Search Algorithms
 
 ```rust
-use zipora::{SuffixArray, RadixSort, MultiWayMerge, 
-            ReplaceSelectSort, ReplaceSelectSortConfig, LoserTree, LoserTreeConfig,
-            ExternalSort, EnhancedSuffixArray, LcpArray};
+use zipora::{SuffixArray, SuffixArrayConfig, SuffixArrayAlgorithm, 
+            RadixSort, MultiWayMerge, ReplaceSelectSort, ReplaceSelectSortConfig, 
+            LoserTree, LoserTreeConfig, ExternalSort, EnhancedSuffixArray, LcpArray};
 
 // External Sorting for Large Datasets (Replacement Selection)
 let config = ReplaceSelectSortConfig {
@@ -1295,12 +1295,71 @@ tournament_tree.add_way(vec![2, 5, 8, 11].into_iter()).unwrap();
 tournament_tree.add_way(vec![3, 6, 9, 12].into_iter()).unwrap();
 let merged = tournament_tree.merge_to_vec().unwrap();
 
-// Advanced Suffix Arrays with SA-IS Algorithm (Linear Time)
+// 🚀 Sophisticated Suffix Array Construction with 5 Algorithm Variants + Adaptive Selection
 let text = b"banana";
+
+// Adaptive algorithm selection based on data characteristics (recommended)
+let sa = SuffixArray::new(text).unwrap(); // Uses adaptive selection by default
+let (start, count) = sa.search(text, b"an");
+println!("Found 'an' at {} occurrences", count);
+
+// Manual algorithm selection for specific requirements
+let config = SuffixArrayConfig {
+    algorithm: SuffixArrayAlgorithm::SAIS,     // SA-IS: Linear-time induced sorting
+    use_parallel: true,
+    parallel_threshold: 100_000,
+    compute_lcp: false,
+    optimize_small_alphabet: true,
+    adaptive_threshold: 10_000,
+};
+let sa_sais = SuffixArray::with_config(text, &config).unwrap();
+
+// DC3 algorithm for moderate-sized inputs with good cache locality
+let config_dc3 = SuffixArrayConfig {
+    algorithm: SuffixArrayAlgorithm::DC3,      // DC3: Divide-and-conquer approach
+    ..Default::default()
+};
+let sa_dc3 = SuffixArray::with_config(text, &config_dc3).unwrap();
+
+// DivSufSort for large inputs with practical performance optimization
+let config_div = SuffixArrayConfig {
+    algorithm: SuffixArrayAlgorithm::DivSufSort, // DivSufSort: Practical performance
+    ..Default::default()
+};
+let sa_div = SuffixArray::with_config(text, &config_div).unwrap();
+
+// Larsson-Sadakane for highly repetitive data
+let config_ls = SuffixArrayConfig {
+    algorithm: SuffixArrayAlgorithm::LarssonSadakane, // Larsson-Sadakane: Repetitive data
+    ..Default::default()
+};
+let sa_ls = SuffixArray::with_config(text, &config_ls).unwrap();
+
+// Data characteristics analysis for manual optimization
+let characteristics = SuffixArray::analyze_text_characteristics(text);
+println!("Text length: {}, Alphabet size: {}", 
+         characteristics.text_length, characteristics.alphabet_size);
+println!("Repetition ratio: {:.3}, Entropy: {:.3}", 
+         characteristics.repetition_ratio, characteristics.entropy);
+
+// Enhanced suffix array with LCP computation
 let enhanced_sa = EnhancedSuffixArray::with_lcp(text).unwrap();
 let sa = enhanced_sa.suffix_array();
-let (start, count) = sa.search(text, b"an");
 let lcp = enhanced_sa.lcp_array().unwrap();
+println!("LCP at position 0: {:?}", lcp.lcp_at(0));
+
+// Suffix array with BWT (Burrows-Wheeler Transform)
+let enhanced_sa_bwt = EnhancedSuffixArray::with_bwt(text).unwrap();
+if let Some(bwt) = enhanced_sa_bwt.bwt() {
+    println!("BWT: {:?}", String::from_utf8_lossy(bwt));
+}
+
+// Performance statistics for algorithm comparison
+let stats = sa.stats();
+println!("Processing time: {}μs, Memory used: {} bytes", 
+         stats.processing_time_us, stats.memory_used);
+println!("Used parallel: {}, Algorithm: Memory-safe O(n) construction", 
+         stats.used_parallel);
 
 // Existing high-performance algorithms
 let mut data = vec![5u32, 2, 8, 1, 9];
@@ -1315,6 +1374,31 @@ let sources = vec![
 let mut merger = MultiWayMerge::new();
 let result = merger.merge(sources).unwrap();
 ```
+
+### Suffix Array Algorithm Selection Guide
+
+Zipora provides 5 sophisticated suffix array construction algorithms with adaptive selection:
+
+| Algorithm | Time Complexity | Best Use Case | Memory Usage |
+|-----------|----------------|---------------|--------------|
+| **Adaptive** | **Varies** | **General use (recommended)** | **Optimal** |
+| **SA-IS** | O(n) | Small alphabets, general use | ~8n bytes |
+| **DC3** | O(n) | Small inputs, good cache locality | ~12n bytes |
+| **DivSufSort** | O(n log n) | Large inputs, practical performance | ~8n bytes |
+| **Larsson-Sadakane** | O(n log n) | Highly repetitive data | ~12n bytes |
+
+**Adaptive Selection Logic:**
+- **Small inputs** (< 10K): DC3 for good cache locality
+- **Small alphabets** (≤ 4 chars): SA-IS for optimal linear performance
+- **Highly repetitive** (> 70% repetition): Larsson-Sadakane for repetitive optimization
+- **Large inputs** (> 1M chars): DivSufSort for practical performance
+- **Medium inputs**: SA-IS for reliable linear-time construction
+
+**Memory Safety Features:**
+- **Zero unsafe operations** in public APIs
+- **Automatic bounds checking** with comprehensive error handling
+- **Stack overflow protection** with recursion depth limits and fallback algorithms
+- **Memory allocation guards** preventing excessive memory usage
 
 ## I/O & Serialization
 
