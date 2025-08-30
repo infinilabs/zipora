@@ -14,7 +14,11 @@ pub mod tournament_tree;
 // Re-export main types
 pub use external_sort::{ExternalSort, ReplaceSelectSort, ReplaceSelectSortConfig};
 pub use multiway_merge::{MergeSource, MultiWayMerge};
-pub use radix_sort::{RadixSort, RadixSortConfig};
+pub use radix_sort::{
+    AdvancedRadixSort, AdvancedRadixSortConfig, AdvancedStringRadixSort, AdvancedU32RadixSort, 
+    AdvancedU64RadixSort, CpuFeatures, DataCharacteristics, RadixSort, RadixSortConfig, 
+    RadixSortable, SortingStrategy
+};
 pub use set_operations::{SetOperations, SetOperationsConfig, SetOperationStats};
 pub use simd_merge::{SimdComparator, SimdConfig, SimdOperations};
 pub use suffix_array::{LcpArray, SuffixArray, SuffixArrayBuilder};
