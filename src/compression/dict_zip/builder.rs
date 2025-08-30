@@ -857,10 +857,12 @@ impl DictionaryBuilder {
         let phase_start = Instant::now();
         
         let sa_config = SuffixArrayConfig {
+            algorithm: crate::algorithms::suffix_array::SuffixArrayAlgorithm::SAIS,
             use_parallel: self.config.use_parallel,
             parallel_threshold: if self.config.use_parallel { 10000 } else { usize::MAX },
             compute_lcp: false, // Not needed for dictionary building
             optimize_small_alphabet: true,
+            adaptive_threshold: 10_000,
         };
 
         let suffix_array = SuffixArray::with_config(data, &sa_config)?;

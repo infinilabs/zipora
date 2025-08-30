@@ -479,10 +479,12 @@ impl SuffixArrayCompressor {
 
         // Build suffix array using the existing SAIS implementation
         let base_builder = BaseSuffixArrayBuilder::new(crate::algorithms::suffix_array::SuffixArrayConfig {
+            algorithm: crate::algorithms::suffix_array::SuffixArrayAlgorithm::SAIS,
             use_parallel: self.config.use_parallel,
             parallel_threshold: self.config.parallel_threshold,
             compute_lcp: false, // We'll compute LCP separately if needed
             optimize_small_alphabet: true,
+            adaptive_threshold: 10_000,
         });
 
         let base_suffix_array = base_builder.build(text)?;
