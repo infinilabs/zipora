@@ -479,6 +479,9 @@ where
             use_secure_memory: self.config.use_secure_memory,
             stable_sort: true,
             cache_optimized: true,
+            use_simd: cfg!(feature = "simd"),
+            prefetch_distance: 2,
+            alignment: 64,
         };
 
         let mut tournament_tree = LoserTree::with_comparator(tree_config, self.comparator.clone());

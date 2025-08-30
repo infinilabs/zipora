@@ -1263,12 +1263,101 @@ let test_positions = vec![100, 200, 300, 400, 500];
 let simd_ranks = bulk_rank1_simd(&bit_data, &test_positions);
 ```
 
-### Sorting & Search Algorithms
+### Advanced Multi-Way Merge Algorithms & Sorting
 
 ```rust
 use zipora::{SuffixArray, SuffixArrayConfig, SuffixArrayAlgorithm, 
             RadixSort, MultiWayMerge, ReplaceSelectSort, ReplaceSelectSortConfig, 
-            LoserTree, LoserTreeConfig, ExternalSort, EnhancedSuffixArray, LcpArray};
+            LoserTree, LoserTreeConfig, ExternalSort, EnhancedSuffixArray, LcpArray,
+            // 🚀 Advanced Multi-Way Merge Components
+            EnhancedLoserTree, SetOperations, SetOperationsConfig, SetOperationStats,
+            SimdComparator, SimdConfig, SimdOperations};
+
+// 🚀 Enhanced Tournament Tree with O(log k) Complexity and Cache Optimization
+let config = LoserTreeConfig {
+    initial_capacity: 64,
+    use_secure_memory: true,
+    stable_sort: true,
+    cache_optimized: true,
+    use_simd: true,
+    prefetch_distance: 2,
+    alignment: 64,
+};
+let mut enhanced_tree = EnhancedLoserTree::new(config);
+
+// Add sorted input streams with true O(log k) complexity
+enhanced_tree.add_way(vec![1, 4, 7, 10].into_iter()).unwrap();
+enhanced_tree.add_way(vec![2, 5, 8, 11].into_iter()).unwrap();
+enhanced_tree.add_way(vec![3, 6, 9, 12].into_iter()).unwrap();
+
+// Initialize with cache-friendly layout and prefetching
+enhanced_tree.initialize().unwrap();
+
+// Merge with O(log k) winner selection and cache optimization
+let merged = enhanced_tree.merge_to_vec().unwrap();
+assert_eq!(merged, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+
+// 🚀 Advanced Set Operations with Bit Mask Optimization
+let mut set_ops = SetOperations::new();
+
+// Intersection with bit mask optimization (≤32 ways)
+let sequences = vec![
+    vec![1, 3, 5, 7, 9].into_iter(),
+    vec![1, 2, 3, 8, 9].into_iter(),
+    vec![1, 3, 4, 6, 9].into_iter(),
+];
+let intersection = set_ops.intersection(sequences).unwrap();
+assert_eq!(intersection, vec![1, 3, 9]);
+
+// Union operations with deduplication
+let sequences = vec![
+    vec![1, 3, 5].into_iter(),
+    vec![2, 4, 6].into_iter(),
+    vec![1, 2, 7].into_iter(),
+];
+let union = set_ops.union(sequences).unwrap();
+assert_eq!(union, vec![1, 2, 3, 4, 5, 6, 7]);
+
+// Frequency counting across multiple streams
+let frequencies = set_ops.count_frequencies(sequences).unwrap();
+println!("Element frequencies: {:?}", frequencies);
+
+// Get performance statistics
+let stats = set_ops.stats();
+println!("Used bit mask optimization: {}", stats.used_bit_mask);
+println!("Processing time: {}μs", stats.processing_time_us);
+
+// 🚀 SIMD-Optimized Merge Operations
+let simd_comparator = SimdComparator::new();
+
+// Hardware-accelerated comparisons
+let left = vec![1, 3, 5, 7, 9];
+let right = vec![2, 4, 6, 8, 10];
+let comparisons = simd_comparator.compare_i32_slices(&left, &right).unwrap();
+
+// Find minimum with SIMD acceleration
+let values = vec![5, 2, 8, 1, 9, 3];
+let (min_idx, min_val) = simd_comparator.find_min_i32(&values).unwrap();
+assert_eq!((min_idx, min_val), (3, 1));
+
+// Merge sorted arrays with SIMD optimizations
+let left = vec![1, 3, 5, 7];
+let right = vec![2, 4, 6, 8];
+let merged = simd_comparator.merge_sorted_i32(&left, &right);
+assert_eq!(merged, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+
+// Parallel operations for multiple value pairs
+let pairs = vec![(1, 2), (5, 3), (4, 4), (9, 7)];
+let parallel_results = SimdOperations::parallel_compare_i32(&pairs);
+
+// Multi-array merging with tournament tree
+let arrays = vec![
+    vec![1, 4, 7],
+    vec![2, 5, 8],
+    vec![3, 6, 9],
+];
+let result = SimdOperations::merge_multiple_sorted(arrays);
+assert_eq!(result, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
 // External Sorting for Large Datasets (Replacement Selection)
 let config = ReplaceSelectSortConfig {
@@ -1282,7 +1371,7 @@ let mut external_sorter = ReplaceSelectSort::new(config);
 let large_dataset = (0..10_000_000).rev().collect::<Vec<u32>>();
 let sorted = external_sorter.sort(large_dataset).unwrap();
 
-// Tournament Tree for Efficient K-Way Merging
+// Legacy Tournament Tree (still available)
 let tree_config = LoserTreeConfig {
     initial_capacity: 16,
     stable_sort: true,
