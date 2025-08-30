@@ -6,6 +6,8 @@
 pub mod external_sort;
 pub mod multiway_merge;
 pub mod radix_sort;
+pub mod set_operations;
+pub mod simd_merge;
 pub mod suffix_array;
 pub mod tournament_tree;
 
@@ -13,8 +15,10 @@ pub mod tournament_tree;
 pub use external_sort::{ExternalSort, ReplaceSelectSort, ReplaceSelectSortConfig};
 pub use multiway_merge::{MergeSource, MultiWayMerge};
 pub use radix_sort::{RadixSort, RadixSortConfig};
+pub use set_operations::{SetOperations, SetOperationsConfig, SetOperationStats};
+pub use simd_merge::{SimdComparator, SimdConfig, SimdOperations};
 pub use suffix_array::{LcpArray, SuffixArray, SuffixArrayBuilder};
-pub use tournament_tree::{LoserTree, LoserTreeConfig, TournamentNode};
+pub use tournament_tree::{EnhancedLoserTree, LoserTree, LoserTreeConfig, TournamentNode, CacheAlignedNode};
 
 /// Configuration for algorithm behavior
 #[derive(Debug, Clone)]
