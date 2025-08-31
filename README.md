@@ -22,7 +22,7 @@ High-performance Rust data structures and compression algorithms with memory saf
 - **📡 Advanced Serialization**: Comprehensive components with smart pointers, endian handling, version management
 - **🗜️ Advanced Compression Framework**: PA-Zip dictionary compression, contextual Huffman (Order-1/Order-2), 64-bit rANS with parallel variants, FSE with ZSTD optimizations, hardware-accelerated bit operations
 - **🔄 Real-time Compression**: Adaptive algorithms with strict latency guarantees
-- **🔌 C FFI Support**: Complete C API for migration from C++
+- **🔌 C FFI Support**: Complete C API for migration from C++ (enabled with `--features ffi`)
 - **🎚️ Five-Level Concurrency Management**: Graduated concurrency control with adaptive selection
 
 ## Five-Level Concurrency Management System
@@ -2878,6 +2878,18 @@ let ptr = pool.allocate()?;
 
 ## C FFI Migration
 
+### Generating C Headers
+
+To generate C header files for FFI bindings:
+
+```bash
+cargo build --features ffi
+```
+
+This creates `include/zipora.h` with all necessary C declarations and constants.
+
+### Usage
+
 ```toml
 [dependencies]
 zipora = { version = "1.1.1", features = ["ffi"] }
@@ -2938,7 +2950,7 @@ cargo bench --bench cache_locality_bench
 
 # Build with optional features
 cargo build --release --features lz4             # Enable LZ4 compression
-cargo build --release --features ffi             # Enable C FFI compatibility
+cargo build --release --features ffi             # Enable C FFI compatibility (generates include/zipora.h)
 cargo build --release --features lz4,ffi         # Multiple optional features
 
 # AVX-512 requires nightly Rust (experimental intrinsics)

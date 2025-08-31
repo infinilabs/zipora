@@ -65,10 +65,12 @@ use std::arch::x86_64::{__m512i, _mm512_loadu_si512, _mm512_storeu_si512};
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::{uint8x16_t, vaddvq_u8, vcntq_u8, vld1q_u8};
 
-#[cfg(target_arch = "x86_64")]
 use std::sync::OnceLock;
+use crate::system::cpu_features::CpuFeatures as SystemCpuFeatures;
 
 /// Runtime CPU feature detection for optimal instruction selection
+/// 
+/// This is a compatibility wrapper around the enhanced system CpuFeatures.
 #[derive(Debug, Clone, Copy)]
 pub struct CpuFeatures {
     /// CPU supports POPCNT instruction for fast bit counting
@@ -85,21 +87,27 @@ pub struct CpuFeatures {
     pub has_avx512vpopcntdq: bool,
 }
 
+impl From<&SystemCpuFeatures> for CpuFeatures {
+    fn from(system_features: &SystemCpuFeatures) -> Self {
+        Self {
+            has_popcnt: system_features.has_popcnt,
+            has_bmi2: system_features.has_bmi2,
+            has_avx2: system_features.has_avx2,
+            has_avx512f: system_features.has_avx512f,
+            has_avx512bw: system_features.has_avx512bw,
+            has_avx512vpopcntdq: system_features.has_avx512vpopcntdq,
+        }
+    }
+}
+
 #[allow(dead_code)]
 static CPU_FEATURES: OnceLock<CpuFeatures> = OnceLock::new();
 
-#[cfg(target_arch = "x86_64")]
 impl CpuFeatures {
-    /// Detect available CPU features at runtime for optimal implementation selection
+    /// Detect available CPU features by delegating to the system CpuFeatures
     pub fn detect() -> Self {
-        Self {
-            has_popcnt: is_x86_feature_detected!("popcnt"),
-            has_bmi2: is_x86_feature_detected!("bmi2"),
-            has_avx2: is_x86_feature_detected!("avx2"),
-            has_avx512f: is_x86_feature_detected!("avx512f"),
-            has_avx512bw: is_x86_feature_detected!("avx512bw"),
-            has_avx512vpopcntdq: is_x86_feature_detected!("avx512vpopcntdq"),
-        }
+        let system_features = crate::system::get_cpu_features();
+        Self::from(system_features)
     }
 
     /// Get the global CPU features instance (cached)
@@ -125,75 +133,6 @@ impl CpuFeatures {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
-impl CpuFeatures {
-    /// Detect available ARM CPU features
-    pub fn detect() -> Self {
-        Self {
-            has_popcnt: cfg!(feature = "simd") && std::arch::is_aarch64_feature_detected!("neon"),
-            has_bmi2: false, // ARM doesn't have BMI2
-            has_avx2: false, // ARM doesn't have AVX2
-            has_avx512f: false,
-            has_avx512bw: false,
-            has_avx512vpopcntdq: false,
-        }
-    }
-
-    pub fn get() -> &'static CpuFeatures {
-        #[cfg(test)]
-        {
-            static TEST_FEATURES: CpuFeatures = CpuFeatures {
-                has_popcnt: false, // Safe fallback in tests
-                has_bmi2: false,
-                has_avx2: false,
-                has_avx512f: false,
-                has_avx512bw: false,
-                has_avx512vpopcntdq: false,
-            };
-            &TEST_FEATURES
-        }
-
-        #[cfg(not(test))]
-        {
-            CPU_FEATURES.get_or_init(Self::detect)
-        }
-    }
-}
-
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-impl CpuFeatures {
-    pub fn detect() -> Self {
-        Self {
-            has_popcnt: false,
-            has_bmi2: false,
-            has_avx2: false,
-            has_avx512f: false,
-            has_avx512bw: false,
-            has_avx512vpopcntdq: false,
-        }
-    }
-
-    pub fn get() -> &'static CpuFeatures {
-        // In test mode, use a simple fallback to avoid potential recursion during testing
-        #[cfg(test)]
-        {
-            static TEST_FEATURES: CpuFeatures = CpuFeatures {
-                has_popcnt: false, // Always false for non-x86_64 anyway
-                has_bmi2: false,
-                has_avx2: false,
-                has_avx512f: false,
-                has_avx512bw: false,
-                has_avx512vpopcntdq: false,
-            };
-            &TEST_FEATURES
-        }
-
-        #[cfg(not(test))]
-        {
-            CPU_FEATURES.get_or_init(Self::detect)
-        }
-    }
-}
 
 //==============================================================================
 // COMPILE-TIME LOOKUP TABLES FOR ULTRA-FAST RANK/SELECT OPERATIONS

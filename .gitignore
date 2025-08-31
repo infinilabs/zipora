@@ -289,4 +289,5 @@ tramp
 *.private
 .local/
 
+include/
 tmp

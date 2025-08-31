@@ -23,7 +23,7 @@ pub mod base64;
 pub mod vm_utils;
 
 // Re-export core functionality
-pub use cpu_features::{CpuFeatureSet, RuntimeCpuFeatures, get_cpu_features, has_cpu_feature};
+pub use cpu_features::{CpuFeatures, RuntimeCpuFeatures, get_cpu_features, has_cpu_feature};
 pub use profiling::{PerfTimer, BenchmarkSuite, HighPrecisionTimer, ProfiledFunction};
 pub use process::{ProcessManager, ProcessPool, BidirectionalPipe, ProcessExecutor};
 pub use base64::{AdaptiveBase64, SimdBase64Encoder, SimdBase64Decoder, base64_encode_simd, base64_decode_simd};

@@ -6,13 +6,13 @@
 //! - Runtime CPU feature detection and adaptive selection
 //! - Fallback to scalar operations when SIMD is unavailable
 
-use crate::system::{CpuFeatureSet, cpu_features::CpuFeature};
+use crate::system::cpu_features::{CpuFeatures, CpuFeature};
 use std::arch::x86_64::*;
 
 /// SIMD-accelerated string operations for hash maps
 pub struct SimdStringOps {
     /// CPU features available at runtime
-    cpu_features: &'static CpuFeatureSet,
+    cpu_features: &'static CpuFeatures,
     /// Selected implementation tier based on available features
     impl_tier: SimdTier,
 }
@@ -44,7 +44,7 @@ impl SimdStringOps {
     }
 
     /// Selects the optimal SIMD implementation tier based on available CPU features
-    fn select_optimal_tier(features: &CpuFeatureSet) -> SimdTier {
+    fn select_optimal_tier(features: &CpuFeatures) -> SimdTier {
         #[cfg(feature = "avx512")]
         if features.has_feature(CpuFeature::AVX512F) && features.has_feature(CpuFeature::AVX512BW) {
             return SimdTier::Avx512;
