@@ -271,7 +271,7 @@ pub use compression::{
 // Re-export System Utilities (Phase 10A)
 pub use system::{
     // CPU feature detection
-    CpuFeatureSet, RuntimeCpuFeatures, get_cpu_features, has_cpu_feature,
+    RuntimeCpuFeatures, get_cpu_features, has_cpu_feature,
     // Performance profiling
     PerfTimer, BenchmarkSuite, HighPrecisionTimer, ProfiledFunction,
     // Process management
