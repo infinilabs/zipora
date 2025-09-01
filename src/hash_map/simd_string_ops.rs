@@ -6,7 +6,8 @@
 //! - Runtime CPU feature detection and adaptive selection
 //! - Fallback to scalar operations when SIMD is unavailable
 
-use crate::system::cpu_features::{CpuFeatures, CpuFeature};
+use crate::system::cpu_features::CpuFeatures;
+use crate::memory::simd_ops::fast_compare;
 use std::arch::x86_64::*;
 
 /// SIMD-accelerated string operations for hash maps
@@ -44,17 +45,18 @@ impl SimdStringOps {
     }
 
     /// Selects the optimal SIMD implementation tier based on available CPU features
+    /// This matches the tier selection logic in core SIMD memory operations for consistency
     fn select_optimal_tier(features: &CpuFeatures) -> SimdTier {
         #[cfg(feature = "avx512")]
-        if features.has_feature(CpuFeature::AVX512F) && features.has_feature(CpuFeature::AVX512BW) {
+        if features.has_avx512f && features.has_avx512vl && features.has_avx512bw {
             return SimdTier::Avx512;
         }
         
-        if features.has_feature(CpuFeature::AVX2) {
+        if features.has_avx2 {
             return SimdTier::Avx2;
         }
         
-        if features.has_feature(CpuFeature::SSE4_2) {
+        if features.has_sse41 && features.has_sse42 {
             return SimdTier::Sse42;
         }
         
@@ -81,18 +83,65 @@ impl SimdStringOps {
             return self.scalar_compare_prefix(bytes1, bytes2, cached_prefix);
         }
         
-        // For now, use scalar comparison to ensure compatibility
-        // SIMD implementations will be enabled in a future update
-        self.scalar_string_compare(bytes1, bytes2, cached_prefix)
+        // Use prefix optimization for cached comparisons
+        if bytes1.len() >= 8 && cached_prefix != 0 {
+            let prefix1 = self.extract_prefix_simd(str1);
+            if prefix1 != cached_prefix {
+                return false;
+            }
+        }
+        
+        // For medium to large strings, use SIMD implementations based on tier
+        // Use size threshold of 16 bytes for SIMD activation to match core SIMD ops
+        if bytes1.len() >= 16 {
+            match self.impl_tier {
+                #[cfg(feature = "avx512")]
+                SimdTier::Avx512 if bytes1.len() >= 64 => {
+                    unsafe { self.avx512_string_compare(bytes1, bytes2, cached_prefix) }
+                }
+                SimdTier::Avx2 if bytes1.len() >= 32 => {
+                    unsafe { self.avx2_string_compare(bytes1, bytes2, cached_prefix) }
+                }
+                SimdTier::Sse42 if bytes1.len() >= 16 => {
+                    unsafe { self.sse42_string_compare(bytes1, bytes2, cached_prefix) }
+                }
+                _ => {
+                    // For smaller sizes or scalar tier, use core SIMD operations for consistency
+                    fast_compare(bytes1, bytes2) == 0
+                }
+            }
+        } else {
+            // Use scalar comparison for small strings
+            self.scalar_string_compare(bytes1, bytes2, cached_prefix)
+        }
     }
 
     /// SIMD-accelerated string hashing
     pub fn fast_string_hash(&self, s: &str, base_hash: u64) -> u64 {
         let bytes = s.as_bytes();
         
-        // For now, use scalar hashing to ensure compatibility
-        // SIMD implementations will be enabled in a future update
-        self.scalar_string_hash(bytes, base_hash)
+        // For very short strings, use scalar hashing
+        if bytes.len() <= 8 {
+            return self.scalar_string_hash(bytes, base_hash);
+        }
+        
+        // Use SIMD implementations based on tier and size thresholds
+        match self.impl_tier {
+            #[cfg(feature = "avx512")]
+            SimdTier::Avx512 if bytes.len() >= 64 => {
+                unsafe { self.avx512_string_hash(bytes, base_hash) }
+            }
+            SimdTier::Avx2 if bytes.len() >= 32 => {
+                unsafe { self.avx2_string_hash(bytes, base_hash) }
+            }
+            SimdTier::Sse42 if bytes.len() >= 16 => {
+                unsafe { self.sse42_string_hash(bytes, base_hash) }
+            }
+            _ => {
+                // Fall back to scalar implementation for smaller sizes or scalar tier
+                self.scalar_string_hash(bytes, base_hash)
+            }
+        }
     }
 
     /// Extracts prefix for caching with SIMD optimization
@@ -103,6 +152,14 @@ impl SimdStringOps {
             match self.impl_tier {
                 SimdTier::Avx2 | SimdTier::Sse42 => {
                     // Use SIMD for 8-byte loads when available
+                    unsafe {
+                        let ptr = bytes.as_ptr() as *const u64;
+                        ptr.read_unaligned()
+                    }
+                }
+                #[cfg(feature = "avx512")]
+                SimdTier::Avx512 => {
+                    // Use AVX-512 optimized 8-byte load
                     unsafe {
                         let ptr = bytes.as_ptr() as *const u64;
                         ptr.read_unaligned()
@@ -362,6 +419,22 @@ pub fn get_global_simd_ops() -> &'static SimdStringOps {
     GLOBAL_SIMD_OPS.get_or_init(|| SimdStringOps::new())
 }
 
+/// Convenience function for fast string comparison using global SIMD operations
+/// Integrates with the core SIMD memory operations for optimal performance
+pub fn fast_string_compare(str1: &str, str2: &str, cached_prefix: u64) -> bool {
+    get_global_simd_ops().fast_string_compare(str1, str2, cached_prefix)
+}
+
+/// Convenience function for fast string hashing using global SIMD operations
+pub fn fast_string_hash(s: &str, base_hash: u64) -> u64 {
+    get_global_simd_ops().fast_string_hash(s, base_hash)
+}
+
+/// Convenience function for extracting string prefix using global SIMD operations
+pub fn extract_string_prefix(s: &str) -> u64 {
+    get_global_simd_ops().extract_prefix_simd(s)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -457,5 +530,82 @@ mod tests {
         
         assert!(ops.fast_string_compare(empty1, empty2, prefix));
         assert!(!ops.fast_string_compare(empty1, non_empty, prefix));
+    }
+    
+    #[test]
+    fn test_simd_integration_with_large_strings() {
+        let ops = SimdStringOps::new();
+        println!("SIMD tier: {:?}", ops.tier());
+        
+        // Test with strings large enough to trigger SIMD operations
+        let large_string1 = "a".repeat(1024);
+        let large_string2 = "a".repeat(1024);
+        let large_string3 = "b".repeat(1024);
+        
+        let prefix = ops.extract_prefix_simd(&large_string1);
+        
+        // These should use SIMD operations based on tier and size
+        assert!(ops.fast_string_compare(&large_string1, &large_string2, prefix));
+        assert!(!ops.fast_string_compare(&large_string1, &large_string3, prefix));
+        
+        // Test hashing with large strings
+        let hash1 = ops.fast_string_hash(&large_string1, 0);
+        let hash2 = ops.fast_string_hash(&large_string2, 0);
+        let hash3 = ops.fast_string_hash(&large_string3, 0);
+        
+        assert_eq!(hash1, hash2);
+        assert_ne!(hash1, hash3);
+    }
+    
+    #[test]
+    fn test_convenience_functions() {
+        // Test the new convenience functions
+        let str1 = "hello world test string for SIMD";
+        let str2 = "hello world test string for SIMD";
+        let str3 = "different string for SIMD testing";
+        
+        let prefix = extract_string_prefix(str1);
+        
+        assert!(fast_string_compare(str1, str2, prefix));
+        assert!(!fast_string_compare(str1, str3, prefix));
+        
+        let hash1 = fast_string_hash(str1, 0);
+        let hash2 = fast_string_hash(str2, 0);
+        let hash3 = fast_string_hash(str3, 0);
+        
+        assert_eq!(hash1, hash2);
+        assert_ne!(hash1, hash3);
+    }
+    
+    #[test]
+    fn test_simd_size_thresholds() {
+        let ops = SimdStringOps::new();
+        
+        // Test strings of various sizes around SIMD thresholds
+        let small_str = "small";  // 5 bytes
+        let medium_str = "this is a medium sized string for testing"; // ~40 bytes  
+        let large_str = "a".repeat(128); // 128 bytes
+        
+        let prefix_small = ops.extract_prefix_simd(&small_str);
+        let prefix_medium = ops.extract_prefix_simd(&medium_str);
+        let prefix_large = ops.extract_prefix_simd(&large_str);
+        
+        // All should work regardless of size
+        assert!(ops.fast_string_compare(&small_str, &small_str, prefix_small));
+        assert!(ops.fast_string_compare(&medium_str, &medium_str, prefix_medium));
+        assert!(ops.fast_string_compare(&large_str, &large_str, prefix_large));
+        
+        // Hash values should be consistent
+        let hash_small1 = ops.fast_string_hash(&small_str, 0);
+        let hash_small2 = ops.fast_string_hash(&small_str, 0);
+        assert_eq!(hash_small1, hash_small2);
+        
+        let hash_medium1 = ops.fast_string_hash(&medium_str, 0);
+        let hash_medium2 = ops.fast_string_hash(&medium_str, 0);
+        assert_eq!(hash_medium1, hash_medium2);
+        
+        let hash_large1 = ops.fast_string_hash(&large_str, 0);
+        let hash_large2 = ops.fast_string_hash(&large_str, 0);
+        assert_eq!(hash_large1, hash_large2);
     }
 }

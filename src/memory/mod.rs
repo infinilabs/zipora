@@ -13,6 +13,7 @@ pub mod mmap;
 pub mod mmap_vec;
 pub mod pool;
 pub mod secure_pool;
+pub mod simd_ops;
 pub mod threadlocal_pool;
 pub mod tiered;
 
@@ -40,6 +41,9 @@ pub use pool::{MemoryPool, PoolConfig, PooledBuffer, PooledVec};
 pub use secure_pool::{
     SecureMemoryPool, SecurePoolConfig, SecurePoolStats, SecurePooledPtr, get_global_pool_for_size,
     get_global_secure_pool_stats, size_to_class,
+};
+pub use simd_ops::{
+    SimdMemOps, SimdTier, fast_copy, fast_compare, fast_find_byte, fast_fill,
 };
 pub use threadlocal_pool::{
     ThreadLocalMemoryPool, ThreadLocalPoolConfig, ThreadLocalPoolStats, ThreadLocalAllocation,

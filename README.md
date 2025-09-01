@@ -2924,6 +2924,76 @@ if (fast_vec_push(NULL, 42) != CResult_Success) {
 }
 ```
 
+## SIMD Framework
+
+Zipora provides a comprehensive SIMD framework with automatic hardware detection and graceful fallbacks:
+
+### SIMD Architecture
+
+```rust
+use zipora::simd::{SimdCapabilities, CpuFeatures, SimdOperations};
+
+// Runtime hardware detection
+let caps = SimdCapabilities::detect();
+println!("AVX2: {}, BMI2: {}, POPCNT: {}", caps.avx2, caps.bmi2, caps.popcnt);
+
+// Adaptive SIMD operations
+let data = vec![1u32, 2, 3, 4, 5, 6, 7, 8];
+let result = SimdOperations::sum_u32_adaptive(&data); // Uses best available SIMD
+```
+
+### SIMD Implementation Guidelines
+
+**Hardware Acceleration Tiers:**
+- **Tier 5**: AVX-512 (8x parallel, nightly Rust) - `cargo +nightly build --features avx512`
+- **Tier 4**: AVX2 (4x parallel, stable Rust) - Default enabled
+- **Tier 3**: BMI2 PDEP/PEXT (bit manipulation) - Runtime detection
+- **Tier 2**: POPCNT (population count) - Hardware acceleration
+- **Tier 1**: ARM NEON (ARM64 platforms) - Cross-platform
+- **Tier 0**: Scalar fallback (portable) - Always available
+
+**Implementation Guidelines:**
+```rust
+// ✅ Correct SIMD style - Runtime detection with fallbacks
+#[cfg(target_arch = "x86_64")]
+fn accelerated_operation(data: &[u32]) -> u32 {
+    if is_x86_feature_detected!("avx2") {
+        unsafe { avx2_implementation(data) }
+    } else if is_x86_feature_detected!("sse2") {
+        unsafe { sse2_implementation(data) }
+    } else {
+        scalar_fallback(data)
+    }
+}
+
+// ✅ ARM support
+#[cfg(target_arch = "aarch64")]
+fn accelerated_operation(data: &[u32]) -> u32 {
+    if std::arch::is_aarch64_feature_detected!("neon") {
+        unsafe { neon_implementation(data) }
+    } else {
+        scalar_fallback(data)
+    }
+}
+```
+
+**Cross-Platform SIMD Pattern:**
+- **Always provide scalar fallback** for compatibility
+- **Use runtime detection** with `is_x86_feature_detected!`
+- **Graceful degradation** across hardware tiers
+- **Unsafe blocks isolated** to SIMD intrinsics only
+- **Comprehensive testing** on all instruction sets
+
+### SIMD Performance Impact
+
+| Component | SIMD Acceleration | Performance Gain |
+|-----------|------------------|------------------|
+| **Rank/Select** | AVX2 + BMI2 | **3.3 Gelem/s** (8x parallel) |
+| **Radix Sort** | AVX2 digit counting | **4-8x faster** sorting |
+| **String Processing** | AVX2 UTF-8 validation | **2-4x faster** text processing |
+| **Compression** | BMI2 bit operations | **5-10x faster** bit manipulation |
+| **Hash Maps** | Cache prefetching | **2-3x fewer** cache misses |
+
 ## Features
 
 | Feature | Description | Default | Requirements |
