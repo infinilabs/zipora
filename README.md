@@ -2189,7 +2189,7 @@ memory_ordering::store_barrier(); // Store barrier
 
 ## String Processing
 
-High-Performance String Processing - Zipora provides 3 comprehensive string processing components with Unicode support, hardware acceleration, and efficient line-based text processing:
+High-Performance String Processing - Zipora provides 4 comprehensive string processing components with SSE4.2 PCMPESTRI acceleration, Unicode support, advanced SIMD search operations, and efficient line-based text processing:
 
 ### Lexicographic String Iterators
 
@@ -2238,6 +2238,67 @@ use zipora::string::utils;
 let common_prefix = utils::find_common_prefix(iter).unwrap();
 let count = utils::count_with_prefix(iter, "app").unwrap(); // Count strings starting with "app"
 ```
+
+### SSE4.2 SIMD String Search
+
+Advanced hardware-accelerated string search operations using SSE4.2 PCMPESTRI instructions with hybrid strategy optimization:
+
+```rust
+use zipora::{SimdStringSearch, SearchTier, MultiSearchResult, get_global_simd_search,
+            sse42_strchr, sse42_strstr, sse42_multi_search, sse42_strcmp};
+
+// Global SIMD string search instance with runtime feature detection
+let search = SimdStringSearch::new();
+println!("Selected SIMD tier: {:?}", search.tier()); // Sse42, Avx2, or Avx512
+
+// SSE4.2 PCMPESTRI-based character search (strchr equivalent)
+// Uses hybrid strategy: SSE4.2 for ≤16 bytes, extended SSE4.2 for ≤35 bytes, binary search for larger
+let haystack = b"hello world test string";
+assert_eq!(search.sse42_strchr(haystack, b'w'), Some(6));
+assert_eq!(search.sse42_strchr(haystack, b'z'), None);
+
+// SSE4.2 substring search with tiered approach (strstr equivalent)
+assert_eq!(search.sse42_strstr(haystack, b"world"), Some(6));
+assert_eq!(search.sse42_strstr(haystack, b"test"), Some(12));
+assert_eq!(search.sse42_strstr(haystack, b"xyz"), None);
+
+// Multi-character vectorized search for multiple needle bytes
+let needles = b"aeiou";
+let result = search.sse42_multi_search(haystack, needles);
+// Returns positions and which characters were found
+println!("Found vowels at positions: {:?}", result.positions);
+println!("Vowel characters: {:?}", result.characters);
+
+// String comparison with early exit optimizations
+use std::cmp::Ordering;
+assert_eq!(search.sse42_strcmp(b"hello", b"hello"), Ordering::Equal);
+assert_eq!(search.sse42_strcmp(b"hello", b"world"), Ordering::Less);
+
+// Convenience functions using global instance
+assert_eq!(sse42_strchr(b"test string", b's'), Some(2));
+assert_eq!(sse42_strstr(b"test string", b"str"), Some(5));
+
+// SIMD implementation tiers with automatic fallback
+match search.tier() {
+    SearchTier::Sse42 => println!("Using SSE4.2 PCMPESTRI acceleration"),
+    SearchTier::Avx2 => println!("Using AVX2 256-bit vectorization"),
+    SearchTier::Avx512 => println!("Using AVX-512 512-bit vectorization"),
+    SearchTier::Scalar => println!("Using portable scalar fallback"),
+}
+```
+
+**Key Features:**
+- **SSE4.2 PCMPESTRI**: Hardware-accelerated character and substring search using specialized string instructions
+- **Hybrid Strategy**: Optimal algorithm selection based on data size (≤16 bytes: single PCMPESTRI, ≤35 bytes: cascaded, >35 bytes: chunked processing)
+- **Multi-Tier SIMD**: Automatic runtime detection with support for SSE4.2, AVX2, AVX-512, and scalar fallback
+- **Early Exit Optimizations**: Hardware-accelerated mismatch detection for string comparison operations
+- **Integration Ready**: Designed for use with FSA/Trie, compression algorithms, hash maps, and blob storage systems
+
+**Performance Characteristics:**
+- **≤16 bytes**: Single PCMPESTRI instruction (optimal hardware utilization)
+- **17-35 bytes**: Cascaded SSE4.2 operations with early exit optimization
+- **>35 bytes**: O(log n) binary search with rank-select optimization for large datasets
+- **Runtime Detection**: Automatic hardware capability detection with graceful fallback to scalar implementations
 
 ### Unicode String Processing
 

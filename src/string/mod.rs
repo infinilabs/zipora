@@ -6,6 +6,7 @@
 //! ## Features
 //!
 //! - **FastStr**: Zero-copy string operations with SIMD hashing
+//! - **SIMD Search**: SSE4.2 PCMPESTRI-based string search operations with hybrid strategies
 //! - **BMI2 String Operations**: Hardware-accelerated string processing with BMI2 instructions
 //! - **Lexicographic Iterators**: Efficient iteration over sorted string collections
 //! - **Unicode Processing**: Full Unicode support with proper handling
@@ -16,6 +17,7 @@ mod lexicographic_iterator;
 mod unicode;
 mod line_processor;
 mod bmi2_string_ops;
+mod simd_search;
 
 pub use fast_str::FastStr;
 
@@ -37,6 +39,13 @@ pub use line_processor::{
     LineSplitter,
 };
 
+// SIMD search operations exports
+pub use simd_search::{
+    SimdStringSearch, SearchTier, MultiSearchResult,
+    get_global_simd_search, sse42_strchr, sse42_strstr, 
+    sse42_multi_search, sse42_strcmp,
+};
+
 // BMI2 string operations exports
 pub use bmi2_string_ops::{
     Bmi2StringProcessor, CharClass, CharFilter, CharRun, CompressionAnalysis,
@@ -51,6 +60,11 @@ pub mod utils {
     pub use super::lexicographic_iterator::utils as lex_utils;
     pub use super::unicode::utils as unicode_utils;
     pub use super::line_processor::utils as line_utils;
+}
+
+/// SIMD string search utilities for hardware-accelerated string operations
+pub mod simd {
+    pub use super::simd_search::*;
 }
 
 /// BMI2 string processing utilities for advanced string operations
