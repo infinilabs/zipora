@@ -1,3 +1,5 @@
+#![cfg_attr(feature = "nightly", feature(core_intrinsics))]
+
 //! # Zipora: High-Performance Data Structures and Compression
 //!
 //! This crate provides a comprehensive Rust implementation of advanced data structures and compression algorithms,
