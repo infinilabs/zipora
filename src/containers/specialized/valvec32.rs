@@ -19,6 +19,58 @@ use std::sync::Arc;
 /// Maximum capacity for ValVec32 (2^32 - 1 elements)
 pub const MAX_CAPACITY: u32 = u32::MAX;
 
+/// Platform-specific malloc_usable_size wrapper
+#[cfg(target_os = "linux")]
+fn get_usable_size(ptr: *mut u8, size: usize) -> usize {
+    unsafe {
+        // Use malloc_usable_size on Linux
+        unsafe extern "C" {
+            fn malloc_usable_size(ptr: *mut std::ffi::c_void) -> usize;
+        }
+        if !ptr.is_null() {
+            malloc_usable_size(ptr as *mut std::ffi::c_void)
+        } else {
+            size
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn get_usable_size(ptr: *mut u8, size: usize) -> usize {
+    unsafe {
+        // Use malloc_size on macOS/iOS
+        unsafe extern "C" {
+            fn malloc_size(ptr: *mut std::ffi::c_void) -> usize;
+        }
+        if !ptr.is_null() {
+            malloc_size(ptr as *mut std::ffi::c_void)
+        } else {
+            size
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn get_usable_size(ptr: *mut u8, size: usize) -> usize {
+    unsafe {
+        // Use _msize on Windows
+        unsafe extern "C" {
+            fn _msize(ptr: *mut std::ffi::c_void) -> usize;
+        }
+        if !ptr.is_null() {
+            _msize(ptr as *mut std::ffi::c_void)
+        } else {
+            size
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "ios", target_os = "windows")))]
+fn get_usable_size(_ptr: *mut u8, size: usize) -> usize {
+    // Fallback for other platforms
+    size
+}
+
 /// Branch prediction hints for performance optimization
 #[cfg(feature = "nightly")]
 use std::intrinsics::{likely, unlikely};
@@ -35,15 +87,29 @@ fn unlikely(b: bool) -> bool {
     b
 }
 
-/// Golden ratio growth strategy from topling-zip
-/// Formula: oldcap * 103 / 64 = 1.609375 (approximates golden ratio 1.618)
+/// Adaptive growth strategy with size-based growth factors
+/// Optimized for different vector sizes to reduce memory waste and improve performance
 #[inline]
-fn larger_capacity(old_cap: u32) -> u32 {
+fn larger_capacity(old_cap: u32, element_size: usize) -> u32 {
     if old_cap == 0 {
-        return 4; // Start with reasonable initial capacity
+        // Start with reasonable initial capacity based on element size
+        let elements_per_cache_line = 64 / element_size.max(1);
+        return (elements_per_cache_line as u32).clamp(4, 16);
     }
-    let new_cap = ((old_cap as u64) * 103) / 64;
-    (new_cap.min(MAX_CAPACITY as u64)) as u32
+    
+    // Adaptive growth strategy based on current size
+    let new_cap = if old_cap <= 64 {
+        // Small vectors: 2x growth for better performance
+        old_cap.saturating_mul(2)
+    } else if old_cap <= 4096 {
+        // Medium vectors: 1.5x growth for balanced approach
+        old_cap + (old_cap >> 1)
+    } else {
+        // Large vectors: 1.25x growth to minimize memory waste
+        old_cap + (old_cap >> 2)
+    };
+    
+    new_cap.min(MAX_CAPACITY)
 }
 
 /// High-performance vector with 32-bit indices for memory efficiency
@@ -59,13 +125,14 @@ fn larger_capacity(old_cap: u32) -> u32 {
 /// - Memory overhead: 16 bytes vs 24 bytes for std::Vec
 /// - Target: 33% memory reduction for struct size
 ///
-/// # Performance
+/// # Performance Optimizations
 ///
 /// - O(1) amortized push/pop operations
 /// - O(1) random access via indexing
-/// - Golden ratio growth (1.609x) for better memory utilization
-/// - Realloc-based growth for potential in-place expansion
-/// - Optimized hot/cold path separation
+/// - Adaptive growth strategy with size-based growth factors
+/// - malloc_usable_size optimization for maximum memory utilization
+/// - Hot path optimization with branch prediction hints
+/// - Streamlined design for optimal cache performance
 ///
 /// # Examples
 ///
@@ -89,7 +156,8 @@ pub struct ValVec32<T> {
     len: u32,
     /// Allocated capacity in elements (u32 for memory efficiency)  
     capacity: u32,
-    // On 64-bit systems: ptr(8) + len(4) + capacity(4) = 16 bytes vs Vec's 24 bytes
+    // Total: ptr(8) + len(4) + capacity(4) = 16 bytes
+    // Streamlined design for optimal performance and cache efficiency
 }
 
 // Simple iterator using slice - prioritize correctness over micro-optimizations
@@ -141,19 +209,29 @@ impl<T> ValVec32<T> {
             return Ok(Self::new());
         }
 
-        let layout = Layout::array::<T>(capacity as usize)
-            .map_err(|_| ZiporaError::invalid_data("Layout calculation failed"))?;
-
-        // SAFETY: We've verified the layout is valid and non-zero
-        let ptr = unsafe { alloc::alloc(layout) };
-        if ptr.is_null() {
-            return Err(ZiporaError::out_of_memory(layout.size()));
-        }
-
+        let capacity_usize = capacity as usize;
+        let size = capacity_usize * mem::size_of::<T>();
+        
+        // Use standard allocation with proper alignment
+        let layout = Layout::array::<T>(capacity_usize)
+            .map_err(|_| ZiporaError::invalid_data("Invalid layout for capacity"))?;
+        
+        let ptr = unsafe {
+            let raw_ptr = alloc::alloc(layout);
+            if raw_ptr.is_null() {
+                return Err(ZiporaError::out_of_memory(size));
+            }
+            NonNull::new_unchecked(raw_ptr as *mut T)
+        };
+        
+        // Use malloc_usable_size to get actual allocated capacity
+        let actual_size = get_usable_size(ptr.as_ptr() as *mut u8, size);
+        let actual_capacity = (actual_size / mem::size_of::<T>()).min(MAX_CAPACITY as usize);
+        
         Ok(Self {
-            ptr: NonNull::new(ptr as *mut T).unwrap(),
+            ptr,
             len: 0,
-            capacity,
+            capacity: actual_capacity as u32,
         })
     }
 
@@ -169,11 +247,11 @@ impl<T> ValVec32<T> {
     /// Returns `ZiporaError::MemoryError` if allocation fails
     pub fn with_secure_pool(capacity: u32, _pool: Arc<SecureMemoryPool>) -> Result<Self> {
         // For now, ignore the pool parameter and use standard allocation
-        // This maintains API compatibility while optimizing performance
+        // This maintains API compatibility while maximizing performance
         Self::with_capacity(capacity)
     }
 
-    /// Returns the number of elements in the vector
+    /// Returns the number of elements in the vector (u32)
     ///
     /// # Examples
     ///
@@ -191,8 +269,14 @@ impl<T> ValVec32<T> {
     pub fn len(&self) -> u32 {
         self.len
     }
+    
+    /// Returns the number of elements in the vector (usize)
+    #[inline]
+    pub fn len_usize(&self) -> usize {
+        self.len as usize
+    }
 
-    /// Returns the allocated capacity of the vector
+    /// Returns the allocated capacity of the vector (u32)
     ///
     /// # Examples
     ///
@@ -206,6 +290,12 @@ impl<T> ValVec32<T> {
     #[inline]
     pub fn capacity(&self) -> u32 {
         self.capacity
+    }
+    
+    /// Returns the allocated capacity of the vector (usize)
+    #[inline]
+    pub fn capacity_usize(&self) -> usize {
+        self.capacity as usize
     }
 
     /// Returns true if the vector is empty
@@ -248,14 +338,10 @@ impl<T> ValVec32<T> {
         self.grow_to(new_capacity)
     }
 
-    /// Calculates new capacity using golden ratio growth strategy
+    /// Calculates new capacity using adaptive growth strategy
     #[inline]
     fn calculate_new_capacity(&self, min_capacity: u32) -> u32 {
-        let new_cap = if self.capacity == 0 {
-            min_capacity.max(4) // Start with reasonable initial capacity
-        } else {
-            larger_capacity(self.capacity).max(min_capacity)
-        };
+        let new_cap = larger_capacity(self.capacity, mem::size_of::<T>()).max(min_capacity);
         new_cap.min(MAX_CAPACITY)
     }
 
@@ -273,24 +359,56 @@ impl<T> ValVec32<T> {
             return Ok(());
         }
 
-        let new_layout = Layout::array::<T>(new_capacity as usize)
-            .map_err(|_| ZiporaError::invalid_data("Layout calculation failed"))?;
-
+        let new_capacity_usize = new_capacity as usize;
+        let new_size = new_capacity_usize * mem::size_of::<T>();
+        
+        let new_layout = Layout::array::<T>(new_capacity_usize)
+            .map_err(|_| ZiporaError::invalid_data("Invalid layout for new capacity"))?;
+        
         let new_ptr = if self.capacity == 0 {
             // Initial allocation
-            unsafe { alloc::alloc(new_layout) }
+            unsafe {
+                let raw_ptr = alloc::alloc(new_layout);
+                if raw_ptr.is_null() {
+                    return Err(ZiporaError::out_of_memory(new_size));
+                }
+                NonNull::new_unchecked(raw_ptr as *mut T)
+            }
         } else {
-            // Reallocation - use realloc for potential in-place expansion
-            let old_layout = Layout::array::<T>(self.capacity as usize).unwrap();
-            unsafe { alloc::realloc(self.ptr.as_ptr() as *mut u8, old_layout, new_layout.size()) }
+            // Reallocation: allocate new memory and copy
+            unsafe {
+                let raw_ptr = alloc::alloc(new_layout);
+                if raw_ptr.is_null() {
+                    return Err(ZiporaError::out_of_memory(new_size));
+                }
+                let new_ptr = NonNull::new_unchecked(raw_ptr as *mut T);
+                
+                // Copy existing data
+                if self.len > 0 {
+                    std::ptr::copy_nonoverlapping(
+                        self.ptr.as_ptr(),
+                        new_ptr.as_ptr(),
+                        self.len as usize,
+                    );
+                }
+                
+                // Deallocate old memory
+                if self.capacity > 0 {
+                    let old_layout = Layout::array::<T>(self.capacity as usize).unwrap();
+                    alloc::dealloc(self.ptr.as_ptr() as *mut u8, old_layout);
+                }
+                
+                new_ptr
+            }
         };
+        
+        // Use malloc_usable_size to get actual allocated capacity
+        let actual_size = get_usable_size(new_ptr.as_ptr() as *mut u8, new_size);
+        let actual_capacity = (actual_size / mem::size_of::<T>()).min(MAX_CAPACITY as usize);
 
-        if new_ptr.is_null() {
-            return Err(ZiporaError::out_of_memory(new_layout.size()));
-        }
-
-        self.ptr = NonNull::new(new_ptr as *mut T).unwrap();
-        self.capacity = new_capacity;
+        self.ptr = new_ptr;
+        self.capacity = actual_capacity as u32;
+        
         Ok(())
     }
 
@@ -322,6 +440,7 @@ impl<T> ValVec32<T> {
     #[inline]
     pub fn push(&mut self, value: T) -> Result<()> {
         if likely(self.len < self.capacity) {
+            // Hot path: fast insertion
             unsafe {
                 let ptr = self.ptr.as_ptr().add(self.len as usize);
                 ptr::write(ptr, value);
@@ -364,6 +483,7 @@ impl<T> ValVec32<T> {
     #[inline]
     pub fn push_panic(&mut self, value: T) {
         if likely(self.len < self.capacity) {
+            // Hot path: fast insertion
             unsafe {
                 let ptr = self.ptr.as_ptr().add(self.len as usize);
                 ptr::write(ptr, value);
@@ -470,7 +590,8 @@ impl<T> ValVec32<T> {
     #[inline]
     pub fn get(&self, index: u32) -> Option<&T> {
         if index < self.len {
-            Some(unsafe { &*self.ptr.as_ptr().add(index as usize) })
+            let index_usize = index as usize;
+            Some(unsafe { &*self.ptr.as_ptr().add(index_usize) })
         } else {
             None
         }
@@ -488,7 +609,8 @@ impl<T> ValVec32<T> {
     #[inline]
     pub fn get_mut(&mut self, index: u32) -> Option<&mut T> {
         if index < self.len {
-            Some(unsafe { &mut *self.ptr.as_ptr().add(index as usize) })
+            let index_usize = index as usize;
+            Some(unsafe { &mut *self.ptr.as_ptr().add(index_usize) })
         } else {
             None
         }
@@ -536,10 +658,10 @@ impl<T> ValVec32<T> {
     /// ```
     pub fn clear(&mut self) {
         // Drop all elements
-        for i in 0..self.len {
+        for i in 0..(self.len as usize) {
             // SAFETY: All indices 0..len are valid
             unsafe {
-                ptr::drop_in_place(self.ptr.as_ptr().add(i as usize));
+                ptr::drop_in_place(self.ptr.as_ptr().add(i));
             }
         }
         self.len = 0;
@@ -750,11 +872,15 @@ impl<T: Clone> Clone for ValVec32<T> {
     fn clone(&self) -> Self {
         let mut new_vec = Self::with_capacity(self.len).expect("Failed to allocate during clone");
 
-        for i in 0..self.len {
-            let value = self.get(i).unwrap().clone();
-            new_vec
-                .push(value)
-                .expect("Push should not fail during clone");
+        // Use bulk copy for better performance
+        if self.len > 0 {
+            unsafe {
+                for i in 0..(self.len as usize) {
+                    let value = (*self.ptr.as_ptr().add(i)).clone();
+                    ptr::write(new_vec.ptr.as_ptr().add(i), value);
+                }
+                new_vec.len = self.len;
+            }
         }
 
         new_vec
@@ -791,7 +917,8 @@ mod tests {
     fn test_with_capacity() -> Result<()> {
         let vec: ValVec32<i32> = ValVec32::with_capacity(10)?;
         assert_eq!(vec.len(), 0);
-        assert_eq!(vec.capacity(), 10);
+        // With malloc_usable_size optimization, capacity may be larger than requested
+        assert!(vec.capacity() >= 10);
         assert!(vec.is_empty());
         Ok(())
     }
@@ -1021,8 +1148,7 @@ mod tests {
         assert!(initial_capacity >= 4);
 
         // The initial capacity should be reasonable for small vectors
-        // With cache-line optimization plus malloc_usable_size bonus, 
-        // this could be slightly larger than exactly one cache line
+        // With malloc_usable_size bonus, this could be slightly larger than expected
         let cache_line_elements = 64 / std::mem::size_of::<i32>();
         let max_reasonable = (cache_line_elements * 2).max(32) as u32; // Allow for malloc bonus
         assert!(initial_capacity <= max_reasonable, 

@@ -55,6 +55,21 @@
 //! - **AVX-512**: Ultra-wide vectorization (8x parallel, nightly Rust)
 //! - **ARM NEON**: Cross-platform SIMD support for ARM64
 //!
+//! # Cache Locality Optimizations
+//!
+//! Advanced cache optimization features for maximum performance:
+//! - **Cache-line alignment**: All major data structures aligned to 64-byte boundaries
+//! - **Software prefetching**: Hardware prefetch hints for sequential and strided access patterns
+//! - **Hot/cold data separation**: Frequently accessed data prioritized in cache hierarchy
+//! - **Access pattern analysis**: Adaptive optimization based on detected usage patterns
+//! - **Cache performance monitoring**: Real-time metrics for hit ratios and bandwidth usage
+//! - **NUMA awareness**: Memory allocation strategies for multi-socket systems
+//!
+//! Cache-optimized variants automatically apply these optimizations:
+//! - `RankSelectMixedIL256` with cache-optimized rank operations
+//! - Cache performance metrics accessible via `.cache_metrics()`
+//! - Adaptive prefetching based on access patterns
+//!
 //! # Fragment-Based Compression
 //!
 //! Advanced compression techniques for optimal space/time trade-offs:

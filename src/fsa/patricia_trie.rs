@@ -52,6 +52,9 @@ use crate::fsa::traits::{
     TrieStats,
 };
 use crate::memory::SecureMemoryPool;
+use crate::memory::cache_layout::{
+    CacheOptimizedAllocator, CacheLayoutConfig, PrefetchHint, AccessPattern, HotColdSeparator
+};
 use crate::{FastVec, StateId};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -103,6 +106,10 @@ pub struct PatriciaConfig {
     pub use_simd: bool,
     /// Memory pool for secure allocation
     pub memory_pool: Option<Arc<SecureMemoryPool>>,
+    /// Cache layout configuration for optimal memory access patterns
+    pub cache_config: CacheLayoutConfig,
+    /// Access pattern hint for cache optimization
+    pub access_pattern: AccessPattern,
 }
 
 impl Default for PatriciaConfig {
@@ -114,6 +121,8 @@ impl Default for PatriciaConfig {
             alignment: 64, // Cache line size
             use_simd: cfg!(target_feature = "avx2"),
             memory_pool: None,
+            cache_config: CacheLayoutConfig::new(),
+            access_pattern: AccessPattern::Mixed,
         }
     }
 }
@@ -128,6 +137,8 @@ impl PatriciaConfig {
             alignment: 64,
             use_simd: true,
             memory_pool: None,
+            cache_config: CacheLayoutConfig::read_heavy(),
+            access_pattern: AccessPattern::ReadHeavy,
         }
     }
     
@@ -140,6 +151,8 @@ impl PatriciaConfig {
             alignment: 32,
             use_simd: false,
             memory_pool: None,
+            cache_config: CacheLayoutConfig::random(),
+            access_pattern: AccessPattern::Random,
         }
     }
     
@@ -156,7 +169,18 @@ impl PatriciaConfig {
             alignment: 64,
             use_simd: true,
             memory_pool: Some(secure_pool),
+            cache_config: CacheLayoutConfig::write_heavy(),
+            access_pattern: AccessPattern::WriteHeavy,
         })
+    }
+    
+    /// Create configuration optimized for sequential access patterns
+    pub fn sequential_optimized() -> Self {
+        Self {
+            cache_config: CacheLayoutConfig::sequential(),
+            access_pattern: AccessPattern::Sequential,
+            ..Self::performance_optimized()
+        }
     }
 }
 
@@ -497,6 +521,12 @@ pub struct PatriciaTrie {
     global_generation: AtomicUsize,
     /// Memory pool for secure allocation
     memory_pool: Option<Arc<SecureMemoryPool>>,
+    /// Cache-optimized allocator for improved memory access patterns
+    cache_allocator: CacheOptimizedAllocator,
+    /// Hot/cold separation for frequently vs rarely accessed nodes
+    node_separator: HotColdSeparator<usize>,
+    /// Node access counts for cache optimization
+    node_access_counts: Vec<AtomicUsize>,
 }
 
 impl PatriciaTrie {
@@ -510,6 +540,12 @@ impl PatriciaTrie {
         let mut nodes = Vec::new();
         let root_node = PatriciaNode::new_root();
         nodes.push(root_node);
+        
+        // Initialize cache optimization infrastructure
+        let cache_allocator = CacheOptimizedAllocator::new(config.cache_config.clone());
+        let node_separator = HotColdSeparator::new(config.cache_config.clone());
+        let mut node_access_counts = Vec::new();
+        node_access_counts.push(AtomicUsize::new(0)); // Root node access count
 
         Self {
             nodes,
@@ -518,6 +554,9 @@ impl PatriciaTrie {
             memory_pool: config.memory_pool.clone(),
             lock: RwLock::new(()),
             global_generation: AtomicUsize::new(0),
+            cache_allocator,
+            node_separator,
+            node_access_counts,
             config,
         }
     }
@@ -531,6 +570,99 @@ impl PatriciaTrie {
         Self::with_config(config)
     }
     
+    /// Record node access for cache optimization
+    #[inline]
+    fn record_node_access(&self, node_idx: usize) {
+        if node_idx < self.node_access_counts.len() {
+            self.node_access_counts[node_idx].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    
+    /// Prefetch node with cache-optimized strategy
+    #[inline]
+    fn prefetch_node(&self, node_idx: usize, hint: PrefetchHint) {
+        if node_idx < self.nodes.len() {
+            let node_ptr = &self.nodes[node_idx] as *const PatriciaNode as *const u8;
+            self.cache_allocator.prefetch(node_ptr, hint);
+            
+            // Also prefetch the node's edge label data
+            let edge_slice = self.nodes[node_idx].edge_label_slice();
+            if !edge_slice.is_empty() {
+                self.cache_allocator.prefetch_range(edge_slice.as_ptr(), edge_slice.len());
+            }
+        }
+    }
+    
+    /// Prefetch child nodes for upcoming navigation
+    #[inline]
+    fn prefetch_children(&self, node_idx: usize) {
+        if node_idx < self.nodes.len() {
+            let node = &self.nodes[node_idx];
+            
+            // Prefetch up to 4 most likely child nodes based on access pattern
+            match self.config.access_pattern {
+                AccessPattern::Sequential => {
+                    // For sequential access, prefetch next few children
+                    for (&_byte, &child_idx) in node.children.iter().take(4) {
+                        self.prefetch_node(child_idx, PrefetchHint::T0);
+                    }
+                }
+                AccessPattern::Random => {
+                    // For random access, prefetch just the next level with T1
+                    for (&_byte, &child_idx) in node.children.iter().take(2) {
+                        self.prefetch_node(child_idx, PrefetchHint::T1);
+                    }
+                }
+                AccessPattern::ReadHeavy => {
+                    // For read-heavy, aggressively prefetch with T0
+                    for (&_byte, &child_idx) in node.children.iter().take(6) {
+                        self.prefetch_node(child_idx, PrefetchHint::T0);
+                    }
+                }
+                _ => {
+                    // Mixed pattern - moderate prefetching
+                    for (&_byte, &child_idx) in node.children.iter().take(3) {
+                        self.prefetch_node(child_idx, PrefetchHint::T1);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Optimize trie layout by reorganizing hot/cold data
+    pub fn optimize_cache_layout(&mut self) -> Result<()> {
+        // Update node separator with access counts
+        let access_counts: Vec<usize> = self.node_access_counts
+            .iter()
+            .map(|count| count.load(std::sync::atomic::Ordering::Relaxed))
+            .collect();
+            
+        // Clear and rebuild the separator with current access patterns
+        self.node_separator = HotColdSeparator::new(self.config.cache_config.clone());
+        
+        for (node_idx, &access_count) in access_counts.iter().enumerate() {
+            if node_idx < self.nodes.len() {
+                self.node_separator.insert(node_idx, access_count);
+            }
+        }
+        
+        // Reorganize based on access patterns
+        self.node_separator.reorganize();
+        
+        Ok(())
+    }
+    
+    /// Get cache optimization statistics
+    pub fn cache_stats(&self) -> (usize, usize, usize) {
+        let hot_nodes = self.node_separator.hot_slice().len();
+        let cold_nodes = self.node_separator.cold_slice().len();
+        let total_accesses: usize = self.node_access_counts
+            .iter()
+            .map(|count| count.load(std::sync::atomic::Ordering::Relaxed))
+            .sum();
+        (hot_nodes, cold_nodes, total_accesses)
+    }
+
     /// Acquire a read token for concurrent operations
     pub fn acquire_read_token(&self) -> ReadToken {
         ReadToken {
@@ -556,6 +688,10 @@ impl PatriciaTrie {
     fn add_node(&mut self, node: PatriciaNode) -> usize {
         let index = self.nodes.len();
         self.nodes.push(node);
+        
+        // Initialize access count for the new node
+        self.node_access_counts.push(AtomicUsize::new(0));
+        
         self.global_generation.fetch_add(1, Ordering::Relaxed);
         index
     }
@@ -767,21 +903,22 @@ impl PatriciaTrie {
         let mut remaining_key = key;
 
         loop {
+            // Record access for cache optimization
+            self.record_node_access(current_idx);
+            
             let node = &self.nodes[current_idx];
             let edge_slice = node.edge_label_slice();
-
-            // Prefetch next node data for better cache performance
-            #[cfg(target_feature = "avx2")]
-            {
-                if !node.children.is_empty() {
-                    // Prefetch likely next node
-                    if remaining_key.len() > 0 {
-                        if let Some(&next_idx) = node.children.get(&remaining_key[0]) {
-                            if next_idx < self.nodes.len() {
-                                simd_ops::prefetch_data(&self.nodes[next_idx] as *const _ as *const u8);
-                            }
-                        }
-                    }
+            
+            // Cache-optimized prefetching based on access pattern
+            if !node.children.is_empty() && remaining_key.len() > 0 {
+                // Prefetch the likely next node based on first byte
+                if let Some(&next_idx) = node.children.get(&remaining_key[0]) {
+                    self.prefetch_node(next_idx, PrefetchHint::T0);
+                }
+                
+                // Prefetch child nodes based on access pattern
+                if matches!(self.config.access_pattern, AccessPattern::ReadHeavy | AccessPattern::Sequential) {
+                    self.prefetch_children(current_idx);
                 }
             }
 

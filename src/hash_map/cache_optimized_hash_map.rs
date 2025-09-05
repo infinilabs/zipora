@@ -5,10 +5,14 @@
 //! sophisticated memory access pattern optimization.
 
 use crate::error::{Result, ZiporaError};
+use crate::memory::cache_layout::{
+    CacheOptimizedAllocator, CacheLayoutConfig, PrefetchHint, align_to_cache_line,
+    AccessPattern as CacheAccessPattern, HotColdSeparator as CacheHotColdSeparator,
+};
 use crate::hash_map::cache_locality::{
     AccessPattern, AccessPatternAnalyzer, CacheConsciousResizer, CacheLayoutOptimizer,
     CacheMetrics, CacheOptimizedBucket, HotColdSeparator, NumaAllocator, Prefetcher,
-    PrefetchHint, CACHE_LINE_SIZE, PREFETCH_DISTANCE,
+    PrefetchHint as LocalPrefetchHint, CACHE_LINE_SIZE, PREFETCH_DISTANCE,
 };
 use std::cell::{Cell, RefCell};
 use ahash::RandomState;
@@ -60,6 +64,8 @@ where
     hash_builder: S,
     /// NUMA-aware allocator
     numa_allocator: NumaAllocator,
+    /// Cache-optimized allocator from new infrastructure
+    cache_allocator: CacheOptimizedAllocator,
     /// Cache layout optimizer
     layout_optimizer: CacheLayoutOptimizer<K, V>,
     /// Access pattern analyzer
@@ -121,6 +127,10 @@ where
 
         // Create NUMA allocator
         let numa_allocator = NumaAllocator::new();
+        
+        // Create cache-optimized allocator
+        let cache_config = CacheLayoutConfig::new();
+        let cache_allocator = CacheOptimizedAllocator::new(cache_config);
 
         // Allocate buckets with cache-line alignment
         let buckets = unsafe {
@@ -157,6 +167,7 @@ where
             len: 0,
             hash_builder,
             numa_allocator,
+            cache_allocator,
             layout_optimizer,
             pattern_analyzer: RefCell::new(AccessPatternAnalyzer::new(1024)),
             cache_metrics: RefCell::new(CacheMetrics::default()),
@@ -230,13 +241,14 @@ where
     }
 
     /// Insert directly without resize checks (used during resize)
-    fn insert_direct(&mut self, key: K, value: V) {
+    fn insert_direct(&mut self, key: K, value: V) -> Result<()> {
         let hash = self.hash_key(&key);
         let hash32 = (hash >> 32) as u32;
         let mut index = self.bucket_index(hash);
-        let mut probe_distance = 0;
+        let mut probe_distance = 0u16;
+        let max_probe_limit = (self.bucket_count as u16).min(1000); // Limit probe distance
 
-        loop {
+        while probe_distance < max_probe_limit {
             unsafe {
                 let bucket = self.buckets.as_ptr().add(index);
 
@@ -251,25 +263,27 @@ where
                             (*bucket).metadata.max_probe_distance.max(probe_distance);
                         
                         self.len += 1;
-                        return;
+                        return Ok(());
                     }
                 }
 
                 // Move to next bucket (linear probing)
                 probe_distance += 1;
                 index = (index + 1) & self.bucket_mask;
-
-                if probe_distance > 100 {
-                    panic!("Excessive probe distance during resize");
-                }
             }
         }
+        
+        Err(ZiporaError::invalid_data(
+            &format!("Failed to insert during resize after {} probes", probe_distance)
+        ))
     }
 
     /// Insert a key-value pair
     pub fn insert(&mut self, key: K, value: V) -> Result<Option<V>> {
-        // Check load factor
-        if self.len >= (self.bucket_count * 7 * self.max_load_factor as usize) / 10 {
+        // Check load factor - use more conservative threshold to prevent infinite loops
+        let capacity = self.bucket_count * 7;
+        let load_factor = self.len as f64 / capacity as f64;
+        if load_factor >= self.max_load_factor * 0.9 { // Use 90% of max load factor
             self.resize()?;
         }
 
@@ -280,12 +294,13 @@ where
         // Record access pattern
         self.pattern_analyzer.borrow_mut().record_access(index);
 
-        // Prefetch upcoming buckets if using linear probing
-        unsafe {
-            self.prefetch_buckets(index, self.prefetch_distance);
+        // Prefetch upcoming buckets using new cache infrastructure
+        if self.prefetch_distance > 0 {
+            let bucket_addr = unsafe { self.buckets.as_ptr().add(index) } as *const u8;
+            self.cache_allocator.prefetch(bucket_addr, PrefetchHint::T0);
         }
 
-        let mut probe_distance = 0;
+        let mut probe_distance = 0u16;
         let mut entry = Some((key, value, hash32, probe_distance));
 
         loop {
@@ -341,9 +356,10 @@ where
                     }
                 }
 
-                // Prefetch next bucket (but limit frequency to avoid overhead)
-                if self.prefetch_distance > 0 && probe_distance > 0 && probe_distance as usize % self.prefetch_distance == 0 {
-                    self.prefetch_buckets(index, self.prefetch_distance);
+                // Prefetch next bucket using new cache infrastructure
+                if self.prefetch_distance > 0 && probe_distance > 0 && probe_distance as usize % 4 == 0 {
+                    let next_bucket_addr = self.buckets.as_ptr().add((index + 1) & self.bucket_mask) as *const u8;
+                    self.cache_allocator.prefetch(next_bucket_addr, PrefetchHint::T1);
                 }
 
                 if probe_distance > 100 {
@@ -366,12 +382,13 @@ where
         // Record access pattern
         self.pattern_analyzer.borrow_mut().record_access(index);
 
-        // Prefetch buckets
-        unsafe {
-            self.prefetch_buckets(index, self.prefetch_distance);
+        // Prefetch buckets using new cache infrastructure
+        if self.prefetch_distance > 0 {
+            let bucket_addr = unsafe { self.buckets.as_ptr().add(index) } as *const u8;
+            self.cache_allocator.prefetch(bucket_addr, PrefetchHint::T0);
         }
 
-        let mut probe_distance = 0;
+        let mut probe_distance = 0u16;
 
         loop {
             unsafe {
@@ -424,7 +441,7 @@ where
         let hash32 = (hash >> 32) as u32;
         let mut index = self.bucket_index(hash);
 
-        let mut probe_distance = 0;
+        let mut probe_distance = 0u16;
 
         loop {
             unsafe {
@@ -528,7 +545,10 @@ where
                     if ((*bucket).metadata.occupancy & (1 << slot)) != 0 {
                         let (k, v) = (*bucket).entries[slot].assume_init_read();
                         // Use direct insertion without resize checks
-                        self.insert_direct(k, v);
+                        if let Err(e) = self.insert_direct(k, v) {
+                            // If insertion fails, we have a serious problem
+                            panic!("Critical error during resize: {}", e);
+                        }
                     }
                 }
             }

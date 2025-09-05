@@ -5,6 +5,7 @@
 
 pub mod bump;
 pub mod cache;
+pub mod cache_layout;
 pub mod fixed_capacity_pool;
 pub mod five_level_pool;
 pub mod hugepage;
@@ -23,6 +24,10 @@ pub use cache::{
     CACHE_LINE_SIZE, CacheAlignedVec, NumaPoolStats, NumaStats, clear_numa_pools, get_numa_stats,
     get_optimal_numa_node, init_numa_pools, numa_alloc_aligned, numa_dealloc,
     set_current_numa_node,
+};
+pub use cache_layout::{
+    CacheOptimizedAllocator, CacheLayoutConfig, CacheHierarchy, AccessPattern, PrefetchHint,
+    HotColdSeparator, CacheLayoutStats, HotColdStats, align_to_cache_line, detect_cache_hierarchy,
 };
 pub use fixed_capacity_pool::{
     FixedCapacityMemoryPool, FixedCapacityPoolConfig, FixedCapacityPoolStats, FixedCapacityAllocation,
@@ -44,6 +49,7 @@ pub use secure_pool::{
 };
 pub use simd_ops::{
     SimdMemOps, SimdTier, fast_copy, fast_compare, fast_find_byte, fast_fill,
+    fast_copy_cache_optimized, fast_compare_cache_optimized, fast_prefetch, fast_prefetch_range,
 };
 pub use threadlocal_pool::{
     ThreadLocalMemoryPool, ThreadLocalPoolConfig, ThreadLocalPoolStats, ThreadLocalAllocation,

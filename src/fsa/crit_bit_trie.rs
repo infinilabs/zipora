@@ -15,9 +15,14 @@ use crate::fsa::traits::{
     FiniteStateAutomaton, PrefixIterable, StateInspectable, StatisticsProvider, Trie, TrieBuilder,
     TrieStats,
 };
+use crate::memory::cache_layout::{
+    CacheOptimizedAllocator, CacheLayoutConfig, PrefetchHint, AccessPattern, HotColdSeparator
+};
 use crate::{FastVec, StateId};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Node in a critical-bit trie
+/// Node in a critical-bit trie with cache optimization
+#[repr(align(64))] // 64-byte cache line alignment
 #[derive(Debug, Clone)]
 struct CritBitNode {
     /// The byte position that differentiates the two subtrees
@@ -83,6 +88,56 @@ impl CritBitNode {
     }
 }
 
+/// Configuration for Critical-Bit Trie cache optimization
+#[derive(Debug, Clone)]
+pub struct CritBitConfig {
+    /// Cache layout configuration for optimal memory access patterns
+    pub cache_config: CacheLayoutConfig,
+    /// Access pattern hint for cache optimization
+    pub access_pattern: AccessPattern,
+    /// Enable BMI2 hardware acceleration for bit operations
+    pub use_bmi2: bool,
+}
+
+impl Default for CritBitConfig {
+    fn default() -> Self {
+        Self {
+            cache_config: CacheLayoutConfig::new(),
+            access_pattern: AccessPattern::Mixed,
+            use_bmi2: cfg!(target_feature = "bmi2"),
+        }
+    }
+}
+
+impl CritBitConfig {
+    /// Create a performance-optimized configuration
+    pub fn performance_optimized() -> Self {
+        Self {
+            cache_config: CacheLayoutConfig::read_heavy(),
+            access_pattern: AccessPattern::ReadHeavy,
+            use_bmi2: true,
+        }
+    }
+    
+    /// Create a memory-optimized configuration
+    pub fn memory_optimized() -> Self {
+        Self {
+            cache_config: CacheLayoutConfig::random(),
+            access_pattern: AccessPattern::Random,
+            use_bmi2: false,
+        }
+    }
+    
+    /// Create configuration optimized for sequential access patterns
+    pub fn sequential_optimized() -> Self {
+        Self {
+            cache_config: CacheLayoutConfig::sequential(),
+            access_pattern: AccessPattern::Sequential,
+            use_bmi2: true,
+        }
+    }
+}
+
 /// Critical-Bit Trie implementation
 ///
 /// A critical-bit trie is a compressed trie that stores only the critical
@@ -109,7 +164,7 @@ impl CritBitNode {
 /// assert!(trie.contains(b"help"));
 /// assert!(!trie.contains(b"he"));
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct CritBitTrie {
     /// Vector of nodes for cache-efficient storage
     nodes: Vec<CritBitNode>,
@@ -117,16 +172,126 @@ pub struct CritBitTrie {
     root: Option<usize>,
     /// Number of keys stored in the trie
     num_keys: usize,
+    /// Configuration for cache optimization
+    config: CritBitConfig,
+    /// Cache-optimized allocator for improved memory access patterns
+    cache_allocator: CacheOptimizedAllocator,
+    /// Hot/cold separation for frequently vs rarely accessed nodes
+    node_separator: HotColdSeparator<usize>,
+    /// Node access counts for cache optimization
+    node_access_counts: Vec<AtomicUsize>,
 }
 
 impl CritBitTrie {
     /// Create a new empty critical-bit trie
     pub fn new() -> Self {
+        Self::with_config(CritBitConfig::default())
+    }
+    
+    /// Create a new critical-bit trie with specific configuration
+    pub fn with_config(config: CritBitConfig) -> Self {
+        let cache_allocator = CacheOptimizedAllocator::new(config.cache_config.clone());
+        let node_separator = HotColdSeparator::new(config.cache_config.clone());
+        
         Self {
             nodes: Vec::new(),
             root: None,
             num_keys: 0,
+            config,
+            cache_allocator,
+            node_separator,
+            node_access_counts: Vec::new(),
         }
+    }
+    
+    /// Record node access for cache optimization
+    #[inline]
+    fn record_node_access(&self, node_idx: usize) {
+        if node_idx < self.node_access_counts.len() {
+            self.node_access_counts[node_idx].fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    
+    /// Prefetch node with cache-optimized strategy
+    #[inline]
+    fn prefetch_node(&self, node_idx: usize, hint: PrefetchHint) {
+        if node_idx < self.nodes.len() {
+            let node_ptr = &self.nodes[node_idx] as *const CritBitNode as *const u8;
+            self.cache_allocator.prefetch(node_ptr, hint);
+        }
+    }
+    
+    /// Prefetch child nodes for upcoming navigation
+    #[inline]
+    fn prefetch_children(&self, node_idx: usize) {
+        if node_idx < self.nodes.len() {
+            let node = &self.nodes[node_idx];
+            
+            // Prefetch child nodes based on access pattern
+            match self.config.access_pattern {
+                AccessPattern::Sequential | AccessPattern::ReadHeavy => {
+                    // Aggressively prefetch both children
+                    if let Some(left_idx) = node.left_child {
+                        self.prefetch_node(left_idx, PrefetchHint::T0);
+                    }
+                    if let Some(right_idx) = node.right_child {
+                        self.prefetch_node(right_idx, PrefetchHint::T0);
+                    }
+                }
+                AccessPattern::Random => {
+                    // Conservative prefetching with T1
+                    if let Some(left_idx) = node.left_child {
+                        self.prefetch_node(left_idx, PrefetchHint::T1);
+                    }
+                    if let Some(right_idx) = node.right_child {
+                        self.prefetch_node(right_idx, PrefetchHint::T1);
+                    }
+                }
+                _ => {
+                    // Mixed pattern - moderate prefetching
+                    if let Some(left_idx) = node.left_child {
+                        self.prefetch_node(left_idx, PrefetchHint::T1);
+                    }
+                    if let Some(right_idx) = node.right_child {
+                        self.prefetch_node(right_idx, PrefetchHint::T1);
+                    }
+                }
+            }
+        }
+    }
+    
+    /// Optimize trie layout by reorganizing hot/cold data
+    pub fn optimize_cache_layout(&mut self) -> Result<()> {
+        // Update node separator with access counts
+        let access_counts: Vec<usize> = self.node_access_counts
+            .iter()
+            .map(|count| count.load(Ordering::Relaxed))
+            .collect();
+            
+        // Clear and rebuild the separator with current access patterns
+        self.node_separator = HotColdSeparator::new(self.config.cache_config.clone());
+        
+        for (node_idx, &access_count) in access_counts.iter().enumerate() {
+            if node_idx < self.nodes.len() {
+                self.node_separator.insert(node_idx, access_count);
+            }
+        }
+        
+        // Reorganize based on access patterns
+        self.node_separator.reorganize();
+        
+        Ok(())
+    }
+    
+    /// Get cache optimization statistics
+    pub fn cache_stats(&self) -> (usize, usize, usize) {
+        let hot_nodes = self.node_separator.hot_slice().len();
+        let cold_nodes = self.node_separator.cold_slice().len();
+        let total_accesses: usize = self.node_access_counts
+            .iter()
+            .map(|count| count.load(Ordering::Relaxed))
+            .sum();
+        (hot_nodes, cold_nodes, total_accesses)
     }
 
     /// Find the critical bit position between two keys
@@ -181,6 +346,10 @@ impl CritBitTrie {
     fn add_node(&mut self, node: CritBitNode) -> usize {
         let index = self.nodes.len();
         self.nodes.push(node);
+        
+        // Initialize access count for the new node
+        self.node_access_counts.push(AtomicUsize::new(0));
+        
         index
     }
 
@@ -269,6 +438,9 @@ impl CritBitTrie {
         let mut current = self.root?;
 
         loop {
+            // Record access for cache optimization
+            self.record_node_access(current);
+            
             let node = &self.nodes[current];
 
             if node.is_leaf() {
@@ -280,10 +452,52 @@ impl CritBitTrie {
                 }
             }
 
-            // Navigate to child based on critical bit
-            let bit = Self::test_bit(key, node.crit_byte, node.crit_bit);
-            current = node.get_child(bit)?;
+            // Cache-optimized navigation with prefetching
+            let bit = if self.config.use_bmi2 {
+                // Use BMI2 optimized bit testing
+                self.test_bit_bmi2(key, node.crit_byte, node.crit_bit)
+            } else {
+                Self::test_bit(key, node.crit_byte, node.crit_bit)
+            };
+            
+            // Prefetch child nodes based on access pattern
+            if matches!(self.config.access_pattern, AccessPattern::ReadHeavy | AccessPattern::Sequential) {
+                self.prefetch_children(current);
+            }
+            
+            let next_child = node.get_child(bit)?;
+            
+            // Prefetch the next node we're about to visit
+            self.prefetch_node(next_child, PrefetchHint::T0);
+            
+            current = next_child;
         }
+    }
+    
+    /// BMI2-optimized bit testing for enhanced performance
+    #[cfg(target_feature = "bmi2")]
+    #[inline]
+    fn test_bit_bmi2(&self, key: &[u8], byte_pos: usize, bit_pos: u8) -> bool {
+        if bit_pos == 8 {
+            // Special case: bit position 8 represents "end-of-string"
+            byte_pos >= key.len()
+        } else if byte_pos >= key.len() {
+            false // Treat missing bytes as 0
+        } else {
+            let byte_val = key[byte_pos];
+            unsafe {
+                use std::arch::x86_64::_bextr_u32;
+                // Extract single bit using BMI2 BEXTR instruction
+                _bextr_u32(byte_val as u32, (bit_pos as u32) | (1u32 << 8)) != 0
+            }
+        }
+    }
+    
+    /// Fallback bit testing for non-BMI2 platforms
+    #[cfg(not(target_feature = "bmi2"))]
+    #[inline]
+    fn test_bit_bmi2(&self, key: &[u8], byte_pos: usize, bit_pos: u8) -> bool {
+        Self::test_bit(key, byte_pos, bit_pos)
     }
 
     /// Get all keys with a given prefix

@@ -75,6 +75,7 @@ impl CacheMetrics {
 
 /// Cache-line aligned allocation wrapper
 #[repr(align(64))]
+#[derive(Clone, Debug)]
 pub struct CacheAligned<T> {
     data: T,
 }
