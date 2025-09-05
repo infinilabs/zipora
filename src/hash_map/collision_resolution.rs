@@ -11,6 +11,9 @@
 use crate::containers::FastVec;
 use crate::error::{Result, ZiporaError};
 use crate::hash_map::simd_string_ops::{get_global_simd_ops, SimdStringOps};
+use crate::memory::cache_layout::{
+    CacheOptimizedAllocator, CacheLayoutConfig, PrefetchHint,
+};
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::mem;
 
@@ -69,6 +72,8 @@ where
     stats: CollisionStats,
     /// SIMD operations for acceleration
     simd_ops: &'static SimdStringOps,
+    /// Cache-optimized allocator for prefetching
+    cache_allocator: CacheOptimizedAllocator,
 }
 
 /// Internal hash map implementation variants
@@ -314,12 +319,17 @@ where
             },
         };
 
+        // Create cache-optimized allocator for Robin Hood hashing patterns
+        let cache_config = CacheLayoutConfig::random();
+        let cache_allocator = CacheOptimizedAllocator::new(cache_config);
+        
         Self {
             strategy,
             hash_builder,
             impl_,
             stats: CollisionStats::default(),
             simd_ops: get_global_simd_ops(),
+            cache_allocator,
         }
     }
 
@@ -352,7 +362,7 @@ where
         let hash = self.hash_key(key);
         
         match &self.impl_ {
-            HashMapImpl::RobinHood(map) => map.get(key, hash),
+            HashMapImpl::RobinHood(map) => map.get(key, hash, &self.cache_allocator),
             HashMapImpl::Chaining(map) => map.get(key, hash),
             HashMapImpl::Hopscotch(map) => map.get(key, hash),
         }
@@ -522,7 +532,7 @@ where
         }
     }
 
-    fn get(&self, key: &K, hash: u64) -> Option<&V>
+    fn get(&self, key: &K, hash: u64, cache_allocator: &CacheOptimizedAllocator) -> Option<&V>
     where
         K: Eq + std::fmt::Debug,
     {
@@ -533,6 +543,10 @@ where
         let cached_hash = Self::cached_hash(hash);
         let mut index = (hash as usize) % self.entries.len();
         let mut probe_distance = 0u16;
+        
+        // Prefetch the initial bucket for better cache performance
+        let initial_bucket_addr = &self.entries[index] as *const _ as *const u8;
+        cache_allocator.prefetch(initial_bucket_addr, PrefetchHint::T0);
 
         loop {
             let entry = &self.entries[index];
@@ -553,6 +567,13 @@ where
 
             probe_distance += 1;
             index = (index + 1) % self.entries.len();
+            
+            // Prefetch ahead during linear probing for better cache utilization
+            if probe_distance % 4 == 0 && probe_distance < self.max_probe_distance {
+                let prefetch_index = (index + 2) % self.entries.len();
+                let prefetch_addr = &self.entries[prefetch_index] as *const _ as *const u8;
+                cache_allocator.prefetch(prefetch_addr, PrefetchHint::T1);
+            }
             
             if probe_distance > self.max_probe_distance + 10 {
                 return None;
@@ -1279,3 +1300,29 @@ mod tests {
         }
     }
 }
+    #[test]
+    fn test_cache_optimized_robin_hood() {
+        let mut map = AdvancedHashMap::with_strategy(CollisionStrategy::RobinHood {
+            max_probe_distance: 64,
+            variance_reduction: true,
+            backward_shift: true,
+        });
+
+        // Insert a larger number of elements to test cache optimization benefits
+        for i in 0..1000 {
+            assert_eq!(map.insert(i, i * 2).unwrap(), None);
+        }
+        
+        // Test random access pattern to trigger cache prefetching
+        for i in (0..1000).step_by(7) { // Prime number step for better collision distribution
+            assert_eq!(map.get(&i), Some(&(i * 2)));
+        }
+        
+        // Verify collision statistics show reasonable probe distances
+        let stats = map.collision_stats();
+        assert!(stats.avg_probe_distance < 5.0); // Should be reasonable with cache optimization
+        assert!(stats.load_factor > 0.0);
+        
+        println!("Cache-optimized Robin Hood stats: avg_probe_distance={:.2}, load_factor={:.2}", 
+                 stats.avg_probe_distance, stats.load_factor);
+    }

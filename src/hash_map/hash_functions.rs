@@ -21,15 +21,17 @@
 //! # Usage
 //!
 //! ```rust
-//! use zipora::hash_map::hash_functions::*;
+//! use zipora::hash_map::{fabo_hash_combine_u64, golden_ratio_next_size};
 //!
-//! // Automatic BMI2 acceleration when available
-//! let hash = bmi2_hash_combine_u64(base_hash, value);
-//! let bucket = extract_hash_bucket_bmi2(hash, 8); // 8-bit bucket (256 buckets)
+//! // Basic hash combining with automatic BMI2 acceleration when available
+//! let base_hash = 0x123456789abcdef0u64;
+//! let value = 0xfedcba9876543210u64;
+//! let hash = fabo_hash_combine_u64(base_hash, value);
 //! 
-//! // Advanced dispatcher for optimal performance
-//! let dispatcher = Bmi2HashDispatcher::new();
-//! let optimized_hash = dispatcher.hash_with_acceleration(&data);
+//! // Golden ratio based sizing
+//! let current_size = 100;
+//! let next_size = golden_ratio_next_size(current_size);
+//! assert!(next_size > current_size);
 //! ```
 
 use crate::succinct::rank_select::bmi2_acceleration::{

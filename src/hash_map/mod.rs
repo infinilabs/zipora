@@ -39,6 +39,11 @@ pub use hash_functions::{
     fabo_hash_combine_u32, fabo_hash_combine_u64, golden_ratio_next_size, optimal_bucket_count,
     advanced_hash_combine, HashFunctionBuilder, CombineStrategy, HashCombinable,
     GOLDEN_RATIO_FRAC_NUM, GOLDEN_RATIO_FRAC_DEN, GOLDEN_LOAD_FACTOR,
+    // Export BMI2-specific functions and types for advanced usage
+    bmi2_hash_combine_u32, bmi2_hash_combine_u64, extract_hash_bucket_bmi2,
+    Bmi2HashDispatcher, HashOptimizationTier, ProbeType,
+    bmi2_collision_resolution, fast_string_hash_bmi2, specialized,
+    get_global_bmi2_dispatcher, hash_with_bmi2, hash_combine_with_bmi2, extract_bucket_with_bmi2,
 };
 
 // Export SIMD string operations

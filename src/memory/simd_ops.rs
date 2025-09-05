@@ -23,6 +23,7 @@
 
 use crate::system::cpu_features::{CpuFeatures, get_cpu_features};
 use crate::error::{Result, ZiporaError};
+use crate::memory::cache_layout::{PrefetchHint, CacheLayoutConfig, align_to_cache_line};
 use std::ptr;
 
 /// Size thresholds for different optimization strategies
@@ -44,11 +45,14 @@ pub enum SimdTier {
 }
 
 /// SIMD Memory Operations dispatcher with runtime CPU feature detection
+#[derive(Debug)]
 pub struct SimdMemOps {
     /// Selected implementation tier based on CPU features
     tier: SimdTier,
     /// CPU features available at runtime
     cpu_features: &'static CpuFeatures,
+    /// Cache layout configuration for optimization
+    cache_config: CacheLayoutConfig,
 }
 
 impl SimdMemOps {
@@ -60,6 +64,19 @@ impl SimdMemOps {
         Self {
             tier,
             cpu_features,
+            cache_config: CacheLayoutConfig::new(),
+        }
+    }
+
+    /// Create a new SIMD memory operations instance with specific cache configuration
+    pub fn with_cache_config(cache_config: CacheLayoutConfig) -> Self {
+        let cpu_features = get_cpu_features();
+        let tier = Self::select_optimal_tier(cpu_features);
+        
+        Self {
+            tier,
+            cpu_features,
+            cache_config,
         }
     }
     
@@ -84,6 +101,11 @@ impl SimdMemOps {
     /// Get CPU features
     pub fn cpu_features(&self) -> &CpuFeatures {
         self.cpu_features
+    }
+
+    /// Get cache configuration
+    pub fn cache_config(&self) -> &CacheLayoutConfig {
+        &self.cache_config
     }
 }
 
@@ -220,6 +242,125 @@ impl SimdMemOps {
         unsafe {
             self.simd_memset(slice.as_mut_ptr(), value, slice.len());
         }
+    }
+
+    /// Issue prefetch hints for memory address
+    /// 
+    /// # Performance
+    /// Uses architecture-specific prefetch instructions to improve cache performance
+    /// for predictable access patterns. No-op on architectures without prefetch support.
+    pub fn prefetch(&self, addr: *const u8, hint: PrefetchHint) {
+        if !self.cache_config.enable_prefetch {
+            return;
+        }
+
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            match hint {
+                PrefetchHint::T0 => std::arch::x86_64::_mm_prefetch(addr as *const i8, std::arch::x86_64::_MM_HINT_T0),
+                PrefetchHint::T1 => std::arch::x86_64::_mm_prefetch(addr as *const i8, std::arch::x86_64::_MM_HINT_T1),
+                PrefetchHint::T2 => std::arch::x86_64::_mm_prefetch(addr as *const i8, std::arch::x86_64::_MM_HINT_T2),
+                PrefetchHint::NTA => std::arch::x86_64::_mm_prefetch(addr as *const i8, std::arch::x86_64::_MM_HINT_NTA),
+            }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        unsafe {
+            match hint {
+                PrefetchHint::T0 | PrefetchHint::T1 => {
+                    std::arch::asm!("prfm pldl1keep, [{}]", in(reg) addr);
+                }
+                PrefetchHint::T2 => {
+                    std::arch::asm!("prfm pldl2keep, [{}]", in(reg) addr);
+                }
+                PrefetchHint::NTA => {
+                    std::arch::asm!("prfm pldl1strm, [{}]", in(reg) addr);
+                }
+            }
+        }
+
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            // No-op for other architectures
+            let _ = (addr, hint);
+        }
+    }
+
+    /// Prefetch memory range for sequential access
+    /// 
+    /// # Performance
+    /// Issues prefetch hints for an entire memory range, optimized for sequential access patterns.
+    /// Automatically adjusts prefetch distance based on cache configuration.
+    pub fn prefetch_range(&self, start: *const u8, size: usize) {
+        if !self.cache_config.enable_prefetch || size == 0 {
+            return;
+        }
+
+        let distance = self.cache_config.prefetch_distance;
+        let cache_line_size = self.cache_config.cache_line_size;
+        
+        // Prefetch in cache line increments
+        let mut addr = start;
+        let end = unsafe { start.add(size) };
+
+        while addr < end {
+            self.prefetch(addr, PrefetchHint::T0);
+            addr = unsafe { addr.add(cache_line_size.min(distance)) };
+        }
+    }
+
+    /// Cache-optimized memory copy with automatic prefetching
+    /// 
+    /// # Performance
+    /// Combines SIMD acceleration with intelligent prefetching based on size and access patterns.
+    /// Automatically selects optimal strategy based on cache configuration.
+    pub fn copy_cache_optimized(&self, src: &[u8], dst: &mut [u8]) -> Result<()> {
+        if src.len() != dst.len() {
+            return Err(ZiporaError::invalid_data(
+                format!("Source and destination lengths don't match: {} vs {}", src.len(), dst.len())
+            ));
+        }
+        
+        if src.is_empty() {
+            return Ok(());
+        }
+
+        // For large copies, use prefetching
+        if src.len() >= self.cache_config.prefetch_distance && self.cache_config.enable_prefetch {
+            // Prefetch source data ahead
+            self.prefetch_range(src.as_ptr(), src.len());
+            
+            // Small delay to let prefetch take effect
+            if src.len() >= MEDIUM_COPY_THRESHOLD {
+                std::hint::spin_loop();
+            }
+        }
+
+        // Use cache-aligned copy if beneficial
+        let src_aligned = (src.as_ptr() as usize) % self.cache_config.cache_line_size == 0;
+        let dst_aligned = (dst.as_mut_ptr() as usize) % self.cache_config.cache_line_size == 0;
+
+        if src_aligned && dst_aligned && src.len() >= self.cache_config.cache_line_size {
+            self.copy_aligned(src, dst)
+        } else {
+            self.copy_nonoverlapping(src, dst)
+        }
+    }
+
+    /// Cache-friendly memory comparison with prefetching
+    /// 
+    /// # Performance
+    /// Uses prefetch hints to improve performance for large comparisons.
+    /// Automatically adjusts strategy based on size and access patterns.
+    pub fn compare_cache_optimized(&self, a: &[u8], b: &[u8]) -> i32 {
+        // For large comparisons, prefetch both arrays
+        let min_len = a.len().min(b.len());
+        if min_len >= self.cache_config.prefetch_distance && self.cache_config.enable_prefetch {
+            self.prefetch_range(a.as_ptr(), a.len());
+            self.prefetch_range(b.as_ptr(), b.len());
+        }
+
+        self.compare(a, b)
     }
 }
 
@@ -948,6 +1089,26 @@ pub fn fast_fill(slice: &mut [u8], value: u8) {
     get_global_simd_ops().fill(slice, value)
 }
 
+/// Convenience function for cache-optimized memory copy
+pub fn fast_copy_cache_optimized(src: &[u8], dst: &mut [u8]) -> Result<()> {
+    get_global_simd_ops().copy_cache_optimized(src, dst)
+}
+
+/// Convenience function for cache-optimized memory comparison
+pub fn fast_compare_cache_optimized(a: &[u8], b: &[u8]) -> i32 {
+    get_global_simd_ops().compare_cache_optimized(a, b)
+}
+
+/// Convenience function for memory prefetch
+pub fn fast_prefetch(addr: *const u8, hint: PrefetchHint) {
+    get_global_simd_ops().prefetch(addr, hint)
+}
+
+/// Convenience function for range prefetch
+pub fn fast_prefetch_range(start: *const u8, size: usize) {
+    get_global_simd_ops().prefetch_range(start, size)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1179,5 +1340,130 @@ mod tests {
         let other_data: Vec<u8> = (0u8..=255u8).map(|i| if i == 128 { 129 } else { i }).collect();
         let cmp = ops.compare(&test_data, &other_data);
         assert!(cmp < 0); // test_data[128] = 128 < other_data[128] = 129
+    }
+
+    #[test]
+    fn test_cache_optimized_operations() {
+        let size = 4096;
+        let src: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
+        let mut dst = vec![0u8; size];
+        
+        // Test cache-optimized copy
+        let result = fast_copy_cache_optimized(&src, &mut dst);
+        assert!(result.is_ok());
+        assert_eq!(src, dst);
+        
+        // Test cache-optimized comparison
+        let cmp = fast_compare_cache_optimized(&src, &dst);
+        assert_eq!(cmp, 0);
+        
+        // Test with different data
+        dst[100] = 255;
+        let cmp2 = fast_compare_cache_optimized(&src, &dst);
+        assert_ne!(cmp2, 0);
+    }
+
+    #[test]
+    fn test_prefetch_operations() {
+        let data = vec![1u8; 1024];
+        
+        // Test single prefetch (should not panic)
+        fast_prefetch(data.as_ptr(), PrefetchHint::T0);
+        fast_prefetch(data.as_ptr(), PrefetchHint::T1);
+        fast_prefetch(data.as_ptr(), PrefetchHint::T2);
+        fast_prefetch(data.as_ptr(), PrefetchHint::NTA);
+        
+        // Test range prefetch (should not panic)
+        fast_prefetch_range(data.as_ptr(), data.len());
+    }
+
+    #[test]
+    fn test_simd_ops_with_cache_config() {
+        use crate::memory::cache_layout::{CacheLayoutConfig, AccessPattern};
+        
+        let config = CacheLayoutConfig::sequential();
+        let ops = SimdMemOps::with_cache_config(config);
+        
+        assert_eq!(ops.cache_config().access_pattern, AccessPattern::Sequential);
+        assert!(ops.cache_config().enable_prefetch);
+        
+        // Test that operations work with custom config
+        let src = b"Hello, Cache-Optimized SIMD!";
+        let mut dst = vec![0u8; src.len()];
+        
+        let result = ops.copy_cache_optimized(src, &mut dst);
+        assert!(result.is_ok());
+        assert_eq!(src, &dst[..]);
+    }
+
+    #[test]
+    fn test_cache_config_access() {
+        let ops = SimdMemOps::new();
+        let config = ops.cache_config();
+        
+        assert!(config.cache_line_size > 0);
+        assert!(config.hierarchy.l1_size > 0);
+        assert!(config.prefetch_distance > 0);
+    }
+
+    #[test]
+    fn test_prefetch_with_different_sizes() {
+        let ops = SimdMemOps::new();
+        
+        // Small data - should still work
+        let small_data = vec![1u8; 32];
+        ops.prefetch_range(small_data.as_ptr(), small_data.len());
+        
+        // Large data
+        let large_data = vec![1u8; 8192];
+        ops.prefetch_range(large_data.as_ptr(), large_data.len());
+        
+        // Empty data
+        ops.prefetch_range(std::ptr::null(), 0);
+    }
+
+    #[test]
+    fn test_cache_optimized_copy_edge_cases() {
+        let ops = SimdMemOps::new();
+        
+        // Empty slices
+        let empty_src: &[u8] = &[];
+        let mut empty_dst: Vec<u8> = vec![];
+        let result = ops.copy_cache_optimized(empty_src, &mut empty_dst);
+        assert!(result.is_ok());
+        
+        // Size mismatch
+        let src = b"hello";
+        let mut dst = vec![0u8; 10];
+        let result = ops.copy_cache_optimized(src, &mut dst);
+        assert!(result.is_err());
+        
+        // Large aligned copy
+        let layout = std::alloc::Layout::from_size_align(4096, 64).unwrap();
+        unsafe {
+            let src_ptr = std::alloc::alloc(layout);
+            let dst_ptr = std::alloc::alloc(layout);
+            
+            if !src_ptr.is_null() && !dst_ptr.is_null() {
+                // Initialize source
+                for i in 0..4096 {
+                    *src_ptr.add(i) = (i % 256) as u8;
+                }
+                
+                let src_slice = std::slice::from_raw_parts(src_ptr, 4096);
+                let dst_slice = std::slice::from_raw_parts_mut(dst_ptr, 4096);
+                
+                let result = ops.copy_cache_optimized(src_slice, dst_slice);
+                assert!(result.is_ok());
+                
+                // Verify copy
+                for i in 0..4096 {
+                    assert_eq!(*src_ptr.add(i), *dst_ptr.add(i));
+                }
+                
+                std::alloc::dealloc(src_ptr, layout);
+                std::alloc::dealloc(dst_ptr, layout);
+            }
+        }
     }
 }

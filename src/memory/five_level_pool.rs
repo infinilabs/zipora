@@ -21,6 +21,8 @@
 //! - **Composability**: Different components can use different concurrency levels
 
 use crate::error::{ZiporaError, Result};
+use crate::memory::cache_layout::{CacheOptimizedAllocator, CacheLayoutConfig, align_to_cache_line, AccessPattern};
+use crate::memory::{get_optimal_numa_node, numa_alloc_aligned, numa_dealloc};
 // Memory pool integration (currently unused in this implementation)  
 // use crate::memory::SecureMemoryPool;
 use std::sync::{Arc, Mutex};
@@ -76,6 +78,16 @@ pub struct FiveLevelPoolConfig {
     pub arena_size: usize,
     /// Fixed capacity for Level 5 (0 = use dynamic)
     pub fixed_capacity: Option<usize>,
+    /// Enable cache-line aligned allocations for better performance
+    pub enable_cache_alignment: bool,
+    /// Cache layout configuration for optimization  
+    pub cache_config: Option<CacheLayoutConfig>,
+    /// Enable NUMA-aware allocation
+    pub enable_numa_awareness: bool,
+    /// Enable huge page allocation for large chunks (Linux only)
+    pub enable_huge_pages: bool,
+    /// Minimum chunk size for huge page allocation
+    pub huge_page_threshold: usize,
 }
 
 impl Default for FiveLevelPoolConfig {
@@ -87,6 +99,11 @@ impl Default for FiveLevelPoolConfig {
             max_skip_levels: 8,
             arena_size: 2 * 1024 * 1024, // 2MB
             fixed_capacity: None,
+            enable_cache_alignment: true,
+            cache_config: Some(CacheLayoutConfig::default()),
+            enable_numa_awareness: true,
+            enable_huge_pages: false,
+            huge_page_threshold: 2 * 1024 * 1024, // 2MB
         }
     }
 }
@@ -98,6 +115,11 @@ impl FiveLevelPoolConfig {
             alignment: 16,
             initial_capacity: 8 * 1024 * 1024, // 8MB
             arena_size: 4 * 1024 * 1024, // 4MB
+            enable_cache_alignment: true,
+            cache_config: Some(CacheLayoutConfig::default()),
+            enable_numa_awareness: true,
+            enable_huge_pages: true,
+            huge_page_threshold: 1024 * 1024, // 1MB
             ..Default::default()
         }
     }
@@ -108,6 +130,11 @@ impl FiveLevelPoolConfig {
             alignment: 8,
             initial_capacity: 512 * 1024, // 512KB
             arena_size: 1024 * 1024, // 1MB
+            enable_cache_alignment: false,
+            cache_config: None,
+            enable_numa_awareness: false,
+            enable_huge_pages: false,
+            huge_page_threshold: 4 * 1024 * 1024, // 4MB
             ..Default::default()
         }
     }
@@ -119,6 +146,11 @@ impl FiveLevelPoolConfig {
             initial_capacity: 256 * 1024, // 256KB
             arena_size: 512 * 1024, // 512KB
             fixed_capacity: Some(16 * 1024 * 1024), // 16MB fixed
+            enable_cache_alignment: true,
+            cache_config: Some(CacheLayoutConfig::sequential()),
+            enable_numa_awareness: false,
+            enable_huge_pages: false,
+            huge_page_threshold: 8 * 1024 * 1024, // 8MB
             ..Default::default()
         }
     }

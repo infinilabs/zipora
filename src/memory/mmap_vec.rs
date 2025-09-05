@@ -19,6 +19,8 @@
 
 use crate::error::{Result, ZiporaError};
 use crate::memory::mmap::{MemoryMappedAllocator, MmapAllocation};
+use crate::memory::cache_layout::{CacheOptimizedAllocator, CacheLayoutConfig, align_to_cache_line, AccessPattern, PrefetchHint};
+use crate::memory::cache::{get_optimal_numa_node, numa_alloc_aligned};
 use std::fs::OpenOptions;
 use std::io::{Seek, SeekFrom, Write};
 use std::marker::PhantomData;
@@ -92,6 +94,18 @@ pub struct MmapVecConfig {
     pub use_huge_pages: bool,
     /// Sync changes to disk immediately
     pub sync_on_write: bool,
+    /// Enable cache-line aligned allocations for better performance
+    pub enable_cache_alignment: bool,
+    /// Cache layout configuration for optimization
+    pub cache_config: Option<CacheLayoutConfig>,
+    /// Enable NUMA-aware allocation
+    pub enable_numa_awareness: bool,
+    /// Expected access pattern for cache optimization
+    pub access_pattern: AccessPattern,
+    /// Enable prefetching for sequential access patterns
+    pub enable_prefetching: bool,
+    /// Prefetch distance in bytes
+    pub prefetch_distance: usize,
 }
 
 impl Default for MmapVecConfig {
@@ -103,6 +117,12 @@ impl Default for MmapVecConfig {
             populate_pages: false,
             use_huge_pages: false,
             sync_on_write: false,
+            enable_cache_alignment: true,
+            cache_config: Some(CacheLayoutConfig::new()),
+            enable_numa_awareness: true,
+            access_pattern: AccessPattern::Mixed,
+            enable_prefetching: true,
+            prefetch_distance: 64, // Default cache line size
         }
     }
 }
