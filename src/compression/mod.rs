@@ -7,12 +7,24 @@
 pub mod adaptive;
 pub mod dict_zip;
 pub mod realtime;
+pub mod simd_lz77;
+pub mod simd_pattern_match;
 pub mod suffix_array;
 
 pub use adaptive::{AdaptiveCompressor, AdaptiveConfig, CompressionProfile};
 pub use dict_zip::{
     DictionaryBuilder as PaZipDictionaryBuilder, DictionaryBuilderConfig, SuffixArrayDictionary, SuffixArrayDictionaryConfig,
     PatternMatcher, DfaCache, Match,
+};
+pub use simd_lz77::{
+    SimdLz77Compressor, SimdLz77Config, SimdLz77Match, SimdLz77Stats,
+    CompressionTier, CompressionParallelMode, DictionaryConfig,
+    SimdLz77CompressorX1, SimdLz77CompressorX2, SimdLz77CompressorX4, SimdLz77CompressorX8,
+    get_global_simd_lz77_compressor, compress_with_simd_lz77, decompress_with_simd_lz77,
+};
+pub use simd_pattern_match::{
+    SimdPatternMatcher, SimdPatternConfig, SimdMatchResult, SimdPatternTier, ParallelMode,
+    get_global_simd_pattern_matcher,
 };
 pub use realtime::{CompressionMode, RealtimeCompressor, RealtimeConfig};
 pub use suffix_array::{
@@ -40,6 +52,8 @@ pub enum Algorithm {
     Rans,
     /// Dictionary-based compression
     Dictionary,
+    /// SIMD-accelerated LZ77 compression
+    SimdLz77,
     /// Hybrid approach using multiple algorithms
     Hybrid,
 }
@@ -58,6 +72,7 @@ impl Algorithm {
             Algorithm::Huffman => 100_000_000.0, // Fast entropy coding
             Algorithm::Rans => 80_000_000.0,     // Good entropy coding
             Algorithm::Dictionary => 150_000_000.0, // Fast pattern matching
+            Algorithm::SimdLz77 => 300_000_000.0, // SIMD-accelerated LZ77
             Algorithm::Hybrid => 50_000_000.0,   // Depends on mix
         }
     }
@@ -75,6 +90,7 @@ impl Algorithm {
             Algorithm::Huffman => 0.65,
             Algorithm::Rans => 0.55,
             Algorithm::Dictionary => 0.45,
+            Algorithm::SimdLz77 => 0.35, // Better compression with SIMD acceleration
             Algorithm::Hybrid => 0.35,
         }
     }
@@ -92,6 +108,7 @@ impl Algorithm {
             Algorithm::Huffman => 1.0,
             Algorithm::Rans => 1.5,
             Algorithm::Dictionary => 3.0,
+            Algorithm::SimdLz77 => 2.5, // Efficient memory usage with SIMD
             Algorithm::Hybrid => 4.0,
         }
     }
@@ -695,6 +712,11 @@ impl CompressorFactory {
                         "Dictionary compressor requires training data",
                     ))
                 }
+            }
+            Algorithm::SimdLz77 => {
+                Ok(Box::new(
+                    crate::compression::simd_lz77::SimdLz77Compressor::default()
+                ))
             }
             Algorithm::Hybrid => {
                 if let Some(data) = training_data {

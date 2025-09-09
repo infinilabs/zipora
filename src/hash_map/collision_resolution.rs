@@ -1,7 +1,7 @@
 //! Advanced Collision Resolution Algorithms
 //!
 //! This module implements sophisticated collision resolution strategies inspired by
-//! topling-zip optimizations and modern hash table research, featuring:
+//! advanced hash table optimizations and modern research, featuring:
 //! - Advanced Robin Hood hashing with variance reduction
 //! - Sophisticated chaining with hash caching and compact storage
 //! - Hopscotch hashing with neighborhood displacement
@@ -171,7 +171,7 @@ where
     max_chain_length: usize,
 }
 
-/// Compact chain node inspired by topling-zip patterns
+/// Compact chain node with optimized memory layout
 #[repr(C)]
 #[derive(Debug)]
 struct ChainNode<K, V> 

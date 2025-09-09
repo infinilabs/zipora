@@ -494,8 +494,15 @@ impl<T: PackedInt> IntVec<T> {
         // Fast bulk path for performance-critical construction
         let u64_values = Self::bulk_convert_to_u64(values);
         
-        // Use simplified strategy analysis for bulk operations
-        let strategy = Self::analyze_bulk_strategy(&u64_values);
+        // 🚀 SPEED-FIRST STRATEGY SELECTION
+        // For bulk operations, prioritize construction speed over optimal compression
+        let strategy = if values.len() >= 1024 {
+            // Large datasets: Use speed-optimized analysis
+            Self::analyze_bulk_strategy(&u64_values)
+        } else {
+            // Small datasets: Use fastest path possible
+            Self::analyze_small_dataset_strategy(&u64_values)
+        };
         result.strategy = strategy;
 
         // Compress using bulk-optimized path
@@ -799,7 +806,10 @@ impl<T: PackedInt> IntVec<T> {
         u64_values
     }
 
-    /// Simplified strategy analysis optimized for bulk operations
+    /// 🚀 Speed-optimized strategy analysis for bulk operations
+    /// 
+    /// Prioritize construction speed over optimal compression.
+    /// Uses fast path selection with early termination for "good enough" strategies.
     fn analyze_bulk_strategy(values: &[u64]) -> CompressionStrategy {
         if values.is_empty() {
             return CompressionStrategy::Raw;
@@ -807,38 +817,53 @@ impl<T: PackedInt> IntVec<T> {
 
         let len = values.len();
         
-        // Skip analysis for very small datasets
+        // Skip analysis for very small datasets - use raw for maximum speed
         if len < 8 {
             return CompressionStrategy::Raw;
         }
 
         // Use hardware-accelerated range analysis
         let (min_val, max_val) = SimdOps::analyze_range_bulk(values);
-
-        // Check if values are sorted for advanced block compression
-        let is_sorted = Self::fast_sorted_check(values);
         
-        // Calculate potential compression strategies like regular path but optimized
-        let strategies = [
-            Self::analyze_min_max(values, min_val, max_val),
-            Self::analyze_delta_bulk(values),
-            Self::analyze_block_based(values, is_sorted),
-        ];
-
-        // Select strategy with best compression ratio
-        strategies.into_iter()
-            .min_by(|a, b| {
-                let ratio_a = Self::estimate_compression_ratio(*a, len);
-                let ratio_b = Self::estimate_compression_ratio(*b, len);
-                ratio_a.partial_cmp(&ratio_b).unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .unwrap_or(CompressionStrategy::Raw)
+        // 🚀 SPEED-FIRST STRATEGY SELECTION
+        // Priority: Simple strategies first, complex strategies only if necessary
+        
+        // Fast path 1: Raw strategy for very large ranges (low compression potential)
+        let range = max_val - min_val;
+        if range == 0 {
+            // All values identical - use raw for simplicity in bulk operations
+            return CompressionStrategy::Raw;
+        }
+        
+        // Fast path 2: MinMax for reasonable ranges (good speed/compression balance)
+        let bit_width = (64 - range.leading_zeros() as usize).min(255) as u8;
+        if bit_width <= 32 {
+            // Good compression potential with minimal overhead
+            return CompressionStrategy::MinMax { min_val, bit_width };
+        }
+        
+        // Fast path 3: For sorted data, check if delta encoding is worthwhile
+        // But only if it provides significant bit width reduction
+        if len >= 1024 {  // Only for larger datasets where analysis cost is amortized
+            let is_sorted = Self::fast_sorted_check(values);
+            if is_sorted {
+                let delta_strategy = Self::analyze_delta_bulk(values);
+                if let CompressionStrategy::Delta { delta_width, .. } = delta_strategy {
+                    if delta_width < bit_width.saturating_sub(8) {  // At least 8-bit improvement
+                        return delta_strategy;
+                    }
+                }
+            }
+        }
+        
+        // Fallback: Use MinMax as it provides good speed/compression balance
+        CompressionStrategy::MinMax { min_val, bit_width }
     }
 
     /// 🚀 ADVANCED FAST PATH: Optimized strategy analysis for small datasets (≤10K elements)
     /// 
     /// Bypasses expensive strategy comparison and uses direct MinMax compression with
-    /// hardware-optimized parameters. Based on advanced UintVecMin0 approach.
+    /// hardware-optimized parameters.
     ///
     /// Key optimizations:
     /// - Single SIMD pass for min/max calculation  
@@ -896,7 +921,7 @@ impl<T: PackedInt> IntVec<T> {
         // For slightly larger small datasets, use optimized block compression
         // Use 64 blockUnits (not 128) for better small dataset performance
         CompressionStrategy::BlockBased {
-            block_size: BlockSize::Block64,  // 🚀 Advanced: 64 units for small data
+            block_size: BlockSize::Block64,  // 🚀 64 units for small data
             offset_width: bit_width.min(8),  // Limit offset width for efficiency
             sample_width: 4,                 // Fixed small sample width
             is_sorted,                       // Use actual sorted detection

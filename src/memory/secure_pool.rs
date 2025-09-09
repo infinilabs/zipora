@@ -56,7 +56,7 @@ const SIZE_CLASSES: &[usize] = &[
 ];
 
 /// Configuration for secure memory pool
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SecurePoolConfig {
     /// Size of each chunk in bytes

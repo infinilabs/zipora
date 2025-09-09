@@ -153,7 +153,7 @@ impl MatcherStats {
 }
 
 /// High-performance pattern matcher for PA-Zip dictionary
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct PatternMatcher {
     /// Reference to suffix array
     suffix_array: Arc<SuffixArray>,

@@ -2,7 +2,7 @@
 //!
 //! This build script implements Phase 1.1 of the systematic SIMD implementation plan.
 //! It provides runtime CPU feature detection and conditional compilation support
-//! following the patterns from advanced SIMD libraries like Topling-zip.
+//! following advanced SIMD library patterns and best practices.
 //!
 //! # Features
 //!

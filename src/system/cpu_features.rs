@@ -1,8 +1,8 @@
 //! # Enhanced CPU Feature Detection System
 //!
 //! Comprehensive runtime CPU feature detection with adaptive algorithm selection.
-//! Inspired by production-grade feature detection systems from Topling-zip and other
-//! high-performance libraries with additional Rust-specific optimizations.
+//! Inspired by production-grade feature detection systems and high-performance
+//! libraries with additional Rust-specific optimizations.
 //!
 //! # Architecture
 //!
@@ -200,7 +200,7 @@ impl CpuFeatures {
         self.simd_tier = self.calculate_simd_tier();
     }
     
-    /// Calculate optimization tier (following Topling-zip patterns)
+    /// Calculate optimization tier
     fn calculate_optimization_tier(&self) -> u8 {
         if self.has_avx512f && self.has_avx512bw && self.has_avx512vpopcntdq {
             5 // Tier 5: AVX-512 with popcount

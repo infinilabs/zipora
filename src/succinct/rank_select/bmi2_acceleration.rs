@@ -887,13 +887,13 @@ impl Bmi2BzhiOps {
     }
 }
 
-/// Advanced PDEP/PEXT patterns for topling-zip style optimizations
+/// Advanced PDEP/PEXT patterns for high-performance bit operations
 pub struct Bmi2AdvancedPatterns;
 
 impl Bmi2AdvancedPatterns {
-    /// PDEP + CTZ select for topling-zip style operations
+    /// PDEP + CTZ select for high-performance operations
     /// 
-    /// Ultra-fast select using the topling-zip pattern: PDEP(1<<k, word) + CTZ
+    /// Ultra-fast select using the PDEP+CTZ pattern: PDEP(1<<k, word) + CTZ
     /// Performance: 5-10x faster than binary search for select operations
     #[inline]
     pub fn pdep_ctz_select(word: u64, k: u32) -> Option<u32> {

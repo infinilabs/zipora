@@ -215,7 +215,7 @@ impl TrieNode {
 }
 
 /// High-performance DFA cache using Double Array Trie
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct DfaCache {
     /// Underlying Double Array Trie for O(1) state transitions
     trie: DoubleArrayTrie,

@@ -276,7 +276,7 @@ fn main() {
     println!("4. Smaller element sizes show larger performance gaps");
     println!("5. Branch prediction has moderate impact on performance");
     
-    println!("\nRecommended optimizations (based on topling-zip research):");
+    println!("\nRecommended optimizations:");
     println!("1. Implement realloc-based growth with malloc_usable_size");
     println!("2. Add cache-aligned initial allocation");
     println!("3. Optimize hot path with inline assembly or intrinsics");
