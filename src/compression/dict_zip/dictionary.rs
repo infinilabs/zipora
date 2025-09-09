@@ -172,7 +172,7 @@ impl MatchStats {
 }
 
 /// High-performance suffix array dictionary for PA-Zip compression
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SuffixArrayDictionary {
     /// The underlying suffix array for pattern searching
     suffix_array: Arc<SuffixArray>,

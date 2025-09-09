@@ -10,6 +10,7 @@ pub mod fse;
 pub mod huffman;
 pub mod parallel;
 pub mod rans;
+pub mod simd_huffman;
 
 // Re-export main types
 pub use bit_ops::{BitOps, BitOpsConfig, EntropyBitOps, BitOpsStats};
@@ -28,6 +29,9 @@ pub type EnhancedFseConfig = FseConfig;
 pub use huffman::{
     HuffmanDecoder, HuffmanEncoder, HuffmanTree,
     ContextualHuffmanEncoder, ContextualHuffmanDecoder, HuffmanOrder
+};
+pub use simd_huffman::{
+    SimdHuffmanEncoder, SimdHuffmanConfig, HuffmanSimdTier
 };
 pub use rans::{
     Rans64Decoder as RansDecoder, Rans64Encoder, Rans64State as RansState, 

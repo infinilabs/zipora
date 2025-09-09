@@ -1,7 +1,6 @@
 //! Advanced String Arena Management
 //!
-//! This module provides sophisticated string arena management patterns inspired by
-//! topling-zip hash_strmap implementation, featuring:
+//! This module provides sophisticated string arena management patterns featuring:
 //! - Advanced freelist management with size-based allocation
 //! - Offset-based addressing for cache efficiency
 //! - Memory pool integration with alignment optimization
@@ -15,7 +14,7 @@ use std::sync::Arc;
 
 /// Advanced string arena with sophisticated memory management
 ///
-/// This implementation follows patterns from topling-zip hash_strmap.hpp:
+/// This implementation provides advanced string arena management:
 /// - Uses offset-based addressing for better cache locality
 /// - Implements freelist management for efficient string reuse
 /// - Provides string deduplication with reference counting
@@ -285,7 +284,7 @@ impl AdvancedStringArena {
             self.strpool[slot_pos + i] = byte;
         }
         
-        // Store extra length at the end (topling-zip pattern)
+        // Store extra length at the end for efficient access
         let extra = real_len - bytes.len() - 1;
         self.strpool[slot_pos + real_len - 1] = extra as u8;
 

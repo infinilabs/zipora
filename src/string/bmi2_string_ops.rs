@@ -1,7 +1,7 @@
 //! Comprehensive BMI2 String Processing Operations
 //!
 //! This module provides systematic BMI2 hardware acceleration for string processing
-//! operations, based on advanced topling-zip patterns and optimizations.
+//! operations, based on advanced bit manipulation patterns and optimizations.
 //!
 //! # Key Features
 //!

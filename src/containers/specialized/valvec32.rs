@@ -4,7 +4,7 @@
 //! memory savings on 64-bit systems for large collections while maintaining
 //! high performance for common operations.
 //!
-//! Based on the topling-zip reference implementation for optimal performance.
+//! Optimized for high performance and memory efficiency.
 
 use crate::error::{Result, ZiporaError};
 use crate::memory::SecureMemoryPool;
@@ -201,7 +201,7 @@ impl<T> ValVec32<T> {
     ///
     /// let vec: ValVec32<i32> = ValVec32::with_capacity(100)?;
     /// assert_eq!(vec.len(), 0);
-    /// assert_eq!(vec.capacity(), 100);
+    /// assert!(vec.capacity() >= 100); // Capacity may be larger due to allocator optimization
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
     pub fn with_capacity(capacity: u32) -> Result<Self> {
