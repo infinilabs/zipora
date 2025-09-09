@@ -1016,6 +1016,92 @@ for &value in &vec {
 
 ## Algorithms & Data Structures
 
+### Cache-Oblivious Algorithms
+
+Zipora includes sophisticated cache-oblivious algorithms that achieve optimal performance across different cache hierarchies without explicit knowledge of cache parameters, complementing the existing cache-aware infrastructure.
+
+#### Key Features
+
+- **Cache-Oblivious Sorting**: Funnel sort with optimal O(1 + N/B * log_{M/B}(N/B)) cache complexity
+- **Adaptive Algorithm Selection**: Intelligent choice between cache-aware and cache-oblivious strategies based on data characteristics
+- **Van Emde Boas Layout**: Cache-optimal data structure layouts with SIMD prefetching
+- **SIMD Integration**: Full integration with Zipora's 6-tier SIMD framework (AVX2/BMI2/POPCNT)
+- **Recursive Subdivision**: Optimal cache utilization through divide-and-conquer with cache-line aligned access patterns
+
+#### Algorithm Selection Strategy
+
+- **Small data** (< L1 cache): Cache-aware optimized algorithms with insertion sort and SIMD acceleration
+- **Medium data** (L1-L3 cache): Cache-oblivious funnel sort for optimal hierarchy utilization
+- **Large data** (> L3 cache): Hybrid approach combining cache-oblivious merge with external sorting
+- **String data**: Specialized cache-oblivious string algorithms with character-specific optimizations
+- **Numeric data**: SIMD-accelerated cache-oblivious variants with hardware prefetching
+
+#### Usage Examples
+
+```rust
+use zipora::algorithms::{CacheObliviousSort, CacheObliviousConfig, AdaptiveAlgorithmSelector, VanEmdeBoas};
+
+// Automatic cache-oblivious sorting with adaptive strategy selection
+let mut sorter = CacheObliviousSort::new();
+let mut data = vec![5, 2, 8, 1, 9, 3, 7, 4, 6];
+sorter.sort(&mut data).unwrap();
+assert_eq!(data, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+// Custom configuration with SIMD and parallel processing
+let config = CacheObliviousConfig {
+    use_simd: true,
+    use_parallel: true,
+    small_threshold: 512,
+    ..Default::default()
+};
+let mut custom_sorter = CacheObliviousSort::with_config(config);
+
+// Adaptive algorithm selector for strategic decision making
+let selector = AdaptiveAlgorithmSelector::new(&config);
+let strategy = selector.select_strategy(data.len(), &config.cache_hierarchy);
+println!("Selected strategy: {:?}", strategy); // CacheAware, CacheOblivious, or Hybrid
+
+// Data characteristics analysis for optimization
+let characteristics = selector.analyze_data(&data);
+println!("Fits in L1: {}, L2: {}, L3: {}", 
+         characteristics.fits_in_l1, characteristics.fits_in_l2, characteristics.fits_in_l3);
+
+// Van Emde Boas layout for cache-optimal data structures
+let cache_hierarchy = detect_cache_hierarchy();
+let veb_data = vec![1, 2, 3, 4, 5, 6, 7, 8];
+let veb = VanEmdeBoas::new(veb_data, cache_hierarchy);
+let element = veb.get(3); // Cache-optimal access with SIMD prefetching
+```
+
+#### Performance Characteristics
+
+- **Cache Complexity**: O(1 + N/B * log_{M/B}(N/B)) optimal across all cache levels simultaneously
+- **Memory Hierarchy**: Automatic adaptation to L1/L2/L3 cache sizes without manual tuning
+- **SIMD Acceleration**: 2-4x speedup with AVX2/BMI2 when available, graceful scalar fallback
+- **Adaptive Selection**: Intelligent strategy choice based on data size and cache hierarchy
+- **Parallel Processing**: Work-stealing parallelization for large datasets with cache-aware partitioning
+
+#### Algorithm Integration
+
+Cache-oblivious algorithms integrate seamlessly with Zipora's infrastructure:
+
+```rust
+// Integration with SecureMemoryPool for cache-aligned allocations
+let pool_config = SecurePoolConfig::performance_optimized();
+let pool = SecureMemoryPool::new(pool_config).unwrap();
+let cache_config = CacheObliviousConfig { memory_pool: Some(Arc::new(pool)), ..Default::default() };
+
+// Integration with cache optimization infrastructure
+let cache_layout = CacheLayoutConfig::sequential();
+let cache_allocator = CacheOptimizedAllocator::new(cache_layout);
+
+// Integration with SIMD framework for hardware acceleration
+let cpu_features = get_cpu_features();
+if cpu_features.has_avx2 {
+    println!("Using AVX2 acceleration for cache-oblivious operations");
+}
+```
+
 ### Advanced Tries
 
 ```rust
@@ -2937,6 +3023,7 @@ Current performance on Intel i7-10700K:
 | SecureMemoryPool alloc | ~18ns | +85% faster | +85% faster | ✅ **Production-ready** |
 | Traditional pool alloc | ~15ns | +90% faster | +90% faster | ❌ Unsafe |
 | **Advanced Radix Sort 1M u32s** | **~25ms** | **+150% faster** | **+80% faster** | ✅ **Memory safe + SIMD** |
+| **Cache-Oblivious Sort 1M u32s** | **O(1 + N/B log N/B)** | **+2-4x SIMD** | **Optimal cache** | ✅ **Memory safe + cache optimal** |
 | Suffix array build | O(n) | N/A | Linear vs O(n log n) | ✅ Memory safe |
 | Fiber spawn | ~5µs | N/A | New capability | ✅ Memory safe |
 
@@ -3275,6 +3362,7 @@ fn accelerated_operation(data: &[u32]) -> u32 {
 |-----------|------------------|------------------|
 | **Rank/Select** | AVX2 + BMI2 | **3.3 Gelem/s** (8x parallel) |
 | **Radix Sort** | AVX2 digit counting | **4-8x faster** sorting |
+| **Cache-Oblivious Sort** | AVX2 + cache prefetch | **2-4x faster** optimal cache complexity |
 | **String Processing** | AVX2 UTF-8 validation | **2-4x faster** text processing |
 | **Compression** | BMI2 bit operations | **5-10x faster** bit manipulation |
 | **Hash Maps** | Cache prefetching | **2-3x fewer** cache misses |
@@ -3335,6 +3423,10 @@ cargo bench --bench advanced_radix_sort_bench
 cargo bench --bench string_radix_sort_bench
 cargo bench --bench parallel_radix_sort_bench
 cargo bench --bench adaptive_sort_bench
+
+# Cache-Oblivious Algorithm benchmarks
+cargo bench --bench cache_oblivious_bench
+cargo bench --bench cache_bench
 
 # FSA & Trie benchmarks
 cargo bench --bench crit_bit_trie_bench

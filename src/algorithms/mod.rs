@@ -3,6 +3,7 @@
 //! This module provides implementations of advanced algorithms commonly used
 //! in data compression, indexing, and sorting applications.
 
+pub mod cache_oblivious;
 pub mod external_sort;
 pub mod multiway_merge;
 pub mod radix_sort;
@@ -12,12 +13,17 @@ pub mod suffix_array;
 pub mod tournament_tree;
 
 // Re-export main types
+pub use cache_oblivious::{
+    AdaptiveAlgorithmSelector, CacheObliviousConfig, CacheObliviousSort,
+    DataCharacteristics as CacheObliviousDataCharacteristics, 
+    CacheObliviousSortingStrategy, VanEmdeBoas
+};
 pub use external_sort::{ExternalSort, ReplaceSelectSort, ReplaceSelectSortConfig};
 pub use multiway_merge::{MergeSource, MultiWayMerge};
 pub use radix_sort::{
     AdvancedRadixSort, AdvancedRadixSortConfig, AdvancedStringRadixSort, AdvancedU32RadixSort, 
     AdvancedU64RadixSort, CpuFeatures, DataCharacteristics, RadixSort, RadixSortConfig, 
-    RadixSortable, SortingStrategy
+    RadixSortable, SortingStrategy as RadixSortingStrategy
 };
 pub use set_operations::{SetOperations, SetOperationsConfig, SetOperationStats};
 pub use simd_merge::{SimdComparator, SimdConfig, SimdOperations};
