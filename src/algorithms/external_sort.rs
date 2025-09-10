@@ -681,7 +681,7 @@ mod tests {
         let data: Vec<i32> = vec![];
         let sorted = sorter.sort(data)?;
 
-        assert_eq!(sorted, vec![]);
+        assert_eq!(sorted, Vec::<i32>::new());
 
         Ok(())
     }

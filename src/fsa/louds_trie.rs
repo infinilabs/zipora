@@ -472,6 +472,81 @@ impl LoudsTrie {
     {
         LoudsTrieBuilder::build_from_unsorted(keys)
     }
+
+    /// Build LOUDS trie from SortableStrVec with configuration (matches C++ pattern)
+    /// This follows the topling-zip C++ pattern: build_from(SortableStrVec& strVec, const NestLoudsTrieConfig& conf)
+    pub fn build_from_sortable_str_vec(
+        keys: &crate::containers::specialized::SortableStrVec,
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<Self> {
+        // Convert SortableStrVec to Vec<&[u8]> for processing
+        let key_refs: Vec<&[u8]> = (0..keys.len())
+            .filter_map(|i| keys.get(i).map(|s| s.as_bytes()))
+            .collect();
+        Self::build_from_str_vec_impl(&key_refs, config)
+    }
+
+    /// Build LOUDS trie from FixedLenStrVec with configuration (matches C++ pattern)
+    /// This follows the topling-zip C++ pattern: build_from(FixedLenStrVec& strVec, const NestLoudsTrieConfig& conf)
+    pub fn build_from_fixed_len_str_vec<const N: usize>(
+        keys: &crate::containers::specialized::FixedLenStrVec<N>,
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<Self> {
+        // Convert FixedLenStrVec to Vec<&[u8]> for processing
+        let key_refs: Vec<&[u8]> = (0..keys.len())
+            .filter_map(|i| keys.get(i).map(|s| s.as_bytes()))
+            .collect();
+        Self::build_from_str_vec_impl(&key_refs, config)
+    }
+
+    /// Build LOUDS trie from ZoSortedStrVec with configuration (matches C++ pattern)
+    /// This follows the topling-zip C++ pattern: build_from(ZoSortedStrVec& strVec, const NestLoudsTrieConfig& conf)
+    pub fn build_from_zo_sorted_str_vec(
+        keys: &crate::containers::specialized::ZoSortedStrVec,
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<Self> {
+        // Convert ZoSortedStrVec to Vec<&[u8]> for processing
+        let key_refs: Vec<&[u8]> = (0..keys.len())
+            .filter_map(|i| keys.get(i).map(|s| s.as_bytes()))
+            .collect();
+        Self::build_from_str_vec_impl(&key_refs, config)
+    }
+
+    /// Build LOUDS trie from vector of byte slices with configuration (matches C++ pattern)
+    /// This follows the topling-zip C++ pattern: build_from(Vec<Vec<u8>>& strVec, const NestLoudsTrieConfig& conf)
+    pub fn build_from_vec_u8(
+        keys: &[Vec<u8>],
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<Self> {
+        let key_refs: Vec<&[u8]> = keys.iter().map(|k| k.as_slice()).collect();
+        Self::build_from_str_vec_impl(&key_refs, config)
+    }
+
+    /// Build LOUDS trie from slice of byte slices with configuration (matches C++ pattern)
+    /// This follows the topling-zip C++ pattern: build_from(&[&[u8]], const NestLoudsTrieConfig& conf)
+    pub fn build_from_slice_u8(
+        keys: &[&[u8]],
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<Self> {
+        Self::build_from_str_vec_impl(keys, config)
+    }
+
+    /// Internal implementation for build_from methods
+    /// Converts NestLoudsTrieConfig to LoudsTrie construction parameters
+    fn build_from_str_vec_impl(keys: &[&[u8]], config: &crate::config::nest_louds_trie::NestLoudsTrieConfig) -> Result<Self> {
+        // For LoudsTrie, we focus on the basic configuration parameters
+        // and ignore the advanced nesting features that are specific to NestedLoudsTrie
+        
+        let mut trie = Self::new();
+        
+        // Insert all keys - LoudsTrie doesn't have advanced configuration support,
+        // so we use the basic insertion mechanism
+        for key in keys {
+            trie.insert(key)?;
+        }
+
+        Ok(trie)
+    }
 }
 
 #[cfg(test)]

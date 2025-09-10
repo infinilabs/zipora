@@ -551,6 +551,158 @@ pub struct DictZipBlobStore {
 }
 
 impl DictZipBlobStore {
+    /// Build DictZipBlobStore from training samples with NestLoudsTrieConfig (matches C++ pattern)
+    /// This follows the topling-zip C++ pattern: build_from(SortableStrVec& strVec, const NestLoudsTrieConfig& conf)
+    pub fn build_from_training_samples(
+        training_samples: &[Vec<u8>],
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<Self> {
+        if training_samples.is_empty() {
+            return Err(ZiporaError::invalid_data("No training samples provided"));
+        }
+
+        // Convert NestLoudsTrieConfig to DictZipConfig
+        let dict_zip_config = Self::convert_config_from_nest_louds_trie(config)?;
+        
+        // Create builder and add training samples
+        let mut builder = DictZipBlobStoreBuilder::with_config(dict_zip_config)?;
+        for sample in training_samples {
+            builder.add_training_sample(sample)?;
+        }
+        
+        builder.finish()
+    }
+
+    /// Build DictZipBlobStore from SortableStrVec with configuration (matches C++ pattern)
+    /// This follows the topling-zip C++ pattern: build_from(SortableStrVec& strVec, const NestLoudsTrieConfig& conf)
+    pub fn build_from_sortable_str_vec(
+        keys: &crate::containers::specialized::SortableStrVec,
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<Self> {
+        // Convert SortableStrVec to training samples
+        let training_samples: Vec<Vec<u8>> = (0..keys.len())
+            .filter_map(|i| keys.get(i).map(|s| s.as_bytes().to_vec()))
+            .collect();
+
+        if training_samples.is_empty() {
+            return Err(ZiporaError::invalid_data("No valid strings in SortableStrVec"));
+        }
+
+        Self::build_from_training_samples(&training_samples, config)
+    }
+
+    /// Build DictZipBlobStore from ZoSortedStrVec with configuration (matches C++ pattern)
+    pub fn build_from_zo_sorted_str_vec(
+        keys: &crate::containers::specialized::ZoSortedStrVec,
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<Self> {
+        // Convert ZoSortedStrVec to training samples
+        let training_samples: Vec<Vec<u8>> = (0..keys.len())
+            .filter_map(|i| keys.get(i).map(|s| s.as_bytes().to_vec()))
+            .collect();
+
+        if training_samples.is_empty() {
+            return Err(ZiporaError::invalid_data("No valid strings in ZoSortedStrVec"));
+        }
+
+        Self::build_from_training_samples(&training_samples, config)
+    }
+
+    /// Build DictZipBlobStore from FixedLenStrVec with configuration (matches C++ pattern)
+    pub fn build_from_fixed_len_str_vec<const N: usize>(
+        keys: &crate::containers::specialized::FixedLenStrVec<N>,
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<Self> {
+        // Convert FixedLenStrVec to training samples
+        let training_samples: Vec<Vec<u8>> = (0..keys.len())
+            .filter_map(|i| keys.get(i).map(|s| s.as_bytes().to_vec()))
+            .collect();
+
+        if training_samples.is_empty() {
+            return Err(ZiporaError::invalid_data("No valid strings in FixedLenStrVec"));
+        }
+
+        Self::build_from_training_samples(&training_samples, config)
+    }
+
+    /// Build DictZipBlobStore from Vec<u8> with configuration (matches C++ pattern)
+    pub fn build_from_vec_u8(
+        data: &[u8],
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<Self> {
+        if data.is_empty() {
+            return Err(ZiporaError::invalid_data("Empty data provided"));
+        }
+
+        // Use the entire data as a single training sample
+        let training_samples = vec![data.to_vec()];
+        Self::build_from_training_samples(&training_samples, config)
+    }
+
+    /// Convert NestLoudsTrieConfig to DictZipConfig with intelligent mapping
+    fn convert_config_from_nest_louds_trie(
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<DictZipConfig> {
+        use crate::compression::dict_zip::PaZipCompressorConfig;
+
+        // Determine appropriate preset based on NestLoudsTrieConfig parameters
+        let base_config = if config.optimization_flags.contains(
+            crate::config::nest_louds_trie::OptimizationFlags::ENABLE_FAST_SEARCH
+        ) {
+            DictZipConfig::realtime_compression()
+        } else if config.enable_queue_compression {
+            DictZipConfig::binary_compression()
+        } else if config.best_delimiters.len() > 10 {
+            // Assume text-heavy data if many delimiters
+            DictZipConfig::text_compression()
+        } else {
+            DictZipConfig::log_compression()
+        };
+
+        // Customize based on NestLoudsTrieConfig parameters
+        let mut dict_builder_config = base_config.dict_builder_config;
+        
+        // Map fragment configuration
+        dict_builder_config.min_pattern_length = config.min_fragment_length as usize;
+        dict_builder_config.max_pattern_length = config.max_fragment_length as usize;
+        
+        // Map sample ratio and frequency
+        dict_builder_config.sample_ratio = 0.8; // Use default sample ratio
+        dict_builder_config.min_frequency = config.sa_fragment_min_freq as u32;
+        
+        // Map BFS depth based on nesting levels
+        dict_builder_config.max_bfs_depth = config.max_bfs_depth.min(8); // Cap at 8 for performance
+        
+        // Adjust dictionary size based on memory settings
+        if config.initial_pool_size > 0 {
+            dict_builder_config.target_dict_size = 16 * 1024 * 1024; // 16MB for custom memory pool
+            dict_builder_config.max_dict_size = 20 * 1024 * 1024; // 20MB max
+        }
+
+        // Map validation settings
+        dict_builder_config.validate_result = config.optimization_flags.contains(
+            crate::config::nest_louds_trie::OptimizationFlags::ENABLE_STATISTICS
+        );
+
+        let validate_result = dict_builder_config.validate_result;
+
+        Ok(DictZipConfig {
+            dict_builder_config,
+            compressor_config: PaZipCompressorConfig::default(),
+            cache_size_bytes: if config.node_cache_size > 0 { config.node_cache_size } else { base_config.cache_size_bytes },
+            external_dictionary: false, // Default to embedded
+            dict_path: None,
+            memory_pool_config: None, // Use default memory pool configuration
+            track_stats: true,
+            validate_dictionary: validate_result,
+            min_compression_size: if config.min_fragment_length > 0 { 
+                config.min_fragment_length as usize 
+            } else { 
+                base_config.min_compression_size 
+            },
+        })
+    }
+
     /// Create from existing dictionary file
     pub fn from_dictionary_file<P: AsRef<Path>>(
         dict_path: P,

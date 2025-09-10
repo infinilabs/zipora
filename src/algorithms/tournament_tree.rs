@@ -16,7 +16,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 #[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0, _MM_HINT_T1};
+use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
 
 /// Cache line size for optimal memory layout
 const CACHE_LINE_SIZE: usize = 64;

@@ -1689,6 +1689,114 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
             0
         }
     }
+
+    /// Build trie from SortableStrVec with configuration (matches C++ pattern)
+    /// This follows the topling-zip C++ pattern: build_from(SortableStrVec& strVec, const NestLoudsTrieConfig& conf)
+    pub fn build_from_sortable_str_vec(
+        keys: &crate::containers::specialized::SortableStrVec,
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<Self> {
+        // Convert SortableStrVec to Vec<&[u8]> for processing
+        let key_refs: Vec<&[u8]> = (0..keys.len())
+            .filter_map(|i| keys.get(i).map(|s| s.as_bytes()))
+            .collect();
+        Self::build_from_str_vec_impl(&key_refs, config)
+    }
+
+    /// Build trie from FixedLenStrVec with configuration (matches C++ pattern)
+    /// This follows the topling-zip C++ pattern: build_from(FixedLenStrVec& strVec, const NestLoudsTrieConfig& conf)
+    pub fn build_from_fixed_len_str_vec<const N: usize>(
+        keys: &crate::containers::specialized::FixedLenStrVec<N>,
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<Self> {
+        // Convert FixedLenStrVec to Vec<&[u8]> for processing
+        let key_refs: Vec<&[u8]> = (0..keys.len())
+            .filter_map(|i| keys.get(i).map(|s| s.as_bytes()))
+            .collect();
+        Self::build_from_str_vec_impl(&key_refs, config)
+    }
+
+    /// Build trie from ZoSortedStrVec with configuration (matches C++ pattern)  
+    /// This follows the topling-zip C++ pattern: build_from(ZoSortedStrVec& strVec, const NestLoudsTrieConfig& conf)
+    pub fn build_from_zo_sorted_str_vec(
+        keys: &crate::containers::specialized::ZoSortedStrVec,
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<Self> {
+        // Convert ZoSortedStrVec to Vec<&[u8]> for processing
+        let key_refs: Vec<&[u8]> = (0..keys.len())
+            .filter_map(|i| keys.get(i).map(|s| s.as_bytes()))
+            .collect();
+        Self::build_from_str_vec_impl(&key_refs, config)
+    }
+
+    /// Build trie from vector of byte slices with configuration (matches C++ pattern)
+    /// This follows the topling-zip C++ pattern: build_from(Vec<Vec<u8>>& strVec, const NestLoudsTrieConfig& conf)
+    pub fn build_from_vec_u8(
+        keys: &[Vec<u8>],
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<Self> {
+        let key_refs: Vec<&[u8]> = keys.iter().map(|k| k.as_slice()).collect();
+        Self::build_from_str_vec_impl(&key_refs, config)
+    }
+
+    /// Build trie from slice of byte slices with configuration (matches C++ pattern)
+    /// This follows the topling-zip C++ pattern: build_from(&[&[u8]], const NestLoudsTrieConfig& conf)
+    pub fn build_from_slice_u8(
+        keys: &[&[u8]],
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<Self> {
+        Self::build_from_str_vec_impl(keys, config)
+    }
+
+    /// Internal implementation for build_from methods
+    /// Converts NestLoudsTrieConfig to NestingConfig and builds the trie
+    fn build_from_str_vec_impl(keys: &[&[u8]], config: &crate::config::nest_louds_trie::NestLoudsTrieConfig) -> Result<Self> {
+        // Convert NestLoudsTrieConfig to NestingConfig
+        let nesting_config = NestingConfig {
+            max_levels: config.nest_level.clamp(1, 8) as usize,
+            fragment_compression_ratio: if config.min_fragment_length > 0 && config.max_fragment_length > config.min_fragment_length as i32 {
+                (config.min_fragment_length as f64 / config.max_fragment_length as f64).clamp(0.1, 0.9)
+            } else {
+                0.3
+            },
+            min_fragment_size: config.min_fragment_length.clamp(1, 64) as usize,
+            max_fragment_size: config.max_fragment_length.clamp(8, 512) as usize,
+            cache_optimization: config.optimization_flags.intersects(
+                crate::config::nest_louds_trie::OptimizationFlags::ENABLE_CACHE_OPTIMIZATION |
+                crate::config::nest_louds_trie::OptimizationFlags::USE_HUGEPAGES
+            ),
+            cache_block_size: if config.optimization_flags.contains(crate::config::nest_louds_trie::OptimizationFlags::ENABLE_CACHE_OPTIMIZATION) {
+                512
+            } else {
+                256
+            },
+            density_switch_threshold: 0.7,
+            adaptive_backend_selection: config.optimization_flags.contains(
+                crate::config::nest_louds_trie::OptimizationFlags::ENABLE_FAST_SEARCH
+            ),
+            memory_pool_size: config.initial_pool_size.max(1024 * 1024), // At least 1MB
+            nest_scale_factor: 1.2,
+            enable_mixed_storage: config.optimization_flags.contains(
+                crate::config::nest_louds_trie::OptimizationFlags::USE_MIXED_CORE_LINK
+            ),
+            fragment_delimiters: if config.best_delimiters.is_empty() {
+                vec![b'\n', b'\r', b'\0', b'\t']
+            } else {
+                config.best_delimiters.iter().copied().collect()
+            },
+            min_fragment_refs: 2,
+        };
+
+        // Create trie with converted configuration
+        let mut trie = Self::with_config(nesting_config)?;
+
+        // Insert all keys
+        for key in keys {
+            trie.insert(key)?;
+        }
+
+        Ok(trie)
+    }
 }
 
 impl<R: RankSelectOps + RankSelectBuilder<R>> Default for NestedLoudsTrie<R> {

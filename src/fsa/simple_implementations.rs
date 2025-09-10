@@ -302,6 +302,6 @@ mod tests {
         assert_eq!(positions, vec![0, 12]);
         
         let positions = search.search_pattern(data, b"xyz");
-        assert_eq!(positions, vec![]);
+        assert_eq!(positions, Vec::<usize>::new());
     }
 }

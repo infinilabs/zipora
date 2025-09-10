@@ -40,10 +40,9 @@
 
 use crate::algorithms::suffix_array::SuffixArray;
 use crate::compression::dict_zip::compression_types::{Match, CompressionType};
-use crate::compression::dict_zip::dfa_cache::CacheMatch;
 use crate::compression::dict_zip::matcher::{PatternMatcher, MatcherConfig};
 use crate::memory::simd_ops::{SimdMemOps, get_global_simd_ops};
-use crate::string::{SimdStringSearch, SearchTier, get_global_simd_search};
+use crate::string::{SimdStringSearch, get_global_simd_search};
 use crate::system::cpu_features::{CpuFeatures, get_cpu_features};
 use crate::error::Result;
 
