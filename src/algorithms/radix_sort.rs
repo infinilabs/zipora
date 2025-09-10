@@ -22,9 +22,8 @@ use std::time::Instant;
 // AVX2/BMI2 intrinsics for advanced SIMD acceleration
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
-    _mm256_and_si256, _mm256_cmpeq_epi32, _mm256_loadu_si256, _mm256_movemask_epi8,
-    _mm256_set1_epi32, _mm256_srlv_epi32, _mm256_storeu_si256, _pdep_u64, _pext_u64, _popcnt64,
-    _tzcnt_u64, __m256i,
+    _mm256_and_si256, _mm256_loadu_si256,
+    _mm256_set1_epi32, _mm256_srlv_epi32, _mm256_storeu_si256, __m256i,
 };
 
 // AVX-512 intrinsics (nightly-only feature)

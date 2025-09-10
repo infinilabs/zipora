@@ -6,13 +6,12 @@
 
 use crate::error::{Result, ZiporaError};
 use crate::memory::cache_layout::{
-    CacheOptimizedAllocator, CacheLayoutConfig, PrefetchHint, align_to_cache_line,
-    AccessPattern as CacheAccessPattern, HotColdSeparator as CacheHotColdSeparator,
+    CacheOptimizedAllocator, CacheLayoutConfig, PrefetchHint,
 };
 use crate::hash_map::cache_locality::{
     AccessPattern, AccessPatternAnalyzer, CacheConsciousResizer, CacheLayoutOptimizer,
     CacheMetrics, CacheOptimizedBucket, HotColdSeparator, NumaAllocator, Prefetcher,
-    PrefetchHint as LocalPrefetchHint, CACHE_LINE_SIZE, PREFETCH_DISTANCE,
+    CACHE_LINE_SIZE, PREFETCH_DISTANCE,
 };
 use std::cell::{Cell, RefCell};
 use ahash::RandomState;

@@ -820,7 +820,7 @@ mod tests {
         assert_eq!(positions, vec![0, 12]);
         
         let no_match = utils::search_pattern(data, b"xyz");
-        assert_eq!(no_match, vec![]);
+        assert_eq!(no_match, Vec::<usize>::new());
     }
 
     #[test]
@@ -837,7 +837,7 @@ mod tests {
         let mut engine = FastSearchEngine::new();
         let empty_data = b"";
         
-        assert_eq!(engine.search_byte(empty_data, b'a').unwrap(), vec![]);
+        assert_eq!(engine.search_byte(empty_data, b'a').unwrap(), Vec::<usize>::new());
         assert_eq!(engine.find_first(empty_data, b'a'), None);
         assert_eq!(engine.find_last(empty_data, b'a'), None);
         assert_eq!(engine.count_byte(empty_data, b'a').unwrap(), 0);

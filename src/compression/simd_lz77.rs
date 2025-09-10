@@ -83,12 +83,11 @@
 
 use crate::compression::dict_zip::compression_types::{
     Match, CompressionType, encode_match, decode_match, BitWriter, BitReader,
-    calculate_encoding_cost, get_encoding_meta, choose_best_compression_type_reference
+    calculate_encoding_cost, choose_best_compression_type_reference
 };
 use crate::compression::dict_zip::{SuffixArrayDictionary, DictionaryBuilder};
 use crate::compression::simd_pattern_match::{
-    SimdPatternMatcher, SimdPatternConfig, SimdMatchResult, SimdPatternTier, ParallelMode,
-    get_global_simd_pattern_matcher
+    SimdPatternMatcher, SimdPatternConfig
 };
 use crate::memory::simd_ops::{SimdMemOps, get_global_simd_ops};
 use crate::memory::{SecureMemoryPool, CacheOptimizedAllocator, CacheLayoutConfig};

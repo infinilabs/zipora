@@ -938,9 +938,9 @@ mod tests {
         let positions = vec![];
         let indices = vec![];
 
-        assert_eq!(bulk_rank1_simd(&bit_data, &positions), vec![]);
-        assert_eq!(bulk_select1_simd(&bit_data, &indices).unwrap(), vec![]);
-        assert_eq!(bulk_popcount_simd(&bit_data), vec![]);
+        assert_eq!(bulk_rank1_simd(&bit_data, &positions), Vec::<usize>::new());
+        assert_eq!(bulk_select1_simd(&bit_data, &indices).unwrap(), Vec::<usize>::new());
+        assert_eq!(bulk_popcount_simd(&bit_data), Vec::<usize>::new());
     }
 
     #[test]

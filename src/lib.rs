@@ -86,6 +86,7 @@ pub mod blob_store;
 pub mod cache;
 pub mod compression;
 pub mod concurrency;
+pub mod config;
 pub mod containers;
 pub mod dev_infrastructure;
 pub mod entropy;

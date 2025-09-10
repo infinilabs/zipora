@@ -113,6 +113,11 @@ pub enum ZiporaError {
         /// Parameter error message
         message: String,
     },
+
+    /// Serialization/deserialization errors
+    #[cfg(feature = "serde")]
+    #[error("Serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
 }
 
 impl ZiporaError {
@@ -242,6 +247,8 @@ impl ZiporaError {
             Self::Configuration { .. } => false,
             Self::SystemError { .. } => false,
             Self::InvalidParameter { .. } => false,
+            #[cfg(feature = "serde")]
+            Self::Serialization(_) => false,
         }
     }
 
@@ -263,6 +270,8 @@ impl ZiporaError {
             Self::SystemError { .. } => "system",
             Self::ResourceExhausted { .. } => "exhausted",
             Self::InvalidParameter { .. } => "parameter",
+            #[cfg(feature = "serde")]
+            Self::Serialization(_) => "serialization",
         }
     }
 }
@@ -476,5 +485,20 @@ mod tests {
         assert!(check_range(5, 4, 10).is_err()); // start > end
         assert!(check_range(0, 11, 10).is_err()); // end > size
         assert!(check_range(usize::MAX, 0, 10).is_err()); // start > end
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_serde_error_conversion() {
+        // Test conversion from serde_json::Error to ZiporaError
+        let invalid_json = "{ invalid json }";
+        let serde_error = serde_json::from_str::<serde_json::Value>(invalid_json).unwrap_err();
+        let zipora_error: ZiporaError = serde_error.into();
+        
+        assert_eq!(zipora_error.category(), "serialization");
+        assert!(!zipora_error.is_recoverable());
+        
+        let display = format!("{}", zipora_error);
+        assert!(display.contains("Serialization error"));
     }
 }

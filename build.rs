@@ -217,7 +217,7 @@ fn compile_test_program(code: &str, flags: &[&str]) -> bool {
 fn is_feature_available(feature: &str) -> bool {
     // This is a simplified check - in practice, you might want to use
     // the actual CPU feature detection or check environment variables
-    let cfg_name = format!("zipora_has_{}", feature.replace(".", "_").replace("-", "_"));
+    let _cfg_name = format!("zipora_has_{}", feature.replace(".", "_").replace("-", "_"));
     
     // For now, assume common features are available
     match feature {
@@ -314,6 +314,7 @@ fn configure_optimization_flags() {
 
 /// Generate FFI bindings if the ffi feature is enabled
 #[cfg(feature = "ffi")]
+#[allow(dead_code)]
 fn generate_ffi_bindings() {
     use std::env;
     use std::path::PathBuf;

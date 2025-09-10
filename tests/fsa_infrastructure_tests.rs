@@ -595,7 +595,7 @@ mod fast_search_tests {
         let mut engine = FastSearchEngine::new();
         let empty_data = b"";
         
-        assert_eq!(engine.search_byte(empty_data, b'a').unwrap(), vec![]);
+        assert_eq!(engine.search_byte(empty_data, b'a').unwrap(), Vec::<usize>::new());
         assert_eq!(engine.find_first(empty_data, b'a'), None);
         assert_eq!(engine.find_last(empty_data, b'a'), None);
         assert_eq!(engine.count_byte(empty_data, b'a').unwrap(), 0);

@@ -368,6 +368,155 @@ impl<R> NestLoudsTrieBlobStore<R>
 where
     R: RankSelectOps + RankSelectBuilder<R> + Clone + Send + Sync,
 {
+    /// Build NestLoudsTrieBlobStore from SortableStrVec with configuration (matches C++ pattern)
+    /// This follows the topling-zip C++ pattern: build_from(SortableStrVec& strVec, const NestLoudsTrieConfig& conf)
+    pub fn build_from_sortable_str_vec(
+        keys: &crate::containers::specialized::SortableStrVec,
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<Self> {
+        // Convert SortableStrVec to key-value pairs for the trie blob store
+        let mut store = Self::new(Self::convert_config_from_nest_louds_trie(config)?)?;
+        
+        // Add each string as both key and data
+        for i in 0..keys.len() {
+            if let Some(key) = keys.get(i) {
+                let key_bytes = key.as_bytes();
+                store.put_with_key(key_bytes, key_bytes)?;
+            }
+        }
+        
+        Ok(store)
+    }
+
+    /// Build NestLoudsTrieBlobStore from ZoSortedStrVec with configuration (matches C++ pattern)
+    pub fn build_from_zo_sorted_str_vec(
+        keys: &crate::containers::specialized::ZoSortedStrVec,
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<Self> {
+        // Convert ZoSortedStrVec to key-value pairs for the trie blob store
+        let mut store = Self::new(Self::convert_config_from_nest_louds_trie(config)?)?;
+        
+        // Add each string as both key and data
+        for i in 0..keys.len() {
+            if let Some(key) = keys.get(i) {
+                let key_bytes = key.as_bytes();
+                store.put_with_key(key_bytes, key_bytes)?;
+            }
+        }
+        
+        Ok(store)
+    }
+
+    /// Build NestLoudsTrieBlobStore from FixedLenStrVec with configuration (matches C++ pattern)
+    pub fn build_from_fixed_len_str_vec<const N: usize>(
+        keys: &crate::containers::specialized::FixedLenStrVec<N>,
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<Self> {
+        // Convert FixedLenStrVec to key-value pairs for the trie blob store
+        let mut store = Self::new(Self::convert_config_from_nest_louds_trie(config)?)?;
+        
+        // Add each string as both key and data
+        for i in 0..keys.len() {
+            if let Some(key) = keys.get(i) {
+                let key_bytes = key.as_bytes();
+                store.put_with_key(key_bytes, key_bytes)?;
+            }
+        }
+        
+        Ok(store)
+    }
+
+    /// Build NestLoudsTrieBlobStore from Vec<u8> with configuration (matches C++ pattern)
+    pub fn build_from_vec_u8(
+        data: &[u8],
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<Self> {
+        if data.is_empty() {
+            return Err(ZiporaError::invalid_data("Empty data provided"));
+        }
+
+        let mut store = Self::new(Self::convert_config_from_nest_louds_trie(config)?)?;
+        
+        // Use the entire data as a single key-value pair
+        store.put_with_key(data, data)?;
+        
+        Ok(store)
+    }
+
+    /// Build NestLoudsTrieBlobStore from slice of u8 with configuration (matches C++ pattern)
+    pub fn build_from_slice_u8(
+        data: &[u8],
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<Self> {
+        Self::build_from_vec_u8(data, config)
+    }
+
+    /// Build NestLoudsTrieBlobStore from key-value pairs with configuration
+    pub fn build_from_key_value_pairs(
+        pairs: &[(Vec<u8>, Vec<u8>)],
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<Self> {
+        if pairs.is_empty() {
+            return Err(ZiporaError::invalid_data("No key-value pairs provided"));
+        }
+
+        let mut store = Self::new(Self::convert_config_from_nest_louds_trie(config)?)?;
+        
+        // Add each key-value pair to the store
+        for (key, value) in pairs {
+            store.put_with_key(key, value)?;
+        }
+        
+        Ok(store)
+    }
+
+    /// Convert NestLoudsTrieConfig to TrieBlobStoreConfig with intelligent mapping
+    fn convert_config_from_nest_louds_trie(
+        config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
+    ) -> Result<TrieBlobStoreConfig> {
+        use crate::fsa::nested_louds_trie::NestingConfig;
+        use crate::blob_store::zip_offset::ZipOffsetBlobStoreConfig;
+
+        // Create NestingConfig from NestLoudsTrieConfig
+        let trie_config = NestingConfig::builder()
+            .max_levels(config.nest_level as usize)
+            .fragment_compression_ratio(0.8) // Use default fragment compression ratio
+            .cache_optimization(config.optimization_flags.contains(
+                crate::config::nest_louds_trie::OptimizationFlags::ENABLE_CACHE_OPTIMIZATION
+            ))
+            .adaptive_backend_selection(config.optimization_flags.contains(
+                crate::config::nest_louds_trie::OptimizationFlags::ENABLE_PARALLEL_CONSTRUCTION
+            ))
+            .build()?;
+
+        // Create blob store config based on optimization flags
+        let blob_config = if config.optimization_flags.contains(
+            crate::config::nest_louds_trie::OptimizationFlags::ENABLE_FAST_SEARCH
+        ) {
+            ZipOffsetBlobStoreConfig::performance_optimized()
+        } else if config.enable_queue_compression {
+            ZipOffsetBlobStoreConfig::compression_optimized()
+        } else if config.optimization_flags.contains(
+            crate::config::nest_louds_trie::OptimizationFlags::USE_HUGEPAGES
+        ) {
+            ZipOffsetBlobStoreConfig::security_optimized()
+        } else {
+            ZipOffsetBlobStoreConfig::default()
+        };
+
+        Ok(TrieBlobStoreConfig {
+            trie_config,
+            blob_config,
+            memory_config: crate::memory::SecurePoolConfig::small_secure(),
+            enable_key_compression: config.enable_queue_compression,
+            enable_batch_optimization: config.optimization_flags.contains(
+                crate::config::nest_louds_trie::OptimizationFlags::ENABLE_PARALLEL_CONSTRUCTION
+            ),
+            key_cache_size: if config.node_cache_size > 0 { config.node_cache_size } else { 1024 },
+            enable_statistics: config.enable_statistics,
+        })
+    }
+
     /// Create a new NestLoudsTrieBlobStore with the given configuration
     ///
     /// # Arguments
