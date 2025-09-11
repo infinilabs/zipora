@@ -1,12 +1,14 @@
 //! Fixed LOUDS Trie implementation with proper dynamic insertion
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 
 use crate::error::Result;
 use crate::fsa::traits::{
     FiniteStateAutomaton, PrefixIterable, StateInspectable, StatisticsProvider, Trie, TrieBuilder,
     TrieStats,
 };
+use crate::statistics::{TrieStatistics, MemorySize, MemoryBreakdown};
 use crate::succinct::{BitVector, RankSelect256};
 use crate::{FastVec, StateId};
 
@@ -38,6 +40,8 @@ pub struct LoudsTrie {
     nodes: Vec<TrieNode>,
     /// Next available node index
     next_node_id: usize,
+    /// Simple statistics matching topling-zip pattern  
+    statistics: std::sync::Arc<std::sync::Mutex<crate::statistics::TrieStat>>,
 }
 
 impl LoudsTrie {
@@ -61,6 +65,62 @@ impl LoudsTrie {
             num_keys: 0,
             nodes,
             next_node_id: 1,
+            statistics: std::sync::Arc::new(std::sync::Mutex::new(crate::statistics::TrieStat::new())),
+        }
+    }
+
+    /// Get simple statistics matching topling-zip pattern
+    pub fn get_stats(&self) -> crate::statistics::TrieStat {
+        self.statistics.lock().unwrap().clone()
+    }
+    
+    /// Print statistics to stderr (matching topling-zip print pattern)
+    pub fn print_stats(&self) {
+        let mut stderr = std::io::stderr();
+        self.statistics.lock().unwrap().print(&mut stderr).ok();
+    }
+    
+    /// Simple memory usage calculation (matching topling-zip simplicity)
+    pub fn mem_size(&self) -> usize {
+        // Calculate LOUDS bits memory (approximate as bit vector length / 8)
+        let louds_bits_memory = (self.louds_bits.len() + 7) / 8;
+        
+        // Calculate rank-select memory (estimated)
+        let rank_select_memory = 256; // Fixed overhead approximation
+        
+        // Calculate labels memory (FastVec length)
+        let labels_memory = self.labels.len();
+        
+        // Calculate is_final memory (approximate as bit vector length / 8)
+        let is_final_memory = (self.is_final.len() + 7) / 8;
+        
+        // Calculate nodes memory
+        let nodes_memory = std::mem::size_of_val(&*self.nodes) + 
+            self.nodes.iter().map(|node| {
+                std::mem::size_of_val(node) + 
+                node.children.capacity() * (std::mem::size_of::<u8>() + std::mem::size_of::<usize>())
+            }).sum::<usize>();
+        
+        let total_size = louds_bits_memory + rank_select_memory + labels_memory + is_final_memory + nodes_memory;
+        
+        // Update total_bytes in statistics (matching topling-zip pipelineThroughBytes pattern)
+        self.statistics.lock().unwrap().total_bytes = total_size as u64;
+        
+        total_size
+    }
+    
+    /// Check if debug output is enabled via environment variable
+    fn debug_enabled() -> bool {
+        std::env::var("LOUDS_TRIE_DEBUG")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(false)
+    }
+    
+    /// Conditionally print statistics if debug is enabled
+    pub fn debug_print_statistics(&self) {
+        if Self::debug_enabled() {
+            eprintln!("LoudsTrie Debug Output:");
+            self.print_stats();
         }
     }
 
@@ -189,8 +249,12 @@ impl LoudsTrie {
 
     /// Navigate to a child state with the given label
     fn goto_child(&self, state: StateId, label: u8) -> Option<StateId> {
+        let start_time = std::time::Instant::now();
+        
         let child_count = self.child_count(state);
         if child_count == 0 {
+            // Update simple timing statistics (topling-zip pattern)
+            self.statistics.lock().unwrap().lookup_time += start_time.elapsed().as_secs_f64();
             return None;
         }
 
@@ -206,11 +270,15 @@ impl LoudsTrie {
 
                     // Count total number of '1' bits up to and including this position
                     let ones_up_to = self.rank_select.rank1(child_1bit_pos + 1);
+                    // Update simple timing statistics (topling-zip pattern)
+                    self.statistics.lock().unwrap().lookup_time += start_time.elapsed().as_secs_f64();
                     return Some(ones_up_to as StateId);
                 }
             }
         }
 
+        // Update simple timing statistics (topling-zip pattern)
+        self.statistics.lock().unwrap().lookup_time += start_time.elapsed().as_secs_f64();
         None
     }
 }
@@ -279,8 +347,78 @@ impl FiniteStateAutomaton for LoudsTrie {
     }
 }
 
+impl MemorySize for LoudsTrie {
+    fn mem_size(&self) -> usize {
+        // Calculate LOUDS bits memory (approximate as bit vector length / 8)
+        let louds_bits_memory = (self.louds_bits.len() + 7) / 8;
+        
+        // Calculate rank-select memory (estimated)
+        let rank_select_memory = 256; // Fixed overhead approximation
+        
+        // Calculate labels memory (FastVec length)
+        let labels_memory = self.labels.len();
+        
+        // Calculate is_final memory (approximate as bit vector length / 8)
+        let is_final_memory = (self.is_final.len() + 7) / 8;
+        
+        // Calculate nodes memory
+        let nodes_memory = std::mem::size_of_val(&*self.nodes) + 
+            self.nodes.iter().map(|node| {
+                std::mem::size_of_val(node) + 
+                node.children.capacity() * (std::mem::size_of::<u8>() + std::mem::size_of::<usize>())
+            }).sum::<usize>();
+        
+        // Calculate struct overhead
+        let struct_overhead = std::mem::size_of::<Self>();
+        
+        let total_size = louds_bits_memory + rank_select_memory + labels_memory + is_final_memory + nodes_memory + struct_overhead;
+        
+        // Update total_bytes in statistics (matching topling-zip pipelineThroughBytes pattern)
+        self.statistics.lock().unwrap().total_bytes = total_size as u64;
+        
+        total_size
+    }
+    
+    fn detailed_mem_size(&self) -> MemoryBreakdown {
+        let mut breakdown = MemoryBreakdown::new();
+        
+        // Calculate LOUDS bits memory (approximate as bit vector length / 8)
+        let louds_bits_memory = (self.louds_bits.len() + 7) / 8;
+        breakdown.add_component("louds_bits", louds_bits_memory);
+        
+        // Calculate rank-select memory (estimated)
+        let rank_select_memory = 256; // Fixed overhead approximation
+        breakdown.add_component("rank_select", rank_select_memory);
+        
+        // Calculate labels memory (FastVec length)
+        let labels_memory = self.labels.len();
+        breakdown.add_component("labels", labels_memory);
+        
+        // Calculate is_final memory (approximate as bit vector length / 8)
+        let is_final_memory = (self.is_final.len() + 7) / 8;
+        breakdown.add_component("is_final", is_final_memory);
+        
+        // Calculate nodes memory
+        let nodes_memory = std::mem::size_of_val(&*self.nodes) + 
+            self.nodes.iter().map(|node| {
+                std::mem::size_of_val(node) + 
+                node.children.capacity() * (std::mem::size_of::<u8>() + std::mem::size_of::<usize>())
+            }).sum::<usize>();
+        breakdown.add_component("nodes", nodes_memory);
+        
+        // Calculate struct overhead
+        breakdown.add_component("struct_overhead", std::mem::size_of::<Self>());
+        
+        breakdown
+    }
+}
+
 impl Trie for LoudsTrie {
     fn insert(&mut self, key: &[u8]) -> Result<StateId> {
+        use std::sync::atomic::Ordering;
+        use std::time::Instant;
+        
+        let start_time = Instant::now();
         let mut node_id = 0usize; // Start at root in tree representation
 
         // Traverse as far as possible in tree representation
@@ -334,6 +472,9 @@ impl Trie for LoudsTrie {
 
         // Rebuild LOUDS representation
         self.rebuild_louds()?;
+
+        // Update simple timing statistics (topling-zip pattern)
+        self.statistics.lock().unwrap().insert_time += start_time.elapsed().as_secs_f64();
 
         Ok(node_id as StateId)
     }

@@ -97,6 +97,7 @@ pub mod io;
 pub mod memory;
 pub mod string;
 pub mod succinct;
+pub mod statistics;
 pub mod system;
 pub mod thread;
 
@@ -298,6 +299,32 @@ pub use dev_infrastructure::{
     Histogram, U32Histogram, U64Histogram, HistogramStats,
     StatAccumulator, AccumulatorStats, MultiDimensionalStats, GlobalStatsRegistry,
     global_stats, StatIndex,
+};
+
+// Re-export Advanced Statistics and Monitoring Framework  
+pub use statistics::{
+    // Core statistics
+    TrieStatistics, MemoryStats as StatsMemoryStats, PerformanceStats as StatsPerformanceStats, 
+    CompressionStats as StatsCompressionStats, DistributionStats, ErrorStats, TimingStats, 
+    MemoryCategory, ErrorType,
+    // Memory tracking
+    MemorySize, MemoryBreakdown, GlobalMemoryTracker, TrackedObject, LocalMemoryTracker,
+    FragmentationAnalysis,
+    // High-precision timing
+    Profiling, QTime, QDuration, PerfTimer as StatsPerfTimer, TimerCollection, TimerStats, 
+    ScopedTimer as StatsScopedTimer, str_date_time_now,
+    // Histogram framework
+    FreqHist, FreqHistO1, FreqHistO2, HistogramData, HistogramDataO1, HistogramDataO2,
+    HistogramCollection, GlobalHistogramStats,
+    // Entropy analysis
+    EntropyAnalyzer, EntropyConfig, EntropyResults, CompressionEstimates, DistributionInfo,
+    SampleStats, EntropyAnalyzerCollection, GlobalEntropyStats,
+    // Buffer management
+    ContextBuffer, BufferMetadata, BufferPriority, StatisticsContext, DefaultStatisticsContext,
+    BufferPoolManager, BufferPoolConfig, PoolStatistics, ScopedBuffer,
+    // Profiling
+    Profiler, ProfilerConfig, OperationProfile, GlobalProfilingStats, ProfiledOperation,
+    global_profiler as stats_global_profiler, init_global_profiler,
 };
 
 // Re-export Low-Level Synchronization (Phase 11A)
