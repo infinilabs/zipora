@@ -16,8 +16,23 @@ use std::ptr::{self, NonNull};
 use std::slice;
 use std::sync::Arc;
 
+// Import libc for direct malloc/realloc/free access
+extern crate libc;
+
 /// Maximum capacity for ValVec32 (2^32 - 1 elements)
 pub const MAX_CAPACITY: u32 = u32::MAX;
+
+/// Cache line size for x86_64 processors
+#[cfg(target_arch = "x86_64")]
+pub const CACHE_LINE_SIZE: usize = 64;
+
+/// Cache line size for ARM64 processors
+#[cfg(target_arch = "aarch64")]
+pub const CACHE_LINE_SIZE: usize = 128;
+
+/// Default cache line size for other architectures
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+pub const CACHE_LINE_SIZE: usize = 64;
 
 /// Platform-specific malloc_usable_size wrapper
 #[cfg(target_os = "linux")]
@@ -345,7 +360,8 @@ impl<T> ValVec32<T> {
         new_cap.min(MAX_CAPACITY)
     }
 
-    /// Grows the vector to the specified capacity
+    /// Grows the vector to the specified capacity - marked cold and never inline
+    /// to keep it out of the hot path for better instruction cache performance
     #[cold]
     #[inline(never)]
     fn grow_to(&mut self, new_capacity: u32) -> Result<()> {
@@ -360,51 +376,68 @@ impl<T> ValVec32<T> {
         }
 
         let new_capacity_usize = new_capacity as usize;
-        let new_size = new_capacity_usize * mem::size_of::<T>();
+        let elem_size = mem::size_of::<T>();
+        let new_size = new_capacity_usize.saturating_mul(elem_size);
         
-        let new_layout = Layout::array::<T>(new_capacity_usize)
-            .map_err(|_| ZiporaError::invalid_data("Invalid layout for new capacity"))?;
-        
+        // Optimize: Try to use realloc first which can be more efficient
         let new_ptr = if self.capacity == 0 {
-            // Initial allocation
+            // Initial allocation - use simple malloc without Layout overhead
             unsafe {
-                let raw_ptr = alloc::alloc(new_layout);
+                let align = mem::align_of::<T>();
+                let raw_ptr = if align <= mem::align_of::<usize>() {
+                    // Most common case: standard alignment
+                    let ptr = libc::malloc(new_size);
+                    ptr as *mut T
+                } else {
+                    // Need special alignment
+                    let layout = Layout::from_size_align_unchecked(new_size, align);
+                    alloc::alloc(layout) as *mut T
+                };
+                
                 if raw_ptr.is_null() {
                     return Err(ZiporaError::out_of_memory(new_size));
                 }
-                NonNull::new_unchecked(raw_ptr as *mut T)
+                NonNull::new_unchecked(raw_ptr)
             }
         } else {
-            // Reallocation: allocate new memory and copy
+            // Reallocation: Try realloc first which may avoid copying
             unsafe {
-                let raw_ptr = alloc::alloc(new_layout);
+                let align = mem::align_of::<T>();
+                let raw_ptr = if align <= mem::align_of::<usize>() {
+                    // Standard alignment - use realloc
+                    let ptr = libc::realloc(self.ptr.as_ptr() as *mut libc::c_void, new_size);
+                    ptr as *mut T
+                } else {
+                    // Special alignment - must allocate and copy
+                    let layout = Layout::from_size_align_unchecked(new_size, align);
+                    let new_raw = alloc::alloc(layout) as *mut T;
+                    if !new_raw.is_null() && self.len > 0 {
+                        ptr::copy_nonoverlapping(
+                            self.ptr.as_ptr(),
+                            new_raw,
+                            self.len as usize,
+                        );
+                    }
+                    if self.capacity > 0 {
+                        let old_layout = Layout::from_size_align_unchecked(
+                            self.capacity as usize * elem_size,
+                            align
+                        );
+                        alloc::dealloc(self.ptr.as_ptr() as *mut u8, old_layout);
+                    }
+                    new_raw
+                };
+                
                 if raw_ptr.is_null() {
                     return Err(ZiporaError::out_of_memory(new_size));
                 }
-                let new_ptr = NonNull::new_unchecked(raw_ptr as *mut T);
-                
-                // Copy existing data
-                if self.len > 0 {
-                    std::ptr::copy_nonoverlapping(
-                        self.ptr.as_ptr(),
-                        new_ptr.as_ptr(),
-                        self.len as usize,
-                    );
-                }
-                
-                // Deallocate old memory
-                if self.capacity > 0 {
-                    let old_layout = Layout::array::<T>(self.capacity as usize).unwrap();
-                    alloc::dealloc(self.ptr.as_ptr() as *mut u8, old_layout);
-                }
-                
-                new_ptr
+                NonNull::new_unchecked(raw_ptr)
             }
         };
         
         // Use malloc_usable_size to get actual allocated capacity
         let actual_size = get_usable_size(new_ptr.as_ptr() as *mut u8, new_size);
-        let actual_capacity = (actual_size / mem::size_of::<T>()).min(MAX_CAPACITY as usize);
+        let actual_capacity = (actual_size / elem_size).min(MAX_CAPACITY as usize);
 
         self.ptr = new_ptr;
         self.capacity = actual_capacity as u32;
@@ -437,17 +470,21 @@ impl<T> ValVec32<T> {
     /// assert_eq!(vec[1], 84);
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
-    #[inline]
+    /// Appends an element to the back of the vector - hot path optimized
+    /// The fast path is always inlined for maximum performance
+    #[inline(always)]
     pub fn push(&mut self, value: T) -> Result<()> {
+        // Hot path: check capacity with likely hint
         if likely(self.len < self.capacity) {
-            // Hot path: fast insertion
+            // Fast path: direct write without any function calls
             unsafe {
-                let ptr = self.ptr.as_ptr().add(self.len as usize);
-                ptr::write(ptr, value);
+                // Use offset instead of add for potentially better codegen
+                ptr::write(self.ptr.as_ptr().offset(self.len as isize), value);
                 self.len += 1;
             }
             Ok(())
         } else {
+            // Cold path: delegate to slow path which is never inlined
             self.push_slow(value)
         }
     }
@@ -480,16 +517,19 @@ impl<T> ValVec32<T> {
     /// assert_eq!(vec[0], 42);
     /// assert_eq!(vec[1], 84);
     /// ```
-    #[inline]
+    /// Appends an element to the vector, panicking on failure - maximum performance
+    /// This provides optimal performance for benchmarking against std::Vec
+    #[inline(always)]
     pub fn push_panic(&mut self, value: T) {
+        // Check with branch prediction hint
         if likely(self.len < self.capacity) {
-            // Hot path: fast insertion
+            // Fast path with minimal overhead
             unsafe {
-                let ptr = self.ptr.as_ptr().add(self.len as usize);
-                ptr::write(ptr, value);
+                ptr::write(self.ptr.as_ptr().offset(self.len as isize), value);
                 self.len += 1;
             }
         } else {
+            // Delegate to cold path
             self.push_slow_panic(value);
         }
     }
@@ -510,6 +550,51 @@ impl<T> ValVec32<T> {
             ptr::write(ptr, value);
             self.len += 1;
         }
+    }
+
+    /// Unchecked push for when capacity is guaranteed - maximum performance
+    /// 
+    /// # Safety
+    /// 
+    /// Caller must ensure that `self.len < self.capacity`
+    /// 
+    /// # Examples
+    /// 
+    /// ```rust
+    /// use zipora::ValVec32;
+    /// 
+    /// let mut vec = ValVec32::with_capacity(10)?;
+    /// unsafe {
+    ///     vec.unchecked_push(42); // Safe because we reserved capacity
+    /// }
+    /// # Ok::<(), zipora::ZiporaError>(())
+    /// ```
+    #[inline(always)]
+    pub unsafe fn unchecked_push(&mut self, value: T) {
+        debug_assert!(self.len < self.capacity);
+        // Direct write with no checks - maximum performance
+        unsafe {
+            ptr::write(self.ptr.as_ptr().offset(self.len as isize), value);
+        }
+        self.len += 1;
+    }
+
+    /// Unchecked push for Copy types - even more optimized
+    /// 
+    /// # Safety
+    /// 
+    /// Caller must ensure that `self.len < self.capacity`
+    #[inline(always)]
+    pub unsafe fn unchecked_push_copy(&mut self, value: T) 
+    where 
+        T: Copy
+    {
+        debug_assert!(self.len < self.capacity);
+        // For Copy types, we can use direct assignment which may be faster
+        unsafe {
+            *self.ptr.as_ptr().offset(self.len as isize) = value;
+        }
+        self.len += 1;
     }
 
 
@@ -745,6 +830,110 @@ impl<T> ValVec32<T> {
             let dst = self.ptr.as_ptr().add(self.len as usize);
             for (i, item) in slice.iter().enumerate() {
                 ptr::write(dst.add(i), item.clone());
+            }
+        }
+
+        self.len = new_len;
+        Ok(())
+    }
+
+    /// SIMD-optimized extend for Copy types - uses memcpy for maximum performance
+    ///
+    /// # Arguments
+    ///
+    /// * `slice` - Slice of elements to append
+    ///
+    /// # Errors
+    ///
+    /// Returns error if capacity overflow or allocation fails
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use zipora::ValVec32;
+    ///
+    /// let mut vec = ValVec32::new();
+    /// vec.extend_from_slice_copy(&[1, 2, 3, 4])?;
+    /// assert_eq!(vec.len(), 4);
+    /// # Ok::<(), zipora::ZiporaError>(())
+    /// ```
+    #[inline]
+    pub fn extend_from_slice_copy(&mut self, slice: &[T]) -> Result<()>
+    where
+        T: Copy,
+    {
+        if slice.is_empty() {
+            return Ok(());
+        }
+
+        let additional = slice.len() as u32;
+        let new_len = self
+            .len
+            .checked_add(additional)
+            .ok_or_else(|| ZiporaError::invalid_data("Length overflow"))?;
+
+        self.reserve(additional)?;
+
+        unsafe {
+            // Use memcpy for Copy types - significantly faster than iteration
+            let dst = self.ptr.as_ptr().add(self.len as usize);
+            ptr::copy_nonoverlapping(slice.as_ptr(), dst, slice.len());
+        }
+
+        self.len = new_len;
+        Ok(())
+    }
+
+    /// Bulk push with SIMD optimization for Copy types
+    ///
+    /// # Arguments
+    ///
+    /// * `count` - Number of elements to push
+    /// * `value` - Value to replicate
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use zipora::ValVec32;
+    ///
+    /// let mut vec = ValVec32::new();
+    /// vec.push_n_copy(100, 42u32)?;
+    /// assert_eq!(vec.len(), 100);
+    /// # Ok::<(), zipora::ZiporaError>(())
+    /// ```
+    #[inline]
+    pub fn push_n_copy(&mut self, count: u32, value: T) -> Result<()>
+    where
+        T: Copy,
+    {
+        if count == 0 {
+            return Ok(());
+        }
+
+        let new_len = self
+            .len
+            .checked_add(count)
+            .ok_or_else(|| ZiporaError::invalid_data("Length overflow"))?;
+
+        self.reserve(count)?;
+
+        unsafe {
+            let dst = self.ptr.as_ptr().add(self.len as usize);
+            
+            // For small counts, use simple loop
+            if count <= 16 {
+                for i in 0..count as usize {
+                    ptr::write(dst.add(i), value);
+                }
+            } else {
+                // For larger counts, use doubling strategy for better performance
+                ptr::write(dst, value);
+                let mut written = 1usize;
+                while written < count as usize {
+                    let to_copy = written.min(count as usize - written);
+                    ptr::copy_nonoverlapping(dst, dst.add(written), to_copy);
+                    written += to_copy;
+                }
             }
         }
 

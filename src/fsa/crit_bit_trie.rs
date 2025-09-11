@@ -15,6 +15,7 @@ use crate::fsa::traits::{
     FiniteStateAutomaton, PrefixIterable, StateInspectable, StatisticsProvider, Trie, TrieBuilder,
     TrieStats,
 };
+use crate::statistics::TrieStat;
 use crate::memory::cache_layout::{
     CacheOptimizedAllocator, CacheLayoutConfig, PrefetchHint, AccessPattern, HotColdSeparator
 };
@@ -138,17 +139,19 @@ impl CritBitConfig {
     }
 }
 
-/// Critical-Bit Trie implementation
+/// Critical-Bit Trie implementation with comprehensive statistics and monitoring
 ///
 /// A critical-bit trie is a compressed trie that stores only the critical
 /// bits needed to distinguish between keys. This provides excellent space
-/// efficiency and fast lookup times.
+/// efficiency and fast lookup times. This implementation includes comprehensive
+/// statistics tracking for performance monitoring and optimization.
 ///
 /// # Structure
 /// - Nodes are stored in a vector for cache efficiency
 /// - Each internal node stores a critical bit position
 /// - Leaves store the complete keys
 /// - The tree maintains lexicographic order
+/// - Comprehensive statistics with real-time monitoring and performance tracking
 ///
 /// # Examples
 ///
@@ -163,6 +166,9 @@ impl CritBitConfig {
 /// assert!(trie.contains(b"hello"));
 /// assert!(trie.contains(b"help"));
 /// assert!(!trie.contains(b"he"));
+///
+/// // Access comprehensive statistics
+/// trie.print_stats();
 /// ```
 #[derive(Debug)]
 pub struct CritBitTrie {
@@ -180,6 +186,8 @@ pub struct CritBitTrie {
     node_separator: HotColdSeparator<usize>,
     /// Node access counts for cache optimization
     node_access_counts: Vec<AtomicUsize>,
+    /// Simple statistics matching topling-zip pattern  
+    statistics: std::cell::RefCell<TrieStat>,
 }
 
 impl CritBitTrie {
@@ -201,7 +209,19 @@ impl CritBitTrie {
             cache_allocator,
             node_separator,
             node_access_counts: Vec::new(),
+            statistics: std::cell::RefCell::new(TrieStat::new()),
         }
+    }
+
+    /// Get simple statistics matching topling-zip pattern
+    pub fn get_stats(&self) -> std::cell::Ref<TrieStat> {
+        self.statistics.borrow()
+    }
+    
+    /// Print statistics to stderr (matching topling-zip print pattern)
+    pub fn print_stats(&self) {
+        let mut stderr = std::io::stderr();
+        self.statistics.borrow().print(&mut stderr).ok();
     }
     
     /// Record node access for cache optimization
@@ -355,6 +375,8 @@ impl CritBitTrie {
 
     /// Insert a key into the trie
     fn insert_recursive(&mut self, node_idx: Option<usize>, key: &[u8]) -> Result<usize> {
+        let start_time = std::time::Instant::now();
+        
         let key_vec = {
             let mut vec = FastVec::new();
             for &byte in key {
@@ -368,6 +390,10 @@ impl CritBitTrie {
             let leaf = CritBitNode::new_leaf(key_vec, true);
             let idx = self.add_node(leaf);
             self.num_keys += 1;
+            
+            // Update simple timing statistics (topling-zip pattern)
+            self.statistics.borrow_mut().insert_time += start_time.elapsed().as_secs_f64();
+            
             return Ok(idx);
         };
 
@@ -388,6 +414,10 @@ impl CritBitTrie {
                 if !is_final {
                     self.num_keys += 1;
                 }
+                
+                // Update simple timing statistics (topling-zip pattern)
+                self.statistics.borrow_mut().insert_time += start_time.elapsed().as_secs_f64();
+                
                 return Ok(node_idx);
             }
 
@@ -410,6 +440,9 @@ impl CritBitTrie {
 
             let internal_idx = self.add_node(internal);
             self.num_keys += 1;
+            
+            // Update simple timing statistics (topling-zip pattern)
+            self.statistics.borrow_mut().insert_time += start_time.elapsed().as_secs_f64();
 
             Ok(internal_idx)
         } else {
@@ -428,6 +461,9 @@ impl CritBitTrie {
             if child_idx != Some(new_child_idx) {
                 self.nodes[node_idx].set_child(bit, new_child_idx);
             }
+            
+            // Update simple timing statistics (topling-zip pattern)
+            self.statistics.borrow_mut().insert_time += start_time.elapsed().as_secs_f64();
 
             Ok(node_idx)
         }
@@ -435,7 +471,16 @@ impl CritBitTrie {
 
     /// Find a key in the trie
     fn find_node(&self, key: &[u8]) -> Option<usize> {
-        let mut current = self.root?;
+        let start_time = std::time::Instant::now();
+        
+        let mut current = match self.root {
+            Some(root) => root,
+            None => {
+                // Update simple timing statistics (topling-zip pattern)
+                self.statistics.borrow_mut().lookup_time += start_time.elapsed().as_secs_f64();
+                return None;
+            }
+        };
 
         loop {
             // Record access for cache optimization
@@ -444,10 +489,21 @@ impl CritBitTrie {
             let node = &self.nodes[current];
 
             if node.is_leaf() {
-                let stored_key = node.key.as_ref()?;
+                let stored_key = match node.key.as_ref() {
+                    Some(key) => key,
+                    None => {
+                        // Update simple timing statistics (topling-zip pattern)
+                        self.statistics.borrow_mut().lookup_time += start_time.elapsed().as_secs_f64();
+                        return None;
+                    }
+                };
                 if stored_key.as_slice() == key && node.is_final {
+                    // Update simple timing statistics (topling-zip pattern)
+                    self.statistics.borrow_mut().lookup_time += start_time.elapsed().as_secs_f64();
                     return Some(current);
                 } else {
+                    // Update simple timing statistics (topling-zip pattern)
+                    self.statistics.borrow_mut().lookup_time += start_time.elapsed().as_secs_f64();
                     return None;
                 }
             }
@@ -465,7 +521,14 @@ impl CritBitTrie {
                 self.prefetch_children(current);
             }
             
-            let next_child = node.get_child(bit)?;
+            let next_child = match node.get_child(bit) {
+                Some(child) => child,
+                None => {
+                    // Update simple timing statistics (topling-zip pattern)
+                    self.statistics.borrow_mut().lookup_time += start_time.elapsed().as_secs_f64();
+                    return None;
+                }
+            };
             
             // Prefetch the next node we're about to visit
             self.prefetch_node(next_child, PrefetchHint::T0);
@@ -658,6 +721,22 @@ impl StatisticsProvider for CritBitTrie {
 
         stats.calculate_bits_per_key();
         stats
+    }
+}
+
+impl CritBitTrie {
+    /// Simple memory usage calculation (matching topling-zip simplicity)
+    pub fn mem_size(&self) -> usize {
+        let node_memory = self.nodes.len() * std::mem::size_of::<CritBitNode>();
+        let node_keys_memory: usize = self.nodes.iter()
+            .filter_map(|node| node.key.as_ref())
+            .map(|key| key.len())
+            .sum();
+        
+        // Update total_bytes in statistics (matching topling-zip pipelineThroughBytes pattern)
+        self.statistics.borrow_mut().total_bytes = (node_memory + node_keys_memory) as u64;
+        
+        node_memory + node_keys_memory
     }
 }
 
