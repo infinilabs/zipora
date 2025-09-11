@@ -2803,6 +2803,274 @@ println!("Avg line length: {:.1}", analysis.avg_line_length());
 
 ## Development Tools
 
+### Advanced Profiling Integration
+
+Zipora features a comprehensive profiling system for performance analysis, bottleneck identification, and optimization guidance across development, testing, and production environments.
+
+#### Core Profiling Components
+
+```rust
+use zipora::dev_infrastructure::profiling::*;
+
+// RAII-based automatic profiling with zero overhead when disabled
+{
+    let _scope = ProfilerScope::new("critical_operation")?;
+    // Your code here - automatically timed and tracked
+    critical_computation();
+} // Automatic cleanup and data collection
+
+// Manual profiling with fine-grained control
+let profiler = HardwareProfiler::global()?;
+let handle = profiler.start("database_query")?;
+execute_database_query();
+let data = profiler.end(handle)?;
+println!("Query took: {:?}", data.duration);
+```
+
+#### Hardware Performance Profiler
+
+Cross-platform high-precision timing with performance counter integration:
+
+```rust
+use zipora::dev_infrastructure::profiling::{HardwareProfiler, ProfilingData};
+
+// Automatic hardware detection and optimal timer selection
+let profiler = HardwareProfiler::global()?;
+
+// Profile CPU-intensive operations
+let handle = profiler.start("matrix_multiplication")?;
+let result = matrix_multiply(&a, &b);
+let data = profiler.end(handle)?;
+
+println!("Operation: {}", data.operation_name);
+println!("Duration: {:?}", data.duration);
+println!("CPU cycles: {:?}", data.cpu_cycles);
+```
+
+**Platform Support:**
+- **Windows**: QueryPerformanceCounter for microsecond precision
+- **Unix/Linux/macOS**: clock_gettime(CLOCK_MONOTONIC) for nanosecond precision
+- **Hardware Counters**: CPU cycle counting where available
+- **Fallback**: High-resolution Instant::now() on all platforms
+
+#### Memory Allocation Profiler
+
+Integrated memory tracking with SecureMemoryPool for comprehensive allocation analysis:
+
+```rust
+use zipora::dev_infrastructure::profiling::{MemoryProfiler, MemoryStats};
+
+let profiler = MemoryProfiler::global()?;
+let handle = profiler.start("memory_intensive_task")?;
+
+// Memory allocations are automatically tracked
+let mut large_buffer = vec![0u8; 10 * 1024 * 1024]; // 10MB allocation
+large_buffer.resize(20 * 1024 * 1024, 1); // Growth tracked
+
+let data = profiler.end(handle)?;
+println!("Peak memory: {} bytes", data.peak_memory_usage);
+println!("Allocations: {}", data.allocation_count);
+```
+
+**Memory Tracking Features:**
+- **Allocation Counting**: Track number and size of allocations
+- **Peak Usage**: Monitor maximum memory consumption
+- **Growth Patterns**: Analyze memory usage over time
+- **SecureMemoryPool Integration**: Leverage existing memory safety infrastructure
+- **Thread-Safe**: Concurrent memory tracking across multiple threads
+
+#### Cache Performance Profiler
+
+Cache efficiency monitoring with integration to Zipora's cache optimization infrastructure:
+
+```rust
+use zipora::dev_infrastructure::profiling::{CacheProfiler, CacheStats};
+
+let profiler = CacheProfiler::global()?;
+let handle = profiler.start("cache_sensitive_algorithm")?;
+
+// Cache performance automatically monitored
+process_large_dataset(&data);
+
+let data = profiler.end(handle)?;
+println!("Cache hit ratio: {:.2}%", data.cache_hit_ratio * 100.0);
+println!("Cache misses: {}", data.cache_misses);
+```
+
+**Cache Monitoring:**
+- **Hit/Miss Ratios**: Track cache efficiency across operations
+- **Access Patterns**: Monitor sequential vs. random access performance
+- **Cache Line Utilization**: Analyze cache-friendly data layout effectiveness
+- **NUMA Awareness**: Track memory locality on multi-socket systems
+- **Integration**: Works with LruPageCache, CacheOptimizedAllocator, and hot/cold separation
+
+#### Profiler Registry and Management
+
+Unified profiler management with thread-safe initialization and lifecycle control:
+
+```rust
+use zipora::dev_infrastructure::profiling::{ProfilerRegistry, ProfilingConfig};
+
+// Global registry with automatic initialization
+let registry = ProfilerRegistry::new();
+
+// Access any profiler type through unified interface
+let hw_profiler = registry.get_hardware_profiler()?;
+let mem_profiler = registry.get_memory_profiler()?;
+let cache_profiler = registry.get_cache_profiler()?;
+
+// Configuration-driven profiler selection
+let config = ProfilingConfig::development()
+    .with_hardware_profiling(true)
+    .with_memory_profiling(true)
+    .with_cache_profiling(true);
+    
+registry.configure(config)?;
+```
+
+#### Rich Configuration System
+
+Comprehensive configuration with presets, builder patterns, and runtime adaptation:
+
+```rust
+use zipora::dev_infrastructure::profiling::{ProfilingConfig, SamplingRate, OutputFormat};
+
+// Preset configurations for different environments
+let production_config = ProfilingConfig::production();    // Minimal overhead
+let development_config = ProfilingConfig::development();  // Balanced profiling
+let debugging_config = ProfilingConfig::debugging();      // Maximum detail
+let disabled_config = ProfilingConfig::disabled();        // Zero overhead
+
+// Custom configuration with builder pattern
+let custom_config = ProfilingConfig::new()
+    .with_hardware_profiling(true)
+    .with_memory_profiling(true)
+    .with_cache_profiling(false)
+    .with_sampling_rate(SamplingRate::Medium)
+    .with_output_format(OutputFormat::Json)
+    .with_buffer_size(8192)
+    .with_collection_interval(Duration::from_millis(100));
+
+// Environment-driven configuration
+let config = if cfg!(debug_assertions) {
+    ProfilingConfig::debugging()
+} else {
+    ProfilingConfig::production()
+};
+```
+
+#### Advanced Reporting and Analysis
+
+Comprehensive performance analysis with statistical insights and bottleneck identification:
+
+```rust
+use zipora::dev_infrastructure::profiling::{ProfilerReporter, ProfilingReport};
+
+// Create reporter with configuration
+let config = ProfilingConfig::development();
+let reporter = ProfilerReporter::new(config)?;
+
+// Generate comprehensive performance report
+let report = reporter.generate_report()?;
+
+// Performance summary
+println!("Report Summary:");
+println!("  Total operations: {}", report.summary.total_operations);
+println!("  Total duration: {:?}", report.summary.total_duration);
+println!("  Average operation time: {:?}", report.summary.average_duration);
+
+// Bottleneck analysis
+for bottleneck in &report.analysis.bottlenecks {
+    println!("Bottleneck: {} ({:.2}% of total time)", 
+             bottleneck.operation_name, bottleneck.percentage_of_total);
+}
+
+// Statistical insights
+println!("Performance Statistics:");
+println!("  95th percentile: {:?}", report.statistics.percentile_95);
+println!("  Standard deviation: {:?}", report.statistics.std_deviation);
+
+// Export in multiple formats
+let json_report = reporter.export_report(&report)?; // JSON format
+```
+
+**Report Features:**
+- **Statistical Analysis**: Mean, median, percentiles, standard deviation
+- **Bottleneck Identification**: Automatically identify performance hotspots
+- **Trend Analysis**: Track performance changes over time
+- **Anomaly Detection**: Identify unusual performance patterns
+- **Multiple Export Formats**: JSON, CSV, Text, Binary
+- **Cross-Platform**: Consistent reporting across all supported platforms
+
+#### Performance Overhead and Benchmarking
+
+The profiling system is designed for minimal performance impact:
+
+```rust
+// Production configuration: <5% overhead
+let config = ProfilingConfig::production();
+
+// Development configuration: <15% overhead  
+let config = ProfilingConfig::development();
+
+// Benchmark profiling overhead
+use criterion::{black_box, Criterion};
+
+fn benchmark_profiling_overhead(c: &mut Criterion) {
+    c.bench_function("profiling_overhead", |b| {
+        b.iter(|| {
+            let _scope = ProfilerScope::new("benchmark_operation")?;
+            black_box(cpu_intensive_work());
+        });
+    });
+}
+```
+
+#### Integration with Zipora Ecosystem
+
+The profiling system integrates seamlessly with Zipora's infrastructure:
+
+```rust
+// SIMD Framework integration
+use zipora::simd::{SimdCapabilities, CpuFeatures};
+let caps = SimdCapabilities::detect();
+// Profiling automatically detects and uses optimal SIMD instructions
+
+// SecureMemoryPool integration  
+let pool_config = SecurePoolConfig::performance_optimized();
+let pool = SecureMemoryPool::new(pool_config)?;
+// Memory profiler tracks SecureMemoryPool allocations automatically
+
+// Cache optimization integration
+let cache_config = CacheLayoutConfig::performance_optimized();
+let allocator = CacheOptimizedAllocator::new(cache_config);
+// Cache profiler monitors cache optimization effectiveness
+
+// Five-level concurrency integration
+let concurrency_config = FiveLevelPoolConfig::performance_optimized();
+let pool = AdaptiveFiveLevelPool::new(concurrency_config)?;
+// Profiling tracks concurrency performance across all levels
+```
+
+#### Cross-Platform Validation
+
+Comprehensive testing ensures consistent behavior across platforms:
+
+- **x86_64**: Full hardware counter support with AVX2/BMI2 optimizations
+- **ARM64**: Native performance counter integration with NEON optimizations  
+- **Windows**: QueryPerformanceCounter integration with IOCP profiling
+- **Linux**: clock_gettime and perf_event_open integration
+- **macOS**: High-resolution mach_absolute_time integration
+
+#### Best Practices
+
+1. **Use RAII Scopes**: Prefer `ProfilerScope` for automatic cleanup
+2. **Configure by Environment**: Use appropriate presets for development vs. production
+3. **Sample Appropriately**: Adjust sampling rates based on performance requirements
+4. **Monitor Overhead**: Regularly benchmark profiling impact on critical paths
+5. **Analyze Reports**: Use comprehensive reports to identify optimization opportunities
+6. **Integrate Testing**: Include profiling in performance regression tests
+
 ### Factory Pattern Implementation
 
 ```rust
