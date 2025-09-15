@@ -6,6 +6,8 @@
 
 use crate::error::{Result, ZiporaError};
 use crate::memory::simd_ops::{fast_copy, fast_fill, fast_compare};
+// Import verification macros for error handling
+use crate::zipora_verify;
 use std::alloc::{self, Layout};
 use std::fmt;
 use std::mem;
@@ -14,20 +16,12 @@ use std::ptr::{self, NonNull};
 use std::slice;
 
 /// Check that a pointer is properly aligned for type T
-/// This is a debug-only assertion to verify allocator guarantees
+/// Uses verification for fail-fast error handling
 #[inline]
 fn check_alignment<T>(ptr: *mut u8) {
-    debug_assert!(
-        !ptr.is_null(),
-        "Pointer should not be null when checking alignment"
-    );
-    debug_assert!(
-        (ptr as usize) % mem::align_of::<T>() == 0,
-        "Pointer {:#x} is not aligned for type {} (requires {}-byte alignment)",
-        ptr as usize,
-        std::any::type_name::<T>(),
-        mem::align_of::<T>()
-    );
+    // Use verification instead of debug_assert
+    crate::zipora_verify_not_null!(ptr);
+    crate::zipora_verify_aligned!(ptr, mem::align_of::<T>());
 }
 
 /// Safely cast an aligned u8 pointer to T pointer with alignment verification
@@ -135,14 +129,17 @@ impl<T> FastVec<T> {
             return Ok(Self::new());
         }
 
+        // Verify capacity is reasonable
+        crate::zipora_verify!(cap <= (isize::MAX as usize) / mem::size_of::<T>().max(1),
+            "capacity {} too large for element size {}", cap, mem::size_of::<T>());
+
         let layout = Layout::array::<T>(cap)
             .map_err(|_| ZiporaError::out_of_memory(cap * mem::size_of::<T>()))?;
 
         let ptr = unsafe {
             let raw_ptr = alloc::alloc(layout);
-            if raw_ptr.is_null() {
-                return Err(ZiporaError::out_of_memory(layout.size()));
-            }
+            // Verify allocation success
+            crate::zipora_verify_alloc!(raw_ptr, layout.size());
             cast_aligned_ptr::<T>(raw_ptr)
         };
 
@@ -221,6 +218,10 @@ impl<T> FastVec<T> {
 
     /// Reserve space for at least `additional` more elements
     pub fn reserve(&mut self, additional: usize) -> Result<()> {
+        // Verify input parameters
+        crate::zipora_verify!(additional <= (isize::MAX as usize) / mem::size_of::<T>().max(1),
+            "additional capacity {} too large for element size {}", additional, mem::size_of::<T>());
+        
         let required = self
             .len
             .checked_add(additional)
@@ -235,6 +236,11 @@ impl<T> FastVec<T> {
 
     /// Ensure the vector has at least the specified capacity
     pub fn ensure_capacity(&mut self, min_cap: usize) -> Result<()> {
+        // Verify input parameters
+        crate::zipora_verify!(min_cap <= (isize::MAX as usize) / mem::size_of::<T>().max(1),
+            "minimum capacity {} too large for element size {}", min_cap, mem::size_of::<T>());
+        crate::zipora_verify_ge!(min_cap, self.len);
+        
         if min_cap <= self.cap {
             return Ok(());
         }
@@ -244,6 +250,11 @@ impl<T> FastVec<T> {
 
     /// Reallocate to the new capacity using realloc for optimal performance
     fn realloc(&mut self, new_cap: usize) -> Result<()> {
+        // Verify reallocation parameters
+        crate::zipora_verify_ge!(new_cap, self.len);
+        crate::zipora_verify!(new_cap <= (isize::MAX as usize) / mem::size_of::<T>().max(1),
+            "new capacity {} too large for element size {}", new_cap, mem::size_of::<T>());
+
         // Use exponential growth with a minimum increase
         let target_cap = new_cap.max(self.cap.saturating_mul(2));
 
@@ -296,9 +307,19 @@ impl<T> FastVec<T> {
 
     /// Push an element to the end of the vector
     pub fn push(&mut self, value: T) -> Result<()> {
+        // Verify data structure invariants
+        crate::zipora_verify_le!(self.len, self.cap);
+        crate::zipora_verify!(self.len < (isize::MAX as usize),
+            "vector length {} would exceed maximum", self.len);
+        
         if self.len >= self.cap {
             self.ensure_capacity(self.len + 1)?;
         }
+
+        // Verify state after potential reallocation
+        crate::zipora_verify_le!(self.len, self.cap);
+        crate::zipora_verify!(self.ptr.is_some() || self.len == 0,
+            "invalid state: non-null pointer required for len > 0");
 
         unsafe {
             ptr::write(self.as_mut_ptr().add(self.len), value);
@@ -309,9 +330,15 @@ impl<T> FastVec<T> {
 
     /// Pop an element from the end of the vector
     pub fn pop(&mut self) -> Option<T> {
+        // Verify data structure invariants
+        crate::zipora_verify_le!(self.len, self.cap);
+        
         if self.len == 0 {
             None
         } else {
+            // Verify we have valid memory before accessing
+            crate::zipora_verify!(self.ptr.is_some(), "invalid state: null pointer with len > 0");
+            
             self.len -= 1;
             Some(unsafe { ptr::read(self.as_ptr().add(self.len)) })
         }
@@ -322,6 +349,9 @@ impl<T> FastVec<T> {
         if index > self.len {
             return Err(ZiporaError::out_of_bounds(index, self.len));
         }
+
+        // Add verification for internal consistency after parameter validation
+        crate::zipora_verify_le!(index, self.len);
 
         if self.len >= self.cap {
             self.ensure_capacity(self.len + 1)?;
@@ -395,8 +425,18 @@ impl<T> FastVec<T> {
     where
         T: Clone,
     {
+        // Verify input parameters
+        crate::zipora_verify!(new_len <= (isize::MAX as usize) / mem::size_of::<T>().max(1),
+            "new length {} too large for element size {}", new_len, mem::size_of::<T>());
+        crate::zipora_verify_le!(self.len, self.cap);
+        
         if new_len > self.len {
             self.ensure_capacity(new_len)?;
+            
+            // Verify state after capacity adjustment
+            crate::zipora_verify_ge!(self.cap, new_len);
+            crate::zipora_verify!(self.ptr.is_some(), "invalid state: null pointer after capacity adjustment");
+            
             let fill_count = new_len - self.len;
             
             // Use SIMD optimization for large fill operations on Copy types
@@ -418,6 +458,10 @@ impl<T> FastVec<T> {
                 }
             }
         } else if new_len < self.len {
+            // Verify we have valid memory to drop elements from
+            crate::zipora_verify!(self.ptr.is_some() || self.len == 0,
+                "invalid state: null pointer with elements to drop");
+                
             // Drop excess elements
             for i in new_len..self.len {
                 unsafe {
@@ -426,17 +470,28 @@ impl<T> FastVec<T> {
             }
         }
         self.len = new_len;
+        
+        // Verify final state invariants
+        crate::zipora_verify_le!(self.len, self.cap);
         Ok(())
     }
 
     /// Clear all elements from the vector
     pub fn clear(&mut self) {
+        // Verify data structure invariants
+        crate::zipora_verify_le!(self.len, self.cap);
+        crate::zipora_verify!(self.ptr.is_some() || self.len == 0,
+            "invalid state: null pointer with elements to clear");
+        
         for i in 0..self.len {
             unsafe {
                 ptr::drop_in_place(self.as_mut_ptr().add(i));
             }
         }
         self.len = 0;
+        
+        // Verify final state
+        crate::zipora_verify_le!(self.len, self.cap);
     }
 
     /// Shrink the capacity to fit the current length
@@ -568,6 +623,13 @@ impl<T> FastVec<T> {
             return Err(ZiporaError::out_of_bounds(end, self.len));
         }
 
+        // Verify internal consistency after parameter validation
+        crate::zipora_verify_le!(start, end);
+        crate::zipora_verify_le!(end, self.len);
+        crate::zipora_verify_le!(self.len, self.cap);
+        crate::zipora_verify!(self.ptr.is_some() || self.len == 0,
+            "invalid state: null pointer with data to fill");
+
         if start == end {
             return Ok(()); // Nothing to fill
         }
@@ -622,12 +684,21 @@ impl<T> FastVec<T> {
     where
         T: Copy,
     {
+        // Verify input parameters
+        crate::zipora_verify!(src.len() <= (isize::MAX as usize) / mem::size_of::<T>().max(1),
+            "source slice length {} too large for element size {}", src.len(), mem::size_of::<T>());
+        crate::zipora_verify_le!(self.len, self.cap);
+        
         if src.is_empty() {
             return Ok(());
         }
 
         // Ensure we have enough capacity
         self.ensure_capacity(src.len())?;
+        
+        // Verify state after capacity adjustment
+        crate::zipora_verify_ge!(self.cap, src.len());
+        crate::zipora_verify!(self.ptr.is_some(), "invalid state: null pointer after capacity adjustment");
 
         // Use SIMD optimization for suitable types and large slices
         if is_simd_safe::<T>() && is_simd_beneficial::<T>(src.len()) {
@@ -729,12 +800,16 @@ impl<T> Index<usize> for FastVec<T> {
     type Output = T;
 
     fn index(&self, index: usize) -> &Self::Output {
+        // Add bounds verification with rich context
+        crate::zipora_verify_bounds!(index, self.len);
         &self.as_slice()[index]
     }
 }
 
 impl<T> IndexMut<usize> for FastVec<T> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        // Add bounds verification with rich context  
+        crate::zipora_verify_bounds!(index, self.len);
         &mut self.as_mut_slice()[index]
     }
 }

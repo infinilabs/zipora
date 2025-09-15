@@ -10,36 +10,36 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native -mtune=native")
 set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG -march=native -mtune=native")
 
 # Try to find the reference library
-find_path(TOPLING_ZIP_INCLUDE_DIR
+find_path(REFERENCE_LIB_INCLUDE_DIR
     NAMES terark/valvec.hpp
     PATHS
         /usr/local/include
         /usr/include
-        ${CMAKE_SOURCE_DIR}/../topling-zip/src
-        ${CMAKE_SOURCE_DIR}/../../topling/topling-zip/src
-        /usr/local/google/home/binwu/workspace/topling/topling-zip/src
+        ${CMAKE_SOURCE_DIR}/../reference-lib/src
+        ${CMAKE_SOURCE_DIR}/../../reference/reference-lib/src
+        /usr/local/google/home/binwu/workspace/reference/reference-lib/src
     DOC "reference library include directory"
 )
 
-find_library(TOPLING_ZIP_LIBRARY
+find_library(REFERENCE_LIB_LIBRARY
     NAMES terark-core terark
     PATHS
         /usr/local/lib
         /usr/lib
-        ${CMAKE_SOURCE_DIR}/../topling-zip/build
-        ${CMAKE_SOURCE_DIR}/../../topling/topling-zip/build
+        ${CMAKE_SOURCE_DIR}/../reference-lib/build
+        ${CMAKE_SOURCE_DIR}/../../reference/reference-lib/build
     DOC "reference library"
 )
 
 # Configure based on whether we found reference library
-if(TOPLING_ZIP_INCLUDE_DIR AND TOPLING_ZIP_LIBRARY)
-    message(STATUS "Found reference library at ${TOPLING_ZIP_INCLUDE_DIR}")
-    add_definitions(-DHAVE_TOPLING_ZIP)
-    include_directories(${TOPLING_ZIP_INCLUDE_DIR})
-    set(TOPLING_ZIP_LIBS ${TOPLING_ZIP_LIBRARY})
+if(REFERENCE_LIB_INCLUDE_DIR AND REFERENCE_LIB_LIBRARY)
+    message(STATUS "Found reference library at ${REFERENCE_LIB_INCLUDE_DIR}")
+    add_definitions(-DHAVE_REFERENCE_LIB)
+    include_directories(${REFERENCE_LIB_INCLUDE_DIR})
+    set(REFERENCE_LIB_LIBS ${REFERENCE_LIB_LIBRARY})
 else()
     message(WARNING "reference library not found, using stub implementations")
-    set(TOPLING_ZIP_LIBS)
+    set(REFERENCE_LIB_LIBS)
 endif()
 
 # Create the benchmark wrapper library
@@ -50,11 +50,11 @@ add_library(zipora_wrapper SHARED
 
 target_include_directories(zipora_wrapper PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${TOPLING_ZIP_INCLUDE_DIR}
+    ${REFERENCE_LIB_INCLUDE_DIR}
 )
 
 target_link_libraries(zipora_wrapper
-    ${TOPLING_ZIP_LIBS}
+    ${REFERENCE_LIB_LIBS}
 )
 
 # Set library properties
@@ -72,11 +72,11 @@ add_library(zipora_wrapper_static STATIC
 
 target_include_directories(zipora_wrapper_static PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${TOPLING_ZIP_INCLUDE_DIR}
+    ${REFERENCE_LIB_INCLUDE_DIR}
 )
 
 target_link_libraries(zipora_wrapper_static
-    ${TOPLING_ZIP_LIBS}
+    ${REFERENCE_LIB_LIBS}
 )
 
 set_target_properties(zipora_wrapper_static PROPERTIES

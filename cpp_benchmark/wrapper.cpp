@@ -43,14 +43,14 @@
 
 // Include the original reference library headers
 // Note: These paths may need adjustment based on actual installation
-#ifdef HAVE_TOPLING_ZIP
+#ifdef HAVE_REFERENCE_LIB
 #include <terark/valvec.hpp>
 #include <terark/fstring.hpp>
 // If rank-select is available in reference library:
 // #include <terark/succinct/rank_select.hpp>
 #endif
 
-#ifdef HAVE_TOPLING_ZIP
+#ifdef HAVE_REFERENCE_LIB
 using namespace terark;
 #else
 // Fallback implementations for when reference library is not available
@@ -143,7 +143,7 @@ static void track_deallocation(size_t size) {
 // Stub Implementations for Enhanced Features
 // ============================================================================
 
-#ifndef HAVE_TOPLING_ZIP
+#ifndef HAVE_REFERENCE_LIB
 // Enhanced stub implementations
 
 class BitVectorStub {
@@ -325,7 +325,7 @@ void cpp_fstring_destroy(void* fstr) {
 uint64_t cpp_fstring_hash(void* fstr) {
     if (fstr) {
         auto* s = static_cast<fstring*>(fstr);
-#ifdef HAVE_TOPLING_ZIP
+#ifdef HAVE_REFERENCE_LIB
         return s->hash();
 #else
         return s->hash();
@@ -337,7 +337,7 @@ uint64_t cpp_fstring_hash(void* fstr) {
 int64_t cpp_fstring_find(void* fstr, const uint8_t* needle, size_t needle_len) {
     if (fstr && needle) {
         auto* s = static_cast<fstring*>(fstr);
-#ifdef HAVE_TOPLING_ZIP
+#ifdef HAVE_REFERENCE_LIB
         fstring needle_str(needle, needle_len);
         size_t pos = s->find(needle_str);
         return pos != fstring::npos ? static_cast<int64_t>(pos) : -1;
@@ -353,7 +353,7 @@ void* cpp_fstring_substring(void* fstr, size_t start, size_t len) {
         auto* s = static_cast<fstring*>(fstr);
         if (start < s->size()) {
             size_t actual_len = std::min(len, s->size() - start);
-#ifdef HAVE_TOPLING_ZIP
+#ifdef HAVE_REFERENCE_LIB
             return new fstring(s->substr(start, actual_len));
 #else
             return new fstring(s->ptr() + start, actual_len);
@@ -374,7 +374,7 @@ size_t cpp_fstring_length(void* fstr) {
 const uint8_t* cpp_fstring_data(void* fstr) {
     if (fstr) {
         auto* s = static_cast<fstring*>(fstr);
-#ifdef HAVE_TOPLING_ZIP
+#ifdef HAVE_REFERENCE_LIB
         return reinterpret_cast<const uint8_t*>(s->data());
 #else
         return s->ptr();

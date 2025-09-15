@@ -42,10 +42,10 @@ pub trait MemorySize {
     }
 }
 
-/// Simple statistics structure matching topling-zip ZipStat
+/// Simple statistics structure matching standard ZipStat
 #[derive(Debug, Clone)]
 pub struct TrieStat {
-    // All times are in seconds (matching topling-zip pattern)
+    // All times are in seconds
     pub insert_time: f64,
     pub lookup_time: f64,
     pub build_time: f64,
@@ -62,7 +62,7 @@ impl TrieStat {
         }
     }
     
-    /// Simple print method matching topling-zip pattern
+    /// Simple print method
     pub fn print(&self, writer: &mut dyn std::io::Write) -> std::io::Result<()> {
         writeln!(writer, "=== Trie Statistics ===")?;
         writeln!(writer, "Insert Time: {:.6} seconds", self.insert_time)?;

@@ -64,7 +64,7 @@ int cpp_fstring_compare(void* fstr1, void* fstr2) {
     auto* s1 = static_cast<fstring*>(fstr1);
     auto* s2 = static_cast<fstring*>(fstr2);
     
-#ifdef HAVE_TOPLING_ZIP
+#ifdef HAVE_REFERENCE_LIB
     return s1->compare(*s2);
 #else
     // Stub implementation
@@ -81,7 +81,7 @@ int cpp_fstring_starts_with(void* fstr, const uint8_t* prefix, size_t prefix_len
     auto* s = static_cast<fstring*>(fstr);
     if (prefix_len > s->size()) return 0;
     
-#ifdef HAVE_TOPLING_ZIP
+#ifdef HAVE_REFERENCE_LIB
     fstring prefix_str(prefix, prefix_len);
     return s->starts_with(prefix_str) ? 1 : 0;
 #else
@@ -95,7 +95,7 @@ int cpp_fstring_ends_with(void* fstr, const uint8_t* suffix, size_t suffix_len) 
     auto* s = static_cast<fstring*>(fstr);
     if (suffix_len > s->size()) return 0;
     
-#ifdef HAVE_TOPLING_ZIP
+#ifdef HAVE_REFERENCE_LIB
     fstring suffix_str(suffix, suffix_len);
     return s->ends_with(suffix_str) ? 1 : 0;
 #else

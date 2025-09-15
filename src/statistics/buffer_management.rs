@@ -684,7 +684,7 @@ mod tests {
     }
 
     // #[test]
-    // Skip this test as it tests advanced buffer management beyond topling-zip pattern
+    // Skip this test as it tests advanced buffer management beyond standard pattern
     // Buffer count tracking requires complex statistics not present in simple pattern
     // fn test_buffer_cleanup() {
     //     let manager = BufferPoolManager::default();
@@ -725,7 +725,7 @@ mod tests {
     }
 
     // #[test]
-    // Skip this test as it uses complex statistics beyond topling-zip pattern
+    // Skip this test as it uses complex statistics beyond standard pattern
     // Thread safety testing requires Arc<Mutex> instead of Cell types
     // fn test_thread_safety() {
     //     let manager = Arc::new(BufferPoolManager::default());

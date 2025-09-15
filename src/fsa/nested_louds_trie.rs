@@ -1691,7 +1691,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
     }
 
     /// Build trie from SortableStrVec with configuration (matches C++ pattern)
-    /// This follows the topling-zip C++ pattern: build_from(SortableStrVec& strVec, const NestLoudsTrieConfig& conf)
+    /// This follows the C++ pattern: build_from(SortableStrVec& strVec, const NestLoudsTrieConfig& conf)
     pub fn build_from_sortable_str_vec(
         keys: &crate::containers::specialized::SortableStrVec,
         config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
@@ -1704,7 +1704,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
     }
 
     /// Build trie from FixedLenStrVec with configuration (matches C++ pattern)
-    /// This follows the topling-zip C++ pattern: build_from(FixedLenStrVec& strVec, const NestLoudsTrieConfig& conf)
+    /// This follows the C++ pattern: build_from(FixedLenStrVec& strVec, const NestLoudsTrieConfig& conf)
     pub fn build_from_fixed_len_str_vec<const N: usize>(
         keys: &crate::containers::specialized::FixedLenStrVec<N>,
         config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
@@ -1717,7 +1717,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
     }
 
     /// Build trie from ZoSortedStrVec with configuration (matches C++ pattern)  
-    /// This follows the topling-zip C++ pattern: build_from(ZoSortedStrVec& strVec, const NestLoudsTrieConfig& conf)
+    /// This follows the C++ pattern: build_from(ZoSortedStrVec& strVec, const NestLoudsTrieConfig& conf)
     pub fn build_from_zo_sorted_str_vec(
         keys: &crate::containers::specialized::ZoSortedStrVec,
         config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
@@ -1730,7 +1730,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
     }
 
     /// Build trie from vector of byte slices with configuration (matches C++ pattern)
-    /// This follows the topling-zip C++ pattern: build_from(Vec<Vec<u8>>& strVec, const NestLoudsTrieConfig& conf)
+    /// This follows the C++ pattern: build_from(Vec<Vec<u8>>& strVec, const NestLoudsTrieConfig& conf)
     pub fn build_from_vec_u8(
         keys: &[Vec<u8>],
         config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
@@ -1740,7 +1740,7 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
     }
 
     /// Build trie from slice of byte slices with configuration (matches C++ pattern)
-    /// This follows the topling-zip C++ pattern: build_from(&[&[u8]], const NestLoudsTrieConfig& conf)
+    /// This follows the C++ pattern: build_from(&[&[u8]], const NestLoudsTrieConfig& conf)
     pub fn build_from_slice_u8(
         keys: &[&[u8]],
         config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
