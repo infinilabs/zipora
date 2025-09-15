@@ -1459,7 +1459,7 @@ impl Profiler for HardwareProfiler {
 /// # Examples
 ///
 /// ```rust
-/// use zipora::dev_infrastructure::MemoryProfiler;
+/// use zipora::dev_infrastructure::{MemoryProfiler, Profiler};
 /// use zipora::memory::SecureMemoryPool;
 /// 
 /// let pool = SecureMemoryPool::new(config)?;

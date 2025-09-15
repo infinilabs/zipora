@@ -91,6 +91,7 @@ pub mod containers;
 pub mod dev_infrastructure;
 pub mod entropy;
 pub mod error;
+pub mod error_recovery;
 pub mod fsa;
 pub mod hash_map;
 pub mod io;
@@ -137,6 +138,10 @@ pub use containers::{
     ZoSortedStrVecRange,
 };
 pub use error::{Result, ZiporaError};
+pub use error_recovery::{
+    verify_alignment, verify_power_of_2, verify_allocation_success, 
+    verify_bounds_check, verify_range_check
+};
 pub use string::{
     FastStr, LexicographicIterator, SortedVecLexIterator, StreamingLexIterator,
     LexIteratorBuilder, UnicodeProcessor, UnicodeAnalysis, Utf8ToUtf32Iterator,

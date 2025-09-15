@@ -705,7 +705,7 @@ mod tests {
     }
 
     // #[test]
-    // Skip this test as it uses complex multi-order histogram analysis beyond topling-zip pattern
+    // Skip this test as it uses complex multi-order histogram analysis beyond standard pattern
     // Order-2 histogram analysis with recursive operations causes stack overflow
     // and is not part of simple statistics pattern
     // fn test_freq_hist_o2() {
@@ -783,7 +783,7 @@ mod tests {
     }
 
     // #[test]
-    // Skip this test as it uses complex multi-order histogram analysis beyond topling-zip pattern
+    // Skip this test as it uses complex multi-order histogram analysis beyond standard pattern
     // Order-2 histogram analysis with recursive operations causes stack overflow
     // and is not part of simple statistics pattern
     // fn test_order2_complexity() {

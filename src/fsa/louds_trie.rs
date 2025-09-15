@@ -40,7 +40,7 @@ pub struct LoudsTrie {
     nodes: Vec<TrieNode>,
     /// Next available node index
     next_node_id: usize,
-    /// Simple statistics matching topling-zip pattern  
+    /// Simple statistics  
     statistics: std::sync::Arc<std::sync::Mutex<crate::statistics::TrieStat>>,
 }
 
@@ -69,18 +69,18 @@ impl LoudsTrie {
         }
     }
 
-    /// Get simple statistics matching topling-zip pattern
+    /// Get simple statistics
     pub fn get_stats(&self) -> crate::statistics::TrieStat {
         self.statistics.lock().unwrap().clone()
     }
     
-    /// Print statistics to stderr (matching topling-zip print pattern)
+    /// Print statistics to stderr
     pub fn print_stats(&self) {
         let mut stderr = std::io::stderr();
         self.statistics.lock().unwrap().print(&mut stderr).ok();
     }
     
-    /// Simple memory usage calculation (matching topling-zip simplicity)
+    /// Simple memory usage calculation
     pub fn mem_size(&self) -> usize {
         // Calculate LOUDS bits memory (approximate as bit vector length / 8)
         let louds_bits_memory = (self.louds_bits.len() + 7) / 8;
@@ -103,7 +103,7 @@ impl LoudsTrie {
         
         let total_size = louds_bits_memory + rank_select_memory + labels_memory + is_final_memory + nodes_memory;
         
-        // Update total_bytes in statistics (matching topling-zip pipelineThroughBytes pattern)
+        // Update total_bytes in statistics
         self.statistics.lock().unwrap().total_bytes = total_size as u64;
         
         total_size
@@ -253,7 +253,7 @@ impl LoudsTrie {
         
         let child_count = self.child_count(state);
         if child_count == 0 {
-            // Update simple timing statistics (topling-zip pattern)
+            // Update simple timing statistics
             self.statistics.lock().unwrap().lookup_time += start_time.elapsed().as_secs_f64();
             return None;
         }
@@ -270,14 +270,14 @@ impl LoudsTrie {
 
                     // Count total number of '1' bits up to and including this position
                     let ones_up_to = self.rank_select.rank1(child_1bit_pos + 1);
-                    // Update simple timing statistics (topling-zip pattern)
+                    // Update simple timing statistics
                     self.statistics.lock().unwrap().lookup_time += start_time.elapsed().as_secs_f64();
                     return Some(ones_up_to as StateId);
                 }
             }
         }
 
-        // Update simple timing statistics (topling-zip pattern)
+        // Update simple timing statistics
         self.statistics.lock().unwrap().lookup_time += start_time.elapsed().as_secs_f64();
         None
     }
@@ -373,7 +373,7 @@ impl MemorySize for LoudsTrie {
         
         let total_size = louds_bits_memory + rank_select_memory + labels_memory + is_final_memory + nodes_memory + struct_overhead;
         
-        // Update total_bytes in statistics (matching topling-zip pipelineThroughBytes pattern)
+        // Update total_bytes in statistics
         self.statistics.lock().unwrap().total_bytes = total_size as u64;
         
         total_size
@@ -473,7 +473,7 @@ impl Trie for LoudsTrie {
         // Rebuild LOUDS representation
         self.rebuild_louds()?;
 
-        // Update simple timing statistics (topling-zip pattern)
+        // Update simple timing statistics
         self.statistics.lock().unwrap().insert_time += start_time.elapsed().as_secs_f64();
 
         Ok(node_id as StateId)
@@ -615,7 +615,7 @@ impl LoudsTrie {
     }
 
     /// Build LOUDS trie from SortableStrVec with configuration (matches C++ pattern)
-    /// This follows the topling-zip C++ pattern: build_from(SortableStrVec& strVec, const NestLoudsTrieConfig& conf)
+    /// This follows the C++ pattern: build_from(SortableStrVec& strVec, const NestLoudsTrieConfig& conf)
     pub fn build_from_sortable_str_vec(
         keys: &crate::containers::specialized::SortableStrVec,
         config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
@@ -628,7 +628,7 @@ impl LoudsTrie {
     }
 
     /// Build LOUDS trie from FixedLenStrVec with configuration (matches C++ pattern)
-    /// This follows the topling-zip C++ pattern: build_from(FixedLenStrVec& strVec, const NestLoudsTrieConfig& conf)
+    /// This follows the C++ pattern: build_from(FixedLenStrVec& strVec, const NestLoudsTrieConfig& conf)
     pub fn build_from_fixed_len_str_vec<const N: usize>(
         keys: &crate::containers::specialized::FixedLenStrVec<N>,
         config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
@@ -641,7 +641,7 @@ impl LoudsTrie {
     }
 
     /// Build LOUDS trie from ZoSortedStrVec with configuration (matches C++ pattern)
-    /// This follows the topling-zip C++ pattern: build_from(ZoSortedStrVec& strVec, const NestLoudsTrieConfig& conf)
+    /// This follows the C++ pattern: build_from(ZoSortedStrVec& strVec, const NestLoudsTrieConfig& conf)
     pub fn build_from_zo_sorted_str_vec(
         keys: &crate::containers::specialized::ZoSortedStrVec,
         config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
@@ -654,7 +654,7 @@ impl LoudsTrie {
     }
 
     /// Build LOUDS trie from vector of byte slices with configuration (matches C++ pattern)
-    /// This follows the topling-zip C++ pattern: build_from(Vec<Vec<u8>>& strVec, const NestLoudsTrieConfig& conf)
+    /// This follows the C++ pattern: build_from(Vec<Vec<u8>>& strVec, const NestLoudsTrieConfig& conf)
     pub fn build_from_vec_u8(
         keys: &[Vec<u8>],
         config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
@@ -664,7 +664,7 @@ impl LoudsTrie {
     }
 
     /// Build LOUDS trie from slice of byte slices with configuration (matches C++ pattern)
-    /// This follows the topling-zip C++ pattern: build_from(&[&[u8]], const NestLoudsTrieConfig& conf)
+    /// This follows the C++ pattern: build_from(&[&[u8]], const NestLoudsTrieConfig& conf)
     pub fn build_from_slice_u8(
         keys: &[&[u8]],
         config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,

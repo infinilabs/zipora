@@ -534,7 +534,7 @@ pub struct PatriciaTrie {
     node_separator: HotColdSeparator<usize>,
     /// Node access counts for cache optimization
     node_access_counts: Vec<AtomicUsize>,
-    /// Simple statistics matching topling-zip pattern  
+    /// Simple statistics  
     statistics: std::sync::Arc<std::sync::Mutex<crate::statistics::TrieStat>>,
 }
 
@@ -639,7 +639,7 @@ impl PatriciaTrie {
         }
     }
 
-    /// Simple memory usage calculation (matching topling-zip simplicity)
+    /// Simple memory usage calculation
     pub fn mem_size(&self) -> usize {
         let node_memory = self.nodes.len() * std::mem::size_of::<PatriciaNode>();
         let edge_memory: usize = self.nodes.iter().map(|node| node.edge_label.len()).sum();
@@ -653,7 +653,7 @@ impl PatriciaTrie {
 
         let total_size = node_memory + edge_memory + children_memory + cache_memory + node_access_memory;
         
-        // Update total_bytes in statistics (matching topling-zip pipelineThroughBytes pattern)
+        // Update total_bytes in statistics
         self.statistics.lock().unwrap().total_bytes = total_size as u64;
         
         total_size
@@ -714,12 +714,12 @@ impl PatriciaTrie {
         &self.config
     }
 
-    /// Get simple statistics matching topling-zip pattern
+    /// Get simple statistics
     pub fn get_stats(&self) -> crate::statistics::TrieStat {
         self.statistics.lock().unwrap().clone()
     }
     
-    /// Print statistics to stderr (matching topling-zip print pattern)
+    /// Print statistics to stderr
     pub fn print_stats(&self) {
         let mut stderr = std::io::stderr();
         self.statistics.lock().unwrap().print(&mut stderr).ok();
@@ -842,7 +842,7 @@ impl PatriciaTrie {
         
         let start_time = Instant::now();
         
-        // Update simple timing statistics (topling-zip pattern)
+        // Update simple timing statistics
         // Note: statistics will be updated at the end with total timing
         let node_edge_label = self.nodes[node_idx].edge_label.clone();
         let edge_slice = node_edge_label.as_slice();
@@ -957,7 +957,7 @@ impl PatriciaTrie {
             self.num_keys.fetch_add(1, Ordering::Relaxed);
         }
 
-        // Update simple timing statistics (topling-zip pattern)
+        // Update simple timing statistics
         self.statistics.lock().unwrap().insert_time += start_time.elapsed().as_secs_f64();
 
         Ok(())
@@ -968,7 +968,7 @@ impl PatriciaTrie {
         use std::time::Instant;
         let start_time = Instant::now();
         
-        // Update simple timing statistics (topling-zip pattern)
+        // Update simple timing statistics
         // Note: statistics will be updated at the end with total timing
         
         let mut current_idx = self.root;
@@ -1027,7 +1027,7 @@ impl PatriciaTrie {
                     None
                 };
                 
-                // Update simple timing statistics (topling-zip pattern)
+                // Update simple timing statistics
                 self.statistics.lock().unwrap().lookup_time += start_time.elapsed().as_secs_f64();
                 
                 return result;
@@ -1038,7 +1038,7 @@ impl PatriciaTrie {
             if let Some(child_idx) = node.get_child(first_byte) {
                 current_idx = child_idx;
             } else {
-                // Update simple timing statistics (topling-zip pattern)
+                // Update simple timing statistics
                 self.statistics.lock().unwrap().lookup_time += start_time.elapsed().as_secs_f64();
                 
                 return None; // No matching child
@@ -1332,7 +1332,7 @@ impl PatriciaTrie {
     }
 
     /// Build PatriciaTrie from SortableStrVec with configuration (matches C++ pattern)
-    /// This follows the topling-zip C++ pattern: build_from(SortableStrVec& strVec, const NestLoudsTrieConfig& conf)
+    /// This follows the C++ pattern: build_from(SortableStrVec& strVec, const NestLoudsTrieConfig& conf)
     pub fn build_from_sortable_str_vec(
         keys: &crate::containers::specialized::SortableStrVec,
         config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
@@ -1345,7 +1345,7 @@ impl PatriciaTrie {
     }
 
     /// Build PatriciaTrie from FixedLenStrVec with configuration (matches C++ pattern)
-    /// This follows the topling-zip C++ pattern: build_from(FixedLenStrVec& strVec, const NestLoudsTrieConfig& conf)
+    /// This follows the C++ pattern: build_from(FixedLenStrVec& strVec, const NestLoudsTrieConfig& conf)
     pub fn build_from_fixed_len_str_vec<const N: usize>(
         keys: &crate::containers::specialized::FixedLenStrVec<N>,
         config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
@@ -1358,7 +1358,7 @@ impl PatriciaTrie {
     }
 
     /// Build PatriciaTrie from ZoSortedStrVec with configuration (matches C++ pattern)
-    /// This follows the topling-zip C++ pattern: build_from(ZoSortedStrVec& strVec, const NestLoudsTrieConfig& conf)
+    /// This follows the C++ pattern: build_from(ZoSortedStrVec& strVec, const NestLoudsTrieConfig& conf)
     pub fn build_from_zo_sorted_str_vec(
         keys: &crate::containers::specialized::ZoSortedStrVec,
         config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
@@ -1371,7 +1371,7 @@ impl PatriciaTrie {
     }
 
     /// Build PatriciaTrie from vector of byte slices with configuration (matches C++ pattern)
-    /// This follows the topling-zip C++ pattern: build_from(Vec<Vec<u8>>& strVec, const NestLoudsTrieConfig& conf)
+    /// This follows the C++ pattern: build_from(Vec<Vec<u8>>& strVec, const NestLoudsTrieConfig& conf)
     pub fn build_from_vec_u8(
         keys: &[Vec<u8>],
         config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
@@ -1381,7 +1381,7 @@ impl PatriciaTrie {
     }
 
     /// Build PatriciaTrie from slice of byte slices with configuration (matches C++ pattern)
-    /// This follows the topling-zip C++ pattern: build_from(&[&[u8]], const NestLoudsTrieConfig& conf)
+    /// This follows the C++ pattern: build_from(&[&[u8]], const NestLoudsTrieConfig& conf)
     pub fn build_from_slice_u8(
         keys: &[&[u8]],
         config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,

@@ -591,7 +591,7 @@ mod tests {
     use super::*;
 
     // #[test]
-    // Skip this test as it uses complex entropy analysis beyond topling-zip pattern
+    // Skip this test as it uses complex entropy analysis beyond standard pattern
     // Advanced multi-order entropy analysis with recursive operations
     // causes stack overflow and is not part of simple statistics pattern
     // fn test_entropy_analyzer_basic() {
@@ -605,7 +605,7 @@ mod tests {
     // }
 
     // #[test]
-    // Skip this test as it uses complex entropy analysis beyond topling-zip pattern
+    // Skip this test as it uses complex entropy analysis beyond standard pattern
     // Advanced multi-order entropy analysis with recursive operations
     // causes stack overflow and is not part of simple statistics pattern
     // fn test_low_entropy_data() {
@@ -618,7 +618,7 @@ mod tests {
     // }
 
     // #[test]
-    // Skip this test as it uses complex entropy analysis beyond topling-zip pattern
+    // Skip this test as it uses complex entropy analysis beyond standard pattern
     // Advanced multi-order entropy analysis with recursive operations
     // causes stack overflow and is not part of simple statistics pattern
     // fn test_high_entropy_data() {
@@ -633,7 +633,7 @@ mod tests {
     // }
 
     // #[test]
-    // Skip this test as it uses complex entropy analysis beyond topling-zip pattern
+    // Skip this test as it uses complex entropy analysis beyond standard pattern
     // Advanced multi-order entropy analysis with recursive operations
     // causes stack overflow and is not part of simple statistics pattern
     // fn test_distribution_analysis() {
@@ -647,7 +647,7 @@ mod tests {
     // }
 
     // #[test]
-    // Skip this test as it uses complex entropy analysis beyond topling-zip pattern
+    // Skip this test as it uses complex entropy analysis beyond standard pattern
     // Advanced multi-order entropy analysis with recursive operations
     // causes stack overflow and is not part of simple statistics pattern
     // fn test_order_comparison() {
@@ -660,7 +660,7 @@ mod tests {
     // }
 
     // #[test]
-    // Skip this test as it uses complex entropy analysis beyond topling-zip pattern
+    // Skip this test as it uses complex entropy analysis beyond standard pattern
     // Advanced multi-order entropy analysis with recursive operations
     // causes stack overflow and is not part of simple statistics pattern
     // fn test_analyzer_collection() {
@@ -682,7 +682,7 @@ mod tests {
     // }
 
     // #[test]
-    // Skip this test as it uses complex entropy analysis beyond topling-zip pattern
+    // Skip this test as it uses complex entropy analysis beyond standard pattern
     // Advanced multi-order entropy analysis with recursive operations
     // causes stack overflow and is not part of simple statistics pattern
     // fn test_configuration_options() {
@@ -704,7 +704,7 @@ mod tests {
     // }
 
     // #[test]
-    // Skip this test as it uses complex entropy analysis beyond topling-zip pattern
+    // Skip this test as it uses complex entropy analysis beyond standard pattern
     // Advanced multi-order entropy analysis with recursive operations
     // causes stack overflow and is not part of simple statistics pattern
     // fn test_compression_estimates() {
@@ -725,7 +725,7 @@ mod tests {
     // }
 
     // #[test]
-    // Skip this test as it uses complex entropy analysis beyond topling-zip pattern
+    // Skip this test as it uses complex entropy analysis beyond standard pattern
     // Advanced multi-order entropy analysis with recursive clear operations
     // causes stack overflow and is not part of simple statistics pattern
     // fn test_clear_functionality() {

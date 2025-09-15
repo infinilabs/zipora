@@ -104,7 +104,10 @@ impl SetOperations {
             self.intersection_general(iterators)?
         };
 
-        self.stats.processing_time_us = start.elapsed().as_micros() as u64;
+        // Use nanosecond precision and convert to microseconds, ensuring minimum of 1
+        // This handles sub-microsecond operations that would otherwise report as 0
+        let elapsed_ns = start.elapsed().as_nanos() as u64;
+        self.stats.processing_time_us = std::cmp::max(1, (elapsed_ns + 500) / 1000);
         self.stats.output_elements = result.len();
 
         Ok(result)
@@ -285,7 +288,10 @@ impl SetOperations {
             }
         }
 
-        self.stats.processing_time_us = start.elapsed().as_micros() as u64;
+        // Use nanosecond precision and convert to microseconds, ensuring minimum of 1
+        // This handles sub-microsecond operations that would otherwise report as 0
+        let elapsed_ns = start.elapsed().as_nanos() as u64;
+        self.stats.processing_time_us = std::cmp::max(1, (elapsed_ns + 500) / 1000);
         self.stats.output_elements = result.len();
 
         Ok(result)
@@ -317,7 +323,10 @@ impl SetOperations {
             }
         }
 
-        self.stats.processing_time_us = start.elapsed().as_micros() as u64;
+        // Use nanosecond precision and convert to microseconds, ensuring minimum of 1
+        // This handles sub-microsecond operations that would otherwise report as 0
+        let elapsed_ns = start.elapsed().as_nanos() as u64;
+        self.stats.processing_time_us = std::cmp::max(1, (elapsed_ns + 500) / 1000);
         self.stats.output_elements = frequencies.len();
 
         Ok(frequencies)
@@ -352,7 +361,10 @@ impl SetOperations {
             }
         }
 
-        self.stats.processing_time_us = start.elapsed().as_micros() as u64;
+        // Use nanosecond precision and convert to microseconds, ensuring minimum of 1
+        // This handles sub-microsecond operations that would otherwise report as 0
+        let elapsed_ns = start.elapsed().as_nanos() as u64;
+        self.stats.processing_time_us = std::cmp::max(1, (elapsed_ns + 500) / 1000);
         self.stats.output_elements = result.len();
 
         Ok(result)

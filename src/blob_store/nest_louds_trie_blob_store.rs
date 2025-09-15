@@ -369,7 +369,7 @@ where
     R: RankSelectOps + RankSelectBuilder<R> + Clone + Send + Sync,
 {
     /// Build NestLoudsTrieBlobStore from SortableStrVec with configuration (matches C++ pattern)
-    /// This follows the topling-zip C++ pattern: build_from(SortableStrVec& strVec, const NestLoudsTrieConfig& conf)
+    /// This follows the C++ pattern: build_from(SortableStrVec& strVec, const NestLoudsTrieConfig& conf)
     pub fn build_from_sortable_str_vec(
         keys: &crate::containers::specialized::SortableStrVec,
         config: &crate::config::nest_louds_trie::NestLoudsTrieConfig,
