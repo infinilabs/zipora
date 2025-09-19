@@ -6,7 +6,7 @@
 use zipora::{
     fsa::nested_louds_trie::{NestedLoudsTrie, NestingConfig},
     fsa::{PrefixIterable, Trie},
-    succinct::RankSelectSimple,
+    succinct::RankSelect256,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   - Fragment delimiters: {:?}", String::from_utf8_lossy(&config.fragment_delimiters));
 
     // Create the trie with advanced configuration
-    let mut trie = NestedLoudsTrie::<RankSelectSimple>::with_config(config)?;
+    let mut trie = NestedLoudsTrie::<RankSelect256>::with_config(config)?;
 
     // Test data with common patterns for fragment detection
     let test_urls = vec![

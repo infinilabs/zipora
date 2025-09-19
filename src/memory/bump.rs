@@ -155,6 +155,7 @@ impl BumpArena {
         BumpScope {
             allocator: &self.allocator,
             initial_offset: self.allocator.current.get(),
+            initial_allocated_bytes: self.allocator.allocated_bytes(),
         }
     }
 
@@ -197,6 +198,7 @@ impl Drop for BumpArena {
 pub struct BumpScope<'a> {
     allocator: &'a BumpAllocator,
     initial_offset: usize,
+    initial_allocated_bytes: u64,
 }
 
 impl<'a> BumpScope<'a> {
@@ -230,12 +232,10 @@ impl<'a> Drop for BumpScope<'a> {
         // Reset to initial position
         self.allocator.current.set(self.initial_offset);
 
-        // Update allocated bytes counter
-        let current_allocated = self.allocator.allocated_bytes();
-        let bytes_to_reset = current_allocated.saturating_sub(self.initial_offset as u64);
+        // Reset allocated bytes counter to what it was when scope was created
         self.allocator
             .allocated_bytes
-            .fetch_sub(bytes_to_reset, Ordering::Relaxed);
+            .store(self.initial_allocated_bytes, Ordering::Relaxed);
     }
 }
 
@@ -462,6 +462,7 @@ mod tests {
             let scope = BumpScope {
                 allocator: &allocator,
                 initial_offset: allocator.current.get(),
+                initial_allocated_bytes: allocator.allocated_bytes(),
             };
 
             let _ptr1 = scope.alloc::<u64>().unwrap();

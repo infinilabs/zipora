@@ -3,7 +3,7 @@
 //! This example shows how to use BitVector and RankSelect256 for efficient
 //! bit operations with constant-time rank and select queries.
 
-use zipora::{BitVector, RankSelect256, Result};
+use zipora::{BitVector, RankSelect256, Result, RankSelectOps};
 
 fn main() -> Result<()> {
     println!("=== Zipora Succinct Data Structures Demo ===\n");

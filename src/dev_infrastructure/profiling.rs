@@ -1011,13 +1011,14 @@ impl ProfilingConfig {
 /// # Examples
 ///
 /// ```rust
-/// use zipora::dev_infrastructure::ProfilerScope;
-/// 
+/// use zipora::dev_infrastructure::{ProfilerScope, Profiler};
+///
 /// {
 ///     let _profiler = ProfilerScope::new("my_operation")?;
 ///     // ... operation code ...
 ///     // Profiling automatically ends when _profiler is dropped
 /// }
+/// # Ok::<(), zipora::ZiporaError>(())
 /// ```
 pub struct ProfilerScope {
     name: String,
@@ -1254,18 +1255,19 @@ impl Profiler for DefaultProfiler {
 /// # Examples
 ///
 /// ```rust
-/// use zipora::dev_infrastructure::HardwareProfiler;
-/// 
+/// use zipora::dev_infrastructure::{HardwareProfiler, Profiler};
+///
 /// let profiler = HardwareProfiler::new("hw_profiler", true)?;
 /// let handle = profiler.start("cpu_intensive_operation")?;
 /// // ... CPU intensive work ...
 /// let data = profiler.end(handle)?;
-/// 
+///
 /// if let Some(hw_stats) = data.hardware_stats {
 ///     println!("CPU cycles: {}", hw_stats.cpu_cycles);
 ///     println!("Instructions: {}", hw_stats.instruction_count);
 ///     println!("Cache misses: {}", hw_stats.cache_misses);
 /// }
+/// # Ok::<(), zipora::ZiporaError>(())
 /// ```
 #[derive(Debug)]
 pub struct HardwareProfiler {
@@ -1460,20 +1462,22 @@ impl Profiler for HardwareProfiler {
 ///
 /// ```rust
 /// use zipora::dev_infrastructure::{MemoryProfiler, Profiler};
-/// use zipora::memory::SecureMemoryPool;
-/// 
+/// use zipora::memory::{SecureMemoryPool, SecurePoolConfig};
+///
+/// let config = SecurePoolConfig::small_secure();
 /// let pool = SecureMemoryPool::new(config)?;
 /// let profiler = MemoryProfiler::new("memory_profiler", true, pool.clone())?;
-/// 
+///
 /// let handle = profiler.start("allocation_heavy_operation")?;
 /// // ... memory-intensive work with the pool ...
 /// let data = profiler.end(handle)?;
-/// 
+///
 /// if let Some(mem_stats) = data.memory_stats {
 ///     println!("Allocated: {} bytes", mem_stats.bytes_allocated);
 ///     println!("Peak usage: {} bytes", mem_stats.peak_memory_usage);
 ///     println!("Allocation count: {}", mem_stats.allocation_count);
 /// }
+/// # Ok::<(), zipora::ZiporaError>(())
 /// ```
 #[derive(Debug)]
 pub struct MemoryProfiler {
@@ -1670,21 +1674,24 @@ impl Profiler for MemoryProfiler {
 /// # Examples
 ///
 /// ```rust
-/// use zipora::dev_infrastructure::CacheProfiler;
-/// use zipora::cache::LruPageCache;
-/// 
-/// let cache = LruPageCache::new(config)?;
-/// let profiler = CacheProfiler::new("cache_profiler", true, Some(cache.clone()))?;
-/// 
+/// use zipora::dev_infrastructure::{CacheProfiler, Profiler};
+/// use zipora::cache::{LruPageCache, PageCacheConfig};
+/// use std::sync::Arc;
+///
+/// let config = PageCacheConfig::default();
+/// let cache = Arc::new(LruPageCache::new(config)?);
+/// let profiler = CacheProfiler::new("cache_profiler", true, Some(cache))?;
+///
 /// let handle = profiler.start("cache_intensive_operation")?;
 /// // ... cache-intensive work ...
 /// let data = profiler.end(handle)?;
-/// 
+///
 /// if let Some(cache_stats) = data.cache_stats {
 ///     println!("Hit rate: {:.2}%", cache_stats.hit_rate * 100.0);
 ///     println!("L1 cache misses: {}", cache_stats.l1_cache_misses);
 ///     println!("Average probe distance: {:.2}", cache_stats.l1_cache_misses as f64);
 /// }
+/// # Ok::<(), zipora::ZiporaError>(())
 /// ```
 pub struct CacheProfiler {
     enabled: bool,
@@ -1956,18 +1963,19 @@ impl Profiler for CacheProfiler {
 /// # Examples
 ///
 /// ```rust
-/// use zipora::dev_infrastructure::{ProfilerRegistry, DefaultProfiler, HardwareProfiler};
-/// 
+/// use zipora::dev_infrastructure::{ProfilerRegistry, DefaultProfiler, HardwareProfiler, Profiler};
+///
 /// let mut registry = ProfilerRegistry::new();
-/// 
+///
 /// // Register different profiler types
 /// registry.register_default("default", DefaultProfiler::global());
 /// registry.register_hardware("hardware", HardwareProfiler::global().unwrap());
-/// 
+///
 /// // Use profilers through the registry
 /// let scope = registry.create_scope("my_operation", "default")?;
 /// // ... operation code ...
 /// // Profiling automatically ends when scope is dropped
+/// # Ok::<(), zipora::ZiporaError>(())
 /// ```
 pub struct ProfilerRegistry {
     profilers: DashMap<String, Arc<dyn Profiler>>,

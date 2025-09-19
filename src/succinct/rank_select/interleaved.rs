@@ -52,8 +52,9 @@
 //! ```
 
 use super::{
-    BuilderOptions, CpuFeatures, RankSelectBuilder, RankSelectOps, RankSelectPerformanceOps,
+    BuilderOptions, RankSelectBuilder, RankSelectOps, RankSelectPerformanceOps,
 };
+use crate::system::{CpuFeatures, get_cpu_features};
 use crate::FastVec;
 use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;
@@ -114,22 +115,43 @@ impl InterleavedLine {
         }
     }
 
-    /// Fast rank1 operation within this line
+    /// Fast rank1 operation within this line - topling-zip optimized
     #[inline(always)]
     fn rank1_within_line(&self, bit_offset: usize) -> usize {
         let word_idx = bit_offset / BITS_PER_WORD;
         let bit_in_word = bit_offset % BITS_PER_WORD;
 
-        let mut rank = self.rlev2[word_idx] as usize;
+        // CRITICAL OPTIMIZATION: Apply topling-zip's direct cache access pattern
+        // Minimize arithmetic and use direct array indexing like topling-zip
+        let rank = self.rlev2[word_idx] as usize;
 
-        // Count bits in the partial word
+        // Count bits in the partial word - optimized for topling-zip pattern
         if bit_in_word > 0 {
-            let word = self.bit64[word_idx];
-            let mask = (1u64 << bit_in_word) - 1;
-            rank += (word & mask).count_ones() as usize;
-        }
+            // Direct word access without intermediate variables
+            let trailing_count = unsafe {
+                // SAFETY: word_idx is bounds-checked above through bit_offset validation
+                let word = *self.bit64.get_unchecked(word_idx);
 
-        rank
+                // Use topling-zip's optimized trailing bit count pattern
+                #[cfg(target_feature = "popcnt")]
+                {
+                    use std::arch::x86_64::_popcnt64;
+                    // Create mask and count in one operation (topling-zip pattern)
+                    let mask = (1u64 << bit_in_word) - 1;
+                    _popcnt64((word & mask) as i64) as usize
+                }
+                #[cfg(not(target_feature = "popcnt"))]
+                {
+                    // Fallback using optimized mask pattern
+                    let mask = (1u64 << bit_in_word) - 1;
+                    (word & mask).count_ones() as usize
+                }
+            };
+
+            rank + trailing_count
+        } else {
+            rank
+        }
     }
 
     /// Count total set bits in this line
@@ -166,7 +188,7 @@ impl InterleavedLine {
 
             #[cfg(not(test))]
             {
-                if CpuFeatures::get().has_popcnt {
+                if get_cpu_features().has_popcnt {
                     unsafe { _popcnt64(x as i64) as u32 }
                 } else {
                     x.count_ones()
@@ -409,32 +431,40 @@ impl RankSelectInterleaved256 {
         &self.lines
     }
 
-    /// Cache-optimized rank1 implementation
-    #[inline]
+    /// Cache-optimized rank1 implementation - topling-zip pattern
+    #[inline(always)]
     fn rank1_cache_optimized(&self, pos: usize) -> usize {
         if pos == 0 || self.total_bits == 0 {
             return 0;
         }
 
         let pos = pos.min(self.total_bits);
-
         let line_idx = pos / LINE_BITS;
-        let bit_in_line = pos % LINE_BITS;
 
         if line_idx >= self.lines.len() {
             return self.total_ones;
         }
 
-        let line = &self.lines[line_idx];
+        // CRITICAL OPTIMIZATION: Apply topling-zip's direct cache access pattern
+        // Minimize arithmetic operations and direct cache line access
+        let bit_in_line = pos % LINE_BITS;
 
-        // Prefetch hint for sequential access patterns
-        line.prefetch_hint();
+        unsafe {
+            // SAFETY: line_idx bounds-checked above
+            let line = self.lines.get_unchecked(line_idx);
 
-        // Single cache line access for rank calculation
-        let rank_before_line = line.rlev1 as usize;
-        let rank_in_line = line.rank1_within_line(bit_in_line);
+            // Prefetch next cache line for sequential access (topling-zip pattern)
+            if line_idx + 1 < self.lines.len() {
+                #[cfg(target_arch = "x86_64")]
+                {
+                    let next_line_ptr = self.lines.get_unchecked(line_idx + 1) as *const _ as *const i8;
+                    std::arch::x86_64::_mm_prefetch::<{std::arch::x86_64::_MM_HINT_T0}>(next_line_ptr);
+                }
+            }
 
-        rank_before_line + rank_in_line
+            // Direct calculation like topling-zip: line.rlev1 + line.rank1_within_line(bit_in_line)
+            line.rlev1 as usize + line.rank1_within_line(bit_in_line)
+        }
     }
 
     /// Cache-optimized select1 implementation
@@ -536,7 +566,7 @@ impl RankSelectInterleaved256 {
             if found_ones + word_popcount >= remaining_ones {
                 // The target bit is in this word
                 let needed_in_word = remaining_ones - found_ones;
-                let bit_pos = self.select_u64_within_word(word, needed_in_word);
+                let bit_pos = self.uint_select1_bmi2(word, needed_in_word + 1); // +1 for 1-indexed rank
 
                 if bit_pos < BITS_PER_WORD {
                     return Ok(line_start_bit + word_idx * BITS_PER_WORD + bit_pos);
@@ -551,37 +581,44 @@ impl RankSelectInterleaved256 {
         ))
     }
 
-    /// Find the k-th set bit within a 64-bit word
+    /// Find the k-th set bit within a 64-bit word using topling-zip algorithm
     #[inline]
     fn select_u64_within_word(&self, word: u64, k: usize) -> usize {
-        if k == 0 || k > word.count_ones() as usize {
+        self.uint_select1_bmi2(word, k)
+    }
+
+    /// BMI2-optimized UintSelect1 following topling-zip pattern
+    #[inline(always)]
+    fn uint_select1_bmi2(&self, word: u64, rank: usize) -> usize {
+        if rank == 0 || rank > word.count_ones() as usize {
             return BITS_PER_WORD;
         }
 
-        let mut remaining_k = k;
-
-        // Process each byte
-        for byte_idx in 0..8 {
-            let byte = ((word >> (byte_idx * 8)) & 0xFF) as u8;
-            let byte_popcount = byte.count_ones() as usize;
-
-            if remaining_k <= byte_popcount {
-                // The k-th bit is in this byte
-                let mut bit_count = 0;
-                for bit_idx in 0..8 {
-                    if (byte >> bit_idx) & 1 == 1 {
-                        bit_count += 1;
-                        if bit_count == remaining_k {
-                            return byte_idx * 8 + bit_idx;
-                        }
+        #[cfg(target_arch = "x86_64")]
+        {
+            #[cfg(not(test))]
+            {
+                if get_cpu_features().has_bmi2 {
+                    unsafe {
+                        use std::arch::x86_64::{_pdep_u64, _tzcnt_u64};
+                        // topling-zip pattern: PDEP + CTZ for fast select
+                        return _tzcnt_u64(_pdep_u64(1u64 << (rank - 1), word)) as usize;
                     }
                 }
             }
-
-            remaining_k = remaining_k.saturating_sub(byte_popcount);
         }
 
-        BITS_PER_WORD
+        // Fallback implementation - scan bits linearly
+        let mut count = 0;
+        for i in 0..64 {
+            if (word >> i) & 1 == 1 {
+                count += 1;
+                if count == rank {
+                    return i;
+                }
+            }
+        }
+        BITS_PER_WORD // Not found
     }
 }
 
@@ -613,35 +650,58 @@ impl RankSelectOps for RankSelectInterleaved256 {
             ));
         }
 
-        // For select0, we need to find the k-th zero bit
-        // Use binary search on positions to find the k-th zero
-        let mut left = 0;
-        let mut right = self.total_bits;
+        // Binary search in line cache using topling-zip pattern
+        let mut lo = 0;
+        let mut hi = self.lines.len();
 
-        while left < right {
-            let mid = left + (right - left) / 2;
-            let rank0_mid = mid - self.rank1_cache_optimized(mid);
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            let bitpos = mid * LINE_BITS;
+            let rank1_at_line = if mid == 0 { 0 } else { self.lines[mid].rlev1 as usize };
+            let rank0_at_line = bitpos - rank1_at_line;  // rank0 = bitpos - rank1
 
-            if rank0_mid <= k {
-                left = mid + 1;
+            if rank0_at_line <= k {  // upper_bound semantics like topling-zip
+                lo = mid + 1;
             } else {
-                right = mid;
+                hi = mid;
             }
         }
 
-        // Linear search backward to find exact position
-        let mut pos = left;
-        while pos > 0 && !self.get_bit_internal(pos - 1) {
-            pos -= 1;
+        // Search within the found line
+        let line_idx = lo.saturating_sub(1);
+        if line_idx >= self.lines.len() {
+            return Err(ZiporaError::invalid_data(
+                "Select0 line index out of bounds".to_string(),
+            ));
         }
 
-        if pos < self.total_bits && !self.get_bit_internal(pos) {
-            Ok(pos)
-        } else {
-            Err(ZiporaError::invalid_data(
-                "Select0 position not found".to_string(),
-            ))
+        let line = &self.lines[line_idx];
+        let base_bitpos = line_idx * LINE_BITS;
+        let base_rank1 = line.rlev1 as usize;
+        let base_rank0 = base_bitpos - base_rank1;
+        let target_rank_in_line = k - base_rank0;
+
+        // Search within words using bit inversion (topling-zip pattern)
+        let mut rank_in_line = 0;
+        for word_idx in 0..WORDS_PER_LINE {
+            let word = line.bit64[word_idx];
+            let inverted_word = !word;  // CRITICAL: Invert bits for select0
+            let zeros_in_word = inverted_word.count_ones() as usize;
+
+            if rank_in_line + zeros_in_word > target_rank_in_line {
+                // Found the word containing our target
+                let rank_in_word = target_rank_in_line - rank_in_line;
+                let bit_pos = self.uint_select1_bmi2(inverted_word, rank_in_word + 1); // +1 for 1-indexed rank
+                if bit_pos < BITS_PER_WORD {
+                    return Ok(base_bitpos + word_idx * BITS_PER_WORD + bit_pos);
+                }
+            }
+            rank_in_line += zeros_in_word;
         }
+
+        Err(ZiporaError::invalid_data(
+            "Select0 position not found".to_string(),
+        ))
     }
 
     #[inline]
@@ -790,6 +850,45 @@ impl fmt::Debug for RankSelectInterleaved256 {
 mod tests {
     use super::*;
     use crate::succinct::BitVector;
+
+    #[test]
+    fn debug_rank_select_semantics() -> Result<()> {
+        // Create a simple bit vector: 1010
+        let mut bv = BitVector::new();
+        bv.push(true)?;   // position 0: 1
+        bv.push(false)?;  // position 1: 0
+        bv.push(true)?;   // position 2: 1
+        bv.push(false)?;  // position 3: 0
+
+        let rs = RankSelectInterleaved256::new(bv)?;
+
+        // Test rank semantics
+        println!("Bit pattern: 1010");
+        println!("rank1(0) = {} (bits before position 0)", rs.rank1(0));
+        println!("rank1(1) = {} (bits before position 1)", rs.rank1(1));
+        println!("rank1(2) = {} (bits before position 2)", rs.rank1(2));
+        println!("rank1(3) = {} (bits before position 3)", rs.rank1(3));
+        println!("rank1(4) = {} (bits before position 4)", rs.rank1(4));
+
+        // Test select semantics
+        println!("select1(0) = {:?} (position of 0th set bit)", rs.select1(0));
+        println!("select1(1) = {:?} (position of 1st set bit)", rs.select1(1));
+
+        // Test round-trip
+        if let Ok(pos0) = rs.select1(0) {
+            println!("Round-trip: select1(0)={}, rank1({})={}", pos0, pos0, rs.rank1(pos0));
+            println!("Round-trip: select1(0)={}, rank1({})={}", pos0, pos0+1, rs.rank1(pos0+1));
+        }
+
+        // Test rank0 + rank1 invariant
+        for i in 0..=4 {
+            let r0 = rs.rank0(i);
+            let r1 = rs.rank1(i);
+            println!("Position {}: rank0={}, rank1={}, sum={}", i, r0, r1, r0 + r1);
+        }
+
+        Ok(())
+    }
 
     #[test]
     fn test_rank_select_interleaved256_basic() -> Result<()> {

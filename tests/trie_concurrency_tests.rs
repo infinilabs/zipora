@@ -25,7 +25,7 @@ use zipora::fsa::{
     DoubleArrayTrie, DoubleArrayTrieConfig, FiniteStateAutomaton, PrefixIterable,
     StatisticsProvider, Trie,
 };
-use zipora::succinct::rank_select::{RankSelectInterleaved256, RankSelectSimple};
+use zipora::succinct::rank_select::RankSelectInterleaved256;
 
 // Note: CompressedSparseTrie concurrency tests would go here when available
 
@@ -624,99 +624,117 @@ fn test_nested_louds_trie_concurrent_prefix_operations() {
 }
 
 #[test]
-fn test_nested_louds_backend_concurrent_comparison() {
-    let keys = generate_concurrent_test_keys(500, "backend_test");
+fn test_nested_louds_concurrent_stress() {
+    // Stress test RankSelectInterleaved256 backend under high concurrent load
+    let keys = generate_concurrent_test_keys(1000, "stress_test");
 
-    // Test different backends under concurrent access
-    let simple_trie = {
-        let mut trie = NestedLoudsTrie::<RankSelectSimple>::new().unwrap();
-        for key in &keys {
-            trie.insert(key).unwrap();
-        }
-        Arc::new(trie)
-    };
+    let mut trie = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
+    for key in &keys {
+        trie.insert(key).unwrap();
+    }
+    let trie = Arc::new(trie);
 
-    let interleaved_trie = {
-        let mut trie = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
-        for key in &keys {
-            trie.insert(key).unwrap();
-        }
-        Arc::new(trie)
-    };
-
-    let num_threads = 4;
-    let barrier = Arc::new(Barrier::new(num_threads * 2)); // 2 sets of threads
+    let num_threads = 8; // Higher thread count for stress testing
+    let reads_per_thread = 150; // More operations per thread
+    let barrier = Arc::new(Barrier::new(num_threads));
     let mut handles = Vec::new();
 
-    // Test simple backend
     for thread_id in 0..num_threads {
-        let trie_clone = Arc::clone(&simple_trie);
+        let trie_clone = Arc::clone(&trie);
         let keys_clone = keys.clone();
         let barrier_clone = Arc::clone(&barrier);
 
         let handle = thread::spawn(move || {
             barrier_clone.wait();
 
+            let start = Instant::now();
             let mut successful_reads = 0;
-            for (i, key) in keys_clone.iter().enumerate() {
-                if i % num_threads == thread_id {
-                    if trie_clone.contains(key) {
-                        successful_reads += 1;
+            let mut lookup_operations = 0;
+            let mut prefix_operations = 0;
+
+            // Intensive concurrent operations
+            for round in 0..reads_per_thread {
+                for (i, key) in keys_clone.iter().enumerate() {
+                    if i % num_threads == thread_id {
+                        // Mix different types of operations
+                        match round % 3 {
+                            0 => {
+                                // Contains check
+                                if trie_clone.contains(key) {
+                                    successful_reads += 1;
+                                }
+                            }
+                            1 => {
+                                // Lookup operation
+                                if trie_clone.lookup(key).is_some() {
+                                    lookup_operations += 1;
+                                }
+                            }
+                            2 => {
+                                // Prefix operation (use first 8 bytes as prefix)
+                                let prefix = &key[..std::cmp::min(8, key.len())];
+                                let results: Vec<_> = trie_clone.iter_prefix(prefix).collect();
+                                if !results.is_empty() {
+                                    prefix_operations += 1;
+                                }
+                            }
+                            _ => unreachable!(),
+                        }
                     }
                 }
             }
 
-            ("simple", thread_id, successful_reads)
-        });
-
-        handles.push(handle);
-    }
-
-    // Test interleaved backend
-    for thread_id in 0..num_threads {
-        let trie_clone = Arc::clone(&interleaved_trie);
-        let keys_clone = keys.clone();
-        let barrier_clone = Arc::clone(&barrier);
-
-        let handle = thread::spawn(move || {
-            barrier_clone.wait();
-
-            let mut successful_reads = 0;
-            for (i, key) in keys_clone.iter().enumerate() {
-                if i % num_threads == thread_id {
-                    if trie_clone.contains(key) {
-                        successful_reads += 1;
-                    }
-                }
-            }
-
-            ("interleaved", thread_id, successful_reads)
+            let duration = start.elapsed();
+            (
+                thread_id,
+                successful_reads,
+                lookup_operations,
+                prefix_operations,
+                duration,
+            )
         });
 
         handles.push(handle);
     }
 
     // Collect results
-    let mut simple_total = 0;
-    let mut interleaved_total = 0;
+    let mut total_reads = 0;
+    let mut total_lookups = 0;
+    let mut total_prefixes = 0;
 
     for handle in handles {
-        let (backend, thread_id, reads) = handle.join().unwrap();
-        match backend {
-            "simple" => simple_total += reads,
-            "interleaved" => interleaved_total += reads,
-            _ => unreachable!(),
-        }
-        println!("{} backend thread {}: {} reads", backend, thread_id, reads);
+        let (thread_id, reads, lookups, prefixes, duration) = handle.join().unwrap();
+        total_reads += reads;
+        total_lookups += lookups;
+        total_prefixes += prefixes;
+        println!(
+            "Stress thread {}: {} reads, {} lookups, {} prefix ops in {:?}",
+            thread_id, reads, lookups, prefixes, duration
+        );
     }
 
-    println!("Simple backend total: {}", simple_total);
-    println!("Interleaved backend total: {}", interleaved_total);
+    println!(
+        "Stress test totals - Reads: {}, Lookups: {}, Prefix ops: {}",
+        total_reads, total_lookups, total_prefixes
+    );
 
-    // Both backends should perform correctly
-    assert!(simple_total > 0);
-    assert!(interleaved_total > 0);
-    assert_eq!(simple_total, interleaved_total); // Should read same number of keys
+    // Verify all operations completed successfully
+    assert!(total_reads > 0, "Should have successful reads");
+    assert!(total_lookups > 0, "Should have successful lookups");
+    assert!(total_prefixes > 0, "Should have successful prefix operations");
+
+    // Verify trie integrity after stress test
+    let final_stats = trie.stats();
+    assert_eq!(final_stats.num_keys as usize, keys.len());
+    assert!(final_stats.memory_usage > 0);
+
+    // Verify all original keys are still accessible
+    for key in &keys {
+        assert!(
+            trie.contains(key),
+            "All keys should remain accessible after concurrent stress test"
+        );
+    }
 }
 
 // =============================================================================

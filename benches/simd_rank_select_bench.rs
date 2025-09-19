@@ -8,7 +8,9 @@
 //! - SIMD bulk operations
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use zipora::{BitVector, BitwiseOp, CpuFeatures, RankSelect256};
+use zipora::{BitVector, BitwiseOp, RankSelect256, RankSelectPerformanceOps};
+use zipora::succinct::rank_select::RankSelectOps;
+use zipora::system::CpuFeatures;
 
 fn create_benchmark_data(size: usize, density: f64) -> BitVector {
     let mut bv = BitVector::new();
@@ -38,7 +40,7 @@ fn bench_rank_operations(c: &mut Criterion) {
             group.bench_function("lookup_tables", |b| {
                 b.iter(|| {
                     for &pos in &test_positions {
-                        black_box(rs.rank1_optimized(black_box(pos)));
+                        black_box(rs.rank1(black_box(pos)));
                     }
                 });
             });
@@ -93,7 +95,7 @@ fn bench_select_operations(c: &mut Criterion) {
             group.bench_function("lookup_tables", |b| {
                 b.iter(|| {
                     for &k in &test_ks {
-                        black_box(rs.select1_optimized(black_box(k)).unwrap());
+                        black_box(rs.select1(black_box(k)).unwrap());
                     }
                 });
             });
@@ -273,13 +275,13 @@ fn bench_cpu_feature_detection(c: &mut Criterion) {
 
     group.bench_function("feature_detection", |b| {
         b.iter(|| {
-            black_box(CpuFeatures::detect());
+            black_box(zipora::system::get_cpu_features());
         });
     });
 
     group.bench_function("cached_features", |b| {
         b.iter(|| {
-            black_box(CpuFeatures::get());
+            black_box(zipora::system::get_cpu_features());
         });
     });
 

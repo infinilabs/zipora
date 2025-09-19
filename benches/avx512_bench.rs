@@ -74,7 +74,7 @@ fn bench_rank_select_avx512(c: &mut Criterion) {
                 &(&rs, &positions),
                 |b, (rs, positions)| {
                     b.iter(|| {
-                        black_box(rs.rank1_bulk_avx512(positions));
+                        black_box(rs.rank1_bulk(positions));
                     });
                 },
             );
@@ -361,21 +361,21 @@ fn bench_cpu_features(c: &mut Criterion) {
     // Benchmark CPU feature detection overhead
     group.bench_function("cpu_detection", |b| {
         b.iter(|| {
-            use zipora::succinct::rank_select::CpuFeatures;
-            black_box(CpuFeatures::detect());
+            // No need to import CpuFeatures here since we use get_cpu_features()
+            black_box(zipora::system::get_cpu_features());
         });
     });
 
     // Benchmark cached feature access
     group.bench_function("cpu_cached_access", |b| {
         b.iter(|| {
-            use zipora::succinct::rank_select::CpuFeatures;
-            black_box(CpuFeatures::get());
+            // No need to import CpuFeatures here since we use get_cpu_features()
+            black_box(zipora::system::get_cpu_features());
         });
     });
 
     // Show available CPU features
-    let features = zipora::succinct::rank_select::CpuFeatures::detect();
+    let features = zipora::system::get_cpu_features();
     println!("Detected CPU Features:");
     println!("  POPCNT: {}", features.has_popcnt);
     println!("  BMI2: {}", features.has_bmi2);
@@ -411,7 +411,7 @@ fn bench_overall_performance(c: &mut Criterion) {
         b.iter(|| {
             // Rank operations
             for i in (0..size).step_by(100) {
-                black_box(rs.rank1_optimized(i.try_into().unwrap()));
+                black_box(rs.rank1(i.try_into().unwrap()));
             }
 
             // String hashing

@@ -551,7 +551,8 @@ impl CritBitTrie {
             unsafe {
                 use std::arch::x86_64::_bextr_u32;
                 // Extract single bit using BMI2 BEXTR instruction
-                _bextr_u32(byte_val as u32, (bit_pos as u32) | (1u32 << 8)) != 0
+                // BEXTR(source, start, length) extracts 'length' bits starting at 'start'
+                _bextr_u32(byte_val as u32, bit_pos as u32, 1) != 0
             }
         }
     }

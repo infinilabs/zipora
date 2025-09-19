@@ -571,7 +571,7 @@ struct LayerStats {
 /// Multi-level nested LOUDS trie with configurable backends
 ///
 /// The trie uses a generic rank/select backend `R` that can be any implementation
-/// from the zipora ecosystem (RankSelectInterleaved256, RankSelectSeparated512, etc.)
+/// from the zipora ecosystem (RankSelectInterleaved256 as the best-performing implementation)
 /// for optimal performance based on data characteristics.
 ///
 /// # Type Parameters
@@ -2297,9 +2297,9 @@ impl<R: RankSelectOps + RankSelectBuilder<R>> NestedLoudsTrie<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::succinct::RankSelectSimple;
+    use crate::succinct::RankSelectInterleaved256;
 
-    type TestTrie = NestedLoudsTrie<RankSelectSimple>;
+    type TestTrie = NestedLoudsTrie<RankSelectInterleaved256>;
 
     #[test]
     fn test_nesting_config_builder() {
@@ -2402,7 +2402,7 @@ mod tests {
 
     #[test]
     fn test_nested_trie_with_different_backends() {
-        use crate::succinct::{RankSelectInterleaved256, RankSelectSeparated256};
+        use crate::succinct::RankSelectInterleaved256;
 
         let config = NestingConfig::builder()
             .max_levels(3)
@@ -2410,9 +2410,9 @@ mod tests {
             .build()
             .unwrap();
 
-        // Test with different backends
+        // Test with RankSelectInterleaved256 (best-performing implementation)
         let mut trie1 =
-            NestedLoudsTrie::<RankSelectSeparated256>::with_config(config.clone()).unwrap();
+            NestedLoudsTrie::<RankSelectInterleaved256>::with_config(config.clone()).unwrap();
         let mut trie2 = NestedLoudsTrie::<RankSelectInterleaved256>::with_config(config).unwrap();
 
         let keys = vec![b"cat".to_vec(), b"car".to_vec(), b"card".to_vec()];

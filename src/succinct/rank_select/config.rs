@@ -18,14 +18,19 @@
 //!
 //! ```rust
 //! use zipora::succinct::rank_select::{
-//!     SeparatedStorageConfig, 
-//!     separated::RankSelectSeparated256, 
-//!     mixed::RankSelectMixedXLBitPacked
+//!     SeparatedStorageConfig,
+//!     RankSelectInterleaved256,
+//!     AdaptiveRankSelect,
+//!     RankSelectOps
 //! };
 //! use zipora::succinct::BitVector;
 //!
-//! // High-performance separated storage for large datasets
-//! let bit_vector = BitVector::new();
+//! // High-performance configuration for large datasets
+//! let mut bit_vector = BitVector::new();
+//! for i in 0..1000 {
+//!     bit_vector.push(i % 3 == 0)?;
+//! }
+//!
 //! let config = SeparatedStorageConfig::new()
 //!     .block_size(512)
 //!     .enable_select_acceleration(true)
@@ -34,18 +39,14 @@
 //!     .select_sample_rate(256)
 //!     .build();
 //!
-//! let rs = RankSelectSeparated256::with_config(bit_vector, config)?;
+//! // Use best-performing implementation with configuration hints
+//! let rs = RankSelectInterleaved256::new(bit_vector.clone())?;
+//! let rank = rs.rank1(500);
+//! let pos = rs.select1(100)?;
 //!
-//! // Memory-optimized multi-dimensional configuration
-//! let bit_vectors = vec![BitVector::new(); 3];
-//! let multi_config = SeparatedStorageConfig::new()
-//!     .optimize_for_space()
-//!     .enable_bit_packed_ranks(true)
-//!     .multi_dimensional_arity(3)
-//!     .superblock_size(16)
-//!     .build();
-//!
-//! let multi_rs = RankSelectMixedXLBitPacked::<3>::new(bit_vectors.try_into().unwrap())?;
+//! // Adaptive selection - automatically chooses optimal implementation
+//! let adaptive_rs = AdaptiveRankSelect::new(bit_vector)?;
+//! println!("Selected: {}", adaptive_rs.implementation_name());
 //! # Ok::<(), zipora::error::ZiporaError>(())
 //! ```
 

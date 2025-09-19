@@ -17,7 +17,7 @@ use zipora::fsa::{
     StatisticsProvider, Trie,
 };
 use zipora::succinct::rank_select::{
-    RankSelectFew, RankSelectInterleaved256, RankSelectSeparated512, RankSelectSimple,
+    RankSelectInterleaved256,
 };
 
 // =============================================================================
@@ -263,10 +263,10 @@ fn bench_nested_louds_trie_backends(c: &mut Criterion) {
 
     let keys = generate_sequential_keys(5000);
 
-    // RankSelectSimple backend
+    // RankSelectInterleaved256 backend
     group.bench_function("simple_backend", |b| {
         b.iter(|| {
-            let mut trie = NestedLoudsTrie::<RankSelectSimple>::new().unwrap();
+            let mut trie = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
             for key in &keys {
                 black_box(trie.insert(key).unwrap());
             }
@@ -285,10 +285,10 @@ fn bench_nested_louds_trie_backends(c: &mut Criterion) {
         });
     });
 
-    // RankSelectSeparated512 backend
+    // RankSelectInterleaved256 backend
     group.bench_function("separated512_backend", |b| {
         b.iter(|| {
-            let mut trie = NestedLoudsTrie::<RankSelectSeparated512>::new().unwrap();
+            let mut trie = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
             for key in &keys {
                 black_box(trie.insert(key).unwrap());
             }
@@ -299,7 +299,7 @@ fn bench_nested_louds_trie_backends(c: &mut Criterion) {
     // RankSelectFew backend (sparse implementation)
     group.bench_function("sparse_backend", |b| {
         b.iter(|| {
-            let mut trie = NestedLoudsTrie::<RankSelectFew<true, 64>>::new().unwrap();
+            let mut trie = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
             for key in &keys {
                 black_box(trie.insert(key).unwrap());
             }
@@ -420,7 +420,7 @@ fn bench_trie_comparison_insertion(c: &mut Criterion) {
 
     group.bench_function("nested_louds_simple", |b| {
         b.iter(|| {
-            let mut trie = NestedLoudsTrie::<RankSelectSimple>::new().unwrap();
+            let mut trie = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
             for key in &keys {
                 black_box(trie.insert(key).unwrap());
             }
@@ -458,7 +458,7 @@ fn bench_trie_comparison_lookup(c: &mut Criterion) {
 
     // Build all data structures
     let mut da_trie = DoubleArrayTrie::new();
-    let mut nested_simple = NestedLoudsTrie::<RankSelectSimple>::new().unwrap();
+    let mut nested_simple = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
     let mut nested_interleaved = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
     let mut hashmap = HashMap::new();
 

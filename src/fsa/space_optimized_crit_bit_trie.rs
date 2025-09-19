@@ -243,64 +243,37 @@ impl Bmi2CritBitOps {
     #[inline]
     fn find_critical_bit_bmi2_impl(key1: &[u8], key2: &[u8]) -> PackedCritPos {
         use std::arch::x86_64::*;
-        
+
         let min_len = key1.len().min(key2.len());
         let mut byte_pos = 0;
-        
-        // Process 8 bytes at a time for cache efficiency
-        while byte_pos + 8 <= min_len {
-            unsafe {
-                // Load 8 bytes as u64
-                let mut bytes1 = [0u8; 8];
-                let mut bytes2 = [0u8; 8];
-                bytes1.copy_from_slice(&key1[byte_pos..byte_pos + 8]);
-                bytes2.copy_from_slice(&key2[byte_pos..byte_pos + 8]);
-                
-                let word1 = u64::from_le_bytes(bytes1);
-                let word2 = u64::from_le_bytes(bytes2);
-                
-                let diff = word1 ^ word2;
-                if diff != 0 {
-                    // Use TZCNT to find first differing bit
-                    let bit_offset = _tzcnt_u64(diff);
-                    let byte_offset = bit_offset / 8;
-                    let bit_in_byte = 7 - (bit_offset % 8); // MSB first
-                    
-                    return PackedCritPos::new(
-                        byte_pos + byte_offset as usize,
-                        bit_in_byte as u8,
-                        false,
-                        false
-                    );
-                }
-            }
-            byte_pos += 8;
-        }
-        
-        // Handle remaining bytes
-        while byte_pos < min_len {
-            if key1[byte_pos] != key2[byte_pos] {
-                let diff = key1[byte_pos] ^ key2[byte_pos];
-                unsafe {
-                    // Find the most significant bit position in the byte (0-7)
-                    // _lzcnt_u32 counts leading zeros in 32-bit word, so subtract 24 to get bit position in byte
-                    let leading_zeros = _lzcnt_u32(diff as u32);
-                    let bit_pos = if leading_zeros >= 24 {
-                        7 - (leading_zeros - 24) as u8
-                    } else {
-                        7 // fallback for unexpected case
-                    };
-                    return PackedCritPos::new(byte_pos, bit_pos, false, false);
-                }
-            }
+
+        // Find first differing byte
+        while byte_pos < min_len && key1[byte_pos] == key2[byte_pos] {
             byte_pos += 1;
         }
-        
-        // Handle length difference with virtual end-of-string bit
-        if key1.len() != key2.len() {
-            PackedCritPos::new(min_len, 8, true, false) // Virtual bit 8
-        } else {
-            PackedCritPos::new(byte_pos, 0, false, false) // Identical keys
+
+        // Handle length difference
+        if byte_pos == min_len {
+            if key1.len() != key2.len() {
+                return PackedCritPos::new(min_len, 8, true, false); // Virtual end-of-string bit
+            } else {
+                return PackedCritPos::new(byte_pos, 0, false, false); // Identical keys
+            }
+        }
+
+        // Find critical bit within differing byte using BMI2
+        let byte1 = key1[byte_pos];
+        let byte2 = key2[byte_pos];
+        let diff = byte1 ^ byte2;
+
+        unsafe {
+            // Use LZCNT to find the most significant differing bit
+            // For a byte, we need to shift to the high bits of a 32-bit word
+            let diff_extended = (diff as u32) << 24;
+            let leading_zeros = _lzcnt_u32(diff_extended);
+            let bit_pos = leading_zeros as u8; // MSB-first bit position (0-7)
+
+            PackedCritPos::new(byte_pos, bit_pos, false, false)
         }
     }
 
@@ -343,18 +316,19 @@ impl Bmi2CritBitOps {
     fn test_bit_bmi2(key: &[u8], crit_pos: PackedCritPos) -> bool {
         let byte_pos = crit_pos.byte_pos();
         let bit_pos = crit_pos.bit_pos();
-        
+
         if crit_pos.is_virtual() {
             // Virtual end-of-string bit
             return byte_pos >= key.len();
         }
-        
+
         if byte_pos >= key.len() {
             return false; // Missing bytes treated as 0
         }
-        
+
         let byte_val = key[byte_pos];
-        (byte_val >> bit_pos) & 1 == 1
+        // MSB-first bit ordering: bit 0 is the most significant bit
+        (byte_val >> (7 - bit_pos)) & 1 == 1
     }
 
     /// Prefetch memory for critical bit operations

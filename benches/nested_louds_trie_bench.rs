@@ -7,9 +7,8 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use zipora::{
     fsa::{FiniteStateAutomaton, NestedLoudsTrie, NestingConfig, PrefixIterable, Trie},
-    succinct::{
-        RankSelectInterleaved256, RankSelectSeparated256, RankSelectSeparated512, RankSelectSimple,
-    },
+    RankSelect256,
+    succinct::rank_select::RankSelectInterleaved256,
 };
 
 /// Generate test data with different characteristics
@@ -45,13 +44,13 @@ fn bench_insertion_backends(c: &mut Criterion) {
     for size in sizes {
         let data = generate_test_data(size, "random");
 
-        // Benchmark RankSelectSimple backend
+        // Benchmark RankSelect256 backend
         group.bench_with_input(
-            BenchmarkId::new("RankSelectSimple", size),
+            BenchmarkId::new("RankSelect256", size),
             &data,
             |b, data| {
                 b.iter(|| {
-                    let mut trie = NestedLoudsTrie::<RankSelectSimple>::new().unwrap();
+                    let mut trie = NestedLoudsTrie::<RankSelect256>::new().unwrap();
                     for key in data {
                         black_box(trie.insert(key).unwrap());
                     }
@@ -60,13 +59,13 @@ fn bench_insertion_backends(c: &mut Criterion) {
             },
         );
 
-        // Benchmark RankSelectSeparated256 backend
+        // Benchmark RankSelect256 backend
         group.bench_with_input(
-            BenchmarkId::new("RankSelectSeparated256", size),
+            BenchmarkId::new("RankSelect256", size),
             &data,
             |b, data| {
                 b.iter(|| {
-                    let mut trie = NestedLoudsTrie::<RankSelectSeparated256>::new().unwrap();
+                    let mut trie = NestedLoudsTrie::<RankSelect256>::new().unwrap();
                     for key in data {
                         black_box(trie.insert(key).unwrap());
                     }
@@ -90,13 +89,13 @@ fn bench_insertion_backends(c: &mut Criterion) {
             },
         );
 
-        // Benchmark RankSelectSeparated512 backend
+        // Benchmark RankSelect256 backend
         group.bench_with_input(
-            BenchmarkId::new("RankSelectSeparated512", size),
+            BenchmarkId::new("RankSelect256", size),
             &data,
             |b, data| {
                 b.iter(|| {
-                    let mut trie = NestedLoudsTrie::<RankSelectSeparated512>::new().unwrap();
+                    let mut trie = NestedLoudsTrie::<RankSelect256>::new().unwrap();
                     for key in data {
                         black_box(trie.insert(key).unwrap());
                     }
@@ -116,10 +115,10 @@ fn bench_lookup_backends(c: &mut Criterion) {
     let data = generate_test_data(size, "random");
 
     // Pre-build tries with different backends
-    let mut trie_simple = NestedLoudsTrie::<RankSelectSimple>::new().unwrap();
-    let mut trie_sep256 = NestedLoudsTrie::<RankSelectSeparated256>::new().unwrap();
+    let mut trie_simple = NestedLoudsTrie::<RankSelect256>::new().unwrap();
+    let mut trie_sep256 = NestedLoudsTrie::<RankSelect256>::new().unwrap();
     let mut trie_int256 = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
-    let mut trie_sep512 = NestedLoudsTrie::<RankSelectSeparated512>::new().unwrap();
+    let mut trie_sep512 = NestedLoudsTrie::<RankSelect256>::new().unwrap();
 
     for key in &data {
         trie_simple.insert(key).unwrap();
@@ -129,7 +128,7 @@ fn bench_lookup_backends(c: &mut Criterion) {
     }
 
     // Benchmark lookups
-    group.bench_function("RankSelectSimple", |b| {
+    group.bench_function("RankSelect256", |b| {
         b.iter(|| {
             for key in &data {
                 black_box(trie_simple.contains(key));
@@ -137,7 +136,7 @@ fn bench_lookup_backends(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("RankSelectSeparated256", |b| {
+    group.bench_function("RankSelect256", |b| {
         b.iter(|| {
             for key in &data {
                 black_box(trie_sep256.contains(key));
@@ -153,7 +152,7 @@ fn bench_lookup_backends(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("RankSelectSeparated512", |b| {
+    group.bench_function("RankSelect256", |b| {
         b.iter(|| {
             for key in &data {
                 black_box(trie_sep512.contains(key));
@@ -179,7 +178,7 @@ fn bench_nesting_levels(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("levels", levels), &data, |b, data| {
             b.iter(|| {
                 let mut trie =
-                    NestedLoudsTrie::<RankSelectSeparated256>::with_config(config.clone()).unwrap();
+                    NestedLoudsTrie::<RankSelect256>::with_config(config.clone()).unwrap();
                 for key in data {
                     black_box(trie.insert(key).unwrap());
                 }
@@ -257,7 +256,7 @@ fn bench_data_patterns(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("pattern", pattern), &data, |b, data| {
             b.iter(|| {
                 let mut trie =
-                    NestedLoudsTrie::<RankSelectSeparated256>::with_config(config.clone()).unwrap();
+                    NestedLoudsTrie::<RankSelect256>::with_config(config.clone()).unwrap();
                 for key in data {
                     black_box(trie.insert(key).unwrap());
                 }
@@ -344,7 +343,7 @@ fn bench_memory_efficiency(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("config", name), &data, |b, data| {
             b.iter(|| {
                 let mut trie =
-                    NestedLoudsTrie::<RankSelectSeparated256>::with_config(config.clone()).unwrap();
+                    NestedLoudsTrie::<RankSelect256>::with_config(config.clone()).unwrap();
                 for key in data {
                     trie.insert(key).unwrap();
                 }
@@ -371,7 +370,7 @@ fn bench_builder_patterns(c: &mut Criterion) {
     // Benchmark incremental insertion
     group.bench_function("incremental", |b| {
         b.iter(|| {
-            let mut trie = NestedLoudsTrie::<RankSelectSeparated256>::new().unwrap();
+            let mut trie = NestedLoudsTrie::<RankSelect256>::new().unwrap();
             for key in &data {
                 black_box(trie.insert(key).unwrap());
             }
@@ -383,7 +382,7 @@ fn bench_builder_patterns(c: &mut Criterion) {
     group.bench_function("sorted_builder", |b| {
         b.iter(|| {
             let trie =
-                NestedLoudsTrie::<RankSelectSeparated256>::build_from_sorted(sorted_data.clone())
+                NestedLoudsTrie::<RankSelect256>::build_from_sorted(sorted_data.clone())
                     .unwrap();
             black_box(trie)
         });
@@ -392,7 +391,7 @@ fn bench_builder_patterns(c: &mut Criterion) {
     // Benchmark unsorted builder
     group.bench_function("unsorted_builder", |b| {
         b.iter(|| {
-            let trie = NestedLoudsTrie::<RankSelectSeparated256>::build_from_unsorted(data.clone())
+            let trie = NestedLoudsTrie::<RankSelect256>::build_from_unsorted(data.clone())
                 .unwrap();
             black_box(trie)
         });
@@ -407,7 +406,7 @@ fn bench_builder_patterns(c: &mut Criterion) {
             .unwrap();
 
         b.iter(|| {
-            let trie = NestedLoudsTrie::<RankSelectSeparated256>::build_optimized(
+            let trie = NestedLoudsTrie::<RankSelect256>::build_optimized(
                 sorted_data.clone(),
                 config.clone(),
             )
