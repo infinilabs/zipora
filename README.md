@@ -565,13 +565,13 @@ The configuration system is designed for efficiency:
 
 ```toml
 [dependencies]
-zipora = "1.1.1"
+zipora = "1.1.2"
 
 # Or with optional features
-zipora = { version = "1.1.1", features = ["lz4", "ffi"] }
+zipora = { version = "1.1.2", features = ["lz4", "ffi"] }
 
 # AVX-512 requires nightly Rust (experimental intrinsics)
-zipora = { version = "1.1.1", features = ["avx512", "lz4", "ffi"] }  # nightly only
+zipora = { version = "1.1.2", features = ["avx512", "lz4", "ffi"] }  # nightly only
 ```
 
 ### Basic Usage
