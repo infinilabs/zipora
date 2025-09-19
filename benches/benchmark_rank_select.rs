@@ -1,7 +1,9 @@
 //! Comprehensive rank-select hardware acceleration benchmarks
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use zipora::{BitVector, CpuFeatures, RankSelect256};
+use zipora::{BitVector, RankSelect256, RankSelectPerformanceOps};
+use zipora::system::CpuFeatures;
+use zipora::succinct::rank_select::RankSelectOps;
 
 fn create_test_bitvector(size: usize, density: f64) -> BitVector {
     let mut bv = BitVector::new();
@@ -14,7 +16,7 @@ fn create_test_bitvector(size: usize, density: f64) -> BitVector {
 
 fn benchmark_rank_operations(c: &mut Criterion) {
     // Detect CPU features
-    let features = CpuFeatures::get();
+    let features = zipora::system::get_cpu_features();
     println!(
         "CPU Features - POPCNT: {}, BMI2: {}, AVX2: {}",
         features.has_popcnt, features.has_bmi2, features.has_avx2
@@ -47,7 +49,7 @@ fn benchmark_rank_operations(c: &mut Criterion) {
                     b.iter(|| {
                         let mut sum = 0;
                         for &pos in *positions {
-                            sum += rs.rank1_optimized(pos);
+                            sum += rs.rank1(pos);
                         }
                         sum
                     })
@@ -136,7 +138,7 @@ fn benchmark_select_operations(c: &mut Criterion) {
                     b.iter(|| {
                         let mut positions = Vec::new();
                         for &k in *ks {
-                            positions.push(rs.select1_optimized(k).unwrap());
+                            positions.push(rs.select1(k).unwrap());
                         }
                         positions
                     })

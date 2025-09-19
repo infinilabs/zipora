@@ -9,7 +9,8 @@
 //! Run with: cargo run --example simd_optimization_demo --features simd
 
 use std::time::Instant;
-use zipora::{BitVector, BitwiseOp, CpuFeatures, RankSelect256};
+use zipora::{BitVector, BitwiseOp, RankSelect256, RankSelectOps, RankSelectPerformanceOps};
+use zipora::system::CpuFeatures;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🚀 SIMD Optimization Demo - Advanced Hardware Acceleration");
@@ -49,7 +50,7 @@ fn demonstrate_cpu_features() {
     println!("🔍 CPU Feature Detection");
     println!("========================");
 
-    let features = CpuFeatures::detect();
+    let features = zipora::system::get_cpu_features();
     println!("Detected CPU features:");
     println!(
         "  POPCNT: {}",
@@ -127,7 +128,7 @@ fn demonstrate_rank_performance(rs: &RankSelect256) {
     let start = Instant::now();
     for _ in 0..iterations {
         for &pos in &test_positions {
-            let _ = rs.rank1_optimized(pos);
+            let _ = rs.rank1_hardware_accelerated(pos);
         }
     }
     let lookup_time = start.elapsed();
@@ -197,7 +198,7 @@ fn demonstrate_select_performance(rs: &RankSelect256) {
     let start = Instant::now();
     for _ in 0..iterations {
         for &k in &test_ks {
-            let _ = rs.select1_optimized(k);
+            let _ = rs.select1_hardware_accelerated(k);
         }
     }
     let lookup_time = start.elapsed();

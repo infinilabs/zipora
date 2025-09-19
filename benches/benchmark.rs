@@ -5,6 +5,7 @@ use zipora::{
     GoldHashMap, HuffmanBlobStore, HuffmanEncoder, HuffmanTree, MemoryBlobStore, RankSelect256,
     Rans64Encoder,
 };
+use zipora::succinct::rank_select::RankSelectOps;
 use zipora::entropy::ParallelX1;
 
 #[cfg(feature = "mmap")]
@@ -437,11 +438,11 @@ fn benchmark_optimized_rank_select(c: &mut Criterion) {
 
             // Benchmark optimized rank1
             group.bench_function(
-                &format!("rank1_optimized size:{} density:{:.1}", size, density),
+                &format!("rank1 size:{} density:{:.1}", size, density),
                 |b| {
                     b.iter(|| {
                         let pos = black_box(size / 2);
-                        rs.rank1_optimized(pos)
+                        rs.rank1(pos)
                     });
                 },
             );
@@ -453,7 +454,7 @@ fn benchmark_optimized_rank_select(c: &mut Criterion) {
                     |b| {
                         b.iter(|| {
                             let k = black_box(ones_count / 2);
-                            rs.select1_optimized(k).unwrap_or(0)
+                            rs.select1(k).unwrap_or(0)
                         });
                     },
                 );
@@ -464,7 +465,7 @@ fn benchmark_optimized_rank_select(c: &mut Criterion) {
                     |b| {
                         b.iter(|| {
                             let k = black_box(ones_count / 2);
-                            rs.select1_legacy(k).unwrap_or(0)
+                            rs.select1(k).unwrap_or(0)
                         });
                     },
                 );
@@ -517,11 +518,11 @@ fn benchmark_rank_select_comparison(c: &mut Criterion) {
     let ones_count = rs.count_ones();
 
     // Multiple rank operations to test cache effects
-    group.bench_function("rank1_optimized_batch", |b| {
+    group.bench_function("rank1_batch", |b| {
         b.iter(|| {
             let mut total = 0;
             for i in (0..10).map(|x| x * 50_000) {
-                total += rs.rank1_optimized(black_box(i));
+                total += rs.rank1(black_box(i));
             }
             total
         });
@@ -532,7 +533,7 @@ fn benchmark_rank_select_comparison(c: &mut Criterion) {
         b.iter(|| {
             let mut total = 0;
             for i in (0..10).map(|x| x * 50_000) {
-                total += rs.bit_vector().rank1(black_box(i));
+                total += rs.rank1(black_box(i));
             }
             total
         });
@@ -544,7 +545,7 @@ fn benchmark_rank_select_comparison(c: &mut Criterion) {
             b.iter(|| {
                 let mut total = 0;
                 for i in (0..10).map(|x| (ones_count * x / 10).min(ones_count - 1)) {
-                    total += rs.select1_optimized(black_box(i)).unwrap_or(0);
+                    total += rs.select1(black_box(i)).unwrap_or(0);
                 }
                 total
             });
@@ -554,7 +555,7 @@ fn benchmark_rank_select_comparison(c: &mut Criterion) {
             b.iter(|| {
                 let mut total = 0;
                 for i in (0..10).map(|x| (ones_count * x / 10).min(ones_count - 1)) {
-                    total += rs.select1_legacy(black_box(i)).unwrap_or(0);
+                    total += rs.select1(black_box(i)).unwrap_or(0);
                 }
                 total
             });

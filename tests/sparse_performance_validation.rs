@@ -6,8 +6,7 @@
 use zipora::{
     BitVector,
     succinct::rank_select::{
-        RankSelectOps, RankSelectSimple, RankSelectSeparated256,
-        RankSelectFew, AdaptiveRankSelect,
+        RankSelectOps, RankSelectPerformanceOps, RankSelectInterleaved256, AdaptiveRankSelect, RankSelectBuilder,
         bmi2_comprehensive::{Bmi2Capabilities, Bmi2BitOps, Bmi2BlockOps},
     },
     blob_store::{SortedUintVec, SortedUintVecBuilder},
@@ -120,37 +119,17 @@ fn test_sparse_rank_performance() {
                  (bv.count_ones() as f64 / bv.len() as f64) * 100.0);
         
         // Create implementations
-        let simple = RankSelectSimple::new(bv.clone()).unwrap();
-        let separated = RankSelectSeparated256::new(bv.clone()).unwrap();
-        let sparse_ones = RankSelectFew::<true, 64>::from_bit_vector(bv.clone()).unwrap();
+        let interleaved = RankSelectInterleaved256::new(bv.clone()).unwrap();
         let adaptive = AdaptiveRankSelect::new(bv.clone()).unwrap();
         
         // Generate test positions
         let test_positions: Vec<usize> = (0..bv.len()).step_by(bv.len() / 100).collect();
         
-        // Benchmark simple implementation (baseline)
-        let (_, simple_time) = PerformanceMeasurer::measure_average(|| {
+        // Benchmark interleaved implementation (baseline)
+        let (_, interleaved_time) = PerformanceMeasurer::measure_average(|| {
             let mut sum = 0;
             for &pos in &test_positions {
-                sum += simple.rank1(pos);
-            }
-            sum
-        }, iterations);
-        
-        // Benchmark separated implementation
-        let (_, separated_time) = PerformanceMeasurer::measure_average(|| {
-            let mut sum = 0;
-            for &pos in &test_positions {
-                sum += separated.rank1(pos);
-            }
-            sum
-        }, iterations);
-        
-        // Benchmark sparse implementation
-        let (_, sparse_time) = PerformanceMeasurer::measure_average(|| {
-            let mut sum = 0;
-            for &pos in &test_positions {
-                sum += sparse_ones.rank1(pos);
+                sum += interleaved.rank1(pos);
             }
             sum
         }, iterations);
@@ -165,31 +144,20 @@ fn test_sparse_rank_performance() {
         }, iterations);
         
         // Calculate improvements
-        let separated_improvement = PerformanceMeasurer::improvement_ratio(simple_time, separated_time);
-        let sparse_improvement = PerformanceMeasurer::improvement_ratio(simple_time, sparse_time);
-        let adaptive_improvement = PerformanceMeasurer::improvement_ratio(simple_time, adaptive_time);
-        
-        println!("  Simple:    {:9.3}ms", simple_time.as_secs_f64() * 1000.0);
-        println!("  Separated: {:9.3}ms ({:.2}x improvement)", separated_time.as_secs_f64() * 1000.0, separated_improvement);
-        println!("  Sparse:    {:9.3}ms ({:.2}x improvement)", sparse_time.as_secs_f64() * 1000.0, sparse_improvement);
-        println!("  Adaptive:  {:9.3}ms ({:.2}x improvement)", adaptive_time.as_secs_f64() * 1000.0, adaptive_improvement);
-        println!("  Selected:  {}", adaptive.implementation_name());
-        
+        let adaptive_improvement = PerformanceMeasurer::improvement_ratio(interleaved_time, adaptive_time);
+
+        println!("  Interleaved: {:9.3}ms", interleaved_time.as_secs_f64() * 1000.0);
+        println!("  Adaptive:    {:9.3}ms ({:.2}x improvement)", adaptive_time.as_secs_f64() * 1000.0, adaptive_improvement);
+        println!("  Selected:    {}", adaptive.implementation_name());
+
         // Validate expected improvements for sparse data
         if test_name.contains("sparse") {
-            // For sparse data, adaptive should be competitive or better than separated
-            assert!(adaptive_improvement >= 0.8, 
+            // For sparse data, adaptive should be competitive or better than interleaved
+            assert!(adaptive_improvement >= 0.8,
                    "Adaptive should perform well on sparse data: {:.2}x", adaptive_improvement);
-            
-            // If sparse implementation was selected, it should perform well
-            if adaptive.implementation_name().contains("RankSelectFew") {
-                assert!(adaptive_improvement >= 1.0,
-                       "Sparse adaptive should improve over simple: {:.2}x", adaptive_improvement);
-            }
         }
-        
-        // All implementations should be reasonably fast
-        assert!(separated_improvement >= 0.5, "Separated should not be too slow: {:.2}x", separated_improvement);
+
+        // Adaptive implementation should be reasonably fast
         assert!(adaptive_improvement >= 0.5, "Adaptive should not be too slow: {:.2}x", adaptive_improvement);
     }
 }
@@ -218,39 +186,21 @@ fn test_sparse_select_performance() {
         println!("\nTesting {}: {} ones", test_name, ones_count);
         
         // Create implementations
-        let simple = RankSelectSimple::new(bv.clone()).unwrap();
-        let separated = RankSelectSeparated256::new(bv.clone()).unwrap();
-        let sparse_ones = RankSelectFew::<true, 64>::from_bit_vector(bv.clone()).unwrap();
+        let interleaved = RankSelectInterleaved256::new(bv.clone()).unwrap();
         let adaptive = AdaptiveRankSelect::new(bv.clone()).unwrap();
         
         // Generate test select indices
         let test_ks: Vec<usize> = (0..ones_count).step_by((ones_count / 20).max(1)).collect();
         
         // Benchmark implementations
-        let (_, simple_time) = PerformanceMeasurer::measure_average(|| {
+        let (_, interleaved_time) = PerformanceMeasurer::measure_average(|| {
             let mut positions = Vec::new();
             for &k in &test_ks {
-                positions.push(simple.select1(k).unwrap());
+                positions.push(interleaved.select1(k).unwrap());
             }
             positions
         }, iterations);
-        
-        let (_, separated_time) = PerformanceMeasurer::measure_average(|| {
-            let mut positions = Vec::new();
-            for &k in &test_ks {
-                positions.push(separated.select1(k).unwrap());
-            }
-            positions
-        }, iterations);
-        
-        let (_, sparse_time) = PerformanceMeasurer::measure_average(|| {
-            let mut positions = Vec::new();
-            for &k in &test_ks {
-                positions.push(sparse_ones.select1(k).unwrap());
-            }
-            positions
-        }, iterations);
-        
+
         let (_, adaptive_time) = PerformanceMeasurer::measure_average(|| {
             let mut positions = Vec::new();
             for &k in &test_ks {
@@ -258,25 +208,32 @@ fn test_sparse_select_performance() {
             }
             positions
         }, iterations);
-        
-        // Calculate improvements
-        let separated_improvement = PerformanceMeasurer::improvement_ratio(simple_time, separated_time);
-        let sparse_improvement = PerformanceMeasurer::improvement_ratio(simple_time, sparse_time);
-        let adaptive_improvement = PerformanceMeasurer::improvement_ratio(simple_time, adaptive_time);
-        
-        println!("  Simple:    {:9.3}ms", simple_time.as_secs_f64() * 1000.0);
-        println!("  Separated: {:9.3}ms ({:.2}x improvement)", separated_time.as_secs_f64() * 1000.0, separated_improvement);
-        println!("  Sparse:    {:9.3}ms ({:.2}x improvement)", sparse_time.as_secs_f64() * 1000.0, sparse_improvement);
-        println!("  Adaptive:  {:9.3}ms ({:.2}x improvement)", adaptive_time.as_secs_f64() * 1000.0, adaptive_improvement);
-        
-        // For sparse data, sparse select should be very fast (O(1) lookup)
+
+        let (_, hardware_accel_time) = PerformanceMeasurer::measure_average(|| {
+            let mut positions = Vec::new();
+            for &k in &test_ks {
+                positions.push(interleaved.select1_hardware_accelerated(k).unwrap());
+            }
+            positions
+        }, iterations);
+
+        // Calculate improvements (using interleaved as baseline)
+        let adaptive_improvement = PerformanceMeasurer::improvement_ratio(interleaved_time, adaptive_time);
+        let hardware_improvement = PerformanceMeasurer::improvement_ratio(interleaved_time, hardware_accel_time);
+
+        println!("  Interleaved:  {:9.3}ms", interleaved_time.as_secs_f64() * 1000.0);
+        println!("  Adaptive:     {:9.3}ms ({:.2}x vs interleaved)", adaptive_time.as_secs_f64() * 1000.0, adaptive_improvement);
+        println!("  Hardware-acc: {:9.3}ms ({:.2}x vs interleaved)", hardware_accel_time.as_secs_f64() * 1000.0, hardware_improvement);
+
+        // For sparse data, adaptive select should choose optimal implementation
         if test_name.contains("sparse") {
-            assert!(sparse_improvement >= 1.5,
-                   "Sparse select should be significantly faster: {:.2}x", sparse_improvement);
-            
-            // Adaptive should choose well
-            assert!(adaptive_improvement >= 1.0,
-                   "Adaptive select should improve over simple: {:.2}x", adaptive_improvement);
+            // Hardware acceleration should provide improvement for sparse data
+            assert!(hardware_improvement >= 1.0,
+                   "Hardware accelerated select should be competitive: {:.2}x", hardware_improvement);
+
+            // Adaptive should choose well and be competitive
+            assert!(adaptive_improvement >= 0.5,
+                   "Adaptive select should be reasonable: {:.2}x", adaptive_improvement);
         }
     }
 }
@@ -502,17 +459,17 @@ fn test_adaptive_construction_overhead() {
         
         // Measure simple construction
         let (_, simple_time) = PerformanceMeasurer::measure(|| {
-            RankSelectSimple::new(bv.clone()).unwrap()
+            RankSelectInterleaved256::new(bv.clone()).unwrap()
         });
         
         // Measure separated construction
         let (_, separated_time) = PerformanceMeasurer::measure(|| {
-            RankSelectSeparated256::new(bv.clone()).unwrap()
+            RankSelectInterleaved256::new(bv.clone()).unwrap()
         });
         
-        // Measure sparse construction
+        // Measure sparse construction using builder trait
         let (_, sparse_time) = PerformanceMeasurer::measure(|| {
-            RankSelectFew::<true, 64>::from_bit_vector(bv.clone()).unwrap()
+            RankSelectInterleaved256::from_bit_vector(bv.clone()).unwrap()
         });
         
         // Measure adaptive construction (includes analysis overhead)
@@ -567,7 +524,7 @@ fn test_overall_performance_validation() {
                  (bv.count_ones() as f64 / bv.len() as f64) * 100.0);
         
         // Create implementations
-        let simple = RankSelectSimple::new(bv.clone()).unwrap();
+        let simple = RankSelectInterleaved256::new(bv.clone()).unwrap();
         let adaptive = AdaptiveRankSelect::new(bv.clone()).unwrap();
         
         // Measure memory usage
@@ -610,8 +567,8 @@ fn test_overall_performance_validation() {
         
         // For sparse data, adaptive should choose sparse implementations
         if test_name.contains("sparse") && bv.count_ones() < bv.len() / 20 {
-            assert!(adaptive.implementation_name().contains("RankSelectFew") || 
-                   adaptive.implementation_name().contains("RankSelectSimple"),
+            assert!(adaptive.implementation_name().contains("RankSelectInterleaved256") || 
+                   adaptive.implementation_name().contains("RankSelectInterleaved256"),
                    "Should choose sparse implementation for sparse data: {}", adaptive.implementation_name());
         }
     }

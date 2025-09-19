@@ -4,7 +4,7 @@
 //! with advanced implementations for maximum performance.
 
 use crate::error::{Result, ZiporaError};
-use crate::succinct::rank_select::CpuFeatures;
+use crate::system::{CpuFeatures, get_cpu_features};
 use crate::succinct::rank_select::bmi2_acceleration::*;
 
 #[cfg(target_arch = "x86_64")]
@@ -31,7 +31,7 @@ pub struct BitOpsConfig {
 
 impl Default for BitOpsConfig {
     fn default() -> Self {
-        let features = CpuFeatures::detect();
+        let features = get_cpu_features();
         Self {
             enable_bmi2: features.has_bmi2,
             enable_avx2: features.has_avx2, 
@@ -58,7 +58,7 @@ impl BitOps {
     
     /// Create bit operations handler with custom configuration
     pub fn with_config(config: BitOpsConfig) -> Self {
-        let features = CpuFeatures::detect();
+        let features = get_cpu_features().clone();
         Self { config, features }
     }
     

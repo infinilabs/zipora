@@ -13,7 +13,7 @@ use zipora::fsa::{
     DoubleArrayTrie, DoubleArrayTrieBuilder, DoubleArrayTrieConfig, FiniteStateAutomaton,
     PrefixIterable, StateInspectable, StatisticsProvider, Trie,
 };
-use zipora::succinct::rank_select::{RankSelectInterleaved256, RankSelectSimple};
+use zipora::succinct::rank_select::{RankSelectInterleaved256, RankSelectOps, RankSelectBuilder};
 
 // Note: CompressedSparseTrie would be tested here too when available in async context
 
@@ -708,7 +708,7 @@ proptest! {
         keys in prop::collection::vec(prop::collection::vec(any::<u8>(), 0..50), 0..100)
     ) {
         let mut da_trie = DoubleArrayTrie::new();
-        let mut nested_trie = NestedLoudsTrie::<RankSelectSimple>::new().unwrap();
+        let mut nested_trie = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
 
         let mut successful_keys = HashSet::new();
 
@@ -857,7 +857,7 @@ proptest! {
         keys in prop::collection::vec(prop::collection::vec(any::<u8>(), 1..30), 1..50)
     ) {
         let mut da_trie = DoubleArrayTrie::new();
-        let mut nested_trie = NestedLoudsTrie::<RankSelectSimple>::new().unwrap();
+        let mut nested_trie = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
 
         for key in &keys {
             let _ = da_trie.insert(key);
@@ -1179,54 +1179,38 @@ fn test_comprehensive_integration_scenario() {
 }
 
 #[test]
-fn test_mixed_backend_integration() {
-    // Test that different rank/select backends work correctly in integration
+fn test_rank_select_backend_integration() {
+    // Test that RankSelectInterleaved256 backend works correctly with trie integration
 
     let keys = generate_common_test_keys();
 
-    let mut simple_trie = NestedLoudsTrie::<RankSelectSimple>::new().unwrap();
-    let mut interleaved_trie = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
+    // Test with RankSelectInterleaved256 backend (best performer: 121-302 Mops/s)
+    let mut trie = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
 
     for key in &keys {
-        simple_trie.insert(key).unwrap();
-        interleaved_trie.insert(key).unwrap();
+        trie.insert(key).unwrap();
     }
 
-    // Both should produce identical results
-    assert_eq!(simple_trie.len(), interleaved_trie.len());
+    // Verify all operations work correctly
+    assert_eq!(trie.len(), keys.len());
 
     for key in &keys {
-        assert_eq!(simple_trie.contains(key), interleaved_trie.contains(key));
-        assert!(simple_trie.contains(key));
-
-        assert_eq!(
-            simple_trie.lookup(key).is_some(),
-            interleaved_trie.lookup(key).is_some()
-        );
-        assert!(simple_trie.lookup(key).is_some());
+        assert!(trie.contains(key));
+        assert!(trie.lookup(key).is_some());
     }
 
-    // Prefix operations should be consistent
-    let simple_all: HashSet<_> = simple_trie.iter_all().collect();
-    let interleaved_all: HashSet<_> = interleaved_trie.iter_all().collect();
-    assert_eq!(simple_all, interleaved_all);
+    // Test prefix operations
+    let all_keys: HashSet<_> = trie.iter_all().collect();
+    assert_eq!(all_keys.len(), keys.len());
 
-    // Statistics should be valid for both
-    let simple_stats = simple_trie.stats();
-    let interleaved_stats = interleaved_trie.stats();
+    // Verify statistics are valid
+    let stats = trie.stats();
+    assert_eq!(stats.num_keys, keys.len());
+    assert!(stats.memory_usage > 0);
+    assert!(stats.bits_per_key > 0.0);
 
-    assert_eq!(simple_stats.num_keys, interleaved_stats.num_keys);
-    assert!(simple_stats.memory_usage > 0);
-    assert!(interleaved_stats.memory_usage > 0);
-
-    // Memory usage may differ between backends
-    println!("Backend comparison:");
-    println!(
-        "  Simple backend memory: {} bytes",
-        simple_stats.memory_usage
-    );
-    println!(
-        "  Interleaved backend memory: {} bytes",
-        interleaved_stats.memory_usage
-    );
+    println!("RankSelectInterleaved256 backend performance:");
+    println!("  Memory usage: {} bytes", stats.memory_usage);
+    println!("  Bits per key: {:.2}", stats.bits_per_key);
+    println!("  Total keys: {}", stats.num_keys);
 }

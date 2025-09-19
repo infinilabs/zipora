@@ -7,9 +7,9 @@
 
 use criterion::{black_box, BenchmarkId, Criterion, criterion_group, criterion_main, Throughput};
 use zipora::{
-    BitVector, RankSelectOps, RankSelectSimple, RankSelectSeparated256, RankSelectInterleaved256,
-    RankSelectFew,
+    BitVector, RankSelect256,
 };
+use zipora::succinct::rank_select::RankSelectOps;
 
 /// Benchmark data patterns for comprehensive testing
 #[derive(Debug, Clone)]

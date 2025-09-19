@@ -3,12 +3,13 @@
 //! A specialized container for sorted string collections that achieves 60% memory
 //! reduction compared to Vec<String> through succinct data structure integration.
 //!
-//! The ZoSortedStrVec uses BitVector and RankSelect256 structures to efficiently
+//! The ZoSortedStrVec uses BitVector and RankSelectInterleaved256 structures to efficiently
 //! store and query string collections with zero-copy access patterns.
 
 use crate::containers::SortableStrVec;
 use crate::error::{Result, ZiporaError};
-use crate::succinct::{BitVector, RankSelect256};
+use crate::succinct::{BitVector, RankSelectInterleaved256};
+use crate::succinct::rank_select::RankSelectOps;
 use std::cmp::Ordering;
 
 #[cfg(feature = "mmap")]
@@ -19,14 +20,14 @@ use std::fs::File;
 /// This container provides memory-efficient storage for sorted string collections
 /// with fast binary search capabilities. The implementation uses:
 /// - BitVector for marking string boundaries
-/// - RankSelect256 for O(1) string offset calculation
+/// - RankSelectInterleaved256 for O(1) string offset calculation
 /// - Contiguous memory layout for cache efficiency
 /// - Zero-copy string access through calculated offsets
 ///
 /// # Memory Layout
 ///
 /// ```text
-/// [BitVector: string boundaries] [RankSelect256: fast rank/select]
+/// [BitVector: string boundaries] [RankSelectInterleaved256: fast rank/select]
 /// [String Data: concatenated strings with null terminators]
 /// ```
 ///
@@ -55,7 +56,7 @@ pub struct ZoSortedStrVec {
     /// Bit vector marking string boundaries (1 = start of string)
     boundaries: BitVector,
     /// RankSelect structure for fast offset calculation
-    rank_select: RankSelect256,
+    rank_select: RankSelectInterleaved256,
     /// Concatenated string data with null terminators
     data: Vec<u8>,
     /// Number of strings stored
@@ -142,9 +143,9 @@ impl ZoSortedStrVec {
     /// Create an empty ZoSortedStrVec
     fn empty() -> Self {
         let boundaries = BitVector::new();
-        let rank_select = RankSelect256::new(boundaries.clone()).unwrap_or_else(|_| {
+        let rank_select = RankSelectInterleaved256::new(boundaries.clone()).unwrap_or_else(|_| {
             // Fallback for empty BitVector - this shouldn't fail in practice
-            RankSelect256::new(BitVector::new()).unwrap()
+            RankSelectInterleaved256::new(BitVector::new()).unwrap()
         });
 
         Self {
@@ -208,10 +209,10 @@ impl ZoSortedStrVec {
         }
 
         // Build RankSelect structure
-        let rank_select = RankSelect256::new(bit_vector.clone())?;
+        let rank_select = RankSelectInterleaved256::new(bit_vector.clone())?;
 
         let memory_usage = bit_vector.len() / 8 + // Approximate BitVector memory
-                          (rank_select.len() / 256) * 4 + // Approximate RankSelect256 memory
+                          (rank_select.len() / 256) * 4 + // Approximate RankSelectInterleaved256 memory
                           data.capacity() +
                           std::mem::size_of::<Self>();
 

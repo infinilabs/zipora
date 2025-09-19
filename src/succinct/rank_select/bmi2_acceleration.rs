@@ -43,7 +43,7 @@ use crate::error::{Result, ZiporaError};
 use crate::succinct::rank_select::SimdCapabilities;
 
 /// BMI2 instruction set capabilities
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Bmi2Capabilities {
     /// BMI1 instructions available (LZCNT, TZCNT, POPCNT)
     pub has_bmi1: bool,

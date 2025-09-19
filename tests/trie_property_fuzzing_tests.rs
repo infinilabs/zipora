@@ -11,7 +11,7 @@ use zipora::fsa::{
     DoubleArrayTrie, DoubleArrayTrieBuilder, DoubleArrayTrieConfig, FiniteStateAutomaton,
     PrefixIterable, StateInspectable, StatisticsProvider, Trie,
 };
-use zipora::succinct::rank_select::{RankSelectInterleaved256, RankSelectSimple};
+use zipora::succinct::rank_select::RankSelectInterleaved256;
 
 // =============================================================================
 // CUSTOM GENERATORS FOR PROPERTY TESTING
@@ -135,7 +135,7 @@ proptest! {
         prop_assert_eq!(da_trie.len(), expected_keys.len());
 
         // Test Nested LOUDS Trie
-        let mut nested_trie = NestedLoudsTrie::<RankSelectSimple>::new().unwrap();
+        let mut nested_trie = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
         let mut nested_expected = HashSet::new();
 
         for key in &keys {
@@ -441,7 +441,7 @@ fn fuzz_trie_operations(data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let sequence = FuzzTestSequence::arbitrary(&mut unstructured)?;
 
     let mut da_trie = DoubleArrayTrie::new();
-    let mut nested_trie = NestedLoudsTrie::<RankSelectSimple>::new()?;
+    let mut nested_trie = NestedLoudsTrie::<RankSelectInterleaved256>::new()?;
     let mut reference_keys = HashSet::new();
 
     for operation in sequence.operations {

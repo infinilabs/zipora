@@ -3689,7 +3689,15 @@ async fn example() {
 
 ## Performance & Security
 
-### Performance
+### Performance Fix Implementation ✅
+
+**Critical Performance Issue Resolved**: The hardware acceleration bug identified in performance analysis has been successfully fixed. The codebase previously had `#[cfg(test)]` blocks that disabled BMI2/AVX2/POPCNT features during testing, causing 33-45x slower performance than claimed. This has been completely resolved through proper runtime CPU feature detection.
+
+**Fix Implementation**:
+- ✅ Removed test-mode hardware feature disabling
+- ✅ Implemented proper `is_x86_feature_detected!()` runtime detection
+- ✅ All SIMD optimizations now work correctly in tests and production
+- ✅ BMI2/AVX2/POPCNT acceleration fully functional
 
 Current performance on Intel i7-10700K:
 
@@ -4039,7 +4047,7 @@ fn accelerated_operation(data: &[u32]) -> u32 {
 
 | Component | SIMD Acceleration | Performance Gain |
 |-----------|------------------|------------------|
-| **Rank/Select** | AVX2 + BMI2 | **3.3 Gelem/s** (8x parallel) |
+| **Rank/Select** | AVX2 + BMI2 | **0.3-0.4 Gops/s** (hardware-accelerated) |
 | **Radix Sort** | AVX2 digit counting | **4-8x faster** sorting |
 | **Cache-Oblivious Sort** | AVX2 + cache prefetch | **2-4x faster** optimal cache complexity |
 | **String Processing** | AVX2 UTF-8 validation | **2-4x faster** text processing |
@@ -4047,6 +4055,24 @@ fn accelerated_operation(data: &[u32]) -> u32 {
 | **Hash Maps** | Cache prefetching | **2-3x fewer** cache misses |
 | **Memory Operations** | Cache-optimized SIMD | **2-3x faster** small copies |
 | **Cache Optimization** | Hardware detection | **>95% hit rate** for hot data |
+
+### Performance Notes
+
+**Hardware Requirements for Optimal Performance:**
+- **CPU**: x86_64 with BMI2, AVX2, and POPCNT support (Intel Haswell+ or AMD Excavator+)
+- **Memory**: DDR4-2400+ recommended for cache-sensitive operations
+- **Compiler**: Rust 1.88+ with target-cpu=native for maximum SIMD utilization
+
+**Performance Characteristics:**
+- **Data Size Dependency**: Performance scales with data size; small datasets (≤100K elements) may fit entirely in cache
+- **Pattern Sensitivity**: Sparse vs. dense data patterns can affect performance by 2-3x
+- **Hardware Acceleration**: Requires BMI2/AVX2 support; falls back to scalar implementations otherwise
+- **Cache Effects**: Larger datasets (>1M elements) may show different performance characteristics due to cache misses
+
+**Benchmark Environment:**
+- All measurements taken with hardware acceleration enabled in production builds
+- Test platform: AMD CPU with AVX2, BMI2, POPCNT support
+- Performance may vary significantly on different hardware configurations
 
 ## Features
 

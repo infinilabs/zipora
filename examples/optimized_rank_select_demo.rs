@@ -3,7 +3,7 @@ use std::time::Instant;
 ///
 /// This example showcases the dramatic performance improvements achieved through
 /// pre-computed lookup tables for bit manipulation operations.
-use zipora::{BitVector, RankSelect256};
+use zipora::{BitVector, RankSelect256, RankSelectOps, RankSelectPerformanceOps};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Optimized Rank-Select Lookup Table Demo ===");
@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for &pos in &positions {
         let start = Instant::now();
-        let rank = rank_select.rank1_optimized(pos);
+        let rank = rank_select.rank1_hardware_accelerated(pos);
         let time = start.elapsed();
 
         println!(
@@ -64,7 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for &k in &select_indices {
         if k < ones_count {
             let start = Instant::now();
-            let pos = rank_select.select1_optimized(k)?;
+            let pos = rank_select.select1_hardware_accelerated(k)?;
             let time = start.elapsed();
 
             println!(
@@ -83,16 +83,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut all_correct = true;
 
     for &pos in &test_positions {
-        let optimized_rank = rank_select.rank1_optimized(pos);
-        let legacy_rank = rank_select.bit_vector().rank1(pos);
-        let correct = optimized_rank == legacy_rank;
+        let optimized_rank = rank_select.rank1_hardware_accelerated(pos);
+        let standard_rank = rank_select.rank1(pos);
+        let correct = optimized_rank == standard_rank;
         all_correct &= correct;
 
         println!(
-            "Position {}: optimized={}, legacy={} {}",
+            "Position {}: optimized={}, standard={} {}",
             pos,
             optimized_rank,
-            legacy_rank,
+            standard_rank,
             if correct { "✓" } else { "✗" }
         );
     }
@@ -101,16 +101,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let test_k_values = [0, 1000, 10000, ones_count / 3];
     for &k in &test_k_values {
         if k < ones_count {
-            let optimized_pos = rank_select.select1_optimized(k)?;
-            let legacy_pos = rank_select.select1_legacy(k)?;
-            let correct = optimized_pos == legacy_pos;
+            let optimized_pos = rank_select.select1_hardware_accelerated(k)?;
+            let standard_pos = rank_select.select1(k)?;
+            let correct = optimized_pos == standard_pos;
             all_correct &= correct;
 
             println!(
-                "Select k={}: optimized={}, legacy={} {}",
+                "Select k={}: optimized={}, standard={} {}",
                 k,
                 optimized_pos,
-                legacy_pos,
+                standard_pos,
                 if correct { "✓" } else { "✗" }
             );
         }
@@ -131,7 +131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let mut total_rank = 0;
     for i in 0..batch_size {
-        total_rank += rank_select.rank1_optimized(i * 10);
+        total_rank += rank_select.rank1_hardware_accelerated(i * 10);
     }
     let batch_time = start.elapsed();
 

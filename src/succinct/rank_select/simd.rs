@@ -54,14 +54,14 @@ use std::arch::aarch64::{
     vld1q_u8,
 };
 
-// Re-export enhanced CPU features from legacy module
-pub use super::legacy::CpuFeatures;
+// Re-export enhanced CPU features from system module
+pub use crate::system::{CpuFeatures, get_cpu_features};
 
 /// Cached CPU features for optimal performance
 static SIMD_FEATURES: OnceLock<SimdCapabilities> = OnceLock::new();
 
 /// Enhanced SIMD capabilities detection
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct SimdCapabilities {
     /// Basic CPU features
     pub cpu_features: CpuFeatures,
@@ -76,10 +76,10 @@ pub struct SimdCapabilities {
 impl SimdCapabilities {
     /// Detect optimal SIMD capabilities for this platform
     pub fn detect() -> Self {
-        let cpu_features = *CpuFeatures::get();
+        let cpu_features = get_cpu_features().clone();
 
         let (optimization_tier, chunk_size, use_prefetch) =
-            Self::determine_optimization_strategy(cpu_features);
+            Self::determine_optimization_strategy(cpu_features.clone());
 
         Self {
             cpu_features,

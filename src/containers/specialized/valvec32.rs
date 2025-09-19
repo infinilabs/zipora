@@ -8,7 +8,7 @@
 
 use crate::error::{Result, ZiporaError};
 use crate::memory::SecureMemoryPool;
-use std::alloc::{self, Layout};
+// Note: Using libc allocator throughout for consistency
 use std::fmt;
 use std::mem;
 use std::ops::{Index, IndexMut};
@@ -86,44 +86,42 @@ fn get_usable_size(_ptr: *mut u8, size: usize) -> usize {
     size
 }
 
-/// Branch prediction hints for performance optimization
+/// Branch prediction hints for performance optimization following topling-zip pattern
+/// Simple, direct approach without function call overhead
 #[cfg(feature = "nightly")]
 use std::intrinsics::{likely, unlikely};
 
+// For stable Rust, we use the simplest approach: just return the boolean
+// The compiler's own optimization will handle branch prediction effectively
+// This avoids any function call overhead that was hurting performance
 #[cfg(not(feature = "nightly"))]
 #[inline(always)]
 fn likely(b: bool) -> bool {
+    // Simple pass-through - let compiler handle optimization
+    // This matches the fallback in topling-zip for non-GCC compilers
     b
 }
 
 #[cfg(not(feature = "nightly"))]
 #[inline(always)]
 fn unlikely(b: bool) -> bool {
+    // Simple pass-through - let compiler handle optimization
+    // This matches the fallback in topling-zip for non-GCC compilers
     b
 }
 
-/// Adaptive growth strategy with size-based growth factors
-/// Optimized for different vector sizes to reduce memory waste and improve performance
+/// Simple optimal growth strategy following topling-zip pattern
+/// Uses golden ratio (~1.618) for mathematically optimal amortized performance
 #[inline]
-fn larger_capacity(old_cap: u32, element_size: usize) -> u32 {
+fn larger_capacity(old_cap: u32) -> u32 {
     if old_cap == 0 {
-        // Start with reasonable initial capacity based on element size
-        let elements_per_cache_line = 64 / element_size.max(1);
-        return (elements_per_cache_line as u32).clamp(4, 16);
+        // Start with reasonable initial capacity - cache line optimized
+        return 8; // Simple, fast initial size
     }
-    
-    // Adaptive growth strategy based on current size
-    let new_cap = if old_cap <= 64 {
-        // Small vectors: 2x growth for better performance
-        old_cap.saturating_mul(2)
-    } else if old_cap <= 4096 {
-        // Medium vectors: 1.5x growth for balanced approach
-        old_cap + (old_cap >> 1)
-    } else {
-        // Large vectors: 1.25x growth to minimize memory waste
-        old_cap + (old_cap >> 2)
-    };
-    
+
+    // topling-zip pattern: oldcap * 103 / 64 ≈ 1.609375 (close to golden ratio 1.618)
+    // This is mathematically optimal for amortized performance
+    let new_cap = (old_cap as u64 * 103 / 64) as u32;
     new_cap.min(MAX_CAPACITY)
 }
 
@@ -227,12 +225,9 @@ impl<T> ValVec32<T> {
         let capacity_usize = capacity as usize;
         let size = capacity_usize * mem::size_of::<T>();
         
-        // Use standard allocation with proper alignment
-        let layout = Layout::array::<T>(capacity_usize)
-            .map_err(|_| ZiporaError::invalid_data("Invalid layout for capacity"))?;
-        
+        // Use libc allocation for consistency with grow_to() and drop()
         let ptr = unsafe {
-            let raw_ptr = alloc::alloc(layout);
+            let raw_ptr = libc::malloc(size);
             if raw_ptr.is_null() {
                 return Err(ZiporaError::out_of_memory(size));
             }
@@ -353,15 +348,15 @@ impl<T> ValVec32<T> {
         self.grow_to(new_capacity)
     }
 
-    /// Calculates new capacity using adaptive growth strategy
+    /// Calculates new capacity using topling-zip optimal growth strategy
     #[inline]
     fn calculate_new_capacity(&self, min_capacity: u32) -> u32 {
-        let new_cap = larger_capacity(self.capacity, mem::size_of::<T>()).max(min_capacity);
+        let new_cap = larger_capacity(self.capacity).max(min_capacity);
         new_cap.min(MAX_CAPACITY)
     }
 
-    /// Grows the vector to the specified capacity - marked cold and never inline
-    /// to keep it out of the hot path for better instruction cache performance
+    /// Grows the vector to the specified capacity - simplified following topling-zip pattern
+    /// Simple realloc-based approach for maximum performance
     #[cold]
     #[inline(never)]
     fn grow_to(&mut self, new_capacity: u32) -> Result<()> {
@@ -378,70 +373,32 @@ impl<T> ValVec32<T> {
         let new_capacity_usize = new_capacity as usize;
         let elem_size = mem::size_of::<T>();
         let new_size = new_capacity_usize.saturating_mul(elem_size);
-        
-        // Optimize: Try to use realloc first which can be more efficient
+
+        // Topling-zip exact realloc pattern: T* q = (T*)pa_realloc(p, sizeof(T) * new_cap);
         let new_ptr = if self.capacity == 0 {
-            // Initial allocation - use simple malloc without Layout overhead
+            // Initial allocation - use malloc directly like topling-zip
             unsafe {
-                let align = mem::align_of::<T>();
-                let raw_ptr = if align <= mem::align_of::<usize>() {
-                    // Most common case: standard alignment
-                    let ptr = libc::malloc(new_size);
-                    ptr as *mut T
-                } else {
-                    // Need special alignment
-                    let layout = Layout::from_size_align_unchecked(new_size, align);
-                    alloc::alloc(layout) as *mut T
-                };
-                
+                let raw_ptr = libc::malloc(new_size);
                 if raw_ptr.is_null() {
                     return Err(ZiporaError::out_of_memory(new_size));
                 }
-                NonNull::new_unchecked(raw_ptr)
+                NonNull::new_unchecked(raw_ptr as *mut T)
             }
         } else {
-            // Reallocation: Try realloc first which may avoid copying
+            // Reallocation - use realloc directly like topling-zip pa_realloc
             unsafe {
-                let align = mem::align_of::<T>();
-                let raw_ptr = if align <= mem::align_of::<usize>() {
-                    // Standard alignment - use realloc
-                    let ptr = libc::realloc(self.ptr.as_ptr() as *mut libc::c_void, new_size);
-                    ptr as *mut T
-                } else {
-                    // Special alignment - must allocate and copy
-                    let layout = Layout::from_size_align_unchecked(new_size, align);
-                    let new_raw = alloc::alloc(layout) as *mut T;
-                    if !new_raw.is_null() && self.len > 0 {
-                        ptr::copy_nonoverlapping(
-                            self.ptr.as_ptr(),
-                            new_raw,
-                            self.len as usize,
-                        );
-                    }
-                    if self.capacity > 0 {
-                        let old_layout = Layout::from_size_align_unchecked(
-                            self.capacity as usize * elem_size,
-                            align
-                        );
-                        alloc::dealloc(self.ptr.as_ptr() as *mut u8, old_layout);
-                    }
-                    new_raw
-                };
-                
+                let old_ptr = self.ptr.as_ptr() as *mut libc::c_void;
+                let raw_ptr = libc::realloc(old_ptr, new_size);
                 if raw_ptr.is_null() {
                     return Err(ZiporaError::out_of_memory(new_size));
                 }
-                NonNull::new_unchecked(raw_ptr)
+                NonNull::new_unchecked(raw_ptr as *mut T)
             }
         };
-        
-        // Use malloc_usable_size to get actual allocated capacity
-        let actual_size = get_usable_size(new_ptr.as_ptr() as *mut u8, new_size);
-        let actual_capacity = (actual_size / elem_size).min(MAX_CAPACITY as usize);
 
         self.ptr = new_ptr;
-        self.capacity = actual_capacity as u32;
-        
+        self.capacity = new_capacity;
+
         Ok(())
     }
 
@@ -471,16 +428,17 @@ impl<T> ValVec32<T> {
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
     /// Appends an element to the back of the vector - hot path optimized
-    /// The fast path is always inlined for maximum performance
+    /// Follows topling-zip patterns for maximum performance
     #[inline(always)]
     pub fn push(&mut self, value: T) -> Result<()> {
-        // Hot path: check capacity with likely hint
-        if likely(self.len < self.capacity) {
-            // Fast path: direct write without any function calls
+        let oldsize = self.len;
+        // Direct implementation - most likely case is that we have capacity
+        if oldsize < self.capacity {
+            // Fast path: direct write following topling-zip placement new pattern
             unsafe {
-                // Use offset instead of add for potentially better codegen
-                ptr::write(self.ptr.as_ptr().offset(self.len as isize), value);
-                self.len += 1;
+                // Use add instead of offset for better codegen (matches topling-zip)
+                ptr::write(self.ptr.as_ptr().add(oldsize as usize), value);
+                self.len = oldsize + 1;
             }
             Ok(())
         } else {
@@ -495,6 +453,8 @@ impl<T> ValVec32<T> {
     /// This method matches the behavior of std::Vec::push, panicking if
     /// allocation fails or the vector is at maximum capacity. This provides
     /// optimal performance for benchmarking against std::Vec.
+    ///
+    /// Ultra-optimized following exact topling-zip patterns for maximum performance.
     ///
     /// # Arguments
     ///
@@ -517,19 +477,19 @@ impl<T> ValVec32<T> {
     /// assert_eq!(vec[0], 42);
     /// assert_eq!(vec[1], 84);
     /// ```
-    /// Appends an element to the vector, panicking on failure - maximum performance
-    /// This provides optimal performance for benchmarking against std::Vec
     #[inline(always)]
     pub fn push_panic(&mut self, value: T) {
-        // Check with branch prediction hint
-        if likely(self.len < self.capacity) {
-            // Fast path with minimal overhead
+        let oldsize = self.len;
+        // Topling-zip exact pattern: check capacity first, likely branch optimization
+        if likely(oldsize < self.capacity) {
+            // Fast path: ultra-optimized direct write (matches topling-zip new(p+oldsize)T(x))
             unsafe {
-                ptr::write(self.ptr.as_ptr().offset(self.len as isize), value);
-                self.len += 1;
+                // Use ptr::write for placement new semantics - matches topling-zip exactly
+                ptr::write(self.ptr.as_ptr().add(oldsize as usize), value);
+                self.len = oldsize + 1;
             }
         } else {
-            // Delegate to cold path
+            // Cold path: never inlined slow path like topling-zip
             self.push_slow_panic(value);
         }
     }
@@ -1018,9 +978,9 @@ impl<T> Drop for ValVec32<T> {
         self.clear();
 
         if self.capacity > 0 && mem::size_of::<T>() > 0 {
-            let layout = Layout::array::<T>(self.capacity as usize).unwrap();
+            // Use libc::free to match topling-zip pattern
             unsafe {
-                alloc::dealloc(self.ptr.as_ptr() as *mut u8, layout);
+                libc::free(self.ptr.as_ptr() as *mut libc::c_void);
             }
         }
     }

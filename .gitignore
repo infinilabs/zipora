@@ -35,6 +35,13 @@ tarpaulin-report.html
 lcov.info
 cobertura.xml
 
+# Temporary debugging and performance test files
+debug_*
+*debug*.rs
+perf_test*
+simple_perf_test*
+test_rank_select_debug*
+
 # IDE and Editor files
 .vscode/
 .idea/

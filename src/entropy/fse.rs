@@ -6,7 +6,7 @@
 
 use crate::error::{Result, ZiporaError};
 use crate::entropy::{EntropyStats, bit_ops::BitOps};
-use crate::succinct::rank_select::CpuFeatures;
+use crate::system::{CpuFeatures, get_cpu_features};
 use serde::{Deserialize, Serialize};
 
 #[cfg(target_arch = "x86_64")]
@@ -28,7 +28,7 @@ pub struct HardwareCapabilities {
 
 impl Default for HardwareCapabilities {
     fn default() -> Self {
-        let features = CpuFeatures::detect();
+        let features = get_cpu_features();
         Self {
             bmi2: features.has_bmi2,
             avx2: features.has_avx2,

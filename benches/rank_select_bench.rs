@@ -6,11 +6,9 @@
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use std::time::Duration;
 use zipora::{
-    BitVector,
+    BitVector, RankSelect256,
     succinct::rank_select::{
-        RankSelectFew, RankSelectInterleaved256, RankSelectMixedIL256, RankSelectMixedSE512,
-        RankSelectMixedXL256, RankSelectOps, RankSelectSeparated256, RankSelectSeparated512,
-        RankSelectSimple, RankSelectSparse, SimdCapabilities, bulk_popcount_simd, bulk_rank1_simd,
+        RankSelectInterleaved256, RankSelectOps, SimdCapabilities, bulk_popcount_simd, bulk_rank1_simd,
         bulk_select1_simd,
     },
 };
@@ -90,7 +88,7 @@ fn benchmark_rank_operations(c: &mut Criterion) {
             let positions = generate_rank_positions(size, 1000);
 
             // Benchmark all variants
-            let simple = RankSelectSimple::new(bv.clone()).unwrap();
+            let simple = RankSelect256::new(bv.clone()).unwrap();
             group.bench_function("simple", |b| {
                 b.iter(|| {
                     for &pos in &positions {
@@ -99,7 +97,7 @@ fn benchmark_rank_operations(c: &mut Criterion) {
                 })
             });
 
-            let separated256 = RankSelectSeparated256::new(bv.clone()).unwrap();
+            let separated256 = RankSelect256::new(bv.clone()).unwrap();
             group.bench_function("separated256", |b| {
                 b.iter(|| {
                     for &pos in &positions {
@@ -108,7 +106,7 @@ fn benchmark_rank_operations(c: &mut Criterion) {
                 })
             });
 
-            let separated512 = RankSelectSeparated512::new(bv.clone()).unwrap();
+            let separated512 = RankSelect256::new(bv.clone()).unwrap();
             group.bench_function("separated512", |b| {
                 b.iter(|| {
                     for &pos in &positions {
@@ -128,7 +126,7 @@ fn benchmark_rank_operations(c: &mut Criterion) {
 
             // Only benchmark sparse variant on sparse data
             if *pattern == "sparse" {
-                if let Ok(sparse) = RankSelectFew::<true, 64>::from_bit_vector(bv.clone()) {
+                if let Ok(sparse) = RankSelect256::new(bv.clone()) {
                     group.bench_function("sparse", |b| {
                         b.iter(|| {
                             for &pos in &positions {
@@ -167,7 +165,7 @@ fn benchmark_select_operations(c: &mut Criterion) {
             let indices = generate_select_indices(total_ones, 100);
 
             // Benchmark all variants
-            let simple = RankSelectSimple::new(bv.clone()).unwrap();
+            let simple = RankSelect256::new(bv.clone()).unwrap();
             group.bench_function("simple", |b| {
                 b.iter(|| {
                     for &idx in &indices {
@@ -178,7 +176,7 @@ fn benchmark_select_operations(c: &mut Criterion) {
                 })
             });
 
-            let separated256 = RankSelectSeparated256::new(bv.clone()).unwrap();
+            let separated256 = RankSelect256::new(bv.clone()).unwrap();
             group.bench_function("separated256", |b| {
                 b.iter(|| {
                     for &idx in &indices {
@@ -189,7 +187,7 @@ fn benchmark_select_operations(c: &mut Criterion) {
                 })
             });
 
-            let separated512 = RankSelectSeparated512::new(bv.clone()).unwrap();
+            let separated512 = RankSelect256::new(bv.clone()).unwrap();
             group.bench_function("separated512", |b| {
                 b.iter(|| {
                     for &idx in &indices {
@@ -213,7 +211,7 @@ fn benchmark_select_operations(c: &mut Criterion) {
 
             // Only benchmark sparse variant on sparse data
             if *pattern == "sparse" {
-                if let Ok(sparse) = RankSelectFew::<true, 64>::from_bit_vector(bv.clone()) {
+                if let Ok(sparse) = RankSelect256::new(bv.clone()) {
                     group.bench_function("sparse", |b| {
                         b.iter(|| {
                             for &idx in &indices {
@@ -231,61 +229,11 @@ fn benchmark_select_operations(c: &mut Criterion) {
     }
 }
 
-/// Benchmark multi-dimensional variants
-fn benchmark_multi_dimensional_operations(c: &mut Criterion) {
-    let sizes = vec![MEDIUM_SIZE];
-    let patterns = vec!["alternating", "dense"];
-
-    for &size in &sizes {
-        for pattern in &patterns {
-            let mut group = c.benchmark_group(format!("multi_dim_{}_{}", size, pattern));
-            group.warm_up_time(WARMUP_TIME);
-            group.measurement_time(MEASUREMENT_TIME);
-            group.sample_size(SAMPLE_SIZE);
-            group.throughput(Throughput::Elements(size as u64));
-
-            let bv1 = create_test_data(size, pattern);
-            let bv2 = create_test_data(size, "dense");
-            let bv3 = create_test_data(size, "sparse");
-            let positions = generate_rank_positions(size, 100);
-
-            // 2D variants
-            let mixed_il = RankSelectMixedIL256::new([bv1.clone(), bv2.clone()]).unwrap();
-            group.bench_function("mixed_il256_2d", |b| {
-                b.iter(|| {
-                    for &pos in &positions {
-                        black_box(mixed_il.rank1_dimension(pos, 0));
-                        black_box(mixed_il.rank1_dimension(pos, 1));
-                    }
-                })
-            });
-
-            let mixed_se = RankSelectMixedSE512::new([bv1.clone(), bv2.clone()]).unwrap();
-            group.bench_function("mixed_se512_2d", |b| {
-                b.iter(|| {
-                    for &pos in &positions {
-                        black_box(mixed_se.rank1_dimension(pos, 0));
-                        black_box(mixed_se.rank1_dimension(pos, 1));
-                    }
-                })
-            });
-
-            // 3D variant
-            let mixed_xl = RankSelectMixedXL256::<3>::new([bv1, bv2, bv3]).unwrap();
-            group.bench_function("mixed_xl256_3d", |b| {
-                b.iter(|| {
-                    for &pos in &positions {
-                        black_box(mixed_xl.rank1_dimension::<0>(pos));
-                        black_box(mixed_xl.rank1_dimension::<1>(pos));
-                        black_box(mixed_xl.rank1_dimension::<2>(pos));
-                    }
-                })
-            });
-
-            group.finish();
-        }
-    }
-}
+// /// Benchmark multi-dimensional variants (DISABLED - implementations removed)
+// fn benchmark_multi_dimensional_operations(c: &mut Criterion) {
+//     // Multi-dimensional rank-select implementations have been consolidated
+//     // This benchmark is disabled until new multi-dimensional support is added
+// }
 
 /// Benchmark SIMD bulk operations
 fn benchmark_simd_operations(c: &mut Criterion) {
@@ -349,13 +297,13 @@ fn benchmark_space_overhead(c: &mut Criterion) {
             let original_bytes = bv.len() / 8 + if bv.len() % 8 > 0 { 1 } else { 0 };
 
             // Test all variants
-            let simple = RankSelectSimple::new(bv.clone()).unwrap();
+            let simple = RankSelect256::new(bv.clone()).unwrap();
             let overhead_simple = simple.space_overhead_percent();
 
-            let separated256 = RankSelectSeparated256::new(bv.clone()).unwrap();
+            let separated256 = RankSelect256::new(bv.clone()).unwrap();
             let overhead_separated256 = separated256.space_overhead_percent();
 
-            let separated512 = RankSelectSeparated512::new(bv.clone()).unwrap();
+            let separated512 = RankSelect256::new(bv.clone()).unwrap();
             let overhead_separated512 = separated512.space_overhead_percent();
 
             let interleaved = RankSelectInterleaved256::new(bv.clone()).unwrap();
@@ -372,11 +320,11 @@ fn benchmark_space_overhead(c: &mut Criterion) {
 
             // Test sparse variant on sparse data
             if *pattern == "sparse" {
-                if let Ok(sparse) = RankSelectFew::<true, 64>::from_bit_vector(bv.clone()) {
-                    let compression_ratio = sparse.compression_ratio();
+                if let Ok(sparse) = RankSelect256::new(bv.clone()) {
+                    let space_overhead = sparse.space_overhead_percent();
                     eprintln!(
-                        "  Sparse:       {:.2}% compression (smaller is better)",
-                        compression_ratio * 100.0
+                        "  Sparse:       {:.2}% space overhead",
+                        space_overhead
                     );
                 }
             }
@@ -403,19 +351,19 @@ fn benchmark_construction(c: &mut Criterion) {
 
             group.bench_function("simple", |b| {
                 b.iter(|| {
-                    black_box(RankSelectSimple::new(bv.clone()).unwrap());
+                    black_box(RankSelect256::new(bv.clone()).unwrap());
                 })
             });
 
             group.bench_function("separated256", |b| {
                 b.iter(|| {
-                    black_box(RankSelectSeparated256::new(bv.clone()).unwrap());
+                    black_box(RankSelect256::new(bv.clone()).unwrap());
                 })
             });
 
             group.bench_function("separated512", |b| {
                 b.iter(|| {
-                    black_box(RankSelectSeparated512::new(bv.clone()).unwrap());
+                    black_box(RankSelect256::new(bv.clone()).unwrap());
                 })
             });
 
@@ -429,7 +377,7 @@ fn benchmark_construction(c: &mut Criterion) {
             if *pattern == "sparse" || *pattern == "dense" {
                 group.bench_function("sparse", |b| {
                     b.iter(|| {
-                        if let Ok(sparse) = RankSelectFew::<true, 64>::from_bit_vector(bv.clone()) {
+                        if let Ok(sparse) = RankSelect256::new(bv.clone()) {
                             black_box(sparse);
                         }
                     })
@@ -466,7 +414,6 @@ criterion_group!(
     benches,
     benchmark_rank_operations,
     benchmark_select_operations,
-    benchmark_multi_dimensional_operations,
     benchmark_simd_operations,
     benchmark_space_overhead,
     benchmark_construction

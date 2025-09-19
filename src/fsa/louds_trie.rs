@@ -9,7 +9,8 @@ use crate::fsa::traits::{
     TrieStats,
 };
 use crate::statistics::{TrieStatistics, MemorySize, MemoryBreakdown};
-use crate::succinct::{BitVector, RankSelect256};
+use crate::succinct::{BitVector, RankSelectInterleaved256};
+use crate::succinct::rank_select::RankSelectOps;
 use crate::{FastVec, StateId};
 
 /// Internal node representation for building the trie
@@ -29,7 +30,7 @@ pub struct LoudsTrie {
     /// LOUDS bit sequence representing the tree structure
     louds_bits: BitVector,
     /// Rank-select structure for efficient navigation
-    rank_select: RankSelect256,
+    rank_select: RankSelectInterleaved256,
     /// Edge labels stored in level order
     labels: FastVec<u8>,
     /// Bit vector marking final (accepting) states
@@ -48,7 +49,7 @@ impl LoudsTrie {
     /// Create a new empty LOUDS trie
     pub fn new() -> Self {
         let louds_bits = BitVector::new();
-        let rank_select = RankSelect256::new(louds_bits.clone()).unwrap();
+        let rank_select = RankSelectInterleaved256::new(louds_bits.clone()).unwrap();
 
         // Initialize with root node
         let mut nodes = Vec::new();
@@ -188,7 +189,7 @@ impl LoudsTrie {
         }
 
         // Rebuild rank-select structure
-        self.rank_select = RankSelect256::new(self.louds_bits.clone())?;
+        self.rank_select = RankSelectInterleaved256::new(self.louds_bits.clone())?;
 
         Ok(())
     }

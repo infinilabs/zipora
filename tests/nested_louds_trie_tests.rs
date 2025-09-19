@@ -15,10 +15,7 @@ use zipora::fsa::nested_louds_trie::{
 use zipora::fsa::{
     FiniteStateAutomaton, PrefixIterable, StateInspectable, StatisticsProvider, Trie, TrieBuilder,
 };
-use zipora::succinct::rank_select::{
-    RankSelectFew, RankSelectInterleaved256, RankSelectMixedIL256, RankSelectSeparated512,
-    RankSelectSimple,
-};
+use zipora::succinct::rank_select::RankSelectInterleaved256;
 
 // =============================================================================
 // TEST DATA GENERATORS
@@ -214,40 +211,81 @@ fn test_creation_with_interleaved_backend() {
 }
 
 #[test]
-fn test_creation_with_separated_backend() {
-    type TrieType = NestedLoudsTrie<RankSelectSeparated512>;
+fn test_creation_with_cache_config() {
+    type TrieType = NestedLoudsTrie<RankSelectInterleaved256>;
 
-    let config = NestingConfigBuilder::new().max_levels(3).build().unwrap();
+    let config = NestingConfigBuilder::new()
+        .max_levels(3)
+        .cache_optimization(true)
+        .cache_block_size(512)
+        .build()
+        .unwrap();
 
     let trie = TrieType::with_config(config);
     assert!(trie.is_ok());
 
     let trie = trie.unwrap();
     assert_eq!(trie.config().max_levels, 3);
+    assert!(trie.config().cache_optimization);
+    assert_eq!(trie.config().cache_block_size, 512);
 }
 
 #[test]
-fn test_creation_with_mixed_backend() {
-    type TrieType = NestedLoudsTrie<RankSelectMixedIL256>;
+fn test_creation_with_fragment_config() {
+    type TrieType = NestedLoudsTrie<RankSelectInterleaved256>;
 
-    let trie = TrieType::new();
+    let config = NestingConfigBuilder::new()
+        .fragment_compression_ratio(0.4)
+        .min_fragment_size(8)
+        .max_fragment_size(128)
+        .build()
+        .unwrap();
+
+    let trie = TrieType::with_config(config);
     assert!(trie.is_ok());
+
+    let trie = trie.unwrap();
+    assert_eq!(trie.config().fragment_compression_ratio, 0.4);
+    assert_eq!(trie.config().min_fragment_size, 8);
+    assert_eq!(trie.config().max_fragment_size, 128);
 }
 
 #[test]
-fn test_creation_with_sparse_backend() {
-    type TrieType = NestedLoudsTrie<RankSelectFew<true, 64>>;
+fn test_creation_with_nesting_config() {
+    type TrieType = NestedLoudsTrie<RankSelectInterleaved256>;
 
-    let trie = TrieType::new();
+    let config = NestingConfigBuilder::new()
+        .max_levels(6)
+        .density_switch_threshold(0.7)
+        .adaptive_backend_selection(false)
+        .build()
+        .unwrap();
+
+    let trie = TrieType::with_config(config);
     assert!(trie.is_ok());
+
+    let trie = trie.unwrap();
+    assert_eq!(trie.config().max_levels, 6);
+    assert_eq!(trie.config().density_switch_threshold, 0.7);
+    assert!(!trie.config().adaptive_backend_selection);
 }
 
 #[test]
-fn test_creation_with_simple_backend() {
-    type TrieType = NestedLoudsTrie<RankSelectSimple>;
+fn test_creation_with_memory_config() {
+    type TrieType = NestedLoudsTrie<RankSelectInterleaved256>;
 
-    let trie = TrieType::new();
+    let config = NestingConfigBuilder::new()
+        .memory_pool_size(2 * 1024 * 1024)
+        .cache_optimization(false)
+        .build()
+        .unwrap();
+
+    let trie = TrieType::with_config(config);
     assert!(trie.is_ok());
+
+    let trie = trie.unwrap();
+    assert_eq!(trie.config().memory_pool_size, 2 * 1024 * 1024);
+    assert!(!trie.config().cache_optimization);
 }
 
 // =============================================================================
@@ -500,87 +538,107 @@ fn test_fragment_extraction_configuration() {
 // =============================================================================
 
 #[test]
-fn test_backend_equivalence() {
+fn test_configuration_equivalence() {
     let keys = generate_prefix_heavy_keys();
 
-    // Test with different backends
-    let mut interleaved_trie = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
-    let mut separated_trie = NestedLoudsTrie::<RankSelectSeparated512>::new().unwrap();
-    let mut simple_trie = NestedLoudsTrie::<RankSelectSimple>::new().unwrap();
+    // Test with different configurations of the same backend
+    let mut default_trie = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
+
+    let cache_config = NestingConfigBuilder::new()
+        .cache_optimization(true)
+        .cache_block_size(512)
+        .build()
+        .unwrap();
+    let mut cache_trie = NestedLoudsTrie::<RankSelectInterleaved256>::with_config(cache_config).unwrap();
+
+    let fragment_config = NestingConfigBuilder::new()
+        .fragment_compression_ratio(0.2)
+        .min_fragment_size(8)
+        .build()
+        .unwrap();
+    let mut fragment_trie = NestedLoudsTrie::<RankSelectInterleaved256>::with_config(fragment_config).unwrap();
 
     // Insert same keys in all tries
     for key in &keys {
-        interleaved_trie.insert(key).unwrap();
-        separated_trie.insert(key).unwrap();
-        simple_trie.insert(key).unwrap();
+        default_trie.insert(key).unwrap();
+        cache_trie.insert(key).unwrap();
+        fragment_trie.insert(key).unwrap();
     }
 
     // All should have same length
-    assert_eq!(interleaved_trie.len(), keys.len());
-    assert_eq!(separated_trie.len(), keys.len());
-    assert_eq!(simple_trie.len(), keys.len());
+    assert_eq!(default_trie.len(), keys.len());
+    assert_eq!(cache_trie.len(), keys.len());
+    assert_eq!(fragment_trie.len(), keys.len());
 
     // All should find the same keys
     for key in &keys {
-        assert_eq!(interleaved_trie.contains(key), separated_trie.contains(key));
-        assert_eq!(separated_trie.contains(key), simple_trie.contains(key));
+        assert_eq!(default_trie.contains(key), cache_trie.contains(key));
+        assert_eq!(cache_trie.contains(key), fragment_trie.contains(key));
     }
 
     // All should reject the same non-existent keys
     let non_existent = b"definitely_not_there";
     assert_eq!(
-        interleaved_trie.contains(non_existent),
-        separated_trie.contains(non_existent)
+        default_trie.contains(non_existent),
+        cache_trie.contains(non_existent)
     );
     assert_eq!(
-        separated_trie.contains(non_existent),
-        simple_trie.contains(non_existent)
+        cache_trie.contains(non_existent),
+        fragment_trie.contains(non_existent)
     );
-    assert!(!interleaved_trie.contains(non_existent));
+    assert!(!default_trie.contains(non_existent));
 }
 
 #[test]
-fn test_backend_performance_characteristics() {
+fn test_configuration_performance_characteristics() {
     let keys = generate_sequential_keys(1000);
 
-    // Test different backends for performance characteristics
-    let mut sparse_trie = NestedLoudsTrie::<RankSelectFew<true, 64>>::new().unwrap();
-    let mut interleaved_trie = NestedLoudsTrie::<RankSelectInterleaved256>::new().unwrap();
+    // Test different configurations for performance characteristics
+    let default_config = NestingConfig::default();
+    let mut default_trie = NestedLoudsTrie::<RankSelectInterleaved256>::with_config(default_config).unwrap();
+
+    let optimized_config = NestingConfigBuilder::new()
+        .cache_optimization(true)
+        .cache_block_size(512)
+        .fragment_compression_ratio(0.2)
+        .build()
+        .unwrap();
+    let mut optimized_trie = NestedLoudsTrie::<RankSelectInterleaved256>::with_config(optimized_config).unwrap();
 
     // Insert keys and measure basic metrics
     let start = std::time::Instant::now();
     for key in &keys {
-        sparse_trie.insert(key).unwrap();
+        default_trie.insert(key).unwrap();
     }
-    let sparse_insert_time = start.elapsed();
+    let default_insert_time = start.elapsed();
 
     let start = std::time::Instant::now();
     for key in &keys {
-        interleaved_trie.insert(key).unwrap();
+        optimized_trie.insert(key).unwrap();
     }
-    let interleaved_insert_time = start.elapsed();
+    let optimized_insert_time = start.elapsed();
 
     // Both should work correctly
-    assert_eq!(sparse_trie.len(), keys.len());
-    assert_eq!(interleaved_trie.len(), keys.len());
+    assert_eq!(default_trie.len(), keys.len());
+    assert_eq!(optimized_trie.len(), keys.len());
 
     // Performance may vary, but both should complete in reasonable time
     println!(
-        "Sparse insert time: {:?}, Interleaved insert time: {:?}",
-        sparse_insert_time, interleaved_insert_time
+        "Default insert time: {:?}, Optimized insert time: {:?}",
+        default_insert_time, optimized_insert_time
     );
 
-    // Memory usage may differ
-    let sparse_memory = sparse_trie.total_memory_usage();
-    let interleaved_memory = interleaved_trie.total_memory_usage();
+    // Memory usage may differ based on configuration
+    let default_memory = default_trie.total_memory_usage();
+    let optimized_memory = optimized_trie.total_memory_usage();
 
     println!(
-        "Sparse memory: {} bytes, Interleaved memory: {} bytes",
-        sparse_memory, interleaved_memory
+        "Default memory: {} bytes, Optimized memory: {} bytes",
+        default_memory, optimized_memory
     );
 
-    assert!(sparse_memory > 0);
-    assert!(interleaved_memory > 0);
+    assert!(default_memory > 0);
+    assert!(optimized_memory > 0);
 }
 
 // =============================================================================
@@ -929,7 +987,7 @@ proptest! {
     fn property_test_insert_lookup_consistency(
         keys in prop::collection::vec(prop::collection::vec(any::<u8>(), 0..100), 0..200)
     ) {
-        type TrieType = NestedLoudsTrie<RankSelectSimple>;
+        type TrieType = NestedLoudsTrie<RankSelectInterleaved256>;
 
         let mut trie = TrieType::new().unwrap();
         let mut expected_keys = HashSet::new();

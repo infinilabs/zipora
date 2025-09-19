@@ -131,19 +131,28 @@ pub fn bmi2_hash_combine_u64(hash: u64, value: u64) -> u64 {
 #[inline]
 unsafe fn bmi2_hash_combine_u32_hardware(hash: u32, value: u32) -> u32 {
     use std::arch::x86_64::*;
-    
+
+    // Use a prime-based seed when hash is zero to avoid zero results
+    let effective_hash = if hash == 0 { 0x9e3779b9u32 } else { hash };
+
     // Use PEXT to extract alternating bits for better mixing
     let mask1 = 0xAAAAAAAAu32;
     let mask2 = 0x55555555u32;
-    
-    let extracted1 = unsafe { _pext_u32(hash, mask1) };
+
+    let extracted1 = unsafe { _pext_u32(effective_hash, mask1) };
     let extracted2 = unsafe { _pext_u32(value, mask2) };
-    
-    // Combine with PDEP for optimal distribution
+
+    // Combine and ensure non-zero result
     let combined = extracted1.wrapping_add(extracted2);
-    let deposited = unsafe { _pdep_u32(combined, 0xFFFFFFFFu32) };
-    
-    deposited.rotate_left(5)
+    let mut result = unsafe { _pdep_u32(combined, 0xFFFFFFFFu32) };
+
+    // Additional mixing to ensure good distribution
+    result ^= value.rotate_right(13);
+    result = result.wrapping_mul(0x9e3779b9u32);
+    result ^= result >> 16;
+
+    // Ensure result is never zero
+    if result == 0 { 0x9e3779b9u32 } else { result }
 }
 
 /// Hardware BMI2 implementation for u64 hash combine
@@ -152,19 +161,28 @@ unsafe fn bmi2_hash_combine_u32_hardware(hash: u32, value: u32) -> u32 {
 #[inline]
 unsafe fn bmi2_hash_combine_u64_hardware(hash: u64, value: u64) -> u64 {
     use std::arch::x86_64::*;
-    
+
+    // Use a prime-based seed when hash is zero to avoid zero results
+    let effective_hash = if hash == 0 { 0x9e3779b97f4a7c15u64 } else { hash };
+
     // Use PEXT to extract alternating bits for better mixing
     let mask1 = 0xAAAAAAAAAAAAAAAAu64;
     let mask2 = 0x5555555555555555u64;
-    
-    let extracted1 = unsafe { _pext_u64(hash, mask1) };
+
+    let extracted1 = unsafe { _pext_u64(effective_hash, mask1) };
     let extracted2 = unsafe { _pext_u64(value, mask2) };
-    
-    // Combine with PDEP for optimal distribution
+
+    // Combine and ensure non-zero result
     let combined = extracted1.wrapping_add(extracted2);
-    let deposited = unsafe { _pdep_u64(combined, 0xFFFFFFFFFFFFFFFFu64) };
-    
-    deposited.rotate_left(5)
+    let mut result = unsafe { _pdep_u64(combined, 0xFFFFFFFFFFFFFFFFu64) };
+
+    // Additional mixing to ensure good distribution
+    result ^= value.rotate_right(13);
+    result = result.wrapping_mul(0xc2b2ae3d27d4eb4fu64);
+    result ^= result >> 29;
+
+    // Ensure result is never zero
+    if result == 0 { 0x9e3779b97f4a7c15u64 } else { result }
 }
 
 

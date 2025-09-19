@@ -834,12 +834,12 @@ fn benchmark_cpu_feature_detection(c: &mut Criterion) {
     let test_data = generator.generate_random_u32(size);
 
     // Detect actual CPU features
-    let cpu_features = CpuFeatures::detect();
+    let cpu_features = zipora::system::get_cpu_features();
 
     // Test different feature combinations
     group.bench_function("cpu_feature_detection_overhead", |b| {
         b.iter(|| {
-            black_box(CpuFeatures::detect())
+            black_box(zipora::system::get_cpu_features())
         })
     });
 
@@ -853,7 +853,7 @@ fn benchmark_cpu_feature_detection(c: &mut Criterion) {
                 |mut data| {
                     let mut sorter = AdvancedU32RadixSort::with_config(
                         AdvancedRadixSortConfig {
-                            use_simd: cpu_features.has_advanced_simd(),
+                            use_simd: cpu_features.has_avx2,
                             use_parallel: true,
                             ..Default::default()
                         }
