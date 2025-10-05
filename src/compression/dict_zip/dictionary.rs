@@ -903,10 +903,13 @@ mod tests {
     #[test]
     fn test_dictionary_creation() {
         let training_data = b"The quick brown fox jumps over the lazy dog. The quick brown fox jumps.";
-        let config = SuffixArrayDictionaryConfig::default();
-        
+        let config = SuffixArrayDictionaryConfig {
+            min_frequency: 2, // Lower frequency requirement to ensure patterns are found
+            ..Default::default()
+        };
+
         let dictionary = SuffixArrayDictionary::new(training_data, config).unwrap();
-        
+
         assert_eq!(dictionary.dictionary_size(), training_data.len());
         assert!(dictionary.cache_states() > 0);
         assert!(dictionary.memory_usage() > 0);

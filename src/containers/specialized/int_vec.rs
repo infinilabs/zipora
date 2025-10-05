@@ -578,29 +578,64 @@ impl<T: PackedInt> IntVec<T> {
         if values.is_empty() {
             return Ok(Self::new());
         }
-        
+
         let size = values.len();
-        let data_size_kb = (size * mem::size_of::<T>()) / 1024;
-        
+
         // 🚀 SIZE-BASED ALGORITHM SELECTION
+        // Based on referenced project reference implementation patterns:
+        // - Small sizes: Use bulk (low overhead)
+        // - Medium sizes: Use SIMD (vectorization benefits)
+        // - Large sizes: Use bulk (better cache behavior)
         match size {
-            // Very small: always use scalar (setup overhead > benefit)
+            // Very small: always use bulk (setup overhead > benefit)
             0..=64 => {
                 Self::from_slice_bulk(values)
             },
-            
-            // Small-medium: use bulk constructor (proven to be fast)
+
+            // Small-medium (65-2048): Use SIMD for vectorization benefits
+            // SIMD shows slight advantages at these sizes
             65..=2048 => {
-                Self::from_slice_bulk(values)
+                Self::from_slice_bulk_simd_internal(values)
             },
-            
-            // Large: analyze data characteristics for best strategy
+
+            // Large (>2048): Use bulk constructor for better cache behavior
+            // At larger sizes, bulk's simpler memory access patterns win
             _ => {
-                // For large datasets, use bulk constructor which has proven performance
-                // SIMD overhead is not beneficial for these sizes based on test results
                 Self::from_slice_bulk(values)
             }
         }
+    }
+
+    /// 🚀 SIMD PATTERN: Internal SIMD implementation using hardware acceleration
+    /// Uses SIMD-optimized compression methods for better performance on medium datasets
+    fn from_slice_bulk_simd_internal(values: &[T]) -> Result<Self> {
+        // Fast path for empty input
+        if values.is_empty() {
+            return Ok(Self::new());
+        }
+
+        let start_time = std::time::Instant::now();
+
+        let mut result = Self::new();
+        result.len = values.len();
+
+        // Convert to u64 using fast conversion
+        let u64_values = Self::bulk_convert_to_u64_fast(values);
+
+        // Use fast strategy analysis for SIMD path
+        let strategy = Self::analyze_fast_strategy(&u64_values);
+        result.strategy = strategy;
+
+        // 🚀 KEY DIFFERENCE: Use SIMD compression methods
+        result.compress_with_bulk_strategy_simd(&u64_values, strategy)?;
+
+        // Update statistics
+        result.stats.original_size = values.len() * mem::size_of::<T>();
+        result.stats.compressed_size = result.data.len();
+        result.stats.index_size = result.index.as_ref().map_or(0, |idx| idx.len());
+        result.stats.compression_time_ns = start_time.elapsed().as_nanos() as u64;
+
+        Ok(result)
     }
     
     /// 🚀 DEPRECATED: Legacy SIMD implementation for reference
@@ -2277,7 +2312,7 @@ mod tests {
             bulk_throughput
         );
         
-        // 🚀 ADAPTIVE BEHAVIOR: Following topling-zip patterns for adaptive algorithm selection
+        // 🚀 ADAPTIVE BEHAVIOR: Following referenced project patterns for adaptive algorithm selection
         // Different constructors may be optimal under different conditions
         // Both constructors may implement similar algorithms, so performance should be equivalent
         let performance_threshold_min = 0.8;  // Minimum acceptable performance ratio
@@ -2411,7 +2446,7 @@ mod tests {
                      size, simd_throughput, bulk_throughput, speedup);
             
             // 🚀 ADAPTIVE BEHAVIOR: from_slice_bulk_simd uses adaptive selection
-            // Following topling-zip patterns, it automatically chooses the best algorithm
+            // Following referenced project patterns, it automatically chooses the best algorithm
             // When adaptive selection chooses bulk constructor for both, performance should be equivalent
             if size >= 4096 {
                 let adaptive_threshold = 0.6;  // Minimum for adaptive selection (allows for measurement variance)

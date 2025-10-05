@@ -45,7 +45,7 @@ pub enum SimdTier {
 }
 
 /// SIMD Memory Operations dispatcher with runtime CPU feature detection
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SimdMemOps {
     /// Selected implementation tier based on CPU features
     tier: SimdTier,

@@ -918,7 +918,7 @@ fn test_concurrent_read_access() {
     let mut handles = Vec::new();
 
     for thread_id in 0..num_threads {
-        let trie_clone = Arc::clone(&trie);
+        let trie_clone: Arc<DoubleArrayTrie> = Arc::clone(&trie);
         let keys_clone = keys.clone();
         let barrier_clone = Arc::clone(&barrier);
 

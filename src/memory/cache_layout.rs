@@ -188,6 +188,17 @@ pub struct CacheOptimizedAllocator {
     cold_allocations: AtomicUsize,
 }
 
+impl Clone for CacheOptimizedAllocator {
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+            simd_ops: self.simd_ops.clone(),
+            hot_allocations: AtomicUsize::new(self.hot_allocations.load(std::sync::atomic::Ordering::Relaxed)),
+            cold_allocations: AtomicUsize::new(self.cold_allocations.load(std::sync::atomic::Ordering::Relaxed)),
+        }
+    }
+}
+
 impl CacheOptimizedAllocator {
     /// Create a new cache-optimized allocator
     pub fn new(config: CacheLayoutConfig) -> Self {

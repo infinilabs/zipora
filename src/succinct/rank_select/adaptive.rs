@@ -446,8 +446,8 @@ impl AdaptiveRankSelect {
         let mut sparse_threshold = criteria.sparse_threshold;
         let mut dense_threshold = criteria.dense_threshold;
 
-        // CRITICAL OPTIMIZATION: Apply topling-zip's cache-aware threshold strategy
-        // topling-zip uses Q=1,4 parameters for different cache optimization levels
+        // CRITICAL OPTIMIZATION: Apply referenced project's cache-aware threshold strategy
+        // referenced project uses Q=1,4 parameters for different cache optimization levels
         let cache_optimization_level = Self::determine_cache_level(profile);
 
         match cache_optimization_level {
@@ -484,9 +484,9 @@ impl AdaptiveRankSelect {
             sparse_threshold *= 1.0 - complexity_factor;
         }
 
-        // Adjust based on run length characteristics - topling-zip optimized
+        // Adjust based on run length characteristics - referenced project optimized
         if profile.run_length_stats.avg_ones_run > 32.0 || profile.run_length_stats.avg_zeros_run > 32.0 {
-            // Use topling-zip's 32-element threshold for linear vs binary search
+            // Use referenced project's 32-element threshold for linear vs binary search
             dense_threshold *= 0.85; // More aggressive dense for longer runs
         }
 
@@ -503,9 +503,9 @@ impl AdaptiveRankSelect {
         (sparse_threshold, dense_threshold)
     }
 
-    /// Determine cache optimization level based on topling-zip's Q parameter strategy
+    /// Determine cache optimization level based on referenced project's Q parameter strategy
     fn determine_cache_level(profile: &DataProfile) -> u8 {
-        // topling-zip uses Q=1 for linear search optimization (≤32 elements)
+        // referenced project uses Q=1 for linear search optimization (≤32 elements)
         // and Q=4 for binary search optimization (larger ranges)
 
         // Estimate typical access range based on data characteristics
@@ -517,7 +517,7 @@ impl AdaptiveRankSelect {
             (profile.total_bits as f64 / (profile.ones_count as f64 + 1.0)).min(512.0) as usize
         };
 
-        // Apply topling-zip's threshold strategy
+        // Apply referenced project's threshold strategy
         if estimated_range <= 32 {
             // Q=1: Linear search optimization for small ranges
             // Better branch prediction, prefer linear algorithms

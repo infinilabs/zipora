@@ -1,38 +1,72 @@
-//! High-performance hash map implementations
+//! High-performance hash map implementation
 //!
-//! This module provides specialized hash map implementations optimized for different use cases:
-//! - `GoldHashMap`: High-performance general-purpose hash map with AHash
-//! - `GoldenRatioHashMap`: Enhanced hash map with golden ratio growth and FaboHashCombine
-//! - `StringOptimizedHashMap`: String-specific optimizations with interning and SIMD
-//! - `SmallHashMap`: Inline storage for small collections with zero allocations
+//! **ZiporaHashMap**: Single, highly optimized hash map implementation with
+//! strategy-based configuration for different use cases. Inspired by referenced project's
+//! focused implementation philosophy.
+//!
+//! # Performance-First Design
+//!
+//! Following referenced project's approach: **"One excellent implementation per data structure"**
+//! instead of maintaining multiple separate implementations.
+//!
+//! # Examples
+//!
+//! ```rust
+//! use zipora::hash_map::{ZiporaHashMap, ZiporaHashMapConfig};
+//! use std::collections::hash_map::RandomState;
+//!
+//! // Default high-performance configuration
+//! let mut map: ZiporaHashMap<&str, &str, RandomState> = ZiporaHashMap::new().unwrap();
+//! map.insert("key", "value").unwrap();
+//!
+//! // Cache-optimized for NUMA systems
+//! let mut cache_map: ZiporaHashMap<&str, &str, RandomState> = ZiporaHashMap::with_config(
+//!     ZiporaHashMapConfig::cache_optimized()
+//! ).unwrap();
+//!
+//! // String-optimized with interning and SIMD
+//! let mut str_map: ZiporaHashMap<&str, &str, RandomState> = ZiporaHashMap::with_config(
+//!     ZiporaHashMapConfig::string_optimized()
+//! ).unwrap();
+//!
+//! // Small inline storage for ≤N elements
+//! let mut small_map: ZiporaHashMap<&str, &str, RandomState> = ZiporaHashMap::with_config(
+//!     ZiporaHashMapConfig::small_inline(8)
+//! ).unwrap();
+//!
+//! // High-performance concurrent with memory pool
+//! let pool = zipora::memory::SecureMemoryPool::new(
+//!     zipora::memory::SecurePoolConfig::small_secure()
+//! ).expect("Failed to create memory pool");
+//! let mut concurrent_map: ZiporaHashMap<&str, &str, RandomState> = ZiporaHashMap::with_config(
+//!     ZiporaHashMapConfig::concurrent_pool(pool)
+//! ).unwrap();
+//! ```
 
-mod gold_hash_map;
+// Core implementation modules
+mod zipora_hash_map;
+mod strategy_traits;
+
+// Utility modules (keep these as they're used by core implementation)
 mod hash_functions;
-mod golden_ratio_hash_map;
-mod small_hash_map;
-mod string_optimized_hash_map;
-mod advanced_string_arena;
-mod collision_resolution;
 mod simd_string_ops;
 mod cache_locality;
-mod cache_optimized_hash_map;
 
-// Re-export existing types
-pub use gold_hash_map::{GoldHashMap, Iter};
-
-// Export new specialized hash map types  
-pub use golden_ratio_hash_map::GoldenRatioHashMap;
-
-// Export iterator types with module-qualified names to avoid conflicts
-pub use golden_ratio_hash_map::{
-    Iter as GoldenRatioIter,
-    Keys as GoldenRatioKeys, 
-    Values as GoldenRatioValues
+// Core ZiporaHashMap implementation
+pub use zipora_hash_map::{
+    ZiporaHashMap, ZiporaHashMapConfig, HashMapStats,
+    HashStrategy, StorageStrategy, OptimizationStrategy,
 };
-pub use string_optimized_hash_map::{StringOptimizedHashMap, StringArenaStats, StringMapIter, StringMapKeys, StringMapValues};
-pub use advanced_string_arena::{AdvancedStringArena, ArenaConfig, ArenaStats};
-pub use collision_resolution::{AdvancedHashMap, CollisionStrategy, CollisionStats};
-pub use small_hash_map::{SmallHashMap, SmallMapIter, SmallMapKeys, SmallMapValues};
+
+// Strategy traits for advanced configuration
+pub use strategy_traits::{
+    CollisionResolutionStrategy, StorageLayoutStrategy, HashOptimizationStrategy,
+    HashBucket, ProbeStats, OptimizationMetrics, OptimizationHint,
+    RobinHoodStrategy, RobinHoodConfig, RobinHoodContext,
+    StandardStorageStrategy, StandardStorageConfig,
+    CacheOptimizedStorageStrategy, CacheOptimizedStorageConfig,
+    SimdOptimizationStrategy, SimdOptimizationConfig, SimdOptimizationContext,
+};
 
 // Export hash function utilities
 pub use hash_functions::{
@@ -57,86 +91,44 @@ pub use cache_locality::{
     CacheConsciousResizer, CACHE_LINE_SIZE,
 };
 
-// Export cache-optimized hash map
-pub use cache_optimized_hash_map::{CacheOptimizedHashMap, CacheOptimizedIter};
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_module_exports() {
-        // Test existing GoldHashMap
-        let _gold_map = GoldHashMap::<i32, String>::new();
+    fn test_zipora_hash_map_basic() {
+        let mut map: ZiporaHashMap<&str, &str> = ZiporaHashMap::new().unwrap();
+        assert_eq!(map.len(), 0);
+        assert!(map.is_empty());
 
-        // Test new specialized hash maps
-        let _golden_ratio_map = GoldenRatioHashMap::<i32, String>::new();
-        let _string_map = StringOptimizedHashMap::<i32>::new();
-        let _small_map: SmallHashMap<i32, String, 4> = SmallHashMap::new();
-
-        // Test hash function utilities
-        let result = fabo_hash_combine_u32(0x12345678, 0xabcdef00);
-        assert_ne!(result, 0);
-
-        let next_size = golden_ratio_next_size(100);
-        assert!(next_size > 100);
-
-        let bucket_count = optimal_bucket_count(100);
-        assert!(bucket_count.is_power_of_two());
-    }
-
-    #[test]
-    fn test_golden_ratio_hash_map_basic() {
-        let mut map = GoldenRatioHashMap::new();
-        assert_eq!(map.insert("test", 42).unwrap(), None);
-        assert_eq!(map.get("test"), Some(&42));
+        assert_eq!(map.insert("key", "value").unwrap(), None);
+        assert_eq!(map.get("key"), Some(&"value"));
         assert_eq!(map.len(), 1);
+        assert!(!map.is_empty());
     }
 
     #[test]
-    fn test_string_optimized_hash_map_basic() {
-        let mut map = StringOptimizedHashMap::new();
-        assert_eq!(map.insert("hello", 42).unwrap(), None);
-        assert_eq!(map.insert("world", 84).unwrap(), None);
-        assert_eq!(map.get("hello"), Some(&42));
-        assert_eq!(map.len(), 2);
-
-        let stats = map.string_arena_stats();
-        assert_eq!(stats.unique_strings, 2);
+    fn test_cache_optimized_config() {
+        let map: ZiporaHashMap<String, i32> =
+            ZiporaHashMap::with_config(ZiporaHashMapConfig::cache_optimized()).unwrap();
+        assert_eq!(map.len(), 0);
+        // Verify cache optimization is enabled
+        let _ = map.cache_metrics(); // Ensure cache metrics are accessible
     }
 
     #[test]
-    fn test_small_hash_map_basic() {
-        let mut map: SmallHashMap<&str, i32, 4> = SmallHashMap::new();
-        assert!(map.is_inline());
-
-        assert_eq!(map.insert("a", 1).unwrap(), None);
-        assert_eq!(map.insert("b", 2).unwrap(), None);
-        assert_eq!(map.len(), 2);
-        assert!(map.is_inline());
-
-        assert_eq!(map.get("a"), Some(&1));
-        assert_eq!(map.get("b"), Some(&2));
+    fn test_string_optimized_config() {
+        let map: ZiporaHashMap<String, i32> =
+            ZiporaHashMap::with_config(ZiporaHashMapConfig::string_optimized()).unwrap();
+        assert_eq!(map.len(), 0);
     }
 
     #[test]
-    fn test_small_hash_map_conversion() {
-        let mut map: SmallHashMap<i32, i32, 2> = SmallHashMap::new();
-        
-        // Fill inline capacity
-        map.insert(1, 10).unwrap();
-        map.insert(2, 20).unwrap();
-        assert!(map.is_inline());
-
-        // This should trigger conversion to large storage
-        map.insert(3, 30).unwrap();
-        assert!(!map.is_inline());
-        assert_eq!(map.len(), 3);
-
-        // Verify all values are accessible
-        assert_eq!(map.get(&1), Some(&10));
-        assert_eq!(map.get(&2), Some(&20));
-        assert_eq!(map.get(&3), Some(&30));
+    fn test_small_inline_config() {
+        let map: ZiporaHashMap<i32, String> =
+            ZiporaHashMap::with_config(ZiporaHashMapConfig::small_inline(4)).unwrap();
+        assert_eq!(map.len(), 0);
     }
 
     #[test]
@@ -154,7 +146,7 @@ mod tests {
         for &size in &sizes {
             let next_size = golden_ratio_next_size(size);
             assert!(next_size > size);
-            
+
             let ratio = next_size as f64 / size as f64;
             assert!(ratio > 1.5 && ratio < 1.7); // Should approximate golden ratio
         }
@@ -171,7 +163,7 @@ mod tests {
         let combined = advanced_hash_combine(&hashes);
         assert_ne!(combined, hashes[0]);
         assert_ne!(combined, hashes[1]);
-        
+
         // Should be deterministic
         assert_eq!(combined, advanced_hash_combine(&hashes));
     }
@@ -180,10 +172,10 @@ mod tests {
     fn test_hash_function_builder() {
         let builder = HashFunctionBuilder::new()
             .with_strategy(CombineStrategy::Fabo);
-        
+
         let hash_fn = builder.build_u32();
         let result = hash_fn(0x12345678, 0xabcdef00);
-        
+
         // Should be deterministic
         assert_eq!(result, hash_fn(0x12345678, 0xabcdef00));
 
@@ -206,7 +198,7 @@ mod tests {
         // All strategies should produce valid results and be deterministic
         for (i, &result) in results.iter().enumerate() {
             assert_ne!(result, 0, "Strategy {} produced zero result", i);
-            
+
             // Test determinism
             let builder = HashFunctionBuilder::new().with_strategy(strategies[i]);
             let hash_fn = builder.build_u32();
@@ -215,3 +207,4 @@ mod tests {
         }
     }
 }
+

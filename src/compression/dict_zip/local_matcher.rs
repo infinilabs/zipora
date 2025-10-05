@@ -65,7 +65,7 @@
 
 use crate::compression::dict_zip::compression_types::{CompressionType, MAX_FAR3_LONG_DISTANCE};
 use crate::error::{Result, ZiporaError};
-use crate::hash_map::{GoldenRatioHashMap, fabo_hash_combine_u32, SimdStringOps};
+use crate::hash_map::{ZiporaHashMap, fabo_hash_combine_u32, SimdStringOps};
 use crate::memory::SecureMemoryPool;
 
 #[cfg(test)]
@@ -420,7 +420,7 @@ pub struct LocalMatcher {
     /// Current position in the input stream
     current_position: usize,
     /// Hash table mapping pattern hashes to chain entries
-    hash_table: GoldenRatioHashMap<u32, Vec<ChainEntry>>,
+    hash_table: ZiporaHashMap<u32, Vec<ChainEntry>>,
     /// SIMD string operations
     simd_ops: Arc<SimdStringOps>,
     /// Memory pool for allocations
@@ -434,8 +434,7 @@ impl LocalMatcher {
     pub fn new(config: LocalMatcherConfig, memory_pool: Arc<SecureMemoryPool>) -> Result<Self> {
         config.validate()?;
 
-        let hash_table = GoldenRatioHashMap::with_capacity(config.hash_table_capacity)
-            .map_err(|e| ZiporaError::out_of_memory(4096))?; // Use default size for error
+        let hash_table = ZiporaHashMap::new()?;
 
         let simd_ops = Arc::new(SimdStringOps::new());
 

@@ -6,7 +6,7 @@
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use zipora::{
-    fsa::{FiniteStateAutomaton, NestedLoudsTrie, NestingConfig, PrefixIterable, Trie},
+    fsa::{FiniteStateAutomaton, NestedLoudsTrie, NestedLoudsTrieBuilder, NestingConfig, PrefixIterable},
     RankSelect256,
     succinct::rank_select::RankSelectInterleaved256,
 };
@@ -221,8 +221,8 @@ fn bench_compression_ratios(c: &mut Criterion) {
                         black_box(trie.insert(key).unwrap());
                     }
 
-                    // Trigger optimization
-                    black_box(trie.optimize().unwrap());
+                    // Optimization is automatic in unified architecture
+                    // black_box(trie.optimize().unwrap());
 
                     // Test lookups after optimization
                     for key in data.iter().step_by(5) {
@@ -378,26 +378,25 @@ fn bench_builder_patterns(c: &mut Criterion) {
         });
     });
 
-    // Benchmark sorted builder
+    // Benchmark sorted builder (using builder pattern)
     group.bench_function("sorted_builder", |b| {
         b.iter(|| {
-            let trie =
-                NestedLoudsTrie::<RankSelect256>::build_from_sorted(sorted_data.clone())
-                    .unwrap();
+            let builder = NestedLoudsTrie::<RankSelect256>::builder();
+            let trie = builder.build_from_iter(sorted_data.clone()).unwrap();
             black_box(trie)
         });
     });
 
-    // Benchmark unsorted builder
+    // Benchmark unsorted builder (using builder pattern)
     group.bench_function("unsorted_builder", |b| {
         b.iter(|| {
-            let trie = NestedLoudsTrie::<RankSelect256>::build_from_unsorted(data.clone())
-                .unwrap();
+            let builder = NestedLoudsTrie::<RankSelect256>::builder();
+            let trie = builder.build_from_iter(data.clone()).unwrap();
             black_box(trie)
         });
     });
 
-    // Benchmark optimized builder
+    // Benchmark optimized builder (using config)
     group.bench_function("optimized_builder", |b| {
         let config = NestingConfig::builder()
             .max_levels(4)
@@ -406,11 +405,8 @@ fn bench_builder_patterns(c: &mut Criterion) {
             .unwrap();
 
         b.iter(|| {
-            let trie = NestedLoudsTrie::<RankSelect256>::build_optimized(
-                sorted_data.clone(),
-                config.clone(),
-            )
-            .unwrap();
+            let builder = NestedLoudsTrieBuilder::<RankSelect256>::with_config(config.clone());
+            let trie = builder.build_from_iter(sorted_data.clone()).unwrap();
             black_box(trie)
         });
     });

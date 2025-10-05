@@ -1,7 +1,8 @@
 use zipora::{
-    BlobStore, FastStr, FastVec, GoldHashMap, HuffmanEncoder, LoudsTrie, MemoryBlobStore, Result,
-    Trie,
+    BlobStore, FastStr, FastVec, ZiporaHashMap, HuffmanEncoder, ZiporaTrie, MemoryBlobStore, Result,
+    succinct::RankSelectInterleaved256,
 };
+use std::collections::hash_map::RandomState;
 
 fn main() -> Result<()> {
     println!("=== Zipora Rust Demo ===\n");
@@ -96,8 +97,8 @@ fn main() -> Result<()> {
     println!("   Store contains {} blobs", store.len());
 
     // Demonstrate Trie
-    println!("\n7. LOUDS Trie:");
-    let mut trie = LoudsTrie::new();
+    println!("\n7. Zipora Trie:");
+    let mut trie: ZiporaTrie<RankSelectInterleaved256> = ZiporaTrie::new();
     let words = ["cat", "car", "card", "care", "careful"];
 
     for word in &words {
@@ -110,8 +111,8 @@ fn main() -> Result<()> {
     println!("   Contains 'dog': {}", trie.contains(b"dog"));
 
     // Demonstrate Hash Map
-    println!("\n8. GoldHashMap:");
-    let mut map = GoldHashMap::new();
+    println!("\n8. ZiporaHashMap:");
+    let mut map: ZiporaHashMap<&str, &str, RandomState> = ZiporaHashMap::new()?;
     map.insert("name", "Zipora")?;
     map.insert("version", "0.1.0")?;
     map.insert("language", "Rust")?;

@@ -3,7 +3,7 @@
 use crate::StateId;
 use crate::error::{Result, ZiporaError};
 use crate::fsa::traits::PrefixIterable;
-use crate::fsa::{LoudsTrie, Trie};
+use crate::fsa::{ZiporaTrie, Trie};
 use rayon::prelude::*;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -56,7 +56,13 @@ impl ParallelTrieBuilder {
         let mut partial_tries = Vec::new();
 
         for chunk in chunks {
-            let trie = tokio::task::spawn_blocking(move || LoudsTrie::build_from_sorted(chunk))
+            let trie = tokio::task::spawn_blocking(move || -> Result<ZiporaTrie> {
+                let mut trie = ZiporaTrie::new();
+                for key in chunk {
+                    trie.insert(&key)?;
+                }
+                Ok(trie)
+            })
                 .await
                 .map_err(|e| {
                     ZiporaError::configuration(&format!("parallel build failed: {}", e))
@@ -69,14 +75,14 @@ impl ParallelTrieBuilder {
         self.merge_tries(partial_tries).await
     }
 
-    /// Merge multiple LOUDS tries into a single trie
-    async fn merge_tries(&self, tries: Vec<LoudsTrie>) -> Result<ParallelLoudsTrie> {
+    /// Merge multiple tries into a single trie
+    async fn merge_tries(&self, tries: Vec<ZiporaTrie>) -> Result<ParallelLoudsTrie> {
         if tries.is_empty() {
             return Ok(ParallelLoudsTrie::new());
         }
 
         if tries.len() == 1 {
-            return Ok(ParallelLoudsTrie::from_louds_trie(
+            return Ok(ParallelLoudsTrie::from_trie(
                 tries.into_iter().next().unwrap(),
             ));
         }
@@ -96,15 +102,21 @@ impl ParallelTrieBuilder {
 
         // Build final trie
         let final_trie =
-            tokio::task::spawn_blocking(move || LoudsTrie::build_from_sorted(all_keys))
+            tokio::task::spawn_blocking(move || -> Result<ZiporaTrie> {
+                let mut trie = ZiporaTrie::new();
+                for key in all_keys {
+                    trie.insert(&key)?;
+                }
+                Ok(trie)
+            })
                 .await
                 .map_err(|e| ZiporaError::configuration(&format!("final build failed: {}", e)))??;
 
-        Ok(ParallelLoudsTrie::from_louds_trie(final_trie))
+        Ok(ParallelLoudsTrie::from_trie(final_trie))
     }
 
     /// Extract all keys from a trie using prefix iteration
-    async fn extract_keys_from_trie(&self, trie: &LoudsTrie) -> Result<Vec<Vec<u8>>> {
+    async fn extract_keys_from_trie(&self, trie: &ZiporaTrie) -> Result<Vec<Vec<u8>>> {
         // Use the PrefixIterable trait to get all keys
         let keys: Vec<Vec<u8>> = trie.iter_all().collect();
         Ok(keys)
@@ -119,8 +131,8 @@ impl Default for ParallelTrieBuilder {
 
 /// A thread-safe LOUDS trie that supports parallel operations
 pub struct ParallelLoudsTrie {
-    inner: Arc<Mutex<LoudsTrie>>,
-    read_replicas: Arc<Mutex<Vec<Arc<LoudsTrie>>>>,
+    inner: Arc<Mutex<ZiporaTrie>>,
+    read_replicas: Arc<Mutex<Vec<Arc<ZiporaTrie>>>>,
     replica_count: usize,
 }
 
@@ -128,7 +140,7 @@ impl ParallelLoudsTrie {
     /// Create a new empty parallel trie
     pub fn new() -> Self {
         let replica_count = num_cpus::get();
-        let empty_trie = LoudsTrie::new();
+        let empty_trie = ZiporaTrie::new();
         let mut read_replicas = Vec::with_capacity(replica_count);
 
         // Create initial empty replicas
@@ -143,8 +155,8 @@ impl ParallelLoudsTrie {
         }
     }
 
-    /// Create from an existing LOUDS trie
-    pub fn from_louds_trie(trie: LoudsTrie) -> Self {
+    /// Create from an existing trie
+    pub fn from_trie(trie: ZiporaTrie) -> Self {
         let replica_count = num_cpus::get();
         let mut read_replicas = Vec::with_capacity(replica_count);
 
@@ -163,7 +175,7 @@ impl ParallelLoudsTrie {
     /// Insert a key (requires write lock)
     pub async fn insert(&self, key: &[u8]) -> Result<StateId> {
         let mut trie = self.inner.lock().await;
-        let result = trie.insert(key);
+        let result = trie.insert_and_get_node_id(key);
         drop(trie);
 
         // Refresh replicas after modification
@@ -274,7 +286,7 @@ impl ParallelLoudsTrie {
         let mut trie = self.inner.lock().await;
 
         for key in keys {
-            let state_id = trie.insert(&key)?;
+            let state_id = trie.insert_and_get_node_id(&key)?;
             results.push(state_id);
         }
 
@@ -289,7 +301,7 @@ impl ParallelLoudsTrie {
     /// Parallel processing of trie operations
     pub async fn parallel_process<F, T>(&self, operations: Vec<F>) -> Vec<Result<T>>
     where
-        F: Fn(&LoudsTrie) -> Result<T> + Send + Sync,
+        F: Fn(&ZiporaTrie) -> Result<T> + Send + Sync,
         T: Send,
     {
         let replicas = self.read_replicas.lock().await;

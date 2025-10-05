@@ -22,7 +22,7 @@
 
 use crate::algorithms::suffix_array::SuffixArray;
 use crate::error::{Result, ZiporaError};
-use crate::fsa::double_array_trie::{DoubleArrayTrie, DoubleArrayTrieConfig, DoubleArrayTrieBuilder};
+use crate::fsa::{ZiporaTrie, ZiporaTrieConfig};
 use crate::fsa::traits::{FiniteStateAutomaton, Trie};
 
 #[cfg(feature = "serde")]
@@ -48,8 +48,8 @@ pub struct DfaCacheConfig {
     pub max_memory_usage: usize,
     /// Growth factor for dynamic expansion
     pub growth_factor: f64,
-    /// Configuration for underlying Double Array Trie
-    pub double_array_config: DoubleArrayTrieConfig,
+    /// Configuration for underlying ZiporaTrie
+    pub trie_config: ZiporaTrieConfig,
 }
 
 impl Default for DfaCacheConfig {
@@ -62,7 +62,39 @@ impl Default for DfaCacheConfig {
             min_node_frequency: 2,
             max_memory_usage: 16 * 1024 * 1024, // 16MB
             growth_factor: 1.5,
-            double_array_config: DoubleArrayTrieConfig::default(),
+            trie_config: ZiporaTrieConfig::default(),
+        }
+    }
+}
+
+impl DfaCacheConfig {
+    /// Create config optimized for small dictionaries (following referenced project approach)
+    pub fn small_dictionary(dict_size: usize) -> Self {
+        Self {
+            initial_capacity: dict_size.min(256),
+            use_memory_pool: false, // Skip memory pool overhead for small data
+            cache_aligned: false,   // Not needed for small data
+            enable_simd: false,     // Overhead not worth it for small data
+            min_node_frequency: 2,
+            max_memory_usage: dict_size * 2, // Allow 2x dictionary size
+            growth_factor: 1.2,     // Smaller growth for memory efficiency
+            trie_config: ZiporaTrieConfig {
+                trie_strategy: crate::fsa::TrieStrategy::DoubleArray {
+                    initial_capacity: dict_size.min(256),
+                    growth_factor: 1.2,
+                    free_list_management: false,
+                    auto_shrink: true,
+                },
+                storage_strategy: crate::fsa::StorageStrategy::Standard {
+                    initial_capacity: dict_size.min(256),
+                    growth_factor: 1.2,
+                },
+                compression_strategy: crate::fsa::CompressionStrategy::None,
+                rank_select_type: crate::fsa::RankSelectType::Simple,
+                enable_simd: false,
+                enable_concurrency: false,
+                cache_optimization: false,
+            },
         }
     }
 }
@@ -217,8 +249,8 @@ impl TrieNode {
 /// High-performance DFA cache using Double Array Trie
 #[derive(Debug, Clone)]
 pub struct DfaCache {
-    /// Underlying Double Array Trie for O(1) state transitions
-    trie: DoubleArrayTrie,
+    /// Underlying ZiporaTrie for fast state transitions
+    trie: ZiporaTrie,
     /// Pattern information indexed by state ID
     pattern_map: HashMap<u32, PatternInfo>,
     /// Configuration used to build this cache
@@ -268,7 +300,7 @@ impl DfaCache {
     
     /// Create an empty DFA cache for BFS construction
     fn new_empty(config: DfaCacheConfig, text: Vec<u8>, suffix_array: Vec<i32>) -> Self {
-        let trie = DoubleArrayTrie::new();
+        let trie = ZiporaTrie::new();
         let stats = CacheStats::default();
         
         Self {
@@ -388,8 +420,9 @@ impl DfaCache {
         }
 
         // Basic validation - check that trie has reasonable structure
-        if self.trie.capacity() == 0 {
-            return Err(ZiporaError::invalid_data("Empty trie in cache"));
+        // Allow empty trie for empty input data (valid case)
+        if self.trie.capacity() == 0 && !self.pattern_map.is_empty() {
+            return Err(ZiporaError::invalid_data("Empty trie in cache but non-empty pattern map"));
         }
 
         Ok(())
@@ -468,7 +501,7 @@ impl DfaCache {
             .map_err(|e| ZiporaError::invalid_data(&format!("Cache deserialization failed: {}", e)))?;
 
         // Create a simple trie for deserialization - full reconstruction would need pattern data
-        let trie = DoubleArrayTrie::new();
+        let trie = ZiporaTrie::new();
         let pattern_map = serializable.pattern_map;
 
         let stats = CacheStats {
@@ -751,35 +784,28 @@ impl DfaCache {
         left
     }
 
-    /// Convert temporary trie to double array trie format
+    /// Convert temporary trie to ZiporaTrie format
     fn build_double_array_trie(&mut self, temp_trie: TemporaryTrie) -> Result<()> {
-        let trie_builder = DoubleArrayTrieBuilder::with_config(self.config.double_array_config.clone());
-        
+        // Create new ZiporaTrie with configuration
+        self.trie = ZiporaTrie::with_config(self.config.trie_config.clone());
+
         // Collect all patterns from terminal states
-        let mut patterns = Vec::new();
         let mut pattern_to_info: HashMap<Vec<u8>, PatternInfo> = HashMap::new();
-        
+
         for (_state_id, pattern_info) in &temp_trie.terminals {
-            patterns.push(pattern_info.pattern.clone());
             pattern_to_info.insert(pattern_info.pattern.clone(), pattern_info.clone());
         }
-        
-        // Sort patterns for double array construction
-        patterns.sort();
-        
-        // Build double array trie
-        self.trie = trie_builder.build_from_sorted(patterns)?;
-        
+
         // Clear pattern_map and rebuild with correct state IDs from new trie
         self.pattern_map.clear();
-        
-        // Map patterns to their new state IDs in the DoubleArrayTrie
+
+        // Insert patterns into trie and map to pattern info
         for (pattern, pattern_info) in pattern_to_info {
-            if let Some(state_id) = self.trie.lookup(&pattern) {
-                self.pattern_map.insert(state_id as u32, pattern_info);
+            if let Ok(state_id) = self.trie.insert_and_get_node_id(&pattern) {
+                self.pattern_map.insert(state_id, pattern_info);
             }
         }
-        
+
         Ok(())
     }
 
@@ -858,28 +884,25 @@ impl DfaCache {
         Ok(root)
     }
 
-    /// Convert trie to Double Array format (simplified version)
-    fn convert_to_double_array(
+    /// Convert trie to ZiporaTrie format (simplified version)
+    fn convert_to_zipora_trie(
         root: Box<TrieNode>,
-        config: &DoubleArrayTrieConfig,
-    ) -> Result<(DoubleArrayTrie, HashMap<u32, PatternInfo>)> {
-        let trie_builder = DoubleArrayTrieBuilder::with_config(config.clone());
+        config: &ZiporaTrieConfig,
+    ) -> Result<(ZiporaTrie, HashMap<u32, PatternInfo>)> {
+        let mut trie = ZiporaTrie::with_config(config.clone());
         let mut pattern_map = HashMap::new();
-        
+
         // Collect all patterns from the trie
         let mut patterns = Vec::new();
         Self::collect_patterns_from_trie(&root, Vec::new(), &mut patterns);
-        
-        // Build the trie from sorted patterns
-        let mut pattern_vecs: Vec<Vec<u8>> = patterns.iter().map(|(pattern, _)| pattern.clone()).collect();
-        pattern_vecs.sort(); // DoubleArrayTrie requires sorted keys
-        let trie = trie_builder.build_from_sorted(pattern_vecs)?;
-        
-        // Create pattern map - simplified mapping
-        for (i, (_pattern, pattern_info)) in patterns.into_iter().enumerate() {
-            pattern_map.insert(i as u32, pattern_info);
+
+        // Insert patterns into ZiporaTrie and create pattern map
+        for (pattern, pattern_info) in patterns {
+            if let Ok(state_id) = trie.insert_and_get_node_id(&pattern) {
+                pattern_map.insert(state_id, pattern_info);
+            }
         }
-        
+
         Ok((trie, pattern_map))
     }
 

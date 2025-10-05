@@ -55,6 +55,11 @@ pub struct CacheMetrics {
 }
 
 impl CacheMetrics {
+    /// Create new cache metrics
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Calculate overall cache hit ratio
     pub fn hit_ratio(&self) -> f64 {
         let total_hits = self.l1_hits + self.l2_hits + self.l3_hits;
@@ -119,6 +124,11 @@ pub enum PrefetchHint {
 pub struct Prefetcher;
 
 impl Prefetcher {
+    /// Create new prefetcher
+    pub fn new() -> Self {
+        Prefetcher
+    }
+
     /// Prefetch a memory location with specified hint
     #[inline(always)]
     pub unsafe fn prefetch<T>(ptr: *const T, hint: PrefetchHint) {
@@ -752,3 +762,13 @@ mod tests {
         assert!(!complete); // Should not be complete in one step
     }
 }
+
+// SAFETY: CacheOptimizedBucket is Send when K and V are Send.
+// The NonNull pointer for overflow is only accessed through proper synchronization
+// at the hash map level, ensuring thread safety.
+unsafe impl<K: Send, V: Send, const N: usize> Send for CacheOptimizedBucket<K, V, N> {}
+
+// SAFETY: CacheOptimizedBucket is Sync when K and V are Sync.
+// The NonNull pointer for overflow is only accessed through proper synchronization
+// at the hash map level, ensuring thread safety.
+unsafe impl<K: Sync, V: Sync, const N: usize> Sync for CacheOptimizedBucket<K, V, N> {}

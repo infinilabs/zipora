@@ -3,7 +3,9 @@
 //! This example demonstrates the critical-bit trie functionality
 //! and provides detailed debugging information.
 
-use zipora::{CritBitTrie, Result, Trie};
+use zipora::fsa::{ZiporaTrie, ZiporaTrieConfig, TrieStrategy, StorageStrategy, CompressionStrategy, RankSelectType, Trie};
+use zipora::succinct::RankSelectInterleaved256;
+use zipora::Result;
 
 fn analyze_key_bits(key: &[u8]) {
     println!(
@@ -58,7 +60,24 @@ fn main() -> Result<()> {
     println!("🔍 Critical-Bit Trie Debug Session");
     println!("=====================================\n");
 
-    let mut trie = CritBitTrie::new();
+    // Create ZiporaTrie with Patricia strategy for critical-bit-like behavior
+    let config = ZiporaTrieConfig {
+        trie_strategy: TrieStrategy::Patricia {
+            max_path_length: 64,
+            compression_threshold: 4,
+            adaptive_compression: true,
+        },
+        storage_strategy: StorageStrategy::Standard {
+            initial_capacity: 256,
+            growth_factor: 1.5,
+        },
+        compression_strategy: CompressionStrategy::None,
+        rank_select_type: RankSelectType::Interleaved256,
+        enable_simd: true,
+        enable_concurrency: false,
+        cache_optimization: false,
+    };
+    let mut trie: ZiporaTrie<RankSelectInterleaved256> = ZiporaTrie::with_config(config);
 
     println!("🌳 Building trie with test keys...");
     let keys = [b"cat".as_slice(), b"car".as_slice(), b"card".as_slice()];

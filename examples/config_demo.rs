@@ -1,82 +1,190 @@
 //! Configuration demonstration example.
-//! 
-//! This example shows how to use the rich configuration APIs in Zipora.
+//!
+//! This example shows how to use the unified configuration APIs in Zipora 2.0.
 
-use zipora::config::{
-    NestLoudsTrieConfig, BlobStoreConfig, MemoryConfig, CompressionConfig, CacheConfig, SIMDConfig,
-    Config,
-};
-use zipora::error::Result;
+use zipora::fsa::{ZiporaTrieConfig, TrieStrategy, StorageStrategy, CompressionStrategy, RankSelectType};
+use zipora::hash_map::{ZiporaHashMapConfig, HashStrategy, OptimizationStrategy};
+use zipora::hash_map::StorageStrategy as HashStorageStrategy;
+use zipora::memory::{MemoryConfig, PoolConfig};
+use zipora::Result;
 
 fn main() -> Result<()> {
-    println!("Zipora Configuration API Demo");
-    println!("==============================");
+    println!("Zipora 2.0 Unified Configuration API Demo");
+    println!("==========================================");
 
-    // Create configurations using default values
-    println!("\n1. Default Configurations");
-    let nest_config = NestLoudsTrieConfig::default();
-    println!("   NestLoudsTrieConfig: nest_level={}, compression_level={}", 
-             nest_config.nest_level, nest_config.core_str_compression_level);
+    // 1. ZiporaTrie Configuration Examples
+    println!("\n1. ZiporaTrie Configurations");
 
-    let blob_config = BlobStoreConfig::default();
-    println!("   BlobStoreConfig: compression_level={}, block_size={}", 
-             blob_config.compression_level, blob_config.block_size);
+    // Default configuration
+    let default_trie_config = ZiporaTrieConfig::default();
+    println!("   Default trie config: SIMD={}, concurrency={}",
+             default_trie_config.enable_simd, default_trie_config.enable_concurrency);
 
-    let memory_config = MemoryConfig::default();
-    println!("   MemoryConfig: pool_size={}, alignment={}", 
-             memory_config.initial_pool_size, memory_config.alignment);
+    // Performance-optimized configuration
+    let perf_trie_config = ZiporaTrieConfig {
+        trie_strategy: TrieStrategy::DoubleArray {
+            initial_capacity: 1024,
+            growth_factor: 2.0,
+            free_list_management: true,
+            auto_shrink: false,
+        },
+        storage_strategy: StorageStrategy::CacheOptimized {
+            cache_line_size: 64,
+            numa_aware: true,
+            prefetch_enabled: true,
+        },
+        compression_strategy: CompressionStrategy::None,
+        rank_select_type: RankSelectType::Interleaved256,
+        enable_simd: true,
+        enable_concurrency: true,
+        cache_optimization: true,
+    };
+    println!("   Performance config: strategy=DoubleArray, cache_optimized=true");
 
-    // Create configurations using presets
-    println!("\n2. Preset Configurations");
-    let perf_config = NestLoudsTrieConfig::performance_preset();
-    println!("   Performance preset: nest_level={}, parallel_threads={}", 
-             perf_config.nest_level, perf_config.parallel_threads);
+    // Memory-optimized configuration
+    let memory_trie_config = ZiporaTrieConfig {
+        trie_strategy: TrieStrategy::CompressedSparse {
+            sparse_threshold: 0.3,
+            compression_level: 6,
+            adaptive_sparse: true,
+        },
+        storage_strategy: StorageStrategy::Standard {
+            initial_capacity: 64,
+            growth_factor: 1.2,
+        },
+        compression_strategy: CompressionStrategy::PathCompression {
+            min_path_length: 2,
+            max_path_length: 64,
+            adaptive_threshold: true,
+        },
+        rank_select_type: RankSelectType::Interleaved256,
+        enable_simd: true,
+        enable_concurrency: false,
+        cache_optimization: false,
+    };
+    println!("   Memory config: strategy=CompressedSparse, compression=PathCompression");
 
-    let mem_config = NestLoudsTrieConfig::memory_preset();
-    println!("   Memory preset: nest_level={}, compression_level={}", 
-             mem_config.nest_level, mem_config.core_str_compression_level);
+    // 2. ZiporaHashMap Configuration Examples
+    println!("\n2. ZiporaHashMap Configurations");
 
-    let rt_config = NestLoudsTrieConfig::realtime_preset();
-    println!("   Realtime preset: nest_level={}, compression_level={}", 
-             rt_config.nest_level, rt_config.core_str_compression_level);
+    // Default hash map configuration
+    let default_map_config = ZiporaHashMapConfig::default();
+    println!("   Default map config: load_factor={:.2}", default_map_config.load_factor);
 
-    // Create configuration using builder pattern
-    println!("\n3. Builder Pattern");
-    let custom_config = NestLoudsTrieConfig::builder()
-        .nest_level(4)
-        .compression_level(8)
-        .enable_statistics(true)
-        .parallel_threads(6)
-        .build()?;
-    println!("   Custom config: nest_level={}, compression_level={}, statistics={}, threads={}", 
-             custom_config.nest_level, 
-             custom_config.core_str_compression_level,
-             custom_config.enable_statistics,
-             custom_config.parallel_threads);
+    // High-performance configuration
+    let perf_map_config = ZiporaHashMapConfig {
+        hash_strategy: HashStrategy::RobinHood {
+            max_probe_distance: 16,
+            variance_reduction: true,
+            backward_shift: true,
+        },
+        storage_strategy: HashStorageStrategy::CacheOptimized {
+            cache_line_size: 64,
+            numa_aware: true,
+            huge_pages: false,
+        },
+        optimization_strategy: OptimizationStrategy::CacheAware {
+            access_pattern_tracking: true,
+            hot_cold_separation: true,
+            prefetch_distance: 2,
+        },
+        initial_capacity: 256,
+        load_factor: 0.75,
+    };
+    println!("   Performance config: strategy=RobinHood, cache_optimized=true");
 
-    // Validate configurations
-    println!("\n4. Configuration Validation");
-    let configs = [
-        ("Default", NestLoudsTrieConfig::default()),
-        ("Performance", NestLoudsTrieConfig::performance_preset()),
-        ("Memory", NestLoudsTrieConfig::memory_preset()),
-        ("Realtime", NestLoudsTrieConfig::realtime_preset()),
-    ];
+    // 3. Memory Configuration Examples
+    println!("\n3. Memory Pool Configurations");
 
-    for (name, config) in configs.iter() {
-        match config.validate() {
-            Ok(()) => println!("   {} config: ✓ Valid", name),
-            Err(e) => println!("   {} config: ✗ Invalid - {}", name, e),
-        }
-    }
+    let memory_config = MemoryConfig {
+        use_pools: true,
+        use_hugepages: false,
+        pool_chunk_size: 64 * 1024, // 64KB
+        max_pool_memory: 128 * 1024 * 1024, // 128MB
+    };
+    println!("   Memory config: pools={}, hugepages={}",
+             memory_config.use_pools, memory_config.use_hugepages);
 
-    println!("\n5. Environment Variable Integration");
-    println!("   Set environment variables like ZIPORA_TRIE_NEST_LEVEL=5 to configure from environment");
-    
-    // Try to load from environment (will use defaults if not set)
-    let env_config = NestLoudsTrieConfig::from_env()?;
-    println!("   Environment config: nest_level={}", env_config.nest_level);
+    let pool_config = PoolConfig {
+        chunk_size: 1024 * 1024, // 1MB
+        max_chunks: 128, // 128MB total
+        alignment: 64,
+    };
+    println!("   Pool config: chunk_size={}MB, max_chunks={}",
+             pool_config.chunk_size / (1024 * 1024),
+             pool_config.max_chunks);
 
-    println!("\nConfiguration API demonstration completed successfully! ✅");
+    // 4. Configuration Pattern Examples
+    println!("\n4. Configuration Patterns");
+
+    println!("   Creating specialized configurations...");
+
+    // String-optimized trie
+    let string_config = ZiporaTrieConfig {
+        trie_strategy: TrieStrategy::Patricia {
+            max_path_length: 128,
+            compression_threshold: 4,
+            adaptive_compression: true,
+        },
+        storage_strategy: StorageStrategy::Standard {
+            initial_capacity: 256,
+            growth_factor: 1.5,
+        },
+        compression_strategy: CompressionStrategy::FragmentCompression {
+            fragment_size: 8,
+            frequency_threshold: 0.3,
+            dictionary_size: 256,
+        },
+        rank_select_type: RankSelectType::Interleaved256,
+        enable_simd: true,
+        enable_concurrency: false,
+        cache_optimization: true,
+    };
+    println!("   String-optimized: Patricia + FragmentCompression");
+
+    // Small data optimized hash map
+    let small_map_config = ZiporaHashMapConfig {
+        hash_strategy: HashStrategy::Chaining {
+            load_factor: 0.9,
+            hash_cache: false,
+            compact_links: true,
+        },
+        storage_strategy: HashStorageStrategy::SmallInline {
+            inline_capacity: 4,
+            fallback_threshold: 8,
+        },
+        optimization_strategy: OptimizationStrategy::Standard,
+        initial_capacity: 8,
+        load_factor: 0.9,
+    };
+    println!("   Small-data optimized: inline_capacity=4, fallback_threshold=8");
+    // 5. Demonstrating configuration usage
+    println!("\n5. Using Configurations");
+
+    println!("   Suppressed variables for unused configs to avoid warnings.");
+    let _ = default_trie_config;
+    let _ = perf_trie_config;
+    let _ = memory_trie_config;
+    let _ = default_map_config;
+    let _ = perf_map_config;
+    let _ = memory_config;
+    let _ = pool_config;
+    let _ = string_config;
+    let _ = small_map_config;
+
+    println!("   All configurations created successfully!");
+    println!("   In a real application, these would be used to create");
+    println!("   ZiporaTrie and ZiporaHashMap instances with:");
+    println!("     ZiporaTrie::with_config(config)");
+    println!("     ZiporaHashMap::with_config(config)");
+
+    println!("\n6. Configuration Benefits");
+    println!("   ✅ Strategy-based configuration for different use cases");
+    println!("   ✅ Type-safe configuration with compile-time validation");
+    println!("   ✅ Performance vs memory trade-offs clearly expressed");
+    println!("   ✅ SIMD and concurrency control per configuration");
+    println!("   ✅ Cache optimization and NUMA awareness settings");
+
+    println!("\nUnified Configuration API demonstration completed successfully! ✅");
     Ok(())
 }

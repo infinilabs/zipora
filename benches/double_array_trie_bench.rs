@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use zipora::fsa::{
     CritBitTrie, DoubleArrayTrie, DoubleArrayTrieBuilder, DoubleArrayTrieConfig,
-    FiniteStateAutomaton, LoudsTrie, PrefixIterable, StatisticsProvider, Trie,
+    FiniteStateAutomaton, PrefixIterable, StatisticsProvider, ZiporaTrie,
 };
 
 // Benchmark data generators
@@ -183,9 +183,9 @@ fn bench_construction_comparison(c: &mut Criterion) {
         b.iter_batched(
             || keys.clone(),
             |keys| {
-                let mut trie = LoudsTrie::new();
+                let mut trie: ZiporaTrie = ZiporaTrie::new();
                 for key in keys {
-                    black_box(trie.insert(&key).unwrap());
+                    black_box(trie.insert(&key));
                 }
                 trie
             },
@@ -250,7 +250,7 @@ fn bench_lookup_performance(c: &mut Criterion) {
 
         // Build structures once
         let mut double_array = DoubleArrayTrie::new();
-        let mut louds = LoudsTrie::new();
+        let mut louds: ZiporaTrie = ZiporaTrie::new();
         let mut critbit = CritBitTrie::new();
         let mut hashmap = HashMap::new();
         let mut btreemap = BTreeMap::new();
