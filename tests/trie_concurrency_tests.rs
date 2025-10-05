@@ -71,7 +71,7 @@ fn test_double_array_trie_concurrent_reads() {
     let mut handles = Vec::new();
 
     for thread_id in 0..num_threads {
-        let trie_clone = Arc::clone(&trie);
+        let trie_clone: Arc<DoubleArrayTrie> = Arc::clone(&trie);
         let keys_clone = keys.clone();
         let barrier_clone = Arc::clone(&barrier);
 
@@ -136,7 +136,7 @@ fn test_double_array_trie_mixed_read_write_protection() {
 
     // Phase 1: Writers insert new keys
     for writer_id in 0..num_writers {
-        let trie_clone = Arc::clone(&trie);
+        let trie_clone: Arc<RwLock<DoubleArrayTrie>> = Arc::clone(&trie);
         let barrier_clone = Arc::clone(&writer_barrier);
         let inserted_clone = Arc::clone(&inserted_keys);
 
@@ -181,7 +181,7 @@ fn test_double_array_trie_mixed_read_write_protection() {
 
     // Phase 2: Readers verify data integrity
     for reader_id in 0..num_readers {
-        let trie_clone = Arc::clone(&trie);
+        let trie_clone: Arc<RwLock<DoubleArrayTrie>> = Arc::clone(&trie);
         let keys_clone = initial_keys.clone();
         let inserted_clone = Arc::clone(&inserted_keys);
         let barrier_clone = Arc::clone(&reader_barrier);
@@ -283,7 +283,7 @@ fn test_double_array_trie_stress_concurrent_access() {
     let mut handles = Vec::new();
 
     for thread_id in 0..num_threads {
-        let trie_clone = Arc::clone(&trie);
+        let trie_clone: Arc<Mutex<DoubleArrayTrie>> = Arc::clone(&trie);
         let barrier_clone = Arc::clone(&barrier);
 
         let handle = thread::spawn(move || {
@@ -521,7 +521,7 @@ fn test_nested_louds_trie_concurrent_reads() {
     let mut handles = Vec::new();
 
     for thread_id in 0..num_threads {
-        let trie_clone = Arc::clone(&trie);
+        let trie_clone: Arc<NestedLoudsTrie<RankSelectInterleaved256>> = Arc::clone(&trie);
         let keys_clone = keys.clone();
         let barrier_clone = Arc::clone(&barrier);
 
@@ -593,7 +593,7 @@ fn test_nested_louds_trie_concurrent_prefix_operations() {
     let mut handles = Vec::new();
 
     for (thread_id, prefix) in prefixes.iter().enumerate() {
-        let trie_clone = Arc::clone(&trie);
+        let trie_clone: Arc<NestedLoudsTrie<RankSelectInterleaved256>> = Arc::clone(&trie);
         let prefix_bytes = prefix.as_bytes().to_vec();
         let barrier_clone = Arc::clone(&barrier);
 
@@ -640,7 +640,7 @@ fn test_nested_louds_concurrent_stress() {
     let mut handles = Vec::new();
 
     for thread_id in 0..num_threads {
-        let trie_clone = Arc::clone(&trie);
+        let trie_clone: Arc<NestedLoudsTrie<RankSelectInterleaved256>> = Arc::clone(&trie);
         let keys_clone = keys.clone();
         let barrier_clone = Arc::clone(&barrier);
 
@@ -762,8 +762,8 @@ fn test_mixed_trie_concurrent_access() {
     let mut handles = Vec::new();
 
     for thread_id in 0..num_threads {
-        let da_clone = Arc::clone(&da_trie);
-        let nested_clone = Arc::clone(&nested_trie);
+        let da_clone: Arc<DoubleArrayTrie> = Arc::clone(&da_trie);
+        let nested_clone: Arc<NestedLoudsTrie<RankSelectInterleaved256>> = Arc::clone(&nested_trie);
         let keys_clone = shared_keys.clone();
         let barrier_clone = Arc::clone(&barrier);
 
@@ -853,8 +853,8 @@ fn test_concurrent_statistics_access() {
     let mut handles = Vec::new();
 
     for thread_id in 0..num_threads {
-        let da_clone = Arc::clone(&da_trie);
-        let nested_clone = Arc::clone(&nested_trie);
+        let da_clone: Arc<DoubleArrayTrie> = Arc::clone(&da_trie);
+        let nested_clone: Arc<NestedLoudsTrie<RankSelectInterleaved256>> = Arc::clone(&nested_trie);
         let barrier_clone = Arc::clone(&barrier);
 
         let handle = thread::spawn(move || {
@@ -957,7 +957,7 @@ fn test_memory_safety_concurrent_access() {
     let mut handles = Vec::new();
 
     for thread_id in 0..num_threads {
-        let trie_clone = Arc::clone(&trie);
+        let trie_clone: Arc<RwLock<DoubleArrayTrie>> = Arc::clone(&trie);
 
         let handle = thread::spawn(move || {
             let worker_keys = generate_worker_specific_keys(thread_id, operations_per_thread);
@@ -1035,7 +1035,7 @@ fn test_nested_louds_memory_safety_concurrent() {
     let mut handles = Vec::new();
 
     for thread_id in 0..num_threads {
-        let trie_clone = Arc::clone(&trie);
+        let trie_clone: Arc<RwLock<NestedLoudsTrie<RankSelectInterleaved256>>> = Arc::clone(&trie);
 
         let handle = thread::spawn(move || {
             let worker_keys = generate_worker_specific_keys(thread_id, operations_per_thread);
@@ -1179,7 +1179,7 @@ fn test_scalability_under_concurrent_load() {
         let start = Instant::now();
         crossbeam_thread::scope(|s| {
             for thread_id in 0..num_threads {
-                let trie_clone = Arc::clone(&trie);
+                let trie_clone: Arc<RwLock<DoubleArrayTrie>> = Arc::clone(&trie);
 
                 s.spawn(move |_| {
                     let worker_keys = generate_worker_specific_keys(thread_id, keys_per_thread);

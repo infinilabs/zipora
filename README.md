@@ -6,6 +6,18 @@
 
 High-performance Rust data structures and compression algorithms with memory safety guarantees.
 
+## ⚡ Version 2.0 - Unified Architecture
+
+Zipora 2.0 introduces a **unified architecture** following referenced project's philosophy of "one excellent implementation per data structure" with strategy-based configuration. This architectural transformation provides:
+
+- **🔄 Unified Implementations**: Single `ZiporaHashMap` and `ZiporaTrie` with strategy-based configuration
+- **🎯 Strategy-Based Design**: Configure behavior through strategies rather than separate types
+- **🧹 Cleaner APIs**: Consistent interfaces with powerful customization options
+- **📈 Better Performance**: Focused optimization efforts on fewer, better implementations
+- **🔧 Easier Maintenance**: Single implementations instead of 14+ separate data structures
+
+> **Migration Note**: Version 2.0 includes breaking changes. See [Migration Guide](docs/MIGRATION_GUIDE.md) for upgrade instructions.
+
 ## Features
 
 - **🚀 High Performance**: Zero-copy operations, SIMD optimizations (AVX2, AVX-512*), cache-friendly layouts
@@ -565,13 +577,13 @@ The configuration system is designed for efficiency:
 
 ```toml
 [dependencies]
-zipora = "1.1.2"
+zipora = "2.0.0"
 
 # Or with optional features
-zipora = { version = "1.1.2", features = ["lz4", "ffi"] }
+zipora = { version = "2.0.0", features = ["lz4", "ffi"] }
 
 # AVX-512 requires nightly Rust (experimental intrinsics)
-zipora = { version = "1.1.2", features = ["avx512", "lz4", "ffi"] }  # nightly only
+zipora = { version = "2.0.0", features = ["avx512", "lz4", "ffi"] }  # nightly only
 ```
 
 ### Basic Usage
@@ -614,80 +626,88 @@ let data = trie_store.get_by_key(b"user/profile/123").unwrap();
 let prefix_data = trie_store.get_by_prefix(b"user/").unwrap();
 println!("Found {} entries with 'user/' prefix", prefix_data.len());
 
-// Advanced tries
-let mut trie = LoudsTrie::new();
+// ⚡ Unified Trie - Single implementation with strategy-based configuration
+use zipora::fsa::{ZiporaTrie, ZiporaTrieConfig, Trie};
+
+// Default Patricia trie behavior
+let mut trie = ZiporaTrie::new(); // Same API as before!
 trie.insert(b"hello").unwrap();
 assert!(trie.contains(b"hello"));
 
-// Critical Bit Trie - space-efficient radix tree with binary decisions
-let mut crit_bit = CritBitTrie::new();
-crit_bit.insert(b"hello").unwrap();
-crit_bit.insert(b"help").unwrap();
-crit_bit.insert(b"world").unwrap();
-assert!(crit_bit.contains(b"hello"));
-assert!(crit_bit.contains(b"help"));
-assert!(!crit_bit.contains(b"he")); // Prefix compression
+// String-specialized trie (formerly CritBitTrie)
+let mut string_trie = ZiporaTrie::with_config(ZiporaTrieConfig::string_specialized());
+string_trie.insert(b"hello").unwrap();
+string_trie.insert(b"help").unwrap();
+string_trie.insert(b"world").unwrap();
+assert!(string_trie.contains(b"hello"));
+assert!(!string_trie.contains(b"he")); // Automatic compression
 
-// Space-Optimized Critical Bit Trie with BMI2 hardware acceleration
-let mut optimized_trie = SpaceOptimizedCritBitTrie::new();
-optimized_trie.insert(b"efficient").unwrap();
-optimized_trie.insert(b"effective").unwrap();
-let stats = optimized_trie.stats();
-println!("Memory usage: {} bytes, {} bits per key", stats.memory_usage, stats.bits_per_key);
+// Space-optimized trie (formerly LOUDS/NestedLouds)
+let mut compact_trie = ZiporaTrie::with_config(ZiporaTrieConfig::space_optimized());
+compact_trie.insert(b"efficient").unwrap();
+compact_trie.insert(b"effective").unwrap();
+let stats = compact_trie.stats();
+println!("Memory usage: {} bytes, compression ratio: {:.1}%",
+         stats.memory_usage, stats.compression_ratio * 100.0);
 
-// Patricia Trie with hardware acceleration
-let mut patricia = PatriciaTrie::new();
-patricia.insert(b"hello").unwrap();
-patricia.insert(b"help").unwrap();
-assert!(patricia.contains(b"hello"));
-assert!(patricia.contains(b"help"));
-assert!(!patricia.contains(b"he")); // Path compression
+// High-performance concurrent trie (formerly DoubleArrayTrie)
+let pool = std::sync::Arc::new(SecureMemoryPool::new(SecurePoolConfig::default()).unwrap());
+let mut concurrent_trie = ZiporaTrie::with_config(
+    ZiporaTrieConfig::concurrent_high_performance(pool)
+);
+concurrent_trie.insert(b"concurrent").unwrap();
 
-// Hash maps - multiple specialized implementations
-let mut map = GoldHashMap::new();
+// ⚡ Unified Hash Map - Single implementation with strategy-based configuration
+use zipora::hash_map::{ZiporaHashMap, ZiporaHashMapConfig};
+
+// Default high-performance hash map
+let mut map = ZiporaHashMap::new(); // Same API as before!
 map.insert("key", "value").unwrap();
 
-// Golden ratio optimized hash map (15-20% better memory efficiency)
-let mut golden_map = GoldenRatioHashMap::new();
-golden_map.insert("optimal", "growth").unwrap();
-
-// String-optimized hash map with interning (memory efficient for string keys)
-let mut string_map = StringOptimizedHashMap::new();
+// String-optimized configuration (formerly StringOptimizedHashMap)
+let mut string_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::string_optimized());
 string_map.insert("interned", 42).unwrap();
+let arena_stats = string_map.stats(); // Unified stats API
 
-// Small hash map with inline storage (zero allocations for ≤N elements)
-let mut small_hash_map: SmallHashMap<&str, i32, 4> = SmallHashMap::new();
-small_hash_map.insert("inline", 1).unwrap();
+// Small inline configuration (formerly SmallHashMap)
+let mut small_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::small_inline(4));
+small_map.insert("inline", 1).unwrap();
 
-// Advanced collision resolution with sophisticated algorithms
-let mut advanced_map = AdvancedHashMap::with_collision_strategy(
-    CollisionStrategy::RobinHood {
+// Cache-optimized configuration with advanced features
+let mut cache_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::cache_optimized());
+cache_map.insert("cache", "optimized").unwrap();
+let metrics = cache_map.cache_metrics(); // Same powerful API!
+println!("Cache hit ratio: {:.2}%", metrics.hit_ratio() * 100.0);
+
+// Advanced custom configuration (replaces AdvancedHashMap)
+use zipora::hash_map::{HashStrategy, StorageStrategy, OptimizationStrategy};
+let config = ZiporaHashMapConfig {
+    hash_strategy: HashStrategy::RobinHood {
         max_probe_distance: 64,
         variance_reduction: true,
         backward_shift: true,
-    }
-).unwrap();
-advanced_map.insert("advanced", "collision handling").unwrap();
+    },
+    storage_strategy: StorageStrategy::CacheOptimized {
+        cache_line_size: 64,
+        numa_aware: true,
+        huge_pages: false,
+    },
+    optimization_strategy: OptimizationStrategy::HighPerformance {
+        simd_enabled: true,
+        cache_optimized: true,
+        prefetch_enabled: true,
+        numa_aware: true,
+    },
+    ..ZiporaHashMapConfig::default()
+};
+let mut advanced_map = ZiporaHashMap::with_config(config);
+advanced_map.insert("advanced", "unified configuration").unwrap();
 
-// Cache-optimized hash map with NUMA awareness and prefetching
-let mut cache_map = CacheOptimizedHashMap::new();
-cache_map.enable_hot_cold_separation(0.2); // 20% hot data
-cache_map.set_adaptive_mode(true);
-cache_map.insert("cache", "optimized").unwrap();
-
-// Get cache performance metrics
-let metrics = cache_map.cache_metrics();
-println!("Cache hit ratio: {:.2}%", metrics.hit_ratio() * 100.0);
-
-// Advanced string arena with offset-based addressing
-let mut arena = AdvancedStringArena::new();
-let handle = arena.add_string("shared string").unwrap();
-let retrieved = arena.get_string(handle).unwrap();
-assert_eq!(retrieved, "shared string");
-
-// String deduplication and reference counting
-let handle2 = arena.add_string("shared string").unwrap(); // Reuses existing
-let stats = arena.stats();
+// Advanced string arena with offset-based addressing (integrated into ZiporaHashMap)
+let mut string_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::string_optimized());
+string_map.insert("shared string", "value1").unwrap();
+string_map.insert("shared string", "value2").unwrap(); // Automatic deduplication
+let stats = string_map.stats();
 println!("Deduplication ratio: {:.2}%", stats.deduplication_ratio * 100.0);
 
 // Entropy coding
@@ -1014,33 +1034,51 @@ println!("Shard distribution: {:?}", shard_sizes);
 
 ## Specialized Hash Maps
 
-Zipora provides six specialized hash map implementations with advanced features including cache locality optimizations, sophisticated collision resolution algorithms, and memory-efficient string arena management:
+Zipora provides a **unified hash map implementation** with strategy-based configuration for advanced features including cache locality optimizations, sophisticated collision resolution algorithms, and memory-efficient string arena management:
 
 ```rust
-use zipora::{GoldHashMap, GoldenRatioHashMap, StringOptimizedHashMap, SmallHashMap};
+use zipora::hash_map::{ZiporaHashMap, ZiporaHashMapConfig, HashStrategy, StorageStrategy};
 
-// Original high-performance hash map (existing)
-let mut gold_map = GoldHashMap::new();
-gold_map.insert("key", "value").unwrap();
-// Best for: General-purpose use, excels at lookups (241-342 Melem/s)
+// Default high-performance hash map - same API as before!
+let mut map = ZiporaHashMap::new();
+map.insert("key", "value").unwrap();
+// Features: Optimized for general-purpose use, excellent lookup performance
 
-// Golden ratio optimized hash map (NEW - 15-20% better memory efficiency)
-let mut golden_map = GoldenRatioHashMap::new();
-golden_map.insert("optimal", "growth").unwrap();
-// Features: Golden ratio growth strategy (1.618x), FaboHashCombine hash function
-// Best for: Memory-constrained applications, sustained performance (55-70 Melem/s)
-
-// String-optimized hash map with interning (NEW - memory efficient for strings)
-let mut string_map = StringOptimizedHashMap::new();
+// String-optimized configuration - memory efficient for string keys
+let mut string_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::string_optimized());
 string_map.insert("interned", 42).unwrap();
-// Features: String interning, prefix caching, SIMD acceleration ready
-// Best for: Applications with many duplicate string keys, memory optimization
+// Features: String interning, prefix caching, SIMD acceleration, arena management
+// Best for: Applications with many duplicate string keys
 
-// Small hash map with inline storage (NEW - zero allocations for small maps)
-let mut small_hash_map: SmallHashMap<&str, i32, 4> = SmallHashMap::new();
-small_hash_map.insert("inline", 1).unwrap();
+// Small inline configuration - zero allocations for small collections
+let mut small_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::small_inline(4));
+small_map.insert("inline", 1).unwrap();
 // Features: Inline storage for ≤N elements, automatic heap fallback
 // Best for: Small collections, zero-allocation scenarios
+
+// Cache-optimized configuration - NUMA awareness and prefetching
+let mut cache_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::cache_optimized());
+cache_map.insert("cache", "optimized").unwrap();
+// Features: Cache-line alignment, NUMA awareness, hot/cold separation
+// Best for: High-performance applications with cache-sensitive workloads
+
+// Custom advanced configuration - full control over strategies
+let config = ZiporaHashMapConfig {
+    hash_strategy: HashStrategy::RobinHood {
+        max_probe_distance: 64,
+        variance_reduction: true,
+        backward_shift: true,
+    },
+    storage_strategy: StorageStrategy::CacheOptimized {
+        cache_line_size: 64,
+        numa_aware: true,
+        huge_pages: false,
+    },
+    load_factor: 0.75,
+    ..ZiporaHashMapConfig::default()
+};
+let mut advanced_map = ZiporaHashMap::with_config(config);
+advanced_map.insert("advanced", "unified configuration").unwrap();
 ```
 
 ### Hash Map Performance Comparison
@@ -1513,105 +1551,93 @@ if cpu_features.has_avx2 {
 }
 ```
 
-### Advanced Tries
+### Unified Tries
 
 ```rust
-use zipora::{CritBitTrie, SpaceOptimizedCritBitTrie, PatriciaTrie, DoubleArrayTrie, 
-            CompressedSparseTrie, NestedLoudsTrie, ConcurrencyLevel, ReaderToken, 
-            WriterToken, RankSelectInterleaved256, PatriciaConfig};
+use zipora::fsa::{ZiporaTrie, ZiporaTrieConfig, Trie, TrieStrategy, CompressionStrategy};
+use zipora::memory::{SecureMemoryPool, SecurePoolConfig};
 
-// Critical Bit Trie - Space-efficient radix tree with binary critical bit decisions
-let mut crit_bit = CritBitTrie::new();
-crit_bit.insert(b"cat").unwrap();
-crit_bit.insert(b"car").unwrap();
-crit_bit.insert(b"card").unwrap();
+// Default Patricia trie behavior - same API as before!
+let mut trie = ZiporaTrie::new();
+trie.insert(b"cat").unwrap();
+trie.insert(b"car").unwrap();
+trie.insert(b"card").unwrap();
 
 // Efficient lookups with O(m) complexity where m is key length
-assert!(crit_bit.contains(b"cat"));
-assert!(crit_bit.contains(b"car"));
-assert!(crit_bit.contains(b"card"));
-assert!(!crit_bit.contains(b"ca")); // Prefix compression means partial matches aren't found
+assert!(trie.contains(b"cat"));
+assert!(trie.contains(b"car"));
+assert!(trie.contains(b"card"));
+assert!(!trie.contains(b"ca")); // Path compression active
 
 // Prefix iteration for hierarchical data
-for key in crit_bit.iter_prefix(b"car") {
+for key in trie.iter_prefix(b"car") {
     println!("Found key with 'car' prefix: {:?}", String::from_utf8_lossy(&key));
 }
 
-// Space-Optimized Critical Bit Trie with BMI2 hardware acceleration
-let mut optimized_trie = SpaceOptimizedCritBitTrie::optimized_for_strings().unwrap();
-optimized_trie.insert(b"efficient").unwrap();
-optimized_trie.insert(b"effective").unwrap();
-optimized_trie.insert(b"engine").unwrap();
+// String-specialized configuration (formerly CritBitTrie)
+let mut string_trie = ZiporaTrie::with_config(ZiporaTrieConfig::string_specialized());
+string_trie.insert(b"efficient").unwrap();
+string_trie.insert(b"effective").unwrap();
+string_trie.insert(b"engine").unwrap();
 
-// Check BMI2 acceleration status
-if optimized_trie.bmi2_acceleration_enabled() {
-    println!("BMI2 hardware acceleration is active for 5-10x faster operations");
+// Automatic BMI2 hardware acceleration detection
+let stats = string_trie.stats();
+if stats.hardware_acceleration_enabled {
+    println!("BMI2 hardware acceleration active for 5-10x faster operations");
 }
 
-// Advanced space optimization statistics
-let stats = optimized_trie.stats();
-let (compression_ratio, avg_key_len, cache_miss_est) = optimized_trie.compression_stats();
+// Advanced compression statistics
 println!("Memory usage: {} bytes, {:.2} bits per key", stats.memory_usage, stats.bits_per_key);
-println!("Compression ratio: {:.1}%, Average key length: {:.1}", 
-         compression_ratio * 100.0, avg_key_len);
+println!("Compression ratio: {:.1}%", stats.compression_ratio * 100.0);
 
-// Runtime optimization for access patterns
-optimized_trie.optimize().unwrap();
+// Space-optimized configuration (formerly LoudsTrie/NestedLoudsTrie)
+let mut compact_trie = ZiporaTrie::with_config(ZiporaTrieConfig::space_optimized());
+compact_trie.insert(b"hello").unwrap();
+compact_trie.insert(b"help").unwrap();
+compact_trie.insert(b"world").unwrap();
 
-// Patricia Trie - Sophisticated radix tree with advanced concurrency and hardware acceleration
-let mut patricia = PatriciaTrie::new();
-patricia.insert(b"hello").unwrap();
-patricia.insert(b"help").unwrap();
-patricia.insert(b"world").unwrap();
+// Advanced space optimization with LOUDS compression
+let space_stats = compact_trie.stats();
+println!("Space saved: {:.1}%", (1.0 - space_stats.compression_ratio) * 100.0);
 
-// O(m) lookup performance with path compression and SIMD acceleration
-assert!(patricia.contains(b"hello"));
-assert!(patricia.contains(b"help"));
-assert!(!patricia.contains(b"he")); // Path compression means partial matches aren't found
+// High-performance concurrent configuration (formerly DoubleArrayTrie)
+let pool = std::sync::Arc::new(SecureMemoryPool::new(SecurePoolConfig::default()).unwrap());
+let mut concurrent_trie = ZiporaTrie::with_config(
+    ZiporaTrieConfig::concurrent_high_performance(pool)
+);
+concurrent_trie.insert(b"computer").unwrap();
+concurrent_trie.insert(b"computation").unwrap();
+concurrent_trie.insert(b"compute").unwrap();
 
-// Advanced configuration with hardware optimizations
-let config = PatriciaConfig::performance_optimized(); // BMI2 + SIMD + concurrency
-let mut optimized_trie = PatriciaTrie::with_config(config);
+// O(1) lookup performance with concurrent access
+assert!(concurrent_trie.contains(b"computer"));
+let perf_stats = concurrent_trie.stats();
+println!("Concurrent performance: {} ops/sec", perf_stats.operations_per_second);
 
-// Concurrent operations with token-based safety
-let config = PatriciaConfig {
-    concurrency_level: ConcurrencyLevel::OneWriteMultiRead,
-    use_bmi2: true,        // Hardware acceleration with BMI2 instructions
-    use_simd: true,        // SIMD string comparisons
-    alignment: 64,         // Cache-line alignment for performance
-    ..Default::default()
+// Custom advanced configuration - full strategy control
+let config = ZiporaTrieConfig {
+    trie_strategy: TrieStrategy::Patricia {
+        max_path_length: 64,
+        compression_threshold: 4,
+        adaptive_compression: true,
+    },
+    compression_strategy: CompressionStrategy::PathCompression {
+        min_path_length: 2,
+        max_path_length: 32,
+        adaptive_threshold: true,
+    },
+    enable_simd: true,
+    cache_optimization: true,
+    concurrency_level: zipora::fsa::ConcurrencyLevel::OneWriteMultiRead,
+    ..ZiporaTrieConfig::default()
 };
-let concurrent_trie = PatriciaTrie::with_config(config);
-let read_token = concurrent_trie.acquire_read_token();
-let write_token = concurrent_trie.acquire_write_token();
+let mut advanced_trie = ZiporaTrie::with_config(config);
+advanced_trie.insert(b"advanced").unwrap();
 
-// Thread-safe operations
-concurrent_trie.lookup_with_token(b"hello", &read_token);
-concurrent_trie.insert_with_token(b"new_key", &write_token).unwrap();
-
-// Prefix iteration with lexicographic ordering
-for key in patricia.iter_prefix(b"hel") {
-    println!("Found key: {:?}", key);
-}
-
-// Comprehensive statistics and performance monitoring
-let stats = patricia.stats();
-println!("Memory usage: {} bytes", stats.memory_usage);
-println!("Keys: {}, Nodes: {}", stats.num_keys, stats.num_states);
-println!("Bits per key: {:.2}", stats.bits_per_key);
-println!("Path compression ratio: {:.1}%", (1.0 - stats.avg_depth / stats.max_depth as f64) * 100.0);
-
-// Double Array Trie - Constant-time O(1) state transitions
-let mut dat = DoubleArrayTrie::new();
-dat.insert(b"computer").unwrap();
-dat.insert(b"computation").unwrap();
-dat.insert(b"compute").unwrap();
-
-// O(1) lookup performance - 2-3x faster than hash maps for dense key sets
-assert!(dat.contains(b"computer"));
-assert_eq!(dat.num_keys(), 3);
-let stats = dat.get_statistics();
-println!("Memory usage: {} bytes per key", stats.memory_usage / stats.num_keys);
+// Comprehensive performance monitoring
+let advanced_stats = advanced_trie.stats();
+println!("Memory efficiency: {:.1}%", advanced_stats.memory_efficiency * 100.0);
+println!("Cache hit ratio: {:.2}%", advanced_stats.cache_hit_ratio * 100.0);
 
 // Compressed Sparse Trie - Multi-level concurrency with token safety
 let mut csp = CompressedSparseTrie::new(ConcurrencyLevel::MultiWriteMultiRead).unwrap();

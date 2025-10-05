@@ -51,6 +51,7 @@ const GOLDEN_RATIO_DENOMINATOR: usize = 64; // 103/64 ≈ 1.609
 /// assert!(compressed.compression_ratio() < 0.5); // >50% space saving with repetitive data
 /// # Ok::<(), zipora::ZiporaError>(())
 /// ```
+#[derive(Debug)]
 pub struct UintVector {
     /// Current compression strategy in use
     strategy: CompressionStrategy,

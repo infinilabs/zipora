@@ -1,7 +1,26 @@
-use zipora::fsa::{DoubleArrayTrie, FiniteStateAutomaton, Trie};
+use zipora::fsa::{ZiporaTrie, ZiporaTrieConfig, TrieStrategy, StorageStrategy, CompressionStrategy, RankSelectType, FiniteStateAutomaton, Trie};
+use zipora::succinct::RankSelectInterleaved256;
 
 fn main() {
-    let mut trie = DoubleArrayTrie::new();
+    // Create ZiporaTrie with DoubleArray strategy for compatibility
+    let config = ZiporaTrieConfig {
+        trie_strategy: TrieStrategy::DoubleArray {
+            initial_capacity: 256,
+            growth_factor: 1.5,
+            free_list_management: true,
+            auto_shrink: false,
+        },
+        storage_strategy: StorageStrategy::Standard {
+            initial_capacity: 256,
+            growth_factor: 1.5,
+        },
+        compression_strategy: CompressionStrategy::None,
+        rank_select_type: RankSelectType::Interleaved256,
+        enable_simd: true,
+        enable_concurrency: false,
+        cache_optimization: false,
+    };
+    let mut trie: ZiporaTrie<RankSelectInterleaved256> = ZiporaTrie::with_config(config);
     trie.insert(b"hello").unwrap();
     trie.insert(b"help").unwrap();
     trie.insert(b"world").unwrap();

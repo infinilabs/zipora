@@ -2,8 +2,8 @@ use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use std::collections::HashMap;
 use zipora::{
     BitVector, BlobStore, DictionaryBuilder, DictionaryCompressor, EntropyStats, FastStr, FastVec,
-    GoldHashMap, HuffmanBlobStore, HuffmanEncoder, HuffmanTree, MemoryBlobStore, RankSelect256,
-    Rans64Encoder,
+    HuffmanBlobStore, HuffmanEncoder, HuffmanTree, MemoryBlobStore, RankSelect256,
+    Rans64Encoder, ZiporaHashMap,
 };
 use zipora::succinct::rank_select::RankSelectOps;
 use zipora::entropy::ParallelX1;
@@ -128,9 +128,9 @@ fn benchmark_hash_map_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("HashMap Comparison");
 
     // Benchmark insertion performance
-    group.bench_function("GoldHashMap insert 10k", |b| {
+    group.bench_function("ZiporaHashMap insert 10k", |b| {
         b.iter(|| {
-            let mut map = GoldHashMap::new();
+            let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().unwrap();
             for i in 0..10_000 {
                 let key = format!("key_{}", i);
                 map.insert(black_box(key), black_box(i)).unwrap();
@@ -151,7 +151,7 @@ fn benchmark_hash_map_comparison(c: &mut Criterion) {
     });
 
     // Create pre-populated maps for lookup benchmarks
-    let mut gold_map = GoldHashMap::new();
+    let mut gold_map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().unwrap();
     let mut std_map = HashMap::new();
 
     for i in 0..10_000 {
@@ -161,7 +161,7 @@ fn benchmark_hash_map_comparison(c: &mut Criterion) {
     }
 
     // Benchmark lookup performance
-    group.bench_function("GoldHashMap lookup", |b| {
+    group.bench_function("ZiporaHashMap lookup", |b| {
         b.iter(|| {
             for i in 0..1_000 {
                 let key = format!("key_{}", black_box(i));

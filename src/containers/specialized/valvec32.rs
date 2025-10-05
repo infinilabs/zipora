@@ -86,7 +86,7 @@ fn get_usable_size(_ptr: *mut u8, size: usize) -> usize {
     size
 }
 
-/// Branch prediction hints for performance optimization following topling-zip pattern
+/// Branch prediction hints for performance optimization following referenced project pattern
 /// Simple, direct approach without function call overhead
 #[cfg(feature = "nightly")]
 use std::intrinsics::{likely, unlikely};
@@ -98,7 +98,7 @@ use std::intrinsics::{likely, unlikely};
 #[inline(always)]
 fn likely(b: bool) -> bool {
     // Simple pass-through - let compiler handle optimization
-    // This matches the fallback in topling-zip for non-GCC compilers
+    // This matches the fallback in referenced project for non-GCC compilers
     b
 }
 
@@ -106,11 +106,11 @@ fn likely(b: bool) -> bool {
 #[inline(always)]
 fn unlikely(b: bool) -> bool {
     // Simple pass-through - let compiler handle optimization
-    // This matches the fallback in topling-zip for non-GCC compilers
+    // This matches the fallback in referenced project for non-GCC compilers
     b
 }
 
-/// Simple optimal growth strategy following topling-zip pattern
+/// Simple optimal growth strategy following referenced project pattern
 /// Uses golden ratio (~1.618) for mathematically optimal amortized performance
 #[inline]
 fn larger_capacity(old_cap: u32) -> u32 {
@@ -119,7 +119,7 @@ fn larger_capacity(old_cap: u32) -> u32 {
         return 8; // Simple, fast initial size
     }
 
-    // topling-zip pattern: oldcap * 103 / 64 ≈ 1.609375 (close to golden ratio 1.618)
+    // referenced project pattern: oldcap * 103 / 64 ≈ 1.609375 (close to golden ratio 1.618)
     // This is mathematically optimal for amortized performance
     let new_cap = (old_cap as u64 * 103 / 64) as u32;
     new_cap.min(MAX_CAPACITY)
@@ -348,14 +348,14 @@ impl<T> ValVec32<T> {
         self.grow_to(new_capacity)
     }
 
-    /// Calculates new capacity using topling-zip optimal growth strategy
+    /// Calculates new capacity using referenced project optimal growth strategy
     #[inline]
     fn calculate_new_capacity(&self, min_capacity: u32) -> u32 {
         let new_cap = larger_capacity(self.capacity).max(min_capacity);
         new_cap.min(MAX_CAPACITY)
     }
 
-    /// Grows the vector to the specified capacity - simplified following topling-zip pattern
+    /// Grows the vector to the specified capacity - simplified following referenced project pattern
     /// Simple realloc-based approach for maximum performance
     #[cold]
     #[inline(never)]
@@ -374,9 +374,9 @@ impl<T> ValVec32<T> {
         let elem_size = mem::size_of::<T>();
         let new_size = new_capacity_usize.saturating_mul(elem_size);
 
-        // Topling-zip exact realloc pattern: T* q = (T*)pa_realloc(p, sizeof(T) * new_cap);
+        // Referenced project exact realloc pattern: T* q = (T*)pa_realloc(p, sizeof(T) * new_cap);
         let new_ptr = if self.capacity == 0 {
-            // Initial allocation - use malloc directly like topling-zip
+            // Initial allocation - use malloc directly like referenced project
             unsafe {
                 let raw_ptr = libc::malloc(new_size);
                 if raw_ptr.is_null() {
@@ -385,7 +385,7 @@ impl<T> ValVec32<T> {
                 NonNull::new_unchecked(raw_ptr as *mut T)
             }
         } else {
-            // Reallocation - use realloc directly like topling-zip pa_realloc
+            // Reallocation - use realloc directly like referenced project pa_realloc
             unsafe {
                 let old_ptr = self.ptr.as_ptr() as *mut libc::c_void;
                 let raw_ptr = libc::realloc(old_ptr, new_size);
@@ -428,15 +428,15 @@ impl<T> ValVec32<T> {
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
     /// Appends an element to the back of the vector - hot path optimized
-    /// Follows topling-zip patterns for maximum performance
+    /// Follows referenced project patterns for maximum performance
     #[inline(always)]
     pub fn push(&mut self, value: T) -> Result<()> {
         let oldsize = self.len;
         // Direct implementation - most likely case is that we have capacity
         if oldsize < self.capacity {
-            // Fast path: direct write following topling-zip placement new pattern
+            // Fast path: direct write following referenced project placement new pattern
             unsafe {
-                // Use add instead of offset for better codegen (matches topling-zip)
+                // Use add instead of offset for better codegen (matches referenced project)
                 ptr::write(self.ptr.as_ptr().add(oldsize as usize), value);
                 self.len = oldsize + 1;
             }
@@ -454,7 +454,7 @@ impl<T> ValVec32<T> {
     /// allocation fails or the vector is at maximum capacity. This provides
     /// optimal performance for benchmarking against std::Vec.
     ///
-    /// Ultra-optimized following exact topling-zip patterns for maximum performance.
+    /// Ultra-optimized following exact referenced project patterns for maximum performance.
     ///
     /// # Arguments
     ///
@@ -480,16 +480,16 @@ impl<T> ValVec32<T> {
     #[inline(always)]
     pub fn push_panic(&mut self, value: T) {
         let oldsize = self.len;
-        // Topling-zip exact pattern: check capacity first, likely branch optimization
+        // Referenced project exact pattern: check capacity first, likely branch optimization
         if likely(oldsize < self.capacity) {
-            // Fast path: ultra-optimized direct write (matches topling-zip new(p+oldsize)T(x))
+            // Fast path: ultra-optimized direct write (matches referenced project new(p+oldsize)T(x))
             unsafe {
-                // Use ptr::write for placement new semantics - matches topling-zip exactly
+                // Use ptr::write for placement new semantics - matches referenced project exactly
                 ptr::write(self.ptr.as_ptr().add(oldsize as usize), value);
                 self.len = oldsize + 1;
             }
         } else {
-            // Cold path: never inlined slow path like topling-zip
+            // Cold path: never inlined slow path like referenced project
             self.push_slow_panic(value);
         }
     }
@@ -978,7 +978,7 @@ impl<T> Drop for ValVec32<T> {
         self.clear();
 
         if self.capacity > 0 && mem::size_of::<T>() > 0 {
-            // Use libc::free to match topling-zip pattern
+            // Use libc::free to match referenced project pattern
             unsafe {
                 libc::free(self.ptr.as_ptr() as *mut libc::c_void);
             }

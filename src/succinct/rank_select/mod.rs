@@ -127,7 +127,7 @@ pub mod interleaved;  // ✅ BEST PERFORMER: 121-302 Mops/s
 pub mod simd;
 
 // Import advanced optimization modules
-pub mod adaptive;  // ✅ Intelligent algorithm selection with topling-zip optimizations
+pub mod adaptive;  // ✅ Intelligent algorithm selection with referenced project optimizations
 pub mod bmi2_acceleration;  // ✅ Hardware acceleration support
 pub mod bmi2_comprehensive;  // ✅ Comprehensive BMI2 optimization support
 

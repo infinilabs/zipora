@@ -476,6 +476,44 @@ impl<T> FastVec<T> {
         Ok(())
     }
 
+    /// Resize the vector to the specified length, using a closure to create new elements
+    pub fn resize_with<F>(&mut self, new_len: usize, f: F) -> Result<()>
+    where
+        F: FnMut() -> T,
+    {
+        // Verify input parameters
+        crate::zipora_verify!(new_len <= (isize::MAX as usize) / mem::size_of::<T>().max(1),
+            "new length {} too large for element size {}", new_len, mem::size_of::<T>());
+        crate::zipora_verify_le!(self.len, self.cap);
+
+        if new_len > self.len {
+            self.ensure_capacity(new_len)?;
+
+            // Verify state after capacity adjustment
+            crate::zipora_verify_ge!(self.cap, new_len);
+            crate::zipora_verify!(self.ptr.is_some(), "invalid state: null pointer after capacity adjustment");
+
+            let mut closure = f;
+            for i in self.len..new_len {
+                unsafe {
+                    ptr::write(self.as_mut_ptr().add(i), closure());
+                }
+            }
+        } else if new_len < self.len {
+            // Drop excess elements
+            for i in new_len..self.len {
+                unsafe {
+                    ptr::drop_in_place(self.as_mut_ptr().add(i));
+                }
+            }
+        }
+        self.len = new_len;
+
+        // Verify final state invariants
+        crate::zipora_verify_le!(self.len, self.cap);
+        Ok(())
+    }
+
     /// Clear all elements from the vector
     pub fn clear(&mut self) {
         // Verify data structure invariants

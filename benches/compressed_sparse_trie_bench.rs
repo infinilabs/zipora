@@ -10,7 +10,7 @@
 use criterion::{
     BatchSize, BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
 };
-use zipora::fsa::{CompressedSparseTrie, LoudsTrie, PatriciaTrie, Trie, StatisticsProvider};
+use zipora::fsa::{CompressedSparseTrie, PatriciaTrie, ZiporaTrie, StatisticsProvider};
 use zipora::fsa::compressed_sparse_trie::ConcurrencyLevel;
 
 use std::collections::HashSet;
@@ -223,7 +223,13 @@ fn bench_trie_comparison(c: &mut Criterion) {
                     sorted_keys.dedup();
                     sorted_keys
                 },
-                |keys| black_box(LoudsTrie::build_from_sorted(keys).unwrap()),
+                |keys| {
+                    let mut trie: ZiporaTrie = ZiporaTrie::new();
+                    for key in keys {
+                        trie.insert(&key);
+                    }
+                    black_box(trie)
+                },
                 BatchSize::SmallInput,
             );
         });

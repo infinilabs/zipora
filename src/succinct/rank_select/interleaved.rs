@@ -115,28 +115,28 @@ impl InterleavedLine {
         }
     }
 
-    /// Fast rank1 operation within this line - topling-zip optimized
+    /// Fast rank1 operation within this line - referenced project optimized
     #[inline(always)]
     fn rank1_within_line(&self, bit_offset: usize) -> usize {
         let word_idx = bit_offset / BITS_PER_WORD;
         let bit_in_word = bit_offset % BITS_PER_WORD;
 
-        // CRITICAL OPTIMIZATION: Apply topling-zip's direct cache access pattern
-        // Minimize arithmetic and use direct array indexing like topling-zip
+        // CRITICAL OPTIMIZATION: Apply referenced project's direct cache access pattern
+        // Minimize arithmetic and use direct array indexing like referenced project
         let rank = self.rlev2[word_idx] as usize;
 
-        // Count bits in the partial word - optimized for topling-zip pattern
+        // Count bits in the partial word - optimized for referenced project pattern
         if bit_in_word > 0 {
             // Direct word access without intermediate variables
             let trailing_count = unsafe {
                 // SAFETY: word_idx is bounds-checked above through bit_offset validation
                 let word = *self.bit64.get_unchecked(word_idx);
 
-                // Use topling-zip's optimized trailing bit count pattern
+                // Use referenced project's optimized trailing bit count pattern
                 #[cfg(target_feature = "popcnt")]
                 {
                     use std::arch::x86_64::_popcnt64;
-                    // Create mask and count in one operation (topling-zip pattern)
+                    // Create mask and count in one operation (referenced project pattern)
                     let mask = (1u64 << bit_in_word) - 1;
                     _popcnt64((word & mask) as i64) as usize
                 }
@@ -431,7 +431,7 @@ impl RankSelectInterleaved256 {
         &self.lines
     }
 
-    /// Cache-optimized rank1 implementation - topling-zip pattern
+    /// Cache-optimized rank1 implementation - referenced project pattern
     #[inline(always)]
     fn rank1_cache_optimized(&self, pos: usize) -> usize {
         if pos == 0 || self.total_bits == 0 {
@@ -445,7 +445,7 @@ impl RankSelectInterleaved256 {
             return self.total_ones;
         }
 
-        // CRITICAL OPTIMIZATION: Apply topling-zip's direct cache access pattern
+        // CRITICAL OPTIMIZATION: Apply referenced project's direct cache access pattern
         // Minimize arithmetic operations and direct cache line access
         let bit_in_line = pos % LINE_BITS;
 
@@ -453,7 +453,7 @@ impl RankSelectInterleaved256 {
             // SAFETY: line_idx bounds-checked above
             let line = self.lines.get_unchecked(line_idx);
 
-            // Prefetch next cache line for sequential access (topling-zip pattern)
+            // Prefetch next cache line for sequential access (referenced project pattern)
             if line_idx + 1 < self.lines.len() {
                 #[cfg(target_arch = "x86_64")]
                 {
@@ -462,7 +462,7 @@ impl RankSelectInterleaved256 {
                 }
             }
 
-            // Direct calculation like topling-zip: line.rlev1 + line.rank1_within_line(bit_in_line)
+            // Direct calculation like referenced project: line.rlev1 + line.rank1_within_line(bit_in_line)
             line.rlev1 as usize + line.rank1_within_line(bit_in_line)
         }
     }
@@ -581,13 +581,13 @@ impl RankSelectInterleaved256 {
         ))
     }
 
-    /// Find the k-th set bit within a 64-bit word using topling-zip algorithm
+    /// Find the k-th set bit within a 64-bit word using referenced project algorithm
     #[inline]
     fn select_u64_within_word(&self, word: u64, k: usize) -> usize {
         self.uint_select1_bmi2(word, k)
     }
 
-    /// BMI2-optimized UintSelect1 following topling-zip pattern
+    /// BMI2-optimized UintSelect1 following referenced project pattern
     #[inline(always)]
     fn uint_select1_bmi2(&self, word: u64, rank: usize) -> usize {
         if rank == 0 || rank > word.count_ones() as usize {
@@ -601,7 +601,7 @@ impl RankSelectInterleaved256 {
                 if get_cpu_features().has_bmi2 {
                     unsafe {
                         use std::arch::x86_64::{_pdep_u64, _tzcnt_u64};
-                        // topling-zip pattern: PDEP + CTZ for fast select
+                        // referenced project pattern: PDEP + CTZ for fast select
                         return _tzcnt_u64(_pdep_u64(1u64 << (rank - 1), word)) as usize;
                     }
                 }
@@ -619,6 +619,18 @@ impl RankSelectInterleaved256 {
             }
         }
         BITS_PER_WORD // Not found
+    }
+}
+
+impl Default for RankSelectInterleaved256 {
+    fn default() -> Self {
+        Self {
+            lines: FastVec::new(),
+            select_cache: None,
+            total_ones: 0,
+            total_bits: 0,
+            select_sample_rate: 256,
+        }
     }
 }
 
@@ -650,7 +662,7 @@ impl RankSelectOps for RankSelectInterleaved256 {
             ));
         }
 
-        // Binary search in line cache using topling-zip pattern
+        // Binary search in line cache using referenced project pattern
         let mut lo = 0;
         let mut hi = self.lines.len();
 
@@ -660,7 +672,7 @@ impl RankSelectOps for RankSelectInterleaved256 {
             let rank1_at_line = if mid == 0 { 0 } else { self.lines[mid].rlev1 as usize };
             let rank0_at_line = bitpos - rank1_at_line;  // rank0 = bitpos - rank1
 
-            if rank0_at_line <= k {  // upper_bound semantics like topling-zip
+            if rank0_at_line <= k {  // upper_bound semantics like referenced project
                 lo = mid + 1;
             } else {
                 hi = mid;
@@ -681,7 +693,7 @@ impl RankSelectOps for RankSelectInterleaved256 {
         let base_rank0 = base_bitpos - base_rank1;
         let target_rank_in_line = k - base_rank0;
 
-        // Search within words using bit inversion (topling-zip pattern)
+        // Search within words using bit inversion (referenced project pattern)
         let mut rank_in_line = 0;
         for word_idx in 0..WORDS_PER_LINE {
             let word = line.bit64[word_idx];

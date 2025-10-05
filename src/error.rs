@@ -118,6 +118,20 @@ pub enum ZiporaError {
     #[cfg(feature = "serde")]
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
+
+    /// Invalid operation or state
+    #[error("Invalid operation: {message}")]
+    InvalidOperation {
+        /// Error message describing the invalid operation
+        message: String,
+    },
+
+    /// Invalid state
+    #[error("Invalid state: {message}")]
+    InvalidState {
+        /// Error message describing the invalid state
+        message: String,
+    },
 }
 
 impl ZiporaError {
@@ -229,6 +243,20 @@ impl ZiporaError {
         }
     }
 
+    /// Create an invalid operation error
+    pub fn invalid_operation<S: Into<String>>(message: S) -> Self {
+        Self::InvalidOperation {
+            message: message.into(),
+        }
+    }
+
+    /// Create an invalid state error
+    pub fn invalid_state<S: Into<String>>(message: S) -> Self {
+        Self::InvalidState {
+            message: message.into(),
+        }
+    }
+
     /// Check if this is a recoverable error
     pub fn is_recoverable(&self) -> bool {
         match self {
@@ -247,6 +275,8 @@ impl ZiporaError {
             Self::Configuration { .. } => false,
             Self::SystemError { .. } => false,
             Self::InvalidParameter { .. } => false,
+            Self::InvalidOperation { .. } => false,
+            Self::InvalidState { .. } => false,
             #[cfg(feature = "serde")]
             Self::Serialization(_) => false,
         }
@@ -270,6 +300,8 @@ impl ZiporaError {
             Self::SystemError { .. } => "system",
             Self::ResourceExhausted { .. } => "exhausted",
             Self::InvalidParameter { .. } => "parameter",
+            Self::InvalidOperation { .. } => "operation",
+            Self::InvalidState { .. } => "state",
             #[cfg(feature = "serde")]
             Self::Serialization(_) => "serialization",
         }

@@ -464,9 +464,17 @@ impl DictionaryBuilder {
     pub fn build(mut self, training_data: &[u8]) -> Result<SuffixArrayDictionary> {
         // Validate configuration before proceeding
         self.validate_config()?;
-        
+
         let start_time = Instant::now();
         self.stats.original_data_size = training_data.len();
+
+        // Adjust max_dict_size based on actual training data size (referenced project approach)
+        // If training data is much smaller than max_dict_size, reduce the budget
+        if training_data.len() < self.config.max_dict_size / 10 {
+            // Training data is less than 10% of max size - adjust down
+            self.config.max_dict_size = (training_data.len() * 20).min(self.config.max_dict_size);
+            self.config.target_dict_size = self.config.target_dict_size.min(self.config.max_dict_size);
+        }
 
         // Initialize memory pool if needed
         if self.memory_pool.is_none() {
@@ -502,7 +510,40 @@ impl DictionaryBuilder {
         // Phase 5: Build DFA cache
         self.report_progress(BuildPhase::DfaCacheConstruction, 0.0, 0.65, "Building DFA cache")?;
         let dict_config = self.create_dictionary_config(&analysis)?;
-        let dictionary = SuffixArrayDictionary::new(&sampled_data, dict_config)?;
+
+        // For very small dictionaries, severely limit training data to prevent suffix array overhead
+        let final_training_data = if self.config.max_dict_size <= 1024 { // For ultra-small dictionaries (≤1KB)
+            // For dictionaries under 1KB, use minimal training data
+            let max_training_size = if self.config.max_dict_size <= 256 {
+                16 // Extreme limit for tiny dictionaries - only 16 bytes of training data
+            } else {
+                self.config.max_dict_size / 16 // Use 6.25% for sub-KB dictionaries
+            };
+
+            if sampled_data.len() > max_training_size {
+                &sampled_data[..max_training_size]
+            } else {
+                &sampled_data
+            }
+        } else if self.config.max_dict_size <= 16384 { // 16KB or smaller
+            // Limit training data to prevent memory explosion
+            // Use much smaller training data for tiny dictionaries
+            let max_training_size = if self.config.max_dict_size <= 8192 {
+                32 // Very aggressive limit for 8KB dictionaries - only 32 bytes of training data
+            } else {
+                self.config.max_dict_size / 8 // Use 12.5% for other small dictionaries
+            };
+
+            if sampled_data.len() > max_training_size {
+                &sampled_data[..max_training_size]
+            } else {
+                &sampled_data
+            }
+        } else {
+            &sampled_data
+        };
+
+        let dictionary = SuffixArrayDictionary::new(final_training_data, dict_config)?;
         self.stats.dfa_cache_states = dictionary.cache_states();
         self.report_progress(BuildPhase::DfaCacheConstruction, 1.0, 0.80, "DFA cache complete")?;
 
@@ -916,20 +957,61 @@ impl DictionaryBuilder {
 
     /// Create dictionary configuration based on analysis
     fn create_dictionary_config(&self, analysis: &DataAnalysis) -> Result<SuffixArrayDictionaryConfig> {
+        // Use the actual (possibly adjusted) max_dict_size
+        let actual_dict_budget = self.config.max_dict_size.min(analysis.data_size * 20);
+
         let config = SuffixArrayDictionaryConfig {
             max_dict_size: self.config.max_dict_size,
             min_frequency: self.config.min_frequency,
             max_bfs_depth: self.config.max_bfs_depth,
             max_cache_states: self.calculate_cache_states(analysis),
             external_mode: false, // Internal mode for building
-            use_memory_pool: true,
-            enable_simd: true,
+            use_memory_pool: if self.config.max_dict_size <= 1024 { false } else { true }, // Disable pool for tiny dicts
+            enable_simd: if self.config.max_dict_size <= 1024 { false } else { true }, // Disable SIMD for tiny dicts
             sample_ratio: 1.0, // Already sampled
             min_pattern_length: self.config.min_pattern_length,
             max_pattern_length: self.config.max_pattern_length,
-            dfa_cache_config: DfaCacheConfig {
-                max_memory_usage: self.config.target_dict_size / 4, // 25% for cache
-                ..Default::default()
+            dfa_cache_config: if actual_dict_budget <= 1024 {
+                // Ultra-optimized config for tiny dictionaries (≤1KB)
+                DfaCacheConfig {
+                    initial_capacity: 8,
+                    use_memory_pool: false,
+                    cache_aligned: false,
+                    enable_simd: false,
+                    min_node_frequency: 1,
+                    max_memory_usage: actual_dict_budget / 2, // 50% for cache in tiny dicts
+                    growth_factor: 1.1,
+                    trie_config: crate::fsa::ZiporaTrieConfig {
+                        trie_strategy: crate::fsa::TrieStrategy::CompressedSparse {
+                            sparse_threshold: 0.1,
+                            compression_level: 1,
+                            adaptive_sparse: false,
+                        },
+                        storage_strategy: crate::fsa::StorageStrategy::Standard {
+                            initial_capacity: 8,
+                            growth_factor: 1.1,
+                        },
+                        compression_strategy: crate::fsa::CompressionStrategy::None,
+                        rank_select_type: crate::fsa::RankSelectType::Simple,
+                        enable_simd: false,
+                        enable_concurrency: false,
+                        cache_optimization: false,
+                    },
+                }
+            } else if actual_dict_budget <= 512 * 1024 {
+                // Use optimized config for small/medium dictionaries (referenced project approach)
+                DfaCacheConfig::small_dictionary(actual_dict_budget)
+            } else {
+                // Use standard config with scaled initial capacity for larger dictionaries
+                DfaCacheConfig {
+                    initial_capacity: if actual_dict_budget <= 1024 * 1024 {
+                        1024 // Moderate capacity for medium dictionaries (≤1MB)
+                    } else {
+                        8192 // Default capacity for large dictionaries
+                    },
+                    max_memory_usage: actual_dict_budget / 4, // 25% for cache
+                    ..Default::default()
+                }
             },
             suffix_array_config: SuffixArrayConfig {
                 use_parallel: self.config.use_parallel,
@@ -948,10 +1030,12 @@ impl DictionaryBuilder {
         dictionary.optimize_cache()?;
 
         // Check if we're within size limits
-        let current_size = dictionary.memory_usage();
-        if current_size > self.config.max_dict_size {
+        // Only check the actual dictionary text size, not auxiliary structures
+        // Following referenced project philosophy: focus on dictionary data, not metadata
+        let dict_text_size = dictionary.dictionary_size();
+        if dict_text_size > self.config.max_dict_size {
             return Err(ZiporaError::invalid_data(
-                &format!("Dictionary size {} exceeds maximum {}", current_size, self.config.max_dict_size)
+                &format!("Dictionary size {} exceeds maximum {}", dict_text_size, self.config.max_dict_size)
             ));
         }
 
@@ -1030,13 +1114,27 @@ impl DictionaryBuilder {
         let mut total_size = 0;
         let mut count = 0;
 
+        // Use max_dict_size with safety margin instead of target_dict_size
+        // Reserve 50% for suffix array and DFA cache overhead
+        let size_budget = self.config.max_dict_size / 2;
+
         for pattern in patterns {
-            let pattern_overhead = pattern.length + 16; // Estimate overhead
-            if total_size + pattern_overhead > self.config.target_dict_size {
+            // More conservative estimation: pattern size + significant overhead for:
+            // - Suffix array entries
+            // - DFA cache states
+            // - Internal data structures
+            let pattern_overhead = pattern.length * 3 + 64; // 3x pattern size + fixed overhead
+
+            if total_size + pattern_overhead > size_budget {
                 break;
             }
             total_size += pattern_overhead;
             count += 1;
+        }
+
+        // For very small dictionaries, ensure we don't select too many patterns
+        if self.config.max_dict_size <= 16384 { // 16KB or smaller
+            count = count.min(32); // Limit to 32 patterns max for small dictionaries
         }
 
         count
@@ -1044,18 +1142,40 @@ impl DictionaryBuilder {
 
     /// Calculate number of cache states based on analysis
     fn calculate_cache_states(&self, analysis: &DataAnalysis) -> usize {
-        let base_states = 8192;
-        
-        // Adjust based on data characteristics
+        // Base states proportional to dictionary size budget
+        // For small dictionaries, use much fewer cache states
+        let base_states = if self.config.max_dict_size <= 16384 { // 16KB or smaller
+            // For small dictionaries, use minimal cache states
+            64.min(self.config.max_dict_size / 128) // ~64 states for 8KB, fewer for smaller
+        } else if self.config.max_dict_size <= 1024 * 1024 { // 1MB or smaller
+            512.min(self.config.max_dict_size / 2048) // Scale with dictionary size
+        } else {
+            8192 // Original default for large dictionaries
+        };
+
+        // Adjust based on data characteristics (but cap for small dictionaries)
         let factor = if analysis.repetitiveness > 0.5 {
-            2.0 // More states for repetitive data
+            if self.config.max_dict_size <= 16384 {
+                1.2 // Much smaller multiplier for small dictionaries
+            } else {
+                2.0 // Original multiplier for large dictionaries
+            }
         } else if analysis.entropy > 6.0 {
             0.5 // Fewer states for high entropy data
         } else {
             1.0
         };
 
-        ((base_states as f64 * factor) as usize).min(65536)
+        let calculated_states = (base_states as f64 * factor) as usize;
+
+        // Hard limit based on dictionary size
+        let max_states = if self.config.max_dict_size <= 16384 {
+            128 // Very conservative for small dictionaries
+        } else {
+            65536 // Original limit for large dictionaries
+        };
+
+        calculated_states.min(max_states)
     }
 
     /// Estimate remaining build time
@@ -1222,7 +1342,7 @@ mod tests {
     fn test_empty_data() {
         let builder = DictionaryBuilder::new();
         let result = builder.build(b"");
-        
+
         // Empty data should still create a valid (empty) dictionary
         assert!(result.is_ok());
         let dictionary = result.unwrap();

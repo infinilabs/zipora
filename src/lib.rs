@@ -25,10 +25,12 @@
 //! ```rust
 //! use zipora::{
 //!     FastVec, ValVec32, SmallMap, FixedCircularQueue, AutoGrowCircularQueue,
-//!     FastStr, MemoryBlobStore, BlobStore, LoudsTrie, Trie, 
-//!     GoldHashMap, GoldenRatioHashMap, StringOptimizedHashMap, SmallHashMap,
-//!     HuffmanEncoder, MemoryPool, PoolConfig, SuffixArray, FiberPool
+//!     FastStr, MemoryBlobStore, BlobStore, ZiporaTrie, ZiporaTrieConfig, Trie,
+//!     ZiporaHashMap, ZiporaHashMapConfig,
+//!     HuffmanEncoder, MemoryPool, PoolConfig, SuffixArray, FiberPool,
+//!     RankSelectInterleaved256,
 //! };
+//! use std::collections::hash_map::RandomState;
 //!
 //! // High-performance vector with realloc optimization
 //! let mut vec = FastVec::new();
@@ -56,25 +58,32 @@
 //! let s = FastStr::from_string("hello world");
 //! println!("Hash: {:x}", s.hash_fast());
 //!
-//! // Advanced trie operations
-//! let mut trie = LoudsTrie::new();
+//! // Advanced trie operations (unified ZiporaTrie)
+//! let mut trie: ZiporaTrie<RankSelectInterleaved256> =
+//!     ZiporaTrie::with_config(ZiporaTrieConfig::default());
 //! trie.insert(b"hello").unwrap();
 //! assert!(trie.contains(b"hello"));
 //!
-//! // High-performance hash maps
-//! let mut map = GoldHashMap::new();
+//! // High-performance hash maps (unified ZiporaHashMap)
+//! let mut map: ZiporaHashMap<&str, &str, RandomState> = ZiporaHashMap::new().unwrap();
 //! map.insert("key", "value").unwrap();
 //!
-//! // Golden ratio optimized hash map (15-20% better memory efficiency)
-//! let mut golden_map = GoldenRatioHashMap::new();
-//! golden_map.insert("optimal", "growth").unwrap();
+//! // Cache-optimized hash map
+//! let mut cache_map: ZiporaHashMap<&str, &str, RandomState> = ZiporaHashMap::with_config(
+//!     ZiporaHashMapConfig::cache_optimized()
+//! ).unwrap();
+//! cache_map.insert("optimal", "growth").unwrap();
 //!
 //! // String-optimized hash map with interning (memory efficient for string keys)
-//! let mut string_map = StringOptimizedHashMap::new();
+//! let mut string_map: ZiporaHashMap<&str, i32, RandomState> = ZiporaHashMap::with_config(
+//!     ZiporaHashMapConfig::string_optimized()
+//! ).unwrap();
 //! string_map.insert("interned", 42).unwrap();
 //!
 //! // Small hash map with inline storage (zero allocations for ≤N elements)
-//! let mut small_hash_map: SmallHashMap<&str, i32, 4> = SmallHashMap::new();
+//! let mut small_hash_map: ZiporaHashMap<&str, i32, RandomState> = ZiporaHashMap::with_config(
+//!     ZiporaHashMapConfig::small_inline(4)
+//! ).unwrap();
 //! small_hash_map.insert("inline", 1).unwrap();
 //! ```
 
@@ -186,27 +195,27 @@ pub use succinct::{
 // Re-export Phase 1 implementations
 pub use blob_store::{BlobStore, MemoryBlobStore, PlainBlobStore};
 pub use fsa::{
-    CritBitTrie, DoubleArrayTrie, DoubleArrayTrieBuilder, DoubleArrayTrieConfig,
-    FiniteStateAutomaton, LoudsTrie, PatriciaTrie, Trie,
+    ZiporaTrie, ZiporaTrieConfig, TrieStrategy, StorageStrategy, CompressionStrategy as TrieCompressionStrategy,
+    RankSelectType, BitVectorType, FiniteStateAutomaton, Trie,
+    // Legacy compatibility exports
+    DoubleArrayTrie, DoubleArrayTrieConfig, DoubleArrayTrieBuilder,
+    NestedLoudsTrie, NestingConfig, NestingConfigBuilder, NestedTrieStats, FragmentStats,
+    CompressedSparseTrie, ConcurrencyLevel, ReaderToken, WriterToken,
+    PatriciaTrie, CritBitTrie,
 };
 pub use io::{DataInput, DataOutput, VarInt};
 
 // Re-export Phase 2 implementations
 pub use hash_map::{
-    // Original high-performance hash map
-    GoldHashMap,
-    // New specialized hash map implementations
-    GoldenRatioHashMap, StringOptimizedHashMap, SmallHashMap,
+    // Core unified hash map implementation
+    ZiporaHashMap, ZiporaHashMapConfig, HashMapStats,
+    HashStrategy, StorageStrategy as HashStorageStrategy, OptimizationStrategy,
     // Hash function utilities
     fabo_hash_combine_u32, fabo_hash_combine_u64, golden_ratio_next_size, optimal_bucket_count,
     advanced_hash_combine, HashFunctionBuilder, CombineStrategy, HashCombinable,
     GOLDEN_RATIO_FRAC_NUM, GOLDEN_RATIO_FRAC_DEN, GOLDEN_LOAD_FACTOR,
-    // Iterator types for GoldenRatioHashMap
-    GoldenRatioIter, GoldenRatioKeys, GoldenRatioValues,
-    // Iterator types for StringOptimizedHashMap
-    StringMapIter, StringMapKeys, StringMapValues, StringArenaStats,
-    // Iterator types for SmallHashMap
-    SmallMapIter, SmallMapKeys, SmallMapValues,
+    // SIMD and cache optimization utilities
+    SimdStringOps, SimdTier, CacheMetrics, Prefetcher,
 };
 
 // Re-export Phase 2.5 implementations (memory mapping)
