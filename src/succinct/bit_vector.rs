@@ -68,6 +68,62 @@ impl BitVector {
         Ok(bv)
     }
 
+    /// Create a bit vector from raw u64 blocks and bit length
+    ///
+    /// This is used by multi-dimensional operations to create result bit vectors
+    /// from SIMD-computed raw bit data.
+    ///
+    /// # Arguments
+    ///
+    /// * `raw_bits` - Raw u64 words containing the bit data
+    /// * `total_bits` - Total number of valid bits
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use zipora::BitVector;
+    ///
+    /// let raw_bits = vec![0xFFFFFFFFFFFFFFFFu64, 0x0000000000000000u64];
+    /// let bv = BitVector::from_raw_bits(raw_bits, 128)?;
+    /// assert_eq!(bv.len(), 128);
+    /// assert_eq!(bv.get(0)?, true);
+    /// assert_eq!(bv.get(63)?, true);
+    /// assert_eq!(bv.get(64)?, false);
+    /// # Ok::<(), zipora::ZiporaError>(())
+    /// ```
+    pub fn from_raw_bits(raw_bits: Vec<u64>, total_bits: usize) -> Result<Self> {
+        let required_blocks = (total_bits + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK;
+
+        if raw_bits.len() < required_blocks {
+            return Err(ZiporaError::invalid_data(format!(
+                "Insufficient raw bits: need {} blocks for {} bits, got {}",
+                required_blocks, total_bits, raw_bits.len()
+            )));
+        }
+
+        let mut blocks = FastVec::with_capacity(required_blocks)?;
+        for (i, &word) in raw_bits.iter().enumerate() {
+            if i < required_blocks {
+                blocks.push(word)?;
+            }
+        }
+
+        // Clear trailing bits in the last block if necessary
+        if total_bits > 0 {
+            let last_block_idx = required_blocks - 1;
+            let bits_in_last_block = total_bits % BITS_PER_BLOCK;
+            if bits_in_last_block > 0 {
+                let mask = (1u64 << bits_in_last_block) - 1;
+                blocks[last_block_idx] &= mask;
+            }
+        }
+
+        Ok(Self {
+            blocks,
+            len: total_bits,
+        })
+    }
+
     /// Get the number of bits in the vector
     #[inline]
     pub fn len(&self) -> usize {
