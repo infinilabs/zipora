@@ -620,6 +620,41 @@ impl RankSelectInterleaved256 {
         }
         BITS_PER_WORD // Not found
     }
+
+    /// Get raw bit data for cross-dimensional operations
+    ///
+    /// Returns a flat array of u64 words containing the bit data.
+    /// Used by multi-dimensional rank/select for efficient cross-dimensional operations.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use zipora::{BitVector, RankSelectInterleaved256};
+    /// use zipora::succinct::rank_select::RankSelectBuilder;
+    ///
+    /// let mut bv = BitVector::new();
+    /// for i in 0..256 {
+    ///     bv.push(i % 2 == 0)?;
+    /// }
+    /// let rs = RankSelectInterleaved256::new(bv)?;
+    /// let bits = rs.get_bit_data();
+    /// assert_eq!(bits.len(), 4); // 256 bits = 4 u64 words
+    /// # Ok::<(), zipora::ZiporaError>(())
+    /// ```
+    pub fn get_bit_data(&self) -> Vec<u64> {
+        let total_words = (self.total_bits + BITS_PER_WORD - 1) / BITS_PER_WORD;
+        let mut result = Vec::with_capacity(total_words);
+
+        for line in self.lines.iter() {
+            for &word in &line.bit64 {
+                if result.len() < total_words {
+                    result.push(word);
+                }
+            }
+        }
+
+        result
+    }
 }
 
 impl Default for RankSelectInterleaved256 {

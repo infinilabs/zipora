@@ -130,6 +130,7 @@ pub mod simd;
 pub mod adaptive;  // ✅ Intelligent algorithm selection with referenced project optimizations
 pub mod bmi2_acceleration;  // ✅ Hardware acceleration support
 pub mod bmi2_comprehensive;  // ✅ Comprehensive BMI2 optimization support
+pub mod multidim_simd;  // ✅ Multi-dimensional SIMD rank/select operations
 
 // Re-export the best-performing implementation as primary
 pub use interleaved::RankSelectInterleaved256;
@@ -156,6 +157,7 @@ pub use bmi2_comprehensive::{
     Bmi2Capabilities as Bmi2CapabilitiesComprehensive, Bmi2SequenceOps as Bmi2SequenceOpsComprehensive,
     Bmi2Stats as Bmi2StatsComprehensive, OptimizationStrategy, SequenceAnalysis as Bmi2SequenceAnalysis,
 };
+pub use multidim_simd::MultiDimRankSelect;
 // Note: Fragment and hierarchical implementations removed - use adaptive selection instead
 
 /// Common trait for all rank/select operations
