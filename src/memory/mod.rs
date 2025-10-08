@@ -13,6 +13,7 @@ pub mod lockfree_pool;
 pub mod mmap;
 pub mod mmap_vec;
 pub mod pool;
+pub mod prefetch;
 pub mod secure_pool;
 pub mod simd_ops;
 pub mod threadlocal_pool;
@@ -43,6 +44,9 @@ pub use lockfree_pool::{
 pub use mmap::{MemoryMappedAllocator, MmapAllocation};
 pub use mmap_vec::{MmapVec, MmapVecConfig, MmapVecConfigBuilder, MmapVecIter, MmapVecStats};
 pub use pool::{MemoryPool, PoolConfig, PooledBuffer, PooledVec};
+pub use prefetch::{
+    PrefetchStrategy, PrefetchConfig, PrefetchLocality, PrefetchMetrics,
+};
 pub use secure_pool::{
     SecureMemoryPool, SecurePoolConfig, SecurePoolStats, SecurePooledPtr, get_global_pool_for_size,
     get_global_secure_pool_stats, size_to_class,

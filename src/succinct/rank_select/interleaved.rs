@@ -655,6 +655,75 @@ impl RankSelectInterleaved256 {
 
         result
     }
+
+    /// Prefetch ahead for sequential operations
+    ///
+    /// This method prefetches cache lines ahead of the current position to reduce
+    /// memory access latency for sequential bulk operations. Integrates with the
+    /// advanced prefetching strategies from the memory module.
+    ///
+    /// # Arguments
+    /// * `base_pos` - Current position in the bit vector
+    /// * `count` - Number of positions to process
+    /// * `strategy` - Prefetch strategy to use (adaptive, sequential, random)
+    ///
+    /// # Safety
+    /// This method uses unsafe prefetch intrinsics but ensures all prefetch addresses
+    /// are within valid memory bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use zipora::{BitVector, RankSelectInterleaved256};
+    /// use zipora::memory::{PrefetchStrategy, PrefetchConfig};
+    /// use zipora::succinct::rank_select::{RankSelectBuilder, RankSelectOps};
+    ///
+    /// let mut bv = BitVector::new();
+    /// for i in 0..10000 {
+    ///     bv.push(i % 3 == 0)?;
+    /// }
+    /// let rs = RankSelectInterleaved256::new(bv)?;
+    ///
+    /// let mut strategy = PrefetchStrategy::new(PrefetchConfig::default());
+    ///
+    /// // Prefetch for sequential bulk operations
+    /// unsafe {
+    ///     rs.prefetch_ahead(1000, 100, &mut strategy);
+    /// }
+    ///
+    /// // Now perform operations with reduced latency
+    /// for i in 1000..1100 {
+    ///     let rank = rs.rank1(i);
+    /// }
+    /// # Ok::<(), zipora::ZiporaError>(())
+    /// ```
+    #[inline]
+    pub unsafe fn prefetch_ahead(
+        &self,
+        base_pos: usize,
+        count: usize,
+        strategy: &mut crate::memory::PrefetchStrategy,
+    ) {
+        if self.lines.is_empty() || count == 0 {
+            return;
+        }
+
+        let start_line = base_pos / LINE_BITS;
+        let end_line = ((base_pos + count * LINE_BITS) / LINE_BITS).min(self.lines.len());
+
+        if start_line >= self.lines.len() {
+            return;
+        }
+
+        // Use sequential prefetch for bulk operations
+        unsafe {
+            let base_ptr = self.lines.as_ptr().add(start_line) as *const u8;
+            let stride = std::mem::size_of::<InterleavedLine>();
+            let prefetch_count = (end_line - start_line).min(8); // Limit to 8 lines ahead
+
+            strategy.sequential_prefetch(base_ptr, stride, prefetch_count);
+        }
+    }
 }
 
 impl Default for RankSelectInterleaved256 {
