@@ -86,9 +86,9 @@ impl BitVector {
     /// let raw_bits = vec![0xFFFFFFFFFFFFFFFFu64, 0x0000000000000000u64];
     /// let bv = BitVector::from_raw_bits(raw_bits, 128)?;
     /// assert_eq!(bv.len(), 128);
-    /// assert_eq!(bv.get(0)?, true);
-    /// assert_eq!(bv.get(63)?, true);
-    /// assert_eq!(bv.get(64)?, false);
+    /// assert_eq!(bv.get(0).unwrap(), true);
+    /// assert_eq!(bv.get(63).unwrap(), true);
+    /// assert_eq!(bv.get(64).unwrap(), false);
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
     pub fn from_raw_bits(raw_bits: Vec<u64>, total_bits: usize) -> Result<Self> {
