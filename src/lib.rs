@@ -105,6 +105,7 @@ pub mod fsa;
 pub mod hash_map;
 pub mod io;
 pub mod memory;
+pub mod simd;
 pub mod string;
 pub mod succinct;
 pub mod statistics;
