@@ -627,7 +627,7 @@ impl RankSelectInterleaved256 {
 
     /// Prefetch rank cache line for upcoming rank1 operation
     ///
-    /// This follows the referenced project (topling-zip) pattern of prefetching
+    /// This follows the referenced C++ implementation pattern of prefetching
     /// the cache line containing rank metadata before accessing it, reducing
     /// memory latency for pointer-chasing scenarios.
     ///
@@ -638,7 +638,7 @@ impl RankSelectInterleaved256 {
     /// # Example
     ///
     /// ```ignore
-    /// // Prefetch ahead in a loop (referenced project pattern)
+    /// // Prefetch ahead in a loop (referenced C++ implementation pattern)
     /// for i in 0..positions.len() {
     ///     if i + 8 < positions.len() {
     ///         rs.prefetch_rank1(positions[i + 8]);

@@ -16,7 +16,7 @@ cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --check
 ## Completed Features
 
 ### Dynamic SIMD Selection (COMPLETED October 2025)
-- **Runtime Adaptive Selection**: Surpasses topling-zip's compile-time approach with runtime hardware detection and micro-benchmarking
+- **Runtime Adaptive Selection**: Surpasses referenced C++ implementation's compile-time approach with runtime hardware detection and micro-benchmarking
 - **Data-Aware Algorithm Choice**: Intelligent SIMD selection based on data size, density, and access patterns
 - **Continuous Performance Monitoring**: Exponential moving average tracking with adaptive threshold adjustment
 - **6-Tier SIMD Framework Integration**: Seamless integration with zipora's Tier 0 (Scalar) → Tier 5 (AVX-512) architecture
@@ -30,7 +30,7 @@ cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --check
 - **Cross-Platform**: x86_64 (AVX-512/AVX2/BMI2/POPCNT) + ARM64 (NEON) with graceful fallbacks
 
 ### Advanced Prefetching Strategies (COMPLETED October 2025) ✅ PRODUCTION READY
-- **Sophisticated Cache Prefetching**: Complete implementation of referenced project's (topling-zip) advanced prefetching patterns
+- **Sophisticated Cache Prefetching**: Complete implementation of referenced C++ implementation's advanced prefetching patterns
 - **Adaptive Prefetching**: Stride detection with confidence-based pattern recognition (Sequential, Strided, Random, PointerChasing)
 - **Sequential Prefetching**: Optimized for bulk array operations with configurable distance and cache line stride
 - **Random Access Prefetching**: Conservative prefetch strategy for unpredictable access patterns with locality hints
@@ -42,14 +42,14 @@ cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --check
 - **Lookahead Prefetching**: PREFETCH_DISTANCE=8 in bulk operations (prefetch i+8 while processing i) - **+11% improvement**
 - **Simplified Optimized APIs**: rank1_optimized(), select1_optimized(), rank1_bulk_optimized(), select1_bulk_optimized()
 - **Zero Monitoring Overhead**: Removed catastrophic 29,000% overhead from per-operation monitoring (CRITICAL FIX)
-- **Pattern Matching topling-zip**: Exactly mirrors prefetch_rank1(), fast_prefetch_rank1() from rank_select_se_512.hpp
+- **Pattern Matching C++ implementation**: Exactly mirrors prefetch_rank1(), fast_prefetch_rank1() from rank_select_se_512.hpp
 - **Measured Performance**: +11.2% bulk improvement (batch=100), minimal overhead for single operations
 - **Performance Fixed**: 193x faster than broken monitoring implementation, production-ready
 - **Comprehensive Testing**: 13 integration tests passing (prefetch, bulk ops, adaptive SIMD, cross-platform, edge cases)
 - **Production Ready**: Zero unsafe in public APIs, 1,872 tests passing in both debug and release modes, benchmarked and optimized
 
 ### Multi-Dimensional SIMD Rank/Select Operations (COMPLETED February 2025)
-- **Template-Based Multi-Dimensional Patterns**: Complete implementation following referenced project (topling-zip) architecture
+- **Template-Based Multi-Dimensional Patterns**: Complete implementation following referenced C++ implementation architecture
 - **Const Generic Dimensions**: Compile-time dimension specification (1-32 dimensions) for zero-cost abstractions
 - **Vectorized Bulk Operations**: SIMD-accelerated bulk_rank_multidim and bulk_select_multidim with 4-8x speedup
 - **Cross-Dimensional Set Operations**: Hardware-accelerated intersect_dimensions and union_dimensions with AVX2 optimization
@@ -62,7 +62,7 @@ cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --check
 - **Memory Efficiency**: ~25% overhead per dimension with excellent cache locality
 
 ### Double Array Trie Performance & Correctness Improvements (COMPLETED February 2025)
-- **Memory Efficiency Optimization**: Reduced memory overhead from 139x to 58x (57.6% improvement) by applying referenced project patterns (topling-zip)
+- **Memory Efficiency Optimization**: Reduced memory overhead from 139x to 58x (57.6% improvement) by applying referenced C++ implementation patterns
   - **Minimal Initialization**: Start with 1 state (root only), grow on demand
   - **Lazy Base Allocation**: Set base values only when children are added (NIL_STATE pattern)
   - **Compact Base Finding**: Use state/4 heuristic for memory-efficient packing (from referenced project's state/16 pattern)
@@ -73,7 +73,7 @@ cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --check
   - **Root State Initialization**: Fixed base[0]=0 bug causing single-byte keys to stay at root instead of creating child states (line 546: base[0]=1)
   - **Prefix Iteration**: Complete FSA trait implementation with proper prefix traversal and key collection
 - **Testing**: All 58 tests passing (34 nested_louds + 24 integration) in both debug and release modes
-- **Referenced Implementation**: Followed topling-zip/src/terark/fsa/double_array_trie.hpp patterns for minimal memory usage and correct state transitions
+- **Referenced Implementation**: Followed C++ implementation's double_array_trie.hpp patterns for minimal memory usage and correct state transitions
 - **Performance Metrics**: Memory efficiency test now passes with <70x overhead threshold (adjusted from <50x to reflect incremental insert vs batch build reality)
 
 ### Unified Architecture Transformation (COMPLETED February 2025)
@@ -415,7 +415,7 @@ sorter.sort(&mut data)?; // Optimal cache complexity automatically
 **Future**: GPU acceleration, distributed systems, machine learning integration, quantum-resistant algorithms
 
 ---
-*Updated: 2025-10-09 - Prefetching + Adaptive SIMD Integration COMPLETED ✅ - Complete rank/select optimization following topling-zip patterns*
+*Updated: 2025-10-09 - Prefetching + Adaptive SIMD Integration COMPLETED ✅ - Complete rank/select optimization following C++ implementation patterns*
 *Framework: Prefetching + Dynamic SIMD Selection + 6-tier hardware acceleration (Tier 0-5) + Cache Optimization + Cache-Oblivious Algorithms*
 *Style: Prefetching + Adaptive SIMD Selection + SIMD Implementation Guidelines + Cache Optimization + Cache-Oblivious Patterns MANDATORY*
 *Performance: <100ns selection overhead, 2-3x sequential speedup, 0.3-0.4 Gops/s rank/select, 4-8x radix sort, 2-8x string processing, >95% cache hits*
@@ -425,8 +425,8 @@ sorter.sort(&mut data)?; // Optimal cache complexity automatically
 *Hardware Tiers: Tier 5 (AVX-512/nightly) → Tier 4 (AVX2/stable) → Tier 3 (BMI2) → Tier 2 (POPCNT) → Tier 1 (NEON) → Tier 0 (scalar/required)*
 *Implementation: Prefetch methods, lookahead (PREFETCH_DISTANCE=8), runtime detection, micro-benchmarking, EMA tracking, degradation detection*
 *Tests: 1,872+ passing (100% pass rate) including 13 new prefetching + adaptive SIMD integration tests*
-*Status: PREFETCHING + ADAPTIVE SIMD INTEGRATION COMPLETED ✅ - Complete rank/select optimization with topling-zip patterns*
-*Latest Update (2025-10-09): PREFETCHING + ADAPTIVE SIMD INTEGRATION ✅ - Systematic integration of prefetching (prefetch_rank1, prefetch_select1, lookahead) with adaptive SIMD selection in RankSelectInterleaved256, exactly mirroring topling-zip's rank_select_se_512.hpp patterns with ARM64 inline asm support*
+*Status: PREFETCHING + ADAPTIVE SIMD INTEGRATION COMPLETED ✅ - Complete rank/select optimization with C++ implementation patterns*
+*Latest Update (2025-10-09): PREFETCHING + ADAPTIVE SIMD INTEGRATION ✅ - Systematic integration of prefetching (prefetch_rank1, prefetch_select1, lookahead) with adaptive SIMD selection in RankSelectInterleaved256, exactly mirroring C++ implementation's rank_select_se_512.hpp patterns with ARM64 inline asm support*
 *Previous Update (2025-10-08): DYNAMIC SIMD SELECTION ✅ - Complete adaptive selection with micro-benchmarking framework, EMA-based performance tracking, degradation detection*
 *Previous Update (2025-02-09): UNIFIED ARCHITECTURE TRANSFORMATION ✅ - ZiporaHashMap and ZiporaTrie replacing 14+ data structures*
 *Previous Update (2025-02-09): CACHE-OBLIVIOUS ALGORITHMS ✅ - Funnel sort, Van Emde Boas layout, adaptive strategy selection*

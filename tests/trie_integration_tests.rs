@@ -545,7 +545,7 @@ fn test_memory_efficiency_comparison() {
     // Both should be reasonably efficient
     // Note: Double Array with incremental insert achieves ~58x overhead
     // This is expected as it's less memory-efficient than batch-built tries
-    // The referenced topling-zip implementation uses batch build which achieves better packing
+    // The referenced C++ implementation uses batch build which achieves better packing
     assert!(da_efficiency < 70.0); // Less than 70x overhead for incremental insert
     assert!(nested_efficiency < 50.0);
 
