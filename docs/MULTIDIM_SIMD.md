@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `MultiDimRankSelect` implementation provides template-based multi-dimensional rank/select patterns following the referenced project (topling-zip) architecture with vectorized operations across multiple dimensions simultaneously.
+The `MultiDimRankSelect` implementation provides template-based multi-dimensional rank/select patterns following the referenced C++ implementation architecture with vectorized operations across multiple dimensions simultaneously.
 
 ## Architecture
 
@@ -304,8 +304,7 @@ Test coverage:
   - Claude & Navarro, "The Wavelet Matrix" (2012)
   - Brisaboa et al., "k²-Trees for Compact Web Graph Representation" (2009)
 
-- **Referenced Implementation**:
-  - topling-zip: https://github.com/topling/topling-zip
+- **Referenced C++ Implementation**:
   - Template-based multi-dimensional patterns
   - Minimal memory overhead techniques
 

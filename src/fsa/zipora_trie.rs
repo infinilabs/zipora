@@ -541,7 +541,7 @@ where
             },
             TrieStrategy::DoubleArray { initial_capacity, .. } => {
                 // Referenced project pattern: start minimal SIZE, but respect CAPACITY hint
-                // topling-zip line 70: states.resize(1) - minimal size
+                // Referenced C++ implementation line 70: states.resize(1) - minimal size
                 // Our approach: reserve capacity but only allocate 1 state (minimal memory)
                 let mut base = FastVec::with_capacity(*initial_capacity)
                     .expect("Failed to allocate base vector");

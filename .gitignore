@@ -216,6 +216,16 @@ before.txt
 after.txt
 comparison.txt
 
+# Ignore benchmark result and report files
+bench_results.txt
+benchmark_output.txt
+benchmark_results.txt
+benchmark_summary.txt
+final_bench_results.txt
+cpp_impl_bench_results.txt
+*_bench_results.txt
+*_benchmark_*.txt
+
 # Ignore any data files used for testing
 data/
 samples/

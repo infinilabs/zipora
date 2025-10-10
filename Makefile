@@ -347,6 +347,12 @@ validate: dev dev_nightly doc doc_nightly
 clean:
 	@echo "🧹 Cleaning build artifacts..."
 	$(CARGO) clean
+	@echo "🧹 Cleaning benchmark result files..."
+	@rm -f bench_results.txt benchmark_output.txt benchmark_results.txt
+	@rm -f benchmark_summary.txt final_bench_results.txt cpp_impl_bench_results.txt
+	@rm -f *_bench_results.txt *_benchmark_*.txt
+	@echo "🧹 Cleaning criterion reports..."
+	@rm -rf target/criterion
 	@echo "✅ Clean completed"
 
 # Update dependencies

@@ -161,6 +161,10 @@ harness = false
 name = "profiling_overhead_bench"
 harness = false
 
+[[bench]]
+name = "cpp_impl_comparison"
+harness = false
+
 # Performance validation example
 [[example]]
 name = "production_benchmark"

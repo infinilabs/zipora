@@ -10,7 +10,7 @@ Comprehensive analysis of the porting progress from C++ to Rust zipora implement
 
 ### Implementation Overview
 
-**Achievement**: Complete multi-dimensional rank/select implementation following referenced project (topling-zip) architecture with vectorized operations across multiple dimensions.
+**Achievement**: Complete multi-dimensional rank/select implementation following referenced C++ implementation architecture with vectorized operations across multiple dimensions.
 
 **Key Features**:
 - ✅ **Const Generic Dimensions**: Compile-time dimension specification (1-32 dimensions) for zero-cost abstractions
