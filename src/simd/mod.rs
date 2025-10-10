@@ -53,4 +53,8 @@ pub enum Operation {
     StringSearch,
     /// Bit manipulation
     BitManip,
+    /// Memory zeroing/filling
+    MemZero,
+    /// Memory copy operations
+    Copy,
 }
