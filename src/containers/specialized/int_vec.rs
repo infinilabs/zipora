@@ -6,8 +6,10 @@
 
 use crate::error::{Result, ZiporaError};
 use crate::memory::fast_copy;
+use crate::simd::{AdaptiveSimdSelector, Operation};
 use std::marker::PhantomData;
 use std::mem;
+use std::time::Instant;
 // Import verification macros
 use crate::zipora_verify;
 
@@ -826,20 +828,31 @@ impl<T: PackedInt> IntVec<T> {
 
     // Private implementation methods
 
-    /// Fast bulk conversion to u64 using unaligned memory operations
+    /// Fast bulk conversion to u64 using unaligned memory operations with Adaptive SIMD
     fn bulk_convert_to_u64(values: &[T]) -> Vec<u64> {
         let mut u64_values = Vec::with_capacity(values.len());
-        
+
+        // Adaptive SIMD selection for optimal conversion
+        let selector = AdaptiveSimdSelector::global();
+        let start_time = Instant::now();
+
         // Process in chunks of 128 elements for cache efficiency
         const CHUNK_SIZE: usize = 128;
-        
+
         for chunk in values.chunks(CHUNK_SIZE) {
             // Use vectorized conversion for better performance
             for &value in chunk {
                 u64_values.push(value.to_u64());
             }
         }
-        
+
+        // Monitor performance for adaptive optimization
+        selector.monitor_performance(
+            Operation::Compress,
+            start_time.elapsed(),
+            values.len() as u64
+        );
+
         u64_values
     }
     
