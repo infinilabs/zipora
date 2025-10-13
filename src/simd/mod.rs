@@ -57,4 +57,10 @@ pub enum Operation {
     MemZero,
     /// Memory copy operations
     Copy,
+    /// UTF-8 validation
+    Utf8Validation,
+    /// Base64/encoding operations
+    Encode,
+    /// Base64/decoding operations
+    Decode,
 }

@@ -18,6 +18,12 @@ pub mod complex_types;
 pub mod versioning;
 pub mod var_int_variants;
 
+// SIMD-accelerated operations
+pub mod simd_validation;
+pub mod simd_memory;
+pub mod simd_encoding;
+pub mod simd_parsing;
+
 // Re-export core types
 pub use data_input::{DataInput, ReaderDataInput, SliceDataInput};
 pub use data_output::{DataOutput, FileDataOutput, VecDataOutput, WriterDataOutput};
