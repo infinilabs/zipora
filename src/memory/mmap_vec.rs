@@ -316,8 +316,10 @@ pub struct MmapVec<T> {
     config: MmapVecConfig,
     /// Cached header pointer
     header: Option<NonNull<MmapVecHeader>>,
-    /// Cached data pointer  
+    /// Cached data pointer
     data: Option<NonNull<T>>,
+    /// Whether this is a temporary file that should be deleted on drop
+    is_temp_file: bool,
     /// Phantom data for type safety
     _phantom: PhantomData<T>,
 }
@@ -343,6 +345,7 @@ where
             config,
             header: None,
             data: None,
+            is_temp_file: false,
             _phantom: PhantomData,
         };
 
@@ -370,6 +373,7 @@ where
             config,
             header: None,
             data: None,
+            is_temp_file: false,
             _phantom: PhantomData,
         };
 
@@ -883,11 +887,23 @@ where
         T: Copy + 'static
     {
         // Create a temporary file for the SIMD-optimized vector
+        // Use thread ID + timestamp + random to avoid conflicts in parallel tests
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+
         let temp_dir = std::env::temp_dir();
-        let file_path = temp_dir.join(format!("mmap_vec_simd_{}.dat", std::process::id()));
+        let thread_id = std::thread::current().id();
+        let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let file_path = temp_dir.join(format!(
+            "mmap_vec_simd_{}_{:?}_{}.dat",
+            std::process::id(),
+            thread_id,
+            counter
+        ));
 
         let config = MmapVecConfig::default();
         let mut vec = Self::create(&file_path, config)?;
+        vec.is_temp_file = true; // Mark as temporary for cleanup
 
         // Zero-initialize using SIMD (6-10x faster for large allocations)
         if capacity > 0 && !std::mem::needs_drop::<T>() {
@@ -1054,51 +1070,12 @@ where
 
         // Resize to match source
         if self.capacity() < other.len() {
-            // Create new temporary file with larger capacity
-            let temp_dir = std::env::temp_dir();
-            let new_file_path = temp_dir.join(format!("mmap_vec_copy_{}.dat", std::process::id()));
-            let mut new_vec = Self::create(&new_file_path, self.config.clone())?;
-            new_vec.reserve(other.len())?;
+            // Need to grow capacity - use reserve instead of creating new vector
+            self.reserve(other.len() - self.len())?;
+        }
 
-            // Copy data to new vector
-            let size_bytes = other.len() * std::mem::size_of::<T>();
-
-            // Prefetch source data for large copies
-            if size_bytes >= 4096 {
-                let src_slice = unsafe {
-                    std::slice::from_raw_parts(other.data_ptr()?.as_ptr() as *const u8, size_bytes)
-                };
-                fast_prefetch_range(src_slice.as_ptr(), size_bytes);
-            }
-
-            // Use cache-optimized SIMD copy (3-5x faster)
-            if size_bytes >= 64 {
-                let src_slice = unsafe {
-                    std::slice::from_raw_parts(other.data_ptr()?.as_ptr() as *const u8, size_bytes)
-                };
-                let dst_slice = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        new_vec.data_ptr()?.as_ptr() as *mut u8,
-                        size_bytes,
-                    )
-                };
-
-                fast_copy_cache_optimized(src_slice, dst_slice)?;
-            } else {
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        other.data_ptr()?.as_ptr(),
-                        new_vec.data_ptr()?.as_ptr(),
-                        other.len(),
-                    );
-                }
-            }
-
-            new_vec.set_length(other.len())?;
-
-            // Replace self with new vector
-            *self = new_vec;
-        } else {
+        // Now copy the data
+        {
             // Have enough capacity, copy directly
             let size_bytes = other.len() * std::mem::size_of::<T>();
 
@@ -1242,8 +1219,14 @@ where
 
 impl<T> Drop for MmapVec<T> {
     fn drop(&mut self) {
-        // Note: Cannot call sync() here due to trait bounds
-        // Users should explicitly call sync() before dropping if needed
+        // Drop the mmap first to ensure munmap happens before file deletion
+        drop(self.mmap.take());
+
+        // Clean up temporary files
+        if self.is_temp_file && self.file_path.exists() {
+            // Best effort deletion - ignore errors
+            let _ = std::fs::remove_file(&self.file_path);
+        }
     }
 }
 

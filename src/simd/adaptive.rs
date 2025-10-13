@@ -47,22 +47,22 @@ impl SimdTier {
 }
 
 /// Specific SIMD implementation type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SimdImpl {
-    /// AVX-512 implementation
-    Avx512,
-    /// AVX2 implementation
-    Avx2,
-    /// BMI2 implementation (PDEP/PEXT)
-    Bmi2,
-    /// SSE4.2 implementation
-    Sse42,
-    /// SSE2 implementation
-    Sse2,
+    /// Scalar fallback (lowest)
+    Scalar = 0,
     /// ARM NEON implementation
-    Neon,
-    /// Scalar fallback
-    Scalar,
+    Neon = 1,
+    /// SSE2 implementation
+    Sse2 = 2,
+    /// BMI2 implementation (PDEP/PEXT)
+    Bmi2 = 3,
+    /// SSE4.2 implementation
+    Sse42 = 4,
+    /// AVX2 implementation
+    Avx2 = 5,
+    /// AVX-512 implementation (highest)
+    Avx512 = 6,
 }
 
 /// Key for caching selection decisions
