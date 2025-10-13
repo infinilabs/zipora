@@ -2,7 +2,7 @@
 
 ## Core Principles
 1. **Performance First**: Benchmark changes, exceed C++ performance
-2. **Memory Safety**: Use SecureMemoryPool, avoid unsafe in public APIs  
+2. **Memory Safety**: Use SecureMemoryPool, avoid unsafe in public APIs
 3. **Testing**: 97%+ coverage, all tests pass
 4. **SIMD**: AVX2/BMI2/POPCNT, AVX-512 on nightly
 5. **Production**: Zero compilation errors, robust error handling
@@ -13,199 +13,161 @@ cargo build --release && cargo test --all-features && cargo bench
 cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --check
 ```
 
-## Completed Features
+## Completed Features ✅
 
-### Dynamic SIMD Selection (COMPLETED October 2025)
-- **Runtime Adaptive Selection**: Surpasses referenced C++ implementation's compile-time approach with runtime hardware detection and micro-benchmarking
-- **Data-Aware Algorithm Choice**: Intelligent SIMD selection based on data size, density, and access patterns
-- **Continuous Performance Monitoring**: Exponential moving average tracking with adaptive threshold adjustment
-- **6-Tier SIMD Framework Integration**: Seamless integration with zipora's Tier 0 (Scalar) → Tier 5 (AVX-512) architecture
-- **Micro-Benchmarking Framework**: Startup benchmarking with warmup/measurement phases, median/p95/p99 latency calculation
-- **Performance History Tracking**: EMA-based throughput tracking, variance/std-dev analysis, percentile calculations
-- **Degradation Detection**: Automatic re-benchmarking when performance drops below 90% threshold for 1000+ operations
-- **Selection Caching**: LRU-based caching with bucketed keys for <100ns cache-hit overhead
-- **Configuration Flexibility**: Customizable thresholds, monitoring intervals, and degradation triggers
-- **Production Ready**: Zero unsafe in public APIs, 1860+ tests passing (100% pass rate), comprehensive documentation
-- **Performance Metrics**: <10ns cache hit, <100ns cache miss, 0.9x threshold detection, adaptive adjustment
-- **Cross-Platform**: x86_64 (AVX-512/AVX2/BMI2/POPCNT) + ARM64 (NEON) with graceful fallbacks
+### Dynamic SIMD Selection
+- Runtime adaptive selection surpassing C++ compile-time approach
+- Data-aware algorithm choice based on size, density, access patterns
+- Continuous performance monitoring with EMA tracking
+- 6-Tier SIMD framework integration (Tier 0-5)
+- Micro-benchmarking with degradation detection (<10ns cache hit, <100ns miss)
+- LRU-based selection caching, customizable thresholds
+- Cross-platform: x86_64 (AVX-512/AVX2/BMI2/POPCNT) + ARM64 (NEON)
 
-### Advanced Prefetching Strategies (COMPLETED October 2025) ✅ PRODUCTION READY
-- **Sophisticated Cache Prefetching**: Complete implementation of referenced C++ implementation's advanced prefetching patterns
-- **Adaptive Prefetching**: Stride detection with confidence-based pattern recognition (Sequential, Strided, Random, PointerChasing)
-- **Sequential Prefetching**: Optimized for bulk array operations with configurable distance and cache line stride
-- **Random Access Prefetching**: Conservative prefetch strategy for unpredictable access patterns with locality hints
-- **Bandwidth-Aware Throttling**: Dynamic prefetch throttling based on memory bandwidth utilization (configurable threshold)
-- **Accuracy-Based Throttling**: Adaptive aggressiveness based on prefetch usefulness tracking (hit rate optimization)
-- **Cross-Platform Support**: x86_64 (_mm_prefetch with T0/T1/T2/NTA hints) and ARM64 (PRFM PLDL1KEEP inline asm)
-- **Prefetch Locality Hints**: L1Temporal, L2Temporal, L3Temporal, NonTemporal for optimal cache level targeting
-- **RankSelectInterleaved256 Integration**: Direct prefetching methods (prefetch_rank1, fast_prefetch_rank1, prefetch_select1)
-- **Lookahead Prefetching**: PREFETCH_DISTANCE=8 in bulk operations (prefetch i+8 while processing i) - **+11% improvement**
-- **Simplified Optimized APIs**: rank1_optimized(), select1_optimized(), rank1_bulk_optimized(), select1_bulk_optimized()
-- **Zero Monitoring Overhead**: Removed catastrophic 29,000% overhead from per-operation monitoring (CRITICAL FIX)
-- **Pattern Matching C++ implementation**: Exactly mirrors prefetch_rank1(), fast_prefetch_rank1() from rank_select_se_512.hpp
-- **Measured Performance**: +11.2% bulk improvement (batch=100), minimal overhead for single operations
-- **Performance Fixed**: 193x faster than broken monitoring implementation, production-ready
-- **Comprehensive Testing**: 13 integration tests passing (prefetch, bulk ops, adaptive SIMD, cross-platform, edge cases)
-- **Production Ready**: Zero unsafe in public APIs, 1,872 tests passing in both debug and release modes, benchmarked and optimized
+### Advanced Prefetching Strategies
+- Sophisticated cache prefetching matching C++ implementation patterns
+- Adaptive stride detection (Sequential, Strided, Random, PointerChasing)
+- Bandwidth-aware and accuracy-based throttling
+- Cross-platform: x86_64 (_mm_prefetch) + ARM64 (PRFM inline asm)
+- Lookahead prefetching (PREFETCH_DISTANCE=8, +11% improvement)
+- Zero monitoring overhead (fixed 29,000% overhead bug)
+- Optimized APIs: rank1_optimized(), select1_optimized(), bulk variants
 
-### Multi-Dimensional SIMD Rank/Select Operations (COMPLETED February 2025)
-- **Template-Based Multi-Dimensional Patterns**: Complete implementation following referenced C++ implementation architecture
-- **Const Generic Dimensions**: Compile-time dimension specification (1-32 dimensions) for zero-cost abstractions
-- **Vectorized Bulk Operations**: SIMD-accelerated bulk_rank_multidim and bulk_select_multidim with 4-8x speedup
-- **Cross-Dimensional Set Operations**: Hardware-accelerated intersect_dimensions and union_dimensions with AVX2 optimization
-- **Interleaved Cache Layout**: Co-located rank metadata and bit data across dimensions for 20-30% cache performance improvement
-- **6-Tier SIMD Framework Integration**: AVX-512 (8 dims) → AVX2 (4 dims) → BMI2 → POPCNT → NEON → Scalar fallback
-- **Performance Characteristics**: 4-8x faster bulk rank, 6-12x faster bulk select, 4-8x faster cross-dimensional AND/OR
-- **Comprehensive Testing**: 8 tests passing covering creation, bulk operations, set operations, edge cases, high-dimensional (8 dims)
-- **Production Ready**: Zero unsafe in public APIs, complete error handling, comprehensive documentation in docs/MULTIDIM_SIMD.md
-- **Use Cases**: Multi-dimensional range queries, wavelet matrix construction, graph adjacency queries
-- **Memory Efficiency**: ~25% overhead per dimension with excellent cache locality
+### Multi-Dimensional SIMD Rank/Select
+- Template-based patterns with const generic dimensions (1-32)
+- Vectorized bulk operations (4-8x speedup)
+- Cross-dimensional set operations with AVX2
+- Interleaved cache layout (20-30% cache improvement)
+- Performance: 4-8x bulk rank, 6-12x bulk select
 
-### Double Array Trie Performance & Correctness Improvements (COMPLETED February 2025)
-- **Memory Efficiency Optimization**: Reduced memory overhead from 139x to 58x (57.6% improvement) by applying referenced C++ implementation patterns
-  - **Minimal Initialization**: Start with 1 state (root only), grow on demand
-  - **Lazy Base Allocation**: Set base values only when children are added (NIL_STATE pattern)
-  - **Compact Base Finding**: Use state/4 heuristic for memory-efficient packing (from referenced project's state/16 pattern)
-  - **Exact Sizing**: Grow arrays to exact needed size, not growth factors
-  - **Aggressive Shrinking**: Set unused bases to 1, truncate to actual length (referenced project line 354-355)
-- **Critical Correctness Fixes**:
-  - **Terminal Bit Preservation**: Fixed bug where extending terminal states lost terminal marker when allocating new base (lines 1455-1460)
-  - **Root State Initialization**: Fixed base[0]=0 bug causing single-byte keys to stay at root instead of creating child states (line 546: base[0]=1)
-  - **Prefix Iteration**: Complete FSA trait implementation with proper prefix traversal and key collection
-- **Testing**: All 58 tests passing (34 nested_louds + 24 integration) in both debug and release modes
-- **Referenced Implementation**: Followed C++ implementation's double_array_trie.hpp patterns for minimal memory usage and correct state transitions
-- **Performance Metrics**: Memory efficiency test now passes with <70x overhead threshold (adjusted from <50x to reflect incremental insert vs batch build reality)
+### Double Array Trie Improvements
+- Memory efficiency: 139x → 58x overhead (57.6% improvement)
+- Minimal initialization, lazy base allocation, compact base finding
+- Critical fixes: terminal bit preservation, root state initialization
+- Following C++ implementation's double_array_trie.hpp patterns
 
-### Unified Architecture Transformation (COMPLETED February 2025)
-- **Referenced Project Philosophy**: "One excellent implementation per data structure" with strategy-based configuration replacing multiple separate implementations
-- **ZiporaHashMap**: Single unified hash map replacing 6+ separate implementations (GoldHashMap, StringOptimizedHashMap, SmallHashMap, GoldenRatioHashMap, AdvancedHashMap, CacheOptimizedHashMap)
-- **ZiporaTrie**: Single unified trie replacing 5+ separate implementations (PatriciaTrie, CritBitTrie, DoubleArrayTrie, LoudsTrie, NestedLoudsTrie, CompressedSparseTrie)
-- **Strategy-Based Configuration**: HashStrategy/StorageStrategy/OptimizationStrategy for hash maps; TrieStrategy/CompressionStrategy for tries
-- **Module Export Cleanup**: Clean module structure with legacy code removal, fixed 76+ compilation errors from missing exports
-- **Breaking Changes**: Version 2.0.0 due to architectural transformation with comprehensive migration guide in docs/MIGRATION_GUIDE.md
-- **API Compatibility**: Backward-compatible APIs with ZiporaHashMap::new() and ZiporaTrie::new() maintaining same interface
-- **Production Ready**: Unified implementations with focused optimization efforts, cleaner APIs, reduced maintenance burden
-- **Performance**: Same or better performance with consistent optimizations applied uniformly across all configurations
-- **Documentation**: Complete migration guide, updated examples, comprehensive configuration documentation
+### Unified Architecture Transformation
+- **ZiporaHashMap**: Single implementation replacing 6+ hash maps
+- **ZiporaTrie**: Single implementation replacing 5+ tries
+- Strategy-based configuration (HashStrategy, TrieStrategy, etc.)
+- Clean module exports, backward-compatible APIs
+- Version 2.0.0 with migration guide
 
-### Advanced Multi-Way Merge Algorithms (COMPLETED January 2025)
-- **Enhanced Tournament Tree**: True O(log k) complexity with cache-friendly 64-byte aligned layout and memory prefetching
-- **Advanced Set Operations**: Intersection/union/frequency counting with bit mask optimization for ≤32 ways
-- **SIMD-Optimized Operations**: AVX2/BMI2 acceleration with cross-platform optimization and runtime feature detection
-- **Memory Integration**: SecureMemoryPool compatibility with cache-aligned structures and prefetching support
-- **Production Ready**: Complete error handling, comprehensive testing, zero compilation errors, all 1750+ tests passing
+### Advanced Multi-Way Merge
+- Tournament tree with O(log k) complexity
+- 64-byte cache-aligned layout, memory prefetching
+- Advanced set operations with bit mask optimization (≤32 ways)
+- SIMD-optimized (AVX2/BMI2) with runtime detection
 
-### Advanced Radix Sort Variants (COMPLETED January 2025)
-- **LSD Radix Sort**: Least Significant Digit first with hardware-accelerated digit counting and parallel bucket distribution
-- **MSD Radix Sort**: Most Significant Digit first with in-place partitioning and work-stealing parallel processing
-- **Adaptive Hybrid Radix Sort**: Intelligent algorithm selection based on data characteristics and runtime analysis
-- **String-Specialized Radix Sort**: Optimized for string data with length-aware processing and character-specific optimizations
-- **SIMD Acceleration**: AVX2/BMI2 optimizations for digit counting and distribution with runtime CPU feature detection
-- **Parallel Processing**: Work-stealing thread pool with adaptive work partitioning for maximum throughput
-- **Production Ready**: Complete error handling, memory safety, and comprehensive testing with 1,764+ tests passing
+### Advanced Radix Sort Variants
+- LSD/MSD algorithms with adaptive hybrid selection
+- String-specialized variants
+- SIMD acceleration (AVX2/BMI2), parallel work-stealing
+- 4-8x faster than comparison sorts
 
-### Advanced Hash Map Ecosystem (COMPLETED January 2025)
-- **AdvancedHashMap**: Sophisticated collision resolution with Robin Hood hashing, chaining, and Hopscotch algorithms
-- **CacheOptimizedHashMap**: Cache-line aligned structures with software prefetching, NUMA awareness, and hot/cold separation
-- **AdvancedStringArena**: Offset-based string management with deduplication, freelist management, and memory pool integration
-- **Cache Locality Optimizations**: 64-byte alignment, x86_64 prefetch intrinsics, access pattern analysis
-- **Documentation**: Comprehensive cache locality optimization guide with API examples and best practices
+### Advanced Hash Map Ecosystem
+- AdvancedHashMap: Robin Hood, chaining, Hopscotch
+- CacheOptimizedHashMap: Cache-line aligned, NUMA-aware
+- AdvancedStringArena: Offset-based with deduplication
+- 64-byte alignment, x86_64 prefetch intrinsics
 
-### Cache Optimization Infrastructure (COMPLETED February 2025)
-- **Core Infrastructure**: Complete cache-line alignment framework with cross-platform support (64B x86_64, 128B ARM64)
-- **Hot/Cold Data Separation**: Intelligent access pattern analysis and data placement optimization
-- **Software Prefetching**: Cross-platform prefetch intrinsics with x86_64 (_mm_prefetch) and ARM64 (__builtin_prefetch) support
-- **NUMA-Aware Allocation**: Automatic topology detection with local node allocation preference
-- **Access Pattern Analysis**: 5 pattern types (Sequential, Random, ReadHeavy, WriteHeavy, Mixed) with performance metrics
-- **Systematic Integration**: Cache optimizations applied across rank/select structures, hash maps, tries, and memory pools
-- **Performance Improvements**: 2-3x memory access speedup, 4-5x sequential processing improvements, 20-40% NUMA gains
-- **Production Ready**: Complete integration with SIMD framework, memory safety guarantees, comprehensive testing
+### Cache Optimization Infrastructure
+- Cache-line alignment (64B x86_64, 128B ARM64)
+- Hot/cold data separation with access pattern analysis
+- Software prefetching (x86_64 _mm_prefetch, ARM64 __builtin_prefetch)
+- NUMA-aware allocation with topology detection
+- 5 access patterns: Sequential, Random, ReadHeavy, WriteHeavy, Mixed
+- Performance: 2-3x memory access, 4-5x sequential, 20-40% NUMA gains
 
-### Cache-Oblivious Algorithms (COMPLETED February 2025)
-- **CacheObliviousSort**: Funnel sort implementation with optimal O(1 + N/B * log_{M/B}(N/B)) cache complexity across all cache levels
-- **AdaptiveAlgorithmSelector**: Intelligent choice between cache-aware and cache-oblivious strategies based on data characteristics
-- **Van Emde Boas Layout**: Cache-optimal data structure layouts with SIMD prefetching and hardware acceleration
-- **Algorithm Integration**: Seamless framework integration with SIMD and cache infrastructure
-- **Adaptive Strategy Selection**: Data-size based algorithm selection (small: cache-aware, medium: cache-oblivious, large: hybrid)
-- **Memory Hierarchy Adaptation**: Automatic optimization for L1/L2/L3 cache sizes without manual tuning
-- **SIMD Acceleration**: 2-4x speedup with AVX2/BMI2 when available, graceful scalar fallback
-- **Production Ready**: Complete error handling, memory safety, comprehensive testing with 12/12 tests passing
+### Cache-Oblivious Algorithms
+- Funnel sort: O(1 + N/B * log_{M/B}(N/B)) cache complexity
+- AdaptiveAlgorithmSelector: cache-aware vs cache-oblivious
+- Van Emde Boas layout with SIMD prefetching
+- 2-4x SIMD speedup, automatic cache hierarchy adaptation
 
-### Performance Fix Implementation (COMPLETED January 2025)
-- **Critical Hardware Acceleration Bug**: Successfully resolved the 33-45x performance degradation caused by disabled CPU features during testing
-- **Root Cause**: `#[cfg(test)]` blocks were disabling BMI2/AVX2/POPCNT features with `has_popcnt: false`, causing all benchmarks to run without hardware acceleration
-- **Technical Resolution**: Implemented proper runtime CPU feature detection using `is_x86_feature_detected!()` across all affected files
-- **Files Fixed**: `src/system/cpu_features.rs`, `src/fsa/fast_search.rs`, `src/containers/specialized/int_vec/int_vec_simd.rs`
-- **Validation**: All SIMD optimizations now functional in both tests and production, achieving 0.3-0.4 Gops/s rank/select performance with hardware acceleration enabled
-- **Production Ready**: Hardware acceleration properly enabled, BMI2/AVX2/POPCNT instructions utilized, SIMD framework patterns implemented
+### SSE4.2 SIMD String Search
+- PCMPESTRI-based hardware acceleration
+- Hybrid strategy: pattern length optimization
+- Core functions: sse42_strchr, strstr, multi_search, strcmp
+- Performance: 2-4x char search, 2-8x pattern search, 3-6x strcmp
+
+### SIMD Memory Operations Integration
+- Complete 6-tier SIMD in SecureMemoryPool, LockFreeMemoryPool, MmapVec
+- SIMD-accelerated zeroing (4-8x), verification (8-16x)
+- Bulk allocation with lookahead (+20-30%)
+- Lock-free safety guarantees
+- 38 new tests, all performance targets met
+
+### Algorithm Integration
+- Radix sort: AVX-512 (16x), AVX2 (8x), BMI2, POPCNT
+- SSE4.2 string search: PCMPESTRI operations
+- SIMD entropy coding: AVX2+BMI2 Huffman
+- Performance: 4-8x radix, 2-8x strings, 5-10x entropy coding
+
+### Enhanced BMI2 Integration
+- Systematic BMI2 across bit operations (BEXTR, BZHI, PDEP/PEXT)
+- Hash function acceleration (2-5x)
+- Compression algorithms (3-10x)
+- String processing (2-8x)
+
+### Cache Layout Optimization
+- CacheOptimizedAllocator, CacheLayoutConfig
+- Cross-platform cache detection (CPUID, /sys)
+- HotColdSeparator with access tracking
+- SIMD memory operations with prefetch integration
+- >95% cache hit rates
 
 ### Core Infrastructure
-- **Memory Management**: SecureMemoryPool, LockFreeMemoryPool, MmapVec<T>
-- **Concurrency**: Five-Level Concurrency Management System with graduated complexity control
-- **Synchronization**: Version-based token and sequence management for concurrent FSA/Trie access
-- **Low-Level Sync**: FutexMutex, InstanceTls<T>, AtomicExt
-
-### Data Structures & Storage
-- **Containers**: 11 specialized containers (3-4x C++ performance)
-- **Storage**: FastVec<T>, IntVec<T>, ZipOffsetBlobStore
-- **Cache**: LruMap<K,V>, ConcurrentLruMap<K,V>, LruPageCache
-- **🚀 IntVec Performance**: High-performance bulk construction (248+ MB/s), hardware-accelerated compression, unaligned memory operations
-- **🚀 Cache-Optimized Memory Infrastructure**: Cache-line aligned allocations, NUMA-aware allocation, hot/cold data separation, huge page integration
+- **Memory**: SecureMemoryPool, LockFreeMemoryPool, MmapVec
+- **Concurrency**: Five-Level Management (NoLocking → FixedCapacity)
+- **Sync**: Version-based tokens, FutexMutex, InstanceTls, AtomicExt
+- **Containers**: 11 specialized (3-4x C++ performance)
+- **Storage**: FastVec, IntVec (248+ MB/s bulk), ZipOffsetBlobStore
+- **Cache**: LruMap, ConcurrentLruMap, LruPageCache
 
 ### Search & Algorithms
-- **🚀 Advanced Rank/Select**: 14 sophisticated variants including RankSelectMixed_IL_256 (dual-dimension interleaved), RankSelectMixedXL256 (multi-dimensional extended), RankSelectMixedXLBitPacked (hierarchical bit-packed caching) with comprehensive BMI2 acceleration (0.3-0.4 Gops/s measured, 2-3x select speedup)
-- **🚀 Advanced Radix Sort Variants**: 4 sophisticated radix sort implementations with LSD/MSD algorithms, adaptive hybrid approach, SIMD optimizations (AVX2/BMI2), parallel processing with work-stealing, and intelligent strategy selection
-- **🚀 Cache-Oblivious Algorithms**: CacheObliviousSort with funnel sort implementation, AdaptiveAlgorithmSelector for cache-aware vs cache-oblivious strategy selection, Van Emde Boas layout optimization for cache-optimal data structures
-- **Tries**: PatriciaTrie, CritBitTrie, DoubleArrayTrie, NestedLoudsTrie with hardware acceleration and sophisticated nesting strategies
-- **Search**: AdaptiveRankSelect with intelligent strategy selection and sophisticated mixed implementations
-- **Hash Maps**: 6 specialized implementations including AdvancedHashMap with collision resolution, CacheOptimizedHashMap with locality optimizations
-- **Sorting**: 5 specialized sorting & search algorithms including advanced radix sort variants and cache-oblivious sorting
+- **Rank/Select**: 14 variants (0.3-0.4 Gops/s with BMI2)
+- **Tries**: Unified ZiporaTrie (PatriciaTrie, CritBitTrie, DoubleArray, NestedLouds)
+- **Hash Maps**: Unified ZiporaHashMap
+- **Sorting**: 5 specialized algorithms
 
 ### I/O & Serialization
 - **Fiber I/O**: FiberAio, StreamBufferedReader, ZeroCopyReader
-- **Serialization**: 8 serialization components
-- **String Processing**: 3 optimized string processing components
+- **Serialization**: 8 components
+- **String**: 3 optimized components
 
-### Compression & Algorithms
-- **PA-Zip Dictionary Compression**: Complete three-algorithm implementation (SA-IS suffix arrays + BFS DFA cache + two-level pattern matching)
-- **SA-IS Algorithm**: O(n) linear-time suffix array construction with induced sorting algorithm fully implemented
-- **BFS DFA Cache**: Breadth-first search double array trie construction with configurable depth and frequency thresholds
-- **Two-Level Pattern Matching**: DFA cache (O(1)) + suffix array fallback (O(log n)) with intelligent strategy selection
-- **Binary Search Optimization**: Advanced three-phase binary search with hybrid approach for optimal performance
-- **🚀 Advanced Entropy Coding**: Contextual Huffman (Order-1/Order-2), 64-bit rANS with parallel variants (x1/x2/x4/x8), FSE with ZSTD optimizations, hardware-accelerated bit operations (BMI2/AVX2), context-aware memory management
-- **Blob Store Integration**: Complete DictZipBlobStore with training samples and batch operations
-
-### System Integration
-- **Development Tools**: 3 development infrastructure components
-- **System Utilities**: 5 system integration utilities
-- **Performance**: Comprehensive benchmarking and profiling tools
+### Compression
+- **PA-Zip**: SA-IS suffix arrays, BFS DFA cache, two-level pattern matching
+- **Entropy Coding**: Contextual Huffman, 64-bit rANS, FSE with ZSTD
+- **Binary Search**: Three-phase optimized search
 
 ### Performance Metrics
-- **Multi-Way Merge**: True O(log k) tournament tree with cache-friendly 64-byte alignment and memory prefetching
-- **Set Operations**: Bit mask optimization for ≤32 ways with O(1) membership testing using efficient bit manipulation
-- **SIMD Acceleration**: AVX2/BMI2 vectorized comparisons with runtime feature detection and cross-platform optimization
-- **Speed**: 0.3-0.4 Gops/s rank/select with BMI2 acceleration (2-3x select speedup over scalar)
-- **Hardware**: PDEP/PEXT/TZCNT optimizations, hybrid search strategies, prefetch hints
+- **Rank/Select**: 0.3-0.4 Gops/s with BMI2 (2-3x select speedup)
+- **Hardware**: PDEP/PEXT/TZCNT, hybrid strategies, prefetch hints
 - **Memory**: 50-70% reduction, 96.9% space compression
-- **Adaptive**: Intelligent strategy selection based on data density analysis
-- **🚀 Cache Optimization**: Cache-line aligned allocations, NUMA-aware allocation, hot/cold separation, prefetch hints for memory pools
-- **PA-Zip Performance**: O(log n) suffix array lookups with binary search (major improvement from O(n) linear scan)
-- **🚀 Entropy Coding Performance**: Contextual models with Order-1/Order-2, 64-bit rANS with parallel variants, hardware-accelerated bit operations (BMI2/AVX2)
-- **🚀 IntVec Construction**: 248+ MB/s bulk construction throughput (5.5x faster than target), advanced optimizations, 16-byte alignment
-- **🚀 Advanced Radix Sort Performance**: 4-8x faster than comparison sorts for integer data, SIMD-accelerated digit counting, near-linear scaling up to 8-16 cores with work-stealing
-- **🚀 Cache-Oblivious Performance**: Optimal O(1 + N/B * log_{M/B}(N/B)) cache complexity, 2-4x speedup with SIMD acceleration, automatic cache hierarchy adaptation
+- **Cache**: >95% hit rates, NUMA-aware, hot/cold separation
+- **Radix Sort**: 4-8x faster, near-linear scaling to 8-16 cores
+- **Cache-Oblivious**: Optimal complexity, 2-4x SIMD speedup
+- **IntVec**: 248+ MB/s bulk construction
+- **SIMD Memory**: 4-12x bulk ops, <100ns selection overhead
 - **Safety**: Zero unsafe in public APIs
-- **Tests**: 1,904+ passing (including SIMD memory operations integration), 97%+ coverage, debug and release modes
-- **🚀 SIMD Memory Operations**: Complete integration with SecureMemoryPool, LockFreeMemoryPool, MmapVec (4-12x performance improvements)
+- **Tests**: 1,904+ passing, 97%+ coverage
 
-## SIMD Framework (MANDATORY FOR ALL IMPLEMENTATIONS)
+## SIMD Framework (MANDATORY)
 
-### **🚀 SIMD Framework - 6-Tier Hardware Acceleration Architecture**
+### 6-Tier Hardware Acceleration Architecture
 
-**All future implementations MUST use SIMD Framework patterns:**
+**Hardware Tiers (implement in order):**
+- **Tier 5**: AVX-512 (8x parallel, nightly) - `#[cfg(feature = "avx512")]`
+- **Tier 4**: AVX2 (4x parallel, stable) - Default
+- **Tier 3**: BMI2 (PDEP/PEXT) - Runtime detection
+- **Tier 2**: POPCNT - Runtime detection
+- **Tier 1**: ARM NEON - `#[cfg(target_arch = "aarch64")]`
+- **Tier 0**: Scalar fallback - MANDATORY first
 
+**Required patterns:**
 ```rust
-// ✅ MANDATORY: Runtime detection with graceful fallbacks
+// Runtime detection with graceful fallbacks
 #[cfg(target_arch = "x86_64")]
 fn accelerated_operation(data: &[u32]) -> u32 {
     if is_x86_feature_detected!("avx2") {
@@ -218,245 +180,76 @@ fn accelerated_operation(data: &[u32]) -> u32 {
 }
 ```
 
-**Hardware Tiers (ALWAYS implement in this order):**
-- **Tier 5**: AVX-512 (8x parallel, nightly) - `#[cfg(feature = "avx512")]`
-- **Tier 4**: AVX2 (4x parallel, stable) - Default, always implement
-- **Tier 3**: BMI2 (PDEP/PEXT) - Runtime detection required
-- **Tier 2**: POPCNT (hardware count) - Runtime detection
-- **Tier 1**: ARM NEON (ARM64) - `#[cfg(target_arch = "aarch64")]`
-- **Tier 0**: Scalar fallback - MANDATORY, always implement first
+**REQUIRED:**
+1. Always provide scalar fallback
+2. Runtime CPU feature detection (`is_x86_feature_detected!`)
+3. Isolate unsafe to SIMD intrinsics only
+4. Cross-platform support (x86_64 + ARM64)
+5. Comprehensive testing
 
-### **🚀 SIMD Implementation Guidelines (MANDATORY)**
+**Performance targets:**
+- Rank/Select: 0.3-0.4 Gops/s with BMI2
+- Radix Sort: 4-8x vs comparison sorts
+- String Processing: 2-4x UTF-8 validation
+- Compression: 5-10x bit manipulation
 
-**REQUIRED Patterns:**
-1. **Always provide scalar fallback** - Must work on all platforms
-2. **Runtime CPU feature detection** - Use `is_x86_feature_detected!`
-3. **Isolate unsafe to SIMD intrinsics only** - No unsafe in public APIs
-4. **Cross-platform support** - x86_64 + ARM64 + portable
-5. **Comprehensive testing** - Test all instruction sets
+## Key Types
 
-**Performance Targets:**
-- **Rank/Select**: 0.3-0.4 Gops/s with BMI2 acceleration (measured with hardware acceleration)
-- **Radix Sort**: 4-8x faster than comparison sorts
-- **String Processing**: 2-4x faster UTF-8 validation
-- **Compression**: 5-10x faster bit manipulation
-
-## Architecture
-
-### Key Types (see src/ for details)
-- **🚀 SIMD Framework**: `SimdCapabilities`, `CpuFeatures`, `SimdOperations` - MANDATORY for all new code
-- **🚀 Cache Optimization Infrastructure**: `CacheOptimizedAllocator`, `CacheLayoutConfig`, `CacheHierarchy`, `AccessPattern`, `PrefetchHint`, `HotColdSeparator`, `CacheAlignedVec<T>`, `detect_cache_hierarchy()`
-- **🚀 Cache-Oblivious Algorithms**: `CacheObliviousSort`, `CacheObliviousConfig`, `AdaptiveAlgorithmSelector`, `VanEmdeBoas<T>`, `CacheObliviousSortingStrategy`, `AlgorithmStats`
-- **Storage**: `FastVec<T>`, `IntVec<T>`, `ZipOffsetBlobStore` 
-- **Cache**: `LruMap<K,V>`, `ConcurrentLruMap<K,V>`, `LruPageCache`
-- **🚀 Cache-Optimized Memory Pools**: `SecureMemoryPool` (with NUMA/hot-cold/huge page support), `LockFreeMemoryPool` (with cache alignment), `MmapVec<T>` (with prefetch hints)
-- **Five-Level Concurrency**: `AdaptiveFiveLevelPool`, `NoLockingPool`, `MutexBasedPool`, `LockFreePool`, `ThreadLocalPool`, `FixedCapacityPool`
-- **Version-Based Sync**: `VersionManager`, `ReaderToken`, `WriterToken`, `TokenManager`, `ConcurrentPatriciaTrie`, `LazyFreeList`, `ConcurrencyLevel`
-- **Sync**: `FutexMutex`, `InstanceTls<T>`, `AtomicExt`
-- **🚀 Advanced Multi-Way Merge**: `EnhancedLoserTree`, `LoserTreeConfig`, `SetOperations`, `SimdComparator`, `SimdOperations`, `CacheAlignedNode`
-- **🚀 Advanced Rank/Select**: `RankSelectInterleaved256`, `RankSelectMixed_IL_256`, `RankSelectMixedXL256`, `RankSelectMixedXLBitPacked`, `AdaptiveRankSelect`, `Bmi2Accelerator`
-- **🚀 Advanced Radix Sort**: `AdvancedRadixSort<T>`, `AdvancedRadixSortConfig`, `SortingStrategy`, `CpuFeatures`, `RadixSortable`, `AdvancedAlgorithmStats`
-- **Search**: `ZiporaTrie` (unified), `ZiporaTrieConfig` (strategies) - UNIFIED IMPLEMENTATIONS
-- **Legacy**: `DoubleArrayTrie`, `PatriciaTrie`, `CritBitTrie`, `NestedLoudsTrie` (deprecated in v2.0)
-- **Hash Maps**: `GoldHashMap`, `AdvancedHashMap`, `CacheOptimizedHashMap`, `AdvancedStringArena`, `CollisionStrategy`, `CacheMetrics`
-- **🚀 Cache Optimization**: `CacheOptimizedAllocator`, `CacheLayoutConfig`, `HotColdSeparator`, `CacheAlignedVec`, `AccessPattern`, `PrefetchHint`
-- **🚀 SSE4.2 SIMD String Search**: `SimdStringSearch`, `SearchTier`, `MultiSearchResult`, `sse42_strchr`, `sse42_strstr`, `sse42_multi_search`, `sse42_strcmp`
+- **SIMD**: `SimdCapabilities`, `CpuFeatures`, `SimdOperations`, `AdaptiveSimdSelector`
+- **Cache**: `CacheOptimizedAllocator`, `CacheLayoutConfig`, `HotColdSeparator`, `CacheAlignedVec`
+- **Memory Pools**: `SecureMemoryPool`, `LockFreeMemoryPool`, `MmapVec`
+- **Concurrency**: `AdaptiveFiveLevelPool`, `VersionManager`, `TokenManager`
+- **Rank/Select**: `RankSelectInterleaved256`, `RankSelectMixed_IL_256`, `AdaptiveRankSelect`
+- **Radix Sort**: `AdvancedRadixSort`, `AdvancedRadixSortConfig`, `SortingStrategy`
+- **Tries**: `ZiporaTrie`, `ZiporaTrieConfig`
+- **Hash Maps**: `ZiporaHashMap`, `AdvancedHashMap`, `CacheOptimizedHashMap`
+- **String Search**: `SimdStringSearch`, `sse42_strchr`, `sse42_strstr`
 - **I/O**: `FiberAio`, `StreamBufferedReader`, `ZeroCopyReader`
-- **🚀 Advanced Entropy Coding**: `ContextualHuffmanEncoder`, `Rans64Encoder`, `FseEncoder`, `ParallelHuffmanEncoder`, `AdaptiveParallelEncoder`, `BitOps`, `EntropyContext`
-- **PA-Zip Compression**: `DictZipBlobStore`, `SuffixArrayDictionary`, `DfaCache`, `PaZipCompressor`, `DictionaryBuilder`, `PatternMatcher`
+- **Entropy Coding**: `ContextualHuffmanEncoder`, `Rans64Encoder`, `FseEncoder`
+- **PA-Zip**: `DictZipBlobStore`, `SuffixArrayDictionary`, `DfaCache`
 
-### Features
+## Features
 - **Default**: `simd`, `mmap`, `zstd`, `serde`
 - **Optional**: `lz4`, `ffi`, `avx512` (nightly)
 
-### Security  
-- Use `SecureMemoryPool` (RAII + thread-safe)
-- Zero unsafe in public APIs
+## Patterns (MANDATORY)
 
-## Five-Level Concurrency Management
-
-A sophisticated graduated concurrency control system providing optimal performance across different threading scenarios:
-
-**Level 1**: `NoLockingPool` - Zero overhead single-threaded operation
-**Level 2**: `MutexBasedPool` - Fine-grained per-size-class mutexes
-**Level 3**: `LockFreePool` - Atomic compare-and-swap operations  
-**Level 4**: `ThreadLocalPool` - Per-thread arena allocation caches
-**Level 5**: `FixedCapacityPool` - Bounded allocation for real-time systems
-
-### Usage: AdaptiveFiveLevelPool::new(config) (src/memory/five_level_pool.rs)
-### Adaptive Selection: Based on CPU cores, allocation patterns, workload characteristics
-### Performance: 32-bit offset addressing, skip-list large blocks, cache-line alignment
-### Tests: 14/14 comprehensive tests passing, benchmarking suite included
-
-## Version-Based Synchronization
-
-A sophisticated token and version sequence management system for safe concurrent access to FSA and Trie data structures:
-
-**Core Components**:
-- **ConcurrencyLevel**: 5-level graduated control (NoWriteReadOnly to MultiWriteMultiRead)
-- **VersionManager**: Atomic version counters with consistency validation and lazy cleanup  
-- **Token System**: Type-safe ReaderToken/WriterToken with RAII lifecycle management
-- **Thread-Local Caching**: High-performance token reuse with 80%+ cache hit rates
-- **Lazy Memory Management**: Age-based cleanup with bulk processing optimization
-
-### Usage: ConcurrentPatriciaTrie::new(config) (src/fsa/concurrent_trie.rs)
-### Token Management: TokenManager::new(level) (src/fsa/token.rs)
-### Performance: <5% single-threaded overhead, linear reader scaling
-### Tests: Complete test coverage for all synchronization components
-
-## Patterns
-
-### 🚀 Dynamic SIMD Selection: MANDATORY for all performance-critical operations
+### Dynamic SIMD Selection
 ```rust
-// ✅ REQUIRED: Adaptive SIMD selection with runtime optimization
 use zipora::simd::{AdaptiveSimdSelector, Operation};
-
-// Get global selector instance (singleton with startup benchmarks)
 let selector = AdaptiveSimdSelector::global();
-
-// Select optimal SIMD implementation based on data characteristics
-let impl_type = selector.select_optimal_impl(
-    Operation::Rank,  // operation type
-    data.len(),       // data size
-    Some(0.5),        // data density (optional)
-);
-
-// Monitor performance for adaptive adjustment
-let start = Instant::now();
-// ... perform operation ...
-selector.monitor_performance(Operation::Rank, start.elapsed(), 1);
+let impl_type = selector.select_optimal_impl(Operation::Rank, data.len(), Some(0.5));
+selector.monitor_performance(Operation::Rank, elapsed, 1);
 ```
 
-### 🚀 SIMD Framework: MANDATORY for all new implementations
+### Cache Optimization
 ```rust
-// ✅ REQUIRED: SIMD Framework with graceful fallbacks
-use zipora::system::cpu_features::get_cpu_features;
-let features = get_cpu_features(); // Runtime detection
-// Implement Tier 0 (scalar) → Tier 4 (AVX2) → other tiers
-```
-
-### 🚀 Cache Optimization: MANDATORY for performance-critical code
-```rust
-// ✅ REQUIRED: Cache-optimized allocations and data layouts
-use zipora::memory::{CacheOptimizedAllocator, CacheLayoutConfig, AccessPattern};
-let config = CacheLayoutConfig::sequential(); // or ::random(), ::read_heavy(), etc.
+use zipora::memory::{CacheOptimizedAllocator, CacheLayoutConfig};
+let config = CacheLayoutConfig::sequential();
 let allocator = CacheOptimizedAllocator::new(config);
-// Use fast_copy_cache_optimized, fast_prefetch_range for optimal performance
 ```
 
-### 🚀 Cache-Oblivious Algorithms: For optimal cache performance without manual tuning
+### Cache-Oblivious Algorithms
 ```rust
-// ✅ REQUIRED: Cache-oblivious algorithms with adaptive selection
-use zipora::algorithms::{CacheObliviousSort, CacheObliviousConfig, AdaptiveAlgorithmSelector};
-let config = CacheObliviousConfig::default();
+use zipora::algorithms::{CacheObliviousSort, AdaptiveAlgorithmSelector};
 let mut sorter = CacheObliviousSort::new(config);
-sorter.sort(&mut data)?; // Optimal cache complexity automatically
+sorter.sort(&mut data)?;
 ```
 
-### Memory: Use SecureMemoryPool (src/memory.rs:45)
-### Five-Level: Use AdaptiveFiveLevelPool::new(config) (src/memory/five_level_pool.rs:1200)
-### Tries: ZiporaTrie::with_config() (src/fsa/mod.rs) - UNIFIED IMPLEMENTATION
-### Version-Based Sync: Use ConcurrentPatriciaTrie::new(config) (src/fsa/concurrent_trie.rs)
-### Cache: LruPageCache::new(config) (src/cache.rs:120)  
-### PA-Zip: DictZipBlobStore::new(config) (src/compression/dict_zip/blob_store.rs)
-### Two-Level Pattern Matching: SuffixArrayDictionary::da_match_max_length() (src/compression/dict_zip/dictionary.rs)
-### Binary Search: SuffixArrayDictionary::sa_equal_range_binary_optimized() (src/compression/dict_zip/dictionary.rs:684)
-### 🚀 Advanced Rank/Select: RankSelectMixed_IL_256::new() (src/succinct/rank_select/mixed_impl.rs)
-### 🚀 IntVec High-Performance: IntVec::from_slice_bulk() (src/containers/specialized/int_vec.rs:745)
-### 🚀 Advanced Radix Sort: AdvancedU32RadixSort::new() (src/algorithms/radix_sort.rs)
-### Hash Maps: ZiporaHashMap::with_config() (src/hash_map/mod.rs) - UNIFIED IMPLEMENTATION
-### Legacy Pattern: AdvancedHashMap::with_collision_strategy() (deprecated in v2.0)
-### 🚀 Cache-Optimized Memory: SecureMemoryPool::new(config.with_cache_alignment(true).with_numa_awareness(true)) (src/memory/secure_pool.rs)
-### 🚀 Lock-Free Cache Pool: LockFreeMemoryPool::new(config.with_cache_optimization()) (src/memory/lockfree_pool.rs)
-### 🚀 Cache-Aware MmapVec: MmapVec::new(config.with_prefetching(true).with_cache_alignment(true)) (src/memory/mmap_vec.rs)
-### Cache: CacheOptimizedHashMap::new() (src/hash_map/cache_optimized_hash_map.rs)
-### String Arena: AdvancedStringArena::new() (src/hash_map/advanced_string_arena.rs)
-### 🚀 SSE4.2 SIMD String Search: SimdStringSearch::new() (src/string/simd_search.rs)
-### 🚀 Cache Optimization: CacheOptimizedAllocator::new(config) (src/memory/cache_layout.rs)
-### 🚀 Cache-Aligned Vectors: CacheAlignedVec::with_access_pattern() (src/memory/cache_layout.rs)
-### 🚀 Hot/Cold Data: HotColdSeparator::new(config) (src/memory/cache_layout.rs)
-### 🚀 Cache-Oblivious Sort: CacheObliviousSort::new() (src/algorithms/cache_oblivious.rs)
-### 🚀 Adaptive Algorithm Selection: AdaptiveAlgorithmSelector::new() (src/algorithms/cache_oblivious.rs)
-### 🚀 Van Emde Boas Layout: VanEmdeBoas::with_data() (src/algorithms/cache_oblivious.rs)
-### Error: ZiporaError::invalid_data (src/error.rs:25)
-### Test: #[cfg(test)] criterion benchmarks
-
-### Enhanced BMI2 Integration (COMPLETED January 2025)
-- **Systematic BMI2 Application**: Comprehensive BMI2 patterns applied across all bit operations domains
-- **Core Infrastructure**: Enhanced `bmi2_acceleration.rs` with BEXTR, BZHI, PDEP/PEXT, and advanced patterns (2-10x performance improvements)
-- **Hash Function Acceleration**: BMI2-optimized hash operations with bucket extraction, combining, and golden ratio calculations (2-5x faster)
-- **Compression Algorithm Enhancement**: Variable-length coding, entropy decoding, and bit stream processing with BMI2 acceleration (3-10x faster)
-- **String Processing Optimization**: UTF-8 validation, pattern matching, Base64 encoding/decoding with BMI2 patterns (2-8x faster)
-- **Framework Integration**: Follows mandatory SIMD Framework patterns with runtime detection and graceful fallbacks
-- **Production Ready**: Zero compilation errors, comprehensive testing (1,854+ tests passing), memory safety guaranteed
-
-### Cache Layout Optimization Infrastructure (COMPLETED February 2025)
-- **Core Infrastructure**: Complete cache optimization framework in `src/memory/cache_layout.rs` with CacheOptimizedAllocator, CacheLayoutConfig, and cache hierarchy detection
-- **Cross-Platform Cache Detection**: x86_64 CPUID-based cache hierarchy detection and ARM64 /sys filesystem parsing for optimal cache parameter discovery
-- **Cache-Line Alignment**: 64-byte alignment for x86_64 and 128-byte for ARM64 with cache-aligned memory allocation and automatic alignment detection
-- **Hot/Cold Data Separation**: HotColdSeparator with access frequency tracking, intelligent data placement, and dynamic reorganization based on access patterns
-- **Cross-Platform Prefetching**: x86_64 _mm_prefetch with T0/T1/T2/NTA hints and ARM64 PRFM instructions for optimal cache warming
-- **NUMA-Aware Allocation**: Automatic NUMA topology detection with local node allocation preference and cross-platform compatibility
-- **Access Pattern Optimization**: 5 access patterns (Sequential, Random, ReadHeavy, WriteHeavy, Mixed) with tailored cache strategies
-- **SIMD Memory Operations**: Cache-optimized SIMD memory operations with prefetch integration and hardware acceleration
-- **Performance Monitoring**: Comprehensive cache statistics, hit rate tracking, and performance analysis tools
-- **Production Integration**: Applied systematically across rank/select structures, hash maps, tries, and memory pools with >95% cache hit rates
-- **Testing Complete**: 11/11 cache layout tests passing, comprehensive coverage for all cache optimization features
-
-### SSE4.2 SIMD String Search (COMPLETED October 2025) ✅ PRODUCTION READY
-- **Hardware Acceleration**: Complete SSE4.2 PCMPESTRI-based string search implementation with specialized string instructions
-- **Hybrid Strategy Optimization**: Intelligent algorithm selection based on pattern length (≤16 bytes: single PCMPESTRI, 17-32 bytes: cascaded operations, >32 bytes: chunked processing)
-- **Multi-Tier SIMD Architecture**: Runtime CPU feature detection with support for SSE4.2, AVX2, AVX-512, ARM NEON, and graceful scalar fallback
-- **Core Functions**: Complete implementation of sse42_strchr, sse42_strstr, sse42_multi_search, sse42_strcmp with hardware-accelerated early exit optimizations
-- **Performance Targets Met**: 2-4x character search, 2-8x pattern search, 3-6x string comparison speedup over scalar (ALL ACHIEVED ✅)
-- **Public API**: find_char(), find_pattern(), find_any_of(), compare_strings() convenience functions
-- **SimdStringSearch**: Configurable SIMD tier selection with runtime detection and custom configuration
-- **Integration Complete**: Module exports in src/io/simd_memory/search.rs, comprehensive documentation in docs/SIMD_STRING_SEARCH.md
-- **Comprehensive Testing**: 12 integration tests passing (100% pass rate) covering all operation types, pattern lengths, and edge cases
-- **Production Quality**: Zero unsafe in public APIs, memory safety guaranteed, 917 lines of production code
-
-### SIMD Memory Operations Integration (COMPLETED October 2025) ✅ PRODUCTION READY
-- **Complete 6-Tier SIMD Framework**: Full integration of SIMD operations into all memory components (SecureMemoryPool, LockFreeMemoryPool, MmapVec)
-- **SecureMemoryPool Enhancements**: SIMD-accelerated memory zeroing (4-8x faster), SIMD verification (8-16x faster), prefetching for allocation metadata, bulk allocation with lookahead (PREFETCH_DISTANCE=8, +20-30% improvement)
-- **LockFreeMemoryPool Enhancements**: SIMD freelist scanning (4-6x faster with AVX2), hardware POPCNT bitmap operations (3-5x faster), prefetching for skip list traversal, bulk operations with intelligent prefetching, lock-free SIMD zeroing
-- **MmapVec Enhancements**: SIMD bulk initialization (6-10x faster), vectorized bulk push/pop (4-8x faster), cache-optimized bulk copy (3-5x faster with prefetching), SIMD range fill (4-6x for byte types), SIMD range compare (8-12x faster)
-- **Adaptive SIMD Selection**: Full integration with `AdaptiveSimdSelector::global()` for runtime optimization and performance monitoring
-- **Lock-Free Safety**: Comprehensive lock-free safety guarantees for concurrent SIMD operations (read-only SIMD, owned memory SIMD, proper memory ordering)
-- **Configuration Flexibility**: `zero_on_alloc`, `enable_simd_optimization`, `zero_on_free` flags for fine-grained control
-- **Cross-Platform Support**: x86_64 (AVX2/BMI2/POPCNT/hardware POPCNT) + ARM64 (NEON) + portable scalar fallbacks
-- **Comprehensive Testing**: 38 new SIMD integration tests (22 SecureMemoryPool + 13 LockFreeMemoryPool + 15 MmapVec), 100% pass rate in debug and release modes
-- **Performance Targets Met**: All performance targets achieved (4-8x bulk ops, <100ns selection overhead, >95% cache hits, zero unsafe in public APIs)
-- **Production Ready**: Zero compilation errors/warnings in modified code, comprehensive documentation, battle-tested with 70 tests passing (2 ignored for intentional exhaustion tests)
-- **Memory Safety**: Zero unsafe operations in public APIs (MANDATORY requirement met), all SIMD operations use safe wrapper functions from `simd_ops.rs`
-
-### Algorithm Integration ✅ FULLY IMPLEMENTED (October 2025)
-- **Radix Sort SIMD Optimizations**: COMPLETE with AVX-512 (16x parallel), AVX2 (8x parallel), BMI2, POPCNT, parallel processing with work-stealing
-- **SSE4.2 String Search Integration**: COMPLETE with PCMPESTRI-based operations (strchr, strstr, multi_search, strcmp), multi-tier SIMD (SSE4.2/AVX2/AVX-512)
-- **SIMD Entropy Coding**: COMPLETE with AVX2+BMI2 accelerated Huffman encoding, size-based strategy selection, batch processing, memory prefetching
-- **Performance Metrics**: Radix sort 4-8x faster, string search 2-8x faster, entropy coding 5-10x faster bit manipulation
-- **Test Coverage**: 63 tests passing (100% pass rate) - 42 radix sort, 15 string search, 6 entropy coding
-- **Cross-Platform**: x86_64 (AVX-512/AVX2/BMI2/SSE4.2/POPCNT) + ARM64 (NEON) + portable scalar fallbacks
-- **Production Ready**: Zero unsafe in public APIs, comprehensive error handling, memory safety guaranteed, zero compilation errors
-- **Detailed Report**: See ALGORITHM_INTEGRATION_STATUS.md for comprehensive evaluation and performance benchmarks
-
-## Next Targets
-**Future**: GPU acceleration, distributed systems, machine learning integration, quantum-resistant algorithms
+## Pattern Reference
+- Memory: `SecureMemoryPool::new(config)` (src/memory.rs:45)
+- Five-Level: `AdaptiveFiveLevelPool::new(config)` (src/memory/five_level_pool.rs:1200)
+- Tries: `ZiporaTrie::with_config()` (src/fsa/mod.rs)
+- Hash Maps: `ZiporaHashMap::with_config()` (src/hash_map/mod.rs)
+- Rank/Select: `RankSelectMixed_IL_256::new()` (src/succinct/rank_select/mixed_impl.rs)
+- Radix Sort: `AdvancedU32RadixSort::new()` (src/algorithms/radix_sort.rs)
+- Cache-Oblivious: `CacheObliviousSort::new()` (src/algorithms/cache_oblivious.rs)
+- String Search: `SimdStringSearch::new()` (src/string/simd_search.rs)
+- PA-Zip: `DictZipBlobStore::new(config)` (src/compression/dict_zip/blob_store.rs)
 
 ---
-*Updated: 2025-10-10 - SIMD Memory Operations Integration COMPLETED ✅ - Complete 6-tier SIMD framework integration into all memory components*
-*Framework: SIMD Memory Ops + Prefetching + Dynamic SIMD Selection + 6-tier hardware acceleration (Tier 0-5) + Cache Optimization + Cache-Oblivious Algorithms*
-*Style: SIMD Memory Integration + Prefetching + Adaptive SIMD Selection + SIMD Implementation Guidelines + Cache Optimization + Cache-Oblivious Patterns MANDATORY*
-*Performance: 4-12x memory ops, <100ns selection overhead, 2-3x sequential speedup, 0.3-0.4 Gops/s rank/select, 4-8x radix sort, 2-8x string processing, >95% cache hits*
-*Cross-Platform: x86_64 (_mm_prefetch, AVX-512/AVX2/BMI2/POPCNT) + ARM64 (PRFM, NEON) + portable fallbacks*
-*Documentation: Complete SIMD memory operations, prefetching integration with adaptive SIMD, lookahead strategies, performance monitoring*
-*MANDATORY: All future memory operations MUST use SIMD-accelerated methods with prefetching + adaptive selection*
-*Hardware Tiers: Tier 5 (AVX-512/nightly) → Tier 4 (AVX2/stable) → Tier 3 (BMI2) → Tier 2 (POPCNT) → Tier 1 (NEON) → Tier 0 (scalar/required)*
-*Implementation: SIMD memory ops (fast_fill, fast_copy_cache_optimized, fast_compare), prefetch methods, lookahead (PREFETCH_DISTANCE=8), runtime detection, micro-benchmarking, EMA tracking, degradation detection*
-*Tests: 1,904+ passing (100% pass rate) including 38 new SIMD memory integration tests (SecureMemoryPool, LockFreeMemoryPool, MmapVec)*
-*Status: SIMD MEMORY OPERATIONS INTEGRATION COMPLETED ✅ - Complete memory subsystem optimization with production-ready SIMD acceleration*
-*Latest Update (2025-10-10): SIMD MEMORY OPERATIONS INTEGRATION ✅ - Systematic integration of SIMD operations into SecureMemoryPool (22 tests), LockFreeMemoryPool (13 tests), MmapVec (15 tests) with adaptive selection, prefetching, and lock-free safety guarantees. Performance targets met: 4-8x bulk ops, <100ns selection overhead, >95% cache hits, zero unsafe in public APIs*
-*Previous Update (2025-10-09): PREFETCHING + ADAPTIVE SIMD INTEGRATION ✅ - Systematic integration of prefetching (prefetch_rank1, prefetch_select1, lookahead) with adaptive SIMD selection in RankSelectInterleaved256, exactly mirroring C++ implementation's rank_select_se_512.hpp patterns with ARM64 inline asm support*
-*Previous Update (2025-10-08): DYNAMIC SIMD SELECTION ✅ - Complete adaptive selection with micro-benchmarking framework, EMA-based performance tracking, degradation detection*
-*Previous Update (2025-02-09): UNIFIED ARCHITECTURE TRANSFORMATION ✅ - ZiporaHashMap and ZiporaTrie replacing 14+ data structures*
-*Previous Update (2025-02-09): CACHE-OBLIVIOUS ALGORITHMS ✅ - Funnel sort, Van Emde Boas layout, adaptive strategy selection*
-*Previous Major Updates: Cache optimization infrastructure, SSE4.2 string search, BMI2 integration, radix sort, multi-way merge*
+**Status**: Production-ready SIMD acceleration framework
+**Performance**: 4-12x memory ops, 0.3-0.4 Gops/s rank/select, 4-8x radix sort, 2-8x string processing
+**Cross-Platform**: x86_64 (AVX-512/AVX2/BMI2/POPCNT) + ARM64 (NEON) + scalar fallbacks
+**Tests**: 1,904+ passing (100% pass rate)
+**Safety**: Zero unsafe in public APIs (MANDATORY)
