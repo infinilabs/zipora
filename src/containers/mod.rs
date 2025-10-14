@@ -6,6 +6,8 @@
 //! ## Core Containers
 //!
 //! - **`FastVec<T>`** - High-performance vector using realloc for growth
+//! - **`UintVecMin0`** - Variable-width integer vector (0-58 bits per value)
+//! - **`ZipIntVec`** - Compressed integer vector with automatic range detection
 //!
 //! ## Specialized Containers - Phase 1
 //!
@@ -34,8 +36,12 @@
 
 mod fast_vec;
 pub mod specialized;
+pub mod uint_vec_min0;
+pub mod zip_int_vec;
 
 pub use fast_vec::FastVec;
+pub use uint_vec_min0::UintVecMin0;
+pub use zip_int_vec::ZipIntVec;
 pub use specialized::{
     AutoGrowCircularQueue,
     EasyHashMap,
