@@ -346,6 +346,7 @@ fn generate_ffi_bindings() {
 }
 
 #[cfg(not(feature = "ffi"))]
+#[allow(dead_code)]
 fn generate_ffi_bindings() {
     // No-op when ffi feature is disabled
 }
