@@ -7,10 +7,13 @@ pub mod cached_store;
 pub mod compressed;
 pub mod entropy;
 pub mod memory;
+pub mod mixed_len;
 pub mod nest_louds_trie_blob_store;
 pub mod plain;
+pub mod simple_zip;
 pub mod sorted_uint_vec;
 pub mod traits;
+pub mod zero_length;
 pub mod zip_offset;
 pub mod zip_offset_builder;
 
@@ -21,16 +24,19 @@ pub use entropy::{
     DictionaryBlobStore, EntropyAlgorithm, EntropyCompressionStats, HuffmanBlobStore, RansBlobStore,
 };
 pub use memory::MemoryBlobStore;
+pub use mixed_len::MixedLenBlobStore;
 pub use nest_louds_trie_blob_store::{
-    NestLoudsTrieBlobStore, NestLoudsTrieBlobStoreBuilder, TrieBlobStoreConfig, 
+    NestLoudsTrieBlobStore, NestLoudsTrieBlobStoreBuilder, TrieBlobStoreConfig,
     TrieBlobStoreConfigBuilder, TrieBlobStoreStats,
 };
 pub use plain::PlainBlobStore;
+pub use simple_zip::{SimpleZipBlobStore, SimpleZipConfig, SimpleZipConfigBuilder};
 pub use sorted_uint_vec::{SortedUintVec, SortedUintVecBuilder, SortedUintVecConfig};
 pub use traits::{
     BatchBlobStore, BlobStore, BlobStoreStats, CompressedBlobStore, CompressionStats,
     IterableBlobStore,
 };
+pub use zero_length::ZeroLengthBlobStore;
 pub use zip_offset::{ZipOffsetBlobStore, ZipOffsetBlobStoreConfig};
 pub use zip_offset_builder::{ZipOffsetBlobStoreBuilder, BatchZipOffsetBlobStoreBuilder, BuilderStats};
 
