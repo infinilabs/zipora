@@ -366,8 +366,7 @@ impl LockFreeMemoryPool {
                     if let Ok(bin_idx) = self.size_to_bin_index(aligned_future_size) {
                         #[cfg(target_arch = "x86_64")]
                         {
-                            let bin_ptr = &self.fast_bins[bin_idx] as *const _ as *const u8;
-                            fast_prefetch(bin_ptr, PrefetchHint::T0);
+                            fast_prefetch(&self.fast_bins[bin_idx], PrefetchHint::T0);
                         }
                     }
                 }

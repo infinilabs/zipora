@@ -1084,7 +1084,7 @@ where
                 let src_slice = unsafe {
                     std::slice::from_raw_parts(other.data_ptr()?.as_ptr() as *const u8, size_bytes)
                 };
-                fast_prefetch_range(src_slice.as_ptr(), size_bytes);
+                fast_prefetch_range(src_slice);
             }
 
             // Use cache-optimized SIMD copy
