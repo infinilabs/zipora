@@ -639,40 +639,7 @@ impl<T: PackedInt> IntVec<T> {
 
         Ok(result)
     }
-    
-    /// 🚀 DEPRECATED: Legacy SIMD implementation for reference
-    /// The adaptive selection above provides better performance
-    #[allow(dead_code)]
-    fn from_slice_bulk_simd_legacy(values: &[T]) -> Result<Self> {
-        let start_time = std::time::Instant::now();
-        
-        let mut result = Self::new();
-        result.len = values.len();
 
-        // Use regular bulk conversion (SIMD conversion had overhead issues)
-        let u64_values = Self::bulk_convert_to_u64_fast(values);
-        
-        // Use the same proven strategy analysis as regular from_slice
-        let data_size_kb = (values.len() * mem::size_of::<T>()) / 1024;
-        let strategy = if values.len() <= 10000 || data_size_kb <= 16 {
-            Self::analyze_small_dataset_strategy(&u64_values)
-        } else {
-            Self::analyze_optimal_strategy(&u64_values)
-        };
-        result.strategy = strategy;
-
-        // Use the same compression method as regular bulk constructor
-        result.compress_with_strategy(&u64_values, strategy)?;
-
-        // Update statistics
-        result.stats.original_size = values.len() * mem::size_of::<T>();
-        result.stats.compressed_size = result.data.len();
-        result.stats.index_size = result.index.as_ref().map_or(0, |idx| idx.len());
-        result.stats.compression_time_ns = start_time.elapsed().as_nanos() as u64;
-
-        Ok(result)
-    }
-    
     /// Create IntVec from slice with optimal compression
     ///
     /// This analyzes the data and selects the best compression strategy
@@ -867,16 +834,9 @@ impl<T: PackedInt> IntVec<T> {
     /// # Performance
     /// 
     /// - 2-3x faster for medium to large datasets
-    /// - Minimal overhead for small datasets  
+    /// - Minimal overhead for small datasets
     /// - Optimized memory access patterns
-    /// 🚀 DEPRECATED: Legacy SIMD conversion - use bulk_convert_to_u64_fast instead
-    #[allow(dead_code)]
-    fn bulk_convert_to_u64_simd(values: &[T]) -> Vec<u64> {
-        // Adaptive selection now delegates to proven bulk constructor
-        // This function is kept for reference but no longer used
-        Self::bulk_convert_to_u64_fast(values)
-    }
-    
+
     /// 🚀 ZERO-COPY PATTERN: Zero-copy bulk constructor for u64 types
     fn from_slice_bulk_zerocopy(values: &[T], start_time: std::time::Instant) -> Result<Self> {
         let mut result = Self::new();

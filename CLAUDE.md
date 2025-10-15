@@ -49,8 +49,9 @@ cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --check
 ### Unified Architecture Transformation
 - **ZiporaHashMap**: Single implementation replacing 6+ hash maps
 - **ZiporaTrie**: Single implementation replacing 5+ tries
+- **EnhancedLoserTree**: Unified tournament tree (removed LoserTree backward compatibility)
 - Strategy-based configuration (HashStrategy, TrieStrategy, etc.)
-- Clean module exports, backward-compatible APIs
+- Clean module exports, no backward compatibility code
 - Version 2.0.0 with migration guide
 
 ### Advanced Multi-Way Merge
@@ -263,8 +264,30 @@ sorter.sort(&mut data)?;
 **Status**: Production-ready SIMD acceleration framework
 **Performance**: 4-12x memory ops, 0.3-0.4 Gops/s rank/select, 4-8x radix sort, 2-8x string processing
 **Cross-Platform**: x86_64 (AVX-512/AVX2/BMI2/POPCNT) + ARM64 (NEON) + scalar fallbacks
-**Tests**: 2,176+ passing (100% pass rate)
+**Tests**: 2,178+ passing (100% pass rate)
 **Safety**: Zero unsafe in public APIs (MANDATORY)
+
+## Deprecated Code Removal (2025-10-15)
+
+### ✅ ALL BACKWARD COMPATIBILITY CODE REMOVED
+
+**Tournament Tree**:
+- Removed `LoserTree` type alias → Use `EnhancedLoserTree` directly
+- Updated all imports and usages across codebase
+- Fixed: `src/algorithms/external_sort.rs`, `src/lib.rs`, `src/algorithms/mod.rs`
+
+**IntVec Legacy SIMD**:
+- Removed deprecated `from_slice_bulk_simd_legacy()` function
+- Removed deprecated `bulk_convert_to_u64_simd()` function
+- All code now uses adaptive SIMD selection framework
+
+**README.md**:
+- Removed legacy Tournament Tree examples
+- Removed "Traditional pools (legacy)" examples from C FFI section
+- Added new blob store examples (ZeroLength, SimpleZip, MixedLen)
+- Updated performance summary table
+
+**Build Status**: ✅ All 2,178 tests passing, zero compilation errors
 
 ## Latest Updates (2025-10-14)
 

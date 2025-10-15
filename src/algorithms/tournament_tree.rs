@@ -591,9 +591,6 @@ where
     }
 }
 
-/// Type alias for backward compatibility
-pub type LoserTree<T, F = fn(&T, &T) -> Ordering> = EnhancedLoserTree<T, F>;
-
 /// Iterator implementation for consuming the enhanced tournament tree
 impl<T, F> Iterator for EnhancedLoserTree<T, F>
 where
@@ -630,7 +627,7 @@ mod tests {
     #[test]
     fn test_empty_tree() {
         let config = LoserTreeConfig::default();
-        let mut tree = LoserTree::<i32>::new(config);
+        let mut tree = EnhancedLoserTree::<i32>::new(config);
         
         assert!(tree.is_empty());
         assert_eq!(tree.num_ways(), 0);
@@ -641,7 +638,7 @@ mod tests {
     #[test]
     fn test_single_way() -> Result<()> {
         let config = LoserTreeConfig::default();
-        let mut tree = LoserTree::<i32>::new(config);
+        let mut tree = EnhancedLoserTree::<i32>::new(config);
         
         tree.add_way(vec![1, 2, 3].into_iter())?;
         
@@ -654,7 +651,7 @@ mod tests {
     #[test]
     fn test_two_way_merge() -> Result<()> {
         let config = LoserTreeConfig::default();
-        let mut tree = LoserTree::<i32>::new(config);
+        let mut tree = EnhancedLoserTree::<i32>::new(config);
         
         tree.add_way(vec![1, 3, 5].into_iter())?;
         tree.add_way(vec![2, 4, 6].into_iter())?;
@@ -668,7 +665,7 @@ mod tests {
     #[test]
     fn test_three_way_merge() -> Result<()> {
         let config = LoserTreeConfig::default();
-        let mut tree = LoserTree::<i32>::new(config);
+        let mut tree = EnhancedLoserTree::<i32>::new(config);
         
         tree.add_way(vec![1, 4, 7].into_iter())?;
         tree.add_way(vec![2, 5, 8].into_iter())?;
@@ -683,7 +680,7 @@ mod tests {
     #[test]
     fn test_uneven_lengths() -> Result<()> {
         let config = LoserTreeConfig::default();
-        let mut tree = LoserTree::<i32>::new(config);
+        let mut tree = EnhancedLoserTree::<i32>::new(config);
         
         tree.add_way(vec![1].into_iter())?;
         tree.add_way(vec![2, 3, 4, 5].into_iter())?;
@@ -698,7 +695,7 @@ mod tests {
     #[test]
     fn test_empty_ways() -> Result<()> {
         let config = LoserTreeConfig::default();
-        let mut tree = LoserTree::<i32>::new(config);
+        let mut tree = EnhancedLoserTree::<i32>::new(config);
         
         tree.add_way(vec![1, 2].into_iter())?;
         tree.add_way(std::iter::empty())?;
@@ -713,7 +710,7 @@ mod tests {
     #[test]
     fn test_duplicate_values() -> Result<()> {
         let config = LoserTreeConfig::default();
-        let mut tree = LoserTree::<i32>::new(config);
+        let mut tree = EnhancedLoserTree::<i32>::new(config);
         
         tree.add_way(vec![1, 2, 2, 3].into_iter())?;
         tree.add_way(vec![2, 2, 4].into_iter())?;
@@ -727,7 +724,7 @@ mod tests {
     #[test]
     fn test_custom_comparator() -> Result<()> {
         let config = LoserTreeConfig::default();
-        let mut tree = LoserTree::with_comparator(config, |a: &i32, b: &i32| b.cmp(a)); // Reverse order
+        let mut tree = EnhancedLoserTree::with_comparator(config, |a: &i32, b: &i32| b.cmp(a)); // Reverse order
         
         tree.add_way(vec![5, 3, 1].into_iter())?;
         tree.add_way(vec![6, 4, 2].into_iter())?;
@@ -741,7 +738,7 @@ mod tests {
     #[test]
     fn test_iterator_interface() -> Result<()> {
         let config = LoserTreeConfig::default();
-        let mut tree = LoserTree::<i32>::new(config);
+        let mut tree = EnhancedLoserTree::<i32>::new(config);
         
         tree.add_way(vec![1, 3].into_iter())?;
         tree.add_way(vec![2, 4].into_iter())?;
@@ -757,7 +754,7 @@ mod tests {
     #[test]
     fn test_peek_before_pop() -> Result<()> {
         let config = LoserTreeConfig::default();
-        let mut tree = LoserTree::<i32>::new(config);
+        let mut tree = EnhancedLoserTree::<i32>::new(config);
         
         tree.add_way(vec![1, 3].into_iter())?;
         tree.add_way(vec![2, 4].into_iter())?;
@@ -776,7 +773,7 @@ mod tests {
     #[test]
     fn test_large_merge() -> Result<()> {
         let config = LoserTreeConfig::default();
-        let mut tree = LoserTree::<i32>::new(config);
+        let mut tree = EnhancedLoserTree::<i32>::new(config);
         
         // Add 10 ways with 100 elements each
         for way in 0..10 {
