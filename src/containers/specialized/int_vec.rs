@@ -259,8 +259,13 @@ mod int_vec_simd {
     
     impl PrefetchOps {
         /// Prefetch memory location for reading with cache hints
+        ///
+        /// # Safety
+        /// This function is safe because it accepts a reference, ensuring the memory address is valid.
+        /// Prefetch hints are advisory only and do not cause faults.
         #[inline]
-        pub fn prefetch_read(addr: *const u8) {
+        pub fn prefetch_read<T: ?Sized>(data: &T) {
+            let addr = data as *const T as *const u8;
             #[cfg(target_arch = "x86_64")]
             {
                 unsafe {
@@ -275,8 +280,13 @@ mod int_vec_simd {
         }
         
         /// Prefetch memory location for writing
+        ///
+        /// # Safety
+        /// This function is safe because it accepts a reference, ensuring the memory address is valid.
+        /// Prefetch hints are advisory only and do not cause faults.
         #[inline]
-        pub fn prefetch_write(addr: *mut u8) {
+        pub fn prefetch_write<T: ?Sized>(data: &T) {
+            let addr = data as *const T as *const u8;
             #[cfg(target_arch = "x86_64")]
             {
                 unsafe {
@@ -2013,7 +2023,7 @@ impl<T: PackedInt> IntVec<T> {
         if byte_index + 8 <= self.data.len() {
             // Prefetch next cache line for sequential access
             if byte_index + 64 < self.data.len() {
-                PrefetchOps::prefetch_read(unsafe { self.data.as_ptr().add(byte_index + 64) });
+                PrefetchOps::prefetch_read(&self.data[byte_index + 64]);
             }
 
             let mut bytes = [0u8; 8];

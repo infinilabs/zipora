@@ -146,15 +146,26 @@ impl VmManager {
     }
 
     /// Prefetch memory pages with optimal strategy
-    pub fn prefetch(&self, addr: *const u8, len: usize) -> Result<()> {
-        self.prefetch_with_strategy(addr, len, PrefetchStrategy::Auto)
+    ///
+    /// # Safety
+    /// This function is safe because it accepts a slice, which guarantees
+    /// the pointer and length form a valid memory range.
+    pub fn prefetch(&self, data: &[u8]) -> Result<()> {
+        self.prefetch_with_strategy(data, PrefetchStrategy::Auto)
     }
 
     /// Prefetch memory with specific strategy
-    pub fn prefetch_with_strategy(&self, addr: *const u8, len: usize, strategy: PrefetchStrategy) -> Result<()> {
-        if len == 0 {
+    ///
+    /// # Safety
+    /// This function is safe because it accepts a slice, which guarantees
+    /// the pointer and length form a valid memory range.
+    pub fn prefetch_with_strategy(&self, data: &[u8], strategy: PrefetchStrategy) -> Result<()> {
+        if data.is_empty() {
             return Ok(());
         }
+
+        let addr = data.as_ptr();
+        let len = data.len();
 
         // Align to page boundaries
         let page_size = self.kernel_info.page_size;
@@ -284,10 +295,17 @@ impl VmManager {
     }
 
     /// Advise kernel about memory usage patterns
-    pub fn advise_memory_usage(&self, addr: *const u8, len: usize, advice: MemoryAdvice) -> Result<()> {
-        if len == 0 {
+    ///
+    /// # Safety
+    /// This function is safe because it accepts a slice, which guarantees
+    /// the pointer and length form a valid memory range.
+    pub fn advise_memory_usage(&self, data: &[u8], advice: MemoryAdvice) -> Result<()> {
+        if data.is_empty() {
             return Ok(());
         }
+
+        let addr = data.as_ptr();
+        let len = data.len();
 
         #[cfg(unix)]
         {
@@ -318,17 +336,24 @@ impl VmManager {
         {
             // Limited support on non-Unix platforms
             match advice {
-                MemoryAdvice::WillNeed => self.prefetch(addr, len),
+                MemoryAdvice::WillNeed => self.prefetch(data),
                 _ => Ok(()), // Ignore other advice on unsupported platforms
             }
         }
     }
 
     /// Lock memory pages to prevent swapping
-    pub fn lock_memory(&self, addr: *const u8, len: usize) -> Result<()> {
-        if len == 0 {
+    ///
+    /// # Safety
+    /// This function is safe because it accepts a slice, which guarantees
+    /// the pointer and length form a valid memory range.
+    pub fn lock_memory(&self, data: &[u8]) -> Result<()> {
+        if data.is_empty() {
             return Ok(());
         }
+
+        let addr = data.as_ptr();
+        let len = data.len();
 
         #[cfg(unix)]
         {
@@ -366,10 +391,17 @@ impl VmManager {
     }
 
     /// Unlock memory pages
-    pub fn unlock_memory(&self, addr: *const u8, len: usize) -> Result<()> {
-        if len == 0 {
+    ///
+    /// # Safety
+    /// This function is safe because it accepts a slice, which guarantees
+    /// the pointer and length form a valid memory range.
+    pub fn unlock_memory(&self, data: &[u8]) -> Result<()> {
+        if data.is_empty() {
             return Ok(());
         }
+
+        let addr = data.as_ptr();
+        let len = data.len();
 
         #[cfg(unix)]
         {
@@ -600,19 +632,27 @@ pub fn get_kernel_info() -> &'static KernelInfo {
 }
 
 /// Convenience function for memory prefetching
-pub fn vm_prefetch(addr: *const u8, len: usize) -> Result<()> {
+///
+/// # Safety
+/// This function is safe because it accepts a slice, which guarantees
+/// the pointer and length form a valid memory range.
+pub fn vm_prefetch(data: &[u8]) -> Result<()> {
     let vm_manager = VmManager::new();
-    vm_manager.prefetch(addr, len)
+    vm_manager.prefetch(data)
 }
 
 /// Convenience function for memory prefetching with minimum page count
-pub fn vm_prefetch_min_pages(addr: *const u8, len: usize, min_pages: usize) -> Result<()> {
+///
+/// # Safety
+/// This function is safe because it accepts a slice, which guarantees
+/// the pointer and length form a valid memory range.
+pub fn vm_prefetch_min_pages(data: &[u8], min_pages: usize) -> Result<()> {
     let kernel_info = get_kernel_info();
     let page_size = kernel_info.page_size;
-    let page_count = (len + page_size - 1) / page_size;
-    
+    let page_count = (data.len() + page_size - 1) / page_size;
+
     if page_count >= min_pages {
-        vm_prefetch(addr, len)
+        vm_prefetch(data)
     } else {
         Ok(()) // Skip prefetch for small allocations
     }
@@ -647,7 +687,7 @@ mod tests {
         
         // Test with a small buffer
         let buffer = vec![0u8; 4096];
-        let result = vm_manager.prefetch(buffer.as_ptr(), buffer.len());
+        let result = vm_manager.prefetch(&buffer);
         // Should not fail, even if prefetch is not supported
         assert!(result.is_ok() || result.is_err());
     }
@@ -683,7 +723,7 @@ mod tests {
         ];
         
         for advice in advice_types {
-            let result = vm_manager.advise_memory_usage(buffer.as_ptr(), buffer.len(), advice);
+            let result = vm_manager.advise_memory_usage(&buffer, advice);
             // Should either succeed or fail gracefully
             assert!(result.is_ok() || result.is_err());
         }
@@ -692,17 +732,17 @@ mod tests {
     #[test]
     fn test_convenience_functions() {
         let buffer = vec![0u8; 4096];
-        
+
         // Test basic prefetch
-        let result = vm_prefetch(buffer.as_ptr(), buffer.len());
+        let result = vm_prefetch(&buffer);
         assert!(result.is_ok() || result.is_err());
-        
+
         // Test prefetch with minimum pages
-        let result = vm_prefetch_min_pages(buffer.as_ptr(), buffer.len(), 1);
+        let result = vm_prefetch_min_pages(&buffer, 1);
         assert!(result.is_ok() || result.is_err());
-        
+
         // Test skip for small allocation
-        let result = vm_prefetch_min_pages(buffer.as_ptr(), 100, 10);
+        let result = vm_prefetch_min_pages(&buffer[..100], 10);
         assert!(result.is_ok()); // Should always succeed (skipped)
     }
 }

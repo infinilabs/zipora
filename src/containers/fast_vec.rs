@@ -780,7 +780,7 @@ impl<T> FastVec<T> {
                     for i in 0..range_len {
                         // Lookahead prefetching (PREFETCH_DISTANCE=8)
                         if i + PREFETCH_DISTANCE < range_len {
-                            PrefetchOps::prefetch_read(&range_slice[i + PREFETCH_DISTANCE] as *const T);
+                            PrefetchOps::prefetch_read(&range_slice[i + PREFETCH_DISTANCE] as *const T as *const u8 as *const i8);
                         }
                         range_slice[i] = value;
                     }

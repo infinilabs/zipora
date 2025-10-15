@@ -1075,21 +1075,20 @@ impl SecureMemoryPool {
 
     /// Verify memory is properly zeroed using SIMD acceleration
     ///
+    /// # Safety
+    /// This function is safe because it accepts a slice, which guarantees
+    /// the pointer and length form a valid memory range.
+    ///
     /// # Performance
     /// Uses SIMD comparison for 8-16x faster verification than byte-by-byte checking.
     /// Particularly effective for large memory regions.
     #[inline]
-    pub fn verify_zeroed_simd(&self, ptr: *const u8, size: usize) -> Result<bool> {
-        if ptr.is_null() {
-            return Err(ZiporaError::invalid_data("Cannot verify null pointer"));
-        }
-
+    pub fn verify_zeroed_simd(&self, data: &[u8]) -> Result<bool> {
         // Create zero buffer for comparison
-        let zero_buf = vec![0u8; size];
+        let zero_buf = vec![0u8; data.len()];
 
         // Use SIMD comparison (8-16x faster than byte-by-byte)
-        let slice = unsafe { std::slice::from_raw_parts(ptr, size) };
-        Ok(fast_compare(slice, &zero_buf) == 0)
+        Ok(fast_compare(data, &zero_buf) == 0)
     }
 
     /// Prefetch allocation metadata for improved cache performance
@@ -1106,12 +1105,10 @@ impl SecureMemoryPool {
         #[cfg(target_arch = "x86_64")]
         {
             // Prefetch the global stack head (most frequently accessed metadata)
-            let stack_ptr = &self.global_stack as *const _ as *const u8;
-            fast_prefetch(stack_ptr, PrefetchHint::T0);
+            fast_prefetch(&self.global_stack, PrefetchHint::T0);
 
             // Prefetch stats counters (frequently accessed during allocation)
-            let stats_ptr = &self.alloc_count as *const _ as *const u8;
-            fast_prefetch(stats_ptr, PrefetchHint::T0);
+            fast_prefetch(&self.alloc_count, PrefetchHint::T0);
         }
     }
 
@@ -1637,7 +1634,7 @@ mod tests {
         assert!(slice.iter().all(|&b| b == 0));
 
         // Verify using SIMD verification
-        assert!(pool.verify_zeroed_simd(ptr.as_ptr(), ptr.size()).unwrap());
+        assert!(pool.verify_zeroed_simd(ptr.as_slice()).unwrap());
     }
 
     #[test]
@@ -1652,11 +1649,11 @@ mod tests {
         unsafe { std::ptr::write_bytes(ptr.as_ptr(), 0, ptr.size()); }
 
         // Verify using SIMD
-        assert!(pool.verify_zeroed_simd(ptr.as_ptr(), ptr.size()).unwrap());
+        assert!(pool.verify_zeroed_simd(ptr.as_slice()).unwrap());
 
         // Modify a byte and verify it fails
         unsafe { *ptr.as_ptr() = 1; }
-        assert!(!pool.verify_zeroed_simd(ptr.as_ptr(), ptr.size()).unwrap());
+        assert!(!pool.verify_zeroed_simd(ptr.as_slice()).unwrap());
     }
 
     #[test]
@@ -1736,11 +1733,13 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_zeroed_null_pointer() {
+    fn test_verify_zeroed_empty_slice() {
         let pool = SecureMemoryPool::new(SecurePoolConfig::small_secure()).unwrap();
 
-        let result = pool.verify_zeroed_simd(std::ptr::null(), 1024);
-        assert!(result.is_err());
+        // Empty slice should verify as zeroed
+        let result = pool.verify_zeroed_simd(&[]);
+        assert!(result.is_ok());
+        assert!(result.unwrap());
     }
 
     #[test]
@@ -1771,7 +1770,7 @@ mod tests {
             assert!(!ptr.as_ptr().is_null());
 
             // Verify using SIMD
-            assert!(pool.verify_zeroed_simd(ptr.as_ptr(), ptr.size()).unwrap());
+            assert!(pool.verify_zeroed_simd(ptr.as_slice()).unwrap());
 
             // Drop happens automatically
         }
@@ -1802,7 +1801,7 @@ mod tests {
                         let ptr = pool.allocate().unwrap();
 
                         // Verify zeroing
-                        if pool.verify_zeroed_simd(ptr.as_ptr(), ptr.size()).unwrap() {
+                        if pool.verify_zeroed_simd(ptr.as_slice()).unwrap() {
                             count.fetch_add(1, Ordering::Relaxed);
                         }
                     }

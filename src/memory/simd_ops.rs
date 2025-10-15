@@ -1100,13 +1100,25 @@ pub fn fast_compare_cache_optimized(a: &[u8], b: &[u8]) -> i32 {
 }
 
 /// Convenience function for memory prefetch
-pub fn fast_prefetch(addr: *const u8, hint: PrefetchHint) {
+///
+/// # Safety
+/// This function is safe because it accepts a reference to any type,
+/// ensuring the memory address is valid. Prefetch hints are advisory only.
+pub fn fast_prefetch<T: ?Sized>(data: &T, hint: PrefetchHint) {
+    let addr = data as *const T as *const u8;
     get_global_simd_ops().prefetch(addr, hint)
 }
 
 /// Convenience function for range prefetch
-pub fn fast_prefetch_range(start: *const u8, size: usize) {
-    get_global_simd_ops().prefetch_range(start, size)
+///
+/// # Safety
+/// This function is safe because it accepts a slice, which guarantees
+/// the pointer and length form a valid memory range.
+pub fn fast_prefetch_range(data: &[u8]) {
+    if data.is_empty() {
+        return;
+    }
+    get_global_simd_ops().prefetch_range(data.as_ptr(), data.len())
 }
 
 #[cfg(test)]
@@ -1366,15 +1378,23 @@ mod tests {
     #[test]
     fn test_prefetch_operations() {
         let data = vec![1u8; 1024];
-        
-        // Test single prefetch (should not panic)
-        fast_prefetch(data.as_ptr(), PrefetchHint::T0);
-        fast_prefetch(data.as_ptr(), PrefetchHint::T1);
-        fast_prefetch(data.as_ptr(), PrefetchHint::T2);
-        fast_prefetch(data.as_ptr(), PrefetchHint::NTA);
-        
-        // Test range prefetch (should not panic)
-        fast_prefetch_range(data.as_ptr(), data.len());
+
+        // Test single prefetch with slice (should not panic)
+        fast_prefetch(&data[0], PrefetchHint::T0);
+        fast_prefetch(&data[0], PrefetchHint::T1);
+        fast_prefetch(&data[0], PrefetchHint::T2);
+        fast_prefetch(&data[0], PrefetchHint::NTA);
+
+        // Test prefetch with different types (generic)
+        let value: u64 = 42;
+        fast_prefetch(&value, PrefetchHint::T0);
+
+        // Test range prefetch with slice (should not panic)
+        fast_prefetch_range(&data);
+        fast_prefetch_range(&data[100..200]);
+
+        // Test with empty slice (should not panic)
+        fast_prefetch_range(&[]);
     }
 
     #[test]
