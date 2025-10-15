@@ -28,7 +28,7 @@ pub use radix_sort::{
 pub use set_operations::{SetOperations, SetOperationsConfig, SetOperationStats};
 pub use simd_merge::{SimdComparator, SimdConfig, SimdOperations};
 pub use suffix_array::{LcpArray, SuffixArray, SuffixArrayBuilder};
-pub use tournament_tree::{EnhancedLoserTree, LoserTree, LoserTreeConfig, TournamentNode, CacheAlignedNode};
+pub use tournament_tree::{EnhancedLoserTree, LoserTreeConfig, TournamentNode, CacheAlignedNode};
 
 /// Configuration for algorithm behavior
 #[derive(Debug, Clone)]

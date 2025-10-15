@@ -5,7 +5,7 @@
 //! available memory by using disk-based temporary storage and efficient 
 //! merge operations.
 
-use crate::algorithms::tournament_tree::{LoserTree, LoserTreeConfig};
+use crate::algorithms::tournament_tree::{EnhancedLoserTree, LoserTreeConfig};
 use crate::error::{Result, ZiporaError};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -484,7 +484,7 @@ where
             alignment: 64,
         };
 
-        let mut tournament_tree = LoserTree::with_comparator(tree_config, self.comparator.clone());
+        let mut tournament_tree = EnhancedLoserTree::with_comparator(tree_config, self.comparator.clone());
 
         // Add all runs to the tournament tree
         for run in &self.temp_files {
