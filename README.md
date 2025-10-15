@@ -4115,10 +4115,10 @@ let ops = SimdMemOps::new();
 let data = vec![1u8; 1024];
 
 // Cross-platform prefetch hints:
-ops.prefetch(data.as_ptr(), PrefetchHint::T0);  // x86_64: _MM_HINT_T0, ARM64: pldl1keep
-ops.prefetch(data.as_ptr(), PrefetchHint::T1);  // x86_64: _MM_HINT_T1, ARM64: pldl1keep  
-ops.prefetch(data.as_ptr(), PrefetchHint::T2);  // x86_64: _MM_HINT_T2, ARM64: pldl2keep
-ops.prefetch(data.as_ptr(), PrefetchHint::NTA); // x86_64: _MM_HINT_NTA, ARM64: pldl1strm
+ops.prefetch(&data, PrefetchHint::T0);  // x86_64: _MM_HINT_T0, ARM64: pldl1keep
+ops.prefetch(&data, PrefetchHint::T1);  // x86_64: _MM_HINT_T1, ARM64: pldl1keep
+ops.prefetch(&data, PrefetchHint::T2);  // x86_64: _MM_HINT_T2, ARM64: pldl2keep
+ops.prefetch(&data, PrefetchHint::NTA); // x86_64: _MM_HINT_NTA, ARM64: pldl1strm
 
 // Architecture-specific features:
 // x86_64: Full _mm_prefetch instruction support with all hint levels
