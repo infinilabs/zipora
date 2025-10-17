@@ -80,7 +80,7 @@ impl ZeroLengthBlobStore {
     /// # Examples
     ///
     /// ```rust
-    /// use zipora::blob_store::ZeroLengthBlobStore;
+    /// use zipora::blob_store::{BlobStore, ZeroLengthBlobStore};
     ///
     /// let store = ZeroLengthBlobStore::new();
     /// assert_eq!(store.len(), 0);
@@ -105,7 +105,7 @@ impl ZeroLengthBlobStore {
     /// # Examples
     ///
     /// ```rust
-    /// use zipora::blob_store::ZeroLengthBlobStore;
+    /// use zipora::blob_store::{BlobStore, ZeroLengthBlobStore};
     ///
     /// let store = ZeroLengthBlobStore::finish(1000);
     /// assert_eq!(store.len(), 1000);
