@@ -21,10 +21,11 @@
 //! ## Usage
 //!
 //! ```rust
-//! use zipora::io::simd_validation::checksum::crc32c;
+//! use zipora::io::simd_validation::checksum::crc32c_hash;
 //!
 //! let data = b"Hello, world!";
-//! let checksum = crc32c(data, 0)?;
+//! let checksum = crc32c_hash(data).unwrap();
+//! assert_ne!(checksum, 0);
 //! ```
 //!
 //! ## Streaming Usage
@@ -32,10 +33,11 @@
 //! ```rust
 //! use zipora::io::simd_validation::checksum::{crc32c_update, crc32c_finalize};
 //!
-//! let mut crc = 0;
-//! crc = crc32c_update(crc, b"Hello, ")?;
-//! crc = crc32c_update(crc, b"world!")?;
+//! let mut crc = 0xFFFFFFFF;
+//! crc = crc32c_update(crc, b"Hello, ").unwrap();
+//! crc = crc32c_update(crc, b"world!").unwrap();
 //! let final_crc = crc32c_finalize(crc);
+//! assert_ne!(final_crc, 0);
 //! ```
 
 use crate::error::{Result, ZiporaError};

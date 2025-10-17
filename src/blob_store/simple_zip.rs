@@ -25,7 +25,7 @@
 //! # Example
 //!
 //! ```rust
-//! use zipora::blob_store::{SimpleZipBlobStore, SimpleZipConfig};
+//! use zipora::blob_store::{BlobStore, SimpleZipBlobStore, SimpleZipConfig};
 //!
 //! let data = vec![
 //!     b"Hello World\n".to_vec(),

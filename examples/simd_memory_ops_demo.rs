@@ -9,10 +9,10 @@
 //! ```
 
 use zipora::memory::simd_ops::{
-    fast_compare, fast_copy, fast_copy_cache_optimized, fast_fill, fast_find_byte,
+    fast_compare, fast_copy, fast_fill, fast_find_byte,
     fast_prefetch_range, get_global_simd_ops, SimdMemOps,
 };
-use zipora::memory::cache_layout::{CacheLayoutConfig, PrefetchHint};
+use zipora::memory::cache_layout::CacheLayoutConfig;
 use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -150,7 +150,7 @@ fn demo_cache_optimized_operations() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n[Manual Prefetch]");
     let data = vec![1u8; 4096];
     println!("Prefetching 4096 bytes...");
-    fast_prefetch_range(data.as_ptr(), data.len());
+    fast_prefetch_range(&data);
     println!("Prefetch complete (no-op on some platforms)");
 
     Ok(())

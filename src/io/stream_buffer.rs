@@ -464,7 +464,7 @@ impl<R: Read> StreamBufferedReader<R> {
     ///
     /// ```no_run
     /// use zipora::io::stream_buffer::StreamBufferedReader;
-    /// use std::io::Cursor;
+    /// use std::io::{Cursor, Read};
     ///
     /// let data = b"Hello, World!";
     /// let cursor = Cursor::new(data);
