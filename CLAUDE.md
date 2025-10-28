@@ -125,7 +125,7 @@ cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --check
 - **Containers**: 13 specialized (UintVecMin0, ZipIntVec + 11 others, 3-4x C++ performance)
 - **Storage**: FastVec, IntVec (248+ MB/s bulk), ZipOffsetBlobStore
 - **Cache**: LruMap, ConcurrentLruMap, LruPageCache
-- **Blob Stores**: ALL 7 VARIANTS ✅ (ZeroLength, SimpleZip, MixedLen, Memory, Plain, Cached, DictZip)
+- **Blob Stores**: ALL 8 VARIANTS ✅ (ZeroLength, SimpleZip, MixedLen, Memory, Plain, Cached, DictZip, ZReorderMap)
 
 ### Search & Algorithms
 - **Rank/Select**: 14 variants (0.3-0.4 Gops/s with BMI2)
@@ -158,7 +158,7 @@ cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --check
 - **SIMD Memory**: 4-12x bulk ops, <100ns selection overhead
 - **ZeroLengthBlobStore**: O(1) overhead, 1M+ records at 0 bytes data footprint
 - **Safety**: Zero unsafe in public APIs
-- **Tests**: 2,176+ passing (100% pass rate), 97%+ coverage
+- **Tests**: 2,191+ passing (100% pass rate), 97%+ coverage
 
 ## SIMD Framework (MANDATORY)
 
@@ -215,7 +215,7 @@ fn accelerated_operation(data: &[u32]) -> u32 {
 - **Entropy Coding**: `ContextualHuffmanEncoder`, `Rans64Encoder`, `FseEncoder`
 - **PA-Zip**: `DictZipBlobStore`, `SuffixArrayDictionary`, `DfaCache`
 - **Containers**: `UintVecMin0`, `ZipIntVec`
-- **Blob Stores**: `ZeroLengthBlobStore`, `SimpleZipBlobStore`, `MixedLenBlobStore`
+- **Blob Stores**: `ZeroLengthBlobStore`, `SimpleZipBlobStore`, `MixedLenBlobStore`, `ZReorderMap`
 
 ## Features
 - **Default**: `simd`, `mmap`, `zstd`, `serde`
@@ -258,13 +258,14 @@ sorter.sort(&mut data)?;
 - Blob Stores: `ZeroLengthBlobStore::new()` (src/blob_store/zero_length.rs)
 - Simple Zip: `SimpleZipBlobStore::build_from()` (src/blob_store/simple_zip.rs)
 - Mixed Len: `MixedLenBlobStore::build_from()` (src/blob_store/mixed_len.rs)
+- Reorder Map: `ZReorderMap::open()`, `ZReorderMapBuilder::new()` (src/blob_store/reorder_map.rs)
 - Containers: `UintVecMin0::new()`, `ZipIntVec::new()` (src/containers/)
 
 ---
 **Status**: Production-ready SIMD acceleration framework
 **Performance**: 4-12x memory ops, 0.3-0.4 Gops/s rank/select, 4-8x radix sort, 2-8x string processing
 **Cross-Platform**: x86_64 (AVX-512/AVX2/BMI2/POPCNT) + ARM64 (NEON) + scalar fallbacks
-**Tests**: 2,178+ passing (100% pass rate)
+**Tests**: 2,191+ passing (100% pass rate)
 **Safety**: Zero unsafe in public APIs (MANDATORY)
 
 ## Deprecated Code Removal (2025-10-15)
@@ -325,6 +326,18 @@ sorter.sort(&mut data)?;
 - Best for datasets where ≥50% records share same length
 - See: `src/blob_store/mixed_len.rs`
 
+#### ZReorderMap ✅
+- RLE-compressed reordering utility for blob store optimization
+- File format: 16-byte header + RLE-encoded entries (5-byte values + var_uint lengths)
+- Supports ascending/descending sequences with sign parameter (1 or -1)
+- Memory-mapped I/O for large datasets (no full RAM load required)
+- LEB128 var_uint encoding for sequence lengths
+- Iterator-based API with rewind support
+- 15 comprehensive tests, all passing
+- Compression: Single 1M-element sequence uses ~23 bytes vs 8MB uncompressed
+- Perfect for optimizing access patterns in compressed blob stores
+- See: `src/blob_store/reorder_map.rs`
+
 ### ✅ ENTROPY CODING VERIFICATION COMPLETE (2025-10-14)
 
 **All entropy coding features are FULLY IMPLEMENTED:**
@@ -361,6 +374,7 @@ sorter.sort(&mut data)?;
 ~~SimpleZipBlobStore~~ ✅ COMPLETED (641 lines, 17 tests)
 ~~MixedLenBlobStore~~ ✅ COMPLETED (595 lines, 17 tests)
 ~~ZeroLengthBlobStore~~ ✅ COMPLETED (476 lines, 15 tests)
+~~ZReorderMap~~ ✅ COMPLETED (964 lines, 15 tests) - RLE reordering utility
 ~~Huffman O1 Context~~ ✅ VERIFIED (already implemented)
 ~~FSE Interleaving~~ ✅ VERIFIED (already implemented)
 
