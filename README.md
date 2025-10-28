@@ -2437,6 +2437,143 @@ let concurrency_config = FiveLevelPoolConfig::performance_optimized();
 let sort_config = RadixSortConfig::with_concurrency(concurrency_config);
 ```
 
+### Set Operations Library - C++ Reference Implementation ✅
+
+Zipora provides a complete implementation of set operations following the C++ reference implementation from topling-zip/set_op.hpp. The library offers both multiset operations (preserving duplicates) and unique set operations (removing duplicates), with adaptive algorithm selection for optimal performance.
+
+#### Key Features
+
+- **Multiset Operations**: intersection, intersection2, union, difference (preserve all duplicates)
+- **Unique Set Operations**: intersection, union, difference (remove duplicates)
+- **Adaptive Algorithms**: Automatic selection between linear scan and binary search
+- **Binary Search Optimization**: Specialized algorithms for small/large set scenarios
+- **In-Place Deduplication**: Memory-efficient set_unique with O(n) complexity
+- **Generic Comparison**: Works with any comparison function, not just Ord types
+- **Zero Unsafe Code**: Complete memory safety in all public APIs
+- **Comprehensive Testing**: 39 tests including 1M+ element scenarios
+
+#### Usage Examples
+
+```rust
+use zipora::algorithms::{
+    multiset_intersection, multiset_fast_intersection, multiset_union, multiset_difference,
+    set_intersection, set_union, set_difference, set_unique, set_unique_default
+};
+
+// 🚀 Multiset Intersection - Preserves Duplicates
+let a = vec![1, 2, 2, 3, 4, 5];
+let b = vec![2, 2, 3, 6, 7];
+let result = multiset_intersection(&a, &b, |x, y| x.cmp(y));
+assert_eq!(result, vec![2, 2, 3]); // Copies from first sequence
+
+// 🚀 Multiset Intersection2 - Copies from Second Sequence
+let a = vec![1, 2, 2, 3];
+let b = vec![2, 2, 2, 3, 4];
+let result = multiset_intersection2(&a, &b, |x, y| x.cmp(y));
+assert_eq!(result, vec![2, 2, 2, 3]); // All duplicates from second sequence
+
+// 🚀 Adaptive Fast Intersection - Auto-Selects Best Algorithm
+// For small first sequence vs large second sequence, uses binary search
+let small = vec![1, 2, 3];
+let large: Vec<i32> = (1..=100).collect();
+let result = multiset_fast_intersection(&small, &large, |x, y| x.cmp(y), 32);
+assert_eq!(result, vec![1, 2, 3]);
+// Threshold = 32: if small.len() * 32 < large.len(), uses binary search
+
+// 🚀 Multiset Union - Combines Both Sequences
+let a = vec![1, 2, 3, 4];
+let b = vec![3, 4, 5, 6];
+let result = multiset_union(&a, &b, |x, y| x.cmp(y));
+assert_eq!(result, vec![1, 2, 3, 3, 4, 4, 5, 6]); // Preserves all duplicates
+
+// 🚀 Multiset Difference - Elements in First but Not Second
+let a = vec![1, 2, 2, 3, 4];
+let b = vec![2, 3, 3, 5];
+let result = multiset_difference(&a, &b, |x, y| x.cmp(y));
+assert_eq!(result, vec![1, 2, 4]); // Removes matching elements
+
+// 🚀 Set Operations - Unique Elements Only
+let a = vec![1, 2, 2, 3, 4];
+let b = vec![2, 2, 3, 5];
+
+let intersection = set_intersection(&a, &b, |x, y| x.cmp(y));
+assert_eq!(intersection, vec![2, 3]); // No duplicates
+
+let union = set_union(&a, &b, |x, y| x.cmp(y));
+assert_eq!(union, vec![1, 2, 3, 4, 5]); // No duplicates
+
+let difference = set_difference(&a, &b, |x, y| x.cmp(y));
+assert_eq!(difference, vec![1, 4]); // No duplicates
+
+// 🚀 In-Place Deduplication - set_unique
+let mut data = vec![1, 1, 2, 2, 2, 3, 4, 4, 5];
+let new_len = set_unique_default(&mut data);
+data.truncate(new_len);
+assert_eq!(data, vec![1, 2, 3, 4, 5]);
+
+// Custom equality predicate
+let mut data = vec![1, 1, 2, 2, 3];
+let new_len = set_unique(&mut data, |a, b| a == b);
+data.truncate(new_len);
+assert_eq!(data, vec![1, 2, 3]);
+```
+
+#### Performance Characteristics
+
+| Operation | Complexity | Best Use Case |
+|-----------|-----------|---------------|
+| `multiset_intersection` | O(n + m) | General use, similar-sized sets |
+| `multiset_1small_intersection` | O(n * log(m)) | Small first set, large second set |
+| `multiset_fast_intersection` | **Adaptive** | **Automatic selection (recommended)** |
+| `multiset_union` | O(n + m) | Merge sorted sequences |
+| `multiset_difference` | O(n + m) | Set subtraction |
+| `set_unique` | O(n) | In-place deduplication |
+| Unique set operations | O(n + m) + O(n) | Remove duplicates from results |
+
+#### Algorithm Selection
+
+**multiset_fast_intersection** adaptive selection logic:
+```rust
+// If first.len() * threshold < second.len():
+//   Use binary search variant (O(n * log(m)))
+// Otherwise:
+//   Use linear scan variant (O(n + m))
+//
+// Default threshold = 32
+// Optimal for: small_set.len() * 32 < large_set.len()
+```
+
+**Performance Comparison**:
+- Linear scan: Best for similar-sized sets or when first set is large
+- Binary search: Best when first set is ≤1/32 size of second set
+- Adaptive: Automatically selects optimal algorithm based on size ratio
+
+#### Integration with Zipora Ecosystem
+
+```rust
+use zipora::{
+    SecureMemoryPool, MemoryConfig,
+    AdaptiveSimdSelector, Operation,
+    multiset_fast_intersection, set_unique_default
+};
+
+// Secure memory integration
+let pool = SecureMemoryPool::new(MemoryConfig::default()).unwrap();
+let mut data = pool.alloc_vec::<i32>(1000);
+
+// Large dataset processing (1M+ elements)
+let a: Vec<i32> = (0..1_000_000).filter(|x| x % 2 == 0).collect();
+let b: Vec<i32> = (0..1_000_000).filter(|x| x % 3 == 0).collect();
+let result = multiset_fast_intersection(&a, &b, |x, y| x.cmp(y), 32);
+// Elements divisible by both 2 and 3 (i.e., by 6)
+
+// Deduplication for memory optimization
+let mut duplicates = vec![1, 1, 2, 2, 3, 3];
+let new_len = set_unique_default(&mut duplicates);
+duplicates.truncate(new_len);
+// Reduced memory footprint
+```
+
 ### Suffix Array Algorithm Selection Guide
 
 Zipora provides 5 sophisticated suffix array construction algorithms with adaptive selection:
