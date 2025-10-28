@@ -10,6 +10,7 @@ pub mod memory;
 pub mod mixed_len;
 pub mod nest_louds_trie_blob_store;
 pub mod plain;
+pub mod reorder_map;
 pub mod simple_zip;
 pub mod sorted_uint_vec;
 pub mod traits;
@@ -30,6 +31,7 @@ pub use nest_louds_trie_blob_store::{
     TrieBlobStoreConfigBuilder, TrieBlobStoreStats,
 };
 pub use plain::PlainBlobStore;
+pub use reorder_map::{ZReorderMap, ZReorderMapBuilder};
 pub use simple_zip::{SimpleZipBlobStore, SimpleZipConfig, SimpleZipConfigBuilder};
 pub use sorted_uint_vec::{SortedUintVec, SortedUintVecBuilder, SortedUintVecConfig};
 pub use traits::{

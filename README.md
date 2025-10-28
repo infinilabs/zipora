@@ -24,7 +24,7 @@ Zipora 2.0 introduces a **unified architecture** following referenced project's 
 - **🛡️ Memory Safety**: Eliminates segfaults, buffer overflows, use-after-free bugs
 - **🧠 Secure Memory Management**: Production-ready memory pools with thread safety, RAII, and vulnerability prevention
 - **🚨 Advanced Error Handling & Recovery**: Sophisticated error classification (WARNING/RECOVERABLE/CRITICAL/FATAL), automatic recovery strategies (memory reclamation, structure rebuilding, fallback algorithms), contextual error reporting with metadata, and comprehensive verification macros
-- **💾 Blob Storage**: 7 specialized stores including trie-based indexing, offset compression, zero-length, fragment deduplication, and mixed-length hybrid storage
+- **💾 Blob Storage**: 8 specialized stores including trie-based indexing, offset compression, zero-length, fragment deduplication, mixed-length hybrid, and RLE reordering utility
 - **📦 Specialized Containers**: Production-ready containers with 40-90% memory/performance improvements
 - **🗂️ Specialized Hash Maps**: Golden ratio optimized, string-optimized, small inline maps with advanced cache locality optimizations, sophisticated collision resolution algorithms, and memory-efficient string arena management
 - **⚡ Cache Optimization Infrastructure**: Comprehensive cache-line alignment, hot/cold data separation, software prefetching, NUMA-aware allocation, and access pattern analysis for maximum performance
@@ -1343,6 +1343,44 @@ println!("Fixed-length ratio: {:.1}%",
          stats.blob_count as f64 / store.len() as f64 * 100.0);
 ```
 
+#### ZReorderMap - RLE Reordering Utility
+
+```rust
+use zipora::{ZReorderMap, ZReorderMapBuilder};
+use tempfile::NamedTempFile;
+
+// Build a reorder map with ascending sequences (sign = 1)
+let temp_file = NamedTempFile::new().unwrap();
+let path = temp_file.path();
+
+{
+    let mut builder = ZReorderMapBuilder::new(path, 1_000_000, 1).unwrap();
+    // Push reordering values - consecutive sequences are automatically compressed
+    for i in 0..500_000 {
+        builder.push(i).unwrap();          // Sequence 1: 0..500_000
+    }
+    for i in 1_000_000..1_500_000 {
+        builder.push(i).unwrap();          // Sequence 2: 1_000_000..1_500_000
+    }
+    builder.finish().unwrap();
+}
+
+// Read back the mapping
+let map = ZReorderMap::open(path).unwrap();
+println!("Total elements: {}", map.size());
+
+// Iterate through reordering values
+for (idx, value) in map.enumerate() {
+    // Process reordered blob access
+    if idx < 10 {
+        println!("Index {} -> Value {}", idx, value);
+    }
+}
+
+// Compression efficiency: 1M elements compressed from 8MB to ~100 bytes
+// Perfect for optimizing blob store access patterns
+```
+
 ### Blob Storage Performance Summary
 
 | Storage Type | Memory Efficiency | Throughput | Features | Best Use Case |
@@ -1352,6 +1390,7 @@ println!("Fixed-length ratio: {:.1}%",
 | **ZeroLengthBlobStore** | **O(1) overhead** | **O(1) all operations** | **Bitmap-only storage** | **Sparse indexes, empty records** |
 | **SimpleZipBlobStore** | **Fragment deduplication** | **O(1) indexed access** | **Delimiter-based splitting** | **Logs, JSON, shared substrings** |
 | **MixedLenBlobStore** | **Rank/select hybrid** | **O(1) bitmap + vector** | **Fixed/variable separation** | **Mixed-length datasets** |
+| **ZReorderMap** | **RLE compression** | **O(1) amortized sequential** | **5-byte values + var_uint** | **Blob store reordering** |
 | **LRU Page Cache** | **Page-aligned allocation** | **Reduced contention** | **Multi-shard architecture** | **High-concurrency access** |
 
 ## Memory Management
