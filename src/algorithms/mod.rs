@@ -8,6 +8,7 @@ pub mod external_sort;
 pub mod multiway_merge;
 pub mod radix_sort;
 pub mod set_operations;
+pub mod set_ops;
 pub mod simd_merge;
 pub mod suffix_array;
 pub mod tournament_tree;
@@ -26,6 +27,13 @@ pub use radix_sort::{
     RadixSortable, SortingStrategy as RadixSortingStrategy
 };
 pub use set_operations::{SetOperations, SetOperationsConfig, SetOperationStats};
+pub use set_ops::{
+    multiset_intersection, multiset_1small_intersection, multiset_fast_intersection,
+    multiset_intersection2, multiset_1small_intersection2, multiset_fast_intersection2,
+    set_unique, set_unique_default,
+    multiset_union, multiset_difference,
+    set_intersection, set_union, set_difference
+};
 pub use simd_merge::{SimdComparator, SimdConfig, SimdOperations};
 pub use suffix_array::{LcpArray, SuffixArray, SuffixArrayBuilder};
 pub use tournament_tree::{EnhancedLoserTree, LoserTreeConfig, TournamentNode, CacheAlignedNode};

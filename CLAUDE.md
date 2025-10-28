@@ -66,6 +66,17 @@ cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --check
 - SIMD acceleration (AVX2/BMI2), parallel work-stealing
 - 4-8x faster than comparison sorts
 
+### Set Operations Library ✅
+- Complete implementation following C++ reference (topling-zip/set_op.hpp)
+- **Multiset operations**: intersection, intersection2, union, difference (preserve duplicates)
+- **Unique set operations**: intersection, union, difference (remove duplicates)
+- **Adaptive algorithms**: multiset_fast_intersection auto-selects optimal strategy
+- **Binary search optimization**: multiset_1small_intersection for small/large scenarios
+- **In-place deduplication**: set_unique with O(n) complexity
+- Performance: O(n+m) linear scan, O(n*log(m)) binary search, adaptive threshold=32
+- 39 comprehensive tests: empty sets, single elements, duplicates, 1M+ elements
+- Zero unsafe code, generic over comparison functions
+
 ### Advanced Hash Map Ecosystem
 - AdvancedHashMap: Robin Hood, chaining, Hopscotch
 - CacheOptimizedHashMap: Cache-line aligned, NUMA-aware
@@ -132,6 +143,7 @@ cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --check
 - **Tries**: Unified ZiporaTrie (PatriciaTrie, CritBitTrie, DoubleArray, NestedLouds)
 - **Hash Maps**: Unified ZiporaHashMap
 - **Sorting**: 5 specialized algorithms
+- **Set Operations**: 13 functions (multiset/unique variants, adaptive selection)
 
 ### I/O & Serialization
 - **Fiber I/O**: FiberAio, StreamBufferedReader, ZeroCopyReader
@@ -157,8 +169,9 @@ cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --check
 - **IntVec**: 248+ MB/s bulk construction
 - **SIMD Memory**: 4-12x bulk ops, <100ns selection overhead
 - **ZeroLengthBlobStore**: O(1) overhead, 1M+ records at 0 bytes data footprint
+- **Set Operations**: O(n+m) linear, O(n*log(m)) binary search, adaptive threshold
 - **Safety**: Zero unsafe in public APIs
-- **Tests**: 2,191+ passing (100% pass rate), 97%+ coverage
+- **Tests**: 2,230+ passing (100% pass rate), 97%+ coverage
 
 ## SIMD Framework (MANDATORY)
 
@@ -211,6 +224,7 @@ fn accelerated_operation(data: &[u32]) -> u32 {
 - **Tries**: `ZiporaTrie`, `ZiporaTrieConfig`
 - **Hash Maps**: `ZiporaHashMap`, `AdvancedHashMap`, `CacheOptimizedHashMap`
 - **String Search**: `SimdStringSearch`, `sse42_strchr`, `sse42_strstr`
+- **Set Operations**: `multiset_intersection`, `multiset_fast_intersection`, `set_unique`, `set_union`
 - **I/O**: `FiberAio`, `StreamBufferedReader`, `ZeroCopyReader`
 - **Entropy Coding**: `ContextualHuffmanEncoder`, `Rans64Encoder`, `FseEncoder`
 - **PA-Zip**: `DictZipBlobStore`, `SuffixArrayDictionary`, `DfaCache`
@@ -254,6 +268,7 @@ sorter.sort(&mut data)?;
 - Radix Sort: `AdvancedU32RadixSort::new()` (src/algorithms/radix_sort.rs)
 - Cache-Oblivious: `CacheObliviousSort::new()` (src/algorithms/cache_oblivious.rs)
 - String Search: `SimdStringSearch::new()` (src/string/simd_search.rs)
+- Set Operations: `multiset_intersection(&a, &b, |x,y| x.cmp(y))` (src/algorithms/set_ops.rs)
 - PA-Zip: `DictZipBlobStore::new(config)` (src/compression/dict_zip/blob_store.rs)
 - Blob Stores: `ZeroLengthBlobStore::new()` (src/blob_store/zero_length.rs)
 - Simple Zip: `SimpleZipBlobStore::build_from()` (src/blob_store/simple_zip.rs)
