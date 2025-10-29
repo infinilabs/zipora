@@ -577,13 +577,13 @@ The configuration system is designed for efficiency:
 
 ```toml
 [dependencies]
-zipora = "2.0.2"
+zipora = "2.1.0"
 
 # Or with optional features
-zipora = { version = "2.0.2", features = ["lz4", "ffi"] }
+zipora = { version = "2.1.0", features = ["lz4", "ffi"] }
 
 # AVX-512 requires nightly Rust (experimental intrinsics)
-zipora = { version = "2.0.2", features = ["avx512", "lz4", "ffi"] }  # nightly only
+zipora = { version = "2.1.0", features = ["avx512", "lz4", "ffi"] }  # nightly only
 ```
 
 ### Basic Usage
@@ -3780,7 +3780,7 @@ Zipora features a **complete and production-ready** implementation of the PA-Zip
 - **Memory-Safe Implementation**: Zero unsafe operations in public APIs
 - **Flexible Integration**: Full integration with blob store framework and memory pools
 - **Production Ready**: Zero compilation errors, all library tests passing
-- **Comprehensive Testing**: 1,630+ tests passing including unified entropy coding implementations
+- **Comprehensive Testing**: 2,287+ tests passing including unified entropy coding implementations
 
 ### Usage Examples
 
@@ -3933,7 +3933,7 @@ PA-Zip provides optimized configuration presets for different data types:
 - **Compression Speed**: 50-200 MB/s depending on data characteristics and pattern density
 - **Compression Ratio**: 30-80% size reduction depending on data repetitiveness
 - **Build Status**: All compilation working in debug and release modes
-- **Test Coverage**: 1,630+ tests passing with unified entropy coding implementations
+- **Test Coverage**: 2,287+ tests passing with unified entropy coding implementations
 
 ### Integration with Zipora Ecosystem
 
@@ -4509,7 +4509,7 @@ cargo build --release --features lz4,ffi         # Multiple optional features
 cargo +nightly build --release --features avx512  # Enable AVX-512 optimizations
 cargo +nightly build --release --features avx512,lz4,ffi  # AVX-512 + other features
 
-# Test (1,630+ tests, 97%+ coverage - includes unification of entropy coding implementations)
+# Test (2,287+ tests, 97%+ coverage - includes unification of entropy coding implementations)
 cargo test --all-features
 
 # Test documentation examples (69 doctests)
