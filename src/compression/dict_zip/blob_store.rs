@@ -85,6 +85,8 @@ use crate::compression::dict_zip::{
     SuffixArrayDictionary, CompressionStats as PaZipCompressionStats,
 };
 use crate::containers::LruMap;
+use crate::entropy::huffman::{ContextualHuffmanEncoder, ContextualHuffmanDecoder};
+use crate::entropy::fse::{FseEncoder, FseDecoder, FseConfig};
 use crate::error::{Result, ZiporaError};
 use crate::memory::{SecureMemoryPool, SecurePoolConfig};
 use crate::RecordId;
@@ -93,9 +95,33 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
+use std::cell::RefCell;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+
+/// Entropy encoding algorithm selection
+///
+/// Matches the C++ reference implementation's EntropyAlgo enum:
+/// - kNoEntropy: No entropy encoding (raw compression only)
+/// - kHuffmanO1: Huffman Order-1 with context
+/// - kFSE: Finite State Entropy (tANS-based, part of ZSTD family)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum EntropyAlgorithm {
+    /// No entropy encoding (raw dictionary compression only)
+    None,
+    /// Huffman Order-1 with context (depends on previous symbol)
+    HuffmanO1,
+    /// Finite State Entropy (tANS-based, ZSTD-compatible)
+    Fse,
+}
+
+impl Default for EntropyAlgorithm {
+    fn default() -> Self {
+        Self::None
+    }
+}
 
 /// Configuration for DictZipBlobStore
 #[derive(Debug, Clone)]
@@ -119,6 +145,36 @@ pub struct DictZipConfig {
     pub validate_dictionary: bool,
     /// Minimum blob size to compress (smaller blobs stored uncompressed)
     pub min_compression_size: usize,
+
+    // ===== Entropy Encoding Configuration (matches C++ DictZipBlobStore::Options) =====
+    /// Entropy encoding algorithm to use (None, HuffmanO1, or FSE)
+    /// Matches C++ EntropyAlgo field
+    pub entropy_algorithm: EntropyAlgorithm,
+
+    /// Interleaving factor for parallel encoding (0, 1, 2, 4, 8)
+    /// - 0 or 1: No interleaving (single stream)
+    /// - 2: 2-way interleaving (modest parallelism)
+    /// - 4: 4-way interleaving (good with AVX2)
+    /// - 8: 8-way interleaving (maximum parallelism)
+    /// Matches C++ entropyInterleaved field
+    pub entropy_interleaved: u8,
+
+    /// Enable lake support (advanced feature from C++ reference)
+    /// Matches C++ enableLake field
+    pub enable_lake: bool,
+
+    /// Embed dictionary in blob store file
+    /// Matches C++ embeddedDict field
+    pub embedded_dict: bool,
+
+    /// Input is permutation (affects encoding strategy)
+    /// Matches C++ inputIsPerm field
+    pub input_is_perm: bool,
+
+    /// Minimum compression ratio required to use entropy encoding
+    /// If actual ratio < this value, fall back to no entropy encoding
+    /// Matches C++ entropyZipRatioRequire field
+    pub entropy_zip_ratio_require: f32,
 }
 
 impl Default for DictZipConfig {
@@ -133,6 +189,14 @@ impl Default for DictZipConfig {
             track_stats: true,
             validate_dictionary: true,
             min_compression_size: 64, // Don't compress blobs smaller than 64 bytes
+
+            // Entropy encoding defaults (matching C++ defaults)
+            entropy_algorithm: EntropyAlgorithm::None,
+            entropy_interleaved: 0,  // No interleaving by default
+            enable_lake: false,
+            embedded_dict: false,
+            input_is_perm: false,
+            entropy_zip_ratio_require: 0.8,  // 80% compression or better
         }
     }
 }
@@ -140,7 +204,7 @@ impl Default for DictZipConfig {
 impl DictZipConfig {
     /// Create configuration optimized for text compression
     pub fn text_compression() -> Self {
-        Self {
+        let mut config = Self {
             dict_builder_config: DictionaryBuilderConfig {
                 sample_sort_policy: crate::compression::dict_zip::SampleSortPolicy::SortBoth, // Use best sorting for text
                 target_dict_size: 32 * 1024 * 1024, // 32MB
@@ -157,12 +221,14 @@ impl DictZipConfig {
             cache_size_bytes: 32 * 1024 * 1024, // 32MB cache
             min_compression_size: 32,
             ..Default::default()
-        }
+        };
+        // Keep entropy defaults from Default::default()
+        config
     }
 
     /// Create configuration optimized for binary data compression
     pub fn binary_compression() -> Self {
-        Self {
+        let mut config = Self {
             dict_builder_config: DictionaryBuilderConfig {
                 sample_sort_policy: crate::compression::dict_zip::SampleSortPolicy::SortRight, // Right sorting good for binary patterns
                 target_dict_size: 16 * 1024 * 1024, // 16MB
@@ -179,12 +245,13 @@ impl DictZipConfig {
             cache_size_bytes: 16 * 1024 * 1024, // 16MB cache
             min_compression_size: 128,
             ..Default::default()
-        }
+        };
+        config
     }
 
     /// Create configuration optimized for log file compression
     pub fn log_compression() -> Self {
-        Self {
+        let mut config = Self {
             dict_builder_config: DictionaryBuilderConfig {
                 sample_sort_policy: crate::compression::dict_zip::SampleSortPolicy::SortLeft, // Left sorting good for log patterns
                 target_dict_size: 64 * 1024 * 1024, // 64MB
@@ -201,12 +268,13 @@ impl DictZipConfig {
             cache_size_bytes: 64 * 1024 * 1024, // 64MB cache
             min_compression_size: 16,
             ..Default::default()
-        }
+        };
+        config
     }
 
     /// Create configuration optimized for real-time compression
     pub fn realtime_compression() -> Self {
-        Self {
+        let mut config = Self {
             dict_builder_config: DictionaryBuilderConfig {
                 target_dict_size: 8 * 1024 * 1024, // 8MB
                 max_dict_size: 10 * 1024 * 1024, // 10MB max
@@ -222,7 +290,8 @@ impl DictZipConfig {
             cache_size_bytes: 8 * 1024 * 1024, // 8MB cache
             min_compression_size: 256,
             ..Default::default()
-        }
+        };
+        config
     }
 
     /// Validate configuration parameters
@@ -245,6 +314,19 @@ impl DictZipConfig {
 
         if self.external_dictionary && self.dict_path.is_none() {
             return Err(ZiporaError::invalid_data("External dictionary requires dict_path"));
+        }
+
+        // Validate entropy encoding configuration
+        if ![0, 1, 2, 4, 8].contains(&self.entropy_interleaved) {
+            return Err(ZiporaError::invalid_data(
+                "Entropy interleaved must be 0, 1, 2, 4, or 8"
+            ));
+        }
+
+        if self.entropy_zip_ratio_require < 0.0 || self.entropy_zip_ratio_require > 1.0 {
+            return Err(ZiporaError::invalid_data(
+                "Entropy zip ratio requirement must be between 0.0 and 1.0"
+            ));
         }
 
         Ok(())
@@ -512,6 +594,11 @@ impl DictZipBlobStoreBuilder {
             stats: Arc::new(RwLock::new(stats)),
             memory_pool: Some(memory_pool),
             next_id: 0,
+            // Lazy-initialized entropy encoders/decoders
+            huffman_encoder: RefCell::new(None),
+            huffman_decoder: RefCell::new(None),
+            fse_encoder: RefCell::new(None),
+            fse_decoder: RefCell::new(None),
         })
     }
 }
@@ -528,6 +615,8 @@ struct CompressedBlob {
     is_compressed: bool,
     /// Compression ratio
     compression_ratio: f32,
+    /// Entropy encoding algorithm used (if any)
+    entropy_algorithm: EntropyAlgorithm,
 }
 
 /// Main DictZipBlobStore implementation
@@ -548,6 +637,16 @@ pub struct DictZipBlobStore {
     memory_pool: Option<Arc<SecureMemoryPool>>,
     /// Next record ID
     next_id: u64,
+
+    // Entropy encoding/decoding components (using RefCell for interior mutability)
+    /// Huffman O1 encoder (lazy initialized on first use)
+    huffman_encoder: RefCell<Option<ContextualHuffmanEncoder>>,
+    /// Huffman O1 decoder (lazy initialized on first use)
+    huffman_decoder: RefCell<Option<ContextualHuffmanDecoder>>,
+    /// FSE encoder (lazy initialized on first use)
+    fse_encoder: RefCell<Option<FseEncoder>>,
+    /// FSE decoder (lazy initialized on first use)
+    fse_decoder: RefCell<Option<FseDecoder>>,
 }
 
 impl DictZipBlobStore {
@@ -695,11 +794,18 @@ impl DictZipBlobStore {
             memory_pool_config: None, // Use default memory pool configuration
             track_stats: true,
             validate_dictionary: validate_result,
-            min_compression_size: if config.min_fragment_length > 0 { 
-                config.min_fragment_length as usize 
-            } else { 
-                base_config.min_compression_size 
+            min_compression_size: if config.min_fragment_length > 0 {
+                config.min_fragment_length as usize
+            } else {
+                base_config.min_compression_size
             },
+            // Entropy encoding defaults
+            entropy_algorithm: EntropyAlgorithm::None,
+            entropy_interleaved: 0,
+            enable_lake: false,
+            embedded_dict: false,
+            input_is_perm: false,
+            entropy_zip_ratio_require: 0.8,
         })
     }
 
@@ -742,6 +848,11 @@ impl DictZipBlobStore {
                 stats: Arc::new(RwLock::new(stats)),
                 memory_pool: Some(memory_pool),
                 next_id: 0,
+                // Lazy-initialized entropy encoders/decoders
+                huffman_encoder: RefCell::new(None),
+                huffman_decoder: RefCell::new(None),
+                fse_encoder: RefCell::new(None),
+                fse_decoder: RefCell::new(None),
             })
         }
         
@@ -908,6 +1019,139 @@ impl DictZipBlobStore {
             stats.blob_stats.record_remove(original_size);
         }
     }
+
+    // ===== Entropy Encoding/Decoding Methods (matches C++ template functions) =====
+
+    /// Apply entropy encoding based on configuration
+    /// Matches C++ read_record_append_entropy<EntropyAlgo, EntropyInterLeave>
+    fn apply_entropy_encoding(&self, data: &[u8]) -> Result<Vec<u8>> {
+        match self.config.entropy_algorithm {
+            EntropyAlgorithm::None => {
+                // No encoding, return as-is
+                Ok(data.to_vec())
+            }
+            EntropyAlgorithm::HuffmanO1 => {
+                self.apply_huffman_o1_encoding(data)
+            }
+            EntropyAlgorithm::Fse => {
+                self.apply_fse_encoding(data)
+            }
+        }
+    }
+
+    /// Apply Huffman O1 encoding with configured interleaving
+    fn apply_huffman_o1_encoding(&self, data: &[u8]) -> Result<Vec<u8>> {
+        // Ensure encoder exists (lazy initialization)
+        if self.huffman_encoder.borrow().is_none() {
+            // Build encoder from training data (use dictionary as training data)
+            let dict = self.dictionary.read()
+                .map_err(|_| ZiporaError::resource_busy("Dictionary read lock"))?;
+
+            // Use dictionary data as training corpus
+            let training_data = dict.data();
+            let new_encoder = ContextualHuffmanEncoder::new(training_data, crate::entropy::huffman::HuffmanOrder::Order1)?;
+            *self.huffman_encoder.borrow_mut() = Some(new_encoder);
+        }
+
+        // Get a clone of the encoder for use
+        let binding = self.huffman_encoder.borrow();
+        let encoder = binding.as_ref().unwrap().clone();
+
+        // Apply encoding based on interleaving factor
+        match self.config.entropy_interleaved {
+            0 | 1 => encoder.encode_x1(data),
+            2 => encoder.encode_x2(data),
+            4 => encoder.encode_x4(data),
+            8 => encoder.encode_x8(data),
+            _ => {
+                Err(ZiporaError::Configuration {
+                    message: format!("Invalid interleaving factor: {}",
+                                   self.config.entropy_interleaved)
+                })
+            }
+        }
+    }
+
+    /// Apply FSE encoding with configured interleaving
+    fn apply_fse_encoding(&self, data: &[u8]) -> Result<Vec<u8>> {
+        // Get or build encoder (lazy initialization)
+        if self.fse_encoder.borrow().is_none() {
+            // Create FSE encoder with interleaving configuration
+            let config = FseConfig {
+                parallel_blocks: if self.config.entropy_interleaved > 1 {
+                    Some(self.config.entropy_interleaved as usize)
+                } else {
+                    None
+                },
+                ..Default::default()
+            };
+
+            let new_encoder = FseEncoder::new(config)?;
+            *self.fse_encoder.borrow_mut() = Some(new_encoder);
+        }
+
+        // Get mutable borrow for compression
+        self.fse_encoder.borrow_mut().as_mut().unwrap().compress(data)
+    }
+
+    /// Check compression ratio and determine if entropy encoding should be used
+    fn check_compression_ratio(&self, original: &[u8], compressed: &[u8]) -> bool {
+        if original.is_empty() {
+            return false;
+        }
+        let ratio = compressed.len() as f32 / original.len() as f32;
+        ratio <= self.config.entropy_zip_ratio_require
+    }
+
+    /// Decode entropy-encoded data
+    /// Matches C++ decompression logic
+    fn decode_entropy(&self, data: &[u8], original_size: usize, entropy_algo: EntropyAlgorithm) -> Result<Vec<u8>> {
+        match entropy_algo {
+            EntropyAlgorithm::None => Ok(data.to_vec()),
+            EntropyAlgorithm::HuffmanO1 => {
+                self.decode_huffman_o1(data, original_size)
+            }
+            EntropyAlgorithm::Fse => {
+                self.decode_fse(data, original_size)
+            }
+        }
+    }
+
+    /// Decode Huffman O1 encoded data with configured interleaving
+    fn decode_huffman_o1(&self, data: &[u8], original_size: usize) -> Result<Vec<u8>> {
+        // Get or build decoder (lazy initialization)
+        if self.huffman_decoder.borrow().is_none() {
+            // Build decoder from encoder - first build encoder
+            let dict = self.dictionary.read()
+                .map_err(|_| ZiporaError::resource_busy("Dictionary read lock"))?;
+
+            let training_data = dict.data();
+            let encoder = ContextualHuffmanEncoder::new(training_data, crate::entropy::huffman::HuffmanOrder::Order1)?;
+            let new_decoder = ContextualHuffmanDecoder::new(encoder);
+            *self.huffman_decoder.borrow_mut() = Some(new_decoder);
+        }
+
+        // Get decoder clone for use
+        let binding = self.huffman_decoder.borrow();
+        let decoder = binding.as_ref().unwrap().clone();
+
+        // The decoder's decode method already handles the encoding format
+        // The interleaving is determined by how the data was encoded
+        decoder.decode(data, original_size)
+    }
+
+    /// Decode FSE encoded data
+    fn decode_fse(&self, data: &[u8], _original_size: usize) -> Result<Vec<u8>> {
+        // Get or build decoder (lazy initialization)
+        if self.fse_decoder.borrow().is_none() {
+            // Create FSE decoder
+            let new_decoder = FseDecoder::new();
+            *self.fse_decoder.borrow_mut() = Some(new_decoder);
+        }
+
+        // Get mutable borrow for decompression
+        self.fse_decoder.borrow_mut().as_mut().unwrap().decompress(data)
+    }
 }
 
 impl BlobStore for DictZipBlobStore {
@@ -922,17 +1166,25 @@ impl BlobStore for DictZipBlobStore {
         let blob = self.storage.get(&id)
             .ok_or_else(|| ZiporaError::invalid_data(format!("Blob {} not found", id)))?;
 
+        // Step 1: Decode entropy encoding (if any)
+        let dict_compressed = self.decode_entropy(
+            &blob.compressed_data,
+            blob.original_size,
+            blob.entropy_algorithm
+        )?;
+
+        // Step 2: Decompress dictionary compression
         let decompressed_data = if blob.is_compressed {
             // Decompress using PA-Zip compressor
             let mut decompressed = Vec::new();
             // Note: compressor is Arc<PaZipCompressor>, so we need to create a mutable copy for decompression
             let mut compressor_copy = (*self.compressor).clone();
-            compressor_copy.decompress(&blob.compressed_data, &mut decompressed)
+            compressor_copy.decompress(&dict_compressed, &mut decompressed)
                 .map_err(|e| ZiporaError::invalid_data(&format!("Decompression failed: {}", e)))?;
             decompressed
         } else {
             // Return uncompressed data directly
-            blob.compressed_data.clone()
+            dict_compressed
         };
 
         // Store in cache
@@ -954,25 +1206,41 @@ impl BlobStore for DictZipBlobStore {
         let should_compress = original_size >= self.config.min_compression_size;
 
         let blob = if should_compress {
-            // Compress using PA-Zip compressor
-            let mut compressed_data = Vec::new();
+            // Step 1: Dictionary compression using PA-Zip compressor
+            let mut dict_compressed = Vec::new();
             let mut compressor_copy = (*self.compressor).clone();
-            let _compression_stats = compressor_copy.compress(data, &mut compressed_data)
+            let _compression_stats = compressor_copy.compress(data, &mut dict_compressed)
                 .map_err(|e| ZiporaError::invalid_data(&format!("Compression failed: {}", e)))?;
-            
-            let compression_ratio = if compressed_data.len() > 0 {
-                compressed_data.len() as f32 / original_size as f32
+
+            // Step 2: Apply entropy encoding (if configured)
+            let (final_compressed, entropy_algorithm) = if self.config.entropy_algorithm != EntropyAlgorithm::None {
+                let entropy_encoded = self.apply_entropy_encoding(&dict_compressed)?;
+
+                // Check if entropy encoding provides benefit
+                if self.check_compression_ratio(&dict_compressed, &entropy_encoded) {
+                    (entropy_encoded, self.config.entropy_algorithm)
+                } else {
+                    // Entropy encoding didn't help, fall back to dict-only
+                    (dict_compressed, EntropyAlgorithm::None)
+                }
+            } else {
+                (dict_compressed, EntropyAlgorithm::None)
+            };
+
+            let compression_ratio = if final_compressed.len() > 0 {
+                final_compressed.len() as f32 / original_size as f32
             } else {
                 1.0
             };
 
             // Only use compression if it actually reduces size
-            if compressed_data.len() < original_size {
+            if final_compressed.len() < original_size {
                 CompressedBlob {
-                    compressed_data,
+                    compressed_data: final_compressed,
                     original_size,
                     is_compressed: true,
                     compression_ratio,
+                    entropy_algorithm,
                 }
             } else {
                 // Store uncompressed if compression doesn't help
@@ -981,6 +1249,7 @@ impl BlobStore for DictZipBlobStore {
                     original_size,
                     is_compressed: false,
                     compression_ratio: 1.0,
+                    entropy_algorithm: EntropyAlgorithm::None,
                 }
             }
         } else {
@@ -990,6 +1259,7 @@ impl BlobStore for DictZipBlobStore {
                 original_size,
                 is_compressed: false,
                 compression_ratio: 1.0,
+                entropy_algorithm: EntropyAlgorithm::None,
             }
         };
 
@@ -1417,5 +1687,293 @@ mod tests {
             ..Default::default()
         };
         assert!(invalid_config.validate().is_err());
+    }
+
+    // ===== Entropy Encoding Tests =====
+
+    #[test]
+    fn test_entropy_algorithm_none() -> Result<()> {
+        let config = DictZipConfig {
+            dict_builder_config: DictionaryBuilderConfig {
+                target_dict_size: 1024,
+                max_dict_size: 8192,
+                validate_result: false,
+                ..Default::default()
+            },
+            min_compression_size: 10,
+            entropy_algorithm: EntropyAlgorithm::None,
+            entropy_interleaved: 0,
+            ..Default::default()
+        };
+
+        let mut builder = DictZipBlobStoreBuilder::with_config(config)?;
+        for sample in create_test_training_data() {
+            builder.add_training_sample(&sample)?;
+        }
+
+        let mut store = builder.finish()?;
+
+        let test_data = b"The quick brown fox jumps over the lazy dog";
+        let id = store.put(test_data)?;
+        let retrieved = store.get(id)?;
+
+        assert_eq!(test_data, retrieved.as_slice());
+        Ok(())
+    }
+
+    #[test]
+    fn test_entropy_huffman_o1_x1() -> Result<()> {
+        let config = DictZipConfig {
+            dict_builder_config: DictionaryBuilderConfig {
+                target_dict_size: 1024,
+                max_dict_size: 8192,
+                validate_result: false,
+                ..Default::default()
+            },
+            min_compression_size: 10,
+            entropy_algorithm: EntropyAlgorithm::HuffmanO1,
+            entropy_interleaved: 1,  // x1 (no interleaving)
+            entropy_zip_ratio_require: 0.95,  // Relaxed threshold
+            ..Default::default()
+        };
+
+        let mut builder = DictZipBlobStoreBuilder::with_config(config)?;
+        for sample in create_test_training_data() {
+            builder.add_training_sample(&sample)?;
+        }
+
+        let mut store = builder.finish()?;
+
+        let test_data = b"The quick brown fox jumps over the lazy dog and then the quick brown fox runs away";
+        let id = store.put(test_data)?;
+        let retrieved = store.get(id)?;
+
+        assert_eq!(test_data, retrieved.as_slice());
+        Ok(())
+    }
+
+    #[test]
+    fn test_entropy_huffman_o1_x2() -> Result<()> {
+        let config = DictZipConfig {
+            dict_builder_config: DictionaryBuilderConfig {
+                target_dict_size: 1024,
+                max_dict_size: 8192,
+                validate_result: false,
+                ..Default::default()
+            },
+            min_compression_size: 10,
+            entropy_algorithm: EntropyAlgorithm::HuffmanO1,
+            entropy_interleaved: 2,  // x2 interleaving
+            entropy_zip_ratio_require: 0.95,
+            ..Default::default()
+        };
+
+        let mut builder = DictZipBlobStoreBuilder::with_config(config)?;
+        for sample in create_test_training_data() {
+            builder.add_training_sample(&sample)?;
+        }
+
+        let mut store = builder.finish()?;
+
+        let test_data = b"Dogs and foxes are both animals that run in nature";
+        let id = store.put(test_data)?;
+        let retrieved = store.get(id)?;
+
+        assert_eq!(test_data, retrieved.as_slice());
+        Ok(())
+    }
+
+    #[test]
+    fn test_entropy_huffman_o1_x4() -> Result<()> {
+        let config = DictZipConfig {
+            dict_builder_config: DictionaryBuilderConfig {
+                target_dict_size: 1024,
+                max_dict_size: 8192,
+                validate_result: false,
+                ..Default::default()
+            },
+            min_compression_size: 10,
+            entropy_algorithm: EntropyAlgorithm::HuffmanO1,
+            entropy_interleaved: 4,  // x4 interleaving (AVX2)
+            entropy_zip_ratio_require: 0.95,
+            ..Default::default()
+        };
+
+        let mut builder = DictZipBlobStoreBuilder::with_config(config)?;
+        for sample in create_test_training_data() {
+            builder.add_training_sample(&sample)?;
+        }
+
+        let mut store = builder.finish()?;
+
+        let test_data = b"Animals like dogs and foxes live in nature and run around";
+        let id = store.put(test_data)?;
+        let retrieved = store.get(id)?;
+
+        assert_eq!(test_data, retrieved.as_slice());
+        Ok(())
+    }
+
+    #[test]
+    fn test_entropy_huffman_o1_x8() -> Result<()> {
+        let config = DictZipConfig {
+            dict_builder_config: DictionaryBuilderConfig {
+                target_dict_size: 1024,
+                max_dict_size: 8192,
+                validate_result: false,
+                ..Default::default()
+            },
+            min_compression_size: 10,
+            entropy_algorithm: EntropyAlgorithm::HuffmanO1,
+            entropy_interleaved: 8,  // x8 interleaving (maximum parallelism)
+            entropy_zip_ratio_require: 0.95,
+            ..Default::default()
+        };
+
+        let mut builder = DictZipBlobStoreBuilder::with_config(config)?;
+        for sample in create_test_training_data() {
+            builder.add_training_sample(&sample)?;
+        }
+
+        let mut store = builder.finish()?;
+
+        let test_data = b"The lazy dog was jumped over by the quick brown fox multiple times";
+        let id = store.put(test_data)?;
+        let retrieved = store.get(id)?;
+
+        assert_eq!(test_data, retrieved.as_slice());
+        Ok(())
+    }
+
+    #[test]
+    fn test_entropy_fse() -> Result<()> {
+        let config = DictZipConfig {
+            dict_builder_config: DictionaryBuilderConfig {
+                target_dict_size: 1024,
+                max_dict_size: 8192,
+                validate_result: false,
+                ..Default::default()
+            },
+            min_compression_size: 10,
+            entropy_algorithm: EntropyAlgorithm::Fse,
+            entropy_interleaved: 0,  // FSE doesn't use same interleaving scheme
+            entropy_zip_ratio_require: 0.95,
+            ..Default::default()
+        };
+
+        let mut builder = DictZipBlobStoreBuilder::with_config(config)?;
+        for sample in create_test_training_data() {
+            builder.add_training_sample(&sample)?;
+        }
+
+        let mut store = builder.finish()?;
+
+        let test_data = b"Quick brown foxes are faster than lazy dogs in every way";
+        let id = store.put(test_data)?;
+        let retrieved = store.get(id)?;
+
+        assert_eq!(test_data, retrieved.as_slice());
+        Ok(())
+    }
+
+    #[test]
+    fn test_entropy_compression_ratio_fallback() -> Result<()> {
+        let config = DictZipConfig {
+            dict_builder_config: DictionaryBuilderConfig {
+                target_dict_size: 1024,
+                max_dict_size: 8192,
+                validate_result: false,
+                ..Default::default()
+            },
+            min_compression_size: 10,
+            entropy_algorithm: EntropyAlgorithm::HuffmanO1,
+            entropy_interleaved: 1,
+            entropy_zip_ratio_require: 0.1,  // Very strict threshold - entropy encoding should fail
+            ..Default::default()
+        };
+
+        let mut builder = DictZipBlobStoreBuilder::with_config(config)?;
+        for sample in create_test_training_data() {
+            builder.add_training_sample(&sample)?;
+        }
+
+        let mut store = builder.finish()?;
+
+        let test_data = b"Short text";
+        let id = store.put(test_data)?;
+        let retrieved = store.get(id)?;
+
+        // Should still work even if entropy encoding is rejected
+        assert_eq!(test_data, retrieved.as_slice());
+        Ok(())
+    }
+
+    #[test]
+    fn test_entropy_config_validation() {
+        // Test valid interleaving factors
+        let valid_config = DictZipConfig {
+            entropy_interleaved: 4,
+            ..Default::default()
+        };
+        assert!(valid_config.validate().is_ok());
+
+        // Test invalid interleaving factor
+        let invalid_config = DictZipConfig {
+            entropy_interleaved: 3,  // Invalid - must be 0, 1, 2, 4, or 8
+            ..Default::default()
+        };
+        assert!(invalid_config.validate().is_err());
+
+        // Test invalid ratio
+        let invalid_ratio_config = DictZipConfig {
+            entropy_zip_ratio_require: 1.5,  // Invalid - must be 0.0-1.0
+            ..Default::default()
+        };
+        assert!(invalid_ratio_config.validate().is_err());
+    }
+
+    #[test]
+    fn test_multiple_entropy_roundtrips() -> Result<()> {
+        let config = DictZipConfig {
+            dict_builder_config: DictionaryBuilderConfig {
+                target_dict_size: 1024,
+                max_dict_size: 8192,
+                validate_result: false,
+                ..Default::default()
+            },
+            min_compression_size: 10,
+            entropy_algorithm: EntropyAlgorithm::HuffmanO1,
+            entropy_interleaved: 2,
+            entropy_zip_ratio_require: 0.95,
+            ..Default::default()
+        };
+
+        let mut builder = DictZipBlobStoreBuilder::with_config(config)?;
+        for sample in create_test_training_data() {
+            builder.add_training_sample(&sample)?;
+        }
+
+        let mut store = builder.finish()?;
+
+        // Test multiple different blobs
+        let test_blobs = vec![
+            b"First test blob with dogs and foxes".to_vec(),
+            b"Second test blob with quick brown animals".to_vec(),
+            b"Third test blob describing lazy behavior".to_vec(),
+        ];
+
+        let mut ids = Vec::new();
+        for blob in &test_blobs {
+            let id = store.put(blob)?;
+            ids.push(id);
+        }
+
+        // Verify all blobs can be retrieved correctly
+        for (i, id) in ids.iter().enumerate() {
+            let retrieved = store.get(*id)?;
+            assert_eq!(test_blobs[i].as_slice(), retrieved.as_slice());
+        }
+
+        Ok(())
     }
 }
