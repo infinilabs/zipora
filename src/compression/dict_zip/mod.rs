@@ -97,7 +97,8 @@ pub mod reference_encoding;
 
 // Re-export main types for convenient access
 pub use blob_store::{
-    DictZipBlobStore, DictZipBlobStoreBuilder, DictZipBlobStoreStats, DictZipConfig
+    DictZipBlobStore, DictZipBlobStoreBuilder, DictZipBlobStoreStats, DictZipConfig,
+    EntropyAlgorithm
 };
 pub use builder::{BuildPhase, BuildProgress, BuildStrategy, DictionaryBuilder, DictionaryBuilderConfig, SampleSortPolicy};
 pub use compression_types::{
