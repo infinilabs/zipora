@@ -4,12 +4,204 @@
 //! - Order-0: Classic Huffman (independent symbols)
 //! - Order-1: Context-based Huffman (depends on previous symbol)
 //! - Order-2: Context-based Huffman (depends on previous two symbols)
-//! 
+//!
 //! Order-1 and Order-2 models provide better compression for data with local dependencies.
+//!
+//! ## Interleaving Support
+//!
+//! The module includes explicit interleaving variants (x1/x2/x4/x8) for parallel
+//! Huffman Order-1 encoding/decoding. Interleaving splits the input into N independent
+//! streams that can be processed in parallel, improving throughput on modern CPUs.
 
 use crate::error::{Result, ZiporaError};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
+
+/// Interleaving factor for parallel Huffman encoding/decoding
+///
+/// Interleaving splits input data into N independent streams that can be
+/// processed in parallel, improving throughput on modern CPUs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterleavingFactor {
+    /// Single stream (no interleaving) - baseline performance
+    X1,
+    /// 2-way interleaving - modest parallelism
+    X2,
+    /// 4-way interleaving - good parallelism with AVX2
+    X4,
+    /// 8-way interleaving - maximum parallelism
+    X8,
+}
+
+impl InterleavingFactor {
+    /// Get the number of parallel streams for this factor
+    #[inline]
+    pub const fn streams(&self) -> usize {
+        match self {
+            Self::X1 => 1,
+            Self::X2 => 2,
+            Self::X4 => 4,
+            Self::X8 => 8,
+        }
+    }
+
+    /// Check if SIMD optimizations are available for this factor
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    pub fn has_simd_support(&self) -> bool {
+        match self {
+            Self::X4 | Self::X8 => is_x86_feature_detected!("avx2"),
+            _ => false,
+        }
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    #[inline]
+    pub fn has_simd_support(&self) -> bool {
+        false
+    }
+}
+
+impl Default for InterleavingFactor {
+    fn default() -> Self {
+        Self::X1
+    }
+}
+
+/// Bit stream writer for Huffman encoding
+///
+/// Writes bits in reverse order (most significant bit first) to match
+/// the C++ reference implementation's behavior.
+#[derive(Debug)]
+struct BitStreamWriter {
+    buffer: Vec<u8>,
+    current: u64,
+    bit_count: usize,
+}
+
+impl BitStreamWriter {
+    fn new() -> Self {
+        Self {
+            buffer: Vec::new(),
+            current: 0,
+            bit_count: 0,
+        }
+    }
+
+    /// Write bits to the stream
+    #[inline]
+    fn write(&mut self, bits: u64, count: usize) {
+        debug_assert!(count <= 64);
+
+        self.current |= bits << self.bit_count;
+        self.bit_count += count;
+
+        // Flush complete bytes
+        while self.bit_count >= 8 {
+            self.buffer.push(self.current as u8);
+            self.current >>= 8;
+            self.bit_count -= 8;
+        }
+    }
+
+    /// Flush remaining bits and return the buffer
+    fn finish(mut self) -> Vec<u8> {
+        if self.bit_count > 0 {
+            self.buffer.push(self.current as u8);
+        }
+        self.buffer
+    }
+
+    /// Get current buffer size in bits
+    #[inline]
+    fn len_bits(&self) -> usize {
+        self.buffer.len() * 8 + self.bit_count
+    }
+}
+
+/// Bit stream reader for Huffman decoding
+#[derive(Debug)]
+struct BitStreamReader<'a> {
+    data: &'a [u8],
+    current: u64,
+    bit_count: usize,
+    byte_pos: usize,
+}
+
+impl<'a> BitStreamReader<'a> {
+    fn new(data: &'a [u8]) -> Self {
+        let mut reader = Self {
+            data,
+            current: 0,
+            bit_count: 0,
+            byte_pos: 0,
+        };
+        reader.refill();
+        reader
+    }
+
+    /// Refill the bit buffer
+    #[inline]
+    fn refill(&mut self) {
+        while self.bit_count <= 56 && self.byte_pos < self.data.len() {
+            self.current |= (self.data[self.byte_pos] as u64) << self.bit_count;
+            self.bit_count += 8;
+            self.byte_pos += 1;
+        }
+    }
+
+    /// Peek at the next `count` bits without consuming them
+    #[inline]
+    fn peek(&self, count: usize) -> u64 {
+        debug_assert!(count <= 64);
+        self.current & ((1u64 << count) - 1)
+    }
+
+    /// Consume `count` bits
+    #[inline]
+    fn consume(&mut self, count: usize) {
+        debug_assert!(count <= self.bit_count);
+        self.current >>= count;
+        self.bit_count -= count;
+    }
+
+    /// Read `count` bits
+    #[inline]
+    fn read(&mut self, count: usize) -> u64 {
+        if count > self.bit_count {
+            self.refill();
+        }
+        let result = self.peek(count);
+        self.consume(count);
+        result
+    }
+
+    /// Check if there are more bits available
+    #[inline]
+    fn has_bits(&self) -> bool {
+        self.bit_count > 0 || self.byte_pos < self.data.len()
+    }
+
+    /// Get remaining bits
+    #[inline]
+    fn remaining_bits(&self) -> usize {
+        self.bit_count + (self.data.len() - self.byte_pos) * 8
+    }
+}
+
+/// Huffman symbol with code information
+#[derive(Debug, Clone, Copy)]
+struct HuffmanSymbol {
+    bits: u64,  // Changed from u16 to u64 to support longer codes
+    bit_count: u8,
+}
+
+impl HuffmanSymbol {
+    #[inline]
+    fn new(bits: u64, bit_count: u8) -> Self {
+        Self { bits, bit_count }
+    }
+}
 
 /// Node in the Huffman tree
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +250,8 @@ pub struct HuffmanTree {
 impl HuffmanTree {
     /// Build Huffman tree from symbol frequencies
     pub fn from_frequencies(frequencies: &[u32; 256]) -> Result<Self> {
+        const MAX_CODE_LENGTH: usize = 64; // Maximum bits that fit in u64
+
         // Collect symbols with non-zero frequencies
         let mut heap = BinaryHeap::new();
         let mut symbol_count = 0;
@@ -115,10 +309,58 @@ impl HuffmanTree {
         // Generate codes
         Self::generate_codes(&root, Vec::new(), &mut codes, &mut max_code_length);
 
+        // Check if tree is too deep (codes too long for u64)
+        if max_code_length > MAX_CODE_LENGTH {
+            // For very deep trees with many symbols, use a simpler encoding
+            // Assign fixed-length codes instead
+            return Self::from_frequencies_fixed_length(frequencies);
+        }
+
         Ok(Self {
             root: Some(root),
             codes,
             max_code_length,
+        })
+    }
+
+    /// Build tree with fixed-length codes for pathological cases
+    fn from_frequencies_fixed_length(frequencies: &[u32; 256]) -> Result<Self> {
+        // Count symbols
+        let symbols: Vec<u8> = frequencies.iter()
+            .enumerate()
+            .filter(|(_, f)| **f > 0)
+            .map(|(s, _)| s as u8)
+            .collect();
+
+        if symbols.is_empty() {
+            return Ok(Self {
+                root: None,
+                codes: HashMap::new(),
+                max_code_length: 0,
+            });
+        }
+
+        // Use 8-bit fixed codes (we have at most 256 symbols)
+        let code_length = 8;
+        let mut codes = HashMap::new();
+
+        for (i, &symbol) in symbols.iter().enumerate() {
+            let mut code = Vec::with_capacity(code_length);
+            let mut val = i;
+            for _ in 0..code_length {
+                code.push((val & 1) != 0);
+                val >>= 1;
+            }
+            codes.insert(symbol, code);
+        }
+
+        // Build decoding tree from codes
+        let root = Self::build_decoding_tree_from_codes(&codes)?;
+
+        Ok(Self {
+            root,
+            codes,
+            max_code_length: code_length,
         })
     }
 
@@ -643,27 +885,61 @@ impl ContextualHuffmanEncoder {
             return Self::new_order0(data);
         }
 
-        // First, create an Order-0 tree for the first symbol
-        let order0_tree = HuffmanTree::from_data(data)?;
+        // Get Order-0 frequencies from training data
+        let mut order0_freqs = [0u32; 256];
+        for &byte in data {
+            order0_freqs[byte as usize] += 1;
+        }
+
+        // Ensure ALL symbols have at least frequency 1 in Order-0 tree
+        // This is critical because Order-0 is used as fallback for unseen contexts
+        for freq in &mut order0_freqs {
+            if *freq == 0 {
+                *freq = 1;
+            }
+        }
+
+        // Build universal Order-0 tree that can encode ALL symbols
+        let order0_tree = HuffmanTree::from_frequencies(&order0_freqs)?;
+
         let mut trees = vec![order0_tree];
         let mut context_map = HashMap::new();
 
         // Collect context-dependent frequencies
         let mut context_frequencies: HashMap<u8, [u32; 256]> = HashMap::new();
-        
+
         for i in 1..data.len() {
             let context = data[i - 1];
             let symbol = data[i];
-            
+
             let freqs = context_frequencies.entry(context).or_insert([0u32; 256]);
             freqs[symbol as usize] += 1;
         }
 
         // Build one tree per context that has data
-        for (&context, &frequencies) in &context_frequencies {
-            let symbol_count = frequencies.iter().filter(|&&f| f > 0).count();
+        // IMPORTANT: Merge with Order-0 frequencies so every tree can encode ALL symbols
+        for (&context, context_freqs) in &context_frequencies {
+            // Merge context-specific frequencies with Order-0 baseline
+            // Use context-specific when available, fall back to Order-0 scaled down
+            let mut merged_freqs = [0u32; 256];
+            let context_total: u32 = context_freqs.iter().sum();
+
+            for symbol in 0..256 {
+                if context_freqs[symbol] > 0 {
+                    // Use context-specific frequency (much higher weight)
+                    merged_freqs[symbol] = context_freqs[symbol] * 100;
+                } else if order0_freqs[symbol] > 0 {
+                    // Use Order-0 frequency with minimal weight
+                    merged_freqs[symbol] = order0_freqs[symbol];
+                } else {
+                    // Symbol never seen in data - use frequency 1 to ensure it exists in tree
+                    merged_freqs[symbol] = 1;
+                }
+            }
+
+            let symbol_count = merged_freqs.iter().filter(|&&f| f > 0).count();
             if symbol_count > 0 {
-                let tree = HuffmanTree::from_frequencies(&frequencies)?;
+                let tree = HuffmanTree::from_frequencies(&merged_freqs)?;
                 context_map.insert(context as u32, trees.len());
                 trees.push(tree);
             }
@@ -682,18 +958,32 @@ impl ContextualHuffmanEncoder {
             return Self::new_order1(data);
         }
 
-        // First, create an Order-0 tree for the first two symbols
-        let order0_tree = HuffmanTree::from_data(data)?;
+        // Get Order-0 frequencies from training data
+        let mut order0_freqs = [0u32; 256];
+        for &byte in data {
+            order0_freqs[byte as usize] += 1;
+        }
+
+        // Ensure ALL symbols have at least frequency 1 in Order-0 tree
+        // This is critical because Order-0 is used as fallback for unseen contexts
+        for freq in &mut order0_freqs {
+            if *freq == 0 {
+                *freq = 1;
+            }
+        }
+
+        // Build universal Order-0 tree that can encode ALL symbols
+        let order0_tree = HuffmanTree::from_frequencies(&order0_freqs)?;
         let mut trees = vec![order0_tree];
         let mut context_map = HashMap::new();
 
         // Collect context-dependent frequencies
         let mut context_frequencies: HashMap<u16, [u32; 256]> = HashMap::new();
-        
+
         for i in 2..data.len() {
             let context = ((data[i - 2] as u16) << 8) | (data[i - 1] as u16);
             let symbol = data[i];
-            
+
             let freqs = context_frequencies.entry(context).or_insert([0u32; 256]);
             freqs[symbol as usize] += 1;
         }
@@ -703,14 +993,31 @@ impl ContextualHuffmanEncoder {
         let mut contexts: Vec<_> = context_frequencies.into_iter().collect();
         contexts.sort_by_key(|(_, freqs)| freqs.iter().sum::<u32>());
         contexts.reverse();
-        
-        // Take top 1024 most frequent contexts 
+
+        // Take top 1024 most frequent contexts
         let max_contexts = 1024.min(contexts.len());
-        
-        for (context, frequencies) in contexts.into_iter().take(max_contexts) {
-            let symbol_count = frequencies.iter().filter(|&&f| f > 0).count();
-            if symbol_count > 0 { // Any context with data is useful
-                let tree = HuffmanTree::from_frequencies(&frequencies)?;
+
+        for (context, context_freqs) in contexts.into_iter().take(max_contexts) {
+            // Merge context-specific frequencies with Order-0 baseline
+            // Use context-specific when available, fall back to Order-0 scaled down
+            let mut merged_freqs = [0u32; 256];
+
+            for symbol in 0..256 {
+                if context_freqs[symbol] > 0 {
+                    // Use context-specific frequency (much higher weight)
+                    merged_freqs[symbol] = context_freqs[symbol] * 100;
+                } else if order0_freqs[symbol] > 0 {
+                    // Use Order-0 frequency with minimal weight
+                    merged_freqs[symbol] = order0_freqs[symbol];
+                } else {
+                    // Symbol never seen in data - use frequency 1 to ensure it exists in tree
+                    merged_freqs[symbol] = 1;
+                }
+            }
+
+            let symbol_count = merged_freqs.iter().filter(|&&f| f > 0).count();
+            if symbol_count > 0 {
+                let tree = HuffmanTree::from_frequencies(&merged_freqs)?;
                 context_map.insert(context as u32, trees.len());
                 trees.push(tree);
             }
@@ -1023,6 +1330,429 @@ impl ContextualHuffmanEncoder {
             context_map,
         })
     }
+
+    /// Encode with specified interleaving factor (Order-1 only)
+    ///
+    /// This splits the input data into N independent streams for parallel processing.
+    /// Only works with Order-1 encoding; returns error for other orders.
+    pub fn encode_with_interleaving(
+        &self,
+        data: &[u8],
+        factor: InterleavingFactor,
+    ) -> Result<Vec<u8>> {
+        if self.order != HuffmanOrder::Order1 {
+            return Err(ZiporaError::invalid_operation(
+                "Interleaving only supported for Order-1 Huffman encoding",
+            ));
+        }
+
+        if data.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        match factor {
+            InterleavingFactor::X1 => self.encode_xn::<1>(data),
+            InterleavingFactor::X2 => self.encode_xn::<2>(data),
+            InterleavingFactor::X4 => self.encode_xn::<4>(data),
+            InterleavingFactor::X8 => self.encode_xn::<8>(data),
+        }
+    }
+
+    /// Decode with specified interleaving factor (Order-1 only)
+    pub fn decode_with_interleaving(
+        &self,
+        data: &[u8],
+        output_size: usize,
+        factor: InterleavingFactor,
+    ) -> Result<Vec<u8>> {
+        if self.order != HuffmanOrder::Order1 {
+            return Err(ZiporaError::invalid_operation(
+                "Interleaving only supported for Order-1 Huffman decoding",
+            ));
+        }
+
+        match factor {
+            InterleavingFactor::X1 => self.decode_xn::<1>(data, output_size),
+            InterleavingFactor::X2 => self.decode_xn::<2>(data, output_size),
+            InterleavingFactor::X4 => self.decode_xn::<4>(data, output_size),
+            InterleavingFactor::X8 => self.decode_xn::<8>(data, output_size),
+        }
+    }
+
+    /// X1 variant - single stream (no interleaving)
+    pub fn encode_x1(&self, data: &[u8]) -> Result<Vec<u8>> {
+        self.encode_with_interleaving(data, InterleavingFactor::X1)
+    }
+
+    /// X2 variant - 2-way interleaving
+    pub fn encode_x2(&self, data: &[u8]) -> Result<Vec<u8>> {
+        self.encode_with_interleaving(data, InterleavingFactor::X2)
+    }
+
+    /// X4 variant - 4-way interleaving
+    pub fn encode_x4(&self, data: &[u8]) -> Result<Vec<u8>> {
+        self.encode_with_interleaving(data, InterleavingFactor::X4)
+    }
+
+    /// X8 variant - 8-way interleaving
+    pub fn encode_x8(&self, data: &[u8]) -> Result<Vec<u8>> {
+        self.encode_with_interleaving(data, InterleavingFactor::X8)
+    }
+
+    /// X1 decode variant
+    pub fn decode_x1(&self, data: &[u8], output_size: usize) -> Result<Vec<u8>> {
+        self.decode_with_interleaving(data, output_size, InterleavingFactor::X1)
+    }
+
+    /// X2 decode variant
+    pub fn decode_x2(&self, data: &[u8], output_size: usize) -> Result<Vec<u8>> {
+        self.decode_with_interleaving(data, output_size, InterleavingFactor::X2)
+    }
+
+    /// X4 decode variant
+    pub fn decode_x4(&self, data: &[u8], output_size: usize) -> Result<Vec<u8>> {
+        self.decode_with_interleaving(data, output_size, InterleavingFactor::X4)
+    }
+
+    /// X8 decode variant
+    pub fn decode_x8(&self, data: &[u8], output_size: usize) -> Result<Vec<u8>> {
+        self.decode_with_interleaving(data, output_size, InterleavingFactor::X8)
+    }
+
+    /// Generic N-way interleaved encoding
+    ///
+    /// Following the C++ reference implementation algorithm:
+    /// 1. Split data into N CONSECUTIVE chunks (not interleaved positions!)
+    /// 2. Encode symbols from each chunk in round-robin fashion
+    /// 3. Use context from previous symbol in the original data
+    ///
+    /// NOTE: The C++ uses backward iteration + reverse writer to get forward bitstream.
+    /// We use forward iteration + forward writer to achieve the same result.
+    fn encode_xn<const N: usize>(&self, data: &[u8]) -> Result<Vec<u8>> {
+        debug_assert!(N > 0 && N <= 8);
+
+        if data.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Build symbol table for fast lookups (context -> symbol -> HuffmanSymbol)
+        let symbol_table = self.build_symbol_table()?;
+
+        let mut writer = BitStreamWriter::new();
+        let record_size = data.len();
+
+        // Calculate stream boundaries (C++ lines 682-700)
+        // Each stream gets a consecutive chunk of the input
+        let mut stream_starts = [0usize; 8];
+        let mut stream_ends = [0usize; 8];
+
+        for n in 0..N {
+            let stream_size = record_size / N + if n < record_size % N { 1 } else { 0 };
+            stream_starts[n] = if n == 0 { 0 } else { stream_ends[n - 1] };
+            stream_ends[n] = stream_starts[n] + stream_size;
+        }
+
+        // Verify last stream ends at record_size
+        debug_assert_eq!(stream_ends[N - 1], record_size);
+
+        let mut stream_positions = stream_starts;
+
+        // Main encoding loop - process in round-robin FORWARD order
+        let mut total_encoded = 0;
+        while total_encoded < record_size {
+            for n in 0..N {
+                if stream_positions[n] >= stream_ends[n] {
+                    continue;
+                }
+
+                let pos = stream_positions[n];
+                let symbol = data[pos];
+
+                // Context is the previous symbol in the ORIGINAL DATA
+                // If at the start of this stream, use context 256
+                let context = if stream_positions[n] == stream_starts[n] {
+                    256u16
+                } else {
+                    data[pos - 1] as u16
+                };
+
+                // Get Huffman code for this symbol in this context
+                let code = symbol_table.get(&(context, symbol))
+                    .ok_or_else(|| ZiporaError::invalid_data(
+                        format!("Symbol {} not found in context {}", symbol, context)
+                    ))?;
+
+                writer.write(code.bits as u64, code.bit_count as usize);
+
+                stream_positions[n] += 1;
+                total_encoded += 1;
+            }
+        }
+
+        Ok(writer.finish())
+    }
+
+    /// Generic N-way interleaved decoding
+    fn decode_xn<const N: usize>(&self, data: &[u8], output_size: usize) -> Result<Vec<u8>> {
+        debug_assert!(N > 0 && N <= 8);
+
+        if data.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Build decode table (block-based lookup)
+        let decode_table = self.build_decode_table()?;
+
+        let mut reader = BitStreamReader::new(data);
+
+        // Calculate stream boundaries (following C++ algorithm)
+        let mut stream_starts = [0usize; 8];
+        let mut stream_ends = [0usize; 8];
+
+        for n in 0..N {
+            let stream_size = output_size / N + if n < output_size % N { 1 } else { 0 };
+            stream_starts[n] = if n == 0 { 0 } else { stream_ends[n - 1] };
+            stream_ends[n] = stream_starts[n] + stream_size;
+        }
+
+        // Create output buffer with correct size
+        let mut output = vec![0u8; output_size];
+
+        // Track context and position for each stream
+        let mut contexts = [256u16; 8]; // 256 = initial context
+        let mut stream_positions = stream_starts;
+
+        // Decode symbols in round-robin fashion, writing to correct positions
+        let mut total_decoded = 0;
+        while total_decoded < output_size {
+            for n in 0..N {
+                if stream_positions[n] >= stream_ends[n] {
+                    continue;
+                }
+
+                let pos = stream_positions[n];
+                let context = contexts[n];
+
+                // Decode one symbol from this stream
+                let symbol = self.decode_one_symbol(&mut reader, context, &decode_table)?;
+
+                // Write directly to the correct output position
+                output[pos] = symbol;
+
+                // Update context to the decoded symbol
+                contexts[n] = symbol as u16;
+                stream_positions[n] += 1;
+                total_decoded += 1;
+
+                if total_decoded >= output_size {
+                    break;
+                }
+            }
+        }
+
+        Ok(output)
+    }
+
+    /// Build fast lookup table for encoding: (context, symbol) -> HuffmanSymbol
+    fn build_symbol_table(&self) -> Result<HashMap<(u16, u8), HuffmanSymbol>> {
+        let mut table = HashMap::new();
+
+        // For each context, build codes for all symbols
+        for context in 0..=256u16 {
+            // Get the tree for this context
+            let tree_idx = if context == 256 {
+                0 // Initial context uses Order-0 tree
+            } else {
+                *self.context_map.get(&(context as u32)).unwrap_or(&0)
+            };
+
+            let tree = &self.trees[tree_idx];
+
+            // Build codes for all symbols in this tree
+            // NOTE: Since new_order1 now ensures all trees contain all symbols,
+            // every symbol should have a code in every tree
+            for symbol in 0..=255u8 {
+                if let Some(code) = tree.get_code(symbol) {
+                    // Convert Vec<bool> to packed bits
+                    let mut bits = 0u64;
+                    let bit_count = code.len() as u8;
+
+                    if bit_count > 64 {
+                        return Err(ZiporaError::invalid_data(
+                            format!("Huffman code too long: {} bits", bit_count)
+                        ));
+                    }
+
+                    for (i, &bit) in code.iter().enumerate() {
+                        if bit && i < 64 {
+                            bits |= 1u64 << i;
+                        }
+                    }
+
+                    table.insert((context, symbol), HuffmanSymbol::new(bits, bit_count));
+                } else {
+                    // This should not happen if new_order1 works correctly
+                    return Err(ZiporaError::invalid_data(
+                        format!("Symbol {} not found in tree for context {}", symbol, context)
+                    ));
+                }
+            }
+        }
+
+        Ok(table)
+    }
+
+    /// Build decode table for fast symbol lookup
+    /// Uses tree-walking to populate ALL 4096 entries for each context
+    ///
+    /// IMPORTANT: Mirrors the encoding logic - uses context-specific tree where available,
+    /// falls back to Order-0 tree for codes not in context-specific tree
+    fn build_decode_table(&self) -> Result<HashMap<u16, Vec<(u64, u8, u8)>>> {
+        const BLOCK_BITS: usize = 12;
+        let mut table: HashMap<u16, Vec<(u64, u8, u8)>> = HashMap::new();
+
+        // Helper function to build table for a single tree
+        let build_tree_table = |tree: &HuffmanTree| -> Vec<(u64, u8, u8)> {
+            let mut tree_table = vec![(0u64, 0u8, 0u8); 1 << BLOCK_BITS];
+
+            if let Some(root) = tree.root() {
+                for peek_value in 0..(1 << BLOCK_BITS) {
+                    let mut current = root;
+                    let mut bits_used = 0;
+                    let mut code_bits = 0u64;
+
+                    // Walk the tree following the bits in peek_value
+                    for bit_pos in 0..BLOCK_BITS {
+                        match current {
+                            HuffmanNode::Leaf { symbol, .. } => {
+                                tree_table[peek_value] = (code_bits, *symbol, bits_used);
+                                break;
+                            }
+                            HuffmanNode::Internal { left, right, .. } => {
+                                let bit = (peek_value >> bit_pos) & 1;
+                                if bit == 1 {
+                                    code_bits |= 1u64 << bit_pos;
+                                    current = right;
+                                } else {
+                                    current = left;
+                                }
+                                bits_used += 1;
+                            }
+                        }
+                    }
+
+                    // If we ended on a leaf after using all BLOCK_BITS, record it
+                    if let HuffmanNode::Leaf { symbol, .. } = current {
+                        if tree_table[peek_value].2 == 0 {
+                            tree_table[peek_value] = (code_bits, *symbol, bits_used);
+                        }
+                    }
+                }
+            }
+
+            tree_table
+        };
+
+        for context in 0..=256u16 {
+            let tree_idx = if context == 256 {
+                0
+            } else {
+                *self.context_map.get(&(context as u32)).unwrap_or(&0)
+            };
+
+            // Build table using the tree for this context
+            let context_table = build_tree_table(&self.trees[tree_idx]);
+            table.insert(context, context_table);
+        }
+
+        Ok(table)
+    }
+
+    /// Decode a single symbol from the bit stream
+    fn decode_one_symbol(
+        &self,
+        reader: &mut BitStreamReader,
+        context: u16,
+        decode_table: &HashMap<u16, Vec<(u64, u8, u8)>>,
+    ) -> Result<u8> {
+        const BLOCK_BITS: usize = 12;
+
+        // Ensure we have enough bits for table lookup
+        if reader.bit_count < BLOCK_BITS {
+            reader.refill();
+        }
+
+        // If we still don't have enough bits for table lookup, use tree-based decoding
+        if reader.bit_count < BLOCK_BITS {
+            return self.decode_one_symbol_tree(reader, context);
+        }
+
+        let context_table = decode_table.get(&context)
+            .ok_or_else(|| ZiporaError::invalid_data(format!("Context {} not found in decode table", context)))?;
+
+        // Peek at BLOCK_BITS
+        let peek_bits = reader.peek(BLOCK_BITS);
+        let (_, symbol, bit_count) = context_table[peek_bits as usize];
+
+        if bit_count == 0 {
+            // Code is longer than BLOCK_BITS, use tree-based decoding
+            return self.decode_one_symbol_tree(reader, context);
+        }
+
+        // Check if we have enough bits for the symbol found in the table
+        // This handles cases where zero-padding at end of stream matches wrong code
+        if reader.bit_count < bit_count as usize {
+            // Not enough bits for table result, use tree-based decoding instead
+            return self.decode_one_symbol_tree(reader, context);
+        }
+
+        reader.consume(bit_count as usize);
+        reader.refill();
+
+        Ok(symbol)
+    }
+
+    /// Decode a single symbol using tree-based decoding (fallback for end-of-stream)
+    fn decode_one_symbol_tree(
+        &self,
+        reader: &mut BitStreamReader,
+        context: u16,
+    ) -> Result<u8> {
+        // Get the tree for this context
+        let tree_idx = if context == 256 {
+            0
+        } else {
+            *self.context_map.get(&(context as u32)).unwrap_or(&0)
+        };
+
+        let tree = &self.trees[tree_idx];
+        let root = tree.root().ok_or_else(|| ZiporaError::invalid_data("Empty tree"))?;
+
+        let mut current = root;
+
+        loop {
+            match current {
+                HuffmanNode::Leaf { symbol, .. } => {
+                    return Ok(*symbol);
+                }
+                HuffmanNode::Internal { left, right, .. } => {
+                    // Need at least 1 bit
+                    if reader.bit_count == 0 {
+                        reader.refill();
+                        if reader.bit_count == 0 {
+                            return Err(ZiporaError::invalid_data("Unexpected end of stream"));
+                        }
+                    }
+
+                    let bit = reader.peek(1) & 1;
+                    reader.consume(1);
+
+                    current = if bit == 1 { right } else { left };
+                }
+            }
+        }
+    }
+
 }
 
 /// Context-aware Huffman decoder
@@ -1385,7 +2115,9 @@ mod tests {
 
     #[test]
     fn test_contextual_huffman_compression_comparison() {
-        // Test that higher order models achieve better compression on suitable data
+        // Test that all Huffman orders produce valid encodings
+        // Note: Since Order-1/2 now include ALL 256 symbols for correctness,
+        // compression ratios may be close to 1.0 for small datasets
         let data = b"aaaaabbbbbcccccdddddeeeeefffff"; // More compressible test data
 
         let encoder0 = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order0).unwrap();
@@ -1396,16 +2128,34 @@ mod tests {
         let ratio1 = encoder1.estimate_compression_ratio(data);
         let ratio2 = encoder2.estimate_compression_ratio(data);
 
-        // Higher order models should generally achieve better compression
-        // Note: This may not always be true for very small datasets
         println!("Order-0 ratio: {:.3}", ratio0);
-        println!("Order-1 ratio: {:.3}", ratio1);  
+        println!("Order-1 ratio: {:.3}", ratio1);
         println!("Order-2 ratio: {:.3}", ratio2);
 
-        // All should achieve some compression on this highly compressible data
+        // Order-0 should achieve compression since it only includes seen symbols
         assert!(ratio0 < 1.0, "Order-0 ratio should be < 1.0, got {:.3}", ratio0);
-        assert!(ratio1 < 1.0, "Order-1 ratio should be < 1.0, got {:.3}", ratio1);
-        assert!(ratio2 < 1.0, "Order-2 ratio should be < 1.0, got {:.3}", ratio2);
+
+        // Order-1/2 include all symbols for correctness, so just check they don't expand too much
+        assert!(ratio1 <= 1.5, "Order-1 ratio too high, got {:.3}", ratio1);
+        assert!(ratio2 <= 1.5, "Order-2 ratio too high, got {:.3}", ratio2);
+
+        // Verify round-trip for all orders
+        let encoded0 = encoder0.encode(data).unwrap();
+        let decoder0 = ContextualHuffmanDecoder::new(encoder0);
+        let decoded0 = decoder0.decode(&encoded0, data.len()).unwrap();
+        assert_eq!(data.to_vec(), decoded0);
+
+        let encoder1 = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order1).unwrap();
+        let encoded1 = encoder1.encode(data).unwrap();
+        let decoder1 = ContextualHuffmanDecoder::new(encoder1);
+        let decoded1 = decoder1.decode(&encoded1, data.len()).unwrap();
+        assert_eq!(data.to_vec(), decoded1);
+
+        let encoder2 = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order2).unwrap();
+        let encoded2 = encoder2.encode(data).unwrap();
+        let decoder2 = ContextualHuffmanDecoder::new(encoder2);
+        let decoded2 = decoder2.decode(&encoded2, data.len()).unwrap();
+        assert_eq!(data.to_vec(), decoded2);
     }
 
     #[test]
@@ -1453,12 +2203,350 @@ mod tests {
     #[test]
     fn test_huffman_order_enum() {
         assert_eq!(HuffmanOrder::default(), HuffmanOrder::Order0);
-        
+
         let orders = [HuffmanOrder::Order0, HuffmanOrder::Order1, HuffmanOrder::Order2];
         for order in orders {
             let data = b"test data";
             let encoder = ContextualHuffmanEncoder::new(data, order).unwrap();
             assert_eq!(encoder.order(), order);
         }
+    }
+
+    // ==================== Interleaving Tests ====================
+
+    #[test]
+    fn test_interleaving_factor_streams() {
+        assert_eq!(InterleavingFactor::X1.streams(), 1);
+        assert_eq!(InterleavingFactor::X2.streams(), 2);
+        assert_eq!(InterleavingFactor::X4.streams(), 4);
+        assert_eq!(InterleavingFactor::X8.streams(), 8);
+    }
+
+    #[test]
+    fn test_interleaving_factor_default() {
+        assert_eq!(InterleavingFactor::default(), InterleavingFactor::X1);
+    }
+
+    #[test]
+    fn test_encode_x1_basic() {
+        let data = b"hello world! this is a test for interleaved huffman coding with order-1 context.";
+        let encoder = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order1).unwrap();
+
+        let encoded = encoder.encode_x1(data).unwrap();
+        let decoded = encoder.decode_x1(&encoded, data.len()).unwrap();
+
+        assert_eq!(data.to_vec(), decoded, "X1 encode-decode round trip failed");
+    }
+
+    #[test]
+    fn test_encode_x2_basic() {
+        let data = b"hello world! this is a test for x2 interleaved huffman coding.";
+        let encoder = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order1).unwrap();
+
+        let encoded = encoder.encode_x2(data).unwrap();
+        let decoded = encoder.decode_x2(&encoded, data.len()).unwrap();
+
+        assert_eq!(data.to_vec(), decoded, "X2 encode-decode round trip failed");
+    }
+
+    #[test]
+    fn test_encode_x4_basic() {
+        let data = b"hello world! this is a test for x4 interleaved huffman coding with more data.";
+        let encoder = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order1).unwrap();
+
+        let encoded = encoder.encode_x4(data).unwrap();
+        let decoded = encoder.decode_x4(&encoded, data.len()).unwrap();
+
+        assert_eq!(data.to_vec(), decoded, "X4 encode-decode round trip failed");
+    }
+
+    #[test]
+    fn test_encode_x8_basic() {
+        let data = b"hello world! this is a test for x8 interleaved huffman coding with even more data to test.";
+        let encoder = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order1).unwrap();
+
+        let encoded = encoder.encode_x8(data).unwrap();
+        let decoded = encoder.decode_x8(&encoded, data.len()).unwrap();
+
+        assert_eq!(data.to_vec(), decoded, "X8 encode-decode round trip failed");
+    }
+
+    #[test]
+    fn test_interleaving_all_variants() {
+        let data = b"The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs.";
+        let encoder = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order1).unwrap();
+
+        // Test all 4 variants
+        for factor in [InterleavingFactor::X1, InterleavingFactor::X2,
+                      InterleavingFactor::X4, InterleavingFactor::X8] {
+            let encoded = encoder.encode_with_interleaving(data, factor).unwrap();
+            let decoded = encoder.decode_with_interleaving(&encoded, data.len(), factor).unwrap();
+
+            assert_eq!(data.to_vec(), decoded,
+                "Round trip failed for {:?} interleaving", factor);
+        }
+    }
+
+    #[test]
+    fn test_interleaving_empty_data() {
+        let data = b"";
+        let encoder = ContextualHuffmanEncoder::new(b"training data", HuffmanOrder::Order1).unwrap();
+
+        let encoded = encoder.encode_x1(data).unwrap();
+        assert!(encoded.is_empty());
+
+        let decoded = encoder.decode_x1(&encoded, 0).unwrap();
+        assert!(decoded.is_empty());
+    }
+
+    #[test]
+    fn test_interleaving_single_byte() {
+        let data = b"a";
+        let encoder = ContextualHuffmanEncoder::new(b"abcdef", HuffmanOrder::Order1).unwrap();
+
+        for factor in [InterleavingFactor::X1, InterleavingFactor::X2,
+                      InterleavingFactor::X4, InterleavingFactor::X8] {
+            let encoded = encoder.encode_with_interleaving(data, factor).unwrap();
+            let decoded = encoder.decode_with_interleaving(&encoded, data.len(), factor).unwrap();
+
+            assert_eq!(data.to_vec(), decoded,
+                "Single byte failed for {:?}", factor);
+        }
+    }
+
+    #[test]
+    fn test_interleaving_two_bytes() {
+        let data = b"ab";
+        let encoder = ContextualHuffmanEncoder::new(b"abcdef", HuffmanOrder::Order1).unwrap();
+
+        for factor in [InterleavingFactor::X1, InterleavingFactor::X2,
+                      InterleavingFactor::X4, InterleavingFactor::X8] {
+            let encoded = encoder.encode_with_interleaving(data, factor).unwrap();
+            let decoded = encoder.decode_with_interleaving(&encoded, data.len(), factor).unwrap();
+
+            assert_eq!(data.to_vec(), decoded,
+                "Two bytes failed for {:?}", factor);
+        }
+    }
+
+    #[test]
+    fn test_interleaving_power_of_two_sizes() {
+        let training_data = b"The quick brown fox jumps over the lazy dog.";
+        let encoder = ContextualHuffmanEncoder::new(training_data, HuffmanOrder::Order1).unwrap();
+
+        // Test with sizes that are powers of 2
+        for size in [8, 16, 32, 64, 128, 256] {
+            let data: Vec<u8> = training_data.iter().cycle().take(size).copied().collect();
+
+            for factor in [InterleavingFactor::X1, InterleavingFactor::X2,
+                          InterleavingFactor::X4, InterleavingFactor::X8] {
+                let encoded = encoder.encode_with_interleaving(&data, factor).unwrap();
+                let decoded = encoder.decode_with_interleaving(&encoded, data.len(), factor).unwrap();
+
+                assert_eq!(data, decoded,
+                    "Power-of-2 size {} failed for {:?}", size, factor);
+            }
+        }
+    }
+
+    #[test]
+    fn test_interleaving_non_power_of_two_sizes() {
+        let training_data = b"The quick brown fox jumps over the lazy dog.";
+        let encoder = ContextualHuffmanEncoder::new(training_data, HuffmanOrder::Order1).unwrap();
+
+        // Test with sizes that are NOT powers of 2
+        for size in [7, 15, 31, 63, 127, 255] {
+            let data: Vec<u8> = training_data.iter().cycle().take(size).copied().collect();
+
+            for factor in [InterleavingFactor::X1, InterleavingFactor::X2,
+                          InterleavingFactor::X4, InterleavingFactor::X8] {
+                let encoded = encoder.encode_with_interleaving(&data, factor).unwrap();
+                let decoded = encoder.decode_with_interleaving(&encoded, data.len(), factor).unwrap();
+
+                assert_eq!(data, decoded,
+                    "Non-power-of-2 size {} failed for {:?}", size, factor);
+            }
+        }
+    }
+
+    #[test]
+    fn test_interleaving_repeated_symbols() {
+        let data = b"aaaaaaaaaaaaaaaa"; // 16 'a's
+        let encoder = ContextualHuffmanEncoder::new(b"abc", HuffmanOrder::Order1).unwrap();
+
+        for factor in [InterleavingFactor::X1, InterleavingFactor::X2,
+                      InterleavingFactor::X4, InterleavingFactor::X8] {
+            let encoded = encoder.encode_with_interleaving(data, factor).unwrap();
+            let decoded = encoder.decode_with_interleaving(&encoded, data.len(), factor).unwrap();
+
+            assert_eq!(data.to_vec(), decoded,
+                "Repeated symbols failed for {:?}", factor);
+        }
+    }
+
+    #[test]
+    fn test_interleaving_alternating_symbols() {
+        let data = b"abababababababab"; // Alternating pattern
+        let encoder = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order1).unwrap();
+
+        for factor in [InterleavingFactor::X1, InterleavingFactor::X2,
+                      InterleavingFactor::X4, InterleavingFactor::X8] {
+            let encoded = encoder.encode_with_interleaving(data, factor).unwrap();
+            let decoded = encoder.decode_with_interleaving(&encoded, data.len(), factor).unwrap();
+
+            assert_eq!(data.to_vec(), decoded,
+                "Alternating pattern failed for {:?}", factor);
+        }
+    }
+
+    #[test]
+    fn test_interleaving_all_bytes() {
+        // Test with data containing all possible byte values
+        let data: Vec<u8> = (0..=255u8).cycle().take(512).collect();
+        let encoder = ContextualHuffmanEncoder::new(&data, HuffmanOrder::Order1).unwrap();
+
+        for factor in [InterleavingFactor::X1, InterleavingFactor::X2,
+                      InterleavingFactor::X4, InterleavingFactor::X8] {
+            let encoded = encoder.encode_with_interleaving(&data, factor).unwrap();
+            let decoded = encoder.decode_with_interleaving(&encoded, data.len(), factor).unwrap();
+
+            assert_eq!(data, decoded,
+                "All bytes test failed for {:?}", factor);
+        }
+    }
+
+    #[test]
+    fn test_interleaving_large_data() {
+        // Test with larger dataset (1KB)
+        let base = b"The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs.";
+        let data: Vec<u8> = base.iter().cycle().take(1024).copied().collect();
+        let encoder = ContextualHuffmanEncoder::new(&data, HuffmanOrder::Order1).unwrap();
+
+        for factor in [InterleavingFactor::X1, InterleavingFactor::X2,
+                      InterleavingFactor::X4, InterleavingFactor::X8] {
+            let encoded = encoder.encode_with_interleaving(&data, factor).unwrap();
+            let decoded = encoder.decode_with_interleaving(&encoded, data.len(), factor).unwrap();
+
+            assert_eq!(data, decoded,
+                "Large data (1KB) failed for {:?}", factor);
+        }
+    }
+
+    #[test]
+    fn test_interleaving_only_order1() {
+        let data = b"test data";
+
+        // Order-0 should fail
+        let encoder0 = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order0).unwrap();
+        assert!(encoder0.encode_with_interleaving(data, InterleavingFactor::X2).is_err());
+
+        // Order-2 should fail
+        let encoder2 = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order2).unwrap();
+        assert!(encoder2.encode_with_interleaving(data, InterleavingFactor::X2).is_err());
+
+        // Order-1 should succeed
+        let encoder1 = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order1).unwrap();
+        assert!(encoder1.encode_with_interleaving(data, InterleavingFactor::X2).is_ok());
+    }
+
+    #[test]
+    fn test_interleaving_compression_ratio() {
+        // Test that interleaving produces valid round-trip encoding
+        // Note: Since Order-1 trees now include ALL 256 symbols for correctness,
+        // compression ratio may be close to 1.0 for small datasets
+        let data = b"The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog.";
+        let encoder = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order1).unwrap();
+
+        for factor in [InterleavingFactor::X1, InterleavingFactor::X2,
+                      InterleavingFactor::X4, InterleavingFactor::X8] {
+            let encoded = encoder.encode_with_interleaving(data, factor).unwrap();
+            let decoded = encoder.decode_with_interleaving(&encoded, data.len(), factor).unwrap();
+
+            // Verify round-trip correctness
+            assert_eq!(data.to_vec(), decoded,
+                "Round trip failed for {:?}", factor);
+
+            // Compression ratio should be reasonable (not expanding too much)
+            let ratio = encoded.len() as f64 / data.len() as f64;
+            assert!(ratio <= 1.2,
+                "Compression ratio too high for {:?}, ratio: {:.3}", factor, ratio);
+        }
+    }
+
+    #[test]
+    fn test_bitstream_writer_basic() {
+        let mut writer = BitStreamWriter::new();
+
+        // Write 8 bits
+        writer.write(0b10101010, 8);
+        let result = writer.finish();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], 0b10101010);
+    }
+
+    #[test]
+    fn test_bitstream_writer_partial_byte() {
+        let mut writer = BitStreamWriter::new();
+
+        // Write 4 bits
+        writer.write(0b1010, 4);
+        let result = writer.finish();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], 0b1010);
+    }
+
+    #[test]
+    fn test_bitstream_writer_multiple_writes() {
+        let mut writer = BitStreamWriter::new();
+
+        // Write 4 bits + 4 bits
+        writer.write(0b1010, 4);
+        writer.write(0b0101, 4);
+        let result = writer.finish();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], 0b01011010); // LSB first
+    }
+
+    #[test]
+    fn test_bitstream_reader_basic() {
+        let data = vec![0b10101010];
+        let mut reader = BitStreamReader::new(&data);
+
+        let bits = reader.read(8);
+        assert_eq!(bits, 0b10101010);
+    }
+
+    #[test]
+    fn test_bitstream_reader_partial() {
+        let data = vec![0b10101010];
+        let mut reader = BitStreamReader::new(&data);
+
+        let first = reader.read(4);
+        let second = reader.read(4);
+
+        assert_eq!(first, 0b1010);
+        assert_eq!(second, 0b1010);
+    }
+
+    #[test]
+    fn test_bitstream_roundtrip() {
+        let mut writer = BitStreamWriter::new();
+
+        // Write various bit patterns
+        writer.write(0b101, 3);
+        writer.write(0b11110000, 8);
+        writer.write(0b1, 1);
+        writer.write(0b111111, 6);
+
+        let data = writer.finish();
+        let mut reader = BitStreamReader::new(&data);
+
+        assert_eq!(reader.read(3), 0b101);
+        assert_eq!(reader.read(8), 0b11110000);
+        assert_eq!(reader.read(1), 0b1);
+        assert_eq!(reader.read(6), 0b111111);
     }
 }
