@@ -1,15 +1,19 @@
-//! High-performance hash map implementation
+//! High-performance hash map implementations
+//!
+//! This module provides two production-grade hash map implementations:
+//!
+//! # ZiporaHashMap
 //!
 //! **ZiporaHashMap**: Single, highly optimized hash map implementation with
 //! strategy-based configuration for different use cases. Inspired by referenced project's
 //! focused implementation philosophy.
 //!
-//! # Performance-First Design
+//! ## Performance-First Design
 //!
 //! Following referenced project's approach: **"One excellent implementation per data structure"**
 //! instead of maintaining multiple separate implementations.
 //!
-//! # Examples
+//! ## Examples
 //!
 //! ```rust
 //! use zipora::hash_map::{ZiporaHashMap, ZiporaHashMapConfig};
@@ -23,29 +27,53 @@
 //! let mut cache_map: ZiporaHashMap<&str, &str, RandomState> = ZiporaHashMap::with_config(
 //!     ZiporaHashMapConfig::cache_optimized()
 //! ).unwrap();
+//! ```
 //!
-//! // String-optimized with interning and SIMD
-//! let mut str_map: ZiporaHashMap<&str, &str, RandomState> = ZiporaHashMap::with_config(
-//!     ZiporaHashMapConfig::string_optimized()
-//! ).unwrap();
+//! # GoldHashMap
 //!
-//! // Small inline storage for ≤N elements
-//! let mut small_map: ZiporaHashMap<&str, &str, RandomState> = ZiporaHashMap::with_config(
-//!     ZiporaHashMapConfig::small_inline(8)
-//! ).unwrap();
+//! **GoldHashMap**: High-performance hash table inspired by Terark's gold_hash_map,
+//! featuring link-based collision resolution, configurable link types (u32/u64),
+//! optional hash caching, and efficient freelist management.
 //!
-//! // High-performance concurrent with memory pool
-//! let pool = zipora::memory::SecureMemoryPool::new(
-//!     zipora::memory::SecurePoolConfig::small_secure()
-//! ).expect("Failed to create memory pool");
-//! let mut concurrent_map: ZiporaHashMap<&str, &str, RandomState> = ZiporaHashMap::with_config(
-//!     ZiporaHashMapConfig::concurrent_pool(pool)
-//! ).unwrap();
+//! ## Key Features
+//!
+//! - **Custom Link Types**: Use u32 for memory efficiency or u64 for massive maps
+//! - **Fast/Safe Iteration**: Choose between fast (no checks) or safe (skip deleted) modes
+//! - **Hash Caching**: Optional hash value caching to reduce recomputation
+//! - **Freelist Management**: Efficient slot reuse for high-churn workloads
+//! - **Auto GC**: Automatic garbage collection of deleted entries
+//! - **Configurable Load Factor**: Fine-tune performance vs memory tradeoff
+//!
+//! ## Examples
+//!
+//! ```rust
+//! use zipora::hash_map::{GoldHashMap, GoldHashMapConfig};
+//!
+//! // Basic usage with default configuration
+//! let mut map = GoldHashMap::<String, i32>::new();
+//! map.insert("hello".to_string(), 42);
+//! assert_eq!(map.get(&"hello".to_string()), Some(&42));
+//!
+//! // Small map with hash caching
+//! let mut small_map = GoldHashMap::<i32, String>::with_config(
+//!     GoldHashMapConfig::small()
+//! );
+//!
+//! // Large map with auto GC
+//! let mut large_map = GoldHashMap::<i32, i32, u64>::with_config(
+//!     GoldHashMapConfig::large()
+//! );
+//!
+//! // High-churn workload optimization
+//! let mut churn_map = GoldHashMap::<String, Vec<u8>>::with_config(
+//!     GoldHashMapConfig::high_churn()
+//! );
 //! ```
 
 // Core implementation modules
 mod zipora_hash_map;
 mod strategy_traits;
+mod gold_hash_map;
 
 // Utility modules (keep these as they're used by core implementation)
 mod hash_functions;
@@ -56,6 +84,12 @@ mod cache_locality;
 pub use zipora_hash_map::{
     ZiporaHashMap, ZiporaHashMapConfig, HashMapStats,
     HashStrategy, StorageStrategy, OptimizationStrategy,
+};
+
+// GoldHashMap - High-performance hash table with link-based collision resolution
+pub use gold_hash_map::{
+    GoldHashMap, GoldHashMapConfig, LinkType, IterationStrategy,
+    GoldHashMapIter,
 };
 
 // Strategy traits for advanced configuration
