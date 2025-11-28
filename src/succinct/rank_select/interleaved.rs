@@ -863,13 +863,18 @@ impl RankSelectInterleaved256 {
             return;
         }
 
-        // Use sequential prefetch for bulk operations
+        // Use sequential prefetch for bulk operations (SAFETY FIX v2.1.1: using slices)
         unsafe {
-            let base_ptr = self.lines.as_ptr().add(start_line) as *const u8;
+            // Convert the range of FastVec elements to a byte slice
+            let num_lines = end_line - start_line;
+            let slice_bytes = std::slice::from_raw_parts(
+                (&self.lines[start_line] as *const InterleavedLine) as *const u8,
+                num_lines * std::mem::size_of::<InterleavedLine>()
+            );
             let stride = std::mem::size_of::<InterleavedLine>();
-            let prefetch_count = (end_line - start_line).min(8); // Limit to 8 lines ahead
+            let prefetch_count = num_lines.min(8); // Limit to 8 lines ahead
 
-            strategy.sequential_prefetch(base_ptr, stride, prefetch_count);
+            strategy.sequential_prefetch(slice_bytes, stride, prefetch_count);
         }
     }
 }

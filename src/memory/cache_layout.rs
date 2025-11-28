@@ -292,21 +292,22 @@ impl CacheOptimizedAllocator {
     }
 
     /// Prefetch memory range for sequential access
-    pub fn prefetch_range(&self, start: *const u8, size: usize) {
-        if !self.config.enable_prefetch || size == 0 {
+    ///
+    /// SAFETY FIX (v2.1.1): Changed from raw pointer to slice to prevent pointer arithmetic overflow
+    pub fn prefetch_range(&self, data: &[u8]) {
+        if !self.config.enable_prefetch || data.is_empty() {
             return;
         }
 
         let distance = self.config.prefetch_distance;
         let cache_line_size = self.config.cache_line_size;
-        
-        // Prefetch in cache line increments
-        let mut addr = start;
-        let end = unsafe { start.add(size) };
+        let step_size = cache_line_size.min(distance);
 
-        while addr < end {
-            self.prefetch(addr, PrefetchHint::T0);
-            addr = unsafe { addr.add(cache_line_size.min(distance)) };
+        // Safe iteration - no pointer arithmetic overflow possible
+        for chunk in data.chunks(step_size) {
+            // SAFETY FIX (v2.1.1): Use chunk.as_ptr() to get actual data pointer,
+            // not &chunk[0] which creates temporary reference (stack address)
+            self.prefetch(chunk.as_ptr(), PrefetchHint::T0);
         }
     }
 
@@ -628,8 +629,14 @@ impl<T> CacheAlignedVec<T> {
         if matches!(self.access_pattern, AccessPattern::Sequential) {
             let len = self.data.len();
             if len > 0 && len % 8 == 0 { // Every 8 elements (cache line worth)
-                let addr = self.data.as_ptr() as *const u8;
-                self.allocator.prefetch_range(addr, mem::size_of::<T>() * len);
+                // SAFETY: Convert T slice to u8 slice for prefetching
+                let byte_slice = unsafe {
+                    std::slice::from_raw_parts(
+                        self.data.as_ptr() as *const u8,
+                        mem::size_of::<T>() * len
+                    )
+                };
+                self.allocator.prefetch_range(byte_slice);
             }
         }
     }
@@ -655,9 +662,14 @@ impl<T> CacheAlignedVec<T> {
             
             // Prefetch the entire range
             if !slice.is_empty() {
-                let addr = slice.as_ptr() as *const u8;
-                let size = slice.len() * mem::size_of::<T>();
-                self.allocator.prefetch_range(addr, size);
+                // SAFETY: Convert T slice to u8 slice for prefetching
+                let byte_slice = unsafe {
+                    std::slice::from_raw_parts(
+                        slice.as_ptr() as *const u8,
+                        slice.len() * mem::size_of::<T>()
+                    )
+                };
+                self.allocator.prefetch_range(byte_slice);
             }
             
             Some(slice)
@@ -781,9 +793,9 @@ mod tests {
         
         // Test single prefetch
         allocator.prefetch(data.as_ptr(), PrefetchHint::T0);
-        
+
         // Test range prefetch
-        allocator.prefetch_range(data.as_ptr(), data.len());
+        allocator.prefetch_range(&data);
         
         // Should not panic - these are essentially no-ops on unsupported platforms
     }

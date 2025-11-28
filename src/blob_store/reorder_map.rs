@@ -228,6 +228,17 @@ impl ZReorderMap {
         header.copy_from_slice(&self.mmap[0..8]);
         self.size = u64::from_le_bytes(header) as usize;
 
+        // SECURITY FIX (v2.1.1): Validate size to prevent DoS attacks
+        // Note: ZReorderMap uses RLE compression, so actual file size can be much smaller
+        // than the number of elements. We validate against an upper bound instead.
+        const MAX_REASONABLE_SIZE: usize = usize::MAX / 100;
+        if self.size > MAX_REASONABLE_SIZE {
+            return Err(ZiporaError::invalid_data(format!(
+                "ZReorderMap size {} exceeds reasonable limit {}",
+                self.size, MAX_REASONABLE_SIZE
+            )));
+        }
+
         // Read sign
         header.copy_from_slice(&self.mmap[8..16]);
         self.sign = i64::from_le_bytes(header);
