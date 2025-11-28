@@ -46,7 +46,7 @@ parking_lot = "0.12"
 
 # Compression (optional)
 zstd = { version = "0.13.2", optional = true }
-lz4_flex = { version = "0.11", optional = true }
+lz4_flex = { version = "0.12", optional = true }
 
 # Serialization (optional)
 serde = { version = "1.0", features = ["derive"], optional = true }
