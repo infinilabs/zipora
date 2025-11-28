@@ -287,25 +287,26 @@ impl SimdMemOps {
     }
 
     /// Prefetch memory range for sequential access
-    /// 
+    ///
     /// # Performance
     /// Issues prefetch hints for an entire memory range, optimized for sequential access patterns.
     /// Automatically adjusts prefetch distance based on cache configuration.
-    pub fn prefetch_range(&self, start: *const u8, size: usize) {
-        if !self.cache_config.enable_prefetch || size == 0 {
+    ///
+    /// SAFETY FIX (v2.1.1): Changed from raw pointer to slice to prevent pointer arithmetic overflow
+    pub fn prefetch_range(&self, data: &[u8]) {
+        if !self.cache_config.enable_prefetch || data.is_empty() {
             return;
         }
 
         let distance = self.cache_config.prefetch_distance;
         let cache_line_size = self.cache_config.cache_line_size;
-        
-        // Prefetch in cache line increments
-        let mut addr = start;
-        let end = unsafe { start.add(size) };
+        let step_size = cache_line_size.min(distance);
 
-        while addr < end {
-            self.prefetch(addr, PrefetchHint::T0);
-            addr = unsafe { addr.add(cache_line_size.min(distance)) };
+        // Safe iteration - no pointer arithmetic overflow possible
+        for chunk in data.chunks(step_size) {
+            // SAFETY FIX (v2.1.1): Use chunk.as_ptr() to get actual data pointer,
+            // not &chunk[0] which creates temporary reference (stack address)
+            self.prefetch(chunk.as_ptr(), PrefetchHint::T0);
         }
     }
 
@@ -328,7 +329,7 @@ impl SimdMemOps {
         // For large copies, use prefetching
         if src.len() >= self.cache_config.prefetch_distance && self.cache_config.enable_prefetch {
             // Prefetch source data ahead
-            self.prefetch_range(src.as_ptr(), src.len());
+            self.prefetch_range(src);
             
             // Small delay to let prefetch take effect
             if src.len() >= MEDIUM_COPY_THRESHOLD {
@@ -356,8 +357,8 @@ impl SimdMemOps {
         // For large comparisons, prefetch both arrays
         let min_len = a.len().min(b.len());
         if min_len >= self.cache_config.prefetch_distance && self.cache_config.enable_prefetch {
-            self.prefetch_range(a.as_ptr(), a.len());
-            self.prefetch_range(b.as_ptr(), b.len());
+            self.prefetch_range(a);
+            self.prefetch_range(b);
         }
 
         self.compare(a, b)
@@ -1118,7 +1119,7 @@ pub fn fast_prefetch_range(data: &[u8]) {
     if data.is_empty() {
         return;
     }
-    get_global_simd_ops().prefetch_range(data.as_ptr(), data.len())
+    get_global_simd_ops().prefetch_range(data)
 }
 
 #[cfg(test)]
@@ -1429,17 +1430,18 @@ mod tests {
     #[test]
     fn test_prefetch_with_different_sizes() {
         let ops = SimdMemOps::new();
-        
+
         // Small data - should still work
         let small_data = vec![1u8; 32];
-        ops.prefetch_range(small_data.as_ptr(), small_data.len());
-        
+        ops.prefetch_range(&small_data);
+
         // Large data
         let large_data = vec![1u8; 8192];
-        ops.prefetch_range(large_data.as_ptr(), large_data.len());
-        
+        ops.prefetch_range(&large_data);
+
         // Empty data
-        ops.prefetch_range(std::ptr::null(), 0);
+        let empty: &[u8] = &[];
+        ops.prefetch_range(empty);
     }
 
     #[test]

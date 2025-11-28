@@ -413,7 +413,10 @@ impl LockFreeMemoryPool {
             ) {
                 Ok(_) => {
                     // Success! Update count and return pointer
-                    bin.count.fetch_sub(1, Ordering::Relaxed);
+                    // SAFETY FIX (v2.1.1): Use Release ordering to synchronize with head update
+                    // This ensures the count decrement is visible to other threads that observe
+                    // the new head value, preventing race conditions in high-contention scenarios
+                    bin.count.fetch_sub(1, Ordering::Release);
                     
                     if let Some(stats) = &self.stats {
                         stats.fast_allocs.fetch_add(1, Ordering::Relaxed);

@@ -107,9 +107,11 @@ impl ZipIntVec {
     /// * `mask` - Value mask
     /// * `min_val` - Minimum value offset
     /// * `idx` - Index to retrieve
+    ///
+    /// SAFETY FIX (v2.1.1): Now returns Result for bounds checking
     #[inline]
-    pub fn fast_get(data: &[u8], bits: usize, mask: usize, min_val: usize, idx: usize) -> usize {
-        min_val + UintVecMin0::fast_get(data, bits, mask, idx)
+    pub fn fast_get(data: &[u8], bits: usize, mask: usize, min_val: usize, idx: usize) -> crate::error::Result<usize> {
+        Ok(min_val + UintVecMin0::fast_get(data, bits, mask, idx)?)
     }
 
     /// Set value at index
@@ -529,7 +531,7 @@ mod tests {
                 vec.min_val(),
                 i,
             );
-            assert_eq!(val, 1000 + i);
+            assert_eq!(val.expect("fast_get should succeed"), 1000 + i);
         }
     }
 

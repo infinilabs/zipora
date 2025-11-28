@@ -384,14 +384,16 @@ impl PrefetchOps {
     }
 
     /// Bulk prefetch for sequential access patterns
-    pub fn prefetch_range(start: *const u8, length: usize) {
+    ///
+    /// SAFETY FIX (v2.1.1): Changed from raw pointer to slice to prevent pointer arithmetic overflow
+    pub fn prefetch_range(data: &[u8]) {
         const CACHE_LINE_SIZE: usize = 64;
-        let end = unsafe { start.add(length) };
-        let mut current = start;
 
-        while current < end {
-            Self::prefetch_read(current);
-            current = unsafe { current.add(CACHE_LINE_SIZE) };
+        // Safe iteration using chunks - no pointer arithmetic overflow possible
+        for chunk in data.chunks(CACHE_LINE_SIZE) {
+            // SAFETY FIX (v2.1.1): Use chunk.as_ptr() to get actual data pointer,
+            // not &chunk[0] which creates temporary reference (stack address)
+            Self::prefetch_read(chunk.as_ptr());
         }
     }
 }
@@ -416,21 +418,26 @@ impl CacheOps {
 
     /// Memory-efficient block processing with prefetching
     pub fn process_blocks<T, F>(
-        data: &[T], 
-        block_size: usize, 
+        data: &[T],
+        block_size: usize,
         mut processor: F
-    ) -> Result<()> 
+    ) -> Result<()>
     where
         F: FnMut(&[T]) -> Result<()>,
     {
-        for chunk in data.chunks(block_size) {
-            // Prefetch next chunk
-            if chunk.len() == block_size && chunk.as_ptr_range().end < data.as_ptr_range().end {
-                let next_chunk_ptr = unsafe { chunk.as_ptr().add(block_size) };
-                PrefetchOps::prefetch_range(
-                    next_chunk_ptr as *const u8, 
-                    block_size * std::mem::size_of::<T>()
-                );
+        for (i, chunk) in data.chunks(block_size).enumerate() {
+            // Prefetch next chunk (SAFETY FIX v2.1.1: using safe slice indexing)
+            let next_chunk_start = (i + 1) * block_size;
+            if next_chunk_start < data.len() {
+                let prefetch_len = std::cmp::min(block_size * std::mem::size_of::<T>(),
+                                                   (data.len() - next_chunk_start) * std::mem::size_of::<T>());
+                let next_chunk_bytes = unsafe {
+                    std::slice::from_raw_parts(
+                        data[next_chunk_start..].as_ptr() as *const u8,
+                        prefetch_len
+                    )
+                };
+                PrefetchOps::prefetch_range(next_chunk_bytes);
             }
 
             processor(chunk)?;

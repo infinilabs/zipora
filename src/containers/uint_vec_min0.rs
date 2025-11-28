@@ -175,24 +175,34 @@ impl UintVecMin0 {
 
     /// Fast get using static method (for use in hot loops)
     ///
-    /// # Safety
+    /// SAFETY FIX (v2.1.1): Added bounds checking to prevent out-of-bounds reads
     ///
-    /// Caller must ensure:
-    /// - `idx < num_elements`
-    /// - `bits <= 58`
-    /// - `data` has sufficient size
+    /// # Parameters
+    /// - `data` - Byte array containing packed values
+    /// - `bits` - Bits per value (must be <= 58)
+    /// - `mask` - Bit mask for extraction
+    /// - `idx` - Index to retrieve
+    ///
+    /// # Returns
+    /// Result containing the value, or error if bounds check fails
     #[inline]
-    pub fn fast_get(data: &[u8], bits: usize, mask: usize, idx: usize) -> usize {
+    pub fn fast_get(data: &[u8], bits: usize, mask: usize, idx: usize) -> Result<usize> {
         assert!(bits <= 58, "fast_get requires bits <= 58");
         let bit_idx = bits * idx;
         let byte_idx = bit_idx / 8;
 
-        // SAFETY: Caller ensures bounds
+        // SAFETY FIX: Validate we can read 8 bytes (size of usize)
+        let required_size = byte_idx + std::mem::size_of::<usize>();
+        if required_size > data.len() {
+            return Err(ZiporaError::out_of_bounds(idx, data.len()));
+        }
+
+        // SAFETY: Bounds checked above
         // Uses unaligned load since values may span cache lines
         let val = unsafe {
             std::ptr::read_unaligned(data.as_ptr().add(byte_idx) as *const usize)
         };
-        (val >> (bit_idx % 8)) & mask
+        Ok((val >> (bit_idx % 8)) & mask)
     }
 
     /// Internal fast get (bounds already checked)
@@ -829,7 +839,8 @@ mod tests {
 
         // Test static method
         for i in 0..100 {
-            let val = UintVecMin0::fast_get(vec.data(), vec.uintbits(), vec.uintmask(), i);
+            let val = UintVecMin0::fast_get(vec.data(), vec.uintbits(), vec.uintmask(), i)
+                .expect("fast_get should succeed for valid index");
             assert_eq!(val, i);
         }
     }

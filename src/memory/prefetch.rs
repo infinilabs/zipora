@@ -455,11 +455,13 @@ impl PrefetchStrategy {
     ///
     /// unsafe {
     ///     // Prefetch based on recent access pattern
-    ///     strategy.adaptive_prefetch(data.as_ptr() as *const u8, &[100, 200, 300, 400]);
+    ///     strategy.adaptive_prefetch(&data, &[100, 200, 300, 400]);
     /// }
     /// ```
-    pub unsafe fn adaptive_prefetch(&mut self, base: *const u8, access_pattern: &[usize]) {
-        if access_pattern.is_empty() || self.should_throttle() {
+    ///
+    /// SAFETY FIX (v2.1.1): Changed from raw pointer to slice to prevent pointer arithmetic overflow
+    pub fn adaptive_prefetch(&mut self, data: &[u8], access_pattern: &[usize]) {
+        if access_pattern.is_empty() || self.should_throttle() || data.is_empty() {
             return;
         }
 
@@ -481,24 +483,27 @@ impl PrefetchStrategy {
             }
 
             let locality = pat.optimal_locality();
+            let base = data.as_ptr();
 
             // Issue prefetches based on pattern
             match pat {
                 AccessPattern::Sequential { stride, .. } => {
                     unsafe {
-                        self.sequential_prefetch_internal(base, stride.unsigned_abs(), self.current_distance, locality);
+                        self.sequential_prefetch_internal_safe(data, stride.unsigned_abs(), self.current_distance, locality);
                     }
                 }
                 AccessPattern::Strided { stride, .. } => {
                     unsafe {
-                        self.sequential_prefetch_internal(base, stride.unsigned_abs(), self.current_distance, locality);
+                        self.sequential_prefetch_internal_safe(data, stride.unsigned_abs(), self.current_distance, locality);
                     }
                 }
                 AccessPattern::Random { .. } => {
-                    // Prefetch predicted addresses conservatively
+                    // Prefetch predicted addresses conservatively (with bounds checking)
                     for &addr in access_pattern.iter().rev().take(2) {
-                        unsafe {
-                            self.issue_prefetch(base.add(addr), locality);
+                        if addr < data.len() {
+                            unsafe {
+                                self.issue_prefetch(base.add(addr), locality);
+                            }
                         }
                     }
                 }
@@ -526,17 +531,19 @@ impl PrefetchStrategy {
     ///
     /// unsafe {
     ///     // Prefetch 8 cache lines ahead with 64-byte stride
-    ///     strategy.sequential_prefetch(data.as_ptr() as *const u8, 64, 8);
+    ///     strategy.sequential_prefetch(&data, 64, 8);
     /// }
     /// ```
-    pub unsafe fn sequential_prefetch(&mut self, base: *const u8, stride: usize, count: usize) {
-        if self.should_throttle() {
+    ///
+    /// SAFETY FIX (v2.1.1): Changed from raw pointer to slice to prevent pointer arithmetic overflow
+    pub fn sequential_prefetch(&mut self, data: &[u8], stride: usize, count: usize) {
+        if self.should_throttle() || data.is_empty() {
             return;
         }
 
         unsafe {
-            self.sequential_prefetch_internal(
-                base,
+            self.sequential_prefetch_internal_safe(
+                data,
                 stride,
                 count,
                 PrefetchLocality::NonTemporal,
@@ -566,10 +573,12 @@ impl PrefetchStrategy {
     ///         data.as_ptr().add(100) as *const u8,
     ///         data.as_ptr().add(500) as *const u8,
     ///     ];
-    ///     strategy.random_prefetch(&predicted_addrs);
+    ///     strategy.random_prefetch(&predicted_refs);
     /// }
     /// ```
-    pub unsafe fn random_prefetch(&mut self, addresses: &[*const u8]) {
+    ///
+    /// SAFETY FIX (v2.1.1): Changed from raw pointers to references to prevent invalid pointer usage
+    pub fn random_prefetch(&mut self, addresses: &[&u8]) {
         if addresses.is_empty() || self.should_throttle() {
             return;
         }
@@ -577,9 +586,9 @@ impl PrefetchStrategy {
         // Limit to max_degree prefetches to avoid pollution
         let limit = addresses.len().min(self.config.max_degree);
 
-        for &addr in addresses.iter().take(limit) {
+        for &addr_ref in addresses.iter().take(limit) {
             unsafe {
-                self.issue_prefetch(addr, PrefetchLocality::L1Temporal);
+                self.issue_prefetch(addr_ref as *const u8, PrefetchLocality::L1Temporal);
             }
         }
     }
@@ -631,6 +640,29 @@ impl PrefetchStrategy {
             let offset = stride * i;
             unsafe {
                 self.issue_prefetch(base.add(offset), locality);
+            }
+        }
+    }
+
+    #[inline]
+    unsafe fn sequential_prefetch_internal_safe(
+        &mut self,
+        data: &[u8],
+        stride: usize,
+        count: usize,
+        locality: PrefetchLocality,
+    ) {
+        let effective_count = count.min(self.config.max_degree);
+        let base = data.as_ptr();
+        let len = data.len();
+
+        for i in 1..=effective_count {
+            // SAFETY FIX (v2.1.1): bounds check before pointer arithmetic
+            let offset = stride.saturating_mul(i);
+            if offset < len {
+                unsafe {
+                    self.issue_prefetch(base.add(offset), locality);
+                }
             }
         }
     }
@@ -811,9 +843,11 @@ mod tests {
         let mut strategy = PrefetchStrategy::new(PrefetchConfig::sequential_optimized());
         let data: Vec<u64> = vec![0; 1000];
 
-        unsafe {
-            strategy.sequential_prefetch(data.as_ptr() as *const u8, 64, 8);
-        }
+        // SAFETY FIX (v2.1.1): Convert u64 vector to byte slice for safe API
+        let data_bytes = unsafe {
+            std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 8)
+        };
+        strategy.sequential_prefetch(data_bytes, 64, 8);
 
         // Should have issued prefetches
         assert!(strategy.metrics.prefetches_issued > 0);
@@ -824,10 +858,15 @@ mod tests {
         let mut strategy = PrefetchStrategy::new(PrefetchConfig::random_optimized());
         let data: Vec<u64> = vec![0; 1000];
 
-        unsafe {
+        {
+            // SAFETY FIX (v2.1.1): Create byte references from u64 data
+            // Convert u64 vector to byte slice, then take references
+            let data_bytes = unsafe {
+                std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 8)
+            };
             let addrs = [
-                data.as_ptr().add(10) as *const u8,
-                data.as_ptr().add(20) as *const u8,
+                &data_bytes[10 * 8],
+                &data_bytes[20 * 8],
             ];
             strategy.random_prefetch(&addrs);
         }
@@ -844,9 +883,11 @@ mod tests {
         // Sequential pattern
         let pattern = vec![0, 64, 128, 192, 256];
 
-        unsafe {
-            strategy.adaptive_prefetch(data.as_ptr() as *const u8, &pattern);
-        }
+        // SAFETY FIX (v2.1.1): Pass byte slice instead of raw pointer
+        let data_bytes = unsafe {
+            std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 8)
+        };
+        strategy.adaptive_prefetch(data_bytes, &pattern);
 
         // Should detect sequential pattern after enough samples
         if let Some(AccessPattern::Sequential { .. }) = strategy.metrics.current_pattern {
@@ -865,11 +906,14 @@ mod tests {
 
         let data: Vec<u64> = vec![0; 10000];
 
+        // SAFETY FIX (v2.1.1): Convert to byte slice for safe API
+        let data_bytes = unsafe {
+            std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 8)
+        };
+
         // Issue many prefetches to accumulate bandwidth
         for _ in 0..5000 {
-            unsafe {
-                strategy.sequential_prefetch(data.as_ptr() as *const u8, 64, 8);
-            }
+            strategy.sequential_prefetch(data_bytes, 64, 8);
         }
 
         // Wait for the 100ms+ interval to allow should_throttle() to calculate
