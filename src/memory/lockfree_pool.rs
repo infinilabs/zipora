@@ -54,20 +54,26 @@ const FAST_BIN_SIZES: &[usize] = &[
 #[derive(Debug)]
 #[repr(align(64))] // Cache line alignment to prevent false sharing
 struct LockFreeHead {
-    /// Atomic head pointer (as offset)
-    head: AtomicU32,
+    /// Atomic head pointer (packed: upper 32 bits = generation, lower 32 bits = offset)
+    ///
+    /// ABA-SAFE: The generation counter prevents the ABA problem by incrementing
+    /// on every CAS operation, ensuring that even if an offset value A→B→A matches,
+    /// the generation counter won't match, preventing use-after-free vulnerabilities.
+    head: AtomicU64,
     /// Atomic count of free items
     count: AtomicU32,
-    /// Padding to prevent false sharing
-    _padding: [u8; 64 - 8],
+    /// Padding to prevent false sharing (64 bytes total: 8 + 4 + 52 = 64)
+    _padding: [u8; 64 - 12],
 }
 
 impl LockFreeHead {
     fn new() -> Self {
         Self {
-            head: AtomicU32::new(LIST_TAIL),
+            // Initialize with generation = 0, offset = LIST_TAIL (0)
+            // This represents an empty list with initial generation counter
+            head: AtomicU64::new(LIST_TAIL as u64),
             count: AtomicU32::new(0),
-            _padding: [0; 64 - 8],
+            _padding: [0; 64 - 12],
         }
     }
 }
@@ -250,6 +256,28 @@ unsafe impl Send for LockFreeMemoryPool {}
 unsafe impl Sync for LockFreeMemoryPool {}
 
 impl LockFreeMemoryPool {
+    /// Pack offset and generation counter into a single u64
+    ///
+    /// Layout: [generation: u32 (upper 32 bits)][offset: u32 (lower 32 bits)]
+    ///
+    /// This packing enables ABA-safe lock-free operations by incrementing
+    /// the generation counter on every CAS, preventing the ABA problem where
+    /// a pointer value matches but points to different data.
+    #[inline]
+    fn pack_head(offset: u32, generation: u32) -> u64 {
+        ((generation as u64) << 32) | (offset as u64)
+    }
+
+    /// Unpack u64 into (offset, generation) tuple
+    ///
+    /// Returns: (offset: u32, generation: u32)
+    #[inline]
+    fn unpack_head(packed: u64) -> (u32, u32) {
+        let offset = (packed & 0xFFFFFFFF) as u32;
+        let generation = (packed >> 32) as u32;
+        (offset, generation)
+    }
+
     /// Create a new lock-free memory pool
     pub fn new(config: LockFreePoolConfig) -> Result<Self> {
         // Allocate backing memory region
@@ -391,23 +419,29 @@ impl LockFreeMemoryPool {
 
         // Try to pop from lock-free stack with CAS retry loop
         for retry in 0..self.config.max_cas_retries {
-            let current_head = bin.head.load(Ordering::Acquire);
-            
-            if current_head == LIST_TAIL {
+            // ABA-SAFE: Load packed value (offset + generation)
+            let packed = bin.head.load(Ordering::Acquire);
+            let (current_offset, current_gen) = Self::unpack_head(packed);
+
+            if current_offset == LIST_TAIL {
                 // Empty bin, need to allocate new memory
                 return self.allocate_new_block(size);
             }
 
             // Load next pointer from current head
             let next_offset = unsafe {
-                let current_ptr = self.offset_to_ptr(current_head)?;
+                let current_ptr = self.offset_to_ptr(current_offset)?;
                 *(current_ptr.as_ptr() as *const u32)
             };
 
+            // ABA-SAFE: Pack next offset with INCREMENTED generation counter
+            // This prevents ABA: even if offset A→B→A, generation won't match
+            let next_packed = Self::pack_head(next_offset, current_gen.wrapping_add(1));
+
             // Try to update head atomically
             match bin.head.compare_exchange_weak(
-                current_head,
-                next_offset,
+                packed,  // Compare full packed value (offset + generation)
+                next_packed,  // New packed value with incremented generation
                 Ordering::Release,
                 Ordering::Relaxed,
             ) {
@@ -417,13 +451,13 @@ impl LockFreeMemoryPool {
                     // This ensures the count decrement is visible to other threads that observe
                     // the new head value, preventing race conditions in high-contention scenarios
                     bin.count.fetch_sub(1, Ordering::Release);
-                    
+
                     if let Some(stats) = &self.stats {
                         stats.fast_allocs.fetch_add(1, Ordering::Relaxed);
                         stats.cas_successes.fetch_add(1, Ordering::Relaxed);
                     }
 
-                    return self.offset_to_ptr(current_head);
+                    return self.offset_to_ptr(current_offset);
                 }
                 Err(_) => {
                     // CAS failed, retry with backoff
@@ -446,26 +480,32 @@ impl LockFreeMemoryPool {
         let bin = &self.fast_bins[bin_index];
         let offset = self.ptr_to_offset(ptr)?;
 
-        // Try to push to lock-free stack with CAS retry loop  
+        // Try to push to lock-free stack with CAS retry loop
         for retry in 0..self.config.max_cas_retries {
-            let current_head = bin.head.load(Ordering::Acquire);
+            // ABA-SAFE: Load packed value (offset + generation)
+            let packed = bin.head.load(Ordering::Acquire);
+            let (current_offset, current_gen) = Self::unpack_head(packed);
 
-            // Store current head as next pointer in the block
+            // Store current OFFSET (not packed value) as next pointer in the block
+            // The next pointer only needs the offset, not the generation counter
             unsafe {
-                *(ptr.as_ptr() as *mut u32) = current_head;
+                *(ptr.as_ptr() as *mut u32) = current_offset;
             }
+
+            // ABA-SAFE: Pack new offset with INCREMENTED generation counter
+            let new_packed = Self::pack_head(offset, current_gen.wrapping_add(1));
 
             // Try to update head atomically
             match bin.head.compare_exchange_weak(
-                current_head,
-                offset,
+                packed,  // Compare full packed value (offset + generation)
+                new_packed,  // New packed value with incremented generation
                 Ordering::Release,
                 Ordering::Relaxed,
             ) {
                 Ok(_) => {
                     // Success! Update count
                     bin.count.fetch_add(1, Ordering::Relaxed);
-                    
+
                     if let Some(stats) = &self.stats {
                         stats.fast_deallocs.fetch_add(1, Ordering::Relaxed);
                         stats.cas_successes.fetch_add(1, Ordering::Relaxed);
@@ -628,11 +668,14 @@ impl LockFreeMemoryPool {
     /// Scalar fallback for finding free slot
     #[inline]
     fn find_free_slot_scalar(&self, bin: &LockFreeHead) -> Option<u32> {
-        let current_head = bin.head.load(Ordering::Acquire);
-        if current_head == LIST_TAIL {
+        // ABA-SAFE: Load packed value and extract offset
+        let packed = bin.head.load(Ordering::Acquire);
+        let (offset, _gen) = Self::unpack_head(packed);
+
+        if offset == LIST_TAIL {
             None
         } else {
-            Some(current_head)
+            Some(offset)
         }
     }
 
