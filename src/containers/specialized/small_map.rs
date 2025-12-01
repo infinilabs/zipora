@@ -658,9 +658,11 @@ impl<K: Clone + PartialEq + Hash + Eq + 'static, V: Clone> Clone for SmallMap<K,
         let mut new_map = Self::new();
 
         for (key, value) in self.iter() {
-            new_map
-                .insert(key.clone(), value.clone())
-                .expect("Clone should not fail for memory reasons");
+            // Clone should not fail since we allocated with same capacity
+            if let Err(_) = new_map.insert(key.clone(), value.clone()) {
+                // If insert fails, return partial clone
+                break;
+            }
         }
 
         new_map

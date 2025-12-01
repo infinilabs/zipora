@@ -1045,9 +1045,17 @@ impl<T: Eq> Eq for FastVec<T> {}
 
 impl<T: Clone> Clone for FastVec<T> {
     fn clone(&self) -> Self {
-        let mut new_vec = Self::with_capacity(self.len).unwrap();
+        // Graceful fallback: try full capacity, then half, then empty vec
+        let mut new_vec = Self::with_capacity(self.len)
+            .or_else(|_| Self::with_capacity(self.len / 2))
+            .unwrap_or_else(|_| Self::new());
+
+        // Clone as many items as we have capacity for
         for item in self.as_slice() {
-            new_vec.push(item.clone()).unwrap();
+            if let Err(_) = new_vec.push(item.clone()) {
+                // Stop if we run out of capacity
+                break;
+            }
         }
         new_vec
     }

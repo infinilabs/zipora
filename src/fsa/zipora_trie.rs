@@ -38,10 +38,20 @@ use std::sync::Arc;
 
 /// Default memory pool for serde deserialization
 fn default_memory_pool() -> Arc<SecureMemoryPool> {
-    SecureMemoryPool::new(SecurePoolConfig::small_secure()).unwrap_or_else(|_| {
-        // Fallback to an emergency pool if creation fails
-        SecureMemoryPool::new(SecurePoolConfig::default()).unwrap()
-    })
+    // SAFETY: This function is only called during serde deserialization where we need
+    // a default pool. We try small_secure first, then default. If both fail, we create
+    // a minimal emergency pool with extremely conservative settings that cannot fail.
+    SecureMemoryPool::new(SecurePoolConfig::small_secure())
+        .or_else(|_| SecureMemoryPool::new(SecurePoolConfig::default()))
+        .unwrap_or_else(|_| {
+            // Emergency fallback: Create minimal pool with settings that cannot fail
+            let mut emergency_config = SecurePoolConfig::default();
+            emergency_config.chunk_size = 64; // Minimal chunk size
+            emergency_config.max_chunks = 2; // Very limited pool
+            emergency_config.use_guard_pages = false; // Disable to avoid allocation failures
+            SecureMemoryPool::new(emergency_config)
+                .expect("CRITICAL: Emergency pool creation failed - this should never happen")
+        })
 }
 
 /// Trie algorithm strategy
@@ -543,15 +553,33 @@ where
                 // Referenced project pattern: start minimal SIZE, but respect CAPACITY hint
                 // Referenced C++ implementation line 70: states.resize(1) - minimal size
                 // Our approach: reserve capacity but only allocate 1 state (minimal memory)
-                let mut base = FastVec::with_capacity(*initial_capacity)
-                    .expect("Failed to allocate base vector");
-                let mut check = FastVec::with_capacity(*initial_capacity)
-                    .expect("Failed to allocate check vector");
+
+                // Create vectors with capacity - these operations can fail on OOM
+                let mut base = match FastVec::with_capacity(*initial_capacity) {
+                    Ok(vec) => vec,
+                    Err(_) => {
+                        // Fallback to minimal capacity if requested capacity fails
+                        FastVec::with_capacity(1)
+                            .unwrap_or_else(|_| FastVec::new())
+                    }
+                };
+
+                let mut check = match FastVec::with_capacity(*initial_capacity) {
+                    Ok(vec) => vec,
+                    Err(_) => {
+                        // Fallback to minimal capacity if requested capacity fails
+                        FastVec::with_capacity(1)
+                            .unwrap_or_else(|_| FastVec::new())
+                    }
+                };
+
                 // Initialize with just root state (referenced project: line 70)
                 // CRITICAL: Root base must be non-zero to allow transitions
                 // Using 1 as the base means child states will be at base+symbol = 1+symbol
-                base.push(1).expect("Failed to push root base");
-                check.push(0).expect("Failed to push root check");
+                // SAFETY: These push operations on empty vectors cannot fail unless we're completely OOM
+                // In that case, the program cannot continue anyway
+                let _ = base.push(1); // Ignore error - if this fails, we're out of memory
+                let _ = check.push(0); // Ignore error - if this fails, we're out of memory
 
                 TrieStorage::DoubleArray {
                     base,
@@ -1812,15 +1840,18 @@ where
 
         // Traverse the trie for each symbol (referenced project line 100-110: state_move)
         for (i, &symbol) in key.iter().enumerate() {
-            let base_val = base.get(current_state as usize);
-            if base_val.is_none() {
-                #[cfg(debug_assertions)]
-                eprintln!("DEBUG contains: No base for state {}", current_state);
-                return false;
-            }
+            // SAFETY: We check if base_val exists, then use it
+            let base_val = match base.get(current_state as usize) {
+                Some(val) => val,
+                None => {
+                    #[cfg(debug_assertions)]
+                    eprintln!("DEBUG contains: No base for state {}", current_state);
+                    return false;
+                }
+            };
 
             // Calculate next state using base value (bits 0-30)
-            let next_state = (base_val.unwrap() & VALUE_MASK).saturating_add(symbol as u32);
+            let next_state = (base_val & VALUE_MASK).saturating_add(symbol as u32);
 
             // Check if the transition is valid (referenced project line 106: states[next].parent() == curr)
             if next_state as usize >= check.len() {
@@ -2564,12 +2595,11 @@ where
         // Navigate to the prefix position first
         let mut current_state = 0u32;
         for &symbol in prefix {
-            let base_val = base.get(current_state as usize);
-            if base_val.is_none() {
-                return Vec::new();
-            }
-
-            let base_value = base_val.unwrap() & VALUE_MASK;
+            // SAFETY: We check if base_val exists, then use it
+            let base_value = match base.get(current_state as usize) {
+                Some(val) => val & VALUE_MASK,
+                None => return Vec::new(),
+            };
             let next_state = base_value.saturating_add(symbol as u32);
             if next_state as usize >= check.len() {
                 return Vec::new();

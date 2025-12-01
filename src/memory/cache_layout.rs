@@ -235,7 +235,8 @@ impl CacheOptimizedAllocator {
             self.cold_allocations.fetch_add(1, Ordering::Relaxed);
         }
 
-        Ok(NonNull::new(ptr).unwrap())
+        // SAFETY: Null check performed at lines 227-229 above
+        Ok(unsafe { NonNull::new_unchecked(ptr) })
     }
 
     /// Deallocate cache-aligned memory

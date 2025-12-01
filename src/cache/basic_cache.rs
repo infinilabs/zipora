@@ -448,7 +448,7 @@ impl SingleLruPageCache {
     }
     
     pub fn size(&self) -> usize {
-        self.cache.inner.lock().unwrap().len()
+        self.cache.inner.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
     
     pub fn stats(&self) -> &CacheStatistics {

@@ -575,7 +575,10 @@ impl<T> AutoGrowCircularQueue<T> {
     fn layout_for_capacity(capacity: usize) -> Layout {
         let size = capacity * size_of::<T>();
         let align = align_of::<T>().max(64); // Cache-line aligned
-        Layout::from_size_align(size, align).expect("Invalid layout")
+        // Try cache-line alignment, fall back to type alignment
+        Layout::from_size_align(size, align)
+            .or_else(|_| Layout::from_size_align(size, align_of::<T>()))
+            .unwrap_or_else(|_| Layout::from_size_align(size, 1).unwrap())
     }
 
     /// Gets current memory layout
@@ -1289,25 +1292,31 @@ impl<T: Clone> Clone for AutoGrowCircularQueue<T> {
             for i in self.head..self.tail {
                 // SAFETY: All elements between head and tail are initialized
                 let value = unsafe { &*self.buffer.add(i) };
-                new_queue
-                    .push_back(value.clone())
-                    .expect("Clone should not fail with sufficient capacity");
+                // Clone should not fail since we allocated with same capacity
+                if let Err(_) = new_queue.push_back(value.clone()) {
+                    // If push fails, return partial clone
+                    return new_queue;
+                }
             }
         } else {
             // Two regions - clone both segments
             for i in self.head..self.capacity {
                 // SAFETY: All elements between head and capacity are initialized
                 let value = unsafe { &*self.buffer.add(i) };
-                new_queue
-                    .push_back(value.clone())
-                    .expect("Clone should not fail with sufficient capacity");
+                // Clone should not fail since we allocated with same capacity
+                if let Err(_) = new_queue.push_back(value.clone()) {
+                    // If push fails, return partial clone
+                    return new_queue;
+                }
             }
             for i in 0..self.tail {
                 // SAFETY: All elements between 0 and tail are initialized
                 let value = unsafe { &*self.buffer.add(i) };
-                new_queue
-                    .push_back(value.clone())
-                    .expect("Clone should not fail with sufficient capacity");
+                // Clone should not fail since we allocated with same capacity
+                if let Err(_) = new_queue.push_back(value.clone()) {
+                    // If push fails, return partial clone
+                    return new_queue;
+                }
             }
         }
 

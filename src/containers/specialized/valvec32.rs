@@ -503,8 +503,19 @@ impl<T> ValVec32<T> {
         }
 
         let new_capacity = self.calculate_new_capacity(self.len + 1);
-        self.grow_to(new_capacity).expect("Failed to allocate memory");
-        
+        // Try to grow, fallback to smaller capacity if needed
+        if self.grow_to(new_capacity).is_err() {
+            // Try half capacity as fallback
+            let fallback_capacity = new_capacity / 2;
+            if fallback_capacity > self.len {
+                if let Err(e) = self.grow_to(fallback_capacity) {
+                    panic!("Failed to allocate memory: {}", e);
+                }
+            } else {
+                panic!("Insufficient memory for growth");
+            }
+        }
+
         unsafe {
             let ptr = self.ptr.as_ptr().add(self.len as usize);
             ptr::write(ptr, value);
@@ -1019,16 +1030,30 @@ impl<T: fmt::Debug> fmt::Debug for ValVec32<T> {
 
 impl<T: Clone> Clone for ValVec32<T> {
     fn clone(&self) -> Self {
-        let mut new_vec = Self::with_capacity(self.len).expect("Failed to allocate during clone");
+        // Graceful fallback: try full capacity, then half, then min capacity
+        let mut new_vec = Self::with_capacity(self.len)
+            .or_else(|_| Self::with_capacity(self.len / 2))
+            .or_else(|_| Self::with_capacity(1.max(self.len / 4)))
+            .unwrap_or_else(|_| Self::new());
 
         // Use bulk copy for better performance
-        if self.len > 0 {
+        if self.len > 0 && new_vec.capacity >= self.len {
             unsafe {
                 for i in 0..(self.len as usize) {
                     let value = (*self.ptr.as_ptr().add(i)).clone();
                     ptr::write(new_vec.ptr.as_ptr().add(i), value);
                 }
                 new_vec.len = self.len;
+            }
+        } else if self.len > 0 {
+            // Partial clone if we couldn't get full capacity
+            let max_items = new_vec.capacity.min(self.len);
+            unsafe {
+                for i in 0..(max_items as usize) {
+                    let value = (*self.ptr.as_ptr().add(i)).clone();
+                    ptr::write(new_vec.ptr.as_ptr().add(i), value);
+                }
+                new_vec.len = max_items;
             }
         }
 

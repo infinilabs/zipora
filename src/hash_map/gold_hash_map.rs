@@ -19,6 +19,7 @@
 //! assert_eq!(map.get(&"hello".to_string()), Some(&42));
 //! ```
 
+use crate::error::{Result, ZiporaError};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
@@ -223,7 +224,14 @@ where
     }
 
     /// Create GoldHashMap with custom configuration
-    pub fn with_config(config: GoldHashMapConfig) -> Self {
+    pub fn with_config(mut config: GoldHashMapConfig) -> Self {
+        // SAFETY FIX: Validate and clamp load_factor to prevent division by zero
+        // and other arithmetic issues. Valid range is (0.0, 1.0).
+        if config.load_factor <= 0.0 || config.load_factor >= 1.0 || !config.load_factor.is_finite() {
+            // Invalid load_factor (≤0, ≥1, NaN, or infinity) - use safe default
+            config.load_factor = 0.7;
+        }
+
         let cap = next_prime(config.initial_capacity.max(5));
         let max_load = (cap as f32 * config.load_factor) as usize;
 
@@ -243,10 +251,10 @@ where
     }
 
     /// Insert key-value pair, returns old value if key existed
-    pub fn insert(&mut self, key: K, value: V) -> Option<V> {
+    pub fn insert(&mut self, key: K, value: V) -> Result<Option<V>> {
         // Check if rehash needed before insertion
         if self.len >= self.max_load {
-            self.rehash(self.buckets.len() + 1);
+            self.rehash(self.buckets.len() + 1)?;
         }
 
         let hash = self.hash_key(&key);
@@ -260,13 +268,21 @@ where
                 // Update existing entry
                 let old = self.entries[idx].value.clone();
                 self.entries[idx].value = value;
-                return Some(old);
+                return Ok(Some(old));
             }
             link = self.entries[idx].link;
         }
 
         // Insert new entry
         let entry_idx = self.allocate_slot();
+
+        // SAFETY FIX: Check capacity before converting to link type
+        if entry_idx > L::MAX.as_usize() {
+            return Err(ZiporaError::resource_exhausted(
+                format!("HashMap entry index {} exceeds link type capacity (max {}). Consider using GoldHashMap<K, V, u64> for larger maps.",
+                        entry_idx, L::MAX.as_usize())
+            ));
+        }
 
         // Update entry data - either overwrite existing or push new
         if entry_idx < self.entries.len() {
@@ -285,7 +301,7 @@ where
 
         // Link into bucket chain (insert at head)
         self.buckets[bucket_idx] = L::from_usize(entry_idx)
-            .expect("Entry index exceeds link type capacity");
+            .expect("Capacity check above ensures this succeeds");
 
         // Update hash cache if enabled
         if let Some(ref mut cache) = self.hash_cache {
@@ -293,7 +309,7 @@ where
         }
 
         self.len += 1;
-        None
+        Ok(None)
     }
 
     /// Get reference to value by key
@@ -330,7 +346,7 @@ where
     }
 
     /// Remove key-value pair, returns value if existed
-    pub fn remove(&mut self, key: &K) -> Option<V> {
+    pub fn remove(&mut self, key: &K) -> Result<Option<V>> {
         let hash = self.hash_key(key);
         let bucket_idx = (hash as usize) % self.buckets.len();
 
@@ -357,15 +373,15 @@ where
 
                 // Auto GC if enabled and freelist too large
                 if self.config.enable_auto_gc && self.freelist_size > self.len / 2 {
-                    self.revoke_deleted();
+                    self.revoke_deleted()?;
                 }
 
-                return Some(old_value);
+                return Ok(Some(old_value));
             }
             prev = Some(idx);
             link = self.entries[idx].link;
         }
-        None
+        Ok(None)
     }
 
     /// Check if map contains key
@@ -435,9 +451,9 @@ where
 
     /// Compact the map by removing all deleted entries
     /// This will invalidate all indices but improve iteration performance
-    pub fn revoke_deleted(&mut self) {
+    pub fn revoke_deleted(&mut self) -> Result<()> {
         if self.freelist_size == 0 {
-            return;
+            return Ok(());
         }
 
         // Compact entries by removing deleted ones
@@ -468,7 +484,9 @@ where
         self.freelist_size = 0;
 
         // Rebuild bucket links
-        self.relink();
+        self.relink()?;
+
+        Ok(())
     }
 
     /// Enable or disable hash caching at runtime
@@ -493,12 +511,13 @@ where
     }
 
     /// Reserve capacity for at least `additional` more elements
-    pub fn reserve(&mut self, additional: usize) {
+    pub fn reserve(&mut self, additional: usize) -> Result<()> {
         let new_capacity = self.len + additional;
         if new_capacity > self.max_load {
             let new_buckets = next_prime((new_capacity as f32 / self.config.load_factor) as usize);
-            self.rehash(new_buckets);
+            self.rehash(new_buckets)?;
         }
+        Ok(())
     }
 
     // Internal: Allocate a slot (reuse from freelist or create new)
@@ -554,21 +573,23 @@ where
     }
 
     // Internal: Rehash to new bucket count
-    fn rehash(&mut self, new_size: usize) {
+    fn rehash(&mut self, new_size: usize) -> Result<()> {
         let new_size = next_prime(new_size.max(5));
         if new_size == self.buckets.len() {
-            return;
+            return Ok(());
         }
 
         self.buckets = vec![L::TAIL; new_size];
         self.max_load = (new_size as f32 * self.config.load_factor) as usize;
 
         // Relink all valid entries
-        self.relink();
+        self.relink()?;
+
+        Ok(())
     }
 
     // Internal: Rebuild all bucket links
-    fn relink(&mut self) {
+    fn relink(&mut self) -> Result<()> {
         // Clear buckets
         self.buckets.fill(L::TAIL);
 
@@ -583,9 +604,21 @@ where
 
                 let bucket_idx = (hash as usize) % self.buckets.len();
                 self.entries[i].link = self.buckets[bucket_idx];
-                self.buckets[bucket_idx] = L::from_usize(i).unwrap();
+
+                // SAFETY FIX: Check capacity before converting to link type
+                if i > L::MAX.as_usize() {
+                    return Err(ZiporaError::resource_exhausted(
+                        format!("HashMap entry index {} exceeds link type capacity (max {}). Consider using GoldHashMap<K, V, u64> for larger maps.",
+                                i, L::MAX.as_usize())
+                    ));
+                }
+
+                self.buckets[bucket_idx] = L::from_usize(i)
+                    .expect("Capacity check above ensures this succeeds");
             }
         }
+
+        Ok(())
     }
 
     // Internal: Hash a key
@@ -659,7 +692,7 @@ mod tests {
     #[test]
     fn test_basic_insert_get() {
         let mut map = GoldHashMap::<String, i32>::new();
-        map.insert("hello".to_string(), 42);
+        map.insert("hello".to_string(), 42).unwrap();
         assert_eq!(map.get(&"hello".to_string()), Some(&42));
         assert_eq!(map.len(), 1);
     }
@@ -667,8 +700,8 @@ mod tests {
     #[test]
     fn test_update_existing() {
         let mut map = GoldHashMap::<String, i32>::new();
-        assert_eq!(map.insert("key".to_string(), 1), None);
-        assert_eq!(map.insert("key".to_string(), 2), Some(1));
+        assert_eq!(map.insert("key".to_string(), 1).unwrap(), None);
+        assert_eq!(map.insert("key".to_string(), 2).unwrap(), Some(1));
         assert_eq!(map.get(&"key".to_string()), Some(&2));
         assert_eq!(map.len(), 1);
     }
@@ -676,8 +709,8 @@ mod tests {
     #[test]
     fn test_remove() {
         let mut map = GoldHashMap::<String, i32>::new();
-        map.insert("key".to_string(), 42);
-        assert_eq!(map.remove(&"key".to_string()), Some(42));
+        map.insert("key".to_string(), 42).unwrap();
+        assert_eq!(map.remove(&"key".to_string()).unwrap(), Some(42));
         assert_eq!(map.get(&"key".to_string()), None);
         assert_eq!(map.len(), 0);
         assert_eq!(map.deleted_count(), 1);
@@ -686,9 +719,9 @@ mod tests {
     #[test]
     fn test_iteration_safe() {
         let mut map = GoldHashMap::<i32, String>::new();
-        map.insert(1, "one".to_string());
-        map.insert(2, "two".to_string());
-        map.insert(3, "three".to_string());
+        map.insert(1, "one".to_string()).unwrap();
+        map.insert(2, "two".to_string()).unwrap();
+        map.insert(3, "three".to_string()).unwrap();
 
         let items: Vec<_> = map.iter().map(|(k, v)| (*k, v.clone())).collect();
         assert_eq!(items.len(), 3);
@@ -700,10 +733,10 @@ mod tests {
     #[test]
     fn test_iteration_with_deletions() {
         let mut map = GoldHashMap::<i32, String>::new();
-        map.insert(1, "one".to_string());
-        map.insert(2, "two".to_string());
-        map.insert(3, "three".to_string());
-        map.remove(&2);
+        map.insert(1, "one".to_string()).unwrap();
+        map.insert(2, "two".to_string()).unwrap();
+        map.insert(3, "three".to_string()).unwrap();
+        map.remove(&2).unwrap();
 
         let items: Vec<_> = map.iter().map(|(k, _)| *k).collect();
         assert_eq!(items.len(), 2);
@@ -715,8 +748,8 @@ mod tests {
     #[test]
     fn test_iteration_fast() {
         let mut map = GoldHashMap::<i32, String>::new();
-        map.insert(1, "one".to_string());
-        map.insert(2, "two".to_string());
+        map.insert(1, "one".to_string()).unwrap();
+        map.insert(2, "two".to_string()).unwrap();
 
         let items: Vec<_> = map.iter_fast().collect();
         assert_eq!(items.len(), 2);
@@ -729,7 +762,7 @@ mod tests {
             ..Default::default()
         };
         let mut map = GoldHashMap::<i32, String>::with_config(config);
-        map.insert(1, "one".to_string());
+        map.insert(1, "one".to_string()).unwrap();
         assert!(map.is_hash_cached());
     }
 
@@ -747,7 +780,7 @@ mod tests {
     fn test_link_type_u32() {
         let mut map = GoldHashMap::<i32, String, u32>::new();
         for i in 0..1000 {
-            map.insert(i, format!("value{}", i));
+            map.insert(i, format!("value{}", i)).unwrap();
         }
         assert_eq!(map.len(), 1000);
         for i in 0..1000 {
@@ -759,7 +792,7 @@ mod tests {
     fn test_link_type_u64() {
         let mut map = GoldHashMap::<i32, String, u64>::new();
         for i in 0..1000 {
-            map.insert(i, format!("value{}", i));
+            map.insert(i, format!("value{}", i)).unwrap();
         }
         assert_eq!(map.len(), 1000);
         for i in 0..1000 {
@@ -773,7 +806,7 @@ mod tests {
         let initial_capacity = map.capacity();
 
         for i in 0..100 {
-            map.insert(i, i * 2);
+            map.insert(i, i * 2).unwrap();
         }
 
         assert!(map.capacity() > initial_capacity);
@@ -786,17 +819,17 @@ mod tests {
     #[test]
     fn test_freelist_reuse() {
         let mut map = GoldHashMap::<i32, i32>::new();
-        map.insert(1, 10);
-        map.insert(2, 20);
-        map.insert(3, 30);
+        map.insert(1, 10).unwrap();
+        map.insert(2, 20).unwrap();
+        map.insert(3, 30).unwrap();
 
         let entries_count = map.entries.len();
 
-        map.remove(&1);
+        map.remove(&1).unwrap();
         assert_eq!(map.len(), 2);
         assert_eq!(map.deleted_count(), 1);
 
-        map.insert(4, 40);  // Should reuse slot from removed entry
+        map.insert(4, 40).unwrap();  // Should reuse slot from removed entry
         assert_eq!(map.len(), 3);
         assert_eq!(map.deleted_count(), 0);
         assert_eq!(map.entries.len(), entries_count);  // No new allocation
@@ -806,7 +839,7 @@ mod tests {
     fn test_large_dataset() {
         let mut map = GoldHashMap::<i32, i32>::new();
         for i in 0..10_000 {
-            map.insert(i, i);
+            map.insert(i, i).unwrap();
         }
         assert_eq!(map.len(), 10_000);
         for i in 0..10_000 {
@@ -817,7 +850,7 @@ mod tests {
     #[test]
     fn test_contains_key() {
         let mut map = GoldHashMap::<String, i32>::new();
-        map.insert("exists".to_string(), 42);
+        map.insert("exists".to_string(), 42).unwrap();
 
         assert!(map.contains_key(&"exists".to_string()));
         assert!(!map.contains_key(&"missing".to_string()));
@@ -826,8 +859,8 @@ mod tests {
     #[test]
     fn test_clear() {
         let mut map = GoldHashMap::<i32, i32>::new();
-        map.insert(1, 10);
-        map.insert(2, 20);
+        map.insert(1, 10).unwrap();
+        map.insert(2, 20).unwrap();
         assert_eq!(map.len(), 2);
 
         map.clear();
@@ -840,18 +873,18 @@ mod tests {
     fn test_revoke_deleted() {
         let mut map = GoldHashMap::<i32, i32>::new();
         for i in 0..10 {
-            map.insert(i, i * 10);
+            map.insert(i, i * 10).unwrap();
         }
 
         // Remove half the elements
         for i in 0..5 {
-            map.remove(&i);
+            map.remove(&i).unwrap();
         }
 
         assert_eq!(map.len(), 5);
         assert_eq!(map.deleted_count(), 5);
 
-        map.revoke_deleted();
+        map.revoke_deleted().unwrap();
 
         assert_eq!(map.len(), 5);
         assert_eq!(map.deleted_count(), 0);
@@ -872,12 +905,12 @@ mod tests {
 
         // Insert many elements
         for i in 0..100 {
-            map.insert(i, i);
+            map.insert(i, i).unwrap();
         }
 
         // Delete most of them to trigger auto GC
         for i in 0..80 {
-            map.remove(&i);
+            map.remove(&i).unwrap();
         }
 
         assert_eq!(map.len(), 20);
@@ -888,7 +921,7 @@ mod tests {
     #[test]
     fn test_get_mut() {
         let mut map = GoldHashMap::<String, i32>::new();
-        map.insert("key".to_string(), 42);
+        map.insert("key".to_string(), 42).unwrap();
 
         if let Some(value) = map.get_mut(&"key".to_string()) {
             *value = 100;
@@ -902,12 +935,12 @@ mod tests {
         let mut map = GoldHashMap::<i32, i32>::new();
         let initial_capacity = map.capacity();
 
-        map.reserve(1000);
+        map.reserve(1000).unwrap();
         assert!(map.capacity() > initial_capacity);
 
         // Should be able to insert without rehashing
         for i in 0..1000 {
-            map.insert(i, i);
+            map.insert(i, i).unwrap();
         }
     }
 
@@ -916,13 +949,13 @@ mod tests {
         let mut map = GoldHashMap::<i32, String>::new();
         assert!(!map.is_hash_cached());
 
-        map.insert(1, "one".to_string());
-        map.insert(2, "two".to_string());
+        map.insert(1, "one".to_string()).unwrap();
+        map.insert(2, "two".to_string()).unwrap();
 
         map.set_hash_caching(true);
         assert!(map.is_hash_cached());
 
-        map.insert(3, "three".to_string());
+        map.insert(3, "three".to_string()).unwrap();
         assert_eq!(map.get(&3), Some(&"three".to_string()));
 
         map.set_hash_caching(false);
@@ -942,7 +975,7 @@ mod tests {
         let mut map = GoldHashMap::<i32, i32>::with_config(config);
 
         for i in 0..40 {
-            map.insert(i, i);
+            map.insert(i, i).unwrap();
         }
 
         let lf = map.load_factor();

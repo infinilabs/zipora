@@ -256,7 +256,8 @@ impl MemoryPool {
     /// 2. **Unsafe assumptions**: Assumes all pointers in pool are valid without verification
     /// 3. **Memory corruption**: If pool is corrupted, this will crash or corrupt memory
     pub fn clear(&self) -> Result<()> {
-        let mut free_chunks = self.free_chunks.lock().unwrap();
+        let mut free_chunks = self.free_chunks.lock()
+            .map_err(|e| ZiporaError::resource_busy(format!("Free chunks mutex poisoned: {}", e)))?;
 
         while let Some(chunk_ptr) = free_chunks.pop_front() {
             // Safety: chunk_ptr came from our own allocation, so it's valid for deallocation
@@ -265,7 +266,8 @@ impl MemoryPool {
         }
 
         // Reset stats
-        let mut stats = self.stats.write().unwrap();
+        let mut stats = self.stats.write()
+            .map_err(|e| ZiporaError::resource_busy(format!("Stats RwLock poisoned: {}", e)))?;
         stats.chunks = 0;
         stats.available = 0;
 

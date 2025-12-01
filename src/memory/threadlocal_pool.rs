@@ -306,7 +306,10 @@ impl ThreadLocalCache {
 
         if let Some(global_pool) = self.global_pool.upgrade() {
             // Use the regular allocate method since we don't have bypass_cache
-            global_pool.allocate(size).map(|alloc| NonNull::new(alloc.as_ptr()).unwrap())
+            global_pool.allocate(size).and_then(|alloc| {
+                NonNull::new(alloc.as_ptr())
+                    .ok_or_else(|| ZiporaError::out_of_memory(size))
+            })
         } else {
             Err(ZiporaError::invalid_data("Global pool unavailable"))
         }
@@ -429,7 +432,8 @@ impl ThreadLocalMemoryPool {
     fn allocate_bypass_cache(&self, size: usize) -> Result<NonNull<u8>> {
         if let Some(ref global_pool) = self.global_pool {
             let secure_ptr = global_pool.allocate()?;
-            Ok(NonNull::new(secure_ptr.as_ptr()).unwrap())
+            NonNull::new(secure_ptr.as_ptr())
+                .ok_or_else(|| ZiporaError::out_of_memory(size))
         } else {
             // Fall back to system allocation
             let layout = Layout::from_size_align(size, 8)

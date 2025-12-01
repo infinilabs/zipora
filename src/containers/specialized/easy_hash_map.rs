@@ -68,7 +68,8 @@ where
     /// Create a new empty EasyHashMap
     pub fn new() -> Self {
         Self {
-            inner: ZiporaHashMap::new().expect("Failed to create ZiporaHashMap"),
+            // ZiporaHashMap::new() typically succeeds, but use unwrap_or_default for safety
+            inner: ZiporaHashMap::new().unwrap_or_default(),
             default_value: None,
             auto_grow: true,
             max_load_factor: 0.75,
@@ -78,7 +79,8 @@ where
     /// Create an EasyHashMap with a default value for missing keys
     pub fn with_default(default_value: V) -> Self {
         Self {
-            inner: ZiporaHashMap::new().expect("Failed to create ZiporaHashMap"),
+            // ZiporaHashMap::new() typically succeeds, but use unwrap_or_default for safety
+            inner: ZiporaHashMap::new().unwrap_or_default(),
             default_value: Some(default_value),
             auto_grow: true,
             max_load_factor: 0.75,
@@ -402,7 +404,10 @@ where
     /// Build the EasyHashMap
     pub fn build(self) -> EasyHashMap<K, V> {
         EasyHashMap {
-            inner: ZiporaHashMap::with_capacity(self.capacity).expect("Failed to create ZiporaHashMap with capacity"),
+            // Graceful fallback: try full capacity, then half, then default
+            inner: ZiporaHashMap::with_capacity(self.capacity)
+                .or_else(|_| ZiporaHashMap::with_capacity(self.capacity / 2))
+                .unwrap_or_default(),
             default_value: self.default_value,
             auto_grow: self.auto_grow,
             max_load_factor: self.max_load_factor,

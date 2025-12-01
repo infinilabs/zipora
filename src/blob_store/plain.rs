@@ -517,7 +517,7 @@ mod tests {
             let store_clone = Arc::clone(&store);
             let handle = thread::spawn(move || {
                 let data = format!("blob{}", i);
-                let mut store = store_clone.lock().unwrap();
+                let mut store = store_clone.lock().unwrap_or_else(|e| e.into_inner());
                 store.put(data.as_bytes()).unwrap()
             });
             handles.push(handle);
@@ -530,7 +530,7 @@ mod tests {
         }
 
         // Verify all blobs can be retrieved
-        let store = store.lock().unwrap();
+        let store = store.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(store.len(), 10);
 
         for (i, id) in ids.iter().enumerate() {
