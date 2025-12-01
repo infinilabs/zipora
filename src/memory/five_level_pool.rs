@@ -218,9 +218,12 @@ impl MemoryChunk {
         if data.is_null() {
             return Err(ZiporaError::resource_exhausted("Failed to allocate memory"));
         }
-        
+
+        // SAFETY: We checked data.is_null() above, so this is guaranteed to succeed
+        let non_null_data = unsafe { NonNull::new_unchecked(data) };
+
         Ok(Self {
-            data: NonNull::new(data).unwrap(),
+            data: non_null_data,
             size: 0,
             capacity,
         })
@@ -494,13 +497,15 @@ impl MutexBasedPool {
     
     fn alloc_from_fast_bin(&self, size: usize) -> Result<MemOffset> {
         let bin_index = (size / self.config.alignment) - 1;
-        
+
         if bin_index < self.free_lists.len() {
-            let mut head = self.free_lists[bin_index].lock().unwrap();
+            let mut head = self.free_lists[bin_index].lock()
+                .map_err(|e| ZiporaError::resource_busy(format!("Free list mutex poisoned: {}", e)))?;
             if !head.head.is_null() {
                 let offset = head.head;
                 unsafe {
-                    let memory = self.memory.lock().unwrap();
+                    let memory = self.memory.lock()
+                        .map_err(|e| ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e)))?;
                     let ptr = memory.offset_ptr(offset.to_usize()) as *mut u32;
                     head.head = MemOffset(*ptr);
                 }
@@ -509,9 +514,10 @@ impl MutexBasedPool {
                 return Ok(offset);
             }
         }
-        
+
         // Allocate from end
-        let mut memory = self.memory.lock().unwrap();
+        let mut memory = self.memory.lock()
+            .map_err(|e| ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e)))?;
         if !memory.can_allocate(size) {
             return Err(ZiporaError::resource_exhausted("Out of memory"));
         }
@@ -523,7 +529,8 @@ impl MutexBasedPool {
     
     fn alloc_from_skip_list(&self, size: usize) -> Result<MemOffset> {
         // For now, allocate from end
-        let mut memory = self.memory.lock().unwrap();
+        let mut memory = self.memory.lock()
+            .map_err(|e| ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e)))?;
         if !memory.can_allocate(size) {
             return Err(ZiporaError::resource_exhausted("Out of memory"));
         }
@@ -535,12 +542,14 @@ impl MutexBasedPool {
     
     fn free_to_fast_bin(&self, offset: MemOffset, size: usize) -> Result<()> {
         let bin_index = (size / self.config.alignment) - 1;
-        
+
         if bin_index < self.free_lists.len() {
-            let mut head = self.free_lists[bin_index].lock().unwrap();
-            
+            let mut head = self.free_lists[bin_index].lock()
+                .map_err(|e| ZiporaError::resource_busy(format!("Free list mutex poisoned: {}", e)))?;
+
             unsafe {
-                let memory = self.memory.lock().unwrap();
+                let memory = self.memory.lock()
+                    .map_err(|e| ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e)))?;
                 let ptr = memory.offset_ptr(offset.to_usize()) as *mut u32;
                 *ptr = head.head.0;
             }
@@ -548,22 +557,23 @@ impl MutexBasedPool {
             head.count += 1;
             self.fragment_size.fetch_add(size, Ordering::Relaxed);
         }
-        
+
         Ok(())
     }
     
     fn free_to_skip_list(&self, offset: MemOffset, size: usize) -> Result<()> {
         self.fragment_size.fetch_add(size, Ordering::Relaxed);
-        let mut huge_stats = self.huge_mutex.lock().unwrap();
+        let mut huge_stats = self.huge_mutex.lock()
+            .map_err(|e| ZiporaError::resource_busy(format!("Huge mutex poisoned: {}", e)))?;
         huge_stats.0 += size;
         huge_stats.1 += 1;
         Ok(())
     }
-    
+
     pub fn stats(&self) -> PoolStats {
-        let memory = self.memory.lock().unwrap();
-        let huge_stats = self.huge_mutex.lock().unwrap();
-        
+        let memory = self.memory.lock().unwrap_or_else(|e| e.into_inner());
+        let huge_stats = self.huge_mutex.lock().unwrap_or_else(|e| e.into_inner());
+
         PoolStats {
             total_capacity: memory.capacity,
             used_memory: memory.size,
@@ -641,7 +651,8 @@ impl LockFreePool {
                 
                 // Get next pointer from the free block
                 let next_head = unsafe {
-                    let memory = self.memory.lock().unwrap();
+                    let memory = self.memory.lock()
+                        .map_err(|e| ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e)))?;
                     let ptr = memory.offset_ptr(current_head as usize) as *const u32;
                     *ptr
                 };
@@ -665,18 +676,19 @@ impl LockFreePool {
                 }
             }
         }
-        
+
         // Fall back to mutex allocation
-        let mut memory = self.memory.lock().unwrap();
+        let mut memory = self.memory.lock()
+            .map_err(|e| ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e)))?;
         if !memory.can_allocate(size) {
             return Err(ZiporaError::resource_exhausted("Out of memory"));
         }
-        
+
         let offset = MemOffset::new(memory.size);
         memory.size += size;
         Ok(offset)
     }
-    
+
     fn free_to_fast_bin_lockfree(&self, offset: MemOffset, size: usize) -> Result<()> {
         let bin_index = (size / self.config.alignment) - 1;
         
@@ -686,10 +698,11 @@ impl LockFreePool {
             // Lock-free insertion
             loop {
                 let current_head = head.head.load(Ordering::Acquire);
-                
+
                 // Write next pointer into freed block
                 unsafe {
-                    let memory = self.memory.lock().unwrap();
+                    let memory = self.memory.lock()
+                        .map_err(|e| ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e)))?;
                     let ptr = memory.offset_ptr(offset.to_usize()) as *mut u32;
                     *ptr = current_head;
                 }
@@ -718,11 +731,12 @@ impl LockFreePool {
     }
     
     fn alloc_from_huge_mutex(&self, size: usize) -> Result<MemOffset> {
-        let mut memory = self.memory.lock().unwrap();
+        let mut memory = self.memory.lock()
+            .map_err(|e| ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e)))?;
         if !memory.can_allocate(size) {
             return Err(ZiporaError::resource_exhausted("Out of memory"));
         }
-        
+
         let offset = MemOffset::new(memory.size);
         memory.size += size;
         Ok(offset)
@@ -730,16 +744,17 @@ impl LockFreePool {
     
     fn free_to_huge_mutex(&self, offset: MemOffset, size: usize) -> Result<()> {
         self.fragment_size.fetch_add(size, Ordering::Relaxed);
-        let mut huge_stats = self.huge_mutex.lock().unwrap();
+        let mut huge_stats = self.huge_mutex.lock()
+            .map_err(|e| ZiporaError::resource_busy(format!("Huge mutex poisoned: {}", e)))?;
         huge_stats.0 += size;
         huge_stats.1 += 1;
         Ok(())
     }
-    
+
     pub fn stats(&self) -> PoolStats {
-        let memory = self.memory.lock().unwrap();
-        let huge_stats = self.huge_mutex.lock().unwrap();
-        
+        let memory = self.memory.lock().unwrap_or_else(|e| e.into_inner());
+        let huge_stats = self.huge_mutex.lock().unwrap_or_else(|e| e.into_inner());
+
         PoolStats {
             total_capacity: memory.capacity,
             used_memory: memory.size,

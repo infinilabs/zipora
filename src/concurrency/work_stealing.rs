@@ -120,7 +120,7 @@ impl WorkStealingQueue {
 
     /// Push a task to the local queue
     pub fn push_local(&self, task: Box<dyn Task>) -> Result<()> {
-        let mut queue = self.local_queue.lock().unwrap();
+        let mut queue = self.local_queue.lock().unwrap_or_else(|e| e.into_inner());
 
         if queue.len() >= self.capacity {
             return Err(ZiporaError::configuration("local queue full"));
@@ -140,18 +140,18 @@ impl WorkStealingQueue {
     /// Pop a task from the local queue (highest priority first)
     pub fn pop_local(&self) -> Option<Box<dyn Task>> {
         // Pop from front since tasks are sorted by priority (highest first)
-        self.local_queue.lock().unwrap().pop_front()
+        self.local_queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front()
     }
 
     /// Steal a task from this queue (FIFO for load balancing)
     pub fn steal(&self) -> Option<Box<dyn Task>> {
         // First try the steal queue
-        if let Some(task) = self.steal_queue.lock().unwrap().pop_front() {
+        if let Some(task) = self.steal_queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front() {
             return Some(task);
         }
 
         // Then try to steal from the local queue
-        let mut local_queue = self.local_queue.lock().unwrap();
+        let mut local_queue = self.local_queue.lock().unwrap_or_else(|e| e.into_inner());
         if local_queue.len() > 1 {
             // Only steal if there's more than one task
             // Try to find a stealable task from the back (lowest priority)
@@ -173,8 +173,8 @@ impl WorkStealingQueue {
 
     /// Move half of the local tasks to the steal queue
     pub fn balance(&self) {
-        let mut local_queue = self.local_queue.lock().unwrap();
-        let mut steal_queue = self.steal_queue.lock().unwrap();
+        let mut local_queue = self.local_queue.lock().unwrap_or_else(|e| e.into_inner());
+        let mut steal_queue = self.steal_queue.lock().unwrap_or_else(|e| e.into_inner());
 
         let local_len = local_queue.len();
         let steal_len = steal_queue.len();
@@ -197,7 +197,7 @@ impl WorkStealingQueue {
 
     /// Get the number of tasks in both queues
     pub fn len(&self) -> usize {
-        self.local_queue.lock().unwrap().len() + self.steal_queue.lock().unwrap().len()
+        self.local_queue.lock().unwrap_or_else(|e| e.into_inner()).len() + self.steal_queue.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Check if both queues are empty
@@ -321,7 +321,7 @@ impl WorkStealingExecutor {
 
         // Check if local queue has space and submit directly to global if not
         let can_use_local = {
-            let queue = self.queues[worker_id].local_queue.lock().unwrap();
+            let queue = self.queues[worker_id].local_queue.lock().unwrap_or_else(|e| e.into_inner());
             queue.len() < self.queues[worker_id].capacity
         };
 
@@ -334,7 +334,7 @@ impl WorkStealingExecutor {
             return Err(ZiporaError::configuration("local queue push failed"));
         } else {
             // Go straight to global queue with priority ordering
-            let mut global_queue = self.global_queue.lock().unwrap();
+            let mut global_queue = self.global_queue.lock().unwrap_or_else(|e| e.into_inner());
             if global_queue.len() < 10000 {
                 // Arbitrary limit
                 // Insert based on priority (highest first)
@@ -493,7 +493,7 @@ impl WorkStealingExecutor {
     /// Get the total number of queued tasks across all workers
     pub fn total_queued(&self) -> usize {
         let worker_tasks: usize = self.queues.iter().map(|q| q.len()).sum();
-        let global_tasks = self.global_queue.lock().unwrap().len();
+        let global_tasks = self.global_queue.lock().unwrap_or_else(|e| e.into_inner()).len();
         worker_tasks + global_tasks
     }
 

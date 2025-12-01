@@ -236,7 +236,7 @@ pub fn global_factory<T: Send + Sync + 'static>() -> &'static GlobalFactory<T> {
     
     // First, try to get an existing factory
     {
-        let factories = FACTORIES.lock().unwrap();
+        let factories = FACTORIES.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(factory_any) = factories.get(&type_id) {
             let factory = factory_any.downcast_ref::<GlobalFactory<T>>().unwrap();
             // Safety: The factory is stored in a static HashMap and lives for the entire program duration
@@ -246,7 +246,7 @@ pub fn global_factory<T: Send + Sync + 'static>() -> &'static GlobalFactory<T> {
     
     // If not found, create a new one
     {
-        let mut factories = FACTORIES.lock().unwrap();
+        let mut factories = FACTORIES.lock().unwrap_or_else(|e| e.into_inner());
         // Double-check pattern in case another thread created it while we were waiting for the lock
         if let Some(factory_any) = factories.get(&type_id) {
             let factory = factory_any.downcast_ref::<GlobalFactory<T>>().unwrap();

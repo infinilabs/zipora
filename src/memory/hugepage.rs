@@ -183,7 +183,9 @@ impl HugePage {
             page_size,
         };
 
-        HUGEPAGE_ALLOCATIONS.lock().unwrap().push(allocation);
+        HUGEPAGE_ALLOCATIONS.lock()
+            .map_err(|e| ZiporaError::resource_busy(format!("Hugepage allocations mutex poisoned: {}", e)))?
+            .push(allocation);
         HUGEPAGE_COUNT.fetch_add(aligned_size / page_size, Ordering::Relaxed);
 
         Ok(Self {
@@ -205,7 +207,7 @@ impl Drop for HugePage {
         }
 
         // Remove from tracking
-        let mut allocations = HUGEPAGE_ALLOCATIONS.lock().unwrap();
+        let mut allocations = HUGEPAGE_ALLOCATIONS.lock().unwrap_or_else(|e| e.into_inner());
         allocations.retain(|alloc| alloc.ptr != self.ptr.as_ptr());
 
         HUGEPAGE_COUNT.fetch_sub(aligned_size / self.page_size, Ordering::Relaxed);

@@ -68,11 +68,14 @@ impl SortableStrVec {
         // Estimate arena size: average 20 bytes per string + metadata
         let estimated_arena_size = capacity * 20;
         let arena_size = estimated_arena_size.max(4096); // Minimum 4KB
-        
+
         let mut vec = Self {
             arena: BumpArena::new(arena_size).unwrap_or_else(|_| {
                 // Fallback to smaller arena if allocation fails
-                BumpArena::new(4096).expect("Failed to allocate minimum arena")
+                BumpArena::new(4096)
+                    .or_else(|_| BumpArena::new(1024))
+                    .or_else(|_| BumpArena::new(512))
+                    .unwrap_or_else(|_| BumpArena::new(256).unwrap_or_else(|_| panic!("Cannot allocate even minimal arena")))
             }),
             strings: Vec::with_capacity(capacity),
             sorted_indices: Vec::with_capacity(capacity),

@@ -34,7 +34,7 @@ impl SingleLruPageCache {
         self.stats.record_bytes_read(length as u64);
         
         let key = (file_id, offset);
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock().unwrap_or_else(|e| e.into_inner());
         
         if let Some(cached_data) = data.get(&key) {
             self.stats.record_hit(CacheHitType::Hit);
@@ -56,7 +56,7 @@ impl SingleLruPageCache {
     }
     
     pub fn size(&self) -> usize {
-        self.data.lock().unwrap().len()
+        self.data.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
     
     pub fn stats(&self) -> &CacheStatistics {

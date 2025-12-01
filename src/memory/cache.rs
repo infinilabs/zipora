@@ -253,7 +253,9 @@ fn numa_alloc<T>(layout: Layout, preferred_node: Option<NumaNode>) -> Result<Non
     if let Ok(mut pools) = NUMA_MANAGER.node_pools.lock() {
         let pool = pools.entry(node).or_insert_with(NumaMemoryPool::new);
         if let Ok(ptr) = pool.allocate(layout, node) {
-            return Ok(NonNull::new(ptr.as_ptr() as *mut T).unwrap());
+            let raw_ptr = ptr.as_ptr() as *mut T;
+            return NonNull::new(raw_ptr)
+                .ok_or_else(|| ZiporaError::out_of_memory(layout.size()));
         }
     }
 
@@ -269,7 +271,8 @@ fn numa_alloc<T>(layout: Layout, preferred_node: Option<NumaNode>) -> Result<Non
         bind_to_numa_node(ptr, layout.size(), node);
     }
 
-    Ok(NonNull::new(ptr as *mut T).unwrap())
+    // SAFETY: Null check performed at lines 263-265 above
+    Ok(unsafe { NonNull::new_unchecked(ptr as *mut T) })
 }
 
 /// NUMA node management
@@ -313,7 +316,9 @@ impl NumaMemoryPool {
         // Try to reuse from pool first
         if let Some(ptr_addr) = pool.pop() {
             self.hit_count.fetch_add(1, Ordering::Relaxed);
-            return Ok(NonNull::new(ptr_addr as *mut u8).unwrap());
+            let ptr = ptr_addr as *mut u8;
+            return NonNull::new(ptr)
+                .ok_or_else(|| ZiporaError::out_of_memory(layout.size()));
         }
 
         // Allocate new memory bound to NUMA node
@@ -329,7 +334,8 @@ impl NumaMemoryPool {
         self.allocated_bytes
             .fetch_add(layout.size(), Ordering::Relaxed);
 
-        Ok(NonNull::new(ptr).unwrap())
+        // SAFETY: Null check performed at lines 323-325 above
+        Ok(unsafe { NonNull::new_unchecked(ptr) })
     }
 
     fn deallocate(&mut self, ptr: NonNull<u8>, layout: Layout) {

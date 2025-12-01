@@ -734,7 +734,7 @@ mod tests {
                     };
 
                     // Store the result
-                    let mut results_guard = results_clone.lock().unwrap();
+                    let mut results_guard = results_clone.lock().unwrap_or_else(|e| e.into_inner());
                     results_guard.push((i, retrieved_msg));
                 }
             });
@@ -747,7 +747,7 @@ mod tests {
         }
 
         // Check that each thread got its own error message
-        let results_guard = results.lock().unwrap();
+        let results_guard = results.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(results_guard.len(), 3);
 
         // Check that we got the expected error messages (order may vary due to threading)

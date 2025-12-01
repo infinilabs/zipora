@@ -400,7 +400,8 @@ impl FixedCapacityMemoryPool {
         }
 
         // Use mutex to prevent race conditions during initialization
-        let mut initialized = self.init_mutex.lock().unwrap();
+        let mut initialized = self.init_mutex.lock()
+            .map_err(|e| ZiporaError::resource_busy(format!("Init mutex poisoned: {}", e)))?;
         if !*initialized {
             // Initialize memory using UnsafeCell for interior mutability
             self.allocate_backing_memory_internal()?;
@@ -515,7 +516,8 @@ impl FixedCapacityMemoryPool {
                 Ordering::Relaxed,
             ).is_ok() {
                 free_list.count.fetch_sub(1, Ordering::Relaxed);
-                return Ok(NonNull::new(block_ptr).unwrap());
+                return NonNull::new(block_ptr)
+                    .ok_or_else(|| ZiporaError::invalid_data("Null block pointer"));
             }
             
             // CAS failed, retry

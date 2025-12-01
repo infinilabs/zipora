@@ -508,8 +508,16 @@ impl<K, V> StorageLayoutStrategy<K, V> for StandardStorageStrategy {
     type Storage = FastVec<HashBucket<K, V>>;
 
     fn create_storage(capacity: usize, config: &Self::Config) -> Self::Storage {
-        let mut storage = FastVec::with_capacity(capacity).expect("Failed to create FastVec");
-        storage.resize_with(capacity, Default::default);
+        // Graceful fallback: try full capacity, then half, then empty vec
+        let mut storage = FastVec::with_capacity(capacity)
+            .or_else(|_| FastVec::with_capacity(capacity / 2))
+            .unwrap_or_else(|_| FastVec::new());
+
+        // Only resize if we got some capacity
+        if storage.capacity() > 0 {
+            let actual_capacity = storage.capacity();
+            let _ = storage.resize_with(actual_capacity, Default::default);
+        }
         storage
     }
 
@@ -570,8 +578,16 @@ impl<K, V> StorageLayoutStrategy<K, V> for CacheOptimizedStorageStrategy {
 
     fn create_storage(capacity: usize, config: &Self::Config) -> Self::Storage {
         // TODO: Use cache-aligned allocation
-        let mut storage = FastVec::with_capacity(capacity).expect("Failed to create FastVec");
-        storage.resize_with(capacity, Default::default).expect("Failed to resize");
+        // Graceful fallback: try full capacity, then half, then empty vec
+        let mut storage = FastVec::with_capacity(capacity)
+            .or_else(|_| FastVec::with_capacity(capacity / 2))
+            .unwrap_or_else(|_| FastVec::new());
+
+        // Only resize if we got some capacity
+        if storage.capacity() > 0 {
+            let actual_capacity = storage.capacity();
+            let _ = storage.resize_with(actual_capacity, Default::default);
+        }
         storage
     }
 

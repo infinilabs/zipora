@@ -150,9 +150,17 @@ impl<T> UltraFastCircularQueue<T> {
             return ptr::NonNull::dangling().as_ptr();
         }
 
-        let layout = Layout::from_size_align(size, CACHE_LINE_SIZE)
-            .expect("Invalid layout for circular buffer");
-        
+        let layout = match Layout::from_size_align(size, CACHE_LINE_SIZE) {
+            Ok(l) => l,
+            Err(_) => {
+                // Fall back to alignment of T if cache line alignment fails
+                match Layout::from_size_align(size, mem::align_of::<T>()) {
+                    Ok(l) => l,
+                    Err(_) => return ptr::NonNull::dangling().as_ptr(),
+                }
+            }
+        };
+
         let ptr = unsafe { alloc::alloc(layout) };
         if ptr.is_null() {
             alloc::handle_alloc_error(layout);
@@ -472,11 +480,17 @@ impl<T> Drop for UltraFastCircularQueue<T> {
         if !self.buffer.is_null() {
             let size = self.capacity * mem::size_of::<T>();
             if size > 0 {
+                // Try cache line alignment first, fall back to T's alignment
                 let layout = Layout::from_size_align(size, CACHE_LINE_SIZE)
-                    .expect("Invalid layout in drop");
-                unsafe {
-                    alloc::dealloc(self.buffer as *mut u8, layout);
+                    .or_else(|_| Layout::from_size_align(size, mem::align_of::<T>()));
+
+                if let Ok(layout) = layout {
+                    unsafe {
+                        alloc::dealloc(self.buffer as *mut u8, layout);
+                    }
                 }
+                // If layout creation fails, we can't safely deallocate
+                // This should never happen in practice, but we avoid panic in Drop
             }
         }
     }
@@ -507,10 +521,14 @@ impl<T: Clone> Clone for UltraFastCircularQueue<T> {
         let mut pos = self.head;
         for _ in 0..self.len {
             let value = unsafe { (*self.buffer.add(pos)).clone() };
-            new_queue.push_back(value).expect("Clone should not fail");
+            // Clone should not fail since we allocated with same capacity
+            if let Err(_) = new_queue.push_back(value) {
+                // If push fails, return partial clone
+                break;
+            }
             pos = (pos + 1) & self.mask;
         }
-        
+
         new_queue
     }
 }

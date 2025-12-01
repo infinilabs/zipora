@@ -347,13 +347,13 @@ impl ParallelTrieOps {
             // Generate all prefixes for this key
             for i in 1..=key.len() {
                 let prefix = key[..i].to_vec();
-                let mut counts = prefix_counts.lock().unwrap();
+                let mut counts = prefix_counts.lock().unwrap_or_else(|e| e.into_inner());
                 *counts.entry(prefix).or_insert(0) += 1;
             }
         });
 
         // Extract prefixes with sufficient support
-        let counts = prefix_counts.lock().unwrap();
+        let counts = prefix_counts.lock().unwrap_or_else(|e| e.into_inner());
         let mut common_prefixes: Vec<Vec<u8>> = counts
             .iter()
             .filter(|&(_, &count)| count >= min_support)
