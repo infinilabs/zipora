@@ -380,6 +380,7 @@ impl FastSearchEngine {
             self.build_rank_select_cache(data, target)?;
         }
 
+        // SAFETY: Either cache existed (!need_rebuild) or we just built it above
         let cache = self.rank_select_cache.as_ref().unwrap();
         let mut positions = Vec::new();
 
@@ -544,6 +545,7 @@ impl FastSearchEngine {
             self.build_rank_select_cache(data, target)?;
         }
 
+        // SAFETY: Either cache existed (!need_rebuild) or we just built it above
         let cache = self.rank_select_cache.as_ref().unwrap();
         Ok(cache.rank_select.rank1(cache.bit_vector.len()))
     }

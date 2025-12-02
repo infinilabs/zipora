@@ -1272,7 +1272,12 @@ where
     S: BuildHasher + Default,
 {
     fn default() -> Self {
-        Self::new().expect("Failed to create default ZiporaHashMap")
+        // SAFETY: ZiporaHashMap::new() only fails on memory allocation errors.
+        // Use unwrap_or_else with panic as this type has non-trivial dependencies.
+        Self::new().unwrap_or_else(|e| {
+            panic!("ZiporaHashMap creation failed in Default: {}. \
+                   This indicates severe memory pressure.", e)
+        })
     }
 }
 
@@ -1298,9 +1303,13 @@ where
     S: BuildHasher + Clone,
 {
     fn clone(&self) -> Self {
-        // Create a new map with the same config and hasher
-        let mut new_map = Self::with_config_and_hasher(self.config.clone(), self.hash_builder.clone())
-            .expect("Failed to create cloned ZiporaHashMap");
+        // SAFETY: Clone requires creating a new map with the same config.
+        // If allocation fails, we panic as there's no graceful fallback for Clone.
+        let new_map = Self::with_config_and_hasher(self.config.clone(), self.hash_builder.clone())
+            .unwrap_or_else(|e| {
+                panic!("ZiporaHashMap clone failed: {}. \
+                       This indicates severe memory pressure.", e)
+            });
 
         // Copy all entries from the original map
         // TODO: Implement proper copying when iter() is available

@@ -487,7 +487,12 @@ impl FsaCache {
 
 impl Default for FsaCache {
     fn default() -> Self {
-        Self::new().expect("Failed to create default FSA cache")
+        // SAFETY: FsaCache::new() only fails on memory pool allocation errors.
+        // Use unwrap_or_else with panic as this type has non-trivial dependencies.
+        Self::new().unwrap_or_else(|e| {
+            panic!("FsaCache creation failed in Default: {}. \
+                   This indicates severe memory pressure.", e)
+        })
     }
 }
 

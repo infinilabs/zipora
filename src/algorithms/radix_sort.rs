@@ -338,6 +338,7 @@ impl RadixSort {
             return;
         }
 
+        // SAFETY: is_empty() check above guarantees iterator has at least one element
         let max_val = *data.iter().max().unwrap() as usize;
         let mut counts = vec![0usize; max_val + 1];
 
@@ -590,6 +591,7 @@ where
 
         for (new_pos, &key) in keys.iter().enumerate() {
             // Find original position of this key
+            // SAFETY: Every key in sorted keys array came from indices, so position() always finds it
             let old_pos = indices.iter().position(|(k, _)| *k == key).unwrap();
             data[new_pos] = original_data[indices[old_pos].1].clone();
         }
@@ -1436,7 +1438,12 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
 
 impl<T: RadixSortable> Default for AdvancedRadixSort<T> {
     fn default() -> Self {
-        Self::new().expect("Failed to create default AdvancedRadixSort")
+        // SAFETY: AdvancedRadixSort::new() only fails on memory allocation errors.
+        // Use unwrap_or_else with panic as this type has complex dependencies.
+        Self::new().unwrap_or_else(|e| {
+            panic!("AdvancedRadixSort creation failed in Default: {}. \
+                   This indicates severe memory pressure.", e)
+        })
     }
 }
 

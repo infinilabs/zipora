@@ -173,6 +173,7 @@ impl MultiWayMerge {
 
         if sources.len() == 1 {
             // Single source - just collect all items
+            // SAFETY: len() == 1 check above guarantees exactly one element
             let mut source = sources.into_iter().next().unwrap();
             let mut result = Vec::new();
             while let Some(item) = source.next() {

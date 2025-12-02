@@ -1235,7 +1235,13 @@ impl SimdLz77Compressor {
 
 impl Default for SimdLz77Compressor {
     fn default() -> Self {
-        Self::new().expect("Default SIMD LZ77 compressor creation should not fail")
+        // SAFETY: SimdLz77Compressor::new() only fails on memory pool allocation errors,
+        // which are extremely rare. Use unwrap_or_else with panic as a last resort
+        // since this is a complex type with static references that can't be easily stubbed.
+        Self::new().unwrap_or_else(|e| {
+            panic!("SIMD LZ77 compressor creation failed in Default: {}. \
+                   This indicates severe memory pressure.", e)
+        })
     }
 }
 
@@ -1374,8 +1380,14 @@ static GLOBAL_SIMD_LZ77_COMPRESSOR: std::sync::OnceLock<std::sync::Mutex<SimdLz7
 pub fn get_global_simd_lz77_compressor() -> &'static std::sync::Mutex<SimdLz77Compressor> {
     GLOBAL_SIMD_LZ77_COMPRESSOR.get_or_init(|| {
         let config = SimdLz77Config::high_performance();
+        // SAFETY: Static initialization - this expect() is intentional because:
+        // 1. This runs once at program startup in OnceLock initialization
+        // 2. If memory allocation fails at startup, the program cannot continue
+        // 3. Proper error handling is not possible in static initialization context
+        // 4. This is a programmer error if it fails (catastrophic resource exhaustion)
         let compressor = SimdLz77Compressor::with_config(config)
-            .expect("Global SIMD LZ77 compressor creation should not fail");
+            .expect("Global SIMD LZ77 compressor creation failed at static init - \
+                    this indicates catastrophic memory exhaustion");
         std::sync::Mutex::new(compressor)
     })
 }

@@ -694,6 +694,7 @@ impl fmt::Debug for BitVector {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "BitVector {{ len: {}, bits: [", self.len)?;
         for i in 0..self.len.min(64) {
+            // SAFETY: Loop bounds are 0..self.len.min(64), so i < self.len always.
             write!(f, "{}", if self.get(i).unwrap() { '1' } else { '0' })?;
         }
         if self.len > 64 {

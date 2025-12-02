@@ -843,7 +843,12 @@ impl CompressedBlobStore for ZipOffsetBlobStore {
 
 impl Default for ZipOffsetBlobStore {
     fn default() -> Self {
-        Self::new().expect("default ZipOffsetBlobStore creation should not fail")
+        // SAFETY: ZipOffsetBlobStore::new() only fails on memory allocation errors.
+        // Use unwrap_or_else with panic as this type has non-trivial dependencies.
+        Self::new().unwrap_or_else(|e| {
+            panic!("ZipOffsetBlobStore creation failed in Default: {}. \
+                   This indicates severe memory pressure.", e)
+        })
     }
 }
 

@@ -373,6 +373,7 @@ where
 
         while !heap.is_empty() {
             // Get minimum element
+            // SAFETY: !heap.is_empty() check above guarantees pop() succeeds
             let min_element = heap.pop().unwrap();
 
             // Start new run file if needed

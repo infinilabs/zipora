@@ -296,8 +296,12 @@ impl MemoryPool {
     }
 
     fn deallocate_chunk(&self, chunk: NonNull<u8>) {
+        // SAFETY: Layout::from_size_align() cannot fail here because:
+        // 1. chunk_size > 0 is enforced by config validation
+        // 2. alignment is a power of 2 enforced by config validation
+        // 3. The same layout was successfully used during allocation
         let layout = Layout::from_size_align(self.config.chunk_size, self.config.alignment)
-            .expect("invalid layout");
+            .expect("Layout invariant violated: config was validated during chunk allocation");
 
         unsafe {
             dealloc(chunk.as_ptr(), layout);

@@ -310,6 +310,7 @@ impl UintVecMin0 {
             return (Self::new_empty(), 0);
         }
 
+        // SAFETY: is_empty() check above guarantees iterator has at least one element
         let &min_val = src.iter().min().unwrap();
         let &max_val = src.iter().max().unwrap();
         let wire_max = max_val - min_val;
@@ -328,6 +329,7 @@ impl UintVecMin0 {
             return (Self::new_empty(), 0);
         }
 
+        // SAFETY: is_empty() check above guarantees iterator has at least one element
         let &min_val = src.iter().min().unwrap();
         let &max_val = src.iter().max().unwrap();
         let wire_max = (max_val - min_val) as usize;
@@ -346,6 +348,7 @@ impl UintVecMin0 {
             return (Self::new_empty(), 0);
         }
 
+        // SAFETY: is_empty() check above guarantees iterator has at least one element
         let &min_val = src.iter().min().unwrap();
         let &max_val = src.iter().max().unwrap();
         let wire_max = (max_val - min_val) as usize;

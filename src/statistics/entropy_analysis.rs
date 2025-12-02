@@ -150,6 +150,7 @@ impl EntropyAnalyzer {
     /// Complete analysis and generate results
     pub fn analyze(&mut self) -> Result<&EntropyResults, ZiporaError> {
         if self.results.is_some() {
+            // SAFETY: is_some() check above guarantees unwrap() succeeds
             return Ok(self.results.as_ref().unwrap());
         }
 

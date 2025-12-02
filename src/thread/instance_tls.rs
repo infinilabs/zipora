@@ -419,6 +419,7 @@ where
             self.instances.insert(owner_ptr, instance);
         }
 
+        // SAFETY: Either key existed or we just inserted it above, so get() always succeeds
         Ok(self.instances.get(&owner_ptr).unwrap().get())
     }
 
