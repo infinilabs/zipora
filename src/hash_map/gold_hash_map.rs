@@ -300,6 +300,7 @@ where
         }
 
         // Link into bucket chain (insert at head)
+        // SAFETY: reserve_one() at line 275 guarantees capacity, and entry_idx < capacity
         self.buckets[bucket_idx] = L::from_usize(entry_idx)
             .expect("Capacity check above ensures this succeeds");
 
@@ -613,6 +614,7 @@ where
                     ));
                 }
 
+                // SAFETY: Capacity check at lines 610-615 guarantees i fits in link type L
                 self.buckets[bucket_idx] = L::from_usize(i)
                     .expect("Capacity check above ensures this succeeds");
             }

@@ -149,6 +149,7 @@ impl ZipIntVec {
             return Self::new_empty();
         }
 
+        // SAFETY: is_empty() check above guarantees iterator has at least one element
         let &min_val = src.iter().min().unwrap();
         let &max_val = src.iter().max().unwrap();
 
@@ -175,6 +176,7 @@ impl ZipIntVec {
             return Self::new_empty();
         }
 
+        // SAFETY: is_empty() check above guarantees iterator has at least one element
         let &min_val = src.iter().min().unwrap();
         let &max_val = src.iter().max().unwrap();
 

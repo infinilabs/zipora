@@ -411,7 +411,12 @@ impl AdaptiveParallelEncoder {
 
 impl Default for AdaptiveParallelEncoder {
     fn default() -> Self {
-        Self::new().expect("Failed to create adaptive parallel encoder")
+        // SAFETY: AdaptiveParallelEncoder::new() only fails on encoder allocation errors.
+        // Use unwrap_or_else with panic as this type has complex encoder dependencies.
+        Self::new().unwrap_or_else(|e| {
+            panic!("AdaptiveParallelEncoder creation failed in Default: {}. \
+                   This indicates severe memory pressure.", e)
+        })
     }
 }
 

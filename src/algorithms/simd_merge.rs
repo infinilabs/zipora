@@ -384,6 +384,7 @@ impl SimdOperations {
         }
 
         if arrays.len() == 1 {
+            // SAFETY: len() == 1 check above guarantees exactly one element
             return arrays.into_iter().next().unwrap();
         }
 
@@ -404,12 +405,14 @@ impl SimdOperations {
             
             // Handle odd number of arrays
             if i < current_arrays.len() {
+                // SAFETY: i < current_arrays.len() check above guarantees nth(i) succeeds
                 next_arrays.push(current_arrays.into_iter().nth(i).unwrap());
             }
-            
+
             current_arrays = next_arrays;
         }
 
+        // SAFETY: After while loop, len() <= 1. Empty case returned early at line 382-384, so len() == 1
         current_arrays.into_iter().next().unwrap()
     }
 }

@@ -123,6 +123,7 @@ where
 
     /// Get a reference to the value or the default value if key doesn't exist
     pub fn get_or_default(&self, key: &K) -> &V {
+        // SAFETY: Caller must call set_default() before using get_or_default()
         self.inner
             .get(key)
             .unwrap_or_else(|| self.default_value.as_ref().expect("No default value set"))
@@ -135,7 +136,7 @@ where
             self.put(key.clone(), value);
         }
 
-        // This should always succeed since we just inserted
+        // SAFETY: put() at line 135 ensures key exists in map
         Ok(self
             .inner
             .get_mut(&key)
@@ -153,6 +154,7 @@ where
             self.put(key.clone(), value);
         }
 
+        // SAFETY: put() at line 154 ensures key exists in map
         Ok(self
             .inner
             .get_mut(&key)

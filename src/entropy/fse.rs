@@ -849,7 +849,8 @@ impl FseEncoder {
     
     /// Single-threaded compression (internal, ZSTD-compatible)
     fn compress_single_internal(&mut self, data: &[u8]) -> Result<Vec<u8>> {
-        let table = self.table.as_ref().unwrap(); // Safe since we checked above
+        // SAFETY: This is called from compress() which creates self.table if None
+        let table = self.table.as_ref().unwrap();
         
         // For very small data, skip FSE compression to avoid expansion
         if data.len() < 100 {

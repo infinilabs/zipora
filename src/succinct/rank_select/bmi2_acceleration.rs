@@ -1318,6 +1318,7 @@ impl Bmi2BlockOps {
         cumulative_counts.push(0);
 
         for &block in blocks {
+            // SAFETY: cumulative_counts has at least one element (pushed 0 at line 1318)
             let last_count = cumulative_counts.last().unwrap();
             cumulative_counts.push(last_count + Bmi2RankOps::popcount_u64(block) as usize);
         }

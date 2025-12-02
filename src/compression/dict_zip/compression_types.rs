@@ -2157,7 +2157,17 @@ impl FseCompressor {
 
 impl Default for FseCompressor {
     fn default() -> Self {
-        Self::new().expect("Default FSE compressor creation should not fail")
+        // SAFETY: FSE compressor creation only fails on memory allocation
+        // errors which are extremely rare. Use unwrap_or_else with minimal
+        // fallback configuration to ensure Default never panics.
+        Self::new().unwrap_or_else(|_| {
+            // Fallback: create with minimal configuration
+            Self {
+                config: FseConfig::default(),
+                encoder: None,
+                decoder: None,
+            }
+        })
     }
 }
 

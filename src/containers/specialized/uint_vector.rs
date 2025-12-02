@@ -291,6 +291,7 @@ impl UintVector {
         }
 
         // Min-max compression analysis
+        // SAFETY: is_empty() check at line 273 returns early, so values is non-empty
         let min_val = *values.iter().min().unwrap();
         let max_val = *values.iter().max().unwrap();
 

@@ -201,7 +201,8 @@ impl<T: Send + Sync + 'static> AutoRegister<T> {
     where
         F: Fn() -> Result<T> + Send + Sync + 'static,
     {
-        // This will panic if registration fails, which is appropriate for static initialization
+        // SAFETY: Static initialization - panic on registration failure is appropriate
+        // because the program cannot continue without successfully registered creators
         global_factory::<T>().register(name, creator)
             .expect(&format!("Failed to register creator '{}'", name));
         
@@ -216,7 +217,8 @@ impl<T: Send + Sync + 'static> AutoRegister<T> {
         U: 'static,
         F: Fn() -> Result<T> + Send + Sync + 'static,
     {
-        // This will panic if registration fails, which is appropriate for static initialization
+        // SAFETY: Static initialization - panic on registration failure is appropriate
+        // because the program cannot continue without successfully registered type creators
         global_factory::<T>().register_type::<U, F>(creator)
             .expect(&format!("Failed to register creator for type '{}'", std::any::type_name::<U>()));
         
@@ -256,8 +258,10 @@ pub fn global_factory<T: Send + Sync + 'static>() -> &'static GlobalFactory<T> {
         
         let factory = Box::new(GlobalFactory::<T>::new());
         factories.insert(type_id, factory);
-        
+
+        // SAFETY: We just inserted this key on the line above, so get() is guaranteed to succeed.
         let factory_any = factories.get(&type_id).unwrap();
+        // SAFETY: We inserted GlobalFactory<T>, so downcast_ref to same type always succeeds.
         let factory = factory_any.downcast_ref::<GlobalFactory<T>>().unwrap();
         
         // Safety: The factory is stored in a static HashMap and lives for the entire program duration

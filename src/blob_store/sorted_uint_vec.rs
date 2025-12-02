@@ -622,7 +622,12 @@ impl SortedUintVec {
 
 impl Default for SortedUintVec {
     fn default() -> Self {
-        Self::new().expect("default SortedUintVec creation should not fail")
+        // SAFETY: SortedUintVec::new() only fails on memory allocation errors.
+        // Use unwrap_or_else with panic as this type has complex dependencies.
+        Self::new().unwrap_or_else(|e| {
+            panic!("SortedUintVec creation failed in Default: {}. \
+                   This indicates severe memory pressure.", e)
+        })
     }
 }
 

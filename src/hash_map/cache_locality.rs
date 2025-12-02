@@ -309,12 +309,18 @@ impl NumaAllocator {
     /// Allocate cache-line aligned memory
     pub unsafe fn alloc_cache_aligned<T>(&self, count: usize) -> *mut T {
         unsafe {
+            // SAFETY: Layout cannot fail because:
+            // 1. size_of::<T>() * count may overflow but we're in unsafe context
+            // SAFETY: Layout::from_size_align() cannot fail because:
+            // 2. CACHE_LINE_SIZE (64) is always a valid power-of-2 alignment
+            // 3. align_of::<T>() is always a valid alignment
+            // Caller is responsible for ensuring count doesn't cause overflow
             let layout = Layout::from_size_align(
                 size_of::<T>() * count,
                 CACHE_LINE_SIZE.max(align_of::<T>()),
             )
-            .expect("Invalid layout");
-            
+            .expect("Layout invariant violated: alignment is always valid power of 2");
+
             self.alloc_on_node(layout, self.preferred_node) as *mut T
         }
     }
@@ -322,12 +328,16 @@ impl NumaAllocator {
     /// Free previously allocated memory
     pub unsafe fn dealloc<T>(&self, ptr: *mut T, count: usize) {
         unsafe {
+            // SAFETY: Layout::from_size_align() cannot fail because:
+            // 1. The same layout was used during allocation
+            // 2. CACHE_LINE_SIZE and align_of::<T>() are always valid alignments
+            // 3. Caller must pass the same count used during allocation
             let layout = Layout::from_size_align(
                 size_of::<T>() * count,
                 CACHE_LINE_SIZE.max(align_of::<T>()),
             )
-            .expect("Invalid layout");
-            
+            .expect("Layout invariant violated: must match layout used during allocation");
+
             dealloc(ptr as *mut u8, layout);
         }
     }

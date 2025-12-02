@@ -505,6 +505,8 @@ impl SortableStrVec {
     /// Sort strings using optimized comparison sort (implementation)
     fn comparison_sort_impl(&self, mut indices: Vec<usize>) -> Vec<usize> {
         indices.sort_unstable_by(|&a, &b| {
+            // SAFETY: indices contains values 0..self.len(), created by extend(0..self.entries.len())
+            // in sort_lexicographic(). All indices are guaranteed to be valid.
             let str_a = self.get(a).unwrap();
             let str_b = self.get(b).unwrap();
 
@@ -592,6 +594,11 @@ impl SortableStrVec {
     }
 
     /// Recursive MSD radix sort helper
+    ///
+    /// # Safety Invariant
+    /// All indices in `indices` slice are valid (0..self.len()) because they originate
+    /// from `extend(0..self.entries.len())` in sort_lexicographic(). The unwrap() calls
+    /// on self.get(idx) are therefore guaranteed to succeed.
     fn radix_sort_msd_recursive(&self, indices: &mut [usize], buffer: &mut [usize], depth: usize) {
         if indices.len() <= 1 {
             return;
@@ -600,6 +607,7 @@ impl SortableStrVec {
         // Use insertion sort for small subarrays
         if indices.len() < 32 {
             indices.sort_unstable_by(|&a, &b| {
+                // SAFETY: See function doc - indices are always 0..self.len()
                 let str_a = self.get(a).unwrap();
                 let str_b = self.get(b).unwrap();
                 str_a[depth.min(str_a.len())..].cmp(&str_b[depth.min(str_b.len())..])
@@ -611,6 +619,7 @@ impl SortableStrVec {
         let mut counts = [0usize; 257]; // 256 bytes + 1 for strings ending at this depth
 
         for &idx in indices.iter() {
+            // SAFETY: See function doc - indices are always 0..self.len()
             let s = self.get(idx).unwrap();
             let byte = if depth < s.len() {
                 s.as_bytes()[depth] as usize + 1
@@ -630,6 +639,7 @@ impl SortableStrVec {
 
         // Distribute strings to buffer based on current character
         for &idx in indices.iter() {
+            // SAFETY: See function doc - indices are always 0..self.len()
             let s = self.get(idx).unwrap();
             let byte = if depth < s.len() {
                 s.as_bytes()[depth] as usize + 1
@@ -656,12 +666,17 @@ impl SortableStrVec {
     }
 
     /// Parallel sorting for large datasets (implementation)
+    ///
+    /// # Safety Invariant
+    /// All indices are valid (0..self.len()) because they originate from
+    /// `extend(0..self.entries.len())` in sort_lexicographic().
     fn parallel_sort_impl(&self, mut indices: Vec<usize>) -> Vec<usize> {
         // For simplicity, use standard parallel sort
         // In production, would use rayon or custom work-stealing implementation
 
         // Fallback to single-threaded sort with optimizations
         indices.sort_unstable_by(|&a, &b| {
+            // SAFETY: See function doc - indices are always 0..self.len()
             let str_a = self.get(a).unwrap();
             let str_b = self.get(b).unwrap();
             str_a.cmp(str_b)
@@ -875,6 +890,9 @@ impl SortableStrVec {
     }
 
     /// Cache-optimized binary search for a string
+    ///
+    /// # Safety Invariant
+    /// sorted_indices contains values 0..self.len(), so self.get(idx) always succeeds.
     pub fn binary_search(&self, needle: &str) -> std::result::Result<usize, usize> {
         if !self.is_sorted || self.sort_mode != SortMode::Lexicographic {
             return Err(0);
@@ -885,12 +903,16 @@ impl SortableStrVec {
             self.block_binary_search(needle)
         } else {
             // Standard binary search for smaller arrays
+            // SAFETY: sorted_indices contains values 0..self.len()
             self.sorted_indices
                 .binary_search_by(|&idx| self.get(idx).unwrap().cmp(needle))
         }
     }
 
     /// Block-based binary search optimized for cache locality
+    ///
+    /// # Safety Invariant
+    /// sorted_indices contains values 0..self.len(), so self.get(idx) always succeeds.
     fn block_binary_search(&self, needle: &str) -> std::result::Result<usize, usize> {
         let n = self.sorted_indices.len();
         let block_size = self.config.cache_block_size;
@@ -909,6 +931,7 @@ impl SortableStrVec {
                 continue;
             }
 
+            // SAFETY: sorted_indices[idx] is 0..self.len(), see function doc
             let mid_str = self.get(self.sorted_indices[idx]).unwrap();
 
             match mid_str.cmp(needle) {
@@ -923,6 +946,7 @@ impl SortableStrVec {
         let end = (left_block * block_size).min(n);
 
         for i in start..end {
+            // SAFETY: sorted_indices[i] is 0..self.len(), see function doc
             let str_val = self.get(self.sorted_indices[i]).unwrap();
             match str_val.cmp(needle) {
                 Ordering::Less => continue,
