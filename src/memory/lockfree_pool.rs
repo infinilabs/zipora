@@ -306,6 +306,7 @@ impl LockFreeMemoryPool {
 
         // Initialize cache allocator if enabled
         let cache_allocator = if config.enable_cache_alignment && config.cache_config.is_some() {
+            // SAFETY: is_some() check above guarantees this unwrap succeeds
             Some(CacheOptimizedAllocator::new(config.cache_config.clone().unwrap()))
         } else {
             None
