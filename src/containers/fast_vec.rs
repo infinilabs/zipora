@@ -334,6 +334,10 @@ impl<T> FastVec<T> {
                         }
                     }
                 } else {
+                    // SAFETY: Layout::array::<T>() cannot fail here because:
+                    // 1. self.cap was successfully used to allocate memory (either in with_capacity or previous realloc)
+                    // 2. If capacity caused layout overflow, allocation would have failed earlier
+                    // 3. The same layout parameters were valid during allocation, so they're valid for deallocation
                     let old_layout = Layout::array::<T>(self.cap).unwrap();
                     unsafe {
                         let raw_ptr =
@@ -601,6 +605,10 @@ impl<T> FastVec<T> {
         if self.len == 0 {
             if let Some(ptr) = self.ptr {
                 unsafe {
+                    // SAFETY: Layout::array::<T>() cannot fail here because:
+                    // 1. self.cap was successfully used to allocate memory (either in with_capacity or previous realloc)
+                    // 2. If capacity caused layout overflow, allocation would have failed earlier
+                    // 3. The same layout parameters were valid during allocation, so they're valid for deallocation
                     let layout = Layout::array::<T>(self.cap).unwrap();
                     alloc::dealloc(ptr.as_ptr() as *mut u8, layout);
                 }
@@ -614,6 +622,10 @@ impl<T> FastVec<T> {
             .map_err(|_| ZiporaError::out_of_memory(self.len * mem::size_of::<T>()))?;
 
         let new_ptr = if let Some(ptr) = self.ptr {
+            // SAFETY: Layout::array::<T>() cannot fail here because:
+            // 1. self.cap was successfully used to allocate memory (either in with_capacity or previous realloc)
+            // 2. If capacity caused layout overflow, allocation would have failed earlier
+            // 3. The same layout parameters were valid during allocation, so they're valid for reallocation
             let old_layout = Layout::array::<T>(self.cap).unwrap();
             unsafe {
                 let raw_ptr =
@@ -970,6 +982,10 @@ impl<T> Drop for FastVec<T> {
         if let Some(ptr) = self.ptr {
             if self.cap > 0 {
                 unsafe {
+                    // SAFETY: Layout::array::<T>() cannot fail here because:
+                    // 1. self.cap was successfully used to allocate memory (either in with_capacity or previous realloc)
+                    // 2. If capacity caused layout overflow, allocation would have failed earlier
+                    // 3. The same layout parameters were valid during allocation, so they're valid for deallocation
                     let layout = Layout::array::<T>(self.cap).unwrap();
                     alloc::dealloc(ptr.as_ptr() as *mut u8, layout);
                 }
