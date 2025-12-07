@@ -609,6 +609,10 @@ impl SecureChunk {
         let total_size = header_size + self.size + footer_size;
 
         let raw_ptr = unsafe { self.ptr.as_ptr().sub(header_size) };
+        // SAFETY: Layout::from_size_align() cannot fail because:
+        // 1. total_size was successfully used to allocate this chunk
+        // 2. Alignment of 8 is always valid (power of 2)
+        // 3. self.size was validated during allocation
         let layout = Layout::from_size_align(total_size, 8).unwrap();
 
         unsafe {
@@ -800,6 +804,7 @@ impl SecureMemoryPool {
 
         // Initialize cache allocator if cache alignment is enabled
         let cache_allocator = if config.enable_cache_alignment && config.cache_config.is_some() {
+            // SAFETY: is_some() check above guarantees this unwrap succeeds
             Some(CacheOptimizedAllocator::new(config.cache_config.clone().unwrap()))
         } else {
             None
@@ -807,6 +812,7 @@ impl SecureMemoryPool {
 
         // Initialize hot/cold separator if enabled
         let hot_cold_separator = if config.enable_hot_cold_separation && config.cache_config.is_some() {
+            // SAFETY: is_some() check above guarantees this unwrap succeeds
             HotColdSeparator::<usize>::new(config.cache_config.clone().unwrap())
         } else {
             HotColdSeparator::<usize>::new(CacheLayoutConfig::default())
@@ -985,7 +991,8 @@ impl SecureMemoryPool {
 
         if local_cache.borrow_mut().try_push(chunk).is_err() {
             // Local cache full, try global stack
-            let chunk = local_cache.borrow_mut().try_pop().unwrap(); // We just failed to push
+            // SAFETY: try_push() just failed at line 992, guaranteeing cache has at least one element
+            let chunk = local_cache.borrow_mut().try_pop().unwrap();
             self.global_stack.push(chunk);
         }
 
@@ -1339,6 +1346,8 @@ pub fn size_to_class(size: usize) -> usize {
 
 /// Global secure pools for different size classes
 static GLOBAL_SECURE_POOLS: Lazy<Vec<Arc<SecureMemoryPool>>> = Lazy::new(|| {
+    // SAFETY: Static initialization - panic on pool creation failure is appropriate
+    // because the program cannot continue without global memory pools
     vec![
         SecureMemoryPool::new(SecurePoolConfig::small_secure()).unwrap(),
         SecureMemoryPool::new(SecurePoolConfig::medium_secure()).unwrap(),

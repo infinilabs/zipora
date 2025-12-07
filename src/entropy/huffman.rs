@@ -516,6 +516,7 @@ impl HuffmanTree {
 
         // Special case: single symbol
         if codes.len() == 1 {
+            // SAFETY: codes.len() == 1 guarantees iter().next() returns Some
             let (&symbol, _) = codes.iter().next().unwrap();
             return Ok(Some(HuffmanNode::Leaf {
                 symbol,
