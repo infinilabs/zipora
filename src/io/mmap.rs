@@ -739,6 +739,11 @@ impl MemoryMappedOutput {
         // Flush current mmap and grow the file
         drop(std::mem::replace(
             &mut self.mmap,
+            // SAFETY: MmapMut::map_anon(0) cannot fail because:
+            // 1. Zero-byte anonymous memory mappings don't require actual system resources
+            // 2. They're trivial operations that always succeed on all platforms (Linux/macOS/Windows)
+            // 3. This is used as a placeholder during mem::replace() to allow dropping the old mmap
+            // 4. The memmap2 library guarantees zero-byte anonymous mappings succeed
             MmapMut::map_anon(0).unwrap(),
         ));
 
@@ -776,6 +781,11 @@ impl MemoryMappedOutput {
         // Unmap before truncating
         drop(std::mem::replace(
             &mut self.mmap,
+            // SAFETY: MmapMut::map_anon(0) cannot fail because:
+            // 1. Zero-byte anonymous memory mappings don't require actual system resources
+            // 2. They're trivial operations that always succeed on all platforms (Linux/macOS/Windows)
+            // 3. This is used as a placeholder during mem::replace() to allow dropping the old mmap
+            // 4. The memmap2 library guarantees zero-byte anonymous mappings succeed
             MmapMut::map_anon(0).unwrap(),
         ));
 

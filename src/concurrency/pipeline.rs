@@ -390,8 +390,10 @@ impl Pipeline {
 
             let mut stage_input_rx = if i == 0 {
                 // First stage reads from pipeline input
+                // SAFETY: current_input initialized with Some(input_rx) at line 383
                 current_input.take().unwrap()
             } else {
+                // SAFETY: channels[i-1] exists (i >= 1, channels has num_stages-1 elements) and is Some (initialized at line 378, taken exactly once)
                 channels[i - 1].take().unwrap().1
             };
 
@@ -399,6 +401,7 @@ impl Pipeline {
                 // Last stage writes to pipeline output
                 output_tx.clone()
             } else {
+                // SAFETY: channels[i] exists (i < num_stages-1, channels has num_stages-1 elements) and is Some (initialized at line 378, taken exactly once)
                 channels[i].take().unwrap().0
             };
 

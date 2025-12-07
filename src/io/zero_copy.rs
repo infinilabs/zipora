@@ -80,15 +80,20 @@ impl ZeroCopyBuffer {
 
     /// Create a buffer with an optional memory pool
     fn with_pool(capacity: usize, pool: Option<Arc<SecureMemoryPool>>) -> Result<Self> {
-        let layout = std::alloc::Layout::from_size_align(capacity, 64) // 64-byte alignment for SIMD
-            .map_err(|e| ZiporaError::io_error(format!("Invalid buffer layout: {}", e)))?;
+        // Handle zero capacity specially to avoid allocation
+        let data = if capacity == 0 {
+            NonNull::dangling()
+        } else {
+            let layout = std::alloc::Layout::from_size_align(capacity, 64) // 64-byte alignment for SIMD
+                .map_err(|e| ZiporaError::io_error(format!("Invalid buffer layout: {}", e)))?;
 
-        let data = unsafe {
-            let ptr = std::alloc::alloc(layout);
-            if ptr.is_null() {
-                return Err(ZiporaError::io_error("Failed to allocate zero-copy buffer"));
+            unsafe {
+                let ptr = std::alloc::alloc(layout);
+                if ptr.is_null() {
+                    return Err(ZiporaError::io_error("Failed to allocate zero-copy buffer"));
+                }
+                NonNull::new_unchecked(ptr)
             }
-            NonNull::new_unchecked(ptr)
         };
 
         Ok(Self {
@@ -282,10 +287,18 @@ impl ZeroCopyWrite for ZeroCopyBuffer {
 
 impl Drop for ZeroCopyBuffer {
     fn drop(&mut self) {
-        unsafe {
-            let layout = std::alloc::Layout::from_size_align_unchecked(self.capacity, 64);
-            std::alloc::dealloc(self.data.as_ptr(), layout);
+        // Only deallocate if we have a non-zero capacity
+        if self.capacity > 0 {
+            // Use the safe Layout constructor to match allocation
+            // This ensures we use the exact same layout parameters
+            let layout = std::alloc::Layout::from_size_align(self.capacity, 64)
+                .expect("Invalid layout in Drop - this should never happen if allocation succeeded");
+
+            unsafe {
+                std::alloc::dealloc(self.data.as_ptr(), layout);
+            }
         }
+        // For zero capacity, data is NonNull::dangling() and doesn't need deallocation
     }
 }
 
@@ -836,12 +849,43 @@ mod tests {
     #[test]
     fn test_zero_copy_buffer_basic() {
         let mut buffer = ZeroCopyBuffer::new(1024).unwrap();
-        
+
         assert_eq!(buffer.capacity(), 1024);
         assert_eq!(buffer.available(), 0);
         assert_eq!(buffer.write_available(), 1024);
         assert!(buffer.is_empty());
         assert!(!buffer.is_full());
+    }
+
+    #[test]
+    fn test_zero_copy_buffer_zero_capacity() {
+        // This test ensures zero-capacity buffers don't cause heap corruption
+        let buffer = ZeroCopyBuffer::new(0).unwrap();
+
+        assert_eq!(buffer.capacity(), 0);
+        assert_eq!(buffer.available(), 0);
+        assert_eq!(buffer.write_available(), 0);
+        assert!(buffer.is_empty());
+        assert!(buffer.is_full());
+
+        // Drop should handle zero capacity gracefully
+        drop(buffer);
+    }
+
+    #[test]
+    fn test_zero_copy_buffer_zero_capacity_ops() {
+        let mut buffer = ZeroCopyBuffer::new(0).unwrap();
+
+        // Zero-capacity operations should fail gracefully
+        assert!(buffer.zc_write(1).unwrap().is_none());
+        assert!(buffer.zc_read(1).unwrap().is_none());
+
+        // These should succeed even with zero capacity
+        assert_eq!(buffer.zc_advance(0).unwrap(), ());
+        assert_eq!(buffer.zc_commit(0).unwrap(), ());
+
+        buffer.compact(); // Should be a no-op
+        buffer.reset();   // Should be a no-op
     }
 
     #[test]
