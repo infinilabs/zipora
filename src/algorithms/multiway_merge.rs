@@ -173,7 +173,8 @@ impl MultiWayMerge {
 
         if sources.len() == 1 {
             // Single source - just collect all items
-            // SAFETY: len() == 1 check above guarantees exactly one element
+            // SAFETY: sources.len() == 1 check at line 174 guarantees exactly one element,
+            // so into_iter().next() always returns Some and unwrap() is safe.
             let mut source = sources.into_iter().next().unwrap();
             let mut result = Vec::new();
             while let Some(item) = source.next() {
@@ -254,6 +255,8 @@ impl MultiWayMerge {
 
             for &source_id in &active_sources {
                 if let Some(item) = sources[source_id].peek() {
+                    // SAFETY: Short-circuit OR evaluation guarantees that if we reach unwrap(),
+                    // min_item.is_none() was false, meaning min_item is Some.
                     if min_item.is_none() || item < min_item.unwrap() {
                         min_item = Some(item);
                         min_source = source_id;
@@ -349,19 +352,27 @@ impl MergeOperations {
             match (&left_current, &right_current) {
                 (Some(l), Some(r)) => {
                     if l <= r {
+                        // SAFETY: Match arm (Some(l), Some(r)) guarantees left_current is Some,
+                        // so take() returns Some and unwrap() is safe.
                         result.push(left_current.take().unwrap());
                         left_current = left_iter.next();
                     } else {
+                        // SAFETY: Match arm (Some(l), Some(r)) guarantees right_current is Some,
+                        // so take() returns Some and unwrap() is safe.
                         result.push(right_current.take().unwrap());
                         right_current = right_iter.next();
                     }
                 }
                 (Some(_), None) => {
+                    // SAFETY: Match arm (Some(_), None) guarantees left_current is Some,
+                    // so take() returns Some and unwrap() is safe.
                     result.push(left_current.take().unwrap());
                     result.extend(left_iter);
                     break;
                 }
                 (None, Some(_)) => {
+                    // SAFETY: Match arm (None, Some(_)) guarantees right_current is Some,
+                    // so take() returns Some and unwrap() is safe.
                     result.push(right_current.take().unwrap());
                     result.extend(right_iter);
                     break;
