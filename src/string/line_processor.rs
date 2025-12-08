@@ -101,6 +101,10 @@ impl<R: Read> LineProcessor<R> {
     pub fn with_config(reader: R, config: LineProcessorConfig) -> Self {
         let reader = BufReader::with_capacity(config.buffer_size, reader);
         let memory_pool = if config.use_secure_memory {
+            // SAFETY: SecureMemoryPool::new with small_secure() configuration is designed
+            // to never fail except in catastrophic OOM scenarios (out of physical memory).
+            // The small_secure() config uses minimal settings (small chunk sizes) that are
+            // virtually guaranteed to succeed in normal operation.
             Some(SecureMemoryPool::new(SecurePoolConfig::small_secure()).unwrap())
         } else {
             None
@@ -390,6 +394,9 @@ impl LineSplitter {
             return;
         }
 
+        // SAFETY: Early return at line 391 guarantees delimiter.len() == 1,
+        // so bytes() iterator is guaranteed to have at least one element.
+        // Therefore next() always returns Some.
         let delimiter_byte = delimiter.bytes().next().unwrap();
         let mut start = 0;
 
