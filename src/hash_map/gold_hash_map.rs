@@ -208,6 +208,9 @@ where
     max_load: usize,
     /// Freelist size (count of deleted slots)
     freelist_size: usize,
+    /// O(1) freelist stack for deleted slot reuse (v2.1.1 performance fix)
+    /// Stores indices of deleted slots for immediate reuse
+    freelist: Vec<usize>,
     /// Configuration
     config: GoldHashMapConfig,
 }
@@ -246,6 +249,7 @@ where
             len: 0,
             max_load,
             freelist_size: 0,
+            freelist: Vec::new(),  // O(1) freelist stack (v2.1.1)
             config,
         }
     }
@@ -448,6 +452,7 @@ where
         }
         self.len = 0;
         self.freelist_size = 0;
+        self.freelist.clear();  // O(1) freelist stack (v2.1.1)
     }
 
     /// Compact the map by removing all deleted entries
@@ -481,8 +486,9 @@ where
             cache.truncate(write_idx);
         }
 
-        // Reset freelist
+        // Reset freelist - both counter and stack (v2.1.1)
         self.freelist_size = 0;
+        self.freelist.clear();
 
         // Rebuild bucket links
         self.relink()?;
@@ -522,16 +528,14 @@ where
     }
 
     // Internal: Allocate a slot (reuse from freelist or create new)
+    // PERFORMANCE FIX (v2.1.1): Changed from O(n) linear scan to O(1) stack pop
     fn allocate_slot(&mut self) -> usize {
-        if self.config.enable_freelist_reuse && self.freelist_size > 0 {
-            // Scan for a deleted slot to reuse
-            for i in 0..self.entries.len() {
-                if self.entries[i].link == L::DELMARK {
-                    self.freelist_size -= 1;
-                    return i;
-                }
+        // O(1) freelist pop - no more linear scanning!
+        if self.config.enable_freelist_reuse {
+            if let Some(idx) = self.freelist.pop() {
+                self.freelist_size -= 1;
+                return idx;
             }
-            // If we didn't find one (shouldn't happen), fall through to create new
         }
 
         // Append new entry - we'll overwrite it immediately in insert()
@@ -554,22 +558,16 @@ where
     }
 
     // Internal: Free a slot (add to freelist)
+    // PERFORMANCE FIX (v2.1.1): Changed from deferred O(n) scan to O(1) stack push
     fn free_slot(&mut self, idx: usize) {
         // Mark as deleted - this is critical for safe iteration
         // We MUST always mark with DELMARK so iteration can skip it
-        if self.config.enable_freelist_reuse {
-            // Add to freelist - we store the next pointer differently
-            // To maintain DELMARK in link field, we'll track freelist separately
-            // For now, just mark as deleted and increment count
-            self.entries[idx].link = L::DELMARK;
+        self.entries[idx].link = L::DELMARK;
+        self.freelist_size += 1;
 
-            // Store freelist in a different way - we can't override link
-            // because we need DELMARK to stay for iteration safety
-            // So we build the freelist during allocation by scanning
-            self.freelist_size += 1;
-        } else {
-            self.entries[idx].link = L::DELMARK;
-            self.freelist_size += 1;
+        // O(1) freelist push - add to stack for immediate reuse
+        if self.config.enable_freelist_reuse {
+            self.freelist.push(idx);
         }
     }
 
