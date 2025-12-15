@@ -145,7 +145,10 @@ impl AdaptiveCompressor {
 
         // Perform compression
         let compressed = {
-            let compressor = self.current_compressor.read().unwrap();
+            let compressor = self.current_compressor.read()
+                .map_err(|e| crate::error::ZiporaError::system_error(
+                    format!("AdaptiveCompressor: current_compressor RwLock poisoned: {}", e)
+                ))?;
             compressor.compress(data)?
         };
 
@@ -159,14 +162,20 @@ impl AdaptiveCompressor {
 
     /// Decompress data
     pub fn decompress(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let compressor = self.current_compressor.read().unwrap();
+        let compressor = self.current_compressor.read()
+            .map_err(|e| crate::error::ZiporaError::system_error(
+                format!("AdaptiveCompressor: current_compressor RwLock poisoned: {}", e)
+            ))?;
         compressor.decompress(data)
     }
 
     /// Get current compression statistics
     pub fn stats(&self) -> CompressionStats {
-        let stats = self.stats.read().unwrap();
-        stats.clone()
+        // SAFETY: Returns default stats if RwLock is poisoned (graceful degradation)
+        // This is a read-only getter; returning empty stats is safe fallback
+        self.stats.read()
+            .map(|s| s.clone())
+            .unwrap_or_default()
     }
 
     /// Get current algorithm
@@ -179,7 +188,10 @@ impl AdaptiveCompressor {
         let new_compressor = CompressorFactory::create(algorithm, None)?;
 
         {
-            let mut compressor = self.current_compressor.write().unwrap();
+            let mut compressor = self.current_compressor.write()
+                .map_err(|e| crate::error::ZiporaError::system_error(
+                    format!("AdaptiveCompressor: current_compressor RwLock poisoned: {}", e)
+                ))?;
             *compressor = new_compressor;
         }
 
@@ -189,8 +201,11 @@ impl AdaptiveCompressor {
 
     /// Get compression profiles
     pub fn profiles(&self) -> HashMap<String, CompressionProfile> {
-        let profiles = self.profiles.read().unwrap();
-        profiles.clone()
+        // SAFETY: Returns empty HashMap if RwLock is poisoned (graceful degradation)
+        // This is a read-only getter; returning empty map is safe fallback
+        self.profiles.read()
+            .map(|p| p.clone())
+            .unwrap_or_default()
     }
 
     /// Train the compressor with sample data
@@ -226,7 +241,10 @@ impl AdaptiveCompressor {
 
     /// Maybe adapt the algorithm based on recent performance
     fn maybe_adapt(&self, data: &[u8]) -> Result<()> {
-        let mut operation_count = self.operation_count.write().unwrap();
+        let mut operation_count = self.operation_count.write()
+            .map_err(|e| crate::error::ZiporaError::system_error(
+                format!("AdaptiveCompressor: operation_count RwLock poisoned: {}", e)
+            ))?;
         *operation_count += 1;
         let count = *operation_count;
         drop(operation_count);
@@ -263,7 +281,10 @@ impl AdaptiveCompressor {
 
     /// Find the best algorithm for the current workload
     fn find_best_algorithm(&self, sample_data: &[u8]) -> Result<Algorithm> {
-        let history = self.performance_history.read().unwrap();
+        let history = self.performance_history.read()
+            .map_err(|e| crate::error::ZiporaError::system_error(
+                format!("AdaptiveCompressor: performance_history RwLock poisoned: {}", e)
+            ))?;
 
         if history.len() < self.config.min_operations {
             return Ok(self.current_algorithm);
@@ -299,9 +320,14 @@ impl AdaptiveCompressor {
         }
 
         // If aggressive learning is enabled, occasionally test new algorithms
-        if self.config.aggressive_learning
-            && *self.operation_count.read().unwrap() % (self.config.evaluation_interval * 5) == 0
-        {
+        let should_test = self.config.aggressive_learning && {
+            let count = self.operation_count.read()
+                .map_err(|e| crate::error::ZiporaError::system_error(
+                    format!("AdaptiveCompressor: operation_count RwLock poisoned: {}", e)
+                ))?;
+            *count % (self.config.evaluation_interval * 5) == 0
+        };
+        if should_test {
             return self.test_new_algorithm(sample_data);
         }
 
@@ -314,7 +340,10 @@ impl AdaptiveCompressor {
         let current = self.current_algorithm;
 
         // Find an algorithm we haven't tested much recently
-        let history = self.performance_history.read().unwrap();
+        let history = self.performance_history.read()
+            .map_err(|e| crate::error::ZiporaError::system_error(
+                format!("AdaptiveCompressor: performance_history RwLock poisoned: {}", e)
+            ))?;
         let mut usage_counts: HashMap<Algorithm, usize> = HashMap::new();
 
         for measurement in history.iter().rev().take(100) {
@@ -338,7 +367,11 @@ impl AdaptiveCompressor {
 
     /// Estimate performance improvement from switching algorithms
     fn estimate_improvement(&self, new_algorithm: Algorithm) -> f64 {
-        let history = self.performance_history.read().unwrap();
+        // SAFETY: Returns 0.0 (no improvement) if RwLock is poisoned (graceful degradation)
+        let history = match self.performance_history.read() {
+            Ok(guard) => guard,
+            Err(_) => return 0.0,
+        };
 
         let current_scores: Vec<f64> = history
             .iter()
@@ -372,7 +405,10 @@ impl AdaptiveCompressor {
         let new_compressor = CompressorFactory::create(algorithm, None)?;
 
         {
-            let mut compressor = self.current_compressor.write().unwrap();
+            let mut compressor = self.current_compressor.write()
+                .map_err(|e| crate::error::ZiporaError::system_error(
+                    format!("AdaptiveCompressor: current_compressor RwLock poisoned: {}", e)
+                ))?;
             *compressor = new_compressor;
         }
 
@@ -395,8 +431,9 @@ impl AdaptiveCompressor {
         };
 
         // Add to history
-        {
-            let mut history = self.performance_history.write().unwrap();
+        // SAFETY: Skip recording if RwLock is poisoned (graceful degradation)
+        // Performance recording is non-critical; missing data won't affect compression
+        if let Ok(mut history) = self.performance_history.write() {
             history.push_back(measurement.clone());
 
             // Maintain window size
@@ -406,8 +443,8 @@ impl AdaptiveCompressor {
         }
 
         // Update global stats
-        {
-            let mut stats = self.stats.write().unwrap();
+        // SAFETY: Skip update if RwLock is poisoned (graceful degradation)
+        if let Ok(mut stats) = self.stats.write() {
             stats.update(
                 measurement.input_size,
                 measurement.output_size,
@@ -419,7 +456,12 @@ impl AdaptiveCompressor {
 
     /// Update compression profile for a data type
     fn update_profile(&self, data_type: &str, measurement: &PerformanceMeasurement) {
-        let mut profiles = self.profiles.write().unwrap();
+        // SAFETY: Skip profile update if RwLock is poisoned (graceful degradation)
+        // Profile updates are non-critical; missing data won't affect compression
+        let mut profiles = match self.profiles.write() {
+            Ok(guard) => guard,
+            Err(_) => return,
+        };
 
         let profile = profiles.entry(data_type.to_string()).or_insert_with(|| {
             CompressionProfile::new(data_type.to_string(), measurement.algorithm)
