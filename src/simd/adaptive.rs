@@ -371,21 +371,182 @@ impl AdaptiveSimdSelector {
 
     /// Run initial benchmarks for common operations
     fn run_initial_benchmarks(&mut self) {
-        // To be implemented with micro-benchmarking framework
-        // For now, just initialize empty benchmarks
+        use crate::simd::benchmarks::MicroBenchmark;
+        use std::hint::black_box;
+
+        let benchmark = MicroBenchmark::new(
+            self.config.warmup_iterations,
+            self.config.measurement_iterations,
+        );
+
+        // Test data sizes (bytes): small, medium, large
+        let test_sizes = [64, 256, 1024, 4096, 16384];
+
         let operations = [
+            Operation::Popcount,
             Operation::Rank,
             Operation::Select,
-            Operation::Popcount,
             Operation::Search,
             Operation::Sort,
         ];
 
         if let Ok(mut benchmarks) = self.operation_benchmarks.write() {
             for &op in &operations {
-                benchmarks.insert(op, BenchmarkResults::default());
+                // Benchmark across different sizes and take median
+                let mut all_latencies = Vec::new();
+
+                for &size in &test_sizes {
+                    // Generate test data with realistic patterns
+                    let test_data = self.generate_test_data(size, op);
+
+                    // Run operation-specific benchmark
+                    let results = match op {
+                        Operation::Popcount => {
+                            benchmark.run_with_data(
+                                || test_data.clone(),
+                                |data| {
+                                    // Popcount benchmark - count set bits
+                                    let mut count = 0u64;
+                                    for &byte in data {
+                                        count += byte.count_ones() as u64;
+                                    }
+                                    black_box(count);
+                                }
+                            )
+                        },
+                        Operation::Rank | Operation::Select => {
+                            benchmark.run_with_data(
+                                || test_data.clone(),
+                                |data| {
+                                    // Rank/Select benchmark - simulate bit scanning
+                                    let mut result = 0usize;
+                                    for (i, &byte) in data.iter().enumerate() {
+                                        if byte.count_ones() > 0 {
+                                            result ^= i;
+                                        }
+                                    }
+                                    black_box(result);
+                                }
+                            )
+                        },
+                        Operation::Search => {
+                            benchmark.run_with_data(
+                                || test_data.clone(),
+                                |data| {
+                                    // Search benchmark - find byte pattern
+                                    let needle = 0x42u8;
+                                    let mut positions = Vec::new();
+                                    for (i, &byte) in data.iter().enumerate() {
+                                        if byte == needle {
+                                            positions.push(i);
+                                        }
+                                    }
+                                    black_box(positions);
+                                }
+                            )
+                        },
+                        Operation::Sort => {
+                            benchmark.run_with_data(
+                                || test_data.clone(),
+                                |data| {
+                                    // Sort benchmark - radix sort simulation
+                                    let mut data_copy = data.to_vec();
+                                    data_copy.sort_unstable();
+                                    black_box(data_copy);
+                                }
+                            )
+                        },
+                        _ => {
+                            // Default benchmark for other operations
+                            benchmark.run_with_data(
+                                || test_data.clone(),
+                                |data| {
+                                    let sum = data.iter().fold(0u64, |acc, &x| acc + x as u64);
+                                    black_box(sum);
+                                }
+                            )
+                        }
+                    };
+
+                    all_latencies.push(results.median_latency);
+                }
+
+                // Calculate aggregate results across all sizes
+                all_latencies.sort();
+                let median_latency = all_latencies[all_latencies.len() / 2];
+                let p95_latency = all_latencies[(all_latencies.len() * 95) / 100];
+                let p99_latency = all_latencies[(all_latencies.len() * 99) / 100];
+
+                // Estimate throughput based on median latency
+                let throughput = if median_latency.as_nanos() > 0 {
+                    1_000_000_000.0 / median_latency.as_nanos() as f64
+                } else {
+                    1_000_000.0 // Default 1M ops/sec
+                };
+
+                let final_results = BenchmarkResults::new(
+                    median_latency,
+                    p95_latency,
+                    p99_latency,
+                    throughput,
+                    all_latencies.len(),
+                );
+
+                benchmarks.insert(op, final_results);
             }
         }
+    }
+
+    /// Generate test data for benchmarking with realistic patterns
+    fn generate_test_data(&self, size: usize, op: Operation) -> Vec<u8> {
+        use std::collections::hash_map::RandomState;
+        use std::hash::{BuildHasher, Hash, Hasher};
+
+        let mut data = vec![0u8; size];
+        let hasher = RandomState::new();
+
+        match op {
+            Operation::Popcount | Operation::Rank | Operation::Select => {
+                // Sparse data pattern (10-30% density)
+                for i in 0..size {
+                    let mut h = hasher.build_hasher();
+                    i.hash(&mut h);
+                    let hash = h.finish();
+                    if hash % 100 < 20 {
+                        data[i] = (hash & 0xFF) as u8;
+                    }
+                }
+            },
+            Operation::Search => {
+                // Random data with occasional needle values
+                for i in 0..size {
+                    let mut h = hasher.build_hasher();
+                    i.hash(&mut h);
+                    let hash = h.finish();
+                    data[i] = if hash % 100 < 5 {
+                        0x42 // Needle value
+                    } else {
+                        (hash & 0xFF) as u8
+                    };
+                }
+            },
+            Operation::Sort => {
+                // Random data for sorting
+                for i in 0..size {
+                    let mut h = hasher.build_hasher();
+                    i.hash(&mut h);
+                    data[i] = (h.finish() & 0xFF) as u8;
+                }
+            },
+            _ => {
+                // Default: sequential pattern
+                for i in 0..size {
+                    data[i] = (i & 0xFF) as u8;
+                }
+            }
+        }
+
+        data
     }
 
     /// Get hardware tier
@@ -541,5 +702,84 @@ mod tests {
 
         assert_eq!(selector.thresholds().avx512_min_size, 2048);
         assert_eq!(selector.thresholds().avx2_min_size, 512);
+    }
+
+    #[test]
+    fn test_micro_benchmarking_framework() {
+        // Create selector with benchmarking enabled
+        let config = AdaptiveSelectorConfig {
+            enable_startup_benchmarks: true,
+            enable_monitoring: true,
+            enable_adaptation: true,
+            warmup_iterations: 5,
+            measurement_iterations: 10,
+            performance_threshold: 0.9,
+            degradation_trigger_count: 100,
+            max_cache_entries: 512,
+        };
+
+        let mut selector = AdaptiveSimdSelector::with_config(config);
+
+        // Run benchmarks
+        selector.run_initial_benchmarks();
+
+        // Verify benchmarks were recorded
+        if let Ok(benchmarks) = selector.operation_benchmarks.read() {
+            // Should have benchmarks for key operations
+            assert!(benchmarks.contains_key(&Operation::Popcount));
+            assert!(benchmarks.contains_key(&Operation::Rank));
+            assert!(benchmarks.contains_key(&Operation::Select));
+            assert!(benchmarks.contains_key(&Operation::Search));
+            assert!(benchmarks.contains_key(&Operation::Sort));
+
+            // Verify benchmark results are valid
+            for (op, results) in benchmarks.iter() {
+                assert!(results.samples > 0, "Operation {:?} should have samples", op);
+                assert!(results.throughput > 0.0, "Operation {:?} should have positive throughput", op);
+                assert!(results.median_latency > Duration::ZERO, "Operation {:?} should have positive latency", op);
+                assert!(results.p95_latency >= results.median_latency, "Operation {:?} p95 should be >= median", op);
+                assert!(results.p99_latency >= results.p95_latency, "Operation {:?} p99 should be >= p95", op);
+            }
+        } else {
+            panic!("Failed to read benchmarks");
+        }
+    }
+
+    #[test]
+    fn test_test_data_generation() {
+        let selector = AdaptiveSimdSelector::new();
+
+        // Test different data patterns
+        let popcount_data = selector.generate_test_data(1024, Operation::Popcount);
+        assert_eq!(popcount_data.len(), 1024);
+
+        let search_data = selector.generate_test_data(512, Operation::Search);
+        assert_eq!(search_data.len(), 512);
+        // Should have some needle values (0x42)
+        assert!(search_data.iter().any(|&b| b == 0x42));
+
+        let sort_data = selector.generate_test_data(256, Operation::Sort);
+        assert_eq!(sort_data.len(), 256);
+
+        // Default pattern
+        let default_data = selector.generate_test_data(128, Operation::Compress);
+        assert_eq!(default_data.len(), 128);
+    }
+
+    #[test]
+    fn test_benchmark_results_persistence() {
+        let mut selector = AdaptiveSimdSelector::new();
+        selector.run_initial_benchmarks();
+
+        // Verify results persist
+        if let Ok(benchmarks) = selector.operation_benchmarks.read() {
+            let popcount_results = benchmarks.get(&Operation::Popcount);
+            assert!(popcount_results.is_some());
+
+            // Results should not be stale immediately
+            if let Some(results) = popcount_results {
+                assert!(!results.is_stale(Duration::from_secs(60)));
+            }
+        }
     }
 }

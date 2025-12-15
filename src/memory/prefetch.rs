@@ -29,15 +29,11 @@
 //! let mut strategy = PrefetchStrategy::new(config);
 //!
 //! // Sequential prefetch for array scans
-//! let data: Vec<u64> = vec![0; 1000];
-//! unsafe {
-//!     strategy.sequential_prefetch(data.as_ptr() as *const u8, 64, 8);
-//! }
+//! let data: Vec<u8> = vec![0; 1000];
+//! strategy.sequential_prefetch(&data, 64, 8);
 //!
 //! // Adaptive prefetch based on detected patterns
-//! unsafe {
-//!     strategy.adaptive_prefetch(data.as_ptr() as *const u8, &[100, 200, 300]);
-//! }
+//! strategy.adaptive_prefetch(&data, &[100, 200, 300]);
 //! ```
 
 use crate::error::{Result, ZiporaError};
@@ -451,12 +447,10 @@ impl PrefetchStrategy {
     /// use zipora::memory::prefetch::{PrefetchStrategy, PrefetchConfig};
     ///
     /// let mut strategy = PrefetchStrategy::new(PrefetchConfig::default());
-    /// let data: Vec<u64> = vec![0; 1000];
+    /// let data: Vec<u8> = vec![0; 1000];
     ///
-    /// unsafe {
-    ///     // Prefetch based on recent access pattern
-    ///     strategy.adaptive_prefetch(&data, &[100, 200, 300, 400]);
-    /// }
+    /// // Prefetch based on recent access pattern
+    /// strategy.adaptive_prefetch(&data, &[100, 200, 300, 400]);
     /// ```
     ///
     /// SAFETY FIX (v2.1.1): Changed from raw pointer to slice to prevent pointer arithmetic overflow
@@ -527,12 +521,10 @@ impl PrefetchStrategy {
     /// use zipora::memory::prefetch::{PrefetchStrategy, PrefetchConfig};
     ///
     /// let mut strategy = PrefetchStrategy::new(PrefetchConfig::sequential_optimized());
-    /// let data: Vec<u64> = vec![0; 1000];
+    /// let data: Vec<u8> = vec![0; 1000];
     ///
-    /// unsafe {
-    ///     // Prefetch 8 cache lines ahead with 64-byte stride
-    ///     strategy.sequential_prefetch(&data, 64, 8);
-    /// }
+    /// // Prefetch 8 cache lines ahead with 64-byte stride
+    /// strategy.sequential_prefetch(&data, 64, 8);
     /// ```
     ///
     /// SAFETY FIX (v2.1.1): Changed from raw pointer to slice to prevent pointer arithmetic overflow
@@ -568,13 +560,15 @@ impl PrefetchStrategy {
     /// let mut strategy = PrefetchStrategy::new(PrefetchConfig::random_optimized());
     /// let data: Vec<u64> = vec![0; 1000];
     ///
-    /// unsafe {
-    ///     let predicted_addrs = [
-    ///         data.as_ptr().add(100) as *const u8,
-    ///         data.as_ptr().add(500) as *const u8,
-    ///     ];
-    ///     strategy.random_prefetch(&predicted_refs);
-    /// }
+    /// // Convert to byte slice for safe prefetching
+    /// let data_bytes = unsafe {
+    ///     std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 8)
+    /// };
+    /// let predicted_addrs = [
+    ///     &data_bytes[100 * 8],
+    ///     &data_bytes[500 * 8],
+    /// ];
+    /// strategy.random_prefetch(&predicted_addrs);
     /// ```
     ///
     /// SAFETY FIX (v2.1.1): Changed from raw pointers to references to prevent invalid pointer usage

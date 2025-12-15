@@ -330,10 +330,13 @@ mod valvec32_performance {
 
         // Random access should be competitive or better than std::Vec
         // Allow up to 3x better performance due to memory layout optimizations
+        // Debug builds have no optimizations, so allow wider variance
+        let max_ratio = if cfg!(debug_assertions) { 5.0 } else { 3.0 };
         assert!(
-            performance_ratio > 0.5 && performance_ratio < 3.0,
-            "ValVec32 random access performance unexpected: {:.2}x",
-            performance_ratio
+            performance_ratio > 0.5 && performance_ratio < max_ratio,
+            "ValVec32 random access performance unexpected: {:.2}x (max allowed: {:.1}x)",
+            performance_ratio,
+            max_ratio
         );
     }
 

@@ -1129,8 +1129,15 @@ pub mod performance_tests {
             performance_ratio
         );
 
-        // Should be within 2x of std::Vec performance
-        assert!(performance_ratio < 2.0);
+        // More lenient threshold for debug builds (unoptimized)
+        // In release mode, should be within 2x. In debug mode, allow up to 10x due to lack of optimizations
+        let max_ratio = if cfg!(debug_assertions) { 10.0 } else { 2.0 };
+        assert!(
+            performance_ratio < max_ratio,
+            "ValVec32 performance ratio {:.2}x exceeds maximum {:.2}x (debug mode allows higher variance)",
+            performance_ratio,
+            max_ratio
+        );
     }
 
     #[test]
