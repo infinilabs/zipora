@@ -233,7 +233,10 @@ impl MemoryPool {
     /// 2. **try_lock failures**: Chunk count may be stale if lock is contended
     /// 3. **TOCTOU races**: Statistics collected at different times may be inconsistent
     pub fn stats(&self) -> PoolStats {
-        let mut stats = self.stats.read().unwrap().clone();
+        // SAFETY: Return default stats if RwLock is poisoned (graceful degradation)
+        let mut stats = self.stats.read()
+            .map(|s| s.clone())
+            .unwrap_or_default();
         stats.alloc_count = self.alloc_count.load(Ordering::Relaxed);
         stats.dealloc_count = self.dealloc_count.load(Ordering::Relaxed);
         stats.pool_hits = self.pool_hits.load(Ordering::Relaxed);
