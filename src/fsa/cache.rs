@@ -304,8 +304,12 @@ impl FsaCache {
 
     /// Remove a state from cache
     pub fn remove_state(&mut self, state_id: u32) -> bool {
-        let _guard = self.lock.write().unwrap();
-        
+        // SAFETY: Return false if RwLock is poisoned (graceful degradation)
+        let _guard = match self.lock.write() {
+            Ok(g) => g,
+            Err(_) => return false,
+        };
+
         if self.states.remove(&state_id).is_some() {
             self.zero_paths.remove(&state_id);
             self.free_list.push(state_id);
@@ -323,8 +327,11 @@ impl FsaCache {
     /// Add zero-path data for compressed path storage
     pub fn add_zero_path(&mut self, state_id: u32, path_data: ZeroPathData) -> Result<()> {
         {
-            let _guard = self.lock.write().unwrap();
-            
+            let _guard = self.lock.write()
+                .map_err(|e| ZiporaError::system_error(
+                    format!("FsaCache: lock RwLock poisoned: {}", e)
+                ))?;
+
             if !self.states.contains_key(&state_id) {
                 return Err(ZiporaError::invalid_data("State not found in cache"));
             }
@@ -339,14 +346,22 @@ impl FsaCache {
 
     /// Get zero-path data for a state
     pub fn get_zero_path(&self, state_id: u32) -> Option<&ZeroPathData> {
-        let _guard = self.lock.read().unwrap();
+        // SAFETY: Return None if RwLock is poisoned (graceful degradation)
+        let _guard = match self.lock.read() {
+            Ok(g) => g,
+            Err(_) => return None,
+        };
         self.zero_paths.get(&state_id)
     }
 
     /// Clear the entire cache
     pub fn clear(&mut self) {
-        let _guard = self.lock.write().unwrap();
-        
+        // SAFETY: Skip clear if RwLock is poisoned (graceful degradation)
+        let _guard = match self.lock.write() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+
         self.states.clear();
         self.zero_paths.clear();
         self.free_list.clear();
@@ -358,7 +373,11 @@ impl FsaCache {
 
     /// Get cache statistics
     pub fn stats(&self) -> FsaCacheStats {
-        let _guard = self.lock.read().unwrap();
+        // SAFETY: Return default stats if RwLock is poisoned (graceful degradation)
+        let _guard = match self.lock.read() {
+            Ok(g) => g,
+            Err(_) => return FsaCacheStats::default(),
+        };
         self.stats.clone()
     }
 
@@ -369,7 +388,11 @@ impl FsaCache {
 
     /// Check if cache is at capacity
     pub fn is_full(&self) -> bool {
-        let _guard = self.lock.read().unwrap();
+        // SAFETY: Return false if RwLock is poisoned (safe default - not full)
+        let _guard = match self.lock.read() {
+            Ok(g) => g,
+            Err(_) => return false,
+        };
         self.states.len() >= self.config.max_states
     }
 

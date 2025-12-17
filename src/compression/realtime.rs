@@ -220,8 +220,8 @@ impl RealtimeCompressor {
         let met_deadline = Instant::now() <= deadline;
 
         // Update statistics
-        {
-            let mut stats = self.stats.write().unwrap();
+        // SAFETY: Skip stats update if RwLock is poisoned (graceful degradation)
+        if let Ok(mut stats) = self.stats.write() {
             stats.update_latency(latency.as_micros() as u64, met_deadline);
         }
 
@@ -240,7 +240,10 @@ impl RealtimeCompressor {
 
     /// Decompress data
     pub async fn decompress(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let compressor = self.compressor.read().unwrap();
+        let compressor = self.compressor.read()
+            .map_err(|e| crate::error::ZiporaError::system_error(
+                format!("RealtimeCompressor: compressor RwLock poisoned: {}", e)
+            ))?;
         compressor.decompress(data)
     }
 
@@ -268,8 +271,10 @@ impl RealtimeCompressor {
 
     /// Get real-time statistics
     pub fn stats(&self) -> RealtimeStats {
-        let stats = self.stats.read().unwrap();
-        stats.clone()
+        // SAFETY: Returns default stats if RwLock is poisoned (graceful degradation)
+        self.stats.read()
+            .map(|s| s.clone())
+            .unwrap_or_default()
     }
 
     /// Switch compression mode
@@ -278,7 +283,10 @@ impl RealtimeCompressor {
         let new_compressor = CompressorFactory::create(algorithm, None)?;
 
         {
-            let mut compressor = self.compressor.write().unwrap();
+            let mut compressor = self.compressor.write()
+                .map_err(|e| crate::error::ZiporaError::system_error(
+                    format!("RealtimeCompressor: compressor RwLock poisoned: {}", e)
+                ))?;
             *compressor = new_compressor;
         }
 
@@ -300,7 +308,10 @@ impl RealtimeCompressor {
             return Ok(data.to_vec());
         }
 
-        let compressor = self.compressor.read().unwrap();
+        let compressor = self.compressor.read()
+            .map_err(|e| crate::error::ZiporaError::system_error(
+                format!("RealtimeCompressor: compressor RwLock poisoned: {}", e)
+            ))?;
         compressor.compress(data)
     }
 
@@ -309,8 +320,8 @@ impl RealtimeCompressor {
         let latency = start_time.elapsed();
 
         // Update timeout statistics
-        {
-            let mut stats = self.stats.write().unwrap();
+        // SAFETY: Skip stats update if RwLock is poisoned (graceful degradation)
+        if let Ok(mut stats) = self.stats.write() {
             stats.update_latency(latency.as_micros() as u64, false);
             stats.fallback_operations += 1;
         }
