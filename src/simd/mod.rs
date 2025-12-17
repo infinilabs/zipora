@@ -24,6 +24,7 @@
 
 pub mod adaptive;
 pub mod benchmarks;
+pub mod macros;
 pub mod performance;
 
 pub use adaptive::{AdaptiveSimdSelector, SelectionKey, SimdImpl, SimdTier};
