@@ -245,21 +245,15 @@ fn align_to_cache_line(size: usize) -> usize {
     (size + CACHE_LINE_SIZE - 1) & !(CACHE_LINE_SIZE - 1)
 }
 
-/// NUMA-aware memory allocation using node-specific pools
+/// NUMA-aware memory allocation
+///
+/// Note: The NumaMemoryPool pooling logic has been disabled due to a critical bug
+/// where chunks of different sizes were mixed in size-category pools, causing
+/// memory corruption when a smaller cached chunk was returned for a larger request.
+/// The pool's Drop also used hardcoded layouts that didn't match actual allocations.
+/// See: https://github.com/infinilabs/zipora/issues/heap-corruption-fix
 fn numa_alloc<T>(layout: Layout, preferred_node: Option<NumaNode>) -> Result<NonNull<T>> {
-    let node = preferred_node.unwrap_or(0); // Default to node 0
-
-    // Try to use NUMA pool for allocation
-    if let Ok(mut pools) = NUMA_MANAGER.node_pools.lock() {
-        let pool = pools.entry(node).or_insert_with(NumaMemoryPool::new);
-        if let Ok(ptr) = pool.allocate(layout, node) {
-            let raw_ptr = ptr.as_ptr() as *mut T;
-            return NonNull::new(raw_ptr)
-                .ok_or_else(|| ZiporaError::out_of_memory(layout.size()));
-        }
-    }
-
-    // Fallback to standard allocation
+    // Direct allocation - pooling disabled due to size-mismatch bugs
     let ptr = unsafe { alloc(layout) };
 
     if ptr.is_null() {
@@ -271,7 +265,7 @@ fn numa_alloc<T>(layout: Layout, preferred_node: Option<NumaNode>) -> Result<Non
         bind_to_numa_node(ptr, layout.size(), node);
     }
 
-    // SAFETY: Null check performed at lines 263-265 above
+    // SAFETY: Null check performed above
     Ok(unsafe { NonNull::new_unchecked(ptr as *mut T) })
 }
 
@@ -756,14 +750,21 @@ mod tests {
         clear_numa_pools().unwrap();
         init_numa_pools().unwrap();
 
-        // Allocate some memory to test stats
-        let _ptr1 = numa_alloc_aligned(1024, 64, 0).unwrap();
-        let _ptr2 = numa_alloc_aligned(512, 32, 0).unwrap();
+        // Allocate some memory to test allocation still works
+        // Note: Pool caching is disabled due to heap corruption fix,
+        // so we just verify allocations succeed
+        let ptr1 = numa_alloc_aligned(1024, 64, 0).unwrap();
+        let ptr2 = numa_alloc_aligned(512, 32, 0).unwrap();
 
+        // Verify allocations are valid (non-null, properly aligned)
+        assert!(!ptr1.as_ptr().is_null());
+        assert!(!ptr2.as_ptr().is_null());
+        assert_eq!(ptr1.as_ptr() as usize % 64, 0);
+        assert_eq!(ptr2.as_ptr() as usize % 32, 0);
+
+        // Stats structure should exist
         let stats = get_numa_stats();
-        if let Some(pool_stats) = stats.pools.get(&0) {
-            assert!(pool_stats.allocated_bytes > 0 || pool_stats.hit_count > 0);
-        }
+        assert!(stats.node_count >= 1);
     }
 
     #[test]
