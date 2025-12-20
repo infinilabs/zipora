@@ -342,8 +342,7 @@ where
         while link != L::TAIL {
             let idx = link.as_usize();
             if link.is_valid() && self.entries[idx].key == *key {
-                // Safe: we have unique mutable access to self
-                return Some(unsafe { &mut *(&mut self.entries[idx].value as *mut V) });
+                return Some(&mut self.entries[idx].value);
             }
             link = self.entries[idx].link;
         }
