@@ -2,8 +2,23 @@
 //!
 //! This module provides comprehensive performance validation for all containers,
 //! ensuring they meet their stated performance goals and memory efficiency claims.
+//!
+//! **IMPORTANT**: These tests should only run in release mode. Debug mode has
+//! significantly different performance characteristics and will cause false failures.
 
 use std::alloc::{GlobalAlloc, Layout, System};
+
+/// Helper macro to skip performance tests in debug mode.
+/// Performance tests are meaningless in debug builds due to lack of optimizations.
+macro_rules! require_release_mode {
+    () => {
+        #[cfg(debug_assertions)]
+        {
+            println!("⚠️  Skipping performance test in debug mode - run with --release");
+            return;
+        }
+    };
+}
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -202,6 +217,7 @@ mod valvec32_performance {
 
     #[test]
     fn bench_valvec32_vs_std_vec_push() {
+        require_release_mode!();
         let runner = BenchmarkRunner::new(BenchmarkConfig::default());
         let sizes = [
             runner.config.small_size,
@@ -291,6 +307,7 @@ mod valvec32_performance {
 
     #[test]
     fn bench_valvec32_random_access() {
+        require_release_mode!();
         let runner = BenchmarkRunner::new(BenchmarkConfig::default());
         let size = runner.config.medium_size;
 
@@ -342,6 +359,7 @@ mod valvec32_performance {
 
     #[test]
     fn bench_valvec32_iteration() {
+        require_release_mode!();
         let runner = BenchmarkRunner::new(BenchmarkConfig::default());
         let size = runner.config.large_size;
 
@@ -412,6 +430,7 @@ mod small_map_performance {
 
     #[test]
     fn bench_small_map_cache_efficiency() {
+        require_release_mode!();
         let runner = BenchmarkRunner::new(BenchmarkConfig::default());
 
         // Test cache-friendly access patterns for small maps
@@ -461,6 +480,7 @@ mod circular_queue_performance {
 
     #[test]
     fn bench_fixed_queue_vs_ring_buffer() {
+        require_release_mode!();
         let runner = BenchmarkRunner::new(BenchmarkConfig::default());
 
         // Test fixed queue performance with full utilization
@@ -508,6 +528,7 @@ mod uint_vector_performance {
 
     #[test]
     fn bench_uint_vector_memory_efficiency() {
+        require_release_mode!();
         let size = 100_000; // Large size for meaningful compression test
 
         // Test data that should compress well (0-999 repeating pattern)
@@ -557,6 +578,7 @@ mod uint_vector_performance {
 
     #[test]
     fn bench_uint_vector_access_performance() {
+        require_release_mode!();
         let runner = BenchmarkRunner::new(BenchmarkConfig::default());
         let size = runner.config.medium_size;
 
@@ -598,6 +620,7 @@ mod string_container_performance {
 
     #[test]
     fn bench_fixed_str_vec_memory_efficiency() {
+        require_release_mode!();
         let size = 10000; // Use fixed size for consistent testing
 
         // Generate test strings that fit in 16 characters
@@ -658,6 +681,7 @@ mod string_container_performance {
 
     #[test]
     fn bench_fixed_str_vec_simd_operations() {
+        require_release_mode!();
         let runner = BenchmarkRunner::new(BenchmarkConfig::default());
 
         // Test SIMD-optimized operations if available
