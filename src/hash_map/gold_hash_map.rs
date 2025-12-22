@@ -215,10 +215,12 @@ where
     config: GoldHashMapConfig,
 }
 
+/// Base implementation - no Clone bounds required
+///
+/// These methods only require K: Hash + Eq and don't clone keys or values.
 impl<K, V, L> GoldHashMap<K, V, L>
 where
-    K: Hash + Eq + Clone,
-    V: Clone,
+    K: Hash + Eq,
     L: LinkType,
 {
     /// Create new GoldHashMap with default configuration
@@ -254,69 +256,6 @@ where
         }
     }
 
-    /// Insert key-value pair, returns old value if key existed
-    pub fn insert(&mut self, key: K, value: V) -> Result<Option<V>> {
-        // Check if rehash needed before insertion
-        if self.len >= self.max_load {
-            self.rehash(self.buckets.len() + 1)?;
-        }
-
-        let hash = self.hash_key(&key);
-        let bucket_idx = (hash as usize) % self.buckets.len();
-
-        // Check if key exists in collision chain
-        let mut link = self.buckets[bucket_idx];
-        while link != L::TAIL {
-            let idx = link.as_usize();
-            if link.is_valid() && self.entries[idx].key == key {
-                // Update existing entry
-                let old = self.entries[idx].value.clone();
-                self.entries[idx].value = value;
-                return Ok(Some(old));
-            }
-            link = self.entries[idx].link;
-        }
-
-        // Insert new entry
-        let entry_idx = self.allocate_slot();
-
-        // SAFETY FIX: Check capacity before converting to link type
-        if entry_idx > L::MAX.as_usize() {
-            return Err(ZiporaError::resource_exhausted(
-                format!("HashMap entry index {} exceeds link type capacity (max {}). Consider using GoldHashMap<K, V, u64> for larger maps.",
-                        entry_idx, L::MAX.as_usize())
-            ));
-        }
-
-        // Update entry data - either overwrite existing or push new
-        if entry_idx < self.entries.len() {
-            // Reusing an existing slot from freelist
-            self.entries[entry_idx].key = key;
-            self.entries[entry_idx].value = value;
-            self.entries[entry_idx].link = self.buckets[bucket_idx];
-        } else {
-            // Creating a new entry
-            self.entries.push(Entry {
-                key,
-                value,
-                link: self.buckets[bucket_idx],
-            });
-        }
-
-        // Link into bucket chain (insert at head)
-        // SAFETY: reserve_one() at line 275 guarantees capacity, and entry_idx < capacity
-        self.buckets[bucket_idx] = L::from_usize(entry_idx)
-            .expect("Capacity check above ensures this succeeds");
-
-        // Update hash cache if enabled
-        if let Some(ref mut cache) = self.hash_cache {
-            cache[entry_idx] = hash;
-        }
-
-        self.len += 1;
-        Ok(None)
-    }
-
     /// Get reference to value by key
     pub fn get(&self, key: &K) -> Option<&V> {
         let hash = self.hash_key(key);
@@ -347,45 +286,6 @@ where
             link = self.entries[idx].link;
         }
         None
-    }
-
-    /// Remove key-value pair, returns value if existed
-    pub fn remove(&mut self, key: &K) -> Result<Option<V>> {
-        let hash = self.hash_key(key);
-        let bucket_idx = (hash as usize) % self.buckets.len();
-
-        let mut prev: Option<usize> = None;
-        let mut link = self.buckets[bucket_idx];
-
-        while link != L::TAIL {
-            let idx = link.as_usize();
-            if link.is_valid() && self.entries[idx].key == *key {
-                // Found - remove it
-                let old_value = self.entries[idx].value.clone();
-                let next_link = self.entries[idx].link;
-
-                // Unlink from chain
-                if let Some(prev_idx) = prev {
-                    self.entries[prev_idx].link = next_link;
-                } else {
-                    self.buckets[bucket_idx] = next_link;
-                }
-
-                // Mark as deleted and add to freelist
-                self.free_slot(idx);
-                self.len -= 1;
-
-                // Auto GC if enabled and freelist too large
-                if self.config.enable_auto_gc && self.freelist_size > self.len / 2 {
-                    self.revoke_deleted()?;
-                }
-
-                return Ok(Some(old_value));
-            }
-            prev = Some(idx);
-            link = self.entries[idx].link;
-        }
-        Ok(None)
     }
 
     /// Check if map contains key
@@ -452,47 +352,6 @@ where
         self.len = 0;
         self.freelist_size = 0;
         self.freelist.clear();  // O(1) freelist stack (v2.1.1)
-    }
-
-    /// Compact the map by removing all deleted entries
-    /// This will invalidate all indices but improve iteration performance
-    pub fn revoke_deleted(&mut self) -> Result<()> {
-        if self.freelist_size == 0 {
-            return Ok(());
-        }
-
-        // Compact entries by removing deleted ones
-        let mut write_idx = 0;
-        for read_idx in 0..self.entries.len() {
-            if self.entries[read_idx].link != L::DELMARK {
-                if write_idx != read_idx {
-                    self.entries[write_idx] = Entry {
-                        key: self.entries[read_idx].key.clone(),
-                        value: self.entries[read_idx].value.clone(),
-                        link: L::TAIL,  // Will be fixed in relink
-                    };
-                    if let Some(ref mut cache) = self.hash_cache {
-                        cache[write_idx] = cache[read_idx];
-                    }
-                }
-                write_idx += 1;
-            }
-        }
-
-        // Truncate to compacted size
-        self.entries.truncate(write_idx);
-        if let Some(ref mut cache) = self.hash_cache {
-            cache.truncate(write_idx);
-        }
-
-        // Reset freelist - both counter and stack (v2.1.1)
-        self.freelist_size = 0;
-        self.freelist.clear();
-
-        // Rebuild bucket links
-        self.relink()?;
-
-        Ok(())
     }
 
     /// Enable or disable hash caching at runtime
@@ -611,7 +470,7 @@ where
                     ));
                 }
 
-                // SAFETY: Capacity check at lines 610-615 guarantees i fits in link type L
+                // SAFETY: Capacity check above guarantees i fits in link type L
                 self.buckets[bucket_idx] = L::from_usize(i)
                     .expect("Capacity check above ensures this succeeds");
             }
@@ -628,10 +487,171 @@ where
     }
 }
 
-impl<K, V, L> Default for GoldHashMap<K, V, L>
+/// Clone-requiring operations
+///
+/// These methods need Clone bounds because they return owned values
+/// or perform compaction that requires cloning entries.
+impl<K, V, L> GoldHashMap<K, V, L>
 where
     K: Hash + Eq + Clone,
     V: Clone,
+    L: LinkType,
+{
+    /// Insert key-value pair, returns old value if key existed
+    ///
+    /// Note: Requires V: Clone to return the previous value when updating.
+    pub fn insert(&mut self, key: K, value: V) -> Result<Option<V>> {
+        // Check if rehash needed before insertion
+        if self.len >= self.max_load {
+            self.rehash(self.buckets.len() + 1)?;
+        }
+
+        let hash = self.hash_key(&key);
+        let bucket_idx = (hash as usize) % self.buckets.len();
+
+        // Check if key exists in collision chain
+        let mut link = self.buckets[bucket_idx];
+        while link != L::TAIL {
+            let idx = link.as_usize();
+            if link.is_valid() && self.entries[idx].key == key {
+                // Update existing entry
+                let old = self.entries[idx].value.clone();
+                self.entries[idx].value = value;
+                return Ok(Some(old));
+            }
+            link = self.entries[idx].link;
+        }
+
+        // Insert new entry
+        let entry_idx = self.allocate_slot();
+
+        // SAFETY FIX: Check capacity before converting to link type
+        if entry_idx > L::MAX.as_usize() {
+            return Err(ZiporaError::resource_exhausted(
+                format!("HashMap entry index {} exceeds link type capacity (max {}). Consider using GoldHashMap<K, V, u64> for larger maps.",
+                        entry_idx, L::MAX.as_usize())
+            ));
+        }
+
+        // Update entry data - either overwrite existing or push new
+        if entry_idx < self.entries.len() {
+            // Reusing an existing slot from freelist
+            self.entries[entry_idx].key = key;
+            self.entries[entry_idx].value = value;
+            self.entries[entry_idx].link = self.buckets[bucket_idx];
+        } else {
+            // Creating a new entry
+            self.entries.push(Entry {
+                key,
+                value,
+                link: self.buckets[bucket_idx],
+            });
+        }
+
+        // Link into bucket chain (insert at head)
+        // SAFETY: Capacity check above guarantees entry_idx fits in link type L
+        self.buckets[bucket_idx] = L::from_usize(entry_idx)
+            .expect("Capacity check above ensures this succeeds");
+
+        // Update hash cache if enabled
+        if let Some(ref mut cache) = self.hash_cache {
+            if entry_idx < cache.len() {
+                cache[entry_idx] = hash;
+            }
+        }
+
+        self.len += 1;
+        Ok(None)
+    }
+
+    /// Remove key-value pair, returns value if existed
+    ///
+    /// Note: Requires V: Clone to return the removed value.
+    pub fn remove(&mut self, key: &K) -> Result<Option<V>> {
+        let hash = self.hash_key(key);
+        let bucket_idx = (hash as usize) % self.buckets.len();
+
+        let mut prev: Option<usize> = None;
+        let mut link = self.buckets[bucket_idx];
+
+        while link != L::TAIL {
+            let idx = link.as_usize();
+            if link.is_valid() && self.entries[idx].key == *key {
+                // Found - remove it
+                let old_value = self.entries[idx].value.clone();
+                let next_link = self.entries[idx].link;
+
+                // Unlink from chain
+                if let Some(prev_idx) = prev {
+                    self.entries[prev_idx].link = next_link;
+                } else {
+                    self.buckets[bucket_idx] = next_link;
+                }
+
+                // Mark as deleted and add to freelist
+                self.free_slot(idx);
+                self.len -= 1;
+
+                // Auto GC if enabled and freelist too large
+                if self.config.enable_auto_gc && self.freelist_size > self.len / 2 {
+                    self.revoke_deleted()?;
+                }
+
+                return Ok(Some(old_value));
+            }
+            prev = Some(idx);
+            link = self.entries[idx].link;
+        }
+        Ok(None)
+    }
+
+    /// Compact the map by removing all deleted entries
+    /// This will invalidate all indices but improve iteration performance
+    ///
+    /// Note: Requires K: Clone, V: Clone to compact entries.
+    pub fn revoke_deleted(&mut self) -> Result<()> {
+        if self.freelist_size == 0 {
+            return Ok(());
+        }
+
+        // Compact entries by removing deleted ones
+        let mut write_idx = 0;
+        for read_idx in 0..self.entries.len() {
+            if self.entries[read_idx].link != L::DELMARK {
+                if write_idx != read_idx {
+                    self.entries[write_idx] = Entry {
+                        key: self.entries[read_idx].key.clone(),
+                        value: self.entries[read_idx].value.clone(),
+                        link: L::TAIL,  // Will be fixed in relink
+                    };
+                    if let Some(ref mut cache) = self.hash_cache {
+                        cache[write_idx] = cache[read_idx];
+                    }
+                }
+                write_idx += 1;
+            }
+        }
+
+        // Truncate to compacted size
+        self.entries.truncate(write_idx);
+        if let Some(ref mut cache) = self.hash_cache {
+            cache.truncate(write_idx);
+        }
+
+        // Reset freelist - both counter and stack (v2.1.1)
+        self.freelist_size = 0;
+        self.freelist.clear();
+
+        // Rebuild bucket links
+        self.relink()?;
+
+        Ok(())
+    }
+}
+
+impl<K, V, L> Default for GoldHashMap<K, V, L>
+where
+    K: Hash + Eq,
     L: LinkType,
 {
     fn default() -> Self {
@@ -640,6 +660,8 @@ where
 }
 
 /// Iterator for GoldHashMap
+///
+/// Note: Iterator does not require Clone bounds since it only yields references.
 pub struct GoldHashMapIter<'a, K, V, L: LinkType>
 where
     K: Hash + Eq,
@@ -651,8 +673,7 @@ where
 
 impl<'a, K, V, L> Iterator for GoldHashMapIter<'a, K, V, L>
 where
-    K: Hash + Eq + Clone,
-    V: Clone,
+    K: Hash + Eq,
     L: LinkType,
 {
     type Item = (&'a K, &'a V);
@@ -999,5 +1020,51 @@ mod tests {
         let config = GoldHashMapConfig::high_churn();
         assert!(config.load_factor < 0.7);  // Lower load factor
         assert!(config.enable_auto_gc);     // Auto GC enabled
+    }
+
+    /// Non-Clone type for testing relaxed Clone bounds
+    #[derive(Debug, Hash, PartialEq, Eq)]
+    struct NonCloneKey(i32);
+
+    #[derive(Debug)]
+    struct NonCloneValue {
+        data: Vec<u8>,
+    }
+
+    #[test]
+    fn test_non_clone_types_base_methods() {
+        // This test verifies that non-Clone types can use the base methods
+        // (get, contains_key, len, is_empty, capacity, load_factor, etc.)
+        // after Issue #18 fix (Excessive Clone Bounds)
+
+        let map: GoldHashMap<NonCloneKey, NonCloneValue> = GoldHashMap::new();
+
+        // Base methods should compile and work without Clone bounds
+        assert!(map.is_empty());
+        assert_eq!(map.len(), 0);
+        assert!(map.capacity() >= 5); // Initial capacity is at least 5
+        assert_eq!(map.load_factor(), 0.0);
+        assert_eq!(map.deleted_count(), 0);
+        assert!(!map.is_hash_cached());
+        assert!(!map.contains_key(&NonCloneKey(42)));
+        assert!(map.get(&NonCloneKey(42)).is_none());
+
+        // Iteration should work without Clone bounds
+        let count = map.iter().count();
+        assert_eq!(count, 0);
+
+        let fast_count = map.iter_fast().count();
+        assert_eq!(fast_count, 0);
+    }
+
+    #[test]
+    fn test_non_clone_types_clear_and_default() {
+        // Test that Default and clear work without Clone bounds
+        let mut map: GoldHashMap<NonCloneKey, NonCloneValue> = GoldHashMap::default();
+        assert!(map.is_empty());
+
+        // Clear should work
+        map.clear();
+        assert!(map.is_empty());
     }
 }
