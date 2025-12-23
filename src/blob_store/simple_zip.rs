@@ -299,7 +299,15 @@ impl SimpleZipBlobStore {
             let offset = self.offsets[i];
             let length = self.lengths[i];
 
-            if offset + length > self.strpool.len() {
+            // Use checked_add to prevent integer overflow before comparison
+            let end_offset = offset.checked_add(length).ok_or_else(|| {
+                ZiporaError::invalid_data(format!(
+                    "Integer overflow: offset={} + length={} exceeds usize::MAX",
+                    offset, length
+                ))
+            })?;
+
+            if end_offset > self.strpool.len() {
                 return Err(ZiporaError::invalid_data(format!(
                     "Invalid fragment offset={} length={} strpool_size={}",
                     offset,
@@ -308,7 +316,7 @@ impl SimpleZipBlobStore {
                 )));
             }
 
-            rec_data.extend_from_slice(&self.strpool[offset..offset + length]);
+            rec_data.extend_from_slice(&self.strpool[offset..end_offset]);
         }
 
         Ok(())
