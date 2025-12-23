@@ -121,9 +121,18 @@ pub struct SecurePoolConfig {
     /// and improve memory access performance.
     pub enable_huge_pages: bool,
     /// Minimum chunk size for huge page allocation (default: 2MB)
-    /// 
+    ///
     /// Chunks smaller than this size use regular pages.
     pub huge_page_threshold: usize,
+    /// Prefetch distance for bulk allocation operations (default: 8)
+    ///
+    /// Number of allocations to look ahead when prefetching cache lines.
+    /// Higher values can improve throughput for large batch allocations but
+    /// may waste prefetch bandwidth for small batches. Tune based on workload:
+    /// - 4: Conservative, good for variable-size batches
+    /// - 8: Default, balanced for most workloads
+    /// - 12-16: Aggressive, best for large uniform batches
+    pub prefetch_distance: usize,
 }
 
 impl SecurePoolConfig {
@@ -147,6 +156,7 @@ impl SecurePoolConfig {
             hot_data_threshold: 1000,
             enable_huge_pages: cfg!(target_os = "linux"),
             huge_page_threshold: 2 * 1024 * 1024, // 2MB
+            prefetch_distance: 8, // Default: balanced for most workloads
         }
     }
 
@@ -170,6 +180,7 @@ impl SecurePoolConfig {
             hot_data_threshold: 500, // More sensitive for small objects
             enable_huge_pages: false, // Disable for small objects
             huge_page_threshold: 2 * 1024 * 1024,
+            prefetch_distance: 8, // Default for small objects
         }
     }
 
@@ -193,6 +204,7 @@ impl SecurePoolConfig {
             hot_data_threshold: 750, // Balanced for medium objects
             enable_huge_pages: false, // Usually not needed for 64KB
             huge_page_threshold: 2 * 1024 * 1024,
+            prefetch_distance: 8, // Default for medium objects
         }
     }
 
@@ -216,6 +228,7 @@ impl SecurePoolConfig {
             hot_data_threshold: 1500, // Higher threshold for large objects
             enable_huge_pages: true, // Enable for large objects
             huge_page_threshold: 2 * 1024 * 1024,
+            prefetch_distance: 12, // More aggressive for large batch allocations
         }
     }
 
@@ -347,10 +360,22 @@ impl SecurePoolConfig {
     }
 
     /// Builder method to set huge page threshold
-    /// 
+    ///
     /// Chunks smaller than this size use regular pages.
     pub fn with_huge_page_threshold(mut self, threshold: usize) -> Self {
         self.huge_page_threshold = threshold;
+        self
+    }
+
+    /// Builder method to set prefetch distance for bulk allocations
+    ///
+    /// Higher values can improve throughput for large batch allocations but
+    /// may waste prefetch bandwidth for small batches. Recommended values:
+    /// - 4: Conservative, good for variable-size batches
+    /// - 8: Default, balanced for most workloads
+    /// - 12-16: Aggressive, best for large uniform batches
+    pub fn with_prefetch_distance(mut self, distance: usize) -> Self {
+        self.prefetch_distance = distance;
         self
     }
 }
@@ -1122,8 +1147,9 @@ impl SecureMemoryPool {
     /// Bulk allocation with prefetching for improved performance
     ///
     /// # Performance
-    /// Uses lookahead prefetching (PREFETCH_DISTANCE=8) to warm cache for future
+    /// Uses configurable lookahead prefetching (default: 8) to warm cache for future
     /// allocations, providing 20-30% improvement over sequential allocations.
+    /// The prefetch distance can be tuned via `SecurePoolConfig::prefetch_distance`.
     ///
     /// # Arguments
     /// * `sizes` - Slice of allocation sizes (all should be equal to chunk_size)
@@ -1131,7 +1157,7 @@ impl SecureMemoryPool {
     /// # Returns
     /// Vector of allocated pointers in the same order as requested sizes
     pub fn allocate_bulk_with_prefetch(self: &Arc<Self>, sizes: &[usize]) -> Result<Vec<SecurePooledPtr>> {
-        const PREFETCH_DISTANCE: usize = 8;
+        let prefetch_distance = self.config.prefetch_distance;
         let mut results = Vec::with_capacity(sizes.len());
 
         for (i, &size) in sizes.iter().enumerate() {
@@ -1143,8 +1169,8 @@ impl SecureMemoryPool {
             }
 
             // Prefetch future allocations (lookahead)
-            if i + PREFETCH_DISTANCE < sizes.len() {
-                self.prefetch_allocation_metadata(sizes[i + PREFETCH_DISTANCE]);
+            if i + prefetch_distance < sizes.len() {
+                self.prefetch_allocation_metadata(sizes[i + prefetch_distance]);
             }
 
             // Perform allocation
