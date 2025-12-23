@@ -187,6 +187,12 @@ impl<K: PartialEq + Hash + Eq + 'static + Clone, V: Clone> SmallMap<K, V> {
 
         // Unrolled search with optimized branch prediction
         // Eliminates loop overhead and improves instruction pipeline utilization
+        //
+        // SAFETY: All assume_init_ref() calls below are safe because:
+        // 1. len is validated by insert() to never exceed SMALL_MAP_THRESHOLD
+        // 2. Keys at indices 0..len are guaranteed initialized by insert()
+        // 3. Each match arm only accesses indices that are < len
+        debug_assert!(len <= SMALL_MAP_THRESHOLD, "len {} exceeds SMALL_MAP_THRESHOLD {}", len, SMALL_MAP_THRESHOLD);
         match len {
             1 => {
                 let k0 = unsafe { keys[0].assume_init_ref() };

@@ -483,6 +483,10 @@ where
             StorageStrategy::SmallInline { inline_capacity, .. } => {
                 Ok(HashMapStorage::SmallInline {
                     inline_data: InlineStorage {
+                        // SAFETY: This creates an array of MaybeUninit<(K, V)> values.
+                        // MaybeUninit<T> does not require initialization, so an array of
+                        // uninitialized MaybeUninit values is valid. Individual elements
+                        // are only accessed after being explicitly initialized.
                         data: unsafe { MaybeUninit::uninit().assume_init() },
                         occupied: 0,
                     },

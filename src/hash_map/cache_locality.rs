@@ -215,6 +215,10 @@ impl<K, V, const N: usize> CacheOptimizedBucket<K, V, N> {
                 reserved: 0,
             },
             hashes: [0; N],
+            // SAFETY: This creates an array of MaybeUninit<(K, V)> values.
+            // MaybeUninit<T> does not require initialization, so an array of
+            // uninitialized MaybeUninit values is valid. Individual elements
+            // are only accessed after being explicitly initialized via write().
             entries: unsafe { MaybeUninit::uninit().assume_init() },
             overflow: None,
             _padding: [],

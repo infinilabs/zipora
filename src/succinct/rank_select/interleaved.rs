@@ -130,6 +130,8 @@ impl InterleavedLine {
             // Direct word access without intermediate variables
             let trailing_count = unsafe {
                 // SAFETY: word_idx is bounds-checked above through bit_offset validation
+                // Also, line 126 uses self.rlev2[word_idx] which would panic if word_idx >= 4
+                debug_assert!(word_idx < WORDS_PER_LINE, "word_idx {} >= WORDS_PER_LINE {}", word_idx, WORDS_PER_LINE);
                 let word = *self.bit64.get_unchecked(word_idx);
 
                 // Use referenced project's optimized trailing bit count pattern
@@ -450,13 +452,15 @@ impl RankSelectInterleaved256 {
         let bit_in_line = pos % LINE_BITS;
 
         unsafe {
-            // SAFETY: line_idx bounds-checked above
+            // SAFETY: line_idx bounds-checked above (line 444: if line_idx >= self.lines.len())
+            debug_assert!(line_idx < self.lines.len(), "line_idx {} >= lines.len() {}", line_idx, self.lines.len());
             let line = self.lines.get_unchecked(line_idx);
 
             // Prefetch next cache line for sequential access (referenced project pattern)
             if line_idx + 1 < self.lines.len() {
                 #[cfg(target_arch = "x86_64")]
                 {
+                    debug_assert!(line_idx + 1 < self.lines.len(), "line_idx + 1 {} >= lines.len() {}", line_idx + 1, self.lines.len());
                     let next_line_ptr = self.lines.get_unchecked(line_idx + 1) as *const _ as *const i8;
                     std::arch::x86_64::_mm_prefetch::<{std::arch::x86_64::_MM_HINT_T0}>(next_line_ptr);
                 }

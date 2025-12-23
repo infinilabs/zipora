@@ -406,6 +406,10 @@ impl SortableStrVec {
             let entries = &self.entries;
 
             self.sorted_indices.sort_unstable_by(|&a, &b| {
+                // SAFETY: sorted_indices only contains valid indices into entries:
+                // - Indices are added via add() which pushes to entries first, then sorted_indices
+                // - Debug mode (above) uses safe bounds-checked access to verify correctness
+                // - sorted_indices.len() == entries.len() invariant maintained by add()
                 let entry_a = unsafe { entries.get_unchecked(a) };
                 let entry_b = unsafe { entries.get_unchecked(b) };
 
