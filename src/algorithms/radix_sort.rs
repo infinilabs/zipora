@@ -1387,7 +1387,17 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
         // Process 8 u64 values at a time using AVX2 (requires casting to u32)
         while i + 8 <= keys.len() {
             // Load 8 u64 values as u32 (lower 32 bits)
-            let keys_u32: Vec<u32> = keys[i..i+8].iter().map(|&k| k as u32).collect();
+            // Use stack-allocated array instead of Vec to avoid heap allocation in hot loop
+            let keys_u32: [u32; 8] = [
+                keys[i] as u32,
+                keys[i + 1] as u32,
+                keys[i + 2] as u32,
+                keys[i + 3] as u32,
+                keys[i + 4] as u32,
+                keys[i + 5] as u32,
+                keys[i + 6] as u32,
+                keys[i + 7] as u32,
+            ];
             let values = unsafe { _mm256_loadu_si256(keys_u32.as_ptr() as *const __m256i) };
 
             // Shift and mask to extract digits
