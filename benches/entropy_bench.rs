@@ -202,6 +202,75 @@ fn bench_fse_algorithms(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark Huffman Order-1 interleaving variants (x1, x2, x4, x8)
+/// This validates the claimed "2-4x speedup" for higher interleaving factors
+fn bench_huffman_o1_interleaving(c: &mut Criterion) {
+    let mut group = c.benchmark_group("huffman_o1_interleaving");
+
+    // Test sizes that benefit from interleaving
+    let sizes = vec![4096, 16384, 65536, 262144];
+    let entropy_levels = vec![2.0, 6.0]; // Medium and high entropy
+
+    for &size in &sizes {
+        for &entropy in &entropy_levels {
+            let data = generate_test_data(size, entropy);
+
+            // Create encoder once and reuse for fair comparison
+            let encoder = ContextualHuffmanEncoder::new(&data, HuffmanOrder::Order1).unwrap();
+
+            // Baseline: x1 (no interleaving)
+            group.bench_with_input(
+                BenchmarkId::new("encode_x1", format!("{}_{}", size, entropy)),
+                &data,
+                |b, data| {
+                    b.iter(|| {
+                        let compressed = encoder.encode_x1(data).unwrap();
+                        black_box(compressed);
+                    });
+                },
+            );
+
+            // x2 interleaving (2 parallel streams)
+            group.bench_with_input(
+                BenchmarkId::new("encode_x2", format!("{}_{}", size, entropy)),
+                &data,
+                |b, data| {
+                    b.iter(|| {
+                        let compressed = encoder.encode_x2(data).unwrap();
+                        black_box(compressed);
+                    });
+                },
+            );
+
+            // x4 interleaving (4 parallel streams)
+            group.bench_with_input(
+                BenchmarkId::new("encode_x4", format!("{}_{}", size, entropy)),
+                &data,
+                |b, data| {
+                    b.iter(|| {
+                        let compressed = encoder.encode_x4(data).unwrap();
+                        black_box(compressed);
+                    });
+                },
+            );
+
+            // x8 interleaving (8 parallel streams)
+            group.bench_with_input(
+                BenchmarkId::new("encode_x8", format!("{}_{}", size, entropy)),
+                &data,
+                |b, data| {
+                    b.iter(|| {
+                        let compressed = encoder.encode_x8(data).unwrap();
+                        black_box(compressed);
+                    });
+                },
+            );
+        }
+    }
+
+    group.finish();
+}
+
 fn bench_parallel_encoding(c: &mut Criterion) {
     let mut group = c.benchmark_group("parallel_encoding");
     
@@ -350,6 +419,7 @@ fn bench_entropy_context(c: &mut Criterion) {
 criterion_group!(
     entropy_benches,
     bench_huffman_algorithms,
+    bench_huffman_o1_interleaving,
     bench_rans_algorithms,
     bench_fse_algorithms,
     bench_parallel_encoding,
