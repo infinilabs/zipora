@@ -302,8 +302,21 @@ impl Drop for ZeroCopyBuffer {
     }
 }
 
-// SAFETY: ZeroCopyBuffer manages its own memory correctly
+// SAFETY: ZeroCopyBuffer is Send because:
+// 1. `data: NonNull<u8>` - Raw pointer to heap-allocated memory owned by this struct.
+//    Memory is allocated in `new()` and deallocated in `Drop`. No thread-local state.
+// 2. `capacity/read_pos/write_pos: usize` - Primitive fields, trivially Send.
+// 3. `_secure_pool/use_secure_pool` - Config fields with no thread affinity.
 unsafe impl Send for ZeroCopyBuffer {}
+
+// SAFETY: ZeroCopyBuffer is Sync because:
+// 1. All fields are either immutable (capacity) or require &mut self for mutation.
+// 2. The buffer provides raw memory access but mutation requires exclusive access.
+// 3. Read-only operations (data(), available(), etc.) are safe to call concurrently.
+// 4. No interior mutability without &mut self.
+//
+// Note: Concurrent reads through multiple &ZeroCopyBuffer are safe, but
+// concurrent writes require external synchronization or &mut self.
 unsafe impl Sync for ZeroCopyBuffer {}
 
 /// Zero-copy reader wrapper that provides direct buffer access

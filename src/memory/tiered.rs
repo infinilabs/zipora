@@ -398,8 +398,21 @@ impl TieredMemoryAllocator {
     }
 }
 
-// Safety: TieredMemoryAllocator can be shared between threads safely
+// SAFETY: TieredMemoryAllocator is Send because:
+// 1. `config: TieredConfig` - Config is Clone with no raw pointers.
+// 2. `small_allocs/medium_allocs/...` - AtomicUsize counters are Send.
+// 3. `bump_allocator: BumpAllocator` - BumpAllocator is Send (uses atomics).
+// 4. `mmap_allocator: MemoryMappedAllocator` - Is Send (uses Mutex).
+// 5. `hugepage_allocator: HugePageAllocator` - Is Send.
 unsafe impl Send for TieredMemoryAllocator {}
+
+// SAFETY: TieredMemoryAllocator is Sync because:
+// 1. Atomic counters (small_allocs, medium_allocs, etc.) are inherently Sync.
+// 2. `bump_allocator: BumpAllocator` - Is Sync (uses CAS for allocation).
+// 3. `mmap_allocator: MemoryMappedAllocator` - Is Sync (uses Mutex).
+// 4. `hugepage_allocator: HugePageAllocator` - Is Sync (uses Mutex).
+// 5. Thread-local pools (SMALL_POOLS, MEDIUM_POOLS) are per-thread.
+// All shared state is protected by atomics or Mutex for thread safety.
 unsafe impl Sync for TieredMemoryAllocator {}
 
 impl TieredAllocation {

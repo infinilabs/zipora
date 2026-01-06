@@ -200,7 +200,26 @@ pub struct FixedCapacityMemoryPool {
     init_mutex: Mutex<bool>,
 }
 
+// SAFETY: FixedCapacityMemoryPool is Send because:
+// 1. `config: FixedCapacityPoolConfig` - Config is Clone with no raw pointers.
+// 2. `memory: UnsafeCell<Option<NonNull<u8>>>` - Protected by init_mutex.
+// 3. `memory_layout: UnsafeCell<Option<Layout>>` - Protected by init_mutex.
+// 4. `free_lists: UnsafeCell<Vec<FreeListHead>>` - Contains only atomics.
+// 5. `size_classes: Vec<usize>` - Immutable after construction.
+// 6. `stats: Option<Arc<...>>` - Arc is Send.
+// 7. `init_mutex: Mutex<bool>` - Mutex is Send.
 unsafe impl Send for FixedCapacityMemoryPool {}
+
+// SAFETY: FixedCapacityMemoryPool is Sync because:
+// 1. Initialization of UnsafeCell fields is protected by `init_mutex`.
+// 2. After initialization, `free_lists` contains atomic head/count fields.
+// 3. `stats` uses Arc for thread-safe reference counting.
+// 4. `size_classes` is immutable after construction.
+// 5. The init_mutex ensures only one thread performs initialization.
+//
+// IMPORTANT: The UnsafeCell fields must only be accessed:
+// - During initialization (under init_mutex lock)
+// - After initialization for atomic operations on free_lists
 unsafe impl Sync for FixedCapacityMemoryPool {}
 
 impl FixedCapacityMemoryPool {

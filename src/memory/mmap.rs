@@ -223,8 +223,20 @@ impl Drop for MemoryMappedAllocator {
     }
 }
 
-// Safety: MemoryMappedAllocator can be shared between threads safely
+// SAFETY: MemoryMappedAllocator is Send because:
+// 1. `min_mmap_size: usize` - Immutable primitive, trivially Send.
+// 2. `page_size: usize` - Immutable primitive, trivially Send.
+// 3. `region_cache: Mutex<HashMap<usize, Vec<*mut u8>>>` - Mutex is Send.
+//    Raw pointers in the cache point to mmap'd regions, not thread-local data.
+// 4. `total_allocated/total_freed/...` - AtomicU64 counters are Send.
 unsafe impl Send for MemoryMappedAllocator {}
+
+// SAFETY: MemoryMappedAllocator is Sync because:
+// 1. `region_cache` - Protected by Mutex for exclusive access.
+// 2. All atomic counters are inherently thread-safe.
+// 3. mmap/munmap syscalls are thread-safe.
+// 4. Immutable fields (min_mmap_size, page_size) are safe to read concurrently.
+// The Mutex ensures serialized access to the region cache.
 unsafe impl Sync for MemoryMappedAllocator {}
 
 impl MmapAllocation {

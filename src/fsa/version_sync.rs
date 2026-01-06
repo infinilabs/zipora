@@ -658,8 +658,20 @@ impl TokenReleaseCallback {
     }
 }
 
-// Safety: TokenReleaseCallback only holds a pointer to VersionManager and token type
+// SAFETY: TokenReleaseCallback is Send because:
+// 1. `version_manager: *const VersionManager` - Raw pointer to a VersionManager.
+//    The VersionManager is expected to outlive all callbacks (managed by Arc).
+// 2. `token_type: TokenType` - Simple enum, trivially Send.
+//
+// INVARIANT: The VersionManager must remain valid for the lifetime of all callbacks.
+// This is enforced by the Arc<VersionManager> ownership in the token creation path.
 unsafe impl Send for TokenReleaseCallback {}
+
+// SAFETY: TokenReleaseCallback is Sync because:
+// 1. Both fields are read-only after construction.
+// 2. `release()` calls thread-safe methods on VersionManager (which uses atomics).
+// 3. The VersionManager's release_reader_token/release_writer_token are atomic.
+// Sharing &TokenReleaseCallback for concurrent reads is safe.
 unsafe impl Sync for TokenReleaseCallback {}
 
 /// Reader token for safe concurrent read access.

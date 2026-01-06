@@ -252,7 +252,27 @@ pub struct LockFreeMemoryPool {
     cache_allocator: Option<CacheOptimizedAllocator>,
 }
 
+// SAFETY: LockFreeMemoryPool is Send because:
+// 1. `config: LockFreePoolConfig` - Config is Clone and contains no pointers.
+// 2. `memory: NonNull<u8>` - Raw pointer to heap-allocated memory owned by this struct.
+//    Memory is allocated in `new()` and deallocated in `Drop`. No thread-local state.
+// 3. `memory_layout: Layout` - Trivially Send.
+// 4. `fast_bins: Vec<CachePadded<LockFreeHead>>` - Contains only atomics.
+// 5. `skip_list_head: Mutex<...>` - Mutex is Send.
+// 6. `next_offset: AtomicU32` - AtomicU32 is Send.
+// 7. `stats: Option<Arc<LockFreePoolStats>>` - Arc<T> is Send if T is Send+Sync.
+// 8. `cache_allocator: Option<CacheOptimizedAllocator>` - Safe container.
 unsafe impl Send for LockFreeMemoryPool {}
+
+// SAFETY: LockFreeMemoryPool is Sync because:
+// 1. All mutable state uses atomic operations (LockFreeHead contains AtomicU64/AtomicU32).
+// 2. Fast bin operations use lock-free CAS with generation counters (ABA-safe).
+// 3. Skip list operations are protected by Mutex.
+// 4. Memory offsets are used instead of raw pointers for safe concurrent access.
+// 5. Acquire/Release ordering ensures proper happens-before relationships.
+// 6. The pool never deallocates memory while allocated chunks may still be in use.
+//
+// The lock-free allocation protocol ensures thread-safe memory distribution.
 unsafe impl Sync for LockFreeMemoryPool {}
 
 impl LockFreeMemoryPool {

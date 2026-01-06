@@ -168,7 +168,17 @@ impl Default for FutexMutex {
     }
 }
 
+// SAFETY: FutexMutex is Send because:
+// 1. `state: AtomicU32` - AtomicU32 is Send, no thread-local state.
+// The mutex can safely be transferred between threads.
 unsafe impl Send for FutexMutex {}
+
+// SAFETY: FutexMutex is Sync because:
+// 1. `state: AtomicU32` - All state transitions use atomic operations.
+// 2. Lock acquisition uses CAS with Acquire ordering.
+// 3. Lock release uses swap with Release ordering.
+// 4. Futex syscalls provide kernel-level synchronization for waiters.
+// The mutex protocol ensures mutual exclusion across threads.
 unsafe impl Sync for FutexMutex {}
 
 /// RAII guard for FutexMutex
@@ -254,7 +264,15 @@ impl Default for FutexCondvar {
     }
 }
 
+// SAFETY: FutexCondvar is Send because:
+// 1. `futex: AtomicU32` - AtomicU32 is Send, no thread-local state.
 unsafe impl Send for FutexCondvar {}
+
+// SAFETY: FutexCondvar is Sync because:
+// 1. `futex: AtomicU32` - All operations use atomic updates.
+// 2. wait() releases the mutex and blocks atomically via futex syscall.
+// 3. notify_one()/notify_all() use futex_wake for kernel-level wakeup.
+// The condvar protocol is designed for cross-thread signaling.
 unsafe impl Sync for FutexCondvar {}
 
 /// High-performance reader-writer lock using futex
@@ -336,7 +354,17 @@ impl Default for FutexRwLock {
     }
 }
 
+// SAFETY: FutexRwLock is Send because:
+// 1. `state: AtomicU32` - AtomicU32 is Send, no thread-local state.
+// The lock can safely be transferred between threads.
 unsafe impl Send for FutexRwLock {}
+
+// SAFETY: FutexRwLock is Sync because:
+// 1. `state: AtomicU32` - All state transitions use atomic operations.
+// 2. Reader count tracked in lower bits, writer flag in upper bit.
+// 3. Acquire/Release ordering ensures proper happens-before relationships.
+// 4. Futex syscalls provide kernel-level synchronization for waiters.
+// The RwLock protocol ensures reader-writer exclusion across threads.
 unsafe impl Sync for FutexRwLock {}
 
 /// RAII guard for read access
