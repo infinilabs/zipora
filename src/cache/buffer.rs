@@ -209,8 +209,22 @@ impl Drop for CacheBuffer {
     }
 }
 
-// Safety: CacheBuffer maintains proper lifetimes for cache references
+// SAFETY: CacheBuffer is Send because:
+// 1. `buffer_type: BufferType` - Simple enum, trivially Send.
+// 2. `data_slice: Option<&'static [u8]>` - Points to immutable data.
+//    The 'static lifetime is a lie (set in from_data), but the slice points
+//    to data_buffer which moves with the struct, so ownership is maintained.
+// 3. `data_buffer: Vec<u8>` - Vec is Send.
+// 4. `cache: Option<Arc<dyn Cache>>` - Arc<dyn Cache> is Send if Cache is Send+Sync.
+// 5. `node_indices: Vec<NodeIndex>` - Vec is Send.
+//
+// IMPORTANT: The `data_slice` field has a fake 'static lifetime. This is safe
+// because the slice always points into `data_buffer`, which moves with the struct.
+// The struct must never be copied/cloned in a way that separates the slice from buffer.
 unsafe impl Send for CacheBuffer {}
+
+// Note: CacheBuffer intentionally does NOT implement Sync because the data_slice
+// field uses interior pointer tricks that would be unsafe to share across threads.
 
 /// Buffer pool for reusing cache buffers
 pub struct BufferPool {

@@ -5,15 +5,32 @@
 
 use crate::error::{Result, ZiporaError};
 use std::alloc::{Layout, alloc, dealloc};
-use std::cell::Cell;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// A bump allocator that allocates memory sequentially from a large buffer
+///
+/// # Thread Safety
+///
+/// This allocator is both `Send` and `Sync`:
+/// - **Send**: The allocator can be transferred between threads safely because
+///   it owns its memory buffer via `NonNull<u8>` and all mutable state uses atomics.
+/// - **Sync**: The allocator can be shared between threads safely because:
+///   - `buffer` is a raw pointer that is only dereferenced in `alloc_bytes` after
+///     atomic coordination via `current`
+///   - `current` uses `AtomicUsize` with proper memory ordering to coordinate
+///     concurrent allocations (CAS loop prevents data races)
+///   - `allocated_bytes` is `AtomicU64` for thread-safe statistics
+///   - `capacity` is immutable after construction
+///
+/// Note: While thread-safe, concurrent allocations may experience contention
+/// in the CAS loop. For high-contention scenarios, consider using per-thread
+/// bump allocators or the thread-local pool variants.
 pub struct BumpAllocator {
     buffer: NonNull<u8>,
     capacity: usize,
-    current: Cell<usize>,
+    /// Current allocation offset, atomically updated for thread-safe bump allocation
+    current: AtomicUsize,
     allocated_bytes: AtomicU64,
 }
 
@@ -35,7 +52,7 @@ impl BumpAllocator {
         Ok(Self {
             buffer: unsafe { NonNull::new_unchecked(ptr) },
             capacity,
-            current: Cell::new(0),
+            current: AtomicUsize::new(0),
             allocated_bytes: AtomicU64::new(0),
         })
     }
@@ -59,6 +76,10 @@ impl BumpAllocator {
     }
 
     /// Allocate raw bytes with specified alignment
+    ///
+    /// This method is thread-safe and uses compare-and-swap to atomically
+    /// reserve space in the buffer. Under high contention, the CAS loop
+    /// will retry until successful or until the buffer is exhausted.
     pub fn alloc_bytes(&self, size: usize, align: usize) -> Result<NonNull<u8>> {
         if size == 0 {
             return Err(ZiporaError::invalid_data("allocation size cannot be zero"));
@@ -70,22 +91,41 @@ impl BumpAllocator {
             ));
         }
 
-        let current = self.current.get();
+        // Use CAS loop for thread-safe bump allocation
+        loop {
+            let current = self.current.load(Ordering::Acquire);
 
-        // Calculate aligned offset
-        let aligned_offset = (current + align - 1) & !(align - 1);
-        let new_offset = aligned_offset + size;
+            // Calculate aligned offset
+            let aligned_offset = (current + align - 1) & !(align - 1);
+            let new_offset = aligned_offset + size;
 
-        if new_offset > self.capacity {
-            return Err(ZiporaError::out_of_memory(size));
+            if new_offset > self.capacity {
+                return Err(ZiporaError::out_of_memory(size));
+            }
+
+            // Try to atomically update the current offset
+            match self.current.compare_exchange_weak(
+                current,
+                new_offset,
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    self.allocated_bytes
+                        .fetch_add(size as u64, Ordering::Relaxed);
+
+                    // SAFETY: aligned_offset is within bounds (checked above),
+                    // and we successfully reserved this range via CAS
+                    let ptr = unsafe { self.buffer.as_ptr().add(aligned_offset) };
+                    return Ok(unsafe { NonNull::new_unchecked(ptr) });
+                }
+                Err(_) => {
+                    // CAS failed, another thread allocated - retry
+                    std::hint::spin_loop();
+                    continue;
+                }
+            }
         }
-
-        self.current.set(new_offset);
-        self.allocated_bytes
-            .fetch_add(size as u64, Ordering::Relaxed);
-
-        let ptr = unsafe { self.buffer.as_ptr().add(aligned_offset) };
-        Ok(unsafe { NonNull::new_unchecked(ptr) })
     }
 
     /// Reset the allocator, making all memory available again
@@ -94,8 +134,10 @@ impl BumpAllocator {
     ///
     /// This invalidates all previously allocated pointers. The caller must ensure
     /// that no allocated objects are accessed after calling this function.
+    /// Additionally, the caller must ensure no other threads are concurrently
+    /// allocating from this allocator during reset.
     pub unsafe fn reset(&self) {
-        self.current.set(0);
+        self.current.store(0, Ordering::Release);
         self.allocated_bytes.store(0, Ordering::Relaxed);
     }
 
@@ -111,18 +153,38 @@ impl BumpAllocator {
 
     /// Get the number of bytes remaining
     pub fn remaining_bytes(&self) -> usize {
-        self.capacity - self.current.get()
+        self.capacity - self.current.load(Ordering::Relaxed)
     }
 
     /// Check if the allocator can satisfy an allocation of the given size and alignment
+    ///
+    /// Note: This is a best-effort check in a concurrent context. Another thread
+    /// may allocate between this check and the actual allocation.
     pub fn can_allocate(&self, size: usize, align: usize) -> bool {
-        let current = self.current.get();
+        let current = self.current.load(Ordering::Relaxed);
         let aligned_offset = (current + align - 1) & !(align - 1);
         aligned_offset + size <= self.capacity
     }
 }
 
+// SAFETY: BumpAllocator is Send because:
+// 1. `buffer: NonNull<u8>` - Raw pointer to heap-allocated memory owned by this struct.
+//    The memory is allocated in `new()` and deallocated in `Drop`. No thread-local state.
+// 2. `capacity: usize` - Immutable after construction, trivially Send.
+// 3. `current: AtomicUsize` - AtomicUsize is Send.
+// 4. `allocated_bytes: AtomicU64` - AtomicU64 is Send.
 unsafe impl Send for BumpAllocator {}
+
+// SAFETY: BumpAllocator is Sync because:
+// 1. `buffer: NonNull<u8>` - Only accessed after successful CAS on `current`, which
+//    provides synchronization. Each thread gets a unique, non-overlapping region.
+// 2. `capacity: usize` - Immutable after construction, safe to read concurrently.
+// 3. `current: AtomicUsize` - Atomic operations with Acquire/Release ordering ensure
+//    proper synchronization for the bump allocation algorithm.
+// 4. `allocated_bytes: AtomicU64` - Atomic updates are inherently thread-safe.
+//
+// The allocation algorithm uses compare_exchange_weak to atomically reserve space,
+// ensuring no two threads receive overlapping memory regions.
 unsafe impl Sync for BumpAllocator {}
 
 impl Drop for BumpAllocator {
@@ -158,7 +220,7 @@ impl BumpArena {
     pub fn scope(&self) -> BumpScope<'_> {
         BumpScope {
             allocator: &self.allocator,
-            initial_offset: self.allocator.current.get(),
+            initial_offset: self.allocator.current.load(Ordering::Relaxed),
             initial_allocated_bytes: self.allocator.allocated_bytes(),
         }
     }
@@ -194,7 +256,7 @@ impl Drop for BumpArena {
         unsafe {
             self.allocator.reset();
         }
-        self.allocator.current.set(self.initial_offset);
+        self.allocator.current.store(self.initial_offset, Ordering::Relaxed);
     }
 }
 
@@ -234,7 +296,7 @@ impl<'a> BumpScope<'a> {
 impl<'a> Drop for BumpScope<'a> {
     fn drop(&mut self) {
         // Reset to initial position
-        self.allocator.current.set(self.initial_offset);
+        self.allocator.current.store(self.initial_offset, Ordering::Relaxed);
 
         // Reset allocated bytes counter to what it was when scope was created
         self.allocator
@@ -468,7 +530,7 @@ mod tests {
         {
             let scope = BumpScope {
                 allocator: &allocator,
-                initial_offset: allocator.current.get(),
+                initial_offset: allocator.current.load(Ordering::Relaxed),
                 initial_allocated_bytes: allocator.allocated_bytes(),
             };
 
@@ -479,7 +541,7 @@ mod tests {
         }
 
         // After scope ends, allocation should be reset
-        assert_eq!(allocator.current.get(), 0);
+        assert_eq!(allocator.current.load(Ordering::Relaxed), 0);
     }
 
     #[test]

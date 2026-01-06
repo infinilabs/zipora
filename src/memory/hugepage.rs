@@ -48,8 +48,19 @@ struct HugePageAllocation {
     page_size: usize,
 }
 
+// SAFETY: HugePageAllocation is Send because:
+// 1. `ptr: *mut u8` - Raw pointer to mmap'd hugepage memory. The allocation
+//    owns this memory exclusively. Hugepages are not thread-local.
+// 2. `size/page_size: usize` - Primitive fields, trivially Send.
 #[cfg(target_os = "linux")]
 unsafe impl Send for HugePageAllocation {}
+
+// SAFETY: HugePageAllocation is Sync because:
+// 1. All fields are read-only after construction.
+// 2. The allocation represents exclusive ownership of a hugepage region.
+// 3. Sharing &HugePageAllocation only provides read access to metadata.
+// 4. Actual memory access requires dereferencing the raw pointer, which
+//    needs external synchronization (provided by containing structures).
 #[cfg(target_os = "linux")]
 unsafe impl Sync for HugePageAllocation {}
 

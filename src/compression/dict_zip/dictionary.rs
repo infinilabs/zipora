@@ -893,7 +893,25 @@ impl ConcurrentSuffixArrayDictionary {
     }
 }
 
+// SAFETY: SuffixArrayDictionary is Send because:
+// 1. `dictionary: Vec<u8>` - Vec is Send.
+// 2. `suffix_array: Vec<u32>` - Vec is Send.
+// 3. `lcp_array: Vec<u32>` - Vec is Send.
+// 4. `inverse_suffix_array: Vec<u32>` - Vec is Send.
+// 5. `dfa_cache: HashMap<...>` - HashMap is Send.
+// 6. `config: SuffixArrayDictionaryConfig` - Config is Clone, trivially Send.
+// 7. `stats: MatchStats` - Stats contain primitives, trivially Send.
+// 8. All other fields are primitives (usize, f64).
 unsafe impl Send for SuffixArrayDictionary {}
+
+// SAFETY: SuffixArrayDictionary is Sync because:
+// 1. All fields are either immutable (after construction) or require &mut self.
+// 2. `find_longest_match` requires &mut self for stats updates.
+// 3. Read-only methods (dictionary_size, cache_states, etc.) are safe concurrently.
+// 4. No interior mutability without &mut self.
+//
+// Note: For concurrent access, use ConcurrentSuffixArrayDictionary which wraps
+// this struct in an RwLock.
 unsafe impl Sync for SuffixArrayDictionary {}
 
 #[cfg(test)]

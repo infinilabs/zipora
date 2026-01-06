@@ -650,7 +650,23 @@ impl SecureChunk {
 // and Drop::drop() takes &mut self. Deallocation is handled explicitly by the pool
 // or by SecurePooledPtr::drop() to ensure proper SIMD optimization based on config.
 
+// SAFETY: SecureChunk is Send because:
+// 1. `ptr: NonNull<u8>` - Raw pointer to heap-allocated memory. The chunk owns
+//    this memory exclusively until deallocated. No thread-local state.
+// 2. `size: usize` - Immutable primitive, trivially Send.
+// 3. `canary: u32` - Immutable after construction, trivially Send.
+// 4. `generation: u32` - Immutable after construction, trivially Send.
 unsafe impl Send for SecureChunk {}
+
+// SAFETY: SecureChunk is Sync because:
+// 1. All fields are immutable after construction.
+// 2. The chunk represents exclusive ownership of a memory region.
+// 3. Sharing &SecureChunk only provides read access to the pointer and metadata.
+// 4. The pointer itself is never dereferenced through &self - only through
+//    explicit unsafe code that requires the caller to ensure synchronization.
+//
+// Note: While SecureChunk is Sync, writing to the underlying memory through
+// the pointer requires external synchronization (which SecurePooledPtr provides).
 unsafe impl Sync for SecureChunk {}
 
 /// Lock-free stack for high-performance chunk storage (Treiber stack)
@@ -1348,7 +1364,21 @@ impl Drop for SecurePooledPtr {
     }
 }
 
+// SAFETY: SecurePooledPtr is Send because:
+// 1. `chunk: Option<SecureChunk>` - SecureChunk is Send (see above).
+// 2. `pool: Weak<SecureMemoryPool>` - Weak<T> is Send if T is Send+Sync.
+//    SecureMemoryPool uses Arc and atomics for thread-safe reference counting.
+// Transferring ownership between threads is safe as only one owner exists.
 unsafe impl Send for SecurePooledPtr {}
+
+// SAFETY: SecurePooledPtr is Sync because:
+// 1. All access is through `&self` (immutable) or `&mut self` (exclusive).
+// 2. `as_slice()` returns a read-only view of the memory.
+// 3. `as_mut_slice()` requires `&mut self`, ensuring exclusive access.
+// 4. The underlying chunk is either None or exclusively owned by this ptr.
+// 5. Pool deallocation is thread-safe via Arc's atomic reference counting.
+//
+// Note: Safe concurrent read access is provided. Mutable access requires &mut self.
 unsafe impl Sync for SecurePooledPtr {}
 
 /// Get current time in nanoseconds

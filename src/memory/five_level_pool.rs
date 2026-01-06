@@ -206,7 +206,21 @@ struct MemoryChunk {
     capacity: usize,
 }
 
+// SAFETY: MemoryChunk is Send because:
+// 1. `data: NonNull<u8>` - Raw pointer to heap-allocated memory owned by this struct.
+//    Memory is allocated in `new()` and deallocated in `Drop`. No thread-local state.
+// 2. `size: usize` - Mutable state but only accessed through &mut self.
+// 3. `capacity: usize` - Immutable after construction, trivially Send.
 unsafe impl Send for MemoryChunk {}
+
+// SAFETY: MemoryChunk is Sync because:
+// 1. `data: NonNull<u8>` - Read-only access through &self via `offset_ptr()`.
+// 2. `size`/`capacity` - Read-only through &self.
+// 3. Mutable operations require &mut self (exclusive access).
+// 4. The chunk provides raw memory that callers must synchronize.
+//
+// Note: MemoryChunk itself is Sync, but the memory it points to requires
+// external synchronization when accessed from multiple threads.
 unsafe impl Sync for MemoryChunk {}
 
 impl MemoryChunk {
@@ -585,7 +599,20 @@ impl MutexBasedPool {
     }
 }
 
+// SAFETY: MutexBasedPool is Send because:
+// 1. `config: FiveLevelPoolConfig` - Config is Clone, no pointers.
+// 2. `memory: Arc<Mutex<MemoryChunk>>` - Arc<Mutex<T>> is Send if T is Send.
+// 3. `free_lists: Vec<Mutex<FreeListHead>>` - Mutex<T> is Send if T is Send.
+// 4. `fragment_size: AtomicUsize` - AtomicUsize is Send.
+// 5. `huge_mutex: Mutex<...>` - Mutex<T> is Send.
 unsafe impl Send for MutexBasedPool {}
+
+// SAFETY: MutexBasedPool is Sync because:
+// 1. All mutable state is protected by Mutex (provides interior mutability).
+// 2. `memory` access is serialized by Arc<Mutex<...>>.
+// 3. `free_lists` - Each size class has its own Mutex for fine-grained locking.
+// 4. `fragment_size` - AtomicUsize provides atomic updates.
+// 5. Mutex provides mutual exclusion for all shared mutable state.
 unsafe impl Sync for MutexBasedPool {}
 
 /// Level 3: Lock-free Programming - Compare-and-swap memory pool
@@ -766,7 +793,20 @@ impl LockFreePool {
     }
 }
 
+// SAFETY: LockFreePool is Send because:
+// 1. `config: FiveLevelPoolConfig` - Config is Clone, no pointers.
+// 2. `memory: Arc<Mutex<MemoryChunk>>` - Arc<Mutex<T>> is Send if T is Send.
+// 3. `free_lists: Vec<LockFreeFreeListHead>` - Contains only atomics.
+// 4. `fragment_size: AtomicUsize` - AtomicUsize is Send.
+// 5. `huge_mutex: Mutex<...>` - Mutex is Send.
 unsafe impl Send for LockFreePool {}
+
+// SAFETY: LockFreePool is Sync because:
+// 1. Fast bin operations use lock-free atomic CAS (AtomicU32 head/count).
+// 2. Memory expansion is protected by Arc<Mutex<...>>.
+// 3. Huge allocations are protected by Mutex.
+// 4. AtomicUsize fragment tracking is inherently thread-safe.
+// 5. Lock-free operations use proper Acquire/Release ordering.
 unsafe impl Sync for LockFreePool {}
 
 /// Level 4: Thread-local Caching - Per-thread memory pools
@@ -900,7 +940,17 @@ impl ThreadLocalPool {
     }
 }
 
+// SAFETY: ThreadLocalPool is Send because:
+// 1. `config: FiveLevelPoolConfig` - Config is Clone, no pointers.
+// 2. `global_pool: Arc<LockFreePool>` - Arc<T> is Send if T is Send+Sync.
+// Thread-local caches are per-thread and don't cross thread boundaries.
 unsafe impl Send for ThreadLocalPool {}
+
+// SAFETY: ThreadLocalPool is Sync because:
+// 1. Thread-local caches (THREAD_CACHE) are per-thread, no cross-thread access.
+// 2. Fallback to global_pool is thread-safe (LockFreePool is Sync).
+// 3. Arc reference counting is atomic.
+// 4. Each thread maintains its own arena, preventing data races.
 unsafe impl Sync for ThreadLocalPool {}
 
 /// Level 5: Fixed Capacity - Bounded memory pool for real-time systems
