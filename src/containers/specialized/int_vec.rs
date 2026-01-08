@@ -499,47 +499,9 @@ impl<T: PackedInt> IntVec<T> {
     /// - Optimized memory access patterns with prefetching
     /// - SIMD-accelerated conversion when available
     pub fn from_slice_bulk(values: &[T]) -> Result<Self> {
-        // Fast path for empty input
-        if values.is_empty() {
-            return Ok(Self::new());
-        }
-        
-        // Defer validation to after empty check for better performance
-        debug_assert!(values.len() <= (isize::MAX as usize) / mem::size_of::<T>().max(1));
-        debug_assert!(mem::size_of::<T>() >= 1 && mem::size_of::<T>() <= 8);
-        
-        let start_time = std::time::Instant::now();
-        
-        // 🚀 ULTRA-OPTIMIZED FAST PATH
-        let mut result = Self::new();
-        result.len = values.len();
-
-        // 🚀 ZERO-COPY PATH: For u64 types, skip conversion entirely
-        if mem::size_of::<T>() == 8 && mem::align_of::<T>() >= 8 {
-            // Direct zero-copy construction for u64 types
-            return Self::from_slice_bulk_zerocopy(values, start_time);
-        }
-
-        // 🚀 OPTIMIZED CONVERSION: Always use the optimized bulk conversion
-        // It now handles all sizes efficiently
-        let u64_values = Self::bulk_convert_to_u64_fast(values);
-        
-        // 🚀 BULK-OPTIMIZED STRATEGY: Use fast strategy for bulk construction
-        // This prioritizes speed with simple MinMax/Raw decision logic
-        let strategy = Self::analyze_fast_strategy(&u64_values);
-        result.strategy = strategy;
-
-        // 🚀 FAST COMPRESSION: Use the optimized fast compression for bulk construction
-        // This prioritizes construction speed by only handling Raw and MinMax strategies
-        result.compress_with_fast_strategy(&u64_values, strategy)?;
-
-        // Update statistics
-        result.stats.original_size = values.len() * mem::size_of::<T>();
-        result.stats.compressed_size = result.data.len();
-        result.stats.index_size = result.index.as_ref().map_or(0, |idx| idx.len());
-        result.stats.compression_time_ns = start_time.elapsed().as_nanos() as u64;
-
-        Ok(result)
+        // Delegate to from_slice which uses optimal strategy selection
+        // Both paths now use identical optimized algorithms for consistent performance
+        Self::from_slice(values)
     }
 
     /// 🚀 Create IntVec from slice with SIMD-optimized bulk construction
@@ -873,27 +835,9 @@ impl<T: PackedInt> IntVec<T> {
     
     /// 🚀 FAST PATTERN: Ultra-fast conversion with minimal overhead
     fn bulk_convert_to_u64_fast(values: &[T]) -> Vec<u64> {
-        // 🚀 OPTIMIZED: Direct iterator conversion with proper capacity
-        // The Rust compiler optimizes this better than manual chunking
-        let mut result = Vec::with_capacity(values.len());
-        
-        // For large datasets, use prefetching to warm the cache
-        #[cfg(target_arch = "x86_64")]
-        if values.len() >= 4096 {
-            unsafe {
-                use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
-                // Prefetch the first few cache lines
-                for i in (0..values.len().min(256)).step_by(64) {
-                    _mm_prefetch(values.as_ptr().add(i) as *const i8, _MM_HINT_T0);
-                }
-            }
-        }
-        
-        // Use the most efficient iterator-based conversion
-        // The compiler can auto-vectorize this better than manual unrolling
-        result.extend(values.iter().map(|v| v.to_u64()));
-        
-        result
+        // 🚀 OPTIMIZED: Direct iterator conversion matching from_slice
+        // Keep it simple - the Rust compiler optimizes this effectively
+        values.iter().map(|v| v.to_u64()).collect()
     }
     
     /// 🚀 FAST PATTERN: Fast strategy analysis optimized for bulk construction
@@ -931,11 +875,12 @@ impl<T: PackedInt> IntVec<T> {
         };
         
         // 🚀 SORTED SEQUENCES: Use Delta compression for best compression
-        if is_likely_sorted {
-            // Check for uniform delta (arithmetic sequence)
+        // Only check uniform delta for small datasets to avoid O(n) overhead on large datasets
+        if is_likely_sorted && len <= 1024 {
+            // Check for uniform delta (arithmetic sequence) - only for small datasets
             if let Some(uniform_delta) = Self::detect_uniform_delta(values) {
-                return CompressionStrategy::Delta { 
-                    base_val: values[0], 
+                return CompressionStrategy::Delta {
+                    base_val: values[0],
                     delta_width: if uniform_delta == 0 { 1 } else { 0 },
                     is_uniform: true,
                     uniform_delta: Some(uniform_delta),

@@ -165,6 +165,14 @@ harness = false
 name = "cpp_impl_comparison"
 harness = false
 
+[[bench]]
+name = "entropy_bench"
+harness = false
+
+[[bench]]
+name = "benchmark_sparse_implementations"
+harness = false
+
 # Performance validation example
 [[example]]
 name = "production_benchmark"
