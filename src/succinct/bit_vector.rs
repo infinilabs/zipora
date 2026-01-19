@@ -231,6 +231,156 @@ impl BitVector {
         Ok(())
     }
 
+    /// Ensure the bit at position `i` is set to 1, growing the vector if necessary
+    ///
+    /// This is useful when using the bit vector as an integer set.
+    /// If `i >= len`, the vector is resized to include position `i`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use zipora::BitVector;
+    ///
+    /// let mut bv = BitVector::new();
+    /// bv.ensure_set1(5)?;
+    /// bv.ensure_set1(10)?;
+    /// bv.ensure_set1(3)?;
+    ///
+    /// assert_eq!(bv.len(), 11);
+    /// assert_eq!(bv.get(5), Some(true));
+    /// assert_eq!(bv.get(10), Some(true));
+    /// assert_eq!(bv.get(3), Some(true));
+    /// assert_eq!(bv.get(4), Some(false));
+    /// # Ok::<(), zipora::ZiporaError>(())
+    /// ```
+    pub fn ensure_set1(&mut self, i: usize) -> Result<()> {
+        if i < self.len {
+            // Fast path: just set the bit
+            let block_index = i / BITS_PER_BLOCK;
+            let bit_index = i % BITS_PER_BLOCK;
+            self.blocks[block_index] |= 1u64 << bit_index;
+        } else {
+            // Slow path: need to grow
+            self.ensure_set1_slow_path(i)?;
+        }
+        Ok(())
+    }
+
+    /// Slow path for ensure_set1 when vector needs to grow
+    #[cold]
+    #[inline(never)]
+    fn ensure_set1_slow_path(&mut self, i: usize) -> Result<()> {
+        // Resize to include position i (sets all new bits to 0)
+        let new_len = i + 1;
+        let new_block_count = (new_len + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK;
+
+        // Add new blocks initialized to 0
+        while self.blocks.len() < new_block_count {
+            self.blocks.push(0)?;
+        }
+        self.len = new_len;
+
+        // Set the bit
+        let block_index = i / BITS_PER_BLOCK;
+        let bit_index = i % BITS_PER_BLOCK;
+        self.blocks[block_index] |= 1u64 << bit_index;
+
+        Ok(())
+    }
+
+    /// Fast ensure_set1 optimized for sequential integer set insertions
+    ///
+    /// This is much faster than `ensure_set1` when inserting integer set members
+    /// sequentially. The optimization relies on the invariant that allocated but
+    /// unused bits between `len` and `capacity` are always 0.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use zipora::BitVector;
+    ///
+    /// let mut bv = BitVector::with_capacity(1000)?;
+    /// // Sequential insertions are very fast
+    /// for i in 0..100 {
+    ///     bv.fast_ensure_set1(i)?;
+    /// }
+    /// assert_eq!(bv.count_ones(), 100);
+    /// # Ok::<(), zipora::ZiporaError>(())
+    /// ```
+    pub fn fast_ensure_set1(&mut self, i: usize) -> Result<()> {
+        let capacity = self.blocks.len() * BITS_PER_BLOCK;
+
+        if i < capacity {
+            // Fast path: within capacity, just update len and set bit
+            if self.len <= i {
+                // Invariant: bits between len and capacity are already 0
+                debug_assert!(
+                    (self.len..=i).all(|j| {
+                        let block_idx = j / BITS_PER_BLOCK;
+                        let bit_idx = j % BITS_PER_BLOCK;
+                        block_idx >= self.blocks.len() || (self.blocks[block_idx] >> bit_idx) & 1 == 0
+                    }),
+                    "fast_ensure_set1 invariant violated: unused bits must be 0"
+                );
+                self.len = i + 1;
+            }
+            let block_index = i / BITS_PER_BLOCK;
+            let bit_index = i % BITS_PER_BLOCK;
+            self.blocks[block_index] |= 1u64 << bit_index;
+            Ok(())
+        } else {
+            // Slow path: need to grow capacity
+            self.fast_ensure_set1_slow_path(i)
+        }
+    }
+
+    /// Slow path for fast_ensure_set1 when capacity needs to grow
+    #[cold]
+    #[inline(never)]
+    fn fast_ensure_set1_slow_path(&mut self, i: usize) -> Result<()> {
+        // Invariant check in debug mode: unused bits must be 0
+        #[cfg(debug_assertions)]
+        {
+            let capacity = self.blocks.len() * BITS_PER_BLOCK;
+            for j in self.len..capacity {
+                let block_idx = j / BITS_PER_BLOCK;
+                let bit_idx = j % BITS_PER_BLOCK;
+                if block_idx < self.blocks.len() {
+                    debug_assert!(
+                        (self.blocks[block_idx] >> bit_idx) & 1 == 0,
+                        "fast_ensure_set1 invariant violated at bit {}: unused bits must be 0",
+                        j
+                    );
+                }
+            }
+        }
+
+        let old_capacity = self.blocks.len() * BITS_PER_BLOCK;
+        let new_len = i + 1;
+        let new_block_count = (new_len + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK;
+
+        // Add new blocks initialized to 0
+        while self.blocks.len() < new_block_count {
+            self.blocks.push(0)?;
+        }
+
+        // Clear any bits that might have been set in the old capacity range
+        // (ensures invariant is maintained)
+        let new_capacity = self.blocks.len() * BITS_PER_BLOCK;
+        if old_capacity < new_capacity {
+            // New blocks are already 0, nothing to do
+        }
+
+        self.len = new_len;
+
+        // Set the bit
+        let block_index = i / BITS_PER_BLOCK;
+        let bit_index = i % BITS_PER_BLOCK;
+        self.blocks[block_index] |= 1u64 << bit_index;
+
+        Ok(())
+    }
+
     /// Insert a bit at the specified position
     pub fn insert(&mut self, index: usize, value: bool) -> Result<()> {
         if index > self.len {

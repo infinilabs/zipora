@@ -93,6 +93,27 @@ let cache = LruPageCache::new(cache_config).unwrap();
 // Entropy coding
 let encoder = HuffmanEncoder::new(b"sample data").unwrap();
 let compressed = encoder.encode(b"sample data").unwrap();
+
+// String utilities
+use zipora::string::{join_str, hex_encode, hex_decode, words, decimal_strcmp};
+
+// Join strings efficiently
+let joined = join_str(", ", &["hello", "world"]);
+assert_eq!(joined, "hello, world");
+
+// Hex encoding/decoding
+let hex = hex_encode(b"Hello");
+assert_eq!(hex, "48656c6c6f");
+let bytes = hex_decode("48656c6c6f").unwrap();
+assert_eq!(bytes, b"Hello");
+
+// Word iteration
+let word_list: Vec<_> = words(b"hello, world!").collect();
+assert_eq!(word_list.len(), 2);
+
+// Numeric string comparison
+use std::cmp::Ordering;
+assert_eq!(decimal_strcmp("100", "99"), Some(Ordering::Greater));
 ```
 
 ## Documentation
