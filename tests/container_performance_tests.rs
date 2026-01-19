@@ -8,12 +8,23 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 
+/// Returns true if running in debug mode (debug_assertions enabled).
+/// Performance tests should be skipped in debug mode as results are meaningless.
+#[cfg(debug_assertions)]
+const fn is_debug_mode() -> bool {
+    true
+}
+
+#[cfg(not(debug_assertions))]
+const fn is_debug_mode() -> bool {
+    false
+}
+
 /// Helper macro to skip performance tests in debug mode.
 /// Performance tests are meaningless in debug builds due to lack of optimizations.
 macro_rules! require_release_mode {
     () => {
-        #[cfg(debug_assertions)]
-        {
+        if is_debug_mode() {
             println!("⚠️  Skipping performance test in debug mode - run with --release");
             return;
         }

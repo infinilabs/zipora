@@ -86,28 +86,21 @@ fn get_usable_size(_ptr: *mut u8, size: usize) -> usize {
     size
 }
 
-/// Branch prediction hints for performance optimization following referenced project pattern
-/// Simple, direct approach without function call overhead
+// Branch prediction hint macro following topling-zip's terark_likely pattern
+// Uses __builtin_expect semantics via core::intrinsics on nightly,
+// or falls back to a no-op on stable (letting LLVM optimize based on code structure)
 #[cfg(feature = "nightly")]
-use std::intrinsics::{likely, unlikely};
-
-// For stable Rust, we use the simplest approach: just return the boolean
-// The compiler's own optimization will handle branch prediction effectively
-// This avoids any function call overhead that was hurting performance
-#[cfg(not(feature = "nightly"))]
-#[inline(always)]
-fn likely(b: bool) -> bool {
-    // Simple pass-through - let compiler handle optimization
-    // This matches the fallback in referenced project for non-GCC compilers
-    b
+macro_rules! terark_likely {
+    ($e:expr) => {
+        std::intrinsics::likely($e)
+    };
 }
 
 #[cfg(not(feature = "nightly"))]
-#[inline(always)]
-fn unlikely(b: bool) -> bool {
-    // Simple pass-through - let compiler handle optimization
-    // This matches the fallback in referenced project for non-GCC compilers
-    b
+macro_rules! terark_likely {
+    ($e:expr) => {
+        $e
+    };
 }
 
 /// Simple optimal growth strategy following referenced project pattern
@@ -428,21 +421,21 @@ impl<T> ValVec32<T> {
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
     /// Appends an element to the back of the vector - hot path optimized
-    /// Follows referenced project patterns for maximum performance
+    /// Follows topling-zip valvec32 patterns for maximum performance
     #[inline(always)]
     pub fn push(&mut self, value: T) -> Result<()> {
+        // Exact topling-zip pattern: load n into local, check against c
         let oldsize = self.len;
-        // Direct implementation - most likely case is that we have capacity
-        if oldsize < self.capacity {
-            // Fast path: direct write following referenced project placement new pattern
+        if terark_likely!(oldsize < self.capacity) {
+            // Fast path: placement new pattern - new(p+oldsize)T(x)
+            let lp = self.ptr.as_ptr(); // Load pointer into register
             unsafe {
-                // Use add instead of offset for better codegen (matches referenced project)
-                ptr::write(self.ptr.as_ptr().add(oldsize as usize), value);
-                self.len = oldsize + 1;
+                ptr::write(lp.add(oldsize as usize), value);
             }
+            self.len = oldsize + 1;
             Ok(())
         } else {
-            // Cold path: delegate to slow path which is never inlined
+            // Cold path: never inlined slow path (terark_no_inline pattern)
             self.push_slow(value)
         }
     }
@@ -454,7 +447,7 @@ impl<T> ValVec32<T> {
     /// allocation fails or the vector is at maximum capacity. This provides
     /// optimal performance for benchmarking against std::Vec.
     ///
-    /// Ultra-optimized following exact referenced project patterns for maximum performance.
+    /// Ultra-optimized following exact topling-zip valvec32 patterns for maximum performance.
     ///
     /// # Arguments
     ///
@@ -479,17 +472,17 @@ impl<T> ValVec32<T> {
     /// ```
     #[inline(always)]
     pub fn push_panic(&mut self, value: T) {
+        // Exact topling-zip pattern: load n into local, check against c
         let oldsize = self.len;
-        // Referenced project exact pattern: check capacity first, likely branch optimization
-        if likely(oldsize < self.capacity) {
-            // Fast path: ultra-optimized direct write (matches referenced project new(p+oldsize)T(x))
+        if terark_likely!(oldsize < self.capacity) {
+            // Fast path: placement new pattern - new(p+oldsize)T(x)
+            let lp = self.ptr.as_ptr(); // Load pointer into register like topling-zip
             unsafe {
-                // Use ptr::write for placement new semantics - matches referenced project exactly
-                ptr::write(self.ptr.as_ptr().add(oldsize as usize), value);
-                self.len = oldsize + 1;
+                ptr::write(lp.add(oldsize as usize), value);
             }
+            self.len = oldsize + 1;
         } else {
-            // Cold path: never inlined slow path like referenced project
+            // Cold path: never inlined slow path (terark_no_inline pattern)
             self.push_slow_panic(value);
         }
     }
@@ -1303,11 +1296,9 @@ mod tests {
 
     #[test]
     fn test_branch_prediction_hints() {
-        // Test that likely/unlikely functions work without crashing
-        assert!(likely(true));
-        assert!(!likely(false));
-        assert!(unlikely(true));
-        assert!(!unlikely(false));
+        // Test that terark_likely macro works correctly (just passes through on stable)
+        assert!(terark_likely!(true));
+        assert!(!terark_likely!(false));
     }
 
     #[test]
