@@ -1212,4 +1212,144 @@ mod tests {
         assert_eq!(bv.len(), 0);
         assert_eq!(bv.capacity(), 0);
     }
+
+    #[test]
+    fn test_ensure_set1_basic() {
+        let mut bv = BitVector::new();
+
+        // Set bits in order
+        bv.ensure_set1(0).unwrap();
+        assert_eq!(bv.len(), 1);
+        assert_eq!(bv.get(0), Some(true));
+
+        bv.ensure_set1(5).unwrap();
+        assert_eq!(bv.len(), 6);
+        assert_eq!(bv.get(5), Some(true));
+        // Bits 1-4 should be false (filled with zeros)
+        for i in 1..5 {
+            assert_eq!(bv.get(i), Some(false));
+        }
+
+        // Setting same bit again should be idempotent
+        bv.ensure_set1(5).unwrap();
+        assert_eq!(bv.len(), 6);
+        assert_eq!(bv.get(5), Some(true));
+    }
+
+    #[test]
+    fn test_ensure_set1_sequential() {
+        let mut bv = BitVector::new();
+
+        // Build a set of integers 0, 2, 4, 6, 8
+        for i in (0..10).step_by(2) {
+            bv.ensure_set1(i).unwrap();
+        }
+
+        assert_eq!(bv.len(), 9);
+        assert_eq!(bv.count_ones(), 5);
+
+        // Check pattern
+        for i in 0..9 {
+            assert_eq!(bv.get(i), Some(i % 2 == 0));
+        }
+    }
+
+    #[test]
+    fn test_ensure_set1_across_blocks() {
+        let mut bv = BitVector::new();
+
+        // Set bits across multiple 64-bit blocks
+        bv.ensure_set1(0).unwrap();
+        bv.ensure_set1(63).unwrap();
+        bv.ensure_set1(64).unwrap();
+        bv.ensure_set1(127).unwrap();
+        bv.ensure_set1(128).unwrap();
+
+        assert_eq!(bv.len(), 129);
+        assert_eq!(bv.count_ones(), 5);
+
+        // Verify specific bits
+        assert_eq!(bv.get(0), Some(true));
+        assert_eq!(bv.get(63), Some(true));
+        assert_eq!(bv.get(64), Some(true));
+        assert_eq!(bv.get(127), Some(true));
+        assert_eq!(bv.get(128), Some(true));
+    }
+
+    #[test]
+    fn test_fast_ensure_set1_sequential() {
+        let mut bv = BitVector::new();
+
+        // Fast version optimized for sequential access
+        for i in 0..100 {
+            bv.fast_ensure_set1(i).unwrap();
+        }
+
+        assert_eq!(bv.len(), 100);
+        assert_eq!(bv.count_ones(), 100); // All bits should be set
+    }
+
+    #[test]
+    fn test_fast_ensure_set1_sparse() {
+        let mut bv = BitVector::new();
+
+        // Set every 10th bit
+        for i in (0..1000).step_by(10) {
+            bv.fast_ensure_set1(i).unwrap();
+        }
+
+        assert_eq!(bv.len(), 991);
+        assert_eq!(bv.count_ones(), 100);
+
+        // Verify the pattern
+        for i in (0..1000).step_by(10) {
+            if i < bv.len() {
+                assert_eq!(bv.get(i), Some(true), "bit {} should be set", i);
+            }
+        }
+    }
+
+    #[test]
+    fn test_ensure_set1_vs_fast_ensure_set1_equivalence() {
+        // Both methods should produce the same result
+        let indices: Vec<usize> = vec![0, 5, 10, 63, 64, 100, 127, 128, 200];
+
+        let mut bv1 = BitVector::new();
+        let mut bv2 = BitVector::new();
+
+        for &i in &indices {
+            bv1.ensure_set1(i).unwrap();
+            bv2.fast_ensure_set1(i).unwrap();
+        }
+
+        assert_eq!(bv1.len(), bv2.len());
+        assert_eq!(bv1.count_ones(), bv2.count_ones());
+
+        for i in 0..bv1.len() {
+            assert_eq!(bv1.get(i), bv2.get(i), "mismatch at bit {}", i);
+        }
+    }
+
+    #[test]
+    fn test_ensure_set1_integer_set_use_case() {
+        // Simulate building a set of integers {3, 7, 15, 31, 63}
+        let integers = vec![3, 7, 15, 31, 63];
+        let mut bv = BitVector::new();
+
+        for &i in &integers {
+            bv.fast_ensure_set1(i).unwrap();
+        }
+
+        // Check membership
+        assert_eq!(bv.get(3), Some(true));
+        assert_eq!(bv.get(7), Some(true));
+        assert_eq!(bv.get(15), Some(true));
+        assert_eq!(bv.get(31), Some(true));
+        assert_eq!(bv.get(63), Some(true));
+
+        // Check non-membership
+        assert_eq!(bv.get(0), Some(false));
+        assert_eq!(bv.get(4), Some(false));
+        assert_eq!(bv.get(8), Some(false));
+    }
 }
