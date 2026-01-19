@@ -1,6 +1,22 @@
 # String Processing
 
-Zipora provides SIMD-accelerated string operations and pattern matching capabilities.
+Zipora provides SIMD-accelerated string operations, pattern matching, and text processing utilities.
+
+## Table of Contents
+
+- [SIMD String Operations](#simd-string-operations)
+- [FastStr - Zero-Copy Strings](#faststr---zero-copy-strings)
+- [Pattern Matching](#pattern-matching)
+- [String Arena](#string-arena)
+- [String Pool](#string-pool)
+- [Advanced String Containers](#advanced-string-containers)
+- [String Sorting](#string-sorting)
+- [Performance Characteristics](#performance-characteristics)
+- [String Join Utilities](#string-join-utilities)
+- [Numeric String Comparison](#numeric-string-comparison)
+- [Word Boundary Detection](#word-boundary-detection)
+- [Hex Encoding/Decoding](#hex-encodingdecoding)
+- [SIMD Hardware Support](#simd-hardware-support)
 
 ## SIMD String Operations
 
@@ -196,6 +212,140 @@ sortable.stable_sort_lexicographic().unwrap();
 | **Memory Compare** | 8-16x | Deduplication |
 | **Hash Computation** | 2-3x | Hash maps, caching |
 | **Bulk Operations** | 4-12x | Batch processing |
+
+## String Join Utilities
+
+```rust
+use zipora::string::{join, join_str, join_fast_str, JoinBuilder};
+
+// Join byte slices
+let parts: [&[u8]; 3] = [b"hello", b"world", b"test"];
+let result = join(b", ", &parts);
+assert_eq!(result, b"hello, world, test");
+
+// Join string slices
+let strings = ["a", "b", "c"];
+let result = join_str("-", &strings);
+assert_eq!(result, "a-b-c");
+
+// Join FastStr values
+use zipora::FastStr;
+let fast_parts = [FastStr::from_string("hello"), FastStr::from_string("world")];
+let result = join_fast_str(" ", &fast_parts);
+assert_eq!(result, "hello world");
+
+// Builder pattern with pre-calculated capacity
+let mut builder = JoinBuilder::with_capacity(", ", 10);
+builder.push("one").push("two").push("three");
+let result = builder.finish();
+assert_eq!(result, "one, two, three");
+```
+
+## Numeric String Comparison
+
+Compare strings as numeric values, handling signs and decimal points correctly.
+
+```rust
+use zipora::string::{decimal_strcmp, realnum_strcmp};
+use std::cmp::Ordering;
+
+// Decimal integer comparison
+assert_eq!(decimal_strcmp("123", "456"), Some(Ordering::Less));
+assert_eq!(decimal_strcmp("-10", "5"), Some(Ordering::Less));
+assert_eq!(decimal_strcmp("100", "99"), Some(Ordering::Greater));
+assert_eq!(decimal_strcmp("-5", "-10"), Some(Ordering::Greater)); // -5 > -10
+
+// Real number comparison (with decimal points)
+assert_eq!(realnum_strcmp("3.14", "2.71"), Some(Ordering::Greater));
+assert_eq!(realnum_strcmp("10", "9.99"), Some(Ordering::Greater));
+assert_eq!(realnum_strcmp("-1.5", "1.5"), Some(Ordering::Less));
+
+// Invalid inputs return None
+assert_eq!(decimal_strcmp("abc", "123"), None);
+assert_eq!(realnum_strcmp("1.2.3", "1.0"), None);
+```
+
+## Word Boundary Detection
+
+Utilities for text tokenization and word-level operations.
+
+```rust
+use zipora::string::{
+    is_word_boundary, is_word_char, words, word_count,
+    find_word_boundaries, word_at_position
+};
+
+// Check word characters [a-zA-Z0-9_]
+assert!(is_word_char(b'a'));
+assert!(is_word_char(b'_'));
+assert!(!is_word_char(b' '));
+
+// Detect word boundaries
+let text = b"hello world";
+assert!(is_word_boundary(text, 0));  // Start of "hello"
+assert!(is_word_boundary(text, 5));  // End of "hello"
+assert!(is_word_boundary(text, 6));  // Start of "world"
+
+// Find all word boundaries
+let boundaries = find_word_boundaries(b"hello world");
+assert_eq!(boundaries, vec![0, 5, 6, 11]);
+
+// Iterate over words
+let word_list: Vec<_> = words(b"hello, world! test_123").collect();
+assert_eq!(word_list.len(), 3);
+assert_eq!(word_list[0], b"hello");
+assert_eq!(word_list[1], b"world");
+assert_eq!(word_list[2], b"test_123");
+
+// Count words
+assert_eq!(word_count(b"hello world"), 2);
+assert_eq!(word_count(b"one-two-three"), 3);
+
+// Find word at position
+assert_eq!(word_at_position(b"hello world", 2), Some((0, 5)));  // "hello"
+assert_eq!(word_at_position(b"hello world", 8), Some((6, 11))); // "world"
+```
+
+## Hex Encoding/Decoding
+
+Fast hexadecimal encoding and decoding utilities.
+
+```rust
+use zipora::string::{
+    hex_decode, hex_encode, hex_encode_upper,
+    hex_decode_to_slice, hex_encode_to_slice,
+    is_valid_hex, parse_hex_byte
+};
+
+// Basic encoding/decoding
+let encoded = hex_encode(b"Hello");
+assert_eq!(encoded, "48656c6c6f");
+
+let decoded = hex_decode("48656c6c6f").unwrap();
+assert_eq!(decoded, b"Hello");
+
+// Uppercase encoding
+let upper = hex_encode_upper(b"\xDE\xAD\xBE\xEF");
+assert_eq!(upper, "DEADBEEF");
+
+// Decode to existing buffer (zero-allocation)
+let mut buf = [0u8; 5];
+let len = hex_decode_to_slice(b"48656c6c6f", &mut buf).unwrap();
+assert_eq!(&buf[..len], b"Hello");
+
+// Encode to existing buffer
+let mut hex_buf = [0u8; 10];
+let len = hex_encode_to_slice(b"Hello", &mut hex_buf).unwrap();
+assert_eq!(&hex_buf[..len], b"48656c6c6f");
+
+// Validation
+assert!(is_valid_hex("DEADBEEF"));
+assert!(!is_valid_hex("hello"));   // Invalid chars
+assert!(!is_valid_hex("123"));     // Odd length
+
+// Parse single hex byte
+assert_eq!(parse_hex_byte(b'4', b'8'), Some(0x48));
+```
 
 ## SIMD Hardware Support
 
