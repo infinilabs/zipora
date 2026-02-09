@@ -79,7 +79,7 @@ criterion = { version = "0.8", features = ["html_reports"] }
 proptest = "1.9"
 tempfile = "3.14"
 arbitrary = { version = "1.4", features = ["derive"] }
-rand = "0.9"
+rand = "0.10"
 # Note: crossbeam-utils and rayon are already in main dependencies
 
 [build-dependencies]
