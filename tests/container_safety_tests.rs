@@ -112,7 +112,7 @@ mod valvec32_safety {
         // Test single element
         vec.push(42).unwrap();
         assert_eq!(vec.len(), 1);
-        assert_eq!(vec[0], 42);
+        assert_eq!(vec[0usize], 42);
         assert_eq!(vec.pop(), Some(42));
         assert!(vec.is_empty());
 
@@ -251,7 +251,7 @@ mod valvec32_safety {
         // Test that panics during operations don't corrupt the vector
         let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
             // This should panic but not corrupt the vector
-            let _ = vec[1000]; // Out of bounds access should panic in debug mode
+            let _ = vec[1000usize]; // Out of bounds access should panic in debug mode
         }));
 
         assert!(result.is_err());

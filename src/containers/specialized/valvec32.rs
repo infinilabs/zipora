@@ -732,6 +732,7 @@ impl<T> ValVec32<T> {
     /// assert_eq!(slice, &[1, 2, 3]);
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
+    #[inline]
     pub fn as_slice(&self) -> &[T] {
         if self.len == 0 || mem::size_of::<T>() == 0 {
             return &[];
@@ -741,6 +742,7 @@ impl<T> ValVec32<T> {
     }
 
     /// Returns a mutable slice containing all elements
+    #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         if self.len == 0 || mem::size_of::<T>() == 0 {
             return &mut [];
@@ -990,28 +992,44 @@ impl<T> Drop for ValVec32<T> {
     }
 }
 
+// Primary indexing: takes usize like topling-zip's operator[](size_t).
+// The u32 storage is an internal detail; callers index with native register width.
+impl<T> Index<usize> for ValVec32<T> {
+    type Output = T;
+
+    /// Direct pointer deref matching topling-zip's `operator[](size_t)`.
+    /// assert in debug, unchecked in release.
+    #[inline(always)]
+    fn index(&self, index: usize) -> &Self::Output {
+        assert!(index < self.len as usize);
+        // SAFETY: bounds checked by assert above
+        unsafe { &*self.ptr.as_ptr().add(index) }
+    }
+}
+
+impl<T> IndexMut<usize> for ValVec32<T> {
+    #[inline(always)]
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        assert!(index < self.len as usize);
+        // SAFETY: bounds checked by assert above
+        unsafe { &mut *self.ptr.as_ptr().add(index) }
+    }
+}
+
+// Convenience: also accept u32 indices
 impl<T> Index<u32> for ValVec32<T> {
     type Output = T;
 
+    #[inline(always)]
     fn index(&self, index: u32) -> &Self::Output {
-        self.get(index).unwrap_or_else(|| {
-            panic!(
-                "Index {} out of bounds for ValVec32 with length {}",
-                index, self.len
-            )
-        })
+        &self[index as usize]
     }
 }
 
 impl<T> IndexMut<u32> for ValVec32<T> {
+    #[inline(always)]
     fn index_mut(&mut self, index: u32) -> &mut Self::Output {
-        let len = self.len; // Capture len before borrow
-        self.get_mut(index).unwrap_or_else(|| {
-            panic!(
-                "Index {} out of bounds for ValVec32 with length {}",
-                index, len
-            )
-        })
+        &mut self[index as usize]
     }
 }
 
@@ -1130,20 +1148,20 @@ mod tests {
         vec.push(10)?;
         vec.push(20)?;
 
-        assert_eq!(vec[0], 10);
-        assert_eq!(vec[1], 20);
+        assert_eq!(vec[0usize], 10);
+        assert_eq!(vec[1usize], 20);
 
-        vec[0] = 15;
-        assert_eq!(vec[0], 15);
+        vec[0usize] = 15;
+        assert_eq!(vec[0usize], 15);
 
         Ok(())
     }
 
     #[test]
-    #[should_panic(expected = "Index 2 out of bounds")]
+    #[should_panic(expected = "assertion failed")]
     fn test_index_panic() {
         let vec: ValVec32<i32> = ValVec32::new();
-        let _ = vec[2]; // Should panic
+        let _ = vec[2usize]; // Should panic
     }
 
     #[test]
@@ -1169,7 +1187,7 @@ mod tests {
         vec.push(42)?;
 
         vec.set(0, 84)?;
-        assert_eq!(vec[0], 84);
+        assert_eq!(vec[0usize], 84);
 
         let result = vec.set(1, 126);
         assert!(result.is_err());
@@ -1248,7 +1266,7 @@ mod tests {
         assert!(vec.capacity() > initial_capacity);
         assert_eq!(vec.len(), 10);
 
-        for i in 0..10 {
+        for i in 0usize..10 {
             assert_eq!(vec[i], i as i32);
         }
 

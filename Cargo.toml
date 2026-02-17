@@ -158,10 +158,6 @@ name = "valvec32_performance_bench"
 harness = false
 
 [[bench]]
-name = "profiling_overhead_bench"
-harness = false
-
-[[bench]]
 name = "cpp_impl_comparison"
 harness = false
 
@@ -192,7 +188,6 @@ debug-assertions = false # Disable debug assertions in release
 opt-level = 3           # Maximum optimization for benchmarks
 lto = "fat"            # Full LTO for best benchmark performance
 codegen-units = 1      # Single codegen unit
-panic = "unwind"       # Match library build for compatibility
 overflow-checks = false # Optimize for performance
 debug = false          # Remove debug info for accurate benchmarks
 debug-assertions = false # No debug assertions in benchmarks
@@ -202,7 +197,6 @@ debug-assertions = false # No debug assertions in benchmarks
 
 [profile.test]
 opt-level = 3           # Optimize for fast test execution
-panic = "unwind"        # Required for test assertions and panic recovery
 debug = true           # Enable debug info for test failures
 debug-assertions = true # Enable debug assertions in tests
 overflow-checks = true  # Enable overflow checks for safety in tests

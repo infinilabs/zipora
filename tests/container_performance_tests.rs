@@ -322,32 +322,37 @@ mod valvec32_performance {
         let runner = BenchmarkRunner::new(BenchmarkConfig::default());
         let size = runner.config.medium_size;
 
-        // Benchmark ValVec32 random access
-        let valvec_metrics = runner.run_benchmark("random_access", "ValVec32<u64>", size, || {
-            let mut vec = ValVec32::with_capacity(size.try_into().unwrap()).unwrap();
-            for i in 0..size {
-                vec.push(i as u64).unwrap();
-            }
+        // Pre-build vectors outside the benchmark closure to isolate random access perf
+        let mut valvec = ValVec32::with_capacity(size.try_into().unwrap()).unwrap();
+        for i in 0..size {
+            valvec.push(i as u64).unwrap();
+        }
+        let mut stdvec: Vec<u64> = Vec::with_capacity(size);
+        for i in 0..size {
+            stdvec.push(i as u64);
+        }
 
-            // Random access pattern
-            for i in 0..1000 {
+        // Use enough iterations to overcome measurement noise
+        let access_count = 100_000;
+
+        // Benchmark ValVec32 random access only (use usize index like topling-zip)
+        let valvec_metrics = runner.run_benchmark("random_access", "ValVec32<u64>", size, || {
+            let mut sum = 0u64;
+            for i in 0..access_count {
                 let index = (i * 37) % size;
-                let _ = vec[index as u32];
+                sum = sum.wrapping_add(valvec[index]);
             }
+            std::hint::black_box(sum);
         });
 
-        // Benchmark std::Vec random access
+        // Benchmark std::Vec random access only
         let stdvec_metrics = runner.run_benchmark("random_access", "std::Vec<u64>", size, || {
-            let mut vec = Vec::with_capacity(size);
-            for i in 0..size {
-                vec.push(i as u64);
-            }
-
-            // Random access pattern
-            for i in 0..1000 {
+            let mut sum = 0u64;
+            for i in 0..access_count {
                 let index = (i * 37) % size;
-                let _ = vec[index];
+                sum = sum.wrapping_add(stdvec[index]);
             }
+            std::hint::black_box(sum);
         });
 
         let performance_ratio = valvec_metrics.compare_to(&stdvec_metrics);
@@ -356,15 +361,12 @@ mod valvec32_performance {
             performance_ratio
         );
 
-        // Random access should be competitive or better than std::Vec
-        // Allow up to 3x better performance due to memory layout optimizations
-        // Debug builds have no optimizations, so allow wider variance
-        let max_ratio = if cfg!(debug_assertions) { 5.0 } else { 3.0 };
+        // Random access should be competitive with std::Vec
+        // Both use slice indexing under the hood, so ratio should be near 1.0
         assert!(
-            performance_ratio > 0.5 && performance_ratio < max_ratio,
-            "ValVec32 random access performance unexpected: {:.2}x (max allowed: {:.1}x)",
-            performance_ratio,
-            max_ratio
+            performance_ratio > 0.5 && performance_ratio < 3.0,
+            "ValVec32 random access performance unexpected: {:.2}x",
+            performance_ratio
         );
     }
 
