@@ -234,19 +234,19 @@ pub mod phase1_tests {
             vec.extend_from_slice(&[10, 20, 30, 40, 50]).unwrap();
 
             // Read access
-            assert_eq!(vec[0], 10);
-            assert_eq!(vec[4], 50);
+            assert_eq!(vec[0usize], 10);
+            assert_eq!(vec[4usize], 50);
 
             // Write access
-            vec[2] = 35;
-            assert_eq!(vec[2], 35);
+            vec[2usize] = 35;
+            assert_eq!(vec[2usize], 35);
 
             // Bounds checking with get/get_mut
             assert_eq!(vec.get(0), Some(&10));
             assert_eq!(vec.get(10), None);
 
             *vec.get_mut(1).unwrap() = 25;
-            assert_eq!(vec[1], 25);
+            assert_eq!(vec[1usize], 25);
         }
 
         #[test]
