@@ -19,8 +19,6 @@ High-performance Rust data structures and compression algorithms with memory saf
 - **Five-Level Concurrency**: Graduated control from single-thread to lock-free
 - **C FFI Support**: Complete C API for migration from C++ (`--features ffi`)
 
-> **Migration Note**: Version 2.0+ includes breaking changes. See [Migration Guide](docs/MIGRATION_GUIDE.md).
-
 ## Quick Start
 
 ```toml
@@ -138,7 +136,6 @@ assert_eq!(decimal_strcmp("100", "99"), Some(Ordering::Greater));
 ### Integration
 - **[I/O & Serialization](docs/IO_SERIALIZATION.md)** - Stream processing, endian handling, varint encoding
 - **[C FFI](docs/FFI.md)** - C API for migration from C++
-- **[Migration Guide](docs/MIGRATION_GUIDE.md)** - Upgrade from version 1.x
 
 ### Performance Reports
 - **[Performance vs C++](docs/PERF_VS_CPP.md)** - Benchmark comparisons

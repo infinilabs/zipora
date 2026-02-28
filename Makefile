@@ -122,7 +122,7 @@ test_release:
 	$(CARGO) test --release $(STABLE_FEATURES) test_stream_performance_comparison -- --nocapture || echo "❌ I/O performance tests failed - may require additional setup"
 	$(CARGO) test --release $(STABLE_FEATURES) test_combined_stream_operations -- --nocapture || echo "❌ I/O integration tests failed - may require additional setup"
 	@echo "🧪 Running stable benchmarks (excluding avx512_bench and cpp_comparison)..."
-	$(CARGO) test --release $(STABLE_FEATURES) --bench benchmark --bench benchmark_rank_select --bench simd_rank_select_bench --bench dictionary_optimization_bench --bench cache_bench --bench secure_memory_pool_bench --bench specialized_containers_bench --bench rank_select_bench --bench compressed_sparse_trie_bench --bench comprehensive_trie_benchmarks --bench double_array_trie_bench --bench nested_louds_trie_bench --bench sortable_str_vec_bench --bench fsa_infrastructure_bench --bench memory_performance --bench memory_pools_bench --bench adaptive_mmap_bench --bench simple_benchmark --bench sortable_str_vec_optimized || echo "❌ Some benchmarks failed - may require additional setup"
+	$(CARGO) test --release $(STABLE_FEATURES) --bench benchmark --bench benchmark_rank_select --bench simd_rank_select_bench --bench dictionary_optimization_bench --bench cache_bench --bench secure_memory_pool_bench --bench specialized_containers_bench --bench rank_select_bench --bench sortable_str_vec_bench --bench fsa_infrastructure_bench --bench memory_performance --bench memory_pools_bench --bench adaptive_mmap_bench --bench simple_benchmark --bench sortable_str_vec_optimized --bench valvec32_performance_bench --bench entropy_bench --bench dict_zip_bench || echo "❌ Some benchmarks failed - may require additional setup"
 	@echo "✅ Release tests (stable) completed"
 
 # Individual test targets - Debug mode (nightly, no benchmarks)  
@@ -141,7 +141,7 @@ test_nightly_release:
 	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) test_stream_performance_comparison -- --nocapture || echo "❌ I/O performance tests failed - may require additional setup"
 	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) test_combined_stream_operations -- --nocapture || echo "❌ I/O integration tests failed - may require additional setup"
 	@echo "🧪 Running nightly benchmarks (including avx512_bench, excluding cpp_comparison)..."
-	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) --bench benchmark --bench benchmark_rank_select --bench simd_rank_select_bench --bench dictionary_optimization_bench --bench cache_bench --bench avx512_bench --bench secure_memory_pool_bench --bench specialized_containers_bench --bench rank_select_bench --bench compressed_sparse_trie_bench --bench comprehensive_trie_benchmarks --bench double_array_trie_bench --bench nested_louds_trie_bench --bench sortable_str_vec_bench --bench fsa_infrastructure_bench --bench memory_performance --bench memory_pools_bench --bench adaptive_mmap_bench --bench simple_benchmark --bench sortable_str_vec_optimized || echo "❌ Some benchmarks failed - may require additional setup"
+	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) --bench benchmark --bench benchmark_rank_select --bench simd_rank_select_bench --bench dictionary_optimization_bench --bench cache_bench --bench avx512_bench --bench secure_memory_pool_bench --bench specialized_containers_bench --bench rank_select_bench --bench sortable_str_vec_bench --bench fsa_infrastructure_bench --bench memory_performance --bench memory_pools_bench --bench adaptive_mmap_bench --bench simple_benchmark --bench sortable_str_vec_optimized --bench valvec32_performance_bench --bench entropy_bench --bench dict_zip_bench || echo "❌ Some benchmarks failed - may require additional setup"
 	@echo "✅ Release tests (nightly) completed"
 
 # =============================================================================
@@ -200,17 +200,16 @@ bench_all:
 		--bench secure_memory_pool_bench \
 		--bench specialized_containers_bench \
 		--bench rank_select_bench \
-		--bench compressed_sparse_trie_bench \
-		--bench comprehensive_trie_benchmarks \
-		--bench double_array_trie_bench \
-		--bench nested_louds_trie_bench \
 		--bench sortable_str_vec_bench \
 		--bench fsa_infrastructure_bench \
 		--bench memory_performance \
 		--bench memory_pools_bench \
 		--bench adaptive_mmap_bench \
 		--bench simple_benchmark \
-		--bench sortable_str_vec_optimized
+		--bench sortable_str_vec_optimized \
+		--bench valvec32_performance_bench \
+		--bench entropy_bench \
+		--bench dict_zip_bench
 	@echo "✅ All stable benchmarks completed"
 
 # Run all available benchmarks including nightly-only ones
@@ -226,17 +225,16 @@ bench_all_nightly:
 		--bench secure_memory_pool_bench \
 		--bench specialized_containers_bench \
 		--bench rank_select_bench \
-		--bench compressed_sparse_trie_bench \
-		--bench comprehensive_trie_benchmarks \
-		--bench double_array_trie_bench \
-		--bench nested_louds_trie_bench \
 		--bench sortable_str_vec_bench \
 		--bench fsa_infrastructure_bench \
 		--bench memory_performance \
 		--bench memory_pools_bench \
 		--bench adaptive_mmap_bench \
 		--bench simple_benchmark \
-		--bench sortable_str_vec_optimized
+		--bench sortable_str_vec_optimized \
+		--bench valvec32_performance_bench \
+		--bench entropy_bench \
+		--bench dict_zip_bench
 	@echo "✅ All nightly benchmarks completed"
 
 # Run SIMD Base64 tests specifically

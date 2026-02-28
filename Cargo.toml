@@ -122,19 +122,7 @@ name = "rank_select_bench"
 harness = false
 
 [[bench]]
-name = "compressed_sparse_trie_bench"
-harness = false
-
-[[bench]]
-name = "cache_locality_bench"
-harness = false
-
-[[bench]]
 name = "simd_memory_bench"
-harness = false
-
-[[bench]]
-name = "comprehensive_trie_benchmarks"
 harness = false
 
 [[bench]]
@@ -143,10 +131,6 @@ harness = false
 
 [[bench]]
 name = "lru_map_bench"
-harness = false
-
-[[bench]]
-name = "crit_bit_trie_bench"
 harness = false
 
 [[bench]]
@@ -163,10 +147,6 @@ harness = false
 
 [[bench]]
 name = "entropy_bench"
-harness = false
-
-[[bench]]
-name = "benchmark_sparse_implementations"
 harness = false
 
 # Performance validation example
