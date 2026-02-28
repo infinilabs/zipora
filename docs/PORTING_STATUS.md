@@ -116,7 +116,7 @@ let any_connection = multi_rs.union_dimensions(&[0, 1])?;
 
 **Key Changes**:
 - ✅ **ZiporaHashMap**: Single unified hash map replacing 6+ separate implementations (GoldHashMap, StringOptimizedHashMap, SmallHashMap, GoldenRatioHashMap, AdvancedHashMap, CacheOptimizedHashMap)
-- ✅ **ZiporaTrie**: Single unified trie replacing 5+ separate implementations (PatriciaTrie, CritBitTrie, DoubleArrayTrie, LoudsTrie, NestedLoudsTrie, CompressedSparseTrie)
+- ✅ **ZiporaTrie**: Single unified trie with strategy-based config (Patricia, CritBit, DoubleArray, Louds, CompressedSparse). Legacy type names are thin compatibility wrappers.
 - ✅ **Strategy-Based Configuration**: HashStrategy, StorageStrategy, OptimizationStrategy for hash maps; TrieStrategy, CompressionStrategy for tries
 - ✅ **Module Export Cleanup**: Clean module structure with legacy code removal
 - ✅ **API Compatibility**: Backward-compatible APIs with `ZiporaHashMap::new()` and `ZiporaTrie::new()` maintaining same interface
@@ -155,8 +155,7 @@ let mut space_trie = ZiporaTrie::with_config(ZiporaTrieConfig::space_optimized()
 
 **Breaking Changes**:
 - ✅ **Version 2.0.0**: Major version bump due to architectural transformation
-- ✅ **Migration Guide**: Comprehensive migration documentation in [docs/MIGRATION_GUIDE.md](MIGRATION_GUIDE.md)
-- ✅ **Deprecation Timeline**: Legacy implementations deprecated with clear upgrade path
+- ✅ **Unified Architecture**: All trie variants consolidated into `ZiporaTrie` with strategy-based config
 
 **Production Ready**:
 - ✅ All compilation errors resolved

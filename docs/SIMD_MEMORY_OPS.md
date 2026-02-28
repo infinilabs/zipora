@@ -462,7 +462,6 @@ fast_copy(&buffer1, &mut buffer2)?;
 
 - [CACHE_OPTIMIZATION_GUIDE.md](CACHE_OPTIMIZATION_GUIDE.md) - Cache optimization patterns
 - [MULTIDIM_SIMD.md](MULTIDIM_SIMD.md) - Multi-dimensional SIMD operations
-- [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) - v2.0 architecture changes
 
 ## Conclusion
 

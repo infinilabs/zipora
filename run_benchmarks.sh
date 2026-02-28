@@ -74,9 +74,11 @@ BENCHMARKS=(
     "specialized_containers_bench:Specialized Containers"
     "memory_pools_bench:Memory Pool Variants"
     "simd_rank_select_bench:SIMD Optimizations"
-    "comprehensive_trie_benchmarks:FSA & Trie Performance"
     "fsa_infrastructure_bench:FSA Infrastructure"
     "cache_bench:Cache Performance"
+    "valvec32_performance_bench:ValVec32 Performance"
+    "entropy_bench:Entropy Coding"
+    "dict_zip_bench:Dictionary Compression"
 )
 
 print_status "Running benchmark suites..."

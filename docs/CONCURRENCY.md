@@ -87,20 +87,16 @@ Zipora includes advanced token and version sequence management for safe concurre
 ### Usage Examples
 
 ```rust
-use zipora::fsa::{ConcurrentPatriciaTrie, ConcurrentTrieConfig, ConcurrencyLevel};
-use zipora::fsa::{TokenManager, with_reader_token, with_writer_token};
+use zipora::fsa::{ZiporaTrie, ZiporaTrieConfig, CompressedSparseTrie, ConcurrencyLevel};
 
-// Create concurrent Patricia trie with multi-reader support
-let config = ConcurrentTrieConfig::new(ConcurrencyLevel::OneWriteMultiRead);
-let mut trie = ConcurrentPatriciaTrie::new(config).unwrap();
+// All trie variants use ZiporaTrie with strategy-based config.
+// CompressedSparseTrie is a compatibility wrapper for concurrent access patterns.
+let trie = CompressedSparseTrie::new(ConcurrencyLevel::OneWriteMultiRead).unwrap();
 
-// Insert with automatic token management
-trie.insert(b"hello", 42).unwrap();
-trie.insert(b"world", 84).unwrap();
-
-// Concurrent lookups from multiple threads
-let value = trie.get(b"hello").unwrap();
-assert_eq!(value, Some(42));
+// Or use ZiporaTrie directly with sparse_optimized config:
+let mut trie = ZiporaTrie::with_config(ZiporaTrieConfig::sparse_optimized());
+trie.insert(b"hello").unwrap();
+assert!(trie.contains(b"hello"));
 
 // Advanced operations with explicit token control
 trie.with_writer_token(|trie, token| {
