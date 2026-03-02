@@ -120,20 +120,28 @@ use std::fmt;
 // This provides 50-150x better performance than the removed legacy implementations
 pub use interleaved::{RankSelectInterleaved256 as RankSelect256};
 
-// Import the new rank/select variants
+// Core rank/select implementations (ported from topling-zip)
 pub mod builder;
 pub mod config;
-pub mod interleaved;  // ✅ BEST PERFORMER: 121-302 Mops/s
+pub mod interleaved;    // rank_select_il_256: interleaved 256-bit blocks
+pub mod separated;      // rank_select_se_256: side-entry 256-bit blocks
+pub mod separated_512;  // rank_select_se_512: side-entry 512-bit blocks
+pub mod simple;         // rank_select_simple: minimal baseline
+pub mod trivial;        // rank_select_allzero / rank_select_allone
 pub mod simd;
 
-// Import advanced optimization modules
-pub mod adaptive;  // ✅ Intelligent algorithm selection with referenced project optimizations
-pub mod bmi2_acceleration;  // ✅ Hardware acceleration support
-pub mod bmi2_comprehensive;  // ✅ Comprehensive BMI2 optimization support
-pub mod multidim_simd;  // ✅ Multi-dimensional SIMD rank/select operations
+// Advanced optimization modules
+pub mod adaptive;
+pub mod bmi2_acceleration;
+pub mod bmi2_comprehensive;
+pub mod multidim_simd;
 
-// Re-export the best-performing implementation as primary
+// Re-export all rank/select implementations
 pub use interleaved::RankSelectInterleaved256;
+pub use separated::RankSelectSE256;
+pub use separated_512::{RankSelectSE512, RankSelectSE512_32};
+pub use simple::RankSelectSimple;
+pub use trivial::{RankSelectAllZero, RankSelectAllOne};
 pub use config::{
     SeparatedStorageConfig, SeparatedStorageConfigBuilder, StorageLayout, MemoryStrategy,
     CacheAlignment, MultiDimensionalConfig, HardwareOptimizations, PerformanceTuning,
