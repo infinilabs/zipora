@@ -377,4 +377,44 @@ mod tests {
         assert_eq!(rs.select1(1).unwrap(), 100);
         assert_eq!(rs.select1(9).unwrap(), 900);
     }
+
+    #[test]
+    fn test_few_zero_invariant() {
+        let rs = RankSelectFewZero::new(vec![5, 15, 25], 50).unwrap();
+        for i in 0..=50 {
+            assert_eq!(rs.rank0(i) + rs.rank1(i), i, "invariant at {}", i);
+        }
+    }
+
+    #[test]
+    fn test_few_zero_empty() {
+        // No zeros at all — everything is 1
+        let rs = RankSelectFewZero::new(vec![], 100).unwrap();
+        assert_eq!(rs.count_ones(), 100);
+        assert_eq!(rs.num_zeros(), 0);
+        assert!(rs.select0(0).is_err());
+        assert_eq!(rs.select1(50).unwrap(), 50);
+        assert_eq!(rs.rank1(100), 100);
+    }
+
+    #[test]
+    fn test_few_one_all_set() {
+        // Every bit is set
+        let positions: Vec<u32> = (0..100).collect();
+        let rs = RankSelectFewOne::new(positions, 100).unwrap();
+        assert_eq!(rs.count_ones(), 100);
+        assert_eq!(rs.rank1(50), 50);
+        assert_eq!(rs.select1(99).unwrap(), 99);
+        assert!(rs.select0(0).is_err());
+    }
+
+    #[test]
+    fn test_few_roundtrip_select_rank() {
+        let rs = RankSelectFewOne::new(vec![10, 20, 30, 40, 50], 100).unwrap();
+        for k in 0..rs.count_ones() {
+            let pos = rs.select1(k).unwrap();
+            assert_eq!(rs.get(pos), Some(true));
+            assert_eq!(rs.rank1(pos + 1), k + 1);
+        }
+    }
 }

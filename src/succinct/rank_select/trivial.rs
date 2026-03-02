@@ -140,4 +140,39 @@ mod tests {
         assert_eq!(rs1.rank0(0), 0);
         assert_eq!(rs1.rank1(0), 0);
     }
+
+    #[test]
+    fn test_large_allzero() {
+        let rs = RankSelectAllZero::new(1_000_000);
+        assert_eq!(rs.rank0(500_000), 500_000);
+        assert_eq!(rs.rank1(500_000), 0);
+        assert_eq!(rs.select0(999_999).unwrap(), 999_999);
+        assert_eq!(rs.max_rank0(), 1_000_000);
+        assert_eq!(rs.mem_size(), std::mem::size_of::<RankSelectAllZero>());
+    }
+
+    #[test]
+    fn test_large_allone() {
+        let rs = RankSelectAllOne::new(1_000_000);
+        assert_eq!(rs.rank1(500_000), 500_000);
+        assert_eq!(rs.rank0(500_000), 0);
+        assert_eq!(rs.select1(999_999).unwrap(), 999_999);
+        assert_eq!(rs.max_rank1(), 1_000_000);
+    }
+
+    #[test]
+    fn test_allzero_select_boundary() {
+        let rs = RankSelectAllZero::new(10);
+        assert_eq!(rs.select0(0).unwrap(), 0);
+        assert_eq!(rs.select0(9).unwrap(), 9);
+        assert!(rs.select0(10).is_err());
+    }
+
+    #[test]
+    fn test_allone_select_boundary() {
+        let rs = RankSelectAllOne::new(10);
+        assert_eq!(rs.select1(0).unwrap(), 0);
+        assert_eq!(rs.select1(9).unwrap(), 9);
+        assert!(rs.select1(10).is_err());
+    }
 }

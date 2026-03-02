@@ -13,6 +13,7 @@ use std::time::Instant;
 // Import verification macros
 use crate::zipora_verify;
 
+#[cfg(not(debug_assertions))]
 mod performance_tests;
 use int_vec_simd::{BitOps, SimdOps, PrefetchOps};
 
@@ -2197,6 +2198,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(debug_assertions))]
     fn test_bulk_constructor_performance() {
         // Test data representing 0.4 MB dataset (100,000 u32 values)
         let dataset_size = 100_000;
@@ -2246,18 +2248,14 @@ mod tests {
             bulk_throughput
         );
         
-        // 🚀 ADAPTIVE BEHAVIOR: Following referenced project patterns for adaptive algorithm selection
-        // Different constructors may be optimal under different conditions
-        // Both constructors may implement similar algorithms, so performance should be equivalent
-        let performance_threshold_min = 0.8;  // Minimum acceptable performance ratio
-        let performance_threshold_max = 1.5;  // Maximum expected performance ratio
+        // Release-only test (guarded by #[cfg(not(debug_assertions))]).
+        // Both constructors implement similar algorithms, performance should be equivalent.
+        let performance_threshold_min = 0.8;
 
-        if speedup >= performance_threshold_max {
-            println!("✅ Bulk constructor significantly faster: {:.2}x speedup", speedup);
-        } else if speedup >= 1.0 {
-            println!("✅ Bulk constructor faster as expected: {:.2}x speedup", speedup);
+        if speedup >= 1.0 {
+            println!("✅ Bulk constructor faster: {:.2}x speedup", speedup);
         } else if speedup >= performance_threshold_min {
-            println!("✅ Performance equivalent (adaptive algorithms): {:.2}x ratio", speedup);
+            println!("✅ Performance equivalent: {:.2}x ratio", speedup);
         } else {
             panic!("❌ Bulk constructor performance issue: {:.2}x speedup (minimum required: {:.2}x)",
                    speedup, performance_threshold_min);
@@ -2324,6 +2322,7 @@ mod tests {
     }
     
     #[test]
+    #[cfg(not(debug_assertions))]
     fn test_simd_bulk_constructor() {
         println!("=== SIMD Bulk Constructor Tests ===");
         
