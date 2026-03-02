@@ -128,6 +128,8 @@ pub mod separated;      // rank_select_se_256: side-entry 256-bit blocks
 pub mod separated_512;  // rank_select_se_512: side-entry 512-bit blocks
 pub mod simple;         // rank_select_simple: minimal baseline
 pub mod trivial;        // rank_select_allzero / rank_select_allone
+pub mod few;            // rank_select_few: sparse bitvector (stores only pivot positions)
+pub mod mixed_il_256;   // rank_select_mixed_il_256: two-dimension interleaved
 pub mod simd;
 
 // Advanced optimization modules
@@ -142,6 +144,9 @@ pub use separated::RankSelectSE256;
 pub use separated_512::{RankSelectSE512, RankSelectSE512_32};
 pub use simple::RankSelectSimple;
 pub use trivial::{RankSelectAllZero, RankSelectAllOne};
+pub use few::{RankSelectFewOne, RankSelectFewZero};
+pub use mixed_il_256::{RankSelectMixedIL256, MixedDimView};
+pub use separated_512::RankSelectSE512_64;
 pub use config::{
     SeparatedStorageConfig, SeparatedStorageConfigBuilder, StorageLayout, MemoryStrategy,
     CacheAlignment, MultiDimensionalConfig, HardwareOptimizations, PerformanceTuning,

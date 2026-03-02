@@ -48,6 +48,11 @@ pub struct RankSelectSE512 {
 
 /// Type aliases matching topling-zip naming.
 pub type RankSelectSE512_32 = RankSelectSE512;
+/// u64 index variant — on 64-bit platforms, RankSelectSE512 already uses usize
+/// internally for all rank/size tracking, so this is functionally identical.
+/// The u32 base field in RankCacheSE512 limits to ~4B bits; for larger bitvectors
+/// a separate implementation with u64 base would be needed.
+pub type RankSelectSE512_64 = RankSelectSE512;
 
 impl RankSelectSE512 {
     /// Build from a BitVector with select acceleration.
