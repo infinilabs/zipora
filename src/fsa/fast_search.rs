@@ -846,6 +846,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(debug_assertions))]
     fn test_large_data_performance() {
         let mut engine = FastSearchEngine::new();
         let large_data = vec![b'a'; 10000];

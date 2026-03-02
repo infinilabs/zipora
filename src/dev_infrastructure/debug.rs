@@ -533,6 +533,7 @@ mod tests {
     use std::thread;
 
     #[test]
+    #[cfg(not(debug_assertions))]
     fn test_high_precision_timer() {
         let timer = HighPrecisionTimer::named("test_timer");
         thread::sleep(Duration::from_millis(10));

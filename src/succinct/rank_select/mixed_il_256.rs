@@ -342,4 +342,41 @@ mod tests {
         assert_eq!(rs.dim1().select1(0).unwrap(), 0);
         assert_eq!(rs.dim1().select1(1).unwrap(), 17);
     }
+
+    #[test]
+    fn test_empty() {
+        let rs = RankSelectMixedIL256::new(make_bv(&[]), make_bv(&[])).unwrap();
+        assert_eq!(rs.dim0().len(), 0);
+        assert_eq!(rs.dim1().len(), 0);
+        assert_eq!(rs.dim0().rank1(0), 0);
+        assert_eq!(rs.dim1().rank1(0), 0);
+    }
+
+    #[test]
+    fn test_all_zeros_all_ones() {
+        let rs = RankSelectMixedIL256::new(
+            make_bv(&vec![false; 100]),
+            make_bv(&vec![true; 100]),
+        ).unwrap();
+        assert_eq!(rs.dim0().count_ones(), 0);
+        assert_eq!(rs.dim1().count_ones(), 100);
+        assert!(rs.dim0().select1(0).is_err());
+        assert_eq!(rs.dim1().select1(50).unwrap(), 50);
+    }
+
+    #[test]
+    fn test_crossing_block_boundary() {
+        // Blocks are 256 bits; put bits near boundaries
+        let mut p0 = vec![false; 300];
+        p0[0] = true;
+        p0[255] = true;
+        p0[256] = true;
+        p0[299] = true;
+        let rs = RankSelectMixedIL256::new(make_bv(&p0), make_bv(&vec![true; 300])).unwrap();
+        assert_eq!(rs.dim0().count_ones(), 4);
+        assert_eq!(rs.dim0().select1(0).unwrap(), 0);
+        assert_eq!(rs.dim0().select1(1).unwrap(), 255);
+        assert_eq!(rs.dim0().select1(2).unwrap(), 256);
+        assert_eq!(rs.dim0().select1(3).unwrap(), 299);
+    }
 }

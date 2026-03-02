@@ -364,11 +364,12 @@ mod tests {
     use std::thread;
 
     #[test]
+    #[cfg(not(debug_assertions))]
     fn test_high_precision_timer() {
         let timer = HighPrecisionTimer::new();
         thread::sleep(Duration::from_millis(10));
         let elapsed = timer.elapsed_ms();
-        
+
         // Should be approximately 10ms (allow some variance)
         assert!(elapsed >= 8 && elapsed <= 15);
     }

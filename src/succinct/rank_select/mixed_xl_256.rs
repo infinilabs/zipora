@@ -332,4 +332,41 @@ mod tests {
         let bv = make_bv(&[true]);
         assert!(RankSelectMixedXL256::new(vec![bv]).is_err());
     }
+
+    #[test]
+    fn test_empty() {
+        let rs = RankSelectMixedXL256::new2(make_bv(&[]), make_bv(&[])).unwrap();
+        assert_eq!(rs.dim(0).len(), 0);
+        assert_eq!(rs.dim(1).len(), 0);
+        assert_eq!(rs.dim(0).rank1(0), 0);
+    }
+
+    #[test]
+    fn test_large_arity2() {
+        let p0: Vec<bool> = (0..5000).map(|i| i % 13 == 0).collect();
+        let p1: Vec<bool> = (0..5000).map(|i| i % 17 == 0).collect();
+        let rs = RankSelectMixedXL256::new2(make_bv(&p0), make_bv(&p1)).unwrap();
+        let e0 = (0..5000).filter(|i| i % 13 == 0).count();
+        let e1 = (0..5000).filter(|i| i % 17 == 0).count();
+        assert_eq!(rs.dim(0).count_ones(), e0);
+        assert_eq!(rs.dim(1).count_ones(), e1);
+        assert_eq!(rs.dim(0).select1(1).unwrap(), 13);
+        assert_eq!(rs.dim(1).select1(1).unwrap(), 17);
+    }
+
+    #[test]
+    fn test_arity4() {
+        let bvs: Vec<BitVector> = (0..4).map(|d| {
+            make_bv(&(0..100).map(|i| i % (d + 2) == 0).collect::<Vec<_>>())
+        }).collect();
+        let rs = RankSelectMixedXL256::new(bvs).unwrap();
+        assert_eq!(rs.arity(), 4);
+        for d in 0..4 {
+            let expected = (0..100).filter(|i| i % (d + 2) == 0).count();
+            assert_eq!(rs.dim(d).count_ones(), expected, "dim{} ones", d);
+            for i in 0..=100 {
+                assert_eq!(rs.dim(d).rank0(i) + rs.dim(d).rank1(i), i, "dim{} invariant at {}", d, i);
+            }
+        }
+    }
 }

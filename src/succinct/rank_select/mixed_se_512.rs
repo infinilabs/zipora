@@ -270,4 +270,33 @@ mod tests {
         assert_eq!(rs.dim1().select1(0).unwrap(), 0);
         assert_eq!(rs.dim1().select1(1).unwrap(), 17);
     }
+
+    #[test]
+    fn test_empty() {
+        let rs = RankSelectMixedSE512::new(make_bv(&[]), make_bv(&[])).unwrap();
+        assert_eq!(rs.dim0().len(), 0);
+        assert_eq!(rs.dim1().len(), 0);
+        assert_eq!(rs.dim0().rank1(0), 0);
+    }
+
+    #[test]
+    fn test_get() {
+        let bv0 = make_bv(&[true, false, true]);
+        let bv1 = make_bv(&[false, true, false]);
+        let rs = RankSelectMixedSE512::new(bv0, bv1).unwrap();
+        assert_eq!(rs.get_dim(0, 0), Some(true));
+        assert_eq!(rs.get_dim(0, 1), Some(false));
+        assert_eq!(rs.get_dim(1, 0), Some(false));
+        assert_eq!(rs.get_dim(1, 1), Some(true));
+        assert_eq!(rs.get_dim(0, 3), None);
+    }
+
+    #[test]
+    fn test_different_sizes() {
+        let rs = RankSelectMixedSE512::new(make_bv(&vec![true; 100]), make_bv(&vec![false; 50])).unwrap();
+        assert_eq!(rs.dim0().len(), 100);
+        assert_eq!(rs.dim1().len(), 50);
+        assert_eq!(rs.dim0().count_ones(), 100);
+        assert_eq!(rs.dim1().count_ones(), 0);
+    }
 }

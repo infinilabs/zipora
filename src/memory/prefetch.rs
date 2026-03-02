@@ -890,6 +890,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(debug_assertions))]
     fn test_prefetch_throttling() {
         use std::thread;
         use std::time::Duration;

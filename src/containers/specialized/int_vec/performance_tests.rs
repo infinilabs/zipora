@@ -2,6 +2,9 @@
 //!
 //! These tests validate the performance targets and ensure the implementation
 //! meets the compression ratio and speed requirements.
+//!
+//! **IMPORTANT**: These tests only run in release mode (`cargo test --release`).
+//! Debug mode has no optimizations, making timing measurements meaningless.
 
 #[cfg(test)]
 use super::*;
