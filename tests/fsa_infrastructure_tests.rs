@@ -530,7 +530,7 @@ mod fast_search_tests {
         // Large data
         let large_data = vec![b'a'; 100];
         let positions = engine.search_byte(&large_data, b'a').unwrap();
-        assert_eq!(positions.len(), 99);
+        assert_eq!(positions.len(), 100);
     }
 
     #[test]
@@ -549,7 +549,7 @@ mod fast_search_tests {
         let positions2 = engine.search_byte(data, b'l').unwrap();
         
         assert_eq!(positions1, positions2);
-        assert_eq!(positions1, vec![3, 9, 14, 15]); // Note: rank-select may have different behavior
+        assert_eq!(positions1, vec![2, 3, 9, 14, 15]);
         
         // Clear cache
         engine.clear_cache();
