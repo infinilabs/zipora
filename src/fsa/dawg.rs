@@ -8,7 +8,7 @@ use crate::fsa::cache::{FsaCache, FsaCacheConfig};
 use crate::fsa::traits::{FiniteStateAutomaton, Trie, TrieStats, StatisticsProvider};
 use crate::StateId;
 use crate::memory::SecureMemoryPool;
-use crate::succinct::rank_select::RankSelectInterleaved256;
+use crate::succinct::rank_select::{RankSelectInterleaved256, RankSelectOps};
 use crate::succinct::BitVector;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -134,102 +134,55 @@ impl DawgState {
     }
 }
 
-/// Transition table for DAWG states
+/// Transition table for DAWG states.
+///
+/// Uses sparse HashMap storage only — the dense state*256 approach was removed
+/// because it wastes O(256 * states) = massive memory for typical FSAs where
+/// average fan-out is 4-8. HashMap gives O(transitions) memory.
 #[derive(Debug, Clone)]
 pub struct TransitionTable {
-    /// Dense transition matrix: state_id * 256 + symbol -> next_state
-    pub dense_table: Vec<u32>,
-    /// Sparse transition map for memory efficiency
+    /// Sparse transition map: (from_state, symbol) -> to_state
     pub sparse_table: HashMap<(u32, u8), u32>,
-    /// Use dense representation
-    pub use_dense: bool,
     /// Number of states
     pub num_states: u32,
 }
 
 impl TransitionTable {
-    /// Create a new transition table
-    pub fn new(num_states: u32, use_dense: bool) -> Self {
-        let dense_table = if use_dense {
-            vec![0; (num_states as usize) * 256]
-        } else {
-            Vec::new()
-        };
-
+    /// Create a new transition table.
+    pub fn new(num_states: u32, _use_dense: bool) -> Self {
         Self {
-            dense_table,
             sparse_table: HashMap::new(),
-            use_dense,
             num_states,
         }
     }
 
-    /// Add a transition
+    /// Add a transition.
+    #[inline]
     pub fn add_transition(&mut self, from_state: u32, symbol: u8, to_state: u32) -> Result<()> {
-        if from_state >= self.num_states {
-            return Err(ZiporaError::invalid_data("Invalid from_state"));
-        }
-
-        if self.use_dense {
-            let index = (from_state as usize) * 256 + (symbol as usize);
-            self.dense_table[index] = to_state;
-        } else {
-            self.sparse_table.insert((from_state, symbol), to_state);
-        }
-
+        self.sparse_table.insert((from_state, symbol), to_state);
         Ok(())
     }
 
-    /// Get transition target state
+    /// Get transition target state.
+    #[inline]
     pub fn get_transition(&self, from_state: u32, symbol: u8) -> Option<u32> {
-        if from_state >= self.num_states {
-            return None;
-        }
-
-        if self.use_dense {
-            let index = (from_state as usize) * 256 + (symbol as usize);
-            let target = self.dense_table[index];
-            if target == 0 { None } else { Some(target) }
-        } else {
-            self.sparse_table.get(&(from_state, symbol)).copied()
-        }
+        self.sparse_table.get(&(from_state, symbol)).copied()
     }
 
-    /// Get all outgoing transitions from a state
+    /// Get all outgoing transitions from a state (sorted by symbol).
     pub fn get_outgoing_transitions(&self, from_state: u32) -> Vec<(u8, u32)> {
-        if from_state >= self.num_states {
-            return Vec::new();
-        }
-
-        let mut transitions = Vec::new();
-
-        if self.use_dense {
-            let base_index = (from_state as usize) * 256;
-            for symbol in 0..256 {
-                let target = self.dense_table[base_index + symbol];
-                if target != 0 {
-                    transitions.push((symbol as u8, target));
-                }
-            }
-        } else {
-            for (&(state, symbol), &target) in &self.sparse_table {
-                if state == from_state {
-                    transitions.push((symbol, target));
-                }
-            }
-        }
-
-        transitions.sort_by_key(|(symbol, _)| *symbol);
+        let mut transitions: Vec<(u8, u32)> = self.sparse_table.iter()
+            .filter_map(|(&(state, symbol), &target)| {
+                if state == from_state { Some((symbol, target)) } else { None }
+            })
+            .collect();
+        transitions.sort_unstable_by_key(|(symbol, _)| *symbol);
         transitions
     }
 
-    /// Estimate memory usage in bytes
+    /// Estimate memory usage in bytes.
     pub fn memory_usage(&self) -> usize {
-        if self.use_dense {
-            self.dense_table.len() * std::mem::size_of::<u32>()
-        } else {
-            self.sparse_table.len() * (std::mem::size_of::<(u32, u8)>() + std::mem::size_of::<u32>())
-        }
+        self.sparse_table.len() * (std::mem::size_of::<(u32, u8)>() + std::mem::size_of::<u32>())
     }
 }
 
@@ -275,10 +228,7 @@ impl NestedTrieDawg {
             crate::memory::SecurePoolConfig::small_secure()
         )?);
 
-        let transitions = TransitionTable::new(
-            config.max_states as u32,
-            !config.compressed_storage
-        );
+        let transitions = TransitionTable::new(config.max_states as u32, false);
 
         let terminal_strategy = if config.use_rank_select {
             TerminalStrategy::RankSelect
@@ -420,51 +370,32 @@ impl NestedTrieDawg {
         Ok(signature)
     }
 
-    /// Remap transitions based on state mapping
+    /// Remap transitions based on state mapping.
     fn remap_transitions(&mut self, state_mapping: &HashMap<u32, u32>) -> Result<()> {
         let old_transitions = std::mem::replace(
             &mut self.transitions,
-            TransitionTable::new(self.states.len() as u32, !self.config.compressed_storage)
+            TransitionTable::new(self.states.len() as u32, false)
         );
 
-        if old_transitions.use_dense {
-            // Remap dense transitions
-            for state_id in 0..old_transitions.num_states {
-                if let Some(&new_state_id) = state_mapping.get(&state_id) {
-                    for symbol in 0..256u16 {
-                        let target = old_transitions.dense_table[(state_id as usize) * 256 + (symbol as usize)];
-                        if target != 0 {
-                            if let Some(&new_target) = state_mapping.get(&target) {
-                                self.transitions.add_transition(new_state_id, symbol as u8, new_target)?;
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            // Remap sparse transitions
-            for (&(from_state, symbol), &to_state) in &old_transitions.sparse_table {
-                if let (Some(&new_from), Some(&new_to)) = 
-                    (state_mapping.get(&from_state), state_mapping.get(&to_state)) {
-                    self.transitions.add_transition(new_from, symbol, new_to)?;
-                }
+        for (&(from_state, symbol), &to_state) in &old_transitions.sparse_table {
+            if let (Some(&new_from), Some(&new_to)) =
+                (state_mapping.get(&from_state), state_mapping.get(&to_state)) {
+                self.transitions.add_transition(new_from, symbol, new_to)?;
             }
         }
 
         Ok(())
     }
 
-    /// Compact states array after merging
+    /// Compact states array after merging.
     fn compact_states(&mut self, state_mapping: &HashMap<u32, u32>) -> Result<()> {
         let mut new_states = Vec::new();
         let mut compaction_mapping: HashMap<u32, u32> = HashMap::new();
 
-        // Build compaction mapping
         let mut new_id = 0u32;
         for old_id in 0..self.states.len() as u32 {
             if let Some(&mapped_id) = state_mapping.get(&old_id) {
                 if mapped_id == old_id {
-                    // This state survives
                     compaction_mapping.insert(old_id, new_id);
                     new_states.push(self.states[old_id as usize]);
                     new_id += 1;
@@ -472,39 +403,19 @@ impl NestedTrieDawg {
             }
         }
 
-        // Update transitions with compaction mapping
         let old_transitions = std::mem::replace(
             &mut self.transitions,
-            TransitionTable::new(new_states.len() as u32, !self.config.compressed_storage)
+            TransitionTable::new(new_states.len() as u32, false)
         );
 
-        // Apply compaction mapping to transitions
-        if old_transitions.use_dense {
-            for state_id in 0..old_transitions.num_states {
-                if let Some(&compact_state_id) = compaction_mapping.get(&state_id) {
-                    for symbol in 0..256u16 {
-                        let target = old_transitions.dense_table[(state_id as usize) * 256 + (symbol as usize)];
-                        if target != 0 {
-                            if let Some(&compact_target) = compaction_mapping.get(&target) {
-                                self.transitions.add_transition(compact_state_id, symbol as u8, compact_target)?;
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            for (&(from_state, symbol), &to_state) in &old_transitions.sparse_table {
-                if let (Some(&compact_from), Some(&compact_to)) = 
-                    (compaction_mapping.get(&from_state), compaction_mapping.get(&to_state)) {
-                    self.transitions.add_transition(compact_from, symbol, compact_to)?;
-                }
+        for (&(from_state, symbol), &to_state) in &old_transitions.sparse_table {
+            if let (Some(&compact_from), Some(&compact_to)) =
+                (compaction_mapping.get(&from_state), compaction_mapping.get(&to_state)) {
+                self.transitions.add_transition(compact_from, symbol, compact_to)?;
             }
         }
 
-        // Update root state
         self.root_state = compaction_mapping.get(&self.root_state).copied().unwrap_or(0);
-
-        // Replace states
         self.states = new_states;
 
         Ok(())
@@ -527,7 +438,7 @@ impl NestedTrieDawg {
     /// Clear all data
     pub fn clear(&mut self) {
         self.states.clear();
-        self.transitions = TransitionTable::new(self.config.max_states as u32, !self.config.compressed_storage);
+        self.transitions = TransitionTable::new(self.config.max_states as u32, false);
         self.terminal_bits = None;
         self.terminal_rank_select = None;
         self.root_state = 0;
@@ -536,6 +447,30 @@ impl NestedTrieDawg {
         if let Some(ref mut cache) = self.cache {
             cache.clear();
         }
+    }
+
+    /// Map a terminal state to its word index (dictionary rank).
+    /// Uses rank-select for O(1) lookup, matching topling-zip's `state_to_word_id`.
+    ///
+    /// Returns None if the state is not terminal.
+    #[inline]
+    pub fn state_to_word_id(&self, state: u32) -> Option<usize> {
+        let idx = state as usize;
+        if idx >= self.states.len() || !self.states[idx].is_terminal() {
+            return None;
+        }
+        if let Some(ref rs) = self.terminal_rank_select {
+            Some(rs.rank1(idx))
+        } else {
+            // Fallback: linear count
+            Some(self.states[..=idx].iter().filter(|s| s.is_terminal()).count() - 1)
+        }
+    }
+
+    /// Total number of states.
+    #[inline]
+    pub fn total_states(&self) -> usize {
+        self.states.len()
     }
 
     /// Get DAWG statistics
@@ -551,11 +486,7 @@ impl NestedTrieDawg {
 
         DawgStats {
             num_states: self.states.len(),
-            num_transitions: if self.transitions.use_dense {
-                self.transitions.dense_table.iter().filter(|&&x| x != 0).count()
-            } else {
-                self.transitions.sparse_table.len()
-            },
+            num_transitions: self.transitions.sparse_table.len(),
             num_keys: self.num_keys,
             memory_usage: state_memory + transition_memory + terminal_memory,
             compression_ratio: if self.num_keys > 0 {

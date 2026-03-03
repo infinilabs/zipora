@@ -149,10 +149,11 @@ impl SimpleZipConfigBuilder {
 pub struct SimpleZipBlobStore {
     /// Deduplicated string pool storing all unique fragments
     strpool: Vec<u8>,
-    /// Fragment offsets in strpool
-    offsets: Vec<usize>,
-    /// Fragment lengths
-    lengths: Vec<usize>,
+    /// Packed (offset << len_bits | length) for each fragment reference.
+    /// Matches topling-zip's `ZipIntVector<uint64_t> m_off_len` pattern.
+    off_len: Vec<u64>,
+    /// Number of bits used for length field in packed off_len
+    len_bits: u32,
     /// Record boundaries: records[i]..records[i+1] = fragment range for record i
     records: UintVecMin0,
     /// Number of records stored
@@ -200,10 +201,17 @@ impl SimpleZipBlobStore {
             record_boundaries.push(all_fragments.len());
         }
 
-        // Step 2: Build deduplicated string pool
+        // Step 2: Build deduplicated string pool and collect offsets/lengths
         let (strpool, offsets, lengths) = Self::build_strpool(&all_fragments)?;
 
-        // Step 3: Build record boundaries
+        // Step 3: Pack offset|length into single u64 (matching topling-zip pattern)
+        let max_len = lengths.iter().copied().max().unwrap_or(0);
+        let len_bits = if max_len == 0 { 0 } else { (usize::BITS - max_len.leading_zeros()) as u32 };
+        let off_len: Vec<u64> = offsets.iter().zip(lengths.iter())
+            .map(|(&offset, &length)| ((offset as u64) << len_bits) | (length as u64))
+            .collect();
+
+        // Step 4: Build record boundaries
         let records = UintVecMin0::build_from_usize(&record_boundaries).0;
 
         let mut stats = BlobStoreStats::default();
@@ -217,8 +225,8 @@ impl SimpleZipBlobStore {
 
         Ok(Self {
             strpool,
-            offsets,
-            lengths,
+            off_len,
+            len_bits,
             records,
             num_records: data.len(),
             unzip_size,
@@ -282,56 +290,52 @@ impl SimpleZipBlobStore {
         Ok((strpool, offsets, lengths))
     }
 
-    /// Get record by reassembling fragments
+    /// Get record by reassembling fragments.
+    ///
+    /// Matches topling-zip's `get_record_append_imp` hot path:
+    /// pre-compute data pointer, bit width, and mask, then loop with
+    /// shift+mask to unpack each (offset, length) pair.
     fn get_record_append_imp(&self, rec_id: usize, rec_data: &mut Vec<u8>) -> Result<()> {
         if rec_id >= self.num_records {
             return Err(ZiporaError::not_found(format!(
-                "Record {} not found (max {})",
-                rec_id,
-                self.num_records - 1
+                "Record {} not found (max {})", rec_id, self.num_records - 1
             )));
         }
 
         let beg = self.records.get(rec_id);
         let end = self.records.get(rec_id + 1);
 
+        // Pre-compute constants for hot loop (matching topling-zip pattern)
+        let strpool = self.strpool.as_ptr();
+        let ol_data = self.off_len.as_ptr();
+        let len_bits = self.len_bits;
+        let len_mask = (1u64 << len_bits) - 1;
+
         for i in beg..end {
-            let offset = self.offsets[i];
-            let length = self.lengths[i];
+            // SAFETY: i is in bounds [beg, end) which are from valid UintVecMin0 entries
+            let packed = unsafe { *ol_data.add(i) };
+            let offset = (packed >> len_bits) as usize;
+            let length = (packed & len_mask) as usize;
 
-            // Use checked_add to prevent integer overflow before comparison
-            let end_offset = offset.checked_add(length).ok_or_else(|| {
-                ZiporaError::invalid_data(format!(
-                    "Integer overflow: offset={} + length={} exceeds usize::MAX",
-                    offset, length
-                ))
-            })?;
-
-            if end_offset > self.strpool.len() {
-                return Err(ZiporaError::invalid_data(format!(
-                    "Invalid fragment offset={} length={} strpool_size={}",
-                    offset,
-                    length,
-                    self.strpool.len()
-                )));
+            // SAFETY: offset and length were packed from valid strpool indices during build
+            debug_assert!(offset + length <= self.strpool.len());
+            unsafe {
+                let src = strpool.add(offset);
+                rec_data.extend_from_slice(std::slice::from_raw_parts(src, length));
             }
-
-            rec_data.extend_from_slice(&self.strpool[offset..end_offset]);
         }
 
         Ok(())
     }
 
-    /// Get memory usage statistics
+    /// Get memory usage statistics.
     pub fn memory_stats(&self) -> MemoryStats {
-        let metadata_size = self.offsets.len() * std::mem::size_of::<usize>()
-            + self.lengths.len() * std::mem::size_of::<usize>()
-            + self.records.mem_size();
+        let off_len_size = self.off_len.len() * std::mem::size_of::<u64>();
+        let metadata_size = off_len_size + self.records.mem_size();
 
         MemoryStats {
             strpool_size: self.strpool.len(),
-            off_len_size: self.offsets.len() * std::mem::size_of::<usize>()
-                + self.lengths.len() * std::mem::size_of::<usize>(),
+            off_len_size,
             records_size: self.records.mem_size(),
             total_size: self.strpool.len() + metadata_size,
             uncompressed_size: self.unzip_size,
@@ -343,10 +347,9 @@ impl SimpleZipBlobStore {
         }
     }
 
-    /// Get number of unique fragments in pool
+    /// Get number of fragment references.
     pub fn num_unique_fragments(&self) -> usize {
-        // Total number of fragment references
-        self.offsets.len()
+        self.off_len.len()
     }
 }
 
@@ -354,8 +357,8 @@ impl Default for SimpleZipBlobStore {
     fn default() -> Self {
         Self {
             strpool: Vec::new(),
-            offsets: Vec::new(),
-            lengths: Vec::new(),
+            off_len: Vec::new(),
+            len_bits: 0,
             records: UintVecMin0::new_empty(),
             num_records: 0,
             unzip_size: 0,
