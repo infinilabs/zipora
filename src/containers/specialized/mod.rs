@@ -80,6 +80,10 @@ mod zo_sorted_str_vec;
 mod lru_map;
 mod concurrent_lru_map;
 
+// P1.4: Missing container types (topling-zip ports)
+pub mod vec_trb;
+mod minimal_sso;
+
 // Phase 1 exports
 pub use circular_queue::{AutoGrowCircularQueue, FixedCircularQueue};
 pub use small_map::SmallMap;
@@ -102,6 +106,10 @@ pub use zo_sorted_str_vec::{ZoSortedStrVec, ZoSortedStrVecIter, ZoSortedStrVecRa
 // Phase 4 exports
 pub use lru_map::{LruMap, LruMapConfig, LruMapStatistics, EvictionCallback, NoOpEvictionCallback};
 pub use concurrent_lru_map::{ConcurrentLruMap, ConcurrentLruMapConfig, ConcurrentLruMapStatistics, LoadBalancingStrategy};
+
+// P1.4 exports
+pub use vec_trb::{VecTrbSet, VecTrbMap};
+pub use minimal_sso::MinimalSso;
 
 // Advanced string containers
 mod advanced_string_vec;

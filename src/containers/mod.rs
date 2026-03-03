@@ -83,4 +83,8 @@ pub use specialized::{
     ConcurrentLruMapConfig,
     ConcurrentLruMapStatistics,
     LoadBalancingStrategy,
+    // P1.4: Missing container types
+    VecTrbSet,
+    VecTrbMap,
+    MinimalSso,
 };
