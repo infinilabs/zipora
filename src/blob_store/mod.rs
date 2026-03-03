@@ -6,6 +6,7 @@
 pub mod cached_store;
 pub mod compressed;
 pub mod entropy;
+pub mod file_header;
 pub mod memory;
 pub mod mixed_len;
 pub mod nest_louds_trie_blob_store;
@@ -37,6 +38,11 @@ pub use sorted_uint_vec::{SortedUintVec, SortedUintVecBuilder, SortedUintVecConf
 pub use traits::{
     BatchBlobStore, BlobStore, BlobStoreStats, CompressedBlobStore, CompressionStats,
     IterableBlobStore,
+};
+pub use file_header::{
+    FileHeaderBase, BlobStoreFileFooter, ChecksumType,
+    MAGIC_STRING, MAGIC_STR_LEN, FILE_HEADER_BASE_SIZE, FILE_HEADER_FULL_SIZE, FILE_FOOTER_SIZE,
+    align_padding, align_up,
 };
 pub use zero_length::ZeroLengthBlobStore;
 pub use zip_offset::{ZipOffsetBlobStore, ZipOffsetBlobStoreConfig};
