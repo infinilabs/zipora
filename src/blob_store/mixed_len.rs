@@ -72,6 +72,19 @@ use crate::error::{Result, ZiporaError};
 use crate::RecordId;
 use std::collections::HashMap;
 
+/// Record access mode, determined at build time.
+/// Matches topling-zip's `set_func_ptr()` compile-time dispatch:
+/// avoids bitmap check when all records are the same type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecordMode {
+    /// All records are fixed-length (no bitmap needed)
+    AllFixed,
+    /// All records are variable-length (no bitmap needed)
+    AllVariable,
+    /// Mix of fixed and variable (bitmap + rank/select dispatch)
+    Mixed,
+}
+
 /// MixedLenBlobStore - Hybrid storage for mixed fixed/variable-length records
 ///
 /// Read-only blob store optimized for datasets with a dominant fixed length.
@@ -80,6 +93,8 @@ pub struct MixedLenBlobStore {
     fixed_len: usize,
     /// Number of fixed-length records
     fixed_num: usize,
+    /// Record access mode (avoids bitmap check in homogeneous cases)
+    mode: RecordMode,
     /// Bitmap: 1 = fixed-length record, 0 = variable-length record
     is_fixed_len: RankSelectInterleaved256,
     /// Packed fixed-length records (fixed_num * fixed_len bytes)
@@ -171,9 +186,20 @@ impl MixedLenBlobStore {
             total_size as f64 / data.len() as f64
         };
 
+        // Determine dispatch mode (matching topling-zip set_func_ptr)
+        let var_num = data.len() - fixed_num;
+        let mode = if var_num == 0 {
+            RecordMode::AllFixed
+        } else if fixed_num == 0 {
+            RecordMode::AllVariable
+        } else {
+            RecordMode::Mixed
+        };
+
         Ok(Self {
             fixed_len,
             fixed_num,
+            mode,
             is_fixed_len,
             fixed_len_values: fixed_values,
             var_len_values: var_values,
@@ -232,9 +258,19 @@ impl MixedLenBlobStore {
             total_size as f64 / data.len() as f64
         };
 
+        let var_num = data.len() - fixed_num;
+        let mode = if var_num == 0 {
+            RecordMode::AllFixed
+        } else if fixed_num == 0 {
+            RecordMode::AllVariable
+        } else {
+            RecordMode::Mixed
+        };
+
         Ok(Self {
             fixed_len,
             fixed_num,
+            mode,
             is_fixed_len,
             fixed_len_values: fixed_values,
             var_len_values: var_values,
@@ -297,20 +333,88 @@ impl MixedLenBlobStore {
             self.is_fixed_len.get(id as usize).unwrap_or(false)
         }
     }
+
+    /// Zero-copy record access — returns a slice into internal storage.
+    ///
+    /// Matches topling-zip's `set_func_ptr()` dispatch pattern:
+    /// - AllFixed: direct index into packed array, no bitmap check
+    /// - AllVariable: direct offset lookup, no bitmap check
+    /// - Mixed: bitmap check + rank dispatch
+    ///
+    /// # Performance
+    /// - Fixed-length records: O(1) pointer arithmetic, zero allocation
+    /// - Variable-length records: O(1) two offset lookups, zero allocation
+    #[inline]
+    pub fn get_ref(&self, id: RecordId) -> Result<&[u8]> {
+        let idx = id as usize;
+        if idx >= self.num_records {
+            return Err(self.out_of_bounds_error(id));
+        }
+
+        match self.mode {
+            RecordMode::AllFixed => {
+                // Hot path: no bitmap check needed
+                let offset = idx * self.fixed_len;
+                Ok(&self.fixed_len_values[offset..offset + self.fixed_len])
+            }
+            RecordMode::AllVariable => {
+                // Hot path: no bitmap check needed
+                let beg = self.var_len_offsets.get(idx);
+                let end = self.var_len_offsets.get(idx + 1);
+                Ok(&self.var_len_values[beg..end])
+            }
+            RecordMode::Mixed => {
+                if self.is_fixed_len.get(idx).unwrap_or(false) {
+                    let fixed_id = self.is_fixed_len.rank1(idx);
+                    let offset = fixed_id * self.fixed_len;
+                    Ok(&self.fixed_len_values[offset..offset + self.fixed_len])
+                } else {
+                    let var_id = self.is_fixed_len.rank0(idx);
+                    let beg = self.var_len_offsets.get(var_id);
+                    let end = self.var_len_offsets.get(var_id + 1);
+                    Ok(&self.var_len_values[beg..end])
+                }
+            }
+        }
+    }
+
+    #[cold]
+    fn out_of_bounds_error(&self, id: RecordId) -> ZiporaError {
+        ZiporaError::not_found(format!(
+            "Record {} not found (max {})", id, self.num_records - 1
+        ))
+    }
+
+    /// Append record data to an existing buffer (matching topling-zip pattern).
+    ///
+    /// This avoids allocation by appending to a caller-provided buffer.
+    #[inline]
+    pub fn get_record_append(&self, id: RecordId, buf: &mut Vec<u8>) -> Result<()> {
+        buf.extend_from_slice(self.get_ref(id)?);
+        Ok(())
+    }
+
+    /// Get the total memory usage of this store (matching topling-zip `mem_size`).
+    #[inline]
+    pub fn mem_size(&self) -> usize {
+        std::mem::size_of_val(&self.is_fixed_len)
+            + self.fixed_len_values.len()
+            + self.var_len_values.len()
+            + self.var_len_offsets.mem_size()
+    }
 }
 
 impl Default for MixedLenBlobStore {
     fn default() -> Self {
-        // Create empty bitmap
         let empty_bv = crate::succinct::BitVector::new();
         let empty_bitmap = RankSelectInterleaved256::new(empty_bv).unwrap_or_else(|_| {
-            // If creation fails, create a minimal empty structure
             panic!("Failed to create empty RankSelectInterleaved256")
         });
 
         Self {
             fixed_len: 0,
             fixed_num: 0,
+            mode: RecordMode::AllFixed,
             is_fixed_len: empty_bitmap,
             fixed_len_values: Vec::new(),
             var_len_values: Vec::new(),
@@ -323,47 +427,7 @@ impl Default for MixedLenBlobStore {
 
 impl BlobStore for MixedLenBlobStore {
     fn get(&self, id: RecordId) -> Result<Vec<u8>> {
-        let idx = id as usize;
-        if idx >= self.num_records {
-            return Err(ZiporaError::not_found(format!(
-                "Record {} not found (max {})",
-                id,
-                self.num_records - 1
-            )));
-        }
-
-        if self.is_fixed_len.get(idx).unwrap_or(false) {
-            // Fixed-length record
-            let fixed_id = self.is_fixed_len.rank1(idx);
-            let offset = fixed_id * self.fixed_len;
-
-            if offset + self.fixed_len > self.fixed_len_values.len() {
-                return Err(ZiporaError::invalid_data(format!(
-                    "Invalid fixed-length offset={} len={} buffer_size={}",
-                    offset,
-                    self.fixed_len,
-                    self.fixed_len_values.len()
-                )));
-            }
-
-            Ok(self.fixed_len_values[offset..offset + self.fixed_len].to_vec())
-        } else {
-            // Variable-length record
-            let var_id = self.is_fixed_len.rank0(idx);
-            let beg = self.var_len_offsets.get(var_id);
-            let end = self.var_len_offsets.get(var_id + 1);
-
-            if end > self.var_len_values.len() {
-                return Err(ZiporaError::invalid_data(format!(
-                    "Invalid variable-length range [{}, {}) buffer_size={}",
-                    beg,
-                    end,
-                    self.var_len_values.len()
-                )));
-            }
-
-            Ok(self.var_len_values[beg..end].to_vec())
-        }
+        self.get_ref(id).map(|s| s.to_vec())
     }
 
     fn put(&mut self, _data: &[u8]) -> Result<RecordId> {
@@ -387,16 +451,23 @@ impl BlobStore for MixedLenBlobStore {
         if idx >= self.num_records {
             return Ok(None);
         }
-
-        if self.is_fixed_len.get(idx).unwrap_or(false) {
-            // Fixed-length record
-            Ok(Some(self.fixed_len))
-        } else {
-            // Variable-length record
-            let var_id = self.is_fixed_len.rank0(idx);
-            let beg = self.var_len_offsets.get(var_id);
-            let end = self.var_len_offsets.get(var_id + 1);
-            Ok(Some(end - beg))
+        match self.mode {
+            RecordMode::AllFixed => Ok(Some(self.fixed_len)),
+            RecordMode::AllVariable => {
+                let beg = self.var_len_offsets.get(idx);
+                let end = self.var_len_offsets.get(idx + 1);
+                Ok(Some(end - beg))
+            }
+            RecordMode::Mixed => {
+                if self.is_fixed_len.get(idx).unwrap_or(false) {
+                    Ok(Some(self.fixed_len))
+                } else {
+                    let var_id = self.is_fixed_len.rank0(idx);
+                    let beg = self.var_len_offsets.get(var_id);
+                    let end = self.var_len_offsets.get(var_id + 1);
+                    Ok(Some(end - beg))
+                }
+            }
         }
     }
 

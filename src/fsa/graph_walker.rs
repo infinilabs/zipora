@@ -4,6 +4,7 @@
 //! traversal strategies optimized for different access patterns and cache efficiency.
 
 use crate::error::{Result, ZiporaError};
+use crate::succinct::BitVector;
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -711,6 +712,222 @@ impl<V: Vertex> GraphWalker<V> for MultiPassWalker<V> {
     }
 }
 
+// ============================================================================
+// Fast integer-indexed walkers matching topling-zip graph_walker.hpp
+// ============================================================================
+//
+// These use BitVector for color tracking (O(1) per vertex, minimal memory)
+// and double-buffered queues for level-aware BFS, matching the C++ reference.
+
+/// Fast BFS walker using bit vector for color tracking.
+///
+/// Matches topling-zip's `BFS_GraphWalker<VertexID>`:
+/// - `febitvec color` → `BitVector color`
+/// - Double-buffered `q1`/`q2` swap for level tracking
+/// - O(n/8) bytes memory for n vertices (vs HashMap O(32n))
+pub struct FastBfsWalker {
+    q1: Vec<u32>,
+    q2: Vec<u32>,
+    idx: usize,
+    depth: usize,
+    color: BitVector,
+}
+
+impl FastBfsWalker {
+    /// Initialize for a graph with `num_vertices` vertices.
+    pub fn new(num_vertices: usize) -> Self {
+        let mut color = BitVector::with_capacity(num_vertices).unwrap_or_else(|_| BitVector::new());
+        for _ in 0..num_vertices {
+            let _ = color.push(false);
+        }
+        Self {
+            q1: Vec::with_capacity(512.min(num_vertices)),
+            q2: Vec::with_capacity(512.min(num_vertices)),
+            idx: 0,
+            depth: 0,
+            color,
+        }
+    }
+
+    /// Add root vertex to start traversal.
+    #[inline]
+    pub fn put_root(&mut self, root: u32) {
+        self.q1.push(root);
+        let _ = self.color.set(root as usize, true);
+    }
+
+    /// Get next vertex in BFS order.
+    #[inline]
+    pub fn next(&mut self) -> u32 {
+        debug_assert!(self.idx <= self.q1.len());
+        if self.idx == self.q1.len() {
+            std::mem::swap(&mut self.q1, &mut self.q2);
+            self.q2.clear();
+            self.idx = 0;
+            self.depth += 1;
+        }
+        debug_assert!(!self.q1.is_empty());
+        let v = self.q1[self.idx];
+        self.idx += 1;
+        v
+    }
+
+    /// Add children, skipping already-visited vertices.
+    #[inline]
+    pub fn put_children(&mut self, children: &[u32]) {
+        for &child in children {
+            if !self.color.get(child as usize).unwrap_or(true) {
+                self.q2.push(child);
+                let _ = self.color.set(child as usize, true);
+            }
+        }
+    }
+
+    /// Check if traversal is complete.
+    #[inline]
+    pub fn is_finished(&self) -> bool {
+        self.q1.len() + self.q2.len() == self.idx
+    }
+
+    /// Current BFS depth.
+    #[inline]
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
+}
+
+/// Fast DFS walker using bit vector for color tracking.
+///
+/// Matches topling-zip's `PFS_GraphWalker<VertexID>` (Performance First Search):
+/// - Stack-based with bit vector color
+/// - Children pushed in reverse order for consistent traversal
+pub struct FastDfsWalker {
+    stack: Vec<u32>,
+    color: BitVector,
+}
+
+impl FastDfsWalker {
+    /// Initialize for a graph with `num_vertices` vertices.
+    pub fn new(num_vertices: usize) -> Self {
+        let mut color = BitVector::with_capacity(num_vertices).unwrap_or_else(|_| BitVector::new());
+        for _ in 0..num_vertices {
+            let _ = color.push(false);
+        }
+        Self {
+            stack: Vec::with_capacity(512),
+            color,
+        }
+    }
+
+    /// Add root vertex.
+    #[inline]
+    pub fn put_root(&mut self, root: u32) {
+        self.stack.push(root);
+        let _ = self.color.set(root as usize, true);
+    }
+
+    /// Get next vertex in DFS order.
+    #[inline]
+    pub fn next(&mut self) -> u32 {
+        debug_assert!(!self.stack.is_empty());
+        self.stack.pop().unwrap()
+    }
+
+    /// Add children in reverse order, skipping visited.
+    #[inline]
+    pub fn put_children(&mut self, children: &[u32]) {
+        for &child in children.iter().rev() {
+            if !self.color.get(child as usize).unwrap_or(true) {
+                self.stack.push(child);
+                let _ = self.color.set(child as usize, true);
+            }
+        }
+    }
+
+    /// Check if traversal is complete.
+    #[inline]
+    pub fn is_finished(&self) -> bool {
+        self.stack.is_empty()
+    }
+}
+
+/// Fast CFS walker: BFS for first 2 levels, then DFS.
+///
+/// Matches topling-zip's `CFS_TreeWalker<VertexID>`:
+/// - Cache-friendly: BFS for shallow levels (cache-hot), DFS for deeper levels
+/// - Optimal for tries where root fanout is high but subtrees are deep
+pub struct FastCfsWalker {
+    q1: Vec<u32>,
+    q2: Vec<u32>,
+    depth: usize,
+    q1_pos: usize,
+}
+
+impl FastCfsWalker {
+    const MAX_BFS_DEPTH: usize = 2;
+
+    pub fn new(_num_vertices: usize) -> Self {
+        Self {
+            q1: Vec::with_capacity(512),
+            q2: Vec::with_capacity(512),
+            depth: 0,
+            q1_pos: 0,
+        }
+    }
+
+    #[inline]
+    pub fn put_root(&mut self, root: u32) {
+        debug_assert_eq!(self.depth, 0);
+        self.q1.push(root);
+    }
+
+    #[inline]
+    pub fn next(&mut self) -> u32 {
+        if self.depth < Self::MAX_BFS_DEPTH {
+            if self.q1_pos < self.q1.len() {
+                let v = self.q1[self.q1_pos];
+                self.q1_pos += 1;
+                return v;
+            }
+            self.depth += 1;
+            self.q1.clear();
+            if self.depth < Self::MAX_BFS_DEPTH {
+                std::mem::swap(&mut self.q1, &mut self.q2);
+                self.q1_pos = 1;
+                return self.q1[0];
+            } else {
+                self.q2.reverse();
+                return self.q2.pop().unwrap();
+            }
+        }
+        self.q2.pop().unwrap()
+    }
+
+    /// Add children — forward order in BFS phase, reverse in DFS phase.
+    #[inline]
+    pub fn put_children(&mut self, children: &[u32]) {
+        let old_size = self.q2.len();
+        self.q2.extend_from_slice(children);
+        if self.depth >= Self::MAX_BFS_DEPTH {
+            self.q2[old_size..].reverse();
+        }
+    }
+
+    #[inline]
+    pub fn is_finished(&self) -> bool {
+        if self.depth < Self::MAX_BFS_DEPTH {
+            self.q1_pos >= self.q1.len() + self.q2.len()
+        } else {
+            self.q2.is_empty()
+        }
+    }
+
+    #[inline]
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -894,5 +1111,105 @@ mod tests {
         
         let multipass_config = WalkerConfig::for_multi_pass();
         assert!(multipass_config.incremental_colors);
+    }
+
+    // ===== Fast integer-indexed walker tests =====
+
+    #[test]
+    fn test_fast_bfs_walker() {
+        // Graph: 0->[1,2], 1->[3], 2->[3], 3->[]
+        let adj: Vec<Vec<u32>> = vec![
+            vec![1, 2], // 0
+            vec![3],    // 1
+            vec![3],    // 2
+            vec![],     // 3
+        ];
+
+        let mut walker = FastBfsWalker::new(4);
+        walker.put_root(0);
+        let mut order = Vec::new();
+
+        while !walker.is_finished() {
+            let v = walker.next();
+            order.push(v);
+            walker.put_children(&adj[v as usize]);
+        }
+
+        // BFS order: 0, then {1,2}, then 3
+        assert_eq!(order[0], 0);
+        assert!(order.contains(&1));
+        assert!(order.contains(&2));
+        assert!(order.contains(&3));
+        assert_eq!(order.len(), 4); // Each vertex visited exactly once
+    }
+
+    #[test]
+    fn test_fast_dfs_walker() {
+        let adj: Vec<Vec<u32>> = vec![
+            vec![1, 2], // 0
+            vec![3],    // 1
+            vec![3],    // 2
+            vec![],     // 3
+        ];
+
+        let mut walker = FastDfsWalker::new(4);
+        walker.put_root(0);
+        let mut order = Vec::new();
+
+        while !walker.is_finished() {
+            let v = walker.next();
+            order.push(v);
+            walker.put_children(&adj[v as usize]);
+        }
+
+        // DFS order: 0, 1, 3, 2 (children pushed in reverse)
+        assert_eq!(order[0], 0);
+        assert_eq!(order.len(), 4);
+        // Vertex 3 should be visited once (deduplicated by color)
+        assert_eq!(order.iter().filter(|&&v| v == 3).count(), 1);
+    }
+
+    #[test]
+    fn test_fast_cfs_walker() {
+        // Tree: 0->[1,2], 1->[3,4], 2->[5,6]
+        let adj: Vec<Vec<u32>> = vec![
+            vec![1, 2],
+            vec![3, 4],
+            vec![5, 6],
+            vec![], vec![], vec![], vec![],
+        ];
+
+        let mut walker = FastCfsWalker::new(7);
+        walker.put_root(0);
+        let mut order = Vec::new();
+
+        while !walker.is_finished() {
+            let v = walker.next();
+            order.push(v);
+            walker.put_children(&adj[v as usize]);
+        }
+
+        // Should visit all 7 nodes
+        assert_eq!(order.len(), 7);
+        assert_eq!(order[0], 0); // root first
+        // First 2 levels in BFS order
+        assert!(order[1] == 1 || order[1] == 2);
+    }
+
+    #[test]
+    fn test_fast_bfs_no_duplicates() {
+        // Diamond: 0->[1,2], 1->[3], 2->[3]
+        let adj: Vec<Vec<u32>> = vec![vec![1, 2], vec![3], vec![3], vec![]];
+        let mut walker = FastBfsWalker::new(4);
+        walker.put_root(0);
+        let mut visited = Vec::new();
+        while !walker.is_finished() {
+            let v = walker.next();
+            visited.push(v);
+            walker.put_children(&adj[v as usize]);
+        }
+        // Node 3 reachable from both 1 and 2 but visited only once
+        assert_eq!(visited.iter().filter(|&&v| v == 3).count(), 1);
+        assert_eq!(visited.len(), 4);
     }
 }

@@ -5,9 +5,8 @@
 
 use crate::error::{Result, ZiporaError};
 use crate::memory::SecureMemoryPool;
-// Note: RankSelectInterleaved256 import removed as it's not used in current implementation
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 /// Cache strategy for FSA operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -216,7 +215,11 @@ impl FsaCacheStats {
     }
 }
 
-/// High-performance FSA cache system
+/// High-performance FSA cache system.
+///
+/// Single-threaded cache for FSA state acceleration, matching topling-zip's
+/// `NTD_CacheTrie` pattern. Not thread-safe — use external synchronization
+/// if shared across threads.
 pub struct FsaCache {
     /// Cache configuration
     config: FsaCacheConfig,
@@ -232,8 +235,6 @@ pub struct FsaCache {
     stats: FsaCacheStats,
     /// Memory pool for efficient allocation
     memory_pool: Option<Arc<SecureMemoryPool>>,
-    /// Thread-safe access
-    lock: RwLock<()>,
 }
 
 impl FsaCache {
@@ -260,7 +261,6 @@ impl FsaCache {
             next_state_id: 1, // Start from 1, reserve 0 for invalid state
             stats: FsaCacheStats::default(),
             memory_pool,
-            lock: RwLock::new(()),
         })
     }
 
@@ -304,12 +304,6 @@ impl FsaCache {
 
     /// Remove a state from cache
     pub fn remove_state(&mut self, state_id: u32) -> bool {
-        // SAFETY: Return false if RwLock is poisoned (graceful degradation)
-        let _guard = match self.lock.write() {
-            Ok(g) => g,
-            Err(_) => return false,
-        };
-
         if self.states.remove(&state_id).is_some() {
             self.zero_paths.remove(&state_id);
             self.free_list.push(state_id);
@@ -326,42 +320,21 @@ impl FsaCache {
 
     /// Add zero-path data for compressed path storage
     pub fn add_zero_path(&mut self, state_id: u32, path_data: ZeroPathData) -> Result<()> {
-        {
-            let _guard = self.lock.write()
-                .map_err(|e| ZiporaError::system_error(
-                    format!("FsaCache: lock RwLock poisoned: {}", e)
-                ))?;
-
-            if !self.states.contains_key(&state_id) {
-                return Err(ZiporaError::invalid_data("State not found in cache"));
-            }
-
-            self.zero_paths.insert(state_id, path_data);
+        if !self.states.contains_key(&state_id) {
+            return Err(ZiporaError::invalid_data("State not found in cache"));
         }
-        
+        self.zero_paths.insert(state_id, path_data);
         self.update_compression_stats();
-        
         Ok(())
     }
 
     /// Get zero-path data for a state
     pub fn get_zero_path(&self, state_id: u32) -> Option<&ZeroPathData> {
-        // SAFETY: Return None if RwLock is poisoned (graceful degradation)
-        let _guard = match self.lock.read() {
-            Ok(g) => g,
-            Err(_) => return None,
-        };
         self.zero_paths.get(&state_id)
     }
 
     /// Clear the entire cache
     pub fn clear(&mut self) {
-        // SAFETY: Skip clear if RwLock is poisoned (graceful degradation)
-        let _guard = match self.lock.write() {
-            Ok(g) => g,
-            Err(_) => return,
-        };
-
         self.states.clear();
         self.zero_paths.clear();
         self.free_list.clear();
@@ -373,11 +346,6 @@ impl FsaCache {
 
     /// Get cache statistics
     pub fn stats(&self) -> FsaCacheStats {
-        // SAFETY: Return default stats if RwLock is poisoned (graceful degradation)
-        let _guard = match self.lock.read() {
-            Ok(g) => g,
-            Err(_) => return FsaCacheStats::default(),
-        };
         self.stats.clone()
     }
 
@@ -388,11 +356,6 @@ impl FsaCache {
 
     /// Check if cache is at capacity
     pub fn is_full(&self) -> bool {
-        // SAFETY: Return false if RwLock is poisoned (safe default - not full)
-        let _guard = match self.lock.read() {
-            Ok(g) => g,
-            Err(_) => return false,
-        };
         self.states.len() >= self.config.max_states
     }
 
@@ -516,6 +479,101 @@ impl Default for FsaCache {
             panic!("FsaCache creation failed in Default: {}. \
                    This indicates severe memory pressure.", e)
         })
+    }
+}
+
+// ============================================================================
+// Fast Vec-based state cache matching topling-zip NTD_CacheState pattern
+// ============================================================================
+
+/// Sentinel value for unused/free states in the fast cache.
+const NIL_STATE: u32 = u32::MAX;
+
+/// Fast Vec-based state cache for dense state ID spaces.
+///
+/// Matches topling-zip's `NTD_CacheTrie` pattern: states stored in a
+/// contiguous Vec indexed by state ID for O(1) lookup. Much faster than
+/// HashMap for typical FSA use where state IDs are sequential.
+///
+/// # Layout (16 bytes per state, matching `NTD_CacheState`)
+/// ```text
+/// child0 (4B) | parent (4B) | map_state (4B) | zp_offset:31 + is_term:1 (4B)
+/// ```
+pub struct FastStateCache {
+    /// States array — indexed by state ID.
+    /// `map_state == NIL_STATE` means the slot is free.
+    states: Vec<CachedState>,
+    /// Number of occupied slots.
+    num_used: usize,
+}
+
+impl FastStateCache {
+    /// Create a new fast cache with `capacity` slots.
+    pub fn new(capacity: usize) -> Self {
+        let free_state = CachedState::new(0, 0, false, true); // is_free = true
+        Self {
+            states: vec![free_state; capacity],
+            num_used: 0,
+        }
+    }
+
+    /// Get a cached state by ID. O(1) array lookup.
+    #[inline]
+    pub fn get_state(&self, state_id: u32) -> Option<CachedState> {
+        let idx = state_id as usize;
+        if idx < self.states.len() {
+            let s = self.states[idx];
+            if !s.is_free() { Some(s) } else { None }
+        } else {
+            None
+        }
+    }
+
+    /// Set a state. O(1) array write.
+    #[inline]
+    pub fn set_state(&mut self, state_id: u32, state: CachedState) {
+        let idx = state_id as usize;
+        if idx >= self.states.len() {
+            // Grow to fit
+            let free_state = CachedState::new(0, 0, false, true);
+            self.states.resize(idx + 1, free_state);
+        }
+        if self.states[idx].is_free() {
+            self.num_used += 1;
+        }
+        self.states[idx] = state;
+    }
+
+    /// Check if a state is cached.
+    #[inline]
+    pub fn has_state(&self, state_id: u32) -> bool {
+        let idx = state_id as usize;
+        idx < self.states.len() && !self.states[idx].is_free()
+    }
+
+    /// Number of cached states.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.num_used
+    }
+
+    /// Check if empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.num_used == 0
+    }
+
+    /// Total memory usage in bytes.
+    #[inline]
+    pub fn mem_size(&self) -> usize {
+        self.states.len() * std::mem::size_of::<CachedState>()
+    }
+
+    /// Clear all cached states.
+    pub fn clear(&mut self) {
+        let free_state = CachedState::new(0, 0, false, true);
+        self.states.fill(free_state);
+        self.num_used = 0;
     }
 }
 
@@ -648,5 +706,53 @@ mod tests {
         let stats = cache.stats();
         assert_eq!(stats.cached_states, 2);
         assert!(stats.memory_usage > 0);
+    }
+
+    // ===== FastStateCache tests =====
+
+    #[test]
+    fn test_fast_state_cache_basic() {
+        let mut cache = FastStateCache::new(100);
+        assert!(cache.is_empty());
+        assert_eq!(cache.len(), 0);
+
+        let state = CachedState::new(42, 0, true, false);
+        cache.set_state(5, state);
+        assert_eq!(cache.len(), 1);
+        assert!(cache.has_state(5));
+        assert!(!cache.has_state(6));
+
+        let retrieved = cache.get_state(5).unwrap();
+        assert_eq!(retrieved.child_base, 42);
+        assert!(retrieved.is_terminal());
+    }
+
+    #[test]
+    fn test_fast_state_cache_grow() {
+        let mut cache = FastStateCache::new(10);
+        // Set state beyond initial capacity
+        let state = CachedState::new(99, 0, false, false);
+        cache.set_state(50, state);
+        assert!(cache.has_state(50));
+        assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn test_fast_state_cache_clear() {
+        let mut cache = FastStateCache::new(100);
+        cache.set_state(1, CachedState::new(10, 0, false, false));
+        cache.set_state(2, CachedState::new(20, 0, false, false));
+        assert_eq!(cache.len(), 2);
+
+        cache.clear();
+        assert_eq!(cache.len(), 0);
+        assert!(!cache.has_state(1));
+        assert!(!cache.has_state(2));
+    }
+
+    #[test]
+    fn test_fast_state_cache_mem_size() {
+        let cache = FastStateCache::new(100);
+        assert_eq!(cache.mem_size(), 100 * std::mem::size_of::<CachedState>());
     }
 }

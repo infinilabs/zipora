@@ -49,16 +49,19 @@ pub use strategy_traits::{
 // Core infrastructure
 pub use cache::{
     CacheStrategy, CachedState, FsaCache, FsaCacheConfig, FsaCacheStats, ZeroPathData,
+    FastStateCache,
 };
 pub use dawg::{
     DawgConfig, DawgState, DawgStats, NestedTrieDawg, TerminalStrategy, TransitionTable,
 };
 pub use fast_search::{
     FastSearchConfig, FastSearchEngine, HardwareCapabilities, SearchStrategy,
+    fast_search_byte, fast_search_byte_max_16, binary_search_byte,
 };
 pub use graph_walker::{
     BfsGraphWalker, CfsGraphWalker, DfsGraphWalker, GraphVisitor, GraphWalker, GraphWalkerFactory,
     MultiPassWalker, SimpleVertex, Vertex, VertexColor, WalkMethod, WalkStats, WalkerConfig,
+    FastBfsWalker, FastDfsWalker, FastCfsWalker,
 };
 pub use simple_implementations::{
     SimpleDawg, SimpleFastSearch, SimpleFsaCache, SimpleGraphWalker,

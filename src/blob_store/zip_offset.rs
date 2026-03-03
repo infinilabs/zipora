@@ -558,17 +558,8 @@ impl ZipOffsetBlobStore {
                 Err(ZiporaError::invalid_data("ZSTD support not enabled"))
             }
         } else {
-            // SIMD-optimized copy for large uncompressed data
-            if self.should_use_simd(final_data.len()) {
-                let mut result = vec![0u8; final_data.len()];
-                match self.simd_copy(final_data, &mut result) {
-                    Ok(()) => Ok(result),
-                    Err(_) => Ok(final_data.to_vec()), // Fallback on error
-                }
-            } else {
-                // Standard copy for small data (truly zero-copy would require lifetime management)
-                Ok(final_data.to_vec())
-            }
+            // Direct copy — Rust's to_vec() already uses optimized memcpy
+            Ok(final_data.to_vec())
         }
     }
 
@@ -728,17 +719,7 @@ impl ZipOffsetBlobStore {
                 Err(ZiporaError::invalid_data("ZSTD support not enabled"))
             }
         } else {
-            // SIMD-optimized copy for large uncompressed data
-            if self.should_use_simd(final_data.len()) {
-                let mut result = vec![0u8; final_data.len()];
-                match self.simd_copy(final_data, &mut result) {
-                    Ok(()) => Ok(result),
-                    Err(_) => Ok(final_data.to_vec()), // Fallback on error
-                }
-            } else {
-                // Standard copy for small data
-                Ok(final_data.to_vec())
-            }
+            Ok(final_data.to_vec())
         }
     }
 }
