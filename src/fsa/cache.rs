@@ -107,11 +107,13 @@ impl CachedState {
     }
 
     /// Check if this is a terminal state
+    #[inline]
     pub fn is_terminal(&self) -> bool {
         (self.parent_and_flags & 0x80000000) != 0
     }
 
     /// Check if this state is free
+    #[inline]
     pub fn is_free(&self) -> bool {
         (self.parent_and_flags & 0x40000000) != 0
     }
@@ -355,6 +357,7 @@ impl FsaCache {
     }
 
     /// Check if cache is at capacity
+    #[inline]
     pub fn is_full(&self) -> bool {
         self.states.len() >= self.config.max_states
     }

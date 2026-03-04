@@ -196,11 +196,13 @@ impl WorkStealingQueue {
     }
 
     /// Get the number of tasks in both queues
+    #[inline]
     pub fn len(&self) -> usize {
         self.local_queue.lock().unwrap_or_else(|e| e.into_inner()).len() + self.steal_queue.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Check if both queues are empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

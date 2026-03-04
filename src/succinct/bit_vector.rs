@@ -814,11 +814,13 @@ pub struct BitRef<'a> {
 
 impl<'a> BitRef<'a> {
     /// Get the current value of the bit
+    #[inline]
     pub fn get(&self) -> bool {
         self.bit_vector.get(self.index).unwrap_or(false)
     }
 
     /// Set the value of the bit
+    #[inline]
     pub fn set(&mut self, value: bool) -> Result<()> {
         self.bit_vector.set(self.index, value)
     }

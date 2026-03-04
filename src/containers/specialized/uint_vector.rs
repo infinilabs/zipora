@@ -182,11 +182,13 @@ impl UintVector {
     }
 
     /// Get the number of elements in the vector
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// Check if the vector is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -228,6 +230,7 @@ impl UintVector {
     /// assert!(usage < 4000); // Should be much less than 4000 bytes (1000 * 4)
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
+    #[inline]
     pub fn memory_usage(&self) -> usize {
         // Base struct size
         std::mem::size_of::<Self>() +

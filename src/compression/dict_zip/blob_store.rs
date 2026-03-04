@@ -397,6 +397,7 @@ impl DictZipBlobStoreStats {
     }
 
     /// Calculate memory usage in bytes
+    #[inline]
     pub fn memory_usage(&self) -> usize {
         self.dictionary_size + 
         self.compression_stats.compressed_size +

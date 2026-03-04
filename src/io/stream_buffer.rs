@@ -174,6 +174,7 @@ impl<R: Read> StreamBufferedReader<R> {
     }
 
     /// Get buffer capacity
+    #[inline]
     pub fn capacity(&self) -> usize {
         self.buffer.len()
     }
@@ -574,6 +575,7 @@ impl<W: Write> StreamBufferedWriter<W> {
     }
 
     /// Get buffer capacity
+    #[inline]
     pub fn capacity(&self) -> usize {
         self.buffer.len()
     }

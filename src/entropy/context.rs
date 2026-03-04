@@ -79,21 +79,25 @@ impl ContextBuffer {
     }
     
     /// Get the data as a slice
+    #[inline]
     pub fn as_slice(&self) -> &[u8] {
         &self.data
     }
     
     /// Get the current length
+    #[inline]
     pub fn len(&self) -> usize {
         self.data.len()
     }
     
     /// Check if the buffer is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
     
     /// Get the current capacity
+    #[inline]
     pub fn capacity(&self) -> usize {
         self.data.capacity()
     }
@@ -356,6 +360,7 @@ impl EntropyResult {
     }
     
     /// Get a reference to the data
+    #[inline]
     pub fn data(&self) -> &[u8] {
         &self.data
     }

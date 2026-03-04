@@ -71,8 +71,10 @@ impl RankSelectSimple {
         (word & ((1u64 << bit_count) - 1)).count_ones() as usize
     }
 
+    #[inline]
     pub fn max_rank0(&self) -> usize { self.max_rank0 }
     pub fn max_rank1(&self) -> usize { self.max_rank1 }
+    #[inline]
     pub fn mem_size(&self) -> usize {
         self.bits.len() * 8 + self.rank_cache.len() * 4
     }
@@ -107,6 +109,7 @@ impl RankSelectOps for RankSelectSimple {
         pos - self.rank1(pos)
     }
 
+    #[inline]
     fn select1(&self, k: usize) -> Result<usize> {
         if k >= self.max_rank1 {
             return Err(ZiporaError::invalid_data("select1 out of range"));
@@ -143,6 +146,7 @@ impl RankSelectOps for RankSelectSimple {
         Err(ZiporaError::invalid_data("select1 internal error"))
     }
 
+    #[inline]
     fn select0(&self, k: usize) -> Result<usize> {
         if k >= self.max_rank0 {
             return Err(ZiporaError::invalid_data("select0 out of range"));

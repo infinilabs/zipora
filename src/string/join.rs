@@ -222,6 +222,7 @@ impl<'a> JoinBuilder<'a> {
     }
 
     /// Add a part to be joined
+    #[inline]
     pub fn push(&mut self, part: &'a str) -> &mut Self {
         self.total_len += part.len();
         self.parts.push(part);
@@ -229,11 +230,13 @@ impl<'a> JoinBuilder<'a> {
     }
 
     /// Get the number of parts added
+    #[inline]
     pub fn len(&self) -> usize {
         self.parts.len()
     }
 
     /// Check if empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.parts.is_empty()
     }

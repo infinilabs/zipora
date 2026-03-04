@@ -119,6 +119,7 @@ impl<T> VersionProxy<T> {
     }
     
     /// Get the inner data
+    #[inline]
     pub fn data(&self) -> &T {
         &self.data
     }

@@ -538,11 +538,13 @@ impl AdvancedStringVec {
     }
 
     /// Get the number of strings
+    #[inline]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Check if empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }

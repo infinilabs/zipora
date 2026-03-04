@@ -680,16 +680,19 @@ impl<T> CacheAlignedVec<T> {
     }
 
     /// Get the underlying data
+    #[inline]
     pub fn as_slice(&self) -> &[T] {
         &self.data
     }
 
     /// Get length
+    #[inline]
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
     /// Check if empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }

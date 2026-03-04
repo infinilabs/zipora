@@ -543,11 +543,13 @@ impl<K: Ord> VecTrbSet<K> {
         true
     }
 
+    #[inline]
     pub fn contains(&self, key: &K) -> bool {
         let (_, found) = self.core.find_unique(key, |a, b| a.cmp(b));
         found
     }
 
+    #[inline]
     pub fn len(&self) -> usize { self.core.count }
     pub fn is_empty(&self) -> bool { self.core.count == 0 }
 
@@ -615,6 +617,7 @@ impl<K: Ord, V> VecTrbMap<K, V> {
         None
     }
 
+    #[inline]
     pub fn get(&self, key: &K) -> Option<&V> {
         let (stk, found) = self.core.find_unique(key, |a, b| a.0.cmp(b));
         if found {
@@ -637,6 +640,7 @@ impl<K: Ord, V> VecTrbMap<K, V> {
     }
 
     pub fn contains_key(&self, key: &K) -> bool { self.get(key).is_some() }
+    #[inline]
     pub fn len(&self) -> usize { self.core.count }
     pub fn is_empty(&self) -> bool { self.core.count == 0 }
 

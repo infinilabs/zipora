@@ -22,16 +22,19 @@ impl CFastVec {
     }
 
     /// Add a value to the vector
+    #[inline]
     pub fn push(&mut self, value: u32) -> crate::Result<()> {
         self.inner.push(value)
     }
 
     /// Get the number of elements in the vector
+    #[inline]
     pub fn len(&self) -> usize {
         self.inner.len()
     }
 
     /// Get a reference to the element at the given index
+    #[inline]
     pub fn get(&self, index: usize) -> Option<&u32> {
         self.inner.get(index)
     }
@@ -63,6 +66,7 @@ impl CBlobStore {
     }
 
     /// Retrieve data from the blob store by ID
+    #[inline]
     pub fn get(&self, id: RecordId) -> crate::Result<Vec<u8>> {
         self.inner.get(id)
     }

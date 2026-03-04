@@ -241,16 +241,19 @@ unsafe impl Sync for MemoryMappedAllocator {}
 
 impl MmapAllocation {
     /// Get the allocated memory as a slice
+    #[inline]
     pub fn as_slice(&self) -> &[u8] {
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.size) }
     }
 
     /// Get the allocated memory as a mutable slice
+    #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.size) }
     }
 
     /// Get the size of the allocation
+    #[inline]
     pub fn size(&self) -> usize {
         self.size
     }

@@ -92,6 +92,7 @@ impl<T> CacheAligned<T> {
     }
 
     /// Get a reference to the inner data
+    #[inline]
     pub fn get(&self) -> &T {
         &self.data
     }

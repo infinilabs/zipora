@@ -349,6 +349,7 @@ struct InlineStorage<K, V> {
 
 impl<K, V> InlineStorage<K, V> {
     /// Get the number of occupied slots
+    #[inline]
     pub fn len(&self) -> usize {
         self.occupied.count_ones() as usize
     }
@@ -586,6 +587,7 @@ where
     }
 
     /// Get number of elements
+    #[inline]
     pub fn len(&self) -> usize {
         match &self.storage {
             HashMapStorage::Standard { entries, .. } => {
@@ -599,6 +601,7 @@ where
     }
 
     /// Check if the map is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

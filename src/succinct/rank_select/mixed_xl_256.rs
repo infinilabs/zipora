@@ -175,6 +175,7 @@ impl RankSelectMixedXL256 {
         Err(ZiporaError::invalid_data("select1 internal error"))
     }
 
+    #[inline]
     pub fn get_dim(&self, dim: usize, index: usize) -> Option<bool> {
         if index >= self.size[dim] { return None; }
         let line_idx = index / LINE_BITS;
@@ -184,6 +185,7 @@ impl RankSelectMixedXL256 {
         Some((word >> bit_idx) & 1 == 1)
     }
 
+    #[inline]
     pub fn mem_size(&self) -> usize {
         if self.lines.is_empty() { return 0; }
         self.lines.len() * (self.arity * WORDS_PER_LINE * 8 + self.arity * 8)
@@ -191,8 +193,10 @@ impl RankSelectMixedXL256 {
 }
 
 impl RankSelectOps for MixedXL256DimView<'_> {
+    #[inline]
     fn rank1(&self, pos: usize) -> usize { self.parent.rank1_dim(self.dim, pos) }
     fn rank0(&self, pos: usize) -> usize { self.parent.rank0_dim(self.dim, pos) }
+    #[inline]
     fn select1(&self, k: usize) -> Result<usize> { self.parent.select1_dim(self.dim, k) }
     fn select0(&self, _k: usize) -> Result<usize> {
         Err(ZiporaError::invalid_data("select0 not implemented for mixed_xl_256"))

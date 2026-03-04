@@ -139,15 +139,19 @@ pub mod double_array_trie {
             Self { trie: ZiporaTrie::with_config(tc) }
         }
         pub fn insert(&mut self, key: &[u8]) -> Result<()> { self.trie.insert(key) }
+        #[inline]
         pub fn contains(&self, key: &[u8]) -> bool { self.trie.contains(key) }
         pub fn lookup(&self, key: &[u8]) -> Option<()> { if self.trie.contains(key) { Some(()) } else { None } }
+        #[inline]
         pub fn len(&self) -> usize { self.trie.len() }
         pub fn is_empty(&self) -> bool { self.trie.is_empty() }
         pub fn stats(&self) -> TrieStats { self.trie.stats().clone() }
+        #[inline]
         pub fn memory_usage(&self) -> usize { self.trie.memory_usage() }
         pub fn capacity(&self) -> usize { self.trie.capacity() }
         pub fn shrink_to_fit(&mut self) { self.trie.shrink_to_fit(); }
         pub fn config(&self) -> DoubleArrayTrieConfig { DoubleArrayTrieConfig::default() }
+        #[inline]
         pub fn is_free(&self, state: u32) -> bool { self.trie.is_free_double_array(state) }
         pub fn is_terminal(&self, state: u32) -> bool { self.trie.is_final(state) }
         pub fn get_parent(&self, state: u32) -> u32 { self.trie.get_parent_double_array(state) }
@@ -257,11 +261,14 @@ pub mod nested_louds_trie {
             Ok(Self { trie: ZiporaTrie::with_config(tc), _marker: PhantomData })
         }
         pub fn insert(&mut self, key: &[u8]) -> Result<()> { self.trie.insert(key) }
+        #[inline]
         pub fn contains(&self, key: &[u8]) -> bool { self.trie.contains(key) }
         pub fn lookup(&self, key: &[u8]) -> Option<()> { if self.trie.contains(key) { Some(()) } else { None } }
+        #[inline]
         pub fn len(&self) -> usize { self.trie.len() }
         pub fn is_empty(&self) -> bool { self.trie.is_empty() }
         pub fn stats(&self) -> TrieStats { self.trie.stats().clone() }
+        #[inline]
         pub fn memory_usage(&self) -> usize { self.trie.memory_usage() }
         pub fn config(&self) -> NestingConfig { NestingConfig::default() }
         pub fn active_levels(&self) -> usize { 1 }
@@ -352,11 +359,13 @@ pub mod compressed_sparse_trie {
             Self::new(_level)
         }
         pub fn insert(&mut self, key: &[u8]) -> Result<()> { self.trie.insert(key) }
+        #[inline]
         pub fn contains(&self, key: &[u8]) -> bool { self.trie.contains(key) }
         pub fn lookup(&self, key: &[u8]) -> Option<()> { if self.trie.contains(key) { Some(()) } else { None } }
         pub fn insert_with_token(&mut self, key: &[u8], _token: &WriterToken) -> Result<()> { self.trie.insert(key) }
         pub fn contains_with_token(&self, key: &[u8], _token: &ReaderToken) -> bool { self.trie.contains(key) }
         pub fn lookup_with_token(&self, key: &[u8], _token: &ReaderToken) -> Option<()> { self.lookup(key) }
+        #[inline]
         pub fn len(&self) -> usize { self.trie.len() }
         pub fn is_empty(&self) -> bool { self.trie.is_empty() }
         pub fn stats(&self) -> TrieStats { self.trie.stats().clone() }

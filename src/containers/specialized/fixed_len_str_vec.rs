@@ -155,11 +155,13 @@ impl<const N: usize> FixedLenStrVec<N> {
     }
 
     /// Get the number of strings in the vector
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// Check if the vector is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }

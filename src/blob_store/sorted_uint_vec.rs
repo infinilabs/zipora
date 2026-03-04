@@ -147,11 +147,13 @@ impl SortedUintVec {
     }
 
     /// Get number of stored values
+    #[inline]
     pub fn len(&self) -> usize {
         self.size
     }
 
     /// Check if empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.size == 0
     }
@@ -162,6 +164,7 @@ impl SortedUintVec {
     }
 
     /// Get total memory usage in bytes
+    #[inline]
     pub fn memory_usage(&self) -> usize {
         self.data.len() + self.index.len()
     }
@@ -287,6 +290,7 @@ impl SortedUintVec {
     }
 
     /// Get value at index with bounds checking
+    #[inline]
     pub fn get(&self, index: usize) -> Result<u64> {
         if index >= self.size {
             return Err(ZiporaError::invalid_data("index out of bounds"));
@@ -664,6 +668,7 @@ impl SortedUintVecBuilder {
     }
 
     /// Add a value (must be >= previous value to maintain sorted order)
+    #[inline]
     pub fn push(&mut self, value: u64) -> Result<()> {
         if let Some(&last) = self.values.last() {
             if value < last {
@@ -684,11 +689,13 @@ impl SortedUintVecBuilder {
     }
 
     /// Get number of values added
+    #[inline]
     pub fn len(&self) -> usize {
         self.values.len()
     }
 
     /// Check if empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
     }

@@ -66,6 +66,7 @@ impl Bmi2Capabilities {
     }
 
     /// Get a cached instance of BMI2 capabilities
+    #[inline]
     pub fn get() -> &'static Self {
         use std::sync::OnceLock;
         static BMI2_CAPS: OnceLock<Bmi2Capabilities> = OnceLock::new();
@@ -1747,11 +1748,13 @@ impl Bmi2Accelerator {
     }
 
     /// Accelerated rank operation
+    #[inline]
     pub fn rank1(&self, word: u64, pos: u32) -> u32 {
         Bmi2RankOps::popcount_trail(word, pos)
     }
 
     /// Accelerated select operation
+    #[inline]
     pub fn select1(&self, word: u64, k: u32) -> Option<u32> {
         Bmi2SelectOps::select1_u64(word, k)
     }

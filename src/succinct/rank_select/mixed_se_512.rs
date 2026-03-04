@@ -108,6 +108,7 @@ impl RankSelectMixedSE512 {
         })
     }
 
+    #[inline]
     pub fn dim0(&self) -> MixedSE512DimView<'_> { MixedSE512DimView { parent: self, dim: 0 } }
     pub fn dim1(&self) -> MixedSE512DimView<'_> { MixedSE512DimView { parent: self, dim: 1 } }
 
@@ -160,6 +161,7 @@ impl RankSelectMixedSE512 {
         Err(ZiporaError::invalid_data("select1 internal error"))
     }
 
+    #[inline]
     pub fn get_dim(&self, dim: usize, index: usize) -> Option<bool> {
         if index >= self.size[dim] { return None; }
         let word_idx = (index / 64) * 2 + dim;
@@ -169,14 +171,17 @@ impl RankSelectMixedSE512 {
         } else { Some(false) }
     }
 
+    #[inline]
     pub fn mem_size(&self) -> usize {
         self.words.len() * 8 + self.rank_cache.len() * std::mem::size_of::<RankCacheMixed>()
     }
 }
 
 impl RankSelectOps for MixedSE512DimView<'_> {
+    #[inline]
     fn rank1(&self, pos: usize) -> usize { self.parent.rank1_dim(self.dim, pos) }
     fn rank0(&self, pos: usize) -> usize { self.parent.rank0_dim(self.dim, pos) }
+    #[inline]
     fn select1(&self, k: usize) -> Result<usize> { self.parent.select1_dim(self.dim, k) }
     fn select0(&self, _k: usize) -> Result<usize> {
         Err(ZiporaError::invalid_data("select0 not implemented for mixed_se_512"))

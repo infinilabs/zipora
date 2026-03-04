@@ -262,6 +262,7 @@ impl LruList {
     }
     
     /// Check if list is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.count() == 0
     }
@@ -406,6 +407,7 @@ impl HashTable {
     }
     
     /// Get hash table size
+    #[inline]
     pub fn size(&self) -> usize {
         self.size
     }

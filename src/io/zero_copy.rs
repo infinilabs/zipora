@@ -107,6 +107,7 @@ impl ZeroCopyBuffer {
     }
 
     /// Get the buffer capacity
+    #[inline]
     pub fn capacity(&self) -> usize {
         self.capacity
     }
@@ -132,11 +133,13 @@ impl ZeroCopyBuffer {
     }
 
     /// Check if the buffer is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.read_pos == self.write_pos
     }
 
     /// Check if the buffer is full
+    #[inline]
     pub fn is_full(&self) -> bool {
         self.write_pos == self.capacity
     }
@@ -778,11 +781,13 @@ pub mod mmap {
         }
 
         /// Get the total size of the mapped region
+        #[inline]
         pub fn len(&self) -> usize {
             self.mmap.len()
         }
 
         /// Check if the mapped region is empty
+        #[inline]
         pub fn is_empty(&self) -> bool {
             self.mmap.is_empty()
         }
@@ -802,6 +807,7 @@ pub mod mmap {
         }
 
         /// Get the entire mapped slice
+        #[inline]
         pub fn as_slice(&self) -> &[u8] {
             &self.mmap
         }

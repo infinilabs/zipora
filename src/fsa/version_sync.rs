@@ -230,6 +230,7 @@ impl LazyFreeList {
     }
 
     /// Adds an item to the lazy free list.
+    #[inline]
     pub fn push(&mut self, item: LazyFreeItem) {
         self.items.push_back(item);
         self.stats.items_added += 1;

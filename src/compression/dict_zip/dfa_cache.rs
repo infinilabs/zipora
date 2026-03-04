@@ -388,6 +388,7 @@ impl DfaCache {
     }
 
     /// Get memory usage in bytes
+    #[inline]
     pub fn memory_usage(&self) -> usize {
         let (base_memory, check_memory, _) = self.trie.memory_stats();
         base_memory + check_memory + 

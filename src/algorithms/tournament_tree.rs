@@ -550,6 +550,7 @@ where
 
 
     /// Check if the tournament tree is empty (all ways exhausted)
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.ways.iter().all(|way| way.is_exhausted())
     }

@@ -21,6 +21,7 @@ impl SimpleFsaCache {
         }
     }
 
+    #[inline]
     pub fn get(&self, key: u32) -> Option<u32> {
         self.cache.get(&key).copied()
     }
@@ -36,10 +37,12 @@ impl SimpleFsaCache {
         Ok(())
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         self.cache.len()
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.cache.is_empty()
     }
@@ -121,6 +124,7 @@ impl SimpleDawg {
         self.states.len()
     }
 
+    #[inline]
     pub fn memory_usage(&self) -> usize {
         self.states.len() * std::mem::size_of::<(u32, bool)>() +
         self.transitions.len() * std::mem::size_of::<((u32, u8), u32)>()

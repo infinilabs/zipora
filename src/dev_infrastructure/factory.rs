@@ -113,6 +113,7 @@ impl<T> FactoryRegistry<T> {
     }
 
     /// Check if a creator is registered
+    #[inline]
     pub fn contains(&self, name: &str) -> Result<bool> {
         let creators = self.creators.read()
             .map_err(|_| ZiporaError::io_error("Failed to acquire read lock on creators"))?;
@@ -185,6 +186,7 @@ impl<T> GlobalFactory<T> {
     }
 
     /// Check if a creator is registered
+    #[inline]
     pub fn contains(&self, name: &str) -> Result<bool> {
         self.registry().contains(name)
     }

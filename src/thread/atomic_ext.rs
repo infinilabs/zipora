@@ -345,6 +345,7 @@ impl<T> AtomicNode<T> {
     }
 
     /// Get the data
+    #[inline]
     pub fn data(&self) -> &T {
         &self.data
     }
@@ -426,11 +427,13 @@ impl<T> AtomicStack<T> {
     }
 
     /// Check if stack is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.head.load(Ordering::Acquire).is_null()
     }
 
     /// Get approximate size
+    #[inline]
     pub fn len(&self) -> usize {
         self.size.load(Ordering::Relaxed)
     }

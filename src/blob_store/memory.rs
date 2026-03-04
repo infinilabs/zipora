@@ -78,6 +78,7 @@ impl MemoryBlobStore {
     }
 
     /// Get the capacity of the underlying HashMap
+    #[inline]
     pub fn capacity(&self) -> usize {
         self.data.capacity()
     }

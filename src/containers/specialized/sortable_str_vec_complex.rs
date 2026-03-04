@@ -94,6 +94,7 @@ impl SortableStrVec {
     }
 
     /// Add a string to the vector, returning its ID
+    #[inline]
     pub fn push(&mut self, s: String) -> Result<usize> {
         let id = self.strings.len();
         let bytes = s.into_bytes();
@@ -110,6 +111,7 @@ impl SortableStrVec {
     }
 
     /// Get a string by insertion order index
+    #[inline]
     pub fn get(&self, index: usize) -> Option<&str> {
         if index >= self.strings.len() {
             return None;
@@ -124,11 +126,13 @@ impl SortableStrVec {
     }
 
     /// Get the number of strings in the vector
+    #[inline]
     pub fn len(&self) -> usize {
         self.strings.len()
     }
 
     /// Check if the vector is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.strings.is_empty()
     }

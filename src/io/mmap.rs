@@ -340,11 +340,13 @@ impl MemoryMappedInput {
     }
 
     /// Returns the total size of the file
+    #[inline]
     pub fn len(&self) -> usize {
         self.file_size as usize
     }
 
     /// Returns true if the file is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.file_size == 0
     }
@@ -709,6 +711,7 @@ impl MemoryMappedOutput {
     }
 
     /// Returns the total capacity of the mapped region
+    #[inline]
     pub fn capacity(&self) -> usize {
         self.capacity
     }

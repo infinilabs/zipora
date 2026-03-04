@@ -128,11 +128,13 @@ impl ZipOffsetBlobStoreBuilder {
     }
 
     /// Get number of records added
+    #[inline]
     pub fn len(&self) -> usize {
         self.stats.record_count
     }
 
     /// Check if empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.stats.record_count == 0
     }
@@ -377,11 +379,13 @@ impl BatchZipOffsetBlobStoreBuilder {
     }
 
     /// Get number of records added
+    #[inline]
     pub fn len(&self) -> usize {
         self.inner.len() + self.records_in_batch
     }
 
     /// Check if empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty() && self.records_in_batch == 0
     }

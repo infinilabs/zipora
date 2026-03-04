@@ -261,11 +261,13 @@ impl ZoSortedStrVec {
     }
 
     /// Get the number of strings in the collection
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// Check if the collection is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -311,6 +313,7 @@ impl ZoSortedStrVec {
     ///
     /// # Returns
     /// true if the string is found, false otherwise
+    #[inline]
     pub fn contains(&self, needle: &str) -> bool {
         self.binary_search(needle).is_ok()
     }
@@ -342,6 +345,7 @@ impl ZoSortedStrVec {
     }
 
     /// Get total memory usage in bytes
+    #[inline]
     pub fn memory_usage(&self) -> usize {
         self.memory_usage
     }

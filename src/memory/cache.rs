@@ -55,16 +55,19 @@ impl<T> CacheAlignedVec<T> {
     }
 
     /// Get the current length
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// Check if the vector is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
     /// Get the current capacity
+    #[inline]
     pub fn capacity(&self) -> usize {
         self.capacity
     }
@@ -91,6 +94,7 @@ impl<T> CacheAlignedVec<T> {
     }
 
     /// Push an element onto the end of the vector
+    #[inline]
     pub fn push(&mut self, value: T) -> Result<()> {
         if self.len == self.capacity {
             self.reserve(1)?;
@@ -114,6 +118,7 @@ impl<T> CacheAlignedVec<T> {
     }
 
     /// Get a reference to an element by index
+    #[inline]
     pub fn get(&self, index: usize) -> Option<&T> {
         if index < self.len {
             unsafe { Some(&*self.ptr.as_ptr().add(index)) }
@@ -132,11 +137,13 @@ impl<T> CacheAlignedVec<T> {
     }
 
     /// Get a slice of all elements
+    #[inline]
     pub fn as_slice(&self) -> &[T] {
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 
     /// Get a mutable slice of all elements
+    #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }
