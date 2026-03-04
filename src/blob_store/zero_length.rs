@@ -139,6 +139,7 @@ impl ZeroLengthBlobStore {
     /// let store = ZeroLengthBlobStore::finish(1_000_000);
     /// assert_eq!(store.mem_size(), 0); // No data memory used
     /// ```
+    #[inline]
     pub fn mem_size(&self) -> usize {
         0
     }

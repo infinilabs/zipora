@@ -77,6 +77,7 @@ impl Bmi2Capabilities {
     }
     
     /// Get cached capabilities (thread-safe singleton)
+    #[inline]
     pub fn get() -> &'static Self {
         static CAPABILITIES: std::sync::OnceLock<Bmi2Capabilities> = std::sync::OnceLock::new();
         CAPABILITIES.get_or_init(Self::detect)
@@ -178,6 +179,7 @@ impl Bmi2BitOps {
     
     /// BMI2-optimized rank operation using POPCNT + bit manipulation
     #[cfg(target_arch = "x86_64")]
+    #[inline]
     pub fn rank1_optimized(word: u64, pos: usize) -> usize {
         if pos >= 64 {
             return word.count_ones() as usize;
@@ -210,6 +212,7 @@ impl Bmi2BitOps {
     
     /// Non-x86 fallback for rank operation
     #[cfg(not(target_arch = "x86_64"))]
+    #[inline]
     pub fn rank1_optimized(word: u64, pos: usize) -> usize {
         if pos >= 64 {
             return word.count_ones() as usize;

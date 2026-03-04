@@ -111,6 +111,7 @@ impl SuffixArray {
     }
 
     /// Get the suffix array
+    #[inline]
     pub fn as_slice(&self) -> &[usize] {
         &self.sa
     }
@@ -978,6 +979,7 @@ impl LcpArray {
     }
 
     /// Get the LCP array
+    #[inline]
     pub fn as_slice(&self) -> &[usize] {
         &self.lcp
     }

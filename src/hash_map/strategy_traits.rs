@@ -194,6 +194,7 @@ impl<K, V> Default for HashBucket<K, V> {
 
 impl<K, V> HashBucket<K, V> {
     /// Check if bucket is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.key.is_none()
     }

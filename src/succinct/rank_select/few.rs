@@ -57,6 +57,7 @@ impl RankSelectFewOne {
     /// Number of 0-bits
     pub fn num_zeros(&self) -> usize { self.size - self.positions.len() }
 
+    #[inline]
     pub fn mem_size(&self) -> usize {
         std::mem::size_of::<Self>() + self.positions.len() * 4
     }
@@ -91,6 +92,7 @@ impl RankSelectOps for RankSelectFewOne {
     }
 
     /// O(log n) select0 — binary search for k-th zero.
+    #[inline]
     fn select0(&self, k: usize) -> Result<usize> {
         let num_zeros = self.num_zeros();
         if k >= num_zeros {
@@ -171,6 +173,7 @@ impl RankSelectFewZero {
     pub fn num_zeros(&self) -> usize { self.positions.len() }
     pub fn num_ones(&self) -> usize { self.size - self.positions.len() }
 
+    #[inline]
     pub fn mem_size(&self) -> usize {
         std::mem::size_of::<Self>() + self.positions.len() * 4
     }
@@ -195,6 +198,7 @@ impl RankSelectOps for RankSelectFewZero {
     }
 
     /// O(log n) select1 — find k-th one.
+    #[inline]
     fn select1(&self, k: usize) -> Result<usize> {
         let num_ones = self.num_ones();
         if k >= num_ones {

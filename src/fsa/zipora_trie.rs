@@ -607,6 +607,7 @@ where
     }
 
     /// Get the root state
+    #[inline]
     pub fn root(&self) -> StateId {
         self.root_state
     }
@@ -804,6 +805,7 @@ where
     }
 
     /// Check if the trie contains a key
+    #[inline]
     pub fn contains(&self, key: &[u8]) -> bool {
         // Delegate to the trait method which has complete implementation for all storage types
         <Self as Trie>::contains(self, key)
@@ -827,11 +829,13 @@ where
     }
 
     /// Get the number of keys in the trie
+    #[inline]
     pub fn len(&self) -> usize {
         self.stats.num_keys
     }
 
     /// Check if the trie is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

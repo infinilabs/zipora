@@ -127,8 +127,10 @@ impl RankSelectMixedIL256 {
     }
 
     /// Get a read-only view of dimension 0.
+    #[inline]
     pub fn dim0(&self) -> MixedDimView<'_> { MixedDimView { parent: self, dim: 0 } }
     /// Get a read-only view of dimension 1.
+    #[inline]
     pub fn dim1(&self) -> MixedDimView<'_> { MixedDimView { parent: self, dim: 1 } }
 
     /// rank1 for a specific dimension.
@@ -150,6 +152,7 @@ impl RankSelectMixedIL256 {
     }
 
     /// select1 for a specific dimension.
+    #[inline]
     pub fn select1_dim(&self, dim: usize, k: usize) -> Result<usize> {
         assert!(dim < 2);
         if k >= self.max_rank1[dim] {
@@ -180,6 +183,7 @@ impl RankSelectMixedIL256 {
     }
 
     /// Get bit value for a specific dimension.
+    #[inline]
     pub fn get_dim(&self, dim: usize, index: usize) -> Option<bool> {
         if index >= self.size[dim] { return None; }
         let line_idx = index / LINE_BITS;
@@ -188,9 +192,11 @@ impl RankSelectMixedIL256 {
         Some((self.lines[line_idx].dim[dim].bit64[word_idx] >> bit_idx) & 1 == 1)
     }
 
+    #[inline]
     pub fn size_dim(&self, dim: usize) -> usize { self.size[dim] }
     pub fn max_rank1_dim(&self, dim: usize) -> usize { self.max_rank1[dim] }
 
+    #[inline]
     pub fn mem_size(&self) -> usize {
         self.lines.len() * std::mem::size_of::<MixedLine>()
     }
@@ -203,6 +209,7 @@ impl RankSelectOps for MixedDimView<'_> {
     #[inline]
     fn rank0(&self, pos: usize) -> usize { self.parent.rank0_dim(self.dim, pos) }
     fn select1(&self, k: usize) -> Result<usize> { self.parent.select1_dim(self.dim, k) }
+    #[inline]
     fn select0(&self, _k: usize) -> Result<usize> {
         Err(ZiporaError::invalid_data("select0 not yet implemented for mixed"))
     }

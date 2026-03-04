@@ -101,11 +101,13 @@ impl DawgState {
     }
 
     /// Check if this is a terminal state
+    #[inline]
     pub fn is_terminal(&self) -> bool {
         (self.flags_and_parent & 0x80000000) != 0
     }
 
     /// Check if this is a final state
+    #[inline]
     pub fn is_final(&self) -> bool {
         (self.flags_and_parent & 0x40000000) != 0
     }
@@ -181,6 +183,7 @@ impl TransitionTable {
     }
 
     /// Estimate memory usage in bytes.
+    #[inline]
     pub fn memory_usage(&self) -> usize {
         self.sparse_table.len() * (std::mem::size_of::<(u32, u8)>() + std::mem::size_of::<u32>())
     }

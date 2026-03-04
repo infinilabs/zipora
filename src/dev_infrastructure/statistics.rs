@@ -132,6 +132,7 @@ impl<T: StatIndex> Histogram<T> {
     }
 
     /// Get count for a specific key
+    #[inline]
     pub fn get(&self, key: T) -> T {
         let key_u64: u64 = key.into();
         
@@ -237,6 +238,7 @@ impl<T: StatIndex> Histogram<T> {
     }
 
     /// Check if histogram is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.count_sum == 0
     }

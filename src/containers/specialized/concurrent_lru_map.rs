@@ -289,6 +289,7 @@ where
     }
     
     /// Get a value by key
+    #[inline]
     pub fn get(&self, key: &K) -> Option<V> {
         let shard_idx = self.select_shard(key);
         self.shards[shard_idx].get(key)
@@ -313,16 +314,19 @@ where
     }
     
     /// Get the current number of entries across all shards
+    #[inline]
     pub fn len(&self) -> usize {
         self.shards.iter().map(|shard| shard.len()).sum()
     }
     
     /// Check if the cache is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
     
     /// Get total capacity across all shards
+    #[inline]
     pub fn capacity(&self) -> usize {
         self.shards.iter().map(|shard| shard.capacity()).sum()
     }

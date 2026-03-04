@@ -468,6 +468,7 @@ impl ThreadLocalMemoryPool {
     }
 
     /// Get memory usage statistics
+    #[inline]
     pub fn memory_usage(&self) -> usize {
         if let Some(stats) = &self.stats {
             stats.cached_memory.load(Ordering::Relaxed) as usize
@@ -498,21 +499,25 @@ impl ThreadLocalAllocation {
     }
 
     /// Get pointer to allocated memory
+    #[inline]
     pub fn as_ptr(&self) -> *mut u8 {
         self.ptr.as_ptr()
     }
 
     /// Get size of allocation
+    #[inline]
     pub fn size(&self) -> usize {
         self.size
     }
 
     /// Get mutable slice view of allocation
+    #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.size) }
     }
 
     /// Get immutable slice view of allocation
+    #[inline]
     pub fn as_slice(&self) -> &[u8] {
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.size) }
     }

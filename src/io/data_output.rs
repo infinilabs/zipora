@@ -79,16 +79,19 @@ impl VecDataOutput {
     }
 
     /// Get the number of bytes written
+    #[inline]
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
     /// Check if no bytes have been written
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
 
     /// Get a reference to the underlying data
+    #[inline]
     pub fn as_slice(&self) -> &[u8] {
         &self.data
     }

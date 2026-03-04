@@ -105,6 +105,7 @@ impl HugePage {
     }
 
     /// Get the memory as a slice
+    #[inline]
     pub fn as_slice(&self) -> &[u8] {
         #[cfg(target_os = "linux")]
         {
@@ -118,6 +119,7 @@ impl HugePage {
     }
 
     /// Get the memory as a mutable slice
+    #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         #[cfg(target_os = "linux")]
         {
@@ -131,6 +133,7 @@ impl HugePage {
     }
 
     /// Get the size of the allocation
+    #[inline]
     pub fn size(&self) -> usize {
         #[cfg(target_os = "linux")]
         {

@@ -432,6 +432,7 @@ impl<T> PooledVec<T> {
     }
 
     /// Push an element to the vector
+    #[inline]
     pub fn push(&mut self, item: T) -> Result<()> {
         if self.len >= self.capacity {
             return Err(ZiporaError::invalid_data("vector capacity exceeded"));
@@ -445,21 +446,25 @@ impl<T> PooledVec<T> {
     }
 
     /// Get the length of the vector
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// Check if the vector is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
     /// Get the capacity of the vector
+    #[inline]
     pub fn capacity(&self) -> usize {
         self.capacity
     }
 
     /// Get a slice of the vector's contents
+    #[inline]
     pub fn as_slice(&self) -> &[T] {
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
@@ -503,21 +508,25 @@ impl PooledBuffer {
     }
 
     /// Get the buffer as a slice
+    #[inline]
     pub fn as_slice(&self) -> &[u8] {
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 
     /// Get the buffer as a mutable slice
+    #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }
 
     /// Get the length of the buffer
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// Check if the buffer is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }

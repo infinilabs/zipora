@@ -21,6 +21,7 @@ impl RankSelectAllZero {
     #[inline(always)] pub fn is1(&self, i: usize) -> bool { assert!(i < self.size); false }
     pub fn max_rank0(&self) -> usize { self.size }
     pub fn max_rank1(&self) -> usize { 0 }
+    #[inline]
     pub fn mem_size(&self) -> usize { std::mem::size_of::<Self>() }
     pub fn zero_seq_len(&self, bitpos: usize) -> usize { assert!(bitpos < self.size); self.size - bitpos }
     pub fn one_seq_len(&self, _bitpos: usize) -> usize { 0 }
@@ -63,6 +64,7 @@ impl RankSelectAllOne {
     #[inline(always)] pub fn is1(&self, i: usize) -> bool { assert!(i < self.size); true }
     pub fn max_rank0(&self) -> usize { 0 }
     pub fn max_rank1(&self) -> usize { self.size }
+    #[inline]
     pub fn mem_size(&self) -> usize { std::mem::size_of::<Self>() }
     pub fn zero_seq_len(&self, _bitpos: usize) -> usize { 0 }
     pub fn one_seq_len(&self, bitpos: usize) -> usize { assert!(bitpos < self.size); self.size - bitpos }
@@ -79,6 +81,7 @@ impl RankSelectOps for RankSelectAllOne {
             Err(ZiporaError::invalid_data("select1 out of range"))
         }
     }
+    #[inline]
     fn select0(&self, _k: usize) -> Result<usize> {
         Err(ZiporaError::invalid_data("select0 on all-one bitvector"))
     }

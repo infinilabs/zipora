@@ -147,6 +147,7 @@ impl BumpAllocator {
     }
 
     /// Get the total capacity of the allocator
+    #[inline]
     pub fn capacity(&self) -> usize {
         self.capacity
     }
@@ -355,6 +356,7 @@ impl<'a, T> BumpVec<'a, T> {
     }
 
     /// Push an element to the vector
+    #[inline]
     pub fn push(&mut self, item: T) -> Result<()> {
         if self.len >= self.capacity {
             return Err(ZiporaError::invalid_data("bump vector capacity exceeded"));
@@ -378,26 +380,31 @@ impl<'a, T> BumpVec<'a, T> {
     }
 
     /// Get the length of the vector
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// Check if the vector is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
     /// Get the capacity of the vector
+    #[inline]
     pub fn capacity(&self) -> usize {
         self.capacity
     }
 
     /// Get a slice of the vector's contents
+    #[inline]
     pub fn as_slice(&self) -> &[T] {
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 
     /// Get a mutable slice of the vector's contents
+    #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }

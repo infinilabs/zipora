@@ -424,6 +424,7 @@ where
     }
 
     /// Get TLS for owner if it exists
+    #[inline]
     pub fn get(&self, owner: &O) -> Option<T> {
         let owner_ptr = owner as *const O;
         self.instances.get(&owner_ptr)?.get_value()
@@ -436,11 +437,13 @@ where
     }
 
     /// Get number of registered owners
+    #[inline]
     pub fn len(&self) -> usize {
         self.instances.len()
     }
 
     /// Check if empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.instances.is_empty()
     }
@@ -485,6 +488,7 @@ where
     }
 
     /// Get number of slots in pool
+    #[inline]
     pub fn len(&self) -> usize {
         POOL_SIZE
     }

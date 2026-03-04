@@ -593,11 +593,13 @@ impl SecureChunk {
     }
 
     /// Get pointer to data area
+    #[inline]
     pub fn as_ptr(&self) -> *mut u8 {
         self.ptr.as_ptr()
     }
 
     /// Get size of data area
+    #[inline]
     pub fn size(&self) -> usize {
         self.size
     }
@@ -1298,6 +1300,7 @@ pub struct SecurePooledPtr {
 
 impl SecurePooledPtr {
     /// Get pointer to allocated memory
+    #[inline]
     pub fn as_ptr(&self) -> *mut u8 {
         self.chunk
             .as_ref()
@@ -1311,6 +1314,7 @@ impl SecurePooledPtr {
     }
 
     /// Get size of allocated memory
+    #[inline]
     pub fn size(&self) -> usize {
         self.chunk.as_ref().map(|c| c.size()).unwrap_or(0)
     }
@@ -1330,6 +1334,7 @@ impl SecurePooledPtr {
     }
 
     /// Get slice view of the allocated memory
+    #[inline]
     pub fn as_slice(&self) -> &[u8] {
         if let Some(chunk) = &self.chunk {
             unsafe { std::slice::from_raw_parts(chunk.as_ptr(), chunk.size()) }
@@ -1339,6 +1344,7 @@ impl SecurePooledPtr {
     }
 
     /// Get mutable slice view of the allocated memory
+    #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         if let Some(chunk) = &self.chunk {
             unsafe { std::slice::from_raw_parts_mut(chunk.as_ptr(), chunk.size()) }

@@ -67,6 +67,7 @@ impl<V> HashStrMap<V> {
     }
 
     /// Get a reference to the value associated with a key
+    #[inline]
     pub fn get(&self, key: &str) -> Option<&V> {
         self.map.get(key)
     }
@@ -87,11 +88,13 @@ impl<V> HashStrMap<V> {
     }
 
     /// Get the number of key-value pairs
+    #[inline]
     pub fn len(&self) -> usize {
         self.map.len()
     }
 
     /// Check if the map is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }

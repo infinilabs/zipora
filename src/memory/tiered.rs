@@ -447,6 +447,7 @@ impl TieredAllocation {
     }
 
     /// Get the size of the allocation
+    #[inline]
     pub fn size(&self) -> usize {
         match self {
             TieredAllocation::Small(_, size) => *size,

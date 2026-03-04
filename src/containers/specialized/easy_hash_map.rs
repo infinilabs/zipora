@@ -117,6 +117,7 @@ where
     }
 
     /// Get a reference to the value associated with a key
+    #[inline]
     pub fn get(&self, key: &K) -> Option<&V> {
         self.inner.get(key)
     }
@@ -172,16 +173,19 @@ where
     }
 
     /// Get the number of key-value pairs
+    #[inline]
     pub fn len(&self) -> usize {
         self.inner.len()
     }
 
     /// Check if the map is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
 
     /// Get the current capacity
+    #[inline]
     pub fn capacity(&self) -> usize {
         self.inner.capacity()
     }

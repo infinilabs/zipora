@@ -760,6 +760,7 @@ impl<T: PackedInt> IntVec<T> {
     }
 
     /// Get total memory usage in bytes
+    #[inline]
     pub fn memory_usage(&self) -> usize {
         mem::size_of::<Self>() + 
         self.data.len() + 

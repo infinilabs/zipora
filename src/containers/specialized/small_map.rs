@@ -137,6 +137,7 @@ where
     /// assert_eq!(map.len(), 1);
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
+    #[inline]
     pub fn len(&self) -> usize {
         match &self.storage {
             SmallMapStorage::Small { len, .. } => *len,
@@ -163,6 +164,7 @@ where
     ///
     /// For small maps, this is always SMALL_MAP_THRESHOLD.
     /// For large maps, this delegates to the underlying ZiporaHashMap.
+    #[inline]
     pub fn capacity(&self) -> usize {
         match &self.storage {
             SmallMapStorage::Small { .. } => SMALL_MAP_THRESHOLD,

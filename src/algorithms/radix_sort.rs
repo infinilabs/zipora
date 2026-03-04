@@ -920,6 +920,7 @@ impl<'a> RadixString<'a> {
         Self { data }
     }
     
+    #[inline]
     pub fn as_slice(&self) -> &[u8] {
         self.data
     }

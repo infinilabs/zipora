@@ -253,6 +253,7 @@ impl Dictionary {
     }
 
     /// Get dictionary entry for a sequence
+    #[inline]
     pub fn get(&self, sequence: &[u8]) -> Option<&DictionaryEntry> {
         self.entries.get(sequence)
     }
@@ -263,11 +264,13 @@ impl Dictionary {
     }
 
     /// Get number of entries
+    #[inline]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
     /// Check if dictionary is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }

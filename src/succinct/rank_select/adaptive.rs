@@ -619,18 +619,22 @@ impl fmt::Display for OptimizationStats {
 
 // Implement RankSelectOps trait by delegating to selected implementation
 impl RankSelectOps for AdaptiveRankSelect {
+    #[inline]
     fn rank1(&self, pos: usize) -> usize {
         self.implementation.rank1(pos)
     }
 
+    #[inline]
     fn rank0(&self, pos: usize) -> usize {
         self.implementation.rank0(pos)
     }
 
+    #[inline]
     fn select1(&self, k: usize) -> Result<usize> {
         self.implementation.select1(k)
     }
 
+    #[inline]
     fn select0(&self, k: usize) -> Result<usize> {
         self.implementation.select0(k)
     }
@@ -694,18 +698,22 @@ impl AdaptiveMultiDimensional {
 }
 
 impl RankSelectOps for AdaptiveMultiDimensional {
+    #[inline]
     fn rank1(&self, pos: usize) -> usize {
         self.implementation.rank1(pos)
     }
 
+    #[inline]
     fn rank0(&self, pos: usize) -> usize {
         self.implementation.rank0(pos)
     }
 
+    #[inline]
     fn select1(&self, k: usize) -> Result<usize> {
         self.implementation.select1(k)
     }
 
+    #[inline]
     fn select0(&self, k: usize) -> Result<usize> {
         self.implementation.select0(k)
     }

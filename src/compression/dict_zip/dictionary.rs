@@ -104,6 +104,7 @@ impl MatchStatus {
     }
     
     /// Check if the range is empty (no matches)
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.lo >= self.hi
     }
@@ -375,6 +376,7 @@ impl SuffixArrayDictionary {
     }
 
     /// Get memory usage statistics
+    #[inline]
     pub fn memory_usage(&self) -> usize {
         let sa_memory = self.suffix_array.as_slice().len() * std::mem::size_of::<usize>();
         let dict_memory = self.dictionary_text.len();
@@ -532,6 +534,7 @@ impl SuffixArrayDictionary {
     }
     
     /// Get access to the raw dictionary data for reference-compliant compression
+    #[inline]
     pub fn data(&self) -> &[u8] {
         &self.dictionary_text
     }

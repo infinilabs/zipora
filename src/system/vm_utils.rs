@@ -569,6 +569,7 @@ pub struct PageAlignedBuffer {
 
 impl PageAlignedBuffer {
     /// Get a pointer to the buffer
+    #[inline]
     pub fn as_ptr(&self) -> *const u8 {
         self.ptr
     }
@@ -579,6 +580,7 @@ impl PageAlignedBuffer {
     }
 
     /// Get the actual allocated size (page-aligned)
+    #[inline]
     pub fn size(&self) -> usize {
         self.size
     }
@@ -589,11 +591,13 @@ impl PageAlignedBuffer {
     }
 
     /// Get a slice view of the buffer
+    #[inline]
     pub fn as_slice(&self) -> &[u8] {
         unsafe { std::slice::from_raw_parts(self.ptr, self.actual_size) }
     }
 
     /// Get a mutable slice view of the buffer
+    #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         unsafe { std::slice::from_raw_parts_mut(self.ptr, self.actual_size) }
     }

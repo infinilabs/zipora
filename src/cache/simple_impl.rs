@@ -51,10 +51,12 @@ impl SingleLruPageCache {
         Ok(())
     }
     
+    #[inline]
     pub fn capacity(&self) -> usize {
         self.config.capacity
     }
     
+    #[inline]
     pub fn size(&self) -> usize {
         self.data.lock().unwrap_or_else(|e| e.into_inner()).len()
     }

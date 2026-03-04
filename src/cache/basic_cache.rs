@@ -443,10 +443,12 @@ impl SingleLruPageCache {
         self.cache.close_file(file_id)
     }
     
+    #[inline]
     pub fn capacity(&self) -> usize {
         self.cache.config.capacity
     }
     
+    #[inline]
     pub fn size(&self) -> usize {
         self.cache.inner.lock().unwrap_or_else(|e| e.into_inner()).len()
     }

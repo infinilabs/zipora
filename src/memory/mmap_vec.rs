@@ -385,6 +385,7 @@ where
     }
 
     /// Get the number of elements in the vector
+    #[inline]
     pub fn len(&self) -> usize {
         self.header()
             .map(|h| unsafe { h.as_ref().length as usize })
@@ -392,11 +393,13 @@ where
     }
 
     /// Check if the vector is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     /// Get the capacity of the vector
+    #[inline]
     pub fn capacity(&self) -> usize {
         self.header()
             .map(|h| unsafe { h.as_ref().capacity as usize })
@@ -465,6 +468,7 @@ where
     }
 
     /// Get an element at the specified index
+    #[inline]
     pub fn get(&self, index: usize) -> Option<&T> {
         if index >= self.len() {
             return None;
@@ -582,6 +586,7 @@ where
     }
 
     /// Get memory usage statistics
+    #[inline]
     pub fn memory_usage(&self) -> usize {
         self.capacity() * std::mem::size_of::<T>() + HEADER_SIZE
     }

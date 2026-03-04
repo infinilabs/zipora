@@ -489,6 +489,7 @@ impl ZipOffsetBlobStore {
     }
 
     /// Get total memory usage
+    #[inline]
     pub fn memory_usage(&self) -> usize {
         self.content.len() + 
         self.offsets.memory_usage() + 

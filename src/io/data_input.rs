@@ -307,11 +307,13 @@ impl MmapDataInput {
     }
 
     /// Get the total size of the memory-mapped region
+    #[inline]
     pub fn len(&self) -> usize {
         self.mmap.len()
     }
 
     /// Check if the memory-mapped region is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.mmap.is_empty()
     }
@@ -327,6 +329,7 @@ impl MmapDataInput {
     }
 
     /// Get the entire memory-mapped slice
+    #[inline]
     pub fn as_slice(&self) -> &[u8] {
         &self.mmap
     }

@@ -124,6 +124,7 @@ impl<T, const N: usize> FixedCircularQueue<T, N> {
     /// assert_eq!(queue.len(), 1);
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
+    #[inline]
     pub fn len(&self) -> usize {
         self.count.load(Ordering::Acquire)
     }
@@ -159,6 +160,7 @@ impl<T, const N: usize> FixedCircularQueue<T, N> {
     /// assert!(queue.is_full());
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
+    #[inline]
     pub fn is_full(&self) -> bool {
         self.count.load(Ordering::Acquire) == N
     }

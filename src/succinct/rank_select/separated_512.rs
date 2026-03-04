@@ -162,9 +162,11 @@ impl RankSelectSE512 {
         lo
     }
 
+    #[inline]
     pub fn max_rank0(&self) -> usize { self.max_rank0 }
     pub fn max_rank1(&self) -> usize { self.max_rank1 }
 
+    #[inline]
     pub fn mem_size(&self) -> usize {
         self.bits.len() * 8
         + self.rank_cache.len() * std::mem::size_of::<RankCacheSE512>()
@@ -222,6 +224,7 @@ impl RankSelectOps for RankSelectSE512 {
         Err(ZiporaError::invalid_data("select1 internal error"))
     }
 
+    #[inline]
     fn select0(&self, k: usize) -> Result<usize> {
         if k >= self.max_rank0 {
             return Err(ZiporaError::invalid_data("select0 out of range"));

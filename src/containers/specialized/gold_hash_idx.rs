@@ -271,11 +271,13 @@ where
     }
 
     /// Get the number of key-value pairs
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// Check if the map is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -318,6 +320,7 @@ where
     }
 
     /// Get memory usage statistics (keys, values)
+    #[inline]
     pub fn memory_usage(&self) -> (usize, usize) {
         (self.key_memory, self.value_memory)
     }

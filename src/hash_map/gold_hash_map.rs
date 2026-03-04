@@ -257,6 +257,7 @@ where
     }
 
     /// Get reference to value by key
+    #[inline]
     pub fn get(&self, key: &K) -> Option<&V> {
         let hash = self.hash_key(key);
         let bucket_idx = (hash as usize) % self.buckets.len();
@@ -273,6 +274,7 @@ where
     }
 
     /// Get mutable reference to value by key
+    #[inline]
     pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
         let hash = self.hash_key(key);
         let bucket_idx = (hash as usize) % self.buckets.len();
@@ -289,21 +291,25 @@ where
     }
 
     /// Check if map contains key
+    #[inline]
     pub fn contains_key(&self, key: &K) -> bool {
         self.get(key).is_some()
     }
 
     /// Number of elements (excluding deleted)
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// Check if empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
     /// Get bucket count
+    #[inline]
     pub fn capacity(&self) -> usize {
         self.buckets.len()
     }

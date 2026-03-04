@@ -664,16 +664,19 @@ where
     }
     
     /// Get the current number of entries
+    #[inline]
     pub fn len(&self) -> usize {
         self.lru_list.len()
     }
     
     /// Check if the cache is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
     
     /// Get the capacity of the cache
+    #[inline]
     pub fn capacity(&self) -> usize {
         self.config.capacity
     }

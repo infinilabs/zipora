@@ -139,11 +139,13 @@ impl CacheBuffer {
     }
     
     /// Get data length
+    #[inline]
     pub fn len(&self) -> usize {
         self.data().len()
     }
     
     /// Check if buffer is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -192,6 +194,7 @@ impl CacheBuffer {
     }
     
     /// Get buffer capacity
+    #[inline]
     pub fn capacity(&self) -> usize {
         self.data_buffer.capacity()
     }

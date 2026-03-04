@@ -120,6 +120,7 @@ impl SimdCapabilities {
     }
 
     /// Get global SIMD capabilities (cached)
+    #[inline]
     pub fn get() -> &'static SimdCapabilities {
         SIMD_FEATURES.get_or_init(Self::detect)
     }
