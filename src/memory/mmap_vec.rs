@@ -1212,7 +1212,7 @@ where
             Ok(fast_compare(self_slice, other_slice) == 0)
         } else {
             // Standard comparison for small ranges
-            Ok(&self.as_slice()[range.clone()] == &other.as_slice()[0..count])
+            Ok(&self.as_slice()[range] == &other.as_slice()[0..count])
         }
     }
 

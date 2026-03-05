@@ -410,7 +410,7 @@ impl PrefetchMetrics {
 /// Advanced prefetch strategy with adaptive capabilities
 pub struct PrefetchStrategy {
     config: PrefetchConfig,
-    cpu_features: CpuFeatures,
+    cpu_features: &'static CpuFeatures,
     stride_detector: StrideDetector,
     bandwidth_monitor: BandwidthMonitor,
     accuracy_throttler: AccuracyThrottler,
@@ -424,7 +424,7 @@ impl PrefetchStrategy {
         Self {
             current_distance: config.base_distance,
             bandwidth_monitor: BandwidthMonitor::new(config.max_bandwidth_gbps),
-            cpu_features: get_cpu_features().clone(),
+            cpu_features: get_cpu_features(),
             stride_detector: StrideDetector::new(),
             accuracy_throttler: AccuracyThrottler::new(),
             metrics: PrefetchMetrics::default(),
