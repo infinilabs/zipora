@@ -64,7 +64,7 @@ static SIMD_FEATURES: OnceLock<SimdCapabilities> = OnceLock::new();
 #[derive(Debug, Clone)]
 pub struct SimdCapabilities {
     /// Basic CPU features
-    pub cpu_features: CpuFeatures,
+    pub cpu_features: &'static CpuFeatures,
     /// Optimal implementation tier (0=scalar, 5=AVX-512)
     pub optimization_tier: u8,
     /// Recommended chunk size for bulk operations
@@ -76,10 +76,10 @@ pub struct SimdCapabilities {
 impl SimdCapabilities {
     /// Detect optimal SIMD capabilities for this platform
     pub fn detect() -> Self {
-        let cpu_features = get_cpu_features().clone();
+        let cpu_features = get_cpu_features();
 
         let (optimization_tier, chunk_size, use_prefetch) =
-            Self::determine_optimization_strategy(cpu_features.clone());
+            Self::determine_optimization_strategy(cpu_features);
 
         Self {
             cpu_features,
@@ -90,7 +90,7 @@ impl SimdCapabilities {
     }
 
     /// Determine the best optimization strategy based on available features
-    fn determine_optimization_strategy(features: CpuFeatures) -> (u8, usize, bool) {
+    fn determine_optimization_strategy(features: &CpuFeatures) -> (u8, usize, bool) {
         #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
         if features.has_avx512vpopcntdq && features.has_avx512bw {
             return (5, 64 * 1024, true); // AVX-512: 64KB chunks with prefetch

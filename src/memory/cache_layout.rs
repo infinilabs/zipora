@@ -659,7 +659,7 @@ impl<T> CacheAlignedVec<T> {
     /// Get slice with range prefetching
     pub fn slice(&self, range: std::ops::Range<usize>) -> Option<&[T]> {
         if range.end <= self.data.len() {
-            let slice = &self.data[range.clone()];
+            let slice = &self.data[range];
             
             // Prefetch the entire range
             if !slice.is_empty() {

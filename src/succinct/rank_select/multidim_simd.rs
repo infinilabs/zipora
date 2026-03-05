@@ -84,7 +84,7 @@ pub struct MultiDimRankSelect<const DIMS: usize, const BLOCK_SIZE: usize = 256> 
     /// Total number of bits (same across all dimensions)
     total_bits: usize,
     /// CPU feature detection for SIMD optimization
-    cpu_features: CpuFeatures,
+    cpu_features: &'static CpuFeatures,
 }
 
 impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_SIZE> {
@@ -171,7 +171,7 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
         Ok(Self {
             dimensions,
             total_bits,
-            cpu_features: get_cpu_features().clone(),
+            cpu_features: get_cpu_features(),
         })
     }
 

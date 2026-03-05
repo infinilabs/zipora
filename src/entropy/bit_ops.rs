@@ -47,7 +47,7 @@ impl Default for BitOpsConfig {
 /// Hardware-accelerated bit manipulation operations
 pub struct BitOps {
     config: BitOpsConfig,
-    features: CpuFeatures,
+    features: &'static CpuFeatures,
 }
 
 impl BitOps {
@@ -58,7 +58,7 @@ impl BitOps {
     
     /// Create bit operations handler with custom configuration
     pub fn with_config(config: BitOpsConfig) -> Self {
-        let features = get_cpu_features().clone();
+        let features = get_cpu_features();
         Self { config, features }
     }
     

@@ -50,7 +50,7 @@ pub struct CacheObliviousConfig {
     /// Memory pool for allocations
     pub memory_pool: Option<Arc<SecureMemoryPool>>,
     /// CPU features for optimization
-    pub cpu_features: CpuFeatures,
+    pub cpu_features: &'static CpuFeatures,
 }
 
 impl Default for CacheObliviousConfig {
@@ -61,7 +61,7 @@ impl Default for CacheObliviousConfig {
             use_parallel: true,
             small_threshold: 1024,
             memory_pool: None,
-            cpu_features: get_cpu_features().clone(),
+            cpu_features: get_cpu_features(),
         }
     }
 }
@@ -511,7 +511,7 @@ impl CacheObliviousSort {
 /// Adaptive algorithm selector for choosing optimal sorting strategy
 pub struct AdaptiveAlgorithmSelector {
     cache_hierarchy: CacheHierarchy,
-    cpu_features: CpuFeatures,
+    cpu_features: &'static CpuFeatures,
 }
 
 impl AdaptiveAlgorithmSelector {
@@ -519,7 +519,7 @@ impl AdaptiveAlgorithmSelector {
     pub fn new(config: &CacheObliviousConfig) -> Self {
         Self {
             cache_hierarchy: config.cache_hierarchy.clone(),
-            cpu_features: config.cpu_features.clone(),
+            cpu_features: config.cpu_features,
         }
     }
 
@@ -584,7 +584,7 @@ pub struct VanEmdeBoas<T> {
     data: Vec<T>,
     height: usize,
     cache_hierarchy: CacheHierarchy,
-    cpu_features: CpuFeatures,
+    cpu_features: &'static CpuFeatures,
     cache_line_size: usize,
 }
 
@@ -592,7 +592,7 @@ impl<T: Clone> VanEmdeBoas<T> {
     /// Create a new Van Emde Boas layout with enhanced cache optimization
     pub fn new(data: Vec<T>, cache_hierarchy: CacheHierarchy) -> Self {
         let height = (data.len() as f64).log2().ceil() as usize;
-        let cpu_features = get_cpu_features().clone();
+        let cpu_features = get_cpu_features();
         let cache_line_size = cache_hierarchy.l1_line_size;
         Self {
             data,
@@ -604,7 +604,7 @@ impl<T: Clone> VanEmdeBoas<T> {
     }
     
     /// Create with custom CPU features for testing
-    pub fn with_cpu_features(data: Vec<T>, cache_hierarchy: CacheHierarchy, cpu_features: CpuFeatures) -> Self {
+    pub fn with_cpu_features(data: Vec<T>, cache_hierarchy: CacheHierarchy, cpu_features: &'static CpuFeatures) -> Self {
         let height = (data.len() as f64).log2().ceil() as usize;
         let cache_line_size = cache_hierarchy.l1_line_size;
         Self {
