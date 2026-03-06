@@ -183,7 +183,7 @@ pub mod double_array_trie {
         fn accepts(&self, key: &[u8]) -> bool { self.trie.accepts(key) }
         fn longest_prefix(&self, input: &[u8]) -> Option<usize> { self.trie.longest_prefix(input) }
         fn transition(&self, state: u32, symbol: u8) -> Option<u32> { self.trie.transition(state, symbol) }
-        fn transitions(&self, state: u32) -> Box<dyn Iterator<Item = (u8, u32)> + '_> {
+        fn transitions(&self, state: u32) -> Vec<(u8, u32)> {
             self.trie.transitions(state)
         }
         fn is_final(&self, state: u32) -> bool { self.trie.is_final(state) }
@@ -302,7 +302,7 @@ pub mod nested_louds_trie {
         fn accepts(&self, key: &[u8]) -> bool { self.trie.accepts(key) }
         fn longest_prefix(&self, input: &[u8]) -> Option<usize> { self.trie.longest_prefix(input) }
         fn transition(&self, state: u32, symbol: u8) -> Option<u32> { self.trie.transition(state, symbol) }
-        fn transitions(&self, state: u32) -> Box<dyn Iterator<Item = (u8, u32)> + '_> { self.trie.transitions(state) }
+        fn transitions(&self, state: u32) -> Vec<(u8, u32)> { self.trie.transitions(state) }
         fn is_final(&self, state: u32) -> bool { self.trie.is_final(state) }
     }
 
@@ -384,7 +384,7 @@ pub mod compressed_sparse_trie {
         fn accepts(&self, key: &[u8]) -> bool { self.trie.accepts(key) }
         fn longest_prefix(&self, input: &[u8]) -> Option<usize> { self.trie.longest_prefix(input) }
         fn transition(&self, state: u32, symbol: u8) -> Option<u32> { self.trie.transition(state, symbol) }
-        fn transitions(&self, state: u32) -> Box<dyn Iterator<Item = (u8, u32)> + '_> { self.trie.transitions(state) }
+        fn transitions(&self, state: u32) -> Vec<(u8, u32)> { self.trie.transitions(state) }
         fn is_final(&self, state: u32) -> bool { self.trie.is_final(state) }
     }
 }

@@ -20,8 +20,8 @@ pub trait FiniteStateAutomaton {
     /// Transition from a state given an input symbol
     fn transition(&self, state: StateId, symbol: u8) -> Option<StateId>;
 
-    /// Get all possible transitions from a state
-    fn transitions(&self, state: StateId) -> Box<dyn Iterator<Item = (u8, StateId)> + '_>;
+    /// Get all possible transitions from a state (sorted by symbol).
+    fn transitions(&self, state: StateId) -> Vec<(u8, StateId)>;
 
     /// Check if the automaton accepts a given input sequence
     fn accepts(&self, input: &[u8]) -> bool {
@@ -273,8 +273,8 @@ mod tests {
             Some(1) // Simplified for testing
         }
 
-        fn transitions(&self, _state: StateId) -> Box<dyn Iterator<Item = (u8, StateId)> + '_> {
-            Box::new(std::iter::empty())
+        fn transitions(&self, _state: StateId) -> Vec<(u8, StateId)> {
+            Vec::new()
         }
     }
 
