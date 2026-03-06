@@ -398,7 +398,15 @@ release_prep: clean format clippy build_release test_release bench doc audit
 	@echo "🚀 Release preparation completed"
 
 # pre-commit sanity check
-sanity: test_debug test_release test_nightly_debug test_nightly_release 
+# Runs stable debug+release first (sequential — shares target/), then nightly.
+# Within each pair, debug builds first so release can reuse shared deps.
+sanity: sanity_stable sanity_nightly
+
+sanity_stable: test_debug test_release
+	@echo "Stable sanity done"
+
+sanity_nightly: test_nightly_debug test_nightly_release
+	@echo "Nightly sanity done"
 
 # =============================================================================
 # HELP TARGET
