@@ -3,22 +3,23 @@
 //! This module provides utilities and helper functions for constructing
 //! rank/select structures with various optimizations and configurations.
 
-use super::{BuilderOptions, RankSelectOps};
+use super::{BuilderOptions, RankSelectInterleaved256};
 use crate::error::Result;
 use crate::succinct::BitVector;
 
-/// Factory for creating optimal rank/select implementations
+/// Factory for creating optimal rank/select implementations.
+///
+/// Currently always returns `RankSelectInterleaved256` — the verified
+/// best performer across all data profiles.
 pub struct RankSelectFactory;
 
 impl RankSelectFactory {
-    /// Create the best rank/select implementation for given data characteristics
+    /// Create the best rank/select implementation for given data characteristics.
     pub fn create_optimal(
-        _bit_vector: BitVector,
+        bit_vector: BitVector,
         _opts: BuilderOptions,
-    ) -> Result<Box<dyn RankSelectOps>> {
-        // TODO: Implement factory logic to choose best implementation
-        // based on data characteristics (size, density, access patterns)
-        todo!("RankSelectFactory implementation")
+    ) -> Result<RankSelectInterleaved256> {
+        RankSelectInterleaved256::new(bit_vector)
     }
 }
 

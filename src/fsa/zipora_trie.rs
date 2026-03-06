@@ -1319,71 +1319,48 @@ where
         }
     }
 
-    fn transitions(&self, state: StateId) -> Box<dyn Iterator<Item = (u8, StateId)> + '_> {
+    fn transitions(&self, state: StateId) -> Vec<(u8, StateId)> {
         match &self.storage {
             TrieStorage::Patricia { nodes, .. } => {
                 if let Some(node) = nodes.get(state as usize) {
-                    Box::new(
-                        node.children
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, &child)| child.map(|c| (i as u8, c))),
-                    )
+                    node.children
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, &child)| child.map(|c| (i as u8, c)))
+                        .collect()
                 } else {
-                    Box::new(std::iter::empty())
+                    Vec::new()
                 }
             }
             TrieStorage::DoubleArray { base, check, .. } => {
-                // For DoubleArray, enumerate all possible transitions from this state
-                if let Some(&base_val) = base.get(state as usize) {
-                    if base_val == 0 {
-                        return Box::new(std::iter::empty());
-                    }
-
-                    const STATE_MASK: u32 = 0x3FFF_FFFF;
-                    let state_copy = state;
-                    let base_clone = base.clone();
-                    let check_clone = check.clone();
-
-                    Box::new((0u8..=255u8).filter_map(move |symbol| {
-                        let next_state = base_val.saturating_add(symbol as u32);
-                        if (next_state as usize) < check_clone.len() {
-                            let check_val = check_clone[next_state as usize];
-                            const TERMINAL_FLAG: u32 = 0x4000_0000;
-
-                            // Check value must match the parent state
-                            // CRITICAL: For root (state 0), we must distinguish between:
-                            // - Uninitialized slots (check = 0, never written)
-                            // - Actual children of root (check = 0, explicitly set)
-                            let is_valid_child = if state_copy == 0 {
-                                // For root, a child is valid if check == 0 AND it has been initialized
-                                // We know it's initialized if it has the TERMINAL_FLAG or has children (base != 0)
-                                (check_val & STATE_MASK) == 0 && (
-                                    (check_val & TERMINAL_FLAG) != 0 ||
-                                    ((next_state as usize) < base_clone.len() && base_clone[next_state as usize] != 0)
-                                )
-                            } else {
-                                // For non-root states, check must be non-zero and match parent
-                                check_val != 0 && (check_val & STATE_MASK) == state_copy
-                            };
-
-                            if is_valid_child {
-                                Some((symbol, next_state))
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    }))
-                } else {
-                    Box::new(std::iter::empty())
+                let Some(&base_val) = base.get(state as usize) else {
+                    return Vec::new();
+                };
+                if base_val == 0 {
+                    return Vec::new();
                 }
+
+                const STATE_MASK: u32 = 0x3FFF_FFFF;
+                const TERMINAL_FLAG: u32 = 0x4000_0000;
+
+                (0u8..=255u8).filter_map(|symbol| {
+                    let next_state = base_val.saturating_add(symbol as u32);
+                    if (next_state as usize) >= check.len() {
+                        return None;
+                    }
+                    let check_val = check[next_state as usize];
+                    let is_valid_child = if state == 0 {
+                        (check_val & STATE_MASK) == 0 && (
+                            (check_val & TERMINAL_FLAG) != 0 ||
+                            ((next_state as usize) < base.len() && base[next_state as usize] != 0)
+                        )
+                    } else {
+                        check_val != 0 && (check_val & STATE_MASK) == state
+                    };
+                    if is_valid_child { Some((symbol, next_state)) } else { None }
+                }).collect()
             }
-            _ => {
-                // TODO: Implement for other storage types (CriticalBit, Louds, CompressedSparse)
-                Box::new(std::iter::empty())
-            }
+            _ => Vec::new(),
         }
     }
 }

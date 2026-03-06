@@ -166,10 +166,14 @@ impl Default for RunLengthStats {
     }
 }
 
-/// Adaptive rank/select implementation that automatically selects optimal strategy
+/// Adaptive rank/select implementation that automatically selects optimal strategy.
+///
+/// Currently always uses `RankSelectInterleaved256` (verified as best performer
+/// at 121-302 Mops/s, 50-150x over other implementations). Direct storage
+/// eliminates vtable indirection on hot-path rank/select operations.
 pub struct AdaptiveRankSelect {
-    /// The actual implementation chosen by adaptive selection
-    implementation: Box<dyn RankSelectOps + Send + Sync>,
+    /// The actual implementation — always RankSelectInterleaved256
+    implementation: RankSelectInterleaved256,
     /// Name of the selected implementation
     implementation_name: String,
     /// Data profile used for selection
@@ -394,16 +398,12 @@ impl AdaptiveRankSelect {
         bit_vector: BitVector,
         profile: &DataProfile,
         criteria: &SelectionCriteria,
-    ) -> Result<(Box<dyn RankSelectOps + Send + Sync>, String)> {
-        // Since we've determined RankSelectInterleaved256 is the best performer (121-302 Mops/s)
-        // by 50-150x over other implementations, we always use it for optimal performance.
-        // The adaptive analysis is preserved for future optimization but implementation is unified.
-
+    ) -> Result<(RankSelectInterleaved256, String)> {
         let description = format!("RankSelectInterleaved256 ({})",
             Self::get_description(profile, criteria));
 
         Ok((
-            Box::new(RankSelectInterleaved256::new(bit_vector)?),
+            RankSelectInterleaved256::new(bit_vector)?,
             description,
         ))
     }
@@ -656,10 +656,12 @@ impl RankSelectOps for AdaptiveRankSelect {
     }
 }
 
-/// Multi-dimensional adaptive selection for related bit vectors
+/// Multi-dimensional adaptive selection for related bit vectors.
+///
+/// Direct storage eliminates vtable indirection.
 pub struct AdaptiveMultiDimensional {
-    /// The selected multi-dimensional implementation
-    implementation: Box<dyn RankSelectOps + Send + Sync>,
+    /// The selected implementation — always RankSelectInterleaved256
+    implementation: RankSelectInterleaved256,
     /// Implementation name
     implementation_name: String,
     /// Number of dimensions
@@ -677,7 +679,7 @@ impl AdaptiveMultiDimensional {
 
         // Since we only have RankSelectInterleaved256 available and it's the best performer,
         // we use it for the first bit vector. Multi-dimensional support can be enhanced later.
-        let implementation = Box::new(RankSelectInterleaved256::new(bit_vector1)?);
+        let implementation = RankSelectInterleaved256::new(bit_vector1)?;
 
         Ok(Self {
             implementation,

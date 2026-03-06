@@ -538,9 +538,11 @@ impl FiniteStateAutomaton for NestedTrieDawg {
         self.transitions.get_transition(state as u32, symbol).map(|s| s as StateId)
     }
 
-    fn transitions(&self, state: StateId) -> Box<dyn Iterator<Item = (u8, StateId)> + '_> {
-        let transitions = self.transitions.get_outgoing_transitions(state as u32);
-        Box::new(transitions.into_iter().map(|(symbol, target)| (symbol, target as StateId)))
+    fn transitions(&self, state: StateId) -> Vec<(u8, StateId)> {
+        self.transitions.get_outgoing_transitions(state as u32)
+            .into_iter()
+            .map(|(symbol, target)| (symbol, target as StateId))
+            .collect()
     }
 }
 
