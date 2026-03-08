@@ -646,6 +646,28 @@ impl<T> ValVec32<T> {
         }
     }
 
+    /// Get element without bounds checking.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure `index < self.len()`.
+    #[inline]
+    pub unsafe fn get_unchecked(&self, index: u32) -> &T {
+        debug_assert!(index < self.len);
+        unsafe { &*self.ptr.as_ptr().add(index as usize) }
+    }
+
+    /// Get mutable element without bounds checking.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure `index < self.len()`.
+    #[inline]
+    pub unsafe fn get_unchecked_mut(&mut self, index: u32) -> &mut T {
+        debug_assert!(index < self.len);
+        unsafe { &mut *self.ptr.as_ptr().add(index as usize) }
+    }
+
     /// Returns a mutable reference to the element at the given index
     ///
     /// # Arguments

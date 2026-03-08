@@ -351,28 +351,30 @@ impl MixedLenBlobStore {
             return Err(self.out_of_bounds_error(id));
         }
 
-        match self.mode {
-            RecordMode::AllFixed => {
-                // Hot path: no bitmap check needed
-                let offset = idx * self.fixed_len;
-                Ok(&self.fixed_len_values[offset..offset + self.fixed_len])
-            }
-            RecordMode::AllVariable => {
-                // Hot path: no bitmap check needed
-                let beg = self.var_len_offsets.get(idx);
-                let end = self.var_len_offsets.get(idx + 1);
-                Ok(&self.var_len_values[beg..end])
-            }
-            RecordMode::Mixed => {
-                if self.is_fixed_len.get(idx).unwrap_or(false) {
-                    let fixed_id = self.is_fixed_len.rank1(idx);
-                    let offset = fixed_id * self.fixed_len;
-                    Ok(&self.fixed_len_values[offset..offset + self.fixed_len])
-                } else {
-                    let var_id = self.is_fixed_len.rank0(idx);
-                    let beg = self.var_len_offsets.get(var_id);
-                    let end = self.var_len_offsets.get(var_id + 1);
-                    Ok(&self.var_len_values[beg..end])
+        // SAFETY: idx < self.num_records verified above.
+        // All internal offsets are valid by construction (build_from guarantees).
+        unsafe {
+            match self.mode {
+                RecordMode::AllFixed => {
+                    let offset = idx * self.fixed_len;
+                    Ok(self.fixed_len_values.get_unchecked(offset..offset + self.fixed_len))
+                }
+                RecordMode::AllVariable => {
+                    let beg = self.var_len_offsets.get_unchecked(idx);
+                    let end = self.var_len_offsets.get_unchecked(idx + 1);
+                    Ok(self.var_len_values.get_unchecked(beg..end))
+                }
+                RecordMode::Mixed => {
+                    if self.is_fixed_len.get(idx).unwrap_or(false) {
+                        let fixed_id = self.is_fixed_len.rank1(idx);
+                        let offset = fixed_id * self.fixed_len;
+                        Ok(self.fixed_len_values.get_unchecked(offset..offset + self.fixed_len))
+                    } else {
+                        let var_id = self.is_fixed_len.rank0(idx);
+                        let beg = self.var_len_offsets.get_unchecked(var_id);
+                        let end = self.var_len_offsets.get_unchecked(var_id + 1);
+                        Ok(self.var_len_values.get_unchecked(beg..end))
+                    }
                 }
             }
         }
