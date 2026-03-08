@@ -161,6 +161,20 @@ impl UintVecMin0 {
         self.fast_get_internal(idx)
     }
 
+    /// Get value without bounds checking.
+    ///
+    /// Matches topling-zip's `get_wire` which skips bounds checks in release.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure `idx < self.size` and `self.bits <= 58`.
+    #[inline]
+    pub unsafe fn get_unchecked(&self, idx: usize) -> usize {
+        debug_assert!(idx < self.size, "Index {} out of bounds {}", idx, self.size);
+        debug_assert!(self.bits <= 58);
+        self.fast_get_internal(idx)
+    }
+
     /// Get two consecutive values (optimized bulk access)
     ///
     /// # Performance
@@ -170,6 +184,18 @@ impl UintVecMin0 {
     pub fn get2(&self, idx: usize) -> [usize; 2] {
         assert!(idx + 1 < self.size, "Index {} out of bounds for get2", idx);
         assert!(self.bits <= 58, "Use BigUintVecMin0 for >58 bits");
+        [self.fast_get_internal(idx), self.fast_get_internal(idx + 1)]
+    }
+
+    /// Get two consecutive values without bounds checking.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure `idx + 1 < self.size` and `self.bits <= 58`.
+    #[inline]
+    pub unsafe fn get2_unchecked(&self, idx: usize) -> [usize; 2] {
+        debug_assert!(idx + 1 < self.size);
+        debug_assert!(self.bits <= 58);
         [self.fast_get_internal(idx), self.fast_get_internal(idx + 1)]
     }
 
