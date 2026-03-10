@@ -605,15 +605,35 @@ impl Config for NestLoudsTrieConfig {
 }
 
 impl NestLoudsTrieConfig {
-    /// Create a new configuration builder.
-    /// 
-    /// # Returns
-    /// 
-    /// A new configuration builder instance.
-    pub fn builder() -> NestLoudsTrieConfigBuilder {
-        NestLoudsTrieConfigBuilder::new()
-    }
-    
+    /// Fluent builder — returns Default for chaining.
+    pub fn builder() -> Self { Self::default() }
+    /// Set nest level.
+    pub fn nest_level(mut self, v: u8) -> Self { self.nest_level = v; self }
+    /// Set compression level.
+    pub fn compression_level(mut self, v: u8) -> Self { self.core_str_compression_level = v; self }
+    /// Set max fragment length.
+    pub fn max_fragment_length(mut self, v: i32) -> Self { self.max_fragment_length = v; self }
+    /// Set min fragment length.
+    pub fn min_fragment_length(mut self, v: u32) -> Self { self.min_fragment_length = v; self }
+    /// Set compression algorithm.
+    pub fn compression_algorithm(mut self, v: CompressionAlgorithm) -> Self { self.compression_algorithm = v; self }
+    /// Set queue compression.
+    pub fn enable_queue_compression(mut self, v: bool) -> Self { self.enable_queue_compression = v; self }
+    /// Set temp directory.
+    pub fn temp_directory(mut self, v: &str) -> Self { self.temp_directory = v.to_string(); self }
+    /// Set initial pool size.
+    pub fn initial_pool_size(mut self, v: usize) -> Self { self.initial_pool_size = v; self }
+    /// Enable statistics.
+    pub fn enable_statistics(mut self, v: bool) -> Self { self.enable_statistics = v; self }
+    /// Enable profiling.
+    pub fn enable_profiling(mut self, v: bool) -> Self { self.enable_profiling = v; self }
+    /// Set parallel threads.
+    pub fn parallel_threads(mut self, v: usize) -> Self { self.parallel_threads = v as u32; self }
+    /// Set optimization flags.
+    pub fn optimization_flags(mut self, v: OptimizationFlags) -> Self { self.optimization_flags = v; self }
+    /// Finalize.
+    pub fn build(self) -> Result<Self> { self.validate()?; Ok(self) }
+
     /// Set the best delimiters from a string of characters.
     /// 
     /// # Arguments
@@ -649,160 +669,6 @@ impl NestLoudsTrieConfig {
     /// `true` if the flag is enabled, `false` otherwise.
     pub fn has_optimization_flag(&self, flag: OptimizationFlags) -> bool {
         self.optimization_flags.contains(flag)
-    }
-}
-
-/// Builder for constructing Nested LOUDS Trie configurations.
-/// 
-/// This builder provides a fluent API for constructing complex configurations
-/// with validation and sensible defaults.
-#[derive(Debug, Clone)]
-pub struct NestLoudsTrieConfigBuilder {
-    config: NestLoudsTrieConfig,
-}
-
-impl NestLoudsTrieConfigBuilder {
-    /// Create a new configuration builder with default values.
-    pub fn new() -> Self {
-        Self {
-            config: NestLoudsTrieConfig::default(),
-        }
-    }
-    
-    /// Set the nesting level.
-    /// 
-    /// # Arguments
-    /// 
-    /// * `level` - Nesting level (1-16)
-    pub fn nest_level(mut self, level: u8) -> Self {
-        self.config.nest_level = level;
-        self
-    }
-    
-    /// Set the maximum fragment length.
-    /// 
-    /// # Arguments
-    /// 
-    /// * `length` - Maximum fragment length (-1 for no limit)
-    pub fn max_fragment_length(mut self, length: i32) -> Self {
-        self.config.max_fragment_length = length;
-        self
-    }
-    
-    /// Set the minimum fragment length.
-    /// 
-    /// # Arguments
-    /// 
-    /// * `length` - Minimum fragment length
-    pub fn min_fragment_length(mut self, length: u32) -> Self {
-        self.config.min_fragment_length = length;
-        self
-    }
-    
-    /// Set the compression level.
-    /// 
-    /// # Arguments
-    /// 
-    /// * `level` - Compression level (0-22)
-    pub fn compression_level(mut self, level: u8) -> Self {
-        self.config.core_str_compression_level = level;
-        self
-    }
-    
-    /// Set the compression algorithm.
-    /// 
-    /// # Arguments
-    /// 
-    /// * `algorithm` - Compression algorithm to use
-    pub fn compression_algorithm(mut self, algorithm: CompressionAlgorithm) -> Self {
-        self.config.compression_algorithm = algorithm;
-        self
-    }
-    
-    /// Enable queue compression.
-    /// 
-    /// # Arguments
-    /// 
-    /// * `enabled` - Whether to enable queue compression
-    pub fn enable_queue_compression(mut self, enabled: bool) -> Self {
-        self.config.enable_queue_compression = enabled;
-        self
-    }
-    
-    /// Set temporary directory.
-    /// 
-    /// # Arguments
-    /// 
-    /// * `dir` - Temporary directory path
-    pub fn temp_directory<S: Into<String>>(mut self, dir: S) -> Self {
-        self.config.temp_directory = dir.into();
-        self
-    }
-    
-    /// Set the initial memory pool size.
-    /// 
-    /// # Arguments
-    /// 
-    /// * `size` - Pool size in bytes
-    pub fn initial_pool_size(mut self, size: usize) -> Self {
-        self.config.initial_pool_size = size;
-        self
-    }
-    
-    /// Enable or disable statistics collection.
-    /// 
-    /// # Arguments
-    /// 
-    /// * `enabled` - Whether to enable statistics
-    pub fn enable_statistics(mut self, enabled: bool) -> Self {
-        self.config.enable_statistics = enabled;
-        self
-    }
-    
-    /// Enable or disable profiling.
-    /// 
-    /// # Arguments
-    /// 
-    /// * `enabled` - Whether to enable profiling
-    pub fn enable_profiling(mut self, enabled: bool) -> Self {
-        self.config.enable_profiling = enabled;
-        self
-    }
-    
-    /// Set optimization flags.
-    /// 
-    /// # Arguments
-    /// 
-    /// * `flags` - Optimization flags to set
-    pub fn optimization_flags(mut self, flags: OptimizationFlags) -> Self {
-        self.config.optimization_flags = flags;
-        self
-    }
-    
-    /// Set the number of parallel threads.
-    /// 
-    /// # Arguments
-    /// 
-    /// * `threads` - Number of threads (0 for auto-detect)
-    pub fn parallel_threads(mut self, threads: u32) -> Self {
-        self.config.parallel_threads = threads;
-        self
-    }
-    
-    /// Build the configuration.
-    /// 
-    /// # Returns
-    /// 
-    /// The constructed configuration, or an error if validation fails.
-    pub fn build(self) -> Result<NestLoudsTrieConfig> {
-        self.config.validate()?;
-        Ok(self.config)
-    }
-}
-
-impl Default for NestLoudsTrieConfigBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

@@ -122,6 +122,29 @@ impl TrieBlobStoreConfig {
         Self::default()
     }
 
+    /// Create a builder (returns Self with Default values for fluent configuration).
+    pub fn builder() -> Self { Self::default() }
+    /// Set trie config.
+    pub fn trie_config(mut self, v: ZiporaTrieConfig) -> Self { self.trie_config = v; self }
+    /// Set blob config.
+    pub fn blob_config(mut self, v: ZipOffsetBlobStoreConfig) -> Self { self.blob_config = v; self }
+    /// Set key compression.
+    pub fn enable_key_compression(mut self, v: bool) -> Self { self.enable_key_compression = v; self }
+    /// Set batch optimization.
+    pub fn enable_batch_optimization(mut self, v: bool) -> Self { self.enable_batch_optimization = v; self }
+    /// Set key cache size.
+    pub fn key_cache_size(mut self, v: usize) -> Self { self.key_cache_size = v; self }
+    /// Set statistics collection.
+    pub fn enable_statistics(mut self, v: bool) -> Self { self.enable_statistics = v; self }
+    /// Finalize configuration.
+    pub fn build(self) -> Result<Self> { Ok(self) }
+    /// Enable key compression.
+    pub fn key_compression(mut self, v: bool) -> Self { self.enable_key_compression = v; self }
+    /// Enable statistics.
+    pub fn statistics(mut self, v: bool) -> Self { self.enable_statistics = v; self }
+    /// Enable batch optimization.
+    pub fn batch_optimization(mut self, v: bool) -> Self { self.enable_batch_optimization = v; self }
+
     /// Create a configuration optimized for performance
     pub fn performance_optimized() -> Self {
         Self {
@@ -160,76 +183,7 @@ impl TrieBlobStoreConfig {
             enable_statistics: true,
         }
     }
-
-    /// Builder pattern for custom configuration
-    pub fn builder() -> TrieBlobStoreConfigBuilder {
-        TrieBlobStoreConfigBuilder::new()
-    }
 }
-
-/// Builder for TrieBlobStoreConfig
-#[derive(Debug)]
-pub struct TrieBlobStoreConfigBuilder {
-    config: TrieBlobStoreConfig,
-}
-
-impl TrieBlobStoreConfigBuilder {
-    /// Create a new builder with default configuration
-    pub fn new() -> Self {
-        Self {
-            config: TrieBlobStoreConfig::default(),
-        }
-    }
-
-    /// Set the trie configuration
-    pub fn trie_config(mut self, config: ZiporaTrieConfig) -> Self {
-        self.config.trie_config = config;
-        self
-    }
-
-    /// Set the blob storage configuration
-    pub fn blob_config(mut self, config: ZipOffsetBlobStoreConfig) -> Self {
-        self.config.blob_config = config;
-        self
-    }
-
-    /// Set the memory pool configuration
-    pub fn memory_config(mut self, config: SecurePoolConfig) -> Self {
-        self.config.memory_config = config;
-        self
-    }
-
-    /// Enable or disable key compression
-    pub fn key_compression(mut self, enable: bool) -> Self {
-        self.config.enable_key_compression = enable;
-        self
-    }
-
-    /// Enable or disable batch optimization
-    pub fn batch_optimization(mut self, enable: bool) -> Self {
-        self.config.enable_batch_optimization = enable;
-        self
-    }
-
-    /// Set the key cache size
-    pub fn key_cache_size(mut self, size: usize) -> Self {
-        self.config.key_cache_size = size;
-        self
-    }
-
-    /// Enable or disable statistics collection
-    pub fn statistics(mut self, enable: bool) -> Self {
-        self.config.enable_statistics = enable;
-        self
-    }
-
-    /// Build the final configuration
-    pub fn build(self) -> Result<TrieBlobStoreConfig> {
-        // Configuration is valid with new ZiporaTrieConfig
-        Ok(self.config)
-    }
-}
-
 /// Statistics specific to trie-based blob storage
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]

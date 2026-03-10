@@ -440,11 +440,29 @@ impl Config for MemoryConfig {
 }
 
 impl MemoryConfig {
-    /// Create a new memory configuration builder.
-    pub fn builder() -> MemoryConfigBuilder {
-        MemoryConfigBuilder::new()
-    }
-    
+    /// Fluent builder — returns Default for chaining.
+    pub fn builder() -> Self { Self::default() }
+    /// Set initial pool size.
+    pub fn initial_pool_size(mut self, v: usize) -> Self { self.initial_pool_size = v; self }
+    /// Set max pool size.
+    pub fn max_pool_size(mut self, v: usize) -> Self { self.max_pool_size = v; self }
+    /// Enable NUMA.
+    pub fn enable_numa(mut self, v: bool) -> Self { self.numa_config.enable_numa_awareness = v; self }
+    /// Enable huge pages.
+    pub fn enable_huge_pages(mut self, v: bool) -> Self { self.huge_page_config.enable_huge_pages = v; self }
+    /// Set alignment.
+    pub fn alignment(mut self, v: usize) -> Self { self.alignment = v; self }
+    /// Set allocation strategy.
+    pub fn allocation_strategy(mut self, v: AllocationStrategy) -> Self { self.allocation_strategy = v; self }
+    /// Set cache optimization level.
+    pub fn cache_optimization(mut self, v: CacheOptimizationLevel) -> Self { self.cache_optimization = v; self }
+    /// Set number of pools.
+    pub fn num_pools(mut self, v: usize) -> Self { self.num_pools = v; self }
+    /// Enable memory protection.
+    pub fn enable_protection(mut self, v: bool) -> Self { self.enable_memory_protection = v; self }
+    /// Finalize.
+    pub fn build(self) -> Result<Self> { self.validate()?; Ok(self) }
+
     /// Get the effective cache line size.
     /// 
     /// Returns the configured cache line size, or the detected system cache line size if auto-detect is enabled.
@@ -480,87 +498,6 @@ impl MemoryConfig {
             AllocationStrategy::FixedCapacity => 1,
             AllocationStrategy::MemoryMapped => 1,
         }
-    }
-}
-
-/// Builder for constructing memory configurations.
-#[derive(Debug, Clone)]
-pub struct MemoryConfigBuilder {
-    config: MemoryConfig,
-}
-
-impl MemoryConfigBuilder {
-    /// Create a new memory configuration builder.
-    pub fn new() -> Self {
-        Self {
-            config: MemoryConfig::default(),
-        }
-    }
-    
-    /// Set the allocation strategy.
-    pub fn allocation_strategy(mut self, strategy: AllocationStrategy) -> Self {
-        self.config.allocation_strategy = strategy;
-        self
-    }
-    
-    /// Set the initial pool size.
-    pub fn initial_pool_size(mut self, size: usize) -> Self {
-        self.config.initial_pool_size = size;
-        self
-    }
-    
-    /// Set the maximum pool size.
-    pub fn max_pool_size(mut self, size: usize) -> Self {
-        self.config.max_pool_size = size;
-        self
-    }
-    
-    /// Set the cache optimization level.
-    pub fn cache_optimization(mut self, level: CacheOptimizationLevel) -> Self {
-        self.config.cache_optimization = level;
-        self
-    }
-    
-    /// Enable NUMA awareness.
-    pub fn enable_numa(mut self, enabled: bool) -> Self {
-        self.config.numa_config.enable_numa_awareness = enabled;
-        self
-    }
-    
-    /// Enable huge pages.
-    pub fn enable_huge_pages(mut self, enabled: bool) -> Self {
-        self.config.huge_page_config.enable_huge_pages = enabled;
-        self
-    }
-    
-    /// Set memory alignment.
-    pub fn alignment(mut self, alignment: usize) -> Self {
-        self.config.alignment = alignment;
-        self
-    }
-    
-    /// Set the number of memory pools.
-    pub fn num_pools(mut self, pools: usize) -> Self {
-        self.config.num_pools = pools;
-        self
-    }
-    
-    /// Enable memory protection features.
-    pub fn enable_protection(mut self, enabled: bool) -> Self {
-        self.config.enable_memory_protection = enabled;
-        self
-    }
-    
-    /// Build the configuration.
-    pub fn build(self) -> Result<MemoryConfig> {
-        self.config.validate()?;
-        Ok(self.config)
-    }
-}
-
-impl Default for MemoryConfigBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

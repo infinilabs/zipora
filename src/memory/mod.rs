@@ -42,7 +42,7 @@ pub use lockfree_pool::{
     LockFreeMemoryPool, LockFreePoolConfig, LockFreePoolStats, LockFreeAllocation, BackoffStrategy,
 };
 pub use mmap::{MemoryMappedAllocator, MmapAllocation};
-pub use mmap_vec::{MmapVec, MmapVecConfig, MmapVecConfigBuilder, MmapVecIter, MmapVecStats};
+pub use mmap_vec::{MmapVec, MmapVecConfig, MmapVecIter, MmapVecStats};
 pub use pool::{MemoryPool, PoolConfig, PooledBuffer, PooledVec};
 pub use prefetch::{
     PrefetchStrategy, PrefetchConfig, PrefetchLocality, PrefetchMetrics,

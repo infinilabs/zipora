@@ -130,6 +130,19 @@ impl Default for MmapVecConfig {
 }
 
 impl MmapVecConfig {
+    /// Create a builder (returns Self with Default values for fluent configuration).
+    pub fn builder() -> Self { Self::default() }
+    /// Set initial capacity.
+    pub fn with_initial_capacity(mut self, v: usize) -> Self { self.initial_capacity = v; self }
+    /// Set growth factor.
+    pub fn with_growth_factor(mut self, v: f64) -> Self { self.growth_factor = v; self }
+    /// Set populate pages.
+    pub fn with_populate_pages(mut self, v: bool) -> Self { self.populate_pages = v; self }
+    /// Set sync on write.
+    pub fn with_sync_on_write(mut self, v: bool) -> Self { self.sync_on_write = v; self }
+    /// Finalize.
+    pub fn build(self) -> Self { self }
+
     /// Create configuration for read-only vectors
     pub fn read_only() -> Self {
         Self {
@@ -194,73 +207,6 @@ impl MmapVecConfig {
             sync_on_write: false, // Avoid I/O in real-time path
             ..Self::default()
         }
-    }
-
-    /// Builder pattern for custom configuration
-    pub fn builder() -> MmapVecConfigBuilder {
-        MmapVecConfigBuilder::new()
-    }
-}
-
-/// Builder for creating custom MmapVec configurations
-#[derive(Debug, Clone)]
-pub struct MmapVecConfigBuilder {
-    config: MmapVecConfig,
-}
-
-impl MmapVecConfigBuilder {
-    /// Create a new builder with default configuration
-    pub fn new() -> Self {
-        Self {
-            config: MmapVecConfig::default(),
-        }
-    }
-
-    /// Set initial capacity
-    pub fn with_initial_capacity(mut self, capacity: usize) -> Self {
-        self.config.initial_capacity = capacity;
-        self
-    }
-
-    /// Set growth factor
-    pub fn with_growth_factor(mut self, factor: f64) -> Self {
-        self.config.growth_factor = factor;
-        self
-    }
-
-    /// Enable or disable read-only mode
-    pub fn with_read_only(mut self, read_only: bool) -> Self {
-        self.config.read_only = read_only;
-        self
-    }
-
-    /// Enable or disable page population
-    pub fn with_populate_pages(mut self, populate: bool) -> Self {
-        self.config.populate_pages = populate;
-        self
-    }
-
-    /// Enable or disable huge pages
-    pub fn with_huge_pages(mut self, enable: bool) -> Self {
-        self.config.use_huge_pages = enable;
-        self
-    }
-
-    /// Enable or disable sync on write
-    pub fn with_sync_on_write(mut self, sync: bool) -> Self {
-        self.config.sync_on_write = sync;
-        self
-    }
-
-    /// Build the final configuration
-    pub fn build(self) -> MmapVecConfig {
-        self.config
-    }
-}
-
-impl Default for MmapVecConfigBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
