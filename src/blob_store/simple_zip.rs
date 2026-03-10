@@ -84,10 +84,16 @@ impl Default for SimpleZipConfig {
 }
 
 impl SimpleZipConfig {
-    /// Create builder for custom configuration
-    pub fn builder() -> SimpleZipConfigBuilder {
-        SimpleZipConfigBuilder::default()
-    }
+    /// Create a builder (returns Self with Default values for fluent configuration).
+    pub fn builder() -> Self { Self::default() }
+    /// Set minimum fragment length.
+    pub fn min_frag_len(mut self, v: usize) -> Self { self.min_frag_len = v; self }
+    /// Set maximum fragment length.
+    pub fn max_frag_len(mut self, v: usize) -> Self { self.max_frag_len = v; self }
+    /// Set delimiters.
+    pub fn delimiters(mut self, v: Vec<u8>) -> Self { self.delimiters = v; self }
+    /// Finalize configuration.
+    pub fn build(self) -> Result<Self> { self.validate()?; Ok(self) }
 
     /// Validate configuration parameters
     pub fn validate(&self) -> Result<()> {
@@ -107,42 +113,6 @@ impl SimpleZipConfig {
         Ok(())
     }
 }
-
-/// Builder for SimpleZipConfig
-#[derive(Debug, Default)]
-pub struct SimpleZipConfigBuilder {
-    min_frag_len: Option<usize>,
-    max_frag_len: Option<usize>,
-    delimiters: Option<Vec<u8>>,
-}
-
-impl SimpleZipConfigBuilder {
-    pub fn min_frag_len(mut self, len: usize) -> Self {
-        self.min_frag_len = Some(len);
-        self
-    }
-
-    pub fn max_frag_len(mut self, len: usize) -> Self {
-        self.max_frag_len = Some(len);
-        self
-    }
-
-    pub fn delimiters(mut self, delims: Vec<u8>) -> Self {
-        self.delimiters = Some(delims);
-        self
-    }
-
-    pub fn build(self) -> Result<SimpleZipConfig> {
-        let config = SimpleZipConfig {
-            min_frag_len: self.min_frag_len.unwrap_or(8),
-            max_frag_len: self.max_frag_len.unwrap_or(256),
-            delimiters: self.delimiters.unwrap_or_else(|| vec![b'\n', b'\r', b'\t', b' ']),
-        };
-        config.validate()?;
-        Ok(config)
-    }
-}
-
 /// SimpleZipBlobStore - Fragment-based compression with deduplication
 ///
 /// Read-only blob store optimized for records with shared substrings.

@@ -29,11 +29,11 @@ pub use memory::MemoryBlobStore;
 pub use mixed_len::MixedLenBlobStore;
 pub use nest_louds_trie_blob_store::{
     NestLoudsTrieBlobStore, NestLoudsTrieBlobStoreBuilder, TrieBlobStoreConfig,
-    TrieBlobStoreConfigBuilder, TrieBlobStoreStats,
+    TrieBlobStoreStats,
 };
 pub use plain::PlainBlobStore;
 pub use reorder_map::{ZReorderMap, ZReorderMapBuilder};
-pub use simple_zip::{SimpleZipBlobStore, SimpleZipConfig, SimpleZipConfigBuilder};
+pub use simple_zip::{SimpleZipBlobStore, SimpleZipConfig};
 pub use sorted_uint_vec::{SortedUintVec, SortedUintVecBuilder, SortedUintVecConfig};
 pub use traits::{
     BatchBlobStore, BlobStore, BlobStoreStats, CompressedBlobStore, CompressionStats,

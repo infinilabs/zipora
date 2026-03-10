@@ -242,9 +242,8 @@ pub mod nested_louds_trie {
                    memory_pool_size: 0 }
         }
     }
-    impl NestingConfig {
-        pub fn builder() -> NestingConfigBuilder { NestingConfigBuilder::new() }
-    }
+    // NestingConfig has all public fields + Default — use struct literals directly:
+    // NestingConfig { max_levels: 5, ..Default::default() }
 
     pub struct NestedLoudsTrie<T> { trie: ZiporaTrie, _marker: PhantomData<T> }
 
@@ -318,24 +317,10 @@ pub mod nested_louds_trie {
         }
     }
 
-    pub struct NestingConfigBuilder { config: NestingConfig }
-    impl NestingConfigBuilder {
-        pub fn new() -> Self { Self { config: NestingConfig::default() } }
-        pub fn max_levels(mut self, v: usize) -> Self { self.config.max_levels = v; self }
-        pub fn fragment_compression_ratio(mut self, v: f64) -> Self { self.config.fragment_compression_ratio = v; self }
-        pub fn min_fragment_size(mut self, v: usize) -> Self { self.config.min_fragment_size = v; self }
-        pub fn max_fragment_size(mut self, v: usize) -> Self { self.config.max_fragment_size = v; self }
-        pub fn cache_optimization(mut self, v: bool) -> Self { self.config.cache_optimization = v; self }
-        pub fn cache_block_size(mut self, v: usize) -> Self { self.config.cache_block_size = v; self }
-        pub fn density_switch_threshold(self, _v: f64) -> Self { self }
-        pub fn adaptive_backend_selection(self, _v: bool) -> Self { self }
-        pub fn memory_pool_size(self, _v: usize) -> Self { self }
-        pub fn build(self) -> Result<NestingConfig> { Ok(self.config) }
-    }
 }
 
 pub use nested_louds_trie::{
-    NestedLoudsTrie, NestingConfig, NestingConfigBuilder, NestingLevel, NestedTrieStats, FragmentStats,
+    NestedLoudsTrie, NestingConfig, NestingLevel, NestedTrieStats, FragmentStats,
 };
 
 /// CompressedSparseTrie compatibility wrapper

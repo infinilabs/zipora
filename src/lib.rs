@@ -219,7 +219,7 @@ pub use fsa::{
     RankSelectType, BitVectorType, FiniteStateAutomaton, Trie,
     // Legacy compatibility exports
     DoubleArrayTrie, DoubleArrayTrieConfig, DoubleArrayTrieBuilder,
-    NestedLoudsTrie, NestingConfig, NestingConfigBuilder, NestedTrieStats, FragmentStats,
+    NestedLoudsTrie, NestingConfig, NestedTrieStats, FragmentStats,
     CompressedSparseTrie, ConcurrencyLevel, ReaderToken, WriterToken,
     PatriciaTrie, CritBitTrie,
 };
