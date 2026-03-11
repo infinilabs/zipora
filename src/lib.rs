@@ -348,19 +348,19 @@ pub use statistics::{
     MemorySize, MemoryBreakdown, GlobalMemoryTracker, TrackedObject, LocalMemoryTracker,
     FragmentationAnalysis,
     // High-precision timing
-    Profiling, QTime, QDuration, PerfTimer as StatsPerfTimer, TimerCollection, TimerStats, 
+    Profiling, QTime, QDuration, PerfTimer as StatsPerfTimer, TimerCollection,
     ScopedTimer as StatsScopedTimer, str_date_time_now,
     // Histogram framework
     FreqHist, FreqHistO1, FreqHistO2, HistogramData, HistogramDataO1, HistogramDataO2,
-    HistogramCollection, GlobalHistogramStats,
+    HistogramCollection,
     // Entropy analysis
     EntropyAnalyzer, EntropyConfig, EntropyResults, CompressionEstimates, DistributionInfo,
-    SampleStats, EntropyAnalyzerCollection, GlobalEntropyStats,
+    EntropyAnalyzerCollection,
     // Buffer management
     ContextBuffer, BufferMetadata, BufferPriority, StatisticsContext, DefaultStatisticsContext,
     BufferPoolManager, BufferPoolConfig, PoolStatistics, ScopedBuffer,
     // Profiling
-    Profiler, ProfilerConfig, OperationProfile, GlobalProfilingStats, ProfiledOperation,
+    Profiler, ProfilerConfig, OperationProfile, ProfiledOperation,
     global_profiler as stats_global_profiler, init_global_profiler,
 };
 

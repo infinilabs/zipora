@@ -234,8 +234,6 @@ impl PerfTimer {
 pub struct TimerCollection;
 impl TimerCollection { pub fn new() -> Self { Self } }
 
-pub struct TimerStats;
-
 pub struct ScopedTimer;
 impl ScopedTimer { pub fn new(_name: &str) -> Self { Self } }
 
@@ -263,8 +261,6 @@ pub type HistogramDataO2 = FreqHist;
 pub struct HistogramCollection;
 impl HistogramCollection { pub fn new() -> Self { Self } }
 
-pub struct GlobalHistogramStats;
-
 // ============================================================================
 // Entropy analysis stubs (from entropy_analysis.rs)
 // ============================================================================
@@ -285,11 +281,7 @@ pub struct CompressionEstimates;
 #[derive(Debug, Clone)]
 pub struct DistributionInfo;
 
-#[derive(Debug, Clone)]
-pub struct SampleStats;
-
 pub struct EntropyAnalyzerCollection;
-pub struct GlobalEntropyStats;
 
 // ============================================================================
 // Buffer management stubs (from buffer_management.rs)
@@ -342,7 +334,6 @@ impl Default for ProfilerConfig {
 }
 
 pub struct OperationProfile;
-pub struct GlobalProfilingStats;
 
 pub struct ProfiledOperation;
 
