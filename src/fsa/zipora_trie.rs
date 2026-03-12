@@ -25,7 +25,7 @@ use crate::containers::specialized::UintVector;
 use crate::containers::FastVec;
 use crate::error::{Result, ZiporaError};
 use crate::fsa::traits::{
-    FiniteStateAutomaton, PrefixIterable, StateInspectable, StatisticsProvider, Trie, TrieBuilder,
+    FiniteStateAutomaton, PrefixIterable, StatisticsProvider, Trie,
     TrieStats,
 };
 use crate::memory::cache_layout::{CacheOptimizedAllocator, CacheLayoutConfig, PrefetchHint};

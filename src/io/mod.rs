@@ -33,7 +33,7 @@ pub use var_int::{SignedVarInt, VarInt};
 pub use endian::{Endianness, EndianConvert, EndianIO, EndianConfig};
 pub use smart_ptr::{SmartPtrSerialize, SerializableType, SerializationContext, DeserializationContext, SmartPtrConfig, SmartPtrSerializer};
 pub use complex_types::{ComplexSerialize, ComplexTypeConfig, ComplexTypeSerializer, NestedSerialize};
-pub use versioning::{Version, VersionProxy, VersionManager, VersionedSerialize, VersionMigration, MigrationRegistry, VersionConfig, VersionedSerializer};
+pub use versioning::{Version, VersionProxy, VersionManager, VersionedSerialize, MigrationRegistry, VersionConfig, VersionedSerializer};
 pub use var_int_variants::{VarIntStrategy, VarIntEncoder, choose_optimal_strategy, choose_optimal_strategy_signed};
 
 // Re-export new I/O & Serialization features

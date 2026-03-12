@@ -264,57 +264,6 @@ pub trait RankSelectPerformanceOps: RankSelectOps {
     /// Bulk select operations for multiple indices
     fn select1_bulk(&self, indices: &[usize]) -> Result<Vec<usize>>;
 }
-
-/// Trait for multi-dimensional rank/select operations
-///
-/// Note: Multi-dimensional operations are currently simplified to use RankSelectInterleaved256.
-/// This trait is kept for API compatibility but implementations may be simplified.
-pub trait RankSelectMultiDimensional<const ARITY: usize>: RankSelectOps {
-    /// Rank operation on a specific dimension (simplified implementation)
-    fn rank1_dim<const D: usize>(&self, pos: usize) -> usize
-    where
-        [(); ARITY]: Sized
-    {
-        // Simplified to use primary dimension only since we only have one implementation
-        self.rank1(pos)
-    }
-
-    /// Select operation on a specific dimension (simplified implementation)
-    fn select1_dim<const D: usize>(&self, k: usize) -> Result<usize>
-    where
-        [(); ARITY]: Sized
-    {
-        // Simplified to use primary dimension only since we only have one implementation
-        self.select1(k)
-    }
-
-    /// Get the number of dimensions
-    fn arity(&self) -> usize {
-        ARITY
-    }
-}
-
-/// Trait for sparse rank/select optimizations
-///
-/// This trait provides specialized operations for sparse bit vectors
-/// where one value (0 or 1) is much more common than the other.
-pub trait RankSelectSparse: RankSelectOps {
-    /// The pivot value that is stored sparsely (true for 1s, false for 0s)
-    const PIVOT: bool;
-
-    /// Get compression ratio (actual size / uncompressed size)
-    fn compression_ratio(&self) -> f64;
-
-    /// Get the number of stored sparse elements
-    fn sparse_count(&self) -> usize;
-
-    /// Check if a position contains the sparse element
-    fn contains_sparse(&self, pos: usize) -> bool;
-
-    /// Get all sparse positions in a range
-    fn sparse_positions_in_range(&self, start: usize, end: usize) -> Vec<usize>;
-}
-
 /// Builder trait for constructing rank/select structures
 ///
 /// This trait provides a uniform interface for building rank/select

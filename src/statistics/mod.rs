@@ -15,15 +15,6 @@ use crate::error::ZiporaError;
 // ============================================================================
 // Core types (from mod.rs)
 // ============================================================================
-
-/// Universal memory size interface
-pub trait MemorySize {
-    fn mem_size(&self) -> usize;
-    fn detailed_mem_size(&self) -> MemoryBreakdown {
-        MemoryBreakdown { total: self.mem_size(), components: HashMap::new() }
-    }
-}
-
 /// Simple statistics matching topling-zip's ZipStat
 #[derive(Debug, Clone)]
 pub struct TrieStat {

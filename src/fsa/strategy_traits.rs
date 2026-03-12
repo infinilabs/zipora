@@ -151,52 +151,6 @@ pub trait CompressionStrategy {
     /// Get compression statistics
     fn compression_stats(&self, context: &Self::Context) -> CompressionStats;
 }
-
-/// Succinct storage strategy for rank/select operations
-pub trait SuccinctStorageStrategy {
-    /// Rank/select implementation type
-    type RankSelect: RankSelectOps + Default;
-
-    /// Configuration for succinct structures
-    type Config: Clone;
-
-    /// Storage context
-    type Context: Default;
-
-    /// Initialize succinct storage
-    fn initialize(config: &Self::Config) -> Self::Context;
-
-    /// Create a bit vector with given capacity
-    fn create_bit_vector(
-        &self,
-        context: &mut Self::Context,
-        capacity: usize,
-        config: &Self::Config,
-    ) -> BitVector;
-
-    /// Build rank/select structure from bit vector
-    fn build_rank_select(
-        &self,
-        context: &mut Self::Context,
-        bit_vector: &BitVector,
-        config: &Self::Config,
-    ) -> Result<Self::RankSelect>;
-
-    /// Optimize storage layout for cache efficiency
-    fn optimize_layout(
-        &self,
-        context: &mut Self::Context,
-        rank_select: &mut Self::RankSelect,
-        config: &Self::Config,
-    ) -> Result<()>;
-
-    /// Get storage efficiency metrics
-    fn storage_efficiency(&self, context: &Self::Context) -> StorageEfficiency;
-
-    /// Estimate memory usage of succinct structures
-    fn succinct_memory_usage(&self, context: &Self::Context) -> usize;
-}
-
 /// Concurrency strategy for thread-safe operations
 pub trait ConcurrencyStrategy {
     /// Configuration for concurrency

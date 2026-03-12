@@ -536,52 +536,6 @@ where
     Ok(result)
 }
 
-/// Trait for types that can be accessed with reader tokens.
-pub trait ReaderTokenAccess {
-    /// The type returned when reading with a token.
-    type ReadResult;
-
-    /// Performs a read operation with the given reader token.
-    fn read_with_token(&self, token: &ReaderToken) -> Result<Self::ReadResult>;
-}
-
-/// Trait for types that can be accessed with writer tokens.
-pub trait WriterTokenAccess {
-    /// The type returned when writing with a token.
-    type WriteResult;
-
-    /// Performs a write operation with the given writer token.
-    fn write_with_token(&mut self, token: &WriterToken) -> Result<Self::WriteResult>;
-}
-
-/// Trait for types that support both reader and writer token access.
-pub trait TokenAccess: ReaderTokenAccess + WriterTokenAccess {
-    /// Performs a read operation using the token manager.
-    fn read_with_manager<F, R>(&self, token_manager: &TokenManager, f: F) -> Result<R>
-    where
-        F: FnOnce(&Self::ReadResult) -> Result<R>,
-    {
-        with_reader_token(token_manager, |token| {
-            let result = self.read_with_token(token)?;
-            f(&result)
-        })
-    }
-
-    /// Performs a write operation using the token manager.
-    fn write_with_manager<F, R>(&mut self, token_manager: &TokenManager, f: F) -> Result<R>
-    where
-        F: FnOnce(&mut Self::WriteResult) -> Result<R>,
-    {
-        with_writer_token(token_manager, |token| {
-            let mut result = self.write_with_token(token)?;
-            f(&mut result)
-        })
-    }
-}
-
-// Automatically implement TokenAccess for types that implement both traits
-impl<T> TokenAccess for T where T: ReaderTokenAccess + WriterTokenAccess {}
-
 #[cfg(test)]
 mod tests {
     use super::*;

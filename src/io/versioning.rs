@@ -316,13 +316,6 @@ pub trait VersionedSerialize: Sized {
         version.is_compatible_with(&Self::current_version())
     }
 }
-
-/// Migration support for handling version upgrades
-pub trait VersionMigration<From, To> {
-    /// Migrate data from an older version to a newer version
-    fn migrate(from: From) -> Result<To>;
-}
-
 /// Version migration registry
 pub struct MigrationRegistry {
     migrations: HashMap<(Version, Version), Box<dyn Fn(&[u8]) -> Result<Vec<u8>>>>,

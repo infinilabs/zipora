@@ -39,7 +39,7 @@ pub use zipora_trie::{
 // Strategy traits for advanced configuration
 pub use strategy_traits::{
     TrieAlgorithmStrategy, CompressionStrategy as CompressionStrategyTrait,
-    SuccinctStorageStrategy, ConcurrencyStrategy,
+    ConcurrencyStrategy,
     AlgorithmStats, CompressionStats, StorageEfficiency, ConcurrencyStats,
     PatriciaAlgorithmStrategy, PatriciaConfig, PatriciaContext, PatriciaNode,
     PathCompressionStrategy, PathCompressionConfig, PathCompressionContext,
@@ -67,12 +67,12 @@ pub use simple_implementations::{
     SimpleDawg, SimpleFastSearch, SimpleFsaCache, SimpleGraphWalker,
 };
 pub use token::{
-    GlobalTokenStats, ReaderTokenAccess, TokenAccess, TokenCache, TokenCacheStats, TokenManager,
-    WriterTokenAccess, with_reader_token, with_writer_token,
+    GlobalTokenStats, TokenCache, TokenCacheStats, TokenManager,
+    with_reader_token, with_writer_token,
 };
 pub use traits::{
-    FiniteStateAutomaton, FsaError, PrefixIterable, StateInspectable, StatisticsProvider, Trie,
-    TrieBuilder, TrieStats,
+    FiniteStateAutomaton, FsaError, PrefixIterable, StatisticsProvider, Trie,
+    TrieStats,
 };
 pub use version_sync::{
     LazyFreeItem, LazyFreeList, LazyFreeStats, ReaderToken as VersionReaderToken,
