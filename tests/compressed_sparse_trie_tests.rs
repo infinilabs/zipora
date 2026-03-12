@@ -14,7 +14,7 @@ use tokio::task;
 use zipora::error::{Result, ZiporaError};
 use zipora::fsa::{
     ZiporaTrie, ZiporaTrieConfig, TrieStrategy, StorageStrategy, CompressionStrategy, RankSelectType,
-    FiniteStateAutomaton, PrefixIterable, StateInspectable, StatisticsProvider, Trie,
+    FiniteStateAutomaton, PrefixIterable, StatisticsProvider, Trie,
 };
 use zipora::succinct::RankSelectInterleaved256;
 use zipora::memory::{SecureMemoryPool, SecurePoolConfig};

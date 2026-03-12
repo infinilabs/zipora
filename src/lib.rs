@@ -345,7 +345,7 @@ pub use statistics::{
     CompressionStats as StatsCompressionStats, DistributionStats, ErrorStats, TimingStats, 
     MemoryCategory, ErrorType,
     // Memory tracking
-    MemorySize, MemoryBreakdown, GlobalMemoryTracker, TrackedObject, LocalMemoryTracker,
+    MemoryBreakdown, GlobalMemoryTracker, TrackedObject, LocalMemoryTracker,
     FragmentationAnalysis,
     // High-precision timing
     Profiling, QTime, QDuration, PerfTimer as StatsPerfTimer, TimerCollection,

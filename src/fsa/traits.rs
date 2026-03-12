@@ -114,52 +114,6 @@ pub trait Trie: FiniteStateAutomaton {
         self.len() == 0
     }
 }
-
-/// Trait for immutable trie construction
-pub trait TrieBuilder<T: Trie> {
-    /// Build a trie from a sorted iterator of keys
-    ///
-    /// # Arguments
-    /// * `keys` - Iterator over sorted keys
-    ///
-    /// # Returns
-    /// * The constructed trie
-    fn build_from_sorted<I>(keys: I) -> Result<T>
-    where
-        I: IntoIterator<Item = Vec<u8>>;
-
-    /// Build a trie from an unsorted iterator of keys
-    ///
-    /// # Arguments
-    /// * `keys` - Iterator over keys (will be sorted internally)
-    ///
-    /// # Returns
-    /// * The constructed trie
-    fn build_from_unsorted<I>(keys: I) -> Result<T>
-    where
-        I: IntoIterator<Item = Vec<u8>>,
-    {
-        let mut sorted_keys: Vec<Vec<u8>> = keys.into_iter().collect();
-        sorted_keys.sort();
-        sorted_keys.dedup();
-        Self::build_from_sorted(sorted_keys)
-    }
-}
-
-/// Trait for automata that support state inspection
-pub trait StateInspectable: FiniteStateAutomaton {
-    /// Get the outgoing degree (number of transitions) from a state
-    fn out_degree(&self, state: StateId) -> usize;
-
-    /// Get all outgoing symbols from a state
-    fn out_symbols(&self, state: StateId) -> Vec<u8>;
-
-    /// Check if a state has any outgoing transitions
-    fn is_leaf(&self, state: StateId) -> bool {
-        self.out_degree(state) == 0
-    }
-}
-
 /// Statistics about trie structure and performance
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]

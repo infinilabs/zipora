@@ -338,24 +338,6 @@ impl<T: BlobStore> BlobStore for CachedBlobStore<T> {
         self.inner.is_empty()
     }
 }
-
-/// Cache-aware extension trait for blob stores
-pub trait CacheAwareBlobStore: BlobStore {
-    /// Read data with cache integration
-    fn read_with_cache(&self, offset: u64, length: usize, cache: &LruPageCache, file_id: FileId) -> Result<CacheBuffer>;
-    
-    /// Write data with cache invalidation
-    fn write_with_cache(&mut self, offset: u64, data: &[u8], cache: &LruPageCache, file_id: FileId) -> Result<()>;
-    
-    /// Get file size for cache calculations
-    fn file_size(&self) -> u64;
-    
-    /// Get optimal cache page size for this store
-    fn optimal_page_size(&self) -> usize {
-        crate::cache::PAGE_SIZE
-    }
-}
-
 /// Cache statistics for blob store operations
 #[derive(Debug, Clone)]
 pub struct BlobCacheStats {
