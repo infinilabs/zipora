@@ -10,7 +10,6 @@ use std::ptr;
 
 use crate::error::{Result, ZiporaError};
 use crate::memory::SecureMemoryPool;
-use crate::io::simd_validation::utf8;
 use crate::memory::simd_ops;
 use std::sync::Arc;
 
@@ -484,7 +483,7 @@ impl<R: Read> StreamBufferedReader<R> {
         }
 
         let buffered_data = &self.buffer[self.pos..self.end];
-        utf8::validate_utf8(buffered_data)
+        Ok(std::str::from_utf8(buffered_data).is_ok())
     }
 }
 

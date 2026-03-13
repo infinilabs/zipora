@@ -22,7 +22,6 @@ pub mod var_int_variants;
 pub mod simd_validation;
 pub mod simd_memory;
 pub mod simd_encoding;
-pub mod simd_parsing;
 
 // Re-export core types
 pub use data_input::{DataInput, ReaderDataInput, SliceDataInput};

@@ -11,7 +11,7 @@ use std::slice;
 
 use crate::error::{Result, ZiporaError};
 use crate::memory::SecureMemoryPool;
-use crate::io::simd_validation::{utf8, checksum};
+use crate::io::simd_validation::checksum;
 use std::sync::Arc;
 
 /// Trait for zero-copy input operations
@@ -465,7 +465,7 @@ impl<R: Read> ZeroCopyReader<R> {
             return Ok(true);
         }
 
-        utf8::validate_utf8(buffered_data)
+        Ok(std::str::from_utf8(buffered_data).is_ok())
     }
 
     /// Compute CRC32C checksum of current buffer using SIMD
@@ -542,7 +542,7 @@ impl<R: Read> ZeroCopyReader<R> {
         }
 
         // Perform both operations on the same data for cache efficiency
-        let is_valid = utf8::validate_utf8(buffered_data)?;
+        let is_valid = std::str::from_utf8(buffered_data).is_ok();
         let crc = checksum::crc32c_hash(buffered_data)?;
 
         Ok((is_valid, crc))
