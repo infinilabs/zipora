@@ -296,10 +296,10 @@ pub use algorithms::{
 
 // Re-export Phase 5 implementations (concurrency)
 pub use concurrency::{
-    AsyncBlobStore, AsyncFileStore, AsyncMemoryBlobStore, ConcurrencyConfig, Fiber, FiberHandle,
-    FiberId, FiberPool, FiberPoolConfig, FiberStats, ParallelLoudsTrie, ParallelTrieBuilder,
-    Pipeline, PipelineBuilder, PipelineStage, PipelineStats, Task, WorkStealingExecutor,
-    WorkStealingQueue,
+    FiberHandle, FiberPool, FiberPoolBuilder, FiberPoolConfig, FiberStats,
+    ParallelLoudsTrie, ParallelTrieBuilder,
+    Pipeline, PipelineBuilder, PipelineStage, PipelineStats,
+    Task, WorkStealingExecutor, WorkStealingQueue,
 };
 
 // Re-export Phase 5 implementations (compression)
