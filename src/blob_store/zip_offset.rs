@@ -662,7 +662,7 @@ impl ZipOffsetBlobStore {
             self.enable_offset_cache();
         }
 
-        let cache = self.offset_cache.as_mut().unwrap();
+        let cache = self.offset_cache.as_mut().expect("cache initialized when caching enabled");
         let block_idx = (id as usize) >> self.config.offset_config.log2_block_units;
         let offset_idx = (id as usize) & self.config.offset_config.block_mask();
 

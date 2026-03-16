@@ -847,7 +847,7 @@ impl fmt::Debug for BitVector {
         write!(f, "BitVector {{ len: {}, bits: [", self.len)?;
         for i in 0..self.len.min(64) {
             // SAFETY: Loop bounds are 0..self.len.min(64), so i < self.len always.
-            write!(f, "{}", if self.get(i).unwrap() { '1' } else { '0' })?;
+            write!(f, "{}", if self.get(i).expect("index within bitvector length") { '1' } else { '0' })?;
         }
         if self.len > 64 {
             write!(f, "...")?;

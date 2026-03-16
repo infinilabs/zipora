@@ -242,7 +242,7 @@ pub fn global_factory<T: Send + Sync + 'static>() -> &'static GlobalFactory<T> {
     {
         let factories = FACTORIES.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(factory_any) = factories.get(&type_id) {
-            let factory = factory_any.downcast_ref::<GlobalFactory<T>>().unwrap();
+            let factory = factory_any.downcast_ref::<GlobalFactory<T>>().expect("registered factory type");
             // Safety: The factory is stored in a static HashMap and lives for the entire program duration
             return unsafe { std::mem::transmute::<&GlobalFactory<T>, &'static GlobalFactory<T>>(factory) };
         }
@@ -253,7 +253,7 @@ pub fn global_factory<T: Send + Sync + 'static>() -> &'static GlobalFactory<T> {
         let mut factories = FACTORIES.lock().unwrap_or_else(|e| e.into_inner());
         // Double-check pattern in case another thread created it while we were waiting for the lock
         if let Some(factory_any) = factories.get(&type_id) {
-            let factory = factory_any.downcast_ref::<GlobalFactory<T>>().unwrap();
+            let factory = factory_any.downcast_ref::<GlobalFactory<T>>().expect("registered factory type");
             // Safety: The factory is stored in a static HashMap and lives for the entire program duration
             return unsafe { std::mem::transmute::<&GlobalFactory<T>, &'static GlobalFactory<T>>(factory) };
         }
@@ -262,9 +262,9 @@ pub fn global_factory<T: Send + Sync + 'static>() -> &'static GlobalFactory<T> {
         factories.insert(type_id, factory);
 
         // SAFETY: We just inserted this key on the line above, so get() is guaranteed to succeed.
-        let factory_any = factories.get(&type_id).unwrap();
+        let factory_any = factories.get(&type_id).expect("factory registered for type");
         // SAFETY: We inserted GlobalFactory<T>, so downcast_ref to same type always succeeds.
-        let factory = factory_any.downcast_ref::<GlobalFactory<T>>().unwrap();
+        let factory = factory_any.downcast_ref::<GlobalFactory<T>>().expect("registered factory type");
         
         // Safety: The factory is stored in a static HashMap and lives for the entire program duration
         unsafe { std::mem::transmute::<&GlobalFactory<T>, &'static GlobalFactory<T>>(factory) }

@@ -105,7 +105,7 @@ impl<R: Read> LineProcessor<R> {
             // to never fail except in catastrophic OOM scenarios (out of physical memory).
             // The small_secure() config uses minimal settings (small chunk sizes) that are
             // virtually guaranteed to succeed in normal operation.
-            Some(SecureMemoryPool::new(SecurePoolConfig::small_secure()).unwrap())
+            Some(SecureMemoryPool::new(SecurePoolConfig::small_secure()).expect("small secure pool creation"))
         } else {
             None
         };
@@ -397,7 +397,7 @@ impl LineSplitter {
         // SAFETY: Early return at line 391 guarantees delimiter.len() == 1,
         // so bytes() iterator is guaranteed to have at least one element.
         // Therefore next() always returns Some.
-        let delimiter_byte = delimiter.bytes().next().unwrap();
+        let delimiter_byte = delimiter.bytes().next().expect("delimiter is non-empty");
         let mut start = 0;
 
         for (i, &byte) in line.as_bytes().iter().enumerate() {

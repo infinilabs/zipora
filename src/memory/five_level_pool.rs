@@ -883,8 +883,8 @@ impl ThreadLocalPool {
                     let num_bins = self.config.max_fast_block_size / self.config.alignment;
                     *cache_ref = Some(ThreadLocalCache::new(self.config.arena_size, num_bins));
                 }
-                
-                let cache = cache_ref.as_mut().unwrap();
+
+                let cache = cache_ref.as_mut().expect("cache initialized");
                 let bin_index = (aligned_size / self.config.alignment).saturating_sub(1);
                 
                 // Try local free list first

@@ -176,7 +176,7 @@ impl BufferPool {
         }
         
         if let Some(idx) = best_idx {
-            let buffer = self.buffers.remove(idx).unwrap();
+            let buffer = self.buffers.remove(idx).expect("buffer index valid from position()");
             self.total_capacity -= buffer.capacity();
             buffer
         } else {

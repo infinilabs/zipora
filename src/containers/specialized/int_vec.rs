@@ -1028,13 +1028,13 @@ impl<T: PackedInt> IntVec<T> {
             let start = block_idx * block_units;
             let end = (start + block_units).min(len);
             // SAFETY: start < end always (len >= 64 checked above, start < len, end > start)
-            let block_min = values[start..end].iter().min().unwrap();
+            let block_min = values[start..end].iter().min().expect("non-empty block");
             samples.push(*block_min);
         }
 
         // SAFETY: samples has num_blocks elements (len >= 64, so num_blocks >= 1)
-        let sample_min = *samples.iter().min().unwrap();
-        let sample_max = *samples.iter().max().unwrap();
+        let sample_min = *samples.iter().min().expect("non-empty samples");
+        let sample_max = *samples.iter().max().expect("non-empty samples");
         let sample_width = BitOps::compute_bit_width(sample_max - sample_min);
 
         // Analyze offset values within blocks
@@ -1148,7 +1148,7 @@ impl<T: PackedInt> IntVec<T> {
             // This achieves >98% compression ratio!
             let mut data = Vec::with_capacity(16); // base_val (8 bytes) + uniform_delta (8 bytes)
             data.extend_from_slice(&base_val.to_le_bytes());
-            data.extend_from_slice(&uniform_delta.unwrap().to_le_bytes());
+            data.extend_from_slice(&uniform_delta.expect("uniform_delta set for uniform blocks").to_le_bytes());
             self.data = data.into_boxed_slice();
             return Ok(());
         }
@@ -1191,13 +1191,13 @@ impl<T: PackedInt> IntVec<T> {
             let start = block_idx * block_units;
             let end = (start + block_units).min(values.len());
             // SAFETY: start < end always (start < values.len() and end = start + block_units capped at values.len())
-            let block_min = *values[start..end].iter().min().unwrap();
+            let block_min = *values[start..end].iter().min().expect("non-empty block");
             samples.push(block_min);
         }
 
         // Compress samples
         // SAFETY: samples has num_blocks elements (pushed in the loop above), num_blocks >= 1
-        let sample_min = *samples.iter().min().unwrap();
+        let sample_min = *samples.iter().min().expect("non-empty samples");
         let index_bits = num_blocks * sample_width as usize;
         let index_bytes = (index_bits + 7) / 8;
         let index_aligned = (index_bytes + 15) & !15;

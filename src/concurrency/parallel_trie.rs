@@ -84,7 +84,7 @@ impl ParallelTrieBuilder {
         if tries.len() == 1 {
             // SAFETY: len() == 1 check above guarantees exactly one element
             return Ok(ParallelLoudsTrie::from_trie(
-                tries.into_iter().next().unwrap(),
+                tries.into_iter().next().expect("non-empty tries"),
             ));
         }
 
@@ -415,7 +415,7 @@ impl ParallelTrieOps {
 
         if tries.len() == 1 {
             // SAFETY: len() == 1 check above guarantees exactly one element
-            return Ok(tries.into_iter().next().unwrap());
+            return Ok(tries.into_iter().next().expect("non-empty tries"));
         }
 
         // Extract and merge all keys from all tries

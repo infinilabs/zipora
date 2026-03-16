@@ -85,7 +85,7 @@ pub unsafe extern "C" fn zipora_version() -> *const c_char {
     static VERSION_CSTRING: OnceLock<CString> = OnceLock::new();
 
     let cstring = VERSION_CSTRING.get_or_init(|| {
-        CString::new(crate::VERSION).unwrap_or_else(|_| CString::new("unknown").unwrap())
+        CString::new(crate::VERSION).unwrap_or_else(|_| CString::new("unknown").expect("static string has no NUL bytes"))
     });
 
     cstring.as_ptr()

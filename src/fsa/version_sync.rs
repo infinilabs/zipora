@@ -265,7 +265,7 @@ impl LazyFreeList {
                 break; // Items are ordered by age, so we can stop here
             }
 
-            let item = self.items.pop_front().unwrap();
+            let item = self.items.pop_front().expect("items non-empty by len check");
             free_fn(item);
             processed += 1;
 

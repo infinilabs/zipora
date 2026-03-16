@@ -338,7 +338,8 @@ impl<T> FastVec<T> {
                     // 1. self.cap was successfully used to allocate memory (either in with_capacity or previous realloc)
                     // 2. If capacity caused layout overflow, allocation would have failed earlier
                     // 3. The same layout parameters were valid during allocation, so they're valid for deallocation
-                    let old_layout = Layout::array::<T>(self.cap).unwrap();
+                    let old_layout = Layout::array::<T>(self.cap)
+                        .expect("array layout overflow: capacity exceeds Layout limits");
                     unsafe {
                         let raw_ptr =
                             alloc::realloc(ptr.as_ptr() as *mut u8, old_layout, new_layout.size());
@@ -609,7 +610,8 @@ impl<T> FastVec<T> {
                     // 1. self.cap was successfully used to allocate memory (either in with_capacity or previous realloc)
                     // 2. If capacity caused layout overflow, allocation would have failed earlier
                     // 3. The same layout parameters were valid during allocation, so they're valid for deallocation
-                    let layout = Layout::array::<T>(self.cap).unwrap();
+                    let layout = Layout::array::<T>(self.cap)
+                        .expect("array layout overflow: capacity exceeds Layout limits");
                     alloc::dealloc(ptr.as_ptr() as *mut u8, layout);
                 }
             }
@@ -626,7 +628,8 @@ impl<T> FastVec<T> {
             // 1. self.cap was successfully used to allocate memory (either in with_capacity or previous realloc)
             // 2. If capacity caused layout overflow, allocation would have failed earlier
             // 3. The same layout parameters were valid during allocation, so they're valid for reallocation
-            let old_layout = Layout::array::<T>(self.cap).unwrap();
+            let old_layout = Layout::array::<T>(self.cap)
+                .expect("array layout overflow: capacity exceeds Layout limits");
             unsafe {
                 let raw_ptr =
                     alloc::realloc(ptr.as_ptr() as *mut u8, old_layout, new_layout.size());
@@ -986,7 +989,8 @@ impl<T> Drop for FastVec<T> {
                     // 1. self.cap was successfully used to allocate memory (either in with_capacity or previous realloc)
                     // 2. If capacity caused layout overflow, allocation would have failed earlier
                     // 3. The same layout parameters were valid during allocation, so they're valid for deallocation
-                    let layout = Layout::array::<T>(self.cap).unwrap();
+                    let layout = Layout::array::<T>(self.cap)
+                        .expect("array layout overflow: capacity exceeds Layout limits");
                     alloc::dealloc(ptr.as_ptr() as *mut u8, layout);
                 }
             }

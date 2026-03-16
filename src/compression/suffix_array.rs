@@ -597,7 +597,7 @@ impl SuffixArrayCompressor {
 
 impl Default for SuffixArrayCompressor {
     fn default() -> Self {
-        Self::new(SuffixArrayConfig::default()).unwrap()
+        Self::new(SuffixArrayConfig::default()).expect("default config is valid")
     }
 }
 

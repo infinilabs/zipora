@@ -356,7 +356,7 @@ impl MigrationRegistry {
         // Simple implementation - could be made more sophisticated
         for &(start, end) in self.migrations.keys() {
             if start == from && end <= to {
-                let intermediate = self.migrations.get(&(start, end)).unwrap()(data)?;
+                let intermediate = self.migrations.get(&(start, end)).expect("migration path exists")(data)?;
                 if end == to {
                     return Ok(intermediate);
                 } else {

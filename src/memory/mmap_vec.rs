@@ -447,7 +447,7 @@ where
 
         unsafe {
             // SAFETY: len > 0 check above guarantees self.data is initialized (Some)
-            let data_ptr = self.data_ptr().unwrap().as_ptr();
+            let data_ptr = self.data_ptr().expect("mmap data pointer valid").as_ptr();
             slice::from_raw_parts(data_ptr, len)
         }
     }
@@ -465,7 +465,7 @@ where
 
         unsafe {
             // SAFETY: len > 0 check above guarantees self.data is initialized (Some)
-            let data_ptr = self.data_ptr().unwrap().as_ptr();
+            let data_ptr = self.data_ptr().expect("mmap data pointer valid").as_ptr();
             slice::from_raw_parts_mut(data_ptr, len)
         }
     }

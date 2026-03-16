@@ -850,7 +850,7 @@ impl FseEncoder {
     /// Single-threaded compression (internal, ZSTD-compatible)
     fn compress_single_internal(&mut self, data: &[u8]) -> Result<Vec<u8>> {
         // SAFETY: This is called from compress() which creates self.table if None
-        let table = self.table.as_ref().unwrap();
+        let table = self.table.as_ref().expect("FSE table must be initialized");
         
         // For very small data, skip FSE compression to avoid expansion
         if data.len() < 100 {
@@ -980,7 +980,7 @@ impl FseEncoder {
         }
         
         // Clone the table to avoid borrowing issues
-        let table = self.table.as_ref().unwrap().clone();
+        let table = self.table.as_ref().expect("FSE table must be initialized").clone();
         let config = self.config.clone();
         
         // Process chunks in parallel using std::thread

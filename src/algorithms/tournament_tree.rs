@@ -304,7 +304,7 @@ where
 
         for (way_idx, way) in self.ways.iter().enumerate() {
             if let Some(value) = way.peek() {
-                if min_value.is_none() || self.compare_optimized(value, min_value.unwrap()) == Ordering::Less {
+                if min_value.is_none() || self.compare_optimized(value, min_value.expect("min_value set by prior iteration")) == Ordering::Less {
                     min_value = Some(value);
                     min_way = way_idx;
                 }

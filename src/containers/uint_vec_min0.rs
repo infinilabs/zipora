@@ -337,8 +337,8 @@ impl UintVecMin0 {
         }
 
         // SAFETY: is_empty() check above guarantees iterator has at least one element
-        let &min_val = src.iter().min().unwrap();
-        let &max_val = src.iter().max().unwrap();
+        let &min_val = src.iter().min().expect("non-empty input");
+        let &max_val = src.iter().max().expect("non-empty input");
         let wire_max = max_val - min_val;
 
         let mut vec = Self::new(src.len(), wire_max);
@@ -356,8 +356,8 @@ impl UintVecMin0 {
         }
 
         // SAFETY: is_empty() check above guarantees iterator has at least one element
-        let &min_val = src.iter().min().unwrap();
-        let &max_val = src.iter().max().unwrap();
+        let &min_val = src.iter().min().expect("non-empty input");
+        let &max_val = src.iter().max().expect("non-empty input");
         let wire_max = (max_val - min_val) as usize;
 
         let mut vec = Self::new(src.len(), wire_max);
@@ -375,8 +375,8 @@ impl UintVecMin0 {
         }
 
         // SAFETY: is_empty() check above guarantees iterator has at least one element
-        let &min_val = src.iter().min().unwrap();
-        let &max_val = src.iter().max().unwrap();
+        let &min_val = src.iter().min().expect("non-empty input");
+        let &max_val = src.iter().max().expect("non-empty input");
         let wire_max = (max_val - min_val) as usize;
 
         let mut vec = Self::new(src.len(), wire_max);

@@ -132,7 +132,7 @@ impl FileHeaderBase {
 
     #[inline]
     pub fn file_size(&self) -> u64 {
-        u64::from_le_bytes(self.data[40..48].try_into().unwrap())
+        u64::from_le_bytes(self.data[40..48].try_into().expect("slice is 8 bytes"))
     }
 
     #[inline]
@@ -142,7 +142,7 @@ impl FileHeaderBase {
 
     #[inline]
     pub fn unzip_size(&self) -> u64 {
-        u64::from_le_bytes(self.data[48..56].try_into().unwrap())
+        u64::from_le_bytes(self.data[48..56].try_into().expect("slice is 8 bytes"))
     }
 
     #[inline]
@@ -153,7 +153,7 @@ impl FileHeaderBase {
     /// Packed field at offset 56: records(40) | checksum_type(8) | format_version(16).
     #[inline]
     fn packed_records_field(&self) -> u64 {
-        u64::from_le_bytes(self.data[56..64].try_into().unwrap())
+        u64::from_le_bytes(self.data[56..64].try_into().expect("slice is 8 bytes"))
     }
 
     #[inline]
@@ -207,14 +207,14 @@ impl FileHeaderBase {
     /// Global dictionary size (40-bit field at offset 64).
     #[inline]
     pub fn global_dict_size(&self) -> u64 {
-        let packed = u64::from_le_bytes(self.data[64..72].try_into().unwrap());
+        let packed = u64::from_le_bytes(self.data[64..72].try_into().expect("slice is 8 bytes"));
         packed & 0xFF_FFFF_FFFF
     }
 
     /// Set global dictionary size.
     #[inline]
     pub fn set_global_dict_size(&mut self, v: u64) {
-        let old = u64::from_le_bytes(self.data[64..72].try_into().unwrap());
+        let old = u64::from_le_bytes(self.data[64..72].try_into().expect("slice is 8 bytes"));
         let new = (old & !0xFF_FFFF_FFFF) | (v & 0xFF_FFFF_FFFF);
         self.data[64..72].copy_from_slice(&new.to_le_bytes());
     }
@@ -282,7 +282,7 @@ impl BlobStoreFileFooter {
     /// XXHash64 of compressed/zipped data blocks.
     #[inline]
     pub fn zip_data_xxhash(&self) -> u64 {
-        u64::from_le_bytes(self.data[0..8].try_into().unwrap())
+        u64::from_le_bytes(self.data[0..8].try_into().expect("slice is 8 bytes"))
     }
 
     #[inline]
@@ -293,7 +293,7 @@ impl BlobStoreFileFooter {
     /// XXHash64 of the entire file (header + data, excluding footer).
     #[inline]
     pub fn file_xxhash(&self) -> u64 {
-        u64::from_le_bytes(self.data[8..16].try_into().unwrap())
+        u64::from_le_bytes(self.data[8..16].try_into().expect("slice is 8 bytes"))
     }
 
     #[inline]
@@ -304,7 +304,7 @@ impl BlobStoreFileFooter {
     /// Footer length field (always 64).
     #[inline]
     pub fn footer_length(&self) -> u32 {
-        u32::from_le_bytes(self.data[60..64].try_into().unwrap())
+        u32::from_le_bytes(self.data[60..64].try_into().expect("slice is 4 bytes"))
     }
 
     #[inline]

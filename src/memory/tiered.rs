@@ -98,7 +98,7 @@ thread_local! {
 
         size_classes.into_iter().map(|size| {
             let config = PoolConfig::new(size, 32, 16); // 32 chunks per pool, 16-byte aligned
-            Arc::new(MemoryPool::new(config).unwrap())
+            Arc::new(MemoryPool::new(config).expect("memory pool creation"))
         }).collect()
     };
 }
@@ -472,7 +472,7 @@ impl TieredAllocation {
 
 /// Global tiered allocator instance
 static GLOBAL_TIERED_ALLOCATOR: once_cell::sync::Lazy<TieredMemoryAllocator> =
-    once_cell::sync::Lazy::new(|| TieredMemoryAllocator::default().unwrap());
+    once_cell::sync::Lazy::new(|| TieredMemoryAllocator::default().expect("default allocator creation"));
 
 /// Allocate memory using the global tiered allocator
 pub fn tiered_allocate(size: usize) -> Result<TieredAllocation> {
