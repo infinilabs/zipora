@@ -150,8 +150,8 @@ impl ZipIntVec {
         }
 
         // SAFETY: is_empty() check above guarantees iterator has at least one element
-        let &min_val = src.iter().min().unwrap();
-        let &max_val = src.iter().max().unwrap();
+        let &min_val = src.iter().min().expect("non-empty input");
+        let &max_val = src.iter().max().expect("non-empty input");
 
         if min_val == max_val {
             // All values are the same
@@ -177,8 +177,8 @@ impl ZipIntVec {
         }
 
         // SAFETY: is_empty() check above guarantees iterator has at least one element
-        let &min_val = src.iter().min().unwrap();
-        let &max_val = src.iter().max().unwrap();
+        let &min_val = src.iter().min().expect("non-empty input");
+        let &max_val = src.iter().max().expect("non-empty input");
 
         if min_val == max_val {
             // All values are the same

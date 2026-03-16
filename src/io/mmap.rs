@@ -747,7 +747,7 @@ impl MemoryMappedOutput {
             // 2. They're trivial operations that always succeed on all platforms (Linux/macOS/Windows)
             // 3. This is used as a placeholder during mem::replace() to allow dropping the old mmap
             // 4. The memmap2 library guarantees zero-byte anonymous mappings succeed
-            MmapMut::map_anon(0).unwrap(),
+            MmapMut::map_anon(0).expect("zero-length anonymous mmap"),
         ));
 
         self.file
@@ -789,7 +789,7 @@ impl MemoryMappedOutput {
             // 2. They're trivial operations that always succeed on all platforms (Linux/macOS/Windows)
             // 3. This is used as a placeholder during mem::replace() to allow dropping the old mmap
             // 4. The memmap2 library guarantees zero-byte anonymous mappings succeed
-            MmapMut::map_anon(0).unwrap(),
+            MmapMut::map_anon(0).expect("zero-length anonymous mmap"),
         ));
 
         // Truncate the file

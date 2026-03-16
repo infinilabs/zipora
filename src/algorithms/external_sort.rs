@@ -300,12 +300,12 @@ where
         // Generate unique instance ID to avoid file name collisions
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("temp file path is valid UTF-8")
             .as_nanos();
         let thread_id = format!("{:?}", thread::current().id());
-        let instance_id = format!("sort_{}_{}", 
-            timestamp, 
-            thread_id.replace("ThreadId(", "").replace(")", "")
+        let instance_id = format!("sort_{}_{}",
+            timestamp,
+            thread_id.replace("ThreadId(", "").replace(")", "").to_string()
         );
         
         Self {
@@ -374,7 +374,7 @@ where
         while !heap.is_empty() {
             // Get minimum element
             // SAFETY: !heap.is_empty() check above guarantees pop() succeeds
-            let min_element = heap.pop().unwrap();
+            let min_element = heap.pop().expect("heap non-empty by loop condition");
 
             // Start new run file if needed
             if temp_writer.is_none() {
@@ -387,7 +387,7 @@ where
             }
 
             // Write element to current run
-            self.write_element(&mut temp_writer.as_mut().unwrap(), &min_element.value)?;
+            self.write_element(&mut temp_writer.as_mut().expect("temp_writer initialized in loop"), &min_element.value)?;
             run_items += 1;
 
             // Try to read next element
@@ -404,14 +404,14 @@ where
 
                     // Close current run if heap is empty or next min is from new run
                     if heap.is_empty() || heap.peek().map(|e| e.run_id).unwrap_or(0) > current_run {
-                        self.finish_run(&mut temp_writer, current_temp_path.take().unwrap(), run_items)?;
+                        self.finish_run(&mut temp_writer, current_temp_path.take().expect("temp path set at run start"), run_items)?;
                         current_run += 1;
                     }
                 }
             } else {
                 // No more input, finish current run when heap empties
                 if heap.is_empty() || heap.peek().map(|e| e.run_id).unwrap_or(0) > current_run {
-                    self.finish_run(&mut temp_writer, current_temp_path.take().unwrap(), run_items)?;
+                    self.finish_run(&mut temp_writer, current_temp_path.take().expect("temp path set at run start"), run_items)?;
                     current_run += 1;
                 }
             }

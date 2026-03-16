@@ -336,7 +336,7 @@ pub mod utils {
                     let chunks = data.chunks_exact(8);
                     let remainder = chunks.remainder();
                     for chunk in chunks {
-                        let value = u64::from_le_bytes(chunk.try_into().unwrap());
+                        let value = u64::from_le_bytes(chunk.try_into().expect("chunk is 8 bytes"));
                         count += _popcnt64(value as i64) as usize;
                     }
                     for &byte in remainder {

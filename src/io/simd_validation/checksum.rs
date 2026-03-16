@@ -555,7 +555,7 @@ mod benches {
         let start = Instant::now();
 
         for _ in 0..iterations {
-            let _ = crc32c_hash(data).unwrap();
+            let _ = crc32c_hash(data).expect("CRC32C hash computation");
         }
 
         let elapsed = start.elapsed();

@@ -295,8 +295,8 @@ impl UintVector {
 
         // Min-max compression analysis
         // SAFETY: is_empty() check at line 273 returns early, so values is non-empty
-        let min_val = *values.iter().min().unwrap();
-        let max_val = *values.iter().max().unwrap();
+        let min_val = *values.iter().min().expect("non-empty input");
+        let max_val = *values.iter().max().expect("non-empty input");
 
         if min_val == max_val {
             // All values are the same - check if single-bit storage is worthwhile

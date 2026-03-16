@@ -307,7 +307,7 @@ impl HuffmanTree {
         // Special case: only one symbol
         if symbol_count == 1 {
             // SAFETY: symbol_count == 1 means we pushed exactly 1 item to heap, so pop() succeeds
-            let node = heap.pop().unwrap().0;
+            let node = heap.pop().expect("heap non-empty by loop invariant").0;
             if let HuffmanNode::Leaf { symbol, .. } = node {
                 let mut codes = HashMap::new();
                 codes.insert(symbol, vec![false]); // Use single bit
@@ -322,8 +322,8 @@ impl HuffmanTree {
         // Build Huffman tree
         while heap.len() > 1 {
             // SAFETY: while loop condition guarantees heap.len() >= 2, so both pops succeed
-            let left = heap.pop().unwrap().0;
-            let right = heap.pop().unwrap().0;
+            let left = heap.pop().expect("heap has >= 2 nodes").0;
+            let right = heap.pop().expect("heap has >= 2 nodes").0;
 
             let merged = HuffmanNode::Internal {
                 frequency: left.frequency() + right.frequency(),
@@ -335,7 +335,7 @@ impl HuffmanTree {
         }
 
         // SAFETY: After while loop, exactly 1 element remains (started with >=2, each iteration removes 2, adds 1)
-        let root = heap.pop().unwrap().0;
+        let root = heap.pop().expect("heap has final root").0;
         let mut codes = HashMap::new();
         let mut max_code_length = 0;
 
@@ -547,7 +547,7 @@ impl HuffmanTree {
         // Special case: single symbol
         if codes.len() == 1 {
             // SAFETY: codes.len() == 1 guarantees iter().next() returns Some
-            let (&symbol, _) = codes.iter().next().unwrap();
+            let (&symbol, _) = codes.iter().next().expect("at least one symbol in codes");
             return Ok(Some(HuffmanNode::Leaf {
                 symbol,
                 frequency: 1, // Dummy frequency for leaf node
@@ -1971,7 +1971,7 @@ impl ContextualHuffmanDecoder {
         // Decode remaining symbols with context
         while result.len() < output_length && byte_idx < encoded_data.len() {
             // SAFETY: First symbol pushed at line 1862 before loop, so result is always non-empty
-            let context = *result.last().unwrap() as u32;
+            let context = *result.last().expect("result non-empty after push") as u32;
             let tree_idx = self.encoder.context_map.get(&context).copied().unwrap_or(0);
             let tree = &self.encoder.trees[tree_idx];
             

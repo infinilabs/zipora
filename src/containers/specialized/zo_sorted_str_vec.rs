@@ -145,7 +145,7 @@ impl ZoSortedStrVec {
         let boundaries = BitVector::new();
         let rank_select = RankSelectInterleaved256::new(boundaries.clone()).unwrap_or_else(|_| {
             // Fallback for empty BitVector - this shouldn't fail in practice
-            RankSelectInterleaved256::new(BitVector::new()).unwrap()
+            RankSelectInterleaved256::new(BitVector::new()).expect("empty bitvector is valid")
         });
 
         Self {

@@ -84,7 +84,7 @@ where
 
     /// Get copy of thread-local instance data
     #[inline]
-    pub fn get(&self) -> T 
+    pub fn get(&self) -> T
     where
         T: Clone,
     {
@@ -98,7 +98,7 @@ where
                 .entry(type_id)
                 .or_insert_with(|| Box::new(TlsMatrix::<T, ROWS, COLS>::new()))
                 .downcast_mut::<TlsMatrix<T, ROWS, COLS>>()
-                .unwrap();
+                .expect("TLS matrix type mismatch");
 
             unsafe { matrix.get_or_create_value(row, col) }
         })
@@ -153,7 +153,7 @@ where
                 .entry(type_id)
                 .or_insert_with(|| Box::new(TlsMatrix::<T, ROWS, COLS>::new()))
                 .downcast_mut::<TlsMatrix<T, ROWS, COLS>>()
-                .unwrap();
+                .expect("TLS matrix type mismatch");
 
             unsafe { matrix.set(row, col, value) }
         });
@@ -307,7 +307,7 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
             self.rows[row] = Some(new_row);
         }
 
-        let row_data = self.rows[row].as_ref().unwrap();
+        let row_data = self.rows[row].as_ref().expect("row is initialized");
         let cell = &row_data[col];
         let value_ref = unsafe { &mut *cell.get() };
 
@@ -315,7 +315,7 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
             *value_ref = Some(T::default());
         }
 
-        value_ref.as_ref().unwrap().clone()
+        value_ref.as_ref().expect("value is initialized").clone()
     }
 
     /// Get value copy if it exists
@@ -342,7 +342,7 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
             self.rows[row] = Some(new_row);
         }
 
-        let row_data = self.rows[row].as_ref().unwrap();
+        let row_data = self.rows[row].as_ref().expect("row is initialized");
         let cell = &row_data[col];
         unsafe { *cell.get() = Some(value) };
     }
@@ -420,7 +420,7 @@ where
         }
 
         // SAFETY: Either key existed or we just inserted it above, so get() always succeeds
-        Ok(self.instances.get(&owner_ptr).unwrap().get())
+        Ok(self.instances.get(&owner_ptr).expect("owner registered in instances").get())
     }
 
     /// Get TLS for owner if it exists
@@ -464,7 +464,7 @@ where
 {
     /// Create a new TLS pool
     pub fn new() -> Result<Self> {
-        let pool = std::array::from_fn(|_| Some(InstanceTls::new().unwrap()));
+        let pool = std::array::from_fn(|_| Some(InstanceTls::new().expect("TLS initialization")));
 
         Ok(Self {
             pool,
@@ -475,7 +475,7 @@ where
     /// Get the next available TLS instance (round-robin)
     pub fn get_next(&self) -> T {
         let slot = self.next_slot.fetch_add(1, Ordering::Relaxed) as usize % POOL_SIZE;
-        self.pool[slot].as_ref().unwrap().get()
+        self.pool[slot].as_ref().expect("pool slot is initialized").get()
     }
 
     /// Get TLS instance by slot index

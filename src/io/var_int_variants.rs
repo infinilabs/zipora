@@ -780,7 +780,7 @@ pub fn choose_optimal_strategy(values: &[u64]) -> VarIntStrategy {
     
     // Analyze data characteristics
     // SAFETY: is_empty() check at line 777 returns early, so values is non-empty
-    let max_value = *values.iter().max().unwrap();
+    let max_value = *values.iter().max().expect("non-empty input");
     let is_sorted = values.windows(2).all(|w| w[0] <= w[1]);
     let small_values = values.iter().all(|&v| v < 256);
     

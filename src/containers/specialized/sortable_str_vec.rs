@@ -515,8 +515,8 @@ impl SortableStrVec {
         indices.sort_unstable_by(|&a, &b| {
             // SAFETY: indices contains values 0..self.len(), created by extend(0..self.entries.len())
             // in sort_lexicographic(). All indices are guaranteed to be valid.
-            let str_a = self.get(a).unwrap();
-            let str_b = self.get(b).unwrap();
+            let str_a = self.get(a).expect("sorted index is valid");
+            let str_b = self.get(b).expect("sorted index is valid");
 
             // Use SIMD-optimized comparison if available
             #[cfg(all(target_arch = "x86_64", feature = "simd"))]
@@ -616,8 +616,8 @@ impl SortableStrVec {
         if indices.len() < 32 {
             indices.sort_unstable_by(|&a, &b| {
                 // SAFETY: See function doc - indices are always 0..self.len()
-                let str_a = self.get(a).unwrap();
-                let str_b = self.get(b).unwrap();
+                let str_a = self.get(a).expect("sorted index is valid");
+                let str_b = self.get(b).expect("sorted index is valid");
                 str_a[depth.min(str_a.len())..].cmp(&str_b[depth.min(str_b.len())..])
             });
             return;
@@ -628,7 +628,7 @@ impl SortableStrVec {
 
         for &idx in indices.iter() {
             // SAFETY: See function doc - indices are always 0..self.len()
-            let s = self.get(idx).unwrap();
+            let s = self.get(idx).expect("sorted index is valid");
             let byte = if depth < s.len() {
                 s.as_bytes()[depth] as usize + 1
             } else {
@@ -648,7 +648,7 @@ impl SortableStrVec {
         // Distribute strings to buffer based on current character
         for &idx in indices.iter() {
             // SAFETY: See function doc - indices are always 0..self.len()
-            let s = self.get(idx).unwrap();
+            let s = self.get(idx).expect("sorted index is valid");
             let byte = if depth < s.len() {
                 s.as_bytes()[depth] as usize + 1
             } else {
@@ -685,8 +685,8 @@ impl SortableStrVec {
         // Fallback to single-threaded sort with optimizations
         indices.sort_unstable_by(|&a, &b| {
             // SAFETY: See function doc - indices are always 0..self.len()
-            let str_a = self.get(a).unwrap();
-            let str_b = self.get(b).unwrap();
+            let str_a = self.get(a).expect("sorted index is valid");
+            let str_b = self.get(b).expect("sorted index is valid");
             str_a.cmp(str_b)
         });
         indices
@@ -913,7 +913,7 @@ impl SortableStrVec {
             // Standard binary search for smaller arrays
             // SAFETY: sorted_indices contains values 0..self.len()
             self.sorted_indices
-                .binary_search_by(|&idx| self.get(idx).unwrap().cmp(needle))
+                .binary_search_by(|&idx| self.get(idx).expect("sorted index is valid").cmp(needle))
         }
     }
 
@@ -940,7 +940,7 @@ impl SortableStrVec {
             }
 
             // SAFETY: sorted_indices[idx] is 0..self.len(), see function doc
-            let mid_str = self.get(self.sorted_indices[idx]).unwrap();
+            let mid_str = self.get(self.sorted_indices[idx]).expect("sorted index is valid");
 
             match mid_str.cmp(needle) {
                 Ordering::Less => left_block = mid_block + 1,
@@ -955,7 +955,7 @@ impl SortableStrVec {
 
         for i in start..end {
             // SAFETY: sorted_indices[i] is 0..self.len(), see function doc
-            let str_val = self.get(self.sorted_indices[i]).unwrap();
+            let str_val = self.get(self.sorted_indices[i]).expect("sorted index is valid");
             match str_val.cmp(needle) {
                 Ordering::Less => continue,
                 Ordering::Equal => return Ok(i),

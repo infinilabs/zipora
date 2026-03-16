@@ -321,9 +321,9 @@ impl PatternMatcher {
                     
                     if best_match.as_ref().map_or(true, |m| match_candidate.is_better_than(m)) {
                         best_match = Some(match_candidate);
-                        
+
                         // Early termination if match quality is very good
-                        if best_match.as_ref().unwrap().quality >= self.config.early_termination_quality {
+                        if best_match.as_ref().expect("best_match set in loop").quality >= self.config.early_termination_quality {
                             break;
                         }
                     }
@@ -339,9 +339,9 @@ impl PatternMatcher {
 
         if best_match.is_some() {
             self.stats.successful_matches += 1;
-            
+
             // Update rolling average
-            let match_len = best_match.as_ref().unwrap().length as f64;
+            let match_len = best_match.as_ref().expect("best_match set in loop").length as f64;
             let total_length = self.stats.avg_match_length * (self.stats.successful_matches - 1) as f64
                               + match_len;
             self.stats.avg_match_length = total_length / self.stats.successful_matches as f64;

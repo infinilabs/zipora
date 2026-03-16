@@ -339,7 +339,7 @@ impl RadixSort {
         }
 
         // SAFETY: is_empty() check above guarantees iterator has at least one element
-        let max_val = *data.iter().max().unwrap() as usize;
+        let max_val = *data.iter().max().expect("non-empty input") as usize;
         let mut counts = vec![0usize; max_val + 1];
 
         // Count occurrences
@@ -592,7 +592,7 @@ where
         for (new_pos, &key) in keys.iter().enumerate() {
             // Find original position of this key
             // SAFETY: Every key in sorted keys array came from indices, so position() always finds it
-            let old_pos = indices.iter().position(|(k, _)| *k == key).unwrap();
+            let old_pos = indices.iter().position(|(k, _)| *k == key).expect("key exists in indices");
             data[new_pos] = original_data[indices[old_pos].1].clone();
         }
 

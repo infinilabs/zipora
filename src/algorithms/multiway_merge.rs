@@ -175,7 +175,7 @@ impl MultiWayMerge {
             // Single source - just collect all items
             // SAFETY: sources.len() == 1 check at line 174 guarantees exactly one element,
             // so into_iter().next() always returns Some and unwrap() is safe.
-            let mut source = sources.into_iter().next().unwrap();
+            let mut source = sources.into_iter().next().expect("non-empty sources");
             let mut result = Vec::new();
             while let Some(item) = source.next() {
                 result.push(item);
@@ -257,7 +257,7 @@ impl MultiWayMerge {
                 if let Some(item) = sources[source_id].peek() {
                     // SAFETY: Short-circuit OR evaluation guarantees that if we reach unwrap(),
                     // min_item.is_none() was false, meaning min_item is Some.
-                    if min_item.is_none() || item < min_item.unwrap() {
+                    if min_item.is_none() || item < min_item.as_ref().expect("min_item set by prior iteration") {
                         min_item = Some(item);
                         min_source = source_id;
                     }
@@ -354,26 +354,26 @@ impl MergeOperations {
                     if l <= r {
                         // SAFETY: Match arm (Some(l), Some(r)) guarantees left_current is Some,
                         // so take() returns Some and unwrap() is safe.
-                        result.push(left_current.take().unwrap());
+                        result.push(left_current.take().expect("left_current set by comparison"));
                         left_current = left_iter.next();
                     } else {
                         // SAFETY: Match arm (Some(l), Some(r)) guarantees right_current is Some,
                         // so take() returns Some and unwrap() is safe.
-                        result.push(right_current.take().unwrap());
+                        result.push(right_current.take().expect("right_current set by comparison"));
                         right_current = right_iter.next();
                     }
                 }
                 (Some(_), None) => {
                     // SAFETY: Match arm (Some(_), None) guarantees left_current is Some,
                     // so take() returns Some and unwrap() is safe.
-                    result.push(left_current.take().unwrap());
+                    result.push(left_current.take().expect("left_current has remaining value"));
                     result.extend(left_iter);
                     break;
                 }
                 (None, Some(_)) => {
                     // SAFETY: Match arm (None, Some(_)) guarantees right_current is Some,
                     // so take() returns Some and unwrap() is safe.
-                    result.push(right_current.take().unwrap());
+                    result.push(right_current.take().expect("right_current has remaining value"));
                     result.extend(right_iter);
                     break;
                 }

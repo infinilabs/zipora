@@ -640,7 +640,8 @@ impl SecureChunk {
         // 1. total_size was successfully used to allocate this chunk
         // 2. Alignment of 8 is always valid (power of 2)
         // 3. self.size was validated during allocation
-        let layout = Layout::from_size_align(total_size, 8).unwrap();
+        let layout = Layout::from_size_align(total_size, 8)
+            .expect("layout creation: non-zero size, power-of-two alignment");
 
         unsafe {
             dealloc(raw_ptr, layout);
@@ -848,7 +849,7 @@ impl SecureMemoryPool {
         // Initialize cache allocator if cache alignment is enabled
         let cache_allocator = if config.enable_cache_alignment && config.cache_config.is_some() {
             // SAFETY: is_some() check above guarantees this unwrap succeeds
-            Some(CacheOptimizedAllocator::new(config.cache_config.clone().unwrap()))
+            Some(CacheOptimizedAllocator::new(config.cache_config.clone().expect("cache_config present when cache_friendly enabled")))
         } else {
             None
         };
@@ -856,7 +857,7 @@ impl SecureMemoryPool {
         // Initialize hot/cold separator if enabled
         let hot_cold_separator = if config.enable_hot_cold_separation && config.cache_config.is_some() {
             // SAFETY: is_some() check above guarantees this unwrap succeeds
-            HotColdSeparator::<usize>::new(config.cache_config.clone().unwrap())
+            HotColdSeparator::<usize>::new(config.cache_config.clone().expect("cache_config present when hot_cold_separation enabled"))
         } else {
             HotColdSeparator::<usize>::new(CacheLayoutConfig::default())
         };
@@ -1035,7 +1036,7 @@ impl SecureMemoryPool {
         if local_cache.borrow_mut().try_push(chunk).is_err() {
             // Local cache full, try global stack
             // SAFETY: try_push() just failed at line 992, guaranteeing cache has at least one element
-            let chunk = local_cache.borrow_mut().try_pop().unwrap();
+            let chunk = local_cache.borrow_mut().try_pop().expect("local cache non-empty by count check");
             self.global_stack.push(chunk);
         }
 
@@ -1411,9 +1412,9 @@ static GLOBAL_SECURE_POOLS: Lazy<Vec<Arc<SecureMemoryPool>>> = Lazy::new(|| {
     // SAFETY: Static initialization - panic on pool creation failure is appropriate
     // because the program cannot continue without global memory pools
     vec![
-        SecureMemoryPool::new(SecurePoolConfig::small_secure()).unwrap(),
-        SecureMemoryPool::new(SecurePoolConfig::medium_secure()).unwrap(),
-        SecureMemoryPool::new(SecurePoolConfig::large_secure()).unwrap(),
+        SecureMemoryPool::new(SecurePoolConfig::small_secure()).expect("small secure pool creation"),
+        SecureMemoryPool::new(SecurePoolConfig::medium_secure()).expect("medium secure pool creation"),
+        SecureMemoryPool::new(SecurePoolConfig::large_secure()).expect("large secure pool creation"),
     ]
 });
 

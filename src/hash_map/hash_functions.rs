@@ -633,8 +633,8 @@ unsafe fn bmi2_string_hash_hardware(bytes: &[u8], mut hash: u64) -> u64 {
     for i in 0..chunks {
         let offset = i * 8;
         let chunk_bytes = &bytes[offset..offset + 8];
-        let val = u64::from_le_bytes(chunk_bytes.try_into().unwrap());
-        
+        let val = u64::from_le_bytes(chunk_bytes.try_into().expect("chunk is 8 bytes"));
+
         // Use BMI2 for enhanced mixing
         let mask = 0xF0F0F0F0F0F0F0F0u64; // Extract high nibbles
         let extracted = unsafe { _pext_u64(val, mask) };
@@ -659,13 +659,13 @@ fn scalar_string_hash_bmi2(bytes: &[u8], mut hash: u64) -> u64 {
     for i in 0..chunks {
         let offset = i * 8;
         let chunk_bytes = &bytes[offset..offset + 8];
-        let val = u64::from_le_bytes(chunk_bytes.try_into().unwrap());
-        
+        let val = u64::from_le_bytes(chunk_bytes.try_into().expect("chunk is 8 bytes"));
+
         // Enhanced scalar mixing inspired by BMI2 patterns
         hash = hash.rotate_left(5).wrapping_add(val);
         hash ^= val.rotate_right(13);
     }
-    
+
     // Handle remaining bytes
     let remaining_start = chunks * 8;
     for &byte in &bytes[remaining_start..] {
@@ -1098,11 +1098,11 @@ impl Bmi2HashDispatcher {
         for i in 0..chunks {
             let offset = i * 8;
             let chunk_bytes = &bytes[offset..offset + 8];
-            let val = u64::from_le_bytes(chunk_bytes.try_into().unwrap());
+            let val = u64::from_le_bytes(chunk_bytes.try_into().expect("chunk is 8 bytes"));
             hash = hash.rotate_left(5).wrapping_add(val);
             hash ^= val.rotate_right(13); // Enhanced mixing
         }
-        
+
         // Handle remaining bytes
         let remaining_start = chunks * 8;
         for &byte in &bytes[remaining_start..] {

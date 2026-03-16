@@ -429,7 +429,7 @@ impl<'a> FastStr<'a> {
             let final_remainder = chunks_8.remainder();
 
             for chunk in chunks_8 {
-                let word = u64::from_le_bytes(chunk.try_into().unwrap());
+                let word = u64::from_le_bytes(chunk.try_into().expect("chunk is 8 bytes"));
                 h = h.wrapping_add(word);
                 h = h.wrapping_mul(0x9e3779b97f4a7c15u64);
                 h ^= h >> 30;
@@ -480,7 +480,7 @@ impl<'a> FastStr<'a> {
             let final_remainder = chunks_8.remainder();
 
             for chunk in chunks_8 {
-                let word = u64::from_le_bytes(chunk.try_into().unwrap());
+                let word = u64::from_le_bytes(chunk.try_into().expect("chunk is 8 bytes"));
                 h = h.wrapping_add(word);
                 h = h.wrapping_mul(0x9e3779b97f4a7c15u64);
                 h ^= h >> 30;
@@ -573,7 +573,7 @@ impl<'a> FastStr<'a> {
         let final_remainder = chunks_8.remainder();
 
         for chunk in chunks_8 {
-            let word = u64::from_le_bytes(chunk.try_into().unwrap());
+            let word = u64::from_le_bytes(chunk.try_into().expect("chunk is 8 bytes"));
             h = h.wrapping_add(word);
             h = h.wrapping_mul(0x9e3779b97f4a7c15u64);
             h ^= h >> 30;
@@ -649,7 +649,7 @@ impl<'a> FastStr<'a> {
         let final_remainder = chunks_8.remainder();
 
         for chunk in chunks_8 {
-            let word = u64::from_le_bytes(chunk.try_into().unwrap());
+            let word = u64::from_le_bytes(chunk.try_into().expect("chunk is 8 bytes"));
             h = h.wrapping_add(word);
             h = h.wrapping_mul(0x9e3779b97f4a7c15u64);
             h ^= h >> 30;
@@ -672,7 +672,7 @@ impl<'a> FastStr<'a> {
         let remainder = chunks.remainder();
 
         for chunk in chunks {
-            let word = u64::from_le_bytes(chunk.try_into().unwrap());
+            let word = u64::from_le_bytes(chunk.try_into().expect("chunk is 8 bytes"));
             // Improved mixing for better avalanche effect
             h = h.wrapping_add(word);
             h = h.wrapping_mul(0x9e3779b97f4a7c15u64); // Golden ratio based multiplier
@@ -699,7 +699,7 @@ impl<'a> FastStr<'a> {
         let final_remainder = chunks.remainder();
 
         for chunk in chunks {
-            let word = u64::from_le_bytes(chunk.try_into().unwrap());
+            let word = u64::from_le_bytes(chunk.try_into().expect("chunk is 8 bytes"));
             // Use same improved mixing as main algorithm
             h = h.wrapping_add(word);
             h = h.wrapping_mul(0x9e3779b97f4a7c15u64);

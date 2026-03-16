@@ -571,7 +571,7 @@ impl ParallelBenchmark {
         println!("{}", "-".repeat(75));
         
         let mut sorted_results: Vec<_> = self.results.values().collect();
-        sorted_results.sort_by(|a, b| b.throughput_mbps.partial_cmp(&a.throughput_mbps).unwrap());
+        sorted_results.sort_by(|a, b| b.throughput_mbps.partial_cmp(&a.throughput_mbps).expect("throughput is not NaN"));
         
         for result in sorted_results {
             println!("{:<15} {:<8} {:<12} {:<12} {:<10.2} {:<10.2}",
@@ -586,12 +586,12 @@ impl ParallelBenchmark {
     
     /// Get best result by throughput
     pub fn get_best_throughput(&self) -> Option<&BenchmarkResult> {
-        self.results.values().max_by(|a, b| a.throughput_mbps.partial_cmp(&b.throughput_mbps).unwrap())
+        self.results.values().max_by(|a, b| a.throughput_mbps.partial_cmp(&b.throughput_mbps).expect("throughput is not NaN"))
     }
     
     /// Get best result by compression ratio
     pub fn get_best_compression(&self) -> Option<&BenchmarkResult> {
-        self.results.values().max_by(|a, b| a.compression_ratio.partial_cmp(&b.compression_ratio).unwrap())
+        self.results.values().max_by(|a, b| a.compression_ratio.partial_cmp(&b.compression_ratio).expect("ratio is not NaN"))
     }
 }
 

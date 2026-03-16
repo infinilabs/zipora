@@ -165,7 +165,8 @@ impl MinimalSso {
     #[cold]
     fn heap_init(&mut self, data: &[u8]) {
         let cap = data.len().next_power_of_two().max(64);
-        let layout = std::alloc::Layout::from_size_align(cap, 1).unwrap();
+        let layout = std::alloc::Layout::from_size_align(cap, 1)
+            .expect("layout creation: non-zero size, power-of-two alignment");
         let ptr = unsafe { std::alloc::alloc(layout) };
         if ptr.is_null() { std::alloc::handle_alloc_error(layout); }
         unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len()); }
@@ -176,7 +177,8 @@ impl MinimalSso {
     fn spill_to_heap(&mut self, old_len: usize, extra: &[u8]) {
         let new_len = old_len + extra.len();
         let cap = new_len.next_power_of_two().max(64);
-        let layout = std::alloc::Layout::from_size_align(cap, 1).unwrap();
+        let layout = std::alloc::Layout::from_size_align(cap, 1)
+            .expect("layout creation: non-zero size, power-of-two alignment");
         let ptr = unsafe { std::alloc::alloc(layout) };
         if ptr.is_null() { std::alloc::handle_alloc_error(layout); }
         unsafe {
@@ -192,10 +194,12 @@ impl MinimalSso {
         let old_cap = self.heap_cap();
         let new_cap = (old_cap * 2).max(min_cap.next_power_of_two());
         let old_ptr = self.heap_ptr();
-        let old_layout = std::alloc::Layout::from_size_align(old_cap, 1).unwrap();
+        let old_layout = std::alloc::Layout::from_size_align(old_cap, 1)
+            .expect("layout creation: non-zero size, power-of-two alignment");
         let ptr = unsafe { std::alloc::realloc(old_ptr, old_layout, new_cap) };
         if ptr.is_null() {
-            let new_layout = std::alloc::Layout::from_size_align(new_cap, 1).unwrap();
+            let new_layout = std::alloc::Layout::from_size_align(new_cap, 1)
+                .expect("layout creation: non-zero size, power-of-two alignment");
             std::alloc::handle_alloc_error(new_layout);
         }
         let len = self.heap_len();
@@ -207,18 +211,18 @@ impl MinimalSso {
 
     #[inline]
     fn heap_ptr(&self) -> *mut u8 {
-        let p: usize = usize::from_ne_bytes(self.bytes[0..8].try_into().unwrap());
+        let p: usize = usize::from_ne_bytes(self.bytes[0..8].try_into().expect("slice is 8 bytes"));
         p as *mut u8
     }
 
     #[inline]
     fn heap_len(&self) -> usize {
-        usize::from_ne_bytes(self.bytes[8..16].try_into().unwrap())
+        usize::from_ne_bytes(self.bytes[8..16].try_into().expect("slice is 8 bytes"))
     }
 
     #[inline]
     fn heap_cap(&self) -> usize {
-        usize::from_ne_bytes(self.bytes[16..24].try_into().unwrap())
+        usize::from_ne_bytes(self.bytes[16..24].try_into().expect("slice is 8 bytes"))
     }
 
     #[inline]
@@ -241,7 +245,8 @@ impl Drop for MinimalSso {
             let ptr = self.heap_ptr();
             let cap = self.heap_cap();
             if cap > 0 && !ptr.is_null() {
-                let layout = std::alloc::Layout::from_size_align(cap, 1).unwrap();
+                let layout = std::alloc::Layout::from_size_align(cap, 1)
+                    .expect("layout creation: non-zero size, power-of-two alignment");
                 unsafe { std::alloc::dealloc(ptr, layout); }
             }
         }

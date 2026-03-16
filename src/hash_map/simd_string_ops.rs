@@ -381,16 +381,16 @@ impl SimdStringOps {
         for i in 0..chunks {
             let offset = i * 8;
             let chunk_bytes = &bytes[offset..offset + 8];
-            let val = u64::from_le_bytes(chunk_bytes.try_into().unwrap());
+            let val = u64::from_le_bytes(chunk_bytes.try_into().expect("chunk is 8 bytes"));
             hash = hash.rotate_left(5).wrapping_add(val);
         }
-        
+
         // Handle remaining bytes
         let remaining_start = chunks * 8;
         for &byte in &bytes[remaining_start..] {
             hash = hash.rotate_left(5).wrapping_add(byte as u64);
         }
-        
+
         hash
     }
 

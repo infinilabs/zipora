@@ -580,7 +580,8 @@ impl<T> AutoGrowCircularQueue<T> {
         // Try cache-line alignment, fall back to type alignment
         Layout::from_size_align(size, align)
             .or_else(|_| Layout::from_size_align(size, align_of::<T>()))
-            .unwrap_or_else(|_| Layout::from_size_align(size, 1).unwrap())
+            .unwrap_or_else(|_| Layout::from_size_align(size, 1)
+                .expect("layout creation: non-zero size, power-of-two alignment"))
     }
 
     /// Gets current memory layout

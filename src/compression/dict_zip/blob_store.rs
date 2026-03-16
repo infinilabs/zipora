@@ -1056,7 +1056,7 @@ impl DictZipBlobStore {
 
         // Get a clone of the encoder for use
         let binding = self.huffman_encoder.borrow();
-        let encoder = binding.as_ref().unwrap().clone();
+        let encoder = binding.as_ref().expect("encoder must be initialized").clone();
 
         // Apply encoding based on interleaving factor
         match self.config.entropy_interleaved {
@@ -1092,7 +1092,7 @@ impl DictZipBlobStore {
         }
 
         // Get mutable borrow for compression
-        self.fse_encoder.borrow_mut().as_mut().unwrap().compress(data)
+        self.fse_encoder.borrow_mut().as_mut().expect("FSE encoder must be initialized").compress(data)
     }
 
     /// Check compression ratio and determine if entropy encoding should be used
@@ -1134,7 +1134,7 @@ impl DictZipBlobStore {
 
         // Get decoder clone for use
         let binding = self.huffman_decoder.borrow();
-        let decoder = binding.as_ref().unwrap().clone();
+        let decoder = binding.as_ref().expect("decoder must be initialized").clone();
 
         // The decoder's decode method already handles the encoding format
         // The interleaving is determined by how the data was encoded
@@ -1151,7 +1151,7 @@ impl DictZipBlobStore {
         }
 
         // Get mutable borrow for decompression
-        self.fse_decoder.borrow_mut().as_mut().unwrap().decompress(data)
+        self.fse_decoder.borrow_mut().as_mut().expect("FSE decoder must be initialized").decompress(data)
     }
 }
 

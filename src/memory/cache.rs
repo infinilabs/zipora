@@ -197,7 +197,7 @@ impl<T> CacheAlignedVec<T> {
             // Reallocation - try to preserve NUMA locality
             let old_layout =
                 Layout::from_size_align(self.capacity * mem::size_of::<T>(), CACHE_LINE_SIZE)
-                    .unwrap();
+                    .expect("layout creation: non-zero size, power-of-two alignment");
 
             let new_ptr = numa_alloc(layout, self.numa_node)?;
 
@@ -229,7 +229,7 @@ impl<T> Drop for CacheAlignedVec<T> {
         if self.capacity > 0 {
             let layout =
                 Layout::from_size_align(self.capacity * mem::size_of::<T>(), CACHE_LINE_SIZE)
-                    .unwrap();
+                    .expect("layout creation: non-zero size, power-of-two alignment");
 
             unsafe {
                 dealloc(self.ptr.as_ptr() as *mut u8, layout);
@@ -381,7 +381,8 @@ impl Drop for NumaMemoryPool {
             unsafe {
                 dealloc(
                     ptr_addr as *mut u8,
-                    Layout::from_size_align(1024, 8).unwrap(),
+                    Layout::from_size_align(1024, 8)
+                        .expect("layout creation: non-zero size, power-of-two alignment"),
                 );
             }
         }
@@ -389,7 +390,8 @@ impl Drop for NumaMemoryPool {
             unsafe {
                 dealloc(
                     ptr_addr as *mut u8,
-                    Layout::from_size_align(64 * 1024, 16).unwrap(),
+                    Layout::from_size_align(64 * 1024, 16)
+                        .expect("layout creation: non-zero size, power-of-two alignment"),
                 );
             }
         }
@@ -397,7 +399,8 @@ impl Drop for NumaMemoryPool {
             unsafe {
                 dealloc(
                     ptr_addr as *mut u8,
-                    Layout::from_size_align(1024 * 1024, 32).unwrap(),
+                    Layout::from_size_align(1024 * 1024, 32)
+                        .expect("layout creation: non-zero size, power-of-two alignment"),
                 );
             }
         }

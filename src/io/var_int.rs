@@ -89,7 +89,7 @@ impl VarInt {
     /// * Vec<u8> containing the encoded bytes
     pub fn encode(value: u64) -> Vec<u8> {
         let mut buffer = Vec::with_capacity(Self::MAX_ENCODED_LEN);
-        Self::write_to_vec(&mut buffer, value).unwrap(); // Vec<u8> writes cannot fail
+        Self::write_to_vec(&mut buffer, value).expect("Vec<u8> write cannot fail");
         buffer
     }
 
@@ -216,7 +216,7 @@ impl VarInt {
     {
         let mut buffer = Vec::new();
         for value in values {
-            Self::write_to_vec(&mut buffer, value).unwrap();
+            Self::write_to_vec(&mut buffer, value).expect("Vec<u8> write cannot fail");
         }
         buffer
     }

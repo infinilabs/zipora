@@ -350,9 +350,9 @@ struct GlobalPools {
 impl GlobalPools {
     fn new() -> Self {
         Self {
-            small_pool: Arc::new(MemoryPool::new(PoolConfig::small()).unwrap()),
-            medium_pool: Arc::new(MemoryPool::new(PoolConfig::medium()).unwrap()),
-            large_pool: Arc::new(MemoryPool::new(PoolConfig::large()).unwrap()),
+            small_pool: Arc::new(MemoryPool::new(PoolConfig::small()).expect("small pool creation")),
+            medium_pool: Arc::new(MemoryPool::new(PoolConfig::medium()).expect("medium pool creation")),
+            large_pool: Arc::new(MemoryPool::new(PoolConfig::large()).expect("large pool creation")),
         }
     }
 
