@@ -1,38 +1,25 @@
-//! Fiber-based concurrency and pipeline processing
+//! Concurrency primitives and pipeline processing
 //!
-//! This module provides high-performance async/await based concurrency primitives
-//! optimized for data processing pipelines and parallel algorithms.
+//! Provides fiber pool, pipeline stages, work-stealing executor,
+//! and parallel trie building.
 
-pub mod async_blob_store;
-pub mod enhanced_mutex;
-pub mod fiber_aio;
 pub mod fiber_pool;
-pub mod fiber_yield;
 pub mod parallel_trie;
 pub mod pipeline;
 pub mod work_stealing;
 
-pub use async_blob_store::{AsyncBlobStore, AsyncFileStore, AsyncMemoryBlobStore};
-pub use enhanced_mutex::{
-    AdaptiveMutex, AdaptiveMutexGuard, MutexConfig, MutexStats, PriorityRwLock, RwLockConfig,
-    SegmentedMutex, SpinLock, SpinLockGuard,
-};
-pub use fiber_aio::{FiberAio, FiberAioConfig, FiberFile, IoProvider, VectoredIo, FiberIoUtils};
-pub use fiber_pool::{FiberHandle, FiberPool, FiberPoolConfig, FiberStats};
-pub use fiber_yield::{
-    AdaptiveYieldScheduler, CooperativeUtils, FiberYield, FiberYieldHandle, GlobalYield,
-    YieldConfig, YieldPoint, YieldStats, YieldingIterator,
-};
+pub use fiber_pool::{FiberHandle, FiberPool, FiberPoolConfig, FiberPoolBuilder, FiberStats};
 pub use parallel_trie::{ParallelLoudsTrie, ParallelTrieBuilder};
 pub use pipeline::{Pipeline, PipelineBuilder, PipelineStage, PipelineStats};
 pub use work_stealing::{Task, WorkStealingExecutor, WorkStealingQueue};
 
-use crate::error::{Result, ZiporaError};
+use crate::error::Result;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-/// A lightweight fiber for concurrent execution
+/// A lightweight fiber for concurrent execution.
+/// Used internally by WorkStealingExecutor.
 pub struct Fiber<T> {
     future: Pin<Box<dyn Future<Output = Result<T>> + Send + 'static>>,
     id: FiberId,
@@ -64,6 +51,7 @@ impl<T> Fiber<T> {
     }
 
     /// Get the fiber's unique ID
+    #[inline]
     pub fn id(&self) -> FiberId {
         self.id
     }
@@ -77,17 +65,14 @@ impl<T> Future for Fiber<T> {
     }
 }
 
-/// Configuration for concurrency parameters
+/// Configuration for concurrency parameters.
+/// Used by WorkStealingExecutor::init().
 #[derive(Debug, Clone)]
 pub struct ConcurrencyConfig {
     /// Maximum number of concurrent fibers
     pub max_fibers: usize,
     /// Size of work-stealing queues
     pub queue_size: usize,
-    /// Enable NUMA-aware scheduling
-    pub numa_aware: bool,
-    /// Fiber stack size
-    pub stack_size: usize,
 }
 
 impl Default for ConcurrencyConfig {
@@ -95,138 +80,13 @@ impl Default for ConcurrencyConfig {
         Self {
             max_fibers: num_cpus::get() * 2,
             queue_size: 1024,
-            numa_aware: false,
-            stack_size: 64 * 1024, // 64KB
         }
     }
-}
-
-/// Initialize the concurrency runtime
-pub async fn init_concurrency(config: ConcurrencyConfig) -> Result<()> {
-    // Verify configuration
-    if config.max_fibers == 0 {
-        return Err(ZiporaError::invalid_data("max_fibers cannot be zero"));
-    }
-
-    if config.queue_size == 0 {
-        return Err(ZiporaError::invalid_data("queue_size cannot be zero"));
-    }
-
-    // Initialize the global executor
-    WorkStealingExecutor::init(config).await?;
-
-    Ok(())
-}
-
-/// Spawn a new fiber for execution
-pub fn spawn<F, T>(future: F) -> FiberHandle<T>
-where
-    F: Future<Output = Result<T>> + Send + 'static,
-    T: Send + 'static,
-{
-    let fiber = Fiber::new(future);
-    let _id = fiber.id();
-
-    // Submit to the global executor
-    WorkStealingExecutor::spawn(fiber)
-}
-
-/// Join multiple fibers and collect their results
-pub async fn join_all<T>(handles: Vec<FiberHandle<T>>) -> Result<Vec<T>>
-where
-    T: Send + 'static,
-{
-    let mut results = Vec::with_capacity(handles.len());
-
-    for handle in handles {
-        results.push(handle.await?);
-    }
-
-    Ok(results)
-}
-
-/// Execute a function on a separate thread pool
-pub async fn spawn_blocking<F, T>(f: F) -> Result<T>
-where
-    F: FnOnce() -> Result<T> + Send + 'static,
-    T: Send + 'static,
-{
-    tokio::task::spawn_blocking(f)
-        .await
-        .map_err(|e| ZiporaError::configuration(&format!("spawn_blocking failed: {}", e)))?
-}
-
-/// Parallel map operation over an iterator
-pub async fn parallel_map<I, F, T, R>(iter: I, f: F) -> Result<Vec<R>>
-where
-    I: IntoIterator<Item = T> + Send,
-    I::IntoIter: Send,
-    F: Fn(T) -> Result<R> + Send + Sync + Clone + 'static,
-    T: Send + 'static,
-    R: Send + 'static,
-{
-    let items: Vec<T> = iter.into_iter().collect();
-    let mut handles = Vec::with_capacity(items.len());
-
-    for item in items {
-        let f = f.clone();
-        let handle = spawn(async move { f(item) });
-        handles.push(handle);
-    }
-
-    join_all(handles).await
-}
-
-/// Parallel reduce operation
-pub async fn parallel_reduce<I, F, T>(iter: I, identity: T, f: F) -> Result<T>
-where
-    I: IntoIterator<Item = T> + Send,
-    I::IntoIter: Send,
-    F: Fn(T, T) -> Result<T> + Send + Sync + Clone + 'static,
-    T: Send + Clone + 'static,
-{
-    let items: Vec<T> = iter.into_iter().collect();
-
-    if items.is_empty() {
-        return Ok(identity);
-    }
-
-    // Divide into chunks for parallel processing
-    let chunk_size = (items.len() + num_cpus::get() - 1) / num_cpus::get();
-    let chunks: Vec<Vec<T>> = items.chunks(chunk_size).map(|c| c.to_vec()).collect();
-
-    let mut handles = Vec::with_capacity(chunks.len());
-
-    for chunk in chunks {
-        let f = f.clone();
-        let identity = identity.clone();
-
-        let handle = spawn(async move {
-            let mut acc = identity;
-            for item in chunk {
-                acc = f(acc, item)?;
-            }
-            Ok(acc)
-        });
-
-        handles.push(handle);
-    }
-
-    let partial_results = join_all(handles).await?;
-
-    // Reduce the partial results
-    let mut final_result = identity;
-    for partial in partial_results {
-        final_result = f(final_result, partial)?;
-    }
-
-    Ok(final_result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio;
 
     #[tokio::test]
     async fn test_fiber_creation() {
@@ -241,41 +101,10 @@ mod tests {
         assert_ne!(id, fiber2.id());
     }
 
-    #[tokio::test]
-    async fn test_concurrency_config() {
+    #[test]
+    fn test_concurrency_config() {
         let config = ConcurrencyConfig::default();
         assert!(config.max_fibers > 0);
         assert!(config.queue_size > 0);
-        assert!(config.stack_size > 0);
-    }
-
-    #[tokio::test]
-    async fn test_parallel_map() {
-        let input = vec![1, 2, 3, 4, 5];
-        let f = |x: i32| -> Result<i32> { Ok(x * 2) };
-
-        let result = parallel_map(input, f).await.unwrap();
-        assert_eq!(result, vec![2, 4, 6, 8, 10]);
-    }
-
-    #[tokio::test]
-    async fn test_parallel_reduce() {
-        let input = vec![1, 2, 3, 4, 5];
-        let f = |acc: i32, x: i32| -> Result<i32> { Ok(acc + x) };
-
-        let result = parallel_reduce(input, 0, f).await.unwrap();
-        assert_eq!(result, 15);
-    }
-
-    #[tokio::test]
-    async fn test_spawn_blocking() {
-        let result = spawn_blocking(|| {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            Ok(42)
-        })
-        .await
-        .unwrap();
-
-        assert_eq!(result, 42);
     }
 }

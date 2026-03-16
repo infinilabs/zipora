@@ -210,105 +210,6 @@ impl FiberPool {
         FiberHandle::new(handle, id)
     }
 
-    /// Spawn multiple fibers and return their handles
-    pub fn spawn_batch<F, T, I>(&self, futures: I) -> Vec<FiberHandle<T>>
-    where
-        F: Future<Output = Result<T>> + Send + 'static,
-        T: Send + 'static,
-        I: IntoIterator<Item = F>,
-    {
-        futures.into_iter().map(|f| self.spawn(f)).collect()
-    }
-
-    /// Execute a parallel map operation
-    pub async fn parallel_map<I, F, T, R>(&self, iter: I, f: F) -> Result<Vec<R>>
-    where
-        I: IntoIterator<Item = T>,
-        F: Fn(T) -> Result<R> + Send + Sync + Clone + 'static,
-        T: Send + 'static,
-        R: Send + 'static,
-    {
-        let handles: Vec<_> = iter
-            .into_iter()
-            .map(|item| {
-                let f = f.clone();
-                self.spawn(async move { f(item) })
-            })
-            .collect();
-
-        let mut results = Vec::with_capacity(handles.len());
-        for handle in handles {
-            results.push(handle.await?);
-        }
-
-        Ok(results)
-    }
-
-    /// Execute a parallel for-each operation
-    pub async fn parallel_for_each<I, F, T>(&self, iter: I, f: F) -> Result<()>
-    where
-        I: IntoIterator<Item = T>,
-        F: Fn(T) -> Result<()> + Send + Sync + Clone + 'static,
-        T: Send + 'static,
-    {
-        let handles: Vec<_> = iter
-            .into_iter()
-            .map(|item| {
-                let f = f.clone();
-                self.spawn(async move { f(item) })
-            })
-            .collect();
-
-        for handle in handles {
-            handle.await?;
-        }
-
-        Ok(())
-    }
-
-    /// Execute a parallel reduce operation
-    pub async fn parallel_reduce<I, F, T>(&self, iter: I, identity: T, f: F) -> Result<T>
-    where
-        I: IntoIterator<Item = T>,
-        F: Fn(T, T) -> Result<T> + Send + Sync + Clone + 'static,
-        T: Send + Clone + 'static,
-    {
-        let items: Vec<T> = iter.into_iter().collect();
-
-        if items.is_empty() {
-            return Ok(identity);
-        }
-
-        // Divide into chunks for parallel processing
-        let chunk_size = std::cmp::max(1, items.len() / self.config.max_workers);
-        let chunks: Vec<Vec<T>> = items.chunks(chunk_size).map(|c| c.to_vec()).collect();
-
-        let handles: Vec<_> = chunks
-            .into_iter()
-            .map(|chunk| {
-                let f = f.clone();
-                let identity = identity.clone();
-                self.spawn(async move {
-                    let mut acc = identity;
-                    for item in chunk {
-                        acc = f(acc, item)?;
-                    }
-                    Ok(acc)
-                })
-            })
-            .collect();
-
-        let partial_results: Vec<T> = futures::future::try_join_all(handles).await?;
-
-        // Reduce the partial results sequentially
-        let mut final_result = identity;
-        for partial in partial_results {
-            final_result = f(final_result, partial)?;
-        }
-
-        Ok(final_result)
-    }
-
     /// Get current pool statistics
     pub fn stats(&self) -> FiberStats {
         let total_spawned = self.stats.total_spawned.load(Ordering::Relaxed);
@@ -441,27 +342,6 @@ mod tests {
         let stats = pool.stats();
         assert_eq!(stats.total_spawned, 1);
         assert_eq!(stats.completed, 1);
-    }
-
-    #[tokio::test]
-    async fn test_parallel_map() {
-        let pool = FiberPool::default().unwrap();
-        let input = vec![1, 2, 3, 4, 5];
-
-        let result = pool.parallel_map(input, |x| Ok(x * 2)).await.unwrap();
-        assert_eq!(result, vec![2, 4, 6, 8, 10]);
-    }
-
-    #[tokio::test]
-    async fn test_parallel_reduce() {
-        let pool = FiberPool::default().unwrap();
-        let input = vec![1, 2, 3, 4, 5];
-
-        let result = pool
-            .parallel_reduce(input, 0, |acc, x| Ok(acc + x))
-            .await
-            .unwrap();
-        assert_eq!(result, 15);
     }
 
     #[tokio::test]
