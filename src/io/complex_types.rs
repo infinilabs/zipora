@@ -126,19 +126,15 @@ impl<T: SerializableType, const N: usize> ComplexSerialize for [T; N] {
             ));
         }
         
-        // Use MaybeUninit for safe initialization
         use std::mem::MaybeUninit;
-        // SAFETY: This creates an array of MaybeUninit<T> values.
-        // MaybeUninit<T> does not require initialization, so an array of
-        // uninitialized MaybeUninit values is valid. All elements are
-        // initialized in the loop below before the final transmute.
-        let mut array: [MaybeUninit<T>; N] = unsafe { MaybeUninit::uninit().assume_init() };
-        
+        // Safe: each element is individually MaybeUninit::uninit(), no assume_init needed
+        let mut array: [MaybeUninit<T>; N] = std::array::from_fn(|_| MaybeUninit::uninit());
+
         for i in 0..N {
             array[i] = MaybeUninit::new(T::deserialize(input)?);
         }
-        
-        // Safety: All elements have been initialized
+
+        // SAFETY: All N elements initialized in the loop above
         Ok(unsafe { std::mem::transmute_copy::<_, [T; N]>(&array) })
     }
 }

@@ -5,9 +5,6 @@
 //! memory-mapped operations, and vectored I/O for maximum throughput.
 
 use std::io::{self, Read, Write, IoSlice, IoSliceMut};
-use std::ptr::NonNull;
-use std::marker::PhantomData;
-use std::slice;
 
 use crate::error::{Result, ZiporaError};
 use crate::memory::SecureMemoryPool;
@@ -56,12 +53,10 @@ pub trait ZeroCopyWrite {
 
 /// Zero-copy buffer for high-performance I/O operations
 pub struct ZeroCopyBuffer {
-    data: NonNull<u8>,
-    capacity: usize,
+    buffer: Vec<u8>,
     read_pos: usize,
     write_pos: usize,
     pool: Option<Arc<SecureMemoryPool>>,
-    _phantom: PhantomData<u8>,
 }
 
 impl ZeroCopyBuffer {
@@ -80,36 +75,18 @@ impl ZeroCopyBuffer {
 
     /// Create a buffer with an optional memory pool
     fn with_pool(capacity: usize, pool: Option<Arc<SecureMemoryPool>>) -> Result<Self> {
-        // Handle zero capacity specially to avoid allocation
-        let data = if capacity == 0 {
-            NonNull::dangling()
-        } else {
-            let layout = std::alloc::Layout::from_size_align(capacity, 64) // 64-byte alignment for SIMD
-                .map_err(|e| ZiporaError::io_error(format!("Invalid buffer layout: {}", e)))?;
-
-            unsafe {
-                let ptr = std::alloc::alloc(layout);
-                if ptr.is_null() {
-                    return Err(ZiporaError::io_error("Failed to allocate zero-copy buffer"));
-                }
-                NonNull::new_unchecked(ptr)
-            }
-        };
-
         Ok(Self {
-            data,
-            capacity,
+            buffer: vec![0u8; capacity],
             read_pos: 0,
             write_pos: 0,
             pool,
-            _phantom: PhantomData,
         })
     }
 
     /// Get the buffer capacity
     #[inline]
     pub fn capacity(&self) -> usize {
-        self.capacity
+        self.buffer.len()
     }
 
     /// Get the number of bytes available for reading
@@ -119,7 +96,7 @@ impl ZeroCopyBuffer {
 
     /// Get the number of bytes available for writing
     pub fn write_available(&self) -> usize {
-        self.capacity - self.write_pos
+        self.buffer.len() - self.write_pos
     }
 
     /// Get the current read position
@@ -141,7 +118,7 @@ impl ZeroCopyBuffer {
     /// Check if the buffer is full
     #[inline]
     pub fn is_full(&self) -> bool {
-        self.write_pos == self.capacity
+        self.write_pos == self.buffer.len()
     }
 
     /// Reset the buffer to empty state
@@ -155,13 +132,7 @@ impl ZeroCopyBuffer {
         if self.read_pos > 0 {
             let available = self.available();
             if available > 0 {
-                unsafe {
-                    std::ptr::copy(
-                        self.data.as_ptr().add(self.read_pos),
-                        self.data.as_ptr(),
-                        available,
-                    );
-                }
+                self.buffer.copy_within(self.read_pos..self.write_pos, 0);
             }
             self.read_pos = 0;
             self.write_pos = available;
@@ -170,22 +141,12 @@ impl ZeroCopyBuffer {
 
     /// Get a slice of the readable data
     pub fn readable_slice(&self) -> &[u8] {
-        unsafe {
-            slice::from_raw_parts(
-                self.data.as_ptr().add(self.read_pos),
-                self.available(),
-            )
-        }
+        &self.buffer[self.read_pos..self.write_pos]
     }
 
     /// Get a mutable slice of the writable space
     pub fn writable_slice(&mut self) -> &mut [u8] {
-        unsafe {
-            slice::from_raw_parts_mut(
-                self.data.as_ptr().add(self.write_pos),
-                self.write_available(),
-            )
-        }
+        &mut self.buffer[self.write_pos..]
     }
 
     /// Fill the buffer from a reader, returning the number of bytes read
@@ -201,7 +162,7 @@ impl ZeroCopyBuffer {
 
         let bytes_read = reader.read(writable)
             .map_err(|e| ZiporaError::io_error(format!("Failed to fill buffer: {}", e)))?;
-        
+
         self.write_pos += bytes_read;
         Ok(bytes_read)
     }
@@ -215,7 +176,7 @@ impl ZeroCopyBuffer {
 
         let bytes_written = writer.write(readable)
             .map_err(|e| ZiporaError::io_error(format!("Failed to drain buffer: {}", e)))?;
-        
+
         self.read_pos += bytes_written;
         Ok(bytes_written)
     }
@@ -224,13 +185,7 @@ impl ZeroCopyBuffer {
 impl ZeroCopyRead for ZeroCopyBuffer {
     fn zc_read(&mut self, len: usize) -> Result<Option<&[u8]>> {
         if self.available() >= len {
-            let slice = unsafe {
-                slice::from_raw_parts(
-                    self.data.as_ptr().add(self.read_pos),
-                    len,
-                )
-            };
-            Ok(Some(slice))
+            Ok(Some(&self.buffer[self.read_pos..self.read_pos + len]))
         } else {
             Ok(None)
         }
@@ -256,20 +211,14 @@ impl ZeroCopyRead for ZeroCopyBuffer {
 impl ZeroCopyWrite for ZeroCopyBuffer {
     fn zc_write(&mut self, len: usize) -> Result<Option<&mut [u8]>> {
         if self.write_available() >= len {
-            let slice = unsafe {
-                slice::from_raw_parts_mut(
-                    self.data.as_ptr().add(self.write_pos),
-                    len,
-                )
-            };
-            Ok(Some(slice))
+            Ok(Some(&mut self.buffer[self.write_pos..self.write_pos + len]))
         } else {
             Ok(None)
         }
     }
 
     fn zc_commit(&mut self, len: usize) -> Result<()> {
-        if self.write_pos + len > self.capacity {
+        if self.write_pos + len > self.buffer.len() {
             return Err(ZiporaError::invalid_data("Cannot commit past buffer capacity"));
         }
         self.write_pos += len;
@@ -287,40 +236,6 @@ impl ZeroCopyWrite for ZeroCopyBuffer {
         Ok(self.write_available().min(len))
     }
 }
-
-impl Drop for ZeroCopyBuffer {
-    fn drop(&mut self) {
-        // Only deallocate if we have a non-zero capacity
-        if self.capacity > 0 {
-            // Use the safe Layout constructor to match allocation
-            // This ensures we use the exact same layout parameters
-            let layout = std::alloc::Layout::from_size_align(self.capacity, 64)
-                .expect("Invalid layout in Drop - this should never happen if allocation succeeded");
-
-            unsafe {
-                std::alloc::dealloc(self.data.as_ptr(), layout);
-            }
-        }
-        // For zero capacity, data is NonNull::dangling() and doesn't need deallocation
-    }
-}
-
-// SAFETY: ZeroCopyBuffer is Send because:
-// 1. `data: NonNull<u8>` - Raw pointer to heap-allocated memory owned by this struct.
-//    Memory is allocated in `new()` and deallocated in `Drop`. No thread-local state.
-// 2. `capacity/read_pos/write_pos: usize` - Primitive fields, trivially Send.
-// 3. `_secure_pool/use_secure_pool` - Config fields with no thread affinity.
-unsafe impl Send for ZeroCopyBuffer {}
-
-// SAFETY: ZeroCopyBuffer is Sync because:
-// 1. All fields are either immutable (capacity) or require &mut self for mutation.
-// 2. The buffer provides raw memory access but mutation requires exclusive access.
-// 3. Read-only operations (data(), available(), etc.) are safe to call concurrently.
-// 4. No interior mutability without &mut self.
-//
-// Note: Concurrent reads through multiple &ZeroCopyBuffer are safe, but
-// concurrent writes require external synchronization or &mut self.
-unsafe impl Sync for ZeroCopyBuffer {}
 
 /// Zero-copy reader wrapper that provides direct buffer access
 pub struct ZeroCopyReader<R> {
