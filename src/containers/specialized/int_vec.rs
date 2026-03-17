@@ -44,35 +44,31 @@ mod unaligned_ops {
             if byte_count >= 64 && count == output.len() {
                 // Use SIMD fast_copy for large transfers (≥64 bytes)
                 let src_slice = unsafe { std::slice::from_raw_parts(ptr, byte_count) };
-                let dst_slice = unsafe { 
-                    std::slice::from_raw_parts_mut(output.as_mut_ptr() as *mut u8, byte_count) 
-                };
+                let dst_slice: &mut [u8] = bytemuck::cast_slice_mut(output);
                 if let Ok(()) = fast_copy(src_slice, dst_slice) {
                     return;
                 }
             }
-            
+
             // Fallback to unaligned reads for smaller transfers or on error
             for (i, out) in output.iter_mut().take(count).enumerate() {
                 *out = unsafe { std::ptr::read_unaligned((ptr as *const u64).add(i)) };
             }
         }
-        
+
         /// Write multiple u64 values in bulk using SIMD-optimized memory operations
         #[inline]
         pub unsafe fn write_bulk_u64(ptr: *mut u8, values: &[u64]) {
             let byte_count = values.len() * 8;
             if byte_count >= 64 {
                 // Use SIMD fast_copy for large transfers (≥64 bytes)
-                let src_slice = unsafe { 
-                    std::slice::from_raw_parts(values.as_ptr() as *const u8, byte_count) 
-                };
+                let src_slice: &[u8] = bytemuck::cast_slice(values);
                 let dst_slice = unsafe { std::slice::from_raw_parts_mut(ptr, byte_count) };
                 if let Ok(()) = fast_copy(src_slice, dst_slice) {
                     return;
                 }
             }
-            
+
             // Fallback to unaligned writes for smaller transfers or on error
             for (i, &value) in values.iter().enumerate() {
                 unsafe { std::ptr::write_unaligned((ptr as *mut u64).add(i), value); }
@@ -745,20 +741,14 @@ impl<T: PackedInt> IntVec<T> {
     /// - Minimal overhead for small datasets
     /// - Optimized memory access patterns
 
-    /// 🚀 ZERO-COPY PATTERN: Zero-copy bulk constructor for u64 types
+    /// Bulk constructor storing values as raw u64 without compression
     fn from_slice_bulk_zerocopy(values: &[T], start_time: std::time::Instant) -> Result<Self> {
         let mut result = Self::new();
         result.len = values.len();
-        
-        // Direct memory copy for u64 types - fastest possible path
-        unsafe {
-            let src_ptr = values.as_ptr() as *const u64;
-            let src_slice = std::slice::from_raw_parts(src_ptr, values.len());
-            
-            // Skip compression for maximum speed - store as raw u64
-            result.strategy = CompressionStrategy::Raw;
-            result.data = src_slice.iter().flat_map(|&x| x.to_le_bytes()).collect();
-        }
+
+        // Convert through PackedInt::to_u64 — safe and correct for all T: PackedInt
+        result.strategy = CompressionStrategy::Raw;
+        result.data = values.iter().flat_map(|v| v.to_u64().to_le_bytes()).collect();
         
         // Update statistics
         result.stats.original_size = values.len() * mem::size_of::<T>();

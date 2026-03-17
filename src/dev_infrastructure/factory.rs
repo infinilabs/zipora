@@ -233,41 +233,35 @@ impl<T: Send + Sync + 'static> AutoRegister<T> {
 /// Get the global factory instance for type T
 pub fn global_factory<T: Send + Sync + 'static>() -> &'static GlobalFactory<T> {
     use std::sync::Mutex;
-    static FACTORIES: std::sync::LazyLock<Mutex<HashMap<TypeId, Box<dyn Any + Send + Sync>>>> = 
+    static FACTORIES: std::sync::LazyLock<Mutex<HashMap<TypeId, Box<dyn Any + Send + Sync>>>> =
         std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
-    
+
     let type_id = TypeId::of::<T>();
-    
+
     // First, try to get an existing factory
     {
         let factories = FACTORIES.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(factory_any) = factories.get(&type_id) {
-            let factory = factory_any.downcast_ref::<GlobalFactory<T>>().expect("registered factory type");
-            // Safety: The factory is stored in a static HashMap and lives for the entire program duration
-            return unsafe { std::mem::transmute::<&GlobalFactory<T>, &'static GlobalFactory<T>>(factory) };
+            let factory_ref = factory_any.downcast_ref::<&'static GlobalFactory<T>>()
+                .expect("registered factory type");
+            return *factory_ref;
         }
     }
-    
-    // If not found, create a new one
+
+    // If not found, create and leak a new one (lives for program duration)
     {
         let mut factories = FACTORIES.lock().unwrap_or_else(|e| e.into_inner());
         // Double-check pattern in case another thread created it while we were waiting for the lock
         if let Some(factory_any) = factories.get(&type_id) {
-            let factory = factory_any.downcast_ref::<GlobalFactory<T>>().expect("registered factory type");
-            // Safety: The factory is stored in a static HashMap and lives for the entire program duration
-            return unsafe { std::mem::transmute::<&GlobalFactory<T>, &'static GlobalFactory<T>>(factory) };
+            let factory_ref = factory_any.downcast_ref::<&'static GlobalFactory<T>>()
+                .expect("registered factory type");
+            return *factory_ref;
         }
-        
-        let factory = Box::new(GlobalFactory::<T>::new());
-        factories.insert(type_id, factory);
 
-        // SAFETY: We just inserted this key on the line above, so get() is guaranteed to succeed.
-        let factory_any = factories.get(&type_id).expect("factory registered for type");
-        // SAFETY: We inserted GlobalFactory<T>, so downcast_ref to same type always succeeds.
-        let factory = factory_any.downcast_ref::<GlobalFactory<T>>().expect("registered factory type");
-        
-        // Safety: The factory is stored in a static HashMap and lives for the entire program duration
-        unsafe { std::mem::transmute::<&GlobalFactory<T>, &'static GlobalFactory<T>>(factory) }
+        // Box::leak gives us a genuinely &'static reference — no transmute needed
+        let leaked: &'static GlobalFactory<T> = Box::leak(Box::new(GlobalFactory::<T>::new()));
+        factories.insert(type_id, Box::new(leaked) as Box<dyn Any + Send + Sync>);
+        leaked
     }
 }
 

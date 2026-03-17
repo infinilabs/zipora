@@ -6,7 +6,6 @@
 
 use std::cmp;
 use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
-use std::ptr;
 
 use crate::error::{Result, ZiporaError};
 use crate::memory::SecureMemoryPool;
@@ -211,19 +210,11 @@ impl<R: Read> StreamBufferedReader<R> {
 
     /// Fill buffer using SIMD memcpy for internal data movement
     fn fill_buffer_simd(&mut self, min_needed: usize) -> Result<usize> {
-        // Move any remaining data to beginning of buffer using SIMD
+        // Move any remaining data to beginning of buffer
         if self.pos > 0 {
             let remaining = self.end - self.pos;
             if remaining > 0 {
-                // Use standard memmove for overlapping regions within the same buffer
-                // SIMD copy requires non-overlapping slices, which we can't guarantee here
-                unsafe {
-                    ptr::copy(
-                        self.buffer.as_ptr().add(self.pos),
-                        self.buffer.as_mut_ptr(),
-                        remaining,
-                    );
-                }
+                self.buffer.copy_within(self.pos..self.pos + remaining, 0);
             }
             self.end = remaining;
             self.pos = 0;

@@ -421,14 +421,14 @@ where
     }
 }
 
-/// Iterator over mutable values in EasyHashMap
+/// Iterator over cloned values in EasyHashMap
 pub struct ValuesIterMut<'a, K, V>
 where
     K: Hash + Eq + Clone,
     V: Clone,
 {
     keys: Vec<K>,
-    map: &'a mut EasyHashMap<K, V>,
+    map: &'a EasyHashMap<K, V>,
     current: usize,
 }
 
@@ -437,17 +437,15 @@ where
     K: Hash + Eq + Clone,
     V: Clone,
 {
-    type Item = &'a mut V;
+    type Item = V;
 
     fn next(&mut self) -> Option<Self::Item> {
         while self.current < self.keys.len() {
             let key = &self.keys[self.current];
             self.current += 1;
 
-            // SAFETY: We know this key exists since we got it from keys()
-            // We need to use unsafe here to extend the lifetime for the iterator
-            if let Some(value) = self.map.inner.get_mut(key) {
-                return Some(unsafe { std::mem::transmute(value) });
+            if let Some(value) = self.map.inner.get(key) {
+                return Some(value.clone());
             }
         }
         None
