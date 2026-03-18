@@ -434,6 +434,7 @@ impl PatternMatcher {
     /// SIMD-accelerated string comparison and extension
     #[cfg(feature = "simd")]
     fn simd_compare_and_extend(&self, input: &[u8], dict: &[u8], max_len: usize) -> usize {
+        // SAFETY: SIMD operations are guarded by cfg(feature = "simd"), bounds checked before each SSE2 intrinsic call
         unsafe {
             let mut pos = 0;
             let simd_chunks = max_len / 16;

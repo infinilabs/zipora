@@ -222,6 +222,7 @@ impl RankSelectSimple {
                 // pdep(1 << k, word) gives a mask with only the k-th set bit
                 // tzcnt gives its position
                 let mask = 1u64 << k;
+                // SAFETY: BMI2 feature detected at runtime, _pdep_u64 is pure arithmetic with no memory access
                 let deposited = unsafe { core::arch::x86_64::_pdep_u64(mask, word) };
                 return deposited.trailing_zeros() as usize;
             }

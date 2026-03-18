@@ -185,6 +185,7 @@ impl SimdHuffmanEncoder {
         #[cfg(target_arch = "x86_64")]
         {
             if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("bmi2") {
+                // SAFETY: AVX2 and BMI2 support verified by runtime feature detection
                 return unsafe { self.encode_avx2_bmi2_impl(data) };
             }
         }
@@ -197,6 +198,7 @@ impl SimdHuffmanEncoder {
         #[cfg(target_arch = "x86_64")]
         {
             if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("bmi2") {
+                // SAFETY: AVX2 and BMI2 support verified by runtime feature detection
                 return unsafe { self.encode_avx2_bmi2_impl(data) };
             }
         }
@@ -209,6 +211,7 @@ impl SimdHuffmanEncoder {
         #[cfg(target_arch = "x86_64")]
         {
             if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("bmi2") {
+                // SAFETY: AVX2 and BMI2 support verified by runtime feature detection
                 return unsafe { self.encode_avx2_bmi2_impl(data) };
             }
         }
@@ -221,6 +224,7 @@ impl SimdHuffmanEncoder {
         #[cfg(target_arch = "x86_64")]
         {
             if is_x86_feature_detected!("avx2") {
+                // SAFETY: AVX2 support verified by runtime feature detection
                 return unsafe { self.encode_avx2_impl(data) };
             }
         }
@@ -233,6 +237,7 @@ impl SimdHuffmanEncoder {
         #[cfg(target_arch = "x86_64")]
         {
             if is_x86_feature_detected!("avx2") {
+                // SAFETY: AVX2 support verified by runtime feature detection
                 return unsafe { self.encode_avx2_impl(data) };
             }
         }
@@ -245,6 +250,7 @@ impl SimdHuffmanEncoder {
         #[cfg(target_arch = "x86_64")]
         {
             if is_x86_feature_detected!("avx2") {
+                // SAFETY: AVX2 support verified by runtime feature detection
                 return unsafe { self.encode_avx2_impl(data) };
             }
         }
@@ -257,6 +263,7 @@ impl SimdHuffmanEncoder {
         #[cfg(target_arch = "x86_64")]
         {
             if is_x86_feature_detected!("sse4.2") && is_x86_feature_detected!("bmi2") {
+                // SAFETY: SSE4.2 and BMI2 support verified by runtime feature detection
                 return unsafe { self.encode_sse42_bmi2_impl(data) };
             }
         }
@@ -269,6 +276,7 @@ impl SimdHuffmanEncoder {
         #[cfg(target_arch = "x86_64")]
         {
             if is_x86_feature_detected!("sse4.2") {
+                // SAFETY: SSE4.2 support verified by runtime feature detection
                 return unsafe { self.encode_sse42_impl(data) };
             }
         }
@@ -281,6 +289,7 @@ impl SimdHuffmanEncoder {
         #[cfg(target_arch = "x86_64")]
         {
             if is_x86_feature_detected!("bmi2") {
+                // SAFETY: BMI2 support verified by runtime feature detection
                 return unsafe { self.encode_bmi2_impl(data) };
             }
         }
@@ -327,12 +336,14 @@ impl SimdHuffmanEncoder {
         for chunk in chunks {
             // Prefetch next chunk
             if self.config.enable_prefetching {
+                // SAFETY: avx2 guaranteed by #[target_feature(enable = "avx2,bmi2")], pointer valid from chunk slice
                 unsafe {
                     _mm_prefetch(chunk.as_ptr().add(32) as *const i8, _MM_HINT_T0);
                 }
             }
 
             // Load 32 symbols into AVX2 register
+            // SAFETY: avx2 guaranteed by #[target_feature(enable = "avx2,bmi2")], chunk is 32 bytes from chunks_exact
             let _symbols = unsafe { _mm256_loadu_si256(chunk.as_ptr() as *const __m256i) };
             
             // Process 8 symbols at a time using AVX2
@@ -350,6 +361,7 @@ impl SimdHuffmanEncoder {
                     
                     if length > 0 {
                         // Use BMI2 BZHI to extract only the needed bits
+                        // SAFETY: bmi2 guaranteed by #[target_feature(enable = "avx2,bmi2")], operates on u32 with valid index
                         let masked_code = unsafe { _bzhi_u32(code, length as u32) };
                         bit_buffer.append_bits(masked_code as u64, length)?;
                     } else {
@@ -368,6 +380,7 @@ impl SimdHuffmanEncoder {
             let length = symbol_lengths[symbol as usize];
             
             if length > 0 {
+                // SAFETY: bmi2 guaranteed by #[target_feature(enable = "avx2,bmi2")], operates on u32 with valid index
                 let masked_code = unsafe { _bzhi_u32(code, length as u32) };
                 bit_buffer.append_bits(masked_code as u64, length)?;
             } else {
@@ -442,6 +455,7 @@ impl SimdHuffmanEncoder {
     unsafe fn encode_sse42_bmi2_impl(&self, data: &[u8]) -> Result<Vec<u8>> {
         // Similar to AVX2+BMI2 but using SSE4.2 16-byte operations
         // Implementation details similar to above but with SSE intrinsics
+        // SAFETY: bmi2 guaranteed by #[target_feature(enable = "sse4.2,bmi2")], delegating to bmi2_impl
         unsafe { self.encode_bmi2_impl(data) }
     }
 
@@ -474,8 +488,9 @@ impl SimdHuffmanEncoder {
                         }
                     }
                     let length = code.len() as u8;
-                    
+
                     // Use BZHI to extract only needed bits
+                    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 with valid index
                     let final_code = unsafe { _bzhi_u64(packed_code, length as u32) };
                     bit_buffer.append_bits(final_code, length)?;
                 } else {

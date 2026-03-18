@@ -139,6 +139,7 @@ impl RankSelectSE256 {
         {
             if is_x86_feature_detected!("bmi2") {
                 let mask = 1u64 << k;
+                // SAFETY: BMI2 feature detected at runtime, _pdep_u64 is pure arithmetic with no memory access
                 let deposited = unsafe { core::arch::x86_64::_pdep_u64(mask, word) };
                 return deposited.trailing_zeros() as usize;
             }
@@ -166,6 +167,7 @@ impl RankSelectSE256 {
         let idx = bitpos / LINE_BITS;
         if idx < self.rank_cache.len() {
             #[cfg(target_arch = "x86_64")]
+            // SAFETY: idx < rank_cache.len() checked, _mm_prefetch is always safe (hint can be ignored)
             unsafe {
                 core::arch::x86_64::_mm_prefetch(
                     &self.rank_cache[idx] as *const RankCacheSE as *const i8,

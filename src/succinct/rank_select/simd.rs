@@ -296,6 +296,8 @@ fn bulk_rank1_avx512(bit_data: &[u64], positions: &[usize], chunk_size: usize) -
             let chunks = complete_words / 8;
             let remainder = complete_words % 8;
 
+            // SAFETY: AVX-512 and popcnt guaranteed by function's CPU feature selection,
+            // pointer valid from bit_data.as_ptr().add(base_idx), bounds: base_idx+8 ≤ complete_words ≤ bit_data.len() verified by chunks calculation
             unsafe {
                 for chunk in 0..chunks {
                     let base_idx = chunk * 8;
@@ -355,6 +357,9 @@ fn bulk_rank1_avx2(bit_data: &[u64], positions: &[usize], _chunk_size: usize) ->
             let chunks = complete_words / 4;
             let remainder = complete_words % 4;
 
+            // SAFETY: AVX2 and popcnt guaranteed by function's CPU feature selection,
+            // pointers valid from bit_data.as_ptr().add(base_idx), bounds: base_idx+4 ≤ complete_words ≤ bit_data.len() verified by chunks calculation,
+            // transmute safe: __m256i and [u64; 4] have same size and alignment
             unsafe {
                 for chunk in 0..chunks {
                     let base_idx = chunk * 4;
@@ -378,6 +383,7 @@ fn bulk_rank1_avx2(bit_data: &[u64], positions: &[usize], _chunk_size: usize) ->
 
             // Handle remaining words
             for i in chunks * 4..chunks * 4 + remainder {
+                // SAFETY: POPCNT guaranteed by function's CPU feature selection
                 unsafe {
                     rank += _popcnt64(bit_data[i] as i64) as usize;
                 }
@@ -385,6 +391,7 @@ fn bulk_rank1_avx2(bit_data: &[u64], positions: &[usize], _chunk_size: usize) ->
         } else {
             // Use POPCNT for small numbers of words
             for i in 0..complete_words {
+                // SAFETY: POPCNT guaranteed by function's CPU feature selection
                 unsafe {
                     rank += _popcnt64(bit_data[i] as i64) as usize;
                 }
@@ -395,6 +402,7 @@ fn bulk_rank1_avx2(bit_data: &[u64], positions: &[usize], _chunk_size: usize) ->
         if bit_offset > 0 && word_index < bit_data.len() {
             let mask = (1u64 << bit_offset) - 1;
             let masked_word = bit_data[word_index] & mask;
+            // SAFETY: POPCNT guaranteed by function's CPU feature selection
             unsafe {
                 rank += _popcnt64(masked_word as i64) as usize;
             }
@@ -424,12 +432,14 @@ fn bulk_rank1_popcnt(bit_data: &[u64], positions: &[usize], use_prefetch: bool) 
         // Count complete words using hardware POPCNT
         for i in 0..word_index {
             if use_prefetch && i % 8 == 0 && i + 8 < word_index {
+                // SAFETY: Pointer valid from bit_data.as_ptr().add(i+8), bounds: i+8 < word_index ≤ bit_data.len() checked above
                 unsafe {
                     let prefetch_ptr = bit_data.as_ptr().add(i + 8);
                     _mm_prefetch(prefetch_ptr as *const i8, _MM_HINT_T0);
                 }
             }
 
+            // SAFETY: POPCNT guaranteed by function's CPU feature selection
             unsafe {
                 rank += _popcnt64(bit_data[i] as i64) as usize;
             }
@@ -439,6 +449,7 @@ fn bulk_rank1_popcnt(bit_data: &[u64], positions: &[usize], use_prefetch: bool) 
         if bit_offset > 0 && word_index < bit_data.len() {
             let mask = (1u64 << bit_offset) - 1;
             let masked_word = bit_data[word_index] & mask;
+            // SAFETY: POPCNT guaranteed by function's CPU feature selection
             unsafe {
                 rank += _popcnt64(masked_word as i64) as usize;
             }
@@ -501,6 +512,7 @@ fn bulk_select1_bmi2(bit_data: &[u64], indices: &[usize]) -> Result<Vec<usize>> 
         if remaining_rank > 0 && word_idx < bit_data.len() {
             let word = bit_data[word_idx];
 
+            // SAFETY: BMI2 guaranteed by function's CPU feature selection (caps.has_bmi2 check in caller)
             unsafe {
                 // Use PDEP to extract the nth set bit position
                 let mask = (1u64 << remaining_rank) - 1;
@@ -555,6 +567,7 @@ fn bulk_select1_popcnt(bit_data: &[u64], indices: &[usize]) -> Result<Vec<usize>
 
         // Find the word containing the target bit
         for (word_idx, &word) in bit_data.iter().enumerate() {
+            // SAFETY: POPCNT guaranteed by function's CPU feature selection
             unsafe {
                 let word_popcount = _popcnt64(word as i64) as usize;
 
@@ -590,6 +603,8 @@ fn bulk_popcount_avx512(bit_data: &[u64]) -> Vec<usize> {
     let chunks = bit_data.len() / 8;
     let remainder = bit_data.len() % 8;
 
+    // SAFETY: AVX-512 and popcnt guaranteed by function's CPU feature selection,
+    // pointer valid from bit_data.as_ptr().add(base_idx), bounds: base_idx+8 ≤ bit_data.len() verified by chunks calculation
     unsafe {
         // Process 8 words at a time using AVX-512
         for chunk in 0..chunks {
@@ -623,6 +638,9 @@ fn bulk_popcount_avx2(bit_data: &[u64]) -> Vec<usize> {
     let chunks = bit_data.len() / 4;
     let remainder = bit_data.len() % 4;
 
+    // SAFETY: AVX2 and popcnt guaranteed by function's CPU feature selection,
+    // pointer valid from bit_data.as_ptr().add(base_idx), bounds: base_idx+4 ≤ bit_data.len() verified by chunks calculation,
+    // transmute safe: __m256i and [u64; 4] have same size and alignment
     unsafe {
         // Process 4 words at a time using AVX2
         for chunk in 0..chunks {
@@ -650,6 +668,7 @@ fn bulk_popcount_avx2(bit_data: &[u64]) -> Vec<usize> {
 fn bulk_popcount_popcnt(bit_data: &[u64]) -> Vec<usize> {
     bit_data
         .iter()
+        // SAFETY: Hardware features verified or caller ensures safety invariants
         .map(|&word| unsafe { _popcnt64(word as i64) as usize })
         .collect()
 }
@@ -677,12 +696,15 @@ fn bulk_rank1_neon(bit_data: &[u64], positions: &[usize]) -> Vec<usize> {
         let chunks = word_index / 2;
         let remainder = word_index % 2;
 
+        // SAFETY: NEON guaranteed by function's CPU feature selection,
+        // pointer valid from bit_data.as_ptr().add(base_idx) cast to u8, bounds: base_idx+2 ≤ word_index ≤ bit_data.len() verified by chunks calculation
         unsafe {
             for chunk in 0..chunks {
                 let base_idx = chunk * 2;
                 let ptr = bit_data.as_ptr().add(base_idx) as *const u8;
 
                 // Load 16 bytes (2 u64s)
+                // SAFETY: NEON guaranteed, ptr valid from bit_data.as_ptr().add(base_idx) cast to u8
                 let vec = unsafe { vld1q_u8(ptr) };
 
                 // Count bits using NEON popcount
@@ -725,13 +747,17 @@ fn bulk_popcount_neon(bit_data: &[u64]) -> Vec<usize> {
     let chunks = bit_data.len() / 2;
     let remainder = bit_data.len() % 2;
 
+    // SAFETY: NEON guaranteed by function's CPU feature selection,
+    // pointer valid from bit_data.as_ptr().add(base_idx) cast to u8, bounds: base_idx+2 ≤ bit_data.len() verified by chunks calculation
     unsafe {
         // Process 2 words at a time using NEON
         for chunk in 0..chunks {
             let base_idx = chunk * 2;
+            // SAFETY: NEON guaranteed, ptr valid from bit_data.as_ptr().add(base_idx) cast to u8
             let ptr = bit_data.as_ptr().add(base_idx) as *const u8;
 
             // Load 16 bytes (2 u64s)
+            // SAFETY: NEON guaranteed for popcount_vec
             let vec = unsafe { vld1q_u8(ptr) };
 
             // Count bits for each 8-byte chunk

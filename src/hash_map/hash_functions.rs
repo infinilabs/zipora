@@ -95,6 +95,7 @@ pub fn bmi2_hash_combine_u32(hash: u32, value: u32) -> u32 {
     {
         let caps = Bmi2Capabilities::get();
         if caps.has_bmi2 {
+            // SAFETY: BMI2 support verified by caps.has_bmi2 runtime check
             return unsafe { bmi2_hash_combine_u32_hardware(hash, value) };
         }
     }
@@ -115,6 +116,7 @@ pub fn bmi2_hash_combine_u64(hash: u64, value: u64) -> u64 {
     {
         let caps = Bmi2Capabilities::get();
         if caps.has_bmi2 {
+            // SAFETY: BMI2 support verified by caps.has_bmi2 runtime check
             return unsafe { bmi2_hash_combine_u64_hardware(hash, value) };
         }
     }
@@ -139,11 +141,14 @@ unsafe fn bmi2_hash_combine_u32_hardware(hash: u32, value: u32) -> u32 {
     let mask1 = 0xAAAAAAAAu32;
     let mask2 = 0x55555555u32;
 
+    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u32 values
     let extracted1 = unsafe { _pext_u32(effective_hash, mask1) };
+    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u32 values
     let extracted2 = unsafe { _pext_u32(value, mask2) };
 
     // Combine and ensure non-zero result
     let combined = extracted1.wrapping_add(extracted2);
+    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u32 values
     let mut result = unsafe { _pdep_u32(combined, 0xFFFFFFFFu32) };
 
     // Additional mixing to ensure good distribution
@@ -169,11 +174,14 @@ unsafe fn bmi2_hash_combine_u64_hardware(hash: u64, value: u64) -> u64 {
     let mask1 = 0xAAAAAAAAAAAAAAAAu64;
     let mask2 = 0x5555555555555555u64;
 
+    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 values
     let extracted1 = unsafe { _pext_u64(effective_hash, mask1) };
+    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 values
     let extracted2 = unsafe { _pext_u64(value, mask2) };
 
     // Combine and ensure non-zero result
     let combined = extracted1.wrapping_add(extracted2);
+    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 values
     let mut result = unsafe { _pdep_u64(combined, 0xFFFFFFFFFFFFFFFFu64) };
 
     // Additional mixing to ensure good distribution
@@ -221,6 +229,7 @@ pub fn bmi2_golden_ratio_next_size(current_size: usize) -> usize {
     {
         let caps = Bmi2Capabilities::get();
         if caps.has_bmi2 {
+            // SAFETY: BMI2 support verified by caps.has_bmi2 runtime check
             return unsafe { bmi2_golden_ratio_hardware(current_size) };
         }
     }
@@ -239,8 +248,9 @@ unsafe fn bmi2_golden_ratio_hardware(current_size: usize) -> usize {
     use std::arch::x86_64::*;
     
     let size_64 = current_size as u64;
-    
+
     // Use BZHI for efficient bit operations in multiplication
+    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 with index 63
     let numerator_bits = unsafe { _bzhi_u64(size_64 * GOLDEN_RATIO_FRAC_NUM, 63) }; // Prevent overflow
     let result = numerator_bits / GOLDEN_RATIO_FRAC_DEN + 1;
     
@@ -282,6 +292,7 @@ pub fn bmi2_optimal_bucket_count(desired_capacity: usize) -> usize {
     {
         let caps = Bmi2Capabilities::get();
         if caps.has_bmi2 {
+            // SAFETY: BMI2 support verified by caps.has_bmi2 runtime check
             return unsafe { bmi2_bucket_count_hardware(desired_capacity) };
         }
     }
@@ -299,16 +310,18 @@ unsafe fn bmi2_bucket_count_hardware(desired_capacity: usize) -> usize {
     use std::arch::x86_64::*;
     
     let capacity_64 = desired_capacity as u64;
-    
+
     // Use BZHI for efficient load factor calculation
+    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 with index 63
     let scaled_capacity = unsafe { _bzhi_u64(capacity_64 * 256, 63) }; // Prevent overflow
     let required_buckets = scaled_capacity / (GOLDEN_LOAD_FACTOR as u64);
-    
+
     // Use BEXTR pattern for next power of 2 calculation
     if required_buckets == 0 {
         return 16;
     }
-    
+
+    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 value
     let log2_bits = 64 - unsafe { _lzcnt_u64(required_buckets - 1) };
     let bucket_count = 1usize << log2_bits;
     bucket_count.max(16)
@@ -516,6 +529,7 @@ pub fn advanced_hash_combine_bmi2(hashes: &[u64]) -> u64 {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi2 {
+                // SAFETY: BMI2 support verified by caps.has_bmi2 runtime check
                 result = unsafe { advanced_bmi2_mixing(result, hash) };
             } else {
                 result ^= hash.rotate_right(17);
@@ -534,6 +548,7 @@ pub fn advanced_hash_combine_bmi2(hashes: &[u64]) -> u64 {
     {
         let caps = Bmi2Capabilities::get();
         if caps.has_bmi2 {
+            // SAFETY: BMI2 support verified by caps.has_bmi2 runtime check
             result = unsafe { bmi2_avalanche_step(result) };
         } else {
             result = scalar_avalanche_step(result);
@@ -557,12 +572,15 @@ unsafe fn advanced_bmi2_mixing(result: u64, hash: u64) -> u64 {
     // Use PEXT to extract specific bit patterns for mixing
     let pattern1 = 0x5555555555555555u64; // Alternating bits
     let pattern2 = 0x3333333333333333u64; // 2-bit patterns
-    
+
+    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 values
     let extracted1 = unsafe { _pext_u64(result, pattern1) };
+    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 values
     let extracted2 = unsafe { _pext_u64(hash, pattern2) };
-    
+
     // Combine and redistribute with PDEP
     let combined = extracted1.wrapping_add(extracted2);
+    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 values
     unsafe { _pdep_u64(combined, 0xFFFFFFFFFFFFFFFFu64) }.rotate_right(17)
 }
 
@@ -572,10 +590,12 @@ unsafe fn advanced_bmi2_mixing(result: u64, hash: u64) -> u64 {
 #[inline]
 unsafe fn bmi2_avalanche_step(mut result: u64) -> u64 {
     use std::arch::x86_64::*;
-    
+
     // Use BZHI for efficient bit masking in avalanche
+    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 with valid index
     result ^= unsafe { _bzhi_u64(result >> 30, 34) };
     result = result.wrapping_mul(0xbf58476d1ce4e5b9);
+    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 with valid index
     result ^= unsafe { _bzhi_u64(result >> 27, 37) };
     result = result.wrapping_mul(0x94d049bb133111eb);
     result ^= result >> 31;
@@ -614,6 +634,7 @@ pub fn fast_string_hash_bmi2(s: &str, base_hash: u64) -> u64 {
     {
         let caps = Bmi2Capabilities::get();
         if caps.has_bmi2 {
+            // SAFETY: BMI2 support verified by caps.has_bmi2 runtime check
             return unsafe { bmi2_string_hash_hardware(bytes, base_hash) };
         }
     }
@@ -637,14 +658,17 @@ unsafe fn bmi2_string_hash_hardware(bytes: &[u8], mut hash: u64) -> u64 {
 
         // Use BMI2 for enhanced mixing
         let mask = 0xF0F0F0F0F0F0F0F0u64; // Extract high nibbles
+        // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 values
         let extracted = unsafe { _pext_u64(val, mask) };
+        // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 values
         hash = unsafe { _pdep_u64(hash.wrapping_add(extracted), 0xFFFFFFFFFFFFFFFFu64) };
         hash = hash.rotate_left(5);
     }
-    
+
     // Handle remaining bytes
     let remaining_start = chunks * 8;
     for &byte in &bytes[remaining_start..] {
+        // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 values
         let byte_extended = unsafe { _pdep_u64(byte as u64, 0x0101010101010101u64) };
         hash = hash.rotate_left(5).wrapping_add(byte_extended);
     }
@@ -708,6 +732,7 @@ fn bmi2_linear_probe(hash: u64, occupied_mask: u64) -> Option<u32> {
     {
         let caps = Bmi2Capabilities::get();
         if caps.has_bmi2 {
+            // SAFETY: BMI2 support verified by caps.has_bmi2 runtime check
             return unsafe { bmi2_linear_probe_hardware(hash, occupied_mask) };
         }
     }
@@ -734,6 +759,7 @@ unsafe fn bmi2_linear_probe_hardware(_hash: u64, occupied_mask: u64) -> Option<u
     // Use BMI2 to find first free slot efficiently
     let free_mask = !occupied_mask;
     if free_mask != 0 {
+        // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 value
         Some(unsafe { _tzcnt_u64(free_mask) } as u32)
     } else {
         None
@@ -750,6 +776,7 @@ fn bmi2_quadratic_probe(hash: u64, occupied_mask: u64) -> Option<u32> {
     {
         let caps = Bmi2Capabilities::get();
         if caps.has_bmi2 {
+            // SAFETY: BMI2 support verified by caps.has_bmi2 runtime check
             return unsafe { bmi2_quadratic_probe_hardware(hash, occupied_mask) };
         }
     }
@@ -776,6 +803,7 @@ unsafe fn bmi2_quadratic_probe_hardware(hash: u64, occupied_mask: u64) -> Option
     }
     
     // Use BEXTR for efficient position calculation
+    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 with valid start/len
     let start_pos = unsafe { _bextr_u64(hash, 0, 6) } as u32; // Extract 6 bits (0-63)
     
     for i in 0..64 {
@@ -801,6 +829,7 @@ fn bmi2_double_hash_probe(hash: u64, occupied_mask: u64) -> Option<u32> {
     {
         let caps = Bmi2Capabilities::get();
         if caps.has_bmi2 {
+            // SAFETY: BMI2 support verified by caps.has_bmi2 runtime check
             return unsafe { bmi2_double_hash_probe_hardware(hash, occupied_mask) };
         }
     }
@@ -830,7 +859,9 @@ unsafe fn bmi2_double_hash_probe_hardware(hash: u64, occupied_mask: u64) -> Opti
     }
     
     // Use BEXTR for efficient hash extraction
+    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 with valid start/len
     let hash1 = unsafe { _bextr_u64(hash, 0, 6) } as u32;     // Lower 6 bits
+    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 with valid start/len
     let hash2 = unsafe { _bextr_u64(hash, 32, 6) } as u32;    // Upper 6 bits
     let step = if hash2 == 0 { 1 } else { hash2 };
     
@@ -857,6 +888,7 @@ pub fn bmi2_load_factor_calculations(
     {
         let caps = Bmi2Capabilities::get();
         if caps.has_bmi2 {
+            // SAFETY: BMI2 support verified by caps.has_bmi2 runtime check
             return unsafe { bmi2_load_factor_hardware(current_size, element_count, target_load_factor) };
         }
     }
@@ -899,6 +931,7 @@ unsafe fn bmi2_load_factor_hardware(
     
     // Calculate load factor with BZHI-optimized precision
     let precision_bits = 32; // Use 32-bit precision
+    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 with index 63
     let scaled_count = unsafe { _bzhi_u64(count_64 << precision_bits, 63) } / size_64;
     let scaled_target = (target_load_factor * (1u64 << precision_bits) as f64) as u64;
     

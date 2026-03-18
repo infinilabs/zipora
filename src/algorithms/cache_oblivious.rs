@@ -186,6 +186,7 @@ impl CacheObliviousSort {
                 for i in 0..k {
                     let start = i * chunk_size;
                     if start < data.len() {
+                        // SAFETY: start < data.len() ensures valid pointer within slice bounds
                         unsafe {
                             let ptr = data.as_ptr().add(start) as *const i8;
                             std::arch::x86_64::_mm_prefetch(ptr, std::arch::x86_64::_MM_HINT_T0);
@@ -215,6 +216,7 @@ impl CacheObliviousSort {
                 {
                     for &(_, end, pos) in segments.iter() {
                         if pos + 16 < end {
+                            // SAFETY: pos + 16 < end <= data.len() ensures valid pointer within slice bounds
                             unsafe {
                                 let ptr = data.as_ptr().add(pos + 16) as *const i8;
                                 std::arch::x86_64::_mm_prefetch(ptr, std::arch::x86_64::_MM_HINT_T1);
@@ -275,9 +277,10 @@ impl CacheObliviousSort {
                 let chunk_size = 64; // Process in cache-line sized chunks
                 for i in (0..src.len()).step_by(chunk_size) {
                     let end = std::cmp::min(i + chunk_size, src.len());
-                    
+
                     // Prefetch next chunk
                     if end + chunk_size < src.len() {
+                        // SAFETY: end + chunk_size < src.len() ensures valid pointers within slice bounds
                         unsafe {
                             let src_ptr = src.as_ptr().add(end + chunk_size) as *const i8;
                             let dst_ptr = dst.as_mut_ptr().add(end + chunk_size) as *const i8;
@@ -285,7 +288,7 @@ impl CacheObliviousSort {
                             std::arch::x86_64::_mm_prefetch(dst_ptr, std::arch::x86_64::_MM_HINT_T0);
                         }
                     }
-                    
+
                     // Copy current chunk
                     dst[i..end].clone_from_slice(&src[i..end]);
                 }
@@ -392,6 +395,7 @@ impl CacheObliviousSort {
             #[cfg(target_arch = "x86_64")]
             {
                 if self.config.cpu_features.has_avx2 {
+                    // SAFETY: i < data.len() by step_by(8) ensures valid pointers within slice bounds
                     unsafe {
                         for i in (0..data.len()).step_by(8) {
                             let ptr = data.as_ptr().add(i) as *const i8;
@@ -415,6 +419,7 @@ impl CacheObliviousSort {
             // Prefetch next cache line for better memory access
             if i + 8 < data.len() && self.config.cpu_features.has_avx2 {
                 #[cfg(target_arch = "x86_64")]
+                // SAFETY: i + 8 < data.len() ensures valid pointer within slice bounds
                 unsafe {
                     let ptr = data.as_ptr().add(i + 8) as *const i8;
                     std::arch::x86_64::_mm_prefetch(ptr, std::arch::x86_64::_MM_HINT_T1);
@@ -628,6 +633,7 @@ impl<T: Clone> VanEmdeBoas<T> {
                     // Prefetch next cache line
                     let cache_line_elements = self.cache_line_size / std::mem::size_of::<T>();
                     if physical_index + cache_line_elements < self.data.len() {
+                        // SAFETY: physical_index + cache_line_elements < data.len() ensures valid pointer within slice bounds
                         unsafe {
                             let ptr = self.data.as_ptr().add(physical_index + cache_line_elements) as *const i8;
                             std::arch::x86_64::_mm_prefetch(ptr, std::arch::x86_64::_MM_HINT_T1);

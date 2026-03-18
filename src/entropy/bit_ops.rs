@@ -67,6 +67,7 @@ impl BitOps {
     pub fn popcount32(&self, x: u32) -> u32 {
         if self.config.enable_popcnt && self.features.has_popcnt {
             #[cfg(target_arch = "x86_64")]
+            // SAFETY: POPCNT instruction is available (checked by feature detection)
             unsafe {
                 _popcnt32(x as i32) as u32
             }
@@ -85,6 +86,7 @@ impl BitOps {
     pub fn popcount64(&self, x: u64) -> u32 {
         if self.config.enable_popcnt && self.features.has_popcnt {
             #[cfg(target_arch = "x86_64")]
+            // SAFETY: POPCNT instruction is available (checked by feature detection)
             unsafe {
                 _popcnt64(x as i64) as u32
             }
@@ -107,6 +109,7 @@ impl BitOps {
         
         #[cfg(target_arch = "x86_64")]
         if self.config.enable_bmi2 && self.features.has_bmi2 {
+            // SAFETY: BMI2 TZCNT instruction is available (checked by feature detection)
             unsafe {
                 _tzcnt_u32(x)
             }
@@ -126,6 +129,7 @@ impl BitOps {
         
         #[cfg(target_arch = "x86_64")]
         if self.config.enable_bmi2 && self.features.has_bmi2 {
+            // SAFETY: BMI2 TZCNT instruction is available (checked by feature detection)
             unsafe {
                 _tzcnt_u64(x) as u32
             }
@@ -141,6 +145,7 @@ impl BitOps {
     pub fn parallel_deposit32(&self, source: u32, mask: u32) -> u32 {
         #[cfg(target_arch = "x86_64")]
         if self.config.enable_bmi2 && self.features.has_bmi2 {
+            // SAFETY: BMI2 PDEP instruction is available (checked by feature detection)
             unsafe {
                 _pdep_u32(source, mask)
             }
@@ -163,6 +168,7 @@ impl BitOps {
     pub fn parallel_deposit64(&self, source: u64, mask: u64) -> u64 {
         #[cfg(target_arch = "x86_64")]
         if self.config.enable_bmi2 && self.features.has_bmi2 {
+            // SAFETY: BMI2 PDEP instruction is available (checked by feature detection)
             unsafe {
                 _pdep_u64(source, mask)
             }
@@ -185,6 +191,7 @@ impl BitOps {
     pub fn parallel_extract32(&self, source: u32, mask: u32) -> u32 {
         #[cfg(target_arch = "x86_64")]
         if self.config.enable_bmi2 && self.features.has_bmi2 {
+            // SAFETY: BMI2 PEXT instruction is available (checked by feature detection)
             unsafe {
                 _pext_u32(source, mask)
             }
@@ -207,6 +214,7 @@ impl BitOps {
     pub fn parallel_extract64(&self, source: u64, mask: u64) -> u64 {
         #[cfg(target_arch = "x86_64")]
         if self.config.enable_bmi2 && self.features.has_bmi2 {
+            // SAFETY: BMI2 PEXT instruction is available (checked by feature detection)
             unsafe {
                 _pext_u64(source, mask)
             }
@@ -229,6 +237,7 @@ impl BitOps {
     pub fn zero_high_bits32(&self, source: u32, index: u32) -> u32 {
         #[cfg(target_arch = "x86_64")]
         if self.config.enable_bmi2 && self.features.has_bmi2 {
+            // SAFETY: BMI2 BZHI instruction is available (checked by feature detection)
             unsafe {
                 _bzhi_u32(source, index)
             }
@@ -258,6 +267,7 @@ impl BitOps {
     pub fn zero_high_bits64(&self, source: u64, index: u32) -> u64 {
         #[cfg(target_arch = "x86_64")]
         if self.config.enable_bmi2 && self.features.has_bmi2 {
+            // SAFETY: BMI2 BZHI instruction is available (checked by feature detection)
             unsafe {
                 _bzhi_u64(source, index)
             }
@@ -291,6 +301,7 @@ impl BitOps {
         
         #[cfg(target_arch = "x86_64")]
         if self.config.enable_bmi2 && self.features.has_bmi2 {
+            // SAFETY: Hardware features verified by runtime detection
             unsafe {
                 // Use BMI2 PDEP + TZCNT optimization for performance
                 let deposited = _pdep_u32(1u32 << k, x);
@@ -318,6 +329,7 @@ impl BitOps {
         
         #[cfg(target_arch = "x86_64")]
         if self.config.enable_bmi2 && self.features.has_bmi2 {
+            // SAFETY: Hardware features verified by runtime detection
             unsafe {
                 // Use BMI2 PDEP + TZCNT optimization for performance
                 let deposited = _pdep_u64(1u64 << k, x);
@@ -446,6 +458,7 @@ impl BitOps {
     pub fn reverse_bits32(&self, x: u32) -> u32 {
         if self.config.enable_bmi2 && self.features.has_bmi2 {
             #[cfg(target_arch = "x86_64")]
+            // SAFETY: Hardware features verified by runtime detection
             unsafe {
                 return Bmi2BitOps::deposit_bits(x.reverse_bits() as u64, u32::MAX as u64) as u32;
             }
@@ -666,6 +679,7 @@ impl BitOps {
         let chunks = data.chunks_exact(4);
         let remainder = chunks.remainder();
         
+        // SAFETY: AVX2 instructions are available (checked by caller)
         unsafe {
             for chunk in chunks {
                 // Load 4 u64 values into AVX2 register
@@ -792,6 +806,7 @@ impl EntropyBitOps {
         // Use BMI2 if available for faster bit manipulation
         if self.bit_ops.config.enable_bmi2 && self.bit_ops.features.has_bmi2 {
             #[cfg(target_arch = "x86_64")]
+            // SAFETY: Hardware features verified by runtime detection
             unsafe {
                 // Use parallel extract/deposit for efficient reversal
                 let mask = 0x55555555u32; // Alternating bits

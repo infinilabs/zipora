@@ -190,6 +190,7 @@ pub fn copy_large_simd(dst: &mut [u8], src: &[u8]) -> Result<()> {
     }
 
     let simd = get_global_simd_copy();
+    // SAFETY: pointers valid from slice.as_ptr()/as_mut_ptr(), len matches, no overlap checked at line 186
     unsafe {
         simd.copy_large_internal(dst.as_mut_ptr(), src.as_ptr(), src.len());
     }
@@ -250,6 +251,7 @@ pub fn copy_small_simd(dst: &mut [u8], src: &[u8]) -> Result<()> {
     }
 
     let simd = get_global_simd_copy();
+    // SAFETY: pointers valid from slice.as_ptr()/as_mut_ptr(), len matches, no overlap checked at line 246
     unsafe {
         simd.copy_small_internal(dst.as_mut_ptr(), src.as_ptr(), src.len());
     }
@@ -320,6 +322,7 @@ pub fn copy_aligned_simd(dst: &mut [u8], src: &[u8]) -> Result<()> {
     }
 
     let simd = get_global_simd_copy();
+    // SAFETY: pointers valid from slice.as_ptr()/as_mut_ptr(), len matches, alignment guaranteed by caller
     unsafe {
         simd.copy_aligned_internal(dst.as_mut_ptr(), src.as_ptr(), src.len());
     }
@@ -352,18 +355,23 @@ impl SimdCopy {
     unsafe fn copy_large_internal(&self, dst: *mut u8, src: *const u8, len: usize) {
         match self.tier {
             SimdCopyTier::Avx512 => {
+                // SAFETY: tier guarantees AVX-512 support, pointers and len valid by caller
                 unsafe { self.avx512_copy_large(dst, src, len); }
             }
             SimdCopyTier::Avx2 => {
+                // SAFETY: tier guarantees AVX2 support, pointers and len valid by caller
                 unsafe { self.avx2_copy_large(dst, src, len); }
             }
             SimdCopyTier::Sse2 => {
+                // SAFETY: tier guarantees SSE2 support, pointers and len valid by caller
                 unsafe { self.sse2_copy_large(dst, src, len); }
             }
             SimdCopyTier::Neon => {
+                // SAFETY: tier guarantees NEON support, pointers and len valid by caller
                 unsafe { self.neon_copy_large(dst, src, len); }
             }
             SimdCopyTier::Scalar => {
+                // SAFETY: pointers and len valid by caller
                 unsafe { self.scalar_copy(dst, src, len); }
             }
         }
@@ -374,18 +382,23 @@ impl SimdCopy {
     unsafe fn copy_small_internal(&self, dst: *mut u8, src: *const u8, len: usize) {
         match self.tier {
             SimdCopyTier::Avx512 => {
+                // SAFETY: tier guarantees AVX-512 support, pointers and len valid by caller
                 unsafe { self.avx512_copy_small(dst, src, len); }
             }
             SimdCopyTier::Avx2 => {
+                // SAFETY: tier guarantees AVX2 support, pointers and len valid by caller
                 unsafe { self.avx2_copy_small(dst, src, len); }
             }
             SimdCopyTier::Sse2 => {
+                // SAFETY: tier guarantees SSE2 support, pointers and len valid by caller
                 unsafe { self.sse2_copy_small(dst, src, len); }
             }
             SimdCopyTier::Neon => {
+                // SAFETY: tier guarantees NEON support, pointers and len valid by caller
                 unsafe { self.neon_copy_small(dst, src, len); }
             }
             SimdCopyTier::Scalar => {
+                // SAFETY: pointers and len valid by caller
                 unsafe { self.scalar_copy(dst, src, len); }
             }
         }
@@ -396,18 +409,23 @@ impl SimdCopy {
     unsafe fn copy_aligned_internal(&self, dst: *mut u8, src: *const u8, len: usize) {
         match self.tier {
             SimdCopyTier::Avx512 => {
+                // SAFETY: tier guarantees AVX-512 support, pointers and len valid by caller
                 unsafe { self.avx512_copy_aligned(dst, src, len); }
             }
             SimdCopyTier::Avx2 => {
+                // SAFETY: tier guarantees AVX2 support, pointers and len valid by caller
                 unsafe { self.avx2_copy_aligned(dst, src, len); }
             }
             SimdCopyTier::Sse2 => {
+                // SAFETY: tier guarantees SSE2 support, pointers and len valid by caller
                 unsafe { self.sse2_copy_aligned(dst, src, len); }
             }
             SimdCopyTier::Neon => {
+                // SAFETY: tier guarantees NEON support, pointers and len valid by caller
                 unsafe { self.neon_copy_aligned(dst, src, len); }
             }
             SimdCopyTier::Scalar => {
+                // SAFETY: pointers and len valid by caller
                 unsafe { self.scalar_copy(dst, src, len); }
             }
         }
@@ -428,6 +446,7 @@ impl SimdCopy {
         // TEMPORARY FIX: Disable streaming stores to prevent memory corruption
         // Use regular stores instead of streaming stores until tail handling is fixed
         while len >= 64 {
+            // SAFETY: avx512f/avx512vl/avx512bw guaranteed by #[target_feature], pointers valid from caller, len >= 64 checked by loop condition
             unsafe {
                 let data = _mm512_loadu_si512(src as *const __m512i);
                 // CHANGED: Using regular store instead of streaming store
@@ -446,6 +465,7 @@ impl SimdCopy {
         if len > 0 {
             if len >= 32 {
                 // First 32 bytes
+                // SAFETY: avx512f/avx512vl/avx512bw guaranteed by #[target_feature], pointers valid from caller, len >= 32 checked above
                 unsafe {
                     let data = _mm256_loadu_si256(src as *const __m256i);
                     _mm256_storeu_si256(dst as *mut __m256i, data);
@@ -454,6 +474,7 @@ impl SimdCopy {
                 // Middle chunks (for len > 64)
                 let mut offset = 32;
                 while offset < len.saturating_sub(32) {
+                    // SAFETY: avx512f/avx512vl/avx512bw guaranteed by #[target_feature], pointers valid from caller, offset + 32 <= len checked by loop condition
                     unsafe {
                         let data = _mm256_loadu_si256(src.add(offset) as *const __m256i);
                         _mm256_storeu_si256(dst.add(offset) as *mut __m256i, data);
@@ -464,6 +485,7 @@ impl SimdCopy {
                 // Last 32 bytes (overlapping if needed)
                 if len > 32 {
                     let offset = len - 32;
+                    // SAFETY: avx512f/avx512vl/avx512bw guaranteed by #[target_feature], pointers valid from caller, offset = len - 32 ensures 32 bytes available
                     unsafe {
                         let tail = _mm256_loadu_si256(src.add(offset) as *const __m256i);
                         _mm256_storeu_si256(dst.add(offset) as *mut __m256i, tail);
@@ -471,6 +493,7 @@ impl SimdCopy {
                 }
             } else if len >= 16 {
                 // First 16 bytes
+                // SAFETY: avx512f/avx512vl/avx512bw guaranteed by #[target_feature], pointers valid from caller, len >= 16 checked above
                 unsafe {
                     let data = _mm_loadu_si128(src as *const __m128i);
                     _mm_storeu_si128(dst as *mut __m128i, data);
@@ -479,6 +502,7 @@ impl SimdCopy {
                 // Middle chunks (for len > 32)
                 let mut offset = 16;
                 while offset < len.saturating_sub(16) {
+                    // SAFETY: avx512f/avx512vl/avx512bw guaranteed by #[target_feature], pointers valid from caller, offset + 16 <= len checked by loop condition
                     unsafe {
                         let data = _mm_loadu_si128(src.add(offset) as *const __m128i);
                         _mm_storeu_si128(dst.add(offset) as *mut __m128i, data);
@@ -489,6 +513,7 @@ impl SimdCopy {
                 // Last 16 bytes (overlapping if needed)
                 if len > 16 {
                     let offset = len - 16;
+                    // SAFETY: avx512f/avx512vl/avx512bw guaranteed by #[target_feature], pointers valid from caller, offset = len - 16 ensures 16 bytes available
                     unsafe {
                         let tail = _mm_loadu_si128(src.add(offset) as *const __m128i);
                         _mm_storeu_si128(dst.add(offset) as *mut __m128i, tail);
@@ -496,6 +521,7 @@ impl SimdCopy {
                 }
             } else {
                 // Scalar copy for very small tails
+                // SAFETY: pointers and len valid by caller
                 unsafe { self.scalar_copy(dst, src, len); }
             }
         }
@@ -508,6 +534,7 @@ impl SimdCopy {
 
         if len >= 64 {
             // First 64-byte load/store
+            // SAFETY: avx512f/avx512vl/avx512bw guaranteed by #[target_feature], pointers valid from caller, len >= 64 checked above
             unsafe {
                 let data = _mm512_loadu_si512(src as *const __m512i);
                 _mm512_storeu_si512(dst as *mut __m512i, data);
@@ -516,6 +543,7 @@ impl SimdCopy {
             // Middle chunks (for len > 128, fill gap between first and last)
             let mut offset = 64;
             while offset < len.saturating_sub(64) {
+                // SAFETY: avx512f/avx512vl/avx512bw guaranteed by #[target_feature], pointers valid from caller, offset + 64 <= len checked by loop condition
                 unsafe {
                     let data = _mm512_loadu_si512(src.add(offset) as *const __m512i);
                     _mm512_storeu_si512(dst.add(offset) as *mut __m512i, data);
@@ -526,6 +554,7 @@ impl SimdCopy {
             // Last 64-byte load/store (overlapping if needed)
             if len > 64 {
                 let offset = len - 64;
+                // SAFETY: avx512f/avx512vl/avx512bw guaranteed by #[target_feature], pointers valid from caller, offset = len - 64 ensures 64 bytes available
                 unsafe {
                     let tail = _mm512_loadu_si512(src.add(offset) as *const __m512i);
                     _mm512_storeu_si512(dst.add(offset) as *mut __m512i, tail);
@@ -533,6 +562,7 @@ impl SimdCopy {
             }
         } else if len >= 32 {
             // First 32-byte load/store
+            // SAFETY: avx512f/avx512vl/avx512bw guaranteed by #[target_feature], pointers valid from caller, len >= 32 checked above
             unsafe {
                 let data = _mm256_loadu_si256(src as *const __m256i);
                 _mm256_storeu_si256(dst as *mut __m256i, data);
@@ -541,6 +571,7 @@ impl SimdCopy {
             // Middle chunks (for len > 64, fill gap between first and last)
             let mut offset = 32;
             while offset < len.saturating_sub(32) {
+                // SAFETY: avx512f/avx512vl/avx512bw guaranteed by #[target_feature], pointers valid from caller, offset + 32 <= len checked by loop condition
                 unsafe {
                     let data = _mm256_loadu_si256(src.add(offset) as *const __m256i);
                     _mm256_storeu_si256(dst.add(offset) as *mut __m256i, data);
@@ -551,6 +582,7 @@ impl SimdCopy {
             // Last 32-byte load/store (overlapping if needed)
             if len > 32 {
                 let offset = len - 32;
+                // SAFETY: avx512f/avx512vl/avx512bw guaranteed by #[target_feature], pointers valid from caller, offset = len - 32 ensures 32 bytes available
                 unsafe {
                     let tail = _mm256_loadu_si256(src.add(offset) as *const __m256i);
                     _mm256_storeu_si256(dst.add(offset) as *mut __m256i, tail);
@@ -558,6 +590,7 @@ impl SimdCopy {
             }
         } else if len >= 16 {
             // First 16-byte load/store
+            // SAFETY: avx512f/avx512vl/avx512bw guaranteed by #[target_feature], pointers valid from caller, len >= 16 checked above
             unsafe {
                 let data = _mm_loadu_si128(src as *const __m128i);
                 _mm_storeu_si128(dst as *mut __m128i, data);
@@ -566,6 +599,7 @@ impl SimdCopy {
             // Middle chunks (for len > 32, fill gap between first and last)
             let mut offset = 16;
             while offset < len.saturating_sub(16) {
+                // SAFETY: avx512f/avx512vl/avx512bw guaranteed by #[target_feature], pointers valid from caller, offset + 16 <= len checked by loop condition
                 unsafe {
                     let data = _mm_loadu_si128(src.add(offset) as *const __m128i);
                     _mm_storeu_si128(dst.add(offset) as *mut __m128i, data);
@@ -576,12 +610,14 @@ impl SimdCopy {
             // Last 16-byte load/store (overlapping if needed)
             if len > 16 {
                 let offset = len - 16;
+                // SAFETY: avx512f/avx512vl/avx512bw guaranteed by #[target_feature], pointers valid from caller, offset = len - 16 ensures 16 bytes available
                 unsafe {
                     let tail = _mm_loadu_si128(src.add(offset) as *const __m128i);
                     _mm_storeu_si128(dst.add(offset) as *mut __m128i, tail);
                 }
             }
         } else {
+            // SAFETY: pointers and len valid by caller
             unsafe { self.scalar_copy(dst, src, len); }
         }
     }
@@ -594,6 +630,7 @@ impl SimdCopy {
         // TEMPORARY FIX: Disable streaming stores to prevent memory corruption
         // Use regular stores instead of streaming stores until tail handling is fixed
         while len >= 64 {
+            // SAFETY: avx512f/avx512vl/avx512bw guaranteed by #[target_feature], pointers valid from caller, aligned by caller, len >= 64 checked by loop condition
             unsafe {
                 let data = _mm512_load_si512(src as *const __m512i);
                 // CHANGED: Using regular store instead of streaming store
@@ -610,6 +647,7 @@ impl SimdCopy {
 
         // Handle remaining bytes
         if len > 0 {
+            // SAFETY: pointers and len valid by caller
             unsafe { self.scalar_copy(dst, src, len); }
         }
     }
@@ -619,16 +657,19 @@ impl SimdCopy {
 impl SimdCopy {
     #[inline]
     unsafe fn avx512_copy_large(&self, dst: *mut u8, src: *const u8, len: usize) {
+        // SAFETY: pointers and len valid by caller
         unsafe { self.scalar_copy(dst, src, len); }
     }
 
     #[inline]
     unsafe fn avx512_copy_small(&self, dst: *mut u8, src: *const u8, len: usize) {
+        // SAFETY: pointers and len valid by caller
         unsafe { self.scalar_copy(dst, src, len); }
     }
 
     #[inline]
     unsafe fn avx512_copy_aligned(&self, dst: *mut u8, src: *const u8, len: usize) {
+        // SAFETY: pointers and len valid by caller
         unsafe { self.scalar_copy(dst, src, len); }
     }
 }
@@ -647,6 +688,7 @@ impl SimdCopy {
         // TEMPORARY FIX: Disable streaming stores to prevent memory corruption
         // Use regular stores instead of streaming stores until tail handling is fixed
         while len >= 32 {
+            // SAFETY: avx2 guaranteed by #[target_feature(enable = "avx2")], pointers valid from caller, len >= 32 checked by loop condition
             unsafe {
                 let data = _mm256_loadu_si256(src as *const __m256i);
                 // CHANGED: Using regular store instead of streaming store
@@ -665,6 +707,7 @@ impl SimdCopy {
         if len > 0 {
             if len >= 16 {
                 // First 16 bytes
+                // SAFETY: avx2 guaranteed by #[target_feature(enable = "avx2")], pointers valid from caller, len >= 16 checked above
                 unsafe {
                     let data = _mm_loadu_si128(src as *const __m128i);
                     _mm_storeu_si128(dst as *mut __m128i, data);
@@ -673,6 +716,7 @@ impl SimdCopy {
                 // Middle chunks (for len > 32)
                 let mut offset = 16;
                 while offset < len.saturating_sub(16) {
+                    // SAFETY: avx2 guaranteed by #[target_feature(enable = "avx2")], pointers valid from caller, offset + 16 <= len checked by loop condition
                     unsafe {
                         let data = _mm_loadu_si128(src.add(offset) as *const __m128i);
                         _mm_storeu_si128(dst.add(offset) as *mut __m128i, data);
@@ -683,6 +727,7 @@ impl SimdCopy {
                 // Last 16 bytes (overlapping if needed)
                 if len > 16 {
                     let offset = len - 16;
+                    // SAFETY: avx2 guaranteed by #[target_feature(enable = "avx2")], pointers valid from caller, offset = len - 16 ensures 16 bytes available
                     unsafe {
                         let tail = _mm_loadu_si128(src.add(offset) as *const __m128i);
                         _mm_storeu_si128(dst.add(offset) as *mut __m128i, tail);
@@ -690,6 +735,7 @@ impl SimdCopy {
                 }
             } else {
                 // Scalar copy for very small tails
+                // SAFETY: pointers and len valid by caller
                 unsafe { self.scalar_copy(dst, src, len); }
             }
         }
@@ -702,6 +748,7 @@ impl SimdCopy {
 
         if len >= 32 {
             // First 32-byte load/store
+            // SAFETY: avx2 guaranteed by #[target_feature(enable = "avx2")], pointers valid from caller, len >= 32 checked above
             unsafe {
                 let data = _mm256_loadu_si256(src as *const __m256i);
                 _mm256_storeu_si256(dst as *mut __m256i, data);
@@ -710,6 +757,7 @@ impl SimdCopy {
             // Middle chunks (for len > 64, fill gap between first and last)
             let mut offset = 32;
             while offset < len.saturating_sub(32) {
+                // SAFETY: avx2 guaranteed by #[target_feature(enable = "avx2")], pointers valid from caller, offset + 32 <= len checked by loop condition
                 unsafe {
                     let data = _mm256_loadu_si256(src.add(offset) as *const __m256i);
                     _mm256_storeu_si256(dst.add(offset) as *mut __m256i, data);
@@ -720,6 +768,7 @@ impl SimdCopy {
             // Last 32-byte load/store (overlapping if needed)
             if len > 32 {
                 let offset = len - 32;
+                // SAFETY: avx2 guaranteed by #[target_feature(enable = "avx2")], pointers valid from caller, offset = len - 32 ensures 32 bytes available
                 unsafe {
                     let tail = _mm256_loadu_si256(src.add(offset) as *const __m256i);
                     _mm256_storeu_si256(dst.add(offset) as *mut __m256i, tail);
@@ -727,6 +776,7 @@ impl SimdCopy {
             }
         } else if len >= 16 {
             // First 16-byte load/store
+            // SAFETY: avx2 guaranteed by #[target_feature(enable = "avx2")], pointers valid from caller, len >= 16 checked above
             unsafe {
                 let data = _mm_loadu_si128(src as *const __m128i);
                 _mm_storeu_si128(dst as *mut __m128i, data);
@@ -735,6 +785,7 @@ impl SimdCopy {
             // Middle chunks (for len > 32, fill gap between first and last)
             let mut offset = 16;
             while offset < len.saturating_sub(16) {
+                // SAFETY: avx2 guaranteed by #[target_feature(enable = "avx2")], pointers valid from caller, offset + 16 <= len checked by loop condition
                 unsafe {
                     let data = _mm_loadu_si128(src.add(offset) as *const __m128i);
                     _mm_storeu_si128(dst.add(offset) as *mut __m128i, data);
@@ -745,12 +796,14 @@ impl SimdCopy {
             // Last 16-byte load/store (overlapping if needed)
             if len > 16 {
                 let offset = len - 16;
+                // SAFETY: avx2 guaranteed by #[target_feature(enable = "avx2")], pointers valid from caller, offset = len - 16 ensures 16 bytes available
                 unsafe {
                     let tail = _mm_loadu_si128(src.add(offset) as *const __m128i);
                     _mm_storeu_si128(dst.add(offset) as *mut __m128i, tail);
                 }
             }
         } else {
+            // SAFETY: pointers and len valid by caller
             unsafe { self.scalar_copy(dst, src, len); }
         }
     }
@@ -763,6 +816,7 @@ impl SimdCopy {
         // TEMPORARY FIX: Disable streaming stores to prevent memory corruption
         // Use regular stores instead of streaming stores until tail handling is fixed
         while len >= 32 {
+            // SAFETY: avx2 guaranteed by #[target_feature(enable = "avx2")], pointers valid from caller, aligned by caller, len >= 32 checked by loop condition
             unsafe {
                 let data = _mm256_load_si256(src as *const __m256i);
                 // CHANGED: Using regular store instead of streaming store
@@ -779,6 +833,7 @@ impl SimdCopy {
 
         // Handle remaining bytes
         if len > 0 {
+            // SAFETY: pointers and len valid by caller
             unsafe { self.scalar_copy(dst, src, len); }
         }
     }
@@ -788,16 +843,19 @@ impl SimdCopy {
 impl SimdCopy {
     #[inline]
     unsafe fn avx2_copy_large(&self, dst: *mut u8, src: *const u8, len: usize) {
+        // SAFETY: pointers and len valid by caller
         unsafe { self.scalar_copy(dst, src, len); }
     }
 
     #[inline]
     unsafe fn avx2_copy_small(&self, dst: *mut u8, src: *const u8, len: usize) {
+        // SAFETY: pointers and len valid by caller
         unsafe { self.scalar_copy(dst, src, len); }
     }
 
     #[inline]
     unsafe fn avx2_copy_aligned(&self, dst: *mut u8, src: *const u8, len: usize) {
+        // SAFETY: pointers and len valid by caller
         unsafe { self.scalar_copy(dst, src, len); }
     }
 }
@@ -815,6 +873,7 @@ impl SimdCopy {
 
         // Process 16-byte chunks
         while len >= 16 {
+            // SAFETY: sse2 guaranteed by #[target_feature(enable = "sse2")], pointers valid from caller, len >= 16 checked by loop condition
             unsafe {
                 let data = _mm_loadu_si128(src as *const __m128i);
                 _mm_storeu_si128(dst as *mut __m128i, data);
@@ -829,11 +888,13 @@ impl SimdCopy {
         if len > 0 {
             if len >= 8 {
                 let offset = len - 8;
+                // SAFETY: sse2 guaranteed by #[target_feature(enable = "sse2")], pointers valid from caller, offset = len - 8 ensures 8 bytes available
                 unsafe {
                     let tail = (src.add(offset) as *const u64).read_unaligned();
                     (dst.add(offset) as *mut u64).write_unaligned(tail);
                 }
             } else {
+                // SAFETY: pointers and len valid by caller
                 unsafe { self.scalar_copy(dst, src, len); }
             }
         }
@@ -846,6 +907,7 @@ impl SimdCopy {
 
         if len >= 16 {
             // First 16-byte load/store
+            // SAFETY: sse2 guaranteed by #[target_feature(enable = "sse2")], pointers valid from caller, len >= 16 checked above
             unsafe {
                 let data = _mm_loadu_si128(src as *const __m128i);
                 _mm_storeu_si128(dst as *mut __m128i, data);
@@ -854,6 +916,7 @@ impl SimdCopy {
             // Middle chunks (for len > 32, fill gap between first and last)
             let mut offset = 16;
             while offset < len.saturating_sub(16) {
+                // SAFETY: sse2 guaranteed by #[target_feature(enable = "sse2")], pointers valid from caller, offset + 16 <= len checked by loop condition
                 unsafe {
                     let data = _mm_loadu_si128(src.add(offset) as *const __m128i);
                     _mm_storeu_si128(dst.add(offset) as *mut __m128i, data);
@@ -864,12 +927,14 @@ impl SimdCopy {
             // Last 16-byte load/store (overlapping if needed)
             if len > 16 {
                 let offset = len - 16;
+                // SAFETY: sse2 guaranteed by #[target_feature(enable = "sse2")], pointers valid from caller, offset = len - 16 ensures 16 bytes available
                 unsafe {
                     let tail = _mm_loadu_si128(src.add(offset) as *const __m128i);
                     _mm_storeu_si128(dst.add(offset) as *mut __m128i, tail);
                 }
             }
         } else {
+            // SAFETY: pointers and len valid by caller
             unsafe { self.scalar_copy(dst, src, len); }
         }
     }
@@ -880,6 +945,7 @@ impl SimdCopy {
         use std::arch::x86_64::*;
 
         while len >= 16 {
+            // SAFETY: sse2 guaranteed by #[target_feature(enable = "sse2")], pointers valid from caller, aligned by caller, len >= 16 checked by loop condition
             unsafe {
                 let data = _mm_load_si128(src as *const __m128i);
                 _mm_store_si128(dst as *mut __m128i, data);
@@ -891,6 +957,7 @@ impl SimdCopy {
         }
 
         if len > 0 {
+            // SAFETY: pointers and len valid by caller
             unsafe { self.scalar_copy(dst, src, len); }
         }
     }
@@ -900,16 +967,19 @@ impl SimdCopy {
 impl SimdCopy {
     #[inline]
     unsafe fn sse2_copy_large(&self, dst: *mut u8, src: *const u8, len: usize) {
+        // SAFETY: pointers and len valid by caller
         unsafe { self.scalar_copy(dst, src, len); }
     }
 
     #[inline]
     unsafe fn sse2_copy_small(&self, dst: *mut u8, src: *const u8, len: usize) {
+        // SAFETY: pointers and len valid by caller
         unsafe { self.scalar_copy(dst, src, len); }
     }
 
     #[inline]
     unsafe fn sse2_copy_aligned(&self, dst: *mut u8, src: *const u8, len: usize) {
+        // SAFETY: pointers and len valid by caller
         unsafe { self.scalar_copy(dst, src, len); }
     }
 }
@@ -926,6 +996,7 @@ impl SimdCopy {
 
         // Process 16-byte chunks
         while len >= 16 {
+            // SAFETY: neon available on aarch64, pointers valid from caller, len >= 16 checked by loop condition
             unsafe {
                 let data = vld1q_u8(src);
                 vst1q_u8(dst, data);
@@ -938,6 +1009,7 @@ impl SimdCopy {
 
         // Handle remaining bytes
         if len > 0 {
+            // SAFETY: pointers and len valid by caller
             unsafe { self.scalar_copy(dst, src, len); }
         }
     }
@@ -948,6 +1020,7 @@ impl SimdCopy {
 
         if len >= 16 {
             // First 16-byte load/store
+            // SAFETY: neon available on aarch64, pointers valid from caller, len >= 16 checked above
             unsafe {
                 let data = vld1q_u8(src);
                 vst1q_u8(dst, data);
@@ -956,6 +1029,7 @@ impl SimdCopy {
             // Middle chunks (for len > 32, fill gap between first and last)
             let mut offset = 16;
             while offset < len.saturating_sub(16) {
+                // SAFETY: neon available on aarch64, pointers valid from caller, offset + 16 <= len checked by loop condition
                 unsafe {
                     let data = vld1q_u8(src.add(offset));
                     vst1q_u8(dst.add(offset), data);
@@ -966,12 +1040,14 @@ impl SimdCopy {
             // Last 16-byte load/store (overlapping if needed)
             if len > 16 {
                 let offset = len - 16;
+                // SAFETY: neon available on aarch64, pointers valid from caller, offset = len - 16 ensures 16 bytes available
                 unsafe {
                     let tail = vld1q_u8(src.add(offset));
                     vst1q_u8(dst.add(offset), tail);
                 }
             }
         } else {
+            // SAFETY: pointers and len valid by caller
             unsafe { self.scalar_copy(dst, src, len); }
         }
     }
@@ -981,6 +1057,7 @@ impl SimdCopy {
         use std::arch::aarch64::*;
 
         while len >= 16 {
+            // SAFETY: neon available on aarch64, pointers valid from caller, aligned by caller, len >= 16 checked by loop condition
             unsafe {
                 let data = vld1q_u8(src);
                 vst1q_u8(dst, data);
@@ -992,6 +1069,7 @@ impl SimdCopy {
         }
 
         if len > 0 {
+            // SAFETY: pointers and len valid by caller
             unsafe { self.scalar_copy(dst, src, len); }
         }
     }
@@ -1001,16 +1079,19 @@ impl SimdCopy {
 impl SimdCopy {
     #[inline]
     unsafe fn neon_copy_large(&self, dst: *mut u8, src: *const u8, len: usize) {
+        // SAFETY: pointers and len valid by caller
         unsafe { self.scalar_copy(dst, src, len); }
     }
 
     #[inline]
     unsafe fn neon_copy_small(&self, dst: *mut u8, src: *const u8, len: usize) {
+        // SAFETY: pointers and len valid by caller
         unsafe { self.scalar_copy(dst, src, len); }
     }
 
     #[inline]
     unsafe fn neon_copy_aligned(&self, dst: *mut u8, src: *const u8, len: usize) {
+        // SAFETY: pointers and len valid by caller
         unsafe { self.scalar_copy(dst, src, len); }
     }
 }
@@ -1023,6 +1104,7 @@ impl SimdCopy {
     /// Scalar fallback copy using standard library
     #[inline]
     unsafe fn scalar_copy(&self, dst: *mut u8, src: *const u8, len: usize) {
+        // SAFETY: pointers valid from caller, len valid by caller, non-overlapping guaranteed by caller
         unsafe {
             std::ptr::copy_nonoverlapping(src, dst, len);
         }
@@ -1111,6 +1193,7 @@ mod tests {
         // Create aligned buffers
         let layout = std::alloc::Layout::from_size_align(4096, 64).unwrap();
 
+        // SAFETY: layout valid from above, pointers checked for null, properly deallocated at end of scope
         unsafe {
             let src_ptr = std::alloc::alloc(layout);
             let dst_ptr = std::alloc::alloc(layout);

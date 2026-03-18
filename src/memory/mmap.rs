@@ -91,6 +91,7 @@ impl MemoryMappedAllocator {
                     self.total_allocated
                         .fetch_add(size as u64, Ordering::Relaxed);
 
+                    // SAFETY: cached ptr was obtained from successful mmap, guaranteed non-null
                     return Ok(MmapAllocation {
                         ptr: unsafe { NonNull::new_unchecked(ptr) },
                         size,
@@ -104,6 +105,7 @@ impl MemoryMappedAllocator {
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
         self.mmap_calls.fetch_add(1, Ordering::Relaxed);
 
+        // SAFETY: fd=-1 for anonymous mapping, size/offset are page-aligned, flags are valid
         let ptr = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
@@ -119,6 +121,7 @@ impl MemoryMappedAllocator {
             return Err(ZiporaError::out_of_memory(size));
         }
 
+        // SAFETY: ptr is valid from successful mmap, actual_size matches allocation, hints are advisory
         // Use madvise for better performance hints
         unsafe {
             // Hint that we'll access this memory soon
@@ -130,6 +133,7 @@ impl MemoryMappedAllocator {
         self.total_allocated
             .fetch_add(size as u64, Ordering::Relaxed);
 
+        // SAFETY: ptr != MAP_FAILED guarantees non-null
         Ok(MmapAllocation {
             ptr: unsafe { NonNull::new_unchecked(ptr as *mut u8) },
             size,
@@ -156,6 +160,7 @@ impl MemoryMappedAllocator {
 
         // Cache is full or locked, deallocate immediately
         self.munmap_calls.fetch_add(1, Ordering::Relaxed);
+        // SAFETY: ptr from allocation was obtained via mmap with matching size
         unsafe {
             if libc::munmap(
                 allocation.ptr.as_ptr() as *mut libc::c_void,
@@ -199,6 +204,7 @@ impl MemoryMappedAllocator {
             for (size, regions) in cache.drain() {
                 for ptr in regions {
                     self.munmap_calls.fetch_add(1, Ordering::Relaxed);
+                    // SAFETY: cached ptr was obtained via mmap with this size
                     unsafe {
                         if libc::munmap(ptr as *mut libc::c_void, size) != 0 {
                             log::warn!("Failed to unmap cached region of size {}", size);
@@ -212,6 +218,7 @@ impl MemoryMappedAllocator {
 
     /// Get system page size
     fn get_page_size() -> usize {
+        // SAFETY: sysconf with _SC_PAGESIZE is always safe to call
         unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
     }
 }
@@ -243,12 +250,14 @@ impl MmapAllocation {
     /// Get the allocated memory as a slice
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
+        // SAFETY: ptr is valid for size bytes, obtained via mmap, mapping valid for lifetime of MmapAllocation
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.size) }
     }
 
     /// Get the allocated memory as a mutable slice
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        // SAFETY: ptr is valid for size bytes, obtained via mmap, mapping valid for lifetime of MmapAllocation
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.size) }
     }
 

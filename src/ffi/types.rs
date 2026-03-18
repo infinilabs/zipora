@@ -367,6 +367,7 @@ impl CBuffer {
             return Vec::new();
         }
 
+        // SAFETY: buffer was created via from_vec with valid Vec, data/size/capacity match original allocation
         unsafe { Vec::from_raw_parts(self.data, self.size, self.capacity) }
     }
 
@@ -380,6 +381,7 @@ impl CBuffer {
             return &[];
         }
 
+        // SAFETY: pointer is valid (null-checked at line 379), size matches initialized data
         unsafe { std::slice::from_raw_parts(self.data, self.size) }
     }
 
@@ -393,6 +395,7 @@ impl CBuffer {
             return &mut [];
         }
 
+        // SAFETY: pointer is valid (null-checked at line 392), size matches initialized data, exclusive mutable access
         unsafe { std::slice::from_raw_parts_mut(self.data, self.size) }
     }
 }
@@ -441,6 +444,7 @@ impl CString {
             return Ok(String::new());
         }
 
+        // SAFETY: pointer is valid (null-checked at line 440), created by from_string via CString::into_raw
         let cstring = unsafe { std::ffi::CString::from_raw(self.data) };
         // Prevent double-free by nulling the pointer
         self.data = std::ptr::null_mut();
@@ -457,6 +461,7 @@ impl CString {
             return Ok("");
         }
 
+        // SAFETY: pointer is valid (null-checked at line 456), points to null-terminated C string
         let cstr = unsafe { std::ffi::CStr::from_ptr(self.data) };
         cstr.to_str()
     }
@@ -471,6 +476,7 @@ impl Default for CString {
 impl Drop for CString {
     fn drop(&mut self) {
         if !self.data.is_null() {
+            // SAFETY: pointer is valid (null-checked), created by from_string via CString::into_raw, not previously freed
             unsafe {
                 let _ = std::ffi::CString::from_raw(self.data);
                 // Automatic cleanup when CString is dropped
@@ -524,6 +530,7 @@ mod tests {
         assert_eq!(buffer.size, 5);
         assert!(buffer.capacity >= 5);
 
+        // SAFETY: buffer contains valid data from Vec, as_slice and into_vec are called with valid buffer
         unsafe {
             let slice = buffer.as_slice();
             assert_eq!(slice, &[1, 2, 3, 4, 5]);
@@ -541,6 +548,7 @@ mod tests {
         assert!(!c_string.data.is_null());
         assert_eq!(c_string.len, 13);
 
+        // SAFETY: c_string contains valid data from from_string, as_str and into_string are called with valid CString
         unsafe {
             let str_ref = c_string.as_str().unwrap();
             assert_eq!(str_ref, "Hello, world!");

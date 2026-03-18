@@ -97,12 +97,15 @@ impl SimdStringOps {
             match self.impl_tier {
                 #[cfg(feature = "avx512")]
                 SimdTier::Avx512 if bytes1.len() >= 64 => {
+                    // SAFETY: AVX-512 support verified by tier selection, length >= 64 checked
                     unsafe { self.avx512_string_compare(bytes1, bytes2, cached_prefix) }
                 }
                 SimdTier::Avx2 if bytes1.len() >= 32 => {
+                    // SAFETY: AVX2 support verified by tier selection, length >= 32 checked
                     unsafe { self.avx2_string_compare(bytes1, bytes2, cached_prefix) }
                 }
                 SimdTier::Sse42 if bytes1.len() >= 16 => {
+                    // SAFETY: SSE4.2 support verified by tier selection, length >= 16 checked
                     unsafe { self.sse42_string_compare(bytes1, bytes2, cached_prefix) }
                 }
                 _ => {
@@ -129,12 +132,15 @@ impl SimdStringOps {
         match self.impl_tier {
             #[cfg(feature = "avx512")]
             SimdTier::Avx512 if bytes.len() >= 64 => {
+                // SAFETY: AVX-512 support verified by tier selection, length >= 64 checked
                 unsafe { self.avx512_string_hash(bytes, base_hash) }
             }
             SimdTier::Avx2 if bytes.len() >= 32 => {
+                // SAFETY: AVX2 support verified by tier selection, length >= 32 checked
                 unsafe { self.avx2_string_hash(bytes, base_hash) }
             }
             SimdTier::Sse42 if bytes.len() >= 16 => {
+                // SAFETY: SSE4.2 support verified by tier selection, length >= 16 checked
                 unsafe { self.sse42_string_hash(bytes, base_hash) }
             }
             _ => {
@@ -152,6 +158,7 @@ impl SimdStringOps {
             match self.impl_tier {
                 SimdTier::Avx2 | SimdTier::Sse42 => {
                     // Use SIMD for 8-byte loads when available
+                    // SAFETY: pointer valid from slice, read_unaligned handles any alignment, bytes.len() >= 8 checked above
                     unsafe {
                         let ptr = bytes.as_ptr() as *const u64;
                         ptr.read_unaligned()
@@ -160,6 +167,7 @@ impl SimdStringOps {
                 #[cfg(feature = "avx512")]
                 SimdTier::Avx512 => {
                     // Use AVX-512 optimized 8-byte load
+                    // SAFETY: pointer valid from slice, read_unaligned handles any alignment, bytes.len() >= 8 checked above
                     unsafe {
                         let ptr = bytes.as_ptr() as *const u64;
                         ptr.read_unaligned()
@@ -184,7 +192,8 @@ impl SimdStringOps {
         let chunks = len / 32;
         for i in 0..chunks {
             let offset = i * 32;
-            
+
+            // SAFETY: avx2 guaranteed by #[target_feature(enable = "avx2")], offset within bounds (chunks calculated from len/32)
             unsafe {
                 let chunk1 = _mm256_loadu_si256(bytes1.as_ptr().add(offset) as *const __m256i);
                 let chunk2 = _mm256_loadu_si256(bytes2.as_ptr().add(offset) as *const __m256i);
@@ -211,6 +220,7 @@ impl SimdStringOps {
         let chunks = len / 32;
         for i in 0..chunks {
             let offset = i * 32;
+            // SAFETY: avx2 guaranteed by #[target_feature(enable = "avx2")], offset within bounds (chunks calculated from len/32)
             unsafe {
                 let chunk = _mm256_loadu_si256(bytes.as_ptr().add(offset) as *const __m256i);
                 
@@ -244,7 +254,8 @@ impl SimdStringOps {
         let chunks = len / 16;
         for i in 0..chunks {
             let offset = i * 16;
-            
+
+            // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], offset within bounds (chunks calculated from len/16)
             unsafe {
                 let chunk1 = _mm_loadu_si128(bytes1.as_ptr().add(offset) as *const __m128i);
                 let chunk2 = _mm_loadu_si128(bytes2.as_ptr().add(offset) as *const __m128i);
@@ -271,6 +282,7 @@ impl SimdStringOps {
         let chunks = len / 16;
         for i in 0..chunks {
             let offset = i * 16;
+            // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], offset within bounds (chunks calculated from len/16)
             unsafe {
                 let chunk = _mm_loadu_si128(bytes.as_ptr().add(offset) as *const __m128i);
                 
@@ -305,7 +317,8 @@ impl SimdStringOps {
         let chunks = len / 64;
         for i in 0..chunks {
             let offset = i * 64;
-            
+
+            // SAFETY: avx512f/avx512bw guaranteed by #[target_feature], offset within bounds (chunks calculated from len/64)
             unsafe {
                 let chunk1 = _mm512_loadu_si512(bytes1.as_ptr().add(offset) as *const __m512i);
                 let chunk2 = _mm512_loadu_si512(bytes2.as_ptr().add(offset) as *const __m512i);
@@ -332,6 +345,7 @@ impl SimdStringOps {
         let chunks = len / 64;
         for i in 0..chunks {
             let offset = i * 64;
+            // SAFETY: avx512f guaranteed by #[target_feature(enable = "avx512f")], offset within bounds (chunks calculated from len/64)
             unsafe {
                 let chunk = _mm512_loadu_si512(bytes.as_ptr().add(offset) as *const __m512i);
                 

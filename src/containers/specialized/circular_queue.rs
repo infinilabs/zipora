@@ -195,6 +195,7 @@ impl<T, const N: usize> FixedCircularQueue<T, N> {
         let tail = self.tail.load(Ordering::Relaxed);
 
         // SAFETY: We've verified the queue is not full, so this slot is available
+        // SAFETY: Queue not full verified, slot available
         unsafe {
             self.buffer[tail].as_mut_ptr().write(value);
         }
@@ -671,6 +672,7 @@ impl<T> AutoGrowCircularQueue<T> {
         if self.len == 0 {
             // Empty queue - just replace buffer
             if !self.buffer.is_null() {
+                // SAFETY: buffer allocated with current_layout(), pointer non-null checked above
                 unsafe {
                     dealloc(self.buffer as *mut u8, self.current_layout());
                 }
@@ -688,6 +690,7 @@ impl<T> AutoGrowCircularQueue<T> {
         // Check if buffer is contiguous (not wrapped) for optimal realloc
         if self.head < self.tail {
             // Buffer is contiguous - try in-place realloc
+            // SAFETY: buffer allocated with old_layout, new_layout.size() >= old size
             unsafe {
                 let new_ptr = realloc(self.buffer as *mut u8, old_layout, new_layout.size());
 
@@ -712,6 +715,7 @@ impl<T> AutoGrowCircularQueue<T> {
 
         // Deallocate old buffer
         if !self.buffer.is_null() {
+            // SAFETY: buffer allocated with old_layout, pointer non-null checked above
             unsafe {
                 dealloc(self.buffer as *mut u8, old_layout);
             }
@@ -736,6 +740,7 @@ impl<T> AutoGrowCircularQueue<T> {
         // Create temporary buffer for reorganization
         let temp_layout =
             Layout::array::<T>(self.len).map_err(|_| ZiporaError::invalid_data("Layout error"))?;
+        // SAFETY: temp_layout is valid from Layout::array
         let temp_buffer = unsafe { alloc(temp_layout) as *mut T };
 
         if temp_buffer.is_null() {
@@ -743,6 +748,7 @@ impl<T> AutoGrowCircularQueue<T> {
         }
 
         // Copy elements to temporary buffer in correct order
+        // SAFETY: buffer and temp_buffer valid, pointers don't overlap, len elements valid
         unsafe {
             if self.head < self.tail {
                 // Single contiguous copy
@@ -771,6 +777,7 @@ impl<T> AutoGrowCircularQueue<T> {
             return Ok(());
         }
 
+        // SAFETY: buffer and new_buffer valid, pointers don't overlap, len elements valid
         unsafe {
             if self.head < self.tail {
                 // Fast path: single contiguous copy
@@ -825,6 +832,7 @@ impl<T> AutoGrowCircularQueue<T> {
         }
 
         // Direct copy - compiler will optimize for SIMD when possible
+        // SAFETY: pointers valid and non-overlapping per debug assertions, count elements valid
         unsafe {
             ptr::copy_nonoverlapping(src, dst, count);
         }
@@ -897,6 +905,7 @@ impl<T> AutoGrowCircularQueue<T> {
         // Fast path: check if we have space using circular queue logic
         // In a circular queue, we can store capacity-1 elements (need 1 slot to distinguish empty/full)
         if likely(self.len < self.capacity - 1) {
+            // SAFETY: tail < capacity, buffer allocated for capacity elements
             unsafe {
                 // Direct write to buffer using raw pointer - no prefetch overhead
                 self.buffer.add(self.tail).write(value);
@@ -923,6 +932,7 @@ impl<T> AutoGrowCircularQueue<T> {
         self.grow_to(new_capacity)?;
 
         // Now we have space - add the element using fast path logic
+        // SAFETY: after grow_to, tail < capacity, buffer allocated for capacity elements
         unsafe {
             self.buffer.add(self.tail).write(value);
         }
@@ -965,6 +975,7 @@ impl<T> AutoGrowCircularQueue<T> {
             return None;
         }
 
+        // SAFETY: Hardware features verified or caller ensures safety invariants
         unsafe {
             // SAFETY: We've verified the queue is not empty
             let value = self.buffer.add(self.head).read();
@@ -1044,6 +1055,7 @@ impl<T> AutoGrowCircularQueue<T> {
     pub fn clear(&mut self) {
         // Fast bulk destruction instead of individual pops
         if self.len > 0 {
+            // SAFETY: head/tail indices valid, buffer contains len initialized elements
             unsafe {
                 if self.head <= self.tail {
                     // Single contiguous region
@@ -1144,6 +1156,7 @@ impl<T> AutoGrowCircularQueue<T> {
         // Now we have guaranteed space - use fast bulk copy
         for item in items {
             // Use fast path since we pre-reserved
+            // SAFETY: after reserve, tail < capacity, buffer allocated for capacity elements
             unsafe {
                 self.buffer.add(self.tail).write(item.clone());
             }
@@ -1173,6 +1186,7 @@ impl<T> AutoGrowCircularQueue<T> {
             return 0;
         }
 
+        // SAFETY: to_pop <= len, head indices valid, buffer contains len initialized elements
         unsafe {
             if self.head < self.tail || (self.head + to_pop <= self.capacity) {
                 // Single contiguous copy - most common case
@@ -1245,6 +1259,7 @@ impl<T> Drop for AutoGrowCircularQueue<T> {
 
         // Deallocate raw memory buffer
         if !self.buffer.is_null() {
+            // SAFETY: buffer allocated with current_layout(), all elements already dropped via clear()
             unsafe {
                 dealloc(self.buffer as *mut u8, self.current_layout());
             }

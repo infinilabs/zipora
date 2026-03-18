@@ -166,6 +166,7 @@ impl BitPackedEntry {
     #[cfg(all(target_feature = "bmi2", target_arch = "x86_64"))]
     #[inline(always)]
     fn offset_bmi2(&self) -> usize {
+        // SAFETY: BMI2 guaranteed by target_feature, _bextr_u64 is pure arithmetic with no memory access
         unsafe {
             std::arch::x86_64::_bextr_u64(self.0, 0, Self::OFFSET_BITS) as usize
         }
@@ -175,6 +176,7 @@ impl BitPackedEntry {
     #[cfg(all(target_feature = "bmi2", target_arch = "x86_64"))]
     #[inline(always)]
     fn length_bmi2(&self) -> usize {
+        // SAFETY: BMI2 guaranteed by target_feature, _bextr_u64 is pure arithmetic with no memory access
         unsafe {
             std::arch::x86_64::_bextr_u64(self.0, Self::OFFSET_BITS, Self::LENGTH_BITS) as usize
         }

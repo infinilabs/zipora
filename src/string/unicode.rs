@@ -90,29 +90,31 @@ fn validate_utf8_and_count_chars_simd(bytes: &[u8]) -> Result<usize> {
 fn is_ascii_simd(bytes: &[u8]) -> bool {
     use std::arch::x86_64::*;
 
+    // SAFETY: AVX2 is available (checked by caller), bytes.as_ptr().add(i) is valid when i + 32 <= len,
+    // _mm256_loadu_si256 and _mm256_movemask_epi8 are valid AVX2 intrinsics that don't cause UB
     unsafe {
         let mut i = 0;
         let len = bytes.len();
-        
+
         // Process 32 bytes at a time with AVX2
         while i + 32 <= len {
             let chunk = _mm256_loadu_si256(bytes.as_ptr().add(i) as *const __m256i);
             let has_high_bit = _mm256_movemask_epi8(chunk);
-            
+
             if has_high_bit != 0 {
                 return false; // Found non-ASCII
             }
-            
+
             i += 32;
         }
-        
+
         // Process remaining bytes
         for &byte in &bytes[i..] {
             if byte >= 0x80 {
                 return false;
             }
         }
-        
+
         true
     }
 }

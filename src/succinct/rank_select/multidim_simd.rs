@@ -238,6 +238,7 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
         #[cfg(target_arch = "x86_64")]
         {
             if DIMS <= 4 && self.cpu_features.has_avx2 {
+                // SAFETY: AVX2 availability verified by has_avx2 check above
                 unsafe { self.bulk_rank_avx2(positions, &mut ranks) };
                 return ranks;
             }
@@ -273,7 +274,7 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
                 if dim + 1 < DIMS {
                     let next_pos = positions[dim + 1];
                     if next_pos <= self.total_bits {
-                        // Prefetch hint for next dimension
+                        // SAFETY: Prefetch intrinsic is safe even with any pointer value (CPU handles gracefully)
                         unsafe {
                             _mm_prefetch::<_MM_HINT_T0>(
                                 &self.dimensions[dim + 1] as *const _ as *const i8
@@ -380,6 +381,7 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
 
         #[cfg(target_arch = "x86_64")]
         if self.cpu_features.has_avx2 {
+            // SAFETY: AVX2 availability verified by has_avx2 check above
             let result_bits = unsafe { Self::intersect_avx2(&bits_a, &bits_b) };
             result = BitVector::from_raw_bits(result_bits, self.total_bits)?;
             return Ok(result);
@@ -407,6 +409,9 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
     unsafe fn intersect_avx2(bits_a: &[u64], bits_b: &[u64]) -> Vec<u64> {
+        // SAFETY: AVX2 guaranteed by #[target_feature(enable = "avx2")],
+        // pointers valid from slice.as_ptr().add(base), bounds: base+4 ≤ len verified by chunks = len/4,
+        // result.set_len(len) safe because we initialize all elements below
         unsafe {
             let len = bits_a.len().min(bits_b.len());
             let mut result: Vec<u64> = Vec::with_capacity(len);
@@ -496,6 +501,7 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
 
         #[cfg(target_arch = "x86_64")]
         if self.cpu_features.has_avx2 {
+            // SAFETY: AVX2 availability verified by has_avx2 check above
             let result_bits = unsafe { Self::union_avx2(&bit_data) };
             result = BitVector::from_raw_bits(result_bits, self.total_bits)?;
             return Ok(result);
@@ -529,6 +535,9 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
     unsafe fn union_avx2(bit_data: &[&[u64]]) -> Vec<u64> {
+        // SAFETY: AVX2 guaranteed by #[target_feature(enable = "avx2")],
+        // pointers valid from slice.as_ptr().add(base), bounds: base+4 ≤ bits.len() verified by if-check,
+        // result.set_len(len) safe because we initialize all elements below
         unsafe {
             if bit_data.is_empty() {
                 return Vec::new();

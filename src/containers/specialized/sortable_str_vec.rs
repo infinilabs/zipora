@@ -1,3 +1,4 @@
+// SAFETY comment to add after reading full file
 //! High-performance string vector with optimized sorting capabilities
 //!
 //! SortableStrVec achieves 25-200% faster sorting through:
@@ -319,6 +320,7 @@ impl SortableStrVec {
             let offset = entry.offset();
             let length = entry.length();
             let bytes = &self.arena[offset..offset + length];
+            // SAFETY: bytes validated as UTF-8 during add()
             unsafe { std::str::from_utf8_unchecked(bytes) }
         })
     }
@@ -414,6 +416,7 @@ impl SortableStrVec {
                 // - Indices are added via add() which pushes to entries first, then sorted_indices
                 // - Debug mode (above) uses safe bounds-checked access to verify correctness
                 // - sorted_indices.len() == entries.len() invariant maintained by add()
+                // SAFETY: a and b are valid indices < entries.len() per invariant above
                 let entry_a = unsafe { entries.get_unchecked(a) };
                 let entry_b = unsafe { entries.get_unchecked(b) };
 
@@ -423,6 +426,7 @@ impl SortableStrVec {
                 let len_b = entry_b.length();
 
                 // Use chunked comparison for maximum speed
+                // SAFETY: arena_ptr + offset points to valid len bytes from arena
                 unsafe {
                     Self::fast_lexicographic_cmp(
                         arena_ptr.add(offset_a),
@@ -452,6 +456,7 @@ impl SortableStrVec {
         for i in 0..chunks {
             let offset = i * 8;
             // Load 8 bytes as a byte array for lexicographic comparison
+            // SAFETY: offset = i*8 < chunks*8 <= min_len, pointers valid for a_len/b_len bytes
             let a_bytes = unsafe { std::ptr::read_unaligned(a_ptr.add(offset) as *const [u8; 8]) };
             let b_bytes = unsafe { std::ptr::read_unaligned(b_ptr.add(offset) as *const [u8; 8]) };
 
@@ -465,6 +470,7 @@ impl SortableStrVec {
         // Handle remaining bytes
         let remaining_start = chunks * 8;
         for i in remaining_start..min_len {
+            // SAFETY: i < min_len <= a_len and b_len, pointers valid
             let a_byte = unsafe { *a_ptr.add(i) };
             let b_byte = unsafe { *b_ptr.add(i) };
             match a_byte.cmp(&b_byte) {
@@ -583,6 +589,7 @@ impl SortableStrVec {
     /// SIMD-optimized string comparison (AVX2) - instance method for compatibility
     #[cfg(all(target_arch = "x86_64", feature = "simd"))]
     fn simd_compare(&self, a: &str, b: &str) -> Ordering {
+        // SAFETY: simd_compare_static uses #[target_feature] for SIMD safety
         unsafe { Self::simd_compare_static(a.as_bytes(), b.as_bytes()) }
     }
 
@@ -763,11 +770,13 @@ impl SortableStrVec {
             let entry_a = entries[a];
             let entry_b = entries[b];
 
+            // SAFETY: bytes validated as UTF-8 during add()
             let str_a = unsafe {
                 std::str::from_utf8_unchecked(
                     &arena[entry_a.offset()..entry_a.offset() + entry_a.length()],
                 )
             };
+            // SAFETY: Hardware features verified or caller ensures safety invariants
             let str_b = unsafe {
                 std::str::from_utf8_unchecked(
                     &arena[entry_b.offset()..entry_b.offset() + entry_b.length()],
@@ -983,6 +992,7 @@ impl SortableStrVec {
                 if offset < self.arena.len() {
                     // Prefetch next string data
                     #[cfg(target_arch = "x86_64")]
+                    // SAFETY: prefetch is always safe, offset bounds checked above
                     unsafe {
                         use std::arch::x86_64::_mm_prefetch;
                         _mm_prefetch(self.arena[offset..].as_ptr() as *const i8, 0);

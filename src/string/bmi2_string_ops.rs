@@ -77,6 +77,7 @@ impl Bmi2StringProcessor {
         #[cfg(target_arch = "x86_64")]
         {
             if self.capabilities.has_bmi2 && input.len() >= 8 {
+                // SAFETY: bmi2 guaranteed by runtime check, input is valid slice
                 return unsafe { self.validate_utf8_bmi2_impl(input) };
             }
         }
@@ -93,6 +94,7 @@ impl Bmi2StringProcessor {
         #[cfg(target_arch = "x86_64")]
         {
             if self.capabilities.has_bmi2 && input.len() >= 8 {
+                // SAFETY: bmi2 guaranteed by runtime check, input is valid slice
                 return unsafe { self.count_utf8_chars_bmi2_impl(input) };
             }
         }
@@ -112,6 +114,7 @@ impl Bmi2StringProcessor {
         #[cfg(target_arch = "x86_64")]
         {
             if self.capabilities.has_bmi2 && input.len() >= 8 {
+                // SAFETY: bmi2 guaranteed by runtime check, input is valid slice
                 return unsafe { self.extract_utf8_chars_bmi2_impl(input) };
             }
         }
@@ -131,6 +134,7 @@ impl Bmi2StringProcessor {
         #[cfg(target_arch = "x86_64")]
         {
             if self.capabilities.has_bmi2 && input.len() >= 8 {
+                // SAFETY: bmi2 guaranteed by runtime check, input is valid slice
                 return unsafe { self.utf8_to_utf16_bmi2_impl(input) };
             }
         }
@@ -161,6 +165,7 @@ impl Bmi2StringProcessor {
         #[cfg(target_arch = "x86_64")]
         {
             if self.capabilities.has_bmi2 && haystack.len() >= 16 && needle.len() >= 4 {
+                // SAFETY: bmi2 guaranteed by runtime check, haystack and needle are valid slices from str
                 return unsafe { self.search_bmi2_impl(haystack.as_bytes(), needle.as_bytes()) };
             }
         }
@@ -177,6 +182,7 @@ impl Bmi2StringProcessor {
         #[cfg(target_arch = "x86_64")]
         {
             if self.capabilities.has_bmi2 && text.len() >= 8 && pattern.len() >= 4 {
+                // SAFETY: bmi2 guaranteed by runtime check, text and pattern are valid slices from str
                 return unsafe { self.wildcard_match_bmi2_impl(text.as_bytes(), pattern.as_bytes()) };
             }
         }
@@ -193,6 +199,7 @@ impl Bmi2StringProcessor {
         #[cfg(target_arch = "x86_64")]
         {
             if self.capabilities.has_bmi2 && text.len() >= 8 {
+                // SAFETY: bmi2 guaranteed by runtime check, text is valid slice from str
                 return unsafe { self.char_class_match_bmi2_impl(text.as_bytes(), char_classes) };
             }
         }
@@ -219,6 +226,7 @@ impl Bmi2StringProcessor {
             #[cfg(target_arch = "x86_64")]
             {
                 if self.capabilities.has_bmi2 && len >= 8 {
+                    // SAFETY: bmi2 guaranteed by runtime check, text_bytes is valid slice, bounds checked above
                     let substring = unsafe { self.extract_substring_bmi2_impl(text_bytes, start, len)? };
                     results.push(substring);
                     continue;
@@ -245,6 +253,7 @@ impl Bmi2StringProcessor {
         #[cfg(target_arch = "x86_64")]
         {
             if self.capabilities.has_bmi2 && input.len() >= 8 {
+                // SAFETY: bmi2 guaranteed by runtime check, input is valid slice from str
                 return unsafe { self.to_lowercase_ascii_bmi2_impl(input.as_bytes()) };
             }
         }
@@ -261,6 +270,7 @@ impl Bmi2StringProcessor {
         #[cfg(target_arch = "x86_64")]
         {
             if self.capabilities.has_bmi2 && input.len() >= 8 {
+                // SAFETY: bmi2 guaranteed by runtime check, input is valid slice from str
                 return unsafe { self.to_uppercase_ascii_bmi2_impl(input.as_bytes()) };
             }
         }
@@ -277,6 +287,7 @@ impl Bmi2StringProcessor {
         #[cfg(target_arch = "x86_64")]
         {
             if self.capabilities.has_bmi2 && input.len() >= 8 {
+                // SAFETY: bmi2 guaranteed by runtime check, input is valid slice from str
                 return unsafe { self.filter_chars_bmi2_impl(input.as_bytes(), filter) };
             }
         }
@@ -293,6 +304,7 @@ impl Bmi2StringProcessor {
         #[cfg(target_arch = "x86_64")]
         {
             if self.capabilities.has_bmi2 && input.len() >= 8 {
+                // SAFETY: bmi2 guaranteed by runtime check, input is valid slice from str
                 return unsafe { self.hash_string_bmi2_impl(input.as_bytes(), seed) };
             }
         }
@@ -313,6 +325,7 @@ impl Bmi2StringProcessor {
         #[cfg(target_arch = "x86_64")]
         {
             if self.capabilities.has_bmi2 && input.len() >= 8 {
+                // SAFETY: bmi2 guaranteed by runtime check, input is valid slice from str
                 return unsafe { self.detect_runs_bmi2_impl(input.as_bytes()) };
             }
         }
@@ -329,6 +342,7 @@ impl Bmi2StringProcessor {
         #[cfg(target_arch = "x86_64")]
         {
             if self.capabilities.has_bmi2 && input.len() >= 16 {
+                // SAFETY: bmi2 guaranteed by runtime check, input is valid slice from str
                 return unsafe { self.analyze_compression_bmi2_impl(input.as_bytes()) };
             }
         }
@@ -345,6 +359,7 @@ impl Bmi2StringProcessor {
         #[cfg(target_arch = "x86_64")]
         {
             if self.capabilities.has_bmi2 && text.len() >= 8 {
+                // SAFETY: bmi2 guaranteed by runtime check, text is valid slice from str
                 return unsafe { self.dictionary_lookup_bmi2_impl(text.as_bytes(), dictionary) };
             }
         }
@@ -365,6 +380,7 @@ impl Bmi2StringProcessor {
         #[cfg(target_arch = "x86_64")]
         {
             if self.capabilities.has_bmi2 && strings.len() >= 4 {
+                // SAFETY: bmi2 guaranteed by runtime check, strings is valid slice of str references
                 return unsafe { self.validate_bulk_bmi2_impl(strings) };
             }
         }
@@ -383,6 +399,7 @@ impl Bmi2StringProcessor {
         #[cfg(target_arch = "x86_64")]
         {
             if self.capabilities.has_bmi2 && strings.len() >= 4 {
+                // SAFETY: bmi2 guaranteed by runtime check, strings is valid slice of str references
                 return unsafe { self.hash_bulk_bmi2_impl(strings, seed) };
             }
         }
@@ -401,6 +418,7 @@ impl Bmi2StringProcessor {
         #[cfg(target_arch = "x86_64")]
         {
             if self.capabilities.has_bmi2 && pairs.len() >= 4 {
+                // SAFETY: bmi2 guaranteed by runtime check, pairs is valid slice of str reference tuples
                 return unsafe { self.compare_bulk_bmi2_impl(pairs) };
             }
         }
@@ -441,6 +459,7 @@ impl Bmi2StringProcessor {
 
         // Process in 8-byte chunks where possible
         while i + 8 <= input.len() {
+            // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from slice, i + 8 <= len checked
             let bytes = unsafe { std::ptr::read_unaligned(input.as_ptr().add(i) as *const u64) };
             continuation_bytes += self.count_utf8_continuation_bytes_bmi2(bytes);
             i += 8;
@@ -467,6 +486,7 @@ impl Bmi2StringProcessor {
         while i < input.len() {
             if i + 4 <= input.len() {
                 // Extract potential UTF-8 character using BEXTR
+                // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from slice, i + 4 <= len checked
                 let char_bytes = unsafe { std::ptr::read_unaligned(input.as_ptr().add(i) as *const u32) };
                 
                 match self.decode_utf8_char_bmi2(char_bytes, &mut i) {
@@ -498,6 +518,7 @@ impl Bmi2StringProcessor {
         while i < input.len() {
             if i + 4 <= input.len() {
                 // Extract UTF-8 character using BMI2
+                // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from slice, i + 4 <= len checked
                 let char_bytes = unsafe { std::ptr::read_unaligned(input.as_ptr().add(i) as *const u32) };
                 
                 match self.decode_utf8_char_bmi2(char_bytes, &mut i) {
@@ -539,6 +560,7 @@ impl Bmi2StringProcessor {
         while i < search_range {
             if i + 8 <= haystack.len() {
                 // Load 8 bytes and search using BMI2 patterns
+                // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from slice, i + 8 <= len checked
                 let chunk = unsafe { std::ptr::read_unaligned(haystack.as_ptr().add(i) as *const u64) };
                 
                 // Extract each byte and compare using BEXTR
@@ -596,6 +618,7 @@ impl Bmi2StringProcessor {
                     let next_char = pattern[pattern_idx];
                     while text_idx < text.len() {
                         let current_char = if text_idx + 8 <= text.len() {
+                            // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from slice, text_idx + 8 <= len checked
                             let chunk = unsafe { std::ptr::read_unaligned(text.as_ptr().add(text_idx) as *const u64) };
                             Bmi2BextrOps::extract_bits_bextr(chunk, 0, 8) as u8
                         } else {
@@ -616,6 +639,7 @@ impl Bmi2StringProcessor {
                 c => {
                     // Literal character match
                     let text_char = if text_idx + 8 <= text.len() {
+                        // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from slice, text_idx + 8 <= len checked
                         let chunk = unsafe { std::ptr::read_unaligned(text.as_ptr().add(text_idx) as *const u64) };
                         Bmi2BextrOps::extract_bits_bextr(chunk, 0, 8) as u8
                     } else {
@@ -648,6 +672,7 @@ impl Bmi2StringProcessor {
         while i < text.len() {
             if i + 8 <= text.len() {
                 // Process 8 characters at once using BMI2
+                // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from slice, i + 8 <= len checked
                 let chunk = unsafe { std::ptr::read_unaligned(text.as_ptr().add(i) as *const u64) };
                 
                 for byte_pos in 0..8 {
@@ -681,6 +706,7 @@ impl Bmi2StringProcessor {
         
         // Validate UTF-8 using BMI2 if possible
         if len >= 8 && self.validate_utf8_bmi2(substring_bytes) {
+            // SAFETY: UTF-8 validity guaranteed by validate_utf8_bmi2 check above
             Ok(unsafe { String::from_utf8_unchecked(substring_bytes.to_vec()) })
         } else {
             // Fallback validation
@@ -699,6 +725,7 @@ impl Bmi2StringProcessor {
         for chunk in input.chunks(8) {
             if chunk.len() == 8 {
                 // Load 8 bytes for parallel processing
+                // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from chunk, len == 8 checked
                 let bytes = unsafe { std::ptr::read_unaligned(chunk.as_ptr() as *const u64) };
                 
                 // Convert to lowercase using BMI2 bit manipulation
@@ -717,6 +744,7 @@ impl Bmi2StringProcessor {
             }
         }
 
+        // SAFETY: all bytes converted from ASCII via to_ascii_lowercase, guaranteed valid UTF-8
         unsafe { String::from_utf8_unchecked(output) }
     }
 
@@ -728,6 +756,7 @@ impl Bmi2StringProcessor {
         for chunk in input.chunks(8) {
             if chunk.len() == 8 {
                 // Load 8 bytes for parallel processing
+                // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from chunk, len == 8 checked
                 let bytes = unsafe { std::ptr::read_unaligned(chunk.as_ptr() as *const u64) };
                 
                 // Convert to uppercase using BMI2 bit manipulation
@@ -746,6 +775,7 @@ impl Bmi2StringProcessor {
             }
         }
 
+        // SAFETY: all bytes converted from ASCII via to_ascii_uppercase, guaranteed valid UTF-8
         unsafe { String::from_utf8_unchecked(output) }
     }
 
@@ -757,6 +787,7 @@ impl Bmi2StringProcessor {
         for chunk in input.chunks(8) {
             if chunk.len() == 8 {
                 // Load 8 bytes for parallel filtering
+                // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from chunk, len == 8 checked
                 let bytes = unsafe { std::ptr::read_unaligned(chunk.as_ptr() as *const u64) };
                 
                 // Filter characters using BMI2 patterns
@@ -776,6 +807,7 @@ impl Bmi2StringProcessor {
             }
         }
 
+        // SAFETY: output bytes are filtered subset of input which is valid UTF-8 str
         unsafe { String::from_utf8_unchecked(output) }
     }
 
@@ -785,6 +817,7 @@ impl Bmi2StringProcessor {
         // Process 8-byte chunks with BMI2 acceleration
         for chunk in input.chunks(8) {
             if chunk.len() == 8 {
+                // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from chunk, len == 8 checked
                 let bytes = unsafe { std::ptr::read_unaligned(chunk.as_ptr() as *const u64) };
                 
                 // Use BMI2 operations for hash mixing
@@ -815,6 +848,7 @@ impl Bmi2StringProcessor {
 
         for i in 1..input.len() {
             let next_char = if i + 8 <= input.len() {
+                // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from slice, i + 8 <= len checked
                 let chunk = unsafe { std::ptr::read_unaligned(input.as_ptr().add(i) as *const u64) };
                 Bmi2BextrOps::extract_bits_bextr(chunk, 0, 8) as u8
             } else {
@@ -855,6 +889,7 @@ impl Bmi2StringProcessor {
         // Count character frequencies using BMI2 acceleration
         for chunk in input.chunks(8) {
             if chunk.len() == 8 {
+                // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from chunk, len == 8 checked
                 let bytes = unsafe { std::ptr::read_unaligned(chunk.as_ptr() as *const u64) };
                 
                 for byte_pos in 0..8 {
@@ -935,6 +970,7 @@ impl Bmi2StringProcessor {
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn hash_bulk_bmi2_impl(&self, strings: &[&str], seed: u64) -> Vec<u64> {
         strings.iter()
+            // SAFETY: bmi2 guaranteed by #[target_feature], s.as_bytes() valid from str
             .map(|s| unsafe { self.hash_string_bmi2_impl(s.as_bytes(), seed) })
             .collect()
     }
@@ -985,6 +1021,7 @@ impl Bmi2StringProcessor {
         // Compare in 8-byte chunks
         let mut i = 0;
         while i + 8 <= len {
+            // SAFETY: pointers valid from slices, i + 8 <= len checked, alignment not required for read_unaligned
             unsafe {
                 let bytes1 = std::ptr::read_unaligned(text1.as_ptr().add(i) as *const u64);
                 let bytes2 = std::ptr::read_unaligned(text2.as_ptr().add(i) as *const u64);

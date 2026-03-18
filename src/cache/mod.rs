@@ -214,12 +214,16 @@ pub fn get_shard_id(file_id: FileId, page_id: PageId, num_shards: u32) -> u32 {
 pub fn prefetch_hint(ptr: *const u8) {
     #[cfg(target_arch = "x86_64")]
     {
+        // SAFETY: _mm_prefetch is a CPU hint instruction that never fails or dereferences ptr,
+        // simply signals the CPU to load the cache line containing ptr into L1 cache
         unsafe {
             std::arch::x86_64::_mm_prefetch(ptr as *const i8, std::arch::x86_64::_MM_HINT_T0);
         }
     }
     #[cfg(target_arch = "aarch64")]
     {
+        // SAFETY: __pldl1keep is a CPU hint instruction that never fails or dereferences ptr,
+        // simply signals the CPU to preload the cache line containing ptr
         unsafe {
             std::arch::aarch64::__pldl1keep(ptr);
         }

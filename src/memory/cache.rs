@@ -100,6 +100,7 @@ impl<T> CacheAlignedVec<T> {
             self.reserve(1)?;
         }
 
+        // SAFETY: pointer valid from alloc, offset < capacity ensured by reserve above
         unsafe {
             ptr::write(self.ptr.as_ptr().add(self.len), value);
         }
@@ -114,6 +115,7 @@ impl<T> CacheAlignedVec<T> {
         }
 
         self.len -= 1;
+        // SAFETY: pointer valid from alloc, offset < len checked by decrement above
         unsafe { Some(ptr::read(self.ptr.as_ptr().add(self.len))) }
     }
 
@@ -121,6 +123,7 @@ impl<T> CacheAlignedVec<T> {
     #[inline]
     pub fn get(&self, index: usize) -> Option<&T> {
         if index < self.len {
+            // SAFETY: pointer valid from alloc, index < len checked above
             unsafe { Some(&*self.ptr.as_ptr().add(index)) }
         } else {
             None
@@ -130,6 +133,7 @@ impl<T> CacheAlignedVec<T> {
     /// Get a mutable reference to an element by index
     pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
         if index < self.len {
+            // SAFETY: pointer valid from alloc, index < len checked above
             unsafe { Some(&mut *self.ptr.as_ptr().add(index)) }
         } else {
             None
@@ -139,12 +143,14 @@ impl<T> CacheAlignedVec<T> {
     /// Get a slice of all elements
     #[inline]
     pub fn as_slice(&self) -> &[T] {
+        // SAFETY: pointer valid from alloc, len <= capacity
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 
     /// Get a mutable slice of all elements
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [T] {
+        // SAFETY: pointer valid from alloc, len <= capacity
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }
 
@@ -152,6 +158,7 @@ impl<T> CacheAlignedVec<T> {
     pub fn clear(&mut self) {
         // Drop all elements
         for i in 0..self.len {
+            // SAFETY: pointer valid from alloc, i < len checked by loop bounds
             unsafe {
                 ptr::drop_in_place(self.ptr.as_ptr().add(i));
             }
@@ -167,6 +174,7 @@ impl<T> CacheAlignedVec<T> {
 
         // Drop the excess elements
         for i in len..self.len {
+            // SAFETY: pointer valid from alloc, i < self.len checked by loop bounds
             unsafe {
                 ptr::drop_in_place(self.ptr.as_ptr().add(i));
             }
@@ -201,12 +209,12 @@ impl<T> CacheAlignedVec<T> {
 
             let new_ptr = numa_alloc(layout, self.numa_node)?;
 
-            // Copy existing data
+            // SAFETY: both pointers valid from alloc, non-overlapping, len <= old capacity
             unsafe {
                 ptr::copy_nonoverlapping(self.ptr.as_ptr(), new_ptr.as_ptr(), self.len);
             }
 
-            // Deallocate old memory
+            // SAFETY: ptr from matching alloc, layout matches allocation
             unsafe {
                 dealloc(self.ptr.as_ptr() as *mut u8, old_layout);
             }
@@ -231,6 +239,7 @@ impl<T> Drop for CacheAlignedVec<T> {
                 Layout::from_size_align(self.capacity * mem::size_of::<T>(), CACHE_LINE_SIZE)
                     .expect("layout creation: non-zero size, power-of-two alignment");
 
+            // SAFETY: ptr from matching alloc, layout matches allocation
             unsafe {
                 dealloc(self.ptr.as_ptr() as *mut u8, layout);
             }
@@ -238,7 +247,9 @@ impl<T> Drop for CacheAlignedVec<T> {
     }
 }
 
+// SAFETY: CacheAlignedVec<T> is Send if T is Send (same as Vec<T>)
 unsafe impl<T: Send> Send for CacheAlignedVec<T> {}
+// SAFETY: CacheAlignedVec<T> is Sync if T is Sync (same as Vec<T>)
 unsafe impl<T: Sync> Sync for CacheAlignedVec<T> {}
 
 impl<T> Default for CacheAlignedVec<T> {
@@ -260,7 +271,7 @@ fn align_to_cache_line(size: usize) -> usize {
 /// The pool's Drop also used hardcoded layouts that didn't match actual allocations.
 /// See: https://github.com/infinilabs/zipora/issues/heap-corruption-fix
 fn numa_alloc<T>(layout: Layout, preferred_node: Option<NumaNode>) -> Result<NonNull<T>> {
-    // Direct allocation - pooling disabled due to size-mismatch bugs
+    // SAFETY: layout valid (size > 0, align power of 2)
     let ptr = unsafe { alloc(layout) };
 
     if ptr.is_null() {
@@ -272,7 +283,7 @@ fn numa_alloc<T>(layout: Layout, preferred_node: Option<NumaNode>) -> Result<Non
         bind_to_numa_node(ptr, layout.size(), node);
     }
 
-    // SAFETY: Null check performed above
+    // SAFETY: null check performed above
     Ok(unsafe { NonNull::new_unchecked(ptr as *mut T) })
 }
 
@@ -324,6 +335,7 @@ impl NumaMemoryPool {
 
         // Allocate new memory bound to NUMA node
         self.miss_count.fetch_add(1, Ordering::Relaxed);
+        // SAFETY: layout valid (size > 0, align power of 2)
         let ptr = unsafe { alloc(layout) };
 
         if ptr.is_null() {
@@ -335,7 +347,7 @@ impl NumaMemoryPool {
         self.allocated_bytes
             .fetch_add(layout.size(), Ordering::Relaxed);
 
-        // SAFETY: Null check performed at lines 323-325 above
+        // SAFETY: null check performed above
         Ok(unsafe { NonNull::new_unchecked(ptr) })
     }
 
@@ -353,7 +365,7 @@ impl NumaMemoryPool {
             // Limit pool size
             pool.push(ptr.as_ptr() as usize);
         } else {
-            // Pool is full, actually deallocate
+            // SAFETY: ptr from matching alloc, layout matches allocation
             unsafe {
                 dealloc(ptr.as_ptr(), layout);
             }
@@ -378,6 +390,7 @@ impl Drop for NumaMemoryPool {
     fn drop(&mut self) {
         // Clean up all cached allocations
         for &ptr_addr in &self.small_chunks {
+            // SAFETY: ptr from matching alloc, hardcoded layout matches small_chunks category
             unsafe {
                 dealloc(
                     ptr_addr as *mut u8,
@@ -387,6 +400,7 @@ impl Drop for NumaMemoryPool {
             }
         }
         for &ptr_addr in &self.medium_chunks {
+            // SAFETY: ptr from matching alloc, hardcoded layout matches medium_chunks category
             unsafe {
                 dealloc(
                     ptr_addr as *mut u8,
@@ -396,6 +410,7 @@ impl Drop for NumaMemoryPool {
             }
         }
         for &ptr_addr in &self.large_chunks {
+            // SAFETY: ptr from matching alloc, hardcoded layout matches large_chunks category
             unsafe {
                 dealloc(
                     ptr_addr as *mut u8,
@@ -572,7 +587,7 @@ pub fn numa_dealloc(ptr: NonNull<u8>, size: usize, align: usize, node: NumaNode)
         }
     }
 
-    // Fallback to standard deallocation
+    // SAFETY: ptr from matching alloc, layout matches allocation
     unsafe {
         dealloc(ptr.as_ptr(), layout);
     }

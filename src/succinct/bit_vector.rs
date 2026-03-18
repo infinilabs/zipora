@@ -167,6 +167,8 @@ impl BitVector {
         let block_index = index / BITS_PER_BLOCK;
         let bit_index = index % BITS_PER_BLOCK;
 
+// SAFETY: Caller must ensure index < self.len()
+
         (unsafe { self.blocks.get_unchecked(block_index) } >> bit_index) & 1 == 1
     }
 
@@ -201,10 +203,12 @@ impl BitVector {
         let bit_index = index % BITS_PER_BLOCK;
 
         if value {
+            // SAFETY: index < len checked by caller, block_index is valid
             unsafe {
                 *self.blocks.get_unchecked_mut(block_index) |= 1u64 << bit_index;
             }
         } else {
+            // SAFETY: index < len checked by caller, block_index is valid
             unsafe {
                 *self.blocks.get_unchecked_mut(block_index) &= !(1u64 << bit_index);
             }
@@ -574,6 +578,7 @@ impl BitVector {
         let chunk_size = 4;
 
         for chunk in positions.chunks(chunk_size) {
+            // SAFETY: pos_array is properly aligned and sized for AVX2 load
             unsafe {
                 // Load positions into SIMD register
                 let mut pos_array = [0u64; 4];
@@ -725,6 +730,7 @@ impl BitVector {
         let avx2_blocks = 4;
         let mut block_idx = start_block;
 
+        // SAFETY: Bounds checked in loop condition, pointers are valid for AVX2 operations
         unsafe {
             // Process 4 blocks at a time with AVX2
             while block_idx + avx2_blocks <= end_block + 1
@@ -1033,6 +1039,7 @@ mod tests {
         bv.push(false).unwrap();
         bv.push(true).unwrap();
 
+        // SAFETY: Indices 0, 1, 2 are valid (len=3)
         unsafe {
             assert_eq!(bv.get_unchecked(0), true);
             assert_eq!(bv.get_unchecked(1), false);

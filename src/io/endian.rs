@@ -237,10 +237,11 @@ impl<T: EndianConvert> EndianIO<T> {
             ));
         }
         
+        // SAFETY: bytes.len() >= size_of::<T>() ensures valid read, unaligned is safe
         let value = unsafe {
             std::ptr::read_unaligned(bytes.as_ptr() as *const T)
         };
-        
+
         Ok(value.from_endian(self.endianness))
     }
     
@@ -254,10 +255,11 @@ impl<T: EndianConvert> EndianIO<T> {
         }
         
         let converted = value.to_endian(self.endianness);
+        // SAFETY: bytes.len() >= size_of::<T>() ensures valid write, unaligned is safe
         unsafe {
             std::ptr::write_unaligned(bytes.as_mut_ptr() as *mut T, converted);
         }
-        
+
         Ok(())
     }
     
@@ -319,16 +321,17 @@ pub mod simd {
             let remainder = chunks.into_remainder();
             
             for chunk in chunk_iter {
+                // SAFETY: chunk is exactly 8 u16 elements, SSE2 support checked via target_feature
                 unsafe {
                     let ptr = chunk.as_mut_ptr() as *mut __m128i;
                     let data = _mm_loadu_si128(ptr);
-                    
+
                     // Byte swap using SIMD shuffle
                     let swapped = _mm_or_si128(
                         _mm_slli_epi16(data, 8),
                         _mm_srli_epi16(data, 8)
                     );
-                    
+
                     _mm_storeu_si128(ptr, swapped);
                 }
             }
@@ -356,14 +359,15 @@ pub mod simd {
             let remainder = chunks.into_remainder();
             
             for chunk in chunk_iter {
+                // SAFETY: chunk is exactly 4 u32 elements, SSE2 support checked via target_feature
                 unsafe {
                     let ptr = chunk.as_mut_ptr() as *mut __m128i;
                     let data = _mm_loadu_si128(ptr);
-                    
+
                     // 32-bit byte swap using SIMD
-                    let swapped = _mm_shuffle_epi8(data, 
+                    let swapped = _mm_shuffle_epi8(data,
                         _mm_set_epi8(12, 13, 14, 15, 8, 9, 10, 11, 4, 5, 6, 7, 0, 1, 2, 3));
-                    
+
                     _mm_storeu_si128(ptr, swapped);
                 }
             }

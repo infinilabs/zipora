@@ -134,6 +134,8 @@ impl Prefetcher {
     #[inline(always)]
     pub unsafe fn prefetch<T>(ptr: *const T, hint: PrefetchHint) {
         #[cfg(target_arch = "x86_64")]
+        // SAFETY: _mm_prefetch is safe to call with any pointer, even if invalid
+        // it only hints the CPU and does not dereference memory
         unsafe {
             match hint {
                 PrefetchHint::AllLevels => _mm_prefetch(ptr as *const i8, _MM_HINT_T0),
@@ -147,10 +149,12 @@ impl Prefetcher {
     /// Prefetch multiple sequential cache lines
     #[inline(always)]
     pub unsafe fn prefetch_range<T>(start: *const T, count: usize, hint: PrefetchHint) {
+        // SAFETY: Caller must ensure start is valid and start..start+count*sizeof(T) is in bounds
+        // Pointer arithmetic is safe because we iterate count times adding bytes_per_element
         unsafe {
             let bytes_per_element = size_of::<T>();
             let mut current = start as *const u8;
-            
+
             for _ in 0..count {
                 Self::prefetch(current as *const T, hint);
                 current = current.add(bytes_per_element);
@@ -166,6 +170,7 @@ impl Prefetcher {
         count: usize,
         hint: PrefetchHint,
     ) {
+        // SAFETY: Caller must ensure base and all base+i*stride for i in 0..count are valid pointers
         unsafe {
             let mut current = base;
             for _ in 0..count {
@@ -253,6 +258,8 @@ impl<K, V, const N: usize> CacheOptimizedBucket<K, V, N> {
     /// Prefetch bucket data
     #[inline(always)]
     pub unsafe fn prefetch(&self) {
+        // SAFETY: self is a valid pointer to this bucket, prefetching self and self+CACHE_LINE_SIZE
+        // is safe even if second line is partially out of bounds (prefetch doesn't dereference)
         unsafe {
             Prefetcher::prefetch(self as *const _, PrefetchHint::AllLevels);
             // Prefetch the second cache line if entries span multiple lines
@@ -299,6 +306,8 @@ impl NumaAllocator {
 
     /// Allocate memory on preferred NUMA node
     pub unsafe fn alloc_on_node(&self, layout: Layout, node: usize) -> *mut u8 {
+        // SAFETY: layout must be valid (non-zero size, valid alignment)
+        // Caller must deallocate with the same layout
         unsafe {
             // In a real implementation, this would use numa_alloc_onnode
             // For now, use standard aligned allocation
@@ -313,6 +322,7 @@ impl NumaAllocator {
 
     /// Allocate cache-line aligned memory
     pub unsafe fn alloc_cache_aligned<T>(&self, count: usize) -> *mut T {
+        // SAFETY: Layout cannot fail because CACHE_LINE_SIZE is power-of-2, caller responsible for count overflow check
         unsafe {
             // SAFETY: Layout cannot fail because:
             // 1. size_of::<T>() * count may overflow but we're in unsafe context
@@ -332,6 +342,7 @@ impl NumaAllocator {
 
     /// Free previously allocated memory
     pub unsafe fn dealloc<T>(&self, ptr: *mut T, count: usize) {
+        // SAFETY: Caller must pass same count and layout used during allocation
         unsafe {
             // SAFETY: Layout::from_size_align() cannot fail because:
             // 1. The same layout was used during allocation
@@ -736,13 +747,14 @@ mod tests {
     #[test]
     fn test_prefetcher() {
         let data = vec![1u64, 2, 3, 4, 5];
+        // SAFETY: data.as_ptr() is valid, ranges are within allocated Vec bounds
         unsafe {
             // Test basic prefetch
             Prefetcher::prefetch(data.as_ptr(), PrefetchHint::AllLevels);
-            
+
             // Test range prefetch
             Prefetcher::prefetch_range(data.as_ptr(), 3, PrefetchHint::L2L3);
-            
+
             // Test strided prefetch
             Prefetcher::prefetch_strided(data.as_ptr(), 2, 2, PrefetchHint::L3Only);
         }
@@ -751,14 +763,15 @@ mod tests {
     #[test]
     fn test_numa_allocator() {
         let allocator = NumaAllocator::new();
-        
+
+        // SAFETY: Valid allocation count, proper deallocation with same count
         unsafe {
             let ptr = allocator.alloc_cache_aligned::<u64>(100);
             assert!(!ptr.is_null());
-            
+
             // Check alignment
             assert_eq!(ptr as usize % CACHE_LINE_SIZE, 0);
-            
+
             // Clean up
             allocator.dealloc(ptr, 100);
         }

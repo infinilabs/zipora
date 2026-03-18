@@ -60,6 +60,7 @@ impl PrefetchOps {
     #[inline]
     fn prefetch_read<T>(ptr: *const T) {
         #[cfg(target_arch = "x86_64")]
+        // SAFETY: _mm_prefetch is always safe - it's a hint that can be ignored; ptr validity checked by caller
         unsafe {
             std::arch::x86_64::_mm_prefetch(
                 ptr as *const i8,
@@ -68,6 +69,7 @@ impl PrefetchOps {
         }
 
         #[cfg(target_arch = "aarch64")]
+        // SAFETY: prfm is always safe - it's a prefetch hint that can be ignored; ptr validity checked by caller
         unsafe {
             // ARM64 PRFM PLDL1KEEP - prefetch for load to L1 cache, temporal
             std::arch::asm!(
@@ -98,6 +100,7 @@ impl PrefetchOps {
 
         for i in (0..count).step_by(elements_per_line) {
             if i + distance < count {
+                // SAFETY: i + distance < count guaranteed by check at line 100
                 unsafe {
                     Self::prefetch_read(start.add(i + distance));
                 }
@@ -116,6 +119,7 @@ unsafe fn slice_as_bytes<T>(slice: &[T]) -> &[u8] {
     if slice.is_empty() {
         &[]
     } else {
+        // SAFETY: slice pointer valid by reference, length computed from valid slice length * size_of::<T>()
         unsafe {
             slice::from_raw_parts(
                 slice.as_ptr() as *const u8,
@@ -135,6 +139,7 @@ unsafe fn slice_as_bytes_mut<T>(slice: &mut [T]) -> &mut [u8] {
     if slice.is_empty() {
         &mut []
     } else {
+        // SAFETY: slice pointer valid by mutable reference, length computed from valid slice length * size_of::<T>()
         unsafe {
             slice::from_raw_parts_mut(
                 slice.as_mut_ptr() as *mut u8,
@@ -196,6 +201,7 @@ impl<T> FastVec<T> {
         let layout = Layout::array::<T>(cap)
             .map_err(|_| ZiporaError::out_of_memory(cap * mem::size_of::<T>()))?;
 
+        // SAFETY: alloc::alloc returns valid pointer for layout; verified by zipora_verify_alloc macro
         let ptr = unsafe {
             let raw_ptr = alloc::alloc(layout);
             // Verify allocation success
@@ -204,6 +210,7 @@ impl<T> FastVec<T> {
         };
 
         Ok(Self {
+            // SAFETY: ptr is non-null after successful allocation verified at line 207
             ptr: Some(unsafe { NonNull::new_unchecked(ptr) }),
             len: 0,
             cap,
@@ -262,6 +269,7 @@ impl<T> FastVec<T> {
         if self.len == 0 {
             &[]
         } else {
+            // SAFETY: ptr valid from allocation, len <= cap maintained by all mutation methods
             unsafe { slice::from_raw_parts(self.as_ptr(), self.len) }
         }
     }
@@ -272,6 +280,7 @@ impl<T> FastVec<T> {
         if self.len == 0 {
             &mut []
         } else {
+            // SAFETY: ptr valid from allocation, len <= cap maintained by all mutation methods
             unsafe { slice::from_raw_parts_mut(self.as_mut_ptr(), self.len) }
         }
     }
@@ -325,6 +334,7 @@ impl<T> FastVec<T> {
             Some(ptr) => {
                 if self.cap == 0 {
                     // This shouldn't happen, but handle it safely
+                    // SAFETY: alloc returns valid pointer or null; cast_aligned_ptr checks alignment
                     unsafe {
                         let raw_ptr = alloc::alloc(new_layout);
                         if raw_ptr.is_null() {
@@ -340,6 +350,7 @@ impl<T> FastVec<T> {
                     // 3. The same layout parameters were valid during allocation, so they're valid for deallocation
                     let old_layout = Layout::array::<T>(self.cap)
                         .expect("array layout overflow: capacity exceeds Layout limits");
+                    // SAFETY: ptr from self.ptr valid allocation, old_layout matches original allocation, new_layout.size() >= old_layout.size()
                     unsafe {
                         let raw_ptr =
                             alloc::realloc(ptr.as_ptr() as *mut u8, old_layout, new_layout.size());
@@ -351,6 +362,7 @@ impl<T> FastVec<T> {
                     }
                 }
             }
+            // SAFETY: alloc returns valid pointer or null; cast_aligned_ptr checks alignment
             None => unsafe {
                 let raw_ptr = alloc::alloc(new_layout);
                 if raw_ptr.is_null() {
@@ -365,6 +377,7 @@ impl<T> FastVec<T> {
             return Err(ZiporaError::out_of_memory(new_layout.size()));
         }
 
+        // SAFETY: new_ptr is non-null after check at line 373
         self.ptr = Some(unsafe { NonNull::new_unchecked(new_ptr) });
         self.cap = target_cap;
         Ok(())
@@ -386,6 +399,7 @@ impl<T> FastVec<T> {
         crate::zipora_verify!(self.ptr.is_some() || self.len == 0,
             "invalid state: non-null pointer required for len > 0");
 
+        // SAFETY: self.len < self.cap after ensure_capacity, ptr valid from allocation
         unsafe {
             ptr::write(self.as_mut_ptr().add(self.len), value);
         }
@@ -403,8 +417,9 @@ impl<T> FastVec<T> {
         } else {
             // Verify we have valid memory before accessing
             crate::zipora_verify!(self.ptr.is_some(), "invalid state: null pointer with len > 0");
-            
+
             self.len -= 1;
+            // SAFETY: self.len < original len guaranteed by check at line 414, ptr valid from verification
             Some(unsafe { ptr::read(self.as_ptr().add(self.len)) })
         }
     }
@@ -423,19 +438,20 @@ impl<T> FastVec<T> {
         }
 
         let move_count = self.len - index;
-        
+
+        // SAFETY: index <= self.len verified at line 427, ptr valid after ensure_capacity, move_count computed safely
         unsafe {
             let ptr = self.as_mut_ptr().add(index);
-            
+
             // Use SIMD optimization for large move operations on Copy types
             if move_count > 0 && is_simd_safe::<T>() && is_simd_beneficial::<T>(move_count) {
                 // Create temporary slices for SIMD copy
                 let src_bytes = slice_as_bytes(slice::from_raw_parts(ptr, move_count));
                 let mut temp_vec: Vec<u8> = vec![0; src_bytes.len()];
-                
+
                 // Copy to temporary buffer with SIMD
                 fast_copy(src_bytes, &mut temp_vec)?;
-                
+
                 // Copy back from temporary buffer with SIMD
                 let dst_bytes = slice_as_bytes_mut(slice::from_raw_parts_mut(ptr.add(1), move_count));
                 fast_copy(&temp_vec, dst_bytes)?;
@@ -443,7 +459,7 @@ impl<T> FastVec<T> {
                 // Standard move for small operations or non-Copy types
                 ptr::copy(ptr, ptr.add(1), move_count);
             }
-            
+
             // Write the new value
             ptr::write(ptr, value);
         }
@@ -458,20 +474,21 @@ impl<T> FastVec<T> {
         }
 
         let move_count = self.len - index - 1;
-        
+
+        // SAFETY: index < self.len verified at line 471, ptr valid from allocation, move_count computed safely
         unsafe {
             let ptr = self.as_mut_ptr().add(index);
             let value = ptr::read(ptr);
-            
+
             // Use SIMD optimization for large move operations on Copy types
             if move_count > 0 && is_simd_safe::<T>() && is_simd_beneficial::<T>(move_count) {
                 // Create temporary slices for SIMD copy
                 let src_bytes = slice_as_bytes(slice::from_raw_parts(ptr.add(1), move_count));
                 let mut temp_vec: Vec<u8> = vec![0; src_bytes.len()];
-                
+
                 // Copy to temporary buffer with SIMD
                 fast_copy(src_bytes, &mut temp_vec)?;
-                
+
                 // Copy back from temporary buffer with SIMD
                 let dst_bytes = slice_as_bytes_mut(slice::from_raw_parts_mut(ptr, move_count));
                 fast_copy(&temp_vec, dst_bytes)?;
@@ -479,7 +496,7 @@ impl<T> FastVec<T> {
                 // Standard move for small operations or non-Copy types
                 ptr::copy(ptr.add(1), ptr, move_count);
             }
-            
+
             self.len -= 1;
             Ok(value)
         }
@@ -507,6 +524,7 @@ impl<T> FastVec<T> {
             // Use SIMD optimization for large fill operations on Copy types
             if is_simd_safe::<T>() && is_simd_beneficial::<T>(fill_count) && mem::size_of::<T>() == 1 {
                 // For u8-sized Copy types, use direct SIMD fill
+                // SAFETY: self.len + fill_count == new_len <= cap after ensure_capacity, ptr valid from verification
                 unsafe {
                     let fill_slice = slice::from_raw_parts_mut(
                         self.as_mut_ptr().add(self.len) as *mut u8,
@@ -517,6 +535,7 @@ impl<T> FastVec<T> {
             } else {
                 // Standard fill for non-Copy types or small operations
                 for i in self.len..new_len {
+                    // SAFETY: i < new_len <= cap after ensure_capacity, ptr valid from verification
                     unsafe {
                         ptr::write(self.as_mut_ptr().add(i), value.clone());
                     }
@@ -526,9 +545,10 @@ impl<T> FastVec<T> {
             // Verify we have valid memory to drop elements from
             crate::zipora_verify!(self.ptr.is_some() || self.len == 0,
                 "invalid state: null pointer with elements to drop");
-                
+
             // Drop excess elements
             for i in new_len..self.len {
+                // SAFETY: new_len <= i < self.len, ptr valid from verification at line 546
                 unsafe {
                     ptr::drop_in_place(self.as_mut_ptr().add(i));
                 }
@@ -560,6 +580,7 @@ impl<T> FastVec<T> {
 
             let mut closure = f;
             for i in self.len..new_len {
+                // SAFETY: i < new_len <= cap after ensure_capacity, ptr valid from verification
                 unsafe {
                     ptr::write(self.as_mut_ptr().add(i), closure());
                 }
@@ -567,6 +588,7 @@ impl<T> FastVec<T> {
         } else if new_len < self.len {
             // Drop excess elements
             for i in new_len..self.len {
+                // SAFETY: new_len <= i < self.len, ptr valid since len > 0
                 unsafe {
                     ptr::drop_in_place(self.as_mut_ptr().add(i));
                 }
@@ -587,6 +609,7 @@ impl<T> FastVec<T> {
             "invalid state: null pointer with elements to clear");
         
         for i in 0..self.len {
+            // SAFETY: i < self.len, ptr valid from verification at line 608
             unsafe {
                 ptr::drop_in_place(self.as_mut_ptr().add(i));
             }
@@ -605,6 +628,7 @@ impl<T> FastVec<T> {
 
         if self.len == 0 {
             if let Some(ptr) = self.ptr {
+                // SAFETY: ptr from valid allocation, layout matches original allocation parameters
                 unsafe {
                     // SAFETY: Layout::array::<T>() cannot fail here because:
                     // 1. self.cap was successfully used to allocate memory (either in with_capacity or previous realloc)
@@ -630,6 +654,7 @@ impl<T> FastVec<T> {
             // 3. The same layout parameters were valid during allocation, so they're valid for reallocation
             let old_layout = Layout::array::<T>(self.cap)
                 .expect("array layout overflow: capacity exceeds Layout limits");
+            // SAFETY: ptr from valid allocation, old_layout matches original, new_layout.size() <= old_layout.size() (shrinking)
             unsafe {
                 let raw_ptr =
                     alloc::realloc(ptr.as_ptr() as *mut u8, old_layout, new_layout.size());
@@ -647,6 +672,7 @@ impl<T> FastVec<T> {
             return Err(ZiporaError::out_of_memory(new_layout.size()));
         }
 
+        // SAFETY: new_ptr is non-null after check at line 670
         self.ptr = Some(unsafe { NonNull::new_unchecked(new_ptr) });
         self.cap = self.len;
         Ok(())
@@ -660,6 +686,7 @@ impl<T> FastVec<T> {
     #[inline]
     pub unsafe fn get_unchecked(&self, index: usize) -> &T {
         debug_assert!(index < self.len);
+        // SAFETY: caller must guarantee index < self.len per function contract
         unsafe { &*self.as_ptr().add(index) }
     }
 
@@ -671,6 +698,7 @@ impl<T> FastVec<T> {
     #[inline]
     pub unsafe fn get_unchecked_mut(&mut self, index: usize) -> &mut T {
         debug_assert!(index < self.len);
+        // SAFETY: caller must guarantee index < self.len per function contract
         unsafe { &mut *self.as_mut_ptr().add(index) }
     }
 
@@ -690,6 +718,7 @@ impl<T> FastVec<T> {
             let items: Vec<T> = iter.collect();
             if items.len() == additional {
                 // Use SIMD-optimized copy from slice
+                // SAFETY: self.len + additional <= cap after reserve, items.len() == additional verified
                 unsafe {
                     let src_bytes = slice_as_bytes(&items);
                     let dst_bytes = slice_as_bytes_mut(slice::from_raw_parts_mut(
@@ -705,6 +734,7 @@ impl<T> FastVec<T> {
             // Standard element-by-element extend for small operations or non-Copy types
             for item in iter {
                 // We know we have capacity, so this won't fail
+                // SAFETY: self.len < self.len + additional <= cap after reserve
                 unsafe {
                     ptr::write(self.as_mut_ptr().add(self.len), item);
                     self.len += 1;
@@ -764,6 +794,7 @@ impl<T> FastVec<T> {
 
             // For u8-sized types, use direct SIMD fill
             if mem::size_of::<T>() == 1 {
+                // SAFETY: start + range_len == end <= self.len verified at line 762, ptr valid from verification at line 770
                 unsafe {
                     let range_slice = slice::from_raw_parts_mut(
                         self.as_mut_ptr().add(start) as *mut u8,
@@ -783,6 +814,7 @@ impl<T> FastVec<T> {
                 }
             } else {
                 // For other Copy types, use bulk fill with prefetching
+                // SAFETY: start + range_len == end <= self.len verified at line 762, ptr valid from verification at line 770
                 let range_slice = unsafe {
                     slice::from_raw_parts_mut(
                         self.as_mut_ptr().add(start),
@@ -866,6 +898,7 @@ impl<T> FastVec<T> {
             // Monitor performance for adaptive optimization
             let start_time = Instant::now();
 
+            // SAFETY: src.len() <= cap after ensure_capacity, ptr valid from verification at line 885
             unsafe {
                 // Advanced prefetching for large copies
                 if src.len() >= PREFETCH_DISTANCE * 8 {
@@ -892,6 +925,7 @@ impl<T> FastVec<T> {
             );
         } else {
             // Standard copy for small slices or non-Copy types
+            // SAFETY: src.len() <= cap after ensure_capacity, no overlap (src is external)
             unsafe {
                 ptr::copy_nonoverlapping(src.as_ptr(), self.as_mut_ptr(), src.len());
             }
@@ -933,6 +967,7 @@ impl<T> FastVec<T> {
             // Monitor performance for adaptive optimization
             let start_time = Instant::now();
 
+            // SAFETY: old_len + src.len() <= cap after reserve, ptr valid from allocation
             unsafe {
                 // Advanced prefetching for large extends
                 if src.len() >= PREFETCH_DISTANCE * 8 {
@@ -959,6 +994,7 @@ impl<T> FastVec<T> {
             );
         } else {
             // Standard copy for small slices or non-Copy types
+            // SAFETY: old_len + src.len() <= cap after reserve, no overlap (src is external)
             unsafe {
                 ptr::copy_nonoverlapping(
                     src.as_ptr(),
@@ -984,6 +1020,7 @@ impl<T> Drop for FastVec<T> {
         self.clear();
         if let Some(ptr) = self.ptr {
             if self.cap > 0 {
+                // SAFETY: ptr and cap are valid from allocation, layout matches allocation layout
                 unsafe {
                     // SAFETY: Layout::array::<T>() cannot fail here because:
                     // 1. self.cap was successfully used to allocate memory (either in with_capacity or previous realloc)
@@ -1049,6 +1086,7 @@ impl<T: PartialEq> PartialEq for FastVec<T> {
         
         // Use SIMD optimization for Copy types with large vectors
         if is_simd_safe::<T>() && is_simd_beneficial::<T>(self.len) {
+            // SAFETY: slices valid from as_slice(), same length verified above
             unsafe {
                 let self_bytes = slice_as_bytes(self.as_slice());
                 let other_bytes = slice_as_bytes(other.as_slice());
@@ -1212,6 +1250,7 @@ mod tests {
         assert!(!vec.as_ptr().is_null());
         assert!(!vec.as_mut_ptr().is_null());
 
+        // SAFETY: test code - ptr non-null verified above, indices 0 and 1 < len (2)
         unsafe {
             assert_eq!(*vec.as_ptr(), 42);
             assert_eq!(*vec.as_ptr().add(1), 84);
@@ -1240,6 +1279,7 @@ mod tests {
         vec.push(20).unwrap();
         vec.push(30).unwrap();
 
+        // SAFETY: test code - indices 0 and 2 < len (3)
         unsafe {
             assert_eq!(*vec.get_unchecked(0), 10);
             assert_eq!(*vec.get_unchecked(2), 30);

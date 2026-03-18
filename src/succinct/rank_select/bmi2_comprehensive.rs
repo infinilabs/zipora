@@ -143,6 +143,7 @@ impl Bmi2BitOps {
             return Self::select1_fallback(word, rank);
         }
         
+        // SAFETY: BMI2 support checked via Bmi2Capabilities::get().has_bmi2
         unsafe {
             // Use the advanced PDEP pattern for ultra-fast select
             let mask = 1u64 << (rank - 1);
@@ -187,6 +188,7 @@ impl Bmi2BitOps {
         
         let caps = Bmi2Capabilities::get();
         if caps.has_bmi2 {
+            // SAFETY: BMI2 support checked via caps.has_bmi2
             unsafe {
                 // Use BZHI to zero high bits efficiently
                 let masked = std::arch::x86_64::_bzhi_u64(word, pos as u32);
@@ -200,6 +202,7 @@ impl Bmi2BitOps {
             // Use POPCNT with manual masking
             let mask = if pos == 0 { 0 } else { (1u64 << pos) - 1 };
             let masked = word & mask;
+            // SAFETY: POPCNT support checked via caps.has_popcnt
             unsafe {
                 std::arch::x86_64::_popcnt64(masked as i64) as usize
             }
@@ -227,6 +230,7 @@ impl Bmi2BitOps {
     pub fn extract_bits_pext(data: u64, mask: u64) -> u64 {
         let caps = Bmi2Capabilities::get();
         if caps.has_bmi2 {
+            // SAFETY: BMI2 support checked via caps.has_bmi2
             unsafe {
                 std::arch::x86_64::_pext_u64(data, mask)
             }
@@ -279,6 +283,7 @@ impl Bmi2BitOps {
         
         let caps = Bmi2Capabilities::get();
         if caps.has_bmi1 {
+            // SAFETY: BMI1 support checked via caps.has_bmi1
             unsafe {
                 std::arch::x86_64::_tzcnt_u64(word) as u32
             }
@@ -302,6 +307,7 @@ impl Bmi2BitOps {
         
         let caps = Bmi2Capabilities::get();
         if caps.has_bmi1 {
+            // SAFETY: BMI1 support checked via caps.has_bmi1
             unsafe {
                 std::arch::x86_64::_lzcnt_u64(word) as u32
             }
@@ -403,6 +409,7 @@ impl Bmi2BlockOps {
         for &pos in positions {
             let word_idx = pos / 64;
             if word_idx < words.len() {
+                // SAFETY: word_idx < words.len() ensures valid pointer arithmetic
                 unsafe {
                     let ptr = words.as_ptr().add(word_idx);
                     std::arch::x86_64::_mm_prefetch(

@@ -143,8 +143,10 @@ impl<T> Core<T> {
     #[inline]
     fn n_mut(&mut self, i: u32) -> &mut Node { &mut self.units[i as usize].0 }
     #[inline]
+    // SAFETY: caller must ensure i < units.len() and units[i].1 is initialized
     unsafe fn data(&self, i: u32) -> &T { unsafe { &*self.units[i as usize].1.as_ptr() } }
     #[inline]
+    // SAFETY: caller must ensure i < units.len() and units[i].1 is initialized
     unsafe fn data_mut(&mut self, i: u32) -> &mut T { unsafe { &mut *self.units[i as usize].1.as_mut_ptr() } }
 
     // -- navigation --
@@ -172,6 +174,7 @@ impl<T> Core<T> {
         let mut stk = PathStack::new();
         let mut p = self.root;
         while p != NIL {
+            // SAFETY: p is a valid node index in tree, node data is initialized
             let ord = cmp(unsafe { self.data(p) }, key);
             match ord {
                 Ordering::Greater => {
@@ -354,6 +357,7 @@ impl<T> Core<T> {
     // in zipora (small to medium ordered sets in hash map internals).
 
     fn remove_idx(&mut self, target: u32, stk: &PathStack) -> T {
+        // SAFETY: target is valid node index, node data is initialized (found via search)
         let value = unsafe { self.units[target as usize].1.assume_init_read() };
         self.count -= 1;
 
@@ -421,6 +425,7 @@ impl<T> Core<T> {
             }
 
             // Copy successor's data into target slot
+            // SAFETY: both succ and target are valid indices, data initialized, buffers non-overlapping
             unsafe {
                 let src = self.units[succ as usize].1.as_ptr();
                 let dst = self.units[target as usize].1.as_mut_ptr();
@@ -462,6 +467,7 @@ impl<T> Core<T> {
         let mut p = self.root;
         let mut result = NIL;
         while p != NIL {
+            // SAFETY: p is a valid node index in tree, node data is initialized
             match cmp(unsafe { self.data(p) }, key) {
                 Ordering::Less => {
                     if self.n(p).is_child(1) { p = self.n(p).right_link(); }
@@ -483,6 +489,7 @@ impl<T> Core<T> {
         let mut p = self.root;
         let mut result = NIL;
         while p != NIL {
+            // SAFETY: p is a valid node index in tree, node data is initialized
             match cmp(unsafe { self.data(p) }, key) {
                 Ordering::Greater => {
                     result = p;
@@ -504,6 +511,7 @@ impl<T> Drop for Core<T> {
         if std::mem::needs_drop::<T>() {
             for i in 0..self.units.len() {
                 if self.units[i].0.is_used() {
+                    // SAFETY: is_used() guarantees data is initialized
                     unsafe { self.units[i].1.assume_init_drop(); }
                 }
             }
@@ -566,11 +574,13 @@ impl<K: Ord> VecTrbSet<K> {
 
     pub fn lower_bound(&self, key: &K) -> Option<&K> {
         let i = self.core.lower_bound(key, |a, b| a.cmp(b));
+        // SAFETY: i returned by lower_bound is valid node index with initialized data
         if i != NIL { Some(unsafe { self.core.data(i) }) } else { None }
     }
 
     pub fn upper_bound(&self, key: &K) -> Option<&K> {
         let i = self.core.upper_bound(key, |a, b| a.cmp(b));
+        // SAFETY: i returned by upper_bound is valid node index with initialized data
         if i != NIL { Some(unsafe { self.core.data(i) }) } else { None }
     }
 }
@@ -584,6 +594,7 @@ impl<'a, K> Iterator for SetIter<'a, K> {
     type Item = &'a K;
     fn next(&mut self) -> Option<Self::Item> {
         if self.curr == NIL { return None; }
+        // SAFETY: curr is valid node index in tree with initialized data
         let r = unsafe { self.core.data(self.curr) };
         self.curr = self.core.move_next(self.curr);
         Some(r)
@@ -607,6 +618,7 @@ impl<K: Ord, V> VecTrbMap<K, V> {
         let (stk, found) = self.core.find_unique(&key, |a, b| a.0.cmp(b));
         if found {
             let target = stk.idx(stk.len - 1);
+            // SAFETY: target is valid index, data is initialized (found in tree)
             let old = unsafe { std::ptr::read(self.core.units[target as usize].1.as_ptr()) };
             self.core.units[target as usize].1 = MaybeUninit::new((key, value));
             return Some(old.1);
@@ -621,6 +633,7 @@ impl<K: Ord, V> VecTrbMap<K, V> {
     pub fn get(&self, key: &K) -> Option<&V> {
         let (stk, found) = self.core.find_unique(key, |a, b| a.0.cmp(b));
         if found {
+            // SAFETY: found=true guarantees valid node index with initialized data
             Some(unsafe { &self.core.data(stk.idx(stk.len - 1)).1 })
         } else { None }
     }
@@ -628,6 +641,7 @@ impl<K: Ord, V> VecTrbMap<K, V> {
     pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
         let (stk, found) = self.core.find_unique(key, |a, b| a.0.cmp(b));
         if found {
+            // SAFETY: found=true guarantees valid node index with initialized data
             Some(unsafe { &mut self.core.data_mut(stk.idx(stk.len - 1)).1 })
         } else { None }
     }
@@ -665,6 +679,7 @@ impl<'a, K, V> Iterator for MapIter<'a, K, V> {
     type Item = (&'a K, &'a V);
     fn next(&mut self) -> Option<Self::Item> {
         if self.curr == NIL { return None; }
+        // SAFETY: curr is valid node index in tree with initialized data
         let pair = unsafe { self.core.data(self.curr) };
         self.curr = self.core.move_next(self.curr);
         Some((&pair.0, &pair.1))

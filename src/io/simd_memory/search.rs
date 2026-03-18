@@ -282,6 +282,7 @@ pub fn sse42_strchr(haystack: &[u8], ch: u8) -> Option<usize> {
         return scalar_strchr(haystack, ch);
     }
 
+    // SAFETY: SSE4.2 feature detected above, haystack is valid slice reference
     unsafe { sse42_strchr_impl(haystack, ch) }
 }
 
@@ -293,6 +294,7 @@ unsafe fn sse42_strchr_impl(haystack: &[u8], ch: u8) -> Option<usize> {
     // Create needle vector with single character
     let mut needle_bytes = [0u8; 16];
     needle_bytes[0] = ch;
+    // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], pointer valid from needle_bytes.as_ptr(), len == 16
     let needle = unsafe { _mm_loadu_si128(needle_bytes.as_ptr() as *const __m128i) };
 
     let mut offset = 0;
@@ -300,10 +302,12 @@ unsafe fn sse42_strchr_impl(haystack: &[u8], ch: u8) -> Option<usize> {
 
     // Process 16-byte chunks
     while offset + CHUNK_SIZE <= len {
+        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], pointer valid from haystack.as_ptr(), offset + 16 <= len checked by loop condition
         let chunk = unsafe { _mm_loadu_si128(haystack.as_ptr().add(offset) as *const __m128i) };
 
         // _SIDD_CMP_EQUAL_ANY: Match any character in needle
         // _SIDD_UBYTE_OPS: Operate on unsigned bytes
+        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], vectors valid from loads above
         let idx = unsafe {
             _mm_cmpestri(
                 needle,
@@ -338,6 +342,7 @@ pub fn sse42_strstr(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         return scalar_strstr(haystack, needle);
     }
 
+    // SAFETY: SSE4.2 feature detected above, haystack and needle are valid slice references
     unsafe { sse42_strstr_impl(haystack, needle) }
 }
 
@@ -349,12 +354,15 @@ unsafe fn sse42_strstr_impl(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     // Strategy selection based on needle length
     if needle_len <= 16 {
         // Single PCMPESTRI operation
+        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], slices valid by caller
         unsafe { sse42_strstr_short(haystack, needle) }
     } else if needle_len <= 32 {
         // Cascaded PCMPESTRI operations
+        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], slices valid by caller
         unsafe { sse42_strstr_medium(haystack, needle) }
     } else {
         // Chunked processing with first-byte filter
+        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], slices valid by caller
         unsafe { sse42_strstr_long(haystack, needle) }
     }
 }
@@ -369,6 +377,7 @@ unsafe fn sse42_strstr_short(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     // Load needle (pad with zeros if < 16 bytes)
     let mut needle_bytes = [0u8; 16];
     needle_bytes[..needle_len].copy_from_slice(needle);
+    // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], pointer valid from needle_bytes.as_ptr(), len == 16
     let needle_vec = unsafe { _mm_loadu_si128(needle_bytes.as_ptr() as *const __m128i) };
 
     let mut offset = 0;
@@ -378,9 +387,11 @@ unsafe fn sse42_strstr_short(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         let remaining = haystack.len() - offset;
         let chunk_len = remaining.min(CHUNK_SIZE);
 
+        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], pointer valid from haystack.as_ptr(), offset <= search_limit checked by loop condition
         let chunk = unsafe { _mm_loadu_si128(haystack.as_ptr().add(offset) as *const __m128i) };
 
         // _SIDD_CMP_EQUAL_ORDERED: Match ordered substring
+        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], vectors valid from loads above
         let idx = unsafe {
             _mm_cmpestri(
                 needle_vec,
@@ -419,6 +430,7 @@ unsafe fn sse42_strstr_medium(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     let search_limit = haystack.len().saturating_sub(needle_len);
 
     while offset <= search_limit {
+        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], slice valid from haystack
         if let Some(match_pos) = unsafe { sse42_strstr_short(&haystack[offset..], first_16) } {
             let absolute_pos = offset + match_pos;
             // Verify full pattern
@@ -444,6 +456,7 @@ unsafe fn sse42_strstr_long(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
     // Use PCMPESTRI to find first byte candidates
     let mut offset = 0;
+    // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], slice valid from haystack
     while let Some(match_pos) = unsafe { sse42_strchr_impl(&haystack[offset..], first_byte) } {
         let absolute_pos = offset + match_pos;
         // Verify full pattern with scalar comparison
@@ -468,6 +481,7 @@ pub fn sse42_multi_search(haystack: &[u8], chars: &[u8]) -> Option<usize> {
         return scalar_multi_search(haystack, chars);
     }
 
+    // SAFETY: SSE4.2 feature detected above, haystack and chars are valid slice references
     unsafe { sse42_multi_search_impl(haystack, chars) }
 }
 
@@ -480,14 +494,17 @@ unsafe fn sse42_multi_search_impl(haystack: &[u8], chars: &[u8]) -> Option<usize
     // Load character set
     let mut chars_bytes = [0u8; 16];
     chars_bytes[..chars_len].copy_from_slice(&chars[..chars_len]);
+    // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], pointer valid from chars_bytes.as_ptr(), len == 16
     let chars_vec = unsafe { _mm_loadu_si128(chars_bytes.as_ptr() as *const __m128i) };
 
     let mut offset = 0;
     let len = haystack.len();
 
     while offset + CHUNK_SIZE <= len {
+        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], pointer valid from haystack.as_ptr(), offset + 16 <= len checked by loop condition
         let chunk = unsafe { _mm_loadu_si128(haystack.as_ptr().add(offset) as *const __m128i) };
 
+        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], vectors valid from loads above
         let idx = unsafe {
             _mm_cmpestri(
                 chars_vec,
@@ -519,6 +536,7 @@ pub fn sse42_strcmp(s1: &[u8], s2: &[u8]) -> Ordering {
         return scalar_strcmp(s1, s2);
     }
 
+    // SAFETY: SSE4.2 feature detected above, s1 and s2 are valid slice references
     unsafe { sse42_strcmp_impl(s1, s2) }
 }
 
@@ -532,11 +550,15 @@ unsafe fn sse42_strcmp_impl(s1: &[u8], s2: &[u8]) -> Ordering {
 
     // Compare 16-byte chunks
     while offset + CHUNK_SIZE <= min_len {
+        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], pointers valid from s1/s2.as_ptr(), offset + 16 <= min_len checked by loop condition
         let chunk1 = unsafe { _mm_loadu_si128(s1.as_ptr().add(offset) as *const __m128i) };
+        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], pointers valid from s1/s2.as_ptr(), offset + 16 <= min_len checked by loop condition
         let chunk2 = unsafe { _mm_loadu_si128(s2.as_ptr().add(offset) as *const __m128i) };
 
         // Check for difference using PCMPEQB
+        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], vectors valid from loads above
         let cmp = unsafe { _mm_cmpeq_epi8(chunk1, chunk2) };
+        // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], vector valid from load above
         let mask = unsafe { _mm_movemask_epi8(cmp) };
 
         if mask != 0xFFFF {

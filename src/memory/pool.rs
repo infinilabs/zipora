@@ -185,7 +185,7 @@ impl MemoryPool {
             if let Some(chunk) = free_chunks.pop_front() {
                 self.pool_hits.fetch_add(1, Ordering::Relaxed);
                 self.update_stats_on_alloc(true);
-                // Safety: chunk came from our own allocation, so it's non-null
+                // SAFETY: chunk came from our own allocation, verified non-null during push
                 return Ok(unsafe { NonNull::new_unchecked(chunk) });
             }
         }
@@ -263,7 +263,7 @@ impl MemoryPool {
             .map_err(|e| ZiporaError::resource_busy(format!("Free chunks mutex poisoned: {}", e)))?;
 
         while let Some(chunk_ptr) = free_chunks.pop_front() {
-            // Safety: chunk_ptr came from our own allocation, so it's valid for deallocation
+            // SAFETY: chunk_ptr came from our own allocation, verified during push
             let chunk = unsafe { NonNull::new_unchecked(chunk_ptr) };
             self.deallocate_chunk(chunk);
         }
@@ -286,6 +286,7 @@ impl MemoryPool {
         let layout = Layout::from_size_align(self.config.chunk_size, self.config.alignment)
             .map_err(|_| ZiporaError::invalid_data("invalid layout for chunk allocation"))?;
 
+        // SAFETY: Layout is valid (chunk_size > 0 and alignment is power of 2, enforced in new())
         let ptr = unsafe { alloc(layout) };
 
         if ptr.is_null() {
@@ -294,7 +295,7 @@ impl MemoryPool {
 
         self.update_stats_on_alloc(false);
 
-        // Safety: We just checked that ptr is not null
+        // SAFETY: null check performed above
         Ok(unsafe { NonNull::new_unchecked(ptr) })
     }
 
@@ -306,6 +307,8 @@ impl MemoryPool {
         let layout = Layout::from_size_align(self.config.chunk_size, self.config.alignment)
             .expect("Layout invariant violated: config was validated during chunk allocation");
 
+        // SAFETY: chunk.as_ptr() was allocated with the same layout
+        // Caller must ensure chunk was allocated by this pool
         unsafe {
             dealloc(chunk.as_ptr(), layout);
         }
@@ -438,6 +441,7 @@ impl<T> PooledVec<T> {
             return Err(ZiporaError::invalid_data("vector capacity exceeded"));
         }
 
+        // SAFETY: self.len < self.capacity checked above, ptr + len is within allocated region
         unsafe {
             self.ptr.as_ptr().add(self.len).write(item);
         }
@@ -466,6 +470,8 @@ impl<T> PooledVec<T> {
     /// Get a slice of the vector's contents
     #[inline]
     pub fn as_slice(&self) -> &[T] {
+        // SAFETY: ptr points to allocated region with capacity elements
+        // len ≤ capacity maintained by push(), all elements 0..len are initialized
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 }
@@ -474,6 +480,7 @@ impl<T> Drop for PooledVec<T> {
     fn drop(&mut self) {
         // Drop all elements
         for i in 0..self.len {
+            // SAFETY: i < self.len, so ptr + i is within initialized region
             unsafe {
                 self.ptr.as_ptr().add(i).drop_in_place();
             }
@@ -510,12 +517,15 @@ impl PooledBuffer {
     /// Get the buffer as a slice
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
+        // SAFETY: ptr points to allocated region from pool, len bytes are valid
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 
     /// Get the buffer as a mutable slice
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        // SAFETY: ptr points to allocated region from pool, len bytes are valid
+        // &mut self ensures exclusive access
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }
 

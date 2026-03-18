@@ -123,6 +123,7 @@ fn test_preset_characteristics() {
 /// Test environment variable parsing
 #[test]
 fn test_environment_variable_parsing() {
+    // SAFETY: set_var is unsafe due to potential data races; test runs single-threaded
     // Set test environment variables
     unsafe { env::set_var("TEST_TRIE_NEST_LEVEL", "5"); }
     unsafe { env::set_var("TEST_TRIE_COMPRESSION_LEVEL", "9"); }
@@ -147,6 +148,7 @@ fn test_environment_variable_parsing() {
         .expect("Failed to parse MemoryConfig from environment");
     assert_eq!(memory_config.initial_pool_size, 134217728);
     
+    // SAFETY: remove_var is unsafe due to potential data races; test runs single-threaded
     // Clean up environment variables
     unsafe { env::remove_var("TEST_TRIE_NEST_LEVEL"); }
     unsafe { env::remove_var("TEST_TRIE_COMPRESSION_LEVEL"); }
@@ -181,11 +183,13 @@ fn test_environment_boolean_parsing() {
     ];
     
     for (value, expected) in test_cases.iter() {
+        // SAFETY: set_var is unsafe due to potential data races; test runs single-threaded
         unsafe { env::set_var("TEST_BOOL_VALUE", value); }
         let result = parse_env_bool("TEST_BOOL_VALUE", false);
         assert_eq!(result, *expected, "Failed for value: '{}'", value);
     }
     
+    // SAFETY: remove_var is unsafe due to potential data races; test runs single-threaded
     unsafe { env::remove_var("TEST_BOOL_VALUE"); }
 }
 
@@ -599,6 +603,7 @@ mod benches {
     /// Benchmark environment variable parsing
     #[test]
     fn bench_env_parsing() -> Result<()> {
+        // SAFETY: set_var is unsafe due to potential data races; bench test runs single-threaded
         // Set up environment variables
         unsafe { env::set_var("BENCH_TRIE_NEST_LEVEL", "3"); }
         unsafe { env::set_var("BENCH_TRIE_COMPRESSION_LEVEL", "6"); }
@@ -613,6 +618,7 @@ mod benches {
         println!("Environment parsing: {:.2}μs per config", 
                  duration.as_nanos() as f64 / iterations as f64 / 1000.0);
         
+        // SAFETY: remove_var is unsafe due to potential data races; bench test runs single-threaded
         // Clean up
         unsafe { env::remove_var("BENCH_TRIE_NEST_LEVEL"); }
         unsafe { env::remove_var("BENCH_TRIE_COMPRESSION_LEVEL"); }

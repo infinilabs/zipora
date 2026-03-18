@@ -229,6 +229,7 @@ fn select_in_word(word: u64, k: usize) -> usize {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("bmi2") {
+            // SAFETY: BMI2 feature detected at runtime, _pdep_u64 is pure arithmetic with no memory access
             let deposited = unsafe { core::arch::x86_64::_pdep_u64(1u64 << k, word) };
             return deposited.trailing_zeros() as usize;
         }

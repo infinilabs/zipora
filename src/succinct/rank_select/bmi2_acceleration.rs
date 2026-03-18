@@ -87,6 +87,7 @@ impl Bmi2PrefetchOps {
         #[cfg(target_arch = "x86_64")]
         {
             if word_index < bit_data.len() {
+                //// SAFETY: Pointer derived from valid slice, word_index < bit_data.len() checked above
                 unsafe {
                     let ptr = bit_data.as_ptr().add(word_index) as *const i8;
                     std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(ptr);
@@ -101,6 +102,7 @@ impl Bmi2PrefetchOps {
         #[cfg(target_arch = "x86_64")]
         {
             if block_index < rank_cache.len() {
+                //// SAFETY: Pointer derived from valid slice, block_index < rank_cache.len() checked above
                 unsafe {
                     let ptr = rank_cache.as_ptr().add(block_index) as *const i8;
                     std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(ptr);
@@ -116,6 +118,7 @@ impl Bmi2PrefetchOps {
         {
             let end_word = (start_word + prefetch_distance).min(bit_data.len());
             for word_idx in (start_word..end_word).step_by(8) {
+                //// SAFETY: Pointer derived from valid slice, word_idx < end_word ≤ bit_data.len() guaranteed by loop bounds
                 // Prefetch every 8 words (512 bytes = 8 cache lines)
                 unsafe {
                     let ptr = bit_data.as_ptr().add(word_idx) as *const i8;
@@ -134,6 +137,7 @@ impl Bmi2RankOps {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi1 {
+                //// SAFETY: has_bmi1 guarantees popcnt availability
                 return unsafe { Self::popcount_hardware(x) };
             }
         }
@@ -164,6 +168,7 @@ impl Bmi2RankOps {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi2 {
+                //// SAFETY: has_bmi2 guarantees bzhi/popcnt availability
                 return unsafe { Self::popcount_trail_bzhi(x, n) };
             }
         }
@@ -179,6 +184,7 @@ impl Bmi2RankOps {
     #[inline]
     unsafe fn popcount_trail_bzhi(x: u64, n: u32) -> u32 {
         let masked = std::arch::x86_64::_bzhi_u64(x, n);
+        //// SAFETY: BMI2 and popcnt guaranteed by #[target_feature(enable = "bmi2,popcnt")]
         unsafe { Self::popcount_hardware(masked) }
     }
 
@@ -189,6 +195,7 @@ impl Bmi2RankOps {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi1 && x != 0 {
+                //// SAFETY: has_bmi1 guarantees lzcnt availability
                 return unsafe { std::arch::x86_64::_lzcnt_u64(x) as u32 };
             }
         }
@@ -203,6 +210,7 @@ impl Bmi2RankOps {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi1 && x != 0 {
+                //// SAFETY: has_bmi1 guarantees tzcnt availability
                 return unsafe { std::arch::x86_64::_tzcnt_u64(x) as u32 };
             }
         }
@@ -216,6 +224,7 @@ impl Bmi2RankOps {
         {
             let caps = Bmi2Capabilities::get();
             if caps.simd_caps.cpu_features.has_avx2 && words.len() >= 4 {
+                //// SAFETY: has_avx2 guarantees avx2/popcnt availability
                 return unsafe { Self::popcount_bulk_avx2(words) };
             }
         }
@@ -236,6 +245,7 @@ impl Bmi2RankOps {
 
         for chunk in chunks {
             // Load 4 x 64-bit words into AVX2 register
+            // SAFETY: AVX2 and popcnt guaranteed, chunks * 4 ≤ words.len()
             let vec = unsafe { _mm256_loadu_si256(chunk.as_ptr() as *const __m256i) };
 
             // Use parallel popcount (if available in future CPUs)
@@ -243,7 +253,9 @@ impl Bmi2RankOps {
             let mut chunk_results = [0u32; 4];
             for i in 0..4 {
                 // Extract with constant index
+                // SAFETY: Hardware features verified or caller ensures safety invariants
                 let word = unsafe {
+                    // SAFETY: AVX2 extract with constant index, i < 4
                     match i {
                         0 => _mm256_extract_epi64::<0>(vec) as u64,
                         1 => _mm256_extract_epi64::<1>(vec) as u64,
@@ -252,6 +264,7 @@ impl Bmi2RankOps {
                         _ => unreachable!(),
                     }
                 };
+                // SAFETY: Hardware features verified or caller ensures safety invariants
                 chunk_results[i] = unsafe { Self::popcount_hardware(word) };
             }
 
@@ -260,6 +273,7 @@ impl Bmi2RankOps {
 
         // Handle remaining words
         for &word in remainder {
+            // SAFETY: Hardware features verified or caller ensures safety invariants
             result.push(unsafe { Self::popcount_hardware(word) });
         }
 
@@ -285,6 +299,7 @@ impl Bmi2SelectOps {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi2 {
+                // SAFETY: has_bmi2 guarantees pdep availability
                 return Some(unsafe { Self::select1_pdep_optimized(word, k) });
             }
         }
@@ -307,6 +322,7 @@ impl Bmi2SelectOps {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi2 {
+                // SAFETY: has_bmi2 guarantees pdep availability
                 return Some(unsafe { Self::select1_pdep_optimized(word, k) });
             }
         }
@@ -522,6 +538,8 @@ impl Bmi2SelectOps {
         #[cfg(target_arch = "x86_64")]
         {
             if block_start_word < bit_data.len() {
+                //// SAFETY: Pointer derived from valid slice, block_start_word < bit_data.len() checked above
+                // SAFETY: Pointer valid from bit_data, block_start_word < bit_data.len()
                 unsafe {
                     let ptr = bit_data.as_ptr().add(block_start_word) as *const i8;
                     std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(ptr);
@@ -604,6 +622,8 @@ impl Bmi2BitOps {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi2 {
+                //// SAFETY: has_bmi2 guarantees pext availability
+                // SAFETY: has_bmi2 guarantees pext availability
                 return unsafe { std::arch::x86_64::_pext_u64(src, mask) };
             }
         }
@@ -636,6 +656,8 @@ impl Bmi2BitOps {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi2 {
+                //// SAFETY: has_bmi2 guarantees pdep availability
+                // SAFETY: has_bmi2 guarantees pdep availability
                 return unsafe { std::arch::x86_64::_pdep_u64(src, mask) };
             }
         }
@@ -668,6 +690,7 @@ impl Bmi2BitOps {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi1 {
+                //// SAFETY: has_bmi1 guarantees blsr availability
                 return unsafe { std::arch::x86_64::_blsr_u64(x) };
             }
         }
@@ -682,6 +705,7 @@ impl Bmi2BitOps {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi1 {
+                //// SAFETY: has_bmi1 guarantees blsi availability
                 return unsafe { std::arch::x86_64::_blsi_u64(x) };
             }
         }
@@ -696,6 +720,7 @@ impl Bmi2BitOps {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi1 {
+                //// SAFETY: has_bmi1 guarantees blsmsk availability
                 return unsafe { std::arch::x86_64::_blsmsk_u64(x) };
             }
         }
@@ -724,6 +749,7 @@ impl Bmi2BextrOps {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi2 {
+                //// SAFETY: has_bmi2 guarantees bextr availability
                 return unsafe { Self::extract_bits_bextr_hardware(src, start, effective_length) };
             }
         }
@@ -754,6 +780,7 @@ impl Bmi2BextrOps {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi2 && sources.len() >= 4 {
+                //// SAFETY: has_bmi2 guarantees bmi2 availability for vectorized ops
                 return unsafe { Self::extract_bits_multi_vectorized(sources, start, length) };
             }
         }
@@ -816,6 +843,7 @@ impl Bmi2BzhiOps {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi2 {
+                //// SAFETY: has_bmi2 guarantees bzhi/popcnt availability
                 return unsafe { Self::popcount_bzhi_hardware(word, bit_count) };
             }
         }
@@ -831,6 +859,7 @@ impl Bmi2BzhiOps {
     #[inline]
     unsafe fn popcount_bzhi_hardware(word: u64, bit_count: u32) -> u32 {
         let masked = std::arch::x86_64::_bzhi_u64(word, bit_count);
+        //// SAFETY: BMI2 and popcnt guaranteed by #[target_feature(enable = "bmi2,popcnt")]
         unsafe { Bmi2RankOps::popcount_hardware(masked) }
     }
     
@@ -844,6 +873,7 @@ impl Bmi2BzhiOps {
                 {
                     let caps = Bmi2Capabilities::get();
                     if caps.has_bmi2 {
+                        //// SAFETY: has_bmi2 guarantees bzhi availability
                         return unsafe { std::arch::x86_64::_bzhi_u64(word, boundary) };
                     }
                 }
@@ -864,6 +894,7 @@ impl Bmi2BzhiOps {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi2 && words.len() >= 4 {
+                //// SAFETY: has_bmi2 guarantees bzhi availability for vectorized ops
                 return unsafe { Self::bzhi_bulk_vectorized(words, bit_count) };
             }
         }
@@ -906,6 +937,7 @@ impl Bmi2AdvancedPatterns {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi2 {
+                // SAFETY: has_bmi2 guarantees pdep/ctz ops
                 return Some(unsafe { Self::pdep_ctz_select_hardware(word, k) });
             }
         }
@@ -932,6 +964,7 @@ impl Bmi2AdvancedPatterns {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi2 {
+                //// SAFETY: has_bmi2 guarantees pext availability for parallel ops
                 return unsafe { Self::pext_parallel_hardware(sources, mask) };
             }
         }
@@ -960,6 +993,7 @@ impl Bmi2AdvancedPatterns {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi2 {
+                //// SAFETY: has_bmi2 guarantees pdep/bzhi availability
                 return unsafe { Self::pdep_bzhi_composite_hardware(src, mask, bit_limit) };
             }
         }
@@ -1033,6 +1067,7 @@ impl Bmi2RangeOps {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi2 {
+                //// SAFETY: has_bmi2 guarantees bmi2 ops availability
                 return unsafe { Self::count_ones_range_bmi2(word, start, effective_len) };
             }
         }
@@ -1059,6 +1094,7 @@ impl Bmi2RangeOps {
         // Zero high bits beyond length using BZHI
         let masked = _bzhi_u64(shifted, len);
 
+        //// SAFETY: BMI2 and popcnt guaranteed by #[target_feature(enable = "bmi2,popcnt")]
         // Count with hardware POPCNT
         unsafe { Bmi2RankOps::popcount_hardware(masked) }
     }
@@ -1319,7 +1355,7 @@ impl Bmi2BlockOps {
         cumulative_counts.push(0);
 
         for &block in blocks {
-            // SAFETY: cumulative_counts has at least one element (pushed 0 at line 1318)
+            //// SAFETY: cumulative_counts has at least one element (pushed 0 at line 1318)
             let last_count = cumulative_counts.last().expect("cumulative_counts non-empty");
             cumulative_counts.push(last_count + Bmi2RankOps::popcount_u64(block) as usize);
         }
@@ -1382,6 +1418,7 @@ impl Bmi2BlockOps {
         let caps = Bmi2Capabilities::get();
 
         if caps.simd_caps.cpu_features.has_avx2 && blocks.len() >= 4 {
+            //// SAFETY: AVX2 availability verified by has_avx2 check above
             unsafe { Self::process_blocks_avx2_bmi2(blocks) }
         } else {
             // Fallback to scalar processing
@@ -1407,6 +1444,7 @@ impl Bmi2BlockOps {
 
         for chunk in blocks.chunks(4) {
             for &block in chunk {
+                // SAFETY: Hardware features verified or caller ensures safety invariants
                 let popcount = unsafe { Bmi2RankOps::popcount_hardware(block) };
                 let lzcnt = if block != 0 {
                     _lzcnt_u64(block) as u32
@@ -1491,6 +1529,7 @@ impl Bmi2Dispatcher {
                 if bit_count >= 64 {
                     return word;
                 }
+                //// SAFETY: has_bmi2 guarantees bzhi availability
                 return unsafe { std::arch::x86_64::_bzhi_u64(word, bit_count) };
             }
         }

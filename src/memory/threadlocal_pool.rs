@@ -163,6 +163,7 @@ impl HotArea {
         let layout = Layout::from_size_align(size, 8)
             .map_err(|e| ZiporaError::invalid_data(&format!("Invalid layout: {}", e)))?;
 
+        // SAFETY: Allocating with valid layout, null check via NonNull::new
         let start = NonNull::new(unsafe { alloc(layout) })
             .ok_or_else(|| ZiporaError::out_of_memory(size))?;
 
@@ -179,7 +180,8 @@ impl HotArea {
         let aligned_size = (size + 7) & !7; // 8-byte alignment
         
         if self.pos + aligned_size <= self.end {
-            let ptr = unsafe { 
+            // SAFETY: pos + aligned_size <= end checked above, start.as_ptr() is valid
+            let ptr = unsafe {
                 NonNull::new_unchecked(self.start.as_ptr().add(self.pos))
             };
             self.pos += aligned_size;
@@ -197,6 +199,7 @@ impl HotArea {
 
 impl Drop for HotArea {
     fn drop(&mut self) {
+        // SAFETY: start was allocated with this layout in HotArea::new
         unsafe {
             dealloc(self.start.as_ptr(), self.layout);
         }
@@ -438,7 +441,8 @@ impl ThreadLocalMemoryPool {
             // Fall back to system allocation
             let layout = Layout::from_size_align(size, 8)
                 .map_err(|e| ZiporaError::invalid_data(&format!("Invalid layout: {}", e)))?;
-            
+
+            // SAFETY: Allocating with valid layout
             NonNull::new(unsafe { alloc(layout) })
                 .ok_or_else(|| ZiporaError::out_of_memory(size))
         }
@@ -454,7 +458,8 @@ impl ThreadLocalMemoryPool {
             // System deallocation
             let layout = Layout::from_size_align(size, 8)
                 .map_err(|e| ZiporaError::invalid_data(&format!("Invalid layout: {}", e)))?;
-            
+
+            // SAFETY: ptr was allocated with this layout in allocate_bypass_cache
             unsafe {
                 dealloc(ptr.as_ptr(), layout);
             }
@@ -513,12 +518,14 @@ impl ThreadLocalAllocation {
     /// Get mutable slice view of allocation
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        // SAFETY: ptr is valid from allocate, size is the allocated size
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.size) }
     }
 
     /// Get immutable slice view of allocation
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
+        // SAFETY: ptr is valid from allocate, size is the allocated size
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.size) }
     }
 }

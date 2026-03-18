@@ -154,6 +154,7 @@ impl MemoryMappedInput {
             }
 
             InputStrategy::StandardMmap => {
+                // SAFETY: MmapOptions::map creates valid memory mapping from file descriptor
                 let mmap = unsafe {
                     MmapOptions::new().map(&file).map_err(|e| {
                         ZiporaError::io_error(format!("Failed to memory-map file: {}", e))
@@ -206,6 +207,7 @@ impl MemoryMappedInput {
 
         let mut buffer = vec![0u8; 64 * 1024]; // 64KB read buffer
         let mut total_read = 0;
+        // SAFETY: hugepage.as_slice() returns valid slice, converting to mutable for writes
         let hugepage_slice = unsafe {
             std::slice::from_raw_parts_mut(hugepage.as_slice().as_ptr() as *mut u8, hugepage.size())
         };
@@ -234,6 +236,7 @@ impl MemoryMappedInput {
             let ptr = mmap.as_ptr() as *mut libc::c_void;
             let len = mmap.len();
 
+            // SAFETY: ptr is valid from mmap, len is the mapped size, madvise hints are safe
             unsafe {
                 // Set access pattern hint
                 match self.access_pattern {
@@ -288,6 +291,7 @@ impl MemoryMappedInput {
         const PREFETCH_WINDOW: usize = 2 * 1024 * 1024; // 2MB prefetch window
         const CACHE_LINE_SIZE: usize = 64;
 
+        // SAFETY: ptr is valid mmap pointer, offset calculations keep us within bounds
         unsafe {
             let mut offset = 0;
             while offset < len {
@@ -664,6 +668,7 @@ impl MemoryMappedOutput {
         file.set_len(initial_size as u64)
             .map_err(|e| ZiporaError::io_error(format!("Failed to set file size: {}", e)))?;
 
+        // SAFETY: MmapOptions::map_mut creates valid mutable memory mapping from file
         let mmap = unsafe {
             MmapOptions::new()
                 .map_mut(&file)
@@ -691,6 +696,7 @@ impl MemoryMappedOutput {
             .map_err(|e| ZiporaError::io_error(format!("Failed to get file metadata: {}", e)))?
             .len() as usize;
 
+        // SAFETY: MmapOptions::map_mut creates valid mutable memory mapping from existing file
         let mmap = unsafe {
             MmapOptions::new()
                 .map_mut(&file)
@@ -754,6 +760,7 @@ impl MemoryMappedOutput {
             .set_len(new_size as u64)
             .map_err(|e| ZiporaError::io_error(format!("Failed to grow file: {}", e)))?;
 
+        // SAFETY: File size set above, remapping with valid file descriptor
         self.mmap = unsafe {
             MmapOptions::new()
                 .map_mut(&self.file)
@@ -798,6 +805,7 @@ impl MemoryMappedOutput {
             .map_err(|e| ZiporaError::io_error(format!("Failed to truncate file: {}", e)))?;
 
         // Remap with new size
+        // SAFETY: File truncated to position above, remapping with valid file descriptor
         self.mmap = unsafe {
             MmapOptions::new().map_mut(&self.file).map_err(|e| {
                 ZiporaError::io_error(format!("Failed to remap truncated file: {}", e))

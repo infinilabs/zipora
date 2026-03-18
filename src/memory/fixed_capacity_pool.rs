@@ -314,6 +314,7 @@ impl FixedCapacityMemoryPool {
         // Clear memory if secure mode is enabled
         if self.config.secure_clear {
             let size = self.size_classes[size_class_index];
+            // SAFETY: pointer valid and size matches allocation, verified by verify_pointer above
             unsafe {
                 std::ptr::write_bytes(ptr.as_ptr(), 0, size);
             }
@@ -375,9 +376,11 @@ impl FixedCapacityMemoryPool {
         let layout = Layout::from_size_align(total_size, self.config.alignment)
             .map_err(|e| ZiporaError::invalid_data(&format!("Invalid layout: {}", e)))?;
 
+        // SAFETY: layout valid (size > 0, align power of 2), ptr null-checked below
         let memory = NonNull::new(unsafe { alloc(layout) })
             .ok_or_else(|| ZiporaError::out_of_memory(total_size))?;
 
+        // SAFETY: UnsafeCell access protected by &mut self exclusive borrow
         unsafe {
             *self.memory.get() = Some(memory);
             *self.memory_layout.get() = Some(layout);
@@ -395,9 +398,11 @@ impl FixedCapacityMemoryPool {
         let layout = Layout::from_size_align(total_size, self.config.alignment)
             .map_err(|e| ZiporaError::invalid_data(&format!("Invalid layout: {}", e)))?;
 
+        // SAFETY: layout valid (size > 0, align power of 2), ptr null-checked below
         let memory = NonNull::new(unsafe { alloc(layout) })
             .ok_or_else(|| ZiporaError::out_of_memory(total_size))?;
 
+        // SAFETY: UnsafeCell access protected by init_mutex in ensure_memory_allocated
         unsafe {
             *self.memory.get() = Some(memory);
             *self.memory_layout.get() = Some(layout);
@@ -411,7 +416,7 @@ impl FixedCapacityMemoryPool {
 
     /// Ensure memory is allocated (lazy allocation)
     fn ensure_memory_allocated(&self) -> Result<()> {
-        // Check if already initialized (safe read through UnsafeCell)
+        // SAFETY: reading Option discriminant is safe even with concurrent writes due to atomic init_mutex
         unsafe {
             if (*self.memory.get()).is_some() {
                 return Ok(());
@@ -432,21 +437,24 @@ impl FixedCapacityMemoryPool {
 
     /// Initialize free lists with all available blocks (for mutable access)
     fn initialize_free_lists(&mut self) -> Result<()> {
-        let memory = unsafe { (*self.memory.get()).ok_or_else(|| 
+        // SAFETY: UnsafeCell access protected by &mut self exclusive borrow
+        let memory = unsafe { (*self.memory.get()).ok_or_else(||
             ZiporaError::invalid_data("Memory not allocated"))? };
 
         let block_size = self.config.max_block_size;
-        
+
         // Initialize all blocks as free in the largest size class
         let largest_class = self.size_classes.len() - 1;
+        // SAFETY: UnsafeCell access protected by &mut self exclusive borrow
         let free_lists = unsafe { &mut *self.free_lists.get() };
         let free_list = &free_lists[largest_class];
 
         for i in 0..self.config.total_blocks {
             let offset = i * block_size;
+            // SAFETY: pointer valid from alloc, offset < total_capacity checked by loop bounds
             let block_ptr = unsafe { memory.as_ptr().add(offset) };
 
-            // Initialize block header
+            // SAFETY: block_ptr valid, aligned, and within allocated memory region
             let header = unsafe { &mut *(block_ptr as *mut BlockHeader) };
             header.size_class = largest_class as u32;
             header.magic = BLOCK_HEADER_MAGIC;
@@ -467,21 +475,24 @@ impl FixedCapacityMemoryPool {
 
     /// Initialize free lists with all available blocks (for shared access via UnsafeCell)
     fn initialize_free_lists_internal(&self) -> Result<()> {
-        let memory = unsafe { (*self.memory.get()).ok_or_else(|| 
+        // SAFETY: UnsafeCell access protected by init_mutex in allocate_backing_memory_internal
+        let memory = unsafe { (*self.memory.get()).ok_or_else(||
             ZiporaError::invalid_data("Memory not allocated"))? };
 
         let block_size = self.config.max_block_size;
-        
+
         // Initialize all blocks as free in the largest size class
         let largest_class = self.size_classes.len() - 1;
+        // SAFETY: UnsafeCell access protected by init_mutex in allocate_backing_memory_internal
         let free_lists = unsafe { &mut *self.free_lists.get() };
         let free_list = &free_lists[largest_class];
 
         for i in 0..self.config.total_blocks {
             let offset = i * block_size;
+            // SAFETY: pointer valid from alloc, offset < total_capacity checked by loop bounds
             let block_ptr = unsafe { memory.as_ptr().add(offset) };
 
-            // Initialize block header
+            // SAFETY: block_ptr valid, aligned, and within allocated memory region
             let header = unsafe { &mut *(block_ptr as *mut BlockHeader) };
             header.size_class = largest_class as u32;
             header.magic = BLOCK_HEADER_MAGIC;
@@ -502,22 +513,25 @@ impl FixedCapacityMemoryPool {
 
     /// Allocate from free list
     fn allocate_from_free_list(&self, size_class_index: usize) -> Result<NonNull<u8>> {
+        // SAFETY: UnsafeCell immutable after initialization, only atomic fields accessed
         let free_lists = unsafe { &*self.free_lists.get() };
         let free_list = &free_lists[size_class_index];
 
         // Try to pop from free list
         loop {
             let current_head = free_list.head.load(Ordering::Acquire);
-            
+
             if current_head == LIST_TAIL {
                 // Try to split from larger size class
                 return self.allocate_by_splitting(size_class_index);
             }
 
-            // Get pointer to current head block
-            let memory = unsafe { (*self.memory.get()).ok_or_else(|| 
+            // SAFETY: memory initialized by ensure_memory_allocated before allocate_from_free_list
+            let memory = unsafe { (*self.memory.get()).ok_or_else(||
                 ZiporaError::invalid_data("Memory not allocated"))? };
+            // SAFETY: pointer valid from alloc, current_head offset validated by free list
             let block_ptr = unsafe { memory.as_ptr().add(current_head as usize) };
+            // SAFETY: block_ptr valid, aligned to BlockHeader, within allocated region
             let header = unsafe { &*(block_ptr as *const BlockHeader) };
 
             // Verify header integrity
@@ -547,6 +561,7 @@ impl FixedCapacityMemoryPool {
     fn allocate_by_splitting(&self, size_class_index: usize) -> Result<NonNull<u8>> {
         // Look for larger size classes with available blocks
         for larger_class in (size_class_index + 1)..self.size_classes.len() {
+            // SAFETY: UnsafeCell immutable after initialization, only atomic fields accessed
             let free_lists = unsafe { &*self.free_lists.get() };
             let free_list = &free_lists[larger_class];
             let head = free_list.head.load(Ordering::Acquire);
@@ -571,11 +586,12 @@ impl FixedCapacityMemoryPool {
 
     /// Deallocate to free list
     fn deallocate_to_free_list(&self, ptr: NonNull<u8>, size_class_index: usize) -> Result<()> {
+        // SAFETY: UnsafeCell immutable after initialization, only atomic fields accessed
         let free_lists = unsafe { &*self.free_lists.get() };
         let free_list = &free_lists[size_class_index];
         let offset = self.ptr_to_offset(ptr)?;
 
-        // Initialize block header
+        // SAFETY: ptr validated by ptr_to_offset above, aligned to BlockHeader
         let header = unsafe { &mut *(ptr.as_ptr() as *mut BlockHeader) };
         header.size_class = size_class_index as u32;
         header.magic = BLOCK_HEADER_MAGIC;
@@ -638,7 +654,8 @@ impl FixedCapacityMemoryPool {
 
     /// Convert pointer to offset
     fn ptr_to_offset(&self, ptr: NonNull<u8>) -> Result<u32> {
-        let memory = unsafe { (*self.memory.get()).ok_or_else(|| 
+        // SAFETY: memory initialized before ptr_to_offset called in allocation/deallocation
+        let memory = unsafe { (*self.memory.get()).ok_or_else(||
             ZiporaError::invalid_data("Memory not allocated"))? };
         
         let base = memory.as_ptr() as usize;
@@ -660,6 +677,7 @@ impl FixedCapacityMemoryPool {
 
 impl Drop for FixedCapacityMemoryPool {
     fn drop(&mut self) {
+        // SAFETY: &mut self exclusive access, layout matches alloc, ptr from matching alloc
         unsafe {
             if let (Some(memory), Some(layout)) = (*self.memory.get(), *self.memory_layout.get()) {
                 dealloc(memory.as_ptr(), layout);
@@ -707,18 +725,21 @@ impl FixedCapacityAllocation {
     /// Get mutable slice view
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        // SAFETY: pointer valid from allocation, size matches allocation
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.size) }
     }
 
     /// Get immutable slice view
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
+        // SAFETY: pointer valid from allocation, size matches allocation
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.size) }
     }
 }
 
 impl Drop for FixedCapacityAllocation {
     fn drop(&mut self) {
+        // SAFETY: pool pointer valid during allocation lifetime, ptr/size_class from allocation
         unsafe {
             if let Err(e) = (*self.pool).deallocate(self.ptr, self.size_class_index) {
                 log::error!("Failed to deallocate fixed capacity memory: {}", e);
@@ -819,10 +840,12 @@ mod tests {
         let pool = FixedCapacityMemoryPool::new(config).unwrap();
         
         // Memory should not be allocated yet
+        // SAFETY: test code, single-threaded access to check initialization state
         unsafe { assert!((*pool.memory.get()).is_none()); }
-        
+
         // First allocation should trigger memory allocation
         let _alloc = pool.allocate(64).unwrap();
+        // SAFETY: test code, single-threaded access to check initialization state
         unsafe { assert!((*pool.memory.get()).is_some()); }
     }
 

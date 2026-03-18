@@ -194,6 +194,7 @@ impl RadixSort {
                     if std::arch::is_x86_feature_detected!("avx512f")
                         && std::arch::is_x86_feature_detected!("avx512bw")
                     {
+                        // SAFETY: avx512f and avx512bw features detected at runtime
                         unsafe {
                             self.count_digits_avx512(data, shift, mask, &mut counts);
                         }
@@ -474,6 +475,7 @@ impl RadixSort {
         // Process 16 u32 values at a time using AVX-512
         while i + 16 <= data.len() {
             // Load 16 x u32 values (512 bits)
+            // SAFETY: #[target_feature] ensures avx512f, i+16 <= data.len() ensures 64 bytes available
             let values = unsafe { _mm512_loadu_si512(data[i..].as_ptr() as *const __m512i) };
 
             // Shift all values to extract the desired digit
@@ -491,6 +493,7 @@ impl RadixSort {
             // Note: This could be further optimized with gather operations
             // For now, extract to array and count sequentially
             let mut digit_array = [0u32; 16];
+            // SAFETY: digit_array is 16 u32s = 64 bytes, matches __m512i size
             unsafe { _mm512_storeu_si512(digit_array.as_mut_ptr() as *mut __m512i, digits) };
 
             for digit in digit_array.iter() {
@@ -1356,6 +1359,7 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
         #[cfg(target_arch = "x86_64")]
         {
             if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("bmi2") {
+                // SAFETY: avx2 and bmi2 features detected at runtime
                 unsafe {
                     self.count_digits_avx2_bmi2(data, shift, mask, counts)?;
                 }
@@ -1399,18 +1403,22 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
                 keys[i + 6] as u32,
                 keys[i + 7] as u32,
             ];
+            // SAFETY: #[target_feature] ensures avx2, keys_u32 is 8 u32s = 32 bytes
             let values = unsafe { _mm256_loadu_si256(keys_u32.as_ptr() as *const __m256i) };
 
             // Shift and mask to extract digits
             let shifted = if shift > 0 {
+                // SAFETY: #[target_feature] ensures avx2/bmi2, values is valid __m256i
                 unsafe { _mm256_srlv_epi32(values, shift_vec) }
             } else {
                 values
             };
+            // SAFETY: #[target_feature] ensures avx2, shifted is valid __m256i
             let digits = unsafe { _mm256_and_si256(shifted, mask_vec) };
 
             // Extract digits and count them
             let mut digit_array = [0u32; 8];
+            // SAFETY: digit_array is 8 u32s = 32 bytes, matches __m256i size
             unsafe { _mm256_storeu_si256(digit_array.as_mut_ptr() as *mut __m256i, digits) };
 
             for &digit in &digit_array {

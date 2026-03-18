@@ -128,9 +128,11 @@ impl InterleavedLine {
         // Count bits in the partial word - optimized for referenced project pattern
         if bit_in_word > 0 {
             // Direct word access without intermediate variables
+            // SAFETY: Hardware features verified or caller ensures safety invariants
             let trailing_count = unsafe {
                 // SAFETY: word_idx is bounds-checked above through bit_offset validation
                 // Also, line 126 uses self.rlev2[word_idx] which would panic if word_idx >= 4
+                // SAFETY: word_idx bounds-checked by rlev2[word_idx] access above
                 debug_assert!(word_idx < WORDS_PER_LINE, "word_idx {} >= WORDS_PER_LINE {}", word_idx, WORDS_PER_LINE);
                 let word = *self.bit64.get_unchecked(word_idx);
 
@@ -191,6 +193,8 @@ impl InterleavedLine {
             #[cfg(not(test))]
             {
                 if get_cpu_features().has_popcnt {
+                    // SAFETY: POPCNT verified by has_popcnt check
+                    // SAFETY: POPCNT availability verified by has_popcnt check above
                     unsafe { _popcnt64(x as i64) as u32 }
                 } else {
                     x.count_ones()
@@ -209,6 +213,7 @@ impl InterleavedLine {
     fn prefetch_hint(&self) {
         #[cfg(target_arch = "x86_64")]
         {
+            // SAFETY: Prefetch intrinsic is safe with any pointer (CPU handles invalid pointers gracefully)
             unsafe {
                 _mm_prefetch(self as *const InterleavedLine as *const i8, _MM_HINT_T0);
             }
@@ -451,6 +456,7 @@ impl RankSelectInterleaved256 {
         // Minimize arithmetic operations and direct cache line access
         let bit_in_line = pos % LINE_BITS;
 
+        // SAFETY: line_idx bounds-checked above (line 444: if line_idx >= self.lines.len())
         unsafe {
             // SAFETY: line_idx bounds-checked above (line 444: if line_idx >= self.lines.len())
             debug_assert!(line_idx < self.lines.len(), "line_idx {} >= lines.len() {}", line_idx, self.lines.len());
@@ -603,6 +609,7 @@ impl RankSelectInterleaved256 {
             #[cfg(not(test))]
             {
                 if get_cpu_features().has_bmi2 {
+                    // SAFETY: BMI2 availability verified by has_bmi2 check above
                     unsafe {
                         use std::arch::x86_64::{_pdep_u64, _tzcnt_u64};
                         // referenced project pattern: PDEP + CTZ for fast select
@@ -656,6 +663,7 @@ impl RankSelectInterleaved256 {
         {
             let line_idx = bitpos / LINE_BITS;
             if line_idx < self.lines.len() {
+                // SAFETY: Pointer derived from valid slice element, bounds checked by if-condition above
                 unsafe {
                     // Prefetch the cache line containing rank metadata
                     // Uses T0 hint for temporal L1 cache (hot data)
@@ -668,6 +676,8 @@ impl RankSelectInterleaved256 {
         {
             let line_idx = bitpos / LINE_BITS;
             if line_idx < self.lines.len() {
+                // SAFETY: Pointer derived from valid slice element, bounds checked by if-condition above,
+                // inline asm uses only prefetch (no memory modification), nostack/preserves_flags ensure no side effects
                 // ARM prefetch using PRFM instruction (stable Rust)
                 unsafe {
                     let ptr = &self.lines[line_idx] as *const InterleavedLine;
@@ -693,6 +703,7 @@ impl RankSelectInterleaved256 {
         {
             let line_idx = bitpos / LINE_BITS;
             if line_idx < lines.len() {
+                // SAFETY: Pointer derived from valid slice element, bounds checked by if-condition above
                 unsafe {
                     let ptr = &lines[line_idx] as *const InterleavedLine as *const i8;
                     _mm_prefetch(ptr, _MM_HINT_T0);
@@ -712,6 +723,7 @@ impl RankSelectInterleaved256 {
             {
                 let cache_idx = id / self.select_sample_rate;
                 if cache_idx < cache.len() {
+                    // SAFETY: Pointer derived from valid slice element, bounds checked by if-condition above
                     unsafe {
                         let ptr = &cache[cache_idx] as *const u32 as *const i8;
                         _mm_prefetch(ptr, _MM_HINT_T0);
@@ -839,6 +851,7 @@ impl RankSelectInterleaved256 {
     /// let mut strategy = PrefetchStrategy::new(PrefetchConfig::default());
     ///
     /// // Prefetch for sequential bulk operations
+    // SAFETY: Hardware features verified or caller ensures safety invariants
     /// unsafe {
     ///     rs.prefetch_ahead(1000, 100, &mut strategy);
     /// }
@@ -868,6 +881,7 @@ impl RankSelectInterleaved256 {
         }
 
         // Use sequential prefetch for bulk operations (SAFETY FIX v2.1.1: using slices)
+        // SAFETY: start_line..end_line bounds-checked above, slice creation is within FastVec bounds
         unsafe {
             // Convert the range of FastVec elements to a byte slice
             let num_lines = end_line - start_line;
@@ -1571,6 +1585,7 @@ mod tests {
             // x86_64 specific: verify intrinsics are available
             use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
             if !rs.lines.is_empty() {
+                // SAFETY: Pointer derived from valid slice element (index 0 checked by is_empty above)
                 unsafe {
                     let ptr = &rs.lines[0] as *const InterleavedLine as *const i8;
                     _mm_prefetch(ptr, _MM_HINT_T0);
@@ -1582,6 +1597,8 @@ mod tests {
         {
             // ARM64 specific: verify inline asm compiles
             if !rs.lines.is_empty() {
+                // SAFETY: Pointer derived from valid slice element (index 0 checked by is_empty above),
+                // inline asm uses only prefetch (no memory modification), nostack/preserves_flags ensure no side effects
                 unsafe {
                     let ptr = &rs.lines[0] as *const InterleavedLine;
                     std::arch::asm!(

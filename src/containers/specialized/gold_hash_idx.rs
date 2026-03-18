@@ -365,6 +365,7 @@ where
         self.values
             .get(index)
             .and_then(|opt| opt.as_ref())
+            // SAFETY: ptr is from allocate_pooled_value, points to valid V, lifetime tied to self
             .map(|ptr| unsafe { &*(ptr.as_ptr() as *const V) })
             .ok_or_else(|| ZiporaError::invalid_data("Invalid value index"))
     }
@@ -374,6 +375,7 @@ where
         self.values
             .get_mut(index)
             .and_then(|opt| opt.as_ref())
+            // SAFETY: ptr is from allocate_pooled_value, points to valid V, exclusive access via &mut self
             .map(|ptr| unsafe { &mut *(ptr.as_ptr() as *mut V) })
             .ok_or_else(|| ZiporaError::invalid_data("Invalid value index"))
     }
@@ -392,6 +394,7 @@ where
         match &self.pool {
             Some(pool) => {
                 let ptr = pool.allocate()?;
+                // SAFETY: ptr is freshly allocated, properly aligned for V, not yet initialized
                 unsafe {
                     std::ptr::write(ptr.as_ptr() as *mut V, value);
                 }
@@ -401,6 +404,7 @@ where
                 // Use global pool
                 let pool = get_global_pool_for_size(mem::size_of::<V>());
                 let ptr = pool.allocate()?;
+                // SAFETY: ptr is freshly allocated, properly aligned for V, not yet initialized
                 unsafe {
                     std::ptr::write(ptr.as_ptr() as *mut V, value);
                 }

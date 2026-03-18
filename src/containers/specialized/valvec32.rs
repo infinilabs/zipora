@@ -37,6 +37,7 @@ pub const CACHE_LINE_SIZE: usize = 64;
 /// Platform-specific malloc_usable_size wrapper
 #[cfg(target_os = "linux")]
 fn get_usable_size(ptr: *mut u8, size: usize) -> usize {
+    // SAFETY: malloc_usable_size is a valid libc function, ptr is from malloc or is null
     unsafe {
         // Use malloc_usable_size on Linux
         unsafe extern "C" {
@@ -52,6 +53,7 @@ fn get_usable_size(ptr: *mut u8, size: usize) -> usize {
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 fn get_usable_size(ptr: *mut u8, size: usize) -> usize {
+    // SAFETY: malloc_size is a valid libc function, ptr is from malloc or is null
     unsafe {
         // Use malloc_size on macOS/iOS
         unsafe extern "C" {
@@ -67,6 +69,7 @@ fn get_usable_size(ptr: *mut u8, size: usize) -> usize {
 
 #[cfg(target_os = "windows")]
 fn get_usable_size(ptr: *mut u8, size: usize) -> usize {
+    // SAFETY: _msize is a valid libc function, ptr is from malloc or is null
     unsafe {
         // Use _msize on Windows
         unsafe extern "C" {
@@ -217,8 +220,9 @@ impl<T> ValVec32<T> {
 
         let capacity_usize = capacity as usize;
         let size = capacity_usize * mem::size_of::<T>();
-        
+
         // Use libc allocation for consistency with grow_to() and drop()
+        // SAFETY: malloc returns valid pointer or null, checked before NonNull::new_unchecked
         let ptr = unsafe {
             let raw_ptr = libc::malloc(size);
             if raw_ptr.is_null() {
@@ -370,6 +374,7 @@ impl<T> ValVec32<T> {
         // Referenced project exact realloc pattern: T* q = (T*)pa_realloc(p, sizeof(T) * new_cap);
         let new_ptr = if self.capacity == 0 {
             // Initial allocation - use malloc directly like referenced project
+            // SAFETY: malloc returns valid pointer or null, checked before NonNull::new_unchecked
             unsafe {
                 let raw_ptr = libc::malloc(new_size);
                 if raw_ptr.is_null() {
@@ -379,6 +384,7 @@ impl<T> ValVec32<T> {
             }
         } else {
             // Reallocation - use realloc directly like referenced project pa_realloc
+            // SAFETY: self.ptr is valid from previous malloc/realloc, realloc returns valid pointer or null
             unsafe {
                 let old_ptr = self.ptr.as_ptr() as *mut libc::c_void;
                 let raw_ptr = libc::realloc(old_ptr, new_size);
@@ -429,6 +435,7 @@ impl<T> ValVec32<T> {
         if terark_likely!(oldsize < self.capacity) {
             // Fast path: placement new pattern - new(p+oldsize)T(x)
             let lp = self.ptr.as_ptr(); // Load pointer into register
+            // SAFETY: oldsize < capacity guarantees offset is within allocated buffer
             unsafe {
                 ptr::write(lp.add(oldsize as usize), value);
             }
@@ -477,6 +484,7 @@ impl<T> ValVec32<T> {
         if terark_likely!(oldsize < self.capacity) {
             // Fast path: placement new pattern - new(p+oldsize)T(x)
             let lp = self.ptr.as_ptr(); // Load pointer into register like topling-zip
+            // SAFETY: oldsize < capacity guarantees offset is within allocated buffer
             unsafe {
                 ptr::write(lp.add(oldsize as usize), value);
             }
@@ -509,6 +517,7 @@ impl<T> ValVec32<T> {
             }
         }
 
+        // SAFETY: grow_to ensures capacity > len, so len is within allocated buffer
         unsafe {
             let ptr = self.ptr.as_ptr().add(self.len as usize);
             ptr::write(ptr, value);
@@ -536,7 +545,7 @@ impl<T> ValVec32<T> {
     #[inline(always)]
     pub unsafe fn unchecked_push(&mut self, value: T) {
         debug_assert!(self.len < self.capacity);
-        // Direct write with no checks - maximum performance
+        // SAFETY: caller guarantees len < capacity, so offset is within allocated buffer
         unsafe {
             ptr::write(self.ptr.as_ptr().offset(self.len as isize), value);
         }
@@ -549,12 +558,12 @@ impl<T> ValVec32<T> {
     /// 
     /// Caller must ensure that `self.len < self.capacity`
     #[inline(always)]
-    pub unsafe fn unchecked_push_copy(&mut self, value: T) 
-    where 
+    pub unsafe fn unchecked_push_copy(&mut self, value: T)
+    where
         T: Copy
     {
         debug_assert!(self.len < self.capacity);
-        // For Copy types, we can use direct assignment which may be faster
+        // SAFETY: caller guarantees len < capacity, so offset is within allocated buffer
         unsafe {
             *self.ptr.as_ptr().offset(self.len as isize) = value;
         }
@@ -572,7 +581,8 @@ impl<T> ValVec32<T> {
 
         let new_capacity = self.calculate_new_capacity(self.len + 1);
         self.grow_to(new_capacity)?;
-        
+
+        // SAFETY: grow_to ensures capacity > len, so len is within allocated buffer
         unsafe {
             let ptr = self.ptr.as_ptr().add(self.len as usize);
             ptr::write(ptr, value);
@@ -640,6 +650,7 @@ impl<T> ValVec32<T> {
     pub fn get(&self, index: u32) -> Option<&T> {
         if index < self.len {
             let index_usize = index as usize;
+            // SAFETY: index < len guarantees offset is within valid initialized range
             Some(unsafe { &*self.ptr.as_ptr().add(index_usize) })
         } else {
             None
@@ -654,6 +665,7 @@ impl<T> ValVec32<T> {
     #[inline]
     pub unsafe fn get_unchecked(&self, index: u32) -> &T {
         debug_assert!(index < self.len);
+        // SAFETY: Caller ensures index < len, ptr is valid for len elements, pointer arithmetic is within bounds
         unsafe { &*self.ptr.as_ptr().add(index as usize) }
     }
 
@@ -665,6 +677,7 @@ impl<T> ValVec32<T> {
     #[inline]
     pub unsafe fn get_unchecked_mut(&mut self, index: u32) -> &mut T {
         debug_assert!(index < self.len);
+        // SAFETY: Caller ensures index < len, ptr is valid for len elements, pointer arithmetic is within bounds, &mut self ensures exclusive access
         unsafe { &mut *self.ptr.as_ptr().add(index as usize) }
     }
 
@@ -681,6 +694,7 @@ impl<T> ValVec32<T> {
     pub fn get_mut(&mut self, index: u32) -> Option<&mut T> {
         if index < self.len {
             let index_usize = index as usize;
+            // SAFETY: index < len guarantees offset is within valid initialized range
             Some(unsafe { &mut *self.ptr.as_ptr().add(index_usize) })
         } else {
             None
@@ -730,7 +744,7 @@ impl<T> ValVec32<T> {
     pub fn clear(&mut self) {
         // Drop all elements
         for i in 0..(self.len as usize) {
-            // SAFETY: All indices 0..len are valid
+            // SAFETY: i < len guarantees offset is within valid initialized range
             unsafe {
                 ptr::drop_in_place(self.ptr.as_ptr().add(i));
             }
@@ -814,6 +828,7 @@ impl<T> ValVec32<T> {
 
         self.reserve(additional)?;
 
+        // SAFETY: reserve ensures capacity >= new_len, dst+i is within allocated buffer for all i < slice.len()
         unsafe {
             let dst = self.ptr.as_ptr().add(self.len as usize);
             for (i, item) in slice.iter().enumerate() {
@@ -862,6 +877,7 @@ impl<T> ValVec32<T> {
 
         self.reserve(additional)?;
 
+        // SAFETY: reserve ensures capacity >= new_len, buffers non-overlapping, dst valid for slice.len() elements
         unsafe {
             // Use memcpy for Copy types - significantly faster than iteration
             let dst = self.ptr.as_ptr().add(self.len as usize);
@@ -905,9 +921,10 @@ impl<T> ValVec32<T> {
 
         self.reserve(count)?;
 
+        // SAFETY: reserve ensures capacity >= new_len, all offsets within allocated buffer
         unsafe {
             let dst = self.ptr.as_ptr().add(self.len as usize);
-            
+
             // For small counts, use simple loop
             if count <= 16 {
                 for i in 0..count as usize {
@@ -1007,6 +1024,7 @@ impl<T> Drop for ValVec32<T> {
 
         if self.capacity > 0 && mem::size_of::<T>() > 0 {
             // Use libc::free to match referenced project pattern
+            // SAFETY: self.ptr is valid from malloc/realloc or dangling (if capacity==0)
             unsafe {
                 libc::free(self.ptr.as_ptr() as *mut libc::c_void);
             }
@@ -1071,6 +1089,7 @@ impl<T: Clone> Clone for ValVec32<T> {
 
         // Use bulk copy for better performance
         if self.len > 0 && new_vec.capacity >= self.len {
+            // SAFETY: i < self.len, offsets within valid ranges for both vectors
             unsafe {
                 for i in 0..(self.len as usize) {
                     let value = (*self.ptr.as_ptr().add(i)).clone();
@@ -1081,6 +1100,7 @@ impl<T: Clone> Clone for ValVec32<T> {
         } else if self.len > 0 {
             // Partial clone if we couldn't get full capacity
             let max_items = new_vec.capacity.min(self.len);
+            // SAFETY: i < max_items <= both capacity and len, offsets within valid ranges
             unsafe {
                 for i in 0..(max_items as usize) {
                     let value = (*self.ptr.as_ptr().add(i)).clone();

@@ -197,11 +197,13 @@ impl<K: PartialEq + Hash + Eq + 'static + Clone, V: Clone> SmallMap<K, V> {
         debug_assert!(len <= SMALL_MAP_THRESHOLD, "len {} exceeds SMALL_MAP_THRESHOLD {}", len, SMALL_MAP_THRESHOLD);
         match len {
             1 => {
+                // SAFETY: len=1, so keys[0] is initialized
                 let k0 = unsafe { keys[0].assume_init_ref() };
                 if k0 == key { Some(0) } else { None }
             }
             2 => {
                 // Load both keys first for better cache utilization
+                // SAFETY: len=2, so keys[0..2] are initialized
                 let k0 = unsafe { keys[0].assume_init_ref() };
                 let k1 = unsafe { keys[1].assume_init_ref() };
                 if k0 == key {
@@ -214,6 +216,7 @@ impl<K: PartialEq + Hash + Eq + 'static + Clone, V: Clone> SmallMap<K, V> {
             }
             3 => {
                 // Load all keys first for optimal cache utilization
+                // SAFETY: len=3, so keys[0..3] are initialized
                 let k0 = unsafe { keys[0].assume_init_ref() };
                 let k1 = unsafe { keys[1].assume_init_ref() };
                 let k2 = unsafe { keys[2].assume_init_ref() };
@@ -229,6 +232,7 @@ impl<K: PartialEq + Hash + Eq + 'static + Clone, V: Clone> SmallMap<K, V> {
             }
             4 => {
                 // Quad comparison - very common case for SmallMap
+                // SAFETY: len=4, so keys[0..4] are initialized
                 let k0 = unsafe { keys[0].assume_init_ref() };
                 let k1 = unsafe { keys[1].assume_init_ref() };
                 let k2 = unsafe { keys[2].assume_init_ref() };
@@ -248,6 +252,7 @@ impl<K: PartialEq + Hash + Eq + 'static + Clone, V: Clone> SmallMap<K, V> {
             5..=8 => {
                 // Handle remaining small sizes with partial unrolling
                 // Check first 4 elements unrolled, then tight loop for remainder
+                // SAFETY: len>=5, so keys[0..4] are initialized
                 let k0 = unsafe { keys[0].assume_init_ref() };
                 let k1 = unsafe { keys[1].assume_init_ref() };
                 let k2 = unsafe { keys[2].assume_init_ref() };
@@ -268,6 +273,7 @@ impl<K: PartialEq + Hash + Eq + 'static + Clone, V: Clone> SmallMap<K, V> {
 
                 // Handle remaining elements (5-8) with tight loop
                 for i in 4..len {
+                    // SAFETY: i < len, so keys[i] is initialized
                     let existing_key = unsafe { keys[i].assume_init_ref() };
                     if existing_key == key {
                         return Some(i);
@@ -293,6 +299,7 @@ impl<K: PartialEq + Hash + Eq + 'static + Clone, V: Clone> SmallMap<K, V> {
     ) -> Option<usize> {
         // Fallback with cache-friendly access pattern
         for i in 0..len {
+            // SAFETY: i < len, keys[0..len] guaranteed initialized by insert()
             let existing_key = unsafe { keys[i].assume_init_ref() };
             if existing_key == key {
                 return Some(i);
@@ -338,6 +345,7 @@ impl<K: PartialEq + Hash + Eq + 'static + Clone, V: Clone> SmallMap<K, V> {
                     let existing_key = unsafe { keys[i].assume_init_ref() };
                     if *existing_key == key {
                         // Replace existing value
+                        // SAFETY: i < len, so values[i] is initialized
                         let existing_value = unsafe { values[i].assume_init_mut() };
                         let old_value = std::mem::replace(existing_value, value);
                         return Ok(Some(old_value));
@@ -391,6 +399,7 @@ impl<K: PartialEq + Hash + Eq + 'static + Clone, V: Clone> SmallMap<K, V> {
                 if let Some(index) = self.find_key_index(key, keys, *len) {
                     // Selective prefetching to avoid overhead
                     #[cfg(all(target_arch = "x86_64", feature = "simd"))]
+                    // SAFETY: prefetch is always safe, index < len from find_key_index
                     unsafe {
                         // Only prefetch for larger maps where memory latency matters
                         if *len > 4 {
@@ -776,6 +785,7 @@ impl OptimizedSearch for u8 {
             return None;
         }
 
+        // SAFETY: SIMD operations on initialized keys[0..len], len > 0 verified above
         unsafe {
             // Create a vector with the search key repeated
             let search_vec = _mm_set1_epi8(*self as i8);
@@ -813,6 +823,7 @@ impl OptimizedSearch for u32 {
             return None;
         }
 
+        // SAFETY: SIMD operations on initialized keys[0..len], len > 0 verified above
         unsafe {
             // Process 4 keys at a time with SSE2
             let search_vec = _mm_set1_epi32(*self as i32);
@@ -866,6 +877,7 @@ impl OptimizedSearch for u64 {
             return None;
         }
 
+        // SAFETY: SIMD operations on initialized keys[0..len], len > 0 verified above
         unsafe {
             // Process 2 keys at a time with SSE2
             let search_vec = _mm_set1_epi64x(*self as i64);
@@ -904,6 +916,7 @@ impl OptimizedSearch for i32 {
         len: usize,
     ) -> Option<usize> {
         // Reuse u32 implementation by bit-casting
+        // SAFETY: i32 and u32 have same representation, transmute valid for same-sized arrays
         unsafe {
             let u32_self = *self as u32;
             let u32_keys = std::mem::transmute::<
@@ -930,14 +943,17 @@ where
         len: usize,
     ) -> Option<usize> {
         // For very small maps, use unrolled search (same as generic implementation but optimized for u8)
+        // SAFETY: All unsafe assume_init_ref calls below access indices < len, keys[0..len] guaranteed initialized
         if len <= 4 {
             match len {
                 0 => None,
                 1 => {
+                    // SAFETY: len=1, so keys[0] is initialized
                     let k0 = unsafe { keys[0].assume_init_ref() };
                     if k0 == key { Some(0) } else { None }
                 }
                 2 => {
+                    // SAFETY: len=2, so keys[0..2] are initialized
                     let k0 = unsafe { keys[0].assume_init_ref() };
                     let k1 = unsafe { keys[1].assume_init_ref() };
                     if k0 == key {
@@ -949,6 +965,7 @@ where
                     }
                 }
                 3 => {
+                    // SAFETY: len=3, so keys[0..3] are initialized
                     let k0 = unsafe { keys[0].assume_init_ref() };
                     let k1 = unsafe { keys[1].assume_init_ref() };
                     let k2 = unsafe { keys[2].assume_init_ref() };
@@ -963,6 +980,7 @@ where
                     }
                 }
                 4 => {
+                    // SAFETY: len=4, so keys[0..4] are initialized
                     let k0 = unsafe { keys[0].assume_init_ref() };
                     let k1 = unsafe { keys[1].assume_init_ref() };
                     let k2 = unsafe { keys[2].assume_init_ref() };
@@ -998,6 +1016,7 @@ where
                 // SIMD optimization: vectorized search for u8 keys
                 if let Some(index) = self.find_key_index_simd(key, keys, *len) {
                     // Prefetching strategy: balanced prefetch for performance
+                    // SAFETY: index < len from find_key_index_simd, prefetch is always safe (hint can be ignored)
                     unsafe {
                         // Primary prefetch for immediate access
                         _mm_prefetch(values[index].as_ptr() as *const i8, _MM_HINT_T0);

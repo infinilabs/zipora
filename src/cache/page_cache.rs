@@ -69,6 +69,7 @@ impl SingleLruPageCache {
         // Apply kernel memory advice
         if config.memory.kernel_advice.huge_pages && config.use_huge_pages {
             #[cfg(target_os = "linux")]
+            // SAFETY: page_buffer is valid allocated memory of size total_memory
             unsafe {
                 libc::madvise(
                     page_buffer.as_ptr() as *mut libc::c_void,
@@ -77,9 +78,10 @@ impl SingleLruPageCache {
                 );
             }
         }
-        
+
         if config.memory.kernel_advice.will_need {
             #[cfg(target_os = "linux")]
+            // SAFETY: page_buffer is valid allocated memory of size total_memory
             unsafe {
                 libc::madvise(
                     page_buffer.as_ptr() as *mut libc::c_void,
@@ -166,6 +168,7 @@ impl SingleLruPageCache {
             
             // Get page data
             let page_ptr = node.page_data_ptr();
+            // SAFETY: page_ptr is valid from node initialization, PAGE_SIZE is the allocated size
             let page_data = unsafe { std::slice::from_raw_parts(page_ptr, PAGE_SIZE) };
             
             // Set up buffer for cleanup
@@ -273,6 +276,7 @@ impl SingleLruPageCache {
         
         let node = &self.nodes[node_idx as usize];
         let page_ptr = node.page_data_ptr();
+        // SAFETY: page_ptr is valid from allocate_and_load_page_with_node, PAGE_SIZE is correct
         let page_data = unsafe { std::slice::from_raw_parts(page_ptr, PAGE_SIZE) };
         
         buffer.set_node(self, node_idx);
@@ -292,6 +296,7 @@ impl SingleLruPageCache {
         
         // Calculate page memory offset
         let page_offset = (node_idx as usize - 1) * self.config.page_size;
+        // SAFETY: node_idx is valid (from allocate_page), page_offset is within page_buffer bounds
         let page_ptr = unsafe { self.page_buffer.as_ptr().add(page_offset) };
         
         // Initialize node
@@ -324,6 +329,7 @@ impl SingleLruPageCache {
         
         // Read data from file (this would need actual file I/O implementation)
         // For now, we'll zero the page
+        // SAFETY: page_ptr is valid allocated memory of PAGE_SIZE bytes
         unsafe {
             std::ptr::write_bytes(page_ptr, 0, PAGE_SIZE);
         }

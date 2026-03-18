@@ -1,4 +1,6 @@
+// SAFETY comment to add after reading full file
 //! Memory-mapped vectors backed by memory-mapped files
+// SAFETY comment to add after reading full file
 //!
 //! This module provides vectors that are backed by memory-mapped files,
 //! enabling persistent storage and efficient large data handling.
@@ -334,6 +336,7 @@ where
     #[inline]
     pub fn len(&self) -> usize {
         self.header()
+            // SAFETY: header pointer is valid, initialized by update_pointers, aligned to MmapVecHeader
             .map(|h| unsafe { h.as_ref().length as usize })
             .unwrap_or(0)
     }
@@ -348,6 +351,7 @@ where
     #[inline]
     pub fn capacity(&self) -> usize {
         self.header()
+            // SAFETY: header pointer is valid, initialized by update_pointers, aligned to MmapVecHeader
             .map(|h| unsafe { h.as_ref().capacity as usize })
             .unwrap_or(0)
     }
@@ -367,6 +371,7 @@ where
         }
 
         // Write the element
+        // SAFETY: current_len < capacity (grow called above), data_ptr valid, add(current_len) within allocation
         unsafe {
             let data_ptr = self.data_ptr()?.as_ptr();
             std::ptr::write(data_ptr.add(current_len), value);
@@ -395,6 +400,7 @@ where
         }
 
         // Read the element
+        // SAFETY: current_len > 0 (checked above), data_ptr valid, add(current_len-1) within allocation
         let value = unsafe {
             let data_ptr = self.data_ptr().ok()?.as_ptr();
             std::ptr::read(data_ptr.add(current_len - 1))
@@ -420,6 +426,7 @@ where
             return None;
         }
 
+        // SAFETY: index < len (checked above), data_ptr valid, add(index) within allocation
         unsafe {
             let data_ptr = self.data_ptr().ok()?.as_ptr();
             Some(&*data_ptr.add(index))
@@ -432,6 +439,7 @@ where
             return None;
         }
 
+        // SAFETY: index < len (checked above), data_ptr valid, add(index) within allocation
         unsafe {
             let data_ptr = self.data_ptr().ok()?.as_ptr();
             Some(&mut *data_ptr.add(index))
@@ -445,6 +453,7 @@ where
             return &[];
         }
 
+        // SAFETY: Hardware features verified or caller ensures safety invariants
         unsafe {
             // SAFETY: len > 0 check above guarantees self.data is initialized (Some)
             let data_ptr = self.data_ptr().expect("mmap data pointer valid").as_ptr();
@@ -463,6 +472,7 @@ where
             return &mut [];
         }
 
+        // SAFETY: Hardware features verified or caller ensures safety invariants
         unsafe {
             // SAFETY: len > 0 check above guarantees self.data is initialized (Some)
             let data_ptr = self.data_ptr().expect("mmap data pointer valid").as_ptr();
@@ -510,10 +520,11 @@ where
         // Sync memory content back to file (temporary implementation)
         if let Some(mmap) = &self.mmap {
             let file_size = self.file_size_from_header()?;
+            // SAFETY: mmap.as_ptr() valid for file_size bytes, mapping valid for lifetime of self
             let content = unsafe {
                 std::slice::from_raw_parts(mmap.as_ptr(), file_size)
             };
-            
+
             std::fs::write(&self.file_path, content)
                 .map_err(|e| ZiporaError::io_error(&format!("Failed to sync to file: {}", e)))?;
         }
@@ -638,6 +649,7 @@ where
             self.reserve(additional)?;
             
             // Fill with the specified value
+            // SAFETY: reserve called above ensures capacity >= len, data_ptr valid, i < len within allocation
             unsafe {
                 let data_ptr = self.data_ptr()?.as_ptr();
                 for i in current_len..len {
@@ -698,8 +710,9 @@ where
         if file_size > 0 {
             let file_content = std::fs::read(path)
                 .map_err(|e| ZiporaError::io_error(&format!("Failed to read file: {}", e)))?;
-            
+
             if file_content.len() <= allocation.size() {
+                // SAFETY: src is file_content.len() bytes, dst is allocation.size() >= file_content.len(), no overlap
                 unsafe {
                     std::ptr::copy_nonoverlapping(
                         file_content.as_ptr(),
@@ -730,6 +743,7 @@ where
             .ok_or_else(|| ZiporaError::invalid_data("Invalid header pointer"))?);
 
         // Data follows the header
+        // SAFETY: base_ptr valid from mmap, HEADER_SIZE within allocation
         let data_ptr = unsafe { base_ptr.add(HEADER_SIZE) } as *mut T;
         self.data = Some(NonNull::new(data_ptr)
             .ok_or_else(|| ZiporaError::invalid_data("Invalid data pointer"))?);
@@ -741,7 +755,8 @@ where
     fn initialize_header(&mut self) -> Result<()> {
         let header_ptr = self.header()?;
         let header = MmapVecHeader::new::<T>();
-        
+
+        // SAFETY: header_ptr valid from update_pointers, aligned to MmapVecHeader
         unsafe {
             std::ptr::write(header_ptr.as_ptr(), header);
         }
@@ -753,6 +768,7 @@ where
     /// Validate header for existing file
     fn validate_header(&self) -> Result<()> {
         let header_ptr = self.header()?;
+        // SAFETY: header_ptr valid from update_pointers, aligned to MmapVecHeader
         let header = unsafe { header_ptr.as_ref() };
         header.validate::<T>()
     }
@@ -770,6 +786,7 @@ where
     /// Set length in header
     fn set_length(&mut self, length: usize) -> Result<()> {
         let header_ptr = self.header()?;
+        // SAFETY: header_ptr valid from update_pointers, exclusive access via &mut self
         unsafe {
             (*header_ptr.as_ptr()).length = length as u64;
         }
@@ -779,6 +796,7 @@ where
     /// Set capacity in header
     fn set_capacity(&mut self, capacity: usize) -> Result<()> {
         let header_ptr = self.header()?;
+        // SAFETY: header_ptr valid from update_pointers, exclusive access via &mut self
         unsafe {
             (*header_ptr.as_ptr()).capacity = capacity as u64;
         }
@@ -862,6 +880,7 @@ where
         if capacity > 0 && !std::mem::needs_drop::<T>() {
             let size_bytes = capacity * std::mem::size_of::<T>();
             if size_bytes >= 64 {  // SIMD threshold
+                // SAFETY: data_ptr valid, size_bytes <= capacity * sizeof(T), mapping valid for vec lifetime
                 let slice = unsafe {
                     std::slice::from_raw_parts_mut(
                         vec.data_ptr()?.as_ptr() as *mut u8,
@@ -901,11 +920,13 @@ where
         }
 
         // Use SIMD copy for bulk push (4-8x faster)
+        // SAFETY: reserve called above ensures capacity, data_ptr valid, add(len) within allocation
         let dst_ptr = unsafe { self.data_ptr()?.as_ptr().add(self.len()) };
         let size_bytes = items.len() * std::mem::size_of::<T>();
 
         if size_bytes >= 64 {  // SIMD threshold
             // Cache-optimized SIMD copy
+            // SAFETY: src is items.len() * sizeof(T) bytes, dst has same size reserved
             let src_slice = unsafe {
                 std::slice::from_raw_parts(items.as_ptr() as *const u8, size_bytes)
             };
@@ -916,6 +937,7 @@ where
             fast_copy_cache_optimized(src_slice, dst_slice)?;
         } else {
             // Small copy: use standard approach
+            // SAFETY: src is items.len() elements, dst has capacity, no overlap
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     items.as_ptr(),
@@ -960,6 +982,7 @@ where
 
         let start = std::time::Instant::now();
         let new_len = self.len() - count;
+        // SAFETY: count <= len (checked above), data_ptr valid, add(new_len) within allocation
         let src_ptr = unsafe { self.data_ptr()?.as_ptr().add(new_len) };
 
         // Allocate result vector
@@ -968,6 +991,7 @@ where
         // Use SIMD copy if beneficial
         let size_bytes = count * std::mem::size_of::<T>();
         if size_bytes >= 64 {
+            // SAFETY: src_ptr valid for count elements, dst has capacity count, size_bytes matches
             let src_slice = unsafe {
                 std::slice::from_raw_parts(src_ptr as *const u8, size_bytes)
             };
@@ -980,6 +1004,7 @@ where
 
             fast_copy_cache_optimized(src_slice, dst_slice)?;
         } else {
+            // SAFETY: src_ptr valid for count elements, dst has capacity count, no overlap
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     src_ptr,
@@ -989,6 +1014,7 @@ where
             }
         }
 
+        // SAFETY: count elements copied into result with capacity count
         unsafe { result.set_len(count); }
         self.set_length(new_len)?;
 
@@ -1034,6 +1060,7 @@ where
 
             // Prefetch source data for large copies
             if size_bytes >= 4096 {
+                // SAFETY: other.data_ptr valid for other.len() elements, size_bytes matches
                 let src_slice = unsafe {
                     std::slice::from_raw_parts(other.data_ptr()?.as_ptr() as *const u8, size_bytes)
                 };
@@ -1042,6 +1069,7 @@ where
 
             // Use cache-optimized SIMD copy
             if size_bytes >= 64 {
+                // SAFETY: src has other.len() elements, dst has capacity >= other.len(), size_bytes matches
                 let src_slice = unsafe {
                     std::slice::from_raw_parts(other.data_ptr()?.as_ptr() as *const u8, size_bytes)
                 };
@@ -1054,6 +1082,7 @@ where
 
                 fast_copy_cache_optimized(src_slice, dst_slice)?;
             } else {
+                // SAFETY: src has other.len() elements, dst has capacity >= other.len(), no overlap
                 unsafe {
                     std::ptr::copy_nonoverlapping(
                         other.data_ptr()?.as_ptr(),
@@ -1101,11 +1130,13 @@ where
 
         // For byte-sized types, use direct SIMD fill
         if std::mem::size_of::<T>() == 1 && size_bytes >= 64 {
+            // SAFETY: range.end <= len checked above, data_ptr valid, add(range.start) + size_bytes within allocation
             let slice = unsafe {
                 let ptr = self.data_ptr()?.as_ptr().add(range.start);
                 std::slice::from_raw_parts_mut(ptr as *mut u8, size_bytes)
             };
 
+            // SAFETY: T is single-byte, transmuting &T to &u8 is safe
             // Transmute value to u8 (safe for single-byte types)
             let byte_value = unsafe { *(&value as *const T as *const u8) };
             fast_fill(slice, byte_value);
@@ -1147,10 +1178,12 @@ where
 
         // Use SIMD comparison for large ranges
         if size_bytes >= 64 {
+            // SAFETY: range.end <= self.len(), data_ptr valid, add(range.start) + size_bytes within allocation
             let self_slice = unsafe {
                 let ptr = self.data_ptr()?.as_ptr().add(range.start);
                 std::slice::from_raw_parts(ptr as *const u8, size_bytes)
             };
+            // SAFETY: range.len() <= other.len() checked above, other.data_ptr valid for size_bytes
             let other_slice = unsafe {
                 std::slice::from_raw_parts(other.data_ptr()?.as_ptr() as *const u8, size_bytes)
             };

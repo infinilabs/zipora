@@ -519,6 +519,7 @@ impl ZipOffsetBlobStore {
         if FIBER_PREFETCH && self.config.enable_simd {
             // Prefetch hint for next cache line
             #[cfg(target_arch = "x86_64")]
+            // SAFETY: _mm_prefetch is always safe (hint can be ignored), record_data.as_ptr() is valid
             unsafe {
                 std::arch::x86_64::_mm_prefetch(
                     record_data.as_ptr() as *const i8,

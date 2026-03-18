@@ -419,9 +419,11 @@ impl TieredAllocation {
     /// Get the allocated memory as a slice
     pub fn as_slice(&self) -> &[u8] {
         match self {
+            // SAFETY: ptr is NonNull from valid pool allocation, size matches allocated chunk
             TieredAllocation::Small(ptr, size) => unsafe {
                 std::slice::from_raw_parts(ptr.as_ptr(), *size)
             },
+            // SAFETY: ptr is NonNull from valid pool allocation, size matches allocated chunk
             TieredAllocation::Medium(ptr, size) => unsafe {
                 std::slice::from_raw_parts(ptr.as_ptr(), *size)
             },
@@ -434,9 +436,11 @@ impl TieredAllocation {
     /// Get the allocated memory as a mutable slice
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         match self {
+            // SAFETY: ptr is NonNull from valid pool allocation, size matches allocated chunk, &mut guarantees exclusive access
             TieredAllocation::Small(ptr, size) => unsafe {
                 std::slice::from_raw_parts_mut(ptr.as_ptr(), *size)
             },
+            // SAFETY: ptr is NonNull from valid pool allocation, size matches allocated chunk, &mut guarantees exclusive access
             TieredAllocation::Medium(ptr, size) => unsafe {
                 std::slice::from_raw_parts_mut(ptr.as_ptr(), *size)
             },
