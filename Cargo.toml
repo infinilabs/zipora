@@ -38,11 +38,9 @@ log = "0.4"
 # Performance
 ahash = "0.8.12"
 rayon = "1.11"
-crossbeam-utils = "0.8"
 dashmap = "6.1"
 thread_local = "1.1"
 fastrand = "2.1"
-parking_lot = "0.12"
 
 # Compression (optional)
 zstd = { version = "0.13.3", optional = true }
@@ -80,7 +78,7 @@ proptest = "1.9"
 tempfile = "3.14"
 arbitrary = { version = "1.4", features = ["derive"] }
 rand = "0.9"
-# Note: crossbeam-utils and rayon are already in main dependencies
+# Note: rayon is already in main dependencies
 
 [build-dependencies]
 cbindgen = { version = "0.29", optional = true }

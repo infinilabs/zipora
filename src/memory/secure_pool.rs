@@ -35,7 +35,7 @@ use crate::memory::cache_layout::{CacheOptimizedAllocator, CacheLayoutConfig, al
 use crate::memory::{get_optimal_numa_node, numa_alloc_aligned, numa_dealloc};
 use crate::simd::adaptive::AdaptiveSimdSelector;
 use crate::simd::Operation;
-use crossbeam_utils::CachePadded;
+use super::CachePadded;
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use std::alloc::{Layout, alloc, dealloc};

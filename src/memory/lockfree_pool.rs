@@ -21,7 +21,7 @@ use crate::error::{Result, ZiporaError};
 use crate::memory::cache_layout::{CacheOptimizedAllocator, CacheLayoutConfig, align_to_cache_line, AccessPattern, PrefetchHint};
 use crate::memory::{get_optimal_numa_node, numa_alloc_aligned, numa_dealloc};
 use crate::memory::simd_ops::{fast_fill, fast_prefetch};
-use crossbeam_utils::CachePadded;
+use super::CachePadded;
 use std::alloc::{Layout, alloc, dealloc};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
