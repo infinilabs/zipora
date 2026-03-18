@@ -66,6 +66,39 @@ pub use tiered::{
 #[cfg(target_os = "linux")]
 pub use hugepage::{HugePage, HugePageAllocator};
 
+/// Cache-line-padded wrapper to prevent false sharing between threads.
+///
+/// Aligns the inner value to 128 bytes (covers both 64-byte x86 and 128-byte
+/// Apple M-series cache lines). Drop-in replacement for `crossbeam_utils::CachePadded`.
+#[derive(Debug)]
+#[repr(align(128))]
+pub struct CachePadded<T> {
+    value: T,
+}
+
+impl<T> CachePadded<T> {
+    /// Wraps `value` in cache-line padding.
+    #[inline]
+    pub const fn new(value: T) -> Self {
+        Self { value }
+    }
+}
+
+impl<T> std::ops::Deref for CachePadded<T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        &self.value
+    }
+}
+
+impl<T> std::ops::DerefMut for CachePadded<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.value
+    }
+}
+
 /// Configuration for memory management behavior
 #[derive(Debug, Clone)]
 pub struct MemoryConfig {
