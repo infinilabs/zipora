@@ -788,6 +788,7 @@ impl LocalMatcher {
         let mut pos = 0;
 
         // Process 16-byte chunks with SSE2
+        // SAFETY: Pointers are bounds-checked before _mm_loadu_si128, SSE2 guaranteed by x86_64 target
         unsafe {
             let simd_chunks = max_len / 16;
             for _ in 0..simd_chunks {

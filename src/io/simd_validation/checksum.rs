@@ -139,6 +139,7 @@ pub fn crc32c(data: &[u8], init: u32) -> Result<u32> {
     #[cfg(target_arch = "x86_64")]
     {
         match impl_type {
+            // SAFETY: detect_crc32c_impl verified SSE4.2 availability
             Crc32cImpl::Sse42 => unsafe { Ok(crc32c_sse42(data, init)) },
             Crc32cImpl::Scalar => Ok(crc32c_scalar(data, init)),
             _ => Ok(crc32c_scalar(data, init)),
@@ -148,6 +149,7 @@ pub fn crc32c(data: &[u8], init: u32) -> Result<u32> {
     #[cfg(target_arch = "aarch64")]
     {
         match impl_type {
+            // SAFETY: detect_crc32c_impl verified ARM CRC32 availability
             Crc32cImpl::ArmCrc32 => unsafe { Ok(crc32c_arm(data, init)) },
             Crc32cImpl::Scalar => Ok(crc32c_scalar(data, init)),
             _ => Ok(crc32c_scalar(data, init)),
@@ -267,6 +269,7 @@ unsafe fn crc32c_sse42(data: &[u8], mut crc: u32) -> u32 {
     while remaining >= 8 {
         // Read 8 bytes as u64 (handles unaligned access)
         // SAFETY: We check remaining >= 8, so this is safe
+        // SAFETY: We check remaining >= 8, so ptr is valid for 8 bytes
         let value = unsafe { ptr.cast::<u64>().read_unaligned() };
         crc = _mm_crc32_u64(crc as u64, value) as u32;
         // SAFETY: We just checked we have at least 8 bytes
@@ -276,6 +279,7 @@ unsafe fn crc32c_sse42(data: &[u8], mut crc: u32) -> u32 {
 
     // Process 4 bytes with _mm_crc32_u32
     if remaining >= 4 {
+        // SAFETY: We check remaining >= 4, so ptr is valid for 4 bytes
         // SAFETY: We check remaining >= 4, so this is safe
         let value = unsafe { ptr.cast::<u32>().read_unaligned() };
         crc = _mm_crc32_u32(crc, value);
@@ -285,6 +289,7 @@ unsafe fn crc32c_sse42(data: &[u8], mut crc: u32) -> u32 {
     }
 
     // Process 2 bytes with _mm_crc32_u16
+        // SAFETY: We check remaining >= 2, so ptr is valid for 2 bytes
     if remaining >= 2 {
         // SAFETY: We check remaining >= 2, so this is safe
         let value = unsafe { ptr.cast::<u16>().read_unaligned() };
@@ -294,6 +299,7 @@ unsafe fn crc32c_sse42(data: &[u8], mut crc: u32) -> u32 {
         remaining -= 2;
     }
 
+        // SAFETY: We check remaining == 1, so dereferencing ptr is safe
     // Process remaining byte with _mm_crc32_u8
     if remaining == 1 {
         // SAFETY: We check remaining == 1, so this is safe
@@ -349,6 +355,7 @@ unsafe fn crc32c_arm(data: &[u8], mut crc: u32) -> u32 {
         ptr = unsafe { ptr.add(2) };
         remaining -= 2;
     }
+        // SAFETY: We check remaining == 1, so dereferencing ptr is safe
 
     // Process remaining byte with __crc32cb
     if remaining == 1 {
@@ -455,6 +462,7 @@ mod tests {
         {
             let features = get_cpu_features();
             if features.has_sse42 {
+                // SAFETY: has_sse42 verified above
                 let crc_sse42 = unsafe { crc32c_sse42(data, 0xFFFFFFFF) };
                 assert_eq!(crc_scalar, crc_sse42, "SSE4.2 CRC mismatch");
             }
@@ -464,6 +472,7 @@ mod tests {
         {
             let features = get_cpu_features();
             if features.has_crc32 {
+                // SAFETY: has_crc32 verified above
                 let crc_arm = unsafe { crc32c_arm(data, 0xFFFFFFFF) };
                 assert_eq!(crc_scalar, crc_arm, "ARM CRC mismatch");
             }
@@ -613,6 +622,7 @@ mod benches {
 
         let start = Instant::now();
         for _ in 0..100_000 {
+            // SAFETY: Test verified SSE4.2 available above
             unsafe {
                 let _ = !crc32c_sse42(&data, 0xFFFFFFFF);
             }

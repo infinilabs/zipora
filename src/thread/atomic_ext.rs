@@ -130,6 +130,7 @@ pub mod x86_64_optimized {
     #[inline]
     pub unsafe fn cas_weak_u64_asm(ptr: *mut u64, expected: u64, desired: u64) -> bool {
         let result: u8;
+        // SAFETY: asm: atomic compare-exchange u64, rax/result clobbered, ptr must be aligned and valid u64
         unsafe {
             std::arch::asm!(
                 "lock cmpxchg {desired:r}, ({ptr})",
@@ -152,7 +153,8 @@ pub mod x86_64_optimized {
         let expected_hi = (expected >> 64) as u64;
         let desired_lo = desired as u64;
         let desired_hi = (desired >> 64) as u64;
-        
+
+        // SAFETY: asm: 128-bit atomic compare-exchange, rax/rbx/rcx/rdx/result clobbered, ptr must be 16-byte aligned and valid u128
         unsafe {
             std::arch::asm!(
                 "mov {desired_lo}, %rbx",
@@ -174,6 +176,7 @@ pub mod x86_64_optimized {
     #[inline]
     pub unsafe fn atomic_increment_u64(ptr: *mut u64) -> u64 {
         let result: u64;
+        // SAFETY: asm: atomic fetch-add u64, result clobbered, ptr must be aligned and valid u64
         unsafe {
             std::arch::asm!(
                 "mov {result:r}, 1",
@@ -190,6 +193,7 @@ pub mod x86_64_optimized {
     #[inline]
     pub unsafe fn atomic_exchange_u64(ptr: *mut u64, val: u64) -> u64 {
         let result: u64;
+        // SAFETY: asm: atomic exchange u64, result clobbered, ptr must be aligned and valid u64
         unsafe {
             std::arch::asm!(
                 "xchg ({ptr}), {val:r}",
@@ -204,6 +208,7 @@ pub mod x86_64_optimized {
     /// Pause instruction for spin loops
     #[inline]
     pub fn pause() {
+        // SAFETY: asm: pause instruction (spin-loop hint), no registers clobbered, no memory effects
         unsafe {
             std::arch::asm!("pause", options(nomem, nostack, preserves_flags));
         }
@@ -212,6 +217,7 @@ pub mod x86_64_optimized {
     /// Memory fence operations
     #[inline]
     pub fn mfence() {
+        // SAFETY: asm: full memory fence, no registers clobbered, orders all loads/stores
         unsafe {
             std::arch::asm!("mfence", options(nostack, preserves_flags));
         }
@@ -219,6 +225,7 @@ pub mod x86_64_optimized {
 
     #[inline]
     pub fn lfence() {
+        // SAFETY: asm: load fence, no registers clobbered, orders all loads
         unsafe {
             std::arch::asm!("lfence", options(nostack, preserves_flags));
         }
@@ -226,6 +233,7 @@ pub mod x86_64_optimized {
 
     #[inline]
     pub fn sfence() {
+        // SAFETY: asm: store fence, no registers clobbered, orders all stores
         unsafe {
             std::arch::asm!("sfence", options(nostack, preserves_flags));
         }
@@ -240,6 +248,7 @@ pub mod aarch64_optimized {
     /// ARM yield instruction for spin loops
     #[inline]
     pub fn yield_now() {
+        // SAFETY: asm: yield instruction (spin-loop hint), no registers clobbered, no memory effects
         unsafe {
             std::arch::asm!("yield", options(nomem, nostack, preserves_flags));
         }
@@ -248,6 +257,7 @@ pub mod aarch64_optimized {
     /// Data memory barrier
     #[inline]
     pub fn dmb() {
+        // SAFETY: asm: data memory barrier, no registers clobbered, orders all memory operations
         unsafe {
             std::arch::asm!("dmb sy", options(nostack, preserves_flags));
         }
@@ -256,6 +266,7 @@ pub mod aarch64_optimized {
     /// Data synchronization barrier
     #[inline]
     pub fn dsb() {
+        // SAFETY: asm: data synchronization barrier, no registers clobbered, completes all memory operations
         unsafe {
             std::arch::asm!("dsb sy", options(nostack, preserves_flags));
         }
@@ -264,6 +275,7 @@ pub mod aarch64_optimized {
     /// Instruction synchronization barrier
     #[inline]
     pub fn isb() {
+        // SAFETY: asm: instruction synchronization barrier, no registers clobbered, flushes pipeline
         unsafe {
             std::arch::asm!("isb", options(nostack, preserves_flags));
         }
@@ -288,13 +300,13 @@ macro_rules! impl_as_atomic {
             
             #[inline]
             fn as_atomic(&self) -> &Self::Atomic {
-                // Safe because atomic types have same representation
+                // SAFETY: atomic types have identical representation to their primitive types, pointer is properly aligned and valid
                 unsafe { &*(self as *const $type as *const $atomic) }
             }
-            
+
             #[inline]
             fn as_atomic_mut(&mut self) -> &mut Self::Atomic {
-                // Safe because atomic types have same representation
+                // SAFETY: atomic types have identical representation to their primitive types, pointer is properly aligned and valid
                 unsafe { &mut *(self as *mut $type as *mut $atomic) }
             }
         }
@@ -316,14 +328,16 @@ impl_as_atomic!(bool, AtomicBool);
 /// Atomic pointer operations extensions
 impl<T> AsAtomic<*mut T> for *mut T {
     type Atomic = AtomicPtr<T>;
-    
+
     #[inline]
     fn as_atomic(&self) -> &Self::Atomic {
+        // SAFETY: AtomicPtr<T> has identical representation to *mut T, pointer is properly aligned and valid
         unsafe { &*(self as *const *mut T as *const AtomicPtr<T>) }
     }
-    
+
     #[inline]
     fn as_atomic_mut(&mut self) -> &mut Self::Atomic {
+        // SAFETY: AtomicPtr<T> has identical representation to *mut T, pointer is properly aligned and valid
         unsafe { &mut *(self as *mut *mut T as *mut AtomicPtr<T>) }
     }
 }
@@ -399,8 +413,9 @@ impl<T> AtomicStack<T> {
         
         loop {
             let head = self.head.load(Ordering::Acquire);
+            // SAFETY: new_node is valid pointer from Box::into_raw, not yet visible to other threads
             unsafe { (*new_node).set_next(head) };
-            
+
             if self.head.compare_exchange_weak(head, new_node, Ordering::Release, Ordering::Relaxed).is_ok() {
                 self.size.fetch_add(1, Ordering::Relaxed);
                 break;
@@ -415,11 +430,13 @@ impl<T> AtomicStack<T> {
             if head.is_null() {
                 return None;
             }
-            
+
+            // SAFETY: head is non-null and was allocated as AtomicNode<T>, acquire ordering ensures visibility
             let next = unsafe { (*head).next() };
-            
+
             if self.head.compare_exchange_weak(head, next, Ordering::Release, Ordering::Relaxed).is_ok() {
                 self.size.fetch_sub(1, Ordering::Relaxed);
+                // SAFETY: head successfully removed from stack, exclusive ownership restored
                 let data = unsafe { Box::from_raw(head).data };
                 return Some(data);
             }

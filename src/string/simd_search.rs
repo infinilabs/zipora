@@ -132,18 +132,22 @@ impl SimdStringSearch {
         match self.impl_tier {
             SearchTier::Sse42 => {
                 if haystack.len() <= 16 {
+                    // SAFETY: sse4.2 guaranteed by impl_tier, haystack is valid slice
                     unsafe { self.sse42_strchr_max_16(haystack, needle) }
                 } else if haystack.len() <= 35 {
+                    // SAFETY: sse4.2 guaranteed by impl_tier, haystack is valid slice
                     unsafe { self.sse42_strchr_max_35(haystack, needle) }
                 } else {
                     self.hybrid_strchr_large(haystack, needle)
                 }
             }
             SearchTier::Avx2 => {
+                // SAFETY: avx2 guaranteed by impl_tier, haystack is valid slice
                 unsafe { self.avx2_strchr(haystack, needle) }
             }
             #[cfg(feature = "avx512")]
             SearchTier::Avx512 => {
+                // SAFETY: avx512f+avx512bw guaranteed by impl_tier, haystack is valid slice
                 unsafe { self.avx512_strchr(haystack, needle) }
             }
             SearchTier::Scalar => {
@@ -175,13 +179,16 @@ impl SimdStringSearch {
 
         match self.impl_tier {
             SearchTier::Sse42 => {
+                // SAFETY: sse4.2 guaranteed by impl_tier, haystack and needle are valid slices
                 unsafe { self.sse42_strstr_impl(haystack, needle) }
             }
             SearchTier::Avx2 => {
+                // SAFETY: avx2 guaranteed by impl_tier, haystack and needle are valid slices
                 unsafe { self.avx2_strstr(haystack, needle) }
             }
             #[cfg(feature = "avx512")]
             SearchTier::Avx512 => {
+                // SAFETY: avx512f+avx512bw guaranteed by impl_tier, haystack and needle are valid slices
                 unsafe { self.avx512_strstr(haystack, needle) }
             }
             SearchTier::Scalar => {
@@ -211,13 +218,16 @@ impl SimdStringSearch {
 
         match self.impl_tier {
             SearchTier::Sse42 => {
+                // SAFETY: sse4.2 guaranteed by impl_tier, haystack and needles are valid slices
                 unsafe { self.sse42_multi_search_impl(haystack, needles) }
             }
             SearchTier::Avx2 => {
+                // SAFETY: avx2 guaranteed by impl_tier, haystack and needles are valid slices
                 unsafe { self.avx2_multi_search(haystack, needles) }
             }
             #[cfg(feature = "avx512")]
             SearchTier::Avx512 => {
+                // SAFETY: avx512f+avx512bw guaranteed by impl_tier, haystack and needles are valid slices
                 unsafe { self.avx512_multi_search(haystack, needles) }
             }
             SearchTier::Scalar => {
@@ -249,13 +259,16 @@ impl SimdStringSearch {
 
         match self.impl_tier {
             SearchTier::Sse42 => {
+                // SAFETY: sse4.2 guaranteed by impl_tier, a and b are valid slices
                 unsafe { self.sse42_strcmp_impl(a, b) }
             }
             SearchTier::Avx2 => {
+                // SAFETY: avx2 guaranteed by impl_tier, a and b are valid slices
                 unsafe { self.avx2_strcmp(a, b) }
             }
             #[cfg(feature = "avx512")]
             SearchTier::Avx512 => {
+                // SAFETY: avx512f+avx512bw guaranteed by impl_tier, a and b are valid slices
                 unsafe { self.avx512_strcmp(a, b) }
             }
             SearchTier::Scalar => {
@@ -278,11 +291,14 @@ impl SimdStringSearch {
         
         // Load haystack data (up to 16 bytes)
         let haystack_vec = if haystack.len() == 16 {
+            // SAFETY: sse4.2 guaranteed by #[target_feature], pointer valid from slice, len == 16 checked
             unsafe { _mm_loadu_si128(haystack.as_ptr() as *const __m128i) }
         } else {
             // For lengths < 16, we need to be careful about reading past the end
             let mut data = [0u8; 16];
+            // SAFETY: pointer valid from slice, haystack.len() <= 16 from caller, copy within bounds
             unsafe { std::ptr::copy_nonoverlapping(haystack.as_ptr(), data.as_mut_ptr(), haystack.len()) };
+            // SAFETY: sse4.2 guaranteed by #[target_feature], pointer valid from stack array
             unsafe { _mm_loadu_si128(data.as_ptr() as *const __m128i) }
         };
 
@@ -310,12 +326,14 @@ impl SimdStringSearch {
         debug_assert!(haystack.len() <= 35 && haystack.len() > 16);
 
         // Search first 16 bytes
+        // SAFETY: sse4.2 guaranteed by #[target_feature], haystack[..16] valid (len > 16 checked)
         if let Some(pos) = unsafe { self.sse42_strchr_max_16(&haystack[..16], needle) } {
             return Some(pos);
         }
 
         // Search remaining bytes
         let remaining = &haystack[16..];
+        // SAFETY: sse4.2 guaranteed by #[target_feature], remaining is valid slice
         if let Some(pos) = unsafe { self.sse42_strchr_max_16(remaining, needle) } {
             return Some(16 + pos);
         }
@@ -335,17 +353,19 @@ impl SimdStringSearch {
             for i in 0..chunks {
                 let start = i * 16;
                 let chunk = &haystack[start..start + 16];
+                // SAFETY: sse4.2 guaranteed by runtime check, chunk is valid 16-byte slice
                 unsafe {
                     if let Some(pos) = self.sse42_strchr_max_16(chunk, needle) {
                         return Some(start + pos);
                     }
                 }
             }
-            
+
             // Handle remaining bytes
             let remaining_start = chunks * 16;
             if remaining_start < haystack.len() {
                 let remaining = &haystack[remaining_start..];
+                // SAFETY: sse4.2 guaranteed by runtime check, remaining is valid slice
                 unsafe {
                     if let Some(pos) = self.sse42_strchr_max_16(remaining, needle) {
                         return Some(remaining_start + pos);
@@ -389,10 +409,13 @@ impl SimdStringSearch {
 
         // For needles ≤ 16 bytes, use PCMPESTRM for substring matching
         let needle_vec = if needle.len() == 16 {
+            // SAFETY: sse4.2 guaranteed by #[target_feature], pointer valid from slice, len == 16 checked
             unsafe { _mm_loadu_si128(needle.as_ptr() as *const __m128i) }
         } else {
             let mut data = [0u8; 16];
+            // SAFETY: pointer valid from slice, needle.len() <= 16 (caller ensures), copy within bounds
             unsafe { std::ptr::copy_nonoverlapping(needle.as_ptr(), data.as_mut_ptr(), needle.len()) };
+            // SAFETY: sse4.2 guaranteed by #[target_feature], pointer valid from stack array
             unsafe { _mm_loadu_si128(data.as_ptr() as *const __m128i) }
         };
 
@@ -410,16 +433,19 @@ impl SimdStringSearch {
             }
 
             let haystack_vec = if search_len == 16 {
+                // SAFETY: sse4.2 guaranteed by #[target_feature], pointer valid from slice, len == 16 checked
                 unsafe { _mm_loadu_si128(haystack[start..].as_ptr() as *const __m128i) }
             } else {
                 let mut data = [0u8; 16];
+                // SAFETY: pointer valid from slice, search_len <= 16 checked, copy within bounds
                 unsafe {
                     std::ptr::copy_nonoverlapping(
-                        haystack[start..].as_ptr(), 
-                        data.as_mut_ptr(), 
+                        haystack[start..].as_ptr(),
+                        data.as_mut_ptr(),
                         search_len
                     );
                 };
+                // SAFETY: sse4.2 guaranteed by #[target_feature], pointer valid from stack array
                 unsafe { _mm_loadu_si128(data.as_ptr() as *const __m128i) }
             };
 
@@ -454,10 +480,13 @@ impl SimdStringSearch {
         if needles.len() <= 16 {
             // For ≤16 needles, we can use PCMPESTRI with CMP_EQUAL_ANY
             let needles_vec = if needles.len() == 16 {
+                // SAFETY: sse4.2 guaranteed by #[target_feature], pointer valid from slice, len == 16 checked
                 unsafe { _mm_loadu_si128(needles.as_ptr() as *const __m128i) }
             } else {
                 let mut data = [0u8; 16];
+                // SAFETY: pointer valid from slice, needles.len() <= 16 checked, copy within bounds
                 unsafe { std::ptr::copy_nonoverlapping(needles.as_ptr(), data.as_mut_ptr(), needles.len()) };
+                // SAFETY: sse4.2 guaranteed by #[target_feature], pointer valid from stack array
                 unsafe { _mm_loadu_si128(data.as_ptr() as *const __m128i) }
             };
 
@@ -465,16 +494,19 @@ impl SimdStringSearch {
             while pos < haystack.len() {
                 let search_len = std::cmp::min(16, haystack.len() - pos);
                 let haystack_vec = if search_len == 16 {
+                    // SAFETY: sse4.2 guaranteed by #[target_feature], pointer valid from slice, len >= 16 checked
                     unsafe { _mm_loadu_si128(haystack[pos..].as_ptr() as *const __m128i) }
                 } else {
                     let mut data = [0u8; 16];
+                    // SAFETY: pointer valid from slice, search_len <= 16 checked, copy within bounds
                     unsafe {
                         std::ptr::copy_nonoverlapping(
-                            haystack[pos..].as_ptr(), 
-                            data.as_mut_ptr(), 
+                            haystack[pos..].as_ptr(),
+                            data.as_mut_ptr(),
                             search_len
                         );
                     };
+                    // SAFETY: sse4.2 guaranteed by #[target_feature], pointer valid from stack array
                     unsafe { _mm_loadu_si128(data.as_ptr() as *const __m128i) }
                 };
 
@@ -517,7 +549,9 @@ impl SimdStringSearch {
         // Compare 16-byte chunks
         for i in 0..chunks {
             let offset = i * 16;
+            // SAFETY: sse4.2 guaranteed by #[target_feature], pointers valid from slices, offset within bounds (chunks * 16 <= len)
             let chunk_a = unsafe { _mm_loadu_si128(a[offset..].as_ptr() as *const __m128i) };
+            // SAFETY: sse4.2 guaranteed by #[target_feature], pointers valid from slices, offset within bounds (chunks * 16 <= len)
             let chunk_b = unsafe { _mm_loadu_si128(b[offset..].as_ptr() as *const __m128i) };
 
             let cmp = _mm_cmpeq_epi8(chunk_a, chunk_b);
@@ -551,6 +585,7 @@ impl SimdStringSearch {
 
         for i in 0..chunks {
             let offset = i * 32;
+            // SAFETY: avx2 guaranteed by #[target_feature], pointer valid from slice, offset within bounds (chunks * 32 <= len)
             let chunk = unsafe { _mm256_loadu_si256(haystack[offset..].as_ptr() as *const __m256i) };
             let cmp = _mm256_cmpeq_epi8(chunk, needle_vec);
             let mask = _mm256_movemask_epi8(cmp);
@@ -578,6 +613,7 @@ impl SimdStringSearch {
         let mut pos = 0;
 
         while pos <= haystack.len() - needle.len() {
+            // SAFETY: avx2 guaranteed by #[target_feature], haystack[pos..] is valid slice
             if let Some(char_pos) = unsafe { self.avx2_strchr(&haystack[pos..], first_char) } {
                 let candidate_pos = pos + char_pos;
                 if candidate_pos + needle.len() <= haystack.len() {
@@ -614,7 +650,9 @@ impl SimdStringSearch {
         // Compare 32-byte chunks
         for i in 0..chunks {
             let offset = i * 32;
+            // SAFETY: avx2 guaranteed by #[target_feature], pointers valid from slices, offset within bounds (chunks * 32 <= len)
             let chunk_a = unsafe { _mm256_loadu_si256(a[offset..].as_ptr() as *const __m256i) };
+            // SAFETY: avx2 guaranteed by #[target_feature], pointers valid from slices, offset within bounds (chunks * 32 <= len)
             let chunk_b = unsafe { _mm256_loadu_si256(b[offset..].as_ptr() as *const __m256i) };
 
             let cmp = _mm256_cmpeq_epi8(chunk_a, chunk_b);
@@ -649,7 +687,9 @@ impl SimdStringSearch {
 
         for i in 0..chunks {
             let offset = i * 64;
+            // SAFETY: avx512f+avx512bw guaranteed by #[target_feature], pointer valid from slice, offset within bounds (chunks * 64 <= len)
             let chunk = unsafe { _mm512_loadu_si512(haystack[offset..].as_ptr() as *const __m512i) };
+            // SAFETY: avx512f+avx512bw guaranteed by #[target_feature], chunk is valid __m512i
             let mask = unsafe { _mm512_cmpeq_epi8_mask(chunk, needle_vec) };
 
             if mask != 0 {
@@ -676,6 +716,7 @@ impl SimdStringSearch {
         let mut pos = 0;
 
         while pos <= haystack.len() - needle.len() {
+            // SAFETY: avx512f+avx512bw guaranteed by #[target_feature], haystack[pos..] is valid slice
             if let Some(char_pos) = unsafe { self.avx512_strchr(&haystack[pos..], first_char) } {
                 let candidate_pos = pos + char_pos;
                 if candidate_pos + needle.len() <= haystack.len() {
@@ -713,7 +754,9 @@ impl SimdStringSearch {
         // Compare 64-byte chunks
         for i in 0..chunks {
             let offset = i * 64;
+            // SAFETY: avx512f+avx512bw guaranteed by #[target_feature], pointers valid from slices, offset within bounds (chunks * 64 <= len)
             let chunk_a = unsafe { _mm512_loadu_si512(a[offset..].as_ptr() as *const __m512i) };
+            // SAFETY: avx512f+avx512bw guaranteed by #[target_feature], pointers valid from slices, offset within bounds (chunks * 64 <= len)
             let chunk_b = unsafe { _mm512_loadu_si512(b[offset..].as_ptr() as *const __m512i) };
 
             let mask = _mm512_cmpeq_epi8_mask(chunk_a, chunk_b);

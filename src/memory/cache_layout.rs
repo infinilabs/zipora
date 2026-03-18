@@ -223,6 +223,7 @@ impl CacheOptimizedAllocator {
         let layout = Layout::from_size_align(aligned_size, effective_alignment)
             .map_err(|_| ZiporaError::invalid_data("Invalid layout for cache-aligned allocation"))?;
 
+        // SAFETY: Allocating with valid layout
         let ptr = unsafe { alloc(layout) };
         if ptr.is_null() {
             return Err(ZiporaError::out_of_memory(size));
@@ -235,7 +236,7 @@ impl CacheOptimizedAllocator {
             self.cold_allocations.fetch_add(1, Ordering::Relaxed);
         }
 
-        // SAFETY: Null check performed at lines 227-229 above
+        // SAFETY: Null check performed at lines 228-230 above
         Ok(unsafe { NonNull::new_unchecked(ptr) })
     }
 
@@ -247,6 +248,7 @@ impl CacheOptimizedAllocator {
         let layout = Layout::from_size_align(aligned_size, effective_alignment)
             .map_err(|_| ZiporaError::invalid_data("Invalid layout for cache-aligned deallocation"))?;
 
+        // SAFETY: ptr was allocated with this layout in allocate_aligned
         unsafe {
             dealloc(ptr.as_ptr(), layout);
         }
@@ -261,6 +263,7 @@ impl CacheOptimizedAllocator {
         }
 
         #[cfg(target_arch = "x86_64")]
+        // SAFETY: _mm_prefetch is a hint, safe to call with any pointer, no dereference
         unsafe {
             match hint {
                 PrefetchHint::T0 => std::arch::x86_64::_mm_prefetch(addr as *const i8, std::arch::x86_64::_MM_HINT_T0),
@@ -271,6 +274,7 @@ impl CacheOptimizedAllocator {
         }
 
         #[cfg(target_arch = "aarch64")]
+        // SAFETY: prfm is a prefetch hint, safe to call with any address, no dereference
         unsafe {
             match hint {
                 PrefetchHint::T0 | PrefetchHint::T1 => {
@@ -480,6 +484,7 @@ fn detect_x86_cache_hierarchy() -> CacheHierarchy {
     // Default fallback
     let mut hierarchy = CacheHierarchy::default();
 
+    // SAFETY: __cpuid is safe to call on x86_64 with valid leaf values
     unsafe {
         // Check if CPUID is available (for x86_64 we can assume it's available)
         {
@@ -488,15 +493,15 @@ fn detect_x86_cache_hierarchy() -> CacheHierarchy {
             loop {
                 let result = __cpuid(0x4 | (level << 8));
                 let cache_type = result.eax & 0x1F;
-                
+
                 if cache_type == 0 {
                     break; // No more cache levels
                 }
 
                 let cache_level = (result.eax >> 5) & 0x7;
                 let line_size = ((result.ebx & 0xFFF) + 1) as usize;
-                let cache_size = (((result.ebx >> 22) + 1) as usize * 
-                                 ((result.ecx + 1) as usize) * 
+                let cache_size = (((result.ebx >> 22) + 1) as usize *
+                                 ((result.ecx + 1) as usize) *
                                  line_size);
 
                 match cache_level {
@@ -630,7 +635,7 @@ impl<T> CacheAlignedVec<T> {
         if matches!(self.access_pattern, AccessPattern::Sequential) {
             let len = self.data.len();
             if len > 0 && len % 8 == 0 { // Every 8 elements (cache line worth)
-                // SAFETY: Convert T slice to u8 slice for prefetching
+                // SAFETY: data.as_ptr() is valid for len elements of T, converting to bytes
                 let byte_slice = unsafe {
                     std::slice::from_raw_parts(
                         self.data.as_ptr() as *const u8,
@@ -647,6 +652,7 @@ impl<T> CacheAlignedVec<T> {
         if let Some(element) = self.data.get(index) {
             // Prefetch nearby elements for random access
             if matches!(self.access_pattern, AccessPattern::Random) && index + 1 < self.data.len() {
+                // SAFETY: index + 1 < len checked above, as_ptr() is valid, add is within bounds
                 let addr = unsafe { self.data.as_ptr().add(index + 1) } as *const u8;
                 self.allocator.prefetch(addr, PrefetchHint::T1);
             }
@@ -660,10 +666,10 @@ impl<T> CacheAlignedVec<T> {
     pub fn slice(&self, range: std::ops::Range<usize>) -> Option<&[T]> {
         if range.end <= self.data.len() {
             let slice = &self.data[range];
-            
+
             // Prefetch the entire range
             if !slice.is_empty() {
-                // SAFETY: Convert T slice to u8 slice for prefetching
+                // SAFETY: slice is valid borrowed data, converting to byte representation
                 let byte_slice = unsafe {
                     std::slice::from_raw_parts(
                         slice.as_ptr() as *const u8,

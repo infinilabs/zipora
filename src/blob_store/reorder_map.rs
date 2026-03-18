@@ -111,6 +111,7 @@ impl ZReorderMap {
             .open(&path_buf)?;
 
         // Memory-map the file
+        // SAFETY: File is valid and open for reading, mmap follows standard OS guarantees for read-only memory maps
         let mmap = unsafe {
             memmap2::MmapOptions::new()
                 .map(&file)

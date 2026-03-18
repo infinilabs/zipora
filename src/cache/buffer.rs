@@ -85,9 +85,10 @@ impl CacheBuffer {
         
         self.node_indices = node_indices;
         self.hit_type = CacheHitType::Mix;
-        
+
         // Set data slice to point to internal buffer
         let data_ptr = self.data_buffer.as_ptr();
+        // SAFETY: data_ptr from as_ptr() is valid, length matches data_buffer size after resize()
         self.data_slice = Some(unsafe { std::slice::from_raw_parts(data_ptr, length) });
     }
     
@@ -97,8 +98,9 @@ impl CacheBuffer {
         self.buffer_type = BufferType::Copied;
         self.data_buffer.clear();
         self.data_buffer.extend_from_slice(data);
-        
+
         let data_ptr = self.data_buffer.as_ptr();
+        // SAFETY: data_ptr from as_ptr() is valid, data.len() matches data_buffer size after extend_from_slice()
         self.data_slice = Some(unsafe { std::slice::from_raw_parts(data_ptr, data.len()) });
         self.hit_type = CacheHitType::Hit;
     }
@@ -118,9 +120,10 @@ impl CacheBuffer {
         }
         
         self.data_buffer.extend_from_slice(data);
-        
+
         // Update data slice
         let data_ptr = self.data_buffer.as_ptr();
+        // SAFETY: data_ptr from as_ptr() is valid, data_buffer.len() is correct after extend_from_slice()
         self.data_slice = Some(unsafe { std::slice::from_raw_parts(data_ptr, self.data_buffer.len()) });
     }
     
@@ -181,10 +184,11 @@ impl CacheBuffer {
         let mut buffer = Self::new();
         buffer.buffer_type = BufferType::Copied;
         buffer.data_buffer = data;
-        
+
         let data_ptr = buffer.data_buffer.as_ptr();
+        // SAFETY: data_ptr from as_ptr() is valid, len matches data_buffer.len() (captured before move)
         buffer.data_slice = Some(unsafe { std::slice::from_raw_parts(data_ptr, len) });
-        
+
         buffer
     }
     

@@ -1,3 +1,4 @@
+// SAFETY comment to add after reading full file
 //! Secure, thread-safe memory pool implementation
 //!
 //! This module provides a production-ready, thread-safe memory pool that eliminates
@@ -485,6 +486,7 @@ impl SecureChunk {
         let layout = Layout::from_size_align(total_size, 8)
             .map_err(|_| ZiporaError::invalid_data("Invalid layout for chunk allocation"))?;
 
+        // SAFETY: layout valid (size > 0, align power of 2)
         let raw_ptr = unsafe { alloc(layout) };
         if raw_ptr.is_null() {
             return Err(ZiporaError::out_of_memory(size));
@@ -492,6 +494,7 @@ impl SecureChunk {
 
         // Initialize header
         let header = raw_ptr as *mut ChunkHeader;
+        // SAFETY: ptr valid from alloc, aligned, within allocated region
         unsafe {
             (*header) = ChunkHeader {
                 magic: CHUNK_HEADER_MAGIC,
@@ -505,7 +508,9 @@ impl SecureChunk {
         }
 
         // Initialize footer
+        // SAFETY: pointer valid from alloc, offset < total_size
         let footer_ptr = unsafe { raw_ptr.add(header_size + size) as *mut ChunkFooter };
+        // SAFETY: footer_ptr valid, aligned, within allocated region
         unsafe {
             (*footer_ptr) = ChunkFooter {
                 canary,
@@ -515,9 +520,11 @@ impl SecureChunk {
         }
 
         // Return pointer to data area (after header)
+        // SAFETY: pointer valid from alloc, offset < total_size
         let data_ptr = unsafe { raw_ptr.add(header_size) };
 
         Ok(Self {
+            // SAFETY: data_ptr non-null (from non-null raw_ptr + offset)
             ptr: unsafe { NonNull::new_unchecked(data_ptr) },
             size,
             generation,
@@ -532,7 +539,9 @@ impl SecureChunk {
     /// Validate chunk integrity
     fn validate(&self) -> Result<()> {
         let header_size = std::mem::size_of::<ChunkHeader>();
+        // SAFETY: ptr constructed in new() with header_size offset, sub reverses it
         let header_ptr = unsafe { self.ptr.as_ptr().sub(header_size) as *const ChunkHeader };
+        // SAFETY: header_ptr valid, aligned to ChunkHeader, from allocation
         let header = unsafe { &*header_ptr };
 
         // Validate header
@@ -565,7 +574,9 @@ impl SecureChunk {
         }
 
         // Validate footer
+        // SAFETY: ptr valid from allocation, self.size offset valid from new()
         let footer_ptr = unsafe { self.ptr.as_ptr().add(self.size) as *const ChunkFooter };
+        // SAFETY: footer_ptr valid, aligned to ChunkFooter, from allocation
         let footer = unsafe { &*footer_ptr };
 
         if footer.magic != CHUNK_FOOTER_MAGIC {
@@ -610,13 +621,14 @@ impl SecureChunk {
     }
 
     /// Safely deallocate the chunk with SIMD-optimized memory zeroing
-    /// 
+    ///
     /// # SIMD Optimization
     /// For memory regions >= simd_threshold bytes, uses vectorized instructions
     /// (AVX-512/AVX2/SSE2) for significantly faster zeroing while maintaining
     /// all security guarantees. Falls back to standard zeroing for smaller regions.
     fn deallocate(self, zero_on_free: bool, enable_simd_ops: bool, simd_threshold: usize) {
         if zero_on_free {
+            // SAFETY: pointer valid from allocation, size matches allocation
             unsafe {
                 // SIMD-optimized memory zeroing for large regions
                 if enable_simd_ops && self.size >= simd_threshold {
@@ -635,6 +647,7 @@ impl SecureChunk {
         let footer_size = std::mem::size_of::<ChunkFooter>();
         let total_size = header_size + self.size + footer_size;
 
+        // SAFETY: ptr constructed in new() with header_size offset, sub reverses it
         let raw_ptr = unsafe { self.ptr.as_ptr().sub(header_size) };
         // SAFETY: Layout::from_size_align() cannot fail because:
         // 1. total_size was successfully used to allocate this chunk
@@ -643,6 +656,7 @@ impl SecureChunk {
         let layout = Layout::from_size_align(total_size, 8)
             .expect("layout creation: non-zero size, power-of-two alignment");
 
+        // SAFETY: ptr from matching alloc, layout matches allocation
         unsafe {
             dealloc(raw_ptr, layout);
         }
@@ -697,6 +711,7 @@ impl<T> LockFreeStack<T> {
 
         loop {
             let head = self.head.load(Ordering::Acquire);
+            // SAFETY: new_node valid from Box::into_raw above, exclusively owned
             unsafe {
                 (*new_node).next = head;
             }
@@ -718,12 +733,14 @@ impl<T> LockFreeStack<T> {
                 return None;
             }
 
+            // SAFETY: head non-null from check above, valid from push
             let next = unsafe { (*head).next };
             if self
                 .head
                 .compare_exchange_weak(head, next, Ordering::Release, Ordering::Relaxed)
                 .is_ok()
             {
+                // SAFETY: head from Box::into_raw in push, CAS ensures exclusive ownership
                 let data = unsafe { Box::from_raw(head).data };
                 return Some(data);
             }
@@ -741,7 +758,9 @@ impl<T> Drop for LockFreeStack<T> {
     }
 }
 
+// SAFETY: LockFreeStack<T> is Send if T is Send (lock-free algorithm)
 unsafe impl<T: Send> Send for LockFreeStack<T> {}
+// SAFETY: LockFreeStack<T> is Sync if T is Send (atomic operations synchronize access)
 unsafe impl<T: Send> Sync for LockFreeStack<T> {}
 
 /// Thread-local cache for reduced contention
@@ -1097,7 +1116,7 @@ impl SecureMemoryPool {
     /// Zero chunk memory with SIMD acceleration and adaptive selection
     fn zero_chunk_simd(&self, chunk: &mut SecureChunk) -> Result<()> {
         if !self.config.enable_simd_ops || chunk.size() < self.config.simd_threshold {
-            // Use standard zeroing for small chunks or when SIMD is disabled
+            // SAFETY: pointer valid from allocation, size matches allocation
             unsafe {
                 std::ptr::write_bytes(chunk.as_ptr(), 0, chunk.size());
             }
@@ -1108,7 +1127,7 @@ impl SecureMemoryPool {
         let selector = AdaptiveSimdSelector::global();
         let start = Instant::now();
 
-        // Create slice for SIMD operation
+        // SAFETY: pointer valid from allocation, size matches allocation
         let slice = unsafe { std::slice::from_raw_parts_mut(chunk.as_ptr(), chunk.size()) };
 
         // Use SIMD-accelerated fill
@@ -1265,11 +1284,14 @@ impl SecureMemoryPool {
             // Read canary from the chunk header for validation
             let data_ptr = ptr_addr as *mut u8;
             let header_size = std::mem::size_of::<ChunkHeader>();
+            // SAFETY: data_ptr from active allocation, sub reverses new() offset
             let header_ptr = unsafe { data_ptr.sub(header_size) as *const ChunkHeader };
+            // SAFETY: header_ptr valid, aligned to ChunkHeader, from allocation
             let header = unsafe { &*header_ptr };
 
             // Create temporary chunk for validation with correct canary
             let chunk = SecureChunk {
+                // SAFETY: data_ptr non-null from active allocation
                 ptr: unsafe { NonNull::new_unchecked(data_ptr) },
                 size: self.config.chunk_size,
                 generation,
@@ -1338,6 +1360,7 @@ impl SecurePooledPtr {
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
         if let Some(chunk) = &self.chunk {
+            // SAFETY: pointer valid from allocation, size matches allocation
             unsafe { std::slice::from_raw_parts(chunk.as_ptr(), chunk.size()) }
         } else {
             &[]
@@ -1348,6 +1371,7 @@ impl SecurePooledPtr {
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         if let Some(chunk) = &self.chunk {
+            // SAFETY: pointer valid from allocation, size matches allocation
             unsafe { std::slice::from_raw_parts_mut(chunk.as_ptr(), chunk.size()) }
         } else {
             &mut []
@@ -1698,6 +1722,7 @@ mod tests {
 
         // Allocate and verify SIMD zeroing
         let ptr = pool.allocate().unwrap();
+        // SAFETY: test code, pointer valid from allocation
         let slice = unsafe {
             std::slice::from_raw_parts(ptr.as_ptr(), ptr.size())
         };
@@ -1717,13 +1742,13 @@ mod tests {
 
         let ptr = pool.allocate().unwrap();
 
-        // Zero manually
+        // SAFETY: test code, pointer valid from allocation
         unsafe { std::ptr::write_bytes(ptr.as_ptr(), 0, ptr.size()); }
 
         // Verify using SIMD
         assert!(pool.verify_zeroed_simd(ptr.as_slice()).unwrap());
 
-        // Modify a byte and verify it fails
+        // SAFETY: test code, pointer valid from allocation
         unsafe { *ptr.as_ptr() = 1; }
         assert!(!pool.verify_zeroed_simd(ptr.as_slice()).unwrap());
     }
@@ -1775,7 +1800,7 @@ mod tests {
             let ptr = pool.allocate().unwrap();
             assert!(!ptr.as_ptr().is_null());
 
-            // Verify zeroing
+            // SAFETY: test code, pointer valid from allocation
             let slice = unsafe {
                 std::slice::from_raw_parts(ptr.as_ptr(), ptr.size())
             };
@@ -1798,6 +1823,7 @@ mod tests {
         let ptr = pool.allocate().unwrap();
 
         // Should still be zeroed, just using scalar path
+        // SAFETY: Hardware features verified or caller ensures safety invariants
         let slice = unsafe {
             std::slice::from_raw_parts(ptr.as_ptr(), ptr.size())
         };

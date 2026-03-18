@@ -79,6 +79,7 @@ impl SimdComparator {
         let mut results = Vec::with_capacity(left.len());
         let chunk_size = 8; // AVX2 can process 8 i32s at once
 
+        // SAFETY: AVX2 feature detected at runtime, all pointer arithmetic bounds-checked below
         unsafe {
             let mut i = 0;
             
@@ -163,15 +164,17 @@ impl SimdComparator {
             return values.iter().enumerate().min_by_key(|(_, val)| *val).map(|(idx, val)| (idx, *val));
         }
 
+        // SAFETY: AVX2 feature detected at runtime, pointer arithmetic bounds-checked before AVX2 intrinsics
         unsafe {
             let chunk_size = 8;
             let mut global_min = i32::MAX;
             let mut global_min_idx = 0;
 
             let mut i = 0;
-            
+
             // Process chunks with AVX2
             while i + chunk_size <= values.len() {
+                // SAFETY: i + chunk_size <= values.len() check above guarantees ptr.add(i) is in bounds
                 let ptr = values.as_ptr().add(i);
                 let vec = _mm256_loadu_si256(ptr as *const __m256i);
 
@@ -241,12 +244,13 @@ impl SimdComparator {
         }
 
         // Use SIMD for copying remaining elements
+        // SAFETY: simd_copy_i32 performs bounds-checked operations on slices
         unsafe {
             if left_idx < left.len() {
                 let remaining = &left[left_idx..];
                 self.simd_copy_i32(remaining, &mut result);
             }
-            
+
             if right_idx < right.len() {
                 let remaining = &right[right_idx..];
                 self.simd_copy_i32(remaining, &mut result);
@@ -264,17 +268,21 @@ impl SimdComparator {
 
         // Reserve space
         dest.reserve(src.len());
+        // SAFETY: dest.len() is within allocated capacity after reserve() call above
         let dest_ptr = unsafe { dest.as_mut_ptr().add(dest.len()) };
 
         // Copy chunks with AVX2
         while i + chunk_size <= src.len() {
+            // SAFETY: i + chunk_size <= src.len() guarantees src.as_ptr().add(i) is in bounds
             let src_ptr = unsafe { src.as_ptr().add(i) };
             let vec = unsafe { _mm256_loadu_si256(src_ptr as *const __m256i) };
+            // SAFETY: dest has reserved space, dest_ptr.add(i) is within allocated capacity
             unsafe { _mm256_storeu_si256(dest_ptr.add(i) as *mut __m256i, vec) };
             i += chunk_size;
         }
 
         // Update vector length
+        // SAFETY: We've written i elements to dest starting at dest.len(), so dest.len() + i is valid
         unsafe { dest.set_len(dest.len() + i) };
 
         // Copy remaining elements

@@ -72,6 +72,7 @@ impl<'a> FastStr<'a> {
     /// - `len` does not exceed the allocated size
     #[inline]
     pub unsafe fn from_raw_parts(ptr: *const u8, len: usize) -> Self {
+        // SAFETY: Caller must ensure ptr is valid for len bytes
         Self {
             data: unsafe { std::slice::from_raw_parts(ptr, len) },
         }
@@ -108,6 +109,7 @@ impl<'a> FastStr<'a> {
     /// The caller must ensure that the data contains valid UTF-8
     #[inline]
     pub unsafe fn as_str_unchecked(&self) -> &str {
+        // SAFETY: Caller must ensure data contains valid UTF-8
         unsafe { str::from_utf8_unchecked(self.data) }
     }
 
@@ -131,6 +133,7 @@ impl<'a> FastStr<'a> {
     #[inline]
     pub unsafe fn get_byte_unchecked(&self, index: usize) -> u8 {
         debug_assert!(index < self.len());
+        // SAFETY: Caller must ensure index < self.len()
         unsafe { *self.data.get_unchecked(index) }
     }
 
@@ -222,6 +225,7 @@ impl<'a> FastStr<'a> {
                 && is_x86_feature_detected!("avx512f")
                 && is_x86_feature_detected!("avx512bw")
             {
+                // SAFETY: AVX-512 feature detected at runtime
                 return unsafe { self.find_byte_avx512(byte) };
             }
         }
@@ -236,6 +240,7 @@ impl<'a> FastStr<'a> {
     /// on large text processing workloads.
     #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
     fn find_avx512(&self, needle: FastStr) -> Option<usize> {
+        // SAFETY: AVX-512 feature detected at runtime in caller
         unsafe { self.find_avx512_impl(needle) }
     }
 
@@ -393,6 +398,7 @@ impl<'a> FastStr<'a> {
 
     #[cfg(target_arch = "x86_64")]
     fn hash_avx2(&self) -> u64 {
+        // SAFETY: AVX2 guaranteed by runtime detection in hash() caller, pointer valid from slice
         unsafe {
             let data = self.data;
             let mut h = 2134173u64.wrapping_add(data.len() as u64 * 31);
@@ -406,10 +412,12 @@ impl<'a> FastStr<'a> {
             // Process 32-byte chunks with AVX2
             for chunk in chunks_32 {
                 // Load 32 bytes as 4 x 64-bit integers
+                // SAFETY: chunk is 32 bytes from chunks_exact(32), pointer valid from slice
                 let data_vec = _mm256_loadu_si256(chunk.as_ptr() as *const __m256i);
 
                 // Convert to individual 64-bit values for processing
                 let mut vals = [0u64; 4];
+                // SAFETY: vals is 32 bytes (4 * 8), properly aligned for _mm256i store
                 _mm256_storeu_si256(vals.as_mut_ptr() as *mut __m256i, data_vec);
 
                 // Process each 64-bit value with the same mixing as fallback
@@ -446,6 +454,7 @@ impl<'a> FastStr<'a> {
 
     #[cfg(target_arch = "x86_64")]
     fn hash_sse2(&self) -> u64 {
+        // SAFETY: SSE2 guaranteed by runtime detection in hash() caller, pointer valid from slice
         unsafe {
             let data = self.data;
             let mut h = 2134173u64.wrapping_add(data.len() as u64 * 31);
@@ -457,10 +466,12 @@ impl<'a> FastStr<'a> {
             // Process 16-byte chunks with SSE2
             for chunk in chunks_16 {
                 // Load 16 bytes as 2 x 64-bit integers
+                // SAFETY: chunk is 16 bytes from chunks_exact(16), pointer valid from slice
                 let data_vec = _mm_loadu_si128(chunk.as_ptr() as *const __m128i);
 
                 // Extract the two 64-bit values
                 let mut vals = [0u64; 2];
+                // SAFETY: vals is 16 bytes (2 * 8), properly aligned for _mm128i store
                 _mm_storeu_si128(vals.as_mut_ptr() as *mut __m128i, data_vec);
 
                 // Process each 64-bit value with the same mixing as fallback
@@ -509,6 +520,7 @@ impl<'a> FastStr<'a> {
     /// This function uses AVX-512 intrinsics and requires runtime feature detection
     #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
     fn hash_avx512(&self) -> u64 {
+        // SAFETY: AVX-512 guaranteed by runtime detection in hash() caller
         unsafe { self.hash_avx512_impl() }
     }
 
@@ -528,10 +540,12 @@ impl<'a> FastStr<'a> {
             use std::arch::x86_64::{__m512i, _mm512_loadu_si512, _mm512_storeu_si512};
 
             // Load 64 bytes as 8 x 64-bit integers using AVX-512
+            // SAFETY: chunk is 64 bytes from chunks_exact(64), pointer valid from slice
             let data_vec = unsafe { _mm512_loadu_si512(chunk.as_ptr() as *const __m512i) };
 
             // Convert to individual 64-bit values for processing
             let mut vals = [0u64; 8];
+            // SAFETY: vals is 64 bytes (8 * 8), properly aligned for _mm512i store
             unsafe { _mm512_storeu_si512(vals.as_mut_ptr() as *mut __m512i, data_vec) };
 
             // Process each 64-bit value with the same mixing as other implementations
@@ -553,8 +567,10 @@ impl<'a> FastStr<'a> {
 
         for chunk in chunks_32 {
             // Use AVX2 for 32-byte chunks if available
+            // SAFETY: chunk is 32 bytes from chunks_exact(32), pointer valid from slice
             let data_vec = unsafe { _mm256_loadu_si256(chunk.as_ptr() as *const __m256i) };
             let mut vals = [0u64; 4];
+            // SAFETY: vals is 32 bytes (4 * 8), properly aligned for _mm256i store
             unsafe { _mm256_storeu_si256(vals.as_mut_ptr() as *mut __m256i, data_vec) };
 
             for val in vals {
@@ -599,6 +615,7 @@ impl<'a> FastStr<'a> {
     /// - **Mobile-friendly**: Optimized for power efficiency
     #[cfg(target_arch = "aarch64")]
     fn hash_neon(&self) -> u64 {
+        // SAFETY: NEON guaranteed by runtime detection in hash() caller
         unsafe { self.hash_neon_impl() }
     }
 
@@ -615,12 +632,14 @@ impl<'a> FastStr<'a> {
         // Process 16-byte chunks with NEON
         for chunk in chunks_16 {
             // Load 16 bytes using NEON - this is more efficient than scalar loads
+            // SAFETY: chunk is 16 bytes from chunks_exact(16), pointer valid from slice
             let data_vec = unsafe { vld1q_u8(chunk.as_ptr()) };
 
             // Convert to two 64-bit values for processing
             // Note: ARM NEON doesn't have direct 64-bit integer operations like x86,
             // so we extract bytes and reconstruct u64 values
             let mut bytes = [0u8; 16];
+            // SAFETY: bytes is 16 bytes, properly sized for NEON 128-bit store
             unsafe { vst1q_u8(bytes.as_mut_ptr(), data_vec) };
 
             // Process as two 64-bit words
@@ -994,6 +1013,7 @@ mod tests {
     fn test_unsafe_operations() {
         let s = FastStr::from_string("hello world");
 
+        // SAFETY: Test verified indices are within bounds
         unsafe {
             assert_eq!(s.get_byte_unchecked(0), b'h');
             assert_eq!(s.get_byte_unchecked(6), b'w');
@@ -1055,6 +1075,7 @@ mod tests {
     #[test]
     fn test_from_raw_parts() {
         let data = b"test data";
+        // SAFETY: data pointer is valid for data.len() bytes
         let s = unsafe { FastStr::from_raw_parts(data.as_ptr(), data.len()) };
         assert_eq!(s.as_str().unwrap(), "test data");
         assert_eq!(s.len(), 9);

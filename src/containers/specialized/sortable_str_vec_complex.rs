@@ -153,14 +153,15 @@ impl SortableStrVec {
         self.sorted_indices.sort_by(|&a, &b| {
             let entry_a = strings[a];
             let entry_b = strings[b];
-            
+
+            // SAFETY: entry offsets and lengths are valid within arena bounds
             unsafe {
                 let str_a_ptr = (arena_start + entry_a.offset as usize) as *const u8;
                 let str_b_ptr = (arena_start + entry_b.offset as usize) as *const u8;
-                
+
                 let str_a_bytes = std::slice::from_raw_parts(str_a_ptr, entry_a.len as usize);
                 let str_b_bytes = std::slice::from_raw_parts(str_b_ptr, entry_b.len as usize);
-                
+
                 str_a_bytes.cmp(str_b_bytes)
             }
         });
@@ -209,17 +210,18 @@ impl SortableStrVec {
         self.sorted_indices.sort_by(|&a, &b| {
             let entry_a = strings[a];
             let entry_b = strings[b];
-            
+
+            // SAFETY: entry offsets and lengths are valid within arena bounds
             unsafe {
                 let str_a_ptr = (arena_start + entry_a.offset as usize) as *const u8;
                 let str_b_ptr = (arena_start + entry_b.offset as usize) as *const u8;
-                
+
                 let str_a_bytes = std::slice::from_raw_parts(str_a_ptr, entry_a.len as usize);
                 let str_b_bytes = std::slice::from_raw_parts(str_b_ptr, entry_b.len as usize);
-                
+
                 let str_a = std::str::from_utf8(str_a_bytes).unwrap_or("");
                 let str_b = std::str::from_utf8(str_b_bytes).unwrap_or("");
-                
+
                 compare(str_a, str_b)
             }
         });
@@ -330,6 +332,7 @@ impl SortableStrVec {
             .map_err(|_| ZiporaError::out_of_memory(len))?;
 
         // Copy string data
+        // SAFETY: ptr is from arena allocation, bytes.len() == len, no overlap
         unsafe {
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.as_ptr(), len);
         }
@@ -367,7 +370,8 @@ impl SortableStrVec {
         // Use string storage directly instead of arena access
         let string_data = &self.strings;
         let str_ptr = (arena_start + entry.offset as usize) as *const u8;
-        
+
+        // SAFETY: entry offset and length are valid within arena bounds
         unsafe {
             let bytes = slice::from_raw_parts(str_ptr, entry.len as usize);
             str::from_utf8(bytes).ok()

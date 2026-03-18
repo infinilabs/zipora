@@ -39,6 +39,7 @@ pub fn binary_search_byte(data: &[u8], key: u8) -> usize {
             hi = mid;
         }
     }
+    // SAFETY: lo < len checked by condition, so lo is in bounds
     if lo < len && unsafe { *data.get_unchecked(lo) } == key {
         lo
     } else {
@@ -54,6 +55,7 @@ pub fn binary_search_byte(data: &[u8], key: u8) -> usize {
 #[target_feature(enable = "sse4.2")]
 unsafe fn sse4_2_search_byte(data: *const u8, len: i32, key: u8) -> usize {
     debug_assert!(len <= 16);
+    // SAFETY: SSE4.2 guaranteed by target_feature, buf prevents out-of-bounds reads, len <= 16 enforced by debug_assert
     unsafe {
         let key128 = _mm_set1_epi8(key as i8);
         // Copy to 16-byte stack buffer to avoid reading past allocation boundary.
@@ -80,23 +82,28 @@ unsafe fn sse4_2_search_byte(data: *const u8, len: i32, key: u8) -> usize {
 unsafe fn fast_search_byte_max_35(data: *const u8, len: usize, key: u8) -> usize {
     debug_assert!(len <= 35);
     if len <= 16 {
+        // SAFETY: SSE4.2 guaranteed by #[target_feature], data valid from caller for len bytes
         return unsafe { sse4_2_search_byte(data, len as i32, key) };
     }
     // First 16 bytes
+    // SAFETY: SSE4.2 guaranteed by #[target_feature], len > 16 checked above
     let pos = unsafe { sse4_2_search_byte(data, 16, key) };
     if pos < 16 {
         return pos;
     }
     if len <= 32 {
+        // SAFETY: data+16 valid since len > 16 and caller ensures len bytes accessible
         let pos2 = unsafe { sse4_2_search_byte(data.add(16), (len - 16) as i32, key) };
         return if pos2 < len - 16 { 16 + pos2 } else { len };
     }
     // 16..32
+    // SAFETY: data+16 valid since len > 32 checked above
     let pos2 = unsafe { sse4_2_search_byte(data.add(16), 16, key) };
     if pos2 < 16 {
         return 16 + pos2;
     }
     // 32..len
+    // SAFETY: data+32 valid since len > 32 (else would have returned above)
     let pos3 = unsafe { sse4_2_search_byte(data.add(32), (len - 32) as i32, key) };
     if pos3 < len - 32 { 32 + pos3 } else { len }
 }
@@ -120,6 +127,7 @@ pub fn fast_search_byte(data: &[u8], key: u8) -> usize {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("sse4.2") {
+            // SAFETY: SSE4.2 feature detected at runtime, data.as_ptr() valid from slice
             unsafe {
                 if len <= 16 {
                     let idx = sse4_2_search_byte(data.as_ptr(), len as i32, key);
@@ -142,6 +150,7 @@ pub fn fast_search_byte_max_16(data: &[u8], key: u8) -> usize {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("sse4.2") {
+            // SAFETY: SSE4.2 feature detected at runtime, data.as_ptr() valid from slice
             unsafe {
                 let idx = sse4_2_search_byte(data.as_ptr(), data.len() as i32, key);
                 return if idx < data.len() { idx } else { data.len() };
@@ -332,6 +341,7 @@ pub mod utils {
         {
             if is_x86_feature_detected!("popcnt") {
                 let mut count = 0usize;
+                // SAFETY: popcnt feature detected at runtime
                 unsafe {
                     let chunks = data.chunks_exact(8);
                     let remainder = chunks.remainder();

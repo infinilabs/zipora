@@ -65,6 +65,7 @@ impl BitOps {
         {
             // Use BMI2 LZCNT when available for fastest calculation
             if is_x86_feature_detected!("lzcnt") {
+                // SAFETY: LZCNT feature availability checked by is_x86_feature_detected!("lzcnt")
                 return unsafe {
                     64 - std::arch::x86_64::_lzcnt_u64(value) as u8
                 };
@@ -82,6 +83,7 @@ impl BitOps {
         {
             // Use BMI2 BEXTR for optimal bit extraction
             if is_x86_feature_detected!("bmi2") {
+                // SAFETY: BMI2 feature availability checked by is_x86_feature_detected!("bmi2")
                 return unsafe {
                     std::arch::x86_64::_bextr_u64(data, start as u32, width as u32)
                 };
@@ -103,6 +105,7 @@ impl BitOps {
         #[cfg(target_arch = "x86_64")]
         {
             if is_x86_feature_detected!("popcnt") {
+                // SAFETY: POPCNT feature availability checked by is_x86_feature_detected!("popcnt")
                 return unsafe {
                     std::arch::x86_64::_popcnt64(value as i64) as u32
                 };
@@ -119,6 +122,7 @@ impl BitOps {
         #[cfg(target_arch = "x86_64")]
         {
             if is_x86_feature_detected!("bmi2") {
+                // SAFETY: BMI2 feature availability checked by is_x86_feature_detected!("bmi2")
                 return unsafe {
                     std::arch::x86_64::_pdep_u64(value, mask)
                 };
@@ -147,6 +151,7 @@ impl BitOps {
         #[cfg(target_arch = "x86_64")]
         {
             if is_x86_feature_detected!("bmi2") {
+                // SAFETY: BMI2 feature availability checked by is_x86_feature_detected!("bmi2")
                 return unsafe {
                     std::arch::x86_64::_pext_u64(value, mask)
                 };
@@ -201,15 +206,17 @@ impl SimdOps {
         let chunks = values.chunks_exact(4);
         let remainder = chunks.remainder();
 
+        // SAFETY: AVX2 feature availability checked in caller via is_x86_feature_detected!("avx2")
+        // Pointer arithmetic valid because chunk.as_ptr() is properly aligned from Vec
         unsafe {
             for chunk in chunks {
                 // Load 4 u64 values
                 let a = _mm256_loadu_si256(chunk.as_ptr() as *const __m256i);
-                
+
                 // Convert to array for processing
                 let mut vals = [0u64; 4];
                 _mm256_storeu_si256(vals.as_mut_ptr() as *mut __m256i, a);
-                
+
                 // Calculate bit widths
                 for &val in &vals {
                     result.push(BitOps::compute_bit_width(val));
@@ -257,17 +264,19 @@ impl SimdOps {
         let mut min_val = values[0];
         let mut max_val = values[0];
 
+        // SAFETY: AVX2 feature availability checked in caller via is_x86_feature_detected!("avx2")
+        // Pointer arithmetic valid because chunk.as_ptr() is properly aligned from Vec
         unsafe {
             let chunks = values.chunks_exact(4);
             let remainder = chunks.remainder();
 
             for chunk in chunks {
                 let data = _mm256_loadu_si256(chunk.as_ptr() as *const __m256i);
-                
+
                 // Note: AVX2 doesn't have direct u64 min/max, so we process individually
                 let mut vals = [0u64; 4];
                 _mm256_storeu_si256(vals.as_mut_ptr() as *mut __m256i, data);
-                
+
                 for &val in &vals {
                     min_val = min_val.min(val);
                     max_val = max_val.max(val);
@@ -357,12 +366,15 @@ impl PrefetchOps {
     pub fn prefetch_read(addr: *const u8) {
         #[cfg(target_arch = "x86_64")]
         {
+            // SAFETY: Prefetch instruction is safe to call with any pointer, even if invalid
+            // it only hints the CPU and does not dereference memory
             unsafe {
                 std::arch::x86_64::_mm_prefetch(addr as *const i8, std::arch::x86_64::_MM_HINT_T0);
             }
         }
         #[cfg(not(target_arch = "x86_64"))]
         {
+            // SAFETY: Caller must ensure addr is valid for read access
             // Compiler hint for prefetching
             std::hint::black_box(unsafe { addr.read_volatile() });
         }
@@ -373,12 +385,15 @@ impl PrefetchOps {
     pub fn prefetch_write(addr: *const u8) {
         #[cfg(target_arch = "x86_64")]
         {
+            // SAFETY: Prefetch instruction is safe to call with any pointer, even if invalid
+            // it only hints the CPU and does not dereference memory
             unsafe {
                 std::arch::x86_64::_mm_prefetch(addr as *const i8, std::arch::x86_64::_MM_HINT_T0);
             }
         }
         #[cfg(not(target_arch = "x86_64"))]
         {
+            // SAFETY: Caller must ensure addr is valid for read access
             std::hint::black_box(unsafe { addr.read_volatile() });
         }
     }
@@ -431,6 +446,8 @@ impl CacheOps {
             if next_chunk_start < data.len() {
                 let prefetch_len = std::cmp::min(block_size * std::mem::size_of::<T>(),
                                                    (data.len() - next_chunk_start) * std::mem::size_of::<T>());
+                // SAFETY: data[next_chunk_start..] is valid slice, casting to u8 pointer for byte-level access
+                // prefetch_len calculated to not exceed remaining data length
                 let next_chunk_bytes = unsafe {
                     std::slice::from_raw_parts(
                         data[next_chunk_start..].as_ptr() as *const u8,

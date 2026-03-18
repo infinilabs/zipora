@@ -93,6 +93,7 @@ impl MinimalSso {
             let len = INLINE_CAP - self.bytes[31] as usize;
             &self.bytes[..len]
         } else {
+            // SAFETY: Heap mode guarantees valid ptr/len from successful allocation in heap_init/write_heap
             unsafe {
                 let ptr = self.heap_ptr();
                 let len = self.heap_len();
@@ -106,6 +107,7 @@ impl MinimalSso {
     /// The caller must ensure the contents are valid UTF-8.
     #[inline]
     pub fn as_str(&self) -> &str {
+        // SAFETY: Caller ensures contents are valid UTF-8 per function documentation
         unsafe { std::str::from_utf8_unchecked(self.as_bytes()) }
     }
 
@@ -137,6 +139,7 @@ impl MinimalSso {
             if new_len > self.heap_cap() {
                 self.heap_grow(new_len);
             }
+            // SAFETY: heap_grow ensures capacity >= new_len, ptr valid from allocation
             unsafe {
                 let ptr = self.heap_ptr();
                 std::ptr::copy_nonoverlapping(data.as_ptr(), ptr.add(old_len), data.len());
@@ -167,8 +170,10 @@ impl MinimalSso {
         let cap = data.len().next_power_of_two().max(64);
         let layout = std::alloc::Layout::from_size_align(cap, 1)
             .expect("layout creation: non-zero size, power-of-two alignment");
+        // SAFETY: Layout is valid (cap > 0, align = 1)
         let ptr = unsafe { std::alloc::alloc(layout) };
         if ptr.is_null() { std::alloc::handle_alloc_error(layout); }
+        // SAFETY: ptr valid from allocation, data.len() <= cap
         unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len()); }
         self.write_heap(ptr, data.len(), cap);
     }
@@ -179,8 +184,10 @@ impl MinimalSso {
         let cap = new_len.next_power_of_two().max(64);
         let layout = std::alloc::Layout::from_size_align(cap, 1)
             .expect("layout creation: non-zero size, power-of-two alignment");
+        // SAFETY: Layout is valid (cap > 0, align = 1)
         let ptr = unsafe { std::alloc::alloc(layout) };
         if ptr.is_null() { std::alloc::handle_alloc_error(layout); }
+        // SAFETY: ptr valid from allocation, old_len + extra.len() <= cap
         unsafe {
             // Copy existing inline data
             std::ptr::copy_nonoverlapping(self.bytes.as_ptr(), ptr, old_len);
@@ -196,6 +203,7 @@ impl MinimalSso {
         let old_ptr = self.heap_ptr();
         let old_layout = std::alloc::Layout::from_size_align(old_cap, 1)
             .expect("layout creation: non-zero size, power-of-two alignment");
+        // SAFETY: old_ptr from valid allocation, old_layout matches original alloc, new_cap > 0
         let ptr = unsafe { std::alloc::realloc(old_ptr, old_layout, new_cap) };
         if ptr.is_null() {
             let new_layout = std::alloc::Layout::from_size_align(new_cap, 1)
@@ -247,6 +255,7 @@ impl Drop for MinimalSso {
             if cap > 0 && !ptr.is_null() {
                 let layout = std::alloc::Layout::from_size_align(cap, 1)
                     .expect("layout creation: non-zero size, power-of-two alignment");
+                // SAFETY: ptr from valid allocation, layout matches original alloc
                 unsafe { std::alloc::dealloc(ptr, layout); }
             }
         }

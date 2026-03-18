@@ -28,12 +28,14 @@ mod unaligned_ops {
         /// Read u64 from unaligned memory address safely
         #[inline]
         pub unsafe fn read_u64_unaligned(ptr: *const u8) -> u64 {
+            // SAFETY: caller ensures ptr is valid for 8 bytes (unsafe fn contract)
             unsafe { std::ptr::read_unaligned(ptr as *const u64) }
         }
-        
+
         /// Write u64 to unaligned memory address safely
         #[inline]
         pub unsafe fn write_u64_unaligned(ptr: *mut u8, value: u64) {
+            // SAFETY: caller ensures ptr is valid for 8 bytes (unsafe fn contract)
             unsafe { std::ptr::write_unaligned(ptr as *mut u64, value); }
         }
         
@@ -43,6 +45,7 @@ mod unaligned_ops {
             let byte_count = count * 8;
             if byte_count >= 64 && count == output.len() {
                 // Use SIMD fast_copy for large transfers (≥64 bytes)
+                // SAFETY: caller ensures ptr is valid for byte_count bytes (unsafe fn contract)
                 let src_slice = unsafe { std::slice::from_raw_parts(ptr, byte_count) };
                 let dst_slice: &mut [u8] = bytemuck::cast_slice_mut(output);
                 if let Ok(()) = fast_copy(src_slice, dst_slice) {
@@ -52,6 +55,7 @@ mod unaligned_ops {
 
             // Fallback to unaligned reads for smaller transfers or on error
             for (i, out) in output.iter_mut().take(count).enumerate() {
+                // SAFETY: caller ensures ptr is valid for count u64s, i < count
                 *out = unsafe { std::ptr::read_unaligned((ptr as *const u64).add(i)) };
             }
         }
@@ -63,6 +67,7 @@ mod unaligned_ops {
             if byte_count >= 64 {
                 // Use SIMD fast_copy for large transfers (≥64 bytes)
                 let src_slice: &[u8] = bytemuck::cast_slice(values);
+                // SAFETY: caller ensures ptr is valid for byte_count bytes (unsafe fn contract)
                 let dst_slice = unsafe { std::slice::from_raw_parts_mut(ptr, byte_count) };
                 if let Ok(()) = fast_copy(src_slice, dst_slice) {
                     return;
@@ -71,6 +76,7 @@ mod unaligned_ops {
 
             // Fallback to unaligned writes for smaller transfers or on error
             for (i, &value) in values.iter().enumerate() {
+                // SAFETY: caller ensures ptr is valid for values.len() u64s, i < values.len()
                 unsafe { std::ptr::write_unaligned((ptr as *mut u64).add(i), value); }
             }
         }
@@ -265,6 +271,7 @@ mod int_vec_simd {
             let addr = data as *const T as *const u8;
             #[cfg(target_arch = "x86_64")]
             {
+                // SAFETY: prefetch is always safe, addr from valid reference
                 unsafe {
                     std::arch::x86_64::_mm_prefetch(addr as *const i8, std::arch::x86_64::_MM_HINT_T0);
                 }
@@ -286,6 +293,7 @@ mod int_vec_simd {
             let addr = data as *const T as *const u8;
             #[cfg(target_arch = "x86_64")]
             {
+                // SAFETY: prefetch is always safe, addr from valid reference
                 unsafe {
                     std::arch::x86_64::_mm_prefetch(addr as *const i8, std::arch::x86_64::_MM_HINT_T0);
                 }

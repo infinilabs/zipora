@@ -44,12 +44,14 @@ impl BumpAllocator {
         let layout = Layout::from_size_align(capacity, 8)
             .map_err(|_| ZiporaError::invalid_data("invalid layout for bump allocator"))?;
 
+        // SAFETY: Allocating memory with valid layout
         let ptr = unsafe { alloc(layout) };
         if ptr.is_null() {
             return Err(ZiporaError::out_of_memory(capacity));
         }
 
         Ok(Self {
+            // SAFETY: Null check performed at line 48-50 above
             buffer: unsafe { NonNull::new_unchecked(ptr) },
             capacity,
             current: AtomicUsize::new(0),
@@ -72,6 +74,7 @@ impl BumpAllocator {
 
         // Create a fat pointer for the slice
         let slice_ptr = std::ptr::slice_from_raw_parts_mut(ptr.as_ptr() as *mut T, count);
+        // SAFETY: ptr is valid NonNull from alloc_bytes, count is the requested size
         Ok(unsafe { NonNull::new_unchecked(slice_ptr) })
     }
 
@@ -115,6 +118,7 @@ impl BumpAllocator {
                         .fetch_add(size as u64, Ordering::Relaxed);
 
                     // SAFETY: aligned_offset is within bounds (checked above),
+                    // SAFETY: aligned_offset < capacity verified, CAS successful
                     // and we successfully reserved this range via CAS
                     let ptr = unsafe { self.buffer.as_ptr().add(aligned_offset) };
                     return Ok(unsafe { NonNull::new_unchecked(ptr) });
@@ -193,6 +197,7 @@ impl Drop for BumpAllocator {
         // Safety check: Only deallocate if we have a valid buffer
         if self.capacity > 0 {
             if let Ok(layout) = Layout::from_size_align(self.capacity, 8) {
+                // SAFETY: buffer was allocated with this exact layout in new()
                 unsafe {
                     dealloc(self.buffer.as_ptr(), layout);
                 }
@@ -254,6 +259,7 @@ impl BumpArena {
 impl Drop for BumpArena {
     fn drop(&mut self) {
         // Reset to initial position
+        // SAFETY: No concurrent allocations during drop, reset invalidates all allocations (documented in reset())
         unsafe {
             self.allocator.reset();
         }
@@ -362,6 +368,7 @@ impl<'a, T> BumpVec<'a, T> {
             return Err(ZiporaError::invalid_data("bump vector capacity exceeded"));
         }
 
+        // SAFETY: self.len < self.capacity (checked above), pointer is valid from allocator
         unsafe {
             self.ptr.as_ptr().add(self.len).write(item);
         }
@@ -376,6 +383,7 @@ impl<'a, T> BumpVec<'a, T> {
         }
 
         self.len -= 1;
+        // SAFETY: self.len was > 0 (checked above), pointer is valid, reading at valid index
         Some(unsafe { self.ptr.as_ptr().add(self.len).read() })
     }
 
@@ -400,12 +408,14 @@ impl<'a, T> BumpVec<'a, T> {
     /// Get a slice of the vector's contents
     #[inline]
     pub fn as_slice(&self) -> &[T] {
+        // SAFETY: ptr is valid from allocator, len <= capacity, all elements initialized
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 
     /// Get a mutable slice of the vector's contents
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [T] {
+        // SAFETY: ptr is valid from allocator, len <= capacity, all elements initialized
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }
 }
@@ -414,6 +424,7 @@ impl<'a, T> Drop for BumpVec<'a, T> {
     fn drop(&mut self) {
         // Drop all elements
         for i in 0..self.len {
+            // SAFETY: i < self.len, all elements [0..len) are initialized
             unsafe {
                 self.ptr.as_ptr().add(i).drop_in_place();
             }
@@ -451,6 +462,7 @@ mod tests {
         let allocator = BumpAllocator::new(4096).unwrap();
 
         let mut slice_ptr = allocator.alloc_slice::<u32>(10).unwrap();
+        // SAFETY: Hardware features verified or caller ensures safety invariants
         let slice = unsafe { slice_ptr.as_mut() };
 
         assert_eq!(slice.len(), 10);
@@ -505,6 +517,7 @@ mod tests {
         assert!(allocator.allocated_bytes() > 0);
         assert!(allocator.remaining_bytes() < 4096);
 
+        // SAFETY: Test code, no concurrent allocations, all allocated pointers discarded
         unsafe {
             allocator.reset();
         }

@@ -399,6 +399,7 @@ impl SortedUintVec {
         
         // Prefetch next cache line for sequential access patterns
         if byte_offset + 64 < data.len() {
+            // SAFETY: byte_offset + 64 < data.len() check guarantees pointer is within allocated buffer
             unsafe {
                 std::arch::x86_64::_mm_prefetch(
                     data.as_ptr().add(byte_offset + 64) as *const i8,
@@ -413,8 +414,9 @@ impl SortedUintVec {
         bytes[..copy_len].copy_from_slice(&data[byte_offset..byte_offset + copy_len]);
         
         let mut value = u64::from_le_bytes(bytes);
-        
+
         // Enhanced BMI2 extraction with compiler-specific optimizations
+        // SAFETY: BMI2 _bextr_u64 is a safe intrinsic for bit field extraction
         unsafe {
             // Use BEXTR for efficient bit field extraction
             value = std::arch::x86_64::_bextr_u64(value, bit_shift as u32, bit_width as u32);
@@ -451,7 +453,8 @@ impl SortedUintVec {
         bytes[..copy_len].copy_from_slice(&data[byte_offset..byte_offset + copy_len]);
         
         let raw_value = u64::from_le_bytes(bytes);
-        
+
+        // SAFETY: BMI2 _pext_u64 and bit manipulation intrinsics are safe
         unsafe {
             // Create extraction mask using PDEP
             let mask = (1u64 << bit_width) - 1;
@@ -538,11 +541,12 @@ impl SortedUintVec {
                     deltas[i] = self.get_block_delta(block_idx, base_offset + i)?;
                 }
             }
-            
+
             // Convert to u64 and add block_min using SIMD
+            // SAFETY: AVX2 intrinsics are safe when feature is available, deltas array is properly sized
             unsafe {
                 let min_vec = std::arch::x86_64::_mm256_set1_epi64x(block_min as i64);
-                
+
                 // Convert 4 deltas at a time (AVX2 processes 4 x i64)
                 for pair in 0..2 {
                     let delta_base = pair * 4;
@@ -597,8 +601,10 @@ impl SortedUintVec {
                 // Prefetch next block's data
                 let next_block_offset = (block_idx + 1) * block_size * (self.config.offset_width as usize);
                 let next_byte_offset = next_block_offset / 8;
-                
+
+
                 if next_byte_offset < self.data.len() {
+                    // SAFETY: next_byte_offset < self.data.len() check guarantees pointer is within allocated buffer
                     unsafe {
                         std::arch::x86_64::_mm_prefetch(
                             self.data.as_ptr().add(next_byte_offset) as *const i8,

@@ -789,7 +789,8 @@ impl FseEncoder {
         // Process 32-byte chunks with AVX2
         let chunks = data.chunks_exact(32);
         let remainder = chunks.remainder();
-        
+
+        // SAFETY: AVX2 guaranteed by function's feature check, pointer bounds verified by chunks_exact
         unsafe {
             // Use histogram approach for better cache efficiency
             let mut local_counters = [0u32; 256];

@@ -140,13 +140,14 @@ impl SimdMemOps {
         let src_end = src_start + src.len();
         let dst_start = dst.as_mut_ptr() as usize;
         let dst_end = dst_start + dst.len();
-        
+
         if (src_start < dst_end && dst_start < src_end) {
             return Err(ZiporaError::invalid_data(
                 "Source and destination slices must not overlap".to_string()
             ));
         }
-        
+
+        // SAFETY: pointers valid from slice bounds, non-overlapping verified above, len checked
         unsafe {
             self.simd_memcpy_unaligned(dst.as_mut_ptr(), src.as_ptr(), src.len());
         }
@@ -179,7 +180,8 @@ impl SimdMemOps {
         if src.is_empty() {
             return Ok(());
         }
-        
+
+        // SAFETY: pointers valid from slice bounds, alignment verified above, len checked
         unsafe {
             self.simd_memcpy_aligned(dst.as_mut_ptr(), src.as_ptr(), src.len());
         }
@@ -202,15 +204,18 @@ impl SimdMemOps {
         
         match a.len().cmp(&b.len()) {
             Ordering::Less => {
+                // SAFETY: pointers valid from slice bounds, len <= min(a.len(), b.len())
                 let result = unsafe { self.simd_memcmp(a.as_ptr(), b.as_ptr(), a.len()) };
                 if result == 0 { -1 } else { result }
             }
             Ordering::Greater => {
+                // SAFETY: pointers valid from slice bounds, len <= min(a.len(), b.len())
                 let result = unsafe { self.simd_memcmp(a.as_ptr(), b.as_ptr(), b.len()) };
                 if result == 0 { 1 } else { result }
             }
             Ordering::Equal => {
                 if a.is_empty() { 0 } else {
+                    // SAFETY: pointers valid from slice bounds, len checked non-empty
                     unsafe { self.simd_memcmp(a.as_ptr(), b.as_ptr(), a.len()) }
                 }
             }
@@ -226,7 +231,8 @@ impl SimdMemOps {
         if haystack.is_empty() {
             return None;
         }
-        
+
+        // SAFETY: pointer valid from slice bounds, len checked non-empty
         unsafe { self.simd_memchr(haystack.as_ptr(), needle, haystack.len()) }
     }
     
@@ -238,7 +244,8 @@ impl SimdMemOps {
         if slice.is_empty() {
             return;
         }
-        
+
+        // SAFETY: pointer valid from slice bounds, len checked non-empty
         unsafe {
             self.simd_memset(slice.as_mut_ptr(), value, slice.len());
         }
@@ -255,6 +262,7 @@ impl SimdMemOps {
         }
 
         #[cfg(target_arch = "x86_64")]
+        // SAFETY: prefetch is advisory only, pointer validity not required, no side effects
         unsafe {
             match hint {
                 PrefetchHint::T0 => std::arch::x86_64::_mm_prefetch(addr as *const i8, std::arch::x86_64::_MM_HINT_T0),
@@ -265,6 +273,7 @@ impl SimdMemOps {
         }
 
         #[cfg(target_arch = "aarch64")]
+        // SAFETY: prefetch is advisory only, pointer validity not required, no side effects
         unsafe {
             match hint {
                 PrefetchHint::T0 | PrefetchHint::T1 => {
@@ -375,15 +384,19 @@ impl SimdMemOps {
     unsafe fn simd_memcpy_unaligned(&self, dst: *mut u8, src: *const u8, len: usize) {
         match (self.tier, len) {
             (SimdTier::Avx512, len) if len >= 64 => {
+                // SAFETY: caller ensures pointers valid and len within bounds
                 unsafe { self.avx512_memcpy_unaligned(dst, src, len); }
             }
             (SimdTier::Avx2, len) if len >= 32 => {
+                // SAFETY: caller ensures pointers valid and len within bounds
                 unsafe { self.avx2_memcpy_unaligned(dst, src, len); }
             }
             (SimdTier::Sse2, len) if len >= 16 => {
+                // SAFETY: caller ensures pointers valid and len within bounds
                 unsafe { self.sse2_memcpy_unaligned(dst, src, len); }
             }
             _ => {
+                // SAFETY: caller ensures pointers valid and len within bounds
                 unsafe { self.scalar_memcpy(dst, src, len); }
             }
         }
@@ -394,15 +407,19 @@ impl SimdMemOps {
     unsafe fn simd_memcpy_aligned(&self, dst: *mut u8, src: *const u8, len: usize) {
         match (self.tier, len) {
             (SimdTier::Avx512, len) if len >= 64 => {
+                // SAFETY: caller ensures pointers valid, aligned, and len within bounds
                 unsafe { self.avx512_memcpy_aligned(dst, src, len); }
             }
             (SimdTier::Avx2, len) if len >= 32 => {
+                // SAFETY: caller ensures pointers valid, aligned, and len within bounds
                 unsafe { self.avx2_memcpy_aligned(dst, src, len); }
             }
             (SimdTier::Sse2, len) if len >= 16 => {
+                // SAFETY: caller ensures pointers valid, aligned, and len within bounds
                 unsafe { self.sse2_memcpy_aligned(dst, src, len); }
             }
             _ => {
+                // SAFETY: caller ensures pointers valid and len within bounds
                 unsafe { self.scalar_memcpy(dst, src, len); }
             }
         }
@@ -413,15 +430,19 @@ impl SimdMemOps {
     unsafe fn simd_memcmp(&self, a: *const u8, b: *const u8, len: usize) -> i32 {
         match (self.tier, len) {
             (SimdTier::Avx512, len) if len >= 64 => {
+                // SAFETY: caller ensures pointers valid and len within bounds
                 unsafe { self.avx512_memcmp(a, b, len) }
             }
             (SimdTier::Avx2, len) if len >= 32 => {
+                // SAFETY: caller ensures pointers valid and len within bounds
                 unsafe { self.avx2_memcmp(a, b, len) }
             }
             (SimdTier::Sse2, len) if len >= 16 => {
+                // SAFETY: caller ensures pointers valid and len within bounds
                 unsafe { self.sse2_memcmp(a, b, len) }
             }
             _ => {
+                // SAFETY: caller ensures pointers valid and len within bounds
                 unsafe { self.scalar_memcmp(a, b, len) }
             }
         }
@@ -432,15 +453,19 @@ impl SimdMemOps {
     unsafe fn simd_memchr(&self, haystack: *const u8, needle: u8, len: usize) -> Option<usize> {
         match (self.tier, len) {
             (SimdTier::Avx512, len) if len >= 64 => {
+                // SAFETY: caller ensures pointer valid and len within bounds
                 unsafe { self.avx512_memchr(haystack, needle, len) }
             }
             (SimdTier::Avx2, len) if len >= 32 => {
+                // SAFETY: caller ensures pointer valid and len within bounds
                 unsafe { self.avx2_memchr(haystack, needle, len) }
             }
             (SimdTier::Sse2, len) if len >= 16 => {
+                // SAFETY: caller ensures pointer valid and len within bounds
                 unsafe { self.sse2_memchr(haystack, needle, len) }
             }
             _ => {
+                // SAFETY: caller ensures pointer valid and len within bounds
                 unsafe { self.scalar_memchr(haystack, needle, len) }
             }
         }
@@ -451,15 +476,19 @@ impl SimdMemOps {
     unsafe fn simd_memset(&self, ptr: *mut u8, value: u8, len: usize) {
         match (self.tier, len) {
             (SimdTier::Avx512, len) if len >= 64 => {
+                // SAFETY: caller ensures pointer valid and len within bounds
                 unsafe { self.avx512_memset(ptr, value, len); }
             }
             (SimdTier::Avx2, len) if len >= 32 => {
+                // SAFETY: caller ensures pointer valid and len within bounds
                 unsafe { self.avx2_memset(ptr, value, len); }
             }
             (SimdTier::Sse2, len) if len >= 16 => {
+                // SAFETY: caller ensures pointer valid and len within bounds
                 unsafe { self.sse2_memset(ptr, value, len); }
             }
             _ => {
+                // SAFETY: caller ensures pointer valid and len within bounds
                 unsafe { self.scalar_memset(ptr, value, len); }
             }
         }
@@ -481,18 +510,20 @@ impl SimdMemOps {
         
         // Process 64-byte chunks
         while len >= 64 {
+            // SAFETY: avx512f/vl/bw guaranteed by #[target_feature], pointers valid from caller, len >= 64 checked, alignment guaranteed by caller
             unsafe {
                 let data = _mm512_load_si512(src_ptr as *const __m512i);
                 _mm512_store_si512(dst_ptr as *mut __m512i, data);
-                
+
                 src_ptr = src_ptr.add(64);
                 dst_ptr = dst_ptr.add(64);
             }
             len -= 64;
         }
-        
+
         // Handle remaining bytes with scalar copy
         if len > 0 {
+            // SAFETY: pointers valid, remaining len < 64
             unsafe { self.scalar_memcpy(dst_ptr, src_ptr, len); }
         }
     }
@@ -506,18 +537,20 @@ impl SimdMemOps {
         
         // Process 64-byte chunks with unaligned loads/stores
         while len >= 64 {
+            // SAFETY: avx512f/vl/bw guaranteed by #[target_feature], pointers valid from caller, len >= 64 checked
             unsafe {
                 let data = _mm512_loadu_si512(src_ptr as *const __m512i);
                 _mm512_storeu_si512(dst_ptr as *mut __m512i, data);
-                
+
                 src_ptr = src_ptr.add(64);
                 dst_ptr = dst_ptr.add(64);
             }
             len -= 64;
         }
-        
+
         // Handle remaining bytes
         if len > 0 {
+            // SAFETY: pointers valid, remaining len < 64
             unsafe { self.scalar_memcpy(dst_ptr, src_ptr, len); }
         }
     }
@@ -528,10 +561,11 @@ impl SimdMemOps {
         
         // Process 64-byte chunks
         while len >= 64 {
+            // SAFETY: avx512f/vl/bw guaranteed by #[target_feature], pointers valid from caller, len >= 64 checked, offset within bounds
             unsafe {
                 let va = _mm512_loadu_si512(a as *const __m512i);
                 let vb = _mm512_loadu_si512(b as *const __m512i);
-                
+
                 let mask = _mm512_cmpneq_epu8_mask(va, vb);
                 if mask != 0 {
                     // Find first differing byte
@@ -540,15 +574,16 @@ impl SimdMemOps {
                     let byte_b = *b.add(byte_offset);
                     return (byte_a as i32) - (byte_b as i32);
                 }
-                
+
                 a = a.add(64);
                 b = b.add(64);
             }
             len -= 64;
         }
-        
+
         // Handle remaining bytes
         if len > 0 {
+            // SAFETY: pointers valid, remaining len < 64
             unsafe { self.scalar_memcmp(a, b, len) }
         } else {
             0
@@ -558,29 +593,32 @@ impl SimdMemOps {
     #[target_feature(enable = "avx512f,avx512vl,avx512bw")]
     unsafe fn avx512_memchr(&self, mut haystack: *const u8, needle: u8, mut len: usize) -> Option<usize> {
         use std::arch::x86_64::*;
-        
+
+        // SAFETY: avx512f/vl/bw guaranteed by #[target_feature]
         let needle_vec = unsafe { _mm512_set1_epi8(needle as i8) };
         let mut offset = 0;
-        
+
         // Process 64-byte chunks
         while len >= 64 {
+            // SAFETY: avx512f/vl/bw guaranteed by #[target_feature], pointer valid from caller, len >= 64 checked, offset within bounds
             unsafe {
                 let data = _mm512_loadu_si512(haystack as *const __m512i);
                 let mask = _mm512_cmpeq_epu8_mask(data, needle_vec);
-                
+
                 if mask != 0 {
                     let byte_offset = mask.trailing_zeros() as usize;
                     return Some(offset + byte_offset);
                 }
-                
+
                 haystack = haystack.add(64);
             }
             offset += 64;
             len -= 64;
         }
-        
+
         // Handle remaining bytes
         if len > 0 {
+            // SAFETY: pointer valid, remaining len < 64
             if let Some(remaining_offset) = unsafe { self.scalar_memchr(haystack, needle, len) } {
                 Some(offset + remaining_offset)
             } else {
@@ -594,20 +632,23 @@ impl SimdMemOps {
     #[target_feature(enable = "avx512f,avx512vl,avx512bw")]
     unsafe fn avx512_memset(&self, mut ptr: *mut u8, value: u8, mut len: usize) {
         use std::arch::x86_64::*;
-        
+
+        // SAFETY: avx512f/vl/bw guaranteed by #[target_feature]
         let value_vec = unsafe { _mm512_set1_epi8(value as i8) };
-        
+
         // Process 64-byte chunks
         while len >= 64 {
+            // SAFETY: avx512f/vl/bw guaranteed by #[target_feature], pointer valid from caller, len >= 64 checked
             unsafe {
                 _mm512_storeu_si512(ptr as *mut __m512i, value_vec);
                 ptr = ptr.add(64);
             }
             len -= 64;
         }
-        
+
         // Handle remaining bytes
         if len > 0 {
+            // SAFETY: pointer valid, remaining len < 64
             unsafe { self.scalar_memset(ptr, value, len); }
         }
     }
@@ -617,26 +658,31 @@ impl SimdMemOps {
 impl SimdMemOps {
     #[inline]
     unsafe fn avx512_memcpy_aligned(&self, dst: *mut u8, src: *const u8, len: usize) {
+        // SAFETY: caller ensures pointers valid and len within bounds
         unsafe { self.scalar_memcpy(dst, src, len); }
     }
-    
+
     #[inline]
     unsafe fn avx512_memcpy_unaligned(&self, dst: *mut u8, src: *const u8, len: usize) {
+        // SAFETY: caller ensures pointers valid and len within bounds
         unsafe { self.scalar_memcpy(dst, src, len); }
     }
-    
+
     #[inline]
     unsafe fn avx512_memcmp(&self, a: *const u8, b: *const u8, len: usize) -> i32 {
+        // SAFETY: caller ensures pointers valid and len within bounds
         unsafe { self.scalar_memcmp(a, b, len) }
     }
-    
+
     #[inline]
     unsafe fn avx512_memchr(&self, haystack: *const u8, needle: u8, len: usize) -> Option<usize> {
+        // SAFETY: caller ensures pointer valid and len within bounds
         unsafe { self.scalar_memchr(haystack, needle, len) }
     }
-    
+
     #[inline]
     unsafe fn avx512_memset(&self, ptr: *mut u8, value: u8, len: usize) {
+        // SAFETY: caller ensures pointer valid and len within bounds
         unsafe { self.scalar_memset(ptr, value, len); }
     }
 }
@@ -656,18 +702,20 @@ impl SimdMemOps {
         
         // Process 32-byte chunks
         while len >= 32 {
+            // SAFETY: avx2 guaranteed by #[target_feature], pointers valid from caller, len >= 32 checked, alignment guaranteed by caller
             unsafe {
                 let data = _mm256_load_si256(src_ptr as *const __m256i);
                 _mm256_store_si256(dst_ptr as *mut __m256i, data);
-                
+
                 src_ptr = src_ptr.add(32);
                 dst_ptr = dst_ptr.add(32);
             }
             len -= 32;
         }
-        
+
         // Handle remaining bytes
         if len > 0 {
+            // SAFETY: pointers valid, remaining len < 32
             unsafe { self.scalar_memcpy(dst_ptr, src_ptr, len); }
         }
     }
@@ -684,26 +732,29 @@ impl SimdMemOps {
             // Prefetch ahead for better cache performance
             let prefetch_distance = 256;
             if len > prefetch_distance {
+                // SAFETY: prefetch is advisory only, pointer valid from caller, offset within bounds
                 unsafe {
                     _mm_prefetch(src_ptr.add(prefetch_distance) as *const i8, _MM_HINT_T0);
                 }
             }
         }
-        
+
         // Process 32-byte chunks with unaligned loads/stores
         while len >= 32 {
+            // SAFETY: avx2 guaranteed by #[target_feature], pointers valid from caller, len >= 32 checked
             unsafe {
                 let data = _mm256_loadu_si256(src_ptr as *const __m256i);
                 _mm256_storeu_si256(dst_ptr as *mut __m256i, data);
-                
+
                 src_ptr = src_ptr.add(32);
                 dst_ptr = dst_ptr.add(32);
             }
             len -= 32;
         }
-        
+
         // Handle remaining bytes
         if len > 0 {
+            // SAFETY: pointers valid, remaining len < 32
             unsafe { self.scalar_memcpy(dst_ptr, src_ptr, len); }
         }
     }
@@ -711,16 +762,17 @@ impl SimdMemOps {
     #[target_feature(enable = "avx2")]
     unsafe fn avx2_memcmp(&self, mut a: *const u8, mut b: *const u8, mut len: usize) -> i32 {
         use std::arch::x86_64::*;
-        
+
         // Process 32-byte chunks
         while len >= 32 {
+            // SAFETY: avx2 guaranteed by #[target_feature], pointers valid from caller, len >= 32 checked, offset within bounds
             unsafe {
                 let va = _mm256_loadu_si256(a as *const __m256i);
                 let vb = _mm256_loadu_si256(b as *const __m256i);
-                
+
                 let cmp = _mm256_cmpeq_epi8(va, vb);
                 let mask = _mm256_movemask_epi8(cmp) as u32;
-                
+
                 if mask != 0xFFFFFFFF {
                     // Find first differing byte
                     let diff_mask = !mask;
@@ -729,15 +781,16 @@ impl SimdMemOps {
                     let byte_b = *b.add(byte_offset);
                     return (byte_a as i32) - (byte_b as i32);
                 }
-                
+
                 a = a.add(32);
                 b = b.add(32);
             }
             len -= 32;
         }
-        
+
         // Handle remaining bytes
         if len > 0 {
+            // SAFETY: pointers valid, remaining len < 32
             unsafe { self.scalar_memcmp(a, b, len) }
         } else {
             0
@@ -747,30 +800,33 @@ impl SimdMemOps {
     #[target_feature(enable = "avx2")]
     unsafe fn avx2_memchr(&self, mut haystack: *const u8, needle: u8, mut len: usize) -> Option<usize> {
         use std::arch::x86_64::*;
-        
+
+        // SAFETY: avx2 guaranteed by #[target_feature]
         let needle_vec = unsafe { _mm256_set1_epi8(needle as i8) };
         let mut offset = 0;
-        
+
         // Process 32-byte chunks
         while len >= 32 {
+            // SAFETY: avx2 guaranteed by #[target_feature], pointer valid from caller, len >= 32 checked, offset within bounds
             unsafe {
                 let data = _mm256_loadu_si256(haystack as *const __m256i);
                 let cmp = _mm256_cmpeq_epi8(data, needle_vec);
                 let mask = _mm256_movemask_epi8(cmp) as u32;
-                
+
                 if mask != 0 {
                     let byte_offset = mask.trailing_zeros() as usize;
                     return Some(offset + byte_offset);
                 }
-                
+
                 haystack = haystack.add(32);
             }
             offset += 32;
             len -= 32;
         }
-        
+
         // Handle remaining bytes
         if len > 0 {
+            // SAFETY: pointer valid, remaining len < 32
             if let Some(remaining_offset) = unsafe { self.scalar_memchr(haystack, needle, len) } {
                 Some(offset + remaining_offset)
             } else {
@@ -784,20 +840,23 @@ impl SimdMemOps {
     #[target_feature(enable = "avx2")]
     unsafe fn avx2_memset(&self, mut ptr: *mut u8, value: u8, mut len: usize) {
         use std::arch::x86_64::*;
-        
+
+        // SAFETY: avx2 guaranteed by #[target_feature]
         let value_vec = unsafe { _mm256_set1_epi8(value as i8) };
-        
+
         // Process 32-byte chunks
         while len >= 32 {
+            // SAFETY: avx2 guaranteed by #[target_feature], pointer valid from caller, len >= 32 checked
             unsafe {
                 _mm256_storeu_si256(ptr as *mut __m256i, value_vec);
                 ptr = ptr.add(32);
             }
             len -= 32;
         }
-        
+
         // Handle remaining bytes
         if len > 0 {
+            // SAFETY: pointer valid, remaining len < 32
             unsafe { self.scalar_memset(ptr, value, len); }
         }
     }
@@ -807,26 +866,31 @@ impl SimdMemOps {
 impl SimdMemOps {
     #[inline]
     unsafe fn avx2_memcpy_aligned(&self, dst: *mut u8, src: *const u8, len: usize) {
+        // SAFETY: caller ensures pointers valid and len within bounds
         unsafe { self.scalar_memcpy(dst, src, len); }
     }
-    
+
     #[inline]
     unsafe fn avx2_memcpy_unaligned(&self, dst: *mut u8, src: *const u8, len: usize) {
+        // SAFETY: caller ensures pointers valid and len within bounds
         unsafe { self.scalar_memcpy(dst, src, len); }
     }
-    
+
     #[inline]
     unsafe fn avx2_memcmp(&self, a: *const u8, b: *const u8, len: usize) -> i32 {
+        // SAFETY: caller ensures pointers valid and len within bounds
         unsafe { self.scalar_memcmp(a, b, len) }
     }
-    
+
     #[inline]
     unsafe fn avx2_memchr(&self, haystack: *const u8, needle: u8, len: usize) -> Option<usize> {
+        // SAFETY: caller ensures pointer valid and len within bounds
         unsafe { self.scalar_memchr(haystack, needle, len) }
     }
-    
+
     #[inline]
     unsafe fn avx2_memset(&self, ptr: *mut u8, value: u8, len: usize) {
+        // SAFETY: caller ensures pointer valid and len within bounds
         unsafe { self.scalar_memset(ptr, value, len); }
     }
 }
@@ -840,24 +904,26 @@ impl SimdMemOps {
     #[target_feature(enable = "sse2")]
     unsafe fn sse2_memcpy_aligned(&self, dst: *mut u8, src: *const u8, mut len: usize) {
         use std::arch::x86_64::*;
-        
+
         let mut dst_ptr = dst;
         let mut src_ptr = src;
-        
+
         // Process 16-byte chunks
         while len >= 16 {
+            // SAFETY: sse2 guaranteed by #[target_feature], pointers valid from caller, len >= 16 checked, alignment guaranteed by caller
             unsafe {
                 let data = _mm_load_si128(src_ptr as *const __m128i);
                 _mm_store_si128(dst_ptr as *mut __m128i, data);
-                
+
                 src_ptr = src_ptr.add(16);
                 dst_ptr = dst_ptr.add(16);
             }
             len -= 16;
         }
-        
+
         // Handle remaining bytes
         if len > 0 {
+            // SAFETY: pointers valid, remaining len < 16
             unsafe { self.scalar_memcpy(dst_ptr, src_ptr, len); }
         }
     }
@@ -865,24 +931,26 @@ impl SimdMemOps {
     #[target_feature(enable = "sse2")]
     unsafe fn sse2_memcpy_unaligned(&self, dst: *mut u8, src: *const u8, mut len: usize) {
         use std::arch::x86_64::*;
-        
+
         let mut dst_ptr = dst;
         let mut src_ptr = src;
-        
+
         // Process 16-byte chunks with unaligned loads/stores
         while len >= 16 {
+            // SAFETY: sse2 guaranteed by #[target_feature], pointers valid from caller, len >= 16 checked
             unsafe {
                 let data = _mm_loadu_si128(src_ptr as *const __m128i);
                 _mm_storeu_si128(dst_ptr as *mut __m128i, data);
-                
+
                 src_ptr = src_ptr.add(16);
                 dst_ptr = dst_ptr.add(16);
             }
             len -= 16;
         }
-        
+
         // Handle remaining bytes
         if len > 0 {
+            // SAFETY: pointers valid, remaining len < 16
             unsafe { self.scalar_memcpy(dst_ptr, src_ptr, len); }
         }
     }
@@ -890,16 +958,17 @@ impl SimdMemOps {
     #[target_feature(enable = "sse2")]
     unsafe fn sse2_memcmp(&self, mut a: *const u8, mut b: *const u8, mut len: usize) -> i32 {
         use std::arch::x86_64::*;
-        
+
         // Process 16-byte chunks
         while len >= 16 {
+            // SAFETY: sse2 guaranteed by #[target_feature], pointers valid from caller, len >= 16 checked, offset within bounds
             unsafe {
                 let va = _mm_loadu_si128(a as *const __m128i);
                 let vb = _mm_loadu_si128(b as *const __m128i);
-                
+
                 let cmp = _mm_cmpeq_epi8(va, vb);
                 let mask = _mm_movemask_epi8(cmp) as u16;
-                
+
                 if mask != 0xFFFF {
                     // Find first differing byte
                     let diff_mask = !mask;
@@ -908,15 +977,16 @@ impl SimdMemOps {
                     let byte_b = *b.add(byte_offset);
                     return (byte_a as i32) - (byte_b as i32);
                 }
-                
+
                 a = a.add(16);
                 b = b.add(16);
             }
             len -= 16;
         }
-        
+
         // Handle remaining bytes
         if len > 0 {
+            // SAFETY: pointers valid, remaining len < 16
             unsafe { self.scalar_memcmp(a, b, len) }
         } else {
             0
@@ -926,30 +996,33 @@ impl SimdMemOps {
     #[target_feature(enable = "sse2")]
     unsafe fn sse2_memchr(&self, mut haystack: *const u8, needle: u8, mut len: usize) -> Option<usize> {
         use std::arch::x86_64::*;
-        
+
+        // SAFETY: sse2 guaranteed by #[target_feature]
         let needle_vec = unsafe { _mm_set1_epi8(needle as i8) };
         let mut offset = 0;
-        
+
         // Process 16-byte chunks
         while len >= 16 {
+            // SAFETY: sse2 guaranteed by #[target_feature], pointer valid from caller, len >= 16 checked, offset within bounds
             unsafe {
                 let data = _mm_loadu_si128(haystack as *const __m128i);
                 let cmp = _mm_cmpeq_epi8(data, needle_vec);
                 let mask = _mm_movemask_epi8(cmp) as u16;
-                
+
                 if mask != 0 {
                     let byte_offset = mask.trailing_zeros() as usize;
                     return Some(offset + byte_offset);
                 }
-                
+
                 haystack = haystack.add(16);
             }
             offset += 16;
             len -= 16;
         }
-        
+
         // Handle remaining bytes
         if len > 0 {
+            // SAFETY: pointer valid, remaining len < 16
             if let Some(remaining_offset) = unsafe { self.scalar_memchr(haystack, needle, len) } {
                 Some(offset + remaining_offset)
             } else {
@@ -963,20 +1036,23 @@ impl SimdMemOps {
     #[target_feature(enable = "sse2")]
     unsafe fn sse2_memset(&self, mut ptr: *mut u8, value: u8, mut len: usize) {
         use std::arch::x86_64::*;
-        
+
+        // SAFETY: sse2 guaranteed by #[target_feature]
         let value_vec = unsafe { _mm_set1_epi8(value as i8) };
-        
+
         // Process 16-byte chunks
         while len >= 16 {
+            // SAFETY: sse2 guaranteed by #[target_feature], pointer valid from caller, len >= 16 checked
             unsafe {
                 _mm_storeu_si128(ptr as *mut __m128i, value_vec);
                 ptr = ptr.add(16);
             }
             len -= 16;
         }
-        
+
         // Handle remaining bytes
         if len > 0 {
+            // SAFETY: pointer valid, remaining len < 16
             unsafe { self.scalar_memset(ptr, value, len); }
         }
     }
@@ -986,26 +1062,31 @@ impl SimdMemOps {
 impl SimdMemOps {
     #[inline]
     unsafe fn sse2_memcpy_aligned(&self, dst: *mut u8, src: *const u8, len: usize) {
+        // SAFETY: caller ensures pointers valid and len within bounds
         unsafe { self.scalar_memcpy(dst, src, len); }
     }
-    
+
     #[inline]
     unsafe fn sse2_memcpy_unaligned(&self, dst: *mut u8, src: *const u8, len: usize) {
+        // SAFETY: caller ensures pointers valid and len within bounds
         unsafe { self.scalar_memcpy(dst, src, len); }
     }
-    
+
     #[inline]
     unsafe fn sse2_memcmp(&self, a: *const u8, b: *const u8, len: usize) -> i32 {
+        // SAFETY: caller ensures pointers valid and len within bounds
         unsafe { self.scalar_memcmp(a, b, len) }
     }
-    
+
     #[inline]
     unsafe fn sse2_memchr(&self, haystack: *const u8, needle: u8, len: usize) -> Option<usize> {
+        // SAFETY: caller ensures pointer valid and len within bounds
         unsafe { self.scalar_memchr(haystack, needle, len) }
     }
-    
+
     #[inline]
     unsafe fn sse2_memset(&self, ptr: *mut u8, value: u8, len: usize) {
+        // SAFETY: caller ensures pointer valid and len within bounds
         unsafe { self.scalar_memset(ptr, value, len); }
     }
 }
@@ -1017,12 +1098,14 @@ impl SimdMemOps {
 impl SimdMemOps {
     #[inline]
     unsafe fn scalar_memcpy(&self, dst: *mut u8, src: *const u8, len: usize) {
+        // SAFETY: caller ensures pointers valid, non-overlapping, and len within bounds
         unsafe { ptr::copy_nonoverlapping(src, dst, len); }
     }
-    
+
     #[inline]
     unsafe fn scalar_memcmp(&self, a: *const u8, b: *const u8, len: usize) -> i32 {
         for i in 0..len {
+            // SAFETY: caller ensures pointers valid, i < len guarantees offset within bounds
             unsafe {
                 let byte_a = *a.add(i);
                 let byte_b = *b.add(i);
@@ -1033,10 +1116,11 @@ impl SimdMemOps {
         }
         0
     }
-    
+
     #[inline]
     unsafe fn scalar_memchr(&self, haystack: *const u8, needle: u8, len: usize) -> Option<usize> {
         for i in 0..len {
+            // SAFETY: caller ensures pointer valid, i < len guarantees offset within bounds
             unsafe {
                 if *haystack.add(i) == needle {
                     return Some(i);
@@ -1045,9 +1129,10 @@ impl SimdMemOps {
         }
         None
     }
-    
+
     #[inline]
     unsafe fn scalar_memset(&self, ptr: *mut u8, value: u8, len: usize) {
+        // SAFETY: caller ensures pointer valid and len within bounds
         unsafe { ptr::write_bytes(ptr, value, len); }
     }
 }
@@ -1261,7 +1346,8 @@ mod tests {
         // Create aligned buffers (64-byte aligned)
         let layout_src = std::alloc::Layout::from_size_align(128, 64).unwrap();
         let layout_dst = std::alloc::Layout::from_size_align(128, 64).unwrap();
-        
+
+        // SAFETY: Test code allocating with valid layouts, null checks before use, deallocated at end
         unsafe {
             let src_ptr = std::alloc::alloc(layout_src);
             let dst_ptr = std::alloc::alloc(layout_dst);
@@ -1462,6 +1548,7 @@ mod tests {
         
         // Large aligned copy
         let layout = std::alloc::Layout::from_size_align(4096, 64).unwrap();
+        // SAFETY: Test code allocating with valid layout, null checks before use, deallocated at end
         unsafe {
             let src_ptr = std::alloc::alloc(layout);
             let dst_ptr = std::alloc::alloc(layout);

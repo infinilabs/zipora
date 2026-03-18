@@ -649,6 +649,7 @@ impl std::fmt::Debug for TokenReleaseCallback {
 
 impl TokenReleaseCallback {
     fn release(&self, token_version: u64) {
+        // SAFETY: version_manager pointer is valid for the lifetime of this callback (tied to VersionedFsa's lifetime)
         unsafe {
             let manager = &*self.version_manager;
             match self.token_type {

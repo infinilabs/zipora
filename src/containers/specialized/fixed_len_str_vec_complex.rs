@@ -174,6 +174,7 @@ impl<const N: usize> FixedLenStrVec<N> {
         let needle_bytes = needle.as_bytes();
         needle_padded[..needle_bytes.len()].copy_from_slice(needle_bytes);
 
+        // SAFETY: SIMD methods verify feature availability, needle_padded slices are within bounds (N verified by match)
         unsafe {
             match N {
                 4 => self.find_exact_simd_32bit(&needle_padded[..4]),
@@ -198,6 +199,7 @@ impl<const N: usize> FixedLenStrVec<N> {
         }
 
         if prefix.len() <= 16 && N >= 16 {
+            // SAFETY: SIMD method verifies SSE2 feature availability, prefix.len() <= 16 checked above
             unsafe { self.count_prefix_simd_128bit(prefix) }
         } else {
             self.count_prefix_fallback(prefix)

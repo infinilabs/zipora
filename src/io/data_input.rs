@@ -288,6 +288,7 @@ impl MmapDataInput {
         let file = File::open(path)
             .map_err(|e| ZiporaError::io_error(format!("Failed to open file: {}", e)))?;
 
+        // SAFETY: File is valid and open for reading, mmap follows standard OS guarantees for read-only memory maps
         let mmap = unsafe {
             Mmap::map(&file)
                 .map_err(|e| ZiporaError::io_error(format!("Failed to memory map file: {}", e)))?

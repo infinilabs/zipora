@@ -161,11 +161,12 @@ impl<T> UltraFastCircularQueue<T> {
             }
         };
 
+        // SAFETY: layout is valid from Layout::from_size_align, alloc returns null or valid pointer
         let ptr = unsafe { alloc::alloc(layout) };
         if ptr.is_null() {
             alloc::handle_alloc_error(layout);
         }
-        
+
         ptr as *mut T
     }
 
@@ -217,6 +218,7 @@ impl<T> UltraFastCircularQueue<T> {
     pub fn push_back(&mut self, value: T) -> Result<()> {
         // Fast path: buffer has space (99% of operations)
         if likely(self.len < self.capacity) {
+            // SAFETY: len < capacity guarantees tail offset is within allocated buffer
             unsafe {
                 self.buffer.add(self.tail).write(value);
             }
@@ -239,8 +241,9 @@ impl<T> UltraFastCircularQueue<T> {
     fn push_back_slow_path(&mut self, value: T) -> Result<()> {
         // Grow the buffer using realloc optimization
         self.grow_buffer()?;
-        
+
         // Now there's definitely space - use fast path logic
+        // SAFETY: grow_buffer ensures capacity > len, tail offset is within allocated buffer
         unsafe {
             self.buffer.add(self.tail).write(value);
         }
@@ -278,6 +281,7 @@ impl<T> UltraFastCircularQueue<T> {
     pub fn pop_front(&mut self) -> Option<T> {
         // Fast path: queue has elements
         if likely(self.len > 0) {
+            // SAFETY: len > 0 guarantees head offset is within valid initialized range
             let value = unsafe { self.buffer.add(self.head).read() };
             self.head = (self.head + 1) & self.mask;
             self.len -= 1;
@@ -295,6 +299,7 @@ impl<T> UltraFastCircularQueue<T> {
     #[inline]
     pub fn front(&self) -> Option<&T> {
         if likely(self.len > 0) {
+            // SAFETY: len > 0 guarantees head offset is within valid initialized range
             Some(unsafe { &*self.buffer.add(self.head) })
         } else {
             None
@@ -310,6 +315,7 @@ impl<T> UltraFastCircularQueue<T> {
             } else {
                 self.tail - 1
             };
+            // SAFETY: len > 0 guarantees back_index is within valid initialized range
             Some(unsafe { &*self.buffer.add(back_index) })
         } else {
             None
@@ -347,6 +353,7 @@ impl<T> UltraFastCircularQueue<T> {
     #[inline]
     fn prefetch_next_write(&self) {
         #[cfg(target_arch = "x86_64")]
+        // SAFETY: len+1 < capacity guarantees next_pos offset is within allocated buffer
         unsafe {
             if self.len + 1 < self.capacity {
                 let next_pos = (self.tail + 1) & self.mask;
@@ -359,9 +366,10 @@ impl<T> UltraFastCircularQueue<T> {
     }
 
     /// Prefetches the next read location for better cache performance
-    #[inline] 
+    #[inline]
     fn prefetch_next_read(&self) {
         #[cfg(target_arch = "x86_64")]
+        // SAFETY: len > 1 guarantees next_pos offset is within valid initialized range
         unsafe {
             if self.len > 1 {
                 let next_pos = (self.head + 1) & self.mask;
@@ -379,13 +387,14 @@ impl<T> UltraFastCircularQueue<T> {
         let new_capacity = old_capacity * 2;
         
         // Try to use realloc for potential in-place expansion
+        // SAFETY: buffer from previous alloc, layouts match allocation, realloc returns null or valid pointer
         let new_buffer = unsafe {
             let old_size = old_capacity * mem::size_of::<T>();
             let new_size = new_capacity * mem::size_of::<T>();
-            
+
             let old_layout = Layout::from_size_align_unchecked(old_size, CACHE_LINE_SIZE);
             let new_layout = Layout::from_size_align_unchecked(new_size, CACHE_LINE_SIZE);
-            
+
             let new_ptr = alloc::realloc(self.buffer as *mut u8, old_layout, new_size);
             if new_ptr.is_null() {
                 return Err(ZiporaError::memory_error("Failed to grow circular buffer"));
@@ -423,6 +432,7 @@ impl<T> UltraFastCircularQueue<T> {
         }
 
         // Fallback to efficient scalar copy
+        // SAFETY: src/dst within allocated buffer, non-overlapping regions, valid for tail_portion_size elements
         unsafe {
             ptr::copy_nonoverlapping(
                 buffer,
@@ -430,7 +440,7 @@ impl<T> UltraFastCircularQueue<T> {
                 tail_portion_size
             );
         }
-        
+
         self.tail = old_capacity + self.tail;
     }
 
@@ -438,19 +448,20 @@ impl<T> UltraFastCircularQueue<T> {
     #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
     fn simd_copy_avx2(&self, buffer: *mut T, old_capacity: usize, tail_portion_size: usize) {
         use std::arch::x86_64::*;
-        
+
+        // SAFETY: src/dst within allocated buffer, non-overlapping regions, aligned/unaligned loads valid
         unsafe {
             let src = buffer as *const u8;
             let dst = (buffer as *mut u8).add(old_capacity * mem::size_of::<T>());
             let total_bytes = tail_portion_size * mem::size_of::<T>();
-            
+
             // Copy in 32-byte chunks using AVX2
             let chunks = total_bytes / 32;
             for i in 0..chunks {
                 let data = _mm256_loadu_si256(src.add(i * 32) as *const __m256i);
                 _mm256_storeu_si256(dst.add(i * 32) as *mut __m256i, data);
             }
-            
+
             // Handle remainder
             let remainder_start = chunks * 32;
             let remainder_size = total_bytes - remainder_start;
@@ -485,6 +496,7 @@ impl<T> Drop for UltraFastCircularQueue<T> {
                     .or_else(|_| Layout::from_size_align(size, mem::align_of::<T>()));
 
                 if let Ok(layout) = layout {
+                    // SAFETY: buffer from previous alloc, layout matches allocation
                     unsafe {
                         alloc::dealloc(self.buffer as *mut u8, layout);
                     }
@@ -503,6 +515,7 @@ impl<T: fmt::Debug> fmt::Debug for UltraFastCircularQueue<T> {
         // Iterate through elements in order
         let mut pos = self.head;
         for _ in 0..self.len {
+            // SAFETY: pos within valid initialized range for all iterations
             unsafe {
                 list.entry(&*self.buffer.add(pos));
             }
@@ -520,6 +533,7 @@ impl<T: Clone> Clone for UltraFastCircularQueue<T> {
         // Copy elements in order
         let mut pos = self.head;
         for _ in 0..self.len {
+            // SAFETY: pos within valid initialized range for all iterations
             let value = unsafe { (*self.buffer.add(pos)).clone() };
             // Clone should not fail since we allocated with same capacity
             if let Err(_) = new_queue.push_back(value) {
@@ -542,15 +556,16 @@ impl<T: PartialEq> PartialEq for UltraFastCircularQueue<T> {
         // Compare elements in order
         let mut self_pos = self.head;
         let mut other_pos = other.head;
-        
+
         for _ in 0..self.len {
+            // SAFETY: positions within valid initialized ranges for all iterations
             let self_val = unsafe { &*self.buffer.add(self_pos) };
             let other_val = unsafe { &*other.buffer.add(other_pos) };
-            
+
             if self_val != other_val {
                 return false;
             }
-            
+
             self_pos = (self_pos + 1) & self.mask;
             other_pos = (other_pos + 1) & other.mask;
         }

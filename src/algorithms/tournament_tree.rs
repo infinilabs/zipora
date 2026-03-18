@@ -423,6 +423,7 @@ where
             let prefetch_level = current_level + self.config.prefetch_distance;
             if prefetch_level < self.tree.len() {
                 let node_ptr = &self.tree[prefetch_level] as *const CacheAlignedNode;
+                // SAFETY: node_ptr is valid (within tree bounds), _mm_prefetch is safe to call with any pointer
                 unsafe {
                     _mm_prefetch(node_ptr as *const i8, _MM_HINT_T0);
                 }

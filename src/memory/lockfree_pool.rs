@@ -304,6 +304,7 @@ impl LockFreeMemoryPool {
         let layout = Layout::from_size_align(config.memory_size, ALIGN_SIZE)
             .map_err(|e| ZiporaError::invalid_data(&format!("Invalid layout: {}", e)))?;
 
+        // SAFETY: layout valid (size > 0, align power of 2)
         let memory = NonNull::new(unsafe { alloc(layout) })
             .ok_or_else(|| ZiporaError::out_of_memory(config.memory_size))?;
 
@@ -388,6 +389,7 @@ impl LockFreeMemoryPool {
 
         // Step 1: Zero memory using SIMD (safe because we own the pointer)
         if self.config.zero_on_free && self.config.enable_simd_optimization {
+            // SAFETY: pointer valid from allocation, size matches allocation
             let slice = unsafe { std::slice::from_raw_parts_mut(ptr.as_ptr(), size) };
             fast_fill(slice, 0);
         }
@@ -449,7 +451,7 @@ impl LockFreeMemoryPool {
                 return self.allocate_new_block(size);
             }
 
-            // Load next pointer from current head
+            // SAFETY: current_offset validated by offset_to_ptr, pointer aligned to u32
             let next_offset = unsafe {
                 let current_ptr = self.offset_to_ptr(current_offset)?;
                 *(current_ptr.as_ptr() as *const u32)
@@ -509,6 +511,7 @@ impl LockFreeMemoryPool {
 
             // Store current OFFSET (not packed value) as next pointer in the block
             // The next pointer only needs the offset, not the generation counter
+            // SAFETY: ptr validated by ptr_to_offset above, aligned to u32
             unsafe {
                 *(ptr.as_ptr() as *mut u32) = current_offset;
             }
@@ -587,6 +590,7 @@ impl LockFreeMemoryPool {
 
                 // Apply cache-friendly operations on the pool memory
                 #[cfg(target_arch = "x86_64")]
+                // SAFETY: pointer valid from allocation, prefetch doesn't require alignment
                 unsafe {
                     // Prefetch the allocated memory for cache optimization
                     std::arch::x86_64::_mm_prefetch(ptr.as_ptr() as *const i8, std::arch::x86_64::_MM_HINT_T0);
@@ -624,7 +628,8 @@ impl LockFreeMemoryPool {
         if offset == LIST_TAIL {
             return Err(ZiporaError::invalid_data("Invalid offset"));
         }
-        
+
+        // SAFETY: pointer valid from alloc, offset validated by caller
         let addr = unsafe { self.memory.as_ptr().add(offset as usize) };
         NonNull::new(addr).ok_or_else(|| ZiporaError::invalid_data("Invalid pointer"))
     }
@@ -745,6 +750,7 @@ impl LockFreeMemoryPool {
 
         let mut count = 0;
         for &bits in bitmap {
+            // SAFETY: _popcnt64 intrinsic requires BMI1/POPCNT support (checked at runtime)
             count += unsafe { _popcnt64(bits as i64) } as usize;
         }
         count
@@ -775,7 +781,7 @@ impl LockFreeMemoryPool {
 
 impl Drop for LockFreeMemoryPool {
     fn drop(&mut self) {
-        // Deallocate backing memory
+        // SAFETY: ptr from matching alloc, layout matches allocation
         unsafe {
             dealloc(self.memory.as_ptr(), self.memory_layout);
         }
@@ -810,12 +816,14 @@ impl LockFreeAllocation {
     /// Get mutable slice view of allocation
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        // SAFETY: pointer valid from allocation, size matches allocation
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.size) }
     }
 
     /// Get immutable slice view of allocation
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
+        // SAFETY: pointer valid from allocation, size matches allocation
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.size) }
     }
 }
@@ -1107,7 +1115,7 @@ mod tests {
 
         let ptr = pool.allocate(256).unwrap();
 
-        // Write pattern
+        // SAFETY: test code, pointer valid from allocation
         unsafe {
             std::ptr::write_bytes(ptr.as_ptr(), 0xFF, 256);
         }
@@ -1182,7 +1190,7 @@ mod tests {
         for size in sizes {
             let ptr = pool.allocate(size).unwrap();
 
-            // Write pattern
+            // SAFETY: test code, pointer valid from allocation
             unsafe {
                 std::ptr::write_bytes(ptr.as_ptr(), 0xAA, size);
             }
@@ -1263,6 +1271,7 @@ mod tests {
 
         // Allocate, write, free with zeroing
         let ptr1 = pool.allocate(128).unwrap();
+        // SAFETY: test code, pointer valid from allocation
         unsafe {
             std::ptr::write_bytes(ptr1.as_ptr(), 0xFF, 128);
         }

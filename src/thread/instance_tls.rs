@@ -100,6 +100,7 @@ where
                 .downcast_mut::<TlsMatrix<T, ROWS, COLS>>()
                 .expect("TLS matrix type mismatch");
 
+            // SAFETY: row and col are valid indices from get_indices (ID % matrix dimensions)
             unsafe { matrix.get_or_create_value(row, col) }
         })
     }
@@ -155,6 +156,7 @@ where
                 .downcast_mut::<TlsMatrix<T, ROWS, COLS>>()
                 .expect("TLS matrix type mismatch");
 
+            // SAFETY: row and col are valid indices from get_indices (ID % matrix dimensions)
             unsafe { matrix.set(row, col, value) }
         });
     }
@@ -309,6 +311,7 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
 
         let row_data = self.rows[row].as_ref().expect("row is initialized");
         let cell = &row_data[col];
+        // SAFETY: UnsafeCell interior mutability, exclusive access within thread-local context
         let value_ref = unsafe { &mut *cell.get() };
 
         if value_ref.is_none() {
@@ -325,6 +328,7 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
     {
         let row_data = self.rows[row].as_ref()?;
         let cell = &row_data[col];
+        // SAFETY: UnsafeCell provides interior mutability, accessing immutably
         unsafe {
             let value_ref = &*cell.get();
             value_ref.as_ref().cloned()
@@ -344,6 +348,7 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
 
         let row_data = self.rows[row].as_ref().expect("row is initialized");
         let cell = &row_data[col];
+        // SAFETY: UnsafeCell interior mutability, exclusive access within thread-local context
         unsafe { *cell.get() = Some(value) };
     }
 
@@ -351,6 +356,7 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
     fn remove(&mut self, row: usize, col: usize) -> Option<T> {
         let row_data = self.rows[row].as_ref()?;
         let cell = &row_data[col];
+        // SAFETY: UnsafeCell interior mutability, exclusive mutable access via &mut self
         unsafe {
             let value_ref = &mut *cell.get();
             value_ref.take()

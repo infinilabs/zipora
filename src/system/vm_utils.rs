@@ -63,13 +63,16 @@ impl KernelInfo {
     fn get_page_size() -> usize {
         #[cfg(unix)]
         {
+            // SAFETY: sysconf with _SC_PAGESIZE is always safe to call, returns valid page size or -1 on error
             unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
         }
         #[cfg(windows)]
         {
             use std::mem;
             use winapi::um::sysinfoapi::{GetSystemInfo, SYSTEM_INFO};
-            
+
+            // SAFETY: SYSTEM_INFO is a C-compatible struct that is safe to zero-initialize,
+            // GetSystemInfo fills it correctly per Windows API contract
             unsafe {
                 let mut system_info: SYSTEM_INFO = mem::zeroed();
                 GetSystemInfo(&mut system_info);
@@ -226,7 +229,8 @@ impl VmManager {
     #[cfg(target_os = "linux")]
     fn madv_populate_read(&self, addr: *const u8, len: usize) -> Result<()> {
         const MADV_POPULATE_READ: libc::c_int = 22;
-        
+
+        // SAFETY: pointer and length derived from valid slice (page-aligned), madvise returns error code (not UB)
         let result = unsafe {
             libc::madvise(addr as *mut libc::c_void, len, MADV_POPULATE_READ)
         };
@@ -242,6 +246,7 @@ impl VmManager {
     /// Use MADV_WILLNEED for prefetching
     #[cfg(unix)]
     fn madv_willneed(&self, addr: *const u8, len: usize) -> Result<()> {
+        // SAFETY: pointer and length derived from valid slice (page-aligned), madvise returns error code (not UB)
         let result = unsafe {
             libc::madvise(addr as *mut libc::c_void, len, libc::MADV_WILLNEED)
         };
@@ -265,7 +270,8 @@ impl VmManager {
             VirtualAddress: addr as *mut std::ffi::c_void,
             NumberOfBytes: len,
         };
-        
+
+        // SAFETY: pointer and length derived from valid slice, GetCurrentProcess() always valid, range is properly initialized
         let result = unsafe {
             PrefetchVirtualMemory(GetCurrentProcess(), 1, &range, 0)
         };
@@ -284,6 +290,7 @@ impl VmManager {
         let end = current + len;
         
         while current < end {
+            // SAFETY: pointer is within valid range derived from slice, read is aligned to page boundary
             unsafe {
                 // Touch the page to bring it into memory
                 let _touch = *(current as *const u8);
@@ -320,6 +327,7 @@ impl VmManager {
                 MemoryAdvice::HugePage => return Err(ZiporaError::invalid_data("MADV_HUGEPAGE only available on Linux")),
             };
 
+            // SAFETY: pointer and length derived from valid slice, madvise returns error code (not UB)
             let result = unsafe {
                 libc::madvise(addr as *mut libc::c_void, len, madvise_flag)
             };
@@ -357,6 +365,7 @@ impl VmManager {
 
         #[cfg(unix)]
         {
+            // SAFETY: pointer and length derived from valid slice, mlock returns error code (not UB)
             let result = unsafe {
                 libc::mlock(addr as *const libc::c_void, len)
             };
@@ -372,7 +381,8 @@ impl VmManager {
         #[cfg(target_os = "windows")]
         {
             use winapi::um::memoryapi::VirtualLock;
-            
+
+            // SAFETY: pointer and length derived from valid slice, VirtualLock returns non-zero on success
             let result = unsafe {
                 VirtualLock(addr as *mut std::ffi::c_void, len)
             };
@@ -405,6 +415,7 @@ impl VmManager {
 
         #[cfg(unix)]
         {
+            // SAFETY: pointer and length derived from valid slice, munlock returns error code (not UB)
             let result = unsafe {
                 libc::munlock(addr as *const libc::c_void, len)
             };
@@ -420,7 +431,8 @@ impl VmManager {
         #[cfg(target_os = "windows")]
         {
             use winapi::um::memoryapi::VirtualUnlock;
-            
+
+            // SAFETY: pointer and length derived from valid slice, VirtualUnlock returns non-zero on success
             let result = unsafe {
                 VirtualUnlock(addr as *mut std::ffi::c_void, len)
             };
@@ -493,6 +505,7 @@ impl PageAlignedAlloc {
 
         #[cfg(unix)]
         {
+            // SAFETY: page_size is power-of-two alignment, aligned_size is multiple of page_size, returns null on failure
             let ptr = unsafe {
                 libc::aligned_alloc(page_size, aligned_size)
             };
@@ -512,7 +525,8 @@ impl PageAlignedAlloc {
         {
             use winapi::um::memoryapi::VirtualAlloc;
             use winapi::um::winnt::{MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE};
-            
+
+            // SAFETY: VirtualAlloc with null base address allocates new memory, size and flags are valid, returns null on failure
             let ptr = unsafe {
                 VirtualAlloc(
                     std::ptr::null_mut(),
@@ -538,7 +552,8 @@ impl PageAlignedAlloc {
             // Fallback using standard allocation with manual alignment
             let layout = std::alloc::Layout::from_size_align(aligned_size + page_size, page_size)
                 .map_err(|_| ZiporaError::invalid_data("Invalid layout"))?;
-            
+
+            // SAFETY: layout is valid (checked above), alloc returns null on failure
             let ptr = unsafe { std::alloc::alloc(layout) };
             if ptr.is_null() {
                 Err(ZiporaError::invalid_data("Failed to allocate memory"))
@@ -593,12 +608,14 @@ impl PageAlignedBuffer {
     /// Get a slice view of the buffer
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
+        // SAFETY: ptr is valid allocation with size >= actual_size, lifetime tied to self
         unsafe { std::slice::from_raw_parts(self.ptr, self.actual_size) }
     }
 
     /// Get a mutable slice view of the buffer
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        // SAFETY: ptr is valid allocation with size >= actual_size, lifetime tied to self, exclusive access via &mut
         unsafe { std::slice::from_raw_parts_mut(self.ptr, self.actual_size) }
     }
 }
@@ -608,12 +625,14 @@ impl Drop for PageAlignedBuffer {
         if !self.ptr.is_null() {
             #[cfg(unix)]
             {
+                // SAFETY: ptr was allocated by aligned_alloc, free is the matching deallocation function
                 unsafe { libc::free(self.ptr as *mut libc::c_void) };
             }
             #[cfg(target_os = "windows")]
             {
                 use winapi::um::memoryapi::VirtualFree;
                 use winapi::um::winnt::MEM_RELEASE;
+                // SAFETY: ptr was allocated by VirtualAlloc, VirtualFree with MEM_RELEASE deallocates it
                 unsafe {
                     VirtualFree(self.ptr as *mut std::ffi::c_void, 0, MEM_RELEASE);
                 }

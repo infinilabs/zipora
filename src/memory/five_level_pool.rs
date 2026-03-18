@@ -227,7 +227,8 @@ impl MemoryChunk {
     fn new(capacity: usize, alignment: usize) -> Result<Self> {
         let layout = Layout::from_size_align(capacity, alignment)
             .map_err(|_| ZiporaError::invalid_data("Invalid memory layout"))?;
-        
+
+        // SAFETY: layout is valid from Layout::from_size_align
         let data = unsafe { alloc(layout) };
         if data.is_null() {
             return Err(ZiporaError::resource_exhausted("Failed to allocate memory"));
@@ -245,6 +246,7 @@ impl MemoryChunk {
     
     unsafe fn offset_ptr(&self, offset: usize) -> *mut u8 {
         debug_assert!(offset <= self.capacity);
+        // SAFETY: caller ensures offset <= capacity per function contract
         unsafe { self.data.as_ptr().add(offset) }
     }
     
@@ -255,6 +257,7 @@ impl MemoryChunk {
 
 impl Drop for MemoryChunk {
     fn drop(&mut self) {
+        // SAFETY: data allocated with same layout (capacity, align_of::<u8>())
         unsafe {
             let layout = Layout::from_size_align_unchecked(self.capacity, align_of::<u8>());
             dealloc(self.data.as_ptr(), layout);
@@ -340,6 +343,7 @@ impl NoLockingPool {
             if !head.head.is_null() {
                 // Pop from free list
                 let offset = head.head;
+                // SAFETY: offset from free list points to valid u32 storing next offset
                 unsafe {
                     let ptr = self.memory.offset_ptr(offset.to_usize()) as *mut u32;
                     head.head = MemOffset(*ptr);
@@ -378,8 +382,9 @@ impl NoLockingPool {
         
         if bin_index < self.free_lists.len() {
             let head = &mut self.free_lists[bin_index];
-            
+
             // Push to free list
+            // SAFETY: offset points to freed block of size >= 4, can store u32
             unsafe {
                 let ptr = self.memory.offset_ptr(offset.to_usize()) as *mut u32;
                 *ptr = head.head.0;
@@ -517,6 +522,7 @@ impl MutexBasedPool {
                 .map_err(|e| ZiporaError::resource_busy(format!("Free list mutex poisoned: {}", e)))?;
             if !head.head.is_null() {
                 let offset = head.head;
+                // SAFETY: offset from free list points to valid u32 storing next offset
                 unsafe {
                     let memory = self.memory.lock()
                         .map_err(|e| ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e)))?;
@@ -561,6 +567,7 @@ impl MutexBasedPool {
             let mut head = self.free_lists[bin_index].lock()
                 .map_err(|e| ZiporaError::resource_busy(format!("Free list mutex poisoned: {}", e)))?;
 
+            // SAFETY: offset points to freed block of size >= 4, can store u32
             unsafe {
                 let memory = self.memory.lock()
                     .map_err(|e| ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e)))?;
@@ -677,6 +684,7 @@ impl LockFreePool {
                 }
                 
                 // Get next pointer from the free block
+                // SAFETY: current_head from free list points to valid u32 storing next offset
                 let next_head = unsafe {
                     let memory = self.memory.lock()
                         .map_err(|e| ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e)))?;
@@ -727,6 +735,7 @@ impl LockFreePool {
                 let current_head = head.head.load(Ordering::Acquire);
 
                 // Write next pointer into freed block
+                // SAFETY: offset points to freed block of size >= 4, can store u32
                 unsafe {
                     let memory = self.memory.lock()
                         .map_err(|e| ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e)))?;

@@ -187,6 +187,7 @@ where
     #[inline(always)]
     fn offset_bmi2<O: OffsetOps<T>>(&self) -> T {
         #[cfg(target_arch = "x86_64")]
+        // SAFETY: BMI2 support checked via target_feature attribute on caller
         unsafe {
             if mem::size_of::<T>() == 4 {
                 let extracted = std::arch::x86_64::_bextr_u64(self.packed_data, 0, 32);
@@ -207,6 +208,7 @@ where
     #[inline(always)]
     fn length_bmi2(&self) -> usize {
         #[cfg(target_arch = "x86_64")]
+        // SAFETY: BMI2 support checked via target_feature attribute on caller
         unsafe {
             if mem::size_of::<T>() == 4 {
                 std::arch::x86_64::_bextr_u64(self.packed_data, 32, 32) as usize
@@ -568,6 +570,7 @@ where
         for i in 0..self.len() {
             if let Some(candidate_bytes) = self.get_bytes(i) {
                 if candidate_bytes.len() == needle_len {
+                    // SAFETY: AVX2 support checked in is_x86_feature_detected guard above
                     if unsafe { self.simd_compare_bytes(candidate_bytes, needle_bytes) } {
                         return Some(i);
                     }
@@ -593,13 +596,14 @@ where
         // Process 32 bytes at a time with AVX2
         for i in 0..chunks {
             let offset = i * 32;
+            // SAFETY: offset is within bounds by chunks calculation, AVX2 support checked via is_x86_feature_detected
             unsafe {
                 let a_vec = _mm256_loadu_si256(a.as_ptr().add(offset) as *const _);
                 let b_vec = _mm256_loadu_si256(b.as_ptr().add(offset) as *const _);
-                
+
                 let cmp = _mm256_cmpeq_epi8(a_vec, b_vec);
                 let mask = _mm256_movemask_epi8(cmp);
-                
+
                 if mask != -1 {
                     return false;
                 }

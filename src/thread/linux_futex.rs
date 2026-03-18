@@ -31,6 +31,7 @@ mod sys {
         uaddr2: *const u32,
         val3: u32,
     ) -> c_int {
+        // SAFETY: Caller ensures uaddr points to valid atomic u32, syscall is safe
         unsafe {
             syscall(
                 SYS_futex,
@@ -55,6 +56,7 @@ mod sys {
             None => ptr::null(),
         };
 
+        // SAFETY: uaddr is valid atomic u32 pointer, timeout_ptr is either null or valid timespec
         unsafe {
             futex(uaddr, FUTEX_WAIT_PRIVATE, val, timeout_ptr, std::ptr::null(), 0)
         }
@@ -63,6 +65,7 @@ mod sys {
     /// Wake waiters on futex
     #[inline]
     pub unsafe fn futex_wake(uaddr: *const u32, count: u32) -> c_int {
+        // SAFETY: uaddr is valid atomic u32 pointer
         unsafe {
             futex(uaddr, FUTEX_WAKE_PRIVATE, count, std::ptr::null(), std::ptr::null(), 0)
         }
@@ -74,6 +77,7 @@ pub struct LinuxFutex;
 
 impl PlatformSync for LinuxFutex {
     fn futex_wait(addr: &AtomicU32, val: u32, timeout: Option<Duration>) -> Result<()> {
+        // SAFETY: addr is valid AtomicU32, as_ptr() returns valid pointer
         unsafe {
             let result = sys::futex_wait(addr.as_ptr(), val, timeout);
             if result == -1 {
@@ -91,6 +95,7 @@ impl PlatformSync for LinuxFutex {
     }
 
     fn futex_wake(addr: &AtomicU32, count: u32) -> Result<usize> {
+        // SAFETY: addr is valid AtomicU32, as_ptr() returns valid pointer
         unsafe {
             let result = sys::futex_wake(addr.as_ptr(), count);
             if result == -1 {

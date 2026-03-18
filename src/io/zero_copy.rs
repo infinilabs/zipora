@@ -687,6 +687,7 @@ pub mod mmap {
     impl MmapZeroCopyReader {
         /// Create a new memory-mapped zero-copy reader
         pub fn new(file: File) -> Result<Self> {
+            // SAFETY: File is valid and open for reading, mmap follows standard OS guarantees for read-only memory maps
             let mmap = unsafe {
                 Mmap::map(&file)
                     .map_err(|e| ZiporaError::io_error(format!("Failed to memory map file: {}", e)))?

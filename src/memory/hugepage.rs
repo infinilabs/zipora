@@ -109,6 +109,7 @@ impl HugePage {
     pub fn as_slice(&self) -> &[u8] {
         #[cfg(target_os = "linux")]
         {
+            // SAFETY: ptr is valid from mmap, size is the allocated size
             unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.size) }
         }
 
@@ -123,6 +124,7 @@ impl HugePage {
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         #[cfg(target_os = "linux")]
         {
+            // SAFETY: ptr is valid from mmap, size is the allocated size, we have exclusive access
             unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.size) }
         }
 
@@ -173,6 +175,7 @@ impl HugePage {
         let aligned_size = (size + page_size - 1) & !(page_size - 1);
 
         // Try to allocate using mmap with MAP_HUGETLB
+        // SAFETY: mmap with valid parameters, null addr lets kernel choose location
         let ptr = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
@@ -188,6 +191,7 @@ impl HugePage {
             return Err(ZiporaError::out_of_memory(aligned_size));
         }
 
+        // SAFETY: mmap returned non-MAP_FAILED, so pointer is valid
         let ptr = unsafe { NonNull::new_unchecked(ptr as *mut u8) };
 
         // Track the allocation
@@ -216,6 +220,7 @@ impl Drop for HugePage {
         // Unmap the memory
         let aligned_size = (self.size + self.page_size - 1) & !(self.page_size - 1);
 
+        // SAFETY: ptr was allocated via mmap with this size in allocate_linux
         unsafe {
             libc::munmap(self.ptr.as_ptr() as *mut libc::c_void, aligned_size);
         }

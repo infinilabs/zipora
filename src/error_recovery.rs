@@ -267,6 +267,7 @@ mod tests {
     fn test_verify_alignment() {
         let aligned_ptr = Box::into_raw(Box::new(42u64)) as *const u8;
         verify_alignment(aligned_ptr, 8); // Should not panic for u64 alignment
+        // SAFETY: aligned_ptr is from Box::into_raw above (line 268), reconstructing same Box for cleanup
         unsafe { Box::from_raw(aligned_ptr as *mut u64) }; // Cleanup
     }
 

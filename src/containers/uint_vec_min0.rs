@@ -223,8 +223,8 @@ impl UintVecMin0 {
             return Err(ZiporaError::out_of_bounds(idx, data.len()));
         }
 
-        // SAFETY: Bounds checked above
-        // Uses unaligned load since values may span cache lines
+        // SAFETY: Bounds check above ensures data[byte_idx..byte_idx+8] is valid
+        // Unaligned load is safe as values may span cache lines
         let val = unsafe {
             std::ptr::read_unaligned(data.as_ptr().add(byte_idx) as *const usize)
         };
@@ -237,7 +237,8 @@ impl UintVecMin0 {
         let bit_idx = self.bits * idx;
         let byte_idx = bit_idx / 8;
 
-        // SAFETY: Bounds checked by caller, data size validated in resize
+        // SAFETY: Caller validated idx < size and bits <= 58, resize ensures sufficient data capacity
+        // Unaligned load is safe as bit-packed values may span alignment boundaries
         let val = unsafe {
             std::ptr::read_unaligned(self.data.as_ptr().add(byte_idx) as *const usize)
         };
@@ -288,7 +289,8 @@ impl UintVecMin0 {
             let shifted_val = val << bit_offset;
             let shifted_mask = mask << bit_offset;
 
-            // SAFETY: Bounds validated in resize, using unaligned access
+            // SAFETY: resize ensures data[byte_idx..byte_idx+8] is allocated and valid
+            // Unaligned read/write is safe for bit-packed data spanning alignment boundaries
             unsafe {
                 let ptr = self.data.as_mut_ptr().add(byte_idx) as *mut usize;
                 let current = std::ptr::read_unaligned(ptr);
@@ -493,7 +495,8 @@ impl UintVecMin0 {
         assert!(bits <= 58, "bits={} is too large (max_allowed=58)", bits);
 
         let mem_size = Self::compute_mem_size(bits, num);
-        // SAFETY: Caller ensures data points to valid memory
+        // SAFETY: Caller must ensure data points to valid mem_size bytes with matching layout
+        // Ownership of memory is transferred to this Vec
         unsafe {
             self.data = Vec::from_raw_parts(data, mem_size, mem_size);
         }
