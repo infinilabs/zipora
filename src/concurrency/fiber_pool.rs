@@ -27,7 +27,7 @@ pub struct FiberPoolConfig {
 
 impl Default for FiberPoolConfig {
     fn default() -> Self {
-        let cpu_count = num_cpus::get();
+        let cpu_count = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
         Self {
             max_fibers: cpu_count * 4,
             initial_workers: cpu_count,

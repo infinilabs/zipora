@@ -38,7 +38,7 @@ impl ConcurrentLruMapConfig {
     pub fn performance_optimized() -> Self {
         Self {
             base_config: LruMapConfig::performance_optimized(),
-            shard_count: num_cpus::get() * 2, // 2 shards per CPU core
+            shard_count: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) * 2, // 2 shards per CPU core
             load_balancing: LoadBalancingStrategy::Hash,
         }
     }
