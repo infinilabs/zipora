@@ -19,7 +19,7 @@ impl ParallelTrieBuilder {
     pub fn new() -> Self {
         Self {
             chunk_size: 10000,
-            max_workers: num_cpus::get(),
+            max_workers: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
         }
     }
 
@@ -140,7 +140,7 @@ pub struct ParallelLoudsTrie {
 impl ParallelLoudsTrie {
     /// Create a new empty parallel trie
     pub fn new() -> Self {
-        let replica_count = num_cpus::get();
+        let replica_count = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
         let empty_trie = ZiporaTrie::new();
         let mut read_replicas = Vec::with_capacity(replica_count);
 
@@ -158,7 +158,7 @@ impl ParallelLoudsTrie {
 
     /// Create from an existing trie
     pub fn from_trie(trie: ZiporaTrie) -> Self {
-        let replica_count = num_cpus::get();
+        let replica_count = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
         let mut read_replicas = Vec::with_capacity(replica_count);
 
         // Create read replicas by cloning the main trie

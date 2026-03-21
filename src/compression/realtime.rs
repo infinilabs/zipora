@@ -78,7 +78,7 @@ impl Default for RealtimeConfig {
     fn default() -> Self {
         Self {
             mode: CompressionMode::LowLatency,
-            max_concurrent: num_cpus::get(),
+            max_concurrent: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
             enable_deadlines: true,
             fallback_on_timeout: true,
             batch_size: 10,

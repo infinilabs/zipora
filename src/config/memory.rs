@@ -494,7 +494,7 @@ impl MemoryConfig {
             AllocationStrategy::System => 1,
             AllocationStrategy::SecurePool => std::cmp::min(self.num_pools, 8),
             AllocationStrategy::LockFree => self.num_pools,
-            AllocationStrategy::ThreadLocal => num_cpus::get(),
+            AllocationStrategy::ThreadLocal => std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
             AllocationStrategy::FixedCapacity => 1,
             AllocationStrategy::MemoryMapped => 1,
         }

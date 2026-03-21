@@ -78,7 +78,7 @@ pub struct ConcurrencyConfig {
 impl Default for ConcurrencyConfig {
     fn default() -> Self {
         Self {
-            max_fibers: num_cpus::get() * 2,
+            max_fibers: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) * 2,
             queue_size: 1024,
         }
     }
