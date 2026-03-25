@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
-use dashmap::DashMap;
 use crate::system::cpu_features::{CpuFeatures, get_cpu_features};
 use super::{Operation, BenchmarkResults, PerformanceHistory};
 
@@ -189,7 +188,7 @@ pub struct AdaptiveSimdSelector {
     config: AdaptiveSelectorConfig,
 
     /// Cached selection decisions (lock-free concurrent access)
-    selection_cache: Arc<DashMap<SelectionKey, SimdImpl>>,
+    selection_cache: Arc<RwLock<HashMap<SelectionKey, SimdImpl>>>,
 }
 
 impl AdaptiveSimdSelector {
@@ -205,7 +204,7 @@ impl AdaptiveSimdSelector {
             performance_history: Arc::new(RwLock::new(HashMap::new())),
             thresholds: SelectionThresholds::default(),
             config: AdaptiveSelectorConfig::default(),
-            selection_cache: Arc::new(DashMap::new()),
+            selection_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -239,27 +238,25 @@ impl AdaptiveSimdSelector {
         data_size: usize,
         data_density: Option<f64>,
     ) -> SimdImpl {
-        // Check cache first (lock-free read)
+        // Check cache first
         let key = SelectionKey::new(operation, data_size, data_density);
 
-        if let Some(impl_type) = self.selection_cache.get(&key) {
-            return *impl_type;
+        if let Some(&impl_type) = self.selection_cache.read().expect("selection_cache lock").get(&key) {
+            return impl_type;
         }
 
         // Perform selection
         let selected = self.select_impl_internal(operation, data_size, data_density);
 
-        // Cache the result (lock-free insert with capacity check)
-        if self.selection_cache.len() >= self.config.max_cache_entries {
-            // Simple LRU eviction: remove first entry (DashMap iteration is lock-free)
-            if let Some(entry) = self.selection_cache.iter().next() {
-                let first_key = *entry.key();
-                drop(entry); // Release the reference before removal
-                self.selection_cache.remove(&first_key);
+        // Cache the result
+        let mut cache = self.selection_cache.write().expect("selection_cache lock");
+        if cache.len() >= self.config.max_cache_entries {
+            // Simple eviction: remove an arbitrary entry
+            if let Some(&first_key) = cache.keys().next() {
+                cache.remove(&first_key);
             }
         }
-
-        self.selection_cache.insert(key, selected);
+        cache.insert(key, selected);
         selected
     }
 
@@ -364,9 +361,10 @@ impl AdaptiveSimdSelector {
         }
     }
 
-    /// Clear cache entries for a specific operation (lock-free)
+    /// Clear cache entries for a specific operation
     fn clear_operation_cache(&self, operation: Operation) {
-        self.selection_cache.retain(|k, _| k.operation != operation);
+        self.selection_cache.write().expect("selection_cache lock")
+            .retain(|k, _| k.operation != operation);
     }
 
     /// Run initial benchmarks for common operations
@@ -567,8 +565,8 @@ impl AdaptiveSimdSelector {
     /// Update thresholds (for testing/tuning)
     pub fn set_thresholds(&mut self, thresholds: SelectionThresholds) {
         self.thresholds = thresholds;
-        // Clear cache when thresholds change (lock-free)
-        self.selection_cache.clear();
+        // Clear cache when thresholds change
+        self.selection_cache.write().expect("selection_cache lock").clear();
     }
 }
 

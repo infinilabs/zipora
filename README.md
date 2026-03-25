@@ -25,8 +25,8 @@ High-performance Rust data structures and compression algorithms with memory saf
 [dependencies]
 zipora = "2.1.4"
 
-# With optional features
-zipora = { version = "2.1.4", features = ["lz4", "async"] }
+# With C FFI bindings
+zipora = { version = "2.1.4", features = ["ffi"] }
 
 # AVX-512 (nightly only)
 zipora = { version = "2.1.4", features = ["avx512"] }
@@ -94,7 +94,7 @@ assert_eq!(joined, "hello, world");
 - **[String Processing](docs/STRING_PROCESSING.md)** - SIMD string operations, pattern matching
 
 ### System Architecture
-- **[Concurrency](docs/CONCURRENCY.md)** - Pipeline processing, work-stealing, parallel trie building (requires `async` feature)
+- **[Concurrency](docs/CONCURRENCY.md)** - Pipeline processing, work-stealing, parallel trie building
 - **[Error Handling](docs/ERROR_HANDLING.md)** - Error classification, automatic recovery strategies
 - **[Configuration](docs/CONFIGURATION.md)** - Rich configuration APIs, presets, validation
 - **[SIMD Framework](docs/SIMD.md)** - 6-tier SIMD with AVX2/BMI2/POPCNT support
@@ -115,9 +115,9 @@ assert_eq!(joined, "hello, world");
 | `mmap` | Yes | Memory-mapped file support |
 | `zstd` | Yes | ZSTD compression |
 | `serde` | Yes | Serialization support (serde, serde_json, bincode) |
-| `lz4` | No | LZ4 compression |
+| `lz4` | Yes | LZ4 compression |
+| `async` | Yes | Async runtime (tokio) for concurrency, pipeline, real-time compression |
 | `ffi` | No | C FFI bindings |
-| `async` | No | Async runtime (tokio) for concurrency, pipeline, real-time compression |
 | `avx512` | No | AVX-512 (nightly only) |
 | `nightly` | No | Nightly-only optimizations |
 
@@ -127,8 +127,8 @@ assert_eq!(joined, "hello, world");
 # Build (default features)
 cargo build --release
 
-# Build with all stable features
-cargo build --release --features simd,mmap,zstd,lz4,serde,ffi,async
+# Build with all features including FFI
+cargo build --release --all-features
 
 # Test
 cargo test --lib
@@ -159,7 +159,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 Minimal dependency footprint by design:
 - **Core**: `bytemuck`, `thiserror`, `log`, `ahash`, `rayon`, `libc`, `once_cell`, `raw-cpuid`
-- **Optional**: `memmap2` (mmap), `zstd`, `lz4_flex`, `serde`/`serde_json`/`bincode`, `tokio` (async), `cbindgen` (ffi)
+- **Default**: `memmap2` (mmap), `zstd`, `lz4_flex`, `serde`/`serde_json`/`bincode`, `tokio` (async)
+- **Optional**: `cbindgen` (ffi)
 - **Removed**: `crossbeam-utils`, `parking_lot`, `uuid`, `num_cpus`, `async-trait`, `futures` (all replaced with std or eliminated)
 
 ## License

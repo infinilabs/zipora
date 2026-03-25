@@ -15,7 +15,7 @@ name = "zipora"
 crate-type = ["rlib", "cdylib"]
 
 [features]
-default = ["simd", "mmap", "zstd", "serde"]
+default = ["simd", "mmap", "zstd", "serde", "lz4", "async"]
 simd = []
 # AVX-512 support requires nightly Rust due to experimental intrinsics
 # Currently disabled by default for stable Rust compatibility
@@ -39,7 +39,6 @@ log = "0.4"
 # Performance
 ahash = "0.8.12"
 rayon = "1.11"
-dashmap = "6.1"
 thread_local = "1.1"
 fastrand = "2.1"
 

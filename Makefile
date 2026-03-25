@@ -2,8 +2,9 @@
 # Comprehensive build and test automation for debug/release modes with feature management
 #
 # Features:
-# - Stable features: simd, mmap, zstd, lz4, serde, ffi  
-# - Nightly features: avx512
+# - Default: simd, mmap, zstd, serde, lz4, async
+# - Optional: ffi
+# - Nightly: avx512
 #
 # Usage:
 #   make         # Build and test everything (stable features only)
@@ -14,7 +15,7 @@
 #   make test_nightly   # Test with all features including nightly
 
 .PHONY: all build test build_nightly test_nightly clean help
-.PHONY: sanity sanity_default sanity_all_stable sanity_nightly_minimal sanity_nightly_all
+.PHONY: sanity sanity_stable sanity_nightly
 .PHONY: build_debug build_release build_nightly_debug build_nightly_release
 .PHONY: test_debug test_release test_nightly_debug test_nightly_release  
 .PHONY: bench bench_fsa bench_serialization bench_io bench_all bench_all_nightly
@@ -26,16 +27,11 @@
 # =============================================================================
 
 # Feature sets
-# No optional features — only default (simd, mmap, zstd, serde)
-DEFAULT_FEATURES :=
-# All stable optional features enabled
-ALL_STABLE_FEATURES := --features simd,mmap,zstd,lz4,serde,ffi,async
-# Nightly features without optional
+# Default features (simd, mmap, zstd, serde, lz4, async — all enabled by default)
+STABLE_FEATURES :=
+# Nightly: default + avx512
 NIGHTLY_FEATURES := --features avx512
-# Nightly features with all optional
-NIGHTLY_ALL_FEATURES := --features simd,mmap,zstd,lz4,serde,ffi,async,avx512
-# Legacy aliases
-STABLE_FEATURES := $(ALL_STABLE_FEATURES)
+# All features including ffi
 ALL_FEATURES := --all-features
 
 # Cargo commands
@@ -126,12 +122,12 @@ test_release:
 	@echo "🧪 Running release tests with stable features (including benchmarks)..."
 	$(CARGO) test --release $(STABLE_FEATURES) --lib --bins --tests
 	@echo "🧪 Running SIMD Base64 comprehensive tests..."
-	$(CARGO) test --release $(STABLE_FEATURES) --test simd_base64_tests -- --nocapture || echo "❌ SIMD Base64 tests failed - may require additional setup"
+	$(CARGO) test --release $(STABLE_FEATURES) --test simd_base64_tests -- --nocapture
 	@echo "🧪 Running I/O & Serialization performance tests..."
-	$(CARGO) test --release $(STABLE_FEATURES) test_stream_performance_comparison -- --nocapture || echo "❌ I/O performance tests failed - may require additional setup"
-	$(CARGO) test --release $(STABLE_FEATURES) test_combined_stream_operations -- --nocapture || echo "❌ I/O integration tests failed - may require additional setup"
+	$(CARGO) test --release $(STABLE_FEATURES) test_stream_performance_comparison -- --nocapture
+	$(CARGO) test --release $(STABLE_FEATURES) test_combined_stream_operations -- --nocapture
 	@echo "🧪 Running stable benchmarks (excluding avx512_bench and cpp_comparison)..."
-	$(CARGO) test --release $(STABLE_FEATURES) --bench benchmark --bench benchmark_rank_select --bench simd_rank_select_bench --bench dictionary_optimization_bench --bench cache_bench --bench secure_memory_pool_bench --bench specialized_containers_bench --bench rank_select_bench --bench sortable_str_vec_bench --bench fsa_infrastructure_bench --bench memory_performance --bench memory_pools_bench --bench adaptive_mmap_bench --bench simple_benchmark --bench sortable_str_vec_optimized --bench valvec32_performance_bench --bench entropy_bench --bench dict_zip_bench || echo "❌ Some benchmarks failed - may require additional setup"
+	$(CARGO) test --release $(STABLE_FEATURES) --bench benchmark --bench benchmark_rank_select --bench simd_rank_select_bench --bench dictionary_optimization_bench --bench cache_bench --bench secure_memory_pool_bench --bench specialized_containers_bench --bench rank_select_bench --bench sortable_str_vec_bench --bench fsa_infrastructure_bench --bench memory_performance --bench memory_pools_bench --bench adaptive_mmap_bench --bench simple_benchmark --bench sortable_str_vec_optimized --bench valvec32_performance_bench --bench entropy_bench --bench dict_zip_bench
 	@echo "✅ Release tests (stable) completed"
 
 # Individual test targets - Debug mode (nightly, no benchmarks)  
@@ -145,12 +141,12 @@ test_nightly_release:
 	@echo "🌙 Running release tests with nightly features (including benchmarks)..."
 	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) --lib --bins --tests
 	@echo "🧪 Running SIMD Base64 comprehensive tests with nightly features..."
-	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) --test simd_base64_tests -- --nocapture || echo "❌ SIMD Base64 tests failed - may require additional setup"
+	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) --test simd_base64_tests -- --nocapture
 	@echo "🧪 Running I/O & Serialization performance tests..."
-	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) test_stream_performance_comparison -- --nocapture || echo "❌ I/O performance tests failed - may require additional setup"
-	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) test_combined_stream_operations -- --nocapture || echo "❌ I/O integration tests failed - may require additional setup"
+	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) test_stream_performance_comparison -- --nocapture
+	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) test_combined_stream_operations -- --nocapture
 	@echo "🧪 Running nightly benchmarks (including avx512_bench, excluding cpp_comparison)..."
-	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) --bench benchmark --bench benchmark_rank_select --bench simd_rank_select_bench --bench dictionary_optimization_bench --bench cache_bench --bench avx512_bench --bench secure_memory_pool_bench --bench specialized_containers_bench --bench rank_select_bench --bench sortable_str_vec_bench --bench fsa_infrastructure_bench --bench memory_performance --bench memory_pools_bench --bench adaptive_mmap_bench --bench simple_benchmark --bench sortable_str_vec_optimized --bench valvec32_performance_bench --bench entropy_bench --bench dict_zip_bench || echo "❌ Some benchmarks failed - may require additional setup"
+	$(CARGO_NIGHTLY) test --release $(NIGHTLY_FEATURES) --bench benchmark --bench benchmark_rank_select --bench simd_rank_select_bench --bench dictionary_optimization_bench --bench cache_bench --bench avx512_bench --bench secure_memory_pool_bench --bench specialized_containers_bench --bench rank_select_bench --bench sortable_str_vec_bench --bench fsa_infrastructure_bench --bench memory_performance --bench memory_pools_bench --bench adaptive_mmap_bench --bench simple_benchmark --bench sortable_str_vec_optimized --bench valvec32_performance_bench --bench entropy_bench --bench dict_zip_bench
 	@echo "✅ Release tests (nightly) completed"
 
 # =============================================================================
@@ -178,9 +174,9 @@ bench_serialization:
 # Run I/O & Memory performance tests specifically
 bench_io:
 	@echo "⚡ Running I/O & Memory performance tests..."
-	$(CARGO) test --release $(STABLE_FEATURES) test_stream_performance_comparison -- --nocapture || echo "❌ I/O performance tests failed - may require additional setup"
-	$(CARGO) test --release $(STABLE_FEATURES) test_combined_stream_operations -- --nocapture || echo "❌ I/O integration tests failed - may require additional setup"
-	$(CARGO) test --release $(STABLE_FEATURES) test_stress_operations -- --nocapture || echo "❌ I/O stress tests failed - may require additional setup"
+	$(CARGO) test --release $(STABLE_FEATURES) test_stream_performance_comparison -- --nocapture
+	$(CARGO) test --release $(STABLE_FEATURES) test_combined_stream_operations -- --nocapture
+	$(CARGO) test --release $(STABLE_FEATURES) test_stress_operations -- --nocapture
 	@echo "⚡ Running I/O & Memory benchmarks..."
 	$(CARGO) bench --release $(STABLE_FEATURES) --bench memory_performance --bench memory_pools_bench --bench adaptive_mmap_bench
 	@echo "✅ I/O performance tests and benchmarks completed"
@@ -407,60 +403,36 @@ release_prep: clean format clippy build_release test_release bench doc audit
 	@echo "🚀 Release preparation completed"
 
 # pre-commit sanity check
-# Tests all 4 feature combinations in debug+release:
-#   1. Default features only (no optional)
-#   2. All stable optional features
-#   3. Nightly without optional features
-#   4. Nightly with all optional features
-# Performance tests (benchmarks) run only in release mode.
+# Tests 2 feature combinations in debug+release:
+#   1. Default features (simd, mmap, zstd, serde, lz4, async)
+#   2. Nightly (default + avx512)
+# Performance tests run only in release mode.
 
-sanity: sanity_default sanity_all_stable sanity_nightly_minimal sanity_nightly_all
+sanity: sanity_stable sanity_nightly
 	@echo ""
 	@echo "=== Sanity check complete ==="
-	@echo "  1. Default features:          debug + release (functions + perf)"
-	@echo "  2. All stable features:       debug + release (functions + perf)"
-	@echo "  3. Nightly (no optional):     debug + release (functions + perf)"
-	@echo "  4. Nightly (all optional):    debug + release (functions + perf)"
+	@echo "  1. Stable (default features): debug + release"
+	@echo "  2. Nightly (default + avx512): debug + release"
 
-# 1. Default features only
-sanity_default:
-	@echo "=== [1/4] Default features (debug) ==="
-	$(CARGO) build $(DEFAULT_FEATURES)
-	$(CARGO) test --lib $(DEFAULT_FEATURES)
-	@echo "=== [1/4] Default features (release + perf) ==="
-	$(CARGO) build --release $(DEFAULT_FEATURES)
-	$(CARGO) test --release --lib $(DEFAULT_FEATURES)
-	@echo "[1/4] Default features: PASS"
+# 1. Stable (default features)
+sanity_stable:
+	@echo "=== [1/2] Stable (debug) ==="
+	$(CARGO) build $(STABLE_FEATURES)
+	$(CARGO) test --lib $(STABLE_FEATURES)
+	@echo "=== [1/2] Stable (release + perf) ==="
+	$(CARGO) build --release $(STABLE_FEATURES)
+	$(CARGO) test --release --lib $(STABLE_FEATURES)
+	@echo "[1/2] Stable: PASS"
 
-# 2. All stable optional features
-sanity_all_stable:
-	@echo "=== [2/4] All stable features (debug) ==="
-	$(CARGO) build $(ALL_STABLE_FEATURES)
-	$(CARGO) test --lib $(ALL_STABLE_FEATURES)
-	@echo "=== [2/4] All stable features (release + perf) ==="
-	$(CARGO) build --release $(ALL_STABLE_FEATURES)
-	$(CARGO) test --release --lib $(ALL_STABLE_FEATURES)
-	@echo "[2/4] All stable features: PASS"
-
-# 3. Nightly without optional features
-sanity_nightly_minimal:
-	@echo "=== [3/4] Nightly minimal (debug) ==="
+# 2. Nightly (default + avx512)
+sanity_nightly:
+	@echo "=== [2/2] Nightly (debug) ==="
 	$(CARGO_NIGHTLY) build $(NIGHTLY_FEATURES)
 	$(CARGO_NIGHTLY) test --lib $(NIGHTLY_FEATURES)
-	@echo "=== [3/4] Nightly minimal (release + perf) ==="
+	@echo "=== [2/2] Nightly (release + perf) ==="
 	$(CARGO_NIGHTLY) build --release $(NIGHTLY_FEATURES)
 	$(CARGO_NIGHTLY) test --release --lib $(NIGHTLY_FEATURES)
-	@echo "[3/4] Nightly minimal: PASS"
-
-# 4. Nightly with all optional features
-sanity_nightly_all:
-	@echo "=== [4/4] Nightly all features (debug) ==="
-	$(CARGO_NIGHTLY) build $(NIGHTLY_ALL_FEATURES)
-	$(CARGO_NIGHTLY) test --lib $(NIGHTLY_ALL_FEATURES)
-	@echo "=== [4/4] Nightly all features (release + perf) ==="
-	$(CARGO_NIGHTLY) build --release $(NIGHTLY_ALL_FEATURES)
-	$(CARGO_NIGHTLY) test --release --lib $(NIGHTLY_ALL_FEATURES)
-	@echo "[4/4] Nightly all features: PASS"
+	@echo "[2/2] Nightly: PASS"
 
 # =============================================================================
 # HELP TARGET
@@ -530,6 +502,6 @@ help:
 	@echo "  sanity                 Full sanity check (4 feature combos x debug+release)"
 	@echo ""
 	@echo "Features:"
-	@echo "  Default: simd, mmap, zstd, serde"
-	@echo "  Optional: lz4, ffi, async"
+	@echo "  Default: simd, mmap, zstd, serde, lz4, async"
+	@echo "  Optional: ffi"
 	@echo "  Nightly: avx512"
