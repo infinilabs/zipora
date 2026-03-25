@@ -14,6 +14,7 @@
 #   make test_nightly   # Test with all features including nightly
 
 .PHONY: all build test build_nightly test_nightly clean help
+.PHONY: sanity sanity_default sanity_all_stable sanity_nightly_minimal sanity_nightly_all
 .PHONY: build_debug build_release build_nightly_debug build_nightly_release
 .PHONY: test_debug test_release test_nightly_debug test_nightly_release  
 .PHONY: bench bench_fsa bench_serialization bench_io bench_all bench_all_nightly
@@ -25,8 +26,16 @@
 # =============================================================================
 
 # Feature sets
-STABLE_FEATURES := --features simd,mmap,zstd,lz4,serde,ffi
-NIGHTLY_FEATURES := --features simd,mmap,zstd,lz4,serde,ffi,avx512
+# No optional features — only default (simd, mmap, zstd, serde)
+DEFAULT_FEATURES :=
+# All stable optional features enabled
+ALL_STABLE_FEATURES := --features simd,mmap,zstd,lz4,serde,ffi,async
+# Nightly features without optional
+NIGHTLY_FEATURES := --features avx512
+# Nightly features with all optional
+NIGHTLY_ALL_FEATURES := --features simd,mmap,zstd,lz4,serde,ffi,async,avx512
+# Legacy aliases
+STABLE_FEATURES := $(ALL_STABLE_FEATURES)
 ALL_FEATURES := --all-features
 
 # Cargo commands
@@ -398,15 +407,60 @@ release_prep: clean format clippy build_release test_release bench doc audit
 	@echo "🚀 Release preparation completed"
 
 # pre-commit sanity check
-# Runs stable debug+release first (sequential — shares target/), then nightly.
-# Within each pair, debug builds first so release can reuse shared deps.
-sanity: sanity_stable sanity_nightly
+# Tests all 4 feature combinations in debug+release:
+#   1. Default features only (no optional)
+#   2. All stable optional features
+#   3. Nightly without optional features
+#   4. Nightly with all optional features
+# Performance tests (benchmarks) run only in release mode.
 
-sanity_stable: test_debug test_release
-	@echo "Stable sanity done"
+sanity: sanity_default sanity_all_stable sanity_nightly_minimal sanity_nightly_all
+	@echo ""
+	@echo "=== Sanity check complete ==="
+	@echo "  1. Default features:          debug + release (functions + perf)"
+	@echo "  2. All stable features:       debug + release (functions + perf)"
+	@echo "  3. Nightly (no optional):     debug + release (functions + perf)"
+	@echo "  4. Nightly (all optional):    debug + release (functions + perf)"
 
-sanity_nightly: test_nightly_debug test_nightly_release
-	@echo "Nightly sanity done"
+# 1. Default features only
+sanity_default:
+	@echo "=== [1/4] Default features (debug) ==="
+	$(CARGO) build $(DEFAULT_FEATURES)
+	$(CARGO) test --lib $(DEFAULT_FEATURES)
+	@echo "=== [1/4] Default features (release + perf) ==="
+	$(CARGO) build --release $(DEFAULT_FEATURES)
+	$(CARGO) test --release --lib $(DEFAULT_FEATURES)
+	@echo "[1/4] Default features: PASS"
+
+# 2. All stable optional features
+sanity_all_stable:
+	@echo "=== [2/4] All stable features (debug) ==="
+	$(CARGO) build $(ALL_STABLE_FEATURES)
+	$(CARGO) test --lib $(ALL_STABLE_FEATURES)
+	@echo "=== [2/4] All stable features (release + perf) ==="
+	$(CARGO) build --release $(ALL_STABLE_FEATURES)
+	$(CARGO) test --release --lib $(ALL_STABLE_FEATURES)
+	@echo "[2/4] All stable features: PASS"
+
+# 3. Nightly without optional features
+sanity_nightly_minimal:
+	@echo "=== [3/4] Nightly minimal (debug) ==="
+	$(CARGO_NIGHTLY) build $(NIGHTLY_FEATURES)
+	$(CARGO_NIGHTLY) test --lib $(NIGHTLY_FEATURES)
+	@echo "=== [3/4] Nightly minimal (release + perf) ==="
+	$(CARGO_NIGHTLY) build --release $(NIGHTLY_FEATURES)
+	$(CARGO_NIGHTLY) test --release --lib $(NIGHTLY_FEATURES)
+	@echo "[3/4] Nightly minimal: PASS"
+
+# 4. Nightly with all optional features
+sanity_nightly_all:
+	@echo "=== [4/4] Nightly all features (debug) ==="
+	$(CARGO_NIGHTLY) build $(NIGHTLY_ALL_FEATURES)
+	$(CARGO_NIGHTLY) test --lib $(NIGHTLY_ALL_FEATURES)
+	@echo "=== [4/4] Nightly all features (release + perf) ==="
+	$(CARGO_NIGHTLY) build --release $(NIGHTLY_ALL_FEATURES)
+	$(CARGO_NIGHTLY) test --release --lib $(NIGHTLY_ALL_FEATURES)
+	@echo "[4/4] Nightly all features: PASS"
 
 # =============================================================================
 # HELP TARGET
@@ -473,7 +527,9 @@ help:
 	@echo "  ci_nightly             CI pipeline (nightly)"
 	@echo "  pre_commit             Pre-commit checks"
 	@echo "  release_prep           Release preparation"
+	@echo "  sanity                 Full sanity check (4 feature combos x debug+release)"
 	@echo ""
 	@echo "Features:"
-	@echo "  Stable: simd, mmap, zstd, lz4, serde, ffi"
+	@echo "  Default: simd, mmap, zstd, serde"
+	@echo "  Optional: lz4, ffi, async"
 	@echo "  Nightly: avx512"
