@@ -36,8 +36,8 @@ use crate::memory::{get_optimal_numa_node, numa_alloc_aligned, numa_dealloc};
 use crate::simd::adaptive::AdaptiveSimdSelector;
 use crate::simd::Operation;
 use super::CachePadded;
-use dashmap::DashMap;
 use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::alloc::{Layout, alloc, dealloc};
 use std::cell::RefCell;
 use std::ptr::NonNull;
@@ -836,7 +836,7 @@ pub struct SecureMemoryPool {
     huge_page_allocs: CachePadded<AtomicU64>,
 
     // Allocation tracking for double-free detection (using usize for Send+Sync safety)
-    active_allocations: DashMap<usize, (u32, Instant)>, // ptr_addr -> (generation, time)
+    active_allocations: std::sync::RwLock<HashMap<usize, (u32, Instant)>>, // ptr_addr -> (generation, time)
 }
 
 impl std::fmt::Debug for SecureMemoryPool {
@@ -902,7 +902,7 @@ impl SecureMemoryPool {
             double_free_detected: CachePadded::new(AtomicU64::new(0)),
             local_cache_hits: CachePadded::new(AtomicU64::new(0)),
             cross_thread_steals: CachePadded::new(AtomicU64::new(0)),
-            active_allocations: DashMap::new(),
+            active_allocations: std::sync::RwLock::new(HashMap::new()),
         }))
     }
 
@@ -948,7 +948,7 @@ impl SecureMemoryPool {
             // }
 
             // Track allocation
-            self.active_allocations.insert(
+            self.active_allocations.write().expect("active_allocations lock").insert(
                 chunk.as_ptr() as usize,
                 (chunk.generation(), Instant::now()),
             );
@@ -978,7 +978,7 @@ impl SecureMemoryPool {
             }
 
             // Track allocation
-            self.active_allocations.insert(
+            self.active_allocations.write().expect("active_allocations lock").insert(
                 chunk.as_ptr() as usize,
                 (chunk.generation(), Instant::now()),
             );
@@ -1002,7 +1002,7 @@ impl SecureMemoryPool {
         }
 
         // Track allocation
-        self.active_allocations.insert(
+        self.active_allocations.write().expect("active_allocations lock").insert(
             chunk.as_ptr() as usize,
             (chunk.generation(), Instant::now()),
         );
@@ -1030,8 +1030,8 @@ impl SecureMemoryPool {
         }
 
         // Check for double-free
-        if let Some((_, allocation_info)) =
-            self.active_allocations.remove(&(chunk.as_ptr() as usize))
+        if let Some(allocation_info) =
+            self.active_allocations.write().expect("active_allocations lock").remove(&(chunk.as_ptr() as usize))
         {
             let (original_generation, _): (u32, Instant) = allocation_info;
             if original_generation != chunk.generation() {
@@ -1264,7 +1264,7 @@ impl SecureMemoryPool {
         // when threads exit or when they access the cache and find it should be cleared.
 
         // Clear allocation tracking
-        self.active_allocations.clear();
+        self.active_allocations.write().expect("active_allocations lock").clear();
 
         Ok(())
     }
@@ -1277,9 +1277,7 @@ impl SecureMemoryPool {
     /// Validate pool integrity
     pub fn validate(&self) -> Result<()> {
         // Check active allocations for corruption
-        for entry in self.active_allocations.iter() {
-            let ptr_addr = *entry.key();
-            let (generation, _time) = *entry.value();
+        for (&ptr_addr, &(generation, _time)) in self.active_allocations.read().expect("active_allocations lock").iter() {
 
             // Read canary from the chunk header for validation
             let data_ptr = ptr_addr as *mut u8;
