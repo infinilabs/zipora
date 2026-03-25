@@ -295,6 +295,7 @@ pub use algorithms::{
 };
 
 // Re-export Phase 5 implementations (concurrency)
+#[cfg(feature = "async")]
 pub use concurrency::{
     FiberHandle, FiberPool, FiberPoolBuilder, FiberPoolConfig, FiberStats,
     ParallelLoudsTrie, ParallelTrieBuilder,
@@ -302,11 +303,14 @@ pub use concurrency::{
     Task, WorkStealingExecutor, WorkStealingQueue,
 };
 
-// Re-export Phase 5 implementations (compression)
+// Re-export compression implementations
 pub use compression::{
-    AdaptiveCompressor, AdaptiveConfig, Algorithm, CompressionMode, CompressionProfile,
-    CompressionStats, Compressor, CompressorFactory, PerformanceRequirements, RealtimeCompressor,
-    RealtimeConfig,
+    AdaptiveCompressor, AdaptiveConfig, Algorithm, CompressionProfile,
+    CompressionStats, Compressor, CompressorFactory, PerformanceRequirements,
+};
+#[cfg(feature = "async")]
+pub use compression::{
+    CompressionMode, RealtimeCompressor, RealtimeConfig,
 };
 
 // Re-export System Utilities (Phase 10A)
@@ -315,12 +319,14 @@ pub use system::{
     RuntimeCpuFeatures, get_cpu_features, has_cpu_feature,
     // Performance profiling
     PerfTimer, BenchmarkSuite, HighPrecisionTimer, ProfiledFunction,
-    // Process management
-    ProcessManager, ProcessPool, BidirectionalPipe, ProcessExecutor,
     // Base64 SIMD
     AdaptiveBase64, SimdBase64Encoder, SimdBase64Decoder, base64_encode_simd, base64_decode_simd,
     // Virtual memory management
     VmManager, PageAlignedAlloc, KernelInfo, vm_prefetch, get_kernel_info,
+};
+#[cfg(feature = "async")]
+pub use system::{
+    ProcessManager, ProcessPool, BidirectionalPipe, ProcessExecutor,
 };
 
 // Re-export Development Infrastructure (Phase 10B)

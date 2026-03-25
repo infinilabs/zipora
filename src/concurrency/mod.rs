@@ -3,14 +3,22 @@
 //! Provides fiber pool, pipeline stages, work-stealing executor,
 //! and parallel trie building.
 
+#[cfg(feature = "async")]
 pub mod fiber_pool;
+#[cfg(feature = "async")]
 pub mod parallel_trie;
+#[cfg(feature = "async")]
 pub mod pipeline;
+#[cfg(feature = "async")]
 pub mod work_stealing;
 
+#[cfg(feature = "async")]
 pub use fiber_pool::{FiberHandle, FiberPool, FiberPoolConfig, FiberPoolBuilder, FiberStats};
+#[cfg(feature = "async")]
 pub use parallel_trie::{ParallelLoudsTrie, ParallelTrieBuilder};
+#[cfg(feature = "async")]
 pub use pipeline::{Pipeline, PipelineBuilder, PipelineStage, PipelineStats};
+#[cfg(feature = "async")]
 pub use work_stealing::{Task, WorkStealingExecutor, WorkStealingQueue};
 
 use crate::error::Result;
@@ -88,6 +96,7 @@ impl Default for ConcurrencyConfig {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "async")]
     #[tokio::test]
     async fn test_fiber_creation() {
         let fiber = Fiber::new(async { Ok(42i32) });

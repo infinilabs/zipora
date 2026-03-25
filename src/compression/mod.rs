@@ -6,6 +6,7 @@
 
 pub mod adaptive;
 pub mod dict_zip;
+#[cfg(feature = "async")]
 pub mod realtime;
 pub mod simd_lz77;
 pub mod simd_pattern_match;
@@ -26,6 +27,7 @@ pub use simd_pattern_match::{
     SimdPatternMatcher, SimdPatternConfig, SimdMatchResult, SimdPatternTier, ParallelMode,
     get_global_simd_pattern_matcher,
 };
+#[cfg(feature = "async")]
 pub use realtime::{CompressionMode, RealtimeCompressor, RealtimeConfig};
 pub use suffix_array::{
     EnhancedSuffixArray, SuffixArrayCompressor, SuffixArrayConfig, SuffixArrayStats,
