@@ -465,8 +465,8 @@ impl LockFreeMemoryPool {
             match bin.head.compare_exchange_weak(
                 packed,  // Compare full packed value (offset + generation)
                 next_packed,  // New packed value with incremented generation
-                Ordering::Release,
-                Ordering::Relaxed,
+                Ordering::AcqRel,
+                Ordering::Acquire,
             ) {
                 Ok(_) => {
                     // Success! Update count and return pointer

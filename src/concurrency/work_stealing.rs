@@ -392,7 +392,7 @@ impl WorkStealingExecutor {
 
     /// Shutdown the executor and wait for all workers to complete
     pub async fn shutdown(&self) -> Result<()> {
-        self.shutdown.store(true, Ordering::Relaxed);
+        self.shutdown.store(true, Ordering::Release);
 
         // Wait for all workers to finish
         for worker in &self.workers {
@@ -423,7 +423,7 @@ impl WorkStealingExecutor {
         let mut idle_count = 0;
         const MAX_IDLE: usize = 100;
 
-        while !shutdown.load(Ordering::Relaxed) {
+        while !shutdown.load(Ordering::Acquire) {
             let task = Self::find_task(my_queue, &other_queues, &global_queue, &stats);
 
             match task {

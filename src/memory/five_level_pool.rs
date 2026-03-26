@@ -696,8 +696,8 @@ impl LockFreePool {
                 match head.head.compare_exchange_weak(
                     current_head,
                     next_head,
-                    Ordering::Release,
-                    Ordering::Relaxed
+                    Ordering::AcqRel,
+                    Ordering::Acquire
                 ) {
                     Ok(_) => {
                         head.count.fetch_sub(1, Ordering::Relaxed);
