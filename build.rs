@@ -317,7 +317,6 @@ fn configure_optimization_flags() {
 #[allow(dead_code)]
 fn generate_ffi_bindings() {
     use std::env;
-    use std::path::PathBuf;
     
     let crate_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     

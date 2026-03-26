@@ -410,12 +410,10 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
     #[target_feature(enable = "avx2")]
     unsafe fn intersect_avx2(bits_a: &[u64], bits_b: &[u64]) -> Vec<u64> {
         // SAFETY: AVX2 guaranteed by #[target_feature(enable = "avx2")],
-        // pointers valid from slice.as_ptr().add(base), bounds: base+4 ≤ len verified by chunks = len/4,
-        // result.set_len(len) safe because we initialize all elements below
+        // pointers valid from slice.as_ptr().add(base), bounds: base+4 ≤ len verified by chunks = len/4
         unsafe {
             let len = bits_a.len().min(bits_b.len());
-            let mut result: Vec<u64> = Vec::with_capacity(len);
-            result.set_len(len);
+            let mut result: Vec<u64> = vec![0u64; len];
 
             let chunks = len / 4; // Process 4 u64s (256 bits) at once
 
@@ -536,16 +534,14 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
     #[target_feature(enable = "avx2")]
     unsafe fn union_avx2(bit_data: &[&[u64]]) -> Vec<u64> {
         // SAFETY: AVX2 guaranteed by #[target_feature(enable = "avx2")],
-        // pointers valid from slice.as_ptr().add(base), bounds: base+4 ≤ bits.len() verified by if-check,
-        // result.set_len(len) safe because we initialize all elements below
+        // pointers valid from slice.as_ptr().add(base), bounds: base+4 ≤ bits.len() verified by if-check
         unsafe {
             if bit_data.is_empty() {
                 return Vec::new();
             }
 
             let len = bit_data[0].len();
-            let mut result: Vec<u64> = Vec::with_capacity(len);
-            result.set_len(len);
+            let mut result: Vec<u64> = vec![0u64; len];
 
             let chunks = len / 4;
 
@@ -751,6 +747,62 @@ mod tests {
         let ranks = multi_rs.bulk_rank_multidim(&positions);
         assert_eq!(ranks.len(), 8);
 
+        Ok(())
+    }
+
+    /// Test SIMD intersect/union with sizes that exercise the remainder path.
+    /// AVX2 processes 4 u64s at a time; these sizes produce 0-3 remainder elements.
+    #[test]
+    fn test_intersect_simd_remainder_boundary() -> Result<()> {
+        // Sizes chosen so the internal u64 word count hits exact multiples and non-multiples of 4:
+        //   1 bit  →  1 u64  (0 chunks, 1 remainder)
+        //  63 bits →  1 u64  (0 chunks, 1 remainder)
+        //  65 bits →  2 u64s (0 chunks, 2 remainder)
+        // 192 bits →  3 u64s (0 chunks, 3 remainder)
+        // 256 bits →  4 u64s (1 chunk,  0 remainder) — exact fit
+        // 257 bits →  5 u64s (1 chunk,  1 remainder)
+        // 500 bits →  8 u64s (2 chunks, 0 remainder) — exact fit
+        // 501 bits →  8 u64s (2 chunks, 0 remainder — ceil rounds up but last word partial)
+        for &size in &[1, 63, 65, 192, 256, 257, 500, 501, 1024, 1025] {
+            let mut dims = vec![];
+            dims.push(create_test_bitvector(size, |i| i % 2 == 0)?);
+            dims.push(create_test_bitvector(size, |i| i % 3 == 0)?);
+
+            let multi_rs: MultiDimRankSelect<2> = MultiDimRankSelect::new(dims)?;
+
+            let intersection = multi_rs.intersect_dimensions(0, 1)?;
+            assert_eq!(intersection.len(), size, "Intersection length mismatch for size {}", size);
+
+            for i in 0..size {
+                let expected = i % 2 == 0 && i % 3 == 0;
+                let actual = intersection.get(i)
+                    .ok_or_else(|| ZiporaError::out_of_bounds(i, size))?;
+                assert_eq!(actual, expected, "Intersect bit {} mismatch for size {}", i, size);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_union_simd_remainder_boundary() -> Result<()> {
+        for &size in &[1, 63, 65, 192, 256, 257, 500, 501, 1024, 1025] {
+            let mut dims = vec![];
+            dims.push(create_test_bitvector(size, |i| i % 4 == 0)?);
+            dims.push(create_test_bitvector(size, |i| i % 6 == 0)?);
+            dims.push(create_test_bitvector(size, |i| i % 8 == 0)?);
+
+            let multi_rs: MultiDimRankSelect<3> = MultiDimRankSelect::new(dims)?;
+
+            let union = multi_rs.union_dimensions(&[0, 1, 2])?;
+            assert_eq!(union.len(), size, "Union length mismatch for size {}", size);
+
+            for i in 0..size {
+                let expected = i % 4 == 0 || i % 6 == 0 || i % 8 == 0;
+                let actual = union.get(i)
+                    .ok_or_else(|| ZiporaError::out_of_bounds(i, size))?;
+                assert_eq!(actual, expected, "Union bit {} mismatch for size {}", i, size);
+            }
+        }
         Ok(())
     }
 }

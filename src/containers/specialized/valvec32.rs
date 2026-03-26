@@ -499,7 +499,7 @@ impl<T> ValVec32<T> {
     #[cold]
     #[inline(never)]
     fn push_slow_panic(&mut self, value: T) {
-        if self.len >= MAX_CAPACITY {
+        if self.len == MAX_CAPACITY {
             panic!("ValVec32 at maximum capacity");
         }
 
@@ -575,7 +575,7 @@ impl<T> ValVec32<T> {
     #[cold]
     #[inline(never)]
     fn push_slow(&mut self, value: T) -> Result<()> {
-        if self.len >= MAX_CAPACITY {
+        if self.len == MAX_CAPACITY {
             return Err(ZiporaError::invalid_data("Vector at maximum capacity"));
         }
 
