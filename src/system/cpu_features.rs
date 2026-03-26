@@ -725,10 +725,9 @@ impl RuntimeCpuFeatures {
             let cpuid = raw_cpuid::CpuId::new();
             
             // Get cache line size
-            if let Some(cache_params) = cpuid.get_cache_parameters() {
-                for cache in cache_params {
+            if let Some(mut cache_params) = cpuid.get_cache_parameters() {
+                if let Some(cache) = cache_params.next() {
                     cache_line_size = cache.coherency_line_size() as usize;
-                    break; // Use first cache entry
                 }
             }
 
