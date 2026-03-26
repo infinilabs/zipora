@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/license-BDL--1.0-blue.svg)](LICENSE)
 [![Rust Version](https://img.shields.io/badge/rust-1.88+-orange.svg)](https://www.rust-lang.org)
 
-High-performance Rust data structures and compression algorithms with memory safety guarantees. Port of the [topling-zip](https://github.com/topling/topling-zip) C++ library with 100% feature parity.
+High-performance Rust data structures and compression algorithms with memory safety guarantees.
 
 ## Key Features
 
