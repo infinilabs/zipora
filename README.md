@@ -145,7 +145,9 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ## Verified Performance
 
-Benchmarked on x86_64 with BMI2/AVX2. Run `cargo bench` to reproduce on your hardware.
+> **Test Machine**: AMD EPYC 7B13 (Zen 3), 64 vCPUs, 117 GB RAM, AVX2/BMI2/POPCNT, rustc 1.91.1, Linux 6.17.
+> Results vary across hardware — Intel may differ on BMI2 (native vs microcode), ARM lacks x86 SIMD paths.
+> Run `cargo bench` to reproduce on your own hardware.
 
 ### Succinct Data Structures
 
