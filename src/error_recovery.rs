@@ -6,7 +6,7 @@
 
 /// Verification macros providing fail-fast error handling with rich contextual information
 
-/// Fatal error macro - equivalent to TERARK_DIE
+/// Fatal error macro for immediate termination
 /// Prints error context and terminates the program immediately
 #[macro_export]
 macro_rules! zipora_die {
@@ -21,7 +21,7 @@ macro_rules! zipora_die {
     };
 }
 
-/// Basic verification macro - equivalent to TERARK_VERIFY
+/// Runtime verification macro with fail-fast behavior
 /// Checks condition and aborts with context if false
 /// In test mode, panics instead of aborting to allow test recovery
 #[macro_export]

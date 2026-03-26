@@ -1,8 +1,6 @@
 //! String join utilities
 //!
 //! Provides efficient string joining operations with SIMD-optimized memory allocation.
-//!
-//! Ported from topling-zip's fstring join utilities.
 
 use super::FastStr;
 

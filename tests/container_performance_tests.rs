@@ -335,7 +335,7 @@ mod valvec32_performance {
         // Use enough iterations to overcome measurement noise
         let access_count = 100_000;
 
-        // Benchmark ValVec32 random access only (use usize index like topling-zip)
+        // Benchmark ValVec32 random access only (using usize index)
         let valvec_metrics = runner.run_benchmark("random_access", "ValVec32<u64>", size, || {
             let mut sum = 0u64;
             for i in 0..access_count {

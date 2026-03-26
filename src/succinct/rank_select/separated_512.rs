@@ -1,6 +1,5 @@
 //! RankSelectSE512: Side-entry rank/select with 512-bit blocks.
 //!
-//! Port of `rank_select_se_512_tpl<T>` from topling-zip.
 //! Uses 512-bit blocks (8 × 64-bit words) with packed 9-bit sub-block ranks.
 //!
 //! Sub-block ranks: 7 × 9 bits packed into a u64 (`rela` field).
@@ -46,7 +45,7 @@ pub struct RankSelectSE512 {
     max_rank1: usize,
 }
 
-/// Type aliases matching topling-zip naming.
+/// Type alias for u32 index variant.
 pub type RankSelectSE512_32 = RankSelectSE512;
 /// u64 index variant — on 64-bit platforms, RankSelectSE512 already uses usize
 /// internally for all rank/size tracking, so this is functionally identical.
@@ -79,7 +78,7 @@ impl RankSelectSE512 {
                 // rela stores ranks for words 0..j (not including j's popcount yet for word j+1)
                 rela |= r << (j * 9);
             }
-            // Clear the unused highest bit (bit 63) — topling-zip does `rela &= u64::MAX >> 1`
+            // Clear the unused highest bit (bit 63)
             rela &= u64::MAX >> 1;
             rank_cache.push(RankCacheSE512 { base: cumulative, rela });
             cumulative += r as u32;

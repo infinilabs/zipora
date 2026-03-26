@@ -163,8 +163,6 @@ impl UintVecMin0 {
 
     /// Get value without bounds checking.
     ///
-    /// Matches topling-zip's `get_wire` which skips bounds checks in release.
-    ///
     /// # Safety
     ///
     /// Caller must ensure `idx < self.size` and `self.bits <= 58`.

@@ -120,7 +120,7 @@ let result = merger.merge(sources).unwrap();
 
 ## Set Operations
 
-Complete implementation following C++ reference from topling-zip/set_op.hpp.
+Complete implementation of set operations.
 
 ```rust
 use zipora::algorithms::{

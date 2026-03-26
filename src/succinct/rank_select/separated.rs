@@ -1,7 +1,6 @@
 //! RankSelectSE256: Side-entry rank/select with 256-bit blocks.
 //!
-//! Port of `rank_select_se` (rank_select_se_256) from topling-zip.
-//! "_se" = "separated": bit data is stored separately from rank index.
+//! "SE" = "separated": bit data is stored separately from rank index.
 //!
 //! Key advantage over interleaved: rank cache doesn't pollute bit-data cache lines,
 //! better for large bitvectors where you scan bits and do occasional rank queries.
@@ -19,7 +18,6 @@ const LINE_BITS: usize = 256;
 const WORDS_PER_LINE: usize = LINE_BITS / 64; // 4
 
 /// Rank cache entry for SE256: 8 bytes per 256-bit block.
-/// Matches topling-zip's `RankCache { uint32_t lev1; uint8_t lev2[4]; }`.
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 struct RankCacheSE {

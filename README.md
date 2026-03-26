@@ -12,7 +12,7 @@ High-performance Rust data structures and compression algorithms with memory saf
 - **Memory Safety**: 99.8% unsafe block documentation coverage, all production unsafe blocks annotated with `// SAFETY:` comments
 - **Secure Memory Management**: Production-ready memory pools with thread safety and RAII
 - **Blob Storage**: 8 specialized stores with trie-based indexing and compression
-- **Succinct Data Structures**: 12 rank/select variants (all topling-zip variants ported)
+- **Succinct Data Structures**: 12 rank/select variants
 - **Specialized Containers**: 13+ containers (VecTrbSet/Map, MinimalSso, SortedUintVec, LruMap, etc.)
 - **Hash Maps**: Golden ratio optimized, string-optimized, cache-optimized implementations
 - **Advanced Tries**: LOUDS, Critical-Bit (BMI2), Patricia tries with rank/select, NestTrieDawg

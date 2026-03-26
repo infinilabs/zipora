@@ -209,7 +209,7 @@ let mut space_trie = ZiporaTrie::with_config(ZiporaTrieConfig::space_optimized()
 **Status**: ✅ **COMPLETE** - Full porting and enhancement from reference implementation
 
 ### Reference Source
-- **Original**: Reference profiling system (`/src/terark/util/profiling.hpp`)
+- **Original**: Reference profiling system from C++ implementation
 - **Language**: C++ → Rust
 - **Scope**: Complete profiling infrastructure with performance analysis capabilities
 
@@ -413,7 +413,7 @@ let mut space_trie = ZiporaTrie::with_config(ZiporaTrieConfig::space_optimized()
 **Status**: ✅ **COMPLETE** - Full porting and enhancement from reference error handling patterns
 
 ### Reference Source
-- **Original**: Reference error handling system (`/src/terark/util/throw.hpp`, `/src/terark/stdtypes.hpp`, `/src/terark/io/IOException.hpp`)
+- **Original**: Reference error handling system from C++ implementation
 - **Language**: C++ → Rust
 - **Scope**: Complete error classification, recovery strategies, and verification framework
 
@@ -424,7 +424,7 @@ let mut space_trie = ZiporaTrie::with_config(ZiporaTrieConfig::space_optimized()
 **Error Severity Classification System**
 - **Status**: ✅ Complete
 - **File**: `/src/error_recovery.rs:17-28`
-- **Original Feature**: TERARK error hierarchy with severity levels
+- **Original Feature**: Four-level error hierarchy with severity levels
 - **Rust Enhancement**: Type-safe enum with explicit severity ordering and Display implementation
 - **Memory Safety**: Zero unsafe operations, compile-time guarantee of valid severity levels
 - **Performance**: Zero-cost abstraction with enum-based matching
@@ -477,11 +477,11 @@ let mut space_trie = ZiporaTrie::with_config(ZiporaTrieConfig::space_optimized()
 **Verification Macros - Production-Ready Assertions**
 - **Status**: ✅ Complete
 - **File**: `/src/error_recovery.rs:504-579`
-- **Original Feature**: TERARK_VERIFY and TERARK_DIE macro patterns
+- **Original Feature**: Fail-fast verification and fatal error macros
 - **Rust Enhancement**: Type-safe verification with file/line tracking
 - **Macros Implemented**:
-  - `zipora_die!`: Fatal error termination (similar to TERARK_DIE)
-  - `zipora_verify!`: Runtime assertion (similar to TERARK_VERIFY)
+  - `zipora_die!`: Fatal error termination with immediate abort
+  - `zipora_verify!`: Runtime assertion with fail-fast behavior
   - `zipora_verify_eq!`, `zipora_verify_ne!`: Comparison assertions
   - `zipora_verify_lt!`, `zipora_verify_le!`, `zipora_verify_gt!`, `zipora_verify_ge!`: Ordering assertions
 - **Features**: File/line capture, formatted error messages, abort on failure
@@ -671,7 +671,7 @@ let mut space_trie = ZiporaTrie::with_config(ZiporaTrieConfig::space_optimized()
 | **🚀 FSE with ZSTD Optimizations** | Advanced FSE research | `FseEncoder + HardwareAcceleration` | **100% ✅** | **⚡ ZSTD optimizations + SIMD acceleration** | **100% ✅** |
 | **🔥 Parallel Encoding Support** | N/A | `ParallelHuffmanEncoder + AdaptiveParallelEncoder` | **100% ✅** | **⚡ x2/x4/x8 variants with adaptive selection** | **100% ✅** |
 | **🔥 Hardware-Optimized Bit Ops** | Optimized bit operations | `BitOps + BMI2/AVX2 acceleration` | **100% ✅** | **⚡ PDEP/PEXT/POPCNT + vectorized operations** | **100% ✅** |
-| **🔥 Context-Aware Memory Management** | TerarkContext patterns | `EntropyContext + buffer pooling` | **100% ✅** | **⚡ Thread-local optimization + reuse** | **100% ✅** |
+| **🔥 Context-Aware Memory Management** | Context-aware buffer pooling | `EntropyContext + buffer pooling` | **100% ✅** | **⚡ Thread-local optimization + reuse** | **100% ✅** |
 | **🔥 PA-Zip Dictionary Compression** | **Advanced suffix array research** | **`DictZipBlobStore/PaZipCompressor/DictionaryBuilder`** | **100% ✅ PRODUCTION READY** | **⚡ 50-200 MB/s, 30-80% compression ratio, ALL THREE CORE ALGORITHMS COMPLETE** | **100% ✅ ALL TESTS PASSING** |
 | **Entropy Blob Stores** | Custom | `HuffmanBlobStore` etc. | 100% | ⚡ Excellent | 100% |
 | **Entropy Analysis** | Custom | `EntropyStats` | 100% | ⚡ Excellent | 100% |

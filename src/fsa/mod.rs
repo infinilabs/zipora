@@ -1,8 +1,8 @@
 //! High-performance Finite State Automata and Trie implementation
 //!
 //! **ZiporaTrie**: Single, highly optimized trie implementation with strategy-based
-//! configuration. Follows topling-zip's approach: one Patricia class with
-//! concurrency level as a config enum, not separate wrapper types.
+//! configuration. One Patricia class with concurrency level as a config enum,
+//! not separate wrapper types.
 //!
 //! # Examples
 //!

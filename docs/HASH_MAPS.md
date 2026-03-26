@@ -53,7 +53,7 @@ advanced_map.insert("advanced", "unified configuration").unwrap();
 
 ## GoldHashMap - Link-Based High-Performance Hash Table
 
-**Production-grade hash table** inspired by Terark's gold_hash_map, featuring link-based collision resolution, configurable link types (u32/u64), optional hash caching, and efficient freelist management.
+**Production-grade hash table** featuring link-based collision resolution, configurable link types (u32/u64), optional hash caching, and efficient freelist management.
 
 ```rust
 use zipora::hash_map::{GoldHashMap, GoldHashMapConfig, IterationStrategy};

@@ -89,18 +89,18 @@ fn get_usable_size(_ptr: *mut u8, size: usize) -> usize {
     size
 }
 
-// Branch prediction hint macro following topling-zip's terark_likely pattern
+// Branch prediction hint macro for performance optimization
 // Uses __builtin_expect semantics via core::intrinsics on nightly,
 // or falls back to a no-op on stable (letting LLVM optimize based on code structure)
 #[cfg(feature = "nightly")]
-macro_rules! terark_likely {
+macro_rules! likely {
     ($e:expr) => {
         std::intrinsics::likely($e)
     };
 }
 
 #[cfg(not(feature = "nightly"))]
-macro_rules! terark_likely {
+macro_rules! likely {
     ($e:expr) => {
         $e
     };
@@ -427,12 +427,12 @@ impl<T> ValVec32<T> {
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
     /// Appends an element to the back of the vector - hot path optimized
-    /// Follows topling-zip valvec32 patterns for maximum performance
+    /// Optimized for maximum performance
     #[inline(always)]
     pub fn push(&mut self, value: T) -> Result<()> {
-        // Exact topling-zip pattern: load n into local, check against c
+        // Load n into local, check against c
         let oldsize = self.len;
-        if terark_likely!(oldsize < self.capacity) {
+        if likely!(oldsize < self.capacity) {
             // Fast path: placement new pattern - new(p+oldsize)T(x)
             let lp = self.ptr.as_ptr(); // Load pointer into register
             // SAFETY: oldsize < capacity guarantees offset is within allocated buffer
@@ -442,7 +442,7 @@ impl<T> ValVec32<T> {
             self.len = oldsize + 1;
             Ok(())
         } else {
-            // Cold path: never inlined slow path (terark_no_inline pattern)
+            // Cold path: never inlined slow path
             self.push_slow(value)
         }
     }
@@ -454,7 +454,7 @@ impl<T> ValVec32<T> {
     /// allocation fails or the vector is at maximum capacity. This provides
     /// optimal performance for benchmarking against std::Vec.
     ///
-    /// Ultra-optimized following exact topling-zip valvec32 patterns for maximum performance.
+    /// Ultra-optimized for maximum performance.
     ///
     /// # Arguments
     ///
@@ -479,18 +479,18 @@ impl<T> ValVec32<T> {
     /// ```
     #[inline(always)]
     pub fn push_panic(&mut self, value: T) {
-        // Exact topling-zip pattern: load n into local, check against c
+        // Load n into local, check against c
         let oldsize = self.len;
-        if terark_likely!(oldsize < self.capacity) {
+        if likely!(oldsize < self.capacity) {
             // Fast path: placement new pattern - new(p+oldsize)T(x)
-            let lp = self.ptr.as_ptr(); // Load pointer into register like topling-zip
+            let lp = self.ptr.as_ptr(); // Load pointer into register
             // SAFETY: oldsize < capacity guarantees offset is within allocated buffer
             unsafe {
                 ptr::write(lp.add(oldsize as usize), value);
             }
             self.len = oldsize + 1;
         } else {
-            // Cold path: never inlined slow path (terark_no_inline pattern)
+            // Cold path: never inlined slow path
             self.push_slow_panic(value);
         }
     }
@@ -1032,12 +1032,12 @@ impl<T> Drop for ValVec32<T> {
     }
 }
 
-// Primary indexing: takes usize like topling-zip's operator[](size_t).
+// Primary indexing: takes usize for convenient indexing.
 // The u32 storage is an internal detail; callers index with native register width.
 impl<T> Index<usize> for ValVec32<T> {
     type Output = T;
 
-    /// Direct pointer deref matching topling-zip's `operator[](size_t)`.
+    /// Direct pointer deref for efficient element access.
     /// assert in debug, unchecked in release.
     #[inline(always)]
     fn index(&self, index: usize) -> &Self::Output {
@@ -1356,9 +1356,9 @@ mod tests {
 
     #[test]
     fn test_branch_prediction_hints() {
-        // Test that terark_likely macro works correctly (just passes through on stable)
-        assert!(terark_likely!(true));
-        assert!(!terark_likely!(false));
+        // Test that likely macro works correctly (just passes through on stable)
+        assert!(likely!(true));
+        assert!(!likely!(false));
     }
 
     #[test]

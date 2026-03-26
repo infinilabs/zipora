@@ -211,9 +211,9 @@ for (int i = 0; i < 4; i++) {
 - **No buffer overflows**: Bounds checking on all operations
 - **Thread safety**: Documented thread safety for each type
 
-## Migration Guide from Terark C++
+## Migration Guide from C++ Reference
 
-| Terark C++ | Zipora C FFI |
+| C++ Reference | Zipora C FFI |
 |------------|--------------|
 | `NestLoudsTrieDAWG` | `zipora_trie_new(ZIPORA_TRIE_NESTED_LOUDS)` |
 | `Patricia` | `zipora_trie_new(ZIPORA_TRIE_PATRICIA)` |

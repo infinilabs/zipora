@@ -1,8 +1,6 @@
 //! Hexadecimal encoding and decoding utilities
 //!
 //! Provides efficient hex encoding and decoding functions.
-//!
-//! Ported from topling-zip's hex utilities.
 
 use crate::error::{Result, ZiporaError};
 

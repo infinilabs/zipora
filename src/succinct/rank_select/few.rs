@@ -1,6 +1,5 @@
 //! RankSelectFew: Sparse bitvector rank/select.
 //!
-//! Port of `rank_select_few<P, W>` from topling-zip.
 //! Optimized for bitvectors where one value (0 or 1) is much rarer than the other.
 //!
 //! Instead of storing the full bitvector, only the positions of the rare ("pivot")

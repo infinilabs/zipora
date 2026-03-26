@@ -2,8 +2,6 @@
 //!
 //! Provides functions for detecting word boundaries in text, useful for
 //! tokenization, search indexing, and text processing.
-//!
-//! Ported from topling-zip's fstring word boundary utilities.
 
 /// Check if a byte is at a word boundary
 ///

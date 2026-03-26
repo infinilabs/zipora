@@ -120,7 +120,7 @@ pub struct SimpleZipBlobStore {
     /// Deduplicated string pool storing all unique fragments
     strpool: Vec<u8>,
     /// Packed (offset << len_bits | length) for each fragment reference.
-    /// Matches topling-zip's `ZipIntVector<uint64_t> m_off_len` pattern.
+    /// Packed offset|length pairs for each fragment.
     off_len: Vec<u64>,
     /// Number of bits used for length field in packed off_len
     len_bits: u32,
@@ -174,7 +174,7 @@ impl SimpleZipBlobStore {
         // Step 2: Build deduplicated string pool and collect offsets/lengths
         let (strpool, offsets, lengths) = Self::build_strpool(&all_fragments)?;
 
-        // Step 3: Pack offset|length into single u64 (matching topling-zip pattern)
+        // Step 3: Pack offset|length into single u64
         let max_len = lengths.iter().copied().max().unwrap_or(0);
         let len_bits = if max_len == 0 { 0 } else { (usize::BITS - max_len.leading_zeros()) as u32 };
         let off_len: Vec<u64> = offsets.iter().zip(lengths.iter())
@@ -262,7 +262,7 @@ impl SimpleZipBlobStore {
 
     /// Get record by reassembling fragments.
     ///
-    /// Matches topling-zip's `get_record_append_imp` hot path:
+    /// Fast path for record retrieval:
     /// pre-compute data pointer, bit width, and mask, then loop with
     /// shift+mask to unpack each (offset, length) pair.
     fn get_record_append_imp(&self, rec_id: usize, rec_data: &mut Vec<u8>) -> Result<()> {
@@ -275,7 +275,7 @@ impl SimpleZipBlobStore {
         let beg = self.records.get(rec_id);
         let end = self.records.get(rec_id + 1);
 
-        // Pre-compute constants for hot loop (matching topling-zip pattern)
+        // Pre-compute constants for hot loop
         let strpool = self.strpool.as_ptr();
         let ol_data = self.off_len.as_ptr();
         let len_bits = self.len_bits;

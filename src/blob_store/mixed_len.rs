@@ -73,8 +73,7 @@ use crate::RecordId;
 use std::collections::HashMap;
 
 /// Record access mode, determined at build time.
-/// Matches topling-zip's `set_func_ptr()` compile-time dispatch:
-/// avoids bitmap check when all records are the same type.
+/// Avoids bitmap check when all records are the same type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RecordMode {
     /// All records are fixed-length (no bitmap needed)
@@ -186,7 +185,7 @@ impl MixedLenBlobStore {
             total_size as f64 / data.len() as f64
         };
 
-        // Determine dispatch mode (matching topling-zip set_func_ptr)
+        // Determine dispatch mode for optimal access
         let var_num = data.len() - fixed_num;
         let mode = if var_num == 0 {
             RecordMode::AllFixed
@@ -336,7 +335,7 @@ impl MixedLenBlobStore {
 
     /// Zero-copy record access — returns a slice into internal storage.
     ///
-    /// Matches topling-zip's `set_func_ptr()` dispatch pattern:
+    /// Fast dispatch based on record mode:
     /// - AllFixed: direct index into packed array, no bitmap check
     /// - AllVariable: direct offset lookup, no bitmap check
     /// - Mixed: bitmap check + rank dispatch
@@ -387,7 +386,7 @@ impl MixedLenBlobStore {
         ))
     }
 
-    /// Append record data to an existing buffer (matching topling-zip pattern).
+    /// Append record data to an existing buffer.
     ///
     /// This avoids allocation by appending to a caller-provided buffer.
     #[inline]
@@ -396,7 +395,7 @@ impl MixedLenBlobStore {
         Ok(())
     }
 
-    /// Get the total memory usage of this store (matching topling-zip `mem_size`).
+    /// Get the total memory usage of this store.
     #[inline]
     pub fn mem_size(&self) -> usize {
         std::mem::size_of_val(&self.is_fixed_len)

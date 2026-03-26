@@ -708,7 +708,7 @@ impl SuffixArrayDictionary {
         }
         
         // Phase 1: Handle boundary cases - advance past suffixes extending beyond text
-        // This mirrors the reference logic: if (terark_unlikely(sa[lo] + depth >= saLen)) { lo++; }
+        // This mirrors the reference logic: if (unlikely(sa[lo] + depth >= saLen)) { lo++; }
         while search_lo < search_hi {
             if let Some(&suffix_idx) = self.suffix_array.as_slice().get(search_lo) {
                 if suffix_idx + pos >= self.dictionary_text.len() {
