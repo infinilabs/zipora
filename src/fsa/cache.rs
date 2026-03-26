@@ -219,9 +219,8 @@ impl FsaCacheStats {
 
 /// High-performance FSA cache system.
 ///
-/// Single-threaded cache for FSA state acceleration, matching topling-zip's
-/// `NTD_CacheTrie` pattern. Not thread-safe — use external synchronization
-/// if shared across threads.
+/// Single-threaded cache for FSA state acceleration. Not thread-safe — use
+/// external synchronization if shared across threads.
 pub struct FsaCache {
     /// Cache configuration
     config: FsaCacheConfig,
@@ -486,7 +485,7 @@ impl Default for FsaCache {
 }
 
 // ============================================================================
-// Fast Vec-based state cache matching topling-zip NTD_CacheState pattern
+// Fast Vec-based state cache for dense state ID spaces
 // ============================================================================
 
 /// Sentinel value for unused/free states in the fast cache.
@@ -494,14 +493,8 @@ const NIL_STATE: u32 = u32::MAX;
 
 /// Fast Vec-based state cache for dense state ID spaces.
 ///
-/// Matches topling-zip's `NTD_CacheTrie` pattern: states stored in a
-/// contiguous Vec indexed by state ID for O(1) lookup. Much faster than
-/// HashMap for typical FSA use where state IDs are sequential.
-///
-/// # Layout (16 bytes per state, matching `NTD_CacheState`)
-/// ```text
-/// child0 (4B) | parent (4B) | map_state (4B) | zp_offset:31 + is_term:1 (4B)
-/// ```
+/// States stored in a contiguous Vec indexed by state ID for O(1) lookup.
+/// Much faster than HashMap for typical FSA use where state IDs are sequential.
 pub struct FastStateCache {
     /// States array — indexed by state ID.
     /// `map_state == NIL_STATE` means the slot is free.

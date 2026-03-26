@@ -8,7 +8,7 @@ Zipora implements a sophisticated error handling and recovery system providing p
 - **Automatic Recovery Strategies**: Memory reclamation, structure rebuilding, fallback algorithm switching
 - **Contextual Error Reporting**: Rich error context with metadata, thread IDs, timestamps
 - **Recovery Statistics**: Comprehensive tracking of recovery attempts, success rates, and performance metrics
-- **Verification Macros**: Production-ready assertion and verification system similar to TERARK_VERIFY
+- **Verification Macros**: Production-ready assertion and verification system with fail-fast behavior
 - **Thread-Safe Operations**: All error handling operations are thread-safe and lock-free
 
 ## Error Severity Levels
@@ -99,14 +99,14 @@ Production-ready verification system:
 ```rust
 use zipora::{zipora_verify, zipora_verify_eq, zipora_verify_lt};
 
-// Basic verification (similar to TERARK_VERIFY)
+// Basic runtime verification with fail-fast behavior
 zipora_verify!(index < size, "Index {} out of bounds for size {}", index, size);
 
 // Comparison macros
 zipora_verify_eq!(actual, expected);
 zipora_verify_lt!(value, limit);
 
-// Fatal error macro (similar to TERARK_DIE)
+// Fatal error macro for immediate termination
 if critical_condition {
     zipora_die!("Critical system failure: {}", error_message);
 }

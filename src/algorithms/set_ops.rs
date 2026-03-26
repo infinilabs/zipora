@@ -1,7 +1,6 @@
 //! Set Operations Library
 //!
-//! Complete implementation of set operations following the C++ reference implementation
-//! from topling-zip/src/terark/set_op.hpp.
+//! Complete implementation of set operations.
 //!
 //! This module provides efficient implementations of:
 //! - Multiset operations (preserving duplicates)
@@ -334,7 +333,6 @@ where
 ///
 /// # Note
 ///
-/// Following the C++ implementation pattern from lines 171-191 of set_op.hpp.
 /// The algorithm uses swap-based movement to avoid extra allocations.
 ///
 /// # Examples

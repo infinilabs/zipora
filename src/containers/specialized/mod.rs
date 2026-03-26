@@ -1,8 +1,7 @@
 //! Specialized container types optimized for specific use cases
 //!
-//! This module provides specialized container implementations that bridge
-//! feature gaps while maintaining zipora's performance
-//! and safety standards.
+//! This module provides specialized container implementations optimized for
+//! performance and memory efficiency while maintaining safety standards.
 //!
 //! ## Phase 1 Container Types
 //!
@@ -80,7 +79,7 @@ mod zo_sorted_str_vec;
 mod lru_map;
 mod concurrent_lru_map;
 
-// P1.4: Missing container types (topling-zip ports)
+// P1.4: Additional container types
 pub mod vec_trb;
 mod minimal_sso;
 

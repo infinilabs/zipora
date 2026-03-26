@@ -1,6 +1,5 @@
 //! Trivial rank/select implementations for all-zero and all-one bitvectors.
 //!
-//! Port of `rank_select_allzero` and `rank_select_allone` from topling-zip.
 //! No bit storage — just `size`. All operations are O(1).
 
 use crate::error::{Result, ZiporaError};

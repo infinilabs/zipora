@@ -1,4 +1,4 @@
-//! Small String Optimization (port of topling-zip `minimal_sso<32>`).
+//! Small String Optimization.
 //!
 //! Strings ≤31 bytes are stored inline (no heap allocation).
 //! Longer strings are heap-allocated with standard growth strategy.

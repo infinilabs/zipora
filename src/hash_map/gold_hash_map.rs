@@ -1,7 +1,6 @@
 //! GoldHashMap - High-performance hash table with advanced features
 //!
-//! A production-grade hash map implementation inspired by Terark's gold_hash_map.hpp,
-//! featuring:
+//! A production-grade hash map implementation featuring:
 //! - Custom link types (u32/u64) for memory efficiency
 //! - Fast and safe iteration modes
 //! - Optional hash caching to reduce recomputation

@@ -1,7 +1,7 @@
 //! Context-aware memory management for entropy algorithms
 //!
 //! This module provides efficient buffer pooling and reuse patterns
-//! inspired by TerarkContext, optimized for entropy coding operations.
+//! optimized for entropy coding operations.
 
 use crate::error::{Result, ZiporaError};
 use std::cell::RefCell;

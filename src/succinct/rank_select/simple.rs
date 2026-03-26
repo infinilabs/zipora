@@ -1,8 +1,7 @@
 //! RankSelectSimple: Minimal rank/select with 256-bit blocks.
 //!
-//! Port of `rank_select_simple` from topling-zip. Simplest possible implementation:
-//! one u32 per 256-bit block storing cumulative rank1. No select acceleration tables.
-//! Select uses binary search over the rank cache.
+//! Simplest possible implementation: one u32 per 256-bit block storing cumulative
+//! rank1. No select acceleration tables. Select uses binary search over the rank cache.
 //!
 //! Trade-offs vs other variants:
 //! - Lowest memory overhead (4 bytes per 256-bit block)

@@ -31,9 +31,9 @@
 //!
 //! # GoldHashMap
 //!
-//! **GoldHashMap**: High-performance hash table inspired by Terark's gold_hash_map,
-//! featuring link-based collision resolution, configurable link types (u32/u64),
-//! optional hash caching, and efficient freelist management.
+//! **GoldHashMap**: High-performance hash table featuring link-based collision
+//! resolution, configurable link types (u32/u64), optional hash caching, and
+//! efficient freelist management.
 //!
 //! ## Key Features
 //!

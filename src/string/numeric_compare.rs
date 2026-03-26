@@ -2,8 +2,6 @@
 //!
 //! Provides string comparison functions that properly handle numeric values,
 //! including signed decimals and real numbers with decimal points.
-//!
-//! Ported from topling-zip's fstring decimal_strcmp and realnum_strcmp.
 
 use std::cmp::Ordering;
 

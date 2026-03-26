@@ -453,7 +453,7 @@ impl NestedTrieDawg {
     }
 
     /// Map a terminal state to its word index (dictionary rank).
-    /// Uses rank-select for O(1) lookup, matching topling-zip's `state_to_word_id`.
+    /// Uses rank-select for O(1) lookup.
     ///
     /// Returns None if the state is not terminal.
     #[inline]

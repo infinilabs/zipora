@@ -1,4 +1,4 @@
-//! Threaded Red-Black Tree on contiguous memory (port of topling-zip vec_trb).
+//! Threaded Red-Black Tree on contiguous memory.
 //!
 //! All nodes stored in a `Vec` with `u32` indices instead of pointers.
 //! Threading: leaf null-pointers are replaced with links to in-order
@@ -8,7 +8,7 @@ use std::cmp::Ordering;
 use std::mem::MaybeUninit;
 
 // ============================================================================
-// Bit layout for u32 indices (matching topling-zip vec_trb_node_t<uint32_t>)
+// Bit layout for u32 indices
 // ============================================================================
 
 const FLAG_BIT: u32 = 1 << 31; // children[0]: color (1=red), children[1]: used (0=used)
@@ -42,7 +42,7 @@ impl Node {
     #[inline] fn left_link(&self) -> u32 { self.link(0) }
     #[inline] fn right_link(&self) -> u32 { self.link(1) }
 
-    // -- type queries (matching topling-zip exactly) --
+    // -- type queries --
     #[inline] fn is_child(&self, side: usize) -> bool { (self.ch[side] & TYPE_BIT) == 0 }
     #[inline] fn is_thread(&self, side: usize) -> bool { (self.ch[side] & TYPE_BIT) != 0 }
 
@@ -196,7 +196,7 @@ impl<T> Core<T> {
         (stk, false)
     }
 
-    // -- insert + rebalance (matching topling-zip vec_trb_insert) --
+    // -- insert + rebalance --
 
     fn insert_at(&mut self, stk: &PathStack, new_idx: u32) {
         self.count += 1;
@@ -227,7 +227,7 @@ impl<T> Core<T> {
         }
         self.n_mut(new_idx).set_red();
 
-        // Rebalance (matching topling-zip vec_trb_insert)
+        // Rebalance using standard red-black tree fixup
         // k = index of parent in stack (stk.len-1)
         if stk.len < 2 {
             // Parent is root — just ensure root is black
@@ -351,7 +351,7 @@ impl<T> Core<T> {
     }
 
     // -- remove: simple splice (no black-height fixup for now) --
-    // Black-height fixup is extremely complex (~200 LOC in topling-zip).
+    // Black-height fixup is extremely complex.
     // The tree stays functionally correct (BST ordering maintained) but
     // may become slightly unbalanced. This is acceptable for the use cases
     // in zipora (small to medium ordered sets in hash map internals).

@@ -1,6 +1,5 @@
 //! RankSelectMixedSE512: Two-dimension side-entry rank/select with 512-bit blocks.
 //!
-//! Port of `rank_select_mixed_se_512` from topling-zip.
 //! Stores two independent bitvectors with words interleaved at the word level:
 //! `words[i*2 + dim]`. Rank cache is separated (side-entry) with packed 9-bit
 //! sub-block ranks per dimension.

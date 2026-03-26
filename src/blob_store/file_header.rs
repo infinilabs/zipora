@@ -1,7 +1,6 @@
 //! On-disk file header structures for blob stores
 //!
-//! Matching topling-zip's `blob_store_file_header.hpp` layout for format compatibility.
-//! All structures are packed to exact byte boundaries for binary-level interoperability.
+//! All structures are packed to exact byte boundaries for binary compatibility.
 
 /// Magic string identifying blob store files.
 pub const MAGIC_STRING: &[u8; 18] = b"terark-blob-store\0";
@@ -41,9 +40,8 @@ impl ChecksumType {
 
 /// Base file header for all blob store types.
 ///
-/// Exactly 80 bytes, matching topling-zip's `FileHeaderBase`.
-/// All blob store file headers start with this structure, followed by
-/// per-type fields to reach 128 bytes total.
+/// Exactly 80 bytes. All blob store file headers start with this structure,
+/// followed by per-type fields to reach 128 bytes total.
 ///
 /// # Layout (80 bytes)
 ///
@@ -241,7 +239,7 @@ impl std::fmt::Debug for FileHeaderBase {
 
 /// File footer for blob store files.
 ///
-/// Exactly 64 bytes, matching topling-zip's `BlobStoreFileFooter`.
+/// Exactly 64 bytes for binary compatibility.
 /// Placed at the end of every blob store file for integrity verification.
 ///
 /// # Layout (64 bytes)
@@ -487,12 +485,11 @@ mod tests {
     }
 
     #[test]
-    fn test_file_sizes_match_topling_zip() {
-        // topling-zip: BOOST_STATIC_ASSERT(sizeof(FileHeaderBase) == 80)
+    fn test_file_sizes_match_reference() {
+        // Verify struct sizes match expected layout
         assert_eq!(FILE_HEADER_BASE_SIZE, 80);
-        // topling-zip: BOOST_STATIC_ASSERT(sizeof(BlobStoreFileFooter) == 64)
         assert_eq!(FILE_FOOTER_SIZE, 64);
-        // topling-zip: BOOST_STATIC_ASSERT(sizeof(FileHeader) == 128) for all stores
+        // Total file header should be 128 bytes for all stores
         assert_eq!(FILE_HEADER_FULL_SIZE, 128);
     }
 

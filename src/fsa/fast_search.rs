@@ -1,10 +1,9 @@
 //! Fast byte search in sorted arrays for FSA child-label lookup.
 //!
-//! Matches topling-zip's `fast_search_byte.hpp` — the core algorithm for trie
-//! node child lookup. The input is a **sorted** byte array of child labels and
-//! we need to find the position of a single key byte.
+//! Core algorithm for trie node child lookup. The input is a **sorted** byte array
+//! of child labels and we need to find the position of a single key byte.
 //!
-//! # Strategy Selection (matching topling-zip)
+//! # Strategy Selection
 //!
 //! | Array length | Algorithm                              |
 //! |-------------|----------------------------------------|
@@ -19,12 +18,11 @@ use std::arch::x86_64::*;
 use crate::error::Result;
 
 // ============================================================================
-// Core sorted-array search functions (matching topling-zip fast_search_byte.hpp)
+// Core sorted-array search functions for sorted byte arrays
 // ============================================================================
 
 /// Binary search for `key` in sorted `data[0..len]`.
 /// Returns index of `key` if found, or `len` if not found.
-/// Matches topling-zip's `binary_search_byte`.
 #[inline]
 pub fn binary_search_byte(data: &[u8], key: u8) -> usize {
     let len = data.len();
@@ -49,7 +47,6 @@ pub fn binary_search_byte(data: &[u8], key: u8) -> usize {
 
 /// SSE4.2 search for `key` in sorted `data[0..len]` where `len <= 16`.
 /// Returns index of `key` if found, or a value >= `len` if not found.
-/// Matches topling-zip's `sse4_2_search_byte`.
 #[cfg(target_arch = "x86_64")]
 #[inline]
 #[target_feature(enable = "sse4.2")]
@@ -75,7 +72,7 @@ unsafe fn sse4_2_search_byte(data: *const u8, len: i32, key: u8) -> usize {
 }
 
 /// Fast search for `key` in sorted `data[0..len]` where `len <= 35`.
-/// Uses up to 3 SSE4.2 calls. Matches topling-zip's `fast_search_byte_max_35`.
+/// Uses up to 3 SSE4.2 calls for optimal performance.
 #[cfg(target_arch = "x86_64")]
 #[inline]
 #[target_feature(enable = "sse4.2")]
@@ -111,7 +108,7 @@ unsafe fn fast_search_byte_max_35(data: *const u8, len: usize, key: u8) -> usize
 /// Primary entry point: search for `key` in sorted byte array `data`.
 /// Returns the index of `key` if found, or `data.len()` if not found.
 ///
-/// Strategy (matching topling-zip):
+/// Strategy:
 /// - ≤16 bytes: SSE4.2 `_mm_cmpestri` (single instruction)
 /// - 17-35 bytes: SSE4.2 (2-3 calls)
 /// - ≥36 bytes: binary search
@@ -143,7 +140,7 @@ pub fn fast_search_byte(data: &[u8], key: u8) -> usize {
 }
 
 /// Search for `key` in sorted `data`, max 16 bytes.
-/// Matches topling-zip's `fast_search_byte_max_16` / `sse4_2_search_byte`.
+/// Uses SSE4.2 intrinsics when available for optimal performance.
 #[inline]
 pub fn fast_search_byte_max_16(data: &[u8], key: u8) -> usize {
     debug_assert!(data.len() <= 16);

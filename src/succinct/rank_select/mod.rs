@@ -120,7 +120,7 @@ use std::fmt;
 // This provides 50-150x better performance than the removed legacy implementations
 pub use interleaved::{RankSelectInterleaved256 as RankSelect256};
 
-// Core rank/select implementations (ported from topling-zip)
+// Core rank/select implementations
 pub mod builder;
 pub mod config;
 pub mod interleaved;    // rank_select_il_256: interleaved 256-bit blocks

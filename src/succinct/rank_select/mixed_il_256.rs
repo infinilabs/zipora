@@ -1,6 +1,5 @@
 //! RankSelectMixedIL256: Two-dimension interleaved rank/select with 256-bit blocks.
 //!
-//! Port of `rank_select_mixed_il_256` from topling-zip.
 //! Stores TWO independent bitvectors interleaved in the same structure.
 //! Each 256-bit "line" contains rank caches + bits for BOTH dimensions.
 //!

@@ -15,7 +15,7 @@ use crate::error::ZiporaError;
 // ============================================================================
 // Core types (from mod.rs)
 // ============================================================================
-/// Simple statistics matching topling-zip's ZipStat
+/// Simple statistics
 #[derive(Debug, Clone)]
 pub struct TrieStat {
     pub insert_time: f64,

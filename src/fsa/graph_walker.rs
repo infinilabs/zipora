@@ -713,18 +713,16 @@ impl<V: Vertex> GraphWalker<V> for MultiPassWalker<V> {
 }
 
 // ============================================================================
-// Fast integer-indexed walkers matching topling-zip graph_walker.hpp
+// Fast integer-indexed walkers using BitVector for color tracking
 // ============================================================================
 //
 // These use BitVector for color tracking (O(1) per vertex, minimal memory)
-// and double-buffered queues for level-aware BFS, matching the C++ reference.
+// and double-buffered queues for level-aware BFS.
 
 /// Fast BFS walker using bit vector for color tracking.
 ///
-/// Matches topling-zip's `BFS_GraphWalker<VertexID>`:
-/// - `febitvec color` → `BitVector color`
-/// - Double-buffered `q1`/`q2` swap for level tracking
-/// - O(n/8) bytes memory for n vertices (vs HashMap O(32n))
+/// Uses BitVector for O(1) per-vertex color tracking with double-buffered queues
+/// for level-aware traversal. O(n/8) bytes memory for n vertices (vs HashMap O(32n)).
 pub struct FastBfsWalker {
     q1: Vec<u32>,
     q2: Vec<u32>,
@@ -798,9 +796,8 @@ impl FastBfsWalker {
 
 /// Fast DFS walker using bit vector for color tracking.
 ///
-/// Matches topling-zip's `PFS_GraphWalker<VertexID>` (Performance First Search):
-/// - Stack-based with bit vector color
-/// - Children pushed in reverse order for consistent traversal
+/// Stack-based with bit vector color tracking.
+/// Children pushed in reverse order for consistent traversal.
 pub struct FastDfsWalker {
     stack: Vec<u32>,
     color: BitVector,
@@ -853,9 +850,8 @@ impl FastDfsWalker {
 
 /// Fast CFS walker: BFS for first 2 levels, then DFS.
 ///
-/// Matches topling-zip's `CFS_TreeWalker<VertexID>`:
-/// - Cache-friendly: BFS for shallow levels (cache-hot), DFS for deeper levels
-/// - Optimal for tries where root fanout is high but subtrees are deep
+/// Cache-friendly: BFS for shallow levels (cache-hot), DFS for deeper levels.
+/// Optimal for tries where root fanout is high but subtrees are deep.
 pub struct FastCfsWalker {
     q1: Vec<u32>,
     q2: Vec<u32>,

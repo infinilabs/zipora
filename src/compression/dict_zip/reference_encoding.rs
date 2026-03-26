@@ -297,7 +297,7 @@ impl<W: Write> ReferenceEncoder<W> {
     ///
     /// Reference C++:
     /// ```cpp
-    /// if (terark_likely(localmatchLen <= 34 + 30)) {
+    /// if (likely(localmatchLen <= 34 + 30)) {
     ///     dio << byte_t(byte_t(DzType::Far2Long) | ((localmatchLen - 34) << 3));
     /// } else {
     ///     dio << byte_t(byte_t(DzType::Far2Long) | (31 << 3));
@@ -325,7 +325,7 @@ impl<W: Write> ReferenceEncoder<W> {
     ///
     /// Reference C++:
     /// ```cpp
-    /// if (terark_likely(localmatchLen <= 35)) {
+    /// if (likely(localmatchLen <= 35)) {
     ///     dio << byte_t(byte_t(DzType::Far3Long) | ((localmatchLen - 5) << 3));
     /// } else {
     ///     dio << byte_t(byte_t(DzType::Far3Long) | (31 << 3));
@@ -353,7 +353,7 @@ impl<W: Write> ReferenceEncoder<W> {
     ///
     /// Reference C++ (simplified version):
     /// ```cpp
-    /// if (terark_likely(gMatch.depth <= gMaxShortLen)) {
+    /// if (likely(gMatch.depth <= gMaxShortLen)) {
     ///     dio << byte_t(byte_t(DzType::Global) | (encLen << 3));
     ///     if (gOffsetBits < 24) {
     ///         WriteUint<3>(dio, (offset << (24 - gOffsetBits)) | (encLen >> 5));

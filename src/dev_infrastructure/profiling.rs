@@ -2,7 +2,7 @@
 //!
 //! Previously 4,491 LOC of profiling framework (Profiler trait, ProfilerScope,
 //! ProfilerRegistry, HardwareProfiler, MemoryProfiler, CacheProfiler,
-//! ProfilerReporter, etc.). Gutted to match topling-zip's ~150 LOC approach.
+//! ProfilerReporter, etc.).
 //!
 //! The actual timing/benchmarking utilities live in `debug.rs` (ScopedTimer,
 //! HighPrecisionTimer, BenchmarkSuite, format_duration). This file previously

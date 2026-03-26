@@ -1,6 +1,5 @@
 //! RankSelectMixedXL256: Multi-dimension interleaved rank/select with 256-bit blocks.
 //!
-//! Port of `rank_select_mixed_xl_256<Arity>` from topling-zip.
 //! Supports 2, 3, or 4 independent bitvectors interleaved in the same structure.
 //!
 //! Each line contains `Arity × 4` words (bits interleaved at word level) plus
