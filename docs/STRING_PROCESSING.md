@@ -211,7 +211,7 @@ sortable.stable_sort_lexicographic().unwrap();
 | **String Search** | 2-4x | Pattern matching |
 | **Memory Compare** | 8-16x | Deduplication |
 | **Hash Computation** | 2-3x | Hash maps, caching |
-| **Bulk Operations** | 4-12x | Batch processing |
+| **Bulk Operations** | ~1.0x | Batch processing (std already vectorizes) |
 
 ## String Join Utilities
 
