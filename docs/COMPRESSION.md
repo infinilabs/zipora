@@ -75,7 +75,7 @@ let config = ContextualHuffmanConfig {
 };
 let contextual = ContextualHuffmanEncoder::with_config(b"training", config).unwrap();
 let result = contextual.encode(b"test data").unwrap();
-println!("Speedup with fast table: 2.1-2.6x");
+println!("Fast table: 256-entry context-aware symbol lookup");
 ```
 
 ## FSE (Finite State Entropy)
@@ -216,9 +216,7 @@ println!("POPCNT: {}", hw.has_popcnt);
 // - POPCNT: Fast bit counting for symbol statistics
 ```
 
-## Performance Targets
+## Performance Notes
 
-- **Huffman O1**: 2.1-2.6x speedup with fast symbol table
-- **Radix Sort in compression**: 4-8x vs comparison sorts
-- **SIMD histogram**: 4-8x faster frequency counting
+- **Huffman O1**: Context-aware encoding with fast 256-entry symbol table
 - **Parallel rANS**: Near-linear scaling to 8+ threads

@@ -198,11 +198,9 @@ use zipora::simd::avx512::{Avx512Ops, Avx512MaskOps};
 | **String compare** | 4-8x | N/A | AVX2 |
 | **Population count** | 2-4x | N/A | POPCNT |
 
-## Performance Targets
+## Performance Notes
 
-- **Rank/Select**: 0.3-0.4 Gops/s with BMI2
-- **SIMD Memory**: 4-12x bulk operations
-- **Histogram**: 4-8x faster frequency counting
+- **Rank/Select**: ~5.2 Gops/s single-query with BMI2 (100K-bit vectors)
 - **Cache Hit**: >95% with prefetching
 
 ## Cross-Platform Support
