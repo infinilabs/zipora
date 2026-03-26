@@ -737,7 +737,7 @@ impl<T> LockFreeStack<T> {
             let next = unsafe { (*head).next };
             if self
                 .head
-                .compare_exchange_weak(head, next, Ordering::Release, Ordering::Relaxed)
+                .compare_exchange_weak(head, next, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
                 // SAFETY: head from Box::into_raw in push, CAS ensures exclusive ownership

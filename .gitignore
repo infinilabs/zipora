@@ -308,3 +308,6 @@ tramp
 
 include/
 tmp
+
+GEMINI.md
+CLAUDE.md

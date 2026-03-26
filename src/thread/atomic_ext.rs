@@ -434,7 +434,7 @@ impl<T> AtomicStack<T> {
             // SAFETY: head is non-null and was allocated as AtomicNode<T>, acquire ordering ensures visibility
             let next = unsafe { (*head).next() };
 
-            if self.head.compare_exchange_weak(head, next, Ordering::Release, Ordering::Relaxed).is_ok() {
+            if self.head.compare_exchange_weak(head, next, Ordering::AcqRel, Ordering::Acquire).is_ok() {
                 self.size.fetch_sub(1, Ordering::Relaxed);
                 // SAFETY: head successfully removed from stack, exclusive ownership restored
                 let data = unsafe { Box::from_raw(head).data };
