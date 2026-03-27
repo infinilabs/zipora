@@ -25,6 +25,7 @@ use crate::memory::cache_layout::{CacheOptimizedAllocator, CacheLayoutConfig, al
 use crate::memory::cache::{get_optimal_numa_node, numa_alloc_aligned};
 use crate::memory::simd_ops::{fast_fill, fast_copy_cache_optimized, fast_compare, fast_prefetch_range};
 use crate::simd::{AdaptiveSimdSelector, Operation};
+use bytemuck::Pod;
 use std::fs::OpenOptions;
 use std::io::{Seek, SeekFrom, Write};
 use std::marker::PhantomData;
@@ -272,9 +273,9 @@ pub struct MmapVec<T> {
     _phantom: PhantomData<T>,
 }
 
-impl<T> MmapVec<T> 
+impl<T> MmapVec<T>
 where
-    T: Copy + 'static, // Require Copy for memory-mapped safety
+    T: Pod + 'static, // Pod ensures every bit pattern is valid for T (prevents UB on mmap read)
 {
     /// Create a new memory-mapped vector
     pub fn create<P: AsRef<Path>>(path: P, config: MmapVecConfig) -> Result<Self> {
@@ -1224,7 +1225,7 @@ pub struct MmapVecIter<'a, T> {
 
 impl<'a, T> Iterator for MmapVecIter<'a, T>
 where
-    T: Copy,
+    T: Pod,
 {
     type Item = &'a T;
 
@@ -1246,7 +1247,7 @@ where
 
 impl<'a, T> ExactSizeIterator for MmapVecIter<'a, T>
 where
-    T: Copy,
+    T: Pod,
 {
     fn len(&self) -> usize {
         self.slice.len() - self.index
@@ -1255,7 +1256,7 @@ where
 
 impl<'a, T> IntoIterator for &'a MmapVec<T>
 where
-    T: Copy + 'static,
+    T: Pod + 'static,
 {
     type Item = &'a T;
     type IntoIter = MmapVecIter<'a, T>;
