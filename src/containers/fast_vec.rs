@@ -439,24 +439,13 @@ impl<T> FastVec<T> {
 
         let move_count = self.len - index;
 
-        // SAFETY: index <= self.len verified at line 427, ptr valid after ensure_capacity, move_count computed safely
+        // SAFETY: index <= self.len verified above, ptr valid after ensure_capacity, move_count computed safely
         unsafe {
             let ptr = self.as_mut_ptr().add(index);
 
-            // Use SIMD optimization for large move operations on Copy types
-            if move_count > 0 && is_simd_safe::<T>() && is_simd_beneficial::<T>(move_count) {
-                // Create temporary slices for SIMD copy
-                let src_bytes = slice_as_bytes(slice::from_raw_parts(ptr, move_count));
-                let mut temp_vec: Vec<u8> = vec![0; src_bytes.len()];
-
-                // Copy to temporary buffer with SIMD
-                fast_copy(src_bytes, &mut temp_vec)?;
-
-                // Copy back from temporary buffer with SIMD
-                let dst_bytes = slice_as_bytes_mut(slice::from_raw_parts_mut(ptr.add(1), move_count));
-                fast_copy(&temp_vec, dst_bytes)?;
-            } else if move_count > 0 {
-                // Standard move for small operations or non-Copy types
+            if move_count > 0 {
+                // ptr::copy handles overlapping memory correctly (compiles to memmove,
+                // which LLVM/glibc already optimizes with SIMD for large buffers)
                 ptr::copy(ptr, ptr.add(1), move_count);
             }
 
@@ -475,25 +464,14 @@ impl<T> FastVec<T> {
 
         let move_count = self.len - index - 1;
 
-        // SAFETY: index < self.len verified at line 471, ptr valid from allocation, move_count computed safely
+        // SAFETY: index < self.len verified above, ptr valid from allocation, move_count computed safely
         unsafe {
             let ptr = self.as_mut_ptr().add(index);
             let value = ptr::read(ptr);
 
-            // Use SIMD optimization for large move operations on Copy types
-            if move_count > 0 && is_simd_safe::<T>() && is_simd_beneficial::<T>(move_count) {
-                // Create temporary slices for SIMD copy
-                let src_bytes = slice_as_bytes(slice::from_raw_parts(ptr.add(1), move_count));
-                let mut temp_vec: Vec<u8> = vec![0; src_bytes.len()];
-
-                // Copy to temporary buffer with SIMD
-                fast_copy(src_bytes, &mut temp_vec)?;
-
-                // Copy back from temporary buffer with SIMD
-                let dst_bytes = slice_as_bytes_mut(slice::from_raw_parts_mut(ptr, move_count));
-                fast_copy(&temp_vec, dst_bytes)?;
-            } else if move_count > 0 {
-                // Standard move for small operations or non-Copy types
+            if move_count > 0 {
+                // ptr::copy handles overlapping memory correctly (compiles to memmove,
+                // which LLVM/glibc already optimizes with SIMD for large buffers)
                 ptr::copy(ptr.add(1), ptr, move_count);
             }
 
