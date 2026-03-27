@@ -16,6 +16,7 @@ use std::cmp::Ordering;
 ///
 /// ```rust
 /// use zipora::string::decimal_strcmp;
+/// use std::cmp::Ordering;
 ///
 /// assert_eq!(decimal_strcmp("123", "456"), Some(Ordering::Less));
 /// assert_eq!(decimal_strcmp("-10", "5"), Some(Ordering::Less));

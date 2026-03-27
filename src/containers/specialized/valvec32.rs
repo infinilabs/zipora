@@ -153,8 +153,8 @@ fn larger_capacity(old_cap: u32) -> u32 {
 /// vec.push(84)?;
 ///
 /// assert_eq!(vec.len(), 2);
-/// assert_eq!(vec[0], 42);
-/// assert_eq!(vec[1], 84);
+/// assert_eq!(vec[0usize], 42);
+/// assert_eq!(vec[1usize], 84);
 /// # Ok::<(), zipora::ZiporaError>(())
 /// ```
 #[repr(C)] // Ensure predictable layout
@@ -422,8 +422,8 @@ impl<T> ValVec32<T> {
     /// vec.push(84)?;
     ///
     /// assert_eq!(vec.len(), 2);
-    /// assert_eq!(vec[0], 42);
-    /// assert_eq!(vec[1], 84);
+    /// assert_eq!(vec[0usize], 42);
+    /// assert_eq!(vec[1usize], 84);
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
     /// Appends an element to the back of the vector - hot path optimized
@@ -474,8 +474,8 @@ impl<T> ValVec32<T> {
     /// vec.push_panic(84);
     ///
     /// assert_eq!(vec.len(), 2);
-    /// assert_eq!(vec[0], 42);
-    /// assert_eq!(vec[1], 84);
+    /// assert_eq!(vec[0usize], 42);
+    /// assert_eq!(vec[1usize], 84);
     /// ```
     #[inline(always)]
     pub fn push_panic(&mut self, value: T) {
