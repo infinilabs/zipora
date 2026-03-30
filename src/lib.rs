@@ -217,8 +217,9 @@ pub use blob_store::{BlobStore, MemoryBlobStore, PlainBlobStore};
 pub use fsa::{
     ZiporaTrie, ZiporaTrieConfig, TrieStrategy, StorageStrategy, CompressionStrategy as TrieCompressionStrategy,
     RankSelectType, BitVectorType, FiniteStateAutomaton, Trie,
-    // Legacy compatibility exports
-    DoubleArrayTrie, DoubleArrayTrieConfig, DoubleArrayTrieBuilder,
+    // Primary trie implementation — 8 bytes/state, faithful C++ reference port
+    DoubleArrayTrie, DoubleArrayTrieMap,
+    // Other trie strategies (available via explicit config)
     NestedLoudsTrie, NestingConfig, NestedTrieStats, FragmentStats,
     CompressedSparseTrie, ConcurrencyLevel, ReaderToken, WriterToken,
     PatriciaTrie, CritBitTrie,

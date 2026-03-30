@@ -17,6 +17,7 @@
 //! ```
 
 // Core implementation modules
+pub mod double_array;
 pub mod zipora_trie;
 pub mod strategy_traits;
 
@@ -32,7 +33,7 @@ pub mod dawg;
 
 // Core ZiporaTrie implementation
 pub use zipora_trie::{
-    ZiporaTrie, ZiporaTrieConfig,
+    ZiporaTrie, ZiporaTrieConfig, ZiporaTrieMap,
     TrieStrategy, StorageStrategy, CompressionStrategy, RankSelectType, BitVectorType,
 };
 
@@ -86,127 +87,9 @@ pub use version_sync::{
 // Previously 1,092 LOC of forwarding wrappers. Now thin modules with
 // just the types needed for backward compat. All delegate to ZiporaTrie.
 
-/// DoubleArrayTrie compatibility wrapper
-pub mod double_array_trie {
-    use super::*;
-    use crate::error::Result;
-
-    #[derive(Debug, Clone)]
-    pub struct DoubleArrayTrieConfig {
-        pub initial_capacity: usize,
-        pub growth_factor: f64,
-        pub use_memory_pool: bool,
-        pub enable_simd: bool,
-        pub pool_size_class: usize,
-        pub auto_shrink: bool,
-        pub cache_aligned: bool,
-        pub heuristic_collision_avoidance: bool,
-    }
-
-    impl Default for DoubleArrayTrieConfig {
-        fn default() -> Self {
-            Self {
-                initial_capacity: 256, growth_factor: 1.5, use_memory_pool: true,
-                enable_simd: true, pool_size_class: 8192, auto_shrink: false,
-                cache_aligned: true, heuristic_collision_avoidance: false,
-            }
-        }
-    }
-
-    /// DoubleArrayTrie — delegates to ZiporaTrie with DoubleArray strategy
-    pub struct DoubleArrayTrie {
-        pub(crate) trie: ZiporaTrie,
-    }
-
-    impl DoubleArrayTrie {
-        pub fn new() -> Self {
-            let mut tc = ZiporaTrieConfig::default();
-            tc.trie_strategy = TrieStrategy::DoubleArray {
-                initial_capacity: 256, growth_factor: 1.5,
-                free_list_management: true, auto_shrink: false,
-            };
-            Self { trie: ZiporaTrie::with_config(tc) }
-        }
-        pub fn with_config(config: DoubleArrayTrieConfig) -> Self {
-            let mut tc = ZiporaTrieConfig::default();
-            tc.trie_strategy = TrieStrategy::DoubleArray {
-                initial_capacity: config.initial_capacity,
-                growth_factor: config.growth_factor,
-                free_list_management: true,
-                auto_shrink: config.auto_shrink,
-            };
-            tc.enable_simd = config.enable_simd;
-            Self { trie: ZiporaTrie::with_config(tc) }
-        }
-        pub fn insert(&mut self, key: &[u8]) -> Result<()> { self.trie.insert(key) }
-        #[inline]
-        pub fn contains(&self, key: &[u8]) -> bool { self.trie.contains(key) }
-        pub fn lookup(&self, key: &[u8]) -> Option<()> { if self.trie.contains(key) { Some(()) } else { None } }
-        #[inline]
-        pub fn len(&self) -> usize { self.trie.len() }
-        pub fn is_empty(&self) -> bool { self.trie.is_empty() }
-        pub fn stats(&self) -> TrieStats { self.trie.stats().clone() }
-        #[inline]
-        pub fn memory_usage(&self) -> usize { self.trie.memory_usage() }
-        pub fn capacity(&self) -> usize { self.trie.capacity() }
-        pub fn shrink_to_fit(&mut self) { self.trie.shrink_to_fit(); }
-        pub fn config(&self) -> DoubleArrayTrieConfig { DoubleArrayTrieConfig::default() }
-        #[inline]
-        pub fn is_free(&self, state: u32) -> bool { self.trie.is_free_double_array(state) }
-        pub fn is_terminal(&self, state: u32) -> bool { self.trie.is_final(state) }
-        pub fn get_parent(&self, state: u32) -> u32 { self.trie.get_parent_double_array(state) }
-        pub fn get_base(&self, state: u32) -> u32 { self.trie.get_base_double_array(state) }
-        pub fn get_check(&self, state: u32) -> u32 { self.trie.get_check_double_array(state) }
-        pub fn memory_stats(&self) -> (usize, usize, f64) {
-            let (b, c, e) = self.trie.memory_stats();
-            let eff = if self.trie.capacity() > 0 {
-                self.trie.state_count() as f64 / self.trie.capacity() as f64
-            } else { 1.0 };
-            (b, c, eff)
-        }
-        pub fn bits_per_key(&self) -> f64 {
-            let s = self.trie.stats();
-            if s.num_keys > 0 { (s.memory_usage * 8) as f64 / s.num_keys as f64 } else { 0.0 }
-        }
-    }
-
-    impl Trie for DoubleArrayTrie {
-        fn insert(&mut self, key: &[u8]) -> Result<crate::StateId> { self.trie.insert(key)?; Ok(0) }
-        fn contains(&self, key: &[u8]) -> bool { self.trie.contains(key) }
-        fn lookup(&self, key: &[u8]) -> Option<crate::StateId> { if self.contains(key) { Some(0) } else { None } }
-        fn len(&self) -> usize { self.trie.len() }
-        fn is_empty(&self) -> bool { self.trie.is_empty() }
-    }
-
-    impl FiniteStateAutomaton for DoubleArrayTrie {
-        fn root(&self) -> u32 { self.trie.root() }
-        fn accepts(&self, key: &[u8]) -> bool { self.trie.accepts(key) }
-        fn longest_prefix(&self, input: &[u8]) -> Option<usize> { self.trie.longest_prefix(input) }
-        fn transition(&self, state: u32, symbol: u8) -> Option<u32> { self.trie.transition(state, symbol) }
-        fn transitions(&self, state: u32) -> Vec<(u8, u32)> {
-            self.trie.transitions(state)
-        }
-        fn is_final(&self, state: u32) -> bool { self.trie.is_final(state) }
-    }
-
-    pub struct DoubleArrayTrieBuilder { config: DoubleArrayTrieConfig }
-    impl DoubleArrayTrieBuilder {
-        pub fn new() -> Self { Self { config: DoubleArrayTrieConfig::default() } }
-        pub fn with_config(config: DoubleArrayTrieConfig) -> Self { Self { config } }
-        pub fn build_from_sorted(self, keys: Vec<Vec<u8>>) -> Result<DoubleArrayTrie> {
-            let mut t = DoubleArrayTrie::with_config(self.config);
-            for k in &keys { t.insert(k)?; }
-            Ok(t)
-        }
-        pub fn build_from_unsorted(self, mut keys: Vec<Vec<u8>>) -> Result<DoubleArrayTrie> {
-            keys.sort();
-            self.build_from_sorted(keys)
-        }
-        pub fn new_compact() -> Self { Self::new() }
-    }
-}
-
-pub use double_array_trie::{DoubleArrayTrie, DoubleArrayTrieConfig, DoubleArrayTrieBuilder};
+// DoubleArrayTrie is the standalone optimized implementation in double_array.rs.
+// No wrapper — use it directly.
+pub use double_array::{DoubleArrayTrie, DoubleArrayTrieMap};
 
 /// NestedLoudsTrie compatibility wrapper
 pub mod nested_louds_trie {
