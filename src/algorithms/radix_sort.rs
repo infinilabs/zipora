@@ -551,6 +551,31 @@ pub struct KeyValueRadixSort<K, V> {
     _phantom: std::marker::PhantomData<(K, V)>,
 }
 
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct KVPair {
+    key: u64,
+    index: usize,
+}
+
+impl RadixSortable for KVPair {
+    fn extract_key(&self) -> u64 {
+        self.key
+    }
+    
+    fn get_byte(&self, position: usize) -> Option<u8> {
+        if position < 8 {
+            Some((self.key >> ((7 - position) * 8)) as u8)
+        } else {
+            None
+        }
+    }
+    
+    fn max_bytes(&self) -> usize {
+        8
+    }
+}
+
 impl<K, V> KeyValueRadixSort<K, V>
 where
     K: Copy + Into<u64>,
@@ -570,38 +595,31 @@ where
             return Ok(());
         }
 
-        // Extract keys and create index mapping
-        let indices: Vec<(u64, usize)> = data
+        let mut indices: Vec<KVPair> = data
             .iter()
             .enumerate()
-            .map(|(i, (k, _))| ((*k).into(), i))
+            .map(|(i, (k, _))| KVPair { key: (*k).into(), index: i })
             .collect();
 
-        // Sort indices by key
-        let mut keys: Vec<u64> = indices.iter().map(|(k, _)| *k).collect();
-        let mut sorter = RadixSort::with_config(self.config.clone());
+        let mut config = AdvancedRadixSortConfig::default();
+        config.use_parallel = self.config.use_parallel;
+        config.parallel_threshold = self.config.parallel_threshold;
+        config.radix_bits = self.config.radix_bits;
+        
+        let mut sorter = AdvancedRadixSort::<KVPair>::with_config(config)
+            .unwrap_or_else(|_| AdvancedRadixSort::new().unwrap());
+            
+        sorter.sort(&mut indices)?;
 
-        // Create a mapping from old key to sorted position
-        let mut key_positions = vec![0usize; keys.len()];
-        for (new_pos, &(_, old_pos)) in indices.iter().enumerate() {
-            key_positions[old_pos] = new_pos;
-        }
-
-        sorter.sort_u64(&mut keys)?;
-
-        // Rearrange data based on sorted keys
-        let original_data: Vec<(K, V)> = data.iter().cloned().collect();
-
-        for (new_pos, &key) in keys.iter().enumerate() {
-            // Find original position of this key
-            // SAFETY: Every key in sorted keys array came from indices, so position() always finds it
-            let old_pos = indices.iter().position(|(k, _)| *k == key).expect("key exists in indices");
-            data[new_pos] = original_data[indices[old_pos].1].clone();
+        let original_data: Vec<(K, V)> = data.to_vec();
+        for (i, ki) in indices.iter().enumerate() {
+            data[i] = original_data[ki.index].clone();
         }
 
         Ok(())
     }
 }
+
 
 impl<K, V> Default for KeyValueRadixSort<K, V>
 where

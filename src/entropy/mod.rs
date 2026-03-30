@@ -103,10 +103,8 @@ impl EntropyAlgorithm {
             EntropyAlgorithm::Fse => true,
             #[cfg(feature = "zstd")]
             EntropyAlgorithm::KFse => true,
-            #[cfg(not(feature = "zstd"))]
-            EntropyAlgorithm::Fse => false,
-            #[cfg(not(feature = "zstd"))]
-            EntropyAlgorithm::KFse => false,
+            // Fse and KFse variants only exist when zstd feature is enabled,
+            // so no fallback arms are needed here.
             EntropyAlgorithm::Dictionary => true,
             EntropyAlgorithm::Auto => true,
         }
