@@ -536,14 +536,15 @@ where
         match &mut self.storage {
             HashMapStorage::Standard { buckets, entries, mask } => {
                 // Try insertion first
-                match Self::insert_standard(&self.hash_builder, buckets, entries, mask, key.clone(), value.clone(), hash) {
+                match Self::insert_standard(&self.hash_builder, buckets, entries, mask, key, value, hash) {
                     Ok(result) => Ok(result),
-                    Err(_) => {
+                    Err((key, value)) => {
                         // Table is full, resize and retry
                         self.resize_storage()?;
                         // Retry insertion after resize
                         if let HashMapStorage::Standard { buckets, entries, mask } = &mut self.storage {
                             Self::insert_standard(&self.hash_builder, buckets, entries, mask, key, value, hash)
+                                .map_err(|_| crate::error::ZiporaError::invalid_state("Hash table full after resize"))
                         } else {
                             Err(crate::error::ZiporaError::invalid_state("Storage type changed during resize"))
                         }
@@ -814,16 +815,18 @@ where
         key: K,
         value: V,
         hash: u64,
-    ) -> Result<Option<V>> {
+    ) -> std::result::Result<Option<V>, (K, V)> {
         // Initialize entries if empty
         if entries.is_empty() {
             let capacity = entries.capacity().max(16); // Use allocated capacity
-            entries.resize_with(capacity, || HashEntry {
+            if let Err(_) = entries.resize_with(capacity, || HashEntry {
                 key: key.clone(),
                 value: value.clone(),
                 hash: 0,
                 next: None,
-            })?;
+            }) {
+                return Err((key, value));
+            }
             *mask = capacity - 1;
 
             // Clear all entries
@@ -854,7 +857,7 @@ where
         }
 
         // Table is full, need to resize
-        Err(crate::error::ZiporaError::invalid_state("Hash table full - resize needed"))
+        Err((key, value))
     }
 
     fn insert_small_inline(

@@ -862,13 +862,13 @@ pub struct MemoryMappedInput;
 
 #[cfg(not(feature = "mmap"))]
 impl MemoryMappedInput {
-    pub fn new(_file: File) -> Result<Self> {
+    pub fn new(_file: std::fs::File) -> Result<Self> {
         Err(ZiporaError::invalid_data(
             "Memory mapping is not available. Enable the 'mmap' feature to use MemoryMappedInput.",
         ))
     }
 
-    pub fn from_path<P: AsRef<Path>>(_path: P) -> Result<Self> {
+    pub fn from_path<P: AsRef<std::path::Path>>(_path: P) -> Result<Self> {
         Err(ZiporaError::invalid_data(
             "Memory mapping is not available. Enable the 'mmap' feature to use MemoryMappedInput.",
         ))
@@ -880,13 +880,13 @@ pub struct MemoryMappedOutput;
 
 #[cfg(not(feature = "mmap"))]
 impl MemoryMappedOutput {
-    pub fn create<P: AsRef<Path>>(_path: P, _initial_size: usize) -> Result<Self> {
+    pub fn create<P: AsRef<std::path::Path>>(_path: P, _initial_size: usize) -> Result<Self> {
         Err(ZiporaError::invalid_data(
             "Memory mapping is not available. Enable the 'mmap' feature to use MemoryMappedOutput.",
         ))
     }
 
-    pub fn open<P: AsRef<Path>>(_path: P) -> Result<Self> {
+    pub fn open<P: AsRef<std::path::Path>>(_path: P) -> Result<Self> {
         Err(ZiporaError::invalid_data(
             "Memory mapping is not available. Enable the 'mmap' feature to use MemoryMappedOutput.",
         ))

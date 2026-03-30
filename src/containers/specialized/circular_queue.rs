@@ -872,7 +872,8 @@ impl<T> AutoGrowCircularQueue<T> {
             );
         }
 
-        ptr::copy_nonoverlapping(src, dst, count);
+        // SAFETY: caller guarantees non-null, aligned, non-overlapping pointers.
+        unsafe { ptr::copy_nonoverlapping(src, dst, count); }
     }
 
     /// Ultra-fast element addition with fast/slow path separation
