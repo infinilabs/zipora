@@ -89,7 +89,7 @@ pub use version_sync::{
 
 // DoubleArrayTrie is the standalone optimized implementation in double_array.rs.
 // No wrapper — use it directly.
-pub use double_array::{DoubleArrayTrie, DoubleArrayTrieMap};
+pub use double_array::{DoubleArrayTrie, DoubleArrayTrieMap, DoubleArrayTrieCursor, RangeIter};
 
 /// NestedLoudsTrie compatibility wrapper
 pub mod nested_louds_trie {
