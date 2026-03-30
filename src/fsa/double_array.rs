@@ -243,6 +243,78 @@ impl DoubleArrayTrie {
         Ok(was_new)
     }
 
+    /// Insert a key, calling `on_relocate(old_pos, new_pos)` whenever a child
+    /// state is moved during collision resolution.  This lets external value
+    /// arrays stay in sync with state IDs.
+    pub fn insert_with_relocate_cb(
+        &mut self,
+        key: &[u8],
+        mut on_relocate: impl FnMut(u32, u32),
+    ) -> Result<bool> {
+        if key.is_empty() {
+            let was_new = !self.states[0].is_term();
+            self.states[0].set_term_bit();
+            if was_new { self.num_keys += 1; }
+            return Ok(was_new);
+        }
+
+        let mut curr = 0u32;
+
+        for &ch in key {
+            let base = self.states[curr as usize].child0();
+
+            if base == NIL_STATE {
+                let new_base = self.find_free_base(&[ch])?;
+                self.states[curr as usize].set_child0(new_base);
+                let next = new_base + ch as u32;
+                self.ensure_capacity(next as usize + 1);
+                self.states[next as usize].set_parent(curr);
+                curr = next;
+            } else {
+                let next = base + ch as u32;
+                self.ensure_capacity(next as usize + 1);
+
+                if !self.states[next as usize].is_free()
+                    && self.states[next as usize].parent() == curr
+                {
+                    curr = next;
+                } else if self.states[next as usize].is_free() {
+                    self.states[next as usize].set_parent(curr);
+                    curr = next;
+                } else {
+                    // Conflict — relocate curr's children, notifying caller.
+                    let old_base = self.states[curr as usize].child0();
+                    let new_base = self.relocate(curr, ch)?;
+
+                    // Notify about each moved child
+                    if old_base != NIL_STATE {
+                        for sch in 0u16..=255u16 {
+                            if sch as u8 == ch { continue; }
+                            let old_pos = old_base + sch as u32;
+                            let new_pos = new_base + sch as u32;
+                            if new_pos as usize >= self.states.len() { continue; }
+                            if !self.states[new_pos as usize].is_free()
+                                && self.states[new_pos as usize].parent() == curr
+                            {
+                                on_relocate(old_pos, new_pos);
+                            }
+                        }
+                    }
+
+                    let next = new_base + ch as u32;
+                    self.ensure_capacity(next as usize + 1);
+                    self.states[next as usize].set_parent(curr);
+                    curr = next;
+                }
+            }
+        }
+
+        let was_new = !self.states[curr as usize].is_term();
+        self.states[curr as usize].set_term_bit();
+        if was_new { self.num_keys += 1; }
+        Ok(was_new)
+    }
+
     /// Check if a key exists — tight loop, minimal branching.
     #[inline]
     pub fn contains(&self, key: &[u8]) -> bool {
@@ -1092,12 +1164,23 @@ impl<V: Copy> DoubleArrayTrieMap<V> {
 
     /// Insert key-value pair. Returns previous value if key existed.
     pub fn insert(&mut self, key: &[u8], value: V) -> Result<Option<V>> {
-        self.trie.insert(key)?;
+        // Use the relocate callback to keep values in sync with state IDs.
+        let values = &mut self.values;
+        self.trie.insert_with_relocate_cb(key, |old_pos, new_pos| {
+            let old = old_pos as usize;
+            let new = new_pos as usize;
+            if new >= values.len() {
+                values.resize((new + 1).max(values.len() * 2), None);
+            }
+            if old < values.len() {
+                values[new] = values[old].take();
+            }
+        })?;
+
         let state = self.trie.lookup_state(key)
             .ok_or_else(|| ZiporaError::invalid_state("insert succeeded but lookup failed"))?;
         let idx = state as usize;
         if idx >= self.values.len() {
-            // Amortized 2x growth to avoid O(n) resizes
             let new_len = (idx + 1).max(self.values.len() * 2).max(256);
             self.values.resize(new_len, None);
         }
@@ -1966,5 +2049,65 @@ mod tests {
         assert_eq!(all_keys.len(), 1000,
             "keys() should return 1000, got {}",
             all_keys.len());
+    }
+}
+
+#[cfg(test)]
+mod prefix_regression_tests {
+    use super::*;
+
+    #[test]
+    fn test_1000_terms_prefix() {
+        let mut t = DoubleArrayTrie::new();
+        for i in 0..1000u32 {
+            let term = format!("term_{:04}", i);
+            let inserted = t.insert(term.as_bytes()).unwrap();
+            assert!(inserted || !inserted, "insert returned for term_{:04}", i);
+        }
+        assert_eq!(t.len(), 1000, "expected 1000 keys, got {}", t.len());
+        
+        // Verify all terms exist
+        let mut missing = Vec::new();
+        for i in 0..1000u32 {
+            let term = format!("term_{:04}", i);
+            if !t.contains(term.as_bytes()) {
+                missing.push(i);
+            }
+        }
+        assert!(missing.is_empty(), "missing {} terms: {:?}", missing.len(), &missing[..missing.len().min(20)]);
+
+        let result = t.keys_with_prefix(b"term_00");
+        assert_eq!(result.len(), 100, "prefix 'term_00' returned {} (expected 100)", result.len());
+    }
+}
+
+#[cfg(test)]
+mod map_prefix_regression_tests {
+    use super::*;
+
+    #[test]
+    fn test_map_1000_terms_prefix_fresh_trie() {
+        // Simulate the engine's flush_to_trie: build fresh trie from sorted entries
+        let mut entries: Vec<(String, u32)> = (0..1000u32)
+            .map(|i| (format!("term_{:04}", i), i))
+            .collect();
+        entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+
+        let mut trie = DoubleArrayTrieMap::with_capacity(entries.len());
+        for (term, id) in &entries {
+            trie.insert(term.as_bytes(), *id).expect("insert failed");
+        }
+
+        assert_eq!(trie.len(), 1000);
+
+        // Verify all lookups
+        for i in 0..1000u32 {
+            let term = format!("term_{:04}", i);
+            assert_eq!(trie.get(term.as_bytes()), Some(i), "get failed for {}", term);
+        }
+
+        // Verify prefix
+        let result = trie.values_with_prefix(b"term_00");
+        assert_eq!(result.len(), 100, "values_with_prefix 'term_00' returned {} (expected 100)", result.len());
     }
 }
