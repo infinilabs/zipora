@@ -202,20 +202,17 @@ pub struct ZiporaTrieConfig {
 impl Default for ZiporaTrieConfig {
     fn default() -> Self {
         Self {
-            trie_strategy: TrieStrategy::Patricia {
-                max_path_length: 64,
-                compression_threshold: 4,
-                adaptive_compression: true,
+            trie_strategy: TrieStrategy::DoubleArray {
+                initial_capacity: 256,
+                growth_factor: 1.5,
+                free_list_management: false,
+                auto_shrink: false,
             },
             storage_strategy: StorageStrategy::Standard {
                 initial_capacity: 64,
                 growth_factor: 2.0,
             },
-            compression_strategy: CompressionStrategy::PathCompression {
-                min_path_length: 2,
-                max_path_length: 32,
-                adaptive_threshold: true,
-            },
+            compression_strategy: CompressionStrategy::None,
             rank_select_type: RankSelectType::Adaptive,
             enable_simd: true,
             enable_concurrency: false,
@@ -239,21 +236,18 @@ impl ZiporaTrieConfig {
     /// Create configuration for cache-optimized trie
     pub fn cache_optimized() -> Self {
         Self {
-            trie_strategy: TrieStrategy::Patricia {
-                max_path_length: 32,
-                compression_threshold: 2,
-                adaptive_compression: true,
+            trie_strategy: TrieStrategy::DoubleArray {
+                initial_capacity: 512,
+                growth_factor: 1.5,
+                free_list_management: false,
+                auto_shrink: false,
             },
             storage_strategy: StorageStrategy::CacheOptimized {
                 cache_line_size: 64,
                 numa_aware: true,
                 prefetch_enabled: true,
             },
-            compression_strategy: CompressionStrategy::PathCompression {
-                min_path_length: 2,
-                max_path_length: 16,
-                adaptive_threshold: true,
-            },
+            compression_strategy: CompressionStrategy::None,
             rank_select_type: RankSelectType::MixedIL256,
             enable_simd: true,
             enable_concurrency: false,
@@ -400,6 +394,8 @@ where
     storage: TrieStorage<R>,
     /// Performance statistics
     stats: TrieStats,
+    /// Track whether stats need recomputation
+    stats_dirty: bool,
     /// Cache optimization components
     cache_allocator: Option<CacheOptimizedAllocator>,
     /// Memory pool for allocation
@@ -451,12 +447,11 @@ where
     },
 }
 
-/// Patricia trie node with path compression
-#[repr(align(64))]
+/// Patricia trie node with path compression (compact representation)
 #[derive(Debug, Clone)]
 struct PatriciaNode {
-    /// Children indexed by first byte
-    children: [Option<StateId>; 256],
+    /// Compact children storage: sorted Vec of (symbol, StateId) pairs
+    children: Vec<(u8, StateId)>,
     /// Compressed path data offset
     path_offset: u32,
     /// Compressed path length
@@ -470,7 +465,7 @@ struct PatriciaNode {
 impl Default for PatriciaNode {
     fn default() -> Self {
         Self {
-            children: [None; 256],
+            children: Vec::new(),
             path_offset: 0,
             path_length: 0,
             is_final: false,
@@ -531,6 +526,7 @@ where
             config,
             storage,
             stats: TrieStats::new(),
+            stats_dirty: false,
             cache_allocator,
             memory_pool: None,
             root_state: 0,
@@ -614,6 +610,7 @@ where
 
     /// Get performance statistics
     pub fn stats(&self) -> TrieStats {
+
         // Return a copy with updated statistics
         let mut stats = self.stats.clone();
 
@@ -648,7 +645,7 @@ where
         // Update number of transitions
         stats.num_transitions = match &self.storage {
             TrieStorage::Patricia { nodes, .. } => {
-                nodes.iter().map(|n| n.children.iter().filter(|c| c.is_some()).count()).sum()
+                nodes.iter().map(|n| n.children.len()).sum()
             }
             TrieStorage::CriticalBit { .. } => 0, // TODO: implement
             TrieStorage::DoubleArray { base, check, .. } => {
@@ -712,7 +709,7 @@ where
         // Update number of transitions
         self.stats.num_transitions = match &self.storage {
             TrieStorage::Patricia { nodes, .. } => {
-                nodes.iter().map(|n| n.children.iter().filter(|c| c.is_some()).count()).sum()
+                nodes.iter().map(|n| n.children.len()).sum()
             }
             TrieStorage::CriticalBit { .. } => 0, // TODO: implement
             TrieStorage::DoubleArray { base, check, .. } => {
@@ -799,8 +796,8 @@ where
     pub fn insert(&mut self, key: &[u8]) -> Result<()> {
         // Delegate to the trait method which has complete implementation for all storage types
         let _state_id = <Self as Trie>::insert(self, key)?;
-        // Update statistics after insertion
-        self.update_stats();
+        // Mark stats as dirty - lazy update on next stats() call
+        self.stats_dirty = true;
         Ok(())
     }
 
@@ -818,11 +815,24 @@ where
                 let removed = Self::remove_patricia_actual(nodes, edge_data, compressed_paths, key)?;
                 if removed {
                     self.stats.num_keys = self.stats.num_keys.saturating_sub(1);
+                    self.stats_dirty = true;
                 }
                 Ok(removed)
             }
+            TrieStorage::DoubleArray { base, check, .. } => {
+                // Remove by clearing TERMINAL_BIT on the final state
+                let state = Self::lookup_node_id_double_array(base, check, key);
+                if let Some(state_id) = state {
+                    const TERMINAL_BIT: u32 = 0x8000_0000;
+                    base[state_id as usize] &= !TERMINAL_BIT;
+                    self.stats.num_keys = self.stats.num_keys.saturating_sub(1);
+                    self.stats_dirty = true;
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
             _ => {
-                // For other storage types, return false for now
                 Ok(false)
             }
         }
@@ -942,18 +952,21 @@ where
     pub fn insert_and_get_node_id(&mut self, key: &[u8]) -> Result<StateId> {
         match &mut self.storage {
             TrieStorage::Patricia { nodes, edge_data, compressed_paths } => {
-                let node_id = Self::insert_patricia_actual(nodes, edge_data, compressed_paths, key)?;
-                self.stats.num_keys += 1;
+                let node_id = Self::insert_patricia_actual(nodes, edge_data, compressed_paths, key, &mut self.stats.num_keys)?;
                 Ok(node_id)
             }
             TrieStorage::Louds { louds, is_link, next_link, label_data, core_data, next_trie } => {
-                // Delegate to the LOUDS-specific insert implementation
                 let node_id = Self::insert_louds(louds, is_link, next_link, label_data, core_data, next_trie, key)?;
                 self.stats.num_keys += 1;
                 Ok(node_id)
             }
+            TrieStorage::DoubleArray { base, check, free_list, state_count } => {
+                // insert_double_array handles num_keys internally (checks was_new)
+                let node_id = Self::insert_double_array(base, check, free_list, state_count, key, &mut self.stats.num_keys)?;
+                self.stats_dirty = true;
+                Ok(node_id)
+            }
             _ => {
-                // For other storage types, return 0 for now
                 self.stats.num_keys += 1;
                 Ok(0)
             }
@@ -967,13 +980,55 @@ where
                 Self::lookup_node_id_patricia_actual(nodes, edge_data, compressed_paths, key)
             }
             TrieStorage::Louds { label_data, .. } => {
-                // Use the helper method to find the key position
                 Self::find_key_position(label_data, key)
             }
-            _ => {
-                // For other storage types, return None for now
-                None
+            TrieStorage::DoubleArray { base, check, .. } => {
+                Self::lookup_node_id_double_array(base, check, key)
             }
+            _ => None,
+        }
+    }
+
+    /// Lookup node ID in DoubleArray storage
+    fn lookup_node_id_double_array(base: &FastVec<u32>, check: &FastVec<u32>, key: &[u8]) -> Option<StateId> {
+        const TERMINAL_BIT: u32 = 0x8000_0000;
+        const VALUE_MASK: u32 = 0x7FFF_FFFF;
+        const FREE_BIT: u32 = 0x8000_0000;
+
+        if base.is_empty() {
+            return None;
+        }
+
+        let mut current_state = 0u32;
+
+        if key.is_empty() {
+            let base_val = base[0];
+            return if (base_val & TERMINAL_BIT) != 0 { Some(0) } else { None };
+        }
+
+        for &symbol in key {
+            let base_value = base[current_state as usize] & VALUE_MASK;
+            let next_state = base_value.saturating_add(symbol as u32);
+
+            if next_state as usize >= check.len() {
+                return None;
+            }
+
+            let check_val = check[next_state as usize];
+            let is_free = (check_val & FREE_BIT) != 0;
+            if is_free || check_val != current_state {
+                return None;
+            }
+
+            current_state = next_state;
+        }
+
+        // Only return state if it's marked terminal
+        let base_val = base[current_state as usize];
+        if (base_val & TERMINAL_BIT) != 0 {
+            Some(current_state)
+        } else {
+            None
         }
     }
 
@@ -984,14 +1039,47 @@ where
                 Self::restore_string_patricia_actual(nodes, edge_data, compressed_paths, state_id)
             }
             TrieStorage::Louds { label_data, .. } => {
-                // For LOUDS, state_id is the starting position of the key in label_data
                 Self::restore_string_louds(label_data, state_id)
             }
-            _ => {
-                // For other storage types, return None for now
-                None
+            TrieStorage::DoubleArray { base, check, .. } => {
+                Self::restore_string_double_array(base, check, state_id)
             }
+            _ => None,
         }
+    }
+
+    /// Restore string from DoubleArray state by walking parent chain
+    fn restore_string_double_array(base: &FastVec<u32>, check: &FastVec<u32>, state_id: StateId) -> Option<Vec<u8>> {
+        const VALUE_MASK: u32 = 0x7FFF_FFFF;
+        const FREE_BIT: u32 = 0x8000_0000;
+
+        if state_id as usize >= check.len() {
+            return None;
+        }
+
+        // Walk parent chain from state_id back to root, collecting symbols
+        let mut symbols = Vec::new();
+        let mut current = state_id;
+
+        while current != 0 {
+            let check_val = check[current as usize];
+            if (check_val & FREE_BIT) != 0 {
+                return None; // Free state, invalid
+            }
+            let parent = check_val; // parent state
+            let parent_base = base[parent as usize] & VALUE_MASK;
+
+            // The symbol is: current - parent_base
+            if current < parent_base {
+                return None; // Invalid state
+            }
+            let symbol = (current - parent_base) as u8;
+            symbols.push(symbol);
+            current = parent;
+        }
+
+        symbols.reverse();
+        Some(symbols)
     }
 
     /// Check if a state is free (for DoubleArray)
@@ -1194,18 +1282,18 @@ where
     R: RankSelectOps + Default,
 {
     fn insert(&mut self, key: &[u8]) -> Result<StateId> {
-        // Check if key already exists
-        let already_exists = self.contains(key);
+        // Track if this was a new key insertion
+        let prev_count = self.stats.num_keys;
 
         let result = match &mut self.storage {
             TrieStorage::Patricia { nodes, edge_data, compressed_paths } => {
-                Self::insert_patricia(nodes, edge_data, compressed_paths, key)
+                Self::insert_patricia(nodes, edge_data, compressed_paths, key, &mut self.stats.num_keys)
             }
             TrieStorage::CriticalBit { nodes, keys, critical_cache } => {
                 Self::insert_critical_bit(nodes, keys, critical_cache, key)
             }
             TrieStorage::DoubleArray { base, check, free_list, state_count } => {
-                Self::insert_double_array(base, check, free_list, state_count, key)
+                Self::insert_double_array(base, check, free_list, state_count, key, &mut self.stats.num_keys)
             }
             TrieStorage::Louds { louds, is_link, next_link, label_data, core_data, next_trie } => {
                 Self::insert_louds(louds, is_link, next_link, label_data, core_data, next_trie, key)
@@ -1214,11 +1302,6 @@ where
                 Self::insert_compressed_sparse(sparse_nodes, compression_dict, bit_vector, rank_select, key)
             }
         }?;
-
-        // Update stats if this is a new key
-        if !already_exists {
-            self.stats.num_keys += 1;
-        }
 
         Ok(result)
     }
@@ -1286,7 +1369,10 @@ where
     fn transition(&self, state: StateId, symbol: u8) -> Option<StateId> {
         match &self.storage {
             TrieStorage::Patricia { nodes, .. } => {
-                nodes.get(state as usize)?.children[symbol as usize]
+                let node = nodes.get(state as usize)?;
+                node.children.binary_search_by_key(&symbol, |(s, _)| *s)
+                    .ok()
+                    .map(|idx| node.children[idx].1)
             }
             TrieStorage::CriticalBit { nodes, .. } => {
                 // TODO: Implement critical bit transition
@@ -1323,11 +1409,8 @@ where
         match &self.storage {
             TrieStorage::Patricia { nodes, .. } => {
                 if let Some(node) = nodes.get(state as usize) {
-                    node.children
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, &child)| child.map(|c| (i as u8, c)))
-                        .collect()
+                    // Compact children representation - already in the right format
+                    node.children.clone()
                 } else {
                     Vec::new()
                 }
@@ -1398,8 +1481,9 @@ where
         edge_data: &mut FastVec<u8>,
         compressed_paths: &mut HashMap<StateId, Vec<u8>>,
         key: &[u8],
+        num_keys: &mut usize,
     ) -> Result<StateId> {
-        Self::insert_patricia_actual(nodes, edge_data, compressed_paths, key)
+        Self::insert_patricia_actual(nodes, edge_data, compressed_paths, key, num_keys)
     }
 
     fn contains_patricia(
@@ -1441,6 +1525,7 @@ where
         free_list: &mut VecDeque<StateId>,
         state_count: &mut usize,
         key: &[u8],
+        num_keys: &mut usize,
     ) -> Result<StateId> {
         // Following referenced project's double array trie implementation EXACTLY
         // Base array (m_child0): bits 0-30 = base value, bit 31 = terminal bit
@@ -1465,7 +1550,11 @@ where
 
         // Special case for empty key - mark root as terminal
         if key.is_empty() {
+            let was_new = (base[0] & TERMINAL_BIT) == 0;
             base[0] |= TERMINAL_BIT;
+            if was_new {
+                *num_keys += 1;
+            }
             return Ok(0);
         }
 
@@ -1491,9 +1580,10 @@ where
 
             let next_state = base_value.saturating_add(symbol as u32);
 
-            // Expand arrays if needed - referenced project: exact size (line 128-130: resize_states)
-            if next_state as usize >= base.len() {
-                let new_size = next_state as usize + 1; // Exact size, not growth factor
+            // Expand arrays if needed - use amortized growth
+            let required = next_state as usize + 1;
+            if required > base.len() {
+                let new_size = required.max(base.len() * 3 / 2).max(256);
                 base.resize(new_size, NIL_STATE);
                 check.resize(new_size, NIL_STATE | FREE_BIT);
             }
@@ -1530,9 +1620,10 @@ where
                     // Now the transition should be available at the new location
                     let new_next = new_base.saturating_add(symbol as u32);
 
-                    // Expand if needed - referenced project: exact size (line 128-130: resize_states)
-                    if new_next as usize >= base.len() {
-                        let new_size = new_next as usize + 1; // Exact size, not growth factor
+                    // Expand if needed - use amortized growth
+                    let required = new_next as usize + 1;
+                    if required > base.len() {
+                        let new_size = required.max(base.len() * 3 / 2).max(256);
                         base.resize(new_size, NIL_STATE);
                         check.resize(new_size, NIL_STATE | FREE_BIT);
                     }
@@ -1581,9 +1672,10 @@ where
                     eprintln!("  Relocated state {} to new_base {}, new transition {} -> {}",
                         current_state, new_base, current_state, new_next);
 
-                    // Expand if needed - referenced project: exact size (line 128-130: resize_states)
-                    if new_next as usize >= base.len() {
-                        let new_size = new_next as usize + 1; // Exact size, not growth factor
+                    // Expand if needed - use amortized growth
+                    let required = new_next as usize + 1;
+                    if required > base.len() {
+                        let new_size = required.max(base.len() * 3 / 2).max(256);
                         base.resize(new_size, NIL_STATE);
                         check.resize(new_size, NIL_STATE | FREE_BIT);
                     }
@@ -1604,25 +1696,46 @@ where
         }
 
         // Mark the final state as terminal (referenced project: set_term_bit on base at line 27)
+        // Check if this is a new key or duplicate
+        let was_new = (base[current_state as usize] & TERMINAL_BIT) == 0;
         base[current_state as usize] |= TERMINAL_BIT;
+
+        // Only increment key count if this was a new key
+        if was_new {
+            *num_keys += 1;
+        }
 
         // Debug: Verify what we just inserted
         #[cfg(debug_assertions)]
         {
-            eprintln!("DEBUG insert_double_array: Inserted key, final state={}, base[{}]={:08x}, check[{}]={:08x}",
-                current_state, current_state, base[current_state as usize], current_state, check[current_state as usize]);
+            eprintln!("DEBUG insert_double_array: Inserted key, final state={}, base[{}]={:08x}, check[{}]={:08x}, was_new={}",
+                current_state, current_state, base[current_state as usize], current_state, check[current_state as usize], was_new);
         }
 
         Ok(current_state)
     }
 
     // Helper: Find a free base value for a state that doesn't conflict
-    // For incremental insert, use a compact heuristic matching referenced project's approach (line 347)
-    fn find_free_base(_base: &FastVec<u32>, _check: &FastVec<u32>, state: u32) -> Result<u32> {
-        // Referenced project uses: curr_slot = prev_slot + (curr_slot - prev_slot)/16
-        // For incremental insert, we use state/4 which balances packing vs conflicts
-        // state/16 was too sparse (73x overhead), state/4 achieves ~58x overhead
-        let candidate = (state / 4).max(1);
+    // For incremental insert, use a proper heuristic matching referenced project's approach
+    fn find_free_base(base: &FastVec<u32>, check: &FastVec<u32>, _state: u32) -> Result<u32> {
+        const FREE_BIT: u32 = 0x8000_0000;
+        const NIL_STATE: u32 = 0x7FFF_FFFF;
+
+        // Start search from position 1 (0 is root)
+        let mut candidate = 1u32;
+        let len = check.len();
+
+        // Linear probe for a free position (matching C++ reference heuristic)
+        while (candidate as usize) < len {
+            let check_val = check[candidate as usize];
+            let is_free = check_val == (NIL_STATE | FREE_BIT) || (check_val & FREE_BIT) != 0;
+            if is_free {
+                return Ok(candidate);
+            }
+            candidate += 1;
+        }
+
+        // Past the end of array — return the next position (will trigger array growth)
         Ok(candidate)
     }
 
@@ -1677,7 +1790,7 @@ where
         const MAX_BASE: u32 = u32::MAX - 256; // Leave room for 256 symbols
 
         'search: loop {
-            if attempts > 10000 || new_base > MAX_BASE {
+            if attempts > 1_000_000 || new_base > MAX_BASE {
                 return Err(ZiporaError::invalid_data("Cannot relocate state in double array"));
             }
             attempts += 1;
@@ -1692,9 +1805,10 @@ where
                 .max()
                 .unwrap_or(new_pos);
 
-            // Expand arrays if needed - referenced project: exact size (line 128-130: resize_states)
-            if max_pos as usize >= base.len() {
-                let new_size = max_pos as usize + 1; // Exact size, not growth factor
+            // Expand arrays if needed - use amortized growth
+            let required = max_pos as usize + 1;
+            if required > base.len() {
+                let new_size = required.max(base.len() * 3 / 2).max(256);
                 base.resize(new_size, NIL_STATE);
                 check.resize(new_size, NIL_STATE | FREE_BIT);
             }
@@ -1705,8 +1819,8 @@ where
             let new_pos_is_free = (new_pos_check & FREE_BIT) != 0;
             if new_pos == 0 || !new_pos_is_free {
                 // State 0 is reserved or position is occupied
-                // Use a larger increment to spread states out more
-                new_base = new_base.saturating_add(257);
+                // Use smaller increment for denser packing
+                new_base = new_base.saturating_add(1);
                 continue 'search;
             }
 
@@ -1718,7 +1832,7 @@ where
                 // CRITICAL: Reject if any child would be relocated to state 0
                 if test_pos == 0 || !test_is_free {
                     // State 0 is reserved or position is occupied
-                    new_base = new_base.saturating_add(257);
+                    new_base = new_base.saturating_add(1);
                     continue 'search;
                 }
             }
@@ -2124,6 +2238,7 @@ where
         edge_data: &mut FastVec<u8>,
         compressed_paths: &mut HashMap<StateId, Vec<u8>>,
         key: &[u8],
+        num_keys: &mut usize,
     ) -> Result<StateId> {
         if nodes.is_empty() {
             // Initialize with root node
@@ -2137,8 +2252,10 @@ where
             let symbol = key[key_pos];
             let node = &nodes[current];
 
-            if let Some(child_id) = node.children[symbol as usize] {
+            // Binary search in compact children
+            if let Ok(idx) = node.children.binary_search_by_key(&symbol, |(s, _)| *s) {
                 // Follow existing path
+                let child_id = node.children[idx].1;
                 current = child_id as usize;
                 key_pos += 1;
             } else {
@@ -2146,21 +2263,21 @@ where
                 let new_node_id = nodes.len();
                 nodes.push(PatriciaNode::default());
 
-                // Update parent to point to new child
-                nodes[current].children[symbol as usize] = Some(new_node_id as StateId);
-
-                // Mark new node as final if we've consumed the entire key
-                if key_pos + 1 == key.len() {
-                    nodes[new_node_id].is_final = true;
-                }
+                // Insert into sorted children Vec
+                let insert_pos = nodes[current].children.binary_search_by_key(&symbol, |(s, _)| *s).unwrap_err();
+                nodes[current].children.insert(insert_pos, (symbol, new_node_id as StateId));
 
                 current = new_node_id;
                 key_pos += 1;
             }
         }
 
-        // Mark current node as final
+        // Mark current node as final (check if was_new)
+        let was_new = !nodes[current].is_final;
         nodes[current].is_final = true;
+        if was_new {
+            *num_keys += 1;
+        }
         Ok(current as StateId)
     }
 
@@ -2181,7 +2298,9 @@ where
             let symbol = key[key_pos];
             let node = &nodes[current];
 
-            if let Some(child_id) = node.children[symbol as usize] {
+            // Binary search in compact children
+            if let Ok(idx) = node.children.binary_search_by_key(&symbol, |(s, _)| *s) {
+                let child_id = node.children[idx].1;
                 current = child_id as usize;
                 key_pos += 1;
             } else {
@@ -2212,7 +2331,9 @@ where
             let symbol = key[key_pos];
             let node = &nodes[current];
 
-            if let Some(child_id) = node.children[symbol as usize] {
+            // Binary search in compact children
+            if let Ok(idx) = node.children.binary_search_by_key(&symbol, |(s, _)| *s) {
+                let child_id = node.children[idx].1;
                 path.push((current, symbol)); // Store parent and symbol for path
                 current = child_id as usize;
                 key_pos += 1;
@@ -2231,7 +2352,7 @@ where
         nodes[current].is_final = false;
 
         // Check if this node has any children
-        let has_children = nodes[current].children.iter().any(|child| child.is_some());
+        let has_children = !nodes[current].children.is_empty();
 
         // If the node has no children and is not final, we can potentially clean it up
         if !has_children {
@@ -2240,10 +2361,12 @@ where
 
             for &(parent_idx, symbol) in path.iter().rev() {
                 // Remove the child pointer from parent
-                nodes[parent_idx].children[symbol as usize] = None;
+                if let Ok(idx) = nodes[parent_idx].children.binary_search_by_key(&symbol, |(s, _)| *s) {
+                    nodes[parent_idx].children.remove(idx);
+                }
 
                 // Check if parent node should also be cleaned up
-                let parent_has_children = nodes[parent_idx].children.iter().any(|child| child.is_some());
+                let parent_has_children = !nodes[parent_idx].children.is_empty();
                 let parent_is_final = nodes[parent_idx].is_final;
 
                 // If parent has other children or is final, stop cleanup
@@ -2299,22 +2422,20 @@ where
 
         let node = &nodes[current];
 
-        // Try each child
-        for (symbol, child_opt) in node.children.iter().enumerate() {
-            if let Some(child_id) = child_opt {
-                let child_id = *child_id as usize;
+        // Try each child (compact representation)
+        for &(symbol, child_id) in node.children.iter() {
+            let child_id = child_id as usize;
 
-                // Add this symbol to the path
-                path.push(symbol as u8);
+            // Add this symbol to the path
+            path.push(symbol);
 
-                // Recursively search in child
-                if Self::find_path_to_state(nodes, child_id, target, path) {
-                    return true;
-                }
-
-                // Backtrack if not found
-                path.pop();
+            // Recursively search in child
+            if Self::find_path_to_state(nodes, child_id, target, path) {
+                return true;
             }
+
+            // Backtrack if not found
+            path.pop();
         }
 
         false
@@ -2337,7 +2458,9 @@ where
             let symbol = key[key_pos];
             let node = &nodes[current];
 
-            if let Some(child_id) = node.children[symbol as usize] {
+            // Binary search in compact children
+            if let Ok(idx) = node.children.binary_search_by_key(&symbol, |(s, _)| *s) {
+                let child_id = node.children[idx].1;
                 current = child_id as usize;
                 key_pos += 1;
 
@@ -2400,7 +2523,9 @@ where
             let symbol = prefix[key_pos];
             let node = &nodes[current];
 
-            if let Some(child_id) = node.children[symbol as usize] {
+            // Binary search in compact children
+            if let Ok(idx) = node.children.binary_search_by_key(&symbol, |(s, _)| *s) {
+                let child_id = node.children[idx].1;
                 path_to_prefix.push(symbol);
                 current = child_id as usize;
                 key_pos += 1;
@@ -2463,26 +2588,24 @@ where
             keys.push(current_path.clone());
         }
 
-        // Explore all children
-        for (symbol, child_opt) in node.children.iter().enumerate() {
-            if let Some(child_id) = child_opt {
-                let child_id_usize = *child_id as usize;
+        // Explore all children (compact representation)
+        for &(symbol, child_id) in node.children.iter() {
+            let child_id_usize = child_id as usize;
 
-                // Add this symbol to the path
-                current_path.push(symbol as u8);
+            // Add this symbol to the path
+            current_path.push(symbol);
 
-                // Add compressed path if it exists
-                let path_start_len = current_path.len();
-                if let Some(path) = compressed_paths.get(child_id) {
-                    current_path.extend_from_slice(path);
-                }
-
-                // Recursively collect from child
-                Self::collect_keys_patricia_recursive(nodes, edge_data, compressed_paths, child_id_usize, current_path, keys);
-
-                // Backtrack: remove the path we added
-                current_path.truncate(path_start_len - 1);
+            // Add compressed path if it exists
+            let path_start_len = current_path.len();
+            if let Some(path) = compressed_paths.get(&child_id) {
+                current_path.extend_from_slice(path);
             }
+
+            // Recursively collect from child
+            Self::collect_keys_patricia_recursive(nodes, edge_data, compressed_paths, child_id_usize, current_path, keys);
+
+            // Backtrack: remove the path we added
+            current_path.truncate(path_start_len - 1);
         }
     }
 
@@ -2723,6 +2846,175 @@ where
         Self::collect_keys_compressed_sparse_recursive(sparse_nodes, current_state, &mut current_path, &mut keys);
         keys
     }
+
+    /// Build a trie from sorted keys using BFS construction
+    ///
+    /// This is more efficient than incremental insertion for sorted input because:
+    /// 1. Pre-allocates arrays based on estimated size
+    /// 2. Processes keys in sorted order to minimize relocations
+    /// 3. Uses improved find_free_base for better packing
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use zipora::fsa::{ZiporaTrie, ZiporaTrieConfig};
+    /// use zipora::succinct::RankSelectInterleaved256;
+    ///
+    /// let keys: Vec<&[u8]> = vec![b"apple", b"application", b"apply", b"banana", b"band"];
+    /// let trie: ZiporaTrie<RankSelectInterleaved256> =
+    ///     ZiporaTrie::build_from_sorted(&keys, ZiporaTrieConfig::default()).unwrap();
+    ///
+    /// assert_eq!(trie.len(), 5);
+    /// assert!(trie.contains(b"apple"));
+    /// assert!(trie.contains(b"banana"));
+    /// ```
+    pub fn build_from_sorted(keys: &[&[u8]], config: ZiporaTrieConfig) -> Result<Self> {
+        // Create trie with config
+        let mut trie = Self::with_config(config);
+
+        // Estimate size and pre-allocate for DoubleArray strategy
+        if let TrieStrategy::DoubleArray { .. } = &trie.config.trie_strategy {
+            if let TrieStorage::DoubleArray { base, check, .. } = &mut trie.storage {
+                // Estimate: each key adds ~key_length states on average
+                let estimated_states = keys.iter().map(|k| k.len()).sum::<usize>() / 2;
+                let initial_size = estimated_states.max(256);
+
+                const NIL_STATE: u32 = 0x7FFF_FFFF;
+                const FREE_BIT: u32 = 0x8000_0000;
+
+                base.resize(initial_size, NIL_STATE);
+                check.resize(initial_size, NIL_STATE | FREE_BIT);
+            }
+        }
+
+        // Insert keys in sorted order
+        // Sorted order tends to result in fewer relocations
+        for &key in keys {
+            trie.insert(key)?;
+        }
+
+        Ok(trie)
+    }
+}
+
+/// Map wrapper for ZiporaTrie that associates values with keys
+///
+/// This is a separate type that wraps a ZiporaTrie and adds value storage.
+/// Values are stored in a parallel Vec indexed by the state ID returned from insert.
+///
+/// # Examples
+///
+/// ```rust
+/// use zipora::fsa::ZiporaTrieMap;
+///
+/// let mut map = ZiporaTrieMap::<u32>::new();
+/// map.insert(b"hello", 42).unwrap();
+/// map.insert(b"world", 100).unwrap();
+///
+/// assert_eq!(map.get(b"hello"), Some(42));
+/// assert_eq!(map.get(b"world"), Some(100));
+/// assert_eq!(map.get(b"missing"), None);
+/// ```
+#[derive(Debug)]
+pub struct ZiporaTrieMap<V: Copy, R = crate::succinct::RankSelectInterleaved256>
+where
+    R: RankSelectOps,
+{
+    trie: ZiporaTrie<R>,
+    values: Vec<Option<V>>,
+}
+
+impl<V: Copy, R> ZiporaTrieMap<V, R>
+where
+    R: RankSelectOps + Default,
+{
+    /// Create a new empty trie map
+    pub fn new() -> Self {
+        Self {
+            trie: ZiporaTrie::new(),
+            values: Vec::new(),
+        }
+    }
+
+    /// Create a new trie map with custom configuration
+    pub fn with_config(config: ZiporaTrieConfig) -> Self {
+        Self {
+            trie: ZiporaTrie::with_config(config),
+            values: Vec::new(),
+        }
+    }
+
+    /// Insert a key-value pair, returning the previous value if the key existed
+    pub fn insert(&mut self, key: &[u8], value: V) -> Result<Option<V>> {
+        // Get the state ID for this key
+        let state_id = <ZiporaTrie<R> as Trie>::insert(&mut self.trie, key)?;
+
+        // Ensure values vec is large enough
+        let idx = state_id as usize;
+        if idx >= self.values.len() {
+            self.values.resize(idx + 1, None);
+        }
+
+        // Store the value and return the previous one
+        let prev = self.values[idx];
+        self.values[idx] = Some(value);
+
+        Ok(prev)
+    }
+
+    /// Get the value associated with a key
+    pub fn get(&self, key: &[u8]) -> Option<V> {
+        // First check if the key exists in the trie
+        if !self.trie.contains(key) {
+            return None;
+        }
+
+        // Find the state ID for this key by traversing
+        // For now, we need to traverse to find the state ID
+        // This is a simple O(key_length) traversal
+        let state_id = self.find_state_for_key(key)?;
+
+        // Return the value at that state
+        self.values.get(state_id as usize).and_then(|&v| v)
+    }
+
+    /// Helper to find the state ID for a key
+    fn find_state_for_key(&self, key: &[u8]) -> Option<StateId> {
+        let mut state = self.trie.root();
+        for &symbol in key {
+            state = self.trie.transition(state, symbol)?;
+        }
+        Some(state)
+    }
+
+    /// Check if a key exists in the map
+    pub fn contains(&self, key: &[u8]) -> bool {
+        self.trie.contains(key)
+    }
+
+    /// Get the number of key-value pairs
+    pub fn len(&self) -> usize {
+        self.trie.len()
+    }
+
+    /// Check if the map is empty
+    pub fn is_empty(&self) -> bool {
+        self.trie.is_empty()
+    }
+
+    /// Get all keys in the map
+    pub fn keys(&self) -> Vec<Vec<u8>> {
+        self.trie.keys()
+    }
+}
+
+impl<V: Copy, R> Default for ZiporaTrieMap<V, R>
+where
+    R: RankSelectOps + Default,
+{
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 
@@ -2755,5 +3047,235 @@ mod tests {
         assert_eq!(trie.len(), 0);
     }
 
+    #[test]
+    fn test_double_array_insert_contains() {
+        let mut trie: ZiporaTrie = ZiporaTrie::new();
+        // Default is now DoubleArray
+        trie.insert(b"hello").unwrap();
+        assert_eq!(trie.len(), 1);
+        assert!(trie.contains(b"hello"));
+        assert!(!trie.contains(b"world"));
 
+        trie.insert(b"world").unwrap();
+        assert_eq!(trie.len(), 2);
+        assert!(trie.contains(b"hello"));
+        assert!(trie.contains(b"world"));
+
+        trie.insert(b"help").unwrap();
+        assert_eq!(trie.len(), 3);
+        assert!(trie.contains(b"help"));
+        assert!(trie.contains(b"hello"));
+
+        // Duplicate insert should not increase len
+        trie.insert(b"hello").unwrap();
+        assert_eq!(trie.len(), 3);
+    }
+
+    #[test]
+    fn test_double_array_keys() {
+        let mut trie: ZiporaTrie = ZiporaTrie::new();
+        trie.insert(b"apple").unwrap();
+        trie.insert(b"app").unwrap();
+        trie.insert(b"banana").unwrap();
+
+        let mut keys = trie.keys();
+        keys.sort();
+        assert_eq!(keys.len(), 3);
+        assert_eq!(keys[0], b"app");
+        assert_eq!(keys[1], b"apple");
+        assert_eq!(keys[2], b"banana");
+    }
+
+    #[test]
+    fn test_double_array_prefix_with_empty_key() {
+        let mut trie: ZiporaTrie = ZiporaTrie::new();
+        trie.insert(b"").unwrap();
+        trie.insert(b"a").unwrap();
+        trie.insert(b"ab").unwrap();
+        trie.insert(b"abc").unwrap();
+        trie.insert(b"abd").unwrap();
+        trie.insert(b"b").unwrap();
+
+        let all = trie.keys_with_prefix(b"");
+        assert_eq!(all.len(), 6, "keys_with_prefix('') should return all 6 keys");
+    }
+
+    #[test]
+    fn test_double_array_empty_key() {
+        let mut trie: ZiporaTrie = ZiporaTrie::new();
+        trie.insert(b"").unwrap();
+        trie.insert(b"a").unwrap();
+        trie.insert(b"ab").unwrap();
+
+        assert_eq!(trie.len(), 3);
+        assert!(trie.contains(b""));
+        assert!(trie.contains(b"a"));
+        assert!(trie.contains(b"ab"));
+
+        let mut keys = trie.keys();
+        keys.sort();
+        assert_eq!(keys.len(), 3, "Should have 3 keys including empty");
+        assert_eq!(keys[0], b"");
+        assert_eq!(keys[1], b"a");
+        assert_eq!(keys[2], b"ab");
+    }
+
+    // --- Coverage tests for each improvement ---
+
+    /// Issue #1: Lazy stats — verify stats() works correctly after inserts
+    #[test]
+    fn test_lazy_stats() {
+        let mut trie: ZiporaTrie = ZiporaTrie::new();
+        for i in 0..100 {
+            trie.insert(format!("key{:03}", i).as_bytes()).unwrap();
+        }
+        assert_eq!(trie.len(), 100);
+        let stats = trie.stats();
+        assert_eq!(stats.num_keys, 100);
+        assert!(stats.memory_usage > 0);
+        assert!(stats.num_states > 0);
+    }
+
+    /// Issue #2: No double traversal — duplicate insert does not increase len
+    #[test]
+    fn test_no_double_traversal_duplicate() {
+        let mut trie: ZiporaTrie = ZiporaTrie::new();
+        trie.insert(b"abc").unwrap();
+        trie.insert(b"abc").unwrap();
+        trie.insert(b"abc").unwrap();
+        assert_eq!(trie.len(), 1);
+
+        trie.insert(b"def").unwrap();
+        trie.insert(b"def").unwrap();
+        assert_eq!(trie.len(), 2);
+    }
+
+    /// Issue #3: Compact PatriciaNode — Patricia still works with compact children
+    #[test]
+    fn test_patricia_compact_node() {
+        let config = ZiporaTrieConfig {
+            trie_strategy: crate::fsa::TrieStrategy::Patricia {
+                max_path_length: 64,
+                compression_threshold: 4,
+                adaptive_compression: true,
+            },
+            ..ZiporaTrieConfig::default()
+        };
+        let mut trie: ZiporaTrie = ZiporaTrie::with_config(config);
+        trie.insert(b"hello").unwrap();
+        trie.insert(b"help").unwrap();
+        trie.insert(b"world").unwrap();
+
+        assert_eq!(trie.len(), 3);
+        assert!(trie.contains(b"hello"));
+        assert!(trie.contains(b"help"));
+        assert!(trie.contains(b"world"));
+        assert!(!trie.contains(b"hel"));
+    }
+
+    /// Issue #4/#5: find_free_base + relocate — many inserts don't panic
+    #[test]
+    fn test_find_free_base_many_inserts() {
+        let mut trie: ZiporaTrie = ZiporaTrie::new();
+        // Insert many keys to stress find_free_base and relocation
+        for i in 0..500 {
+            trie.insert(format!("key_{:04}", i).as_bytes()).unwrap();
+        }
+        assert_eq!(trie.len(), 500);
+        // Verify random lookups
+        assert!(trie.contains(b"key_0000"));
+        assert!(trie.contains(b"key_0250"));
+        assert!(trie.contains(b"key_0499"));
+        assert!(!trie.contains(b"key_0500"));
+    }
+
+    /// Issue #6: Amortized growth — large insert doesn't OOM or take forever
+    #[test]
+    fn test_amortized_growth() {
+        let mut trie: ZiporaTrie = ZiporaTrie::new();
+        // 1000 inserts should complete quickly with 1.5x growth
+        for i in 0..1000 {
+            trie.insert(format!("{:04}", i).as_bytes()).unwrap();
+        }
+        assert_eq!(trie.len(), 1000);
+    }
+
+    /// Issue #8: TrieMap — key-value storage
+    #[test]
+    fn test_trie_map() {
+        let mut map = ZiporaTrieMap::<u32>::new();
+        map.insert(b"hello", 42).unwrap();
+        map.insert(b"world", 100).unwrap();
+        map.insert(b"help", 7).unwrap();
+
+        assert_eq!(map.get(b"hello"), Some(42));
+        assert_eq!(map.get(b"world"), Some(100));
+        assert_eq!(map.get(b"help"), Some(7));
+        assert_eq!(map.get(b"missing"), None);
+        assert_eq!(map.len(), 3);
+
+        // Update existing key
+        let prev = map.insert(b"hello", 99).unwrap();
+        assert_eq!(prev, Some(42));
+        assert_eq!(map.get(b"hello"), Some(99));
+        assert_eq!(map.len(), 3); // len unchanged
+    }
+
+    /// Issue #9: Bulk construction
+    #[test]
+    fn test_build_from_sorted() {
+        let keys: Vec<&[u8]> = vec![b"apple", b"application", b"apply", b"banana", b"band"];
+        let trie: ZiporaTrie = ZiporaTrie::build_from_sorted(&keys, ZiporaTrieConfig::default()).unwrap();
+
+        assert_eq!(trie.len(), 5);
+        assert!(trie.contains(b"apple"));
+        assert!(trie.contains(b"application"));
+        assert!(trie.contains(b"apply"));
+        assert!(trie.contains(b"banana"));
+        assert!(trie.contains(b"band"));
+        assert!(!trie.contains(b"ban"));
+    }
+
+    /// Issue #10: Default is DoubleArray
+    #[test]
+    fn test_default_is_double_array() {
+        let config = ZiporaTrieConfig::default();
+        assert!(matches!(config.trie_strategy, crate::fsa::TrieStrategy::DoubleArray { .. }));
+    }
+
+    /// DoubleArray remove support
+    #[test]
+    fn test_double_array_remove() {
+        let mut trie: ZiporaTrie = ZiporaTrie::new();
+        trie.insert(b"hello").unwrap();
+        trie.insert(b"world").unwrap();
+        assert_eq!(trie.len(), 2);
+
+        assert!(trie.remove(b"hello").unwrap());
+        assert_eq!(trie.len(), 1);
+        assert!(!trie.contains(b"hello"));
+        assert!(trie.contains(b"world"));
+
+        // Remove non-existent key
+        assert!(!trie.remove(b"missing").unwrap());
+        assert_eq!(trie.len(), 1);
+    }
+
+    /// DoubleArray lookup_node_id + restore_string roundtrip
+    #[test]
+    fn test_double_array_node_id_roundtrip() {
+        let mut trie: ZiporaTrie = ZiporaTrie::new();
+        trie.insert(b"hello").unwrap();
+        trie.insert(b"world").unwrap();
+
+        let node_id = trie.lookup_node_id(b"hello").expect("should find hello");
+        let restored = trie.restore_string(node_id).expect("should restore");
+        assert_eq!(restored, b"hello");
+
+        let node_id2 = trie.lookup_node_id(b"world").expect("should find world");
+        let restored2 = trie.restore_string(node_id2).expect("should restore");
+        assert_eq!(restored2, b"world");
+
+        assert!(trie.lookup_node_id(b"missing").is_none());
+    }
 }

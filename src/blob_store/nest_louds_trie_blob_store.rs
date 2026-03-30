@@ -104,8 +104,16 @@ pub struct TrieBlobStoreConfig {
 
 impl Default for TrieBlobStoreConfig {
     fn default() -> Self {
+        // Use Patricia strategy for blob store trie — Patricia node IDs are stable
+        // across insertions (no relocation), which is required for node_to_blob_map.
+        let mut trie_config = ZiporaTrieConfig::default();
+        trie_config.trie_strategy = crate::fsa::TrieStrategy::Patricia {
+            max_path_length: 64,
+            compression_threshold: 4,
+            adaptive_compression: true,
+        };
         Self {
-            trie_config: ZiporaTrieConfig::default(),
+            trie_config,
             blob_config: ZipOffsetBlobStoreConfig::default(),
             memory_config: SecurePoolConfig::small_secure(),
             enable_key_compression: true,
@@ -147,8 +155,15 @@ impl TrieBlobStoreConfig {
 
     /// Create a configuration optimized for performance
     pub fn performance_optimized() -> Self {
+        // Blob store requires Patricia (stable node IDs for node_to_blob_map)
+        let mut trie_config = ZiporaTrieConfig::cache_optimized();
+        trie_config.trie_strategy = crate::fsa::TrieStrategy::Patricia {
+            max_path_length: 64,
+            compression_threshold: 4,
+            adaptive_compression: true,
+        };
         Self {
-            trie_config: ZiporaTrieConfig::cache_optimized(),
+            trie_config,
             blob_config: ZipOffsetBlobStoreConfig::performance_optimized(),
             memory_config: SecurePoolConfig::large_secure(),
             enable_key_compression: true,
@@ -173,8 +188,14 @@ impl TrieBlobStoreConfig {
 
     /// Create a configuration optimized for security
     pub fn security_optimized() -> Self {
+        let mut trie_config = ZiporaTrieConfig::cache_optimized();
+        trie_config.trie_strategy = crate::fsa::TrieStrategy::Patricia {
+            max_path_length: 64,
+            compression_threshold: 4,
+            adaptive_compression: true,
+        };
         Self {
-            trie_config: ZiporaTrieConfig::cache_optimized(),
+            trie_config,
             blob_config: ZipOffsetBlobStoreConfig::security_optimized(),
             memory_config: SecurePoolConfig::medium_secure(),
             enable_key_compression: true,
@@ -1379,11 +1400,11 @@ mod tests {
 
         let perf_config = TrieBlobStoreConfig::performance_optimized();
         assert_eq!(perf_config.key_cache_size, 4096);
-        assert_eq!(perf_config.trie_config.max_levels(), 4);
+        assert_eq!(perf_config.trie_config.max_levels(), 4); // Patricia for blob store
 
         let mem_config = TrieBlobStoreConfig::memory_optimized();
         assert_eq!(mem_config.key_cache_size, 256);
-        assert_eq!(mem_config.trie_config.max_levels(), 4); // memory_optimized uses space_optimized which has nesting_levels: 4
+        assert_eq!(mem_config.trie_config.max_levels(), 4); // memory_optimized uses space_optimized (Louds, nesting_levels: 4)
     }
 
     #[test]

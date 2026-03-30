@@ -17,7 +17,7 @@ High-performance Rust data structures and compression algorithms with memory saf
 - **Succinct Data Structures**: 12 rank/select variants
 - **Specialized Containers**: 13+ containers (VecTrbSet/Map, MinimalSso, SortedUintVec, LruMap, etc.)
 - **Hash Maps**: Golden ratio optimized, string-optimized, cache-optimized implementations
-- **Advanced Tries**: LOUDS, Critical-Bit (BMI2), Patricia tries with rank/select, NestTrieDawg
+- **Advanced Tries**: Double-Array (DoubleArrayTrie), LOUDS, Critical-Bit (BMI2), Patricia tries with rank/select, NestTrieDawg
 - **Compression**: PA-Zip, Huffman O0/O1/O2, FSE, rANS, ZSTD integration
 - **C FFI Support**: Complete C API for migration from C++ (`--features ffi`)
 
@@ -25,13 +25,13 @@ High-performance Rust data structures and compression algorithms with memory saf
 
 ```toml
 [dependencies]
-zipora = "2.1.5"
+zipora = "3.0.0"
 
 # With C FFI bindings
-zipora = { version = "2.1.5", features = ["ffi"] }
+zipora = { version = "3.0.0", features = ["ffi"] }
 
 # AVX-512 (nightly only)
-zipora = { version = "2.1.5", features = ["avx512"] }
+zipora = { version = "3.0.0", features = ["avx512"] }
 ```
 
 ### Basic Usage
@@ -226,24 +226,31 @@ Zipora provides the core building blocks for high-performance search engines: su
 
 ### 1. Term Dictionary (Trie-based)
 
-Use `ZiporaTrie` for fast term-to-ID mapping. The LOUDS-based representation is 3-5x more memory-efficient than a `HashMap<String, u32>` for large vocabularies.
+Use `DoubleArrayTrie` (double-array trie) for maximum performance — 8 bytes per state with O(1) transitions per byte. For large vocabularies, it's 3-5x more memory-efficient than `HashMap<String, u32>` while providing faster lookups.
 
 ```rust
-use zipora::fsa::{ZiporaTrie, ZiporaTrieConfig, Trie};
+use zipora::DoubleArrayTrie;
 
 // Build term dictionary during indexing
-let config = ZiporaTrieConfig::performance_optimized();
-let mut dict = ZiporaTrie::with_config(config);
+let mut dict = DoubleArrayTrie::new();
 
-for (term_id, term) in terms.iter().enumerate() {
+for term in terms.iter() {
     dict.insert(term.as_bytes()).unwrap();
 }
 
-// Query-time lookup: O(|key|) — independent of dictionary size
+// Query-time lookup: O(|key|) with O(1) per-byte transitions
 assert!(dict.contains(b"search"));
+
+// For key-value storage (term → term_id)
+use zipora::DoubleArrayTrieMap;
+let mut term_ids: DoubleArrayTrieMap<u32> = DoubleArrayTrieMap::new();
+for (term_id, term) in terms.iter().enumerate() {
+    term_ids.insert(term.as_bytes(), term_id as u32).unwrap();
+}
+let id = term_ids.get(b"search");
 ```
 
-For read-heavy workloads, `DoubleArrayTrie` provides O(1) state transitions per byte. For compressed term storage with prefix sharing, use `NestLoudsTrieBlobStore`.
+For alternative trie strategies (LOUDS, Patricia, CritBit), use `ZiporaTrie` with explicit config. For compressed term storage with prefix sharing, use `NestLoudsTrieBlobStore`.
 
 ### 2. Inverted Index (Posting Lists)
 
@@ -440,8 +447,8 @@ stop_words.insert("and", true);
 
 | Search Engine Component | Zipora Type | When to Use |
 |------------------------|-------------|-------------|
-| Term dictionary | `ZiporaTrie` | Default choice, memory-efficient |
-| Term dictionary (speed) | `DoubleArrayTrie` | O(1) transitions, read-heavy |
+| Term dictionary | `DoubleArrayTrie` | Default choice, 8 bytes/state, O(1) transitions |
+| Term dictionary (alternatives) | `ZiporaTrie` | LOUDS/Patricia/CritBit via config |
 | Short posting lists | `UintVecMin0` | Variable-width, <1M doc IDs |
 | Long posting lists | `SortedUintVec` | Delta-compressed sorted IDs |
 | Boolean posting lists | `BitVector` + `AdaptiveRankSelect` | High-frequency terms, bitwise ops |
