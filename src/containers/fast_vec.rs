@@ -661,11 +661,11 @@ impl<T> FastVec<T> {
     /// # Safety
     ///
     /// The caller must ensure that `index < self.len()`
-    #[inline]
+    #[inline(always)]
     pub unsafe fn get_unchecked(&self, index: usize) -> &T {
         debug_assert!(index < self.len);
-        // SAFETY: caller must guarantee index < self.len per function contract
-        unsafe { &*self.as_ptr().add(index) }
+        // SAFETY: if len > 0, ptr is always Some. unwrap_unchecked eliminates the Option branch.
+        unsafe { &*self.ptr.unwrap_unchecked().as_ptr().add(index) }
     }
 
     /// Get a mutable reference to the element at the specified index without bounds checking
@@ -673,11 +673,12 @@ impl<T> FastVec<T> {
     /// # Safety
     ///
     /// The caller must ensure that `index < self.len()`
-    #[inline]
+    #[inline(always)]
     pub unsafe fn get_unchecked_mut(&mut self, index: usize) -> &mut T {
         debug_assert!(index < self.len);
-        // SAFETY: caller must guarantee index < self.len per function contract
-        unsafe { &mut *self.as_mut_ptr().add(index) }
+        // SAFETY: if len > 0, ptr is always Some (set by with_capacity/push/resize).
+        // unwrap_unchecked eliminates the Option branch that the compiler can't prove away.
+        unsafe { &mut *self.ptr.unwrap_unchecked().as_ptr().add(index) }
     }
 
     /// Extend the vector with elements from an iterator
