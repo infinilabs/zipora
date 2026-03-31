@@ -441,22 +441,44 @@ impl BitVector {
     /// Resize the bit vector to the specified length
     pub fn resize(&mut self, new_len: usize, value: bool) -> Result<()> {
         if new_len > self.len {
-            // Extend with the given value
-            for _ in self.len..new_len {
-                self.push(value)?;
+            let new_blocks_needed = (new_len + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK;
+            let old_blocks = self.blocks.len();
+            let fill: u64 = if value { !0u64 } else { 0u64 };
+
+            // Handle partial last block: set/clear upper bits
+            if self.len > 0 {
+                let remaining = self.len % BITS_PER_BLOCK;
+                if remaining > 0 {
+                    let last = old_blocks - 1;
+                    if value {
+                        // Set upper bits of last existing block
+                        self.blocks[last] |= !((1u64 << remaining) - 1);
+                    }
+                    // If !value, upper bits are already 0 (invariant)
+                }
             }
-        } else if new_len < self.len {
-            // Truncate
+
+            // Bulk-extend blocks — single allocation, no per-bit loop
+            self.blocks.resize(new_blocks_needed, fill)?;
             self.len = new_len;
 
-            // Clear bits in the last partial block
-            if new_len > 0 {
-                let last_block_index = (new_len - 1) / BITS_PER_BLOCK;
-                let bits_in_last_block = new_len % BITS_PER_BLOCK;
+            // Mask off excess bits in final block
+            let tail_bits = new_len % BITS_PER_BLOCK;
+            if tail_bits > 0 {
+                let last = new_blocks_needed - 1;
+                self.blocks[last] &= (1u64 << tail_bits) - 1;
+            }
+        } else if new_len < self.len {
+            let new_blocks = (new_len + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK;
+            // FastVec::resize handles shrinking (drops excess elements)
+            self.blocks.resize(new_blocks, 0)?;
+            self.len = new_len;
 
-                if bits_in_last_block > 0 {
-                    let mask = (1u64 << bits_in_last_block) - 1;
-                    self.blocks[last_block_index] &= mask;
+            if new_len > 0 {
+                let tail_bits = new_len % BITS_PER_BLOCK;
+                if tail_bits > 0 {
+                    let last = new_blocks - 1;
+                    self.blocks[last] &= (1u64 << tail_bits) - 1;
                 }
             }
         }
@@ -532,10 +554,89 @@ impl BitVector {
         pos - self.rank1(pos)
     }
 
-    /// Get access to the underlying blocks for advanced operations
+    /// Get read-only access to the underlying u64 blocks.
     #[inline]
     pub fn blocks(&self) -> &[u64] {
         self.blocks.as_slice()
+    }
+
+    /// Get mutable access to the underlying u64 blocks.
+    ///
+    /// This allows zero-overhead scatter operations matching raw `Vec<u64>`.
+    /// The caller must not change the slice length. Bits beyond `self.len()`
+    /// in the last block are undefined.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use zipora::BitVector;
+    ///
+    /// let mut bv = BitVector::with_size(1000, false).unwrap();
+    /// let blocks = bv.blocks_mut();
+    /// // Scatter doc IDs directly — same speed as raw Vec<u64>
+    /// for doc_id in [10u32, 50, 100, 500, 999] {
+    ///     let w = doc_id as usize >> 6;
+    ///     let b = doc_id as usize & 63;
+    ///     blocks[w] |= 1u64 << b;
+    /// }
+    /// assert_eq!(bv.count_ones(), 5);
+    /// ```
+    #[inline]
+    pub fn blocks_mut(&mut self) -> &mut [u64] {
+        self.blocks.as_mut_slice()
+    }
+
+    /// Set bit at `index` to 1 without bounds checking.
+    ///
+    /// Faster than `set_unchecked(index, true)` — no branch on the value parameter.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `index < self.len()`.
+    #[inline(always)]
+    pub unsafe fn set_bit_unchecked(&mut self, index: usize) {
+        debug_assert!(index < self.len);
+        let block_index = index >> 6; // / 64
+        let bit_index = index & 63;   // % 64
+        // SAFETY: index < len guarantees block_index < blocks.len()
+        unsafe {
+            *self.blocks.get_unchecked_mut(block_index) |= 1u64 << bit_index;
+        }
+    }
+
+    /// Clear bit at `index` to 0 without bounds checking.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `index < self.len()`.
+    #[inline(always)]
+    pub unsafe fn clear_bit_unchecked(&mut self, index: usize) {
+        debug_assert!(index < self.len);
+        let block_index = index >> 6;
+        let bit_index = index & 63;
+        // SAFETY: index < len guarantees block_index < blocks.len()
+        unsafe {
+            *self.blocks.get_unchecked_mut(block_index) &= !(1u64 << bit_index);
+        }
+    }
+
+    /// Set multiple bit positions to 1 in bulk.
+    ///
+    /// More efficient than calling `set_bit_unchecked` in a loop:
+    /// single function call, pointer setup amortized, LLVM can vectorize.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that all values in `indices` are `< self.len()`.
+    #[inline]
+    pub unsafe fn set_bits_bulk_unchecked(&mut self, indices: &[u32]) {
+        let blocks = self.blocks.as_mut_slice();
+        for &idx in indices {
+            let w = idx as usize >> 6;
+            let b = idx as usize & 63;
+            // SAFETY: caller guarantees all indices < self.len()
+            unsafe { *blocks.get_unchecked_mut(w) |= 1u64 << b; }
+        }
     }
 
     /// Reserve space for at least `additional` more bits
@@ -1360,5 +1461,94 @@ mod tests {
         assert_eq!(bv.get(0), Some(false));
         assert_eq!(bv.get(4), Some(false));
         assert_eq!(bv.get(8), Some(false));
+    }
+
+    #[test]
+    fn test_blocks_mut_scatter() {
+        let mut bv = BitVector::with_size(1000, false).unwrap();
+        let doc_ids: Vec<u32> = vec![0, 1, 63, 64, 65, 500, 999];
+
+        // Scatter via blocks_mut — same performance as raw Vec<u64>
+        let blocks = bv.blocks_mut();
+        for &doc_id in &doc_ids {
+            let w = doc_id as usize >> 6;
+            let b = doc_id as usize & 63;
+            blocks[w] |= 1u64 << b;
+        }
+
+        assert_eq!(bv.count_ones(), 7);
+        for &doc_id in &doc_ids {
+            assert_eq!(bv.get(doc_id as usize), Some(true), "bit {} should be set", doc_id);
+        }
+        assert_eq!(bv.get(2), Some(false));
+        assert_eq!(bv.get(998), Some(false));
+    }
+
+    #[test]
+    fn test_set_bit_unchecked() {
+        let mut bv = BitVector::with_size(256, false).unwrap();
+
+        unsafe {
+            bv.set_bit_unchecked(0);
+            bv.set_bit_unchecked(63);
+            bv.set_bit_unchecked(64);
+            bv.set_bit_unchecked(255);
+        }
+
+        assert_eq!(bv.count_ones(), 4);
+        assert_eq!(bv.get(0), Some(true));
+        assert_eq!(bv.get(63), Some(true));
+        assert_eq!(bv.get(64), Some(true));
+        assert_eq!(bv.get(255), Some(true));
+        assert_eq!(bv.get(1), Some(false));
+    }
+
+    #[test]
+    fn test_clear_bit_unchecked() {
+        let mut bv = BitVector::with_size(128, true).unwrap();
+        assert_eq!(bv.count_ones(), 128);
+
+        unsafe {
+            bv.clear_bit_unchecked(0);
+            bv.clear_bit_unchecked(64);
+            bv.clear_bit_unchecked(127);
+        }
+
+        assert_eq!(bv.count_ones(), 125);
+        assert_eq!(bv.get(0), Some(false));
+        assert_eq!(bv.get(64), Some(false));
+        assert_eq!(bv.get(127), Some(false));
+        assert_eq!(bv.get(1), Some(true));
+    }
+
+    #[test]
+    fn test_set_bits_bulk_unchecked() {
+        let mut bv = BitVector::with_size(10000, false).unwrap();
+        let indices: Vec<u32> = (0..1000).map(|i| i * 10).collect();
+
+        unsafe { bv.set_bits_bulk_unchecked(&indices); }
+
+        assert_eq!(bv.count_ones(), 1000);
+        for &idx in &indices {
+            assert!(bv.get(idx as usize) == Some(true), "bit {} should be set", idx);
+        }
+        assert_eq!(bv.get(1), Some(false));
+        assert_eq!(bv.get(9999), Some(false));
+    }
+
+    #[test]
+    fn test_blocks_mut_then_count_ones() {
+        // Simulates the search engine union counting pattern
+        let mut bv = BitVector::with_size(50000, false).unwrap();
+
+        // Scatter 5000 doc IDs
+        let blocks = bv.blocks_mut();
+        for i in 0..5000u32 {
+            let doc_id = (i * 10) as usize;
+            blocks[doc_id >> 6] |= 1u64 << (doc_id & 63);
+        }
+
+        // Count via popcount
+        assert_eq!(bv.count_ones(), 5000);
     }
 }
