@@ -2740,4 +2740,126 @@ mod map_prefix_regression_tests {
         let result = trie.values_with_prefix(b"term_00");
         assert_eq!(result.len(), 100, "values_with_prefix 'term_00' returned {} (expected 100)", result.len());
     }
+
+    // --- Additional corner case tests ---
+
+    #[test]
+    fn test_all_256_single_byte_keys() {
+        let mut t = DoubleArrayTrie::new();
+        for b in 0u8..=255 {
+            t.insert(&[b]).unwrap();
+        }
+        assert_eq!(t.len(), 256);
+        for b in 0u8..=255 {
+            assert!(t.contains(&[b]), "missing single-byte key 0x{:02x}", b);
+        }
+    }
+
+    #[test]
+    fn test_insert_after_shrink() {
+        let mut t = DoubleArrayTrie::new();
+        t.insert(b"hello").unwrap();
+        t.insert(b"world").unwrap();
+        t.shrink_to_fit();
+        // Insert more after shrinking
+        t.insert(b"foo").unwrap();
+        t.insert(b"bar").unwrap();
+        assert_eq!(t.len(), 4);
+        assert!(t.contains(b"hello"));
+        assert!(t.contains(b"world"));
+        assert!(t.contains(b"foo"));
+        assert!(t.contains(b"bar"));
+    }
+
+    #[test]
+    fn test_inline_values_empty_key() {
+        let mut t = DoubleArrayTrie::new();
+        t.insert_with_value(b"", 42).unwrap();
+        assert_eq!(t.get_value(b""), Some(42));
+        t.insert_with_value(b"a", 1).unwrap();
+        assert_eq!(t.get_value(b""), Some(42));
+        assert_eq!(t.get_value(b"a"), Some(1));
+    }
+
+    #[test]
+    fn test_cursor_after_remove() {
+        let mut t = DoubleArrayTrie::new();
+        t.insert(b"a").unwrap();
+        t.insert(b"b").unwrap();
+        t.insert(b"c").unwrap();
+        t.remove(b"b");
+
+        let mut c = t.cursor();
+        c.seek_begin();
+        assert_eq!(c.key(), b"a");
+        assert!(c.next());
+        assert_eq!(c.key(), b"c");
+        assert!(!c.next());
+    }
+
+    #[test]
+    fn test_keys_with_prefix_empty_trie() {
+        let t = DoubleArrayTrie::new();
+        assert_eq!(t.keys_with_prefix(b"").len(), 0);
+        assert_eq!(t.keys_with_prefix(b"anything").len(), 0);
+        assert_eq!(t.keys().len(), 0);
+    }
+
+    #[test]
+    fn test_map_empty_key() {
+        let mut map = DoubleArrayTrieMap::<u32>::new();
+        map.insert(b"", 99).unwrap();
+        assert_eq!(map.get(b""), Some(99));
+        assert_eq!(map.len(), 1);
+        map.insert(b"x", 1).unwrap();
+        assert_eq!(map.get(b""), Some(99));
+        assert_eq!(map.get(b"x"), Some(1));
+    }
+
+    #[test]
+    fn test_remove_all_then_reinsert() {
+        let mut t = DoubleArrayTrie::new();
+        for i in 0..50u32 {
+            t.insert(format!("k{}", i).as_bytes()).unwrap();
+        }
+        assert_eq!(t.len(), 50);
+        // Remove all
+        for i in 0..50u32 {
+            assert!(t.remove(format!("k{}", i).as_bytes()));
+        }
+        assert_eq!(t.len(), 0);
+        assert!(t.is_empty());
+        // Reinsert
+        for i in 0..50u32 {
+            t.insert(format!("k{}", i).as_bytes()).unwrap();
+        }
+        assert_eq!(t.len(), 50);
+        for i in 0..50u32 {
+            assert!(t.contains(format!("k{}", i).as_bytes()));
+        }
+    }
+
+    #[test]
+    fn test_range_after_remove() {
+        let mut t = DoubleArrayTrie::new();
+        t.insert(b"a").unwrap();
+        t.insert(b"b").unwrap();
+        t.insert(b"c").unwrap();
+        t.insert(b"d").unwrap();
+        t.remove(b"b");
+        t.remove(b"c");
+
+        let range: Vec<Vec<u8>> = t.range(b"a", b"z").collect();
+        assert_eq!(range.len(), 2);
+        assert_eq!(range[0], b"a");
+        assert_eq!(range[1], b"d");
+    }
+
+    #[test]
+    fn test_for_each_value_empty_prefix_empty_trie() {
+        let t = DoubleArrayTrie::new();
+        let mut count = 0;
+        t.for_each_value_with_prefix(b"", |_| count += 1);
+        assert_eq!(count, 0);
+    }
 }
