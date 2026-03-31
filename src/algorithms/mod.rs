@@ -10,6 +10,7 @@ pub mod radix_sort;
 pub mod set_operations;
 pub mod set_ops;
 pub mod simd_merge;
+pub mod simd_set_intersect;
 pub mod suffix_array;
 pub mod tournament_tree;
 
@@ -35,6 +36,10 @@ pub use set_ops::{
     set_intersection, set_union, set_difference
 };
 pub use simd_merge::{SimdComparator, SimdConfig, SimdOperations};
+pub use simd_set_intersect::{
+    sorted_intersect_adaptive, sorted_intersect_simd, sorted_intersect_count,
+    sorted_intersect_galloping,
+};
 pub use suffix_array::{LcpArray, SuffixArray, SuffixArrayBuilder};
 pub use tournament_tree::{EnhancedLoserTree, LoserTreeConfig, TournamentNode, CacheAlignedNode};
 
