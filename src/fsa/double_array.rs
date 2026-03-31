@@ -248,7 +248,7 @@ impl DoubleArrayTrie {
 
             if base == NIL_STATE {
                 let new_base = self.find_free_base(&[ch])?;
-                self.states[curr as usize].set_child0(new_base);
+                self.set_base_padded(curr as usize, new_base);
                 let next = new_base + ch as u32;
                 self.ensure_capacity(next as usize + 1);
 
@@ -326,7 +326,7 @@ impl DoubleArrayTrie {
 
             if base == NIL_STATE {
                 let new_base = self.find_free_base(&[ch])?;
-                self.states[curr as usize].set_child0(new_base);
+                self.set_base_padded(curr as usize, new_base);
                 let next = new_base + ch as u32;
                 self.ensure_capacity(next as usize + 1);
 
@@ -386,6 +386,8 @@ impl DoubleArrayTrie {
     }
 
     /// Check if a key exists — tight loop, minimal branching.
+    /// `set_base_padded` guarantees `base + 255` is always in-bounds,
+    /// so the bounds check is a safety belt, not a performance bottleneck.
     #[inline]
     pub fn contains(&self, key: &[u8]) -> bool {
         let states = self.states.as_slice();
@@ -401,7 +403,6 @@ impl DoubleArrayTrie {
             if base == NIL_STATE { return false; }
             let next = base as usize + ch as usize;
             if next >= len { return false; }
-            // Combined free + parent check: if free, parent has FREE_BIT set, won't match curr
             if states[next].parent != curr as u32 { return false; }
             curr = next;
         }
@@ -719,11 +720,40 @@ impl DoubleArrayTrie {
         Ok(prev)
     }
 
-    /// Get inline i32 value for key.
+    /// Get inline i32 value for key (two-step: lookup_state + values index).
     #[inline]
     pub fn get_value(&self, key: &[u8]) -> Option<i32> {
-        let state = self.lookup_state(key)? as usize;
-        self.values.get(state).and_then(|v| v.map(|x| x as i32))
+        self.lookup_value(key)
+    }
+
+    /// Fused single-traversal value lookup — no intermediate function calls.
+    /// Combines trie traversal + terminal check + value read in one tight loop.
+    #[inline]
+    pub fn lookup_value(&self, key: &[u8]) -> Option<i32> {
+        let states = self.states.as_slice();
+        let values = self.values.as_slice();
+        let len = states.len();
+
+        if key.is_empty() {
+            return if states[0].is_term() {
+                values.get(0).and_then(|v| v.map(|x| x as i32))
+            } else {
+                None
+            };
+        }
+
+        let mut curr = 0usize;
+        for &ch in key {
+            let base = states[curr].child0();
+            if base == NIL_STATE { return None; }
+            let next = base as usize + ch as usize;
+            if next >= len { return None; }
+            if states[next].parent != curr as u32 { return None; }
+            curr = next;
+        }
+
+        if !states[curr].is_term() { return None; }
+        values.get(curr).and_then(|v| v.map(|x| x as i32))
     }
 
     // =========================================================================
@@ -811,9 +841,21 @@ impl DoubleArrayTrie {
     }
 
     /// Shrink internal arrays to fit actual usage.
+    /// Preserves the base+256 padding invariant for bounds-check-free lookups.
     pub fn shrink_to_fit(&mut self) {
+        // Find highest base value to preserve padding invariant
+        let mut max_base_plus_256 = 0usize;
+        for s in self.states.iter() {
+            if !s.is_free() {
+                let base = s.child0();
+                if base != NIL_STATE {
+                    max_base_plus_256 = max_base_plus_256.max(base as usize + 256);
+                }
+            }
+        }
+
         let last_used = self.states.iter().rposition(|s| !s.is_free()).unwrap_or(0);
-        let new_len = (last_used + 257).min(self.states.len());
+        let new_len = (last_used + 1).max(max_base_plus_256).min(self.states.len());
         self.states.truncate(new_len);
         self.states.shrink_to_fit();
         self.ninfos.truncate(new_len);
@@ -870,6 +912,15 @@ impl DoubleArrayTrie {
         let new_len = required.max(self.states.len() * 3 / 2).max(256);
         self.states.resize(new_len, DaState::new_free());
         self.ninfos.resize(new_len, NInfo::default());
+    }
+
+    /// Set base and ensure states array is padded to base+256.
+    /// This guarantees `base + any_byte` is always in-bounds,
+    /// eliminating the bounds check from the lookup hot path.
+    #[inline]
+    fn set_base_padded(&mut self, state: usize, base: u32) {
+        self.states[state].set_child0(base);
+        self.ensure_capacity(base as usize + 256);
     }
 
     /// Find a free base value where all given children symbols can be placed.
@@ -1038,7 +1089,7 @@ impl DoubleArrayTrie {
         }
 
         // Update state's base to new location
-        self.states[state as usize].set_child0(new_base);
+        self.set_base_padded(state as usize, new_base);
 
         // Rebuild parent's NInfo chain from scratch (excluding new_ch, caller will add it)
         for &ch in &children_symbols {
@@ -1128,7 +1179,7 @@ impl DoubleArrayTrie {
             self.states[old_pos as usize].set_free();
         }
 
-        self.states[state as usize].set_child0(new_base);
+        self.set_base_padded(state as usize, new_base);
 
         // Rebuild NInfo chain for ALL children (not excluding any)
         for &ch in &children_symbols {
