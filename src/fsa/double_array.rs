@@ -187,8 +187,11 @@ impl DoubleArrayTrie {
     }
 
     /// Create with pre-allocated capacity.
+    ///
+    /// Minimum capacity is 256 to guarantee that `base ^ ch` (where ch is
+    /// any byte 0-255) is always in-bounds for states with `child0 = 0`.
     pub fn with_capacity(capacity: usize) -> Self {
-        let cap = capacity.max(2);
+        let cap = capacity.max(256);
         let mut states = Vec::with_capacity(cap);
         states.push(DaState::new_root());
         states.resize(cap, DaState::new_free());
@@ -2081,6 +2084,31 @@ mod tests {
         // But keys must still work
         assert!(t.contains(b"hello"));
         assert!(t.contains(b"world"));
+    }
+
+    /// Regression test: with_capacity < 256 must not cause UB.
+    /// Bug 1.1.1: base=0 + unsafe get_unchecked(ch) with ch >= cap is UB.
+    #[test]
+    fn test_small_capacity_no_oob() {
+        // with_capacity(2) must be clamped to 256 minimum
+        let t = DoubleArrayTrie::with_capacity(2);
+        assert!(t.total_states() >= 256, "minimum capacity must be 256");
+
+        // contains on empty trie must not crash (base=0, next=ch)
+        assert!(!t.contains(b"hello"));  // 'h' = 104, needs states[104]
+        assert!(!t.contains(b"\xff"));   // 0xFF = 255, needs states[255]
+        assert!(!t.contains(b"\x00"));   // 0x00 = 0, needs states[0]
+
+        // insert + lookup must work
+        let mut t = DoubleArrayTrie::with_capacity(1);
+        t.insert(b"test").unwrap();
+        assert!(t.contains(b"test"));
+        assert!(!t.contains(b"other"));
+
+        // with_capacity(0) must also be safe
+        let t = DoubleArrayTrie::with_capacity(0);
+        assert!(t.total_states() >= 256);
+        assert!(!t.contains(b"anything"));
     }
 
     #[test]
