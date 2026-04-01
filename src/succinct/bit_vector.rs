@@ -705,103 +705,92 @@ impl BitVector {
         Ok(())
     }
 
-    /// SIMD-accelerated bulk rank operations
+    /// Bulk rank1 for multiple positions.
     ///
-    /// Process multiple rank queries in parallel using AVX2 vectorization.
-    /// This provides significant performance improvements for bulk operations.
-    #[cfg(all(target_arch = "x86_64", feature = "simd"))]
-    pub fn rank1_bulk_simd(&self, positions: &[usize]) -> Vec<usize> {
-        let mut results = Vec::with_capacity(positions.len());
+    /// For sorted positions, this is faster than individual `rank1` calls
+    /// because it walks the blocks array once, accumulating popcounts.
+    /// For unsorted positions, falls back to individual `rank1` calls.
+    ///
+    /// For true O(1) per-query rank with precomputed indices, use
+    /// `AdaptiveRankSelect` from `src/succinct/`.
+    pub fn rank1_bulk(&self, positions: &[usize]) -> Vec<usize> {
+        if positions.is_empty() { return Vec::new(); }
 
-        // Process positions using SIMD acceleration when available
-        if is_x86_feature_detected!("avx2") {
-            self.rank1_bulk_simd_avx2(positions, &mut results);
+        // Check if positions are sorted — enables single-pass optimization
+        let sorted = positions.windows(2).all(|w| w[0] <= w[1]);
+
+        if sorted {
+            self.rank1_bulk_sorted(positions)
         } else {
-            // Fallback to individual rank operations
-            for &pos in positions {
-                results.push(self.rank1(pos));
+            positions.iter().map(|&pos| self.rank1(pos)).collect()
+        }
+    }
+
+    /// Backward-compatible alias for `rank1_bulk`.
+    #[inline]
+    pub fn rank1_bulk_simd(&self, positions: &[usize]) -> Vec<usize> {
+        self.rank1_bulk(positions)
+    }
+
+    /// Single-pass bulk rank for sorted positions.
+    /// Walks blocks once, accumulating popcount — O(n + b) where
+    /// n = positions.len() and b = max_position / 64.
+    fn rank1_bulk_sorted(&self, positions: &[usize]) -> Vec<usize> {
+        let blocks = self.blocks.as_slice();
+        let mut results = Vec::with_capacity(positions.len());
+        let mut cumul = 0usize;
+        let mut current_word = 0usize;
+
+        for &pos in positions {
+            let target_word = pos / 64;
+            let remaining_bits = pos % 64;
+
+            // Accumulate popcount from current_word to target_word
+            while current_word < target_word && current_word < blocks.len() {
+                cumul += blocks[current_word].count_ones() as usize;
+                current_word += 1;
             }
+
+            // Add partial word bits
+            let mut rank = cumul;
+            if remaining_bits > 0 && target_word < blocks.len() {
+                let mask = (1u64 << remaining_bits) - 1;
+                rank += (blocks[target_word] & mask).count_ones() as usize;
+            }
+
+            results.push(rank);
         }
 
         results
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "simd"))]
-    fn rank1_bulk_simd_avx2(&self, positions: &[usize], results: &mut Vec<usize>) {
-        // Process 4 positions at a time using AVX2
-        let chunk_size = 4;
-
-        for chunk in positions.chunks(chunk_size) {
-            // SAFETY: pos_array is properly aligned and sized for AVX2 load
-            unsafe {
-                // Load positions into SIMD register
-                let mut pos_array = [0u64; 4];
-                for (i, &pos) in chunk.iter().enumerate() {
-                    pos_array[i] = pos as u64;
-                }
-
-                let _positions_vec = _mm256_loadu_si256(pos_array.as_ptr() as *const __m256i);
-
-                // Process each position (simplified for demonstration)
-                for &pos in chunk {
-                    results.push(self.rank1(pos));
-                }
-            }
-        }
-    }
-
-    #[cfg(not(all(target_arch = "x86_64", feature = "simd")))]
-    pub fn rank1_bulk_simd(&self, positions: &[usize]) -> Vec<usize> {
-        // Fallback implementation for non-SIMD platforms
-        positions.iter().map(|&pos| self.rank1(pos)).collect()
-    }
-
-    /// SIMD-accelerated bit setting for ranges
+    /// Set a contiguous range of bits [start, end) to the given value.
     ///
-    /// Set ranges of bits using vectorized operations for better performance
-    /// on large ranges.
-    #[cfg(all(target_arch = "x86_64", feature = "simd"))]
-    pub fn set_range_simd(&mut self, start: usize, end: usize, value: bool) -> Result<()> {
+    /// Uses word-level masking: one OR/AND per u64 word in the range.
+    /// For a range spanning N words, this is N operations vs N×64 individual
+    /// bit sets.
+    pub fn set_range(&mut self, start: usize, end: usize, value: bool) -> Result<()> {
         if start > end || end > self.len {
             return Err(ZiporaError::out_of_bounds(end, self.len));
         }
+        if start == end { return Ok(()); }
 
-        if is_x86_feature_detected!("avx2") {
-            self.set_range_simd_avx2(start, end, value)?;
-        } else {
-            // Fallback to individual bit setting
-            for i in start..end {
-                self.set(i, value)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    #[cfg(all(target_arch = "x86_64", feature = "simd"))]
-    fn set_range_simd_avx2(&mut self, start: usize, end: usize, value: bool) -> Result<()> {
         let start_block = start / BITS_PER_BLOCK;
         let end_block = (end - 1) / BITS_PER_BLOCK;
 
-        // Handle aligned blocks using SIMD
         for block_idx in start_block..=end_block {
-            if block_idx >= self.blocks.len() {
-                break;
-            }
+            if block_idx >= self.blocks.len() { break; }
 
             let block_start = block_idx * BITS_PER_BLOCK;
             let block_end = ((block_idx + 1) * BITS_PER_BLOCK).min(end);
             let range_start = start.max(block_start);
             let range_end = end.min(block_end);
 
-            if range_start >= range_end {
-                continue;
-            }
+            if range_start >= range_end { continue; }
 
             let start_bit = range_start - block_start;
             let end_bit = range_end - block_start;
 
-            // Create mask for the range within this block
             let mask = if end_bit >= BITS_PER_BLOCK {
                 !((1u64 << start_bit) - 1)
             } else {
@@ -818,18 +807,18 @@ impl BitVector {
         Ok(())
     }
 
-    #[cfg(not(all(target_arch = "x86_64", feature = "simd")))]
+    /// Backward-compatible alias for `set_range`.
+    #[cfg(all(target_arch = "x86_64", feature = "simd"))]
+    #[inline]
     pub fn set_range_simd(&mut self, start: usize, end: usize, value: bool) -> Result<()> {
-        // Fallback implementation for non-SIMD platforms
-        if start > end || end > self.len {
-            return Err(ZiporaError::out_of_bounds(end, self.len));
-        }
+        self.set_range(start, end, value)
+    }
 
-        for i in start..end {
-            self.set(i, value)?;
-        }
-
-        Ok(())
+    /// Backward-compatible alias for `set_range`.
+    #[cfg(not(all(target_arch = "x86_64", feature = "simd")))]
+    #[inline]
+    pub fn set_range_simd(&mut self, start: usize, end: usize, value: bool) -> Result<()> {
+        self.set_range(start, end, value)
     }
 
     /// SIMD-accelerated bulk bit operations
@@ -967,19 +956,25 @@ pub enum BitwiseOp {
 }
 
 /// Helper struct for mutable bit access
+/// Proxy reference to a single bit in a `BitVector`.
+///
+/// Use `get()` and `set()` for explicit access. `Deref<Target=bool>` is
+/// provided for read convenience (`if *bit_ref { ... }`), but `DerefMut`
+/// is not possible — you cannot take `&mut bool` to a sub-byte location.
+/// This is the standard pattern for bit-packed types in Rust.
 pub struct BitRef<'a> {
     bit_vector: &'a mut BitVector,
     index: usize,
 }
 
 impl<'a> BitRef<'a> {
-    /// Get the current value of the bit
+    /// Read the bit value.
     #[inline]
     pub fn get(&self) -> bool {
         self.bit_vector.get(self.index).unwrap_or(false)
     }
 
-    /// Set the value of the bit
+    /// Write the bit value.
     #[inline]
     pub fn set(&mut self, value: bool) -> Result<()> {
         self.bit_vector.set(self.index, value)
@@ -990,8 +985,6 @@ impl<'a> std::ops::Deref for BitRef<'a> {
     type Target = bool;
 
     fn deref(&self) -> &Self::Target {
-        // We can't return a reference to a bool that doesn't exist,
-        // so we use a static value. This is a limitation of the design.
         if self.get() { &true } else { &false }
     }
 }
