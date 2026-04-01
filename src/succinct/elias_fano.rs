@@ -97,9 +97,15 @@ pub struct EliasFano {
 }
 
 impl EliasFano {
-    /// Build from a sorted slice of values. Values must be in ascending order.
+    /// Build from a sorted slice of u32 values. Zero-allocation — processes
+    /// u32 values directly without converting to an intermediate `Vec<u64>`.
     pub fn from_sorted(values: &[u32]) -> Self {
-        Self::from_sorted_u64(&values.iter().map(|&v| v as u64).collect::<Vec<_>>())
+        if values.is_empty() {
+            return Self::from_sorted_u64(&[]);
+        }
+        // Process u32 directly: cast on-the-fly, no intermediate Vec<u64>
+        let universe = values[values.len() - 1] as u64 + 1;
+        Self::from_sorted_impl(values.len(), universe, |i| values[i] as u64)
     }
 
     /// Build from sorted u64 values.
@@ -117,10 +123,12 @@ impl EliasFano {
                 select0_samples: Vec::new(),
             };
         }
+        let universe = values[values.len() - 1] + 1;
+        Self::from_sorted_impl(values.len(), universe, |i| values[i])
+    }
 
-        let n = values.len();
-        let universe = values[n - 1] + 1;
-
+    /// Shared construction logic. `get_val(i)` returns the i-th value as u64.
+    fn from_sorted_impl(n: usize, universe: u64, get_val: impl Fn(usize) -> u64) -> Self {
         // L = floor(log2(universe / n)), at least 0
         let low_bit_width = if n >= universe as usize {
             0
@@ -135,9 +143,9 @@ impl EliasFano {
         let low_words = ((total_low_bits + 63) / 64) as usize;
         let mut low_bits = vec![0u64; low_words];
 
-        for (i, &val) in values.iter().enumerate() {
+        for i in 0..n {
             if low_bit_width > 0 {
-                let low_val = val & low_mask;
+                let low_val = get_val(i) & low_mask;
                 let bit_pos = i as u64 * low_bit_width as u64;
                 let word_idx = (bit_pos / 64) as usize;
                 let bit_idx = (bit_pos % 64) as u32;
@@ -150,7 +158,8 @@ impl EliasFano {
         }
 
         // Build high bits in unary encoding
-        let max_high = values[n - 1] >> low_bit_width;
+        let last_val = get_val(n - 1);
+        let max_high = last_val >> low_bit_width;
         let high_len_bits = n + max_high as usize + 1;
         let high_words = (high_len_bits + 63) / 64;
         let mut high_bits = vec![0u64; high_words];
@@ -158,8 +167,8 @@ impl EliasFano {
         let mut pos = 0usize;
         let mut prev_high = 0u64;
 
-        for &val in values {
-            let high = val >> low_bit_width;
+        for i in 0..n {
+            let high = get_val(i) >> low_bit_width;
             pos += (high - prev_high) as usize;
             let word_idx = pos / 64;
             let bit_idx = pos % 64;
@@ -170,7 +179,6 @@ impl EliasFano {
             prev_high = high;
         }
 
-        // Build sampling indices for O(1) rank/select
         let (rank_samples, select1_samples, select0_samples) =
             Self::build_samples(&high_bits, high_len_bits);
 
@@ -475,6 +483,9 @@ impl EliasFano {
 }
 
 /// Iterator over Elias-Fano encoded elements.
+///
+/// Uses `trailing_zeros` to skip 0-bits in bulk — O(1) amortized per element,
+/// same technique as `EliasFanoCursor`.
 pub struct EliasFanoIter<'a> {
     ef: &'a EliasFano,
     pos: usize,
@@ -487,26 +498,37 @@ impl<'a> Iterator for EliasFanoIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         if self.pos >= self.ef.len { return None; }
 
-        // Find next 1-bit in high_bits starting from high_pos
-        while self.high_pos < self.ef.high_len_bits {
-            let word_idx = self.high_pos / 64;
-            let bit_idx = self.high_pos % 64;
+        // Find next 1-bit using trailing_zeros (bulk skip over 0-bits)
+        let next_pos = self.high_pos;
+        let mut word_idx = next_pos / 64;
+        if word_idx >= self.ef.high_bits.len() { return None; }
 
-            if word_idx >= self.ef.high_bits.len() { return None; }
+        // Mask out bits below current position within the first word
+        let bit_offset = next_pos % 64;
+        let mut word = self.ef.high_bits[word_idx] >> bit_offset;
 
-            if (self.ef.high_bits[word_idx] >> bit_idx) & 1 == 1 {
-                // Found a 1-bit — this is an element
-                let high_val = (self.high_pos - self.pos) as u64;
-                let low = self.ef.get_low(self.pos);
-                let val = (high_val << self.ef.low_bit_width) | low;
-                self.pos += 1;
-                self.high_pos += 1;
-                return Some(val);
+        if word != 0 {
+            let tz = word.trailing_zeros() as usize;
+            self.high_pos = word_idx * 64 + bit_offset + tz;
+        } else {
+            // Scan subsequent words
+            loop {
+                word_idx += 1;
+                if word_idx >= self.ef.high_bits.len() { return None; }
+                word = self.ef.high_bits[word_idx];
+                if word != 0 {
+                    self.high_pos = word_idx * 64 + word.trailing_zeros() as usize;
+                    break;
+                }
             }
-            self.high_pos += 1; // Skip 0-bit (bucket boundary)
         }
 
-        None
+        let high_val = (self.high_pos - self.pos) as u64;
+        let low = self.ef.get_low(self.pos);
+        let val = (high_val << self.ef.low_bit_width) | low;
+        self.pos += 1;
+        self.high_pos += 1;
+        Some(val)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
