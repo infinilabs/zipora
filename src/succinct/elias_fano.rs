@@ -282,19 +282,17 @@ impl EliasFano {
     }
 
     /// Find the first element >= target. Returns (index, value).
-    /// O(1) amortized — the core operation for posting list intersection.
+    ///
+    /// Uses select0 to jump to the target bucket, then scans high_bits
+    /// directly (no `select1` or `get()` calls). Each element costs only
+    /// `get_low` (1-2 word reads) + bit scan (~1 cycle).
+    #[inline]
     pub fn next_geq(&self, target: u64) -> Option<(usize, u64)> {
         if self.len == 0 || target >= self.universe { return None; }
 
         let target_high = target >> self.low_bit_width;
-        let target_low = if self.low_bit_width > 0 {
-            target & ((1u64 << self.low_bit_width) - 1)
-        } else {
-            0
-        };
 
-        // Find the first element in bucket >= target_high using select0
-        // Bucket b starts at position select0(b) in high_bits
+        // Jump to bucket via select0
         let bucket_start_pos = if target_high == 0 {
             0
         } else {
@@ -304,16 +302,45 @@ impl EliasFano {
             }
         };
 
-        // Count elements before this bucket (= number of 1-bits before bucket_start_pos)
         let elem_before = self.rank1(bucket_start_pos);
 
-        // Scan forward from elem_before to find first element >= target
-        for idx in elem_before..self.len {
-            if let Some(val) = self.get(idx) {
-                if val >= target {
-                    return Some((idx, val));
-                }
+        // Scan high_bits directly from bucket_start_pos — no get()/select1 calls
+        let mut idx = elem_before;
+        let mut word_idx = bucket_start_pos / 64;
+        if word_idx >= self.high_bits.len() { return None; }
+
+        // Start scanning from the bit within the first word
+        let start_bit = bucket_start_pos % 64;
+        let mut word = self.high_bits[word_idx] >> start_bit;
+        let mut bit_pos = bucket_start_pos;
+
+        while idx < self.len {
+            if word == 0 {
+                word_idx += 1;
+                if word_idx >= self.high_bits.len() { return None; }
+                word = self.high_bits[word_idx];
+                bit_pos = word_idx * 64;
+                continue;
             }
+
+            // Skip to the next set bit (trailing zeros = 0-bits to skip)
+            let tz = word.trailing_zeros() as usize;
+            bit_pos += tz;
+            word >>= tz;
+
+            // This is a 1-bit — element `idx` at high_pos = bit_pos
+            let high_val = (bit_pos - idx) as u64;
+            let low = self.get_low(idx);
+            let val = (high_val << self.low_bit_width) | low;
+
+            if val >= target {
+                return Some((idx, val));
+            }
+
+            // Advance past this 1-bit
+            idx += 1;
+            bit_pos += 1;
+            word >>= 1;
         }
 
         None
@@ -489,6 +516,143 @@ impl<'a> Iterator for EliasFanoIter<'a> {
 }
 
 impl<'a> ExactSizeIterator for EliasFanoIter<'a> {}
+
+/// Stateful cursor for O(1) amortized sequential access over Elias-Fano.
+///
+/// Tracks position in `high_bits` so advancing to the next element costs
+/// only one `trailing_zeros` + one `get_low` — no `select1` calls.
+///
+/// # Examples
+///
+/// ```rust
+/// use zipora::succinct::elias_fano::EliasFano;
+///
+/// let docs = vec![3, 5, 11, 27, 31, 42, 58, 63];
+/// let ef = EliasFano::from_sorted(&docs);
+/// let mut cursor = ef.cursor();
+///
+/// assert_eq!(cursor.current(), Some(3));
+/// assert!(cursor.advance());
+/// assert_eq!(cursor.current(), Some(5));
+///
+/// // Jump to first element >= 30
+/// assert!(cursor.advance_to_geq(30));
+/// assert_eq!(cursor.current(), Some(31));
+/// ```
+pub struct EliasFanoCursor<'a> {
+    ef: &'a EliasFano,
+    /// Current element index (0..len).
+    index: usize,
+    /// Current bit position in high_bits (position of the current 1-bit).
+    high_pos: usize,
+}
+
+impl<'a> EliasFanoCursor<'a> {
+    /// Create a cursor positioned at the first element.
+    fn new(ef: &'a EliasFano) -> Self {
+        if ef.is_empty() {
+            return Self { ef, index: 0, high_pos: 0 };
+        }
+        // Find the first 1-bit in high_bits
+        let mut high_pos = 0;
+        for (word_idx, &word) in ef.high_bits.iter().enumerate() {
+            if word != 0 {
+                high_pos = word_idx * 64 + word.trailing_zeros() as usize;
+                break;
+            }
+        }
+        Self { ef, index: 0, high_pos }
+    }
+
+    /// Current element value. O(1) — no select needed.
+    #[inline]
+    pub fn current(&self) -> Option<u64> {
+        if self.index >= self.ef.len { return None; }
+        let high_val = (self.high_pos - self.index) as u64;
+        let low = self.ef.get_low(self.index);
+        Some((high_val << self.ef.low_bit_width) | low)
+    }
+
+    /// Current element index.
+    #[inline]
+    pub fn index(&self) -> usize { self.index }
+
+    /// Whether the cursor is past the last element.
+    #[inline]
+    pub fn is_exhausted(&self) -> bool { self.index >= self.ef.len }
+
+    /// Advance to the next element. O(1) amortized — just find the next 1-bit.
+    #[inline]
+    pub fn advance(&mut self) -> bool {
+        self.index += 1;
+        if self.index >= self.ef.len { return false; }
+
+        // Move past current 1-bit
+        let next_pos = self.high_pos + 1;
+        let mut word_idx = next_pos / 64;
+        if word_idx >= self.ef.high_bits.len() { return false; }
+
+        // Mask out bits at or below current position within the word
+        let bit_in_word = next_pos % 64;
+        let mut word = self.ef.high_bits[word_idx] >> bit_in_word;
+
+        // Find next 1-bit
+        if word != 0 {
+            self.high_pos = word_idx * 64 + bit_in_word + word.trailing_zeros() as usize;
+            return true;
+        }
+
+        // Scan subsequent words
+        loop {
+            word_idx += 1;
+            if word_idx >= self.ef.high_bits.len() { return false; }
+            word = self.ef.high_bits[word_idx];
+            if word != 0 {
+                self.high_pos = word_idx * 64 + word.trailing_zeros() as usize;
+                return true;
+            }
+        }
+    }
+
+    /// Advance to the first element >= target.
+    ///
+    /// If the current element is already >= target, does nothing and returns true.
+    /// Otherwise, jumps to the target bucket via `select0` and scans forward.
+    #[inline]
+    pub fn advance_to_geq(&mut self, target: u64) -> bool {
+        // Fast path: current is already >= target
+        if let Some(val) = self.current() {
+            if val >= target { return true; }
+        } else {
+            return false;
+        }
+
+        // Use the same inline scanning as next_geq
+        if let Some((idx, _)) = self.ef.next_geq(target) {
+            // Position the cursor at the found element via select1
+            if let Some(high_pos) = self.ef.select1(idx) {
+                self.index = idx;
+                self.high_pos = high_pos;
+                return true;
+            }
+        }
+        self.index = self.ef.len; // exhausted
+        false
+    }
+
+    /// Reset cursor to the first element.
+    pub fn reset(&mut self) {
+        *self = Self::new(self.ef);
+    }
+}
+
+impl EliasFano {
+    /// Create a stateful cursor for O(1) sequential access.
+    #[inline]
+    pub fn cursor(&self) -> EliasFanoCursor<'_> {
+        EliasFanoCursor::new(self)
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -676,6 +840,124 @@ mod tests {
         {
             let per_call = elapsed / (100 * targets.len() as u32);
             eprintln!("Elias-Fano next_geq: {:?}/call, {} found", per_call, found);
+        }
+    }
+
+    // --- Cursor tests ---
+
+    #[test]
+    fn test_cursor_basic() {
+        let docs = vec![3, 5, 11, 27, 31, 42, 58, 63];
+        let ef = EliasFano::from_sorted(&docs);
+        let mut cursor = ef.cursor();
+
+        // Sequential access matches get()
+        for (i, &v) in docs.iter().enumerate() {
+            assert!(!cursor.is_exhausted());
+            assert_eq!(cursor.index(), i);
+            assert_eq!(cursor.current(), Some(v as u64), "cursor at {} failed", i);
+            if i < docs.len() - 1 {
+                assert!(cursor.advance());
+            }
+        }
+        assert!(!cursor.advance()); // past end
+        assert!(cursor.is_exhausted());
+    }
+
+    #[test]
+    fn test_cursor_advance_to_geq() {
+        let docs = vec![3, 5, 11, 27, 31, 42, 58, 63];
+        let ef = EliasFano::from_sorted(&docs);
+        let mut cursor = ef.cursor();
+
+        // Jump to >= 30
+        assert!(cursor.advance_to_geq(30));
+        assert_eq!(cursor.current(), Some(31));
+
+        // Already >= 42 from current pos? No, 31 < 42
+        assert!(cursor.advance_to_geq(42));
+        assert_eq!(cursor.current(), Some(42));
+
+        // Jump past end
+        assert!(!cursor.advance_to_geq(100));
+        assert!(cursor.is_exhausted());
+    }
+
+    #[test]
+    fn test_cursor_matches_iterator() {
+        let docs: Vec<u32> = (0..10000).map(|i| i * 10 + i % 7).collect();
+        let ef = EliasFano::from_sorted(&docs);
+
+        // Cursor should produce same values as iterator
+        let from_iter: Vec<u64> = ef.iter().collect();
+        let mut from_cursor = Vec::new();
+        let mut cursor = ef.cursor();
+        if let Some(v) = cursor.current() {
+            from_cursor.push(v);
+            while cursor.advance() {
+                from_cursor.push(cursor.current().unwrap());
+            }
+        }
+
+        assert_eq!(from_cursor.len(), from_iter.len());
+        for (i, (&a, &b)) in from_cursor.iter().zip(from_iter.iter()).enumerate() {
+            assert_eq!(a, b, "mismatch at index {}", i);
+        }
+    }
+
+    #[test]
+    fn test_cursor_reset() {
+        let docs = vec![10, 20, 30];
+        let ef = EliasFano::from_sorted(&docs);
+        let mut cursor = ef.cursor();
+
+        cursor.advance();
+        cursor.advance();
+        assert_eq!(cursor.current(), Some(30));
+
+        cursor.reset();
+        assert_eq!(cursor.current(), Some(10));
+        assert_eq!(cursor.index(), 0);
+    }
+
+    /// Performance: cursor sequential vs get() sequential
+    #[test]
+    fn test_cursor_performance() {
+        let docs: Vec<u32> = (0..100000).map(|i| i * 10).collect();
+        let ef = EliasFano::from_sorted(&docs);
+
+        #[cfg(not(debug_assertions))]
+        {
+            // get(i) sequential
+            let start = std::time::Instant::now();
+            let mut sum1 = 0u64;
+            for _ in 0..10 {
+                for i in 0..ef.len() {
+                    sum1 += ef.get(i).unwrap();
+                }
+            }
+            let get_time = start.elapsed();
+
+            // cursor sequential
+            let start = std::time::Instant::now();
+            let mut sum2 = 0u64;
+            for _ in 0..10 {
+                let mut cursor = ef.cursor();
+                sum2 += cursor.current().unwrap();
+                while cursor.advance() {
+                    sum2 += cursor.current().unwrap();
+                }
+            }
+            let cursor_time = start.elapsed();
+
+            assert_eq!(sum1, sum2, "cursor and get must produce same sum");
+
+            let speedup = get_time.as_nanos() as f64 / cursor_time.as_nanos() as f64;
+            eprintln!("Sequential 100K: get={:?}, cursor={:?}, speedup={:.1}×",
+                get_time, cursor_time, speedup);
+
+            assert!(speedup > 2.0,
+                "cursor should be at least 2× faster than get(), got {:.1}×", speedup);
         }
     }
 }
