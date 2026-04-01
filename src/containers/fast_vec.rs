@@ -217,6 +217,61 @@ impl<T> FastVec<T> {
         })
     }
 
+    /// Create a FastVec with zeroed memory using `alloc_zeroed` (maps to `calloc`).
+    ///
+    /// For large allocations, `calloc` leverages kernel zero-page mapping,
+    /// avoiding physical zeroing entirely. This makes it significantly faster
+    /// than `alloc` + `memset` for zero-initialized buffers.
+    ///
+    /// The returned vector has `len == cap` — all elements are zero-initialized.
+    ///
+    /// # Safety requirement
+    /// `T` must be a type where all-zero bytes is a valid value (e.g., integer
+    /// types, `bool`, pointers-as-Option-with-niche). Do NOT use with types
+    /// that have non-zero invariants.
+    pub fn with_capacity_zeroed(cap: usize) -> Result<Self> {
+        if cap == 0 {
+            return Ok(Self::new());
+        }
+
+        crate::zipora_verify!(cap <= (isize::MAX as usize) / mem::size_of::<T>().max(1),
+            "capacity {} too large for element size {}", cap, mem::size_of::<T>());
+
+        let layout = Layout::array::<T>(cap)
+            .map_err(|_| ZiporaError::out_of_memory(cap * mem::size_of::<T>()))?;
+
+        // SAFETY: alloc_zeroed returns zeroed memory; calloc kernel optimization
+        // avoids physical zeroing for large allocations via zero-page mapping.
+        let ptr = unsafe {
+            let raw_ptr = alloc::alloc_zeroed(layout);
+            crate::zipora_verify_alloc!(raw_ptr, layout.size());
+            cast_aligned_ptr::<T>(raw_ptr)
+        };
+
+        Ok(Self {
+            // SAFETY: ptr is non-null after successful allocation
+            ptr: Some(unsafe { NonNull::new_unchecked(ptr) }),
+            len: cap,  // all elements are valid (zeroed)
+            cap,
+        })
+    }
+
+    /// Create a FastVec by taking ownership of a `Vec<T>` without copying.
+    ///
+    /// The Vec's buffer is transferred to FastVec. The original Vec is consumed.
+    pub fn from_vec(vec: Vec<T>) -> Self {
+        let mut vec = std::mem::ManuallyDrop::new(vec);
+        let ptr = vec.as_mut_ptr();
+        let len = vec.len();
+        let cap = vec.capacity();
+
+        Self {
+            ptr: NonNull::new(ptr),
+            len,
+            cap,
+        }
+    }
+
     /// Create a FastVec with the specified size, filled with the given value
     pub fn with_size(size: usize, value: T) -> Result<Self>
     where
