@@ -173,8 +173,6 @@ fn label_to_ninfo(label: u8) -> u16 {
 pub struct DoubleArrayTrie {
     states: Vec<DaState>,
     ninfos: Vec<NInfo>,
-    /// Inline i32 values indexed by terminal state ID
-    values: Vec<Option<u32>>,
     num_keys: usize,
     /// Heuristic search position
     search_head: usize,
@@ -201,7 +199,6 @@ impl DoubleArrayTrie {
         Self {
             states,
             ninfos,
-            values: Vec::new(),
             num_keys: 0,
             search_head: 1,
         }
@@ -256,92 +253,16 @@ impl DoubleArrayTrie {
     }
 
     /// Insert a key. Returns true if the key was new.
+    #[inline]
     pub fn insert(&mut self, key: &[u8]) -> Result<bool> {
-        // Empty key: mark root as terminal
-        if key.is_empty() {
-            let was_new = !self.ninfos[0].is_term();
-            self.ninfos[0].set_term();
-            if was_new { self.num_keys += 1; }
-            return Ok(was_new);
-        }
-
-        let mut curr = 0u32;
-
-        for &ch in key {
-            // child0 == 0 means "no children" (find_free_base never returns 0).
-            // This is a single register comparison — no ninfos memory access.
-            let base = self.states[curr as usize].child0;
-            if base == 0 {
-                let new_base = self.find_free_base(&[ch])?;
-                self.set_base_padded(curr as usize, new_base);
-                let next = new_base ^ ch as u32;
-                self.ensure_capacity(next as usize + 1);
-
-                self.states[next as usize].child0 = 0;
-                self.states[next as usize].set_parent(curr);
-                self.add_child_link(curr as usize, ch);
-                curr = next;
-            } else {
-                let next = base ^ ch as u32;
-                self.ensure_capacity(next as usize + 1);
-
-                if !self.states[next as usize].is_free()
-                    && self.states[next as usize].parent() == curr
-                {
-                    // Transition exists, follow it
-                    curr = next;
-                } else if self.states[next as usize].is_free() {
-                    // Position free, allocate it
-                    self.states[next as usize].child0 = 0; // safe leaf base
-                    self.states[next as usize].set_parent(curr);
-                    self.add_child_link(curr as usize, ch);
-                    curr = next;
-                } else {
-                    // Conflict — position `next` is occupied by another parent's child.
-                    let conflict_parent = self.states[next as usize].parent();
-
-                    // Guard: if conflict_parent is root sentinel or invalid,
-                    // always relocate curr (safe default). This handles the XOR
-                    // edge case where base ^ ch = 0 (root position).
-                    let can_consult = (conflict_parent as usize) < self.ninfos.len()
-                        && conflict_parent != curr
-                        && !self.is_ancestor(conflict_parent, curr);
-
-                    if can_consult {
-                        let curr_n = self.count_children(curr) + 1;
-                        let conf_n = self.count_children(conflict_parent);
-                        if curr_n > conf_n {
-                            self.relocate_existing(conflict_parent)?;
-                            self.states[next as usize].child0 = 0;
-                            self.states[next as usize].set_parent(curr);
-                            self.add_child_link(curr as usize, ch);
-                            curr = next;
-                            continue;
-                        }
-                    }
-
-                    // Relocate curr's children (default)
-                    let new_base = self.relocate(curr, ch)?;
-                    let next = new_base ^ ch as u32;
-                    self.ensure_capacity(next as usize + 1);
-                    self.states[next as usize].child0 = 0;
-                    self.states[next as usize].set_parent(curr);
-                    self.add_child_link(curr as usize, ch);
-                    curr = next;
-                }
-            }
-        }
-
-        // Mark terminal
-        let was_new = !self.ninfos[curr as usize].is_term();
-        self.ninfos[curr as usize].set_term();
-        if was_new { self.num_keys += 1; }
-        Ok(was_new)
+        self.insert_with_relocate_cb(key, |_, _| {})
     }
 
     /// Insert a key, calling `on_relocate(old_pos, new_pos)` whenever a child
-    /// state is moved during collision resolution.  This lets external value
+    /// state is moved during collision resolution. This lets external value
     /// arrays stay in sync with state IDs.
+    ///
+    /// Uses consult (relocate-smaller-side) to minimize total relocations.
     pub fn insert_with_relocate_cb(
         &mut self,
         key: &[u8],
@@ -357,6 +278,7 @@ impl DoubleArrayTrie {
         let mut curr = 0u32;
 
         for &ch in key {
+            // child0 == 0 means "no children" (find_free_base never returns 0).
             let base = self.states[curr as usize].child0;
             if base == 0 {
                 let new_base = self.find_free_base(&[ch])?;
@@ -382,27 +304,47 @@ impl DoubleArrayTrie {
                     self.add_child_link(curr as usize, ch);
                     curr = next;
                 } else {
-                    // Conflict — relocate curr's children, notifying caller.
+                    // Conflict — position occupied by another parent's child.
+                    // Consult: relocate the side with fewer children.
+                    let conflict_parent = self.states[next as usize].parent();
+
+                    // Guard: conflict_parent must be valid and not an ancestor
+                    // of curr (relocating an ancestor would corrupt traversal).
+                    let can_consult = (conflict_parent as usize) < self.ninfos.len()
+                        && conflict_parent != curr
+                        && !self.is_ancestor(conflict_parent, curr);
+
+                    if can_consult {
+                        let curr_n = self.count_children(curr) + 1;
+                        let conf_n = self.count_children(conflict_parent);
+                        if curr_n > conf_n {
+                            // Relocate conflict parent (fewer children)
+                            let old_base_cf = self.states[conflict_parent as usize].child0();
+                            self.relocate_existing(conflict_parent)?;
+                            let new_base_cf = self.states[conflict_parent as usize].child0();
+
+                            // Notify callback about conflict parent's moved children
+                            Self::notify_relocated(
+                                &self.ninfos, conflict_parent as usize,
+                                old_base_cf, new_base_cf, &mut on_relocate,
+                            );
+
+                            self.states[next as usize].child0 = 0;
+                            self.states[next as usize].set_parent(curr);
+                            self.add_child_link(curr as usize, ch);
+                            curr = next;
+                            continue;
+                        }
+                    }
+
+                    // Default: relocate curr's children
                     let old_base = self.states[curr as usize].child0();
                     let new_base = self.relocate(curr, ch)?;
 
-                    // Notify about each moved child (use ninfo chain at NEW base)
-                    let parent_pos = curr as usize;
-                    let mut c = self.ninfos[parent_pos].first_child();
-                    while c != NINFO_NONE {
-                        let label = (c - 1) as u8;
-                        if label != ch {
-                            let old_pos = old_base ^ label as u32;
-                            let new_pos = new_base ^ label as u32;
-                            on_relocate(old_pos, new_pos);
-                        }
-                        let child_pos = (new_base ^ label as u32) as usize;
-                        c = if child_pos < self.ninfos.len() {
-                            self.ninfos[child_pos].sibling
-                        } else {
-                            NINFO_NONE
-                        };
-                    }
+                    Self::notify_relocated_excluding(
+                        &self.ninfos, curr as usize,
+                        old_base, new_base, ch, &mut on_relocate,
+                    );
 
                     let next = new_base ^ ch as u32;
                     self.ensure_capacity(next as usize + 1);
@@ -418,6 +360,38 @@ impl DoubleArrayTrie {
         self.ninfos[curr as usize].set_term();
         if was_new { self.num_keys += 1; }
         Ok(was_new)
+    }
+
+    /// Notify callback about all moved children of a parent after relocation.
+    fn notify_relocated(
+        ninfos: &[NInfo], parent_pos: usize,
+        old_base: u32, new_base: u32,
+        on_relocate: &mut impl FnMut(u32, u32),
+    ) {
+        let mut c = ninfos[parent_pos].first_child();
+        while c != NINFO_NONE {
+            let label = (c - 1) as u8;
+            on_relocate(old_base ^ label as u32, new_base ^ label as u32);
+            let child_pos = (new_base ^ label as u32) as usize;
+            c = if child_pos < ninfos.len() { ninfos[child_pos].sibling } else { NINFO_NONE };
+        }
+    }
+
+    /// Notify callback about moved children, excluding `exclude_ch` (new child).
+    fn notify_relocated_excluding(
+        ninfos: &[NInfo], parent_pos: usize,
+        old_base: u32, new_base: u32, exclude_ch: u8,
+        on_relocate: &mut impl FnMut(u32, u32),
+    ) {
+        let mut c = ninfos[parent_pos].first_child();
+        while c != NINFO_NONE {
+            let label = (c - 1) as u8;
+            if label != exclude_ch {
+                on_relocate(old_base ^ label as u32, new_base ^ label as u32);
+            }
+            let child_pos = (new_base ^ label as u32) as usize;
+            c = if child_pos < ninfos.len() { ninfos[child_pos].sibling } else { NINFO_NONE };
+        }
     }
 
     /// Check if a key exists — tight loop, 1 branch per transition.
@@ -476,11 +450,16 @@ impl DoubleArrayTrie {
     }
 
     /// Remove a key. Returns true if the key existed.
+    ///
+    /// After clearing the terminal flag, prunes dead-end nodes that are
+    /// no longer part of any valid key path (leaf states with no children
+    /// and no terminal flag).
     pub fn remove(&mut self, key: &[u8]) -> bool {
         if let Some(state) = self.lookup_state(key) {
             if self.ninfos[state as usize].is_term() {
                 self.ninfos[state as usize].clear_term();
                 self.num_keys -= 1;
+                self.prune_dead_branch(state);
                 return true;
             }
         }
@@ -505,6 +484,79 @@ impl DoubleArrayTrie {
 
         symbols.reverse();
         Some(symbols)
+    }
+
+    /// Prune dead-end nodes after a key removal.
+    /// Walks up the parent chain freeing non-terminal leaf nodes and
+    /// removing them from their parent's NInfo child chain.
+    fn prune_dead_branch(&mut self, state: u32) {
+        let mut curr = state;
+
+        while curr != 0 {
+            // Stop if this state is terminal or has children
+            if self.ninfos[curr as usize].is_term() { break; }
+            if self.ninfos[curr as usize].first_child() != NINFO_NONE { break; }
+
+            // This state is a dead leaf — remove it
+            let parent = self.states[curr as usize].parent();
+            if parent as usize >= self.states.len() { break; }
+
+            let parent_base = self.states[parent as usize].child0();
+            let label = (curr ^ parent_base) as u8;
+
+            // Remove from parent's NInfo child chain
+            self.remove_child_link(parent as usize, label);
+
+            // Free the state
+            self.ninfos[curr as usize] = NInfo::default();
+            self.states[curr as usize].set_free();
+
+            // Continue up to parent
+            curr = parent;
+        }
+    }
+
+    /// Remove a label from the sorted sibling chain of parent_pos.
+    fn remove_child_link(&mut self, parent_pos: usize, label: u8) {
+        let label_enc = label_to_ninfo(label);
+        let base = self.states[parent_pos].child0();
+
+        let first = self.ninfos[parent_pos].first_child();
+        if first == NINFO_NONE { return; }
+
+        if first == label_enc {
+            // Removing the first child — update parent's child pointer
+            let child_pos = (base ^ label as u32) as usize;
+            let next = if child_pos < self.ninfos.len() {
+                self.ninfos[child_pos].sibling
+            } else {
+                NINFO_NONE
+            };
+            self.ninfos[parent_pos].set_first_child(next);
+            return;
+        }
+
+        // Walk chain to find and unlink the label
+        let mut prev_enc = first;
+        loop {
+            let prev_label = (prev_enc - 1) as u8;
+            let prev_pos = (base ^ prev_label as u32) as usize;
+            if prev_pos >= self.ninfos.len() { break; }
+            let next_enc = self.ninfos[prev_pos].sibling;
+            if next_enc == label_enc {
+                // Found it — unlink by pointing prev to label's next
+                let label_pos = (base ^ label as u32) as usize;
+                let after = if label_pos < self.ninfos.len() {
+                    self.ninfos[label_pos].sibling
+                } else {
+                    NINFO_NONE
+                };
+                self.ninfos[prev_pos].sibling = after;
+                return;
+            }
+            if next_enc == NINFO_NONE { break; }
+            prev_enc = next_enc;
+        }
     }
 
     /// Get all keys in the trie.
@@ -727,67 +779,7 @@ impl DoubleArrayTrie {
     }
 
     // =========================================================================
-    // Fix 3: Inline i32 value storage via compact values array
-    // =========================================================================
-
-    /// Insert key with an i32 value stored in a compact internal array.
-    /// Values are indexed by terminal state ID — no label-0 sentinel needed,
-    /// so binary keys with 0x00 bytes work correctly.
-    pub fn insert_with_value(&mut self, key: &[u8], value: i32) -> Result<Option<i32>> {
-        self.insert(key)?;
-        let state = self.lookup_state(key)
-            .ok_or_else(|| ZiporaError::invalid_state("insert succeeded but lookup failed"))? as usize;
-
-        // Ensure values array is large enough (amortized 2x growth)
-        if state >= self.values.len() {
-            let new_len = (state + 1).max(self.values.len() * 2).max(256);
-            self.values.resize(new_len, None);
-        }
-
-        let prev = self.values[state].map(|v| v as i32);
-        self.values[state] = Some(value as u32);
-        Ok(prev)
-    }
-
-    /// Get inline i32 value for key (two-step: lookup_state + values index).
-    #[inline]
-    pub fn get_value(&self, key: &[u8]) -> Option<i32> {
-        self.lookup_value(key)
-    }
-
-    /// Fused single-traversal value lookup — no intermediate function calls.
-    /// Combines trie traversal + terminal check + value read in one tight loop.
-    #[inline]
-    pub fn lookup_value(&self, key: &[u8]) -> Option<i32> {
-        let states = self.states.as_slice();
-        let values = self.values.as_slice();
-
-        if key.is_empty() {
-            return if self.ninfos[0].is_term() {
-                values.get(0).and_then(|v| v.map(|x| x as i32))
-            } else {
-                None
-            };
-        }
-
-        let ninfos = self.ninfos.as_slice();
-        let mut curr = 0usize;
-        for &ch in key {
-            let base = states[curr].child0;
-            let next = (base ^ ch as u32) as usize;
-            // SAFETY: same invariant as contains()
-            debug_assert!(next < states.len());
-            let next_state = unsafe { states.get_unchecked(next) };
-            if next_state.parent != curr as u32 { return None; }
-            curr = next;
-        }
-
-        if !ninfos[curr].is_term() { return None; }
-        values.get(curr).and_then(|v| v.map(|x| x as i32))
-    }
-
-    // =========================================================================
-    // Fix 4: Consult — relocate the smaller side on conflict
+    // Consult — relocate the smaller side on conflict
     // =========================================================================
 
     /// Count children of a state using sibling chain (O(k)).
@@ -825,46 +817,6 @@ impl DoubleArrayTrie {
             // After relocation, the conflict position should be free now
             // Return curr's existing base (no change needed)
             Ok(self.states[curr as usize].child0())
-        }
-    }
-
-    // =========================================================================
-    // Fix 5: Zero-alloc prefix value iteration (inline i32 values)
-    // =========================================================================
-
-    /// Call `f(value)` for each terminal in the subtree of `prefix` that has
-    /// an inline i32 value. Zero allocation.
-    pub fn for_each_value_with_prefix(&self, prefix: &[u8], mut f: impl FnMut(i32)) {
-        let mut curr = 0u32;
-        for &ch in prefix {
-            let next = self.state_move(curr, ch);
-            if next == NIL_STATE { return; }
-            curr = next;
-        }
-        self.walk_values(curr, &mut f);
-    }
-
-    /// DFS walk yielding values via sibling chain.
-    fn walk_values(&self, state: u32, f: &mut impl FnMut(i32)) {
-        if state as usize >= self.states.len() { return; }
-
-        if self.ninfos[state as usize].is_term() {
-            if let Some(Some(val)) = self.values.get(state as usize) {
-                f(*val as i32);
-            }
-        }
-
-        let mut c = self.ninfos[state as usize].first_child();
-        if c == NINFO_NONE { return; }
-        let base = self.states[state as usize].child0();
-
-        while c != NINFO_NONE {
-            let label = (c - 1) as u8;
-            let child_pos = (base ^ label as u32) as usize;
-            if child_pos < self.states.len() && !self.states[child_pos].is_free() {
-                self.walk_values(child_pos as u32, f);
-            }
-            c = if child_pos < self.ninfos.len() { self.ninfos[child_pos].sibling } else { NINFO_NONE };
         }
     }
 
@@ -953,22 +905,24 @@ impl DoubleArrayTrie {
     }
 
     /// Find a free base value where all given children symbols can be placed.
-    /// Scans from `search_head` with aggressive advancement to skip occupied regions.
+    ///
+    /// Uses search_head to skip past occupied regions at the start, then
+    /// probes candidates by incrementing base. For single-child inserts,
+    /// jumps directly to the next free position when the candidate is occupied.
     fn find_free_base(&mut self, children: &[u8]) -> Result<u32> {
         debug_assert!(!children.is_empty());
 
-        let min_ch = *children.iter().min().unwrap() as u32;
+        let ch0 = children[0] as u32;
         let single = children.len() == 1;
 
         // Advance search_head past any occupied region
-        while (self.search_head as usize) < self.states.len()
+        while self.search_head < self.states.len()
             && !self.states[self.search_head].is_free()
         {
             self.search_head += 1;
         }
 
-        // With XOR, base ^ min_ch should land near search_head
-        let mut base = (self.search_head as u32) ^ min_ch;
+        let mut base = (self.search_head as u32) ^ ch0;
         if base == 0 { base = 1; }
 
         let mut attempts = 0u32;
@@ -979,33 +933,27 @@ impl DoubleArrayTrie {
             }
             attempts += 1;
 
-            // XOR: all child positions are in [base & !0xFF, (base | 0xFF)]
             self.ensure_capacity((base as usize | 0xFF) + 1);
 
-            if single {
-                let pos = (base ^ min_ch) as usize;
-                if pos > 0 && self.states[pos].is_free() {
-                    self.search_head = pos;
-                    return Ok(base);
-                }
-                base += 1;
-                continue;
-            }
-
-            // Multi-child: check first child position first (early exit)
-            let first_pos = (base ^ children[0] as u32) as usize;
+            let first_pos = (base ^ ch0) as usize;
             if first_pos == 0 || !self.states[first_pos].is_free() {
                 base += 1;
                 continue;
             }
 
+            if single {
+                self.search_head = first_pos;
+                return Ok(base);
+            }
+
+            // Multi-child: check remaining positions
             let all_free = children[1..].iter().all(|&ch| {
                 let pos = (base ^ ch as u32) as usize;
                 pos > 0 && self.states[pos].is_free()
             });
 
             if all_free {
-                self.search_head = (base ^ min_ch) as usize;
+                self.search_head = first_pos;
                 return Ok(base);
             }
             base += 1;
@@ -1088,17 +1036,6 @@ impl DoubleArrayTrie {
                     }
                 }
 
-                if (old_pos as usize) < self.values.len() {
-                    let val = self.values[old_pos as usize].take();
-                    if val.is_some() {
-                        let new_idx = new_pos as usize;
-                        if new_idx >= self.values.len() {
-                            self.values.resize((new_idx + 1).max(self.values.len() * 2), None);
-                        }
-                        self.values[new_idx] = val;
-                    }
-                }
-
                 self.ninfos[old_pos as usize] = NInfo::default();
                 self.states[old_pos as usize].set_free();
             }
@@ -1118,7 +1055,7 @@ impl DoubleArrayTrie {
     }
 
     /// Relocate ALL existing children of `state` without adding a new child.
-    /// Used by consult (Fix 4) when relocating the conflict parent.
+    /// Used by consult when relocating the conflict parent.
     /// Returns the new base value.
     fn relocate_existing(&mut self, state: u32) -> Result<u32> {
         let old_base = self.states[state as usize].child0();
@@ -1176,24 +1113,12 @@ impl DoubleArrayTrie {
                 }
             }
 
-            if (old_pos as usize) < self.values.len() {
-                let val = self.values[old_pos as usize].take();
-                if val.is_some() {
-                    let new_idx = new_pos as usize;
-                    if new_idx >= self.values.len() {
-                        self.values.resize((new_idx + 1).max(self.values.len() * 2), None);
-                    }
-                    self.values[new_idx] = val;
-                }
-            }
-
             self.ninfos[old_pos as usize] = NInfo::default();
             self.states[old_pos as usize].set_free();
         }
 
         self.set_base_padded(state as usize, new_base);
 
-        // Rebuild NInfo chain for ALL children (not excluding any)
         for &ch in &children_symbols {
             self.add_child_link(state as usize, ch);
         }
@@ -1202,6 +1127,10 @@ impl DoubleArrayTrie {
     }
 
     /// Check if `ancestor` is an ancestor of `descendant` in the trie.
+    ///
+    /// Required for correctness in consult (relocate-smaller-side): relocating
+    /// an ancestor of `curr` would invalidate our traversal state. The depth-256
+    /// bound prevents infinite loops on malformed parent chains.
     fn is_ancestor(&self, ancestor: u32, descendant: u32) -> bool {
         let mut curr = descendant;
         let mut depth = 0;
@@ -2603,56 +2532,53 @@ mod tests {
             all_keys.len());
     }
 
-    // --- Fix 3: Inline value tests ---
+    // --- Value tests (via DoubleArrayTrieMap) ---
 
     #[test]
-    fn test_inline_values_basic() {
-        let mut t = DoubleArrayTrie::new();
-        let prev = t.insert_with_value(b"hello", 42).unwrap();
-        assert_eq!(prev, None); // First insert
+    fn test_map_values_basic() {
+        let mut m = DoubleArrayTrieMap::<i32>::new();
+        let prev = m.insert(b"hello", 42).unwrap();
+        assert_eq!(prev, None);
 
-        assert_eq!(t.get_value(b"hello"), Some(42));
-        assert_eq!(t.get_value(b"world"), None);
+        assert_eq!(m.get(b"hello"), Some(42));
+        assert_eq!(m.get(b"world"), None);
 
-        t.insert_with_value(b"world", 100).unwrap();
-        assert_eq!(t.get_value(b"world"), Some(100));
+        m.insert(b"world", 100).unwrap();
+        assert_eq!(m.get(b"world"), Some(100));
 
-        // Update existing
-        let prev = t.insert_with_value(b"hello", 99).unwrap();
+        let prev = m.insert(b"hello", 99).unwrap();
         assert_eq!(prev, Some(42));
-        assert_eq!(t.get_value(b"hello"), Some(99));
+        assert_eq!(m.get(b"hello"), Some(99));
     }
 
     #[test]
-    fn test_inline_values_many() {
-        let mut t = DoubleArrayTrie::new();
-        for i in 0..500u32 {
-            t.insert_with_value(format!("key_{:04}", i).as_bytes(), i as i32).unwrap();
+    fn test_map_values_many() {
+        let mut m = DoubleArrayTrieMap::<i32>::new();
+        for i in 0..500i32 {
+            m.insert(format!("key_{:04}", i).as_bytes(), i).unwrap();
         }
-        for i in 0..500u32 {
-            assert_eq!(t.get_value(format!("key_{:04}", i).as_bytes()), Some(i as i32),
+        for i in 0..500i32 {
+            assert_eq!(m.get(format!("key_{:04}", i).as_bytes()), Some(i),
                 "value mismatch for key_{:04}", i);
         }
-        assert_eq!(t.len(), 500);
+        assert_eq!(m.len(), 500);
     }
 
     #[test]
-    fn test_inline_values_with_contains() {
-        let mut t = DoubleArrayTrie::new();
-        t.insert_with_value(b"abc", 1).unwrap();
-        t.insert_with_value(b"abd", 2).unwrap();
+    fn test_map_values_with_contains() {
+        let mut m = DoubleArrayTrieMap::<i32>::new();
+        m.insert(b"abc", 1).unwrap();
+        m.insert(b"abd", 2).unwrap();
 
-        // contains should still work
-        assert!(t.contains(b"abc"));
-        assert!(t.contains(b"abd"));
-        assert!(!t.contains(b"ab"));
+        assert!(m.contains(b"abc"));
+        assert!(m.contains(b"abd"));
+        assert!(!m.contains(b"ab"));
 
-        // values accessible
-        assert_eq!(t.get_value(b"abc"), Some(1));
-        assert_eq!(t.get_value(b"abd"), Some(2));
+        assert_eq!(m.get(b"abc"), Some(1));
+        assert_eq!(m.get(b"abd"), Some(2));
     }
 
-    // --- Fix 4: Consult tests ---
+    // --- Consult tests ---
 
     #[test]
     fn test_consult_many_inserts() {
@@ -2668,49 +2594,43 @@ mod tests {
         }
     }
 
-    // --- Fix 5: Prefix value iteration tests ---
+    // --- Prefix value iteration tests (via DoubleArrayTrieMap) ---
 
     #[test]
-    fn test_prefix_value_iteration() {
-        let mut t = DoubleArrayTrie::new();
-        t.insert_with_value(b"app", 1).unwrap();
-        t.insert_with_value(b"apple", 2).unwrap();
-        t.insert_with_value(b"application", 3).unwrap();
-        t.insert_with_value(b"banana", 4).unwrap();
+    fn test_map_prefix_value_iteration() {
+        let mut m = DoubleArrayTrieMap::<i32>::new();
+        m.insert(b"app", 1).unwrap();
+        m.insert(b"apple", 2).unwrap();
+        m.insert(b"application", 3).unwrap();
+        m.insert(b"banana", 4).unwrap();
 
-        let mut vals = Vec::new();
-        t.for_each_value_with_prefix(b"app", |v| vals.push(v));
+        let mut vals: Vec<i32> = m.values_with_prefix(b"app");
         vals.sort();
         assert_eq!(vals, vec![1, 2, 3]);
 
-        let mut all_vals = Vec::new();
-        t.for_each_value_with_prefix(b"", |v| all_vals.push(v));
+        let mut all_vals: Vec<i32> = m.values_with_prefix(b"");
         all_vals.sort();
         assert_eq!(all_vals, vec![1, 2, 3, 4]);
 
-        let mut none = Vec::new();
-        t.for_each_value_with_prefix(b"xyz", |v| none.push(v));
+        let none: Vec<i32> = m.values_with_prefix(b"xyz");
         assert!(none.is_empty());
     }
 
-    /// Performance test with inline values
+    /// Performance test with map values
     #[test]
-    fn test_inline_value_performance() {
-        let mut t = DoubleArrayTrie::new();
+    fn test_map_value_performance() {
+        let mut m = DoubleArrayTrieMap::<i32>::new();
         for i in 0..5000i32 {
-            t.insert_with_value(format!("term_{:06}", i).as_bytes(), i).unwrap();
+            m.insert(format!("term_{:06}", i).as_bytes(), i).unwrap();
         }
-        assert_eq!(t.len(), 5000);
+        assert_eq!(m.len(), 5000);
 
-        // All values accessible
         for i in 0..5000i32 {
-            assert_eq!(t.get_value(format!("term_{:06}", i).as_bytes()), Some(i));
+            assert_eq!(m.get(format!("term_{:06}", i).as_bytes()), Some(i));
         }
 
-        // Prefix value iteration: term_001 matches term_001000..term_001999 = 1000 keys
-        let mut count = 0;
-        t.for_each_value_with_prefix(b"term_001", |_| count += 1);
-        assert_eq!(count, 1000, "prefix 'term_001' should yield 1000 values, got {}", count);
+        let prefix_vals = m.values_with_prefix(b"term_001");
+        assert_eq!(prefix_vals.len(), 1000, "prefix 'term_001' should yield 1000 values, got {}", prefix_vals.len());
     }
 }
 
@@ -2804,13 +2724,13 @@ mod map_prefix_regression_tests {
     }
 
     #[test]
-    fn test_inline_values_empty_key() {
-        let mut t = DoubleArrayTrie::new();
-        t.insert_with_value(b"", 42).unwrap();
-        assert_eq!(t.get_value(b""), Some(42));
-        t.insert_with_value(b"a", 1).unwrap();
-        assert_eq!(t.get_value(b""), Some(42));
-        assert_eq!(t.get_value(b"a"), Some(1));
+    fn test_map_values_empty_key() {
+        let mut m = DoubleArrayTrieMap::<i32>::new();
+        m.insert(b"", 42).unwrap();
+        assert_eq!(m.get(b""), Some(42));
+        m.insert(b"a", 1).unwrap();
+        assert_eq!(m.get(b""), Some(42));
+        assert_eq!(m.get(b"a"), Some(1));
     }
 
     #[test]
@@ -2888,10 +2808,9 @@ mod map_prefix_regression_tests {
     }
 
     #[test]
-    fn test_for_each_value_empty_prefix_empty_trie() {
-        let t = DoubleArrayTrie::new();
-        let mut count = 0;
-        t.for_each_value_with_prefix(b"", |_| count += 1);
-        assert_eq!(count, 0);
+    fn test_map_values_empty_prefix_empty() {
+        let m = DoubleArrayTrieMap::<i32>::new();
+        let vals = m.values_with_prefix(b"");
+        assert_eq!(vals.len(), 0);
     }
 }
