@@ -265,21 +265,20 @@ impl DoubleArrayTrie {
         let mut curr = 0u32;
 
         for &ch in key {
-            // Use NInfo to detect "no children" — child0 is always a valid
-            // in-bounds base (0 for leaves, allocated base for internal nodes).
-            if self.ninfos[curr as usize].first_child() == NINFO_NONE {
-                // No children yet — allocate a new base
+            // child0 == 0 means "no children" (find_free_base never returns 0).
+            // This is a single register comparison — no ninfos memory access.
+            let base = self.states[curr as usize].child0;
+            if base == 0 {
                 let new_base = self.find_free_base(&[ch])?;
                 self.set_base_padded(curr as usize, new_base);
                 let next = new_base ^ ch as u32;
                 self.ensure_capacity(next as usize + 1);
 
-                self.states[next as usize].child0 = 0; // safe leaf base
+                self.states[next as usize].child0 = 0;
                 self.states[next as usize].set_parent(curr);
                 self.add_child_link(curr as usize, ch);
                 curr = next;
             } else {
-                let base = self.states[curr as usize].child0();
                 let next = base ^ ch as u32;
                 self.ensure_capacity(next as usize + 1);
 
@@ -355,7 +354,8 @@ impl DoubleArrayTrie {
         let mut curr = 0u32;
 
         for &ch in key {
-            if self.ninfos[curr as usize].first_child() == NINFO_NONE {
+            let base = self.states[curr as usize].child0;
+            if base == 0 {
                 let new_base = self.find_free_base(&[ch])?;
                 self.set_base_padded(curr as usize, new_base);
                 let next = new_base ^ ch as u32;
@@ -366,7 +366,6 @@ impl DoubleArrayTrie {
                 self.add_child_link(curr as usize, ch);
                 curr = next;
             } else {
-                let base = self.states[curr as usize].child0();
                 let next = base ^ ch as u32;
                 self.ensure_capacity(next as usize + 1);
 
