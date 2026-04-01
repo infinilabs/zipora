@@ -1711,6 +1711,47 @@ impl<V: Copy> DoubleArrayTrieMap<V> {
         }
     }
 
+    /// Call `f(value)` for each terminal with the given prefix. Zero allocation.
+    ///
+    /// This is the fast path for prefix queries — no Vec allocation, no key
+    /// cloning. Uses NInfo sibling chain for O(k) child enumeration.
+    pub fn for_each_value_with_prefix(&self, prefix: &[u8], mut f: impl FnMut(V)) {
+        let mut curr = 0u32;
+        for &ch in prefix {
+            let next = self.trie.state_move(curr, ch);
+            if next == NIL_STATE { return; }
+            curr = next;
+        }
+        self.walk_values_dfs(curr, &mut f);
+    }
+
+    /// DFS walk yielding values via NInfo sibling chain. Zero allocation.
+    fn walk_values_dfs(&self, state: u32, f: &mut impl FnMut(V)) {
+        if state as usize >= self.trie.states.len() { return; }
+
+        if self.trie.ninfos[state as usize].is_term() {
+            if let Some(Some(val)) = self.values.get(state as usize) {
+                f(*val);
+            }
+        }
+
+        let mut c = self.trie.ninfos[state as usize].first_child();
+        if c == NINFO_NONE { return; }
+        let base = self.trie.states[state as usize].child0();
+        while c != NINFO_NONE {
+            let label = (c - 1) as u8;
+            let child_pos = (base ^ label as u32) as usize;
+            if child_pos < self.trie.states.len() && !self.trie.states[child_pos].is_free() {
+                self.walk_values_dfs(child_pos as u32, f);
+            }
+            c = if child_pos < self.trie.ninfos.len() {
+                self.trie.ninfos[child_pos].sibling
+            } else {
+                NINFO_NONE
+            };
+        }
+    }
+
     pub fn remove(&mut self, key: &[u8]) -> Option<V> {
         let state = self.trie.lookup_state(key)?;
         let prev = self.values.get(state as usize).and_then(|v| *v);
@@ -2613,6 +2654,30 @@ mod tests {
         assert_eq!(all_vals, vec![1, 2, 3, 4]);
 
         let none: Vec<i32> = m.values_with_prefix(b"xyz");
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn test_map_for_each_value_with_prefix() {
+        let mut m = DoubleArrayTrieMap::<i32>::new();
+        m.insert(b"app", 1).unwrap();
+        m.insert(b"apple", 2).unwrap();
+        m.insert(b"application", 3).unwrap();
+        m.insert(b"banana", 4).unwrap();
+
+        // Zero-alloc callback must match values_with_prefix
+        let mut callback_vals = Vec::new();
+        m.for_each_value_with_prefix(b"app", |v| callback_vals.push(v));
+        callback_vals.sort();
+        assert_eq!(callback_vals, vec![1, 2, 3]);
+
+        let mut all = Vec::new();
+        m.for_each_value_with_prefix(b"", |v| all.push(v));
+        all.sort();
+        assert_eq!(all, vec![1, 2, 3, 4]);
+
+        let mut none = Vec::new();
+        m.for_each_value_with_prefix(b"xyz", |v| none.push(v));
         assert!(none.is_empty());
     }
 

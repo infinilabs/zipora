@@ -1763,9 +1763,8 @@ mod tests {
             eprintln!("Scatter+popcount (20×5K, 1M): Scalar={:?}, BitVector={:?}, ratio={:.2}×",
                 scalar_time, bv_time, ratio);
 
-            // Should be within 1.15× of scalar (was 1.37× before fixes)
-            assert!(ratio < 1.25,
-                "BitVector too slow: {:.2}× vs scalar", ratio);
+            assert!(ratio < 1.2,
+                "BitVector too slow: {:.2}× vs scalar (expected <1.2×)", ratio);
         }
     }
 }

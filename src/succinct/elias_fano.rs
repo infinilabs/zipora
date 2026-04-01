@@ -30,10 +30,16 @@
 /// Memory: 4 bytes per 64 bytes of high_bits = 6.25% overhead.
 const RANK_SAMPLE_RATE: usize = 8;
 
-/// Sampling rate for select acceleration.
-/// One position sample per SELECT_SAMPLE_RATE set/clear bits.
+/// Sampling rate for select1 acceleration.
+/// One position sample per SELECT1_SAMPLE_RATE set bits.
 /// Memory: 4 bytes per 256 elements ≈ negligible.
-const SELECT_SAMPLE_RATE: usize = 256;
+const SELECT1_SAMPLE_RATE: usize = 256;
+
+/// Sampling rate for select0 acceleration.
+/// Denser than select1 because `next_geq` uses select0 on the hot path.
+/// At 64, max post-sample scan = 1 word (vs 4 words at 256).
+/// Memory: 4 bytes per 64 zero-bits — still negligible.
+const SELECT0_SAMPLE_RATE: usize = 64;
 
 /// Select the `rank`-th set bit in a 64-bit word (0-indexed).
 /// Returns the bit position (0..63).
@@ -88,11 +94,9 @@ pub struct EliasFano {
     /// Cumulative popcount at every RANK_SAMPLE_RATE words.
     /// rank_samples[i] = popcount(high_bits[0..i*RANK_SAMPLE_RATE])
     rank_samples: Vec<u32>,
-    /// Position of every SELECT_SAMPLE_RATE-th set bit.
-    /// select1_samples[i] = bit-position of the (i*SELECT_SAMPLE_RATE)-th 1-bit
+    /// Position of every SELECT1_SAMPLE_RATE-th set bit.
     select1_samples: Vec<u32>,
-    /// Position of every SELECT_SAMPLE_RATE-th clear bit.
-    /// select0_samples[i] = bit-position of the (i*SELECT_SAMPLE_RATE)-th 0-bit
+    /// Position of every SELECT0_SAMPLE_RATE-th clear bit (denser for next_geq).
     select0_samples: Vec<u32>,
 }
 
@@ -229,14 +233,14 @@ impl EliasFano {
             let after_ones = cumul_ones + ones;
             while next_sel1 < after_ones {
                 select1_samples.push((word_idx * 64) as u32);
-                next_sel1 += SELECT_SAMPLE_RATE as u32;
+                next_sel1 += SELECT1_SAMPLE_RATE as u32;
             }
 
-            // Select0: same for zero bits
+            // Select0: denser sampling for next_geq hot path
             let after_zeros = cumul_zeros + zeros;
             while next_sel0 < after_zeros {
                 select0_samples.push((word_idx * 64) as u32);
-                next_sel0 += SELECT_SAMPLE_RATE as u32;
+                next_sel0 += SELECT0_SAMPLE_RATE as u32;
             }
 
             cumul_ones = after_ones;
@@ -386,7 +390,7 @@ impl EliasFano {
         if rank >= self.len { return None; }
 
         // Jump to sample: select1_samples[k] = word-start of k*S-th 1-bit
-        let sample_idx = rank / SELECT_SAMPLE_RATE;
+        let sample_idx = rank / SELECT1_SAMPLE_RATE;
         let start_word = if sample_idx < self.select1_samples.len() {
             self.select1_samples[sample_idx] as usize / 64
         } else {
@@ -417,7 +421,7 @@ impl EliasFano {
     /// O(1) via sampling + rank.
     #[inline]
     fn select0(&self, rank: usize) -> Option<usize> {
-        let sample_idx = rank / SELECT_SAMPLE_RATE;
+        let sample_idx = rank / SELECT0_SAMPLE_RATE;
         let start_word = if sample_idx < self.select0_samples.len() {
             self.select0_samples[sample_idx] as usize / 64
         } else {
@@ -639,7 +643,8 @@ impl<'a> EliasFanoCursor<'a> {
     /// Advance to the first element >= target.
     ///
     /// If the current element is already >= target, does nothing and returns true.
-    /// Otherwise, jumps to the target bucket via `select0` and scans forward.
+    /// Otherwise, jumps to the target bucket via `select0` and scans high_bits
+    /// directly — maintaining `high_pos` inline with NO redundant `select1` call.
     #[inline]
     pub fn advance_to_geq(&mut self, target: u64) -> bool {
         // Fast path: current is already >= target
@@ -649,16 +654,62 @@ impl<'a> EliasFanoCursor<'a> {
             return false;
         }
 
-        // Use the same inline scanning as next_geq
-        if let Some((idx, _)) = self.ef.next_geq(target) {
-            // Position the cursor at the found element via select1
-            if let Some(high_pos) = self.ef.select1(idx) {
+        if target >= self.ef.universe { self.index = self.ef.len; return false; }
+
+        let target_high = target >> self.ef.low_bit_width;
+
+        // Jump to target bucket via select0
+        let bucket_start_pos = if target_high == 0 {
+            0
+        } else {
+            match self.ef.select0(target_high as usize - 1) {
+                Some(p) => p + 1,
+                None => { self.index = self.ef.len; return false; }
+            }
+        };
+
+        let elem_before = self.ef.rank1(bucket_start_pos);
+
+        // Scan high_bits directly — maintaining index + high_pos inline
+        let mut idx = elem_before;
+        let mut word_idx = bucket_start_pos / 64;
+        if word_idx >= self.ef.high_bits.len() { self.index = self.ef.len; return false; }
+
+        let start_bit = bucket_start_pos % 64;
+        let mut word = self.ef.high_bits[word_idx] >> start_bit;
+        let mut bit_pos = bucket_start_pos;
+
+        while idx < self.ef.len {
+            if word == 0 {
+                word_idx += 1;
+                if word_idx >= self.ef.high_bits.len() { break; }
+                word = self.ef.high_bits[word_idx];
+                bit_pos = word_idx * 64;
+                continue;
+            }
+
+            let tz = word.trailing_zeros() as usize;
+            bit_pos += tz;
+            word >>= tz;
+
+            // This is element `idx` at high_pos = bit_pos
+            let high_val = (bit_pos - idx) as u64;
+            let low = self.ef.get_low(idx);
+            let val = (high_val << self.ef.low_bit_width) | low;
+
+            if val >= target {
+                // Found it — update cursor state directly
                 self.index = idx;
-                self.high_pos = high_pos;
+                self.high_pos = bit_pos;
                 return true;
             }
+
+            idx += 1;
+            bit_pos += 1;
+            word >>= 1;
         }
-        self.index = self.ef.len; // exhausted
+
+        self.index = self.ef.len;
         false
     }
 
