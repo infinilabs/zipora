@@ -321,22 +321,27 @@ impl<T> FastVec<T> {
     /// Get the vector as a slice
     #[inline]
     pub fn as_slice(&self) -> &[T] {
-        if self.len == 0 {
-            &[]
-        } else {
-            // SAFETY: ptr valid from allocation, len <= cap maintained by all mutation methods
-            unsafe { slice::from_raw_parts(self.as_ptr(), self.len) }
+        // Branch-free: when len==0, from_raw_parts with a dangling aligned
+        // pointer and length 0 is safe. When len>0, ptr is always Some.
+        // SAFETY: ptr is valid+aligned when len > 0 (allocation invariant).
+        // When len == 0, dangling() provides aligned non-null pointer.
+        unsafe {
+            slice::from_raw_parts(
+                self.ptr.unwrap_or(NonNull::dangling()).as_ptr(),
+                self.len,
+            )
         }
     }
 
     /// Get the vector as a mutable slice
-    #[inline]
+    #[inline(always)]
     pub fn as_mut_slice(&mut self) -> &mut [T] {
-        if self.len == 0 {
-            &mut []
-        } else {
-            // SAFETY: ptr valid from allocation, len <= cap maintained by all mutation methods
-            unsafe { slice::from_raw_parts_mut(self.as_mut_ptr(), self.len) }
+        // SAFETY: same as as_slice — dangling pointer with len=0 is safe.
+        unsafe {
+            slice::from_raw_parts_mut(
+                self.ptr.unwrap_or(NonNull::dangling()).as_ptr(),
+                self.len,
+            )
         }
     }
 
