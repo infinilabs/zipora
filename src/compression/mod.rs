@@ -10,6 +10,7 @@ pub mod dict_zip;
 pub mod realtime;
 pub mod simd_lz77;
 pub mod simd_pattern_match;
+pub mod stream_vbyte;
 pub mod suffix_array;
 
 pub use adaptive::{AdaptiveCompressor, AdaptiveConfig, CompressionProfile};

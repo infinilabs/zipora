@@ -5,9 +5,11 @@
 //! operations in constant time with ~3% space overhead.
 
 pub mod bit_vector;
+pub mod elias_fano;
 pub mod rank_select;
 
 pub use bit_vector::{BitVector, BitwiseOp};
+pub use elias_fano::EliasFano;
 pub use rank_select::{
     BuilderOptions,
     PerformanceStats,
