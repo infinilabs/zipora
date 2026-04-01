@@ -17,21 +17,21 @@ High-performance Rust data structures and compression algorithms with memory saf
 - **Succinct Data Structures**: 12 rank/select variants
 - **Specialized Containers**: 13+ containers (VecTrbSet/Map, MinimalSso, SortedUintVec, LruMap, etc.)
 - **Hash Maps**: Golden ratio optimized, string-optimized, cache-optimized implementations
-- **Advanced Tries**: Double-Array (DoubleArrayTrie), LOUDS, Critical-Bit (BMI2), Patricia tries with rank/select, NestTrieDawg
+- **Advanced Tries**: Double-Array (DoubleArrayTrie, XOR transitions), LOUDS, Critical-Bit (BMI2), Patricia tries with rank/select, NestTrieDawg
 - **Compression**: PA-Zip, Huffman O0/O1/O2, FSE, rANS, ZSTD integration
-- **C FFI Support**: Complete C API for migration from C++ (`--features ffi`)
+- **C FFI Support**: Complete C API (`--features ffi`)
 
 ## Quick Start
 
 ```toml
 [dependencies]
-zipora = "3.1.0"
+zipora = "3.1.1"
 
 # With C FFI bindings
-zipora = { version = "3.1.0", features = ["ffi"] }
+zipora = { version = "3.1.1", features = ["ffi"] }
 
 # AVX-512 (nightly only)
-zipora = { version = "3.1.0", features = ["avx512"] }
+zipora = { version = "3.1.1", features = ["avx512"] }
 ```
 
 ### Basic Usage
@@ -103,11 +103,10 @@ assert_eq!(joined, "hello, world");
 
 ### Integration
 - **[I/O & Serialization](docs/IO_SERIALIZATION.md)** - Stream processing, endian handling, varint encoding
-- **[C FFI](docs/FFI.md)** - C API for migration from C++
+- **[C FFI](docs/FFI.md)** - C API for interoperability
 
-### Performance Reports
-- **[Performance vs C++](docs/PERF_VS_CPP.md)** - Benchmark comparisons
-- **[Porting Status](docs/PORTING_STATUS.md)** - Feature parity status
+### Reference
+- **[Porting Status](docs/PORTING_STATUS.md)** - Feature implementation status
 
 ## Features
 
@@ -150,6 +149,28 @@ cargo clippy --all-targets --all-features -- -D warnings
 > **Test Machine**: AMD EPYC 7B13 (Zen 3), 64 vCPUs, 117 GB RAM, AVX2/BMI2/POPCNT, rustc 1.91.1, Linux 6.17.
 > Results vary across hardware — Intel may differ on BMI2 (native vs microcode), ARM lacks x86 SIMD paths.
 > Run `cargo bench` to reproduce on your own hardware.
+
+### Trie / Term Dictionary (DoubleArrayTrie)
+
+| Operation (5000 terms) | Time | Per-op |
+|------------------------|------|--------|
+| Lookup hit | 103 µs | 20.6 ns/lookup |
+| Lookup miss | 19 µs | 3.8 ns/lookup |
+| Prefix search (5 queries) | 14 µs | 2.8 µs/query |
+| Insert (incremental) | 967 µs | 193 ns/term |
+
+XOR transitions, terminal bit in NInfo, unsafe `get_unchecked` — 3 ops, 1 branch per transition.
+Supports arbitrary binary keys including `\x00` bytes.
+
+### BitVector (scatter + popcount)
+
+| Operation (1M bits) | Zipora | Scalar Vec\<u64\> | Ratio |
+|---------------------|--------|-------------------|-------|
+| Scatter + popcount (20×5K docs) | **1.08 ms** | 1.35 ms | **0.80x (faster)** |
+| Allocation (`with_size(1M, false)`) | **155 µs** | 247 µs | **0.63x (faster)** |
+| Popcount only (50% density) | 9.25 µs | 9.26 µs | Tied |
+
+`alloc_zeroed` (calloc), zero-copy `from_blocks`, auto-vectorized `count_ones`.
 
 ### Succinct Data Structures
 
@@ -226,7 +247,7 @@ Zipora provides the core building blocks for high-performance search engines: su
 
 ### 1. Term Dictionary (Trie-based)
 
-Use `DoubleArrayTrie` (double-array trie) for maximum performance — 8 bytes per state with O(1) transitions per byte. For large vocabularies, it's 3-5x more memory-efficient than `HashMap<String, u32>` while providing faster lookups.
+Use `DoubleArrayTrie` (double-array trie with XOR transitions) for maximum performance — 8 bytes per state with O(1) transitions per byte. Supports arbitrary binary keys including `\x00` bytes. For large vocabularies, it's 3-5x more memory-efficient than `HashMap<String, u32>` while providing faster lookups.
 
 ```rust
 use zipora::DoubleArrayTrie;
@@ -447,7 +468,7 @@ stop_words.insert("and", true);
 
 | Search Engine Component | Zipora Type | When to Use |
 |------------------------|-------------|-------------|
-| Term dictionary | `DoubleArrayTrie` | Default choice, 8 bytes/state, O(1) transitions |
+| Term dictionary | `DoubleArrayTrie` | Default choice, 8 bytes/state, XOR transitions |
 | Term dictionary (alternatives) | `ZiporaTrie` | LOUDS/Patricia/CritBit via config |
 | Short posting lists | `UintVecMin0` | Variable-width, <1M doc IDs |
 | Long posting lists | `SortedUintVec` | Delta-compressed sorted IDs |
