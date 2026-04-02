@@ -218,7 +218,7 @@ pub use fsa::{
     ZiporaTrie, ZiporaTrieConfig, TrieStrategy, StorageStrategy, CompressionStrategy as TrieCompressionStrategy,
     RankSelectType, BitVectorType, FiniteStateAutomaton, Trie,
     // Primary trie implementation — 8 bytes/state, faithful C++ reference port
-    DoubleArrayTrie, DoubleArrayTrieMap,
+    DoubleArrayTrie, DoubleArrayTrieMap, MapValue,
     // Other trie strategies (available via explicit config)
     NestedLoudsTrie, NestingConfig, NestedTrieStats, FragmentStats,
     CompressedSparseTrie, ConcurrencyLevel, ReaderToken, WriterToken,

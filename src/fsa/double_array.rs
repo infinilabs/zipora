@@ -1588,6 +1588,25 @@ impl<'a> Iterator for RangeIter<'a> {
 ///
 /// Values are stored in a parallel Vec indexed by state ID.
 ///
+/// Trait for values stored in `DoubleArrayTrieMap`.
+///
+/// The associated constant `EMPTY` serves as a sentinel for unoccupied
+/// slots. It must be a value that will never be inserted as a real
+/// value — the trait impl documents this contract per type.
+///
+/// Zero runtime cost: `EMPTY` is a compile-time constant, monomorphized
+/// into a literal (e.g., `cmp eax, 0x80000000` for i32).
+pub trait MapValue: Copy + PartialEq {
+    /// Sentinel representing "no value stored here".
+    const EMPTY: Self;
+}
+
+impl MapValue for i32   { const EMPTY: Self = i32::MIN; }
+impl MapValue for u32   { const EMPTY: Self = u32::MAX; }
+impl MapValue for i64   { const EMPTY: Self = i64::MIN; }
+impl MapValue for u64   { const EMPTY: Self = u64::MAX; }
+impl MapValue for usize { const EMPTY: Self = usize::MAX; }
+
 /// # Examples
 ///
 /// ```rust
@@ -1598,12 +1617,12 @@ impl<'a> Iterator for RangeIter<'a> {
 /// assert_eq!(map.get(b"hello"), Some(42));
 /// ```
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct DoubleArrayTrieMap<V: Copy> {
+pub struct DoubleArrayTrieMap<V: MapValue> {
     trie: DoubleArrayTrie,
-    values: Vec<Option<V>>,
+    values: Vec<V>,
 }
 
-impl<V: Copy> DoubleArrayTrieMap<V> {
+impl<V: MapValue> DoubleArrayTrieMap<V> {
     pub fn new() -> Self {
         Self { trie: DoubleArrayTrie::new(), values: Vec::new() }
     }
@@ -1620,10 +1639,11 @@ impl<V: Copy> DoubleArrayTrieMap<V> {
             let old = old_pos as usize;
             let new = new_pos as usize;
             if new >= values.len() {
-                values.resize((new + 1).max(values.len() * 2), None);
+                values.resize((new + 1).max(values.len() * 2), V::EMPTY);
             }
             if old < values.len() {
-                values[new] = values[old].take();
+                let v = std::mem::replace(&mut values[old], V::EMPTY);
+                values[new] = v;
             }
         })?;
 
@@ -1632,18 +1652,25 @@ impl<V: Copy> DoubleArrayTrieMap<V> {
         let idx = state as usize;
         if idx >= self.values.len() {
             let new_len = (idx + 1).max(self.values.len() * 2).max(256);
-            self.values.resize(new_len, None);
+            self.values.resize(new_len, V::EMPTY);
         }
         let prev = self.values[idx];
-        self.values[idx] = Some(value);
-        Ok(prev)
+        self.values[idx] = value;
+        Ok(if prev != V::EMPTY { Some(prev) } else { None })
     }
 
     /// Get value for key.
     #[inline]
     pub fn get(&self, key: &[u8]) -> Option<V> {
         let state = self.trie.lookup_state(key)?;
-        self.values.get(state as usize).and_then(|v| *v)
+        let idx = state as usize;
+        if idx < self.values.len() {
+            // SAFETY: bounds checked above
+            let v = unsafe { *self.values.get_unchecked(idx) };
+            if v != V::EMPTY { Some(v) } else { None }
+        } else {
+            None
+        }
     }
 
     #[inline]
@@ -1687,8 +1714,10 @@ impl<V: Copy> DoubleArrayTrieMap<V> {
         if state as usize >= self.trie.states.len() { return; }
 
         if self.trie.ninfos[state as usize].is_term() {
-            if let Some(Some(val)) = self.values.get(state as usize) {
-                entries.push((path.clone(), *val));
+            if let Some(&val) = self.values.get(state as usize) {
+                if val != V::EMPTY {
+                    entries.push((path.clone(), val));
+                }
             }
         }
 
@@ -1730,8 +1759,10 @@ impl<V: Copy> DoubleArrayTrieMap<V> {
         if state as usize >= self.trie.states.len() { return; }
 
         if self.trie.ninfos[state as usize].is_term() {
-            if let Some(Some(val)) = self.values.get(state as usize) {
-                f(*val);
+            if let Some(&val) = self.values.get(state as usize) {
+                if val != V::EMPTY {
+                    f(val);
+                }
             }
         }
 
@@ -1754,16 +1785,22 @@ impl<V: Copy> DoubleArrayTrieMap<V> {
 
     pub fn remove(&mut self, key: &[u8]) -> Option<V> {
         let state = self.trie.lookup_state(key)?;
-        let prev = self.values.get(state as usize).and_then(|v| *v);
+        let idx = state as usize;
+        let prev = if idx < self.values.len() {
+            let v = self.values[idx];
+            if v != V::EMPTY { Some(v) } else { None }
+        } else {
+            None
+        };
         self.trie.remove(key);
-        if let Some(slot) = self.values.get_mut(state as usize) {
-            *slot = None;
+        if idx < self.values.len() {
+            self.values[idx] = V::EMPTY;
         }
         prev
     }
 }
 
-impl<V: Copy> std::fmt::Debug for DoubleArrayTrieMap<V> {
+impl<V: MapValue> std::fmt::Debug for DoubleArrayTrieMap<V> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DoubleArrayTrieMap")
             .field("num_keys", &self.trie.len())
@@ -1773,7 +1810,7 @@ impl<V: Copy> std::fmt::Debug for DoubleArrayTrieMap<V> {
     }
 }
 
-impl<V: Copy> Default for DoubleArrayTrieMap<V> {
+impl<V: MapValue> Default for DoubleArrayTrieMap<V> {
     fn default() -> Self { Self::new() }
 }
 
