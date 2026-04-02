@@ -69,25 +69,21 @@ pub fn sorted_union_simd(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize {
 }
 
 /// Count-only union (returns cardinality of union without materialization).
+///
+/// Uses the identity `|A ∪ B| = |A| + |B| - |A ∩ B|` to delegate to
+/// the SIMD-accelerated `sorted_intersect_count`, which uses SSE4.1 4×4
+/// block comparison for balanced lists and galloping for skewed sizes.
+///
+/// This is faster than a branching merge at all list sizes:
+/// - Small lists (1K–5K): avoids branch misprediction from 3-way if/else
+/// - Large lists (10K+): benefits from SIMD intersection parallelism
 #[inline]
 pub fn sorted_union_count(a: &[u32], b: &[u32]) -> usize {
     if a.is_empty() { return b.len(); }
     if b.is_empty() { return a.len(); }
 
-    let mut count = 0;
-    let mut i = 0usize;
-    let mut j = 0usize;
-
-    while i < a.len() && j < b.len() {
-        let va = a[i];
-        let vb = b[j];
-
-        if va == vb { count += 1; i += 1; j += 1; }
-        else if va < vb { count += 1; i += 1; }
-        else { count += 1; j += 1; }
-    }
-
-    count + (a.len() - i) + (b.len() - j)
+    // |A ∪ B| = |A| + |B| - |A ∩ B|
+    a.len() + b.len() - super::sorted_intersect_count(a, b)
 }
 
 // ============================================================================
@@ -212,6 +208,68 @@ mod tests {
     }
 
     #[test]
+    fn test_count_empty() {
+        assert_eq!(sorted_union_count(&[], &[]), 0);
+        assert_eq!(sorted_union_count(&[], &[1, 2, 3]), 3);
+        assert_eq!(sorted_union_count(&[4, 5], &[]), 2);
+    }
+
+    #[test]
+    fn test_count_no_overlap() {
+        let a = vec![1, 3, 5];
+        let b = vec![2, 4, 6];
+        assert_eq!(sorted_union_count(&a, &b), 6);
+    }
+
+    #[test]
+    fn test_count_full_overlap() {
+        let a = vec![1, 2, 3, 4, 5];
+        let b = vec![1, 2, 3, 4, 5];
+        assert_eq!(sorted_union_count(&a, &b), 5);
+    }
+
+    #[test]
+    fn test_count_subset() {
+        let a = vec![2, 4, 6];
+        let b: Vec<u32> = (1..=8).collect();
+        assert_eq!(sorted_union_count(&a, &b), 8);
+    }
+
+    #[test]
+    fn test_count_single_elements() {
+        assert_eq!(sorted_union_count(&[1], &[1]), 1);
+        assert_eq!(sorted_union_count(&[1], &[2]), 2);
+    }
+
+    #[test]
+    fn test_count_matches_materialize() {
+        // Verify count-only matches materialized union length at various sizes
+        let test_cases: Vec<(Vec<u32>, Vec<u32>)> = vec![
+            // Small
+            ((0..100).step_by(2).collect(), (0..100).step_by(3).collect()),
+            // Medium (1K-5K range)
+            ((0..5000).step_by(2).collect(), (0..5000).step_by(3).collect()),
+            // Large (10K+)
+            ((0..20000).step_by(2).collect(), (0..20000).step_by(3).collect()),
+            // Skewed
+            ((0..100).collect(), (0..10000).step_by(7).collect()),
+            // High overlap
+            ((0..5000).collect(), (0..5000).collect()),
+            // No overlap
+            ((0..5000).collect(), (5000..10000).collect()),
+        ];
+
+        for (a, b) in &test_cases {
+            let count = sorted_union_count(a, b);
+            let mut out = Vec::new();
+            sorted_union_adaptive(a, b, &mut out);
+            assert_eq!(count, out.len(),
+                "count mismatch for a.len()={}, b.len()={}: count={}, materialize={}",
+                a.len(), b.len(), count, out.len());
+        }
+    }
+
+    #[test]
     fn test_large_balanced() {
         let a: Vec<u32> = (0..10000).step_by(2).collect(); // evens
         let b: Vec<u32> = (0..10000).step_by(3).collect(); // multiples of 3
@@ -249,6 +307,71 @@ mod tests {
         let mut out = Vec::new();
         sorted_union_adaptive(&a, &b, &mut out);
         assert_eq!(out, vec![0, 1, u32::MAX / 2, u32::MAX - 1, u32::MAX]);
+    }
+
+    /// Old branching scalar merge for benchmark comparison.
+    fn sorted_union_count_branching(a: &[u32], b: &[u32]) -> usize {
+        if a.is_empty() { return b.len(); }
+        if b.is_empty() { return a.len(); }
+        let mut count = 0;
+        let mut i = 0usize;
+        let mut j = 0usize;
+        while i < a.len() && j < b.len() {
+            let va = a[i];
+            let vb = b[j];
+            if va == vb { count += 1; i += 1; j += 1; }
+            else if va < vb { count += 1; i += 1; }
+            else { count += 1; j += 1; }
+        }
+        count + (a.len() - i) + (b.len() - j)
+    }
+
+    #[test]
+    fn bench_union_count_old_vs_new() {
+        if cfg!(debug_assertions) {
+            eprintln!("Skipping benchmark in debug mode");
+            return;
+        }
+
+        let sizes: &[(usize, &str)] = &[
+            (500, "500 (tiny)"),
+            (1_000, "1K"),
+            (3_000, "3K"),
+            (5_000, "5K"),
+            (10_000, "10K"),
+            (50_000, "50K"),
+        ];
+
+        for &(size, label) in sizes {
+            // ~33% overlap: evens vs multiples-of-3
+            let a: Vec<u32> = (0..size as u32 * 2).step_by(2).collect();
+            let b: Vec<u32> = (0..size as u32 * 2).step_by(3).collect();
+            let iterations = 100_000usize / (size / 100).max(1);
+
+            // Verify correctness
+            let old = sorted_union_count_branching(&a, &b);
+            let new = sorted_union_count(&a, &b);
+            assert_eq!(old, new, "mismatch at size={size}");
+
+            let mut sink = 0usize;
+            // Warmup
+            for _ in 0..100 { sink += sorted_union_count_branching(&a, &b); }
+            for _ in 0..100 { sink += sorted_union_count(&a, &b); }
+
+            let start = std::time::Instant::now();
+            for _ in 0..iterations { sink += sorted_union_count_branching(&a, &b); }
+            let old_ns = start.elapsed().as_nanos() as f64 / iterations as f64;
+
+            let start = std::time::Instant::now();
+            for _ in 0..iterations { sink += sorted_union_count(&a, &b); }
+            let new_ns = start.elapsed().as_nanos() as f64 / iterations as f64;
+
+            let speedup = old_ns / new_ns;
+            eprintln!(
+                "union_count {label:>12}: old={old_ns:>8.0}ns, new(intersect)={new_ns:>8.0}ns, \
+                 speedup={speedup:.2}× [sink={sink}]"
+            );
+        }
     }
 
     #[test]
