@@ -274,6 +274,8 @@ for term in terms.iter() {
 assert!(dict.contains(b"search"));
 
 // 键值存储（词项 → 词项 ID）
+// DoubleArrayTrieMap<V> 要求 V: MapValue（可配置哨兵值，零成本消除 Option<V>）
+// 内置实现：i32 (MIN)、u32 (MAX)、i64 (MIN)、u64 (MAX)、usize (MAX)
 use zipora::DoubleArrayTrieMap;
 let mut term_ids: DoubleArrayTrieMap<u32> = DoubleArrayTrieMap::new();
 for (term_id, term) in terms.iter().enumerate() {
@@ -281,6 +283,8 @@ for (term_id, term) in terms.iter().enumerate() {
 }
 let id = term_ids.get(b"search");
 ```
+
+`DoubleArrayTrieMap<V>` 使用 `MapValue` trait 的编译期哨兵常量代替 `Option<V>`，对基本类型可将值数组内存占用减半（如 `i32` 从每槽 8 字节降至 4 字节）。哨兵通过单态化编译为单条 `cmp` 指令——零运行时开销。
 
 需要其他 Trie 策略（LOUDS、Patricia、CritBit），可通过显式配置使用 `ZiporaTrie`。需要前缀压缩的词项存储，可使用 `NestLoudsTrieBlobStore`。
 

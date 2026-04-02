@@ -274,6 +274,8 @@ for term in terms.iter() {
 assert!(dict.contains(b"search"));
 
 // For key-value storage (term → term_id)
+// DoubleArrayTrieMap<V> requires V: MapValue (configurable sentinel for zero-cost Option<V> elimination)
+// Built-in impls: i32 (MIN), u32 (MAX), i64 (MIN), u64 (MAX), usize (MAX)
 use zipora::DoubleArrayTrieMap;
 let mut term_ids: DoubleArrayTrieMap<u32> = DoubleArrayTrieMap::new();
 for (term_id, term) in terms.iter().enumerate() {
@@ -281,6 +283,8 @@ for (term_id, term) in terms.iter().enumerate() {
 }
 let id = term_ids.get(b"search");
 ```
+
+`DoubleArrayTrieMap<V>` uses the `MapValue` trait with a compile-time sentinel constant instead of `Option<V>`, halving the values array memory footprint for primitive types (e.g., 4 bytes vs 8 bytes per slot for `i32`). The sentinel is monomorphized to a single `cmp` instruction — zero runtime cost.
 
 For alternative trie strategies (LOUDS, Patricia, CritBit), use `ZiporaTrie` with explicit config. For compressed term storage with prefix sharing, use `NestLoudsTrieBlobStore`.
 
