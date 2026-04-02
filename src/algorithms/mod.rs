@@ -3,6 +3,7 @@
 //! This module provides implementations of advanced algorithms commonly used
 //! in data compression, indexing, and sorting applications.
 
+pub mod bit_ops;
 pub mod cache_oblivious;
 pub mod external_sort;
 pub mod multiway_merge;
@@ -16,6 +17,7 @@ pub mod suffix_array;
 pub mod tournament_tree;
 
 // Re-export main types
+pub use bit_ops::popcount_slice;
 pub use cache_oblivious::{
     AdaptiveAlgorithmSelector, CacheObliviousConfig, CacheObliviousSort,
     DataCharacteristics as CacheObliviousDataCharacteristics, 

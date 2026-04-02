@@ -540,19 +540,15 @@ impl BitVector {
 
     /// Count the number of set bits in the entire vector.
     ///
-    /// Uses iterator-based traversal (no bounds checks) to enable LLVM
-    /// auto-vectorization with AVX2 vpshufb popcount (~4 words/cycle).
+    /// Uses SIMD-accelerated `popcount_slice` (AVX2 vpshufb / POPCNT / NEON)
+    /// for complete blocks, with scalar masking for the partial last block.
     #[inline]
     pub fn count_ones(&self) -> usize {
         let blocks = self.blocks.as_slice();
         let complete_blocks = self.len / BITS_PER_BLOCK;
         let remaining_bits = self.len % BITS_PER_BLOCK;
 
-        // Iterator-based: no bounds checks, LLVM can auto-vectorize
-        let mut count: usize = blocks[..complete_blocks]
-            .iter()
-            .map(|w| w.count_ones() as usize)
-            .sum();
+        let mut count = crate::algorithms::popcount_slice(&blocks[..complete_blocks]);
 
         // Handle partial last block
         if remaining_bits > 0 && complete_blocks < blocks.len() {

@@ -91,7 +91,7 @@ assert_eq!(joined, "hello, world");
 - **[Memory Management](docs/MEMORY_MANAGEMENT.md)** - SecureMemoryPool, MmapVec, five-level pools
 
 ### Algorithms & Processing
-- **[Algorithms](docs/ALGORITHMS.md)** - Radix sort, suffix arrays, set operations, cache-oblivious algorithms
+- **[Algorithms](docs/ALGORITHMS.md)** - Radix sort, suffix arrays, set operations, cache-oblivious algorithms, SIMD popcount
 - **[Compression](docs/COMPRESSION.md)** - PA-Zip, Huffman, FSE, rANS, real-time compression
 - **[String Processing](docs/STRING_PROCESSING.md)** - SIMD string operations, pattern matching
 
@@ -170,7 +170,18 @@ Supports arbitrary binary keys including `\x00` bytes.
 | Allocation (`with_size(1M, false)`) | **155 µs** | 247 µs | **0.63x (faster)** |
 | Popcount only (50% density) | 9.25 µs | 9.26 µs | Tied |
 
-`alloc_zeroed` (calloc), zero-copy `from_blocks`, auto-vectorized `count_ones`.
+`alloc_zeroed` (calloc), zero-copy `from_blocks`, SIMD `popcount_slice` (AVX-512 / POPCNT / AVX2 / NEON).
+
+### popcount_slice (SIMD population count)
+
+| Slice size | Throughput | Rate |
+|------------|-----------|------|
+| 16 words (128B) | 4.4 ns | 3.7 Gwords/s |
+| 781 words (6KB, engine union buffer) | 150 ns | 5.2 Gwords/s |
+| 10K words (80KB) | 1.9 µs | 5.4 Gwords/s |
+
+Multi-tier dispatch: AVX-512 VPOPCNTDQ → hardware POPCNT → AVX2 vpshufb → NEON → scalar.
+Used internally by `BitVector::count_ones()` and available as `zipora::algorithms::popcount_slice`.
 
 ### Succinct Data Structures
 
