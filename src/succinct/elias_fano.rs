@@ -909,8 +909,10 @@ impl PartitionedEliasFano {
 
     /// Find the first element >= target. Returns (global_index, value).
     ///
-    /// Binary search on chunk upper bounds, then linear scan within the chunk.
-    /// Each chunk fits in 1-3 cache lines — no L2 misses within a chunk.
+    /// Binary search on chunk upper bounds, then select0-based skip within
+    /// the chunk to jump directly to the target's high-value bucket.
+    /// Only scans elements in the target bucket and beyond — typically
+    /// 1-5 elements instead of the full 128-element chunk.
     #[inline]
     pub fn next_geq(&self, target: u64) -> Option<(usize, u64)> {
         if self.len == 0 || target >= self.universe { return None; }
@@ -933,39 +935,16 @@ impl PartitionedEliasFano {
             return Some((global_offset, chunk.min_value + delta));
         }
 
-        // Scan within chunk — linear scan of high_bits.
-        // With ≤ 4 words of high_bits per chunk, this is very fast.
         let target_delta = target - chunk.min_value;
 
-        let mut idx = 0usize;
-        let mut word_idx = 0usize;
-        let mut word = if !chunk.high_bits.is_empty() { chunk.high_bits[0] } else { return None; };
-        let mut bit_pos = 0usize;
+        // Skip directly to the target_high bucket via select0 on high_bits.
+        // This avoids scanning all preceding elements (the old 10-41× regression).
+        let target_high = (target_delta >> chunk.low_bit_width) as usize;
+        let (start_idx, start_pos) = chunk_skip_to_high(chunk, target_high);
 
-        while idx < chunk.count {
-            if word == 0 {
-                word_idx += 1;
-                if word_idx >= chunk.high_bits.len() { break; }
-                word = chunk.high_bits[word_idx];
-                bit_pos = word_idx * 64;
-                continue;
-            }
-
-            let tz = word.trailing_zeros() as usize;
-            bit_pos += tz;
-            word >>= tz;
-
-            let high_val = (bit_pos - idx) as u64;
-            let low = Self::get_low_from_chunk(chunk, idx);
-            let delta = (high_val << chunk.low_bit_width) | low;
-
-            if delta >= target_delta {
-                return Some((global_offset + idx, chunk.min_value + delta));
-            }
-
-            idx += 1;
-            bit_pos += 1;
-            word >>= 1;
+        // Scan only from the skip point — typically 1-5 elements
+        if let Some((local_idx, delta)) = chunk_scan_geq(chunk, target_delta, start_idx, start_pos) {
+            return Some((global_offset + local_idx, chunk.min_value + delta));
         }
 
         // Not found in this chunk — first element of next chunk
@@ -1009,30 +988,154 @@ impl PartitionedEliasFano {
     /// Select1 on a chunk's high_bits — find position of the k-th set bit.
     /// No sampling needed (≤ 4 words), just linear scan.
     fn chunk_select1(&self, chunk: &PefChunk, rank: usize) -> usize {
-        let mut remaining = rank;
-        for (word_idx, &word) in chunk.high_bits.iter().enumerate() {
-            let ones = word.count_ones() as usize;
-            if remaining < ones {
-                return word_idx * 64 + select_in_word(word, remaining);
-            }
-            remaining -= ones;
-        }
-        chunk.high_len_bits // shouldn't happen if rank < count
+        chunk_select1(chunk, rank)
     }
 
     /// Get low bits of the i-th element within a chunk.
     #[inline]
     fn get_low_from_chunk(chunk: &PefChunk, index: usize) -> u64 {
-        if chunk.low_bit_width == 0 { return 0; }
-        let bit_pos = index as u64 * chunk.low_bit_width as u64;
-        let word_idx = (bit_pos / 64) as usize;
-        let bit_idx = (bit_pos % 64) as u32;
-        let mut val = chunk.low_bits[word_idx] >> bit_idx;
-        if bit_idx + chunk.low_bit_width > 64 && word_idx + 1 < chunk.low_bits.len() {
-            val |= chunk.low_bits[word_idx + 1] << (64 - bit_idx);
-        }
-        val & ((1u64 << chunk.low_bit_width) - 1)
+        chunk_get_low(chunk, index)
     }
+}
+
+// ============================================================================
+// Shared chunk helpers (used by both PEF and OPEF)
+// ============================================================================
+
+/// Select1 on a chunk's high_bits — find position of the k-th set bit.
+/// No sampling needed (≤ 8 words for PEF, ≤ 16 for OPEF), just word-level scan.
+#[inline]
+fn chunk_select1(chunk: &PefChunk, rank: usize) -> usize {
+    let mut remaining = rank;
+    for (word_idx, &word) in chunk.high_bits.iter().enumerate() {
+        let ones = word.count_ones() as usize;
+        if remaining < ones {
+            return word_idx * 64 + select_in_word(word, remaining);
+        }
+        remaining -= ones;
+    }
+    chunk.high_len_bits
+}
+
+/// Get low bits of the i-th element within a chunk.
+#[inline]
+fn chunk_get_low(chunk: &PefChunk, index: usize) -> u64 {
+    if chunk.low_bit_width == 0 { return 0; }
+    let bit_pos = index as u64 * chunk.low_bit_width as u64;
+    let word_idx = (bit_pos / 64) as usize;
+    let bit_idx = (bit_pos % 64) as u32;
+    let mut val = chunk.low_bits[word_idx] >> bit_idx;
+    if bit_idx + chunk.low_bit_width > 64 && word_idx + 1 < chunk.low_bits.len() {
+        val |= chunk.low_bits[word_idx + 1] << (64 - bit_idx);
+    }
+    val & ((1u64 << chunk.low_bit_width) - 1)
+}
+
+/// Skip forward in a chunk's high_bits to where high_val >= target_high.
+///
+/// Returns `(element_index, bit_position)` — the scanning start point.
+/// This is equivalent to `select0(target_high - 1) + 1` on the chunk's
+/// high_bits, followed by `rank1` to get the element count before that point.
+///
+/// For chunks with ≤ 16 words of high_bits, this is a fast word-level scan
+/// with no sampling overhead — analogous to plain EF's select0 jump but
+/// without auxiliary structures.
+#[inline]
+fn chunk_skip_to_high(chunk: &PefChunk, target_high: usize) -> (usize, usize) {
+    if target_high == 0 {
+        return (0, 0);
+    }
+
+    let mut zeros_remaining = target_high;
+    let mut ones_count = 0usize;
+    let last_wi = chunk.high_bits.len().saturating_sub(1);
+
+    for (wi, &w) in chunk.high_bits.iter().enumerate() {
+        // Mask out padding bits in the last word
+        let valid_bits = if wi == last_wi {
+            let rem = chunk.high_len_bits % 64;
+            if rem == 0 && chunk.high_len_bits > 0 { 64 } else { rem }
+        } else {
+            64
+        };
+        let valid_mask = if valid_bits >= 64 { u64::MAX } else { (1u64 << valid_bits) - 1 };
+        let masked = w & valid_mask;
+
+        let ones = masked.count_ones() as usize;
+        let zeros = valid_bits - ones;
+
+        if zeros_remaining <= zeros {
+            // The target zero is in this word. Find position of the
+            // zeros_remaining-th zero bit (1-indexed → select the
+            // (zeros_remaining-1)-th set bit in the inverted word).
+            let inverted = (!w) & valid_mask;
+            let zero_pos_in_word = select_in_word(inverted, zeros_remaining - 1);
+            let abs_pos = wi * 64 + zero_pos_in_word;
+
+            // Count ones before abs_pos + 1 (rank1 up to and including abs_pos)
+            let bits_up_to = zero_pos_in_word + 1;
+            let partial_mask = if bits_up_to >= 64 { u64::MAX } else { (1u64 << bits_up_to) - 1 };
+            ones_count += (w & partial_mask).count_ones() as usize;
+
+            // Start scanning from the bit after the target zero
+            return (ones_count, abs_pos + 1);
+        }
+
+        zeros_remaining -= zeros;
+        ones_count += ones;
+    }
+
+    // All zeros consumed — past the end of the chunk
+    (chunk.count, chunk.high_len_bits)
+}
+
+/// Linear scan within a chunk's high_bits starting from a given position.
+/// Returns `Some((local_index, delta))` for the first element with `delta >= target_delta`.
+#[inline]
+fn chunk_scan_geq(
+    chunk: &PefChunk,
+    target_delta: u64,
+    start_idx: usize,
+    start_pos: usize,
+) -> Option<(usize, u64)> {
+    let mut idx = start_idx;
+    let mut bit_pos = start_pos;
+    let mut word_idx = bit_pos / 64;
+    if word_idx >= chunk.high_bits.len() {
+        return None;
+    }
+
+    let start_bit = bit_pos % 64;
+    let mut word = chunk.high_bits[word_idx] >> start_bit;
+    bit_pos = word_idx * 64 + start_bit;
+
+    while idx < chunk.count {
+        if word == 0 {
+            word_idx += 1;
+            if word_idx >= chunk.high_bits.len() { break; }
+            word = chunk.high_bits[word_idx];
+            bit_pos = word_idx * 64;
+            continue;
+        }
+
+        let tz = word.trailing_zeros() as usize;
+        bit_pos += tz;
+        word >>= tz;
+
+        let high_val = (bit_pos - idx) as u64;
+        let low = chunk_get_low(chunk, idx);
+        let delta = (high_val << chunk.low_bit_width) | low;
+
+        if delta >= target_delta {
+            return Some((idx, delta));
+        }
+
+        idx += 1;
+        bit_pos += 1;
+        word >>= 1;
+    }
+
+    None
 }
 
 /// Iterator over PartitionedEliasFano elements.
@@ -1309,6 +1412,11 @@ impl<'a> EliasFanoBatchCursor<'a> {
     }
 
     /// Refill the buffer with up to BATCH_SIZE decoded elements.
+    ///
+    /// Optimized with incremental low-bit tracking: instead of recomputing
+    /// word_idx/bit_idx from scratch for each element's get_low(), we track
+    /// the low-bit position and pre-loaded words across the batch, advancing
+    /// by low_bit_width per element.
     fn refill(&mut self) {
         let count = (self.ef.len - self.next_elem).min(BATCH_SIZE);
         if count == 0 {
@@ -1317,24 +1425,35 @@ impl<'a> EliasFanoBatchCursor<'a> {
         }
 
         let start_elem = self.next_elem;
+        let lbw = self.ef.low_bit_width;
+
+        // --- High-bit scanning state ---
         let mut bit_pos = self.high_pos;
         let mut word_idx = bit_pos / 64;
-
-        // Start scanning from the correct bit within the word
         let start_bit = bit_pos % 64;
         let mut word = if word_idx < self.ef.high_bits.len() {
             self.ef.high_bits[word_idx] >> start_bit
         } else {
             0
         };
-        // Adjust bit_pos to word-aligned + offset for correct tracking
         bit_pos = word_idx * 64 + start_bit;
 
-        // Batch decode: scan high_bits for `count` 1-bits + extract low_bits
+        // --- Low-bit incremental state ---
+        let low_mask = if lbw == 0 { 0u64 } else { (1u64 << lbw) - 1 };
+        let mut low_bit_pos = start_elem as u64 * lbw as u64;
+        let mut low_word_idx = (low_bit_pos / 64) as usize;
+        let mut low_bit_idx = (low_bit_pos % 64) as u32;
+        let mut low_word = if lbw > 0 && low_word_idx < self.ef.low_bits.len() {
+            self.ef.low_bits[low_word_idx]
+        } else { 0 };
+        let mut low_word_next = if lbw > 0 && low_word_idx + 1 < self.ef.low_bits.len() {
+            self.ef.low_bits[low_word_idx + 1]
+        } else { 0 };
+
         for k in 0..count {
             let idx = start_elem + k;
 
-            // Find next 1-bit
+            // Find next 1-bit in high_bits
             while word == 0 {
                 word_idx += 1;
                 word = self.ef.high_bits[word_idx];
@@ -1345,11 +1464,35 @@ impl<'a> EliasFanoBatchCursor<'a> {
             word >>= tz;
 
             let high_val = (bit_pos - idx) as u64;
-            let low = self.ef.get_low(idx);
-            self.buffer[k] = (high_val << self.ef.low_bit_width) | low;
+
+            // Inline low-bit extraction with incremental tracking
+            let low = if lbw == 0 {
+                0u64
+            } else {
+                let mut val = low_word >> low_bit_idx;
+                if low_bit_idx + lbw > 64 {
+                    val |= low_word_next << (64 - low_bit_idx);
+                }
+                val & low_mask
+            };
+
+            self.buffer[k] = (high_val << lbw) | low;
 
             bit_pos += 1;
             word >>= 1;
+
+            // Advance low-bit position incrementally
+            if lbw > 0 {
+                low_bit_idx += lbw;
+                if low_bit_idx >= 64 {
+                    low_bit_idx -= 64;
+                    low_word_idx += 1;
+                    low_word = low_word_next;
+                    low_word_next = if low_word_idx + 1 < self.ef.low_bits.len() {
+                        self.ef.low_bits[low_word_idx + 1]
+                    } else { 0 };
+                }
+            }
         }
 
         self.buf_pos = 0;
@@ -1454,18 +1597,7 @@ impl<'a> PartitionedEliasFanoBatchCursor<'a> {
             let chunk = &self.pef.chunks[self.chunk_idx];
 
             // If starting a new chunk, find the first 1-bit
-            if self.local_idx == 0 && filled == 0 && self.next_elem > 0
-                && self.next_elem % PEF_CHUNK_SIZE == 0
-            {
-                self.local_high_pos = 0;
-                for (wi, &w) in chunk.high_bits.iter().enumerate() {
-                    if w != 0 {
-                        self.local_high_pos = wi * 64 + w.trailing_zeros() as usize;
-                        break;
-                    }
-                }
-            } else if self.local_idx == 0 && self.next_elem == 0 {
-                // First element of first chunk
+            if self.local_idx == 0 {
                 self.local_high_pos = 0;
                 for (wi, &w) in chunk.high_bits.iter().enumerate() {
                     if w != 0 {
@@ -1478,6 +1610,10 @@ impl<'a> PartitionedEliasFanoBatchCursor<'a> {
             let chunk_remaining = chunk.count - self.local_idx;
             let to_decode = (count - filled).min(chunk_remaining);
 
+            let lbw = chunk.low_bit_width;
+            let low_mask = if lbw == 0 { 0u64 } else { (1u64 << lbw) - 1 };
+
+            // --- High-bit scanning state ---
             let mut bit_pos = self.local_high_pos;
             let mut word_idx = bit_pos / 64;
             let start_bit = bit_pos % 64;
@@ -1487,6 +1623,17 @@ impl<'a> PartitionedEliasFanoBatchCursor<'a> {
                 0
             };
             bit_pos = word_idx * 64 + start_bit;
+
+            // --- Low-bit incremental state ---
+            let mut low_bit_pos = self.local_idx as u64 * lbw as u64;
+            let mut low_word_idx = (low_bit_pos / 64) as usize;
+            let mut low_bit_idx = (low_bit_pos % 64) as u32;
+            let mut low_word = if lbw > 0 && low_word_idx < chunk.low_bits.len() {
+                chunk.low_bits[low_word_idx]
+            } else { 0 };
+            let mut low_word_next = if lbw > 0 && low_word_idx + 1 < chunk.low_bits.len() {
+                chunk.low_bits[low_word_idx + 1]
+            } else { 0 };
 
             for k in 0..to_decode {
                 let li = self.local_idx + k;
@@ -1502,12 +1649,36 @@ impl<'a> PartitionedEliasFanoBatchCursor<'a> {
                 word >>= tz;
 
                 let high_val = (bit_pos - li) as u64;
-                let low = PartitionedEliasFano::get_low_from_chunk(chunk, li);
-                let delta = (high_val << chunk.low_bit_width) | low;
+
+                // Inline low-bit extraction with incremental tracking
+                let low = if lbw == 0 {
+                    0u64
+                } else {
+                    let mut val = low_word >> low_bit_idx;
+                    if low_bit_idx + lbw > 64 {
+                        val |= low_word_next << (64 - low_bit_idx);
+                    }
+                    val & low_mask
+                };
+
+                let delta = (high_val << lbw) | low;
                 self.buffer[filled + k] = chunk.min_value + delta;
 
                 bit_pos += 1;
                 word >>= 1;
+
+                // Advance low-bit position
+                if lbw > 0 {
+                    low_bit_idx += lbw;
+                    if low_bit_idx >= 64 {
+                        low_bit_idx -= 64;
+                        low_word_idx += 1;
+                        low_word = low_word_next;
+                        low_word_next = if low_word_idx + 1 < chunk.low_bits.len() {
+                            chunk.low_bits[low_word_idx + 1]
+                        } else { 0 };
+                    }
+                }
             }
 
             self.local_idx += to_decode;
@@ -1792,6 +1963,9 @@ impl OptimalPartitionedEliasFano {
     }
 
     /// Find the first element >= target.
+    ///
+    /// Binary search on chunk upper bounds, then select0-based skip within
+    /// the chunk to jump directly to the target's high-value bucket.
     #[inline]
     pub fn next_geq(&self, target: u64) -> Option<(usize, u64)> {
         if self.len == 0 || target >= self.universe { return None; }
@@ -1814,34 +1988,13 @@ impl OptimalPartitionedEliasFano {
 
         let target_delta = target - chunk.min_value;
 
-        // Linear scan within chunk
-        let mut idx = 0usize;
-        let mut word_idx = 0usize;
-        let mut word = if !chunk.high_bits.is_empty() { chunk.high_bits[0] } else { return None; };
-        let mut bit_pos = 0usize;
+        // Skip directly to the target_high bucket via select0 on high_bits.
+        let target_high = (target_delta >> chunk.low_bit_width) as usize;
+        let (start_idx, start_pos) = chunk_skip_to_high(chunk, target_high);
 
-        while idx < chunk.count {
-            if word == 0 {
-                word_idx += 1;
-                if word_idx >= chunk.high_bits.len() { break; }
-                word = chunk.high_bits[word_idx];
-                bit_pos = word_idx * 64;
-                continue;
-            }
-            let tz = word.trailing_zeros() as usize;
-            bit_pos += tz;
-            word >>= tz;
-
-            let high_val = (bit_pos - idx) as u64;
-            let low = Self::get_low_from_chunk(chunk, idx);
-            let delta = (high_val << chunk.low_bit_width) | low;
-
-            if delta >= target_delta {
-                return Some((global_offset + idx, chunk.min_value + delta));
-            }
-            idx += 1;
-            bit_pos += 1;
-            word >>= 1;
+        // Scan only from the skip point
+        if let Some((local_idx, delta)) = chunk_scan_geq(chunk, target_delta, start_idx, start_pos) {
+            return Some((global_offset + local_idx, chunk.min_value + delta));
         }
 
         // Fallback to next chunk
@@ -1879,28 +2032,12 @@ impl OptimalPartitionedEliasFano {
     }
 
     fn chunk_select1(&self, chunk: &PefChunk, rank: usize) -> usize {
-        let mut remaining = rank;
-        for (word_idx, &word) in chunk.high_bits.iter().enumerate() {
-            let ones = word.count_ones() as usize;
-            if remaining < ones {
-                return word_idx * 64 + select_in_word(word, remaining);
-            }
-            remaining -= ones;
-        }
-        chunk.high_len_bits
+        chunk_select1(chunk, rank)
     }
 
     #[inline]
     fn get_low_from_chunk(chunk: &PefChunk, index: usize) -> u64 {
-        if chunk.low_bit_width == 0 { return 0; }
-        let bit_pos = index as u64 * chunk.low_bit_width as u64;
-        let word_idx = (bit_pos / 64) as usize;
-        let bit_idx = (bit_pos % 64) as u32;
-        let mut val = chunk.low_bits[word_idx] >> bit_idx;
-        if bit_idx + chunk.low_bit_width > 64 && word_idx + 1 < chunk.low_bits.len() {
-            val |= chunk.low_bits[word_idx + 1] << (64 - bit_idx);
-        }
-        val & ((1u64 << chunk.low_bit_width) - 1)
+        chunk_get_low(chunk, index)
     }
 }
 
@@ -2060,6 +2197,10 @@ impl<'a> OptimalPefBatchCursor<'a> {
             let chunk_remaining = chunk.count - self.local_idx;
             let to_decode = (count - filled).min(chunk_remaining);
 
+            let lbw = chunk.low_bit_width;
+            let low_mask = if lbw == 0 { 0u64 } else { (1u64 << lbw) - 1 };
+
+            // --- High-bit scanning state ---
             let mut bit_pos = self.local_high_pos;
             let mut word_idx = bit_pos / 64;
             let start_bit = bit_pos % 64;
@@ -2069,6 +2210,17 @@ impl<'a> OptimalPefBatchCursor<'a> {
                 0
             };
             bit_pos = word_idx * 64 + start_bit;
+
+            // --- Low-bit incremental state ---
+            let mut low_bit_pos = self.local_idx as u64 * lbw as u64;
+            let mut low_word_idx = (low_bit_pos / 64) as usize;
+            let mut low_bit_idx = (low_bit_pos % 64) as u32;
+            let mut low_word = if lbw > 0 && low_word_idx < chunk.low_bits.len() {
+                chunk.low_bits[low_word_idx]
+            } else { 0 };
+            let mut low_word_next = if lbw > 0 && low_word_idx + 1 < chunk.low_bits.len() {
+                chunk.low_bits[low_word_idx + 1]
+            } else { 0 };
 
             for k in 0..to_decode {
                 let li = self.local_idx + k;
@@ -2083,12 +2235,34 @@ impl<'a> OptimalPefBatchCursor<'a> {
                 word >>= tz;
 
                 let high_val = (bit_pos - li) as u64;
-                let low = OptimalPartitionedEliasFano::get_low_from_chunk(chunk, li);
-                let delta = (high_val << chunk.low_bit_width) | low;
+
+                let low = if lbw == 0 {
+                    0u64
+                } else {
+                    let mut val = low_word >> low_bit_idx;
+                    if low_bit_idx + lbw > 64 {
+                        val |= low_word_next << (64 - low_bit_idx);
+                    }
+                    val & low_mask
+                };
+
+                let delta = (high_val << lbw) | low;
                 self.buffer[filled + k] = chunk.min_value + delta;
 
                 bit_pos += 1;
                 word >>= 1;
+
+                if lbw > 0 {
+                    low_bit_idx += lbw;
+                    if low_bit_idx >= 64 {
+                        low_bit_idx -= 64;
+                        low_word_idx += 1;
+                        low_word = low_word_next;
+                        low_word_next = if low_word_idx + 1 < chunk.low_bits.len() {
+                            chunk.low_bits[low_word_idx + 1]
+                        } else { 0 };
+                    }
+                }
             }
 
             self.local_idx += to_decode;
