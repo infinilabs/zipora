@@ -14,7 +14,7 @@ High-performance Rust data structures and compression algorithms with memory saf
 - **Memory Safety**: 99.8% unsafe block documentation coverage, all production unsafe blocks annotated with `// SAFETY:` comments
 - **Secure Memory Management**: Production-ready memory pools with thread safety and RAII
 - **Blob Storage**: 8 specialized stores with trie-based indexing and compression
-- **Succinct Data Structures**: 12 rank/select variants
+- **Succinct Data Structures**: 12 rank/select variants, Rank9 (Vigna 2008), Elias-Fano / Partitioned / DP-Optimal Partitioned Elias-Fano, HybridPostingList (auto-select encoding), AMD-safe PDEP with `has_fast_bmi2`
 - **Specialized Containers**: 13+ containers (VecTrbSet/Map, MinimalSso, SortedUintVec, LruMap, etc.)
 - **Hash Maps**: Golden ratio optimized, string-optimized, cache-optimized implementations
 - **Advanced Tries**: Double-Array (DoubleArrayTrie, XOR transitions), LOUDS, Critical-Bit (BMI2), Patricia tries with rank/select, NestTrieDawg
@@ -487,6 +487,8 @@ stop_words.insert("and", true);
 | Term dictionary (alternatives) | `ZiporaTrie` | LOUDS/Patricia/CritBit via config |
 | Short posting lists | `UintVecMin0` | Variable-width, <1M doc IDs |
 | Long posting lists | `SortedUintVec` | Delta-compressed sorted IDs |
+| Compressed posting lists | `HybridPostingList` | Auto-selects: Dense/EF/Partitioned/Optimal by list size |
+| Rank/Select (large bitvecs) | `Rank9` | O(1) rank, O(log n) select, 25% overhead, hardware-independent |
 | Boolean posting lists | `BitVector` + `AdaptiveRankSelect` | High-frequency terms, bitwise ops |
 | AND/OR/NOT queries | `set_ops::multiset_*` | Sorted posting list intersection |
 | Bulk bitwise queries | SIMD rank/select | 10-41x faster than scalar |

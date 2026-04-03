@@ -276,6 +276,144 @@ unsafe fn popcount_neon(words: &[u64]) -> usize {
 // Tests
 // ============================================================================
 
+// ============================================================================
+// AMD-safe BMI2 detection + select_in_word
+// ============================================================================
+
+/// Check whether the current CPU has a fast BMI2 PDEP instruction.
+///
+/// AMD Zen 1/2 (EPYC 7001/7002, Ryzen 1000-3000) advertise BMI2 support via
+/// CPUID, but their PDEP is microcoded at **250-300 cycles** (vs 3 cycles on
+/// Intel Haswell+ and AMD Zen 3+). `is_x86_feature_detected!("bmi2")` returns
+/// `true` on these CPUs, making it an insufficient guard.
+///
+/// This function checks:
+/// - Intel: BMI2 is always fast if present (returns `is_x86_feature_detected!("bmi2")`)
+/// - AMD Zen 3+ (family 0x19+): fast hardware PDEP (returns true)
+/// - AMD Zen 1/2 (family 0x17): microcoded PDEP (returns **false**)
+/// - Other/ARM: returns false
+///
+/// The result is cached in a `OnceLock` — the CPUID check runs at most once.
+#[inline]
+pub fn has_fast_bmi2() -> bool {
+    static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHE.get_or_init(has_fast_bmi2_detect)
+}
+
+fn has_fast_bmi2_detect() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if !std::arch::is_x86_feature_detected!("bmi2") {
+            return false;
+        }
+
+        // SAFETY: __cpuid is always safe on x86_64 with leaf 0 and 1.
+        let cpuid0 = unsafe { std::arch::x86_64::__cpuid(0) };
+
+        // Check "AuthenticAMD": ebx="Auth", edx="enti", ecx="cAMD"
+        let is_amd = cpuid0.ebx == 0x6874_7541
+            && cpuid0.edx == 0x6974_6E65
+            && cpuid0.ecx == 0x444D_4163;
+
+        if !is_amd {
+            // Intel (or other x86 vendor): BMI2 PDEP is always fast
+            return true;
+        }
+
+        // AMD: only Zen 3+ has fast PDEP
+        // Zen 1/2 = family 0x17, Zen 3/4 = family 0x19, Zen 5 = family 0x1A
+        let cpuid1 = unsafe { std::arch::x86_64::__cpuid(1) };
+        let base_family = (cpuid1.eax >> 8) & 0xF;
+        let ext_family = (cpuid1.eax >> 20) & 0xFF;
+        let effective_family = if base_family == 0xF {
+            base_family + ext_family
+        } else {
+            base_family
+        };
+
+        effective_family >= 0x19
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
+
+/// Select the `rank`-th set bit in a 64-bit word (0-indexed).
+/// Returns the bit position (0..63).
+///
+/// Three-tier dispatch:
+/// 1. **BMI2 PDEP** (3 cycles) — Intel Haswell+ and AMD Zen 3+
+/// 2. **POPCNT binary search** (O(1), ~18 instructions) — any CPU with POPCNT
+/// 3. **Scalar bit-clearing loop** (O(rank)) — universal fallback
+///
+/// The PDEP path is gated by [`has_fast_bmi2`], which detects and avoids
+/// AMD Zen 1/2's microcoded PDEP (250-300 cycles).
+#[inline(always)]
+pub fn select_in_word(word: u64, rank: usize) -> usize {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if has_fast_bmi2() {
+            // SAFETY: BMI2 available and fast (verified by has_fast_bmi2).
+            // _pdep_u64(1 << rank, word) places a 1-bit at the position of the
+            // rank-th set bit in `word`. trailing_zeros gives that position.
+            return unsafe {
+                let mask = std::arch::x86_64::_pdep_u64(1u64 << rank, word);
+                mask.trailing_zeros() as usize
+            };
+        }
+
+        if std::arch::is_x86_feature_detected!("popcnt") {
+            return select_in_word_popcnt(word, rank);
+        }
+    }
+
+    select_in_word_scalar(word, rank)
+}
+
+/// POPCNT-based binary search select — O(1) with ~18 instructions.
+///
+/// Uses hardware popcount to binary-search for the byte containing the
+/// rank-th set bit, then narrows to the exact bit. Branch-free friendly
+/// on modern out-of-order CPUs.
+#[inline(always)]
+fn select_in_word_popcnt(word: u64, rank: usize) -> usize {
+    let mut r = rank;
+    let mut pos = 0usize;
+
+    let count = (word & 0xFFFF_FFFF).count_ones() as usize;
+    if count <= r { r -= count; pos += 32; }
+
+    let count = ((word >> pos) & 0xFFFF).count_ones() as usize;
+    if count <= r { r -= count; pos += 16; }
+
+    let count = ((word >> pos) & 0xFF).count_ones() as usize;
+    if count <= r { r -= count; pos += 8; }
+
+    let count = ((word >> pos) & 0xF).count_ones() as usize;
+    if count <= r { r -= count; pos += 4; }
+
+    let count = ((word >> pos) & 0x3).count_ones() as usize;
+    if count <= r { r -= count; pos += 2; }
+
+    let count = ((word >> pos) & 0x1) as usize;
+    if count <= r { pos += 1; }
+
+    pos
+}
+
+/// Scalar fallback: clear the lowest `rank` set bits, then find the next one.
+/// O(rank) — worst case 63 iterations, but typically rank is small.
+#[inline(always)]
+fn select_in_word_scalar(word: u64, rank: usize) -> usize {
+    let mut w = word;
+    for _ in 0..rank {
+        w &= w - 1; // Clear lowest set bit
+    }
+    w.trailing_zeros() as usize
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,6 +551,113 @@ mod tests {
         let expected: usize = bits.iter().map(|w| w.count_ones() as usize).sum();
         assert_eq!(popcount_slice(&bits), expected);
     }
+
+    // ========================================================================
+    // select_in_word tests
+    // ========================================================================
+
+    #[test]
+    fn test_has_fast_bmi2_no_panic() {
+        // Just verify detection runs without panicking
+        let result = has_fast_bmi2();
+        eprintln!("has_fast_bmi2() = {result}");
+    }
+
+    #[test]
+    fn test_select_in_word_basic() {
+        // word = 0b1010_1010 = 0xAA: bits set at positions 1, 3, 5, 7
+        let word = 0xAAu64;
+        assert_eq!(select_in_word(word, 0), 1); // 0th set bit at pos 1
+        assert_eq!(select_in_word(word, 1), 3); // 1st set bit at pos 3
+        assert_eq!(select_in_word(word, 2), 5); // 2nd set bit at pos 5
+        assert_eq!(select_in_word(word, 3), 7); // 3rd set bit at pos 7
+    }
+
+    #[test]
+    fn test_select_in_word_rank_zero() {
+        // Rank 0 = find the first (lowest) set bit
+        assert_eq!(select_in_word(1, 0), 0);
+        assert_eq!(select_in_word(0x80, 0), 7);
+        assert_eq!(select_in_word(u64::MAX, 0), 0);
+    }
+
+    #[test]
+    fn test_select_in_word_high_rank() {
+        // All bits set: select_in_word(MAX, k) = k
+        for k in 0..64 {
+            assert_eq!(select_in_word(u64::MAX, k), k, "MAX rank={k}");
+        }
+    }
+
+    #[test]
+    fn test_select_in_word_single_bit() {
+        // Single bit at each position
+        for pos in 0..64 {
+            assert_eq!(select_in_word(1u64 << pos, 0), pos, "1<<{pos} rank=0");
+        }
+    }
+
+    #[test]
+    fn test_select_in_word_sparse() {
+        // Sparse word: bits at positions 0, 16, 32, 48
+        let word = 1u64 | (1u64 << 16) | (1u64 << 32) | (1u64 << 48);
+        assert_eq!(select_in_word(word, 0), 0);
+        assert_eq!(select_in_word(word, 1), 16);
+        assert_eq!(select_in_word(word, 2), 32);
+        assert_eq!(select_in_word(word, 3), 48);
+    }
+
+    #[test]
+    fn test_select_in_word_consecutive() {
+        // Low 8 bits set: 0xFF
+        let word = 0xFFu64;
+        for k in 0..8 {
+            assert_eq!(select_in_word(word, k), k, "0xFF rank={k}");
+        }
+    }
+
+    #[test]
+    fn test_select_in_word_popcnt_matches_scalar() {
+        // Verify POPCNT fallback matches scalar for many patterns
+        let test_words: Vec<u64> = vec![
+            0, 1, 0xFF, 0xAAAA_AAAA_AAAA_AAAA, 0x5555_5555_5555_5555,
+            u64::MAX, 0x8000_0000_0000_0001, 0x0123_4567_89AB_CDEF,
+            0xFEDC_BA98_7654_3210, 0x0F0F_0F0F_0F0F_0F0F,
+        ];
+
+        for &word in &test_words {
+            let ones = word.count_ones() as usize;
+            for rank in 0..ones {
+                let popcnt_result = select_in_word_popcnt(word, rank);
+                let scalar_result = select_in_word_scalar(word, rank);
+                assert_eq!(
+                    popcnt_result, scalar_result,
+                    "mismatch word=0x{word:016X} rank={rank}: popcnt={popcnt_result} scalar={scalar_result}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_select_in_word_random_patterns() {
+        // Pseudo-random patterns — verify all tiers agree
+        let mut rng = 0x1234_5678_9ABC_DEF0u64;
+        for _ in 0..100 {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            let word = rng;
+            let ones = word.count_ones() as usize;
+            for rank in 0..ones {
+                let result = select_in_word(word, rank);
+                let scalar = select_in_word_scalar(word, rank);
+                assert_eq!(
+                    result, scalar,
+                    "mismatch word=0x{word:016X} rank={rank}"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -502,5 +747,37 @@ mod benchmarks {
             "popcount {size} words: scalar={scalar_ns:.1}ns, simd={simd_ns:.1}ns, \
              speedup={speedup:.1}× [sink={sink}]"
         );
+    }
+
+    #[test]
+    fn bench_select_in_word() {
+        if cfg!(debug_assertions) {
+            eprintln!("Skipping benchmark in debug mode");
+            return;
+        }
+
+        let words: Vec<u64> = (0..1000u64)
+            .map(|i| i.wrapping_mul(0xDEAD_BEEF_CAFE_BABE) | 0x8000_0000_0000_0001)
+            .collect();
+        let iterations = 100_000;
+
+        let mut sink = 0usize;
+        // Warmup
+        for &w in &words {
+            let ones = w.count_ones() as usize;
+            for r in 0..ones.min(4) {
+                sink += select_in_word(w, r);
+            }
+        }
+
+        let start = Instant::now();
+        for _ in 0..iterations {
+            for &w in &words {
+                sink += select_in_word(w, 0);
+                sink += select_in_word(w, 1);
+            }
+        }
+        let ns = start.elapsed().as_nanos() as f64 / (iterations as f64 * 2000.0);
+        eprintln!("select_in_word: {ns:.1} ns/call [sink={sink}]");
     }
 }

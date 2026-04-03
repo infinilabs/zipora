@@ -14,7 +14,7 @@
 - **内存安全**：99.8% 的 unsafe 代码块文档覆盖率，所有生产环境中的 unsafe 代码块均附有 `// SAFETY:` 注释
 - **安全内存管理**：线程安全的生产级内存池，支持 RAII
 - **Blob 存储**：8 种专用存储引擎，支持 Trie 索引和压缩
-- **简洁数据结构**：12 种 rank/select 变体
+- **简洁数据结构**：12 种 rank/select 变体、Rank9（Vigna 2008）、Elias-Fano / Partitioned / DP-Optimal Partitioned Elias-Fano、HybridPostingList（自动选择编码策略）、AMD 安全 PDEP（`has_fast_bmi2` 检测）
 - **专用容器**：13+ 种容器（VecTrbSet/Map、MinimalSso、SortedUintVec、LruMap 等）
 - **哈希表**：黄金比例优化、字符串优化、缓存优化的多种实现
 - **高级 Trie**：双数组（DoubleArrayTrie，XOR 转移）、LOUDS、Critical-Bit（BMI2）、Patricia Trie + rank/select、NestTrieDawg

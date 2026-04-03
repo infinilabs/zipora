@@ -131,20 +131,10 @@ impl RankSelectSE256 {
     }
 
     /// Select k-th set bit within a u64 word.
+    /// Delegates to centralized AMD-safe implementation in algorithms::bit_ops.
     #[inline]
     fn select_in_word(word: u64, k: usize) -> usize {
-        #[cfg(target_arch = "x86_64")]
-        {
-            if is_x86_feature_detected!("bmi2") {
-                let mask = 1u64 << k;
-                // SAFETY: BMI2 feature detected at runtime, _pdep_u64 is pure arithmetic with no memory access
-                let deposited = unsafe { core::arch::x86_64::_pdep_u64(mask, word) };
-                return deposited.trailing_zeros() as usize;
-            }
-        }
-        let mut w = word;
-        for _ in 0..k { w &= w - 1; }
-        w.trailing_zeros() as usize
+        crate::algorithms::bit_ops::select_in_word(word, k)
     }
 
     #[inline]

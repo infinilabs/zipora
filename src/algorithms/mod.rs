@@ -17,7 +17,7 @@ pub mod suffix_array;
 pub mod tournament_tree;
 
 // Re-export main types
-pub use bit_ops::popcount_slice;
+pub use bit_ops::{popcount_slice, select_in_word, has_fast_bmi2};
 pub use cache_oblivious::{
     AdaptiveAlgorithmSelector, CacheObliviousConfig, CacheObliviousSort,
     DataCharacteristics as CacheObliviousDataCharacteristics, 
