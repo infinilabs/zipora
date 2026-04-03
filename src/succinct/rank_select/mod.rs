@@ -132,6 +132,7 @@ pub mod few;            // rank_select_few: sparse bitvector (stores only pivot 
 pub mod mixed_il_256;   // rank_select_mixed_il_256: two-dimension interleaved 256-bit
 pub mod mixed_se_512;   // rank_select_mixed_se_512: two-dimension side-entry 512-bit
 pub mod mixed_xl_256;   // rank_select_mixed_xl_256: multi-dimension (2-4) interleaved 256-bit
+pub mod rank9;          // rank9: O(1) rank with 512-bit blocks, 25% overhead (Vigna 2008)
 pub mod simd;
 
 // Advanced optimization modules
@@ -150,6 +151,7 @@ pub use few::{RankSelectFewOne, RankSelectFewZero};
 pub use mixed_il_256::{RankSelectMixedIL256, MixedDimView};
 pub use mixed_se_512::{RankSelectMixedSE512, MixedSE512DimView};
 pub use mixed_xl_256::{RankSelectMixedXL256, MixedXL256DimView};
+pub use rank9::Rank9;
 pub use separated_512::RankSelectSE512_64;
 pub use config::{
     SeparatedStorageConfig, SeparatedStorageConfigBuilder, StorageLayout, MemoryStrategy,

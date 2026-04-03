@@ -9,7 +9,10 @@ pub mod elias_fano;
 pub mod rank_select;
 
 pub use bit_vector::{BitVector, BitwiseOp};
-pub use elias_fano::EliasFano;
+pub use elias_fano::{
+    EliasFano, PartitionedEliasFano, OptimalPartitionedEliasFano,
+    HybridPostingList, PostingEncoding,
+};
 pub use rank_select::{
     BuilderOptions,
     PerformanceStats,
@@ -41,4 +44,6 @@ pub use rank_select::{
     bulk_popcount_simd,
     bulk_rank1_simd,
     bulk_select1_simd,
+    // Rank9
+    Rank9,
 };
