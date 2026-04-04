@@ -979,7 +979,7 @@ impl PartitionedEliasFano {
         let (start_idx, start_pos) = chunk_skip_to_high(&view, target_high);
 
         // Scan only from the skip point — typically 1-5 elements
-        if let Some((local_idx, delta)) = chunk_scan_geq(&view, target_delta, start_idx, start_pos) {
+        if let Some((local_idx, delta, _)) = chunk_scan_geq(&view, target_delta, start_idx, start_pos) {
             return Some((global_offset + local_idx, view.min_value + delta));
         }
 
@@ -1153,7 +1153,13 @@ fn chunk_skip_to_high(chunk: &ChunkView<'_>, target_high: usize) -> (usize, usiz
 /// Find position of the first set bit in a chunk's high_bits.
 #[inline]
 fn chunk_first_one(chunk: &ChunkView<'_>) -> usize {
-    for (wi, &w) in chunk.high_bits.iter().enumerate() {
+    chunk_first_one_cached(chunk.high_bits)
+}
+
+/// Find position of the first set bit in a high_bits slice (no ChunkView needed).
+#[inline]
+fn chunk_first_one_cached(high_bits: &[u64]) -> usize {
+    for (wi, &w) in high_bits.iter().enumerate() {
         if w != 0 {
             return wi * 64 + w.trailing_zeros() as usize;
         }
@@ -1162,14 +1168,17 @@ fn chunk_first_one(chunk: &ChunkView<'_>) -> usize {
 }
 
 /// Linear scan within a chunk's high_bits starting from a given position.
-/// Returns `Some((local_index, delta))` for the first element with `delta >= target_delta`.
+/// Returns `Some((local_index, delta, bit_pos))` for the first element with
+/// `delta >= target_delta`. The returned `bit_pos` is the position of that
+/// element's set bit in high_bits, eliminating the need for a subsequent
+/// `chunk_select1` call.
 #[inline]
 fn chunk_scan_geq(
     chunk: &ChunkView<'_>,
     target_delta: u64,
     start_idx: usize,
     start_pos: usize,
-) -> Option<(usize, u64)> {
+) -> Option<(usize, u64, usize)> {
     let mut idx = start_idx;
     let mut bit_pos = start_pos;
     let mut word_idx = bit_pos / 64;
@@ -1199,7 +1208,7 @@ fn chunk_scan_geq(
         let delta = (high_val << chunk.low_bit_width) | low;
 
         if delta >= target_delta {
-            return Some((idx, delta));
+            return Some((idx, delta, bit_pos));
         }
 
         idx += 1;
@@ -1319,6 +1328,8 @@ pub struct PartitionedEliasFanoCursor<'a> {
     local_idx: usize,
     local_high_pos: usize,
     global_idx: usize,
+    /// Cached current element value — avoids recomputing in advance_to_geq.
+    cached_value: u64,
     // Cached from current chunk — refreshed on chunk transitions only
     cached_high_bits: &'a [u64],
     cached_low_bits: &'a [u64],
@@ -1332,6 +1343,7 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
         if pef.is_empty() {
             return Self {
                 pef, chunk_idx: 0, local_idx: 0, local_high_pos: 0, global_idx: 0,
+                cached_value: 0,
                 cached_high_bits: &[], cached_low_bits: &[],
                 cached_low_bit_width: 0, cached_count: 0, cached_min_value: 0,
             };
@@ -1344,8 +1356,13 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
                 break;
             }
         }
+        // Compute initial element value
+        let high_val = high_pos as u64; // local_idx is 0, so high_val = high_pos - 0
+        let low = chunk_get_low(&view, 0);
+        let initial_val = view.min_value + (high_val << view.low_bit_width) + low;
         Self {
             pef, chunk_idx: 0, local_idx: 0, local_high_pos: high_pos, global_idx: 0,
+            cached_value: initial_val,
             cached_high_bits: view.high_bits, cached_low_bits: view.low_bits,
             cached_low_bit_width: view.low_bit_width, cached_count: view.count,
             cached_min_value: view.min_value,
@@ -1377,13 +1394,18 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
         (combined >> b_idx) as u64 & ((1u64 << lbw) - 1)
     }
 
-    /// Current element value.
+    /// Compute and cache the current element value from cursor state.
     #[inline]
-    pub fn current(&self) -> Option<u64> {
-        if self.global_idx >= self.pef.len { return None; }
+    fn recompute_value(&mut self) {
         let high_val = (self.local_high_pos - self.local_idx) as u64;
         let low = self.get_low_cached(self.local_idx);
-        Some(self.cached_min_value + (high_val << self.cached_low_bit_width) + low)
+        self.cached_value = self.cached_min_value + (high_val << self.cached_low_bit_width) + low;
+    }
+
+    /// Current element value — O(1) from cached value.
+    #[inline]
+    pub fn current(&self) -> Option<u64> {
+        if self.global_idx >= self.pef.len { None } else { Some(self.cached_value) }
     }
 
     /// Current global element index.
@@ -1408,14 +1430,8 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
             self.local_idx = 0;
             if self.chunk_idx >= self.pef.meta.len() { return false; }
             self.refresh_chunk_cache();
-            // Find first 1-bit in the new chunk
-            self.local_high_pos = 0;
-            for (word_idx, &word) in self.cached_high_bits.iter().enumerate() {
-                if word != 0 {
-                    self.local_high_pos = word_idx * 64 + word.trailing_zeros() as usize;
-                    break;
-                }
-            }
+            self.local_high_pos = chunk_first_one_cached(self.cached_high_bits);
+            self.recompute_value();
             return true;
         }
 
@@ -1429,41 +1445,43 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
 
         if word != 0 {
             self.local_high_pos = word_idx * 64 + bit_in_word + word.trailing_zeros() as usize;
-            return true;
-        }
-        loop {
-            word_idx += 1;
-            if word_idx >= self.cached_high_bits.len() { return false; }
-            word = self.cached_high_bits[word_idx];
-            if word != 0 {
-                self.local_high_pos = word_idx * 64 + word.trailing_zeros() as usize;
-                return true;
+        } else {
+            loop {
+                word_idx += 1;
+                if word_idx >= self.cached_high_bits.len() { return false; }
+                word = self.cached_high_bits[word_idx];
+                if word != 0 {
+                    self.local_high_pos = word_idx * 64 + word.trailing_zeros() as usize;
+                    break;
+                }
             }
         }
+        self.recompute_value();
+        true
     }
 
     /// Advance to the first element >= target.
     ///
     /// Optimized with three fast paths:
-    /// 1. **Current >= target**: O(1) — no work needed (uses cached data).
-    /// 2. **Same-chunk**: Skip binary search, scan from cursor position. O(1) for
-    ///    close targets (the common case in posting list intersection).
+    /// 1. **Current >= target**: O(1) — single comparison against cached value.
+    /// 2. **Same-chunk**: Scan forward from cursor position directly (no
+    ///    `chunk_skip_to_high`). O(d) where d = distance to target in elements.
     /// 3. **Galloping search**: O(log d) where d = distance in chunks to target,
     ///    instead of O(log C) binary search over all C chunks.
     #[inline]
     pub fn advance_to_geq(&mut self, target: u64) -> bool {
-        // Fast path 1: current is already >= target (uses cached data, no chunk_view)
-        if let Some(val) = self.current() {
-            if val >= target { return true; }
-        } else {
-            return false;
-        }
+        // Fast path 1: cached_value >= target — O(1), no computation
+        if self.global_idx >= self.pef.len { return false; }
+        if self.cached_value >= target { return true; }
 
         let num_chunks = self.pef.meta.len();
 
         // Fast path 2: target is within current chunk's range
+        // Scan directly from cursor position — no chunk_skip_to_high overhead.
+        // For sorted posting list queries, targets are close together, so this
+        // typically scans only a few elements.
         if target <= self.pef.chunk_upper_bounds[self.chunk_idx] {
-            // Build a ChunkView from cached data for helper functions
+            let target_delta = target - self.cached_min_value;
             let view = ChunkView {
                 low_bits: self.cached_low_bits,
                 high_bits: self.cached_high_bits,
@@ -1472,18 +1490,11 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
                 min_value: self.cached_min_value,
                 high_len_bits: self.pef.meta[self.chunk_idx].high_len_bits as usize,
             };
-            let target_delta = target - view.min_value;
-            let target_high = (target_delta >> view.low_bit_width) as usize;
-            let (skip_idx, skip_pos) = chunk_skip_to_high(&view, target_high);
-            let (si, sp) = if skip_idx > self.local_idx {
-                (skip_idx, skip_pos)
-            } else {
-                (self.local_idx, self.local_high_pos)
-            };
-            if let Some((local_idx, _)) = chunk_scan_geq(&view, target_delta, si, sp) {
+            if let Some((local_idx, delta, hp)) = chunk_scan_geq(&view, target_delta, self.local_idx, self.local_high_pos) {
                 self.local_idx = local_idx;
                 self.global_idx = self.chunk_idx * PEF_CHUNK_SIZE + local_idx;
-                self.local_high_pos = chunk_select1(&view, local_idx);
+                self.local_high_pos = hp;
+                self.cached_value = self.cached_min_value + delta;
                 return true;
             }
         }
@@ -1517,13 +1528,8 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
         if target <= self.cached_min_value {
             self.local_idx = 0;
             self.global_idx = global_offset;
-            let view = ChunkView {
-                low_bits: self.cached_low_bits, high_bits: self.cached_high_bits,
-                low_bit_width: self.cached_low_bit_width, count: self.cached_count,
-                min_value: self.cached_min_value,
-                high_len_bits: self.pef.meta[self.chunk_idx].high_len_bits as usize,
-            };
-            self.local_high_pos = chunk_first_one(&view);
+            self.local_high_pos = chunk_first_one_cached(self.cached_high_bits);
+            self.recompute_value();
             return true;
         }
 
@@ -1533,14 +1539,15 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
             min_value: self.cached_min_value,
             high_len_bits: self.pef.meta[self.chunk_idx].high_len_bits as usize,
         };
-        let target_delta = target - view.min_value;
+        let target_delta = target - self.cached_min_value;
         let target_high = (target_delta >> view.low_bit_width) as usize;
         let (si, sp) = chunk_skip_to_high(&view, target_high);
 
-        if let Some((local_idx, _)) = chunk_scan_geq(&view, target_delta, si, sp) {
+        if let Some((local_idx, delta, hp)) = chunk_scan_geq(&view, target_delta, si, sp) {
             self.local_idx = local_idx;
             self.global_idx = global_offset + local_idx;
-            self.local_high_pos = chunk_select1(&view, local_idx);
+            self.local_high_pos = hp;
+            self.cached_value = self.cached_min_value + delta;
             return true;
         }
 
@@ -1554,13 +1561,8 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
         self.refresh_chunk_cache();
         self.local_idx = 0;
         self.global_idx = next * PEF_CHUNK_SIZE;
-        let nv = ChunkView {
-            low_bits: self.cached_low_bits, high_bits: self.cached_high_bits,
-            low_bit_width: self.cached_low_bit_width, count: self.cached_count,
-            min_value: self.cached_min_value,
-            high_len_bits: self.pef.meta[self.chunk_idx].high_len_bits as usize,
-        };
-        self.local_high_pos = chunk_first_one(&nv);
+        self.local_high_pos = chunk_first_one_cached(self.cached_high_bits);
+        self.recompute_value();
         true
     }
 
@@ -2244,7 +2246,7 @@ impl OptimalPartitionedEliasFano {
         let (start_idx, start_pos) = chunk_skip_to_high(&view, target_high);
 
         // Scan only from the skip point
-        if let Some((local_idx, delta)) = chunk_scan_geq(&view, target_delta, start_idx, start_pos) {
+        if let Some((local_idx, delta, _)) = chunk_scan_geq(&view, target_delta, start_idx, start_pos) {
             return Some((global_offset + local_idx, view.min_value + delta));
         }
 
@@ -2428,6 +2430,7 @@ pub struct OptimalPefCursor<'a> {
     local_idx: usize,
     local_high_pos: usize,
     global_idx: usize,
+    cached_value: u64,
     // Cached from current chunk
     cached_high_bits: &'a [u64],
     cached_low_bits: &'a [u64],
@@ -2441,6 +2444,7 @@ impl<'a> OptimalPefCursor<'a> {
         if opef.is_empty() {
             return Self {
                 opef, chunk_idx: 0, local_idx: 0, local_high_pos: 0, global_idx: 0,
+                cached_value: 0,
                 cached_high_bits: &[], cached_low_bits: &[],
                 cached_low_bit_width: 0, cached_count: 0, cached_min_value: 0,
             };
@@ -2453,8 +2457,12 @@ impl<'a> OptimalPefCursor<'a> {
                 break;
             }
         }
+        let high_val = high_pos as u64;
+        let low = chunk_get_low(&view, 0);
+        let initial_val = view.min_value + (high_val << view.low_bit_width) + low;
         Self {
             opef, chunk_idx: 0, local_idx: 0, local_high_pos: high_pos, global_idx: 0,
+            cached_value: initial_val,
             cached_high_bits: view.high_bits, cached_low_bits: view.low_bits,
             cached_low_bit_width: view.low_bit_width, cached_count: view.count,
             cached_min_value: view.min_value,
@@ -2484,6 +2492,13 @@ impl<'a> OptimalPefCursor<'a> {
         (combined >> b_idx) as u64 & ((1u64 << lbw) - 1)
     }
 
+    #[inline]
+    fn recompute_value(&mut self) {
+        let high_val = (self.local_high_pos - self.local_idx) as u64;
+        let low = self.get_low_cached(self.local_idx);
+        self.cached_value = self.cached_min_value + (high_val << self.cached_low_bit_width) + low;
+    }
+
     /// Build a ChunkView from cached data (for helper functions).
     #[inline]
     fn cached_view(&self) -> ChunkView<'a> {
@@ -2497,13 +2512,10 @@ impl<'a> OptimalPefCursor<'a> {
         }
     }
 
-    /// Current element value.
+    /// Current element value — O(1) from cached value.
     #[inline]
     pub fn current(&self) -> Option<u64> {
-        if self.global_idx >= self.opef.len { return None; }
-        let high_val = (self.local_high_pos - self.local_idx) as u64;
-        let low = self.get_low_cached(self.local_idx);
-        Some(self.cached_min_value + (high_val << self.cached_low_bit_width) + low)
+        if self.global_idx >= self.opef.len { None } else { Some(self.cached_value) }
     }
 
     #[inline]
@@ -2525,13 +2537,8 @@ impl<'a> OptimalPefCursor<'a> {
             self.local_idx = 0;
             if self.chunk_idx >= self.opef.meta.len() { return false; }
             self.refresh_chunk_cache();
-            self.local_high_pos = 0;
-            for (word_idx, &word) in self.cached_high_bits.iter().enumerate() {
-                if word != 0 {
-                    self.local_high_pos = word_idx * 64 + word.trailing_zeros() as usize;
-                    break;
-                }
-            }
+            self.local_high_pos = chunk_first_one_cached(self.cached_high_bits);
+            self.recompute_value();
             return true;
         }
 
@@ -2544,48 +2551,40 @@ impl<'a> OptimalPefCursor<'a> {
 
         if word != 0 {
             self.local_high_pos = word_idx * 64 + bit_in_word + word.trailing_zeros() as usize;
-            return true;
-        }
-        loop {
-            word_idx += 1;
-            if word_idx >= self.cached_high_bits.len() { return false; }
-            word = self.cached_high_bits[word_idx];
-            if word != 0 {
-                self.local_high_pos = word_idx * 64 + word.trailing_zeros() as usize;
-                return true;
+        } else {
+            loop {
+                word_idx += 1;
+                if word_idx >= self.cached_high_bits.len() { return false; }
+                word = self.cached_high_bits[word_idx];
+                if word != 0 {
+                    self.local_high_pos = word_idx * 64 + word.trailing_zeros() as usize;
+                    break;
+                }
             }
         }
+        self.recompute_value();
+        true
     }
 
     /// Advance to the first element >= target.
     ///
-    /// Same-chunk fast path + galloping search, matching PEF cursor pattern.
+    /// O(1) cached value check, same-chunk direct scan, galloping for cross-chunk.
     #[inline]
     pub fn advance_to_geq(&mut self, target: u64) -> bool {
-        // Fast path 1: current is already >= target
-        if let Some(val) = self.current() {
-            if val >= target { return true; }
-        } else {
-            return false;
-        }
+        if self.global_idx >= self.opef.len { return false; }
+        if self.cached_value >= target { return true; }
 
         let num_chunks = self.opef.meta.len();
 
-        // Fast path 2: target is within current chunk's range
+        // Same-chunk: scan directly from cursor position
         if target <= self.opef.chunk_upper_bounds[self.chunk_idx] {
+            let target_delta = target - self.cached_min_value;
             let view = self.cached_view();
-            let target_delta = target - view.min_value;
-            let target_high = (target_delta >> view.low_bit_width) as usize;
-            let (skip_idx, skip_pos) = chunk_skip_to_high(&view, target_high);
-            let (si, sp) = if skip_idx > self.local_idx {
-                (skip_idx, skip_pos)
-            } else {
-                (self.local_idx, self.local_high_pos)
-            };
-            if let Some((local_idx, _)) = chunk_scan_geq(&view, target_delta, si, sp) {
+            if let Some((local_idx, delta, hp)) = chunk_scan_geq(&view, target_delta, self.local_idx, self.local_high_pos) {
                 self.local_idx = local_idx;
                 self.global_idx = self.opef.chunk_starts[self.chunk_idx] + local_idx;
-                self.local_high_pos = chunk_select1(&view, local_idx);
+                self.local_high_pos = hp;
+                self.cached_value = self.cached_min_value + delta;
                 return true;
             }
         }
@@ -2619,20 +2618,21 @@ impl<'a> OptimalPefCursor<'a> {
         if target <= self.cached_min_value {
             self.local_idx = 0;
             self.global_idx = global_offset;
-            let view = self.cached_view();
-            self.local_high_pos = chunk_first_one(&view);
+            self.local_high_pos = chunk_first_one_cached(self.cached_high_bits);
+            self.recompute_value();
             return true;
         }
 
         let view = self.cached_view();
-        let target_delta = target - view.min_value;
+        let target_delta = target - self.cached_min_value;
         let target_high = (target_delta >> view.low_bit_width) as usize;
         let (si, sp) = chunk_skip_to_high(&view, target_high);
 
-        if let Some((local_idx, _)) = chunk_scan_geq(&view, target_delta, si, sp) {
+        if let Some((local_idx, delta, hp)) = chunk_scan_geq(&view, target_delta, si, sp) {
             self.local_idx = local_idx;
             self.global_idx = global_offset + local_idx;
-            self.local_high_pos = chunk_select1(&view, local_idx);
+            self.local_high_pos = hp;
+            self.cached_value = self.cached_min_value + delta;
             return true;
         }
 
@@ -2646,8 +2646,8 @@ impl<'a> OptimalPefCursor<'a> {
         self.refresh_chunk_cache();
         self.local_idx = 0;
         self.global_idx = self.opef.chunk_starts[next];
-        let nv = self.cached_view();
-        self.local_high_pos = chunk_first_one(&nv);
+        self.local_high_pos = chunk_first_one_cached(self.cached_high_bits);
+        self.recompute_value();
         true
     }
 
