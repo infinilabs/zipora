@@ -1,6 +1,6 @@
 [package]
 name = "zipora"
-version = "3.1.3"
+version = "3.1.4"
 edition = "2024"
 rust-version = "1.88"
 authors = ["InfiniLabs"]
@@ -44,7 +44,7 @@ fastrand = "2.1"
 
 # Compression (optional)
 zstd = { version = "0.13.3", optional = true }
-lz4_flex = { version = "0.12", optional = true }
+lz4_flex = { version = "0.13", optional = true }
 
 # Serialization (optional)
 serde = { version = "1.0", features = ["derive"], optional = true }
