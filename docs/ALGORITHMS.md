@@ -267,6 +267,48 @@ let ranks = multi_rs.bulk_rank_multidim(&positions);
 let intersection = multi_rs.intersect_dimensions(0, 1).unwrap();
 ```
 
+## SIMD Search Primitives
+
+SIMD-accelerated primitives for Block-Max WAND query execution — the core ranking algorithm in modern search engines.
+
+### `simd_gallop_to` — SIMD Exponential Search
+
+Advances a cursor within a sorted `u32` slice to the first position where `arr[cursor] >= target`. Three-phase algorithm:
+
+1. **Exponential search**: Steps 1, 2, 4, 8, ... to narrow the range (uses `saturating_mul`/`saturating_add` to prevent overflow)
+2. **SIMD scan** (AVX2 → SSE2 → scalar): Loads 8/4 elements at a time, uses XOR bias trick for unsigned comparison via `_mm256_cmpgt_epi32`
+3. **Scalar tail**: Handles remaining elements < SIMD width
+
+```rust
+use zipora::algorithms::simd_gallop_to;
+
+let sorted: Vec<u32> = (0..10000).step_by(3).collect();
+let mut cursor = 0;
+simd_gallop_to(&sorted, &mut cursor, 500); // cursor now at first element >= 500
+simd_gallop_to(&sorted, &mut cursor, 1000); // resumes from cursor position
+```
+
+### `simd_block_filter` — SIMD Block Scoring Filter
+
+Compares up to 64 scores against a threshold using AVX2 `_mm256_cmp_ps` with `_CMP_GT_OQ` (NaN-safe). Returns `(bitmask, count)`.
+
+```rust
+use zipora::algorithms::simd_block_filter;
+
+let doc_ids: Vec<u32> = (0..64).collect();
+let scores: Vec<f32> = (0..64).map(|i| i as f32 * 0.1).collect();
+let (bitmask, count) = simd_block_filter(&doc_ids, &scores, 3.0);
+// Iterate set bits to find qualifying documents
+```
+
+### Elias-Fano Cursor `advance_to_index`
+
+All EF cursor types support O(log n) random repositioning via `advance_to_index(idx)`, essential for BMW's block-skipping:
+
+- `EliasFanoCursor::advance_to_index` — uses `select1(idx)` for direct positioning
+- `PartitionedEliasFanoCursor::advance_to_index` — handles 128-element uniform chunks
+- `OptimalPefCursor::advance_to_index` — handles variable-length DP-optimal chunks
+
 ## Performance Characteristics
 
 - **Cache Complexity**: O(1 + N/B * log_{M/B}(N/B)) optimal across all cache levels

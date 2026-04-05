@@ -1798,6 +1798,287 @@ impl<V: MapValue> DoubleArrayTrieMap<V> {
         }
         prev
     }
+
+    /// Returns a lazy iterator over all (key, value) pairs with keys starting with `prefix`.
+    ///
+    /// Unlike `entries_with_prefix()`, this does not allocate a Vec of all results.
+    /// Results are yielded one at a time via DFS traversal of the trie's sibling chains.
+    pub fn iter_prefix(&self, prefix: &[u8]) -> PrefixIterator<'_, V> {
+        // Walk prefix to reach the subtree root
+        let mut curr = 0u32;
+        for &ch in prefix {
+            let next = self.trie.state_move(curr, ch);
+            if next == NIL_STATE {
+                return PrefixIterator { trie: self, stack: Vec::new(), path: Vec::new() };
+            }
+            curr = next;
+        }
+
+        let state = curr as usize;
+        let first_child = if state < self.trie.ninfos.len() {
+            self.trie.ninfos[state].first_child()
+        } else {
+            NINFO_NONE
+        };
+
+        let path = prefix.to_vec();
+        let frame = PrefixFrame {
+            state: curr,
+            next_sibling: first_child,
+            checked_terminal: false,
+            depth: prefix.len(),
+        };
+        PrefixIterator { trie: self, stack: vec![frame], path }
+    }
+
+    /// Returns a lazy iterator over all (key, value) pairs within edit distance
+    /// `max_dist` of `query`.
+    ///
+    /// Uses incremental Levenshtein distance with trie-based pruning.
+    /// Subtrees where the minimum possible edit distance exceeds `max_dist` are skipped.
+    pub fn iter_fuzzy(&self, query: &[u8], max_dist: usize) -> FuzzyIterator<'_, V> {
+        // Row 0: edit distance of empty string vs query[0..j]
+        let row0: Vec<usize> = (0..=query.len()).collect();
+
+        let first_child = if !self.trie.states.is_empty() {
+            self.trie.ninfos[0].first_child()
+        } else {
+            NINFO_NONE
+        };
+
+        let frame = FuzzyFrame {
+            state: 0, // root
+            next_sibling: first_child,
+            checked_terminal: false,
+            depth: 0,
+        };
+
+        FuzzyIterator {
+            trie: self,
+            stack: vec![frame],
+            path: Vec::new(),
+            query: query.to_vec(),
+            max_dist,
+            dp_columns: vec![row0],
+        }
+    }
+}
+
+/// Stack frame for prefix iteration DFS.
+struct PrefixFrame {
+    state: u32,
+    /// Next sibling to visit (NInfo encoding: label+1, 0=done).
+    next_sibling: u16,
+    /// Whether we've checked/yielded this state's terminal value.
+    checked_terminal: bool,
+    /// Depth of the path when this frame was pushed (path[0..depth] is the key).
+    depth: usize,
+}
+
+/// Lazy iterator over all (key, value) pairs with keys starting with a given prefix.
+///
+/// Traverses NInfo sibling chains using an explicit DFS stack, yielding entries
+/// one at a time without collecting all results into a Vec. This prevents memory
+/// spikes on broad queries (e.g., prefix="a").
+pub struct PrefixIterator<'a, V: MapValue> {
+    trie: &'a DoubleArrayTrieMap<V>,
+    stack: Vec<PrefixFrame>,
+    path: Vec<u8>,
+}
+
+impl<'a, V: MapValue> Iterator for PrefixIterator<'a, V> {
+    type Item = (Vec<u8>, V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let frame = self.stack.last_mut()?;
+            let state = frame.state;
+
+            // First, check if this state is terminal and should yield
+            if !frame.checked_terminal {
+                frame.checked_terminal = true;
+                let state_idx = state as usize;
+                if state_idx < self.trie.trie.ninfos.len()
+                    && self.trie.trie.ninfos[state_idx].is_term()
+                    && let Some(&val) = self.trie.values.get(state_idx)
+                    && val != V::EMPTY
+                {
+                    return Some((self.path[..frame.depth].to_vec(), val));
+                }
+            }
+
+            // Then try to visit the next child
+            if frame.next_sibling == NINFO_NONE {
+                // No more children — pop
+                self.stack.pop();
+                continue;
+            }
+
+            let label = (frame.next_sibling - 1) as u8;
+            let base = self.trie.trie.states[state as usize].child0();
+            let child_pos = (base ^ label as u32) as usize;
+
+            // Advance sibling cursor BEFORE pushing child
+            frame.next_sibling = if child_pos < self.trie.trie.ninfos.len() {
+                self.trie.trie.ninfos[child_pos].sibling
+            } else {
+                NINFO_NONE
+            };
+            let parent_depth = frame.depth;
+
+            // Validate child
+            if child_pos >= self.trie.trie.states.len()
+                || self.trie.trie.states[child_pos].is_free()
+            {
+                continue;
+            }
+
+            // Set path for child
+            let child_depth = parent_depth + 1;
+            self.path.truncate(parent_depth);
+            self.path.push(label);
+
+            // Push child frame
+            let first_child = if child_pos < self.trie.trie.ninfos.len() {
+                self.trie.trie.ninfos[child_pos].first_child()
+            } else {
+                NINFO_NONE
+            };
+            self.stack.push(PrefixFrame {
+                state: child_pos as u32,
+                next_sibling: first_child,
+                checked_terminal: false,
+                depth: child_depth,
+            });
+        }
+    }
+}
+
+/// Stack frame for fuzzy iteration DFS.
+struct FuzzyFrame {
+    state: u32,
+    next_sibling: u16,
+    checked_terminal: bool,
+    depth: usize,
+}
+
+/// Lazy iterator over all (key, value) pairs within edit distance `max_dist` of a query.
+///
+/// Uses incremental Levenshtein distance computation with DP rows maintained
+/// per depth level. Prunes subtrees where `min(dp_row) > max_dist`.
+pub struct FuzzyIterator<'a, V: MapValue> {
+    trie: &'a DoubleArrayTrieMap<V>,
+    stack: Vec<FuzzyFrame>,
+    path: Vec<u8>,
+    query: Vec<u8>,
+    max_dist: usize,
+    /// dp_columns[d] = edit distance row for path[0..d] vs query[0..j], j in 0..=query.len()
+    dp_columns: Vec<Vec<usize>>,
+}
+
+impl<'a, V: MapValue> FuzzyIterator<'a, V> {
+    /// Compute the next DP row when appending character `c` at current depth.
+    fn compute_row(prev_row: &[usize], query: &[u8], c: u8) -> Vec<usize> {
+        let mut row = vec![0; query.len() + 1];
+        row[0] = prev_row[0] + 1; // deletion
+        for j in 1..=query.len() {
+            let cost = if query[j - 1] == c { 0 } else { 1 };
+            row[j] = (prev_row[j] + 1)          // deletion
+                .min(row[j - 1] + 1)             // insertion
+                .min(prev_row[j - 1] + cost);    // substitution
+        }
+        row
+    }
+}
+
+impl<'a, V: MapValue> Iterator for FuzzyIterator<'a, V> {
+    type Item = (Vec<u8>, V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let frame = self.stack.last_mut()?;
+            let state = frame.state;
+            let depth = frame.depth;
+
+            // Check terminal
+            if !frame.checked_terminal {
+                frame.checked_terminal = true;
+                let state_idx = state as usize;
+                if depth < self.dp_columns.len()
+                    && self.dp_columns[depth][self.query.len()] <= self.max_dist
+                    && state_idx < self.trie.trie.ninfos.len()
+                    && self.trie.trie.ninfos[state_idx].is_term()
+                    && let Some(&val) = self.trie.values.get(state_idx)
+                    && val != V::EMPTY
+                {
+                    return Some((self.path[..depth].to_vec(), val));
+                }
+            }
+
+            // Try next child
+            if frame.next_sibling == NINFO_NONE {
+                self.stack.pop();
+                // Restore dp_columns: each stack frame at depth d has dp_columns[0..=d].
+                // When popping, truncate to the parent's depth + 1.
+                if let Some(parent) = self.stack.last() {
+                    self.dp_columns.truncate(parent.depth + 1);
+                } else {
+                    self.dp_columns.truncate(1); // keep root row only
+                }
+                continue;
+            }
+
+            let label = (frame.next_sibling - 1) as u8;
+            let base = self.trie.trie.states[state as usize].child0();
+            let child_pos = (base ^ label as u32) as usize;
+
+            // Advance sibling cursor
+            frame.next_sibling = if child_pos < self.trie.trie.ninfos.len() {
+                self.trie.trie.ninfos[child_pos].sibling
+            } else {
+                NINFO_NONE
+            };
+            let parent_depth = frame.depth;
+
+            // Validate child
+            if child_pos >= self.trie.trie.states.len()
+                || self.trie.trie.states[child_pos].is_free()
+            {
+                continue;
+            }
+
+            // Compute DP row for this child
+            let prev_row = &self.dp_columns[parent_depth];
+            let new_row = Self::compute_row(prev_row, &self.query, label);
+
+            // Prune: if min edit distance in row > max_dist, skip subtree
+            if *new_row.iter().min().unwrap_or(&usize::MAX) > self.max_dist {
+                continue;
+            }
+
+            // Set path
+            let child_depth = parent_depth + 1;
+            self.path.truncate(parent_depth);
+            self.path.push(label);
+
+            // Set DP column for child depth
+            self.dp_columns.truncate(child_depth);
+            self.dp_columns.push(new_row);
+
+            // Push child frame
+            let first_child = if child_pos < self.trie.trie.ninfos.len() {
+                self.trie.trie.ninfos[child_pos].first_child()
+            } else {
+                NINFO_NONE
+            };
+            self.stack.push(FuzzyFrame {
+                state: child_pos as u32,
+                next_sibling: first_child,
+                checked_terminal: false,
+                depth: child_depth,
+            });
+        }
+    }
 }
 
 impl<V: MapValue> std::fmt::Debug for DoubleArrayTrieMap<V> {
@@ -2263,6 +2544,377 @@ mod tests {
         let mut all = Vec::new();
         t.for_each_key_with_prefix(b"", |key| all.push(key.to_vec()));
         assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn test_prefix_iterator_matches_entries_with_prefix() {
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        let words: &[&[u8]] = &[b"apple", b"app", b"application", b"banana", b"band", b"bar"];
+        for (i, w) in words.iter().enumerate() {
+            trie.insert(w, i as i32 + 1).unwrap();
+        }
+
+        // Compare iter_prefix with entries_with_prefix for various prefixes
+        let prefixes: Vec<&[u8]> = vec![b"app", b"ban", b"b", b"apple", b"z", b""];
+        for prefix in &prefixes {
+            let mut lazy: Vec<_> = trie.iter_prefix(prefix).collect();
+            let mut eager = trie.entries_with_prefix(prefix);
+            lazy.sort_by(|a, b| a.0.cmp(&b.0));
+            eager.sort_by(|a, b| a.0.cmp(&b.0));
+            assert_eq!(lazy, eager, "mismatch for prefix {:?}", std::str::from_utf8(prefix));
+        }
+    }
+
+    #[test]
+    fn test_prefix_iterator_empty_trie() {
+        let trie = DoubleArrayTrieMap::<i32>::new();
+        assert_eq!(trie.iter_prefix(b"any").count(), 0);
+    }
+
+    #[test]
+    fn test_prefix_iterator_nonexistent_prefix() {
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        trie.insert(b"hello", 1).unwrap();
+        assert_eq!(trie.iter_prefix(b"xyz").count(), 0);
+    }
+
+    #[test]
+    fn test_prefix_iterator_empty_prefix_yields_all() {
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        trie.insert(b"a", 1).unwrap();
+        trie.insert(b"b", 2).unwrap();
+        trie.insert(b"c", 3).unwrap();
+        assert_eq!(trie.iter_prefix(b"").count(), 3);
+    }
+
+    #[test]
+    fn test_prefix_iterator_drop_early() {
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        for i in 0..100 {
+            let key = format!("key{:03}", i);
+            trie.insert(key.as_bytes(), i).unwrap();
+        }
+        // Just take 5 — should not panic or leak
+        let first5: Vec<_> = trie.iter_prefix(b"key").take(5).collect();
+        assert_eq!(first5.len(), 5);
+    }
+
+    #[test]
+    fn test_fuzzy_iterator_exact_match() {
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        trie.insert(b"cat", 1).unwrap();
+        trie.insert(b"car", 2).unwrap();
+        trie.insert(b"cap", 3).unwrap();
+        trie.insert(b"dog", 4).unwrap();
+
+        // max_dist=0 → exact match only
+        let results: Vec<_> = trie.iter_fuzzy(b"cat", 0).collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, b"cat");
+        assert_eq!(results[0].1, 1);
+    }
+
+    #[test]
+    fn test_fuzzy_iterator_distance_1() {
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        trie.insert(b"cat", 1).unwrap();
+        trie.insert(b"car", 2).unwrap();
+        trie.insert(b"cap", 3).unwrap();
+        trie.insert(b"bat", 4).unwrap();
+        trie.insert(b"dog", 5).unwrap();
+
+        // Distance 1 from "cat": cat(0), car(1), cap(1), bat(1)
+        let mut results: Vec<_> = trie.iter_fuzzy(b"cat", 1).collect();
+        results.sort_by(|a, b| a.0.cmp(&b.0));
+        let keys: Vec<&[u8]> = results.iter().map(|(k, _)| k.as_slice()).collect();
+        assert!(keys.contains(&b"cat".as_slice()));
+        assert!(keys.contains(&b"car".as_slice()));
+        assert!(keys.contains(&b"cap".as_slice()));
+        assert!(keys.contains(&b"bat".as_slice()));
+        assert!(!keys.contains(&b"dog".as_slice())); // distance 3
+    }
+
+    #[test]
+    fn test_fuzzy_iterator_empty_query() {
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        trie.insert(b"a", 1).unwrap();
+        trie.insert(b"ab", 2).unwrap();
+        trie.insert(b"abc", 3).unwrap();
+
+        // Empty query, max_dist=1 → only keys of length ≤ 1
+        let results: Vec<_> = trie.iter_fuzzy(b"", 1).collect();
+        assert!(results.iter().any(|(k, _)| k == b"a"));
+        assert!(!results.iter().any(|(k, _)| k == b"abc")); // distance 3
+    }
+
+    #[test]
+    fn test_fuzzy_iterator_empty_trie() {
+        let trie = DoubleArrayTrieMap::<i32>::new();
+        assert_eq!(trie.iter_fuzzy(b"test", 2).count(), 0);
+    }
+
+    #[test]
+    fn test_fuzzy_iterator_all_within_distance() {
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        trie.insert(b"cat", 1).unwrap();
+
+        // Large max_dist should find the single key
+        let results: Vec<_> = trie.iter_fuzzy(b"xyz", 10).collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, b"cat");
+    }
+
+    #[test]
+    fn test_prefix_iterator_prefix_longer_than_keys() {
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        trie.insert(b"app", 1).unwrap();
+        trie.insert(b"apple", 2).unwrap();
+        // Prefix longer than any key — should yield nothing
+        assert_eq!(trie.iter_prefix(b"application123").count(), 0);
+    }
+
+    #[test]
+    fn test_prefix_iterator_single_key_trie() {
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        trie.insert(b"hello", 42).unwrap();
+
+        // Exact key as prefix
+        let results: Vec<_> = trie.iter_prefix(b"hello").collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0], (b"hello".to_vec(), 42));
+
+        // Prefix of the key
+        let results: Vec<_> = trie.iter_prefix(b"hel").collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0], (b"hello".to_vec(), 42));
+
+        // Non-matching prefix
+        assert_eq!(trie.iter_prefix(b"world").count(), 0);
+    }
+
+    #[test]
+    fn test_prefix_iterator_deeply_nested() {
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        // Create deeply nested prefix chain
+        trie.insert(b"a", 1).unwrap();
+        trie.insert(b"ab", 2).unwrap();
+        trie.insert(b"abc", 3).unwrap();
+        trie.insert(b"abcd", 4).unwrap();
+        trie.insert(b"abcde", 5).unwrap();
+
+        // Each prefix should include itself and all extensions
+        assert_eq!(trie.iter_prefix(b"").count(), 5);
+        assert_eq!(trie.iter_prefix(b"a").count(), 5);
+        assert_eq!(trie.iter_prefix(b"ab").count(), 4);
+        assert_eq!(trie.iter_prefix(b"abc").count(), 3);
+        assert_eq!(trie.iter_prefix(b"abcd").count(), 2);
+        assert_eq!(trie.iter_prefix(b"abcde").count(), 1);
+        assert_eq!(trie.iter_prefix(b"abcdef").count(), 0);
+    }
+
+    #[test]
+    fn test_prefix_iterator_large_trie() {
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        for i in 0..1000 {
+            let key = format!("key{:04}", i);
+            trie.insert(key.as_bytes(), i).unwrap();
+        }
+
+        // Compare against entries_with_prefix for several prefixes
+        for prefix in [b"key" as &[u8], b"key0", b"key00", b"key000", b"key0001", b""] {
+            let mut lazy: Vec<_> = trie.iter_prefix(prefix).collect();
+            let mut eager = trie.entries_with_prefix(prefix);
+            lazy.sort_by(|a, b| a.0.cmp(&b.0));
+            eager.sort_by(|a, b| a.0.cmp(&b.0));
+            assert_eq!(lazy, eager, "mismatch for prefix {:?}", std::str::from_utf8(prefix));
+        }
+    }
+
+    #[test]
+    fn test_prefix_iterator_binary_keys() {
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        trie.insert(&[0x00, 0x01, 0x02], 1).unwrap();
+        trie.insert(&[0x00, 0x01, 0xFF], 2).unwrap();
+        trie.insert(&[0x00, 0xFF], 3).unwrap();
+        trie.insert(&[0xFF, 0x00], 4).unwrap();
+
+        let results: Vec<_> = trie.iter_prefix(&[0x00]).collect();
+        assert_eq!(results.len(), 3); // all keys starting with 0x00
+
+        let results2: Vec<_> = trie.iter_prefix(&[0x00, 0x01]).collect();
+        assert_eq!(results2.len(), 2);
+    }
+
+    #[test]
+    fn test_fuzzy_iterator_edit_distance_verification() {
+        // Helper: compute Levenshtein distance
+        fn edit_distance(a: &[u8], b: &[u8]) -> usize {
+            let m = a.len();
+            let n = b.len();
+            let mut dp = vec![vec![0usize; n + 1]; m + 1];
+            for i in 0..=m { dp[i][0] = i; }
+            for j in 0..=n { dp[0][j] = j; }
+            for i in 1..=m {
+                for j in 1..=n {
+                    let cost = if a[i-1] == b[j-1] { 0 } else { 1 };
+                    dp[i][j] = (dp[i-1][j] + 1)
+                        .min(dp[i][j-1] + 1)
+                        .min(dp[i-1][j-1] + cost);
+                }
+            }
+            dp[m][n]
+        }
+
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        let words = [b"cat" as &[u8], b"car", b"cap", b"bat", b"hat", b"cart", b"ca", b"c", b"cats", b"dog"];
+        for (i, w) in words.iter().enumerate() {
+            trie.insert(w, i as i32).unwrap();
+        }
+
+        let query = b"cat";
+        for max_dist in 0..=3 {
+            let results: Vec<_> = trie.iter_fuzzy(query, max_dist).collect();
+            for (key, _) in &results {
+                let dist = edit_distance(key, query);
+                assert!(dist <= max_dist,
+                    "key {:?} has distance {} from {:?}, exceeds max_dist {}",
+                    std::str::from_utf8(key), dist, std::str::from_utf8(query), max_dist);
+            }
+            // Verify completeness: check all trie keys within distance
+            for w in &words {
+                let dist = edit_distance(w, query);
+                if dist <= max_dist {
+                    assert!(results.iter().any(|(k, _)| k == *w),
+                        "key {:?} at distance {} missing from results (max_dist={})",
+                        std::str::from_utf8(w), dist, max_dist);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_fuzzy_iterator_insertion_deletion_substitution() {
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        trie.insert(b"cat", 1).unwrap();   // exact
+        trie.insert(b"at", 2).unwrap();    // deletion of 'c'
+        trie.insert(b"ct", 3).unwrap();    // deletion of 'a'
+        trie.insert(b"ca", 4).unwrap();    // deletion of 't'
+        trie.insert(b"cats", 5).unwrap();  // insertion of 's'
+        trie.insert(b"scat", 6).unwrap();  // insertion of 's' at start
+        trie.insert(b"caat", 7).unwrap();  // insertion of 'a'
+        trie.insert(b"bat", 8).unwrap();   // substitution
+        trie.insert(b"cot", 9).unwrap();   // substitution
+        trie.insert(b"cab", 10).unwrap();  // substitution
+
+        let results: Vec<_> = trie.iter_fuzzy(b"cat", 1).collect();
+        let keys: Vec<Vec<u8>> = results.iter().map(|(k, _)| k.clone()).collect();
+
+        // All distance-1 keys should be found
+        assert!(keys.contains(&b"cat".to_vec()), "exact match");
+        assert!(keys.contains(&b"at".to_vec()), "deletion of c");
+        assert!(keys.contains(&b"ct".to_vec()), "deletion of a");
+        assert!(keys.contains(&b"ca".to_vec()), "deletion of t");
+        assert!(keys.contains(&b"cats".to_vec()), "insertion of s");
+        assert!(keys.contains(&b"bat".to_vec()), "substitution c->b");
+        assert!(keys.contains(&b"cot".to_vec()), "substitution a->o");
+        assert!(keys.contains(&b"cab".to_vec()), "substitution t->b");
+    }
+
+    #[test]
+    fn test_fuzzy_iterator_root_terminal() {
+        // Empty string as a key
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        trie.insert(b"", 1).unwrap();
+        trie.insert(b"a", 2).unwrap();
+        trie.insert(b"ab", 3).unwrap();
+
+        // max_dist=0 with empty query — should find only ""
+        let results: Vec<_> = trie.iter_fuzzy(b"", 0).collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, b"".to_vec());
+
+        // max_dist=1 with empty query — should find "" and "a"
+        let results: Vec<_> = trie.iter_fuzzy(b"", 1).collect();
+        assert!(results.iter().any(|(k, _)| k.is_empty()));
+        assert!(results.iter().any(|(k, _)| k == b"a"));
+        assert!(!results.iter().any(|(k, _)| k == b"ab")); // distance 2
+    }
+
+    #[test]
+    fn test_fuzzy_iterator_long_query_short_keys() {
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        trie.insert(b"a", 1).unwrap();
+        trie.insert(b"ab", 2).unwrap();
+
+        // Long query, max_dist=1 — too far from short keys
+        let results: Vec<_> = trie.iter_fuzzy(b"abcdefgh", 1).collect();
+        assert_eq!(results.len(), 0);
+
+        // Long query, large max_dist — should find them
+        let results: Vec<_> = trie.iter_fuzzy(b"abcdefgh", 7).collect();
+        assert!(results.iter().any(|(k, _)| k == b"a"));
+    }
+
+    #[test]
+    fn test_fuzzy_iterator_binary_keys() {
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        trie.insert(&[0x00, 0x01], 1).unwrap();
+        trie.insert(&[0x00, 0x02], 2).unwrap();
+        trie.insert(&[0xFF, 0xFE], 3).unwrap();
+
+        // Distance 1 from [0x00, 0x01]: substitution gives [0x00, 0x02]
+        let results: Vec<_> = trie.iter_fuzzy(&[0x00, 0x01], 1).collect();
+        assert!(results.iter().any(|(k, _)| k == &[0x00, 0x01]));
+        assert!(results.iter().any(|(k, _)| k == &[0x00, 0x02]));
+        assert!(!results.iter().any(|(k, _)| k == &[0xFF, 0xFE])); // too far
+    }
+
+    #[test]
+    fn test_fuzzy_iterator_pruning_completeness() {
+        // Stress test: ensure pruning doesn't miss valid results
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        let words: Vec<String> = (0..100).map(|i| format!("word{:02}", i)).collect();
+        for (i, w) in words.iter().enumerate() {
+            trie.insert(w.as_bytes(), i as i32).unwrap();
+        }
+
+        fn edit_distance(a: &[u8], b: &[u8]) -> usize {
+            let m = a.len();
+            let n = b.len();
+            let mut dp = vec![vec![0usize; n + 1]; m + 1];
+            for i in 0..=m { dp[i][0] = i; }
+            for j in 0..=n { dp[0][j] = j; }
+            for i in 1..=m {
+                for j in 1..=n {
+                    let cost = if a[i-1] == b[j-1] { 0 } else { 1 };
+                    dp[i][j] = (dp[i-1][j] + 1)
+                        .min(dp[i][j-1] + 1)
+                        .min(dp[i-1][j-1] + cost);
+                }
+            }
+            dp[m][n]
+        }
+
+        let query = b"word50";
+        for max_dist in 0..=2 {
+            let results: Vec<_> = trie.iter_fuzzy(query, max_dist).collect();
+
+            // Every result should be within distance
+            for (key, _) in &results {
+                let d = edit_distance(key, query);
+                assert!(d <= max_dist, "spurious result {:?} at distance {}",
+                    std::str::from_utf8(key), d);
+            }
+
+            // Every word within distance should appear
+            for w in &words {
+                let d = edit_distance(w.as_bytes(), query);
+                if d <= max_dist {
+                    assert!(results.iter().any(|(k, _)| k == w.as_bytes()),
+                        "missing {:?} at distance {} (max_dist={})", w, d, max_dist);
+                }
+            }
+        }
     }
 
     // --- Cursor / Range tests ---

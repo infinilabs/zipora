@@ -688,6 +688,26 @@ impl<'a> EliasFanoCursor<'a> {
         false
     }
 
+    /// Reposition the cursor directly to element at `idx`.
+    /// After this call, `self.index() == idx` and `self.current()` returns `ef.get(idx)`.
+    /// Subsequent `advance()` and `advance_to_geq()` continue from this position.
+    ///
+    /// Returns false (cursor unchanged) if `idx >= ef.len()`.
+    #[inline]
+    pub fn advance_to_index(&mut self, idx: usize) -> bool {
+        if idx >= self.ef.len { return false; }
+        // Fast path: same position
+        if idx == self.index { return true; }
+        // Use select1 to find the bit position of the idx-th 1-bit in high_bits
+        if let Some(pos) = self.ef.select1(idx) {
+            self.index = idx;
+            self.high_pos = pos;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Reset cursor to the first element.
     pub fn reset(&mut self) {
         *self = Self::new(self.ef);
@@ -1564,6 +1584,45 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
         self.local_high_pos = chunk_first_one_cached(self.cached_high_bits);
         self.recompute_value();
         true
+    }
+
+    /// Reposition the cursor directly to element at global index `idx`.
+    /// Returns false (cursor unchanged) if `idx >= self.pef.len`.
+    #[inline]
+    pub fn advance_to_index(&mut self, idx: usize) -> bool {
+        if idx >= self.pef.len { return false; }
+        if idx == self.global_idx { return true; }
+
+        let chunk_idx = idx / PEF_CHUNK_SIZE;
+        let local_idx = idx % PEF_CHUNK_SIZE;
+
+        // Switch chunk if needed
+        if chunk_idx != self.chunk_idx {
+            self.chunk_idx = chunk_idx;
+            self.refresh_chunk_cache();
+        }
+
+        self.local_idx = local_idx;
+        self.global_idx = idx;
+
+        // Find local_high_pos by scanning for the local_idx-th 1-bit in cached_high_bits
+        self.local_high_pos = Self::find_nth_one(self.cached_high_bits, local_idx);
+        self.recompute_value();
+        true
+    }
+
+    /// Find the position of the n-th set bit (0-indexed) in a high_bits slice.
+    #[inline]
+    fn find_nth_one(high_bits: &[u64], n: usize) -> usize {
+        let mut remaining = n;
+        for (word_idx, &word) in high_bits.iter().enumerate() {
+            let ones = word.count_ones() as usize;
+            if remaining < ones {
+                return word_idx * 64 + select_in_word(word, remaining);
+            }
+            remaining -= ones;
+        }
+        0 // Should not happen for valid index
     }
 
     /// Reset cursor to the first element.
@@ -2649,6 +2708,46 @@ impl<'a> OptimalPefCursor<'a> {
         self.local_high_pos = chunk_first_one_cached(self.cached_high_bits);
         self.recompute_value();
         true
+    }
+
+    /// Reposition the cursor directly to element at global index `idx`.
+    /// Returns false (cursor unchanged) if `idx >= self.opef.len`.
+    #[inline]
+    pub fn advance_to_index(&mut self, idx: usize) -> bool {
+        if idx >= self.opef.len { return false; }
+        if idx == self.global_idx { return true; }
+
+        // Binary search chunk_starts to find which chunk contains idx
+        let chunk_idx = self.opef.chunk_starts.partition_point(|&s| s <= idx) - 1;
+        let local_idx = idx - self.opef.chunk_starts[chunk_idx];
+
+        // Switch chunk if needed
+        if chunk_idx != self.chunk_idx {
+            self.chunk_idx = chunk_idx;
+            self.refresh_chunk_cache();
+        }
+
+        self.local_idx = local_idx;
+        self.global_idx = idx;
+
+        // Find local_high_pos by scanning for the local_idx-th 1-bit
+        self.local_high_pos = Self::find_nth_one(self.cached_high_bits, local_idx);
+        self.recompute_value();
+        true
+    }
+
+    /// Find the position of the n-th set bit (0-indexed) in a high_bits slice.
+    #[inline]
+    fn find_nth_one(high_bits: &[u64], n: usize) -> usize {
+        let mut remaining = n;
+        for (word_idx, &word) in high_bits.iter().enumerate() {
+            let ones = word.count_ones() as usize;
+            if remaining < ones {
+                return word_idx * 64 + select_in_word(word, remaining);
+            }
+            remaining -= ones;
+        }
+        0
     }
 
     pub fn reset(&mut self) {
@@ -4133,5 +4232,321 @@ mod tests {
                     h.bits_per_element());
             }
         }
+    }
+
+    #[test]
+    fn test_cursor_advance_to_index_basic() {
+        let vals = vec![3, 5, 11, 27, 31, 42, 58, 63];
+        let ef = EliasFano::from_sorted(&vals);
+        let mut cursor = ef.cursor();
+
+        // advance_to_index(0) matches get(0)
+        assert!(cursor.advance_to_index(0));
+        assert_eq!(cursor.current(), Some(3));
+        assert_eq!(cursor.index(), 0);
+
+        // advance_to_index(7) matches get(7) — last element
+        assert!(cursor.advance_to_index(7));
+        assert_eq!(cursor.current(), Some(63));
+        assert_eq!(cursor.index(), 7);
+
+        // advance_to_index(8) — past end
+        assert!(!cursor.advance_to_index(8));
+        // Cursor should be unchanged
+        assert_eq!(cursor.index(), 7);
+        assert_eq!(cursor.current(), Some(63));
+    }
+
+    #[test]
+    fn test_cursor_advance_to_index_then_advance() {
+        let vals = vec![3, 5, 11, 27, 31, 42, 58, 63];
+        let ef = EliasFano::from_sorted(&vals);
+        let mut cursor = ef.cursor();
+
+        // Jump to index 5, then advance should give index 6
+        assert!(cursor.advance_to_index(5));
+        assert_eq!(cursor.current(), Some(42));
+        assert!(cursor.advance());
+        assert_eq!(cursor.current(), Some(58));
+        assert_eq!(cursor.index(), 6);
+    }
+
+    #[test]
+    fn test_cursor_advance_to_index_then_geq() {
+        let vals = vec![3, 5, 11, 27, 31, 42, 58, 63];
+        let ef = EliasFano::from_sorted(&vals);
+        let mut cursor = ef.cursor();
+
+        // Jump to index 2, then advance_to_geq(40) should find 42 at index 5
+        assert!(cursor.advance_to_index(2));
+        assert_eq!(cursor.current(), Some(11));
+        assert!(cursor.advance_to_geq(40));
+        assert_eq!(cursor.current(), Some(42));
+        assert_eq!(cursor.index(), 5);
+    }
+
+    #[test]
+    fn test_cursor_advance_to_index_backward() {
+        let vals = vec![3, 5, 11, 27, 31, 42, 58, 63];
+        let ef = EliasFano::from_sorted(&vals);
+        let mut cursor = ef.cursor();
+
+        // Forward to 5, then backward to 2
+        assert!(cursor.advance_to_index(5));
+        assert_eq!(cursor.current(), Some(42));
+        assert!(cursor.advance_to_index(2));
+        assert_eq!(cursor.current(), Some(11));
+        assert_eq!(cursor.index(), 2);
+    }
+
+    #[test]
+    fn test_cursor_advance_to_index_roundtrip() {
+        let vals = vec![3, 5, 11, 27, 31, 42, 58, 63];
+        let ef = EliasFano::from_sorted(&vals);
+        let mut cursor = ef.cursor();
+
+        // Visit every index, verify matches get()
+        for i in 0..vals.len() {
+            assert!(cursor.advance_to_index(i));
+            assert_eq!(cursor.current(), ef.get(i));
+            assert_eq!(cursor.index(), i);
+        }
+    }
+
+    #[test]
+    fn test_cursor_advance_to_index_same_position() {
+        let vals = vec![10, 20, 30];
+        let ef = EliasFano::from_sorted(&vals);
+        let mut cursor = ef.cursor();
+
+        assert!(cursor.advance_to_index(1));
+        assert_eq!(cursor.current(), Some(20));
+        // Same position — should be no-op
+        assert!(cursor.advance_to_index(1));
+        assert_eq!(cursor.current(), Some(20));
+    }
+
+    #[test]
+    fn test_cursor_advance_to_index_empty() {
+        let ef = EliasFano::from_sorted(&[]);
+        let mut cursor = ef.cursor();
+        assert!(!cursor.advance_to_index(0));
+    }
+
+    #[test]
+    fn test_pef_cursor_advance_to_index() {
+        // Need 200+ elements to exercise multiple chunks
+        let vals: Vec<u32> = (0..500).map(|i| i * 3 + 1).collect();
+        let pef = PartitionedEliasFano::from_sorted(&vals);
+        let mut cursor = pef.cursor();
+
+        // Test various indices across chunks
+        for &idx in &[0, 1, 127, 128, 129, 255, 256, 300, 499] {
+            assert!(cursor.advance_to_index(idx), "advance_to_index({idx}) failed");
+            assert_eq!(cursor.current(), Some(vals[idx] as u64), "wrong value at {idx}");
+            assert_eq!(cursor.index(), idx);
+        }
+
+        // Past end
+        assert!(!cursor.advance_to_index(500));
+
+        // Backward jump
+        assert!(cursor.advance_to_index(300));
+        assert!(cursor.advance_to_index(50));
+        assert_eq!(cursor.current(), Some(vals[50] as u64));
+    }
+
+    #[test]
+    fn test_opef_cursor_advance_to_index() {
+        let vals: Vec<u32> = (0..500).map(|i| i * 3 + 1).collect();
+        let opef = OptimalPartitionedEliasFano::from_sorted(&vals);
+        let mut cursor = opef.cursor();
+
+        for &idx in &[0, 1, 50, 100, 200, 300, 499] {
+            assert!(cursor.advance_to_index(idx), "advance_to_index({idx}) failed");
+            assert_eq!(cursor.current(), Some(vals[idx] as u64), "wrong value at {idx}");
+            assert_eq!(cursor.index(), idx);
+        }
+
+        assert!(!cursor.advance_to_index(500));
+
+        // Backward jump
+        assert!(cursor.advance_to_index(400));
+        assert!(cursor.advance_to_index(100));
+        assert_eq!(cursor.current(), Some(vals[100] as u64));
+    }
+
+    #[test]
+    fn test_cursor_advance_to_index_large_values() {
+        // Test with values near u32::MAX to verify select1 with large universes
+        let vals = vec![0, 1000, u32::MAX / 2, u32::MAX - 1000, u32::MAX];
+        let ef = EliasFano::from_sorted(&vals);
+        let mut cursor = ef.cursor();
+
+        for i in 0..vals.len() {
+            assert!(cursor.advance_to_index(i));
+            assert_eq!(cursor.current(), Some(vals[i] as u64));
+            assert_eq!(cursor.index(), i);
+        }
+    }
+
+    #[test]
+    fn test_cursor_advance_to_index_large_sequence() {
+        // 1500 elements exercises select1 sampling (every 256 elements)
+        let vals: Vec<u32> = (0..1500).map(|i| i * 7 + 3).collect();
+        let ef = EliasFano::from_sorted(&vals);
+        let mut cursor = ef.cursor();
+
+        // Every 10th index
+        for i in (0..1500).step_by(10) {
+            assert!(cursor.advance_to_index(i));
+            assert_eq!(cursor.current(), Some(vals[i] as u64));
+            assert_eq!(cursor.index(), i);
+        }
+
+        // Backward jumps across the sequence
+        assert!(cursor.advance_to_index(1000));
+        assert!(cursor.advance_to_index(500));
+        assert_eq!(cursor.current(), Some(vals[500] as u64));
+        assert!(cursor.advance_to_index(1499));
+        assert_eq!(cursor.current(), Some(vals[1499] as u64));
+        assert!(cursor.advance_to_index(0));
+        assert_eq!(cursor.current(), Some(vals[0] as u64));
+    }
+
+    #[test]
+    fn test_cursor_advance_to_index_multiple_backward_jumps() {
+        let vals: Vec<u32> = (0..200).map(|i| i * 5).collect();
+        let ef = EliasFano::from_sorted(&vals);
+        let mut cursor = ef.cursor();
+
+        // Zigzag: forward, backward, forward, backward
+        assert!(cursor.advance_to_index(100));
+        assert_eq!(cursor.current(), Some(500));
+        assert!(cursor.advance_to_index(50));
+        assert_eq!(cursor.current(), Some(250));
+        assert!(cursor.advance_to_index(150));
+        assert_eq!(cursor.current(), Some(750));
+        assert!(cursor.advance_to_index(25));
+        assert_eq!(cursor.current(), Some(125));
+
+        // Verify advance() still works after backward jump
+        assert!(cursor.advance());
+        assert_eq!(cursor.index(), 26);
+        assert_eq!(cursor.current(), Some(130));
+    }
+
+    #[test]
+    fn test_empty_pef_advance_to_index() {
+        let pef = PartitionedEliasFano::from_sorted(&[]);
+        let mut cursor = pef.cursor();
+        assert!(!cursor.advance_to_index(0));
+    }
+
+    #[test]
+    fn test_empty_opef_advance_to_index() {
+        let opef = OptimalPartitionedEliasFano::from_sorted(&[]);
+        let mut cursor = opef.cursor();
+        assert!(!cursor.advance_to_index(0));
+    }
+
+    #[test]
+    fn test_pef_cursor_within_chunk_jumps() {
+        let vals: Vec<u32> = (0..500).map(|i| i * 3).collect();
+        let pef = PartitionedEliasFano::from_sorted(&vals);
+        let mut cursor = pef.cursor();
+
+        // Forward within chunk 0
+        assert!(cursor.advance_to_index(10));
+        assert_eq!(cursor.current(), Some(30));
+        assert!(cursor.advance_to_index(20));
+        assert_eq!(cursor.current(), Some(60));
+
+        // Backward within chunk 0
+        assert!(cursor.advance_to_index(5));
+        assert_eq!(cursor.current(), Some(15));
+
+        // Last element of chunk 0
+        assert!(cursor.advance_to_index(127));
+        assert_eq!(cursor.current(), Some(vals[127] as u64));
+        assert_eq!(cursor.index(), 127);
+
+        // First element of chunk 1, then advance()
+        assert!(cursor.advance_to_index(128));
+        assert_eq!(cursor.current(), Some(vals[128] as u64));
+        assert_eq!(cursor.index(), 128);
+        assert!(cursor.advance());
+        assert_eq!(cursor.index(), 129);
+        assert_eq!(cursor.current(), Some(vals[129] as u64));
+    }
+
+    #[test]
+    fn test_pef_cursor_chunk_boundary_roundtrip() {
+        let vals: Vec<u32> = (0..500).map(|i| i * 3).collect();
+        let pef = PartitionedEliasFano::from_sorted(&vals);
+        let mut cursor = pef.cursor();
+
+        // Sequential calls crossing chunk boundary
+        for i in 125..132 {
+            assert!(cursor.advance_to_index(i));
+            assert_eq!(cursor.current(), Some(vals[i] as u64));
+            assert_eq!(cursor.index(), i);
+        }
+    }
+
+    #[test]
+    fn test_pef_cursor_advance_to_index_large_values() {
+        let vals = vec![0, 1000, u32::MAX / 2, u32::MAX - 1000, u32::MAX];
+        let pef = PartitionedEliasFano::from_sorted(&vals);
+        let mut cursor = pef.cursor();
+
+        for i in 0..vals.len() {
+            assert!(cursor.advance_to_index(i));
+            assert_eq!(cursor.current(), Some(vals[i] as u64));
+        }
+    }
+
+    #[test]
+    fn test_opef_cursor_advance_to_index_within_chunk() {
+        let vals: Vec<u32> = (0..1000).map(|i| i * 5).collect();
+        let opef = OptimalPartitionedEliasFano::from_sorted(&vals);
+        let mut cursor = opef.cursor();
+
+        // Forward within a chunk
+        assert!(cursor.advance_to_index(10));
+        assert_eq!(cursor.current(), Some(50));
+        assert!(cursor.advance_to_index(20));
+        assert_eq!(cursor.current(), Some(100));
+
+        // Backward within the same chunk
+        assert!(cursor.advance_to_index(5));
+        assert_eq!(cursor.current(), Some(25));
+
+        // Jump far forward then far backward
+        assert!(cursor.advance_to_index(900));
+        assert_eq!(cursor.current(), Some(vals[900] as u64));
+        assert!(cursor.advance_to_index(50));
+        assert_eq!(cursor.current(), Some(vals[50] as u64));
+    }
+
+    #[test]
+    fn test_opef_cursor_advance_to_index_then_advance() {
+        let vals: Vec<u32> = (0..500).map(|i| i * 3 + 1).collect();
+        let opef = OptimalPartitionedEliasFano::from_sorted(&vals);
+        let mut cursor = opef.cursor();
+
+        // Jump to an index, then call advance()
+        assert!(cursor.advance_to_index(250));
+        assert_eq!(cursor.current(), Some(vals[250] as u64));
+        assert!(cursor.advance());
+        assert_eq!(cursor.index(), 251);
+        assert_eq!(cursor.current(), Some(vals[251] as u64));
+
+        // Jump to an index, then call advance_to_geq()
+        assert!(cursor.advance_to_index(100));
+        assert_eq!(cursor.current(), Some(vals[100] as u64));
+        let target = vals[200] as u64;
+        assert!(cursor.advance_to_geq(target));
+        assert_eq!(cursor.index(), 200);
     }
 }

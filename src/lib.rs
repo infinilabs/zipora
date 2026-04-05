@@ -294,6 +294,7 @@ pub use algorithms::{
     AlgorithmConfig, EnhancedLoserTree, ExternalSort, LcpArray, LoserTreeConfig, MergeSource, MultiWayMerge,
     RadixSort, RadixSortConfig, ReplaceSelectSort, ReplaceSelectSortConfig, SuffixArray,
     SuffixArrayBuilder, TournamentNode,
+    simd_gallop_to, simd_block_filter,
 };
 
 // Re-export Phase 5 implementations (concurrency)
