@@ -26,13 +26,13 @@
 
 ```toml
 [dependencies]
-zipora = "3.1.1"
+zipora = "3.1.2"
 
 # 启用 C FFI 绑定
-zipora = { version = "3.1.1", features = ["ffi"] }
+zipora = { version = "3.1.2", features = ["ffi"] }
 
 # AVX-512（仅 nightly）
-zipora = { version = "3.1.1", features = ["avx512"] }
+zipora = { version = "3.1.2", features = ["avx512"] }
 ```
 
 ### 基本用法
