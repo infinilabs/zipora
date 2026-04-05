@@ -126,6 +126,7 @@ pub mod io;
 pub mod memory;
 pub mod simd;
 pub mod string;
+pub mod scoring;
 pub mod succinct;
 pub mod statistics;
 pub mod system;
