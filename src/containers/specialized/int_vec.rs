@@ -748,7 +748,6 @@ impl<T: PackedInt> IntVec<T> {
     /// - 2-3x faster for medium to large datasets
     /// - Minimal overhead for small datasets
     /// - Optimized memory access patterns
-
     /// Bulk constructor storing values as raw u64 without compression
     fn from_slice_bulk_zerocopy(values: &[T], start_time: std::time::Instant) -> Result<Self> {
         let mut result = Self::new();

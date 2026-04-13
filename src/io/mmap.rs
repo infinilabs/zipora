@@ -46,12 +46,14 @@ pub enum InputStrategy {
     /// Standard memory mapping with 4KB pages
     StandardMmap,
     /// Memory mapping with hugepages (2MB or 1GB)
+    /// Note: This currently incurs an upfront copy from the file into the hugepage.
     HugepageMmap,
 }
 
-/// Memory-mapped file input for zero-copy reading operations
+/// Memory-mapped file input for fast reading operations
 ///
-/// Provides efficient reading from memory-mapped files without copying data.
+/// Provides efficient reading from memory-mapped files. The standard mmap
+/// strategy avoids copying data, while the hugepage strategy incurs an upfront copy.
 /// Ideal for large files and random access patterns.
 ///
 /// # Examples
@@ -176,9 +178,9 @@ impl MemoryMappedInput {
                 };
 
                 match HugePage::new(self.file_size as usize, hugepage_size) {
-                    Ok(hugepage) => {
-                        // Copy file data to hugepage memory for zero-copy access
-                        self.copy_file_to_hugepage(&mut file, &hugepage)?;
+                    Ok(mut hugepage) => {
+                        // Note: "HugepageMmap" is not true zero-copy. It allocates a hugepage and copies the file into it.
+                        self.copy_file_to_hugepage(&mut file, &mut hugepage)?;
                         self.hugepage = Some(hugepage);
                     }
                     Err(_) => {
@@ -201,16 +203,13 @@ impl MemoryMappedInput {
     }
 
     #[cfg(target_os = "linux")]
-    fn copy_file_to_hugepage(&mut self, file: &mut File, hugepage: &HugePage) -> Result<()> {
+    fn copy_file_to_hugepage(&mut self, file: &mut File, hugepage: &mut HugePage) -> Result<()> {
         file.seek(SeekFrom::Start(0))
             .map_err(|e| ZiporaError::io_error(format!("Failed to seek file: {}", e)))?;
 
         let mut buffer = vec![0u8; 64 * 1024]; // 64KB read buffer
         let mut total_read = 0;
-        // SAFETY: hugepage.as_slice() returns valid slice, converting to mutable for writes
-        let hugepage_slice = unsafe {
-            std::slice::from_raw_parts_mut(hugepage.as_slice().as_ptr() as *mut u8, hugepage.size())
-        };
+        let hugepage_slice = hugepage.as_mut_slice();
 
         while total_read < self.file_size as usize {
             let bytes_read = file

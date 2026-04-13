@@ -138,7 +138,6 @@ pub mod simd;
 // Advanced optimization modules
 pub mod adaptive;
 pub mod bmi2_acceleration;
-pub mod bmi2_comprehensive;
 pub mod multidim_simd;
 
 // Re-export all rank/select implementations
@@ -170,11 +169,6 @@ pub use adaptive::{
 pub use bmi2_acceleration::{
     Bmi2Accelerator, Bmi2BitOps, Bmi2BlockOps, Bmi2Capabilities, Bmi2PrefetchOps, Bmi2RangeOps, 
     Bmi2RankOps, Bmi2SelectOps, Bmi2SequenceOps, Bmi2Stats,
-};
-pub use bmi2_comprehensive::{
-    Bmi2BitOps as Bmi2BitOpsComprehensive, Bmi2BlockOps as Bmi2BlockOpsComprehensive,
-    Bmi2Capabilities as Bmi2CapabilitiesComprehensive, Bmi2SequenceOps as Bmi2SequenceOpsComprehensive,
-    Bmi2Stats as Bmi2StatsComprehensive, OptimizationStrategy, SequenceAnalysis as Bmi2SequenceAnalysis,
 };
 pub use multidim_simd::MultiDimRankSelect;
 // Note: Fragment and hierarchical implementations removed - use adaptive selection instead

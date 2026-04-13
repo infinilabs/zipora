@@ -1497,6 +1497,9 @@ where
     }
 
     // Critical-bit trie implementation methods
+    /// Critical-bit trie insertion.
+    //  TODO: port from C++ reference `src/terark/fsa/crit_bit_trie.hpp`
+    #[allow(unused)]
     fn insert_critical_bit(
         nodes: &mut FastVec<CritBitNode>,
         keys: &mut FastVec<Vec<u8>>,
@@ -1507,6 +1510,9 @@ where
         Ok(0)
     }
 
+    /// Critical-bit trie lookup.
+    //  TODO: port from C++ reference `src/terark/fsa/crit_bit_trie.hpp`
+    #[allow(unused)]
     fn contains_critical_bit(
         &self,
         nodes: &FastVec<CritBitNode>,
@@ -1987,6 +1993,9 @@ where
     }
 
     // LOUDS trie implementation methods
+    /// LOUDS trie insertion.
+    //  TODO: port from C++ reference `src/terark/fsa/nest_louds_trie.hpp`
+    #[allow(unused)]
     fn insert_louds(
         louds: &mut R,
         is_link: &mut R,
@@ -2025,6 +2034,9 @@ where
         Ok(state_id)
     }
 
+    /// LOUDS trie lookup.
+    //  TODO: port from C++ reference `src/terark/fsa/nest_louds_trie.hpp`
+    #[allow(unused)]
     fn contains_louds(
         &self,
         louds: &R,
@@ -2129,6 +2141,9 @@ where
     }
 
     // Compressed sparse trie implementation methods
+    /// Compressed sparse trie insertion.
+    //  TODO: port from C++ reference `src/terark/fsa/cspptrie.hpp`
+    #[allow(unused)]
     fn insert_compressed_sparse(
         sparse_nodes: &mut HashMap<StateId, SparseNode>,
         compression_dict: &mut HashMap<Vec<u8>, u32>,
@@ -2192,6 +2207,9 @@ where
         Ok(current_state)
     }
 
+    /// Compressed sparse trie lookup.
+    //  TODO: port from C++ reference `src/terark/fsa/cspptrie.hpp`
+    #[allow(unused)]
     fn contains_compressed_sparse(
         &self,
         sparse_nodes: &HashMap<StateId, SparseNode>,

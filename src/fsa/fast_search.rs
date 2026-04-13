@@ -568,8 +568,8 @@ mod tests {
     #[test]
     fn test_utils_search_any_of() {
         let data = b"hello world";
-        assert_eq!(utils::search_any_of(data, &[b'l', b'w']), Some(2));
-        assert_eq!(utils::search_any_of(data, &[b'x', b'z']), None);
+        assert_eq!(utils::search_any_of(data, b"lw"), Some(2));
+        assert_eq!(utils::search_any_of(data, b"xz"), None);
     }
 
     #[test]

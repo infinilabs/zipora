@@ -1017,7 +1017,8 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "criterion")]
+    // We allow test execution here to compile-check benchmarks during `cargo test`.
+    #[cfg(any(feature = "criterion", test))]
     mod benchmarks {
         use super::*;
         use criterion::{black_box, Criterion};

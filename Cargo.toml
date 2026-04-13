@@ -30,6 +30,7 @@ serde = ["dep:serde", "dep:serde_json", "dep:bincode"]
 async = ["dep:tokio"]
 
 [dependencies]
+crossbeam-epoch = "0.9"
 # Core functionality
 memmap2 = { version = "0.9.9", optional = true }
 bytemuck = "1.24"

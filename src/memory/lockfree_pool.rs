@@ -451,10 +451,15 @@ impl LockFreeMemoryPool {
                 return self.allocate_new_block(size);
             }
 
-            // SAFETY: current_offset validated by offset_to_ptr, pointer aligned to u32
+            // SAFETY: current_offset validated by offset_to_ptr, pointer aligned to u32.
+            // The `AtomicU32` type-pun is valid due to provenance and alignment (ALIGN_SIZE=8).
+            // Explicit atomic load is the data-race fix. `Relaxed` ordering is sufficient here
+            // because if we win the CAS on `head`, the read was valid and the CAS provides the
+            // synchronization fence. If we lose the CAS, the read might be garbage, but it
+            // doesn't affect correctness since we retry the loop.
             let next_offset = unsafe {
                 let current_ptr = self.offset_to_ptr(current_offset)?;
-                *(current_ptr.as_ptr() as *const u32)
+                (*(current_ptr.as_ptr() as *const std::sync::atomic::AtomicU32)).load(std::sync::atomic::Ordering::Relaxed)
             };
 
             // ABA-SAFE: Pack next offset with INCREMENTED generation counter
@@ -513,7 +518,7 @@ impl LockFreeMemoryPool {
             // The next pointer only needs the offset, not the generation counter
             // SAFETY: ptr validated by ptr_to_offset above, aligned to u32
             unsafe {
-                *(ptr.as_ptr() as *mut u32) = current_offset;
+                (*(ptr.as_ptr() as *const std::sync::atomic::AtomicU32)).store(current_offset, std::sync::atomic::Ordering::Relaxed);
             }
 
             // ABA-SAFE: Pack new offset with INCREMENTED generation counter
