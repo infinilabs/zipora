@@ -443,7 +443,7 @@ impl CacheObliviousSort {
             if pivot > 0 {
                 self.cache_aware_quicksort(data, low, pivot - 1);
             }
-            if pivot + 1 <= high {
+            if pivot < high {
                 self.cache_aware_quicksort(data, pivot + 1, high);
             }
         }

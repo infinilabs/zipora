@@ -687,68 +687,74 @@ unsafe impl Send for SecureChunk {}
 unsafe impl Sync for SecureChunk {}
 
 /// Lock-free stack for high-performance chunk storage (Treiber stack)
+use crossbeam_epoch::{self as epoch, Atomic, Owned, Shared};
+
 struct LockFreeStack<T> {
-    head: AtomicPtr<Node<T>>,
+    head: Atomic<Node<T>>,
 }
 
 struct Node<T> {
-    data: T,
-    next: *mut Node<T>,
+    data: std::mem::ManuallyDrop<T>,
+    next: Atomic<Node<T>>,
 }
 
 impl<T> LockFreeStack<T> {
     fn new() -> Self {
         Self {
-            head: AtomicPtr::new(std::ptr::null_mut()),
+            head: Atomic::null(),
         }
     }
 
     fn push(&self, item: T) {
-        let new_node = Box::into_raw(Box::new(Node {
-            data: item,
-            next: std::ptr::null_mut(),
-        }));
+        let mut node = Owned::new(Node {
+            data: std::mem::ManuallyDrop::new(item),
+            next: Atomic::null(),
+        });
 
+        let guard = epoch::pin();
         loop {
-            let head = self.head.load(Ordering::Acquire);
-            // SAFETY: new_node valid from Box::into_raw above, exclusively owned
-            unsafe {
-                (*new_node).next = head;
-            }
+            let head = self.head.load(Ordering::Acquire, &guard);
+            node.next.store(head, Ordering::Relaxed);
 
-            if self
-                .head
-                .compare_exchange_weak(head, new_node, Ordering::Release, Ordering::Relaxed)
-                .is_ok()
-            {
-                break;
+            match self.head.compare_exchange(head, node, Ordering::Release, Ordering::Relaxed, &guard) {
+                Ok(_) => break,
+                Err(e) => node = e.new,
             }
         }
     }
 
     fn pop(&self) -> Option<T> {
+        let guard = epoch::pin();
         loop {
-            let head = self.head.load(Ordering::Acquire);
+            let head = self.head.load(Ordering::Acquire, &guard);
+            
+            // Check if stack is empty
             if head.is_null() {
                 return None;
             }
 
-            // SAFETY: head non-null from check above, valid from push
-            let next = unsafe { (*head).next };
-            if self
-                .head
-                .compare_exchange_weak(head, next, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                // SAFETY: head from Box::into_raw in push, CAS ensures exclusive ownership
-                let data = unsafe { Box::from_raw(head).data };
-                return Some(data);
+            // SAFETY: The node is protected from destruction by the epoch guard.
+            // Even if another thread pops this node, its memory will remain valid
+            // until the current epoch advances, ensuring the read of `next` is safe.
+            let next = unsafe { head.deref() }.next.load(Ordering::Relaxed, &guard);
+
+            if self.head.compare_exchange(head, next, Ordering::AcqRel, Ordering::Acquire, &guard).is_ok() {
+                // We successfully unlinked the head node. We now have exclusive ownership
+                // of the data inside it, but we must wait for all threads to drop their
+                // guards before the memory backing the node can be reclaimed.
+                unsafe {
+                    guard.defer_destroy(head);
+                    // The data itself can be moved out immediately since we logically
+                    // own it. Rust's Ownership prevents use-after-free of the `data`.
+                    return Some(std::mem::ManuallyDrop::into_inner(std::ptr::read(&head.deref().data)));
+                }
             }
         }
     }
 
     fn is_empty(&self) -> bool {
-        self.head.load(Ordering::Acquire).is_null()
+        let guard = epoch::pin();
+        self.head.load(Ordering::Acquire, &guard).is_null()
     }
 }
 
@@ -758,10 +764,6 @@ impl<T> Drop for LockFreeStack<T> {
     }
 }
 
-// SAFETY: LockFreeStack<T> is Send if T is Send (lock-free algorithm)
-unsafe impl<T: Send> Send for LockFreeStack<T> {}
-// SAFETY: LockFreeStack<T> is Sync if T is Send (atomic operations synchronize access)
-unsafe impl<T: Send> Sync for LockFreeStack<T> {}
 
 /// Thread-local cache for reduced contention
 #[derive(Default)]

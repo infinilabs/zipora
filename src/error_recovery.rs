@@ -4,7 +4,7 @@
 //! using fail-fast philosophy with rich contextual error reporting throughout data structures.
 
 
-/// Verification macros providing fail-fast error handling with rich contextual information
+//! Verification macros providing fail-fast error handling with rich contextual information
 
 /// Fatal error macro for immediate termination
 /// Prints error context and terminates the program immediately

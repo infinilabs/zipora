@@ -31,10 +31,108 @@
 //! ```
 
 use crate::error::{Result, ZiporaError};
+
+/// Runtime BMI2 capabilities detection and caching
+#[derive(Debug, Clone)]
+pub struct AdaptiveCpuCapabilities {
+    /// BMI1 instruction set available (TZCNT, LZCNT, ANDN)
+    pub has_bmi1: bool,
+    /// BMI2 instruction set available (PDEP, PEXT, BZHI)
+    pub has_bmi2: bool,
+    /// POPCNT instruction available
+    pub has_popcnt: bool,
+    /// AVX2 instruction set available
+    pub has_avx2: bool,
+    /// Optimization tier (0=none, 1=basic, 2=BMI1, 3=BMI2, 4=BMI2+AVX2)
+    pub optimization_tier: u8,
+    /// Recommended chunk size for bulk operations
+    pub chunk_size: usize,
+}
+
+impl AdaptiveCpuCapabilities {
+    /// Detect available CPU features and determine optimization tier
+    pub fn detect() -> Self {
+        let has_bmi1 = Self::detect_bmi1();
+        let has_bmi2 = Self::detect_bmi2();
+        let has_popcnt = Self::detect_popcnt();
+        let has_avx2 = Self::detect_avx2();
+        
+        let optimization_tier = match (has_popcnt, has_bmi1, has_bmi2, has_avx2) {
+            (true, true, true, true) => 4,  // Full BMI2 + AVX2
+            (true, true, true, false) => 3, // BMI2 without AVX2
+            (true, true, false, _) => 2,    // BMI1 only
+            (true, false, false, _) => 1,   // POPCNT only
+            _ => 0,                          // No acceleration
+        };
+        
+        let chunk_size = match optimization_tier {
+            4 => 1024,  // Large chunks for AVX2
+            3 => 512,   // Medium chunks for BMI2
+            2 => 256,   // Smaller chunks for BMI1
+            1 => 128,   // Small chunks for POPCNT
+            _ => 64,    // Minimal chunks for scalar
+        };
+        
+        Self {
+            has_bmi1,
+            has_bmi2,
+            has_popcnt,
+            has_avx2,
+            optimization_tier,
+            chunk_size,
+        }
+    }
+    
+    /// Get cached capabilities (thread-safe singleton)
+    #[inline]
+    pub fn get() -> &'static Self {
+        static CAPABILITIES: std::sync::OnceLock<AdaptiveCpuCapabilities> = std::sync::OnceLock::new();
+        CAPABILITIES.get_or_init(Self::detect)
+    }
+    
+    #[cfg(target_arch = "x86_64")]
+    fn detect_bmi1() -> bool {
+        std::is_x86_feature_detected!("bmi1")
+    }
+    
+    #[cfg(not(target_arch = "x86_64"))]
+    fn detect_bmi1() -> bool {
+        false
+    }
+    
+    #[cfg(target_arch = "x86_64")]
+    fn detect_bmi2() -> bool {
+        std::is_x86_feature_detected!("bmi2")
+    }
+    
+    #[cfg(not(target_arch = "x86_64"))]
+    fn detect_bmi2() -> bool {
+        false
+    }
+    
+    #[cfg(target_arch = "x86_64")]
+    fn detect_popcnt() -> bool {
+        std::is_x86_feature_detected!("popcnt")
+    }
+    
+    #[cfg(not(target_arch = "x86_64"))]
+    fn detect_popcnt() -> bool {
+        false
+    }
+    
+    #[cfg(target_arch = "x86_64")]
+    fn detect_avx2() -> bool {
+        std::is_x86_feature_detected!("avx2")
+    }
+    
+    #[cfg(not(target_arch = "x86_64"))]
+    fn detect_avx2() -> bool {
+        false
+    }
+}
 use crate::succinct::BitVector;
 use super::{
     RankSelectOps, RankSelectInterleaved256,
-    bmi2_comprehensive::Bmi2Capabilities,
 };
 use std::fmt;
 
@@ -221,7 +319,7 @@ impl AdaptiveRankSelect {
         let entropy = Self::calculate_entropy(bit_vector);
         
         // Detect hardware acceleration capabilities
-        let hardware_tier = Bmi2Capabilities::get().optimization_tier;
+        let hardware_tier = AdaptiveCpuCapabilities::get().optimization_tier;
         
         // Use provided access pattern or infer from data characteristics
         let access_pattern = Self::infer_access_pattern(criteria.access_pattern, &run_length_stats, pattern_complexity);

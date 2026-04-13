@@ -105,7 +105,7 @@ fn bench_configuration_strategies(c: &mut Criterion) {
                         size
                     ),
                     &(&rs, &test_positions),
-                    |b, (rs, positions)| {
+                    |b, (rs, positions): &(_, _)| {
                         b.iter(|| {
                             let mut sum = 0;
                             for &pos in *positions {
@@ -152,7 +152,7 @@ fn bench_memory_overhead_analysis(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new(format!("rank_{}", config_name), size),
             &(&rs, &test_positions),
-            |b, (rs, positions)| {
+            |b, (rs, positions): &(_, _)| {
                 b.iter(|| {
                     let mut sum = 0;
                     for &pos in *positions {
@@ -189,7 +189,7 @@ fn bench_scalability(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("rank_scalability", size),
             &(&rs, &test_positions),
-            |b, (rs, positions)| {
+            |b, (rs, positions): &(_, _)| {
                 b.iter(|| {
                     let mut sum = 0;
                     for &pos in *positions {
@@ -211,7 +211,7 @@ fn bench_scalability(c: &mut Criterion) {
             group.bench_with_input(
                 BenchmarkId::new("select_scalability", size),
                 &(&rs, &select_indices),
-                |b, (rs, indices)| {
+                |b, (rs, indices): &(_, _)| {
                     b.iter(|| {
                         let mut sum = 0;
                         for &idx in *indices {
@@ -256,7 +256,7 @@ fn bench_baseline_comparison(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new(format!("rank_{}", impl_name), size),
             &(rs, &test_positions),
-            |b, (rs, positions)| {
+            |b, (rs, positions): &(_, _)| {
                 b.iter(|| {
                     let mut sum = 0;
                     for &pos in *positions {

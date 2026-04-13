@@ -20,13 +20,6 @@ mod tests {
         // Guard should automatically unlock on drop
     }
 
-    #[test]
-    fn test_atomic_stack_basic() {
-        let stack = AtomicStack::new();
-        stack.push(42);
-        assert_eq!(stack.pop(), Some(42));
-        assert_eq!(stack.pop(), None);
-    }
 
     #[test]
     fn test_atomic_ext_basic() {

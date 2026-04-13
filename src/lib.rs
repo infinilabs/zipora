@@ -311,10 +311,6 @@ pub use compression::{
     AdaptiveCompressor, AdaptiveConfig, Algorithm, CompressionProfile,
     CompressionStats, Compressor, CompressorFactory, PerformanceRequirements,
 };
-#[cfg(feature = "async")]
-pub use compression::{
-    CompressionMode, RealtimeCompressor, RealtimeConfig,
-};
 
 // Re-export System Utilities (Phase 10A)
 pub use system::{
@@ -380,7 +376,7 @@ pub use thread::{
     // Instance-Specific Thread-Local Storage
     InstanceTls, OwnerTls, TlsPool,
     // Atomic Operations Framework
-    AtomicExt, AsAtomic, AtomicNode, AtomicStack, AtomicBitOps, spin_loop_hint,
+    AtomicExt, AsAtomic, AtomicBitOps, spin_loop_hint,
     memory_ordering,
 };
 

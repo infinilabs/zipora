@@ -119,6 +119,7 @@ impl HugePage {
         }
     }
 
+
     /// Get the memory as a mutable slice
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {

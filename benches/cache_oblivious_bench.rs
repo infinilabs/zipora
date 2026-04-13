@@ -80,7 +80,7 @@ fn bench_sorting_algorithms(c: &mut Criterion) {
                     use_parallel: true,
                     small_threshold: 1024,
                     memory_pool: None,
-                    cpu_features: cpu_features.clone(),
+                    cpu_features: &cpu_features.clone(),
                 };
                 b.iter_with_setup(
                     || create_test_data(size),
@@ -104,7 +104,7 @@ fn bench_sorting_algorithms(c: &mut Criterion) {
                     use_parallel: true,
                     small_threshold: 1024,
                     memory_pool: None,
-                    cpu_features: cpu_features.clone(),
+                    cpu_features: &cpu_features.clone(),
                 };
                 b.iter_with_setup(
                     || create_test_data(size),
@@ -144,7 +144,7 @@ fn bench_access_patterns(c: &mut Criterion) {
             use_parallel: true,
             small_threshold: 1024,
             memory_pool: None,
-            cpu_features: cpu_features.clone(),
+            cpu_features: &cpu_features.clone(),
         };
         b.iter_with_setup(
             || create_random_data(test_size),
@@ -164,7 +164,7 @@ fn bench_access_patterns(c: &mut Criterion) {
             use_parallel: true,
             small_threshold: 1024,
             memory_pool: None,
-            cpu_features: cpu_features.clone(),
+            cpu_features: &cpu_features.clone(),
         };
         b.iter_with_setup(
             || create_nearly_sorted_data(test_size),
@@ -184,7 +184,7 @@ fn bench_access_patterns(c: &mut Criterion) {
             use_parallel: true,
             small_threshold: 1024,
             memory_pool: None,
-            cpu_features: cpu_features.clone(),
+            cpu_features: &cpu_features.clone(),
         };
         b.iter_with_setup(
             || create_reverse_sorted_data(test_size),
@@ -219,7 +219,7 @@ fn bench_simd_impact(c: &mut Criterion) {
             use_parallel: false, // Focus on SIMD impact
             small_threshold: 1024,
             memory_pool: None,
-            cpu_features: cpu_features.clone(),
+            cpu_features: &cpu_features.clone(),
         };
         b.iter_with_setup(
             || create_test_data(test_size),
@@ -239,7 +239,7 @@ fn bench_simd_impact(c: &mut Criterion) {
             use_parallel: false, // Focus on SIMD impact
             small_threshold: 1024,
             memory_pool: None,
-            cpu_features: cpu_features.clone(),
+            cpu_features: &cpu_features.clone(),
         };
         b.iter_with_setup(
             || create_test_data(test_size),
@@ -299,7 +299,7 @@ fn bench_cache_hierarchy_adaptation(c: &mut Criterion) {
                     use_parallel: true,
                     small_threshold: 1024,
                     memory_pool: None,
-                    cpu_features: cpu_features.clone(),
+                    cpu_features: &cpu_features.clone(),
                 };
                 b.iter_with_setup(
                     || create_test_data(size),
