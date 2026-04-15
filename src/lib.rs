@@ -1,4 +1,3 @@
-#![cfg_attr(feature = "nightly", feature(core_intrinsics))]
 // P0.1: Suppress warning categories that represent future cleanup work, not bugs.
 // These will be re-enabled as modules are cleaned up (P1-P3 tasks in plan.md).
 #![allow(missing_docs)] // P3.7: documentation task
