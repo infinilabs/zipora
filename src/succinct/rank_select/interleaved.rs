@@ -554,82 +554,36 @@ impl RankSelectInterleaved256 {
             .min(self.lines.len().saturating_sub(1))
     }
 
-    /// Find select position within a specific line
+    /// Find select position within a specific line using C++ reference logic
+    #[inline(always)]
     fn select1_within_line(&self, line_idx: usize, remaining_ones: usize) -> Result<usize> {
-        if line_idx >= self.lines.len() {
-            return Err(ZiporaError::invalid_data(
-                "Line index out of bounds".to_string(),
-            ));
-        }
+        // remaining_ones is 1-indexed
+        let target_rank0 = remaining_ones - 1; // 0-indexed for comparisons and select_in_word
 
-        let line = &self.lines[line_idx];
+        let line = unsafe { self.lines.get_unchecked(line_idx) };
         let line_start_bit = line_idx * LINE_BITS;
 
-        // Search within the line for the remaining set bits
-        let mut found_ones = 0;
+        let rlev2 = &line.rlev2;
+        let bit64 = &line.bit64;
 
-        for word_idx in 0..WORDS_PER_LINE {
-            let _word_start_rank = line.rlev2[word_idx] as usize;
-            let word = line.bit64[word_idx];
-            let word_popcount = line.popcount_hardware_accelerated(word) as usize;
-
-            if found_ones + word_popcount >= remaining_ones {
-                // The target bit is in this word
-                let needed_in_word = remaining_ones - found_ones;
-                let bit_pos = self.uint_select1_bmi2(word, needed_in_word + 1); // +1 for 1-indexed rank
-
-                if bit_pos < BITS_PER_WORD {
-                    return Ok(line_start_bit + word_idx * BITS_PER_WORD + bit_pos);
-                }
+        if target_rank0 < rlev2[2] as usize {
+            if target_rank0 < rlev2[1] as usize {
+                // rlev2[0] is always 0 implicitly
+                let bit_in_word = crate::algorithms::bit_ops::select_in_word(bit64[0], target_rank0);
+                Ok(line_start_bit + bit_in_word)
+            } else {
+                let bit_in_word = crate::algorithms::bit_ops::select_in_word(bit64[1], target_rank0 - rlev2[1] as usize);
+                Ok(line_start_bit + 64 + bit_in_word)
             }
-
-            found_ones += word_popcount;
-        }
-
-        Err(ZiporaError::invalid_data(
-            "Select position not found in line".to_string(),
-        ))
-    }
-
-    /// Find the k-th set bit within a 64-bit word using referenced project algorithm
-    #[inline]
-    fn select_u64_within_word(&self, word: u64, k: usize) -> usize {
-        self.uint_select1_bmi2(word, k)
-    }
-
-    /// BMI2-optimized UintSelect1 following referenced project pattern
-    #[inline(always)]
-    fn uint_select1_bmi2(&self, word: u64, rank: usize) -> usize {
-        if rank == 0 || rank > word.count_ones() as usize {
-            return BITS_PER_WORD;
-        }
-
-        #[cfg(target_arch = "x86_64")]
-        {
-            #[cfg(not(test))]
-            {
-                if get_cpu_features().has_bmi2 {
-                    // SAFETY: BMI2 availability verified by has_bmi2 check above
-                    unsafe {
-                        use std::arch::x86_64::{_pdep_u64, _tzcnt_u64};
-                        // referenced project pattern: PDEP + CTZ for fast select
-                        return _tzcnt_u64(_pdep_u64(1u64 << (rank - 1), word)) as usize;
-                    }
-                }
+        } else {
+            if target_rank0 < rlev2[3] as usize {
+                let bit_in_word = crate::algorithms::bit_ops::select_in_word(bit64[2], target_rank0 - rlev2[2] as usize);
+                Ok(line_start_bit + 128 + bit_in_word)
+            } else {
+                let bit_in_word = crate::algorithms::bit_ops::select_in_word(bit64[3], target_rank0 - rlev2[3] as usize);
+                Ok(line_start_bit + 192 + bit_in_word)
             }
         }
-
-        // Fallback implementation - scan bits linearly
-        let mut count = 0;
-        for i in 0..64 {
-            if (word >> i) & 1 == 1 {
-                count += 1;
-                if count == rank {
-                    return i;
-                }
-            }
-        }
-        BITS_PER_WORD // Not found
     }
 
     //
@@ -978,7 +932,7 @@ impl RankSelectOps for RankSelectInterleaved256 {
             if rank_in_line + zeros_in_word > target_rank_in_line {
                 // Found the word containing our target
                 let rank_in_word = target_rank_in_line - rank_in_line;
-                let bit_pos = self.uint_select1_bmi2(inverted_word, rank_in_word + 1); // +1 for 1-indexed rank
+                let bit_pos = crate::algorithms::bit_ops::select_in_word(inverted_word, rank_in_word);
                 if bit_pos < BITS_PER_WORD {
                     return Ok(base_bitpos + word_idx * BITS_PER_WORD + bit_pos);
                 }

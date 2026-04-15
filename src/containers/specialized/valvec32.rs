@@ -95,7 +95,7 @@ fn get_usable_size(_ptr: *mut u8, size: usize) -> usize {
 #[cfg(feature = "nightly")]
 macro_rules! likely {
     ($e:expr) => {
-        std::intrinsics::likely($e)
+        $e
     };
 }
 
