@@ -122,40 +122,13 @@ impl InterleavedLine {
         let bit_in_word = bit_offset % BITS_PER_WORD;
 
         // CRITICAL OPTIMIZATION: Apply referenced project's direct cache access pattern
-        // Minimize arithmetic and use direct array indexing like referenced project
         let rank = self.rlev2[word_idx] as usize;
 
-        // Count bits in the partial word - optimized for referenced project pattern
-        if bit_in_word > 0 {
-            // Direct word access without intermediate variables
-            // SAFETY: Hardware features verified or caller ensures safety invariants
-            let trailing_count = unsafe {
-                // SAFETY: word_idx is bounds-checked above through bit_offset validation
-                // Also, line 126 uses self.rlev2[word_idx] which would panic if word_idx >= 4
-                // SAFETY: word_idx bounds-checked by rlev2[word_idx] access above
-                debug_assert!(word_idx < WORDS_PER_LINE, "word_idx {} >= WORDS_PER_LINE {}", word_idx, WORDS_PER_LINE);
-                let word = *self.bit64.get_unchecked(word_idx);
-
-                // Use referenced project's optimized trailing bit count pattern
-                #[cfg(target_feature = "popcnt")]
-                {
-                    use std::arch::x86_64::_popcnt64;
-                    // Create mask and count in one operation (referenced project pattern)
-                    let mask = (1u64 << bit_in_word) - 1;
-                    _popcnt64((word & mask) as i64) as usize
-                }
-                #[cfg(not(target_feature = "popcnt"))]
-                {
-                    // Fallback using optimized mask pattern
-                    let mask = (1u64 << bit_in_word) - 1;
-                    (word & mask).count_ones() as usize
-                }
-            };
-
-            rank + trailing_count
-        } else {
-            rank
-        }
+        // SAFETY: word_idx bounds-checked by modulo BITS_PER_WORD and LINE_BITS
+        let word = unsafe { *self.bit64.get_unchecked(word_idx) };
+        let mask = (1u64.wrapping_shl(bit_in_word as u32)) - 1;
+        
+        rank + (word & mask).count_ones() as usize
     }
 
     /// Count total set bits in this line
@@ -909,6 +882,7 @@ impl RankSelectOps for RankSelectInterleaved256 {
         }
 
         // Search within the found line
+
         let line_idx = lo.saturating_sub(1);
         if line_idx >= self.lines.len() {
             return Err(ZiporaError::invalid_data(
@@ -922,29 +896,28 @@ impl RankSelectOps for RankSelectInterleaved256 {
         let base_rank0 = base_bitpos - base_rank1;
         let target_rank_in_line = k - base_rank0;
 
-        // Search within words using bit inversion (referenced project pattern)
-        let mut rank_in_line = 0;
-        for word_idx in 0..WORDS_PER_LINE {
-            let word = line.bit64[word_idx];
-            let inverted_word = !word;  // CRITICAL: Invert bits for select0
-            let zeros_in_word = inverted_word.count_ones() as usize;
+        let rlev2 = &line.rlev2;
+        let bit64 = &line.bit64;
 
-            if rank_in_line + zeros_in_word > target_rank_in_line {
-                // Found the word containing our target
-                let rank_in_word = target_rank_in_line - rank_in_line;
-                let bit_pos = crate::algorithms::bit_ops::select_in_word(inverted_word, rank_in_word);
-                if bit_pos < BITS_PER_WORD {
-                    return Ok(base_bitpos + word_idx * BITS_PER_WORD + bit_pos);
-                }
+        if target_rank_in_line < 128 - rlev2[2] as usize {
+            if target_rank_in_line < 64 - rlev2[1] as usize {
+                // rlev2[0] is always 0 implicitly
+                let bit_in_word = crate::algorithms::bit_ops::select_in_word(!bit64[0], target_rank_in_line);
+                Ok(base_bitpos + bit_in_word)
+            } else {
+                let bit_in_word = crate::algorithms::bit_ops::select_in_word(!bit64[1], target_rank_in_line - (64 - rlev2[1] as usize));
+                Ok(base_bitpos + 64 + bit_in_word)
             }
-            rank_in_line += zeros_in_word;
+        } else {
+            if target_rank_in_line < 192 - rlev2[3] as usize {
+                let bit_in_word = crate::algorithms::bit_ops::select_in_word(!bit64[2], target_rank_in_line - (128 - rlev2[2] as usize));
+                Ok(base_bitpos + 128 + bit_in_word)
+            } else {
+                let bit_in_word = crate::algorithms::bit_ops::select_in_word(!bit64[3], target_rank_in_line - (192 - rlev2[3] as usize));
+                Ok(base_bitpos + 192 + bit_in_word)
+            }
         }
-
-        Err(ZiporaError::invalid_data(
-            "Select0 position not found".to_string(),
-        ))
     }
-
     #[inline]
     fn len(&self) -> usize {
         self.total_bits
