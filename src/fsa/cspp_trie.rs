@@ -10,6 +10,12 @@ pub const NIL_STATE: u32 = u32::MAX;
 pub const MAX_ZPATH: usize = 254;
 pub const INITIAL_STATE: u32 = 0;
 
+// Free list: max block size handled by fast bins (in slots).
+// Blocks larger than this go to a simple large-block list.
+const FREE_LIST_MAX_SLOTS: usize = 128;
+// Sentinel for empty free list bucket
+const FREE_LIST_NIL: u32 = u32::MAX;
+
 pub const SKIP_SLOTS: [u32; 16] = [
     1, 1, 1,           // 0, 1, 2
     2, 2, 2, 2,        // 3, 4, 5, 6
@@ -48,6 +54,26 @@ impl PatriciaNode {
     pub fn empty() -> Self {
         PatriciaNode { child: NIL_STATE }
     }
+}
+
+/// Memory pool statistics, matching C++ Patricia::MemStat.
+#[derive(Debug, Clone, Default)]
+pub struct MemStat {
+    pub fastbin: Vec<usize>,
+    pub used_size: usize,
+    pub capacity: usize,
+    pub frag_size: usize,
+    pub large_size: usize,
+    pub large_cnt: usize,
+    pub lazy_free_sum: usize,
+    pub lazy_free_cnt: usize,
+}
+
+/// Item deferred for lazy reclamation (Phase C.2).
+#[derive(Clone, Copy)]
+struct LazyFreeItem {
+    slot: u32,
+    slots: u32,
 }
 
 pub struct NodeView<'a> {
@@ -343,6 +369,12 @@ pub struct CsppTrie {
     pub n_nodes: usize,
     pub valsize: usize,
     pub max_word_len: usize,
+    // Phase C: size-bucketed free list (intrusive linked list per slot-count bucket)
+    fast_bins: Vec<u32>,        // fast_bins[slots-1] = head of free list for that slot count
+    large_list: Vec<(u32, u32)>, // (slot, n_slots) for blocks > FREE_LIST_MAX_SLOTS
+    frag_size: usize,           // total bytes in all free lists
+    // Phase C.2: lazy free list for reader safety
+    lazy_free_list: Vec<LazyFreeItem>,
 }
 
 impl CsppTrie {
@@ -353,6 +385,10 @@ impl CsppTrie {
             n_nodes: 1, // root
             valsize,
             max_word_len: 0,
+            fast_bins: vec![FREE_LIST_NIL; FREE_LIST_MAX_SLOTS],
+            large_list: Vec::new(),
+            frag_size: 0,
+            lazy_free_list: Vec::new(),
         };
         trie.init_root();
         trie
@@ -457,18 +493,86 @@ impl CsppTrie {
         self.lookup(key).is_some()
     }
 
-    // ========== Phase B: Single-Thread Insert ==========
+    // ========== Phase C: Memory Pool ==========
 
+    /// Allocate `byte_size` bytes from the mempool.
+    /// Checks size-bucketed free list first, then bump-allocates.
     fn alloc_node(&mut self, byte_size: usize) -> u32 {
         let slots = (byte_size + 3) / 4;
+
+        // Fast path: check free list for this slot count
+        if slots > 0 && slots <= FREE_LIST_MAX_SLOTS {
+            let bin_idx = slots - 1;
+            let head = self.fast_bins[bin_idx];
+            if head != FREE_LIST_NIL {
+                // Pop from intrusive linked list
+                let next = unsafe { self.mempool[head as usize].child };
+                self.fast_bins[bin_idx] = next;
+                self.frag_size -= slots * ALIGN_SIZE;
+                return head;
+            }
+        } else if slots > FREE_LIST_MAX_SLOTS {
+            // Search large block list for first-fit
+            if let Some(idx) = self.large_list.iter().position(|&(_, s)| s as usize >= slots) {
+                let (pos, block_slots) = self.large_list.swap_remove(idx);
+                self.frag_size -= block_slots as usize * ALIGN_SIZE;
+                // Split remainder back to free list if leftover is significant
+                let leftover = block_slots as usize - slots;
+                if leftover > 0 {
+                    self.free_node(pos + slots as u32, leftover * ALIGN_SIZE);
+                }
+                return pos;
+            }
+        }
+
+        // Slow path: bump allocation
         let pos = self.mempool.len() as u32;
         self.mempool.resize(self.mempool.len() + slots, PatriciaNode::empty());
         pos
     }
 
-    fn free_node(&mut self, _slot: u32, _byte_size: usize) {
-        // No-op for Phase B (single-thread bump allocator).
-        // Memory reclaimed when CsppTrie is dropped.
+    /// Free `byte_size` bytes starting at `slot` back to the free list.
+    fn free_node(&mut self, slot: u32, byte_size: usize) {
+        let slots = (byte_size + 3) / 4;
+        if slots == 0 { return; }
+
+        // Shrink-from-end optimization
+        if slot as usize + slots == self.mempool.len() {
+            self.mempool.truncate(slot as usize);
+            return;
+        }
+
+        if slots <= FREE_LIST_MAX_SLOTS {
+            // Push to size-bucketed free list (intrusive: store next pointer in first slot)
+            let bin_idx = slots - 1;
+            unsafe {
+                (*self.mempool.as_mut_ptr().add(slot as usize)).child = self.fast_bins[bin_idx];
+            }
+            self.fast_bins[bin_idx] = slot;
+        } else {
+            // Large block list
+            self.large_list.push((slot, slots as u32));
+        }
+        self.frag_size += slots * ALIGN_SIZE;
+    }
+
+    /// Defer freeing a node until all readers have finished (EBR).
+    /// For `SingleThreadStrict` mode, call `free_node` directly instead.
+    pub fn free_node_deferred_pub(&mut self, slot: u32, byte_size: usize) {
+        self.free_node_deferred(slot, byte_size);
+    }
+
+    fn free_node_deferred(&mut self, slot: u32, byte_size: usize) {
+        let slots = ((byte_size + 3) / 4) as u32;
+        self.lazy_free_list.push(LazyFreeItem { slot, slots });
+    }
+
+    /// Reclaim all deferred free nodes. Call when no readers are active.
+    pub fn reclaim_lazy_frees(&mut self) {
+        let items: Vec<_> = self.lazy_free_list.drain(..).collect();
+        for item in items {
+            self.free_node(item.slot, item.slots as usize * ALIGN_SIZE);
+        }
     }
 
     fn realloc_node(&mut self, old_slot: u32, old_size: usize, new_size: usize) -> u32 {
@@ -490,6 +594,39 @@ impl CsppTrie {
         }
         self.free_node(old_slot, old_size);
         new_slot
+    }
+
+    /// Return memory statistics matching C++ Patricia::MemStat.
+    pub fn mem_get_stat(&self) -> MemStat {
+        let mut fastbin = Vec::with_capacity(FREE_LIST_MAX_SLOTS);
+        for bin_idx in 0..FREE_LIST_MAX_SLOTS {
+            let mut count = 0;
+            let mut head = self.fast_bins[bin_idx];
+            while head != FREE_LIST_NIL {
+                count += 1;
+                head = unsafe { self.mempool[head as usize].child };
+            }
+            fastbin.push(count);
+        }
+
+        let large_size: usize = self.large_list.iter().map(|&(_, s)| s as usize * ALIGN_SIZE).sum();
+        let lazy_sum: usize = self.lazy_free_list.iter().map(|i| i.slots as usize * ALIGN_SIZE).sum();
+
+        MemStat {
+            fastbin,
+            used_size: self.mempool.len() * ALIGN_SIZE,
+            capacity: self.mempool.capacity() * ALIGN_SIZE,
+            frag_size: self.frag_size,
+            large_size,
+            large_cnt: self.large_list.len(),
+            lazy_free_sum: lazy_sum,
+            lazy_free_cnt: self.lazy_free_list.len(),
+        }
+    }
+
+    /// Total fragmented (reclaimable) bytes across all free lists.
+    pub fn mem_frag_size(&self) -> usize {
+        self.frag_size
     }
 
     /// Create a chain of nodes for the remaining key suffix.

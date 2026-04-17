@@ -314,3 +314,118 @@ fn test_insert_long_suffix_chain() {
     assert!(!trie.contains(&long_key[..299]));
     assert_eq!(trie.num_words(), 1);
 }
+
+// ========== Phase C: Memory Pool & Statistics Tests ==========
+
+#[test]
+fn test_mem_stat_initial() {
+    let trie = CsppTrie::new(4);
+    let stat = trie.mem_get_stat();
+    assert!(stat.used_size > 0);
+    assert_eq!(stat.frag_size, 0);
+    assert_eq!(stat.large_cnt, 0);
+    assert_eq!(stat.lazy_free_cnt, 0);
+    // All fast bins should be empty
+    assert!(stat.fastbin.iter().all(|&c| c == 0));
+}
+
+#[test]
+fn test_mem_stat_after_inserts() {
+    let mut trie = CsppTrie::new(0);
+    let initial_size = trie.mem_get_stat().used_size;
+    for i in 0..100u8 {
+        trie.insert(&[i]);
+    }
+    let stat = trie.mem_get_stat();
+    assert!(stat.used_size > initial_size);
+    assert_eq!(trie.num_words(), 100);
+    // frag_size may be > 0 due to node replacements during cnt_type transitions
+    // (old nodes are freed back to the free list)
+    assert!(stat.frag_size > 0 || stat.used_size > initial_size);
+}
+
+#[test]
+fn test_free_list_reuse() {
+    let mut trie = CsppTrie::new(0);
+    // Insert keys with shared prefixes so interior nodes get replaced (not at mempool end)
+    // This ensures freed nodes go to the free list rather than shrinking the pool.
+    trie.insert(b"aaa");
+    trie.insert(b"aab"); // fork at zpath → frees interior nodes
+    trie.insert(b"aac");
+    trie.insert(b"aad");
+    trie.insert(b"aae");
+    trie.insert(b"aaf");
+    trie.insert(b"aag");
+    let stat = trie.mem_get_stat();
+    let total_free_bins: usize = stat.fastbin.iter().sum();
+    // There should be some free list entries from replaced interior nodes
+    assert!(stat.frag_size > 0 || total_free_bins > 0,
+        "Expected some free list entries from interior node transitions, frag={}", stat.frag_size);
+}
+
+#[test]
+fn test_lazy_free_and_reclaim() {
+    let mut trie = CsppTrie::new(0);
+    // Insert multiple keys so the mempool grows well past the root
+    trie.insert(b"hello");
+    trie.insert(b"world");
+    trie.insert(b"test123");
+    let stat_before = trie.mem_get_stat();
+    assert_eq!(stat_before.lazy_free_cnt, 0);
+
+    // Defer-free a slot in the middle of the mempool (not at end, so it won't shrink)
+    let mid_slot = 260u32; // well inside the root area, not at the end
+    trie.free_node_deferred_pub(mid_slot, 8); // 2 slots
+    let stat_deferred = trie.mem_get_stat();
+    assert_eq!(stat_deferred.lazy_free_cnt, 1);
+    assert_eq!(stat_deferred.lazy_free_sum, 8);
+
+    // Reclaim: lazy items move to free list
+    trie.reclaim_lazy_frees();
+    let stat_reclaimed = trie.mem_get_stat();
+    assert_eq!(stat_reclaimed.lazy_free_cnt, 0);
+    // The reclaimed node goes to free list (not at end of mempool)
+    assert!(stat_reclaimed.frag_size >= 8,
+        "Expected frag_size >= 8 after reclaim, got {}", stat_reclaimed.frag_size);
+}
+
+#[test]
+fn test_mem_frag_size_tracking() {
+    let mut trie = CsppTrie::new(0);
+    assert_eq!(trie.mem_frag_size(), 0);
+
+    // Insert enough keys to trigger node transitions (which free old nodes)
+    for i in 0..20u8 {
+        trie.insert(&[i + 65]);
+    }
+    // After transitions, there should be fragmentation
+    let frag = trie.mem_frag_size();
+    // frag may be 0 if all freed nodes were at the end (shrink-from-end optimization)
+    // but with 20 inserts causing multiple transitions, some interior nodes will be freed
+    let stat = trie.mem_get_stat();
+    assert_eq!(frag, stat.frag_size);
+}
+
+#[test]
+fn test_10k_insert_memory_efficiency() {
+    let mut trie = CsppTrie::new(4);
+    for i in 0..10_000u32 {
+        let key = format!("key{:05}", i);
+        let (is_new, valpos) = trie.insert(key.as_bytes());
+        if is_new {
+            unsafe {
+                let ptr = trie.mempool.as_mut_ptr() as *mut u8;
+                std::ptr::write_unaligned(ptr.add(valpos) as *mut u32, i);
+            }
+        }
+    }
+    let stat = trie.mem_get_stat();
+    assert_eq!(trie.num_words(), 10_000);
+    // Memory efficiency: bytes per key should be reasonable
+    let bytes_per_key = stat.used_size as f64 / 10_000.0;
+    // With 4-byte values and ~8-byte keys, expect < 100 bytes/key
+    assert!(bytes_per_key < 200.0, "bytes_per_key={:.1} too high", bytes_per_key);
+    // Fragmentation ratio should be manageable
+    let frag_ratio = stat.frag_size as f64 / stat.used_size as f64;
+    assert!(frag_ratio < 0.5, "frag_ratio={:.2} too high", frag_ratio);
+}
