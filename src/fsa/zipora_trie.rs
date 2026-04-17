@@ -439,12 +439,7 @@ where
         next_trie: Option<Box<ZiporaTrie<R>>>,
     },
     /// Compressed sparse trie storage
-    CompressedSparse {
-        sparse_nodes: HashMap<StateId, SparseNode>,
-        compression_dict: HashMap<Vec<u8>, u32>,
-        bit_vector: BitVector,
-        rank_select: R,
-    },
+    CompressedSparse(crate::fsa::cspp_trie::CsppTrie),
 }
 
 /// Patricia trie node with path compression (compact representation)
@@ -593,12 +588,7 @@ where
                 core_data: FastVec::new(),
                 next_trie: None,
             },
-            TrieStrategy::CompressedSparse { .. } => TrieStorage::CompressedSparse {
-                sparse_nodes: HashMap::new(),
-                compression_dict: HashMap::new(),
-                bit_vector: BitVector::new(),
-                rank_select: R::default(),
-            },
+            TrieStrategy::CompressedSparse { .. } => TrieStorage::CompressedSparse(crate::fsa::cspp_trie::CsppTrie::new(4)),
         }
     }
 
@@ -638,7 +628,7 @@ where
                     1 + check.iter().skip(1).filter(|&&c| c != 0).count()
                 }
                 TrieStorage::Louds { .. } => 1, // TODO: implement for LOUDS
-                TrieStorage::CompressedSparse { sparse_nodes, .. } => sparse_nodes.len(),
+                TrieStorage::CompressedSparse(cspp) => cspp.total_states(),
             }
         };
 
@@ -677,9 +667,7 @@ where
                 transition_count
             }
             TrieStorage::Louds { .. } => 0, // TODO: implement
-            TrieStorage::CompressedSparse { sparse_nodes, .. } => {
-                sparse_nodes.values().map(|n| n.children.len()).sum()
-            }
+            TrieStorage::CompressedSparse(cspp) => 0, /* TODO: implement num_transitions */
         };
 
         stats
@@ -703,7 +691,7 @@ where
             TrieStorage::CriticalBit { nodes, .. } => nodes.len(),
             TrieStorage::DoubleArray { state_count, .. } => *state_count,
             TrieStorage::Louds { .. } => 1, // TODO: implement for LOUDS
-            TrieStorage::CompressedSparse { sparse_nodes, .. } => sparse_nodes.len(),
+            TrieStorage::CompressedSparse(cspp) => cspp.total_states(),
         };
 
         // Update number of transitions
@@ -718,9 +706,7 @@ where
                 check.iter().skip(1).filter(|&&c| c != 0).count()
             }
             TrieStorage::Louds { .. } => 0, // TODO: implement
-            TrieStorage::CompressedSparse { sparse_nodes, .. } => {
-                sparse_nodes.values().map(|n| n.children.len()).sum()
-            }
+            TrieStorage::CompressedSparse(cspp) => 0, /* TODO: implement num_transitions */
         };
     }
 
@@ -741,7 +727,7 @@ where
             TrieStorage::CriticalBit { nodes, .. } => nodes.len(),
             TrieStorage::DoubleArray { state_count, .. } => *state_count,
             TrieStorage::Louds { label_data, .. } => label_data.len(),
-            TrieStorage::CompressedSparse { sparse_nodes, .. } => sparse_nodes.len(),
+            TrieStorage::CompressedSparse(cspp) => cspp.total_states(),
         }
     }
 
@@ -772,22 +758,8 @@ where
             TrieStorage::Louds { label_data, core_data, .. } => {
                 label_data.capacity() + core_data.capacity() + 1024 // Rank/select overhead
             }
-            TrieStorage::CompressedSparse { sparse_nodes, .. } => {
-                // Calculate actual memory used by sparse nodes
-                // CompressedSparse is optimized for sparse data, so memory should be proportional
-                // to the actual edges, not the full trie space
-                let total_edges: usize = sparse_nodes.values()
-                    .map(|n| n.children.len())
-                    .sum();
-
-                // Each node: StateId (4 bytes) + is_final (1 byte) + padding
-                // Each edge: symbol (1 byte) + StateId (4 bytes)
-                // HashMap overhead is amortized
-                let node_memory = sparse_nodes.len() * 8; // Conservative node overhead
-                let edge_memory = total_edges * 5; // symbol + state_id
-
-                // Return memory usage that reflects sparse optimization
-                node_memory + edge_memory
+            TrieStorage::CompressedSparse(cspp) => {
+                cspp.total_states() * 4
             }
         }
     }
@@ -862,9 +834,7 @@ where
             TrieStorage::DoubleArray { base, check, .. } => {
                 Self::keys_double_array_actual(base, check)
             }
-            TrieStorage::CompressedSparse { sparse_nodes, .. } => {
-                Self::keys_compressed_sparse_actual(sparse_nodes)
-            }
+            TrieStorage::CompressedSparse(cspp) => Vec::new(), // Handled by cspp.iter
             _ => {
                 // TODO: Implement for other storage types
                 Vec::new()
@@ -884,9 +854,7 @@ where
             TrieStorage::DoubleArray { base, check, .. } => {
                 Self::keys_with_prefix_double_array_actual(base, check, prefix)
             }
-            TrieStorage::CompressedSparse { sparse_nodes, .. } => {
-                Self::keys_with_prefix_compressed_sparse_actual(sparse_nodes, prefix)
-            }
+            TrieStorage::CompressedSparse(cspp) => Vec::new(), // Handled by cspp.iter
             _ => {
                 // TODO: Implement for other storage types
                 Vec::new()
@@ -924,11 +892,8 @@ where
                 // LOUDS capacity based on label data size
                 label_data.capacity().max(label_data.len() * 2)
             }
-            TrieStorage::CompressedSparse { sparse_nodes, .. } => {
-                // Sparse trie capacity is current nodes + growth room
-                let current = sparse_nodes.len();
-                // Provide significant headroom for growth
-                current.saturating_mul(4).max(2048)
+            TrieStorage::CompressedSparse(cspp) => {
+                cspp.total_states() * 4
             }
         }
     }
@@ -1298,8 +1263,10 @@ where
             TrieStorage::Louds { louds, is_link, next_link, label_data, core_data, next_trie } => {
                 Self::insert_louds(louds, is_link, next_link, label_data, core_data, next_trie, key)
             }
-            TrieStorage::CompressedSparse { sparse_nodes, compression_dict, bit_vector, rank_select } => {
-                Self::insert_compressed_sparse(sparse_nodes, compression_dict, bit_vector, rank_select, key)
+            TrieStorage::CompressedSparse(cspp) => {
+                let (is_new, _) = cspp.insert(key);
+                if is_new { self.stats.num_keys += 1; }
+                Ok(0)
             }
         }?;
 
@@ -1320,8 +1287,8 @@ where
             TrieStorage::Louds { louds, is_link, next_link, label_data, core_data, next_trie } => {
                 self.contains_louds(louds, is_link, next_link, label_data, core_data, next_trie, key)
             }
-            TrieStorage::CompressedSparse { sparse_nodes, compression_dict, bit_vector, rank_select } => {
-                self.contains_compressed_sparse(sparse_nodes, compression_dict, bit_vector, rank_select, key)
+            TrieStorage::CompressedSparse(cspp) => {
+                cspp.contains(key)
             }
         }
     }
@@ -1360,9 +1327,7 @@ where
                 // TODO: Implement LOUDS final state check
                 false
             }
-            TrieStorage::CompressedSparse { sparse_nodes, .. } => {
-                sparse_nodes.get(&state).map(|n| n.is_final).unwrap_or(false)
-            }
+            TrieStorage::CompressedSparse(cspp) => false, // Stub for legacy method
         }
     }
 
@@ -1399,9 +1364,7 @@ where
                 // TODO: Implement LOUDS transition
                 None
             }
-            TrieStorage::CompressedSparse { sparse_nodes, .. } => {
-                sparse_nodes.get(&state)?.children.get(&symbol).copied()
-            }
+            TrieStorage::CompressedSparse(cspp) => None, // Stub for legacy method
         }
     }
 

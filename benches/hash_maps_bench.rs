@@ -55,7 +55,7 @@ fn bench_integer_insertion(c: &mut Criterion) {
         // GoldHashMap (existing)
         group.bench_with_input(BenchmarkId::new("GoldHashMap", size), &size, |b, &size| {
             b.iter(|| {
-                let mut map = GoldHashMap::with_capacity(size * 2).unwrap(); // Extra capacity to avoid full map
+                let mut map = GoldHashMap::new().unwrap(); // Extra capacity to avoid full map
                 for i in 0..size {
                     map.insert(black_box(i), black_box(i * 2)).unwrap();
                 }
@@ -109,7 +109,7 @@ fn bench_integer_lookup(c: &mut Criterion) {
         }
         
         // GoldHashMap
-        let mut gold_map = GoldHashMap::with_capacity(size * 2).unwrap();
+        let mut gold_map = GoldHashMap::new().unwrap();
         for &key in &keys {
             gold_map.insert(key, key * 2).unwrap();
         }
@@ -195,7 +195,7 @@ fn bench_string_insertion(c: &mut Criterion) {
         // GoldHashMap
         group.bench_with_input(BenchmarkId::new("GoldHashMap", size), &size, |b, _| {
             b.iter(|| {
-                let mut map = GoldHashMap::with_capacity(size * 2).unwrap();
+                let mut map = GoldHashMap::new().unwrap();
                 for (i, key) in keys.iter().enumerate() {
                     map.insert(black_box(key.clone()), black_box(i)).unwrap();
                 }
@@ -244,7 +244,7 @@ fn bench_string_lookup(c: &mut Criterion) {
 
         // Prepare maps
         let mut std_map = HashMap::with_capacity(size);
-        let mut gold_map = GoldHashMap::with_capacity(size * 2).unwrap();
+        let mut gold_map = GoldHashMap::new().unwrap();
         let mut golden_map = GoldenRatioHashMap::with_capacity(size).unwrap();
         let mut string_map = StringOptimizedHashMap::with_capacity(size).unwrap();
 
