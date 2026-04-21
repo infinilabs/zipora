@@ -339,11 +339,6 @@ impl SimdMemOps {
         if src.len() >= self.cache_config.prefetch_distance && self.cache_config.enable_prefetch {
             // Prefetch source data ahead
             self.prefetch_range(src);
-            
-            // Small delay to let prefetch take effect
-            if src.len() >= MEDIUM_COPY_THRESHOLD {
-                std::hint::spin_loop();
-            }
         }
 
         // Use cache-aligned copy if beneficial
