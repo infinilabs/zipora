@@ -1081,14 +1081,10 @@ impl<T: fmt::Debug> fmt::Debug for ValVec32<T> {
 
 impl<T: Clone> Clone for ValVec32<T> {
     fn clone(&self) -> Self {
-        // Graceful fallback: try full capacity, then half, then min capacity
         let mut new_vec = Self::with_capacity(self.len)
-            .or_else(|_| Self::with_capacity(self.len / 2))
-            .or_else(|_| Self::with_capacity(1.max(self.len / 4)))
-            .unwrap_or_else(|_| Self::new());
+            .expect("Memory allocation failed during clone");
 
-        // Use bulk copy for better performance
-        if self.len > 0 && new_vec.capacity >= self.len {
+        if self.len > 0 {
             // SAFETY: i < self.len, offsets within valid ranges for both vectors
             unsafe {
                 for i in 0..(self.len as usize) {
@@ -1096,17 +1092,6 @@ impl<T: Clone> Clone for ValVec32<T> {
                     ptr::write(new_vec.ptr.as_ptr().add(i), value);
                 }
                 new_vec.len = self.len;
-            }
-        } else if self.len > 0 {
-            // Partial clone if we couldn't get full capacity
-            let max_items = new_vec.capacity.min(self.len);
-            // SAFETY: i < max_items <= both capacity and len, offsets within valid ranges
-            unsafe {
-                for i in 0..(max_items as usize) {
-                    let value = (*self.ptr.as_ptr().add(i)).clone();
-                    ptr::write(new_vec.ptr.as_ptr().add(i), value);
-                }
-                new_vec.len = max_items;
             }
         }
 
@@ -1292,6 +1277,40 @@ mod tests {
         vec2.push(42)?;
         assert_eq!(vec1, vec2);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_clone_preserves_exact_length() -> Result<()> {
+        for &n in &[0, 1, 7, 64, 255, 1000, 10_000] {
+            let mut vec = ValVec32::<u32>::new();
+            for i in 0..n {
+                vec.push(i)?;
+            }
+
+            let cloned = vec.clone();
+            assert_eq!(cloned.len(), vec.len(),
+                "clone must preserve exact length for n={}", n);
+            assert_eq!(cloned.as_slice(), vec.as_slice(),
+                "clone must preserve all elements for n={}", n);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_clone_independence() -> Result<()> {
+        let mut vec = ValVec32::<i32>::new();
+        for i in 0..500 {
+            vec.push(i)?;
+        }
+
+        let mut cloned = vec.clone();
+        cloned.push(999)?;
+
+        assert_eq!(vec.len(), 500);
+        assert_eq!(cloned.len(), 501);
+        assert_eq!(cloned[500usize], 999);
+        assert_eq!(vec.as_slice(), &cloned.as_slice()[..500]);
         Ok(())
     }
 

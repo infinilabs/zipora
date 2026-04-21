@@ -63,7 +63,7 @@ struct Rank9Entry {
 /// ```
 pub struct Rank9 {
     /// Raw bitvector words.
-    data: Vec<u64>,
+    bv: BitVector,
     /// Rank9 index: one entry per 512-bit block, plus sentinel.
     index: Vec<Rank9Entry>,
     /// Total number of valid bits.
@@ -76,8 +76,7 @@ impl Rank9 {
     /// Build from a BitVector.
     pub fn new(bv: BitVector) -> Result<Self> {
         let len_bits = bv.len();
-        let data = bv.blocks().to_vec();
-        let num_blocks = (data.len() + WORDS_PER_BLOCK - 1) / WORDS_PER_BLOCK;
+        let num_blocks = (bv.blocks().len() + WORDS_PER_BLOCK - 1) / WORDS_PER_BLOCK;
 
         let mut index = Vec::with_capacity(num_blocks + 1);
         let mut cumul: u64 = 0;
@@ -89,7 +88,7 @@ impl Rank9 {
 
             for k in 0..WORDS_PER_BLOCK {
                 let word_idx = start_word + k;
-                let word = if word_idx < data.len() { data[word_idx] } else { 0 };
+                let word = if word_idx < bv.blocks().len() { bv.blocks()[word_idx] } else { 0 };
                 block_cumul += word.count_ones() as u64;
                 // Store cumulative count after word k in sub-block position k
                 // (positions 0..6 are stored; position 7 is implied)
@@ -106,7 +105,7 @@ impl Rank9 {
         index.push(Rank9Entry { base: cumul, sub: 0 });
 
         Ok(Self {
-            data,
+            bv,
             index,
             len_bits,
             total_ones: cumul as usize,
@@ -135,9 +134,9 @@ impl Rank9 {
 
         // Add popcount of partial word
         let global_word = block * WORDS_PER_BLOCK + word_in_block;
-        if global_word < self.data.len() && bit_in_word > 0 {
+        if global_word < self.bv.blocks().len() && bit_in_word > 0 {
             let mask = (1u64 << bit_in_word) - 1;
-            rank += (self.data[global_word] & mask).count_ones() as usize;
+            rank += (self.bv.blocks()[global_word] & mask).count_ones() as usize;
         }
 
         rank
@@ -187,8 +186,8 @@ impl Rank9 {
         }
 
         let global_word = start_word + word_offset;
-        if global_word < self.data.len() {
-            let word = self.data[global_word];
+        if global_word < self.bv.blocks().len() {
+            let word = self.bv.blocks()[global_word];
             let bit_pos = select_in_word(word, remaining as usize);
             Ok(global_word * 64 + bit_pos)
         } else {
@@ -196,9 +195,70 @@ impl Rank9 {
         }
     }
 
+    /// Select0 via binary search on blocks.
+    pub fn select0_fast(&self, k: usize) -> Result<usize> {
+        let total_zeros = self.len_bits - self.total_ones;
+        if k >= total_zeros {
+            return Err(ZiporaError::invalid_data(format!(
+                "select0({}) out of range (total_zeros={})", k, total_zeros)));
+        }
+
+        let target = k as u64;
+
+        let num_blocks = self.index.len() - 1;
+        let mut lo = 0usize;
+        let mut hi = num_blocks;
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            let zeros_before = ((mid + 1) * BITS_PER_BLOCK) as u64 - self.index[mid + 1].base;
+            if zeros_before <= target {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+
+        let block = lo;
+        let entry = &self.index[block];
+        let block_start_bit = (block * BITS_PER_BLOCK) as u64;
+        let zeros_before_block = block_start_bit - entry.base;
+        let mut remaining = target - zeros_before_block;
+        let start_word = block * WORDS_PER_BLOCK;
+
+        // Scan sub-blocks to find the word within the block
+        let mut word_offset = 0usize;
+        for j in 0..7 {
+            let sub_ones = (entry.sub >> (j * 9)) & 0x1FF;
+            let sub_bits = ((j + 1) * 64) as u64;
+            let sub_zeros = sub_bits - sub_ones;
+            
+            if sub_zeros > remaining {
+                break;
+            }
+            word_offset = j + 1;
+        }
+
+        // Adjust remaining by sub-block zeros before this word
+        if word_offset > 0 {
+            let sub_ones_before = (entry.sub >> ((word_offset - 1) * 9)) & 0x1FF;
+            let sub_bits_before = (word_offset * 64) as u64;
+            let sub_zeros_before = sub_bits_before - sub_ones_before;
+            remaining -= sub_zeros_before;
+        }
+
+        let global_word = start_word + word_offset;
+        if global_word < self.bv.blocks().len() {
+            let word = !self.bv.blocks()[global_word]; // Invert word for select0
+            let bit_pos = select_in_word(word, remaining as usize);
+            Ok(global_word * 64 + bit_pos)
+        } else {
+            Err(ZiporaError::invalid_data("select0 internal error: word out of range"))
+        }
+    }
+
     /// Memory usage in bytes.
     pub fn mem_size(&self) -> usize {
-        self.data.len() * 8 + self.index.len() * std::mem::size_of::<Rank9Entry>()
+        self.bv.blocks().len() * 8 + self.index.len() * std::mem::size_of::<Rank9Entry>()
     }
 }
 
@@ -213,24 +273,7 @@ impl RankSelectOps for Rank9 {
 
     fn select1(&self, k: usize) -> Result<usize> { self.select1_fast(k) }
 
-    fn select0(&self, k: usize) -> Result<usize> {
-        let total_zeros = self.len_bits - self.total_ones;
-        if k >= total_zeros {
-            return Err(ZiporaError::invalid_data("select0 out of range"));
-        }
-        // Binary search using rank0
-        let mut lo = 0usize;
-        let mut hi = self.len_bits;
-        while lo < hi {
-            let mid = (lo + hi) / 2;
-            if self.rank0(mid) <= k {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-        if lo > 0 { Ok(lo - 1) } else { Ok(0) }
-    }
+    fn select0(&self, k: usize) -> Result<usize> { self.select0_fast(k) }
 
     fn len(&self) -> usize { self.len_bits }
     fn count_ones(&self) -> usize { self.total_ones }
@@ -239,8 +282,8 @@ impl RankSelectOps for Rank9 {
         if index >= self.len_bits { return None; }
         let word_idx = index / 64;
         let bit_idx = index % 64;
-        if word_idx < self.data.len() {
-            Some((self.data[word_idx] >> bit_idx) & 1 == 1)
+        if word_idx < self.bv.blocks().len() {
+            Some((self.bv.blocks()[word_idx] >> bit_idx) & 1 == 1)
         } else {
             Some(false)
         }
@@ -248,7 +291,7 @@ impl RankSelectOps for Rank9 {
 
     fn space_overhead_percent(&self) -> f64 {
         if self.len_bits == 0 { return 0.0; }
-        let data_bytes = self.data.len() * 8;
+        let data_bytes = self.bv.blocks().len() * 8;
         let index_bytes = self.index.len() * std::mem::size_of::<Rank9Entry>();
         (index_bytes as f64 / data_bytes as f64) * 100.0
     }
@@ -434,6 +477,65 @@ mod tests {
         for k in (0..total_zeros).step_by(total_zeros / 5 + 1) {
             let pos = r9.select0(k).unwrap();
             assert_eq!(r9.get(pos), Some(false), "select0({}) = {} is not a zero bit", k, pos);
+        }
+    }
+
+    #[test]
+    fn test_select0_exhaustive_block_crossing() {
+        let pattern: Vec<bool> = (0..2000).map(|i| i % 5 == 0).collect();
+        let r9 = Rank9::new(make_bv(&pattern)).unwrap();
+        let total_zeros = r9.len() - r9.count_ones();
+
+        for k in 0..total_zeros {
+            let pos = r9.select0(k).unwrap();
+            assert_eq!(r9.get(pos), Some(false),
+                "select0({}) = {} is not a zero bit", k, pos);
+            assert_eq!(r9.rank0(pos), k,
+                "rank0(select0({})) != {}", k, k);
+        }
+        assert!(r9.select0(total_zeros).is_err());
+    }
+
+    #[test]
+    fn test_select0_select1_roundtrip_large() {
+        let pattern: Vec<bool> = (0..10000).map(|i| (i * 7 + 3) % 11 < 4).collect();
+        let r9 = Rank9::new(make_bv(&pattern)).unwrap();
+
+        let total_ones = r9.count_ones();
+        let total_zeros = r9.len() - total_ones;
+
+        for k in (0..total_ones).step_by(total_ones / 50 + 1) {
+            let pos = r9.select1(k).unwrap();
+            assert_eq!(r9.rank1(pos), k);
+            assert_eq!(r9.get(pos), Some(true));
+        }
+
+        for k in (0..total_zeros).step_by(total_zeros / 50 + 1) {
+            let pos = r9.select0(k).unwrap();
+            assert_eq!(r9.rank0(pos), k);
+            assert_eq!(r9.get(pos), Some(false));
+        }
+    }
+
+    #[test]
+    fn test_select0_all_zeros() {
+        let bv = BitVector::with_size(1024, false).unwrap();
+        let r9 = Rank9::new(bv).unwrap();
+        for k in 0..1024 {
+            assert_eq!(r9.select0(k).unwrap(), k);
+        }
+    }
+
+    #[test]
+    fn test_select0_sparse_ones() {
+        let pattern: Vec<bool> = (0..5000).map(|i| i % 500 == 0).collect();
+        let r9 = Rank9::new(make_bv(&pattern)).unwrap();
+        let total_zeros = r9.len() - r9.count_ones();
+
+        for k in (0..total_zeros).step_by(total_zeros / 20 + 1) {
+            let pos = r9.select0(k).unwrap();
+            assert_eq!(r9.get(pos), Some(false));
+            assert_eq!(r9.rank0(pos), k);
         }
     }
 

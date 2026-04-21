@@ -152,7 +152,7 @@ impl RadixSort {
             return Ok(());
         }
 
-        self.sort_bytes_msd(data, 0)?;
+        self.sort_bytes_msd(data.as_mut_slice(), 0)?;
 
         let elapsed = start_time.elapsed();
         let total_bytes: usize = data.iter().map(|v| v.len()).sum();
@@ -358,31 +358,49 @@ impl RadixSort {
         }
     }
 
-    fn sort_bytes_msd(&self, data: &mut Vec<Vec<u8>>, depth: usize) -> Result<()> {
+    fn sort_bytes_msd(&self, data: &mut [Vec<u8>], depth: usize) -> Result<()> {
         if data.len() <= 1 {
             return Ok(());
         }
 
-        // Most Significant Digit radix sort for byte strings
-        let mut buckets: Vec<Vec<Vec<u8>>> = vec![Vec::new(); 257]; // 256 bytes + end marker
+        let mut counts = [0usize; 257];
 
-        // Distribute into buckets based on character at current depth
-        for item in data.drain(..) {
-            let bucket_index = if depth < item.len() {
-                item[depth] as usize + 1 // +1 to reserve 0 for strings shorter than depth
-            } else {
-                0 // Strings that end before this depth
-            };
-            buckets[bucket_index].push(item);
+        for item in data.iter() {
+            let b = if depth < item.len() { item[depth] as usize + 1 } else { 0 };
+            counts[b] += 1;
         }
 
-        // Recursively sort each bucket and collect results
-        for (i, mut bucket) in buckets.into_iter().enumerate() {
-            if bucket.len() > 1 && i > 0 {
-                // Skip empty bucket (i=0) for short strings
-                self.sort_bytes_msd(&mut bucket, depth + 1)?;
+        let mut offsets = [0usize; 257];
+        let mut current_pos = 0;
+        for i in 0..257 {
+            offsets[i] = current_pos;
+            current_pos += counts[i];
+        }
+
+        let mut next_free = offsets;
+
+        for b in 0..257 {
+            let end = if b == 256 { data.len() } else { offsets[b + 1] };
+            while next_free[b] < end {
+                let pos = next_free[b];
+                let item_b = if depth < data[pos].len() { data[pos][depth] as usize + 1 } else { 0 };
+                
+                if item_b == b {
+                    next_free[b] += 1;
+                } else {
+                    data.swap(pos, next_free[item_b]);
+                    next_free[item_b] += 1;
+                }
             }
-            data.extend(bucket);
+        }
+
+        // Recursively sort each bucket (skip bucket 0 as it contains strings that have ended)
+        for b in 1..257 {
+            let start = offsets[b];
+            let end = if b == 256 { data.len() } else { offsets[b + 1] };
+            if end - start > 1 {
+                self.sort_bytes_msd(&mut data[start..end], depth + 1)?;
+            }
         }
 
         Ok(())
@@ -402,27 +420,21 @@ impl RadixSort {
 
     /// Multi-way merge for u32 chunks
     fn multiway_merge_u32_chunks(&self, data: &mut [u32], chunk_size: usize) -> Result<()> {
-        use crate::algorithms::multiway_merge::{MultiWayMerge, VectorSource};
+        use crate::algorithms::multiway_merge::{MultiWayMerge, SliceSource};
 
-        // Create vector sources from each sorted chunk
+        // If no merging needed
+        if data.is_empty() || chunk_size >= data.len() {
+            return Ok(());
+        }
+
         let mut sources = Vec::new();
-        let mut chunks_vec = Vec::new();
-
-        // Collect chunks into owned vectors
         for chunk in data.chunks(chunk_size) {
-            chunks_vec.push(chunk.to_vec());
+            sources.push(SliceSource::new(chunk));
         }
 
-        // Create sources from the chunks
-        for chunk in chunks_vec {
-            sources.push(VectorSource::new(chunk));
-        }
-
-        // Merge all sources
         let mut merger = MultiWayMerge::new();
         let merged = merger.merge(sources)?;
 
-        // Copy merged result back to original data
         data.copy_from_slice(&merged);
 
         Ok(())
@@ -430,27 +442,20 @@ impl RadixSort {
 
     /// Multi-way merge for u64 chunks
     fn multiway_merge_u64_chunks(&self, data: &mut [u64], chunk_size: usize) -> Result<()> {
-        use crate::algorithms::multiway_merge::{MultiWayMerge, VectorSource};
+        use crate::algorithms::multiway_merge::{MultiWayMerge, SliceSource};
 
-        // Create vector sources from each sorted chunk
+        if data.is_empty() || chunk_size >= data.len() {
+            return Ok(());
+        }
+
         let mut sources = Vec::new();
-        let mut chunks_vec = Vec::new();
-
-        // Collect chunks into owned vectors
         for chunk in data.chunks(chunk_size) {
-            chunks_vec.push(chunk.to_vec());
+            sources.push(SliceSource::new(chunk));
         }
 
-        // Create sources from the chunks
-        for chunk in chunks_vec {
-            sources.push(VectorSource::new(chunk));
-        }
-
-        // Merge all sources
         let mut merger = MultiWayMerge::new();
         let merged = merger.merge(sources)?;
 
-        // Copy merged result back to original data
         data.copy_from_slice(&merged);
 
         Ok(())
@@ -1680,6 +1685,81 @@ mod tests {
 
         let sorted = result.unwrap();
         assert_eq!(sorted, vec![1, 1, 3, 4, 5]);
+    }
+
+    #[test]
+    fn test_msd_sort_bytes_large_dataset() {
+        let mut sorter = RadixSort::new();
+        let mut data: Vec<Vec<u8>> = (0..1000u32)
+            .map(|i| format!("key_{:06}", (i * 997) % 1000).into_bytes())
+            .collect();
+
+        sorter.sort_bytes(&mut data).unwrap();
+
+        for w in data.windows(2) {
+            assert!(w[0] <= w[1], "not sorted: {:?} > {:?}",
+                String::from_utf8_lossy(&w[0]), String::from_utf8_lossy(&w[1]));
+        }
+    }
+
+    #[test]
+    fn test_msd_sort_bytes_duplicates() {
+        let mut sorter = RadixSort::new();
+        let mut data: Vec<Vec<u8>> = (0..500)
+            .map(|i| format!("dup_{}", i % 10).into_bytes())
+            .collect();
+
+        sorter.sort_bytes(&mut data).unwrap();
+
+        for w in data.windows(2) {
+            assert!(w[0] <= w[1]);
+        }
+        let dup_0_count = data.iter().filter(|d| d == &&b"dup_0".to_vec()).count();
+        assert_eq!(dup_0_count, 50);
+    }
+
+    #[test]
+    fn test_msd_sort_bytes_shared_prefixes() {
+        let mut sorter = RadixSort::new();
+        let mut data = vec![
+            b"prefix_zzz".to_vec(),
+            b"prefix_aaa".to_vec(),
+            b"prefix_mmm".to_vec(),
+            b"prefix".to_vec(),
+            b"prefi".to_vec(),
+            b"prefix_aaa_longer".to_vec(),
+        ];
+
+        sorter.sort_bytes(&mut data).unwrap();
+
+        assert_eq!(data, vec![
+            b"prefi".to_vec(),
+            b"prefix".to_vec(),
+            b"prefix_aaa".to_vec(),
+            b"prefix_aaa_longer".to_vec(),
+            b"prefix_mmm".to_vec(),
+            b"prefix_zzz".to_vec(),
+        ]);
+    }
+
+    #[test]
+    fn test_msd_sort_bytes_all_empty() {
+        let mut sorter = RadixSort::new();
+        let mut data: Vec<Vec<u8>> = vec![vec![], vec![], vec![]];
+        sorter.sort_bytes(&mut data).unwrap();
+        assert_eq!(data.len(), 3);
+        assert!(data.iter().all(|d| d.is_empty()));
+    }
+
+    #[test]
+    fn test_msd_sort_bytes_single_char_permutation() {
+        let mut sorter = RadixSort::new();
+        let mut data: Vec<Vec<u8>> = (0u8..=255).rev().map(|b| vec![b]).collect();
+
+        sorter.sort_bytes(&mut data).unwrap();
+
+        let expected: Vec<Vec<u8>> = (0u8..=255).map(|b| vec![b]).collect();
+        assert_eq!(data, expected);
     }
 
     // Tests for AdvancedRadixSort

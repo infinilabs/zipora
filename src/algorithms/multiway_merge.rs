@@ -50,6 +50,45 @@ pub trait MergeSource<T> {
     }
 }
 
+/// A slice-based merge source to avoid allocations
+pub struct SliceSource<'a, T> {
+    data: &'a [T],
+    index: usize,
+}
+
+impl<'a, T> SliceSource<'a, T> {
+    pub fn new(data: &'a [T]) -> Self {
+        Self { data, index: 0 }
+    }
+}
+
+impl<'a, T> MergeSource<T> for SliceSource<'a, T>
+where
+    T: Clone,
+{
+    fn next(&mut self) -> Option<T> {
+        if self.index < self.data.len() {
+            let item = self.data[self.index].clone();
+            self.index += 1;
+            Some(item)
+        } else {
+            None
+        }
+    }
+
+    fn peek(&self) -> Option<&T> {
+        self.data.get(self.index)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.index >= self.data.len()
+    }
+
+    fn remaining_hint(&self) -> Option<usize> {
+        Some(self.data.len() - self.index)
+    }
+}
+
 /// A simple vector-based merge source
 pub struct VectorSource<T> {
     data: Vec<T>,
@@ -558,6 +597,52 @@ mod tests {
         MergeOperations::merge_in_place(&mut data, 4);
 
         assert_eq!(data, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn test_slice_source_basic() {
+        let data = vec![1, 3, 5, 7, 9];
+        let mut src = SliceSource::new(&data);
+
+        assert_eq!(src.peek(), Some(&1));
+        assert_eq!(src.remaining_hint(), Some(5));
+
+        assert_eq!(src.next(), Some(1));
+        assert_eq!(src.next(), Some(3));
+        assert_eq!(src.remaining_hint(), Some(3));
+        assert!(!src.is_empty());
+
+        assert_eq!(src.next(), Some(5));
+        assert_eq!(src.next(), Some(7));
+        assert_eq!(src.next(), Some(9));
+        assert!(src.is_empty());
+        assert_eq!(src.next(), None);
+    }
+
+    #[test]
+    fn test_multiway_merge_with_slice_sources() {
+        let a = vec![1, 4, 7, 10];
+        let b = vec![2, 5, 8, 11];
+        let c = vec![3, 6, 9, 12];
+
+        let mut merger = MultiWayMerge::new();
+        let sources = vec![
+            SliceSource::new(&a),
+            SliceSource::new(&b),
+            SliceSource::new(&c),
+        ];
+
+        let result = merger.merge(sources).unwrap();
+        assert_eq!(result, (1..=12).collect::<Vec<i32>>());
+    }
+
+    #[test]
+    fn test_slice_source_empty() {
+        let data: Vec<u32> = vec![];
+        let mut src = SliceSource::new(&data);
+        assert!(src.is_empty());
+        assert_eq!(src.next(), None);
+        assert_eq!(src.peek(), None);
     }
 
     #[test]
