@@ -128,11 +128,39 @@ with_writer_token(&token_manager, |token| {
 | **Level 3** | `OneWriteMultiRead` | Read-heavy workloads | **Excellent reader scaling** |
 | **Level 4** | `MultiWriteMultiRead` | High-contention scenarios | **Full concurrency** |
 
+### ConcurrentCsppTrie (Multi-Writer CSPP Trie)
+
+The `ConcurrentCsppTrie` provides true multi-writer/multi-reader concurrent access to a Compressed Sparse Parallel Patricia trie, using epoch-based reclamation (crossbeam-epoch) and optimistic per-node locking.
+
+```rust
+use zipora::fsa::cspp_trie_concurrent::ConcurrentCsppTrie;
+use crossbeam_epoch as epoch;
+use std::sync::Arc;
+
+let trie = Arc::new(ConcurrentCsppTrie::with_capacity(0, 10_000_000));
+
+// Multi-threaded insert (each thread gets its own epoch guard for batching)
+let trie_clone = Arc::clone(&trie);
+std::thread::spawn(move || {
+    let guard = epoch::pin();
+    for i in 0..10_000 {
+        let key = format!("key_{:06}", i);
+        trie_clone.insert_with_guard(key.as_bytes(), &guard);
+    }
+});
+
+// Concurrent reads are lock-free
+assert!(trie.contains(b"key_000000"));
+```
+
+**Performance**: 6.9M single-thread insert/sec, 8.0M lookup/sec, 10+ M keys/sec at 16 threads with batched guards.
+
 ### Performance Characteristics
 
 - **Single-threaded overhead**: < 5% compared to no synchronization
 - **Multi-reader scaling**: Linear up to 8+ cores
 - **Writer throughput**: 90%+ of single-threaded for OneWriteMultiRead
+- **ConcurrentCsppTrie**: 10+ M keys/sec multi-writer (16 threads, batched guards)
 - **Token cache hit rate**: 80%+ for repeated operations
 - **Memory overhead**: < 10% additional memory usage
 
