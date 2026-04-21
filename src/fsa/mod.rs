@@ -19,6 +19,7 @@
 // Core implementation modules
 pub mod double_array;
 pub mod cspp_trie;
+pub mod cspp_trie_concurrent;
 pub mod zipora_trie;
 pub mod strategy_traits;
 
