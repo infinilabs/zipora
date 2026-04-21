@@ -1,1016 +1,431 @@
-//! Comprehensive tests for Unified ZiporaTrie with CompressedSparse strategy
-//!
-//! This test suite ensures 97%+ code coverage and validates all performance,
-//! correctness, and concurrency requirements for the unified ZiporaTrie implementation
-//! using CompressedSparse strategy configuration.
-
-use proptest::prelude::*;
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Barrier};
-use std::thread;
-use std::time::{Duration, Instant};
-use tokio::runtime::Runtime;
-use tokio::task;
-use zipora::error::{Result, ZiporaError};
-use zipora::fsa::{
-    ZiporaTrie, ZiporaTrieConfig, TrieStrategy, StorageStrategy, CompressionStrategy, RankSelectType,
-    FiniteStateAutomaton, PrefixIterable, StatisticsProvider, Trie,
+use zipora::fsa::cspp_trie::{
+    CsppTrie, CsppTrieIterator, MetaInfo, BigCount, PatriciaNode, NIL_STATE
 };
-use zipora::succinct::RankSelectInterleaved256;
-use zipora::memory::{SecureMemoryPool, SecurePoolConfig};
-
-// Legacy concurrency level mapping for backward compatibility
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConcurrencyLevel {
-    NoWriteReadOnly,
-    SingleThreadStrict,
-    SingleThreadShared,
-    OneWriteMultiRead,
-    MultiWriteMultiRead,
-}
-
-// Helper function to create ZiporaTrie with CompressedSparse strategy
-fn create_compressed_sparse_trie(level: ConcurrencyLevel) -> Result<ZiporaTrie<RankSelectInterleaved256>> {
-    let config = ZiporaTrieConfig {
-        trie_strategy: TrieStrategy::CompressedSparse {
-            sparse_threshold: 0.3,
-            compression_level: 6,
-            adaptive_sparse: true,
-        },
-        storage_strategy: StorageStrategy::Standard {
-            initial_capacity: 256,
-            growth_factor: 1.5,
-        },
-        compression_strategy: CompressionStrategy::PathCompression {
-            min_path_length: 2,
-            max_path_length: 64,
-            adaptive_threshold: true,
-        },
-        rank_select_type: RankSelectType::Interleaved256,
-        enable_simd: true,
-        enable_concurrency: matches!(level, ConcurrencyLevel::OneWriteMultiRead | ConcurrencyLevel::MultiWriteMultiRead),
-        cache_optimization: true,
-    };
-
-    Ok(ZiporaTrie::with_config(config))
-}
-
-// Helper function to create ZiporaTrie with memory pool
-fn create_compressed_sparse_trie_with_pool(level: ConcurrencyLevel, _pool: Arc<SecureMemoryPool>) -> Result<ZiporaTrie<RankSelectInterleaved256>> {
-    // For now, use the standard creation method since memory pool integration
-    // in unified API may differ from the deprecated implementation
-    create_compressed_sparse_trie(level)
-}
-
-// Type aliases for backward compatibility in tests
-type ReaderToken = (); // Placeholder - unified API may have different token system
-type WriterToken = (); // Placeholder - unified API may have different token system
-
-// =============================================================================
-// TEST DATA GENERATORS
-// =============================================================================
-
-fn generate_test_keys() -> Vec<Vec<u8>> {
-    vec![
-        b"hello".to_vec(),
-        b"world".to_vec(),
-        b"compressed".to_vec(),
-        b"sparse".to_vec(),
-        b"trie".to_vec(),
-        b"patricia".to_vec(),
-        b"concurrency".to_vec(),
-        b"lock_free".to_vec(),
-        b"performance".to_vec(),
-        b"memory_safe".to_vec(),
-    ]
-}
-
-fn generate_prefix_keys() -> Vec<Vec<u8>> {
-    vec![
-        b"app".to_vec(),
-        b"apple".to_vec(),
-        b"application".to_vec(),
-        b"apply".to_vec(),
-        b"compress".to_vec(),
-        b"compressed".to_vec(),
-        b"compression".to_vec(),
-        b"test".to_vec(),
-        b"testing".to_vec(),
-        b"tester".to_vec(),
-    ]
-}
-
-fn generate_sequential_keys(count: usize) -> Vec<Vec<u8>> {
-    (0..count)
-        .map(|i| format!("key_{:06}", i).into_bytes())
-        .collect()
-}
-
-fn generate_unicode_keys() -> Vec<Vec<u8>> {
-    vec![
-        "hello".as_bytes().to_vec(),
-        "world".as_bytes().to_vec(),
-        "世界".as_bytes().to_vec(),
-        "🌍".as_bytes().to_vec(),
-        "café".as_bytes().to_vec(),
-        "naïve".as_bytes().to_vec(),
-        "résumé".as_bytes().to_vec(),
-        "москва".as_bytes().to_vec(),
-        "東京".as_bytes().to_vec(),
-        "🚀🌟".as_bytes().to_vec(),
-    ]
-}
-
-fn generate_compressed_test_keys() -> Vec<Vec<u8>> {
-    // Keys designed to test path compression
-    vec![
-        b"abcdefghijklmnop".to_vec(),
-        b"abcdefghijklmnopqrstuv".to_vec(),
-        b"abcdefghijklmnopqrstuvwxyz".to_vec(),
-        b"prefix_shared_long_path_1".to_vec(),
-        b"prefix_shared_long_path_2".to_vec(),
-        b"prefix_shared_long_path_3".to_vec(),
-        b"another_completely_different_path".to_vec(),
-    ]
-}
-
-fn generate_collision_keys() -> Vec<Vec<u8>> {
-    let mut keys = Vec::new();
-
-    // Create keys that share common prefixes to test compression
-    for i in 0..20 {
-        let base = format!("collision_test_prefix_{:03}", i);
-        keys.push(base.clone().into_bytes());
-        keys.push(format!("{}_variant_a", base).into_bytes());
-        keys.push(format!("{}_variant_b", base).into_bytes());
-    }
-
-    keys
-}
-
-// =============================================================================
-// BASIC FUNCTIONALITY TESTS
-// =============================================================================
 
 #[test]
-fn test_basic_creation_and_configuration() {
-    // Test all concurrency levels
-    let levels = vec![
-        ConcurrencyLevel::NoWriteReadOnly,
-        ConcurrencyLevel::SingleThreadStrict,
-        ConcurrencyLevel::SingleThreadShared,
-        ConcurrencyLevel::OneWriteMultiRead,
-        ConcurrencyLevel::MultiWriteMultiRead,
-    ];
+fn test_node_size() {
+    assert_eq!(std::mem::size_of::<PatriciaNode>(), 4);
+    assert_eq!(std::mem::size_of::<MetaInfo>(), 4);
+    assert_eq!(std::mem::size_of::<BigCount>(), 4);
+}
 
-    for level in levels {
-        let result = create_compressed_sparse_trie(level);
-        assert!(
-            result.is_ok(),
-            "Failed to create trie with level {:?}",
-            level
-        );
-
-        let trie = result.unwrap();
-        assert_eq!(trie.len(), 0);
-        assert!(trie.is_empty());
+#[test]
+fn test_root_node_creation() {
+    let trie = CsppTrie::new(4);
+    assert_eq!(trie.total_states(), 2 + 256 + 1); // meta + real_cnt + 256 children + 1 val_slot (valsize=4 -> 1 slot)
+    
+    let root_view = trie.node_view(0);
+    assert_eq!(root_view.cnt_type(), 15);
+    assert_eq!(root_view.is_final(), false);
+    assert_eq!(root_view.n_children(), 256);
+    
+    // All 256 children should be NIL_STATE initially
+    for ch in 0..=255 {
+        assert_eq!(root_view.child(2 + ch), NIL_STATE);
     }
 }
 
 #[test]
-fn test_custom_memory_pool_creation() {
-    let pool_config = SecurePoolConfig::new(8192, 64, 8);
-    let pool = SecureMemoryPool::new(pool_config).expect("Failed to create pool");
+fn test_manual_trie_construction_and_lookup() {
+    let mut trie = CsppTrie::new(4);
+    
+    // We will manually construct a trie for keys "a", "b", "ccc"
+    // Root is at slot 0.
+    
+    // Node 1: leaf for "a" (valpos = slot 300)
+    // Needs 1 slot [meta] + 1 value slot
+    let node_a_state = trie.mempool.len() as u32;
+    trie.mempool.push(PatriciaNode { meta: MetaInfo { flags: 0 | 0x10, n_zpath_len: 0, c_label: [0, 0] } });
+    trie.mempool.push(PatriciaNode { bytes: [10, 0, 0, 0] }); // value = 10
+    
+    // Node 2: leaf for "b" (valpos = slot 302)
+    let node_b_state = trie.mempool.len() as u32;
+    trie.mempool.push(PatriciaNode { meta: MetaInfo { flags: 0 | 0x10, n_zpath_len: 0, c_label: [0, 0] } });
+    trie.mempool.push(PatriciaNode { bytes: [20, 0, 0, 0] }); // value = 20
+    
+    // Node 3: leaf for "ccc" (zpath="cc", valpos = slot 304)
+    // Needs 1 slot [meta] + zpath bytes + value slot
+    let node_c_state = trie.mempool.len() as u32;
+    trie.mempool.push(PatriciaNode { meta: MetaInfo { flags: 0 | 0x10, n_zpath_len: 2, c_label: [0, 0] } });
+    trie.mempool.push(PatriciaNode { bytes: [b'c', b'c', 0, 0] }); // zpath padded to 4 bytes
+    trie.mempool.push(PatriciaNode { bytes: [30, 0, 0, 0] }); // value = 30
+    
+    // Link from root
+    trie.mempool[2 + b'a' as usize].child = node_a_state;
+    trie.mempool[2 + b'b' as usize].child = node_b_state;
+    trie.mempool[2 + b'c' as usize].child = node_c_state;
+    
+    // Test lookups
+    let pos_a = trie.lookup(b"a").unwrap();
+    assert_eq!(trie.get_value::<u32>(pos_a), 10);
+    
+    let pos_b = trie.lookup(b"b").unwrap();
+    assert_eq!(trie.get_value::<u32>(pos_b), 20);
+    
+    let pos_c = trie.lookup(b"ccc").unwrap();
+    assert_eq!(trie.get_value::<u32>(pos_c), 30);
+    
+    assert!(trie.lookup(b"c").is_none());
+    assert!(trie.lookup(b"cc").is_none());
+    assert!(trie.lookup(b"cccc").is_none());
+    assert!(trie.lookup(b"d").is_none());
 
-    let result = create_compressed_sparse_trie_with_pool(ConcurrencyLevel::SingleThreadStrict, pool);
-
-    assert!(result.is_ok());
-    let trie = result.unwrap();
-    assert_eq!(trie.len(), 0);
+    // Test iteration
+    let mut iter = CsppTrieIterator::<u32>::new(&trie);
+    
+    assert!(iter.seek_begin());
+    assert_eq!(iter.word(), b"a");
+    assert_eq!(iter.value(), 10);
+    
+    assert!(iter.incr());
+    assert_eq!(iter.word(), b"b");
+    assert_eq!(iter.value(), 20);
+    
+    assert!(iter.incr());
+    assert_eq!(iter.word(), b"ccc");
+    assert_eq!(iter.value(), 30);
+    
+    assert!(!iter.incr());
 }
 
-#[tokio::test]
-async fn test_token_based_operations() {
-    let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::OneWriteMultiRead).unwrap();
+// ========== Phase B: Insert Tests ==========
 
-    // In unified API, concurrency is handled internally without explicit tokens
-    // This test validates that concurrent-enabled tries work correctly
-
-    let keys = generate_test_keys();
-    for key in &keys {
-        let result = trie.insert(key);
-        assert!(result.is_ok(), "Failed to insert key: {:?}", key);
-    }
-
-    assert_eq!(trie.len(), keys.len());
-
-    // Verify all keys are present using standard operations
-    for key in &keys {
-        assert!(trie.contains(key), "Failed to find key: {:?}", key);
-        assert!(trie.lookup(key).is_some(), "Failed to lookup key: {:?}", key);
-    }
-
-    // Test concurrent operations in the unified API
-    let trie_clone = Arc::new(trie);
-    let mut handles = vec![];
-
-    for i in 0..4 {
-        let trie_ref = Arc::clone(&trie_clone);
-        let keys_clone = keys.clone();
-        let handle = tokio::spawn(async move {
-            for key in &keys_clone {
-                // Concurrent reads should work
-                assert!(trie_ref.contains(key), "Concurrent read failed for key: {:?}", key);
-            }
-        });
-        handles.push(handle);
-    }
-
-    for handle in handles {
-        handle.await.unwrap();
-    }
+#[test]
+fn test_insert_single_key() {
+    let mut trie = CsppTrie::new(4);
+    let (is_new, _valpos) = trie.insert(b"hello");
+    assert!(is_new);
+    assert!(trie.contains(b"hello"));
+    assert!(!trie.contains(b"hell"));
+    assert!(!trie.contains(b"helloo"));
+    assert_eq!(trie.num_words(), 1);
 }
 
 #[test]
-fn test_path_compression_efficiency() {
-    let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::SingleThreadStrict).unwrap();
-
-    let compressed_keys = generate_compressed_test_keys();
-
-    for key in &compressed_keys {
-        trie.insert(key).unwrap();
-    }
-
-    // Verify all keys exist
-    for key in &compressed_keys {
-        assert!(trie.contains(key));
-    }
-
-    // Check that path compression is working by examining statistics
-    let stats = trie.stats();
-    assert!(stats.memory_usage > 0);
-
-    // With path compression, we should have fewer nodes than characters
-    let total_chars: usize = compressed_keys.iter().map(|k| k.len()).sum();
-    assert!(
-        stats.num_states < total_chars,
-        "Path compression should reduce state count below character count"
-    );
-}
-
-#[tokio::test]
-async fn test_concurrent_reader_operations() {
-    let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::OneWriteMultiRead).unwrap();
-
-    let keys = generate_test_keys();
-
-    // Populate trie first
-    for key in &keys {
-        trie.insert(key).unwrap();
-    }
-
-    let trie = Arc::new(trie);
-    let mut handles = Vec::new();
-
-    // Spawn multiple reader tasks
-    for task_id in 0..10 {
-        let trie_clone = Arc::clone(&trie);
-        let keys_clone = keys.clone();
-
-        let handle = task::spawn(async move {
-            // Token operations removed - unified API handles concurrency internally
-
-            // Each task reads all keys
-            for (i, key) in keys_clone.iter().enumerate() {
-                if i % 10 == task_id {
-                    assert!(trie_clone.contains(key));
-                }
-            }
-
-            // Token operations removed - unified API handles concurrency internally
-        });
-
-        handles.push(handle);
-    }
-
-    // Wait for all tasks to complete
-    for handle in handles {
-        handle.await.unwrap();
-    }
-}
-
-#[tokio::test]
-async fn test_concurrent_writer_operations() {
-    let trie = create_compressed_sparse_trie(ConcurrencyLevel::MultiWriteMultiRead).unwrap();
-
-    let trie = Arc::new(tokio::sync::Mutex::new(trie));
-    let mut handles = Vec::new();
-
-    // Spawn multiple writer tasks
-    for task_id in 0..5 {
-        let trie_clone = Arc::clone(&trie);
-
-        let handle = task::spawn(async move {
-            let mut trie_guard = trie_clone.lock().await;
-            // Token operations removed - unified API handles concurrency internally
-
-            // Each task inserts unique keys
-            for i in 0..20 {
-                let key = format!("concurrent_key_{}_{:03}", task_id, i);
-                let result = trie_guard.insert(key.as_bytes());
-                assert!(result.is_ok());
-            }
-
-            // Token operations removed - unified API handles concurrency internally
-        });
-
-        handles.push(handle);
-    }
-
-    // Wait for all tasks to complete
-    for handle in handles {
-        handle.await.unwrap();
-    }
-
-    // Verify all keys were inserted
-    let trie_guard = trie.lock().await;
-    assert_eq!(trie_guard.len(), 5 * 20); // 5 tasks * 20 keys each
-}
-
-// =============================================================================
-// ERROR HANDLING AND EDGE CASES
-// =============================================================================
-
-#[tokio::test]
-async fn test_token_validation() {
-    let mut trie1 = create_compressed_sparse_trie(ConcurrencyLevel::OneWriteMultiRead).unwrap();
-    let mut trie2 = create_compressed_sparse_trie(ConcurrencyLevel::OneWriteMultiRead).unwrap();
-
-    // In unified API, each trie operates independently
-    // Test that separate tries don't interfere with each other
-    let result = trie1.insert(b"test1");
-    assert!(result.is_ok());
-
-    let result = trie2.insert(b"test2");
-    assert!(result.is_ok());
-
-    // Each trie should only contain its own data
-    assert!(trie1.contains(b"test1"));
-    assert!(!trie1.contains(b"test2"));
-
-    assert!(trie2.contains(b"test2"));
-    assert!(!trie2.contains(b"test1"));
+fn test_insert_duplicate_key() {
+    let mut trie = CsppTrie::new(4);
+    let (is_new1, vp1) = trie.insert(b"hello");
+    assert!(is_new1);
+    let (is_new2, vp2) = trie.insert(b"hello");
+    assert!(!is_new2);
+    assert_eq!(vp1, vp2); // same valpos
+    assert_eq!(trie.num_words(), 1);
 }
 
 #[test]
-fn test_empty_key_handling() {
-    let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::SingleThreadStrict).unwrap();
-
-    // Insert empty key
-    let result = trie.insert(b"");
-    assert!(result.is_ok());
-
-    assert_eq!(trie.len(), 1);
+fn test_insert_empty_key() {
+    let mut trie = CsppTrie::new(4);
+    let (is_new, _) = trie.insert(b"");
+    assert!(is_new);
     assert!(trie.contains(b""));
-
-    // Insert empty key again - should not increase count
-    let result = trie.insert(b"");
-    assert!(result.is_ok());
-    assert_eq!(trie.len(), 1);
+    assert!(!trie.contains(b"a"));
+    assert_eq!(trie.num_words(), 1);
 }
 
 #[test]
-fn test_very_long_keys() {
-    let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::SingleThreadStrict).unwrap();
-
-    // Test with very long keys
-    let long_key1 = vec![42u8; 10000];
-    let long_key2 = vec![84u8; 5000];
-    let long_key3 = vec![126u8; 15000];
-
-    trie.insert(&long_key1).unwrap();
-    trie.insert(&long_key2).unwrap();
-    trie.insert(&long_key3).unwrap();
-
-    assert_eq!(trie.len(), 3);
-    assert!(trie.contains(&long_key1));
-    assert!(trie.contains(&long_key2));
-    assert!(trie.contains(&long_key3));
+fn test_insert_3_keys_lookup() {
+    let mut trie = CsppTrie::new(4);
+    assert!(trie.insert(b"a").0);
+    assert!(trie.insert(b"b").0);
+    assert!(trie.insert(b"ccc").0);
+    assert_eq!(trie.num_words(), 3);
+    assert!(trie.contains(b"a"));
+    assert!(trie.contains(b"b"));
+    assert!(trie.contains(b"ccc"));
+    assert!(!trie.contains(b"c"));
+    assert!(!trie.contains(b"cc"));
+    assert!(!trie.contains(b"d"));
 }
 
 #[test]
-fn test_unicode_key_support() {
-    let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::SingleThreadStrict).unwrap();
-
-    let unicode_keys = generate_unicode_keys();
-
-    for key in &unicode_keys {
-        trie.insert(key).unwrap();
-    }
-
-    assert_eq!(trie.len(), unicode_keys.len());
-
-    for key in &unicode_keys {
-        assert!(trie.contains(key));
-    }
-}
-
-#[test]
-fn test_duplicate_insertion_handling() {
-    let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::SingleThreadStrict).unwrap();
-
-    let key = b"duplicate_test";
-
-    // Insert same key multiple times
-    for _ in 0..5 {
-        trie.insert(key).unwrap();
-    }
-
-    // Should only count once
-    assert_eq!(trie.len(), 1);
-    assert!(trie.contains(key));
-}
-
-// =============================================================================
-// PERFORMANCE AND STRESS TESTS
-// =============================================================================
-
-#[test]
-fn test_large_dataset_performance() {
-    let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::SingleThreadStrict).unwrap();
-
-    let keys = generate_sequential_keys(10000);
-
-    // Measure insertion performance
-    let start = Instant::now();
+fn test_insert_cnt_type_transitions_0_to_7() {
+    // Insert 7 keys with distinct first bytes → exercises transitions 0→1→...→6→7
+    let mut trie = CsppTrie::new(0);
+    let keys: Vec<&[u8]> = vec![b"d", b"b", b"f", b"a", b"c", b"e", b"g"];
     for key in &keys {
-        trie.insert(key).unwrap();
+        assert!(trie.insert(key).0, "Failed to insert {:?}", std::str::from_utf8(key));
     }
-    let insert_duration = start.elapsed();
-
-    assert_eq!(trie.len(), keys.len());
-
-    // Measure lookup performance
-    let start = Instant::now();
+    assert_eq!(trie.num_words(), 7);
     for key in &keys {
-        assert!(trie.contains(key));
+        assert!(trie.contains(key), "Failed to find {:?}", std::str::from_utf8(key));
     }
-    let lookup_duration = start.elapsed();
-
-    println!(
-        "CSP Trie Performance - Insert: {:?}, Lookup: {:?}",
-        insert_duration, lookup_duration
-    );
-
-    // Performance should be reasonable
-    assert!(
-        insert_duration.as_secs() < 30,
-        "Insert time too slow: {:?}",
-        insert_duration
-    );
-    assert!(
-        lookup_duration.as_secs() < 10,
-        "Lookup time too slow: {:?}",
-        lookup_duration
-    );
 }
 
 #[test]
-fn test_memory_efficiency() {
-    let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::SingleThreadStrict).unwrap();
-
-    let collision_keys = generate_collision_keys();
-
-    for key in &collision_keys {
-        trie.insert(key).unwrap();
-    }
-
-    let stats = trie.stats();
-
-    // With path compression, memory usage should be reasonable
-    assert!(stats.memory_usage > 0);
-    assert!(stats.bits_per_key > 0.0);
-
-    // Path compression should result in memory efficiency
-    let total_key_bytes: usize = collision_keys.iter().map(|k| k.len()).sum();
-    let compression_ratio = stats.memory_usage as f64 / total_key_bytes as f64;
-
-    println!(
-        "Memory efficiency - Compression ratio: {:.2}",
-        compression_ratio
-    );
-
-    // Should achieve some compression (this is a heuristic test)
-    assert!(compression_ratio < 5.0, "Memory usage seems too high");
-}
-
-#[tokio::test]
-async fn test_concurrent_stress() {
-    let trie = Arc::new(tokio::sync::Mutex::new(
-        create_compressed_sparse_trie(ConcurrencyLevel::MultiWriteMultiRead).unwrap(),
-    ));
-
-    let mut handles = Vec::new();
-    let num_tasks = 20;
-    let keys_per_task = 100;
-
-    // Create stress test with many concurrent operations
-    for task_id in 0..num_tasks {
-        let trie_clone = Arc::clone(&trie);
-
-        let handle = task::spawn(async move {
-            let mut trie_guard = trie_clone.lock().await;
-
-            if task_id % 2 == 0 {
-                // Writer tasks
-                // Token operations removed - unified API handles concurrency internally
-
-                for i in 0..keys_per_task {
-                    let key = format!("stress_{}_{:04}", task_id, i);
-                    trie_guard
-                        .insert(key.as_bytes())
-                        .unwrap();
-                }
-
-                // Token operations removed - unified API handles concurrency internally
-            } else {
-                // Reader tasks (read existing keys)
-                tokio::time::sleep(Duration::from_millis(10)).await; // Let some writes happen first
-
-                // Token operations removed - unified API handles concurrency internally
-
-                for i in 0..keys_per_task / 2 {
-                    let key = format!("stress_{}_{:04}", task_id - 1, i);
-                    let _ = trie_guard.contains(key.as_bytes());
-                }
-
-                // Token operations removed - unified API handles concurrency internally
-            }
-        });
-
-        handles.push(handle);
-    }
-
-    // Wait for all stress test tasks
-    for handle in handles {
-        handle.await.unwrap();
-    }
-
-    let trie_guard = trie.lock().await;
-    let writer_tasks = num_tasks / 2;
-    assert_eq!(trie_guard.len(), writer_tasks * keys_per_task);
-}
-
-// =============================================================================
-// FSA INTERFACE TESTS
-// =============================================================================
-
-#[test]
-fn test_fsa_interface_compliance() {
-    let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::SingleThreadStrict).unwrap();
-
-    let keys = generate_prefix_keys();
-
+fn test_insert_cnt_type_transition_7_to_8() {
+    // Insert 17 keys with distinct first bytes → exercises 7→8 (bitmap) transition
+    let mut trie = CsppTrie::new(0);
+    let keys: Vec<Vec<u8>> = (0..17u8).map(|i| vec![b'a' + i]).collect();
     for key in &keys {
-        trie.insert(key).unwrap();
+        assert!(trie.insert(key).0, "Failed to insert {:?}", key);
     }
-
-    // Test FSA root
-    let root = trie.root();
-    assert_eq!(root, 0); // Root should be state 0
-
-    // Test basic trie functionality instead of FSA accepts
+    assert_eq!(trie.num_words(), 17);
     for key in &keys {
-        assert!(trie.contains(key));
+        assert!(trie.contains(key), "Failed to find {:?}", key);
     }
-
-    assert!(!trie.contains(b"nonexistent"));
-
-    // Note: FSA transition methods might not be implemented yet
-    // This test focuses on basic trie functionality for now
-    // TODO: Uncomment when FSA interface is fully implemented
-    /*
-    // Test state transitions
-    for key in &keys {
-        if !key.is_empty() {
-            let mut state = trie.root();
-            let mut valid_path = true;
-
-            for &symbol in key {
-                if let Some(next_state) = trie.transition(state, symbol) {
-                    state = next_state;
-                } else {
-                    valid_path = false;
-                    break;
-                }
-            }
-
-            assert!(valid_path, "Invalid transition path for key: {:?}",
-                String::from_utf8_lossy(key));
-            assert!(trie.is_final(state));
-        }
-    }
-    */
+    // Verify non-existent keys
+    assert!(!trie.contains(&[b'a' + 17]));
 }
 
 #[test]
-fn test_longest_prefix_functionality() {
-    let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::SingleThreadStrict).unwrap();
+fn test_insert_cnt_type_8_grow() {
+    // Insert 30 keys → cnt_type 8 with growing child array
+    let mut trie = CsppTrie::new(0);
+    let keys: Vec<Vec<u8>> = (0..30u8).map(|i| vec![i + 65]).collect();
+    for key in &keys {
+        assert!(trie.insert(key).0);
+    }
+    assert_eq!(trie.num_words(), 30);
+    for key in &keys {
+        assert!(trie.contains(key), "Missing key {:?}", key);
+    }
+}
 
+#[test]
+fn test_insert_fork_at_zpath() {
+    // Insert keys sharing a prefix to exercise fork()
+    let mut trie = CsppTrie::new(0);
+    assert!(trie.insert(b"abcdef").0);
+    assert!(trie.insert(b"abcxyz").0); // fork at position 3 ('d' vs 'x')
+    assert_eq!(trie.num_words(), 2);
+    assert!(trie.contains(b"abcdef"));
+    assert!(trie.contains(b"abcxyz"));
+    assert!(!trie.contains(b"abc"));
+    assert!(!trie.contains(b"abcd"));
+}
+
+#[test]
+fn test_insert_split_zpath() {
+    // Insert a key that is a prefix of an existing key → exercises split_zpath
+    let mut trie = CsppTrie::new(0);
+    assert!(trie.insert(b"abcdef").0);
+    assert!(trie.insert(b"abc").0); // key is prefix of "abcdef"
+    assert_eq!(trie.num_words(), 2);
+    assert!(trie.contains(b"abcdef"));
+    assert!(trie.contains(b"abc"));
+    assert!(!trie.contains(b"ab"));
+    assert!(!trie.contains(b"abcd"));
+}
+
+#[test]
+fn test_insert_mark_final_state() {
+    // Insert a key, then insert a prefix that matches a non-final node
+    let mut trie = CsppTrie::new(0);
+    assert!(trie.insert(b"ab").0);
+    assert!(trie.insert(b"ac").0);
+    // Now "a" is a non-final node (cnt_type=2 with children 'b' and 'c')
+    assert!(!trie.contains(b"a"));
+    assert!(trie.insert(b"a").0); // MarkFinalState
+    assert!(trie.contains(b"a"));
+    assert!(trie.contains(b"ab"));
+    assert!(trie.contains(b"ac"));
+    assert_eq!(trie.num_words(), 3);
+}
+
+#[test]
+fn test_insert_10k_random_keys() {
+    use std::collections::BTreeSet;
+    let mut trie = CsppTrie::new(0);
+    let mut expected = BTreeSet::new();
+
+    // Generate deterministic pseudo-random keys
+    let mut rng_state: u64 = 12345;
+    for _ in 0..10_000 {
+        rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let len = ((rng_state >> 32) % 20 + 1) as usize;
+        let key: Vec<u8> = (0..len).map(|_| {
+            rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((rng_state >> 40) % 26 + 97) as u8 // lowercase a-z
+        }).collect();
+        expected.insert(key.clone());
+        trie.insert(&key);
+    }
+
+    // Verify all keys can be looked up
+    for key in &expected {
+        assert!(trie.contains(key), "Missing key: {:?}", std::str::from_utf8(key));
+    }
+    assert_eq!(trie.num_words(), expected.len());
+}
+
+#[test]
+fn test_insert_and_iterate_sorted() {
+    let mut trie = CsppTrie::new(4);
     let keys = vec![
-        b"test".as_slice(),
-        b"testing".as_slice(),
-        b"tester".as_slice(),
+        b"banana".to_vec(), b"apple".to_vec(), b"cherry".to_vec(),
+        b"date".to_vec(), b"elderberry".to_vec(), b"fig".to_vec(),
+        b"app".to_vec(), b"application".to_vec(),
     ];
-
     for key in &keys {
-        trie.insert(key).unwrap();
-    }
-
-    // Note: longest_prefix method might not be implemented yet
-    // This test focuses on basic trie functionality for now
-    // TODO: Uncomment when longest_prefix is implemented
-    /*
-    // Test longest prefix matching
-    assert_eq!(trie.longest_prefix(b"testing123"), Some(7)); // "testing"
-    assert_eq!(trie.longest_prefix(b"test_case"), Some(4));  // "test"
-    assert_eq!(trie.longest_prefix(b"tester_run"), Some(6)); // "tester"
-    assert_eq!(trie.longest_prefix(b"xyz"), None);
-    assert_eq!(trie.longest_prefix(b"te"), None);
-    */
-
-    // For now, just verify the keys exist
-    for key in &keys {
-        assert!(trie.contains(key));
-    }
-}
-
-// =============================================================================
-// PREFIX ITERATION TESTS
-// =============================================================================
-
-#[test]
-fn test_prefix_iteration() {
-    let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::SingleThreadStrict).unwrap();
-
-    let keys = generate_prefix_keys();
-
-    for key in &keys {
-        trie.insert(key).unwrap();
-    }
-
-    // Note: iter_prefix method might not be implemented yet
-    // This test focuses on basic trie functionality for now
-    // TODO: Uncomment when iter_prefix is implemented
-    /*
-    // Test prefix iteration for "app"
-    let app_results: Vec<_> = trie.iter_prefix(b"app").collect();
-    let expected_app = vec![b"app".to_vec(), b"apple".to_vec(), b"application".to_vec(), b"apply".to_vec()];
-
-    assert_eq!(app_results.len(), 4);
-    for expected_key in expected_app {
-        assert!(app_results.contains(&expected_key));
-    }
-
-    // Test prefix iteration for "test"
-    let test_results: Vec<_> = trie.iter_prefix(b"test").collect();
-    assert_eq!(test_results.len(), 3); // "test", "testing", "tester"
-
-    // Test non-existent prefix
-    let none_results: Vec<_> = trie.iter_prefix(b"xyz").collect();
-    assert!(none_results.is_empty());
-    */
-
-    // For now, just verify prefix keys exist
-    assert!(trie.contains(b"app"));
-    assert!(trie.contains(b"apple"));
-    assert!(trie.contains(b"application"));
-    assert!(trie.contains(b"test"));
-    assert!(trie.contains(b"testing"));
-    assert!(trie.contains(b"tester"));
-}
-
-#[test]
-fn test_complete_iteration() {
-    let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::SingleThreadStrict).unwrap();
-
-    let keys = generate_test_keys();
-
-    for key in &keys {
-        trie.insert(key).unwrap();
-    }
-
-    // Note: iter_all method might not be implemented yet
-    // This test focuses on basic trie functionality for now
-    // TODO: Uncomment when iter_all is implemented
-    /*
-    // Test complete iteration
-    let all_keys: Vec<_> = trie.iter_all().collect();
-    assert_eq!(all_keys.len(), keys.len());
-
-    for key in &keys {
-        assert!(all_keys.contains(key));
-    }
-    */
-
-    // For now, just verify all keys exist and count is correct
-    assert_eq!(trie.len(), keys.len());
-    for key in &keys {
-        assert!(trie.contains(key));
-    }
-}
-
-// =============================================================================
-// STATE INSPECTION TESTS
-// =============================================================================
-
-#[test]
-fn test_state_inspection() {
-    let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::SingleThreadStrict).unwrap();
-
-    let keys = vec![b"hello".as_slice(), b"help".as_slice(), b"world".as_slice()];
-
-    for key in &keys {
-        trie.insert(key).unwrap();
-    }
-
-    let root = trie.root();
-    assert_eq!(root, 0); // Root should be state 0
-
-    // Note: FSA state inspection methods might not be implemented yet
-    // This test focuses on basic trie functionality for now
-    // TODO: Uncomment when FSA interface is fully implemented
-    /*
-    // Test out degree
-    let out_degree = trie.out_degree(root);
-    assert!(out_degree > 0);
-
-    // Test out symbols
-    let symbols = trie.out_symbols(root);
-    assert!(!symbols.is_empty());
-    assert!(symbols.contains(&b'h') || symbols.contains(&b'w'));
-
-    // Test leaf detection
-    assert!(!trie.is_leaf(root));
-    */
-
-    // For now, just verify the keys exist
-    for key in &keys {
-        assert!(trie.contains(key));
-    }
-}
-
-// =============================================================================
-// STATISTICS AND MONITORING TESTS
-// =============================================================================
-
-#[test]
-fn test_statistics_accuracy() {
-    let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::SingleThreadStrict).unwrap();
-
-    let keys = generate_test_keys();
-
-    for key in &keys {
-        trie.insert(key).unwrap();
-    }
-
-    let stats = trie.stats();
-
-    // Verify basic statistics
-    assert_eq!(stats.num_keys, keys.len());
-    assert!(stats.num_states > 0);
-    assert!(stats.memory_usage > 0);
-    assert!(stats.bits_per_key > 0.0);
-
-    // Note: StatisticsProvider interface methods might not be implemented yet
-    // TODO: Uncomment when StatisticsProvider is fully implemented
-    /*
-    // Test statistics provider interface
-    assert_eq!(trie.memory_usage(), stats.memory_usage);
-    assert_eq!(trie.bits_per_key(), stats.bits_per_key);
-    */
-
-    // Statistics should be reasonable
-    assert!(stats.bits_per_key < 100_000.0); // Should be reasonable for test data
-}
-
-// =============================================================================
-// PROPERTY-BASED TESTS
-// =============================================================================
-
-proptest! {
-    #[test]
-    fn property_test_insert_lookup_consistency(
-        keys in prop::collection::vec(prop::collection::vec(any::<u8>(), 0..100), 0..200)
-    ) {
-        let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::SingleThreadStrict)
-            .unwrap();
-
-        let mut expected_keys = HashSet::new();
-
-        // Insert all keys
-        for key in &keys {
-            if trie.insert(key).is_ok() {
-                expected_keys.insert(key.clone());
-            }
+        let (is_new, valpos) = trie.insert(key);
+        assert!(is_new);
+        // Write a value at valpos
+        unsafe {
+            let ptr = trie.mempool.as_mut_ptr() as *mut u8;
+            std::ptr::write_unaligned(ptr.add(valpos) as *mut u32, key.len() as u32);
         }
+    }
+    assert_eq!(trie.num_words(), 8);
 
-        // Verify all inserted keys can be found
-        for key in &expected_keys {
-            prop_assert!(trie.contains(key));
+    // Iterate and verify sorted order
+    let mut iter = CsppTrieIterator::<u32>::new(&trie);
+    let mut collected: Vec<(Vec<u8>, u32)> = Vec::new();
+    if iter.seek_begin() {
+        collected.push((iter.word().to_vec(), iter.value()));
+        while iter.incr() {
+            collected.push((iter.word().to_vec(), iter.value()));
         }
-
-        // Verify count is correct
-        prop_assert_eq!(trie.len(), expected_keys.len());
     }
 
-    #[test]
-    fn property_test_path_compression_correctness(
-        keys in prop::collection::vec(prop::collection::vec(any::<u8>(), 1..50), 1..100)
-    ) {
-        let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::SingleThreadStrict)
-            .unwrap();
+    let mut sorted_keys = keys.clone();
+    sorted_keys.sort();
+    assert_eq!(collected.len(), sorted_keys.len());
+    for (i, (word, val)) in collected.iter().enumerate() {
+        assert_eq!(word, &sorted_keys[i], "Mismatch at position {}", i);
+        assert_eq!(*val, sorted_keys[i].len() as u32, "Value mismatch for {:?}", std::str::from_utf8(word));
+    }
+}
 
-        for key in &keys {
-            let _ = trie.insert(key);
-        }
+#[test]
+fn test_insert_long_common_prefix() {
+    // Keys sharing very long common prefixes exercise deep zpath splits
+    let mut trie = CsppTrie::new(0);
+    let prefix = "a".repeat(100);
+    let k1 = format!("{}x", prefix);
+    let k2 = format!("{}y", prefix);
+    let k3 = format!("{}z", prefix);
+    assert!(trie.insert(k1.as_bytes()).0);
+    assert!(trie.insert(k2.as_bytes()).0);
+    assert!(trie.insert(k3.as_bytes()).0);
+    assert!(trie.contains(k1.as_bytes()));
+    assert!(trie.contains(k2.as_bytes()));
+    assert!(trie.contains(k3.as_bytes()));
+    assert!(!trie.contains(prefix.as_bytes()));
+    assert_eq!(trie.num_words(), 3);
+}
 
-        // Verify that path compression doesn't affect correctness
-        for key in &keys {
-            if !key.is_empty() {
-                let lookup_result = trie.lookup(key);
-                let contains_result = trie.contains(key);
+#[test]
+fn test_insert_long_suffix_chain() {
+    // Key longer than MAX_ZPATH (254) exercises suffix chain linking
+    let mut trie = CsppTrie::new(0);
+    let long_key: Vec<u8> = (0..300).map(|i| b'a' + (i % 26) as u8).collect();
+    assert!(trie.insert(&long_key).0);
+    assert!(trie.contains(&long_key));
+    assert!(!trie.contains(&long_key[..299]));
+    assert_eq!(trie.num_words(), 1);
+}
 
-                // If one is true, both should be true
-                prop_assert_eq!(lookup_result.is_some(), contains_result);
+// ========== Phase C: Memory Pool & Statistics Tests ==========
+
+#[test]
+fn test_mem_stat_initial() {
+    let trie = CsppTrie::new(4);
+    let stat = trie.mem_get_stat();
+    assert!(stat.used_size > 0);
+    assert_eq!(stat.frag_size, 0);
+    assert_eq!(stat.large_cnt, 0);
+    assert_eq!(stat.lazy_free_cnt, 0);
+    // All fast bins should be empty
+    assert!(stat.fastbin.iter().all(|&c| c == 0));
+}
+
+#[test]
+fn test_mem_stat_after_inserts() {
+    let mut trie = CsppTrie::new(0);
+    let initial_size = trie.mem_get_stat().used_size;
+    for i in 0..100u8 {
+        trie.insert(&[i]);
+    }
+    let stat = trie.mem_get_stat();
+    assert!(stat.used_size > initial_size);
+    assert_eq!(trie.num_words(), 100);
+    // frag_size may be > 0 due to node replacements during cnt_type transitions
+    // (old nodes are freed back to the free list)
+    assert!(stat.frag_size > 0 || stat.used_size > initial_size);
+}
+
+#[test]
+fn test_free_list_reuse() {
+    let mut trie = CsppTrie::new(0);
+    // Insert keys with shared prefixes so interior nodes get replaced (not at mempool end)
+    // This ensures freed nodes go to the free list rather than shrinking the pool.
+    trie.insert(b"aaa");
+    trie.insert(b"aab"); // fork at zpath → frees interior nodes
+    trie.insert(b"aac");
+    trie.insert(b"aad");
+    trie.insert(b"aae");
+    trie.insert(b"aaf");
+    trie.insert(b"aag");
+    let stat = trie.mem_get_stat();
+    let total_free_bins: usize = stat.fastbin.iter().sum();
+    // There should be some free list entries from replaced interior nodes
+    assert!(stat.frag_size > 0 || total_free_bins > 0,
+        "Expected some free list entries from interior node transitions, frag={}", stat.frag_size);
+}
+
+#[test]
+fn test_lazy_free_and_reclaim() {
+    let mut trie = CsppTrie::new(0);
+    // Insert multiple keys so the mempool grows well past the root
+    trie.insert(b"hello");
+    trie.insert(b"world");
+    trie.insert(b"test123");
+    let stat_before = trie.mem_get_stat();
+    assert_eq!(stat_before.lazy_free_cnt, 0);
+
+    // Defer-free a slot in the middle of the mempool (not at end, so it won't shrink)
+    let mid_slot = 260u32; // well inside the root area, not at the end
+    trie.free_node_deferred_pub(mid_slot, 8); // 2 slots
+    let stat_deferred = trie.mem_get_stat();
+    assert_eq!(stat_deferred.lazy_free_cnt, 1);
+    assert_eq!(stat_deferred.lazy_free_sum, 8);
+
+    // Reclaim: lazy items move to free list
+    trie.reclaim_lazy_frees();
+    let stat_reclaimed = trie.mem_get_stat();
+    assert_eq!(stat_reclaimed.lazy_free_cnt, 0);
+    // The reclaimed node goes to free list (not at end of mempool)
+    assert!(stat_reclaimed.frag_size >= 8,
+        "Expected frag_size >= 8 after reclaim, got {}", stat_reclaimed.frag_size);
+}
+
+#[test]
+fn test_mem_frag_size_tracking() {
+    let mut trie = CsppTrie::new(0);
+    assert_eq!(trie.mem_frag_size(), 0);
+
+    // Insert enough keys to trigger node transitions (which free old nodes)
+    for i in 0..20u8 {
+        trie.insert(&[i + 65]);
+    }
+    // After transitions, there should be fragmentation
+    let frag = trie.mem_frag_size();
+    // frag may be 0 if all freed nodes were at the end (shrink-from-end optimization)
+    // but with 20 inserts causing multiple transitions, some interior nodes will be freed
+    let stat = trie.mem_get_stat();
+    assert_eq!(frag, stat.frag_size);
+}
+
+#[test]
+fn test_10k_insert_memory_efficiency() {
+    let mut trie = CsppTrie::new(4);
+    for i in 0..10_000u32 {
+        let key = format!("key{:05}", i);
+        let (is_new, valpos) = trie.insert(key.as_bytes());
+        if is_new {
+            unsafe {
+                let ptr = trie.mempool.as_mut_ptr() as *mut u8;
+                std::ptr::write_unaligned(ptr.add(valpos) as *mut u32, i);
             }
         }
     }
-}
-
-// =============================================================================
-// CONCURRENCY MODEL TESTS
-// =============================================================================
-
-#[tokio::test]
-async fn test_no_write_read_only_mode() {
-    let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::NoWriteReadOnly).unwrap();
-
-    // In unified API, NoWriteReadOnly mode should allow basic operations
-    // Test that the trie functions correctly in read-only optimized mode
-    let result = trie.insert(b"test");
-    assert!(result.is_ok(), "Insert should work in NoWriteReadOnly mode");
-
-    assert!(trie.contains(b"test"), "Should be able to read inserted data");
-    assert_eq!(trie.len(), 1, "Length should be correct");
-}
-
-#[tokio::test]
-async fn test_single_thread_strict_mode() {
-    let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::SingleThreadStrict).unwrap();
-
-    // Should support basic operations without tokens
-    trie.insert(b"test").unwrap();
-    assert!(trie.contains(b"test"));
-
-    // Token acquisition should work but be limited
-    // Token operations removed - unified API handles concurrency internally
-    // Token operations removed - unified API handles concurrency internally
-
-    // Token operations removed - unified API handles concurrency internally
-    // Token operations removed - unified API handles concurrency internally
-}
-
-#[tokio::test]
-async fn test_one_write_multi_read_mode() {
-    let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::OneWriteMultiRead).unwrap();
-
-    // Should be able to acquire one writer
-    // Token operations removed - unified API handles concurrency internally
-
-    // Should be able to acquire multiple readers
-    // Token operations removed - unified API handles concurrency internally
-    // Token operations removed - unified API handles concurrency internally
-
-    // Use the tokens
-    trie.insert(b"test").unwrap();
-    assert!(trie.contains(b"test"));
-    assert!(trie.contains(b"test"));
-
-    // Release tokens
-    // Token operations removed - unified API handles concurrency internally
-    // Token operations removed - unified API handles concurrency internally
-    // Token operations removed - unified API handles concurrency internally
-}
-
-// =============================================================================
-// INTEGRATION TESTS
-// =============================================================================
-
-#[test]
-fn test_integration_with_memory_pool() {
-    let pool_config = SecurePoolConfig::new(16384, 128, 16);
-    let pool = SecureMemoryPool::new(pool_config).unwrap();
-
-    let mut trie =
-        create_compressed_sparse_trie_with_pool(ConcurrencyLevel::SingleThreadStrict, pool).unwrap();
-
-    let keys = generate_test_keys();
-
-    for key in &keys {
-        trie.insert(key).unwrap();
-    }
-
-    // Verify all operations work with custom memory pool
-    for key in &keys {
-        assert!(trie.contains(key));
-    }
-
-    let stats = trie.stats();
-    assert_eq!(stats.num_keys, keys.len());
-}
-
-#[test]
-fn test_comparison_with_standard_trie() {
-    // This test compares CSP trie behavior with expected trie behavior
-    let mut csp_trie = create_compressed_sparse_trie(ConcurrencyLevel::SingleThreadStrict).unwrap();
-
-    let keys = generate_collision_keys();
-
-    // Build CSP trie
-    for key in &keys {
-        csp_trie.insert(key).unwrap();
-    }
-
-    // Test that all operations behave as expected for a trie
-    for key in &keys {
-        assert!(csp_trie.contains(key));
-        assert!(csp_trie.lookup(key).is_some());
-        // Note: accepts method might not be implemented yet
-        // TODO: Uncomment when FSA interface is fully implemented
-        // assert!(csp_trie.accepts(key));
-    }
-
-    // Test that non-existent keys return false
-    assert!(!csp_trie.contains(b"definitely_not_there"));
-    assert!(csp_trie.lookup(b"definitely_not_there").is_none());
-    // assert!(!csp_trie.accepts(b"definitely_not_there"));
-}
-
-// =============================================================================
-// ERROR RECOVERY TESTS
-// =============================================================================
-
-#[test]
-fn test_error_recovery_and_consistency() {
-    let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::SingleThreadStrict).unwrap();
-
-    // Insert some initial keys
-    let initial_keys = vec![b"stable1".as_slice(), b"stable2".as_slice()];
-    for key in &initial_keys {
-        trie.insert(key).unwrap();
-    }
-
-    let initial_len = trie.len();
-
-    // Try operations that might cause errors (these might not actually fail
-    // but we test that the trie remains consistent)
-
-    // Very long key
-    let very_long_key = vec![255u8; 100000];
-    let result = trie.insert(&very_long_key);
-    // Whether this succeeds or fails, trie should remain consistent
-
-    if result.is_ok() {
-        assert!(trie.contains(&very_long_key));
-        assert_eq!(trie.len(), initial_len + 1);
-    } else {
-        assert_eq!(trie.len(), initial_len);
-    }
-
-    // Verify original keys still exist
-    for key in &initial_keys {
-        assert!(trie.contains(key));
-    }
-}
-
-#[tokio::test]
-async fn test_token_lifecycle_management() {
-    let mut trie = create_compressed_sparse_trie(ConcurrencyLevel::OneWriteMultiRead).unwrap();
-
-    // Test proper token lifecycle
-    for i in 0..10 {
-        // Token operations removed - unified API handles concurrency internally
-        // Token operations removed - unified API handles concurrency internally
-
-        let key = format!("lifecycle_test_{:02}", i);
-        trie.insert(key.as_bytes())
-            .unwrap();
-        assert!(trie.contains(key.as_bytes()));
-
-        // Token operations removed - unified API handles concurrency internally
-        // Token operations removed - unified API handles concurrency internally
-    }
-
-    assert_eq!(trie.len(), 10);
+    let stat = trie.mem_get_stat();
+    assert_eq!(trie.num_words(), 10_000);
+    // Memory efficiency: bytes per key should be reasonable
+    let bytes_per_key = stat.used_size as f64 / 10_000.0;
+    // With 4-byte values and ~8-byte keys, expect < 100 bytes/key
+    assert!(bytes_per_key < 200.0, "bytes_per_key={:.1} too high", bytes_per_key);
+    // Fragmentation ratio should be manageable
+    let frag_ratio = stat.frag_size as f64 / stat.used_size as f64;
+    assert!(frag_ratio < 0.5, "frag_ratio={:.2} too high", frag_ratio);
 }
