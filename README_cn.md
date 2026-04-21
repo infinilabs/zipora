@@ -18,7 +18,7 @@
 - **BM25 评分**：FieldnormEncoder（Lucene SmallFloat，1 字节字段长度） + Bm25BatchScorer（AVX2 SIMD 批量评分、预取）
 - **专用容器**：13+ 种容器（VecTrbSet/Map、MinimalSso、SortedUintVec、LruMap 等）
 - **哈希表**：黄金比例优化、字符串优化、缓存优化的多种实现
-- **高级 Trie**：双数组（DoubleArrayTrie，XOR 转移）、LOUDS、Critical-Bit（BMI2）、Patricia Trie + rank/select、NestTrieDawg、惰性前缀/模糊迭代器
+- **高级 Trie**：双数组（DoubleArrayTrie，XOR 转移）、LOUDS、Critical-Bit（BMI2）、Patricia Trie + rank/select、NestTrieDawg、惰性前缀/模糊迭代器、CsppTrie（压缩稀疏并行 Patricia，10 种节点编码，10.7 字节/键）、ConcurrentCsppTrie（多写多读，基于 epoch 的回收，线程本地分配）
 - **压缩算法**：PA-Zip、Huffman O0/O1/O2、FSE、rANS、ZSTD 集成
 - **C FFI 支持**：完整的 C API（`--features ffi`）
 
@@ -153,7 +153,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 详见 **[性能基准测试](docs/PERFORMANCE.md)**，涵盖所有组件的详细结果（Trie、BitVector、位计数、rank/select、容器、熵编码、LRU 缓存、BM25 评分）。
 
-**亮点**：DoubleArrayTrie 20.6 ns/次查找，SIMD 位计数 5.2 Gwords/s，批量位运算快 41 倍，BM25 SIMD 快 13.5 倍，LRU 热读取快 26 倍。
+**亮点**：DoubleArrayTrie 20.6 ns/次查找，CsppTrie 690 万次插入/秒 + 800 万次查找/秒（10.7 字节/键），ConcurrentCsppTrie 1000 万+ 键/秒（16 线程），SIMD 位计数 5.2 Gwords/s，批量位运算快 41 倍，BM25 SIMD 快 13.5 倍，LRU 热读取快 26 倍。
 
 ## 依赖
 

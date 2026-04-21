@@ -18,7 +18,7 @@ High-performance Rust data structures and compression algorithms with memory saf
 - **BM25 Scoring**: FieldnormEncoder (Lucene SmallFloat, 1-byte fieldnorms) + Bm25BatchScorer (AVX2 SIMD batch, prefetch)
 - **Specialized Containers**: 13+ containers (VecTrbSet/Map, MinimalSso, SortedUintVec, LruMap, etc.)
 - **Hash Maps**: Golden ratio optimized, string-optimized, cache-optimized implementations
-- **Advanced Tries**: Double-Array (DoubleArrayTrie, XOR transitions), LOUDS, Critical-Bit (BMI2), Patricia tries with rank/select, NestTrieDawg, lazy prefix/fuzzy iterators
+- **Advanced Tries**: Double-Array (DoubleArrayTrie, XOR transitions), LOUDS, Critical-Bit (BMI2), Patricia tries with rank/select, NestTrieDawg, lazy prefix/fuzzy iterators, CsppTrie (Compressed Sparse Parallel Patricia, 10 node encodings, 10.7 bytes/key), ConcurrentCsppTrie (multi-writer/multi-reader, epoch-based reclamation, thread-local allocation)
 - **Compression**: PA-Zip, Huffman O0/O1/O2, FSE, rANS, ZSTD integration
 - **C FFI Support**: Complete C API (`--features ffi`)
 
@@ -153,7 +153,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 See **[Performance Benchmarks](docs/PERFORMANCE.md)** for detailed results across all components (Trie, BitVector, popcount, rank/select, containers, entropy coding, LRU cache, BM25 scoring).
 
-**Highlights**: DoubleArrayTrie 20.6 ns/lookup, SIMD popcount 5.2 Gwords/s, bulk bitwise 41x faster, BM25 SIMD 13.5x faster, LRU hot-get 26x faster.
+**Highlights**: DoubleArrayTrie 20.6 ns/lookup, CsppTrie 6.9M insert/sec + 8.0M lookup/sec (10.7 bytes/key), ConcurrentCsppTrie 10+ M keys/sec (16 threads), SIMD popcount 5.2 Gwords/s, bulk bitwise 41x faster, BM25 SIMD 13.5x faster, LRU hot-get 26x faster.
 
 ## Dependencies
 
