@@ -6,7 +6,7 @@
 //! better for large bitvectors where you scan bits and do occasional rank queries.
 //!
 //! Layout:
-//! - `bits: Vec<u64>` — raw bit words
+//! - `bv: BitVector` — raw bit vector payload
 //! - `rank_cache: Vec<RankCacheSE>` — one 8-byte entry per 256-bit block
 //! - Optional `sel0_cache` / `sel1_cache` for accelerated select
 
@@ -37,7 +37,7 @@ impl RankCacheSE {
 
 /// Side-entry rank/select with 256-bit blocks.
 pub struct RankSelectSE256 {
-    bits: Vec<u64>,
+    bv: BitVector,
     rank_cache: Vec<RankCacheSE>,
     sel0_cache: Option<Vec<u32>>,
     sel1_cache: Option<Vec<u32>>,
@@ -55,20 +55,20 @@ impl RankSelectSE256 {
     /// Build with control over select acceleration tables.
     pub fn with_options(bv: BitVector, speed_select0: bool, speed_select1: bool) -> Result<Self> {
         let size = bv.len();
-        let bits: Vec<u64> = bv.blocks().to_vec();
         let nlines = (size + LINE_BITS - 1) / LINE_BITS;
 
         // Build rank cache
         let mut rank_cache = Vec::with_capacity(nlines + 1);
         let mut cumulative = 0u32;
+        let blocks = bv.blocks();
         for i in 0..nlines {
             let mut rc = RankCacheSE::new(cumulative);
             let mut r = 0u32;
             for j in 0..WORDS_PER_LINE {
                 rc.lev2[j] = r as u8;
                 let word_idx = i * WORDS_PER_LINE + j;
-                if word_idx < bits.len() {
-                    r += bits[word_idx].count_ones();
+                if word_idx < blocks.len() {
+                    r += blocks[word_idx].count_ones();
                 }
             }
             rank_cache.push(rc);
@@ -88,7 +88,7 @@ impl RankSelectSE256 {
             Some(Self::build_select1_cache(&rank_cache, max_rank1, nlines))
         } else { None };
 
-        Ok(Self { bits, rank_cache, sel0_cache, sel1_cache, size, max_rank0, max_rank1 })
+        Ok(Self { bv, rank_cache, sel0_cache, sel1_cache, size, max_rank0, max_rank1 })
     }
 
     /// Build select0 acceleration: sel0_cache[r/256] = first block where cumulative rank0 >= r
@@ -143,7 +143,7 @@ impl RankSelectSE256 {
 
     #[inline]
     pub fn mem_size(&self) -> usize {
-        self.bits.len() * 8
+        self.bv.blocks().len() * 8
         + self.rank_cache.len() * std::mem::size_of::<RankCacheSE>()
         + self.sel0_cache.as_ref().map_or(0, |c| c.len() * 4)
         + self.sel1_cache.as_ref().map_or(0, |c| c.len() * 4)
@@ -212,7 +212,7 @@ impl RankSelectOps for RankSelectSE256 {
         rc.lev1 as usize
             + rc.lev2[word_in_block] as usize
             + Self::popcount_trail(
-                if word_idx < self.bits.len() { self.bits[word_idx] } else { 0 },
+                if word_idx < self.bv.blocks().len() { self.bv.blocks()[word_idx] } else { 0 },
                 bit_in_word,
             )
     }
@@ -237,8 +237,8 @@ impl RankSelectOps for RankSelectSE256 {
             if remaining_in_block >= rc.lev2[j] as usize {
                 let remaining_in_word = remaining_in_block - rc.lev2[j] as usize;
                 let word_idx = block * WORDS_PER_LINE + j;
-                if word_idx < self.bits.len() {
-                    let word = self.bits[word_idx];
+                if word_idx < self.bv.blocks().len() {
+                    let word = self.bv.blocks()[word_idx];
                     return Ok(base_bitpos + j * 64 + Self::select_in_word(word, remaining_in_word));
                 }
             }
@@ -265,7 +265,7 @@ impl RankSelectOps for RankSelectSE256 {
             if remaining >= zeros_before_j {
                 let remaining_in_word = remaining - zeros_before_j;
                 let word_idx = block * WORDS_PER_LINE + j;
-                let word = if word_idx < self.bits.len() { self.bits[word_idx] } else { 0 };
+                let word = if word_idx < self.bv.blocks().len() { self.bv.blocks()[word_idx] } else { 0 };
                 return Ok(base_bitpos + j * 64 + Self::select_in_word(!word, remaining_in_word));
             }
         }
@@ -279,8 +279,8 @@ impl RankSelectOps for RankSelectSE256 {
         if index >= self.size { return None; }
         let word_idx = index / 64;
         let bit_idx = index % 64;
-        if word_idx < self.bits.len() {
-            Some((self.bits[word_idx] >> bit_idx) & 1 == 1)
+        if word_idx < self.bv.blocks().len() {
+            Some((self.bv.blocks()[word_idx] >> bit_idx) & 1 == 1)
         } else {
             Some(false)
         }

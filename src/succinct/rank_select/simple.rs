@@ -18,7 +18,7 @@ const WORDS_PER_LINE: usize = LINE_BITS / 64;
 
 /// Minimal rank/select — one u32 per 256-bit block.
 pub struct RankSelectSimple {
-    bits: Vec<u64>,
+    bv: BitVector,
     rank_cache: Vec<u32>,
     size: usize,
     max_rank0: usize,
@@ -29,18 +29,18 @@ impl RankSelectSimple {
     /// Build from a BitVector.
     pub fn new(bv: BitVector) -> Result<Self> {
         let size = bv.len();
-        let words: Vec<u64> = bv.blocks().to_vec();
         let nlines = (size + LINE_BITS - 1) / LINE_BITS;
 
         // Build rank cache: one u32 per block = cumulative rank1 at block start
         let mut rank_cache = Vec::with_capacity(nlines + 1);
         let mut cumulative_rank1 = 0u64;
+        let blocks = bv.blocks();
         for i in 0..nlines {
             rank_cache.push(cumulative_rank1 as u32);
             for j in 0..WORDS_PER_LINE {
                 let word_idx = i * WORDS_PER_LINE + j;
-                if word_idx < words.len() {
-                    cumulative_rank1 += words[word_idx].count_ones() as u64;
+                if word_idx < blocks.len() {
+                    cumulative_rank1 += blocks[word_idx].count_ones() as u64;
                 }
             }
         }
@@ -49,7 +49,7 @@ impl RankSelectSimple {
         let max_rank1 = cumulative_rank1 as usize;
         let max_rank0 = size - max_rank1;
 
-        Ok(Self { bits: words, rank_cache, size, max_rank0, max_rank1 })
+        Ok(Self { bv, rank_cache, size, max_rank0, max_rank1 })
     }
 
     /// Build from raw bit words.
@@ -75,7 +75,7 @@ impl RankSelectSimple {
     pub fn max_rank1(&self) -> usize { self.max_rank1 }
     #[inline]
     pub fn mem_size(&self) -> usize {
-        self.bits.len() * 8 + self.rank_cache.len() * 4
+        self.bv.blocks().len() * 8 + self.rank_cache.len() * 4
     }
 }
 
@@ -90,15 +90,16 @@ impl RankSelectOps for RankSelectSimple {
         // Sum popcounts of whole words within the block
         let block_word_start = block * WORDS_PER_LINE;
         let target_word = pos / 64;
+        let blocks = self.bv.blocks();
         for i in block_word_start..target_word {
-            if i < self.bits.len() {
-                rank += self.bits[i].count_ones() as usize;
+            if i < blocks.len() {
+                rank += blocks[i].count_ones() as usize;
             }
         }
         // Add partial word
         let bit_in_word = pos % 64;
-        if bit_in_word > 0 && target_word < self.bits.len() {
-            rank += Self::popcount_trail(self.bits[target_word], bit_in_word);
+        if bit_in_word > 0 && target_word < blocks.len() {
+            rank += Self::popcount_trail(blocks[target_word], bit_in_word);
         }
         rank
     }
@@ -129,12 +130,13 @@ impl RankSelectOps for RankSelectSimple {
         let block = lo - 1;
         let mut remaining = k - self.rank_cache[block] as usize;
         let base_bitpos = block * LINE_BITS;
+        let blocks = self.bv.blocks();
 
         // Linear scan within the block
         for j in 0..WORDS_PER_LINE {
             let word_idx = block * WORDS_PER_LINE + j;
-            if word_idx >= self.bits.len() { break; }
-            let word = self.bits[word_idx];
+            if word_idx >= blocks.len() { break; }
+            let word = blocks[word_idx];
             let ones = word.count_ones() as usize;
             if remaining < ones {
                 // Target is in this word — use BMI2 pdep/tzcnt if available
@@ -167,11 +169,12 @@ impl RankSelectOps for RankSelectSimple {
         let rank0_at_block = block * LINE_BITS - self.rank_cache[block] as usize;
         let mut remaining = k - rank0_at_block;
         let base_bitpos = block * LINE_BITS;
+        let blocks = self.bv.blocks();
 
         for j in 0..WORDS_PER_LINE {
             let word_idx = block * WORDS_PER_LINE + j;
-            if word_idx >= self.bits.len() { break; }
-            let word = self.bits[word_idx];
+            if word_idx >= blocks.len() { break; }
+            let word = blocks[word_idx];
             let zeros = (!word).count_ones() as usize;
             // Clamp zeros for partial last word
             let max_bits = if base_bitpos + (j + 1) * 64 > self.size {
@@ -196,8 +199,9 @@ impl RankSelectOps for RankSelectSimple {
         if index >= self.size { return None; }
         let word_idx = index / 64;
         let bit_idx = index % 64;
-        if word_idx < self.bits.len() {
-            Some((self.bits[word_idx] >> bit_idx) & 1 == 1)
+        let blocks = self.bv.blocks();
+        if word_idx < blocks.len() {
+            Some((blocks[word_idx] >> bit_idx) & 1 == 1)
         } else {
             Some(false)
         }

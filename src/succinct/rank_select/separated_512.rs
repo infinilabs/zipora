@@ -36,7 +36,7 @@ fn get_rela(rela: u64, k: usize) -> usize {
 
 /// Side-entry rank/select with 512-bit blocks and u32 index.
 pub struct RankSelectSE512 {
-    bits: Vec<u64>,
+    bv: BitVector,
     rank_cache: Vec<RankCacheSE512>,
     sel0_cache: Option<Vec<u32>>,
     sel1_cache: Option<Vec<u32>>,
@@ -61,7 +61,7 @@ impl RankSelectSE512 {
 
     pub fn with_options(bv: BitVector, speed_select0: bool, speed_select1: bool) -> Result<Self> {
         let size = bv.len();
-        let bits: Vec<u64> = bv.blocks().to_vec();
+        let blocks = bv.blocks();
         let nlines = (size + LINE_BITS - 1) / LINE_BITS;
 
         // Build rank cache
@@ -72,7 +72,7 @@ impl RankSelectSE512 {
             let mut r = 0u64;
             for j in 0..WORDS_PER_LINE {
                 let word_idx = i * WORDS_PER_LINE + j;
-                let pc = if word_idx < bits.len() { bits[word_idx].count_ones() as u64 } else { 0 };
+                let pc = if word_idx < blocks.len() { blocks[word_idx].count_ones() as u64 } else { 0 };
                 r += pc;
                 // Pack cumulative rank into rela (9 bits per sub-block)
                 // rela stores ranks for words 0..j (not including j's popcount yet for word j+1)
@@ -96,7 +96,7 @@ impl RankSelectSE512 {
             Some(Self::build_select_cache(&rank_cache, max_rank1, nlines, true))
         } else { None };
 
-        Ok(Self { bits, rank_cache, sel0_cache, sel1_cache, size, max_rank0, max_rank1 })
+        Ok(Self { bv, rank_cache, sel0_cache, sel1_cache, size, max_rank0, max_rank1 })
     }
 
     fn build_select_cache(rank_cache: &[RankCacheSE512], max_rank: usize, nlines: usize, is_rank1: bool) -> Vec<u32> {
@@ -160,7 +160,7 @@ impl RankSelectSE512 {
 
     #[inline]
     pub fn mem_size(&self) -> usize {
-        self.bits.len() * 8
+        self.bv.blocks().len() * 8
         + self.rank_cache.len() * std::mem::size_of::<RankCacheSE512>()
         + self.sel0_cache.as_ref().map_or(0, |c| c.len() * 4)
         + self.sel1_cache.as_ref().map_or(0, |c| c.len() * 4)
@@ -182,7 +182,7 @@ impl RankSelectOps for RankSelectSE512 {
         rc.base as usize
             + get_rela(rc.rela, k)
             + Self::popcount_trail(
-                if word_idx < self.bits.len() { self.bits[word_idx] } else { 0 },
+                if word_idx < self.bv.blocks().len() { self.bv.blocks()[word_idx] } else { 0 },
                 bit_in_word,
             )
     }
@@ -208,8 +208,8 @@ impl RankSelectOps for RankSelectSE512 {
             if target >= rank_before_j {
                 let remaining = target - rank_before_j;
                 let word_idx = block * WORDS_PER_LINE + j;
-                if word_idx < self.bits.len() {
-                    return Ok(base_bitpos + j * 64 + Self::select_in_word(self.bits[word_idx], remaining));
+                if word_idx < self.bv.blocks().len() {
+                    return Ok(base_bitpos + j * 64 + Self::select_in_word(self.bv.blocks()[word_idx], remaining));
                 }
             }
         }
@@ -235,7 +235,7 @@ impl RankSelectOps for RankSelectSE512 {
             if target >= zeros_before_j {
                 let remaining = target - zeros_before_j;
                 let word_idx = block * WORDS_PER_LINE + j;
-                let word = if word_idx < self.bits.len() { self.bits[word_idx] } else { 0 };
+                let word = if word_idx < self.bv.blocks().len() { self.bv.blocks()[word_idx] } else { 0 };
                 return Ok(base_bitpos + j * 64 + Self::select_in_word(!word, remaining));
             }
         }
@@ -249,8 +249,8 @@ impl RankSelectOps for RankSelectSE512 {
         if index >= self.size { return None; }
         let word_idx = index / 64;
         let bit_idx = index % 64;
-        if word_idx < self.bits.len() {
-            Some((self.bits[word_idx] >> bit_idx) & 1 == 1)
+        if word_idx < self.bv.blocks().len() {
+            Some((self.bv.blocks()[word_idx] >> bit_idx) & 1 == 1)
         } else {
             Some(false)
         }
