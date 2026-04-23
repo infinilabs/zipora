@@ -616,9 +616,17 @@ where
             
         sorter.sort(&mut indices)?;
 
-        let original_data: Vec<(K, V)> = data.to_vec();
+        let mut targets = vec![0; data.len()];
         for (i, ki) in indices.iter().enumerate() {
-            data[i] = original_data[ki.index].clone();
+            targets[ki.index] = i;
+        }
+
+        for i in 0..data.len() {
+            while targets[i] != i {
+                let alt = targets[i];
+                data.swap(i, alt);
+                targets.swap(i, alt);
+            }
         }
 
         Ok(())
@@ -1667,6 +1675,78 @@ mod tests {
             (8, "eight".to_string()),
         ];
         assert_eq!(data, expected);
+    }
+
+    #[test]
+    fn test_key_value_sort_empty() {
+        let sorter = KeyValueRadixSort::<u32, String>::new();
+        let mut data: Vec<(u32, String)> = vec![];
+        assert!(sorter.sort_by_key(&mut data).is_ok());
+        assert!(data.is_empty());
+    }
+
+    #[test]
+    fn test_key_value_sort_single() {
+        let sorter = KeyValueRadixSort::<u32, String>::new();
+        let mut data = vec![(42, "only".to_string())];
+        assert!(sorter.sort_by_key(&mut data).is_ok());
+        assert_eq!(data, vec![(42, "only".to_string())]);
+    }
+
+    #[test]
+    fn test_key_value_sort_already_sorted() {
+        let sorter = KeyValueRadixSort::<u32, String>::new();
+        let mut data: Vec<(u32, String)> = (0..50).map(|i| (i, format!("v{}", i))).collect();
+        let expected = data.clone();
+        assert!(sorter.sort_by_key(&mut data).is_ok());
+        assert_eq!(data, expected);
+    }
+
+    #[test]
+    fn test_key_value_sort_reverse() {
+        let sorter = KeyValueRadixSort::<u32, String>::new();
+        let mut data: Vec<(u32, String)> = (0..50).rev().map(|i| (i, format!("v{}", i))).collect();
+        assert!(sorter.sort_by_key(&mut data).is_ok());
+        for i in 0..50u32 {
+            assert_eq!(data[i as usize], (i, format!("v{}", i)));
+        }
+    }
+
+    #[test]
+    fn test_key_value_sort_duplicate_keys() {
+        let sorter = KeyValueRadixSort::<u32, String>::new();
+        let mut data = vec![
+            (3, "a".to_string()),
+            (1, "b".to_string()),
+            (3, "c".to_string()),
+            (1, "d".to_string()),
+            (2, "e".to_string()),
+        ];
+        assert!(sorter.sort_by_key(&mut data).is_ok());
+        let keys: Vec<u32> = data.iter().map(|(k, _)| *k).collect();
+        assert_eq!(keys, vec![1, 1, 2, 3, 3]);
+        let all_values: std::collections::HashSet<&str> =
+            data.iter().map(|(_, v)| v.as_str()).collect();
+        assert_eq!(all_values.len(), 5);
+    }
+
+    #[test]
+    fn test_key_value_sort_large_strings() {
+        let sorter = KeyValueRadixSort::<u32, String>::new();
+        let n = 200;
+        let mut data: Vec<(u32, String)> = (0..n)
+            .map(|i| {
+                let key = ((i * 7 + 13) % n) as u32;
+                (key, "x".repeat(64) + &format!("_{}", key))
+            })
+            .collect();
+        assert!(sorter.sort_by_key(&mut data).is_ok());
+        for i in 1..data.len() {
+            assert!(data[i - 1].0 <= data[i].0, "not sorted at index {}", i);
+        }
+        for (k, v) in &data {
+            assert!(v.ends_with(&format!("_{}", k)));
+        }
     }
 
     #[test]

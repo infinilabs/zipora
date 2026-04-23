@@ -826,12 +826,12 @@ impl DfaCache {
 
         // Use a sliding window approach to find frequent patterns
         for pattern_len in 1..=max_depth {
-            let mut pattern_counts: HashMap<Vec<u8>, (usize, u32)> = HashMap::new();
+            let mut pattern_counts: HashMap<&[u8], (usize, u32)> = HashMap::new();
             
             // Count all patterns of this length
             for &start_pos in sa {
                 if start_pos + pattern_len <= text.len() {
-                    let pattern = text[start_pos..start_pos + pattern_len].to_vec();
+                    let pattern = &text[start_pos..start_pos + pattern_len];
                     let entry = pattern_counts.entry(pattern).or_insert((start_pos, 0));
                     entry.1 += 1;
                 }
@@ -841,7 +841,7 @@ impl DfaCache {
             for (pattern, (position, frequency)) in pattern_counts {
                 if frequency >= min_frequency {
                     patterns.push(PatternInfo {
-                        pattern,
+                        pattern: pattern.to_vec(),
                         position,
                         frequency,
                         length: pattern_len,
