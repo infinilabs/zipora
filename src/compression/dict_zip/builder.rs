@@ -919,12 +919,12 @@ impl DictionaryBuilder {
         
         // Extract patterns of different lengths
         for pattern_len in self.config.min_pattern_length..=self.config.max_pattern_length {
-            let mut pattern_counts: HashMap<Vec<u8>, u32> = HashMap::new();
+            let mut pattern_counts: HashMap<&[u8], u32> = HashMap::new();
             
             // Count occurrences of all patterns of this length
             for &start_pos in suffix_array.as_slice() {
                 if start_pos + pattern_len <= data.len() {
-                    let pattern = data[start_pos..start_pos + pattern_len].to_vec();
+                    let pattern = &data[start_pos..start_pos + pattern_len];
                     *pattern_counts.entry(pattern).or_insert(0) += 1;
                 }
             }
@@ -933,7 +933,7 @@ impl DictionaryBuilder {
             for (pattern, frequency) in pattern_counts {
                 if frequency >= self.config.min_frequency && frequency <= self.config.max_frequency {
                     patterns.push(PatternInfo {
-                        pattern,
+                        pattern: pattern.to_vec(),
                         frequency,
                         length: pattern_len,
                     });
@@ -1076,7 +1076,9 @@ impl DictionaryBuilder {
 
         for window in data.windows(4) {
             total_4grams += 1;
-            if !seen_4grams.insert(window.to_vec()) {
+            let mut arr = [0u8; 4];
+            arr.copy_from_slice(window);
+            if !seen_4grams.insert(arr) {
                 repeated_4grams += 1;
             }
         }
