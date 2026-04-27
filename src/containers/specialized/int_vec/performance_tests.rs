@@ -12,8 +12,10 @@ use super::*;
 use std::time::Instant;
 
 /// Performance test data generator
+#[cfg(test)]
 struct PerfDataGen;
 
+#[cfg(test)]
 impl PerfDataGen {
     /// Generate sorted sequence - should achieve excellent compression
     pub fn sorted_sequence(size: usize) -> Vec<u32> {

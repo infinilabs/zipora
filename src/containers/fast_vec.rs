@@ -813,7 +813,7 @@ impl<T> FastVec<T> {
         // Adaptive SIMD selection for optimal implementation
         if is_simd_safe::<T>() && is_simd_beneficial::<T>(range_len) {
             let selector = AdaptiveSimdSelector::global();
-            let simd_impl = selector.select_optimal_impl(
+            let _ = selector.select_optimal_impl(
                 Operation::MemZero,
                 range_len * mem::size_of::<T>(),
                 None, // No density for fill operations
@@ -919,7 +919,7 @@ impl<T> FastVec<T> {
         // Adaptive SIMD selection for optimal copy implementation
         if is_simd_safe::<T>() && is_simd_beneficial::<T>(src.len()) {
             let selector = AdaptiveSimdSelector::global();
-            let simd_impl = selector.select_optimal_impl(
+            let _ = selector.select_optimal_impl(
                 Operation::Copy,
                 src.len() * mem::size_of::<T>(),
                 None, // No density for copy operations
@@ -988,7 +988,7 @@ impl<T> FastVec<T> {
         // Adaptive SIMD selection for optimal extend implementation
         if is_simd_safe::<T>() && is_simd_beneficial::<T>(src.len()) {
             let selector = AdaptiveSimdSelector::global();
-            let simd_impl = selector.select_optimal_impl(
+            let _ = selector.select_optimal_impl(
                 Operation::Copy,
                 src.len() * mem::size_of::<T>(),
                 None, // No density for extend operations

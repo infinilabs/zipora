@@ -1220,8 +1220,6 @@ impl FseDecoder {
             ..self.config.clone()
         };
         let table = FseTable::new(&frequencies, &config)?;
-        let table_size = 1usize << table_log;
-        
         // Read initial state from the END of the data (rANS reads backward)
         if data.len() < pos + 8 {
             return Err(ZiporaError::invalid_data("Missing final state"));
@@ -1247,7 +1245,7 @@ impl FseDecoder {
         // Decode symbols using advanced approach
         let mut output = Vec::with_capacity(original_size);
         
-        for i in 0..original_size {
+        for _i in 0..original_size {
             // Decode symbol first (optimal order for performance)
             let (symbol, new_state) = table.decode_symbol(state);
             

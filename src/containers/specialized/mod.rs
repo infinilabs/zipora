@@ -110,12 +110,3 @@ pub use concurrent_lru_map::{ConcurrentLruMap, ConcurrentLruMapConfig, Concurren
 pub use vec_trb::{VecTrbSet, VecTrbMap};
 pub use minimal_sso::MinimalSso;
 
-// Advanced string containers
-mod advanced_string_vec;
-mod bit_packed_string_vec;
-
-pub use advanced_string_vec::{AdvancedStringVec, AdvancedStringConfig, CompressionStats};
-pub use bit_packed_string_vec::{
-    BitPackedStringVec, BitPackedStringVec32, BitPackedStringVec64,
-    BitPackedConfig, BitPackedStats, OffsetOps, U32OffsetOps, U64OffsetOps,
-};

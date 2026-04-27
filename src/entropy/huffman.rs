@@ -966,8 +966,6 @@ impl ContextualHuffmanEncoder {
             // Merge context-specific frequencies with Order-0 baseline
             // Use context-specific when available, fall back to Order-0 scaled down
             let mut merged_freqs = [0u32; 256];
-            let context_total: u32 = context_freqs.iter().sum();
-
             for symbol in 0..256 {
                 if context_freqs[symbol] > 0 {
                     // Use context-specific frequency (much higher weight)

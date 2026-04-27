@@ -408,7 +408,7 @@ where
         let handles: Vec<_> = self.shards
             .iter()
             .enumerate()
-            .map(|(idx, shard)| {
+            .map(|(_idx, shard)| {
                 let shard = shard.clone();
                 let mut f = f.clone();
                 thread::spawn(move || f(&shard))
@@ -435,7 +435,7 @@ where
         
         // Note: This is not atomic across shards, so the snapshot
         // might not be perfectly consistent
-        for shard in &self.shards {
+        for _shard in &self.shards {
             // We'd need to add a keys() method to LruMap for this to work
             // For now, this is a placeholder showing the interface
         }

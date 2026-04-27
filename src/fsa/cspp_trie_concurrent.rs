@@ -1472,7 +1472,7 @@ impl ConcurrentCsppTrie {
                 let is_final = view.is_final();
                 let skip = view.skip_slots();
                 let n_children = view.n_children();
-                let flags = view.meta().flags;
+                let _flags = view.meta().flags;
 
                 let node_size = (skip + n_children) * ALIGN_SIZE
                     + ((zpath_len + 3) & !3)

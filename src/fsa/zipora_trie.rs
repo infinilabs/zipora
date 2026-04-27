@@ -667,7 +667,7 @@ where
                 transition_count
             }
             TrieStorage::Louds { .. } => 0, // TODO: implement
-            TrieStorage::CompressedSparse(cspp) => 0, /* TODO: implement num_transitions */
+            TrieStorage::CompressedSparse(_cspp) => 0, /* TODO: implement num_transitions */
         };
 
         stats
@@ -701,13 +701,13 @@ where
                 nodes.iter().map(|n| n.children.len()).sum()
             }
             TrieStorage::CriticalBit { .. } => 0, // TODO: implement
-            TrieStorage::DoubleArray { base, check, .. } => {
+            TrieStorage::DoubleArray { base: _, check, .. } => {
                 // Count non-zero check values (excluding root) as transitions
                 // Each non-zero check represents a valid transition
                 check.iter().skip(1).filter(|&&c| c != 0).count()
             }
             TrieStorage::Louds { .. } => 0, // TODO: implement
-            TrieStorage::CompressedSparse(cspp) => 0, /* TODO: implement num_transitions */
+            TrieStorage::CompressedSparse(_cspp) => 0, /* TODO: implement num_transitions */
         };
     }
 
@@ -835,7 +835,7 @@ where
             TrieStorage::DoubleArray { base, check, .. } => {
                 Self::keys_double_array_actual(base, check)
             }
-            TrieStorage::CompressedSparse(cspp) => Vec::new(), // Handled by cspp.iter
+            TrieStorage::CompressedSparse(_cspp) => Vec::new(), // Handled by _cspp.iter
             _ => {
                 // TODO: Implement for other storage types
                 Vec::new()
@@ -855,7 +855,7 @@ where
             TrieStorage::DoubleArray { base, check, .. } => {
                 Self::keys_with_prefix_double_array_actual(base, check, prefix)
             }
-            TrieStorage::CompressedSparse(cspp) => Vec::new(), // Handled by cspp.iter
+            TrieStorage::CompressedSparse(_cspp) => Vec::new(), // Handled by _cspp.iter
             _ => {
                 // TODO: Implement for other storage types
                 Vec::new()
@@ -1249,8 +1249,6 @@ where
 {
     fn insert(&mut self, key: &[u8]) -> Result<StateId> {
         // Track if this was a new key insertion
-        let prev_count = self.stats.num_keys;
-
         let result = match &mut self.storage {
             TrieStorage::Patricia { nodes, edge_data, compressed_paths } => {
                 Self::insert_patricia(nodes, edge_data, compressed_paths, key, &mut self.stats.num_keys)
@@ -1328,7 +1326,7 @@ where
                 // TODO: Implement LOUDS final state check
                 false
             }
-            TrieStorage::CompressedSparse(cspp) => false, // Stub for legacy method
+            TrieStorage::CompressedSparse(_cspp) => false, // Stub for legacy method
         }
     }
 
@@ -1340,7 +1338,7 @@ where
                     .ok()
                     .map(|idx| node.children[idx].1)
             }
-            TrieStorage::CriticalBit { nodes, .. } => {
+            TrieStorage::CriticalBit { nodes: _, .. } => {
                 // TODO: Implement critical bit transition
                 None
             }
@@ -1365,7 +1363,7 @@ where
                 // TODO: Implement LOUDS transition
                 None
             }
-            TrieStorage::CompressedSparse(cspp) => None, // Stub for legacy method
+            TrieStorage::CompressedSparse(_cspp) => None, // Stub for legacy method
         }
     }
 
@@ -1492,7 +1490,7 @@ where
     fn insert_double_array(
         base: &mut FastVec<u32>,
         check: &mut FastVec<u32>,
-        free_list: &mut VecDeque<StateId>,
+        _free_list: &mut VecDeque<StateId>,
         state_count: &mut usize,
         key: &[u8],
         num_keys: &mut usize,
@@ -1535,7 +1533,9 @@ where
             std::str::from_utf8(key).unwrap_or("<non-utf8>"));
 
         // Traverse the trie for each symbol in the key
-        for (pos, &symbol) in key.iter().enumerate() {
+        #[cfg(debug_assertions)]
+        let mut pos: usize = 0;
+        for &symbol in key.iter() {
             // Calculate next state position using base value (bits 0-30)
             let mut base_value = base[current_state as usize] & VALUE_MASK;
 
@@ -1663,6 +1663,8 @@ where
                     *state_count += 1;
                 }
             }
+            #[cfg(debug_assertions)]
+            { pos += 1; }
         }
 
         // Mark the final state as terminal (referenced project: set_term_bit on base at line 27)
@@ -1687,7 +1689,7 @@ where
 
     // Helper: Find a free base value for a state that doesn't conflict
     // For incremental insert, use a proper heuristic matching referenced project's approach
-    fn find_free_base(base: &FastVec<u32>, check: &FastVec<u32>, _state: u32) -> Result<u32> {
+    fn find_free_base(_base: &FastVec<u32>, check: &FastVec<u32>, _state: u32) -> Result<u32> {
         const FREE_BIT: u32 = 0x8000_0000;
         const NIL_STATE: u32 = 0x7FFF_FFFF;
 
@@ -1715,7 +1717,7 @@ where
         check: &mut FastVec<u32>,
         state: u32,
         new_symbol: u8,
-        state_count: &mut usize,
+        _state_count: &mut usize,
     ) -> Result<u32> {
         const VALUE_MASK: u32 = 0x7FFF_FFFF;   // Bits 0-30 for values (referenced project)
         const TERMINAL_BIT: u32 = 0x8000_0000; // Bit 31 in base for terminal (referenced project)
@@ -1905,7 +1907,9 @@ where
         let mut current_state = 0u32;
 
         // Traverse the trie for each symbol (referenced project line 100-110: state_move)
-        for (i, &symbol) in key.iter().enumerate() {
+        #[cfg(debug_assertions)]
+        let mut i: usize = 0;
+        for &symbol in key.iter() {
             // SAFETY: We check if base_val exists, then use it
             let base_val = match base.get(current_state as usize) {
                 Some(val) => val,
@@ -1938,6 +1942,8 @@ where
             }
 
             current_state = next_state;
+            #[cfg(debug_assertions)]
+            { i += 1; }
         }
 
         // Check if the final state is marked as terminal (check terminal bit in base)
@@ -2217,8 +2223,8 @@ where
     // Actual implementation methods for Patricia trie
     fn insert_patricia_actual(
         nodes: &mut FastVec<PatriciaNode>,
-        edge_data: &mut FastVec<u8>,
-        compressed_paths: &mut HashMap<StateId, Vec<u8>>,
+        _edge_data: &mut FastVec<u8>,
+        _compressed_paths: &mut HashMap<StateId, Vec<u8>>,
         key: &[u8],
         num_keys: &mut usize,
     ) -> Result<StateId> {
@@ -2265,8 +2271,8 @@ where
 
     fn contains_patricia_actual(
         nodes: &FastVec<PatriciaNode>,
-        edge_data: &FastVec<u8>,
-        compressed_paths: &HashMap<StateId, Vec<u8>>,
+        _edge_data: &FastVec<u8>,
+        _compressed_paths: &HashMap<StateId, Vec<u8>>,
         key: &[u8],
     ) -> bool {
         if nodes.is_empty() {
@@ -2296,8 +2302,8 @@ where
 
     fn remove_patricia_actual(
         nodes: &mut FastVec<PatriciaNode>,
-        edge_data: &mut FastVec<u8>,
-        compressed_paths: &mut HashMap<StateId, Vec<u8>>,
+        _edge_data: &mut FastVec<u8>,
+        _compressed_paths: &mut HashMap<StateId, Vec<u8>>,
         key: &[u8],
     ) -> Result<bool> {
         if nodes.is_empty() {
@@ -2339,8 +2345,6 @@ where
         // If the node has no children and is not final, we can potentially clean it up
         if !has_children {
             // Walk back up the path and remove unnecessary nodes
-            let mut node_to_remove = current;
-
             for &(parent_idx, symbol) in path.iter().rev() {
                 // Remove the child pointer from parent
                 if let Ok(idx) = nodes[parent_idx].children.binary_search_by_key(&symbol, |(s, _)| *s) {
@@ -2355,9 +2359,6 @@ where
                 if parent_has_children || parent_is_final {
                     break;
                 }
-
-                // Continue cleanup with parent
-                node_to_remove = parent_idx;
             }
         }
 
@@ -2366,8 +2367,8 @@ where
 
     fn restore_string_patricia_actual(
         nodes: &FastVec<PatriciaNode>,
-        edge_data: &FastVec<u8>,
-        compressed_paths: &HashMap<StateId, Vec<u8>>,
+        _edge_data: &FastVec<u8>,
+        _compressed_paths: &HashMap<StateId, Vec<u8>>,
         state_id: StateId,
     ) -> Option<Vec<u8>> {
         if nodes.is_empty() || state_id as usize >= nodes.len() {
@@ -2425,7 +2426,7 @@ where
 
     fn lookup_node_id_patricia_actual(
         nodes: &FastVec<PatriciaNode>,
-        edge_data: &FastVec<u8>,
+        _edge_data: &FastVec<u8>,
         compressed_paths: &HashMap<StateId, Vec<u8>>,
         key: &[u8],
     ) -> Option<StateId> {
