@@ -358,7 +358,7 @@ where
 
     fn get<'a, Q>(
         &self,
-        context: &Self::Context,
+        _context: &Self::Context,
         buckets: &'a [HashBucket<K, V>],
         key: &Q,
         hash: u64,
@@ -398,7 +398,7 @@ where
 
     fn remove<Q>(
         &self,
-        context: &mut Self::Context,
+        _context: &mut Self::Context,
         buckets: &mut [HashBucket<K, V>],
         key: &Q,
         hash: u64,
@@ -508,7 +508,7 @@ impl<K, V> StorageLayoutStrategy<K, V> for StandardStorageStrategy {
     type Config = StandardStorageConfig;
     type Storage = FastVec<HashBucket<K, V>>;
 
-    fn create_storage(capacity: usize, config: &Self::Config) -> Self::Storage {
+    fn create_storage(capacity: usize, _config: &Self::Config) -> Self::Storage {
         // Graceful fallback: try full capacity, then half, then empty vec
         let mut storage = FastVec::with_capacity(capacity)
             .or_else(|_| FastVec::with_capacity(capacity / 2))
@@ -525,7 +525,7 @@ impl<K, V> StorageLayoutStrategy<K, V> for StandardStorageStrategy {
     fn resize_storage(
         storage: &mut Self::Storage,
         new_capacity: usize,
-        config: &Self::Config,
+        _config: &Self::Config,
     ) -> Result<()> {
         storage.resize_with(new_capacity, Default::default);
         Ok(())
@@ -547,7 +547,7 @@ impl<K, V> StorageLayoutStrategy<K, V> for StandardStorageStrategy {
         storage.capacity() * std::mem::size_of::<HashBucket<K, V>>()
     }
 
-    fn optimize_layout(storage: &mut Self::Storage, config: &Self::Config) -> Result<()> {
+    fn optimize_layout(_storage: &mut Self::Storage, _config: &Self::Config) -> Result<()> {
         // No special optimization for standard storage
         Ok(())
     }
@@ -577,7 +577,7 @@ impl<K, V> StorageLayoutStrategy<K, V> for CacheOptimizedStorageStrategy {
     type Config = CacheOptimizedStorageConfig;
     type Storage = FastVec<HashBucket<K, V>>;
 
-    fn create_storage(capacity: usize, config: &Self::Config) -> Self::Storage {
+    fn create_storage(capacity: usize, _config: &Self::Config) -> Self::Storage {
         // TODO: Use cache-aligned allocation
         // Graceful fallback: try full capacity, then half, then empty vec
         let mut storage = FastVec::with_capacity(capacity)
@@ -595,7 +595,7 @@ impl<K, V> StorageLayoutStrategy<K, V> for CacheOptimizedStorageStrategy {
     fn resize_storage(
         storage: &mut Self::Storage,
         new_capacity: usize,
-        config: &Self::Config,
+        _config: &Self::Config,
     ) -> Result<()> {
         // TODO: Use cache-aligned reallocation
         storage.resize_with(new_capacity, Default::default)?;
@@ -618,7 +618,7 @@ impl<K, V> StorageLayoutStrategy<K, V> for CacheOptimizedStorageStrategy {
         storage.capacity() * std::mem::size_of::<HashBucket<K, V>>()
     }
 
-    fn optimize_layout(storage: &mut Self::Storage, config: &Self::Config) -> Result<()> {
+    fn optimize_layout(_storage: &mut Self::Storage, _config: &Self::Config) -> Result<()> {
         // TODO: Implement cache optimization
         Ok(())
     }
@@ -658,10 +658,10 @@ impl<K, V> HashOptimizationStrategy<K, V> for SimdOptimizationStrategy {
     fn pre_insert(
         &self,
         context: &mut Self::Context,
-        key: &K,
-        hash: u64,
-        buckets: &[HashBucket<K, V>],
-        config: &Self::Config,
+        _key: &K,
+        _hash: u64,
+        _buckets: &[HashBucket<K, V>],
+        _config: &Self::Config,
     ) {
         // TODO: Implement SIMD-accelerated pre-insert optimizations
         context.simd_operations += 1;
@@ -669,10 +669,10 @@ impl<K, V> HashOptimizationStrategy<K, V> for SimdOptimizationStrategy {
 
     fn post_insert(
         &self,
-        context: &mut Self::Context,
-        key: &K,
-        inserted: bool,
-        config: &Self::Config,
+        _context: &mut Self::Context,
+        _key: &K,
+        _inserted: bool,
+        _config: &Self::Config,
     ) {
         // TODO: Implement post-insert optimizations
     }
@@ -680,10 +680,10 @@ impl<K, V> HashOptimizationStrategy<K, V> for SimdOptimizationStrategy {
     fn pre_lookup<Q>(
         &self,
         context: &mut Self::Context,
-        key: &Q,
-        hash: u64,
-        buckets: &[HashBucket<K, V>],
-        config: &Self::Config,
+        _key: &Q,
+        _hash: u64,
+        _buckets: &[HashBucket<K, V>],
+        _config: &Self::Config,
     ) where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
@@ -696,7 +696,7 @@ impl<K, V> HashOptimizationStrategy<K, V> for SimdOptimizationStrategy {
         &self,
         context: &mut Self::Context,
         operations: &[OptimizationHint],
-        config: &Self::Config,
+        _config: &Self::Config,
     ) {
         context.bulk_operations += operations.len() as u64;
         // TODO: Implement bulk SIMD optimizations

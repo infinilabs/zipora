@@ -551,7 +551,7 @@ impl Default for UintVecMin0 {
 impl std::ops::Index<usize> for UintVecMin0 {
     type Output = usize;
 
-    fn index(&self, idx: usize) -> &Self::Output {
+    fn index(&self, _idx: usize) -> &Self::Output {
         // We can't return a reference to a packed value, so we use a workaround
         // This is a limitation of the Index trait with packed data
         panic!("Use get() method instead of indexing for UintVecMin0");

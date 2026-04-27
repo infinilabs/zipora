@@ -512,7 +512,7 @@ impl VersionManager {
     }
 
     /// Internal method to release a reader token.
-    fn release_reader_token(&self, token_version: u64) {
+    fn release_reader_token(&self, _token_version: u64) {
         self.active_readers.fetch_sub(1, Ordering::Relaxed);
 
         // Update minimum version if this was the head token
@@ -527,7 +527,7 @@ impl VersionManager {
     }
 
     /// Internal method to release a writer token.
-    fn release_writer_token(&self, token_version: u64) {
+    fn release_writer_token(&self, _token_version: u64) {
         self.active_writers.fetch_sub(1, Ordering::Relaxed);
 
         // Update minimum version if this was the head token

@@ -967,7 +967,7 @@ impl<T: PackedInt> IntVec<T> {
             .unwrap_or(CompressionStrategy::Raw)
     }
 
-    fn analyze_min_max(values: &[u64], min_val: u64, max_val: u64) -> CompressionStrategy {
+    fn analyze_min_max(_values: &[u64], min_val: u64, max_val: u64) -> CompressionStrategy {
         if min_val == max_val {
             // All values are the same
             return CompressionStrategy::MinMax { min_val, bit_width: 1 };
@@ -1359,7 +1359,7 @@ impl<T: PackedInt> IntVec<T> {
 
         let bit_offset = (index - 1) * delta_width as usize;
         match self.read_bits(&self.data[8..], bit_offset, delta_width) {
-            Ok(delta) => {
+            Ok(_delta) => {
                 // Reconstruct value by summing deltas
                 let mut current_val = base_val;
                 for i in 1..=index {
@@ -1386,8 +1386,6 @@ impl<T: PackedInt> IntVec<T> {
     ) -> Option<u64> {
         let block_units = block_size.units();
         let block_idx = index / block_units;
-        let offset_in_block = index % block_units;
-
         // Get sample (block base value)
         let index_data = self.index.as_ref()?;
         let sample_bit_offset = block_idx * sample_width as usize;

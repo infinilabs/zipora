@@ -391,7 +391,7 @@ impl NoLockingPool {
         Ok(())
     }
     
-    fn free_to_skip_list(&mut self, offset: MemOffset, size: usize) -> Result<()> {
+    fn free_to_skip_list(&mut self, _offset: MemOffset, size: usize) -> Result<()> {
         // TODO: Implement skip list insertion
         // For now, just track statistics
         self.fragment_size += size;
@@ -564,7 +564,7 @@ impl MutexBasedPool {
         Ok(())
     }
     
-    fn free_to_skip_list(&self, offset: MemOffset, size: usize) -> Result<()> {
+    fn free_to_skip_list(&self, _offset: MemOffset, size: usize) -> Result<()> {
         self.fragment_size.fetch_add(size, Ordering::Relaxed);
         let mut huge_stats = self.huge_mutex.lock()
             .map_err(|e| ZiporaError::resource_busy(format!("Huge mutex poisoned: {}", e)))?;
@@ -760,7 +760,7 @@ impl LockFreePool {
         Ok(offset)
     }
     
-    fn free_to_huge_mutex(&self, offset: MemOffset, size: usize) -> Result<()> {
+    fn free_to_huge_mutex(&self, _offset: MemOffset, size: usize) -> Result<()> {
         self.fragment_size.fetch_add(size, Ordering::Relaxed);
         let mut huge_stats = self.huge_mutex.lock()
             .map_err(|e| ZiporaError::resource_busy(format!("Huge mutex poisoned: {}", e)))?;

@@ -337,9 +337,6 @@ impl AdaptiveParallelEncoder {
         }
         
         let unique_symbols = frequencies.iter().filter(|&&f| f > 0).count();
-        let max_freq = frequencies.iter().max().unwrap_or(&0);
-        let skewness = (*max_freq as f64) / (data.len() as f64);
-        
         // Algorithm selection
         let algorithm = if entropy < 2.0 {
             "huffman" // Low entropy - Huffman is efficient

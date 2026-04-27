@@ -1044,7 +1044,7 @@ impl SecureMemoryPool {
     /// Allocate a new chunk with cache optimizations
     fn allocate_new_chunk_optimized(&self, generation: u32, is_hot: bool) -> Result<SecureChunk> {
         // Use cache allocator if available and chunk size meets threshold
-        if let Some(ref cache_allocator) = self.cache_allocator {
+        if let Some(ref _cache_allocator) = self.cache_allocator {
             if self.config.enable_cache_alignment {
                 self.cache_aligned_allocs.fetch_add(1, Ordering::Relaxed);
             }

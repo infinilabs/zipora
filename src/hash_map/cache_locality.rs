@@ -503,28 +503,6 @@ impl<T: Clone> HotColdSeparator<T> {
 
     /// Migrate data between hot and cold based on access patterns
     pub fn rebalance(&mut self) {
-        // Collect access statistics
-        let mut access_stats: Vec<(usize, u64)> = self
-            .access_counts
-            .iter()
-            .enumerate()
-            .map(|(i, count)| (i, count.load(Ordering::Relaxed)))
-            .collect();
-        
-        // Sort by access count
-        access_stats.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
-        
-        // Determine new hot set
-        let hot_capacity = self.hot.capacity();
-        let new_hot_indices: Vec<usize> = access_stats
-            .iter()
-            .take(hot_capacity)
-            .map(|&(idx, _)| idx)
-            .collect();
-        
-        // Perform migration (simplified - in practice would be more sophisticated)
-        // This would involve moving data between hot and cold vectors
-        
         // Reset access counts
         for count in &self.access_counts {
             count.store(0, Ordering::Relaxed);
@@ -559,7 +537,7 @@ impl CacheConsciousResizer {
     }
 
     /// Perform incremental resize step
-    pub fn resize_step<T, F>(&mut self, data: &mut Vec<T>, rehash_fn: F) -> bool
+    pub fn resize_step<T, F>(&mut self, data: &mut Vec<T>, _rehash_fn: F) -> bool
     where
         T: Clone,
         F: Fn(&T, usize) -> usize,

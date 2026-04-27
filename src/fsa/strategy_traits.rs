@@ -290,7 +290,7 @@ impl TrieAlgorithmStrategy for PatriciaAlgorithmStrategy {
     type Context = PatriciaContext;
     type Node = PatriciaNode;
 
-    fn initialize(config: &Self::Config) -> Self::Context {
+    fn initialize(_config: &Self::Config) -> Self::Context {
         PatriciaContext::default()
     }
 
@@ -362,7 +362,7 @@ impl TrieAlgorithmStrategy for PatriciaAlgorithmStrategy {
         context: &Self::Context,
         nodes: &FastVec<Self::Node>,
         key: &[u8],
-        config: &Self::Config,
+        _config: &Self::Config,
     ) -> bool {
         if nodes.is_empty() {
             return false;
@@ -396,11 +396,11 @@ impl TrieAlgorithmStrategy for PatriciaAlgorithmStrategy {
 
     fn transition(
         &self,
-        context: &Self::Context,
+        _context: &Self::Context,
         nodes: &FastVec<Self::Node>,
         state: StateId,
         symbol: u8,
-        config: &Self::Config,
+        _config: &Self::Config,
     ) -> Option<StateId> {
         if state as usize >= nodes.len() {
             return None;
@@ -411,10 +411,10 @@ impl TrieAlgorithmStrategy for PatriciaAlgorithmStrategy {
 
     fn is_final(
         &self,
-        context: &Self::Context,
+        _context: &Self::Context,
         nodes: &FastVec<Self::Node>,
         state: StateId,
-        config: &Self::Config,
+        _config: &Self::Config,
     ) -> bool {
         if state as usize >= nodes.len() {
             return false;
@@ -425,10 +425,10 @@ impl TrieAlgorithmStrategy for PatriciaAlgorithmStrategy {
 
     fn transitions(
         &self,
-        context: &Self::Context,
+        _context: &Self::Context,
         nodes: &FastVec<Self::Node>,
         state: StateId,
-        config: &Self::Config,
+        _config: &Self::Config,
     ) -> Vec<(u8, StateId)> {
         if state as usize >= nodes.len() {
             return Vec::new();
@@ -444,9 +444,9 @@ impl TrieAlgorithmStrategy for PatriciaAlgorithmStrategy {
 
     fn optimize(
         &self,
-        context: &mut Self::Context,
-        nodes: &mut FastVec<Self::Node>,
-        config: &Self::Config,
+        _context: &mut Self::Context,
+        _nodes: &mut FastVec<Self::Node>,
+        _config: &Self::Config,
     ) -> Result<()> {
         // TODO: Implement optimization (path compression, node merging, etc.)
         Ok(())
@@ -498,14 +498,14 @@ impl PatriciaAlgorithmStrategy {
 
     fn split_compressed_path(
         &self,
-        context: &mut PatriciaContext,
-        nodes: &mut FastVec<PatriciaNode>,
+        _context: &mut PatriciaContext,
+        _nodes: &mut FastVec<PatriciaNode>,
         current: usize,
-        key: &[u8],
-        key_pos: usize,
-        path: &[u8],
-        match_len: usize,
-        config: &PatriciaConfig,
+        _key: &[u8],
+        _key_pos: usize,
+        _path: &[u8],
+        _match_len: usize,
+        _config: &PatriciaConfig,
     ) -> Result<StateId> {
         // TODO: Implement path splitting for partial matches
         Ok(current as StateId)
@@ -533,7 +533,7 @@ impl CompressionStrategy for PathCompressionStrategy {
     type Context = PathCompressionContext;
     type CompressedData = u32; // Index into compressed_paths
 
-    fn initialize(config: &Self::Config) -> Self::Context {
+    fn initialize(_config: &Self::Config) -> Self::Context {
         PathCompressionContext::default()
     }
 
@@ -562,7 +562,7 @@ impl CompressionStrategy for PathCompressionStrategy {
         &self,
         context: &Self::Context,
         compressed: &Self::CompressedData,
-        config: &Self::Config,
+        _config: &Self::Config,
     ) -> Result<Vec<u8>> {
         context.compressed_paths.get(compressed)
             .map(|path| path.clone())
@@ -571,7 +571,7 @@ impl CompressionStrategy for PathCompressionStrategy {
 
     fn should_compress(
         &self,
-        context: &Self::Context,
+        _context: &Self::Context,
         data: &[u8],
         config: &Self::Config,
     ) -> bool {
@@ -588,10 +588,10 @@ impl CompressionStrategy for PathCompressionStrategy {
 
     fn update_dictionary(
         &self,
-        context: &mut Self::Context,
-        data: &[u8],
-        frequency: u32,
-        config: &Self::Config,
+        _context: &mut Self::Context,
+        _data: &[u8],
+        _frequency: u32,
+        _config: &Self::Config,
     ) {
         // For path compression, we don't maintain a frequency dictionary
         // but we could track usage statistics here
@@ -619,35 +619,35 @@ impl ConcurrencyStrategy for SingleThreadedConcurrencyStrategy {
     type ReaderToken = NoOpToken;
     type WriterToken = NoOpToken;
 
-    fn initialize(config: &Self::Config) -> Self::Context {
+    fn initialize(_config: &Self::Config) -> Self::Context {
         SingleThreadedContext
     }
 
-    fn acquire_read_token(&self, context: &Self::Context) -> Result<Self::ReaderToken> {
+    fn acquire_read_token(&self, _context: &Self::Context) -> Result<Self::ReaderToken> {
         Ok(NoOpToken)
     }
 
-    fn acquire_write_token(&self, context: &Self::Context) -> Result<Self::WriterToken> {
+    fn acquire_write_token(&self, _context: &Self::Context) -> Result<Self::WriterToken> {
         Ok(NoOpToken)
     }
 
-    fn release_read_token(&self, context: &Self::Context, token: Self::ReaderToken) {
+    fn release_read_token(&self, _context: &Self::Context, _token: Self::ReaderToken) {
         // No-op
     }
 
-    fn release_write_token(&self, context: &Self::Context, token: Self::WriterToken) {
+    fn release_write_token(&self, _context: &Self::Context, _token: Self::WriterToken) {
         // No-op
     }
 
-    fn allow_concurrent_reads(&self, context: &Self::Context) -> bool {
+    fn allow_concurrent_reads(&self, _context: &Self::Context) -> bool {
         false // Single-threaded
     }
 
-    fn allow_concurrent_writes(&self, context: &Self::Context) -> bool {
+    fn allow_concurrent_writes(&self, _context: &Self::Context) -> bool {
         false // Single-threaded
     }
 
-    fn concurrency_stats(&self, context: &Self::Context) -> ConcurrencyStats {
+    fn concurrency_stats(&self, _context: &Self::Context) -> ConcurrencyStats {
         ConcurrencyStats::default()
     }
 }

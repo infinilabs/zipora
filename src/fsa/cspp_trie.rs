@@ -336,14 +336,12 @@ impl<'a> NodeView<'a> {
                 let mut child_idx = 0;
                 for byte_idx in 0..32 {
                     let mut b = bitmap_slice[byte_idx];
-                    let mut bit_offset = 0;
                     while b != 0 {
                         let tz = b.trailing_zeros();
                         let ch = (byte_idx * 8) as u8 + tz as u8;
                         f(ch, self.child(10 + child_idx));
                         child_idx += 1;
                         b &= b - 1;
-                        bit_offset += tz + 1;
                     }
                 }
             }
@@ -1177,10 +1175,10 @@ impl CsppTrie {
 
         loop {
             // Extract node properties (drop borrow before any mutation)
-            let (cnt_type, zpath_len, is_final, skip, n_children, flags) = {
+            let (cnt_type, zpath_len, is_final, skip, n_children) = {
                 let view = self.node_view(curr);
                 (view.cnt_type(), view.zpath_len(), view.is_final(),
-                 view.skip_slots(), view.n_children(), view.meta().flags)
+                 view.skip_slots(), view.n_children())
             };
 
             let node_size = (skip + n_children) * ALIGN_SIZE

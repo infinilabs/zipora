@@ -1245,7 +1245,7 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
         let mask = (radix - 1) as u64;
         
         // Allocate buffers - use memory pool if available
-        let buffer = if let Some(ref pool) = self.memory_pool {
+        let buffer = if let Some(ref _pool) = self.memory_pool {
             // For now, fall back to regular allocation
             // TODO: Implement proper memory pool integration for generic types
             vec![data[0].clone(); data.len()]
@@ -1473,7 +1473,7 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
     }
 
     /// Multi-way merge for combining parallel sorted chunks
-    fn multiway_merge_chunks(&self, data: &mut [T], chunk_size: usize) -> Result<()> {
+    fn multiway_merge_chunks(&self, data: &mut [T], _chunk_size: usize) -> Result<()> {
         // For now, use a simple approach: collect all elements and sort
         // This is less efficient than true multi-way merge but ensures correctness
         // TODO: Implement proper multi-way merge when the generic bounds are resolved

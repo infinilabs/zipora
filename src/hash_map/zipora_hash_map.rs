@@ -477,7 +477,7 @@ where
                     mask: initial_capacity.saturating_sub(1),
                 })
             }
-            StorageStrategy::SmallInline { inline_capacity, .. } => {
+            StorageStrategy::SmallInline { inline_capacity: _, .. } => {
                 Ok(HashMapStorage::SmallInline {
                     inline_data: InlineStorage {
                         // SAFETY: This creates an array of MaybeUninit<(K, V)> values.
@@ -688,7 +688,7 @@ where
     pub fn capacity(&self) -> usize {
         match &self.storage {
             HashMapStorage::Standard { entries, .. } => entries.capacity(), // Return actual allocated capacity
-            HashMapStorage::SmallInline { inline_data, fallback, .. } => {
+            HashMapStorage::SmallInline { inline_data: _, fallback, .. } => {
                 16 + fallback.as_ref().map_or(0, |f| match f.as_ref() {
                     HashMapStorage::Standard { entries, .. } => entries.capacity(),
                     _ => 0,
@@ -802,8 +802,8 @@ where
 
     // Implementation methods for different storage strategies
     fn insert_standard(
-        hash_builder: &S,
-        buckets: &mut FastVec<StandardBucket<K, V>>,
+        _hash_builder: &S,
+        _buckets: &mut FastVec<StandardBucket<K, V>>,
         entries: &mut FastVec<HashEntry<K, V>>,
         mask: &mut usize,
         key: K,
@@ -860,35 +860,35 @@ where
     }
 
     fn insert_small_inline(
-        inline_data: &mut InlineStorage<K, V>,
-        fallback: &mut Option<Box<HashMapStorage<K, V>>>,
-        len: &mut usize,
-        key: K,
-        value: V,
+        _inline_data: &mut InlineStorage<K, V>,
+        _fallback: &mut Option<Box<HashMapStorage<K, V>>>,
+        _len: &mut usize,
+        _key: K,
+        _value: V,
     ) -> Result<Option<V>> {
         // TODO: Implement inline insertion with fallback
         Ok(None)
     }
 
     fn insert_cache_optimized(
-        buckets: &mut FastVec<CacheOptimizedBucket<K, V>>,
-        hot_data: &mut FastVec<K>,
-        cold_data: &mut FastVec<V>,
-        prefetcher: &mut Prefetcher,
-        key: K,
-        value: V,
+        _buckets: &mut FastVec<CacheOptimizedBucket<K, V>>,
+        _hot_data: &mut FastVec<K>,
+        _cold_data: &mut FastVec<V>,
+        _prefetcher: &mut Prefetcher,
+        _key: K,
+        _value: V,
     ) -> Result<Option<V>> {
         // TODO: Implement cache-optimized insertion
         Ok(None)
     }
 
     fn insert_string_optimized(
-        arena: &mut StringArena,
-        buckets: &mut FastVec<StringBucket>,
-        entries: &mut FastVec<StringEntry<V>>,
-        prefix_cache: &mut FastVec<PrefixCacheEntry>,
-        key: K,
-        value: V,
+        _arena: &mut StringArena,
+        _buckets: &mut FastVec<StringBucket>,
+        _entries: &mut FastVec<StringEntry<V>>,
+        _prefix_cache: &mut FastVec<PrefixCacheEntry>,
+        _key: K,
+        _value: V,
     ) -> Result<Option<V>> {
         // TODO: Implement string-optimized insertion
         Ok(None)
@@ -896,7 +896,7 @@ where
 
     fn get_standard<'a, Q>(
         &self,
-        buckets: &FastVec<StandardBucket<K, V>>,
+        _buckets: &FastVec<StandardBucket<K, V>>,
         entries: &'a FastVec<HashEntry<K, V>>,
         mask: &usize,
         key: &Q,
@@ -935,10 +935,10 @@ where
 
     fn get_small_inline<Q>(
         &self,
-        inline_data: &InlineStorage<K, V>,
-        fallback: &Option<Box<HashMapStorage<K, V>>>,
-        len: &usize,
-        key: &Q,
+        _inline_data: &InlineStorage<K, V>,
+        _fallback: &Option<Box<HashMapStorage<K, V>>>,
+        _len: &usize,
+        _key: &Q,
     ) -> Option<&V>
     where
         K: Borrow<Q>,
@@ -950,11 +950,11 @@ where
 
     fn get_cache_optimized<Q>(
         &self,
-        buckets: &FastVec<CacheOptimizedBucket<K, V>>,
-        hot_data: &FastVec<K>,
-        cold_data: &FastVec<V>,
-        prefetcher: &Prefetcher,
-        key: &Q,
+        _buckets: &FastVec<CacheOptimizedBucket<K, V>>,
+        _hot_data: &FastVec<K>,
+        _cold_data: &FastVec<V>,
+        _prefetcher: &Prefetcher,
+        _key: &Q,
     ) -> Option<&V>
     where
         K: Borrow<Q>,
@@ -966,11 +966,11 @@ where
 
     fn get_string_optimized<Q>(
         &self,
-        arena: &StringArena,
-        buckets: &FastVec<StringBucket>,
-        entries: &FastVec<StringEntry<V>>,
-        prefix_cache: &FastVec<PrefixCacheEntry>,
-        key: &Q,
+        _arena: &StringArena,
+        _buckets: &FastVec<StringBucket>,
+        _entries: &FastVec<StringEntry<V>>,
+        _prefix_cache: &FastVec<PrefixCacheEntry>,
+        _key: &Q,
     ) -> Option<&V>
     where
         K: Borrow<Q>,
@@ -983,7 +983,7 @@ where
     // get_mut implementation methods
     fn get_mut_standard<'a, Q>(
         hash_builder: &S,
-        buckets: &'a mut FastVec<StandardBucket<K, V>>,
+        _buckets: &'a mut FastVec<StandardBucket<K, V>>,
         entries: &'a mut FastVec<HashEntry<K, V>>,
         mask: &mut usize,
         key: &Q,
@@ -1032,10 +1032,10 @@ where
     }
 
     fn get_mut_small_inline<'a, Q>(
-        inline_data: &'a mut InlineStorage<K, V>,
-        fallback: &'a mut Option<Box<HashMapStorage<K, V>>>,
-        len: &mut usize,
-        key: &Q,
+        _inline_data: &'a mut InlineStorage<K, V>,
+        _fallback: &'a mut Option<Box<HashMapStorage<K, V>>>,
+        _len: &mut usize,
+        _key: &Q,
     ) -> Option<&'a mut V>
     where
         K: Borrow<Q>,
@@ -1046,11 +1046,11 @@ where
     }
 
     fn get_mut_cache_optimized<'a, Q>(
-        buckets: &'a mut FastVec<CacheOptimizedBucket<K, V>>,
-        hot_data: &mut FastVec<K>,
-        cold_data: &'a mut FastVec<V>,
-        prefetcher: &mut Prefetcher,
-        key: &Q,
+        _buckets: &'a mut FastVec<CacheOptimizedBucket<K, V>>,
+        _hot_data: &mut FastVec<K>,
+        _cold_data: &'a mut FastVec<V>,
+        _prefetcher: &mut Prefetcher,
+        _key: &Q,
     ) -> Option<&'a mut V>
     where
         K: Borrow<Q>,
@@ -1061,11 +1061,11 @@ where
     }
 
     fn get_mut_string_optimized<'a, Q>(
-        arena: &mut StringArena,
-        buckets: &mut FastVec<StringBucket>,
-        entries: &'a mut FastVec<StringEntry<V>>,
-        prefix_cache: &mut FastVec<PrefixCacheEntry>,
-        key: &Q,
+        _arena: &mut StringArena,
+        _buckets: &mut FastVec<StringBucket>,
+        _entries: &'a mut FastVec<StringEntry<V>>,
+        _prefix_cache: &mut FastVec<PrefixCacheEntry>,
+        _key: &Q,
     ) -> Option<&'a mut V>
     where
         K: Borrow<Q>,
@@ -1078,7 +1078,7 @@ where
     // remove implementation methods
     fn remove_standard<Q>(
         hash_builder: &S,
-        buckets: &mut FastVec<StandardBucket<K, V>>,
+        _buckets: &mut FastVec<StandardBucket<K, V>>,
         entries: &mut FastVec<HashEntry<K, V>>,
         mask: &mut usize,
         key: &Q,
@@ -1187,10 +1187,10 @@ where
     }
 
     fn remove_small_inline<Q>(
-        inline_data: &mut InlineStorage<K, V>,
-        fallback: &mut Option<Box<HashMapStorage<K, V>>>,
-        len: &mut usize,
-        key: &Q,
+        _inline_data: &mut InlineStorage<K, V>,
+        _fallback: &mut Option<Box<HashMapStorage<K, V>>>,
+        _len: &mut usize,
+        _key: &Q,
     ) -> Option<V>
     where
         K: Borrow<Q>,
@@ -1201,11 +1201,11 @@ where
     }
 
     fn remove_cache_optimized<Q>(
-        buckets: &mut FastVec<CacheOptimizedBucket<K, V>>,
-        hot_data: &mut FastVec<K>,
-        cold_data: &mut FastVec<V>,
-        prefetcher: &mut Prefetcher,
-        key: &Q,
+        _buckets: &mut FastVec<CacheOptimizedBucket<K, V>>,
+        _hot_data: &mut FastVec<K>,
+        _cold_data: &mut FastVec<V>,
+        _prefetcher: &mut Prefetcher,
+        _key: &Q,
     ) -> Option<V>
     where
         K: Borrow<Q>,
@@ -1216,11 +1216,11 @@ where
     }
 
     fn remove_string_optimized<Q>(
-        arena: &mut StringArena,
-        buckets: &mut FastVec<StringBucket>,
-        entries: &mut FastVec<StringEntry<V>>,
-        prefix_cache: &mut FastVec<PrefixCacheEntry>,
-        key: &Q,
+        _arena: &mut StringArena,
+        _buckets: &mut FastVec<StringBucket>,
+        _entries: &mut FastVec<StringEntry<V>>,
+        _prefix_cache: &mut FastVec<PrefixCacheEntry>,
+        _key: &Q,
     ) -> Option<V>
     where
         K: Borrow<Q>,
@@ -1243,13 +1243,13 @@ where
     }
 
     fn clear_small_inline(
-        inline_data: &mut InlineStorage<K, V>,
+        _inline_data: &mut InlineStorage<K, V>,
         fallback: &mut Option<Box<HashMapStorage<K, V>>>,
         len: &mut usize,
     ) {
         // TODO: Implement small inline clear
         *len = 0;
-        if let Some(fallback) = fallback.take() {
+        if let Some(_fallback) = fallback.take() {
             // Clear fallback if it exists
         }
     }
@@ -1258,7 +1258,7 @@ where
         buckets: &mut FastVec<CacheOptimizedBucket<K, V>>,
         hot_data: &mut FastVec<K>,
         cold_data: &mut FastVec<V>,
-        prefetcher: &mut Prefetcher,
+        _prefetcher: &mut Prefetcher,
     ) {
         // TODO: Implement cache-optimized clear
         buckets.clear();
@@ -1267,7 +1267,7 @@ where
     }
 
     fn clear_string_optimized(
-        arena: &mut StringArena,
+        _arena: &mut StringArena,
         buckets: &mut FastVec<StringBucket>,
         entries: &mut FastVec<StringEntry<V>>,
         prefix_cache: &mut FastVec<PrefixCacheEntry>,
@@ -1364,7 +1364,7 @@ where
                 }
                 None
             }
-            HashMapStorage::SmallInline { len, .. } => {
+            HashMapStorage::SmallInline { len: _, .. } => {
                 // TODO: Implement inline iteration - for now return None
                 None
             }
@@ -1378,7 +1378,7 @@ where
                     None
                 }
             }
-            HashMapStorage::StringOptimized { entries, .. } => {
+            HashMapStorage::StringOptimized { entries: _, .. } => {
                 // TODO: Implement string-optimized iteration - for now return None
                 None
             }

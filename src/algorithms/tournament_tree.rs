@@ -344,7 +344,7 @@ where
             };
 
             // Compare and store the loser in this internal node
-            let (winner, loser) = self.compare_competitors(left_competitor, right_competitor)?;
+            let (_winner, loser) = self.compare_competitors(left_competitor, right_competitor)?;
             
             // Prefetch next nodes if configured
             if self.config.cache_optimized && self.config.prefetch_distance > 0 {
@@ -359,7 +359,7 @@ where
     }
 
     /// Get the winner of a subtree rooted at the given internal node
-    fn get_subtree_winner(&self, node_idx: usize) -> usize {
+    fn get_subtree_winner(&self, _node_idx: usize) -> usize {
         // In a loser tree, the winner is determined by traversing up from leaves
         // This is a simplified version - a full implementation would cache winners
         // For now, we'll use the overall winner

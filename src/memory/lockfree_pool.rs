@@ -565,7 +565,7 @@ impl LockFreeMemoryPool {
         let ptr = self.offset_to_ptr(offset)?;
         
         // Apply cache optimization hints if enabled
-        if let Some(ref cache_allocator) = self.cache_allocator {
+        if let Some(ref _cache_allocator) = self.cache_allocator {
             if self.config.enable_cache_alignment {
                 if let Some(stats) = &self.stats {
                     stats.cache_aligned_allocs.fetch_add(1, Ordering::Relaxed);

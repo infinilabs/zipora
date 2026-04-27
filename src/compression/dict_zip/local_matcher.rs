@@ -164,7 +164,7 @@ impl LocalMatch {
     }
 
     /// Calculate match quality based on length, distance, and compression type
-    fn calculate_quality(length: usize, distance: usize, compression_type: CompressionType) -> f64 {
+    fn calculate_quality(length: usize, _distance: usize, compression_type: CompressionType) -> f64 {
         // Base quality from length (longer matches are better)
         let length_quality = 1.0 - (-(length as f64) / 50.0).exp();
 

@@ -454,8 +454,8 @@ pub mod utils {
 
     /// Benchmark different rank/select implementations
     pub fn benchmark_variants(
-        bit_vector: &BitVector,
-        iterations: usize,
+        _bit_vector: &BitVector,
+        _iterations: usize,
     ) -> Vec<(String, f64, f64)> {
         // This would contain actual benchmarking code
         // For now, return placeholder data
