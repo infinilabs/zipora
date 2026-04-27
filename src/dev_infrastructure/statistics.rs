@@ -578,7 +578,7 @@ impl Default for GlobalStatsRegistry {
 
 /// Global statistics registry instance
 static GLOBAL_STATS: std::sync::LazyLock<GlobalStatsRegistry> = 
-    std::sync::LazyLock::new(|| GlobalStatsRegistry::new());
+    std::sync::LazyLock::new(GlobalStatsRegistry::new);
 
 /// Get the global statistics registry
 pub fn global_stats() -> &'static GlobalStatsRegistry {

@@ -24,6 +24,12 @@ pub struct TrieStat {
     pub total_bytes: u64,
 }
 
+impl Default for TrieStat {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TrieStat {
     pub fn new() -> Self {
         Self { insert_time: 0.0, lookup_time: 0.0, build_time: 0.0, total_bytes: 0 }
@@ -77,6 +83,12 @@ pub struct MemoryStats {
     pub deallocation_count: AtomicU64,
 }
 
+impl Default for MemoryStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryStats {
     pub fn new() -> Self {
         Self {
@@ -115,6 +127,12 @@ pub struct PerformanceStats {
     pub average_operation_time_ns: AtomicU64,
 }
 
+impl Default for PerformanceStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PerformanceStats {
     pub fn new() -> Self {
         Self {
@@ -142,6 +160,12 @@ pub struct CompressionStats {
     pub compressed_size: AtomicUsize,
 }
 
+impl Default for CompressionStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CompressionStats {
     pub fn new() -> Self {
         Self { original_size: AtomicUsize::new(0), compressed_size: AtomicUsize::new(0) }
@@ -154,6 +178,12 @@ impl CompressionStats {
 #[derive(Debug)]
 pub struct DistributionStats { pub total_samples: AtomicU64 }
 
+impl Default for DistributionStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DistributionStats {
     pub fn new() -> Self { Self { total_samples: AtomicU64::new(0) } }
     pub fn merge(&mut self, _other: &DistributionStats) {}
@@ -163,6 +193,12 @@ impl DistributionStats {
 
 #[derive(Debug)]
 pub struct ErrorStats { pub total_errors: AtomicU64 }
+
+impl Default for ErrorStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl ErrorStats {
     pub fn new() -> Self { Self { total_errors: AtomicU64::new(0) } }
@@ -174,6 +210,12 @@ impl ErrorStats {
 
 #[derive(Debug)]
 pub struct TimingStats { pub creation_time: Instant }
+
+impl Default for TimingStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl TimingStats {
     pub fn new() -> Self { Self { creation_time: Instant::now() } }
@@ -190,6 +232,12 @@ impl TimingStats {
 #[derive(Debug, Clone)]
 pub struct MemoryBreakdown { pub total: usize, pub components: HashMap<String, usize> }
 
+impl Default for MemoryBreakdown {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryBreakdown {
     pub fn new() -> Self { Self { total: 0, components: HashMap::new() } }
     pub fn add_component(&mut self, name: &str, size: usize) {
@@ -199,10 +247,22 @@ impl MemoryBreakdown {
 }
 
 pub struct GlobalMemoryTracker;
+impl Default for GlobalMemoryTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GlobalMemoryTracker { pub fn new() -> Self { Self } }
 
 pub struct TrackedObject;
 pub struct LocalMemoryTracker;
+impl Default for LocalMemoryTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LocalMemoryTracker { pub fn new() -> Self { Self } }
 
 #[derive(Debug, Clone)]
@@ -217,12 +277,24 @@ pub type QTime = Instant;
 pub type QDuration = Duration;
 
 pub struct PerfTimer { start: Instant }
+impl Default for PerfTimer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PerfTimer {
     pub fn new() -> Self { Self { start: Instant::now() } }
     pub fn elapsed(&self) -> Duration { self.start.elapsed() }
 }
 
 pub struct TimerCollection;
+impl Default for TimerCollection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TimerCollection { pub fn new() -> Self { Self } }
 
 pub struct ScopedTimer;
@@ -238,6 +310,12 @@ pub fn str_date_time_now() -> String {
 
 #[derive(Debug, Clone)]
 pub struct FreqHist { counts: Vec<u64> }
+impl Default for FreqHist {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FreqHist {
     pub fn new() -> Self { Self { counts: vec![0u64; 256] } }
     pub fn add(&mut self, byte: u8) { self.counts[byte as usize] += 1; }
@@ -250,6 +328,12 @@ pub type HistogramDataO1 = FreqHist;
 pub type HistogramDataO2 = FreqHist;
 
 pub struct HistogramCollection;
+impl Default for HistogramCollection {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HistogramCollection { pub fn new() -> Self { Self } }
 
 // ============================================================================
@@ -257,6 +341,12 @@ impl HistogramCollection { pub fn new() -> Self { Self } }
 // ============================================================================
 
 pub struct EntropyAnalyzer;
+impl Default for EntropyAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EntropyAnalyzer { pub fn new() -> Self { Self } }
 
 #[derive(Debug, Clone)]

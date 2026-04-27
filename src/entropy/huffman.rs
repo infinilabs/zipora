@@ -23,8 +23,10 @@ use std::collections::{BinaryHeap, HashMap};
 /// Interleaving splits input data into N independent streams that can be
 /// processed in parallel, improving throughput on modern CPUs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum InterleavingFactor {
     /// Single stream (no interleaving) - baseline performance
+    #[default]
     X1,
     /// 2-way interleaving - modest parallelism
     X2,
@@ -63,11 +65,6 @@ impl InterleavingFactor {
     }
 }
 
-impl Default for InterleavingFactor {
-    fn default() -> Self {
-        Self::X1
-    }
-}
 
 // ============================================================================
 // Fast Symbol Table for Huffman Encoding Optimization
@@ -512,7 +509,7 @@ impl HuffmanTree {
             max_code_length = max_code_length.max(code_length);
 
             // Read code bits
-            let byte_count = (code_length + 7) / 8;
+            let byte_count = code_length.div_ceil(8);
             if offset + byte_count > data.len() {
                 return Err(ZiporaError::invalid_data("Truncated Huffman code data"));
             }
@@ -777,7 +774,7 @@ impl HuffmanEncoder {
             }
         }
 
-        let compressed_bytes = (total_bits + 7) / 8;
+        let compressed_bytes = total_bits.div_ceil(8);
         compressed_bytes as f64 / data.len() as f64
     }
 }
@@ -847,11 +844,10 @@ impl HuffmanDecoder {
         }
 
         // Handle final symbol if we're at a leaf
-        if let HuffmanNode::Leaf { symbol, .. } = current_node {
-            if result.len() < output_length {
+        if let HuffmanNode::Leaf { symbol, .. } = current_node
+            && result.len() < output_length {
                 result.push(*symbol);
             }
-        }
 
         if result.len() != output_length {
             return Err(ZiporaError::invalid_data(format!(
@@ -867,8 +863,10 @@ impl HuffmanDecoder {
 
 /// Context-based Huffman encoding models for improved compression
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum HuffmanOrder {
     /// Order-0: Classic Huffman coding (symbols are independent)
+    #[default]
     Order0,
     /// Order-1: Symbol frequencies depend on the previous symbol
     Order1,
@@ -876,11 +874,6 @@ pub enum HuffmanOrder {
     Order2,
 }
 
-impl Default for HuffmanOrder {
-    fn default() -> Self {
-        Self::Order0
-    }
-}
 
 /// Enhanced Huffman encoder with context-based models
 #[derive(Debug)]
@@ -1224,11 +1217,10 @@ impl ContextualHuffmanEncoder {
             }
             HuffmanOrder::Order1 => {
                 // First symbol
-                if let Some(tree) = self.trees.first() {
-                    if let Some(code) = tree.get_code(data[0]) {
+                if let Some(tree) = self.trees.first()
+                    && let Some(code) = tree.get_code(data[0]) {
                         total_bits += code.len();
                     }
-                }
 
                 // Context-dependent symbols
                 for i in 1..data.len() {
@@ -1248,11 +1240,10 @@ impl ContextualHuffmanEncoder {
             HuffmanOrder::Order2 => {
                 // First two symbols
                 for i in 0..2.min(data.len()) {
-                    if let Some(tree) = self.trees.first() {
-                        if let Some(code) = tree.get_code(data[i]) {
+                    if let Some(tree) = self.trees.first()
+                        && let Some(code) = tree.get_code(data[i]) {
                             total_bits += code.len();
                         }
-                    }
                 }
 
                 // Context-dependent symbols
@@ -1272,7 +1263,7 @@ impl ContextualHuffmanEncoder {
             }
         }
 
-        let compressed_bytes = (total_bits + 7) / 8;
+        let compressed_bytes = total_bits.div_ceil(8);
         compressed_bytes as f64 / data.len() as f64
     }
 
@@ -1752,11 +1743,10 @@ impl ContextualHuffmanEncoder {
                     }
 
                     // If we ended on a leaf after using all BLOCK_BITS, record it
-                    if let HuffmanNode::Leaf { symbol, .. } = current {
-                        if tree_table[peek_value].2 == 0 {
+                    if let HuffmanNode::Leaf { symbol, .. } = current
+                        && tree_table[peek_value].2 == 0 {
                             tree_table[peek_value] = (code_bits, *symbol, bits_used);
                         }
-                    }
                 }
             }
 
@@ -1947,11 +1937,10 @@ impl ContextualHuffmanDecoder {
         }
 
         // Handle final symbol if we're at a leaf
-        if let HuffmanNode::Leaf { symbol, .. } = current_node {
-            if result.len() < output_length {
+        if let HuffmanNode::Leaf { symbol, .. } = current_node
+            && result.len() < output_length {
                 result.push(*symbol);
             }
-        }
 
         Ok(result)
     }

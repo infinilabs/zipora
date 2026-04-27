@@ -57,7 +57,7 @@ impl StreamVByte {
     /// Encode raw u32 values (no delta encoding).
     pub fn encode_raw(values: &[u32]) -> EncodedStream {
         let n = values.len();
-        let num_groups = (n + 3) / 4;
+        let num_groups = n.div_ceil(4);
 
         let mut controls = Vec::with_capacity(num_groups);
         let mut data = Vec::with_capacity(n * 2); // Estimate
@@ -235,7 +235,7 @@ impl GroupVarint {
         }
 
         // Store count of remaining values in last byte if not multiple of 4
-        if n % 4 != 0 {
+        if !n.is_multiple_of(4) {
             output.push((n % 4) as u8);
         } else {
             output.push(0); // No remainder

@@ -191,6 +191,12 @@ pub mod nested_louds_trie {
     }
 
     pub struct NestedLoudsTrieBuilder<T> { config: NestingConfig, _marker: PhantomData<T> }
+    impl<T> Default for NestedLoudsTrieBuilder<T> {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     impl<T> NestedLoudsTrieBuilder<T> {
         pub fn new() -> Self { Self { config: NestingConfig::default(), _marker: PhantomData } }
         pub fn with_config(config: NestingConfig) -> Self { Self { config, _marker: PhantomData } }

@@ -402,7 +402,7 @@ impl CsppTrie {
     fn init_root(&mut self) {
         // Fast node (15) takes 258 slots (meta + real_cnt + 256 children)
         // plus value size
-        let val_slots = (self.valsize + 3) / 4;
+        let val_slots = self.valsize.div_ceil(4);
         let root_slots = 2 + 256 + val_slots;
         self.mempool.resize(root_slots, PatriciaNode::empty());
         
@@ -463,7 +463,7 @@ impl CsppTrie {
             if zlen > 0 {
                 let zpath = view.zpath_slice();
                 let match_len = std::cmp::min(zlen, key.len() - pos);
-                if &key[pos..pos + match_len] != &zpath[..match_len] {
+                if key[pos..pos + match_len] != zpath[..match_len] {
                     return None;
                 }
                 pos += match_len;
@@ -503,7 +503,7 @@ impl CsppTrie {
     /// Allocate `byte_size` bytes from the mempool.
     /// Checks size-bucketed free list first, then bump-allocates.
     fn alloc_node(&mut self, byte_size: usize) -> u32 {
-        let slots = (byte_size + 3) / 4;
+        let slots = byte_size.div_ceil(4);
 
         // Fast path: check free list for this slot count
         if slots > 0 && slots <= FREE_LIST_MAX_SLOTS {
@@ -538,7 +538,7 @@ impl CsppTrie {
 
     /// Free `byte_size` bytes starting at `slot` back to the free list.
     fn free_node(&mut self, slot: u32, byte_size: usize) {
-        let slots = (byte_size + 3) / 4;
+        let slots = byte_size.div_ceil(4);
         if slots == 0 { return; }
 
         // Shrink-from-end optimization
@@ -568,7 +568,7 @@ impl CsppTrie {
     }
 
     fn free_node_deferred(&mut self, slot: u32, byte_size: usize) {
-        let slots = ((byte_size + 3) / 4) as u32;
+        let slots = byte_size.div_ceil(4) as u32;
         self.lazy_free_list.push(LazyFreeItem { slot, slots });
     }
 
@@ -581,8 +581,8 @@ impl CsppTrie {
     }
 
     fn realloc_node(&mut self, old_slot: u32, old_size: usize, new_size: usize) -> u32 {
-        let old_slots = (old_size + 3) / 4;
-        let new_slots = (new_size + 3) / 4;
+        let old_slots = old_size.div_ceil(4);
+        let new_slots = new_size.div_ceil(4);
         if old_slots == new_slots { return old_slot; }
         // If at end of mempool, extend in place
         if old_slot as usize + old_slots == self.mempool.len() {
@@ -1313,7 +1313,7 @@ impl CsppTrie {
                         (*self.mempool.as_mut_ptr().add(curr as usize + 2 + ch as usize)).child = suffix_node;
                         // Increment real count at slot 1
                         let real_cnt = &mut (*self.mempool.as_mut_ptr().add(curr as usize + 1)).big;
-                        (*real_cnt).n_children += 1;
+                        real_cnt.n_children += 1;
                     }
                 }
                 self.n_words += 1;
@@ -1450,7 +1450,7 @@ impl<'a, T: Copy> CsppTrieIterator<'a, T> {
                     }
                 }
             } else {
-                if let Some(_) = self.stack.last() {
+                if self.stack.last().is_some() {
                     let backtrack_len = 1 + view.zpath_len();
                     self.word.truncate(self.word.len().saturating_sub(backtrack_len));
                 } else {

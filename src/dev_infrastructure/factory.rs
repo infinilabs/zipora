@@ -45,7 +45,7 @@ impl<T> FactoryRegistry<T> {
             .map_err(|_| ZiporaError::io_error("Failed to acquire write lock on creators"))?;
         
         if creators.contains_key(name) {
-            return Err(ZiporaError::invalid_data(&format!("Creator '{}' already registered", name)));
+            return Err(ZiporaError::invalid_data(format!("Creator '{}' already registered", name)));
         }
         
         creators.insert(name.to_string(), Box::new(creator));
@@ -77,7 +77,7 @@ impl<T> FactoryRegistry<T> {
             .map_err(|_| ZiporaError::io_error("Failed to acquire read lock on creators"))?;
         
         let creator = creators.get(name)
-            .ok_or_else(|| ZiporaError::not_found(&format!("Creator '{}' not found", name)))?;
+            .ok_or_else(|| ZiporaError::not_found(format!("Creator '{}' not found", name)))?;
         
         creator()
     }
@@ -90,7 +90,7 @@ impl<T> FactoryRegistry<T> {
             .map_err(|_| ZiporaError::io_error("Failed to acquire read lock on type_map"))?;
         
         let type_name = type_map.get(&type_id)
-            .ok_or_else(|| ZiporaError::not_found(&format!("Type '{}' not registered", std::any::type_name::<U>())))?.clone();
+            .ok_or_else(|| ZiporaError::not_found(format!("Type '{}' not registered", std::any::type_name::<U>())))?.clone();
         
         drop(type_map); // Release lock before calling create
         self.create(&type_name)
@@ -206,7 +206,7 @@ impl<T: Send + Sync + 'static> AutoRegister<T> {
         // SAFETY: Static initialization - panic on registration failure is appropriate
         // because the program cannot continue without successfully registered creators
         global_factory::<T>().register(name, creator)
-            .expect(&format!("Failed to register creator '{}'", name));
+            .unwrap_or_else(|_| panic!("Failed to register creator '{}'", name));
         
         Self {
             _phantom: PhantomData,
@@ -222,7 +222,7 @@ impl<T: Send + Sync + 'static> AutoRegister<T> {
         // SAFETY: Static initialization - panic on registration failure is appropriate
         // because the program cannot continue without successfully registered type creators
         global_factory::<T>().register_type::<U, F>(creator)
-            .expect(&format!("Failed to register creator for type '{}'", std::any::type_name::<U>()));
+            .unwrap_or_else(|_| panic!("Failed to register creator for type '{}'", std::any::type_name::<U>()));
         
         Self {
             _phantom: PhantomData,
@@ -244,7 +244,7 @@ pub fn global_factory<T: Send + Sync + 'static>() -> &'static GlobalFactory<T> {
         if let Some(factory_any) = factories.get(&type_id) {
             let factory_ref = factory_any.downcast_ref::<&'static GlobalFactory<T>>()
                 .expect("registered factory type");
-            return *factory_ref;
+            return factory_ref;
         }
     }
 
@@ -255,7 +255,7 @@ pub fn global_factory<T: Send + Sync + 'static>() -> &'static GlobalFactory<T> {
         if let Some(factory_any) = factories.get(&type_id) {
             let factory_ref = factory_any.downcast_ref::<&'static GlobalFactory<T>>()
                 .expect("registered factory type");
-            return *factory_ref;
+            return factory_ref;
         }
 
         // Box::leak gives us a genuinely &'static reference — no transmute needed

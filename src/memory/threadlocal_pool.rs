@@ -159,7 +159,7 @@ impl HotArea {
     /// Create new hot area
     fn new(size: usize) -> Result<Self> {
         let layout = Layout::from_size_align(size, 8)
-            .map_err(|e| ZiporaError::invalid_data(&format!("Invalid layout: {}", e)))?;
+            .map_err(|e| ZiporaError::invalid_data(format!("Invalid layout: {}", e)))?;
 
         // SAFETY: Allocating with valid layout, null check via NonNull::new
         let start = NonNull::new(unsafe { alloc(layout) })
@@ -216,24 +216,22 @@ impl ThreadLocalCache {
     /// Allocate memory from thread-local cache
     fn allocate(&mut self, size: usize, config: &ThreadLocalPoolConfig) -> Result<NonNull<u8>> {
         // Try size class free list first
-        if let Some(list_index) = self.size_to_list_index(size) {
-            if let Some(ptr) = self.free_lists[list_index].pop() {
+        if let Some(list_index) = self.size_to_list_index(size)
+            && let Some(ptr) = self.free_lists[list_index].pop() {
                 if let Some(stats) = &self.stats {
                     stats.cache_hits.fetch_add(1, Ordering::Relaxed);
                 }
                 return Ok(ptr);
             }
-        }
 
         // Try hot area allocation
-        if let Some(ref mut hot_area) = self.hot_area {
-            if let Some(ptr) = hot_area.try_allocate(size) {
+        if let Some(ref mut hot_area) = self.hot_area
+            && let Some(ptr) = hot_area.try_allocate(size) {
                 if let Some(stats) = &self.stats {
                     stats.hot_allocations.fetch_add(1, Ordering::Relaxed);
                 }
                 return Ok(ptr);
             }
-        }
 
         // Need to allocate new hot area or fall back to global pool
         self.allocate_new_area_or_fallback(size, config)
@@ -355,7 +353,7 @@ pub struct ThreadLocalMemoryPool {
 
 // Thread-local storage for current cache
 thread_local! {
-    static CURRENT_CACHE: RefCell<Option<ThreadLocalCache>> = RefCell::new(None);
+    static CURRENT_CACHE: RefCell<Option<ThreadLocalCache>> = const { RefCell::new(None) };
 }
 
 impl ThreadLocalMemoryPool {
@@ -433,7 +431,7 @@ impl ThreadLocalMemoryPool {
         } else {
             // System deallocation
             let layout = Layout::from_size_align(size, 8)
-                .map_err(|e| ZiporaError::invalid_data(&format!("Invalid layout: {}", e)))?;
+                .map_err(|e| ZiporaError::invalid_data(format!("Invalid layout: {}", e)))?;
 
             // SAFETY: ptr was allocated with this layout in allocate_bypass_cache
             unsafe {

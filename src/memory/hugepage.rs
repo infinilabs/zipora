@@ -325,7 +325,7 @@ impl HugePageAllocator {
 
 impl Default for HugePageAllocator {
     fn default() -> Self {
-        Self::new().unwrap_or_else(|_| {
+        Self::new().unwrap_or({
             #[cfg(target_os = "linux")]
             {
                 Self {

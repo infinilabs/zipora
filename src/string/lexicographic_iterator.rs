@@ -242,7 +242,7 @@ impl<R: std::io::Read> LexicographicIterator for StreamingLexIterator<R> {
 
     fn next(&mut self) -> std::result::Result<bool, Self::Error> {
         self.read_next_line()
-            .map_err(|e| ZiporaError::io_error(&format!("Failed to read line {}: {}", self.line_number + 1, e)))
+            .map_err(|e| ZiporaError::io_error(format!("Failed to read line {}: {}", self.line_number + 1, e)))
     }
 
     fn prev(&mut self) -> std::result::Result<bool, Self::Error> {

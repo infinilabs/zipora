@@ -87,7 +87,7 @@ impl EliasFano {
 
         // Pack low bits (+1 padding word for branchless u128 extraction)
         let total_low_bits = n as u64 * low_bit_width as u64;
-        let low_words = ((total_low_bits + 63) / 64) as usize;
+        let low_words = total_low_bits.div_ceil(64) as usize;
         let mut low_bits = vec![0u64; low_words + 1];
 
         for i in 0..n {
@@ -108,7 +108,7 @@ impl EliasFano {
         let last_val = get_val(n - 1);
         let max_high = last_val >> low_bit_width;
         let high_len_bits = n + max_high as usize + 1;
-        let high_words = (high_len_bits + 63) / 64;
+        let high_words = high_len_bits.div_ceil(64);
         let mut high_bits = vec![0u64; high_words];
 
         let mut pos = 0usize;

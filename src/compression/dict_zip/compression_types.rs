@@ -168,31 +168,25 @@ impl CompressionType {
     pub fn supports(self, distance: usize, length: usize) -> bool {
         match self {
             CompressionType::Literal => {
-                distance == 0 && length >= 1 && length <= MAX_LITERAL_LENGTH
+                distance == 0 && (1..=MAX_LITERAL_LENGTH).contains(&length)
             }
             CompressionType::Global => {
                 length >= MIN_GLOBAL_LENGTH
             }
             CompressionType::RLE => {
-                distance == 1 && length >= 2 && length <= MAX_RLE_LENGTH
+                distance == 1 && (2..=MAX_RLE_LENGTH).contains(&length)
             }
             CompressionType::NearShort => {
-                distance >= 2 
-                    && distance <= MAX_NEAR_SHORT_DISTANCE 
-                    && length >= 2 
-                    && length <= MAX_NEAR_SHORT_LENGTH
+                (2..=MAX_NEAR_SHORT_DISTANCE).contains(&distance) 
+                    && (2..=MAX_NEAR_SHORT_LENGTH).contains(&length)
             }
             CompressionType::Far1Short => {
-                distance >= 2 
-                    && distance <= MAX_FAR1_SHORT_DISTANCE 
-                    && length >= 2 
-                    && length <= MAX_FAR1_SHORT_LENGTH
+                (2..=MAX_FAR1_SHORT_DISTANCE).contains(&distance) 
+                    && (2..=MAX_FAR1_SHORT_LENGTH).contains(&length)
             }
             CompressionType::Far2Short => {
-                distance >= 258 
-                    && distance <= MAX_FAR2_SHORT_DISTANCE 
-                    && length >= 2 
-                    && length <= MAX_FAR2_SHORT_LENGTH
+                (258..=MAX_FAR2_SHORT_DISTANCE).contains(&distance) 
+                    && (2..=MAX_FAR2_SHORT_LENGTH).contains(&length)
             }
             CompressionType::Far2Long => {
                 distance <= MAX_FAR2_LONG_DISTANCE && length >= MIN_FAR2_LONG_LENGTH
@@ -283,21 +277,21 @@ pub fn get_encoding_meta(distance: usize, length: usize) -> EncodingMeta {
         };
     }
     
-    if distance >= 2 && distance <= 9 && length <= 5 {
+    if (2..=9).contains(&distance) && length <= 5 {
         return EncodingMeta {
             compression_type: CompressionType::NearShort,
             cost_bytes: 1,
         };
     }
     
-    if distance >= 2 && distance <= 257 && length <= 33 {
+    if (2..=257).contains(&distance) && length <= 33 {
         return EncodingMeta {
             compression_type: CompressionType::Far1Short,
             cost_bytes: 2,
         };
     }
     
-    if distance >= 258 && distance <= 258 + 65535 && length <= 33 {
+    if (258..=258 + 65535).contains(&distance) && length <= 33 {
         return EncodingMeta {
             compression_type: CompressionType::Far2Short,
             cost_bytes: 3,
@@ -1138,7 +1132,7 @@ pub fn encode_match(match_type: &Match, writer: &mut BitWriter) -> Result<usize>
         Match::Far2Short { distance, length } => {
             // 16 bits for distance (258-65793), stored as distance-258
             // 5 bits for length (2-33), stored as length-2
-            writer.write_bits((*distance - 258) as u32, 16)?;
+            writer.write_bits((*distance - 258), 16)?;
             writer.write_bits((*length - 2) as u32, 5)?;
         }
         Match::Far2Long { distance, length } => {
@@ -1149,7 +1143,7 @@ pub fn encode_match(match_type: &Match, writer: &mut BitWriter) -> Result<usize>
         Match::Far3Long { distance, length } => {
             // 24 bits for distance + variable length encoding
             writer.write_bits(*distance & 0xFFFFFF, 24)?;
-            encode_variable_length((*length - MIN_FAR2_LONG_LENGTH as u32) as u32, writer)?; // Store as offset
+            encode_variable_length((*length - MIN_FAR2_LONG_LENGTH as u32), writer)?; // Store as offset
         }
     }
     
@@ -1347,7 +1341,7 @@ pub fn calculate_theoretical_compression_ratio(matches: &[Match]) -> f64 {
         }
     }).sum();
     
-    let compressed_bytes = (compressed_bits + 7) / 8; // Round up to bytes
+    let compressed_bytes = compressed_bits.div_ceil(8); // Round up to bytes
     
     if uncompressed_bytes == 0 {
         return 1.0;

@@ -472,8 +472,7 @@ impl TrieAlgorithmStrategy for PatriciaAlgorithmStrategy {
 
     fn memory_usage(&self, context: &Self::Context, nodes: &FastVec<Self::Node>) -> usize {
         let node_memory = nodes.capacity() * std::mem::size_of::<PatriciaNode>();
-        let path_memory = context.compressed_paths.iter()
-            .map(|(_, path)| path.len())
+        let path_memory = context.compressed_paths.values().map(|path| path.len())
             .sum::<usize>();
         node_memory + path_memory
     }
@@ -564,8 +563,7 @@ impl CompressionStrategy for PathCompressionStrategy {
         compressed: &Self::CompressedData,
         _config: &Self::Config,
     ) -> Result<Vec<u8>> {
-        context.compressed_paths.get(compressed)
-            .map(|path| path.clone())
+        context.compressed_paths.get(compressed).cloned()
             .ok_or_else(|| ZiporaError::invalid_data("Compressed path not found"))
     }
 

@@ -430,7 +430,7 @@ static GLOBAL_SIMD_OPS: std::sync::OnceLock<SimdStringOps> = std::sync::OnceLock
 
 /// Gets the global SIMD string operations instance
 pub fn get_global_simd_ops() -> &'static SimdStringOps {
-    GLOBAL_SIMD_OPS.get_or_init(|| SimdStringOps::new())
+    GLOBAL_SIMD_OPS.get_or_init(SimdStringOps::new)
 }
 
 /// Convenience function for fast string comparison using global SIMD operations

@@ -49,6 +49,7 @@ impl PoolConfig {
 
 /// Statistics for memory pool usage
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct PoolStats {
     /// Total bytes allocated
     pub allocated: u64,
@@ -66,19 +67,6 @@ pub struct PoolStats {
     pub pool_misses: u64,
 }
 
-impl Default for PoolStats {
-    fn default() -> Self {
-        Self {
-            allocated: 0,
-            available: 0,
-            chunks: 0,
-            alloc_count: 0,
-            dealloc_count: 0,
-            pool_hits: 0,
-            pool_misses: 0,
-        }
-    }
-}
 
 /// A memory pool for efficient allocation of fixed-size chunks
 ///
@@ -181,14 +169,13 @@ impl MemoryPool {
         self.alloc_count.fetch_add(1, Ordering::Relaxed);
 
         // Try to get a chunk from the pool first
-        if let Ok(mut free_chunks) = self.free_chunks.try_lock() {
-            if let Some(chunk) = free_chunks.pop_front() {
+        if let Ok(mut free_chunks) = self.free_chunks.try_lock()
+            && let Some(chunk) = free_chunks.pop_front() {
                 self.pool_hits.fetch_add(1, Ordering::Relaxed);
                 self.update_stats_on_alloc(true);
                 // SAFETY: chunk came from our own allocation, verified non-null during push
                 return Ok(unsafe { NonNull::new_unchecked(chunk) });
             }
-        }
 
         // Pool is empty or locked, allocate new chunk
         self.pool_misses.fetch_add(1, Ordering::Relaxed);
@@ -210,13 +197,12 @@ impl MemoryPool {
         self.dealloc_count.fetch_add(1, Ordering::Relaxed);
 
         // Try to return chunk to pool if not full
-        if let Ok(mut free_chunks) = self.free_chunks.try_lock() {
-            if free_chunks.len() < self.config.max_chunks {
+        if let Ok(mut free_chunks) = self.free_chunks.try_lock()
+            && free_chunks.len() < self.config.max_chunks {
                 free_chunks.push_back(chunk.as_ptr());
                 self.update_stats_on_dealloc(true);
                 return Ok(());
             }
-        }
 
         // Pool is full or locked, deallocate directly
         self.deallocate_chunk(chunk);
@@ -315,21 +301,19 @@ impl MemoryPool {
     }
 
     fn update_stats_on_alloc(&self, from_pool: bool) {
-        if let Ok(mut stats) = self.stats.try_write() {
-            if !from_pool {
+        if let Ok(mut stats) = self.stats.try_write()
+            && !from_pool {
                 stats.allocated += self.config.chunk_size as u64;
             }
-        }
     }
 
     fn update_stats_on_dealloc(&self, to_pool: bool) {
-        if let Ok(mut stats) = self.stats.try_write() {
-            if !to_pool {
+        if let Ok(mut stats) = self.stats.try_write()
+            && !to_pool {
                 stats.allocated = stats
                     .allocated
                     .saturating_sub(self.config.chunk_size as u64);
             }
-        }
     }
 }
 
@@ -342,7 +326,7 @@ impl Drop for MemoryPool {
 
 /// Global memory pool instances
 static GLOBAL_POOLS: once_cell::sync::Lazy<GlobalPools> =
-    once_cell::sync::Lazy::new(|| GlobalPools::new());
+    once_cell::sync::Lazy::new(GlobalPools::new);
 
 struct GlobalPools {
     small_pool: Arc<MemoryPool>,

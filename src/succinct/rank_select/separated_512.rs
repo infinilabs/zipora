@@ -62,7 +62,7 @@ impl RankSelectSE512 {
     pub fn with_options(bv: BitVector, speed_select0: bool, speed_select1: bool) -> Result<Self> {
         let size = bv.len();
         let blocks = bv.blocks();
-        let nlines = (size + LINE_BITS - 1) / LINE_BITS;
+        let nlines = size.div_ceil(LINE_BITS);
 
         // Build rank cache
         let mut rank_cache = Vec::with_capacity(nlines + 1);
@@ -100,7 +100,7 @@ impl RankSelectSE512 {
     }
 
     fn build_select_cache(rank_cache: &[RankCacheSE512], max_rank: usize, nlines: usize, is_rank1: bool) -> Vec<u32> {
-        let slots = (max_rank + LINE_BITS - 1) / LINE_BITS;
+        let slots = max_rank.div_ceil(LINE_BITS);
         let mut cache = vec![0u32; slots + 1];
         cache[0] = 0;
         for j in 1..slots {
@@ -258,7 +258,7 @@ impl RankSelectOps for RankSelectSE512 {
 
     fn space_overhead_percent(&self) -> f64 {
         if self.size == 0 { return 0.0; }
-        let bit_bytes = (self.size + 7) / 8;
+        let bit_bytes = self.size.div_ceil(8);
         let overhead = self.mem_size() - bit_bytes;
         (overhead as f64 / bit_bytes as f64) * 100.0
     }

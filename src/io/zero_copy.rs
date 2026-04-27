@@ -487,7 +487,7 @@ impl<R: Read> Read for ZeroCopyReader<R> {
         // Fill buffer and read from it
         if !self.eof {
             let bytes_read = self.buffer.fill_from(&mut self.inner)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                .map_err(io::Error::other)?;
             if bytes_read == 0 {
                 self.eof = true;
             }
@@ -565,7 +565,7 @@ impl<W: Write> ZeroCopyWriter<W> {
     fn flush_buffer(&mut self) -> io::Result<()> {
         while !self.buffer.is_empty() {
             let bytes_written = self.buffer.drain_to(&mut self.inner)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                .map_err(io::Error::other)?;
             if bytes_written == 0 {
                 return Err(io::Error::new(io::ErrorKind::WriteZero, "Failed to drain buffer completely"));
             }

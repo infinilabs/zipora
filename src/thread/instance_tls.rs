@@ -208,8 +208,8 @@ where
                 ZiporaError::system_error("Failed to acquire TLS registry read lock")
             })?;
             
-            if let Some(state_box) = read_guard.get(&type_id) {
-                if let Some(state_mutex) = state_box.downcast_ref::<Mutex<GlobalTlsState<T, ROWS, COLS>>>() {
+            if let Some(state_box) = read_guard.get(&type_id)
+                && let Some(state_mutex) = state_box.downcast_ref::<Mutex<GlobalTlsState<T, ROWS, COLS>>>() {
                     let mut state = state_mutex.lock().map_err(|_| {
                         ZiporaError::system_error("Failed to acquire TLS state lock")
                     })?;
@@ -223,7 +223,7 @@ where
                     } else {
                         let id = state.next_id;
                         if id as usize >= ROWS * COLS {
-                            return Err(ZiporaError::resource_exhausted(&format!(
+                            return Err(ZiporaError::resource_exhausted(format!(
                                 "Too many TLS instances: max {}",
                                 ROWS * COLS
                             )));
@@ -232,7 +232,6 @@ where
                         return Ok(id);
                     }
                 }
-            }
         }
 
         // Need write lock to insert new type
@@ -263,7 +262,7 @@ where
         } else {
             let id = state.next_id;
             if id as usize >= ROWS * COLS {
-                return Err(ZiporaError::resource_exhausted(&format!(
+                return Err(ZiporaError::resource_exhausted(format!(
                     "Too many TLS instances: max {}",
                     ROWS * COLS
                 )));
@@ -382,13 +381,11 @@ impl<T: Send + Sync + 'static, const ROWS: usize, const COLS: usize> Drop for Cl
         // Use read lock to find the state
         if let Ok(read_guard) = registry.read() {
             let type_id = TypeId::of::<(T, [(); ROWS], [(); COLS])>();
-            if let Some(state_box) = read_guard.get(&type_id) {
-                if let Some(state_mutex) = state_box.downcast_ref::<Mutex<GlobalTlsState<T, ROWS, COLS>>>() {
-                    if let Ok(mut state) = state_mutex.lock() {
+            if let Some(state_box) = read_guard.get(&type_id)
+                && let Some(state_mutex) = state_box.downcast_ref::<Mutex<GlobalTlsState<T, ROWS, COLS>>>()
+                    && let Ok(mut state) = state_mutex.lock() {
                         state.free_ids.push_back(self.id);
                     }
-                }
-            }
         }
     }
 }
@@ -420,9 +417,9 @@ where
     pub fn get_or_create(&mut self, owner: &O) -> Result<T> {
         let owner_ptr = owner as *const O;
         
-        if !self.instances.contains_key(&owner_ptr) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.instances.entry(owner_ptr) {
             let instance = InstanceTls::new()?;
-            self.instances.insert(owner_ptr, instance);
+            e.insert(instance);
         }
 
         // SAFETY: Either key existed or we just inserted it above, so get() always succeeds

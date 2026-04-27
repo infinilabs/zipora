@@ -145,13 +145,13 @@ impl LocalMatch {
     /// Determine the optimal compression type for given distance and length
     fn determine_compression_type(distance: usize, length: usize) -> CompressionType {
         // Determine compression type based on PA-Zip algorithm rules
-        if distance == 1 && length >= 2 && length <= 33 {
+        if distance == 1 && (2..=33).contains(&length) {
             CompressionType::RLE
-        } else if distance >= 2 && distance <= 9 && length >= 2 && length <= 5 {
+        } else if (2..=9).contains(&distance) && (2..=5).contains(&length) {
             CompressionType::NearShort
-        } else if distance >= 2 && distance <= 257 && length >= 2 && length <= 33 {
+        } else if (2..=257).contains(&distance) && (2..=33).contains(&length) {
             CompressionType::Far1Short
-        } else if distance >= 258 && distance <= 65793 && length >= 2 && length <= 33 {
+        } else if (258..=65793).contains(&distance) && (2..=33).contains(&length) {
             CompressionType::Far2Short
         } else if distance <= 65535 && length >= 34 {
             CompressionType::Far2Long
@@ -508,11 +508,10 @@ impl LocalMatcher {
         let mut matches = Vec::new();
 
         // First check for RLE (run-length encoding)
-        if self.config.enable_rle_detection {
-            if let Some(rle_match) = self.find_rle_match(input, input_pos, pattern_len)? {
+        if self.config.enable_rle_detection
+            && let Some(rle_match) = self.find_rle_match(input, input_pos, pattern_len)? {
                 matches.push(rle_match);
             }
-        }
 
         // Then search for general pattern matches
         let pattern_matches = self.find_pattern_matches(input, input_pos, pattern_len)?;

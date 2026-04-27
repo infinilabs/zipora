@@ -243,7 +243,7 @@ impl ZoSortedStrVec {
 
         // Find the start position of the string using rank/select
         // select1(index) returns the position of the (index+1)th set bit (0-indexed)
-        let start_pos = self.rank_select.select1(index).ok()? as usize;
+        let start_pos = self.rank_select.select1(index).ok()?;
 
         // Check if this is an empty string (starts with null terminator)
         if self.data[start_pos] == 0 {

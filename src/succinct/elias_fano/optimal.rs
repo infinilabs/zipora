@@ -95,7 +95,7 @@ impl OptimalPartitionedEliasFano {
         dp[0] = 0;
 
         for i in 1..=n {
-            let max_j_start = if i > MAX_CHUNK_SIZE { i - MAX_CHUNK_SIZE } else { 0 };
+            let max_j_start = i.saturating_sub(MAX_CHUNK_SIZE);
             let min_j_end = if i >= MIN_CHUNK_SIZE { i - MIN_CHUNK_SIZE + 1 } else { 0 };
 
             // Only consider valid chunk sizes [MIN_CHUNK_SIZE, MAX_CHUNK_SIZE]
@@ -162,7 +162,7 @@ impl OptimalPartitionedEliasFano {
 
             // Pack low bits directly into flat array
             let total_low_bits = count as u64 * low_bit_width as u64;
-            let low_words = ((total_low_bits + 63) / 64) as usize;
+            let low_words = total_low_bits.div_ceil(64) as usize;
             let low_offset = all_low_bits.len();
             all_low_bits.resize(low_offset + low_words, 0);
             for i in 0..count {
@@ -183,7 +183,7 @@ impl OptimalPartitionedEliasFano {
             let last_delta = max_val - min_val;
             let max_high = last_delta >> low_bit_width;
             let high_len_bits = count + max_high as usize + 1;
-            let high_words = (high_len_bits + 63) / 64;
+            let high_words = high_len_bits.div_ceil(64);
             let high_offset = all_high_bits.len();
             all_high_bits.resize(high_offset + high_words, 0);
             let mut hpos = 0usize;

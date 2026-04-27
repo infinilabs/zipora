@@ -397,7 +397,7 @@ impl WorkStealingExecutor {
         // Wait for all workers to finish
         for worker in &self.workers {
             if let Some(ref handle) = worker.handle {
-                let _ = handle.abort();
+                handle.abort();
             }
         }
 
@@ -456,7 +456,7 @@ impl WorkStealingExecutor {
             }
 
             // Periodically balance the queue
-            if stats.total_executed.load(Ordering::Relaxed) % 100 == 0 {
+            if stats.total_executed.load(Ordering::Relaxed).is_multiple_of(100) {
                 my_queue.balance();
             }
         }
@@ -475,11 +475,10 @@ impl WorkStealingExecutor {
         }
 
         // 2. Try global queue
-        if let Ok(mut queue) = global_queue.try_lock() {
-            if let Some(task) = queue.pop_front() {
+        if let Ok(mut queue) = global_queue.try_lock()
+            && let Some(task) = queue.pop_front() {
                 return Some(task);
             }
-        }
 
         // 3. Try to steal from other workers
         for other_queue in other_queues {

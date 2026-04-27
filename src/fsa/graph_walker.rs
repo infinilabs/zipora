@@ -32,8 +32,10 @@ pub enum WalkMethod {
 
 /// Vertex color for graph traversal algorithms
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Default)]
 pub enum VertexColor {
     /// Unvisited vertex
+    #[default]
     White,
     /// Currently being processed
     Gray,
@@ -43,11 +45,6 @@ pub enum VertexColor {
     Custom(u32),
 }
 
-impl Default for VertexColor {
-    fn default() -> Self {
-        VertexColor::White
-    }
-}
 
 /// Graph vertex trait
 pub trait Vertex: Clone + Eq + Hash {
@@ -227,17 +224,15 @@ impl<V: Vertex> BfsGraphWalker<V> {
         
         while let Some((current, depth)) = self.queue.pop_front() {
             // Check limits
-            if let Some(max_depth) = self.config.max_depth {
-                if depth >= max_depth {
+            if let Some(max_depth) = self.config.max_depth
+                && depth >= max_depth {
                     continue;
                 }
-            }
             
-            if let Some(max_vertices) = self.config.max_vertices {
-                if self.stats.vertices_visited >= max_vertices {
+            if let Some(max_vertices) = self.config.max_vertices
+                && self.stats.vertices_visited >= max_vertices {
                     break;
                 }
-            }
             
             // Visit vertex
             if !visitor.visit_vertex(&current, depth)? {
@@ -343,17 +338,15 @@ impl<V: Vertex> DfsGraphWalker<V> {
             }
             
             // Check limits
-            if let Some(max_depth) = self.config.max_depth {
-                if depth >= max_depth {
+            if let Some(max_depth) = self.config.max_depth
+                && depth >= max_depth {
                     continue;
                 }
-            }
             
-            if let Some(max_vertices) = self.config.max_vertices {
-                if self.stats.vertices_visited >= max_vertices {
+            if let Some(max_vertices) = self.config.max_vertices
+                && self.stats.vertices_visited >= max_vertices {
                     break;
                 }
-            }
             
             // Visit vertex
             if !visitor.visit_vertex(&current, depth)? {

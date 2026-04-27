@@ -346,8 +346,8 @@ impl DfaCache {
                 state = next_state;
                 
                 // Check if this state represents a complete pattern
-                if self.trie.is_final(state) {
-                    if let Some(pattern_info) = self.pattern_map.get(&state) {
+                if self.trie.is_final(state)
+                    && let Some(pattern_info) = self.pattern_map.get(&state) {
                         longest_match = Some(CacheMatch {
                             length: i + 1,
                             dict_position: pattern_info.position,
@@ -355,7 +355,6 @@ impl DfaCache {
                             state_id: state,
                         });
                     }
-                }
             } else {
                 // No transition available, stop here
                 break;
@@ -417,7 +416,7 @@ impl DfaCache {
         for &state_id in self.pattern_map.keys() {
             if state_id as usize >= self.trie.capacity() {
                 return Err(ZiporaError::invalid_data(
-                    &format!("Invalid state ID {} in pattern map", state_id)
+                    format!("Invalid state ID {} in pattern map", state_id)
                 ));
             }
         }
@@ -442,7 +441,7 @@ impl DfaCache {
         };
 
         bincode::serialize(&serializable)
-            .map_err(|e| ZiporaError::invalid_data(&format!("Cache serialization failed: {}", e)))
+            .map_err(|e| ZiporaError::invalid_data(format!("Cache serialization failed: {}", e)))
     }
 
     /// Get DFA state by ID for two-level pattern matching
@@ -501,7 +500,7 @@ impl DfaCache {
         use bincode;
 
         let serializable: SerializableCache = bincode::deserialize(data)
-            .map_err(|e| ZiporaError::invalid_data(&format!("Cache deserialization failed: {}", e)))?;
+            .map_err(|e| ZiporaError::invalid_data(format!("Cache deserialization failed: {}", e)))?;
 
         // Create a simple trie for deserialization - full reconstruction would need pattern data
         let trie = ZiporaTrie::new();
@@ -672,7 +671,7 @@ impl DfaCache {
                 // End of current character group
                 partitions.insert(current_char, (current_start, current_start + i));
                 current_char = *ch;
-                current_start = current_start + i;
+                current_start += i;
                 i = 0;
             }
             i += 1;
@@ -798,7 +797,7 @@ impl DfaCache {
         // Collect all patterns from terminal states
         let mut pattern_to_info: HashMap<Vec<u8>, PatternInfo> = HashMap::new();
 
-        for (_state_id, pattern_info) in &temp_trie.terminals {
+        for pattern_info in temp_trie.terminals.values() {
             pattern_to_info.insert(pattern_info.pattern.clone(), pattern_info.clone());
         }
 

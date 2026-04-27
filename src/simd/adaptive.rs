@@ -346,18 +346,15 @@ impl AdaptiveSimdSelector {
             history.record_sample(duration, ops);
 
             // Check for performance degradation
-            if self.config.enable_adaptation {
-                if let Ok(benchmarks) = self.operation_benchmarks.read() {
-                    if let Some(benchmark) = benchmarks.get(&operation) {
-                        if history.check_performance_degradation(benchmark.throughput,
+            if self.config.enable_adaptation
+                && let Ok(benchmarks) = self.operation_benchmarks.read()
+                    && let Some(benchmark) = benchmarks.get(&operation)
+                        && history.check_performance_degradation(benchmark.throughput,
                                                                  self.config.degradation_trigger_count) {
                             // Clear cache for this operation to force re-evaluation
                             drop(benchmarks); // Release read lock before write
                             self.clear_operation_cache(operation);
                         }
-                    }
-                }
-            }
         }
     }
 
@@ -507,9 +504,9 @@ impl AdaptiveSimdSelector {
             Operation::Popcount | Operation::Rank | Operation::Select => {
                 // Sparse data pattern (10-30% density)
                 for i in 0..size {
-                    let mut h = hasher.build_hasher();
-                    i.hash(&mut h);
-                    let hash = h.finish();
+                    
+                    
+                    let hash = hasher.hash_one(i);
                     if hash % 100 < 20 {
                         data[i] = (hash & 0xFF) as u8;
                     }
@@ -518,9 +515,9 @@ impl AdaptiveSimdSelector {
             Operation::Search => {
                 // Random data with occasional needle values
                 for i in 0..size {
-                    let mut h = hasher.build_hasher();
-                    i.hash(&mut h);
-                    let hash = h.finish();
+                    
+                    
+                    let hash = hasher.hash_one(i);
                     data[i] = if hash % 100 < 5 {
                         0x42 // Needle value
                     } else {
@@ -531,9 +528,9 @@ impl AdaptiveSimdSelector {
             Operation::Sort => {
                 // Random data for sorting
                 for i in 0..size {
-                    let mut h = hasher.build_hasher();
-                    i.hash(&mut h);
-                    data[i] = (h.finish() & 0xFF) as u8;
+                    
+                    
+                    data[i] = (hasher.hash_one(i) & 0xFF) as u8;
                 }
             },
             _ => {
@@ -554,7 +551,7 @@ impl AdaptiveSimdSelector {
 
     /// Get CPU features
     pub fn cpu_features(&self) -> &CpuFeatures {
-        &self.cpu_features
+        self.cpu_features
     }
 
     /// Get current thresholds

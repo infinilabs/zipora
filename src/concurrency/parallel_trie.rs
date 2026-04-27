@@ -65,7 +65,7 @@ impl ParallelTrieBuilder {
             })
                 .await
                 .map_err(|e| {
-                    ZiporaError::configuration(&format!("parallel build failed: {}", e))
+                    ZiporaError::configuration(format!("parallel build failed: {}", e))
                 })??;
 
             partial_tries.push(trie);
@@ -111,7 +111,7 @@ impl ParallelTrieBuilder {
                 Ok(trie)
             })
                 .await
-                .map_err(|e| ZiporaError::configuration(&format!("final build failed: {}", e)))??;
+                .map_err(|e| ZiporaError::configuration(format!("final build failed: {}", e)))??;
 
         Ok(ParallelLoudsTrie::from_trie(final_trie))
     }

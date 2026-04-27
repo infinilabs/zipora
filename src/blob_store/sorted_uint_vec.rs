@@ -228,11 +228,10 @@ impl SortedUintVec {
                         power_of_two_deltas += 1;
                     }
                     
-                    if let Some(prev) = prev_delta {
-                        if delta == prev {
+                    if let Some(prev) = prev_delta
+                        && delta == prev {
                             consecutive_deltas += 1;
                         }
-                    }
                     prev_delta = Some(delta);
                 }
             }
@@ -322,7 +321,7 @@ impl SortedUintVec {
         let bit_offset = sample_offset % 8;
         
         // Calculate actual bytes needed for this sample width
-        let bytes_needed = ((bit_offset + self.config.sample_width as usize + 7) / 8).min(8);
+        let bytes_needed = (bit_offset + self.config.sample_width as usize).div_ceil(8).min(8);
         if byte_offset + bytes_needed > self.index.len() {
             return Err(ZiporaError::invalid_data("index data truncated"));
         }
@@ -349,7 +348,7 @@ impl SortedUintVec {
 
         let byte_offset = bit_offset / 8;
         let bit_shift = bit_offset % 8;
-        let bytes_needed = ((bit_shift + bit_width as usize + 7) / 8).min(8);
+        let bytes_needed = (bit_shift + bit_width as usize).div_ceil(8).min(8);
         
         if byte_offset + bytes_needed > data.len() {
             return Err(ZiporaError::invalid_data("bit extraction out of bounds"));
@@ -459,7 +458,7 @@ impl SortedUintVec {
         let bit_shift = bit_offset % 8;
         
         let mut value = 0u64;
-        let bytes_to_read = ((bit_shift + bit_width as usize + 7) / 8).min(8);
+        let bytes_to_read = (bit_shift + bit_width as usize).div_ceil(8).min(8);
         
         // Read bytes and construct value
         for i in 0..bytes_to_read {
@@ -655,11 +654,10 @@ impl SortedUintVecBuilder {
     /// Add a value (must be >= previous value to maintain sorted order)
     #[inline]
     pub fn push(&mut self, value: u64) -> Result<()> {
-        if let Some(&last) = self.values.last() {
-            if value < last {
+        if let Some(&last) = self.values.last()
+            && value < last {
                 return Err(ZiporaError::invalid_data("values must be sorted"));
             }
-        }
         
         self.values.push(value)?;
         Ok(())
@@ -709,15 +707,15 @@ impl SortedUintVecBuilder {
         }
 
         let block_size = config.block_size();
-        let num_blocks = (values.len() + block_size - 1) / block_size;
+        let num_blocks = values.len().div_ceil(block_size);
 
         // Pre-allocate storage
         let index_bits = num_blocks * config.sample_width as usize;
-        let index_bytes = (index_bits + 7) / 8;
+        let index_bytes = index_bits.div_ceil(8);
         result.index.reserve(index_bytes)?;
 
         let data_bits = values.len() * config.offset_width as usize;
-        let data_bytes = (data_bits + 7) / 8;
+        let data_bytes = data_bits.div_ceil(8);
         result.data.reserve(data_bytes)?;
 
         // Process each block
@@ -798,7 +796,7 @@ impl SortedUintVecBuilder {
     fn store_bits(&self, data: &mut FastVec<u8>, bit_offset: usize, value: u64, bit_width: u8) -> Result<()> {
         let byte_offset = bit_offset / 8;
         let bit_shift = bit_offset % 8;
-        let bytes_needed = (bit_shift + bit_width as usize + 7) / 8;
+        let bytes_needed = (bit_shift + bit_width as usize).div_ceil(8);
 
         // Ensure sufficient space
         while data.len() < byte_offset + bytes_needed {
@@ -842,7 +840,7 @@ impl SortedUintVecBuilder {
     fn store_bits_static(data: &mut FastVec<u8>, bit_offset: usize, value: u64, bit_width: u8) -> Result<()> {
         let byte_offset = bit_offset / 8;
         let bit_shift = bit_offset % 8;
-        let bytes_needed = (bit_shift + bit_width as usize + 7) / 8;
+        let bytes_needed = (bit_shift + bit_width as usize).div_ceil(8);
 
         // Ensure sufficient space
         while data.len() < byte_offset + bytes_needed {

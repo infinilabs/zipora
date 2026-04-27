@@ -122,11 +122,13 @@ impl Default for OptimizationFlags {
 /// These levels control how temporary files are used to manage memory
 /// during large trie construction operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum TempLevel {
     /// Default smart temporary file usage (level 0)
     /// 
     /// The system automatically determines the best temporary file
     /// strategy based on available memory and data size.
+    #[default]
     Smart = 0,
     
     /// Use temporary files for BFS queue (level 1)
@@ -154,11 +156,6 @@ pub enum TempLevel {
     SaveNestStrPool = 4,
 }
 
-impl Default for TempLevel {
-    fn default() -> Self {
-        Self::Smart
-    }
-}
 
 /// Compression algorithm selection for core string compression.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -485,7 +482,7 @@ impl Config for NestLoudsTrieConfig {
         config.compression_min_length = parse_env_var(&format!("{}TRIE_COMPRESSION_MIN_LENGTH", prefix), config.compression_min_length);
         
         // Memory management
-        if let Ok(temp_dir) = std::env::var(&format!("{}TRIE_TEMP_DIRECTORY", prefix)) {
+        if let Ok(temp_dir) = std::env::var(format!("{}TRIE_TEMP_DIRECTORY", prefix)) {
             config.temp_directory = temp_dir;
         }
         config.initial_pool_size = parse_env_var(&format!("{}TRIE_INITIAL_POOL_SIZE", prefix), config.initial_pool_size);

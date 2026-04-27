@@ -54,7 +54,7 @@ impl FastDivision {
         }
         
         let shift = (32 - divisor.leading_zeros()) as u8;
-        let multiplier = ((1u64 << (32 + shift)) + divisor as u64 - 1) / divisor as u64;
+        let multiplier = (1u64 << (32 + shift)).div_ceil(divisor as u64);
         
         Self { divisor, multiplier, shift }
     }
@@ -80,6 +80,12 @@ impl FastDivision {
 pub struct EntropyNormalizer {
     entropy_threshold: f64,
     adaptive_scaling: bool,
+}
+
+impl Default for EntropyNormalizer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EntropyNormalizer {
@@ -421,7 +427,7 @@ impl FseTable {
         let mut position = 0u32;
         for symbol in 0..=max_symbol as usize {
             let freq = if symbol < normalized_freqs.len() {
-                normalized_freqs[symbol] as u32
+                normalized_freqs[symbol]
             } else {
                 0
             };
@@ -560,9 +566,9 @@ impl FseTable {
         
         let x0 = b_lo * a_lo;
         let x1 = (b_lo * a_hi) + (b_hi * a_lo) + (x0 >> 32);
-        let x2 = (b_hi * a_hi) + (x1 >> 32);
         
-        x2
+        
+        (b_hi * a_hi) + (x1 >> 32)
     }
     
     /// Encode symbol using rANS approach
@@ -838,11 +844,10 @@ impl FseEncoder {
         }
         
         // Use parallel processing for large data
-        if let Some(num_blocks) = self.config.parallel_blocks {
-            if data.len() > self.config.block_size * 2 {
+        if let Some(num_blocks) = self.config.parallel_blocks
+            && data.len() > self.config.block_size * 2 {
                 return self.compress_parallel(data, num_blocks);
             }
-        }
         
         // Single-threaded compression
         self.compress_single_internal(data)
@@ -1119,7 +1124,7 @@ impl FseDecoder {
             // 1. Number of blocks is reasonable (2-64)
             // 2. There's enough data for block size headers
             // 3. The block sizes make sense
-            if potential_num_blocks >= 2 && potential_num_blocks <= 64 {
+            if (2..=64).contains(&potential_num_blocks) {
                 let header_size = 4 + 4 * potential_num_blocks as usize; // num_blocks + block_sizes
                 if data.len() >= header_size {
                     // Verify that the block sizes are reasonable
@@ -1185,7 +1190,7 @@ impl FseDecoder {
             return Ok(data[pos..pos + original_size].to_vec());
         }
         
-        if table_log < 5 || table_log > 15 {
+        if !(5..=15).contains(&table_log) {
             return Err(ZiporaError::invalid_data(format!("Invalid table log: {}", table_log)));
         }
         

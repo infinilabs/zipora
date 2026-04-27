@@ -882,7 +882,7 @@ impl SimdPatternMatcher {
                 if pattern_len <= 16 {
                     1
                 } else if pattern_len <= 35 {
-                    (pattern_len + 15) / 16
+                    pattern_len.div_ceil(16)
                 } else {
                     pattern_len / 16 + 1
                 }
@@ -891,7 +891,7 @@ impl SimdPatternMatcher {
                 if pattern_len <= 32 {
                     1
                 } else {
-                    (pattern_len + 31) / 32
+                    pattern_len.div_ceil(32)
                 }
             }
             #[cfg(feature = "avx512")]
@@ -1261,7 +1261,7 @@ static GLOBAL_SIMD_PATTERN_MATCHER: std::sync::OnceLock<SimdPatternMatcher> = st
 
 /// Get the global SIMD pattern matcher instance
 pub fn get_global_simd_pattern_matcher() -> &'static SimdPatternMatcher {
-    GLOBAL_SIMD_PATTERN_MATCHER.get_or_init(|| SimdPatternMatcher::new())
+    GLOBAL_SIMD_PATTERN_MATCHER.get_or_init(SimdPatternMatcher::new)
 }
 
 #[cfg(test)]

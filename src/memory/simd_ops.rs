@@ -168,8 +168,8 @@ impl SimdMemOps {
         }
         
         // Verify alignment
-        let src_aligned = (src.as_ptr() as usize) % CACHE_LINE_SIZE == 0;
-        let dst_aligned = (dst.as_mut_ptr() as usize) % CACHE_LINE_SIZE == 0;
+        let src_aligned = (src.as_ptr() as usize).is_multiple_of(CACHE_LINE_SIZE);
+        let dst_aligned = (dst.as_mut_ptr() as usize).is_multiple_of(CACHE_LINE_SIZE);
         
         if !src_aligned || !dst_aligned {
             return Err(ZiporaError::invalid_data(
@@ -342,8 +342,8 @@ impl SimdMemOps {
         }
 
         // Use cache-aligned copy if beneficial
-        let src_aligned = (src.as_ptr() as usize) % self.cache_config.cache_line_size == 0;
-        let dst_aligned = (dst.as_mut_ptr() as usize) % self.cache_config.cache_line_size == 0;
+        let src_aligned = (src.as_ptr() as usize).is_multiple_of(self.cache_config.cache_line_size);
+        let dst_aligned = (dst.as_mut_ptr() as usize).is_multiple_of(self.cache_config.cache_line_size);
 
         if src_aligned && dst_aligned && src.len() >= self.cache_config.cache_line_size {
             self.copy_aligned(src, dst)
@@ -590,7 +590,7 @@ impl SimdMemOps {
         use std::arch::x86_64::*;
 
         // SAFETY: avx512f/vl/bw guaranteed by #[target_feature]
-        let needle_vec = unsafe { _mm512_set1_epi8(needle as i8) };
+        let needle_vec = _mm512_set1_epi8(needle as i8);
         let mut offset = 0;
 
         // Process 64-byte chunks
@@ -614,11 +614,7 @@ impl SimdMemOps {
         // Handle remaining bytes
         if len > 0 {
             // SAFETY: pointer valid, remaining len < 64
-            if let Some(remaining_offset) = unsafe { self.scalar_memchr(haystack, needle, len) } {
-                Some(offset + remaining_offset)
-            } else {
-                None
-            }
+            unsafe { self.scalar_memchr(haystack, needle, len) }.map(|remaining_offset| offset + remaining_offset)
         } else {
             None
         }
@@ -629,7 +625,7 @@ impl SimdMemOps {
         use std::arch::x86_64::*;
 
         // SAFETY: avx512f/vl/bw guaranteed by #[target_feature]
-        let value_vec = unsafe { _mm512_set1_epi8(value as i8) };
+        let value_vec = _mm512_set1_epi8(value as i8);
 
         // Process 64-byte chunks
         while len >= 64 {
@@ -797,7 +793,7 @@ impl SimdMemOps {
         use std::arch::x86_64::*;
 
         // SAFETY: avx2 guaranteed by #[target_feature]
-        let needle_vec = unsafe { _mm256_set1_epi8(needle as i8) };
+        let needle_vec = _mm256_set1_epi8(needle as i8);
         let mut offset = 0;
 
         // Process 32-byte chunks
@@ -822,11 +818,7 @@ impl SimdMemOps {
         // Handle remaining bytes
         if len > 0 {
             // SAFETY: pointer valid, remaining len < 32
-            if let Some(remaining_offset) = unsafe { self.scalar_memchr(haystack, needle, len) } {
-                Some(offset + remaining_offset)
-            } else {
-                None
-            }
+            unsafe { self.scalar_memchr(haystack, needle, len) }.map(|remaining_offset| offset + remaining_offset)
         } else {
             None
         }
@@ -837,7 +829,7 @@ impl SimdMemOps {
         use std::arch::x86_64::*;
 
         // SAFETY: avx2 guaranteed by #[target_feature]
-        let value_vec = unsafe { _mm256_set1_epi8(value as i8) };
+        let value_vec = _mm256_set1_epi8(value as i8);
 
         // Process 32-byte chunks
         while len >= 32 {
@@ -993,7 +985,7 @@ impl SimdMemOps {
         use std::arch::x86_64::*;
 
         // SAFETY: sse2 guaranteed by #[target_feature]
-        let needle_vec = unsafe { _mm_set1_epi8(needle as i8) };
+        let needle_vec = _mm_set1_epi8(needle as i8);
         let mut offset = 0;
 
         // Process 16-byte chunks
@@ -1018,11 +1010,7 @@ impl SimdMemOps {
         // Handle remaining bytes
         if len > 0 {
             // SAFETY: pointer valid, remaining len < 16
-            if let Some(remaining_offset) = unsafe { self.scalar_memchr(haystack, needle, len) } {
-                Some(offset + remaining_offset)
-            } else {
-                None
-            }
+            unsafe { self.scalar_memchr(haystack, needle, len) }.map(|remaining_offset| offset + remaining_offset)
         } else {
             None
         }
@@ -1033,7 +1021,7 @@ impl SimdMemOps {
         use std::arch::x86_64::*;
 
         // SAFETY: sse2 guaranteed by #[target_feature]
-        let value_vec = unsafe { _mm_set1_epi8(value as i8) };
+        let value_vec = _mm_set1_epi8(value as i8);
 
         // Process 16-byte chunks
         while len >= 16 {
@@ -1147,7 +1135,7 @@ static GLOBAL_SIMD_OPS: std::sync::OnceLock<SimdMemOps> = std::sync::OnceLock::n
 
 /// Get the global SIMD memory operations instance
 pub fn get_global_simd_ops() -> &'static SimdMemOps {
-    GLOBAL_SIMD_OPS.get_or_init(|| SimdMemOps::new())
+    GLOBAL_SIMD_OPS.get_or_init(SimdMemOps::new)
 }
 
 /// Convenience function for fast memory copy

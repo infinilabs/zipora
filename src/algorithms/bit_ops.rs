@@ -227,7 +227,7 @@ unsafe fn popcount_hw(words: &[u64]) -> usize {
     let mut sum: usize = 0;
     for &w in words {
         // SAFETY: POPCNT guaranteed by #[target_feature(enable = "popcnt")].
-        sum += unsafe { _popcnt64(w as i64) } as usize;
+        sum += _popcnt64(w as i64) as usize;
     }
     sum
 }
@@ -308,7 +308,7 @@ fn has_fast_bmi2_detect() -> bool {
         }
 
         // SAFETY: __cpuid is always safe on x86_64 with leaf 0 and 1.
-        let cpuid0 = unsafe { std::arch::x86_64::__cpuid(0) };
+        let cpuid0 = std::arch::x86_64::__cpuid(0);
 
         // Check "AuthenticAMD": ebx="Auth", edx="enti", ecx="cAMD"
         let is_amd = cpuid0.ebx == 0x6874_7541
@@ -322,7 +322,7 @@ fn has_fast_bmi2_detect() -> bool {
 
         // AMD: only Zen 3+ has fast PDEP
         // Zen 1/2 = family 0x17, Zen 3/4 = family 0x19, Zen 5 = family 0x1A
-        let cpuid1 = unsafe { std::arch::x86_64::__cpuid(1) };
+        let cpuid1 = std::arch::x86_64::__cpuid(1);
         let base_family = (cpuid1.eax >> 8) & 0xF;
         let ext_family = (cpuid1.eax >> 20) & 0xFF;
         let effective_family = if base_family == 0xF {

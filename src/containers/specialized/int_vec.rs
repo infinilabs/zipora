@@ -607,7 +607,7 @@ impl<T: PackedInt> IntVec<T> {
         
         // 🚀 ADVANCED FAST PATH: For small datasets (≤10K elements), use optimized direct compression
         // This eliminates strategy analysis overhead that dominates small dataset performance
-        let data_size_kb = (values.len() * mem::size_of::<T>()) / 1024;
+        let data_size_kb = std::mem::size_of_val(values) / 1024;
         let strategy = if values.len() <= 10000 || data_size_kb <= 16 {
             // Direct strategy selection for small datasets - based on advanced patterns
             Self::analyze_small_dataset_strategy(&u64_values)
@@ -621,7 +621,7 @@ impl<T: PackedInt> IntVec<T> {
         result.compress_with_strategy(&u64_values, strategy)?;
 
         // Update statistics
-        result.stats.original_size = values.len() * mem::size_of::<T>();
+        result.stats.original_size = std::mem::size_of_val(values);
         result.stats.compressed_size = result.data.len();
         result.stats.index_size = result.index.as_ref().map_or(0, |idx| idx.len());
         result.stats.compression_time_ns = start_time.elapsed().as_nanos() as u64;
@@ -767,7 +767,7 @@ impl<T: PackedInt> IntVec<T> {
         result.data = values.iter().flat_map(|v| v.to_u64().to_le_bytes()).collect();
         
         // Update statistics
-        result.stats.original_size = values.len() * mem::size_of::<T>();
+        result.stats.original_size = std::mem::size_of_val(values);
         result.stats.compressed_size = result.data.len();
         result.stats.index_size = 0;
         result.stats.compression_time_ns = start_time.elapsed().as_nanos() as u64;
@@ -1026,7 +1026,7 @@ impl<T: PackedInt> IntVec<T> {
         };
 
         let block_units = block_size.units();
-        let num_blocks = (len + block_units - 1) / block_units;
+        let num_blocks = len.div_ceil(block_units);
 
         // Analyze sample values (block base values)
         let mut samples = Vec::with_capacity(num_blocks);
@@ -1072,18 +1072,18 @@ impl<T: PackedInt> IntVec<T> {
         let compressed_size = match strategy {
             CompressionStrategy::Raw => original_size,
             CompressionStrategy::MinMax { bit_width, .. } => {
-                ((len * bit_width as usize + 7) / 8).max(32)
+                (len * bit_width as usize).div_ceil(8).max(32)
             }
             CompressionStrategy::Delta { delta_width, .. } => {
-                8 + ((len * delta_width as usize + 7) / 8).max(32) // base + deltas
+                8 + (len * delta_width as usize).div_ceil(8).max(32) // base + deltas
             }
             CompressionStrategy::BlockBased { 
                 block_size, offset_width, sample_width, .. 
             } => {
                 let block_units = block_size.units();
-                let num_blocks = (len + block_units - 1) / block_units;
+                let num_blocks = len.div_ceil(block_units);
                 let index_size = num_blocks * sample_width as usize / 8;
-                let data_size = (len * offset_width as usize + 7) / 8;
+                let data_size = (len * offset_width as usize).div_ceil(8);
                 index_size + data_size
             }
         };
@@ -1123,7 +1123,7 @@ impl<T: PackedInt> IntVec<T> {
         }
 
         let total_bits = values.len() * bit_width as usize;
-        let byte_size = (total_bits + 7) / 8;
+        let byte_size = total_bits.div_ceil(8);
         let aligned_size = (byte_size + 15) & !15; // 16-byte alignment
 
         let mut data = vec![0u8; aligned_size];
@@ -1164,7 +1164,7 @@ impl<T: PackedInt> IntVec<T> {
         data.extend_from_slice(&base_val.to_le_bytes());
 
         let total_bits = (values.len() - 1) * delta_width as usize;
-        let delta_bytes = (total_bits + 7) / 8;
+        let delta_bytes = total_bits.div_ceil(8);
         let aligned_size = (delta_bytes + 15) & !15;
         
         data.resize(8 + aligned_size, 0);
@@ -1189,7 +1189,7 @@ impl<T: PackedInt> IntVec<T> {
         _is_sorted: bool
     ) -> Result<()> {
         let block_units = block_size.units();
-        let num_blocks = (values.len() + block_units - 1) / block_units;
+        let num_blocks = values.len().div_ceil(block_units);
 
         // Build index (samples)
         let mut samples = Vec::with_capacity(num_blocks);
@@ -1205,7 +1205,7 @@ impl<T: PackedInt> IntVec<T> {
         // SAFETY: samples has num_blocks elements (pushed in the loop above), num_blocks >= 1
         let sample_min = *samples.iter().min().expect("non-empty samples");
         let index_bits = num_blocks * sample_width as usize;
-        let index_bytes = (index_bits + 7) / 8;
+        let index_bytes = index_bits.div_ceil(8);
         let index_aligned = (index_bytes + 15) & !15;
         
         let mut index_data = vec![0u8; index_aligned];
@@ -1219,7 +1219,7 @@ impl<T: PackedInt> IntVec<T> {
 
         // Compress data (offsets within blocks)
         let data_bits = values.len() * offset_width as usize;
-        let data_bytes = (data_bits + 7) / 8;
+        let data_bytes = data_bits.div_ceil(8);
         let data_aligned = (data_bytes + 15) & !15;
         
         let mut data = vec![0u8; data_aligned];
@@ -1261,7 +1261,7 @@ impl<T: PackedInt> IntVec<T> {
 
         // Calculate required bytes
         let bits_needed = bit_in_byte + bits as usize;
-        let bytes_needed = (bits_needed + 7) / 8;
+        let bytes_needed = bits_needed.div_ceil(8);
 
         if byte_offset + bytes_needed <= data.len() && bytes_needed <= 8 {
             // Fast unaligned write (up to 64 bits)
@@ -1349,13 +1349,12 @@ impl<T: PackedInt> IntVec<T> {
         }
 
         // 🚀 ADVANCED UNIFORM DELTA: Perfect compression (0 bits per element)
-        if is_uniform {
-            if let Some(delta) = uniform_delta {
+        if is_uniform
+            && let Some(delta) = uniform_delta {
                 // For uniform delta sequences like [0,1,2,3,...], calculate directly
                 // No need to read compressed data - perfect compression!
                 return Some(base_val + (index as u64) * delta);
             }
-        }
 
         let bit_offset = (index - 1) * delta_width as usize;
         match self.read_bits(&self.data[8..], bit_offset, delta_width) {

@@ -267,13 +267,7 @@ impl FsaCache {
 
     /// Get a cached state by ID
     pub fn get_state(&self, state_id: u32) -> Option<CachedState> {
-        if let Some(state) = self.states.get(&state_id) {
-            // Increment hit counter (we'd need atomic counters for true thread safety)
-            Some(*state)
-        } else {
-            // Increment miss counter
-            None
-        }
+        self.states.get(&state_id).copied()
     }
 
     /// Cache a new state

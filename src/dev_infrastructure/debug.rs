@@ -511,7 +511,7 @@ macro_rules! measure_time {
 
 /// Global performance profiler instance
 static GLOBAL_PROFILER: std::sync::LazyLock<PerformanceProfiler> = 
-    std::sync::LazyLock::new(|| PerformanceProfiler::new());
+    std::sync::LazyLock::new(PerformanceProfiler::new);
 
 /// Get the global performance profiler
 pub fn global_profiler() -> &'static PerformanceProfiler {
@@ -520,7 +520,7 @@ pub fn global_profiler() -> &'static PerformanceProfiler {
 
 /// Global memory debugger instance
 static GLOBAL_MEMORY_DEBUGGER: std::sync::LazyLock<MemoryDebugger> = 
-    std::sync::LazyLock::new(|| MemoryDebugger::new());
+    std::sync::LazyLock::new(MemoryDebugger::new);
 
 /// Get the global memory debugger
 pub fn global_memory_debugger() -> &'static MemoryDebugger {

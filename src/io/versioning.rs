@@ -109,11 +109,10 @@ impl<T> VersionProxy<T> {
             return false;
         }
         
-        if let Some(max_version) = &self.max_version {
-            if version > max_version {
+        if let Some(max_version) = &self.max_version
+            && version > max_version {
                 return false;
             }
-        }
         
         true
     }
@@ -488,13 +487,12 @@ impl VersionedSerializer {
         let current_version = T::current_version();
         
         // Check version compatibility
-        if self.config.strict_version_checking {
-            if !T::supports_version(&stored_version) {
+        if self.config.strict_version_checking
+            && !T::supports_version(&stored_version) {
                 return Err(ZiporaError::invalid_data(
                     format!("Unsupported version: {} (current: {})", stored_version, current_version)
                 ));
             }
-        }
         
         // Check version skew
         let version_diff = if stored_version > current_version {

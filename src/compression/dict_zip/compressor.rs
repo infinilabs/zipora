@@ -749,7 +749,7 @@ impl PaZipCompressor {
         }
 
         // Block-based parallel compression
-        let num_blocks = (input.len() + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        let num_blocks = input.len().div_ceil(BLOCK_SIZE);
         let mut compressed_blocks = Vec::with_capacity(num_blocks);
 
         // Process blocks sequentially for now (true parallelism would require thread safety)
@@ -812,18 +812,16 @@ impl PaZipCompressor {
         strategies.push((literal_strategy, literal_cost));
         
         // Consider local match if available
-        if let Some(local) = local_match {
-            if let Some((strategy, cost)) = self.calculate_local_match_cost(local)? {
+        if let Some(local) = local_match
+            && let Some((strategy, cost)) = self.calculate_local_match_cost(local)? {
                 strategies.push((strategy, cost));
             }
-        }
         
         // Consider global match if available  
-        if let Some(global) = global_match {
-            if let Some((strategy, cost)) = self.calculate_global_match_cost(global)? {
+        if let Some(global) = global_match
+            && let Some((strategy, cost)) = self.calculate_global_match_cost(global)? {
                 strategies.push((strategy, cost));
             }
-        }
         
         Ok(strategies)
     }
@@ -968,7 +966,7 @@ impl PaZipCompressor {
             CompressionStrategy::Literal { length } => {
                 // Encode literal: [type_byte=0] [length] [literal_data...]
                 output.push(0); // Type byte for Literal
-                output.push(length as u8); // Length byte
+                output.push(length); // Length byte
                 
                 let end_pos = (pos + length as usize).min(input.len());
                 output.extend_from_slice(&input[pos..end_pos]); // Actual literal data
@@ -1092,11 +1090,10 @@ impl PaZipCompressor {
         }
         
         // Track strategy switches
-        if let Some(prev_strategy) = self.current_strategy {
-            if std::mem::discriminant(&strategy) != std::mem::discriminant(&prev_strategy) {
+        if let Some(prev_strategy) = self.current_strategy
+            && std::mem::discriminant(&strategy) != std::mem::discriminant(&prev_strategy) {
                 self.stats.strategy_switches += 1;
             }
-        }
     }
     
     /// Step 7: Update adaptive thresholds based on compression efficiency

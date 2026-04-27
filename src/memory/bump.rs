@@ -195,14 +195,13 @@ unsafe impl Sync for BumpAllocator {}
 impl Drop for BumpAllocator {
     fn drop(&mut self) {
         // Safety check: Only deallocate if we have a valid buffer
-        if self.capacity > 0 {
-            if let Ok(layout) = Layout::from_size_align(self.capacity, 8) {
+        if self.capacity > 0
+            && let Ok(layout) = Layout::from_size_align(self.capacity, 8) {
                 // SAFETY: buffer was allocated with this exact layout in new()
                 unsafe {
                     dealloc(self.buffer.as_ptr(), layout);
                 }
             }
-        }
     }
 }
 

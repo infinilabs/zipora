@@ -807,7 +807,7 @@ pub struct ThreadLocalPool {
 }
 
 thread_local! {
-    static THREAD_CACHE: std::cell::RefCell<Option<ThreadLocalCache>> = std::cell::RefCell::new(None);
+    static THREAD_CACHE: std::cell::RefCell<Option<ThreadLocalCache>> = const { std::cell::RefCell::new(None) };
 }
 
 struct ThreadLocalCache {
@@ -819,8 +819,7 @@ struct ThreadLocalCache {
 
 impl ThreadLocalCache {
     fn new(arena_size: usize, num_bins: usize) -> Self {
-        let mut arena = Vec::with_capacity(arena_size);
-        arena.resize(arena_size, 0);
+        let mut arena = vec![0; arena_size];
         
         Self {
             arena,

@@ -303,7 +303,7 @@ where
         let thread_id = format!("{:?}", thread::current().id());
         let instance_id = format!("sort_{}_{}",
             timestamp,
-            thread_id.replace("ThreadId(", "").replace(")", "").to_string()
+            thread_id.replace("ThreadId(", "").replace(")", "")
         );
         
         Self {

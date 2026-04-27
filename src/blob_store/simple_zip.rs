@@ -116,6 +116,7 @@ impl SimpleZipConfig {
 /// SimpleZipBlobStore - Fragment-based compression with deduplication
 ///
 /// Read-only blob store optimized for records with shared substrings.
+#[derive(Default)]
 pub struct SimpleZipBlobStore {
     /// Deduplicated string pool storing all unique fragments
     strpool: Vec<u8>,
@@ -176,7 +177,7 @@ impl SimpleZipBlobStore {
 
         // Step 3: Pack offset|length into single u64
         let max_len = lengths.iter().copied().max().unwrap_or(0);
-        let len_bits = if max_len == 0 { 0 } else { (usize::BITS - max_len.leading_zeros()) as u32 };
+        let len_bits = if max_len == 0 { 0 } else { (usize::BITS - max_len.leading_zeros()) };
         let off_len: Vec<u64> = offsets.iter().zip(lengths.iter())
             .map(|(&offset, &length)| ((offset as u64) << len_bits) | (length as u64))
             .collect();
@@ -323,19 +324,6 @@ impl SimpleZipBlobStore {
     }
 }
 
-impl Default for SimpleZipBlobStore {
-    fn default() -> Self {
-        Self {
-            strpool: Vec::new(),
-            off_len: Vec::new(),
-            len_bits: 0,
-            records: UintVecMin0::new_empty(),
-            num_records: 0,
-            unzip_size: 0,
-            stats: BlobStoreStats::default(),
-        }
-    }
-}
 
 impl BlobStore for SimpleZipBlobStore {
     fn get(&self, id: RecordId) -> Result<Vec<u8>> {

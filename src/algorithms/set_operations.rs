@@ -236,11 +236,10 @@ impl SetOperations {
         }
 
         // Check the last key
-        if let Some(key) = current_key {
-            if count == num_ways {
+        if let Some(key) = current_key
+            && count == num_ways {
                 result.push(key);
             }
-        }
 
         Ok(result)
     }

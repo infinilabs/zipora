@@ -308,11 +308,10 @@ where
         let min_capacity = ((self.len as f64 / self.load_factor) as usize)
             .next_power_of_two()
             .max(16);
-        if min_capacity < self.capacity {
-            if let Err(_) = self.resize_to(min_capacity) {
+        if min_capacity < self.capacity
+            && self.resize_to(min_capacity).is_err() {
                 // If resize fails, continue with current capacity
             }
-        }
 
         // Also shrink value storage
         self.values.shrink_to_fit();

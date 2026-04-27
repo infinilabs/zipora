@@ -307,7 +307,7 @@ pub mod simd {
     #[cfg(target_feature = "sse2")]
     /// SIMD-accelerated conversion for u16 arrays
     pub fn convert_u16_slice_simd(values: &mut [u16], from_little: bool) {
-        if !from_little == cfg!(target_endian = "little") {
+        if from_little != cfg!(target_endian = "little") {
             return; // No conversion needed
         }
         
@@ -346,7 +346,7 @@ pub mod simd {
     #[cfg(target_feature = "sse2")]
     /// SIMD-accelerated conversion for u32 arrays
     pub fn convert_u32_slice_simd(values: &mut [u32], from_little: bool) {
-        if !from_little == cfg!(target_endian = "little") {
+        if from_little != cfg!(target_endian = "little") {
             return; // No conversion needed
         }
         

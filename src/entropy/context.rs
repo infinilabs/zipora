@@ -131,11 +131,10 @@ impl Drop for ContextBuffer {
         if let Some(context) = self.context.take() {
             // Return buffer to pool if eligible for reuse
             let capacity = self.data.capacity();
-            if capacity >= MIN_REUSE_SIZE && capacity <= MAX_REUSE_SIZE {
-                if let Ok(mut pool) = context.lock() {
+            if (MIN_REUSE_SIZE..=MAX_REUSE_SIZE).contains(&capacity)
+                && let Ok(mut pool) = context.lock() {
                     pool.return_buffer(std::mem::take(&mut self.data));
                 }
-            }
         }
     }
 }
@@ -264,11 +263,10 @@ impl EntropyContext {
         let buffer = if self.config.thread_local && capacity <= MAX_REUSE_SIZE {
             // Try thread-local allocation first for better performance
             TLS_CONTEXT.with(|ctx| {
-                if let Some(tls_ctx) = ctx.get() {
-                    if let Ok(mut pool) = tls_ctx.pool.try_borrow_mut() {
+                if let Some(tls_ctx) = ctx.get()
+                    && let Ok(mut pool) = tls_ctx.pool.try_borrow_mut() {
                         return pool.get_buffer(capacity);
                     }
-                }
                 Vec::with_capacity(capacity)
             })
         } else {

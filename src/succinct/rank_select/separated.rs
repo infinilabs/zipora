@@ -55,7 +55,7 @@ impl RankSelectSE256 {
     /// Build with control over select acceleration tables.
     pub fn with_options(bv: BitVector, speed_select0: bool, speed_select1: bool) -> Result<Self> {
         let size = bv.len();
-        let nlines = (size + LINE_BITS - 1) / LINE_BITS;
+        let nlines = size.div_ceil(LINE_BITS);
 
         // Build rank cache
         let mut rank_cache = Vec::with_capacity(nlines + 1);
@@ -93,7 +93,7 @@ impl RankSelectSE256 {
 
     /// Build select0 acceleration: sel0_cache[r/256] = first block where cumulative rank0 >= r
     fn build_select0_cache(rank_cache: &[RankCacheSE], max_rank0: usize, nlines: usize) -> Vec<u32> {
-        let slots = (max_rank0 + LINE_BITS - 1) / LINE_BITS;
+        let slots = max_rank0.div_ceil(LINE_BITS);
         let mut cache = vec![0u32; slots + 1];
         cache[0] = 0;
         for j in 1..slots {
@@ -109,7 +109,7 @@ impl RankSelectSE256 {
 
     /// Build select1 acceleration: sel1_cache[r/256] = first block where cumulative rank1 >= r
     fn build_select1_cache(rank_cache: &[RankCacheSE], max_rank1: usize, nlines: usize) -> Vec<u32> {
-        let slots = (max_rank1 + LINE_BITS - 1) / LINE_BITS;
+        let slots = max_rank1.div_ceil(LINE_BITS);
         let mut cache = vec![0u32; slots + 1];
         cache[0] = 0;
         for j in 1..slots {
@@ -288,7 +288,7 @@ impl RankSelectOps for RankSelectSE256 {
 
     fn space_overhead_percent(&self) -> f64 {
         if self.size == 0 { return 0.0; }
-        let bit_bytes = (self.size + 7) / 8;
+        let bit_bytes = self.size.div_ceil(8);
         let overhead = self.mem_size() - bit_bytes;
         (overhead as f64 / bit_bytes as f64) * 100.0
     }

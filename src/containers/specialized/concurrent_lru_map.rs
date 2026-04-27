@@ -407,8 +407,8 @@ where
         
         let handles: Vec<_> = self.shards
             .iter()
-            .enumerate()
-            .map(|(_idx, shard)| {
+            
+            .map(|shard| {
                 let shard = shard.clone();
                 let mut f = f.clone();
                 thread::spawn(move || f(&shard))

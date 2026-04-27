@@ -252,7 +252,7 @@ where
         
         // Create a complete binary tree structure
         // For k ways, we need k-1 internal nodes + k leaf nodes = 2k-1 total
-        let tree_size = if self.num_ways > 1 { self.num_ways - 1 } else { 0 };
+        let tree_size = self.num_ways.saturating_sub(1);
         
         if self.config.cache_optimized {
             self.tree.resize(tree_size, CacheAlignedNode::new(0, 0));
@@ -288,12 +288,11 @@ where
         let mut min_value: Option<&T> = None;
 
         for (way_idx, way) in self.ways.iter().enumerate() {
-            if let Some(value) = way.peek() {
-                if min_value.is_none() || self.compare_optimized(value, min_value.expect("min_value set by prior iteration")) == Ordering::Less {
+            if let Some(value) = way.peek()
+                && (min_value.is_none() || self.compare_optimized(value, min_value.expect("min_value set by prior iteration")) == Ordering::Less) {
                     min_value = Some(value);
                     min_way = way_idx;
                 }
-            }
         }
 
         Ok(min_way)

@@ -11,7 +11,7 @@
 #![allow(redundant_semicolons)] // Style nit
 #![allow(clippy::needless_return)] // Style nit
 #![allow(private_interfaces)] // Visibility issues are P3 cleanup
-#![allow(unused_unsafe)] // Nested unsafe blocks from SIMD dispatch macros
+// #![allow(unused_unsafe)] // Nested unsafe blocks from SIMD dispatch macros
 #![allow(mismatched_lifetime_syntaxes)] // Lifetime elision style - not a bug
 #![allow(dropping_references)] // drop() on references is intentional for clarity
 #![allow(noop_method_call)] // .clone() on references is harmless

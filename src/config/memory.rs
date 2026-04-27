@@ -10,10 +10,12 @@ use serde::{Deserialize, Serialize};
 
 /// Memory allocation strategy for different scenarios.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum AllocationStrategy {
     /// Default system allocator
     System,
     /// Secure memory pool with protection
+    #[default]
     SecurePool,
     /// Lock-free allocator for high concurrency
     LockFree,
@@ -25,30 +27,22 @@ pub enum AllocationStrategy {
     MemoryMapped,
 }
 
-impl Default for AllocationStrategy {
-    fn default() -> Self {
-        Self::SecurePool
-    }
-}
 
 /// Cache optimization level for different performance requirements.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum CacheOptimizationLevel {
     /// No cache optimization
     None,
     /// Basic cache-line alignment
     Basic,
     /// Advanced optimization with prefetching
+    #[default]
     Advanced,
     /// Maximum optimization with NUMA awareness
     Maximum,
 }
 
-impl Default for CacheOptimizationLevel {
-    fn default() -> Self {
-        Self::Advanced
-    }
-}
 
 /// NUMA (Non-Uniform Memory Access) configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

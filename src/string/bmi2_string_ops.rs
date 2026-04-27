@@ -581,11 +581,10 @@ impl Bmi2StringProcessor {
                 i += 8; // Skip ahead by chunk size
             } else {
                 // Fallback to scalar search for remainder
-                if haystack[i] == first_char {
-                    if haystack[i..].starts_with(needle) {
+                if haystack[i] == first_char
+                    && haystack[i..].starts_with(needle) {
                         return Some(i);
                     }
-                }
                 i += 1;
             }
         }
@@ -1129,7 +1128,7 @@ impl Bmi2StringProcessor {
         
         for byte_pos in 0..8 {
             let byte_val = Bmi2BextrOps::extract_bits_bextr(bytes, (byte_pos * 8) as u32, 8) as u8;
-            let lowercase = if byte_val >= b'A' && byte_val <= b'Z' {
+            let lowercase = if byte_val.is_ascii_uppercase() {
                 byte_val + 32
             } else {
                 byte_val
@@ -1147,7 +1146,7 @@ impl Bmi2StringProcessor {
         
         for byte_pos in 0..8 {
             let byte_val = Bmi2BextrOps::extract_bits_bextr(bytes, (byte_pos * 8) as u32, 8) as u8;
-            let uppercase = if byte_val >= b'a' && byte_val <= b'z' {
+            let uppercase = if byte_val.is_ascii_lowercase() {
                 byte_val - 32
             } else {
                 byte_val
@@ -1474,7 +1473,7 @@ static GLOBAL_BMI2_PROCESSOR: std::sync::OnceLock<Bmi2StringProcessor> = std::sy
 
 /// Get global BMI2 string processor instance
 pub fn get_global_bmi2_processor() -> &'static Bmi2StringProcessor {
-    GLOBAL_BMI2_PROCESSOR.get_or_init(|| Bmi2StringProcessor::new())
+    GLOBAL_BMI2_PROCESSOR.get_or_init(Bmi2StringProcessor::new)
 }
 
 /// Convenience function for BMI2-accelerated UTF-8 validation

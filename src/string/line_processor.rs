@@ -201,11 +201,10 @@ impl<R: Read> LineProcessor<R> {
         }
 
         // Process remaining lines in the last partial batch
-        if !batch.is_empty() {
-            if handler(&batch)? {
+        if !batch.is_empty()
+            && handler(&batch)? {
                 total_processed += batch.len();
             }
-        }
 
         Ok(total_processed)
     }
@@ -258,7 +257,7 @@ impl<R: Read> LineProcessor<R> {
             Ok(0) => Ok(false), // EOF
             Ok(bytes_read) => {
                 if self.line_buffer.len() > self.config.max_line_length {
-                    return Err(ZiporaError::invalid_data(&format!(
+                    return Err(ZiporaError::invalid_data(format!(
                         "Line {} exceeds maximum length of {} bytes",
                         self.line_count + 1,
                         self.config.max_line_length
@@ -266,20 +265,19 @@ impl<R: Read> LineProcessor<R> {
                 }
 
                 // Remove line endings if not preserving them
-                if !self.config.preserve_line_endings {
-                    if self.line_buffer.ends_with('\n') {
+                if !self.config.preserve_line_endings
+                    && self.line_buffer.ends_with('\n') {
                         self.line_buffer.pop();
                         if self.line_buffer.ends_with('\r') {
                             self.line_buffer.pop();
                         }
                     }
-                }
 
                 self.line_count += 1;
                 self.byte_count += bytes_read;
                 Ok(true)
             }
-            Err(e) => Err(ZiporaError::io_error(&format!(
+            Err(e) => Err(ZiporaError::io_error(format!(
                 "Failed to read line {}: {}",
                 self.line_count + 1,
                 e
@@ -399,11 +397,10 @@ impl LineSplitter {
         }
 
         // Add the last field
-        if start < line.len() {
-            if let Ok(field) = std::str::from_utf8(&line.as_bytes()[start..]) {
+        if start < line.len()
+            && let Ok(field) = std::str::from_utf8(&line.as_bytes()[start..]) {
                 self.buffer.push(field.to_string());
             }
-        }
     }
 }
 

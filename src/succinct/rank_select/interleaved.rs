@@ -221,7 +221,7 @@ impl RankSelectInterleaved256 {
             return Ok(());
         }
 
-        let num_lines = (self.total_bits + LINE_BITS - 1) / LINE_BITS;
+        let num_lines = self.total_bits.div_ceil(LINE_BITS);
         self.lines.reserve(num_lines)?;
 
         let blocks = bit_vector.blocks();
@@ -266,7 +266,7 @@ impl RankSelectInterleaved256 {
     /// Extract a 64-bit word from the bit vector blocks
     fn extract_word_from_blocks(&self, blocks: &[u64], start_bit: usize, end_bit: usize) -> u64 {
         let start_word = start_bit / BITS_PER_WORD;
-        let end_word = (end_bit + BITS_PER_WORD - 1) / BITS_PER_WORD;
+        let end_word = end_bit.div_ceil(BITS_PER_WORD);
 
         if start_word >= blocks.len() {
             return 0;
@@ -716,7 +716,7 @@ impl RankSelectInterleaved256 {
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
     pub fn get_bit_data(&self) -> Vec<u64> {
-        let total_words = (self.total_bits + BITS_PER_WORD - 1) / BITS_PER_WORD;
+        let total_words = self.total_bits.div_ceil(BITS_PER_WORD);
         let mut result = Vec::with_capacity(total_words);
 
         for line in self.lines.iter() {
@@ -925,7 +925,7 @@ impl RankSelectOps for RankSelectInterleaved256 {
             return 0.0;
         }
 
-        let bit_data_bytes = (self.total_bits + 7) / 8;
+        let bit_data_bytes = self.total_bits.div_ceil(8);
         let cache_bytes = self.lines.len() * std::mem::size_of::<InterleavedLine>();
         let select_cache_bytes = self
             .select_cache

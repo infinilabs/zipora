@@ -299,7 +299,7 @@ impl AdaptiveCompressor {
             let score = measurement.score(&self.requirements);
             algorithm_scores
                 .entry(measurement.algorithm)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(score);
         }
 

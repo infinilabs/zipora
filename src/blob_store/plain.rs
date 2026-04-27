@@ -130,11 +130,10 @@ impl PlainBlobStore {
                 max_id = max_id.max(id);
 
                 // Get file size for stats
-                if let Ok(metadata) = entry.metadata() {
-                    if metadata.is_file() {
+                if let Ok(metadata) = entry.metadata()
+                    && metadata.is_file() {
                         stats.record_put(metadata.len() as usize);
                     }
-                }
             }
         }
 
@@ -177,11 +176,10 @@ impl PlainBlobStore {
             let filename_str = filename.to_string_lossy();
 
             // Try to parse filename as record ID
-            if let Ok(id) = filename_str.parse::<u32>() {
-                if entry.path().is_file() {
+            if let Ok(id) = filename_str.parse::<u32>()
+                && entry.path().is_file() {
                     ids.push(id);
                 }
-            }
         }
 
         ids.sort_unstable();

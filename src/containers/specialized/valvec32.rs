@@ -120,8 +120,8 @@ fn larger_capacity(old_cap: u32) -> u32 {
 
     // referenced project pattern: oldcap * 103 / 64 ≈ 1.609375 (close to golden ratio 1.618)
     // This is mathematically optimal for amortized performance
-    let new_cap = (old_cap as u64 * 103 / 64) as u32;
-    new_cap.min(MAX_CAPACITY)
+    
+    (old_cap as u64 * 103 / 64) as u32
 }
 
 /// High-performance vector with 32-bit indices for memory efficiency
@@ -351,8 +351,8 @@ impl<T> ValVec32<T> {
     /// Calculates new capacity using referenced project optimal growth strategy
     #[inline]
     fn calculate_new_capacity(&self, min_capacity: u32) -> u32 {
-        let new_cap = larger_capacity(self.capacity).max(min_capacity);
-        new_cap.min(MAX_CAPACITY)
+        
+        larger_capacity(self.capacity).max(min_capacity)
     }
 
     /// Grows the vector to the specified capacity - simplified following referenced project pattern

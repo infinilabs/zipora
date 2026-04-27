@@ -101,7 +101,7 @@ impl<T> Future for FiberHandle<T> {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match Pin::new(&mut self.inner).poll(cx) {
             Poll::Ready(Ok(result)) => Poll::Ready(result),
-            Poll::Ready(Err(e)) => Poll::Ready(Err(ZiporaError::configuration(&format!(
+            Poll::Ready(Err(e)) => Poll::Ready(Err(ZiporaError::configuration(format!(
                 "fiber join error: {}",
                 e
             )))),

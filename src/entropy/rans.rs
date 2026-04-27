@@ -152,7 +152,7 @@ impl Rans64Symbol {
             // Use hardware 128-bit multiplication when available
             if std::is_x86_feature_detected!("bmi2") {
                 // SAFETY: Pure arithmetic on u64 values cast to u128, no memory access or undefined behavior
-                unsafe {
+                {
                     let result = (a as u128) * (b as u128);
                     (result >> 64) as u64
                 }

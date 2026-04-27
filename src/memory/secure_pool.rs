@@ -546,28 +546,28 @@ impl SecureChunk {
 
         // Validate header
         if header.magic != CHUNK_HEADER_MAGIC {
-            return Err(ZiporaError::invalid_data(&format!(
+            return Err(ZiporaError::invalid_data(format!(
                 "Header corruption detected: magic={:#x}, expected={:#x}",
                 header.magic, CHUNK_HEADER_MAGIC
             )));
         }
 
         if header.generation != self.generation {
-            return Err(ZiporaError::invalid_data(&format!(
+            return Err(ZiporaError::invalid_data(format!(
                 "Generation mismatch: header={}, chunk={}",
                 header.generation, self.generation
             )));
         }
 
         if header.pool_id != self.pool_id {
-            return Err(ZiporaError::invalid_data(&format!(
+            return Err(ZiporaError::invalid_data(format!(
                 "Pool ID mismatch: header={}, chunk={}",
                 header.pool_id, self.pool_id
             )));
         }
 
         if header.canary != self.canary {
-            return Err(ZiporaError::invalid_data(&format!(
+            return Err(ZiporaError::invalid_data(format!(
                 "Header canary mismatch: header={:#x}, chunk={:#x}",
                 header.canary, self.canary
             )));
@@ -580,21 +580,21 @@ impl SecureChunk {
         let footer = unsafe { &*footer_ptr };
 
         if footer.magic != CHUNK_FOOTER_MAGIC {
-            return Err(ZiporaError::invalid_data(&format!(
+            return Err(ZiporaError::invalid_data(format!(
                 "Footer corruption detected: magic={:#x}, expected={:#x}",
                 footer.magic, CHUNK_FOOTER_MAGIC
             )));
         }
 
         if footer.canary != self.canary {
-            return Err(ZiporaError::invalid_data(&format!(
+            return Err(ZiporaError::invalid_data(format!(
                 "Footer canary mismatch: footer={:#x}, chunk={:#x}",
                 footer.canary, self.canary
             )));
         }
 
         if footer.generation != self.generation {
-            return Err(ZiporaError::invalid_data(&format!(
+            return Err(ZiporaError::invalid_data(format!(
                 "Footer generation mismatch: footer={}, chunk={}",
                 footer.generation, self.generation
             )));
