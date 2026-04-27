@@ -633,15 +633,14 @@ where
         // Auto-finalization can cause issues with tests that expect to continue writing
 
         // Check cache first - but we need to verify the key still exists in trie
-        if self.config.key_cache_size > 0 {
-            if let Some(&_cached_record_id) = self.key_cache.get(key) {
+        if self.config.key_cache_size > 0
+            && let Some(&_cached_record_id) = self.key_cache.get(key) {
                 // Cache hit - still need to verify through trie since we changed the design
                 if self.config.enable_statistics {
                     self.stats.record_key_cache_access(true);
                 }
                 // Fall through to trie lookup for now - cache will be optimized later
             }
-        }
 
         // Look up key in trie
         let node_id = self.trie.lookup_node_id(key)
@@ -706,13 +705,11 @@ where
 
         for key in keys_with_prefix {
             // Look up key in trie to get node ID (don't call get_by_key to avoid auto-finalization)
-            if let Some(node_id) = self.trie.lookup_node_id(&key) {
-                if let Some(&blob_id) = self.node_to_blob_map.get(&(node_id as usize)) {
-                    if let Some(data) = self.temp_blob_storage.get(&blob_id) {
+            if let Some(node_id) = self.trie.lookup_node_id(&key)
+                && let Some(&blob_id) = self.node_to_blob_map.get(&(node_id as usize))
+                    && let Some(data) = self.temp_blob_storage.get(&blob_id) {
                         results.push((key, data.clone()));
                     }
-                }
-            }
         }
 
         if self.config.enable_statistics {
@@ -802,8 +799,7 @@ where
 
         // Retrieve data from temporary storage (until ZipOffsetBlobStore is fixed)
         self.temp_blob_storage.get(&blob_id)
-            .ok_or_else(|| ZiporaError::not_found("blob data not found"))
-            .map(|data| data.clone())
+            .ok_or_else(|| ZiporaError::not_found("blob data not found")).cloned()
     }
 
     /// Store a blob and return its unique ID
@@ -828,7 +824,7 @@ where
         }
 
         // Get blob ID from node mapping
-        let _blob_id = *self.node_to_blob_map.get(&(node_id as usize))
+        let _blob_id = *self.node_to_blob_map.get(&{ node_id })
             .ok_or_else(|| ZiporaError::not_found("node mapping not found"))?;
 
         // Remove from blob store (only allowed if not finalized, since finalized stores are read-only)
@@ -929,11 +925,10 @@ where
     fn iter_ids(&self) -> Self::IdIter {
         let mut ids = Vec::new();
         for i in 0..self.record_to_node_map.len() {
-            if let Some(&node_id) = self.record_to_node_map.get(i) {
-                if node_id != usize::MAX {
+            if let Some(&node_id) = self.record_to_node_map.get(i)
+                && node_id != usize::MAX {
                     ids.push(i as RecordId);
                 }
-            }
         }
         ids.into_iter()
     }
@@ -1010,7 +1005,7 @@ where
         }
 
         // Get blob ID from node mapping
-        let blob_id = *self.node_to_blob_map.get(&(node_id as usize))
+        let blob_id = *self.node_to_blob_map.get(&{ node_id })
             .ok_or_else(|| ZiporaError::not_found("node mapping not found"))?;
 
         // For temporary storage, return 1.0 (no compression)
@@ -1033,7 +1028,7 @@ where
         }
 
         // Get blob ID from node mapping
-        let blob_id = *self.node_to_blob_map.get(&(node_id as usize))
+        let blob_id = *self.node_to_blob_map.get(&{ node_id })
             .ok_or_else(|| ZiporaError::not_found("node mapping not found"))?;
 
         // For temporary storage, compressed size equals uncompressed size

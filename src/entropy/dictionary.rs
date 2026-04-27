@@ -66,7 +66,7 @@ impl BloomFilter {
         let size = (-((expected_items as f64) * false_positive_rate.ln()) / (2.0_f64.ln().powi(2)))
             .ceil() as usize;
         let hash_functions = ((size as f64 / expected_items as f64) * 2.0_f64.ln()).ceil() as usize;
-        let num_u64s = (size + 63) / 64;
+        let num_u64s = size.div_ceil(64);
 
         Self {
             bits: vec![0; num_u64s],
@@ -183,7 +183,7 @@ impl DictionaryBuilder {
                         break;
                     }
 
-                    let match_len = self.find_match_length(&data, pos, i);
+                    let match_len = self.find_match_length(data, pos, i);
                     if match_len >= self.min_match_length {
                         let offset = (i - pos) as u32;
                         let entry = DictionaryEntry::new(offset, match_len as u32);
@@ -200,7 +200,7 @@ impl DictionaryBuilder {
             }
 
             // Add current position to hash table
-            hash_table.entry(hash).or_insert_with(Vec::new).push(i);
+            hash_table.entry(hash).or_default().push(i);
 
             if entries.len() >= self.max_entries {
                 break;
@@ -585,13 +585,13 @@ impl OptimizedDictionaryCompressor {
             let first_hash = rolling_hash.hash_slice(&data[0..min_match_length]);
             hash_table
                 .entry(first_hash)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(0);
 
             // Roll through remaining positions
             for i in 1..=data.len().saturating_sub(min_match_length) {
                 let hash = rolling_hash.roll(data[i - 1], data[i + min_match_length - 1]);
-                hash_table.entry(hash).or_insert_with(Vec::new).push(i);
+                hash_table.entry(hash).or_default().push(i);
             }
         }
 

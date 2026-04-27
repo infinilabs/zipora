@@ -59,6 +59,7 @@ use crate::error::{ZiporaError, Result};
 /// and performance characteristics. Higher levels provide more concurrency but with additional overhead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
+#[derive(Default)]
 pub enum ConcurrencyLevel {
     /// Level 0: Read-only access with no synchronization overhead.
     /// 
@@ -72,6 +73,7 @@ pub enum ConcurrencyLevel {
     /// **Use Case**: Single-threaded applications or single-threaded phases of execution.
     /// **Performance**: Zero synchronization overhead, immediate memory deallocation.
     /// **Thread Safety**: Single thread only, no concurrent access allowed.
+    #[default]
     SingleThreadStrict = 1,
 
     /// Level 2: Single-threaded with token validity checking and lazy cleanup.
@@ -147,11 +149,6 @@ impl ConcurrencyLevel {
     }
 }
 
-impl Default for ConcurrencyLevel {
-    fn default() -> Self {
-        Self::SingleThreadStrict
-    }
-}
 
 impl std::fmt::Display for ConcurrencyLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

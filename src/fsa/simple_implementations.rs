@@ -63,6 +63,12 @@ pub struct SimpleDawg {
     num_keys: usize,
 }
 
+impl Default for SimpleDawg {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SimpleDawg {
     pub fn new() -> Self {
         let mut dawg = Self {
@@ -137,6 +143,12 @@ pub struct SimpleGraphWalker {
     visited: HashMap<u32, bool>,
 }
 
+impl Default for SimpleGraphWalker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SimpleGraphWalker {
     pub fn new() -> Self {
         Self {
@@ -156,8 +168,8 @@ impl SimpleGraphWalker {
             let neighbors = visit_fn(current)?;
             
             for neighbor in neighbors {
-                if !self.visited.contains_key(&neighbor) {
-                    self.visited.insert(neighbor, true);
+                if let std::collections::hash_map::Entry::Vacant(e) = self.visited.entry(neighbor) {
+                    e.insert(true);
                     queue.push_back(neighbor);
                 }
             }
@@ -178,6 +190,12 @@ impl SimpleGraphWalker {
 /// Simple fast search using linear methods
 #[derive(Debug)]
 pub struct SimpleFastSearch;
+
+impl Default for SimpleFastSearch {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl SimpleFastSearch {
     pub fn new() -> Self {

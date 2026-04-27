@@ -307,7 +307,7 @@ unsafe fn sse42_strchr_impl(haystack: &[u8], ch: u8) -> Option<usize> {
         // _SIDD_CMP_EQUAL_ANY: Match any character in needle
         // _SIDD_UBYTE_OPS: Operate on unsigned bytes
         // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], vectors valid from loads above
-        let idx = unsafe {
+        let idx = {
             _mm_cmpestri(
                 needle,
                 1, // needle length = 1
@@ -391,7 +391,7 @@ unsafe fn sse42_strstr_short(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
         // _SIDD_CMP_EQUAL_ORDERED: Match ordered substring
         // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], vectors valid from loads above
-        let idx = unsafe {
+        let idx = {
             _mm_cmpestri(
                 needle_vec,
                 needle_len as i32,
@@ -504,7 +504,7 @@ unsafe fn sse42_multi_search_impl(haystack: &[u8], chars: &[u8]) -> Option<usize
         let chunk = unsafe { _mm_loadu_si128(haystack.as_ptr().add(offset) as *const __m128i) };
 
         // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], vectors valid from loads above
-        let idx = unsafe {
+        let idx = {
             _mm_cmpestri(
                 chars_vec,
                 chars_len as i32,
@@ -556,9 +556,9 @@ unsafe fn sse42_strcmp_impl(s1: &[u8], s2: &[u8]) -> Ordering {
 
         // Check for difference using PCMPEQB
         // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], vectors valid from loads above
-        let cmp = unsafe { _mm_cmpeq_epi8(chunk1, chunk2) };
+        let cmp = _mm_cmpeq_epi8(chunk1, chunk2);
         // SAFETY: sse4.2 guaranteed by #[target_feature(enable = "sse4.2")], vector valid from load above
-        let mask = unsafe { _mm_movemask_epi8(cmp) };
+        let mask = _mm_movemask_epi8(cmp);
 
         if mask != 0xFFFF {
             // Found difference - use scalar comparison to determine order

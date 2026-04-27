@@ -378,7 +378,7 @@ impl SuffixArrayDictionary {
     /// Get memory usage statistics
     #[inline]
     pub fn memory_usage(&self) -> usize {
-        let sa_memory = self.suffix_array.as_slice().len() * std::mem::size_of::<usize>();
+        let sa_memory = std::mem::size_of_val(self.suffix_array.as_slice());
         let dict_memory = self.dictionary_text.len();
         let cache_memory = self.dfa_cache.memory_usage();
         
@@ -421,7 +421,7 @@ impl SuffixArrayDictionary {
         };
 
         bincode::serialize(&serializable)
-            .map_err(|e| ZiporaError::invalid_data(&format!("Serialization failed: {}", e)))
+            .map_err(|e| ZiporaError::invalid_data(format!("Serialization failed: {}", e)))
     }
 
     /// Deserialize dictionary from external storage
@@ -430,7 +430,7 @@ impl SuffixArrayDictionary {
         use bincode;
 
         let serializable: SerializableDictionary = bincode::deserialize(data)
-            .map_err(|e| ZiporaError::invalid_data(&format!("Deserialization failed: {}", e)))?;
+            .map_err(|e| ZiporaError::invalid_data(format!("Deserialization failed: {}", e)))?;
 
         // Reconstruct dictionary text
         let dictionary_text = Arc::new(serializable.dictionary_text);
@@ -509,10 +509,10 @@ impl SuffixArrayDictionary {
         
         let serialized = self.serialize()?;
         let mut file = File::create(path)
-            .map_err(|e| ZiporaError::io_error(&format!("Failed to create dictionary file: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to create dictionary file: {}", e)))?;
         
         file.write_all(&serialized)
-            .map_err(|e| ZiporaError::io_error(&format!("Failed to write dictionary file: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write dictionary file: {}", e)))?;
         
         Ok(())
     }
@@ -523,7 +523,7 @@ impl SuffixArrayDictionary {
         use std::fs;
         
         let data = fs::read(path)
-            .map_err(|e| ZiporaError::io_error(&format!("Failed to read dictionary file: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to read dictionary file: {}", e)))?;
         
         Self::deserialize(&data)
     }
@@ -674,8 +674,8 @@ impl SuffixArrayDictionary {
         let actual_hi = hi.min(self.suffix_array.as_slice().len());
         
         for i in lo..actual_hi {
-            if let Some(&suffix_idx) = self.suffix_array.as_slice().get(i) {
-                if suffix_idx + pos < self.dictionary_text.len() {
+            if let Some(&suffix_idx) = self.suffix_array.as_slice().get(i)
+                && suffix_idx + pos < self.dictionary_text.len() {
                     let char_at_pos = self.dictionary_text[suffix_idx + pos];
                     if char_at_pos == ch {
                         if first_match.is_none() {
@@ -684,7 +684,6 @@ impl SuffixArrayDictionary {
                         last_match = Some(i);
                     }
                 }
-            }
         }
         
         match (first_match, last_match) {

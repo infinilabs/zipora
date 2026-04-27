@@ -83,7 +83,7 @@ pub fn hex_decode(hex: &str) -> Result<Vec<u8>> {
 /// assert_eq!(result, b"Hello");
 /// ```
 pub fn hex_decode_bytes(hex: &[u8]) -> Result<Vec<u8>> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return Err(ZiporaError::InvalidData {
             message: "hex string must have even length".to_string(),
         });
@@ -120,7 +120,7 @@ pub fn hex_decode_bytes(hex: &[u8]) -> Result<Vec<u8>> {
 /// assert_eq!(&buf, b"Hello");
 /// ```
 pub fn hex_decode_to_slice(hex: &[u8], output: &mut [u8]) -> Result<usize> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return Err(ZiporaError::InvalidData {
             message: "hex string must have even length".to_string(),
         });
@@ -255,7 +255,7 @@ pub fn hex_encode_to_slice(bytes: &[u8], output: &mut [u8]) -> Result<usize> {
 /// assert!(!is_valid_hex("123"));  // Odd length
 /// ```
 pub fn is_valid_hex(s: &str) -> bool {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return false;
     }
     s.bytes().all(|c| hex_char_to_nibble(c).is_some())

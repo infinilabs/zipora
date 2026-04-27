@@ -629,6 +629,12 @@ pub struct SimdOptimizationStrategy {
     _simd_ops: &'static SimdStringOps,
 }
 
+impl Default for SimdOptimizationStrategy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SimdOptimizationStrategy {
     pub fn new() -> Self {
         Self {

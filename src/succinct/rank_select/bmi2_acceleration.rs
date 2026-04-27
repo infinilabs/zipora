@@ -254,7 +254,7 @@ impl Bmi2RankOps {
             for i in 0..4 {
                 // Extract with constant index
                 // SAFETY: Hardware features verified or caller ensures safety invariants
-                let word = unsafe {
+                let word = {
                     // SAFETY: AVX2 extract with constant index, i < 4
                     match i {
                         0 => _mm256_extract_epi64::<0>(vec) as u64,
@@ -1636,11 +1636,7 @@ impl Bmi2HashOps {
         
         // Find first free slot using BMI2
         let free_mask = !occupied_mask;
-        if let Some(first_free) = Bmi2SelectOps::select1_u64(free_mask, 0) {
-            Some(first_free)
-        } else {
-            None
-        }
+        Bmi2SelectOps::select1_u64(free_mask, 0).map(|first_free| first_free)
     }
     
     /// Bulk hash bucket extraction

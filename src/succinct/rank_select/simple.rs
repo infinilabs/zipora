@@ -29,7 +29,7 @@ impl RankSelectSimple {
     /// Build from a BitVector.
     pub fn new(bv: BitVector) -> Result<Self> {
         let size = bv.len();
-        let nlines = (size + LINE_BITS - 1) / LINE_BITS;
+        let nlines = size.div_ceil(LINE_BITS);
 
         // Build rank cache: one u32 per block = cumulative rank1 at block start
         let mut rank_cache = Vec::with_capacity(nlines + 1);
@@ -209,7 +209,7 @@ impl RankSelectOps for RankSelectSimple {
 
     fn space_overhead_percent(&self) -> f64 {
         if self.size == 0 { return 0.0; }
-        let bit_bytes = (self.size + 7) / 8;
+        let bit_bytes = self.size.div_ceil(8);
         let cache_bytes = self.rank_cache.len() * 4;
         (cache_bytes as f64 / bit_bytes as f64) * 100.0
     }

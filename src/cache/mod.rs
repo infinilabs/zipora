@@ -197,7 +197,7 @@ pub const INVALID_NODE: NodeIndex = u32::MAX;
 pub fn hash_file_page(file_id: FileId, page_id: PageId) -> u64 {
     let fi_page_id = ((file_id as u64) << 32) | (page_id as u64);
     // Bit rotation for better distribution
-    let hash1 = (fi_page_id << 3) | (fi_page_id >> 61);
+    let hash1 = fi_page_id.rotate_left(3);
     // Endian-aware mixing
     hash1.swap_bytes()
 }

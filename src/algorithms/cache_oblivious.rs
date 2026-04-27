@@ -240,7 +240,7 @@ impl CacheObliviousSort {
                 }
             }
             
-            if let Some(_) = min_value {
+            if min_value.is_some() {
                 // Move minimum element to output
                 temp[output_pos] = data[segments[min_segment].2].clone();
                 output_pos += 1;
@@ -302,9 +302,9 @@ impl CacheObliviousSort {
     /// Cache-aware sorting for small data that fits in cache
     fn cache_aware_sort<T: Clone + Ord>(&mut self, data: &mut [T]) -> Result<()> {
         // Use optimized algorithms for data that fits in specific cache levels
-        if data.len() * std::mem::size_of::<T>() <= self.config.cache_hierarchy.l1_size {
+        if std::mem::size_of_val(data) <= self.config.cache_hierarchy.l1_size {
             self.l1_optimized_sort(data);
-        } else if data.len() * std::mem::size_of::<T>() <= self.config.cache_hierarchy.l2_size {
+        } else if std::mem::size_of_val(data) <= self.config.cache_hierarchy.l2_size {
             self.l2_optimized_sort(data);
         } else {
             self.l3_optimized_sort(data);
@@ -314,7 +314,7 @@ impl CacheObliviousSort {
 
     /// Hybrid approach combining cache-aware and cache-oblivious
     fn hybrid_sort<T: Clone + Ord>(&mut self, data: &mut [T]) -> Result<()> {
-        let data_size = data.len() * std::mem::size_of::<T>();
+        let data_size = std::mem::size_of_val(data);
         
         if data_size <= self.config.cache_hierarchy.l2_size {
             // Use cache-aware for data that fits in L2
@@ -547,10 +547,10 @@ impl AdaptiveAlgorithmSelector {
     pub fn analyze_data<T>(&self, data: &[T]) -> DataCharacteristics {
         DataCharacteristics {
             size: data.len(),
-            memory_footprint: data.len() * std::mem::size_of::<T>(),
-            fits_in_l1: data.len() * std::mem::size_of::<T>() <= self.cache_hierarchy.l1_size,
-            fits_in_l2: data.len() * std::mem::size_of::<T>() <= self.cache_hierarchy.l2_size,
-            fits_in_l3: data.len() * std::mem::size_of::<T>() <= self.cache_hierarchy.l3_size,
+            memory_footprint: std::mem::size_of_val(data),
+            fits_in_l1: std::mem::size_of_val(data) <= self.cache_hierarchy.l1_size,
+            fits_in_l2: std::mem::size_of_val(data) <= self.cache_hierarchy.l2_size,
+            fits_in_l3: std::mem::size_of_val(data) <= self.cache_hierarchy.l3_size,
         }
     }
 }

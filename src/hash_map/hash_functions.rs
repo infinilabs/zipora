@@ -139,14 +139,14 @@ unsafe fn bmi2_hash_combine_u32_hardware(hash: u32, value: u32) -> u32 {
     let mask2 = 0x55555555u32;
 
     // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u32 values
-    let extracted1 = unsafe { _pext_u32(effective_hash, mask1) };
+    let extracted1 = _pext_u32(effective_hash, mask1);
     // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u32 values
-    let extracted2 = unsafe { _pext_u32(value, mask2) };
+    let extracted2 = _pext_u32(value, mask2);
 
     // Combine and ensure non-zero result
     let combined = extracted1.wrapping_add(extracted2);
     // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u32 values
-    let mut result = unsafe { _pdep_u32(combined, 0xFFFFFFFFu32) };
+    let mut result = _pdep_u32(combined, 0xFFFFFFFFu32);
 
     // Additional mixing to ensure good distribution
     result ^= value.rotate_right(13);
@@ -172,14 +172,14 @@ unsafe fn bmi2_hash_combine_u64_hardware(hash: u64, value: u64) -> u64 {
     let mask2 = 0x5555555555555555u64;
 
     // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 values
-    let extracted1 = unsafe { _pext_u64(effective_hash, mask1) };
+    let extracted1 = _pext_u64(effective_hash, mask1);
     // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 values
-    let extracted2 = unsafe { _pext_u64(value, mask2) };
+    let extracted2 = _pext_u64(value, mask2);
 
     // Combine and ensure non-zero result
     let combined = extracted1.wrapping_add(extracted2);
     // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 values
-    let mut result = unsafe { _pdep_u64(combined, 0xFFFFFFFFFFFFFFFFu64) };
+    let mut result = _pdep_u64(combined, 0xFFFFFFFFFFFFFFFFu64);
 
     // Additional mixing to ensure good distribution
     result ^= value.rotate_right(13);
@@ -248,7 +248,7 @@ unsafe fn bmi2_golden_ratio_hardware(current_size: usize) -> usize {
 
     // Use BZHI for efficient bit operations in multiplication
     // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 with index 63
-    let numerator_bits = unsafe { _bzhi_u64(size_64 * GOLDEN_RATIO_FRAC_NUM, 63) }; // Prevent overflow
+    let numerator_bits = _bzhi_u64(size_64 * GOLDEN_RATIO_FRAC_NUM, 63); // Prevent overflow
     let result = numerator_bits / GOLDEN_RATIO_FRAC_DEN + 1;
     
     result as usize
@@ -310,7 +310,7 @@ unsafe fn bmi2_bucket_count_hardware(desired_capacity: usize) -> usize {
 
     // Use BZHI for efficient load factor calculation
     // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 with index 63
-    let scaled_capacity = unsafe { _bzhi_u64(capacity_64 * 256, 63) }; // Prevent overflow
+    let scaled_capacity = _bzhi_u64(capacity_64 * 256, 63); // Prevent overflow
     let required_buckets = scaled_capacity / (GOLDEN_LOAD_FACTOR as u64);
 
     // Use BEXTR pattern for next power of 2 calculation
@@ -572,14 +572,14 @@ unsafe fn advanced_bmi2_mixing(result: u64, hash: u64) -> u64 {
     let pattern2 = 0x3333333333333333u64; // 2-bit patterns
 
     // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 values
-    let extracted1 = unsafe { _pext_u64(result, pattern1) };
+    let extracted1 = _pext_u64(result, pattern1);
     // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 values
-    let extracted2 = unsafe { _pext_u64(hash, pattern2) };
+    let extracted2 = _pext_u64(hash, pattern2);
 
     // Combine and redistribute with PDEP
     let combined = extracted1.wrapping_add(extracted2);
     // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 values
-    unsafe { _pdep_u64(combined, 0xFFFFFFFFFFFFFFFFu64) }.rotate_right(17)
+    _pdep_u64(combined, 0xFFFFFFFFFFFFFFFFu64).rotate_right(17)
 }
 
 /// BMI2-optimized avalanche step for final hash mixing
@@ -591,10 +591,10 @@ unsafe fn bmi2_avalanche_step(mut result: u64) -> u64 {
 
     // Use BZHI for efficient bit masking in avalanche
     // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 with valid index
-    result ^= unsafe { _bzhi_u64(result >> 30, 34) };
+    result ^= _bzhi_u64(result >> 30, 34);
     result = result.wrapping_mul(0xbf58476d1ce4e5b9);
     // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 with valid index
-    result ^= unsafe { _bzhi_u64(result >> 27, 37) };
+    result ^= _bzhi_u64(result >> 27, 37);
     result = result.wrapping_mul(0x94d049bb133111eb);
     result ^= result >> 31;
     
@@ -657,9 +657,9 @@ unsafe fn bmi2_string_hash_hardware(bytes: &[u8], mut hash: u64) -> u64 {
         // Use BMI2 for enhanced mixing
         let mask = 0xF0F0F0F0F0F0F0F0u64; // Extract high nibbles
         // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 values
-        let extracted = unsafe { _pext_u64(val, mask) };
+        let extracted = _pext_u64(val, mask);
         // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 values
-        hash = unsafe { _pdep_u64(hash.wrapping_add(extracted), 0xFFFFFFFFFFFFFFFFu64) };
+        hash = _pdep_u64(hash.wrapping_add(extracted), 0xFFFFFFFFFFFFFFFFu64);
         hash = hash.rotate_left(5);
     }
 
@@ -667,7 +667,7 @@ unsafe fn bmi2_string_hash_hardware(bytes: &[u8], mut hash: u64) -> u64 {
     let remaining_start = chunks * 8;
     for &byte in &bytes[remaining_start..] {
         // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 values
-        let byte_extended = unsafe { _pdep_u64(byte as u64, 0x0101010101010101u64) };
+        let byte_extended = _pdep_u64(byte as u64, 0x0101010101010101u64);
         hash = hash.rotate_left(5).wrapping_add(byte_extended);
     }
     
@@ -1241,7 +1241,7 @@ static GLOBAL_BMI2_DISPATCHER: std::sync::OnceLock<Bmi2HashDispatcher> = std::sy
 
 /// Get global BMI2 hash dispatcher
 pub fn get_global_bmi2_dispatcher() -> &'static Bmi2HashDispatcher {
-    GLOBAL_BMI2_DISPATCHER.get_or_init(|| Bmi2HashDispatcher::new())
+    GLOBAL_BMI2_DISPATCHER.get_or_init(Bmi2HashDispatcher::new)
 }
 
 /// Convenience function for hash with automatic BMI2 acceleration

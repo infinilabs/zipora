@@ -424,7 +424,7 @@ impl<R: Read> StreamBufferedReader<R> {
             let dst_slice = &mut remaining[..to_copy];
 
             // Use SIMD-optimized copy
-            if let Err(_) = simd_ops::fast_copy(src_slice, dst_slice) {
+            if simd_ops::fast_copy(src_slice, dst_slice).is_err() {
                 // Fallback to standard copy if SIMD fails
                 dst_slice.copy_from_slice(src_slice);
             }
@@ -480,7 +480,7 @@ impl<R: Read> StreamBufferedReader<R> {
 
 impl<R: Read> Read for StreamBufferedReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.read_bulk(buf).map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+        self.read_bulk(buf).map_err(io::Error::other)
     }
 }
 
@@ -488,7 +488,7 @@ impl<R: Read> BufRead for StreamBufferedReader<R> {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
         if self.pos >= self.end {
             self.fill_buffer(1)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                .map_err(io::Error::other)?;
         }
         Ok(&self.buffer[self.pos..self.end])
     }
@@ -618,7 +618,7 @@ impl<W: Write> Write for StreamBufferedWriter<W> {
         if buf.len() >= self.config.bulk_read_threshold {
             // For large writes, flush buffer and write directly
             self.flush_buffer()
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                .map_err(io::Error::other)?;
             
             let written = self.inner.write(buf)?;
             self.total_written += written as u64;
@@ -632,7 +632,7 @@ impl<W: Write> Write for StreamBufferedWriter<W> {
                 let available = self.buffer.len() - self.pos;
                 if available == 0 {
                     self.flush_buffer()
-                        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                        .map_err(io::Error::other)?;
                     continue;
                 }
 
@@ -649,7 +649,7 @@ impl<W: Write> Write for StreamBufferedWriter<W> {
 
     fn flush(&mut self) -> io::Result<()> {
         self.flush_buffer()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
         self.inner.flush()
     }
 }

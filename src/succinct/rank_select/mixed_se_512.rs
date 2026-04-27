@@ -48,7 +48,7 @@ impl RankSelectMixedSE512 {
         let size0 = bv0.len();
         let size1 = bv1.len();
         let max_size = size0.max(size1);
-        let nlines = (max_size + LINE_BITS - 1) / LINE_BITS;
+        let nlines = max_size.div_ceil(LINE_BITS);
         let total_words = nlines * WORDS_PER_LINE * 2; // *2 for interleaving
 
         let b0 = bv0.blocks();

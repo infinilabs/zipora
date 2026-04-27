@@ -319,7 +319,7 @@ impl PatternMatcher {
                 if let Some(dict_pos) = self.suffix_array.suffix_at_rank(start_idx) {
                     let match_candidate = Match::new(pattern_len, dict_pos, input_pos, false);
                     
-                    if best_match.as_ref().map_or(true, |m| match_candidate.is_better_than(m)) {
+                    if best_match.as_ref().is_none_or(|m| match_candidate.is_better_than(m)) {
                         best_match = Some(match_candidate);
 
                         // Early termination if match quality is very good

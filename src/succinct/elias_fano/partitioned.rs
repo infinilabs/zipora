@@ -83,7 +83,7 @@ impl PartitionedEliasFano {
     }
 
     fn from_sorted_impl(n: usize, universe: u64, get_val: impl Fn(usize) -> u64) -> Self {
-        let num_chunks = (n + PEF_CHUNK_SIZE - 1) / PEF_CHUNK_SIZE;
+        let num_chunks = n.div_ceil(PEF_CHUNK_SIZE);
         let mut all_low_bits = Vec::new();
         let mut all_high_bits = Vec::new();
         let mut meta = Vec::with_capacity(num_chunks);
@@ -109,7 +109,7 @@ impl PartitionedEliasFano {
 
             // Pack low bits directly into flat array
             let total_low_bits = count as u64 * low_bit_width as u64;
-            let low_words = ((total_low_bits + 63) / 64) as usize;
+            let low_words = total_low_bits.div_ceil(64) as usize;
             let low_offset = all_low_bits.len();
             all_low_bits.resize(low_offset + low_words, 0);
 
@@ -131,7 +131,7 @@ impl PartitionedEliasFano {
             let last_delta = max_val - min_val;
             let max_high = last_delta >> low_bit_width;
             let high_len_bits = count + max_high as usize + 1;
-            let high_words = (high_len_bits + 63) / 64;
+            let high_words = high_len_bits.div_ceil(64);
             let high_offset = all_high_bits.len();
             all_high_bits.resize(high_offset + high_words, 0);
 

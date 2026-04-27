@@ -187,8 +187,7 @@ impl ZiporaError {
 
     /// Create an I/O error from a message
     pub fn io_error<S: Into<String>>(message: S) -> Self {
-        Self::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
+        Self::Io(std::io::Error::other(
             message.into(),
         ))
     }

@@ -10,6 +10,7 @@ use std::time::Instant;
 
 /// Suffix array construction algorithms
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum SuffixArrayAlgorithm {
     /// SA-IS (Suffix Array by Induced Sorting) - linear time, good for general use
     SAIS,
@@ -20,14 +21,10 @@ pub enum SuffixArrayAlgorithm {
     /// Larsson-Sadakane algorithm - optimized for repetitive data
     LarssonSadakane,
     /// Adaptive selection based on data characteristics
+    #[default]
     Adaptive,
 }
 
-impl Default for SuffixArrayAlgorithm {
-    fn default() -> Self {
-        Self::Adaptive
-    }
-}
 
 impl SuffixArrayAlgorithm {
     /// Get a human-readable description of the algorithm
@@ -519,11 +516,10 @@ impl SuffixArrayBuilder {
                 
                 // Replace sentinel values with missing indices
                 for sa_val in sa.iter_mut() {
-                    if *sa_val >= n {
-                        if let Some(missing_idx) = missing_iter.next() {
+                    if *sa_val >= n
+                        && let Some(missing_idx) = missing_iter.next() {
                             *sa_val = missing_idx;
                         }
-                    }
                 }
             }
             
@@ -807,11 +803,10 @@ impl SuffixArrayBuilder {
             
             // Replace sentinel values with missing indices
             for sa_val in sa.iter_mut() {
-                if *sa_val >= n {
-                    if let Some(missing_idx) = missing_iter.next() {
+                if *sa_val >= n
+                    && let Some(missing_idx) = missing_iter.next() {
                         *sa_val = missing_idx;
                     }
-                }
             }
         }
         
@@ -1022,9 +1017,7 @@ impl LcpArray {
 
                 lcp[rank[i]] = h;
 
-                if h > 0 {
-                    h -= 1;
-                }
+                h = h.saturating_sub(1);
             }
         }
 
@@ -1076,7 +1069,7 @@ impl EnhancedSuffixArray {
 
     /// Get the BWT if available
     pub fn bwt(&self) -> Option<&[u8]> {
-        self.bwt.as_ref().map(|v| v.as_slice())
+        self.bwt.as_deref()
     }
 
     fn compute_bwt(text: &[u8], sa: &[usize]) -> Vec<u8> {

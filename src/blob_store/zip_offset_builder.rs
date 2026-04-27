@@ -99,7 +99,7 @@ impl ZipOffsetBlobStoreBuilder {
 
         let pool: Option<SecureMemoryPool> = None; // TODO: Fix SecureMemoryPool type inconsistency
 
-        let offset_builder = SortedUintVecBuilder::with_config(config.offset_config.clone());
+        let offset_builder = SortedUintVecBuilder::with_config(config.offset_config);
 
         Ok(Self {
             config,
@@ -115,7 +115,7 @@ impl ZipOffsetBlobStoreBuilder {
     pub fn with_pool(config: ZipOffsetBlobStoreConfig, pool: SecureMemoryPool) -> Result<Self> {
         config.validate()?;
 
-        let offset_builder = SortedUintVecBuilder::with_config(config.offset_config.clone());
+        let offset_builder = SortedUintVecBuilder::with_config(config.offset_config);
 
         Ok(Self {
             config,
@@ -191,7 +191,7 @@ impl ZipOffsetBlobStoreBuilder {
 
         // Write processed data to content buffer
         let processed_len = processed_data.len();
-        self.content.extend(processed_data.into_iter())?;
+        self.content.extend(processed_data)?;
         self.current_offset += processed_len as u64;
 
         // Update statistics
@@ -368,7 +368,7 @@ impl BatchZipOffsetBlobStoreBuilder {
         // For now, just process the entire buffer as one record
         // TODO: Implement proper record separation
         if !self.batch_buffer.is_empty() {
-            self.inner.add_record(&self.batch_buffer.as_slice())?;
+            self.inner.add_record(self.batch_buffer.as_slice())?;
         }
 
         // Clear batch

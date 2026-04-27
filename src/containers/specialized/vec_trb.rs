@@ -529,6 +529,12 @@ pub struct VecTrbSet<K: Ord> {
     core: Core<K>,
 }
 
+impl<K: Ord> Default for VecTrbSet<K> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<K: Ord> VecTrbSet<K> {
     pub fn new() -> Self { Self { core: Core::new() } }
 
@@ -608,6 +614,12 @@ impl<'a, K> Iterator for SetIter<'a, K> {
 /// Ordered map on contiguous memory with u32 indices.
 pub struct VecTrbMap<K: Ord, V> {
     core: Core<(K, V)>,
+}
+
+impl<K: Ord, V> Default for VecTrbMap<K, V> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<K: Ord, V> VecTrbMap<K, V> {

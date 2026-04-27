@@ -369,7 +369,7 @@ impl BitOps {
     
     /// Get detected CPU features
     pub fn features(&self) -> &CpuFeatures {
-        &self.features
+        self.features
     }
     
     /// Check if BMI2 instructions are available
@@ -459,7 +459,7 @@ impl BitOps {
         if self.config.enable_bmi2 && self.features.has_bmi2 {
             #[cfg(target_arch = "x86_64")]
             // SAFETY: Hardware features verified by runtime detection
-            unsafe {
+            {
                 return Bmi2BitOps::deposit_bits(x.reverse_bits() as u64, u32::MAX as u64) as u32;
             }
         }

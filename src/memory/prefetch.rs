@@ -323,7 +323,7 @@ impl AccuracyThrottler {
         }
 
         // Adjust aggressiveness every 100 prefetches
-        if self.prefetches_issued % 100 == 0 {
+        if self.prefetches_issued.is_multiple_of(100) {
             self.adjust_aggressiveness();
         }
     }

@@ -255,7 +255,7 @@ impl RadixSort {
 
         // Split into chunks and sort in parallel
         let num_threads = rayon::current_num_threads();
-        let chunk_size = (data.len() + num_threads - 1) / num_threads; // Round up
+        let chunk_size = data.len().div_ceil(num_threads); // Round up
 
         data.par_chunks_mut(chunk_size).for_each(|chunk| {
             let temp_sorter = RadixSort::with_config(RadixSortConfig {
@@ -277,7 +277,7 @@ impl RadixSort {
         let mut buffer = vec![0u64; data.len()];
         let mut counts = vec![0usize; radix];
 
-        let max_passes = (64 + self.config.radix_bits - 1) / self.config.radix_bits;
+        let max_passes = 64_usize.div_ceil(self.config.radix_bits);
 
         for pass in 0..max_passes {
             let shift = pass * self.config.radix_bits;
@@ -318,7 +318,7 @@ impl RadixSort {
         }
 
         let num_threads = rayon::current_num_threads();
-        let chunk_size = (data.len() + num_threads - 1) / num_threads; // Round up
+        let chunk_size = data.len().div_ceil(num_threads); // Round up
 
         data.par_chunks_mut(chunk_size).for_each(|chunk| {
             let temp_sorter = RadixSort::with_config(RadixSortConfig {
@@ -1195,12 +1195,12 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
     /// Insertion sort for small datasets
     fn insertion_sort(&mut self, data: &mut [T]) -> Result<()> {
         for i in 1..data.len() {
-            let key = data[i].clone();
+            let key = data[i];
             let key_value = key.extract_key();
             let mut j = i;
             
             while j > 0 && data[j - 1].extract_key() > key_value {
-                data[j] = data[j - 1].clone();
+                data[j] = data[j - 1];
                 j -= 1;
             }
             data[j] = key;
@@ -1248,9 +1248,9 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
         let buffer = if let Some(ref _pool) = self.memory_pool {
             // For now, fall back to regular allocation
             // TODO: Implement proper memory pool integration for generic types
-            vec![data[0].clone(); data.len()]
+            vec![data[0]; data.len()]
         } else {
-            vec![data[0].clone(); data.len()]
+            vec![data[0]; data.len()]
         };
         
         let mut buffer = buffer;
@@ -1262,7 +1262,7 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
             .max()
             .unwrap_or(0);
         let max_passes = if max_key == 0 { 1 } else { 
-            (64 - max_key.leading_zeros() as usize + self.config.radix_bits - 1) / self.config.radix_bits 
+            (64 - max_key.leading_zeros() as usize).div_ceil(self.config.radix_bits) 
         };
 
         for pass in 0..max_passes {
@@ -1294,7 +1294,7 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
             for item in data.iter() {
                 let key = item.extract_key();
                 let digit = ((key >> shift) & mask) as usize;
-                buffer[counts[digit]] = item.clone();
+                buffer[counts[digit]] = *item;
                 counts[digit] += 1;
             }
 
@@ -1321,7 +1321,7 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
         }
 
         // Split into chunks and sort in parallel
-        let chunk_size = (data.len() + num_threads - 1) / num_threads;
+        let chunk_size = data.len().div_ceil(num_threads);
 
         data.par_chunks_mut(chunk_size).for_each(|chunk| {
             if let Ok(mut temp_sorter) = AdvancedRadixSort::with_config(AdvancedRadixSortConfig {
@@ -1440,12 +1440,12 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
             // Shift and mask to extract digits
             let shifted = if shift > 0 {
                 // SAFETY: #[target_feature] ensures avx2/bmi2, values is valid __m256i
-                unsafe { _mm256_srlv_epi32(values, shift_vec) }
+                _mm256_srlv_epi32(values, shift_vec)
             } else {
                 values
             };
             // SAFETY: #[target_feature] ensures avx2, shifted is valid __m256i
-            let digits = unsafe { _mm256_and_si256(shifted, mask_vec) };
+            let digits = _mm256_and_si256(shifted, mask_vec);
 
             // Extract digits and count them
             let mut digit_array = [0u32; 8];

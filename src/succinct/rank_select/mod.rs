@@ -437,12 +437,12 @@ pub mod utils {
         select_sample_rate: usize,
         enable_select_cache: bool,
     ) -> f64 {
-        let num_blocks = (total_bits + block_size - 1) / block_size;
+        let num_blocks = total_bits.div_ceil(block_size);
         let rank_overhead = num_blocks * 4; // 4 bytes per block
 
         let select_overhead = if enable_select_cache {
             let estimated_ones = total_bits / 2; // Assume 50% density
-            let num_samples = (estimated_ones + select_sample_rate - 1) / select_sample_rate;
+            let num_samples = estimated_ones.div_ceil(select_sample_rate);
             num_samples * 4 // 4 bytes per sample
         } else {
             0

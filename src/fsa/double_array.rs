@@ -458,14 +458,13 @@ impl DoubleArrayTrie {
     /// no longer part of any valid key path (leaf states with no children
     /// and no terminal flag).
     pub fn remove(&mut self, key: &[u8]) -> bool {
-        if let Some(state) = self.lookup_state(key) {
-            if self.ninfos[state as usize].is_term() {
+        if let Some(state) = self.lookup_state(key)
+            && self.ninfos[state as usize].is_term() {
                 self.ninfos[state as usize].clear_term();
                 self.num_keys -= 1;
                 self.prune_dead_branch(state);
                 return true;
             }
-        }
         false
     }
 
@@ -976,11 +975,10 @@ impl DoubleArrayTrie {
             while c != NINFO_NONE {
                 let label = (c - 1) as u8;
                 let child_pos = (old_base ^ label as u32) as usize;
-                if child_pos < self.states.len() && !self.states[child_pos].is_free() {
-                    if !children_symbols.contains(&label) {
+                if child_pos < self.states.len() && !self.states[child_pos].is_free()
+                    && !children_symbols.contains(&label) {
                         children_symbols.push(label);
                     }
-                }
                 c = if child_pos < self.ninfos.len() {
                     self.ninfos[child_pos].sibling
                 } else {
@@ -1718,13 +1716,11 @@ impl<V: MapValue> DoubleArrayTrieMap<V> {
     fn collect_entries(&self, state: u32, path: &mut Vec<u8>, entries: &mut Vec<(Vec<u8>, V)>) {
         if state as usize >= self.trie.states.len() { return; }
 
-        if self.trie.ninfos[state as usize].is_term() {
-            if let Some(&val) = self.values.get(state as usize) {
-                if val != V::EMPTY {
+        if self.trie.ninfos[state as usize].is_term()
+            && let Some(&val) = self.values.get(state as usize)
+                && val != V::EMPTY {
                     entries.push((path.clone(), val));
                 }
-            }
-        }
 
         let mut c = self.trie.ninfos[state as usize].first_child();
         if c == NINFO_NONE { return; }
@@ -1763,13 +1759,11 @@ impl<V: MapValue> DoubleArrayTrieMap<V> {
     fn walk_values_dfs(&self, state: u32, f: &mut impl FnMut(V)) {
         if state as usize >= self.trie.states.len() { return; }
 
-        if self.trie.ninfos[state as usize].is_term() {
-            if let Some(&val) = self.values.get(state as usize) {
-                if val != V::EMPTY {
+        if self.trie.ninfos[state as usize].is_term()
+            && let Some(&val) = self.values.get(state as usize)
+                && val != V::EMPTY {
                     f(val);
                 }
-            }
-        }
 
         let mut c = self.trie.ninfos[state as usize].first_child();
         if c == NINFO_NONE { return; }

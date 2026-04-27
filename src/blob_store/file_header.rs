@@ -89,7 +89,7 @@ impl FileHeaderBase {
     /// Validate the magic string.
     #[inline]
     pub fn validate_magic(&self) -> bool {
-        &self.data[1..1 + MAGIC_STR_LEN] == &MAGIC_STRING[..MAGIC_STR_LEN]
+        self.data[1..1 + MAGIC_STR_LEN] == MAGIC_STRING[..MAGIC_STR_LEN]
     }
 
     // --- Field accessors ---

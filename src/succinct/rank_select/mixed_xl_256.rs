@@ -56,13 +56,13 @@ impl RankSelectMixedXL256 {
     /// Build from multiple BitVectors (2-4 dimensions).
     pub fn new(bitvectors: Vec<BitVector>) -> Result<Self> {
         let arity = bitvectors.len();
-        if arity < 2 || arity > 4 {
+        if !(2..=4).contains(&arity) {
             return Err(ZiporaError::invalid_data("arity must be 2, 3, or 4"));
         }
 
         let sizes: Vec<usize> = bitvectors.iter().map(|bv| bv.len()).collect();
         let max_size = *sizes.iter().max().unwrap_or(&0);
-        let nlines = (max_size + LINE_BITS - 1) / LINE_BITS;
+        let nlines = max_size.div_ceil(LINE_BITS);
 
         let blocks: Vec<&[u64]> = bitvectors.iter().map(|bv| bv.blocks()).collect();
 

@@ -47,7 +47,7 @@ pub fn decode_base64_from_buffer(data: &[u8], output: &mut [u8]) -> Result<usize
 /// Calculate the encoded length for a given input length
 pub fn calculate_encoded_len(input_len: usize) -> usize {
     // Standard base64: 4 output chars per 3 input bytes, rounded up, with padding
-    ((input_len + 2) / 3) * 4
+    input_len.div_ceil(3) * 4
 }
 
 /// Calculate the maximum decoded length for a given encoded length

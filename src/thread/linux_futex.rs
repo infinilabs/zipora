@@ -85,7 +85,7 @@ impl PlatformSync for LinuxFutex {
                     libc::EAGAIN => Ok(()), // Value changed before wait
                     libc::ETIMEDOUT => Err(ZiporaError::timeout("Futex wait timed out")),
                     libc::EINTR => Ok(()), // Interrupted by signal
-                    _ => Err(ZiporaError::system_error(&format!("Futex wait failed: errno {}", errno))),
+                    _ => Err(ZiporaError::system_error(format!("Futex wait failed: errno {}", errno))),
                 }
             } else {
                 Ok(())
@@ -99,7 +99,7 @@ impl PlatformSync for LinuxFutex {
             let result = sys::futex_wake(addr.as_ptr(), count);
             if result == -1 {
                 let errno = *libc::__errno_location();
-                Err(ZiporaError::system_error(&format!("Futex wake failed: errno {}", errno)))
+                Err(ZiporaError::system_error(format!("Futex wake failed: errno {}", errno)))
             } else {
                 Ok(result as usize)
             }

@@ -147,7 +147,7 @@ impl UintVector {
         self.len += 1;
 
         // Recompress every 64 elements or when capacity is reached
-        if self.temp_values.len() % 64 == 0 || self.temp_values.len() > 1000 {
+        if self.temp_values.len().is_multiple_of(64) || self.temp_values.len() > 1000 {
             self.recompress_all()?;
         } else {
             // Quick append for small increments
@@ -341,7 +341,7 @@ impl UintVector {
     /// Compute compressed size with 16-byte alignment
     fn compute_compressed_size(bit_width: u8, num_elements: usize) -> usize {
         let total_bits = bit_width as usize * num_elements;
-        let using_size = (total_bits + 7) / 8;
+        let using_size = total_bits.div_ceil(8);
         let touch_size = using_size + 8 - 1; // for unaligned access
         let aligned_size = (touch_size + 15) & !15; // 16-byte alignment
         std::cmp::max(aligned_size, MIN_ALLOCATION_SIZE)
@@ -464,7 +464,7 @@ impl UintVector {
 
         // Calculate how many bytes we need to span
         let bits_needed = bit_in_byte + bits as usize;
-        let bytes_needed = (bits_needed + 7) / 8;
+        let bytes_needed = bits_needed.div_ceil(8);
 
         if byte_offset + bytes_needed > self.data.len() {
             return Err(ZiporaError::invalid_data("Bit offset out of bounds"));

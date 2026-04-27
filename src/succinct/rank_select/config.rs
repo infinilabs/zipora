@@ -624,7 +624,7 @@ impl SeparatedStorageConfig {
         }
 
         // Density-based optimizations
-        if density < 0.1 || density > 0.9 {
+        if !(0.1..=0.9).contains(&density) {
             // Very sparse or very dense: optimize for space
             builder = builder
                 .memory_strategy(MemoryStrategy::MinimizeSpace)

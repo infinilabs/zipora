@@ -263,13 +263,12 @@ impl BufferPool {
     
     /// Get buffer from pool or create new one
     pub fn get(&self) -> CacheBuffer {
-        if let Ok(mut buffers) = self.available.lock() {
-            if let Some(mut buffer) = buffers.pop() {
+        if let Ok(mut buffers) = self.available.lock()
+            && let Some(mut buffer) = buffers.pop() {
                 buffer.clear();
                 self.reuses.fetch_add(1, Ordering::Relaxed);
                 return buffer;
             }
-        }
         
         self.allocations.fetch_add(1, Ordering::Relaxed);
         CacheBuffer::new()
@@ -277,11 +276,10 @@ impl BufferPool {
     
     /// Return buffer to pool
     pub fn put(&self, buffer: CacheBuffer) {
-        if let Ok(mut buffers) = self.available.lock() {
-            if buffers.len() < self.max_size {
+        if let Ok(mut buffers) = self.available.lock()
+            && buffers.len() < self.max_size {
                 buffers.push(buffer);
             }
-        }
     }
     
     /// Get pool statistics

@@ -444,6 +444,7 @@ where
 
 /// Patricia trie node with path compression (compact representation)
 #[derive(Debug, Clone)]
+#[derive(Default)]
 struct PatriciaNode {
     /// Compact children storage: sorted Vec of (symbol, StateId) pairs
     children: Vec<(u8, StateId)>,
@@ -457,17 +458,6 @@ struct PatriciaNode {
     _flags: u8,
 }
 
-impl Default for PatriciaNode {
-    fn default() -> Self {
-        Self {
-            children: Vec::new(),
-            _path_offset: 0,
-            _path_length: 0,
-            is_final: false,
-            _flags: 0,
-        }
-    }
-}
 
 /// Critical-bit trie node
 #[repr(align(64))]
@@ -1186,6 +1176,12 @@ pub struct TrieIterator {
     index: usize,
 }
 
+impl Default for TrieIterator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TrieIterator {
     pub fn new() -> Self {
         TrieIterator {
@@ -1899,7 +1895,7 @@ where
 
         // Special case for empty key - check if root is terminal (check terminal bit in base)
         if key.is_empty() {
-            return base.get(0)
+            return base.first()
                 .map(|b| (b & TERMINAL_BIT) != 0)
                 .unwrap_or(false);
         }
@@ -2662,7 +2658,7 @@ where
         let mut current_path = Vec::new();
 
         #[cfg(debug_assertions)]
-        eprintln!("DEBUG keys_double_array: Starting from root state 0, base[0]={:?}", base.get(0));
+        eprintln!("DEBUG keys_double_array: Starting from root state 0, base[0]={:?}", base.first());
 
         Self::collect_keys_double_array_recursive(base, check, 0, &mut current_path, &mut keys);
         keys
@@ -2860,8 +2856,8 @@ where
         let mut trie = Self::with_config(config);
 
         // Estimate size and pre-allocate for DoubleArray strategy
-        if let TrieStrategy::DoubleArray { .. } = &trie.config.trie_strategy {
-            if let TrieStorage::DoubleArray { base, check, .. } = &mut trie.storage {
+        if let TrieStrategy::DoubleArray { .. } = &trie.config.trie_strategy
+            && let TrieStorage::DoubleArray { base, check, .. } = &mut trie.storage {
                 // Estimate: each key adds ~key_length states on average
                 let estimated_states = keys.iter().map(|k| k.len()).sum::<usize>() / 2;
                 let initial_size = estimated_states.max(256);
@@ -2872,7 +2868,6 @@ where
                 base.resize(initial_size, NIL_STATE);
                 check.resize(initial_size, NIL_STATE | FREE_BIT);
             }
-        }
 
         // Insert keys in sorted order
         // Sorted order tends to result in fewer relocations

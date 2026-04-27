@@ -580,7 +580,7 @@ impl RuntimeCpuFeatures {
             // Enhanced cache line size detection
             if let Some(cache_params) = cpuid.get_cache_parameters() {
                 for cache in cache_params {
-                    cache_line_size = cache.coherency_line_size() as usize;
+                    cache_line_size = cache.coherency_line_size();
                     
                     // Calculate cache size using available methods
                     // Note: exact calculation varies by raw_cpuid version
@@ -703,12 +703,11 @@ impl RuntimeCpuFeatures {
         #[cfg(target_arch = "x86_64")]
         {
             let cpuid = raw_cpuid::CpuId::new();
-            if let Some(feature_info) = cpuid.get_feature_info() {
-                if feature_info.has_htt() {
+            if let Some(feature_info) = cpuid.get_feature_info()
+                && feature_info.has_htt() {
                     // Hyperthreading is enabled, so physical cores = logical / 2
                     return (logical_cores, logical_cores / 2);
                 }
-            }
         }
 
         (logical_cores, physical_cores)
@@ -727,11 +726,10 @@ impl RuntimeCpuFeatures {
             let cpuid = raw_cpuid::CpuId::new();
             
             // Get cache line size
-            if let Some(mut cache_params) = cpuid.get_cache_parameters() {
-                if let Some(cache) = cache_params.next() {
-                    cache_line_size = cache.coherency_line_size() as usize;
+            if let Some(mut cache_params) = cpuid.get_cache_parameters()
+                && let Some(cache) = cache_params.next() {
+                    cache_line_size = cache.coherency_line_size();
                 }
-            }
 
             // Try to get cache sizes
             // Note: Cache size detection is complex and varies by CPU

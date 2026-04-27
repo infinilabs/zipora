@@ -1315,7 +1315,7 @@ impl<T: Clone> Clone for AutoGrowCircularQueue<T> {
                 // SAFETY: All elements between head and tail are initialized
                 let value = unsafe { &*self.buffer.add(i) };
                 // Clone should not fail since we allocated with same capacity
-                if let Err(_) = new_queue.push_back(value.clone()) {
+                if new_queue.push_back(value.clone()).is_err() {
                     // If push fails, return partial clone
                     return new_queue;
                 }
@@ -1326,7 +1326,7 @@ impl<T: Clone> Clone for AutoGrowCircularQueue<T> {
                 // SAFETY: All elements between head and capacity are initialized
                 let value = unsafe { &*self.buffer.add(i) };
                 // Clone should not fail since we allocated with same capacity
-                if let Err(_) = new_queue.push_back(value.clone()) {
+                if new_queue.push_back(value.clone()).is_err() {
                     // If push fails, return partial clone
                     return new_queue;
                 }
@@ -1335,7 +1335,7 @@ impl<T: Clone> Clone for AutoGrowCircularQueue<T> {
                 // SAFETY: All elements between 0 and tail are initialized
                 let value = unsafe { &*self.buffer.add(i) };
                 // Clone should not fail since we allocated with same capacity
-                if let Err(_) = new_queue.push_back(value.clone()) {
+                if new_queue.push_back(value.clone()).is_err() {
                     // If push fails, return partial clone
                     return new_queue;
                 }

@@ -426,11 +426,8 @@ where
         config.initial_capacity = capacity.max(16);
 
         // Update storage strategy to use the specified capacity
-        match &mut config.storage_strategy {
-            StorageStrategy::Standard { initial_capacity, .. } => {
-                *initial_capacity = capacity.max(16);
-            }
-            _ => {}
+        if let StorageStrategy::Standard { initial_capacity, .. } = &mut config.storage_strategy {
+            *initial_capacity = capacity.max(16);
         }
 
         Self::with_config(config)
@@ -709,9 +706,9 @@ where
 
     /// Hash a key using the configured hasher
     fn hash_key(&self, key: &K) -> u64 {
-        let mut hasher = self.hash_builder.build_hasher();
-        key.hash(&mut hasher);
-        let h = hasher.finish();
+        
+        
+        let h = self.hash_builder.hash_one(key);
         if h == 0 { 1 } else if h == u64::MAX { u64::MAX - 1 } else { h }
     }
 
@@ -721,9 +718,9 @@ where
         K: Borrow<Q>,
         Q: Hash + ?Sized,
     {
-        let mut hasher = self.hash_builder.build_hasher();
-        key.hash(&mut hasher);
-        let h = hasher.finish();
+        
+        
+        let h = self.hash_builder.hash_one(key);
         if h == 0 { 1 } else if h == u64::MAX { u64::MAX - 1 } else { h }
     }
 
@@ -996,9 +993,9 @@ where
             return None;
         }
 
-        let mut hasher = hash_builder.build_hasher();
-        key.hash(&mut hasher);
-        let h = hasher.finish();
+        
+        
+        let h = hash_builder.hash_one(key);
         let hash = if h == 0 { 1 } else if h == u64::MAX { u64::MAX - 1 } else { h };
 
         let capacity = entries.len();
@@ -1091,9 +1088,9 @@ where
             return None;
         }
 
-        let mut hasher = hash_builder.build_hasher();
-        key.hash(&mut hasher);
-        let h = hasher.finish();
+        
+        
+        let h = hash_builder.hash_one(key);
         let hash = if h == 0 { 1 } else if h == u64::MAX { u64::MAX - 1 } else { h };
 
         let capacity = entries.len();

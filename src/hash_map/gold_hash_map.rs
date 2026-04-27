@@ -394,12 +394,11 @@ where
     // PERFORMANCE FIX (v2.1.1): Changed from O(n) linear scan to O(1) stack pop
     fn allocate_slot(&mut self) -> usize {
         // O(1) freelist pop - no more linear scanning!
-        if self.config.enable_freelist_reuse {
-            if let Some(idx) = self.freelist.pop() {
+        if self.config.enable_freelist_reuse
+            && let Some(idx) = self.freelist.pop() {
                 self.freelist_size -= 1;
                 return idx;
             }
-        }
 
         // Append new entry - we'll overwrite it immediately in insert()
         let idx = self.entries.len();
@@ -559,11 +558,10 @@ where
             .expect("Capacity check above ensures this succeeds");
 
         // Update hash cache if enabled
-        if let Some(ref mut cache) = self.hash_cache {
-            if entry_idx < cache.len() {
+        if let Some(ref mut cache) = self.hash_cache
+            && entry_idx < cache.len() {
                 cache[entry_idx] = hash;
             }
-        }
 
         self.len += 1;
         Ok(None)

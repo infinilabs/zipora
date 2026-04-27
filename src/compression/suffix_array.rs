@@ -520,7 +520,7 @@ impl SuffixArrayCompressor {
         let construction_time = start_time.elapsed();
 
         // Calculate statistics
-        let original_sa_size = raw_suffix_array.len() * std::mem::size_of::<usize>();
+        let original_sa_size = std::mem::size_of_val(raw_suffix_array);
         let compressed_sa_size = suffix_array.memory_usage();
         let lcp_size = lcp_array.as_ref().map_or(0, |lcp| lcp.memory_usage());
         let total_compressed_size = compressed_sa_size + lcp_size;
@@ -575,9 +575,7 @@ impl SuffixArrayCompressor {
 
                 lcp[rank[i]] = h;
 
-                if h > 0 {
-                    h -= 1;
-                }
+                h = h.saturating_sub(1);
             }
         }
 

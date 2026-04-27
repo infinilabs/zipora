@@ -81,7 +81,7 @@ impl RankSelectMixedIL256 {
         let size0 = bv0.len();
         let size1 = bv1.len();
         let max_size = size0.max(size1);
-        let nlines = (max_size + LINE_BITS - 1) / LINE_BITS;
+        let nlines = max_size.div_ceil(LINE_BITS);
 
         let blocks0 = bv0.blocks();
         let blocks1 = bv1.blocks();
@@ -217,7 +217,7 @@ impl RankSelectOps for MixedDimView<'_> {
     fn get(&self, index: usize) -> Option<bool> { self.parent.get_dim(self.dim, index) }
     fn space_overhead_percent(&self) -> f64 {
         if self.parent.size[self.dim] == 0 { return 0.0; }
-        let bit_bytes = (self.parent.size[self.dim] + 7) / 8;
+        let bit_bytes = self.parent.size[self.dim].div_ceil(8);
         let cache_bytes = self.parent.lines.len() * 8; // rank cache portion
         (cache_bytes as f64 / bit_bytes as f64) * 100.0
     }

@@ -136,7 +136,7 @@ impl<'a> Bm25BatchScorer<'a> {
         // Slice bounds validated: fieldnorm_bytes.len() == n, tfs.len() == n,
         // scores.len() >= n (all asserted in caller). Each chunk accesses [base..base+8]
         // where base+8 <= n.
-        let idf_k1p1_vec = unsafe { _mm256_set1_ps(self.idf_k1p1) };
+        let idf_k1p1_vec = _mm256_set1_ps(self.idf_k1p1);
         let table = self.norm_table;
 
         let chunks = n / 8;

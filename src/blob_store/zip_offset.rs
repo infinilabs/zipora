@@ -344,7 +344,7 @@ impl ZipOffsetBlobStore {
 
         let pool: Option<SecureMemoryPool> = None; // TODO: Fix SecureMemoryPool type inconsistency
 
-        let offsets = SortedUintVec::with_config(config.offset_config.clone())?;
+        let offsets = SortedUintVec::with_config(config.offset_config)?;
 
         Ok(Self {
             content: FastVec::new(),
@@ -360,7 +360,7 @@ impl ZipOffsetBlobStore {
     pub fn with_pool(config: ZipOffsetBlobStoreConfig, pool: SecureMemoryPool) -> Result<Self> {
         config.validate()?;
 
-        let offsets = SortedUintVec::with_config(config.offset_config.clone())?;
+        let offsets = SortedUintVec::with_config(config.offset_config)?;
 
         Ok(Self {
             content: FastVec::new(),
@@ -412,15 +412,15 @@ impl ZipOffsetBlobStore {
             store.content.resize(current_len + content_bytes.len(), 0)?;
             {
                 let content_slice = &mut store.content.as_mut_slice()[current_len..];
-                if let Err(_) = fast_copy(&content_bytes, content_slice) {
+                if fast_copy(&content_bytes, content_slice).is_err() {
                     // Fallback to standard extend on error
                     drop(content_slice); // Explicitly drop the mutable reference
                     store.content.resize(current_len, 0)?;
-                    store.content.extend(content_bytes.into_iter())?;
+                    store.content.extend(content_bytes)?;
                 }
             }
         } else {
-            store.content.extend(content_bytes.into_iter())?;
+            store.content.extend(content_bytes)?;
         }
 
         // Skip padding to 16-byte alignment
@@ -542,11 +542,10 @@ impl ZipOffsetBlobStore {
             let checksum_part = &record_data[record_len..];
 
             // Verify checksum using SIMD-optimized comparison
-            if CHECKSUM_LEN == 4 {
-                if !self.verify_checksum(data_part, checksum_part)? {
+            if CHECKSUM_LEN == 4
+                && !self.verify_checksum(data_part, checksum_part)? {
                     return Err(ZiporaError::invalid_data("checksum verification failed"));
                 }
-            }
         }
 
         let final_data = &record_data[..record_len];
@@ -706,11 +705,10 @@ impl ZipOffsetBlobStore {
             let checksum_part = &record_data[record_len..];
 
             // Use SIMD-optimized checksum verification
-            if CHECKSUM_LEN == 4 {
-                if !self.verify_checksum(data_part, checksum_part)? {
+            if CHECKSUM_LEN == 4
+                && !self.verify_checksum(data_part, checksum_part)? {
                     return Err(ZiporaError::invalid_data("checksum verification failed"));
                 }
-            }
         }
 
         let final_data = &record_data[..record_len];

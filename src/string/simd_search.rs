@@ -822,7 +822,7 @@ static GLOBAL_SIMD_SEARCH: std::sync::OnceLock<SimdStringSearch> = std::sync::On
 
 /// Gets the global SIMD string search instance
 pub fn get_global_simd_search() -> &'static SimdStringSearch {
-    GLOBAL_SIMD_SEARCH.get_or_init(|| SimdStringSearch::new())
+    GLOBAL_SIMD_SEARCH.get_or_init(SimdStringSearch::new)
 }
 
 /// Convenience function for SSE4.2 character search using global instance

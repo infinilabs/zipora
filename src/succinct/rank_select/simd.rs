@@ -215,7 +215,7 @@ pub fn bulk_select1_simd(bit_data: &[u64], indices: &[usize]) -> Result<Vec<usiz
 
     match capabilities.optimization_tier {
         #[cfg(target_arch = "x86_64")]
-        5 | 4 | 3 if capabilities.cpu_features.has_bmi2 => bulk_select1_bmi2(bit_data, indices),
+        3..=5 if capabilities.cpu_features.has_bmi2 => bulk_select1_bmi2(bit_data, indices),
 
         #[cfg(target_arch = "x86_64")]
         4 => bulk_select1_avx2(bit_data, indices),
@@ -487,8 +487,7 @@ fn bulk_select1_bmi2(bit_data: &[u64], indices: &[usize]) -> Result<Vec<usize>> 
 
         while left < right {
             let mid = (left + right) / 2;
-            let rank_at_mid = bulk_rank1_simd(bit_data, &[mid * 64])
-                .get(0)
+            let rank_at_mid = bulk_rank1_simd(bit_data, &[mid * 64]).first()
                 .copied()
                 .unwrap_or(0);
 
@@ -501,8 +500,7 @@ fn bulk_select1_bmi2(bit_data: &[u64], indices: &[usize]) -> Result<Vec<usize>> 
 
         word_idx = if left > 0 { left - 1 } else { 0 };
         if word_idx > 0 {
-            cumulative_rank = bulk_rank1_simd(bit_data, &[word_idx * 64])
-                .get(0)
+            cumulative_rank = bulk_rank1_simd(bit_data, &[word_idx * 64]).first()
                 .copied()
                 .unwrap_or(0);
         }

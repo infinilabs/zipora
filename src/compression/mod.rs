@@ -269,7 +269,7 @@ impl Compressor for Lz4Compressor {
         #[cfg(feature = "lz4")]
         {
             lz4_flex::decompress_size_prepended(data)
-                .map_err(|e| ZiporaError::compression(&format!("LZ4 decompression failed: {}", e)))
+                .map_err(|e| ZiporaError::compression(format!("LZ4 decompression failed: {}", e)))
         }
         #[cfg(not(feature = "lz4"))]
         {
@@ -303,12 +303,12 @@ impl ZstdCompressor {
 impl Compressor for ZstdCompressor {
     fn compress(&self, data: &[u8]) -> Result<Vec<u8>> {
         zstd::bulk::compress(data, self.level)
-            .map_err(|e| ZiporaError::compression(&format!("ZSTD compression failed: {}", e)))
+            .map_err(|e| ZiporaError::compression(format!("ZSTD compression failed: {}", e)))
     }
 
     fn decompress(&self, data: &[u8]) -> Result<Vec<u8>> {
         zstd::bulk::decompress(data, 100 * 1024 * 1024) // 100MB limit
-            .map_err(|e| ZiporaError::compression(&format!("ZSTD decompression failed: {}", e)))
+            .map_err(|e| ZiporaError::compression(format!("ZSTD decompression failed: {}", e)))
     }
 
     fn algorithm(&self) -> Algorithm {
@@ -611,12 +611,11 @@ impl Compressor for HybridCompressor {
 
         // Try each compressor and pick the best result
         for (i, compressor) in self.compressors.iter().enumerate() {
-            if let Ok(compressed) = compressor.compress(data) {
-                if compressed.len() < best_result.len() {
+            if let Ok(compressed) = compressor.compress(data)
+                && compressed.len() < best_result.len() {
                     best_result = compressed;
                     best_algorithm = i as u8;
                 }
-            }
         }
 
         // Prepend algorithm identifier

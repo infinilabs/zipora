@@ -76,7 +76,7 @@ impl Rank9 {
     /// Build from a BitVector.
     pub fn new(bv: BitVector) -> Result<Self> {
         let len_bits = bv.len();
-        let num_blocks = (bv.blocks().len() + WORDS_PER_BLOCK - 1) / WORDS_PER_BLOCK;
+        let num_blocks = bv.blocks().len().div_ceil(WORDS_PER_BLOCK);
 
         let mut index = Vec::with_capacity(num_blocks + 1);
         let mut cumul: u64 = 0;

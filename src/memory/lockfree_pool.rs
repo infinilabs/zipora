@@ -282,7 +282,7 @@ impl LockFreeMemoryPool {
     pub fn new(config: LockFreePoolConfig) -> Result<Self> {
         // Allocate backing memory region
         let layout = Layout::from_size_align(config.memory_size, ALIGN_SIZE)
-            .map_err(|e| ZiporaError::invalid_data(&format!("Invalid layout: {}", e)))?;
+            .map_err(|e| ZiporaError::invalid_data(format!("Invalid layout: {}", e)))?;
 
         // SAFETY: layout valid (size > 0, align power of 2)
         let memory = NonNull::new(unsafe { alloc(layout) })
@@ -391,14 +391,13 @@ impl LockFreeMemoryPool {
                 let future_size = sizes[i + PREFETCH_DISTANCE];
                 let aligned_future_size = self.align_size(future_size);
 
-                if aligned_future_size <= FAST_BIN_THRESHOLD {
-                    if let Ok(bin_idx) = self.size_to_bin_index(aligned_future_size) {
+                if aligned_future_size <= FAST_BIN_THRESHOLD
+                    && let Ok(bin_idx) = self.size_to_bin_index(aligned_future_size) {
                         #[cfg(target_arch = "x86_64")]
                         {
                             fast_prefetch(&self.fast_bins[bin_idx], PrefetchHint::T0);
                         }
                     }
-                }
             }
 
             // Perform allocation
@@ -565,8 +564,8 @@ impl LockFreeMemoryPool {
         let ptr = self.offset_to_ptr(offset)?;
         
         // Apply cache optimization hints if enabled
-        if let Some(ref _cache_allocator) = self.cache_allocator {
-            if self.config.enable_cache_alignment {
+        if let Some(ref _cache_allocator) = self.cache_allocator
+            && self.config.enable_cache_alignment {
                 if let Some(stats) = &self.stats {
                     stats.cache_aligned_allocs.fetch_add(1, Ordering::Relaxed);
                 }
@@ -582,7 +581,6 @@ impl LockFreeMemoryPool {
                 // Memory is already zeroed by default in most allocators
                 // Additional zeroing could be added here if needed for security
             }
-        }
         
         if let Some(stats) = &self.stats {
             stats.memory_usage.fetch_add(aligned_size as u64, Ordering::Relaxed);

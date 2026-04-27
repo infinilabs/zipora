@@ -527,7 +527,7 @@ where
             };
 
             std::fs::write(&self.file_path, content)
-                .map_err(|e| ZiporaError::io_error(&format!("Failed to sync to file: {}", e)))?;
+                .map_err(|e| ZiporaError::io_error(format!("Failed to sync to file: {}", e)))?;
         }
         Ok(())
     }
@@ -678,15 +678,15 @@ where
             .write(true)
             .truncate(true)
             .open(path)
-            .map_err(|e| ZiporaError::io_error(&format!("Failed to create file: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to create file: {}", e)))?;
 
         // Set file size
         file.seek(SeekFrom::Start(size - 1))
-            .map_err(|e| ZiporaError::io_error(&format!("Failed to seek: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to seek: {}", e)))?;
         file.write_all(&[0])
-            .map_err(|e| ZiporaError::io_error(&format!("Failed to write: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to write: {}", e)))?;
         file.sync_all()
-            .map_err(|e| ZiporaError::io_error(&format!("Failed to sync: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to sync: {}", e)))?;
 
         Ok(())
     }
@@ -694,7 +694,7 @@ where
     /// Create memory mapping for file
     fn create_mmap(path: &Path, _config: &MmapVecConfig) -> Result<MmapAllocation> {
         let file_size = std::fs::metadata(path)
-            .map_err(|e| ZiporaError::io_error(&format!("Failed to get file size: {}", e)))?
+            .map_err(|e| ZiporaError::io_error(format!("Failed to get file size: {}", e)))?
             .len() as usize;
             
         // Use a minimum size that's appropriate for memory mapping
@@ -704,13 +704,13 @@ where
         
         let allocator = MemoryMappedAllocator::new(min_mmap_size);
         let mut allocation = allocator.allocate(allocation_size)
-            .map_err(|e| ZiporaError::io_error(&format!("Failed to create mmap: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to create mmap: {}", e)))?;
         
         // Read file content into the memory mapping
         // This is a temporary implementation - real mmap would map the file directly
         if file_size > 0 {
             let file_content = std::fs::read(path)
-                .map_err(|e| ZiporaError::io_error(&format!("Failed to read file: {}", e)))?;
+                .map_err(|e| ZiporaError::io_error(format!("Failed to read file: {}", e)))?;
 
             if file_content.len() <= allocation.size() {
                 // SAFETY: src is file_content.len() bytes, dst is allocation.size() >= file_content.len(), no overlap
@@ -825,10 +825,10 @@ where
         let file = OpenOptions::new()
             .write(true)
             .open(&self.file_path)
-            .map_err(|e| ZiporaError::io_error(&format!("Failed to open file: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to open file: {}", e)))?;
         
         file.set_len(new_file_size)
-            .map_err(|e| ZiporaError::io_error(&format!("Failed to resize file: {}", e)))?;
+            .map_err(|e| ZiporaError::io_error(format!("Failed to resize file: {}", e)))?;
 
         // Recreate memory mapping with new size
         drop(self.mmap.take()); // Unmap old mapping
@@ -923,7 +923,7 @@ where
         // Use SIMD copy for bulk push (4-8x faster)
         // SAFETY: reserve called above ensures capacity, data_ptr valid, add(len) within allocation
         let dst_ptr = unsafe { self.data_ptr()?.as_ptr().add(self.len()) };
-        let size_bytes = items.len() * std::mem::size_of::<T>();
+        let size_bytes = std::mem::size_of_val(items);
 
         if size_bytes >= 64 {  // SIMD threshold
             // Cache-optimized SIMD copy
@@ -1192,7 +1192,7 @@ where
             Ok(fast_compare(self_slice, other_slice) == 0)
         } else {
             // Standard comparison for small ranges
-            Ok(&self.as_slice()[range] == &other.as_slice()[0..count])
+            Ok(self.as_slice()[range] == other.as_slice()[0..count])
         }
     }
 

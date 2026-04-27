@@ -101,11 +101,10 @@ impl KernelInfo {
         // Parse kernel version and check if >= 5.14
         if let Some(version_part) = kernel_version.split('-').next() {
             let parts: Vec<&str> = version_part.split('.').collect();
-            if parts.len() >= 2 {
-                if let (Ok(major), Ok(minor)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
+            if parts.len() >= 2
+                && let (Ok(major), Ok(minor)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
                     return major > 5 || (major == 5 && minor >= 14);
                 }
-            }
         }
         false
     }
@@ -173,7 +172,7 @@ impl VmManager {
         // Align to page boundaries
         let page_size = self.kernel_info.page_size;
         let aligned_addr = ((addr as usize) / page_size) * page_size;
-        let aligned_end = (((addr as usize) + len + page_size - 1) / page_size) * page_size;
+        let aligned_end = ((addr as usize) + len).div_ceil(page_size) * page_size;
         let aligned_len = aligned_end - aligned_addr;
 
         match strategy {
@@ -238,7 +237,7 @@ impl VmManager {
         if result == 0 {
             Ok(())
         } else {
-            Err(ZiporaError::invalid_data(&format!("madvise MADV_POPULATE_READ failed: {}", 
+            Err(ZiporaError::invalid_data(format!("madvise MADV_POPULATE_READ failed: {}", 
                 std::io::Error::last_os_error())))
         }
     }
@@ -254,7 +253,7 @@ impl VmManager {
         if result == 0 {
             Ok(())
         } else {
-            Err(ZiporaError::invalid_data(&format!("madvise MADV_WILLNEED failed: {}", 
+            Err(ZiporaError::invalid_data(format!("madvise MADV_WILLNEED failed: {}", 
                 std::io::Error::last_os_error())))
         }
     }
@@ -335,7 +334,7 @@ impl VmManager {
             if result == 0 {
                 Ok(())
             } else {
-                Err(ZiporaError::invalid_data(&format!("madvise failed: {}", 
+                Err(ZiporaError::invalid_data(format!("madvise failed: {}", 
                     std::io::Error::last_os_error())))
             }
         }
@@ -373,7 +372,7 @@ impl VmManager {
             if result == 0 {
                 Ok(())
             } else {
-                Err(ZiporaError::invalid_data(&format!("mlock failed: {}", 
+                Err(ZiporaError::invalid_data(format!("mlock failed: {}", 
                     std::io::Error::last_os_error())))
             }
         }
@@ -423,7 +422,7 @@ impl VmManager {
             if result == 0 {
                 Ok(())
             } else {
-                Err(ZiporaError::invalid_data(&format!("munlock failed: {}", 
+                Err(ZiporaError::invalid_data(format!("munlock failed: {}", 
                     std::io::Error::last_os_error())))
             }
         }
@@ -501,7 +500,7 @@ impl PageAlignedAlloc {
     /// Allocate page-aligned memory
     pub fn allocate(&self, size: usize) -> Result<PageAlignedBuffer> {
         let page_size = self.vm_manager.kernel_info().page_size;
-        let aligned_size = ((size + page_size - 1) / page_size) * page_size;
+        let aligned_size = size.div_ceil(page_size) * page_size;
 
         #[cfg(unix)]
         {
@@ -651,7 +650,7 @@ static KERNEL_INFO: OnceLock<KernelInfo> = OnceLock::new();
 
 /// Get global kernel information (detected once on first call)
 pub fn get_kernel_info() -> &'static KernelInfo {
-    KERNEL_INFO.get_or_init(|| KernelInfo::detect())
+    KERNEL_INFO.get_or_init(KernelInfo::detect)
 }
 
 /// Convenience function for memory prefetching
@@ -672,7 +671,7 @@ pub fn vm_prefetch(data: &[u8]) -> Result<()> {
 pub fn vm_prefetch_min_pages(data: &[u8], min_pages: usize) -> Result<()> {
     let kernel_info = get_kernel_info();
     let page_size = kernel_info.page_size;
-    let page_count = (data.len() + page_size - 1) / page_size;
+    let page_count = data.len().div_ceil(page_size);
 
     if page_count >= min_pages {
         vm_prefetch(data)

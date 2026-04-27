@@ -124,7 +124,7 @@ impl RankSelectOps for RankSelectFewOne {
 
     fn space_overhead_percent(&self) -> f64 {
         if self.size == 0 { return 0.0; }
-        let minimal_bytes = (self.size + 7) / 8;
+        let minimal_bytes = self.size.div_ceil(8);
         let actual_bytes = self.mem_size();
         if actual_bytes < minimal_bytes {
             // Negative overhead = space savings
@@ -233,7 +233,7 @@ impl RankSelectOps for RankSelectFewZero {
 
     fn space_overhead_percent(&self) -> f64 {
         if self.size == 0 { return 0.0; }
-        let minimal_bytes = (self.size + 7) / 8;
+        let minimal_bytes = self.size.div_ceil(8);
         let actual_bytes = self.mem_size();
         if actual_bytes < minimal_bytes {
             -((minimal_bytes - actual_bytes) as f64 / minimal_bytes as f64) * 100.0

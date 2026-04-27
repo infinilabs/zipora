@@ -60,7 +60,7 @@ pub fn validate_utf8_and_count_chars(bytes: &[u8]) -> Result<usize> {
 fn validate_utf8_and_count_chars_scalar(bytes: &[u8]) -> Result<usize> {
     match str::from_utf8(bytes) {
         Ok(s) => Ok(s.chars().count()),
-        Err(e) => Err(ZiporaError::invalid_data(&format!("Invalid UTF-8: {}", e))),
+        Err(e) => Err(ZiporaError::invalid_data(format!("Invalid UTF-8: {}", e))),
     }
 }
 
@@ -284,7 +284,7 @@ impl<'a> Utf8ToUtf32Iterator<'a> {
     pub fn new(bytes: &'a [u8]) -> Result<Self> {
         // Validate UTF-8 first
         str::from_utf8(bytes)
-            .map_err(|e| ZiporaError::invalid_data(&format!("Invalid UTF-8: {}", e)))?;
+            .map_err(|e| ZiporaError::invalid_data(format!("Invalid UTF-8: {}", e)))?;
 
         Ok(Self {
             bytes,
@@ -412,34 +412,34 @@ pub mod utils {
         let codepoint = ch as u32;
         
         // CJK ranges (simplified)
-        (codepoint >= 0x1100 && codepoint <= 0x115F) ||  // Hangul Jamo
-        (codepoint >= 0x2E80 && codepoint <= 0x2EFF) ||  // CJK Radicals Supplement
-        (codepoint >= 0x2F00 && codepoint <= 0x2FDF) ||  // Kangxi Radicals
-        (codepoint >= 0x3000 && codepoint <= 0x303F) ||  // CJK Symbols and Punctuation
-        (codepoint >= 0x3040 && codepoint <= 0x309F) ||  // Hiragana
-        (codepoint >= 0x30A0 && codepoint <= 0x30FF) ||  // Katakana
-        (codepoint >= 0x3100 && codepoint <= 0x312F) ||  // Bopomofo
-        (codepoint >= 0x3130 && codepoint <= 0x318F) ||  // Hangul Compatibility Jamo
-        (codepoint >= 0x3190 && codepoint <= 0x319F) ||  // Kanbun
-        (codepoint >= 0x31A0 && codepoint <= 0x31BF) ||  // Bopomofo Extended
-        (codepoint >= 0x31C0 && codepoint <= 0x31EF) ||  // CJK Strokes
-        (codepoint >= 0x31F0 && codepoint <= 0x31FF) ||  // Katakana Phonetic Extensions
-        (codepoint >= 0x3200 && codepoint <= 0x32FF) ||  // Enclosed CJK Letters and Months
-        (codepoint >= 0x3300 && codepoint <= 0x33FF) ||  // CJK Compatibility
-        (codepoint >= 0x3400 && codepoint <= 0x4DBF) ||  // CJK Extension A
-        (codepoint >= 0x4E00 && codepoint <= 0x9FFF) ||  // CJK Unified Ideographs
-        (codepoint >= 0xA000 && codepoint <= 0xA48F) ||  // Yi Syllables
-        (codepoint >= 0xA490 && codepoint <= 0xA4CF) ||  // Yi Radicals
-        (codepoint >= 0xAC00 && codepoint <= 0xD7AF) ||  // Hangul Syllables
-        (codepoint >= 0xF900 && codepoint <= 0xFAFF) ||  // CJK Compatibility Ideographs
-        (codepoint >= 0xFE10 && codepoint <= 0xFE1F) ||  // Vertical Forms
-        (codepoint >= 0xFE30 && codepoint <= 0xFE4F) ||  // CJK Compatibility Forms
-        (codepoint >= 0xFE50 && codepoint <= 0xFE6F) ||  // Small Form Variants
-        (codepoint >= 0xFF00 && codepoint <= 0xFFEF) ||  // Halfwidth and Fullwidth Forms
-        (codepoint >= 0x20000 && codepoint <= 0x2A6DF) || // CJK Extension B
-        (codepoint >= 0x2A700 && codepoint <= 0x2B73F) || // CJK Extension C
-        (codepoint >= 0x2B740 && codepoint <= 0x2B81F) || // CJK Extension D
-        (codepoint >= 0x2F800 && codepoint <= 0x2FA1F)    // CJK Compatibility Ideographs Supplement
+        (0x1100..=0x115F).contains(&codepoint) ||  // Hangul Jamo
+        (0x2E80..=0x2EFF).contains(&codepoint) ||  // CJK Radicals Supplement
+        (0x2F00..=0x2FDF).contains(&codepoint) ||  // Kangxi Radicals
+        (0x3000..=0x303F).contains(&codepoint) ||  // CJK Symbols and Punctuation
+        (0x3040..=0x309F).contains(&codepoint) ||  // Hiragana
+        (0x30A0..=0x30FF).contains(&codepoint) ||  // Katakana
+        (0x3100..=0x312F).contains(&codepoint) ||  // Bopomofo
+        (0x3130..=0x318F).contains(&codepoint) ||  // Hangul Compatibility Jamo
+        (0x3190..=0x319F).contains(&codepoint) ||  // Kanbun
+        (0x31A0..=0x31BF).contains(&codepoint) ||  // Bopomofo Extended
+        (0x31C0..=0x31EF).contains(&codepoint) ||  // CJK Strokes
+        (0x31F0..=0x31FF).contains(&codepoint) ||  // Katakana Phonetic Extensions
+        (0x3200..=0x32FF).contains(&codepoint) ||  // Enclosed CJK Letters and Months
+        (0x3300..=0x33FF).contains(&codepoint) ||  // CJK Compatibility
+        (0x3400..=0x4DBF).contains(&codepoint) ||  // CJK Extension A
+        (0x4E00..=0x9FFF).contains(&codepoint) ||  // CJK Unified Ideographs
+        (0xA000..=0xA48F).contains(&codepoint) ||  // Yi Syllables
+        (0xA490..=0xA4CF).contains(&codepoint) ||  // Yi Radicals
+        (0xAC00..=0xD7AF).contains(&codepoint) ||  // Hangul Syllables
+        (0xF900..=0xFAFF).contains(&codepoint) ||  // CJK Compatibility Ideographs
+        (0xFE10..=0xFE1F).contains(&codepoint) ||  // Vertical Forms
+        (0xFE30..=0xFE4F).contains(&codepoint) ||  // CJK Compatibility Forms
+        (0xFE50..=0xFE6F).contains(&codepoint) ||  // Small Form Variants
+        (0xFF00..=0xFFEF).contains(&codepoint) ||  // Halfwidth and Fullwidth Forms
+        (0x20000..=0x2A6DF).contains(&codepoint) || // CJK Extension B
+        (0x2A700..=0x2B73F).contains(&codepoint) || // CJK Extension C
+        (0x2B740..=0x2B81F).contains(&codepoint) || // CJK Extension D
+        (0x2F800..=0x2FA1F).contains(&codepoint)    // CJK Compatibility Ideographs Supplement
     }
 
     /// Extract all Unicode codepoints from a string

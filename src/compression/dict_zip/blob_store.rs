@@ -108,8 +108,10 @@ use serde::{Deserialize, Serialize};
 /// - kFSE: Finite State Entropy (tANS-based, part of ZSTD family)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Default)]
 pub enum EntropyAlgorithm {
     /// No entropy encoding (raw dictionary compression only)
+    #[default]
     None,
     /// Huffman Order-1 with context (depends on previous symbol)
     HuffmanO1,
@@ -117,11 +119,6 @@ pub enum EntropyAlgorithm {
     Fse,
 }
 
-impl Default for EntropyAlgorithm {
-    fn default() -> Self {
-        Self::None
-    }
-}
 
 /// Configuration for DictZipBlobStore
 #[derive(Debug, Clone)]
@@ -228,7 +225,8 @@ impl DictZipConfig {
 
     /// Create configuration optimized for binary data compression
     pub fn binary_compression() -> Self {
-        let mut config = Self {
+        
+        Self {
             dict_builder_config: DictionaryBuilderConfig {
                 sample_sort_policy: crate::compression::dict_zip::SampleSortPolicy::SortRight, // Right sorting good for binary patterns
                 target_dict_size: 16 * 1024 * 1024, // 16MB
@@ -245,13 +243,13 @@ impl DictZipConfig {
             cache_size_bytes: 16 * 1024 * 1024, // 16MB cache
             min_compression_size: 128,
             ..Default::default()
-        };
-        config
+        }
     }
 
     /// Create configuration optimized for log file compression
     pub fn log_compression() -> Self {
-        let mut config = Self {
+        
+        Self {
             dict_builder_config: DictionaryBuilderConfig {
                 sample_sort_policy: crate::compression::dict_zip::SampleSortPolicy::SortLeft, // Left sorting good for log patterns
                 target_dict_size: 64 * 1024 * 1024, // 64MB
@@ -268,13 +266,13 @@ impl DictZipConfig {
             cache_size_bytes: 64 * 1024 * 1024, // 64MB cache
             min_compression_size: 16,
             ..Default::default()
-        };
-        config
+        }
     }
 
     /// Create configuration optimized for real-time compression
     pub fn realtime_compression() -> Self {
-        let mut config = Self {
+        
+        Self {
             dict_builder_config: DictionaryBuilderConfig {
                 target_dict_size: 8 * 1024 * 1024, // 8MB
                 max_dict_size: 10 * 1024 * 1024, // 10MB max
@@ -290,8 +288,7 @@ impl DictZipConfig {
             cache_size_bytes: 8 * 1024 * 1024, // 8MB cache
             min_compression_size: 256,
             ..Default::default()
-        };
-        config
+        }
     }
 
     /// Validate configuration parameters
@@ -556,12 +553,11 @@ impl DictZipBlobStoreBuilder {
         };
 
         // Handle external dictionary storage before creating compressor
-        if self.config.external_dictionary {
-            if let Some(dict_path) = &self.config.dict_path {
+        if self.config.external_dictionary
+            && let Some(dict_path) = &self.config.dict_path {
                 #[cfg(feature = "serde")]
                 dictionary.save_to_file(dict_path)?;
             }
-        }
 
         let dictionary_size = dictionary.size_in_bytes();
 
@@ -970,7 +966,7 @@ impl DictZipBlobStore {
     /// Try to retrieve from cache
     fn try_get_from_cache(&self, id: RecordId) -> Option<Vec<u8>> {
         if let Ok(cache) = self.cache.read() {
-            cache.get(&id).map(|v| v.clone())
+            cache.get(&id)
         } else {
             None
         }
@@ -1181,7 +1177,7 @@ impl BlobStore for DictZipBlobStore {
             // Note: compressor is Arc<PaZipCompressor>, so we need to create a mutable copy for decompression
             let mut compressor_copy = (*self.compressor).clone();
             compressor_copy.decompress(&dict_compressed, &mut decompressed)
-                .map_err(|e| ZiporaError::invalid_data(&format!("Decompression failed: {}", e)))?;
+                .map_err(|e| ZiporaError::invalid_data(format!("Decompression failed: {}", e)))?;
             decompressed
         } else {
             // Return uncompressed data directly
@@ -1211,7 +1207,7 @@ impl BlobStore for DictZipBlobStore {
             let mut dict_compressed = Vec::new();
             let mut compressor_copy = (*self.compressor).clone();
             let _compression_stats = compressor_copy.compress(data, &mut dict_compressed)
-                .map_err(|e| ZiporaError::invalid_data(&format!("Compression failed: {}", e)))?;
+                .map_err(|e| ZiporaError::invalid_data(format!("Compression failed: {}", e)))?;
 
             // Step 2: Apply entropy encoding (if configured)
             let (final_compressed, entropy_algorithm) = if self.config.entropy_algorithm != EntropyAlgorithm::None {
@@ -1228,7 +1224,7 @@ impl BlobStore for DictZipBlobStore {
                 (dict_compressed, EntropyAlgorithm::None)
             };
 
-            let compression_ratio = if final_compressed.len() > 0 {
+            let compression_ratio = if !final_compressed.is_empty() {
                 final_compressed.len() as f32 / original_size as f32
             } else {
                 1.0

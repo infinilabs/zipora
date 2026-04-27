@@ -56,6 +56,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Default)]
 pub enum EntropyAlgorithm {
     /// Huffman coding - classical entropy coding, good for simple distributions
     Huffman,
@@ -70,14 +71,10 @@ pub enum EntropyAlgorithm {
     /// Dictionary-based compression for repetitive data
     Dictionary,
     /// Automatic selection based on data characteristics
+    #[default]
     Auto,
 }
 
-impl Default for EntropyAlgorithm {
-    fn default() -> Self {
-        Self::Auto
-    }
-}
 
 impl EntropyAlgorithm {
     /// Get the name of the algorithm
@@ -154,7 +151,7 @@ impl EntropyAlgorithm {
             (e, s, _) if e < 4.0 && s > 1024 => Self::Fse,
             
             // Medium entropy, medium size - rANS is balanced
-            (e, s, _) if e >= 4.0 && e <= 6.0 && s > 256 => Self::Rans,
+            (e, s, _) if (4.0..=6.0).contains(&e) && s > 256 => Self::Rans,
             
             // High entropy or small data - Huffman is simple and effective
             _ => Self::Huffman,

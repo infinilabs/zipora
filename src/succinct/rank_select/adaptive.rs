@@ -340,7 +340,7 @@ impl AdaptiveRankSelect {
     
     /// Analyze run lengths to understand bit patterns
     fn analyze_run_lengths(bit_vector: &BitVector) -> RunLengthStats {
-        if bit_vector.len() == 0 {
+        if bit_vector.is_empty() {
             return RunLengthStats::default();
         }
         
@@ -393,7 +393,7 @@ impl AdaptiveRankSelect {
     
     /// Calculate pattern complexity score (0.0 = very regular, 1.0 = random)
     fn calculate_pattern_complexity(bit_vector: &BitVector, run_stats: &RunLengthStats) -> f64 {
-        if bit_vector.len() == 0 {
+        if bit_vector.is_empty() {
             return 0.0;
         }
         
@@ -444,13 +444,13 @@ impl AdaptiveRankSelect {
             }
         }
         
-        let num_windows = (bit_vector.len() + window_size - 1) / window_size;
+        let num_windows = bit_vector.len().div_ceil(window_size);
         if num_windows == 0 { 1.0 } else { clusters as f64 / num_windows as f64 }
     }
     
     /// Calculate Shannon entropy of bit distribution
     fn calculate_entropy(bit_vector: &BitVector) -> f64 {
-        if bit_vector.len() == 0 {
+        if bit_vector.is_empty() {
             return 0.0;
         }
         

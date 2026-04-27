@@ -382,7 +382,7 @@ impl SortableStrVec {
                 .collect();
 
             // Sort by slice comparison
-            sort_data.sort_unstable_by(|a, b| a.1.cmp(&b.1));
+            sort_data.sort_unstable_by(|a, b| a.1.cmp(b.1));
 
             // Update sorted indices
             for (i, (idx, _)) in sort_data.into_iter().enumerate() {
@@ -930,7 +930,7 @@ impl SortableStrVec {
         let block_size = self.config.cache_block_size;
 
         // First, binary search on block boundaries
-        let num_blocks = (n + block_size - 1) / block_size;
+        let num_blocks = n.div_ceil(block_size);
         let mut left_block = 0;
         let mut right_block = num_blocks;
 

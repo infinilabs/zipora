@@ -54,7 +54,7 @@ impl BitVector {
 
     /// Create a bit vector with the specified capacity (in bits)
     pub fn with_capacity(capacity: usize) -> Result<Self> {
-        let block_capacity = (capacity + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK;
+        let block_capacity = capacity.div_ceil(BITS_PER_BLOCK);
         Ok(Self {
             blocks: FastVec::with_capacity(block_capacity)?,
             len: 0,
@@ -69,7 +69,7 @@ impl BitVector {
         if !value {
             // Fast path: alloc_zeroed leverages kernel zero-page mapping.
             // For 1M bits this is ~1 µs vs ~30 µs for alloc+write_bytes.
-            let num_blocks = (size + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK;
+            let num_blocks = size.div_ceil(BITS_PER_BLOCK);
             let blocks = FastVec::with_capacity_zeroed(num_blocks)?;
             Ok(Self { blocks, len: size })
         } else {
@@ -103,7 +103,7 @@ impl BitVector {
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
     pub fn from_raw_bits(raw_bits: Vec<u64>, total_bits: usize) -> Result<Self> {
-        let required_blocks = (total_bits + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK;
+        let required_blocks = total_bits.div_ceil(BITS_PER_BLOCK);
 
         if raw_bits.len() < required_blocks {
             return Err(ZiporaError::invalid_data(format!(
@@ -161,7 +161,7 @@ impl BitVector {
     pub fn from_blocks(blocks: Vec<u64>, total_bits: usize) -> Self {
         let num_blocks = blocks.len();
         debug_assert!(
-            num_blocks >= (total_bits + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK,
+            num_blocks >= total_bits.div_ceil(BITS_PER_BLOCK),
             "blocks.len()={num_blocks} insufficient for {total_bits} bits"
         );
         Self {
@@ -322,7 +322,7 @@ impl BitVector {
     fn ensure_set1_slow_path(&mut self, i: usize) -> Result<()> {
         // Resize to include position i (sets all new bits to 0)
         let new_len = i + 1;
-        let new_block_count = (new_len + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK;
+        let new_block_count = new_len.div_ceil(BITS_PER_BLOCK);
 
         // Add new blocks initialized to 0
         while self.blocks.len() < new_block_count {
@@ -407,7 +407,7 @@ impl BitVector {
 
         let old_capacity = self.blocks.len() * BITS_PER_BLOCK;
         let new_len = i + 1;
-        let new_block_count = (new_len + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK;
+        let new_block_count = new_len.div_ceil(BITS_PER_BLOCK);
 
         // Add new blocks initialized to 0
         while self.blocks.len() < new_block_count {
@@ -487,7 +487,7 @@ impl BitVector {
     /// Resize the bit vector to the specified length
     pub fn resize(&mut self, new_len: usize, value: bool) -> Result<()> {
         if new_len > self.len {
-            let new_blocks_needed = (new_len + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK;
+            let new_blocks_needed = new_len.div_ceil(BITS_PER_BLOCK);
             let old_blocks = self.blocks.len();
             let fill: u64 = if value { !0u64 } else { 0u64 };
 
@@ -515,7 +515,7 @@ impl BitVector {
                 self.blocks[last] &= (1u64 << tail_bits) - 1;
             }
         } else if new_len < self.len {
-            let new_blocks = (new_len + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK;
+            let new_blocks = new_len.div_ceil(BITS_PER_BLOCK);
             // FastVec::resize handles shrinking (drops excess elements)
             self.blocks.resize(new_blocks, 0)?;
             self.len = new_len;
@@ -691,7 +691,7 @@ impl BitVector {
     /// Reserve space for at least `additional` more bits
     pub fn reserve(&mut self, additional: usize) -> Result<()> {
         let new_len = self.len + additional;
-        let new_block_count = (new_len + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK;
+        let new_block_count = new_len.div_ceil(BITS_PER_BLOCK);
         let additional_blocks = new_block_count.saturating_sub(self.blocks.len());
 
         if additional_blocks > 0 {

@@ -95,7 +95,7 @@ impl HybridPostingList {
 
     #[inline]
     pub fn bits_per_element(&self) -> f64 {
-        if self.len() == 0 { return 0.0; }
+        if self.is_empty() { return 0.0; }
         (self.size_bytes() * 8) as f64 / self.len() as f64
     }
 

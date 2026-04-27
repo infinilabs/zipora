@@ -37,7 +37,7 @@ fn cast_aligned_ptr<T>(ptr: *mut u8) -> *mut T {
 #[inline]
 const fn is_simd_safe<T>() -> bool {
     // Use const traits when available, for now rely on Copy bound in caller
-    mem::needs_drop::<T>() == false
+    !mem::needs_drop::<T>()
 }
 
 /// Check if an operation size is large enough to benefit from SIMD
@@ -123,7 +123,7 @@ unsafe fn slice_as_bytes<T>(slice: &[T]) -> &[u8] {
         unsafe {
             slice::from_raw_parts(
                 slice.as_ptr() as *const u8,
-                slice.len() * mem::size_of::<T>(),
+                std::mem::size_of_val(slice),
             )
         }
     }
@@ -143,7 +143,7 @@ unsafe fn slice_as_bytes_mut<T>(slice: &mut [T]) -> &mut [u8] {
         unsafe {
             slice::from_raw_parts_mut(
                 slice.as_mut_ptr() as *mut u8,
-                slice.len() * mem::size_of::<T>(),
+                std::mem::size_of_val(slice),
             )
         }
     }
@@ -921,7 +921,7 @@ impl<T> FastVec<T> {
             let selector = AdaptiveSimdSelector::global();
             let _ = selector.select_optimal_impl(
                 Operation::Copy,
-                src.len() * mem::size_of::<T>(),
+                std::mem::size_of_val(src),
                 None, // No density for copy operations
             );
 
@@ -990,7 +990,7 @@ impl<T> FastVec<T> {
             let selector = AdaptiveSimdSelector::global();
             let _ = selector.select_optimal_impl(
                 Operation::Copy,
-                src.len() * mem::size_of::<T>(),
+                std::mem::size_of_val(src),
                 None, // No density for extend operations
             );
 
@@ -1048,8 +1048,8 @@ impl<T> Default for FastVec<T> {
 impl<T> Drop for FastVec<T> {
     fn drop(&mut self) {
         self.clear();
-        if let Some(ptr) = self.ptr {
-            if self.cap > 0 {
+        if let Some(ptr) = self.ptr
+            && self.cap > 0 {
                 // SAFETY: ptr and cap are valid from allocation, layout matches allocation layout
                 unsafe {
                     // SAFETY: Layout::array::<T>() cannot fail here because:
@@ -1061,7 +1061,6 @@ impl<T> Drop for FastVec<T> {
                     alloc::dealloc(ptr.as_ptr() as *mut u8, layout);
                 }
             }
-        }
     }
 }
 
@@ -1140,7 +1139,7 @@ impl<T: Clone> Clone for FastVec<T> {
 
         // Clone as many items as we have capacity for
         for item in self.as_slice() {
-            if let Err(_) = new_vec.push(item.clone()) {
+            if new_vec.push(item.clone()).is_err() {
                 // Stop if we run out of capacity
                 break;
             }

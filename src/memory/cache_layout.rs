@@ -485,7 +485,7 @@ fn detect_x86_cache_hierarchy() -> CacheHierarchy {
     let mut hierarchy = CacheHierarchy::default();
 
     // SAFETY: __cpuid is safe to call on x86_64 with valid leaf values
-    unsafe {
+    {
         // Check if CPUID is available (for x86_64 we can assume it's available)
         {
             // Get cache information using CPUID leaf 4
@@ -634,7 +634,7 @@ impl<T> CacheAlignedVec<T> {
         // Prefetch next cache line if sequential access
         if matches!(self.access_pattern, AccessPattern::Sequential) {
             let len = self.data.len();
-            if len > 0 && len % 8 == 0 { // Every 8 elements (cache line worth)
+            if len > 0 && len.is_multiple_of(8) { // Every 8 elements (cache line worth)
                 // SAFETY: data.as_ptr() is valid for len elements of T, converting to bytes
                 let byte_slice = unsafe {
                     std::slice::from_raw_parts(
@@ -673,7 +673,7 @@ impl<T> CacheAlignedVec<T> {
                 let byte_slice = unsafe {
                     std::slice::from_raw_parts(
                         slice.as_ptr() as *const u8,
-                        slice.len() * mem::size_of::<T>()
+                        std::mem::size_of_val(slice)
                     )
                 };
                 self.allocator.prefetch_range(byte_slice);

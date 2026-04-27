@@ -81,7 +81,7 @@ impl BidirectionalPipe {
 
         // Spawn the process
         let mut child = cmd.spawn()
-            .map_err(|e| ZiporaError::invalid_data(&format!("Failed to spawn process: {}", e)))?;
+            .map_err(|e| ZiporaError::invalid_data(format!("Failed to spawn process: {}", e)))?;
 
         // Extract pipes
         let stdin = child.stdin.take()
@@ -105,11 +105,11 @@ impl BidirectionalPipe {
         let mut stdin_guard = self.stdin_writer.lock().await;
         if let Some(ref mut stdin) = *stdin_guard {
             stdin.write_all(line.as_bytes()).await
-                .map_err(|e| ZiporaError::invalid_data(&format!("Failed to write to stdin: {}", e)))?;
+                .map_err(|e| ZiporaError::invalid_data(format!("Failed to write to stdin: {}", e)))?;
             stdin.write_all(b"\n").await
-                .map_err(|e| ZiporaError::invalid_data(&format!("Failed to write newline: {}", e)))?;
+                .map_err(|e| ZiporaError::invalid_data(format!("Failed to write newline: {}", e)))?;
             stdin.flush().await
-                .map_err(|e| ZiporaError::invalid_data(&format!("Failed to flush stdin: {}", e)))?;
+                .map_err(|e| ZiporaError::invalid_data(format!("Failed to flush stdin: {}", e)))?;
             Ok(())
         } else {
             Err(ZiporaError::invalid_data("Stdin pipe is not available"))
@@ -132,7 +132,7 @@ impl BidirectionalPipe {
                     }
                     Ok(Some(line))
                 }
-                Err(e) => Err(ZiporaError::invalid_data(&format!("Failed to read stdout: {}", e))),
+                Err(e) => Err(ZiporaError::invalid_data(format!("Failed to read stdout: {}", e))),
             }
         } else {
             Err(ZiporaError::invalid_data("Stdout pipe is not available"))
@@ -155,7 +155,7 @@ impl BidirectionalPipe {
                     }
                     Ok(Some(line))
                 }
-                Err(e) => Err(ZiporaError::invalid_data(&format!("Failed to read stderr: {}", e))),
+                Err(e) => Err(ZiporaError::invalid_data(format!("Failed to read stderr: {}", e))),
             }
         } else {
             Err(ZiporaError::invalid_data("Stderr pipe is not available"))
@@ -167,7 +167,7 @@ impl BidirectionalPipe {
         let mut process_guard = self.process.lock().await;
         if let Some(mut child) = process_guard.take() {
             let status = child.wait().await
-                .map_err(|e| ZiporaError::invalid_data(&format!("Failed to wait for process: {}", e)))?;
+                .map_err(|e| ZiporaError::invalid_data(format!("Failed to wait for process: {}", e)))?;
             Ok(status.code().unwrap_or(-1))
         } else {
             Err(ZiporaError::invalid_data("Process is not available"))
@@ -179,7 +179,7 @@ impl BidirectionalPipe {
         let mut process_guard = self.process.lock().await;
         if let Some(ref mut child) = *process_guard {
             child.kill().await
-                .map_err(|e| ZiporaError::invalid_data(&format!("Failed to kill process: {}", e)))?;
+                .map_err(|e| ZiporaError::invalid_data(format!("Failed to kill process: {}", e)))?;
         }
         Ok(())
     }
@@ -224,7 +224,7 @@ impl ProcessExecutor {
 
         // Execute the command
         let output = cmd.output()
-            .map_err(|e| ZiporaError::invalid_data(&format!("Failed to execute command: {}", e)))?;
+            .map_err(|e| ZiporaError::invalid_data(format!("Failed to execute command: {}", e)))?;
 
         let execution_time_ms = start_time.elapsed().as_millis() as u64;
 
@@ -260,10 +260,10 @@ impl ProcessExecutor {
             let timeout_duration = std::time::Duration::from_millis(timeout_ms);
             tokio::time::timeout(timeout_duration, cmd.output()).await
                 .map_err(|_| ZiporaError::invalid_data("Process execution timed out"))?
-                .map_err(|e| ZiporaError::invalid_data(&format!("Failed to execute command: {}", e)))?
+                .map_err(|e| ZiporaError::invalid_data(format!("Failed to execute command: {}", e)))?
         } else {
             cmd.output().await
-                .map_err(|e| ZiporaError::invalid_data(&format!("Failed to execute command: {}", e)))?
+                .map_err(|e| ZiporaError::invalid_data(format!("Failed to execute command: {}", e)))?
         };
 
         let execution_time_ms = start_time.elapsed().as_millis() as u64;
@@ -355,7 +355,7 @@ impl ProcessPool {
 
         // Spawn the process
         let child = cmd.spawn()
-            .map_err(|e| ZiporaError::invalid_data(&format!("Failed to spawn process: {}", e)))?;
+            .map_err(|e| ZiporaError::invalid_data(format!("Failed to spawn process: {}", e)))?;
 
         // Generate unique ID
         let mut id_guard = self.next_id.lock().await;
@@ -379,7 +379,7 @@ impl ProcessPool {
 
         let mut child = process_arc.lock().await;
         let status = child.wait().await
-            .map_err(|e| ZiporaError::invalid_data(&format!("Failed to wait for process: {}", e)))?;
+            .map_err(|e| ZiporaError::invalid_data(format!("Failed to wait for process: {}", e)))?;
 
         // Remove from active processes
         let mut processes = self.active_processes.write().await;
@@ -398,7 +398,7 @@ impl ProcessPool {
 
         let mut child = process_arc.lock().await;
         child.kill().await
-            .map_err(|e| ZiporaError::invalid_data(&format!("Failed to kill process: {}", e)))?;
+            .map_err(|e| ZiporaError::invalid_data(format!("Failed to kill process: {}", e)))?;
 
         // Remove from active processes
         let mut processes = self.active_processes.write().await;

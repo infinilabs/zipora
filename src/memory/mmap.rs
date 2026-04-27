@@ -84,9 +84,9 @@ impl MemoryMappedAllocator {
         let actual_size = (size + page_size - 1) & !(page_size - 1);
 
         // Try to get from cache first
-        if let Ok(mut cache) = self.region_cache.try_lock() {
-            if let Some(regions) = cache.get_mut(&actual_size) {
-                if let Some(ptr) = regions.pop() {
+        if let Ok(mut cache) = self.region_cache.try_lock()
+            && let Some(regions) = cache.get_mut(&actual_size)
+                && let Some(ptr) = regions.pop() {
                     self.cache_hits.fetch_add(1, Ordering::Relaxed);
                     self.total_allocated
                         .fetch_add(size as u64, Ordering::Relaxed);
@@ -98,8 +98,6 @@ impl MemoryMappedAllocator {
                         actual_size,
                     });
                 }
-            }
-        }
 
         // Cache miss, allocate new region
         self.cache_misses.fetch_add(1, Ordering::Relaxed);

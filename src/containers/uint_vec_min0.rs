@@ -133,7 +133,7 @@ impl UintVecMin0 {
     #[inline]
     pub fn compute_mem_size(bits: usize, num: usize) -> usize {
         assert!(bits <= 64, "bits must be <= 64");
-        let using_size = (bits * num + 7) / 8;
+        let using_size = (bits * num).div_ceil(8);
         let touch_size = using_size + std::mem::size_of::<u64>() - 1;
         (touch_size + 15) & !15 // Align to 16 bytes
     }

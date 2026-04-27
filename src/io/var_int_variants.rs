@@ -539,7 +539,7 @@ impl VarIntEncoder {
                 let bytes_needed = if value == 0 {
                     1
                 } else {
-                    ((64 - value.leading_zeros() + 7) / 8) as usize
+                    (64 - value.leading_zeros()).div_ceil(8) as usize
                 };
                 
                 // Encode bytes needed in selector (2 bits per value)
@@ -604,7 +604,7 @@ impl VarIntEncoder {
     fn encode_prefix_free_u64(&self, value: u64) -> Result<Vec<u8>> {
         // Use length prefix followed by value
         let value_bytes = value.to_le_bytes();
-        let significant_bytes = ((64 - value.leading_zeros() + 7) / 8) as usize;
+        let significant_bytes = (64 - value.leading_zeros()).div_ceil(8) as usize;
         let significant_bytes = if significant_bytes == 0 { 1 } else { significant_bytes };
         
         let mut result = Vec::new();

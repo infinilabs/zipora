@@ -267,7 +267,7 @@ impl FixedCapacityMemoryPool {
         }
 
         if size > self.config.max_block_size {
-            return Err(ZiporaError::invalid_data(&format!(
+            return Err(ZiporaError::invalid_data(format!(
                 "Allocation size {} exceeds maximum {}", size, self.config.max_block_size
             )));
         }
@@ -374,7 +374,7 @@ impl FixedCapacityMemoryPool {
     fn allocate_backing_memory(&mut self) -> Result<()> {
         let total_size = self.config.total_blocks * self.config.max_block_size;
         let layout = Layout::from_size_align(total_size, self.config.alignment)
-            .map_err(|e| ZiporaError::invalid_data(&format!("Invalid layout: {}", e)))?;
+            .map_err(|e| ZiporaError::invalid_data(format!("Invalid layout: {}", e)))?;
 
         // SAFETY: layout valid (size > 0, align power of 2), ptr null-checked below
         let memory = NonNull::new(unsafe { alloc(layout) })
@@ -396,7 +396,7 @@ impl FixedCapacityMemoryPool {
     fn allocate_backing_memory_internal(&self) -> Result<()> {
         let total_size = self.config.total_blocks * self.config.max_block_size;
         let layout = Layout::from_size_align(total_size, self.config.alignment)
-            .map_err(|e| ZiporaError::invalid_data(&format!("Invalid layout: {}", e)))?;
+            .map_err(|e| ZiporaError::invalid_data(format!("Invalid layout: {}", e)))?;
 
         // SAFETY: layout valid (size > 0, align power of 2), ptr null-checked below
         let memory = NonNull::new(unsafe { alloc(layout) })

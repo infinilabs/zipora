@@ -312,8 +312,8 @@ impl SimdHuffmanEncoder {
         let mut symbol_lengths = [0u8; 256];
         
         for symbol in 0u8..=255 {
-            if let Some(code) = self.base_encoder.tree().get_code(symbol) {
-                if code.len() <= 32 {
+            if let Some(code) = self.base_encoder.tree().get_code(symbol)
+                && code.len() <= 32 {
                     // Pack bits into u32 (simple approach for now)
                     let mut packed_code = 0u32;
                     
@@ -326,7 +326,6 @@ impl SimdHuffmanEncoder {
                     symbol_codes[symbol as usize] = packed_code;
                     symbol_lengths[symbol as usize] = code.len() as u8;
                 }
-            }
         }
 
         // Process data in batches of 32 bytes (AVX2 register size)
@@ -362,7 +361,7 @@ impl SimdHuffmanEncoder {
                     if length > 0 {
                         // Use BMI2 BZHI to extract only the needed bits
                         // SAFETY: bmi2 guaranteed by #[target_feature(enable = "avx2,bmi2")], operates on u32 with valid index
-                        let masked_code = unsafe { _bzhi_u32(code, length as u32) };
+                        let masked_code = _bzhi_u32(code, length as u32);
                         bit_buffer.append_bits(masked_code as u64, length)?;
                     } else {
                         return Err(ZiporaError::invalid_data(format!(
@@ -381,7 +380,7 @@ impl SimdHuffmanEncoder {
             
             if length > 0 {
                 // SAFETY: bmi2 guaranteed by #[target_feature(enable = "avx2,bmi2")], operates on u32 with valid index
-                let masked_code = unsafe { _bzhi_u32(code, length as u32) };
+                let masked_code = _bzhi_u32(code, length as u32);
                 bit_buffer.append_bits(masked_code as u64, length)?;
             } else {
                 return Err(ZiporaError::invalid_data(format!(
@@ -491,7 +490,7 @@ impl SimdHuffmanEncoder {
 
                     // Use BZHI to extract only needed bits
                     // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 with valid index
-                    let final_code = unsafe { _bzhi_u64(packed_code, length as u32) };
+                    let final_code = _bzhi_u64(packed_code, length as u32);
                     bit_buffer.append_bits(final_code, length)?;
                 } else {
                     return Err(ZiporaError::invalid_data(
@@ -534,7 +533,7 @@ struct BitBuffer {
 
 impl BitBuffer {
     fn with_capacity(estimated_bits: usize) -> Self {
-        let estimated_bytes = (estimated_bits + 7) / 8;
+        let estimated_bytes = estimated_bits.div_ceil(8);
         Self {
             bytes: Vec::with_capacity(estimated_bytes),
             current_byte: 0,

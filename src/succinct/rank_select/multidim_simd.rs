@@ -275,7 +275,7 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
                     let next_pos = positions[dim + 1];
                     if next_pos <= self.total_bits {
                         // SAFETY: Prefetch intrinsic is safe even with any pointer value (CPU handles gracefully)
-                        unsafe {
+                        {
                             _mm_prefetch::<_MM_HINT_T0>(
                                 &self.dimensions[dim + 1] as *const _ as *const i8
                             );

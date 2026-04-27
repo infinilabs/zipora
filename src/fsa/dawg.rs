@@ -390,13 +390,12 @@ impl NestedTrieDawg {
 
         let mut new_id = 0u32;
         for old_id in 0..self.states.len() as u32 {
-            if let Some(&mapped_id) = state_mapping.get(&old_id) {
-                if mapped_id == old_id {
+            if let Some(&mapped_id) = state_mapping.get(&old_id)
+                && mapped_id == old_id {
                     compaction_mapping.insert(old_id, new_id);
                     new_states.push(self.states[old_id as usize]);
                     new_id += 1;
                 }
-            }
         }
 
         let old_transitions = std::mem::replace(
@@ -528,11 +527,11 @@ impl FiniteStateAutomaton for NestedTrieDawg {
     }
 
     fn transition(&self, state: StateId, symbol: u8) -> Option<StateId> {
-        self.transitions.get_transition(state as u32, symbol).map(|s| s as StateId)
+        self.transitions.get_transition(state, symbol).map(|s| s as StateId)
     }
 
     fn transitions(&self, state: StateId) -> Vec<(u8, StateId)> {
-        self.transitions.get_outgoing_transitions(state as u32)
+        self.transitions.get_outgoing_transitions(state)
             .into_iter()
             .map(|(symbol, target)| (symbol, target as StateId))
             .collect()

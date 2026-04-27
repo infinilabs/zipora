@@ -37,8 +37,10 @@ use std::time::{Duration, Instant};
 /// Based on the reference implementation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Default)]
 pub enum SampleSortPolicy {
     /// No sorting - samples used as-is
+    #[default]
     SortNone,
     /// Sort samples by left (beginning) content, remove duplicates
     SortLeft,
@@ -48,19 +50,16 @@ pub enum SampleSortPolicy {
     SortBoth,
 }
 
-impl Default for SampleSortPolicy {
-    fn default() -> Self {
-        SampleSortPolicy::SortNone
-    }
-}
 
 /// Building strategy for dictionary construction
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Default)]
 pub enum BuildStrategy {
     /// Optimize for maximum compression ratio
     MaxCompression,
     /// Balance compression and speed
+    #[default]
     Balanced,
     /// Optimize for maximum speed
     MaxSpeed,
@@ -70,11 +69,6 @@ pub enum BuildStrategy {
     Custom,
 }
 
-impl Default for BuildStrategy {
-    fn default() -> Self {
-        BuildStrategy::Balanced
-    }
-}
 
 /// Configuration for dictionary builder
 #[derive(Debug, Clone)]
@@ -972,8 +966,8 @@ impl DictionaryBuilder {
             max_bfs_depth: self.config.max_bfs_depth,
             max_cache_states: self.calculate_cache_states(analysis),
             external_mode: false, // Internal mode for building
-            use_memory_pool: if self.config.max_dict_size <= 1024 { false } else { true }, // Disable pool for tiny dicts
-            enable_simd: if self.config.max_dict_size <= 1024 { false } else { true }, // Disable SIMD for tiny dicts
+            use_memory_pool: self.config.max_dict_size > 1024, // Disable pool for tiny dicts
+            enable_simd: self.config.max_dict_size > 1024, // Disable SIMD for tiny dicts
             sample_ratio: 1.0, // Already sampled
             min_pattern_length: self.config.min_pattern_length,
             max_pattern_length: self.config.max_pattern_length,
@@ -1041,7 +1035,7 @@ impl DictionaryBuilder {
         let dict_text_size = dictionary.dictionary_size();
         if dict_text_size > self.config.max_dict_size {
             return Err(ZiporaError::invalid_data(
-                &format!("Dictionary size {} exceeds maximum {}", dict_text_size, self.config.max_dict_size)
+                format!("Dictionary size {} exceeds maximum {}", dict_text_size, self.config.max_dict_size)
             ));
         }
 
@@ -1051,8 +1045,8 @@ impl DictionaryBuilder {
 
     /// Report progress to callback if set
     fn report_progress(&self, phase: BuildPhase, phase_progress: f64, overall_progress: f64, message: &str) -> Result<()> {
-        if let Some(ref callback) = self.progress_callback {
-            if self.config.enable_progress {
+        if let Some(ref callback) = self.progress_callback
+            && self.config.enable_progress {
                 let progress = BuildProgress {
                     phase,
                     phase_progress,
@@ -1065,7 +1059,6 @@ impl DictionaryBuilder {
                 };
                 callback(&progress);
             }
-        }
         Ok(())
     }
 

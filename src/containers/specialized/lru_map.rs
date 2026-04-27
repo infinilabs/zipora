@@ -737,21 +737,21 @@ where
     /// Allocate a node from the free list
     fn allocate_node(&self) -> Result<u32> {
         let mut free_nodes = self.free_nodes.lock().map_err(|_| ZiporaError::out_of_memory(0))?;
-        free_nodes.pop().ok_or_else(|| ZiporaError::out_of_memory(0).into())
+        free_nodes.pop().ok_or_else(|| ZiporaError::out_of_memory(0))
     }
     
     /// Evict the least recently used entry
     fn evict_lru(&self) -> Result<()> {
         let lru_node_idx = self.lru_list.get_lru_node();
         if lru_node_idx == INVALID_NODE {
-            return Err(ZiporaError::out_of_memory(0).into());
+            return Err(ZiporaError::out_of_memory(0));
         }
         
         let mut nodes = self.nodes.write().map_err(|_| ZiporaError::out_of_memory(0))?;
         
         // Check validity and get key/value for callback before mutations
         if !(lru_node_idx as usize) < nodes.len() || !nodes[lru_node_idx as usize].is_valid {
-            return Err(ZiporaError::out_of_memory(0).into());
+            return Err(ZiporaError::out_of_memory(0));
         }
         
         let key = nodes[lru_node_idx as usize].key.clone();

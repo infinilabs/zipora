@@ -668,7 +668,7 @@ impl ConcurrentCsppTrie {
     /// `capacity` is the maximum number of PatriciaNode slots (4 bytes each).
     /// For `n` keys of average length `L`, a good estimate is `n * (L + 20)`.
     pub fn with_capacity(valsize: usize, capacity: usize) -> Self {
-        let val_slots = (valsize + 3) / 4;
+        let val_slots = valsize.div_ceil(4);
         let root_slots = 2 + 256 + val_slots;
         assert!(capacity >= root_slots, "capacity too small for root node");
 
@@ -759,7 +759,7 @@ impl ConcurrentCsppTrie {
                 let zpath = view.zpath_slice();
                 let remaining = key.len() - pos;
                 let match_len = std::cmp::min(zlen, remaining);
-                if &key[pos..pos + match_len] != &zpath[..match_len] {
+                if key[pos..pos + match_len] != zpath[..match_len] {
                     return None;
                 }
                 pos += match_len;
@@ -822,7 +822,7 @@ impl ConcurrentCsppTrie {
     }
 
     fn alloc_node(&self, byte_size: usize) -> u32 {
-        let slots = (byte_size + 3) / 4;
+        let slots = byte_size.div_ceil(4);
         let tla_cell = self.get_tla();
         let mut tla = tla_cell.borrow_mut();
 
@@ -1026,7 +1026,7 @@ impl ConcurrentCsppTrie {
                 *bmp.add(label as usize / 8) |= 1 << (label % 8);
             }
             // Compute rank prefix at slot 1 bytes 0-3
-            let rank = p.add(1 * 4);
+            let rank = p.add(4);
             let mut cumulative = 0u32;
             for q in 0..4 {
                 *rank.add(q) = cumulative as u8;
@@ -1115,7 +1115,7 @@ impl ConcurrentCsppTrie {
         unsafe {
             let base = self.inner.pool.data.as_ptr() as *mut u8;
             let p = base.add(node as usize * 4);
-            let rank_dst = p.add(1 * 4);
+            let rank_dst = p.add(4);
             std::ptr::copy_nonoverlapping(rank_prefix.as_ptr(), rank_dst, 4);
             let bmp_dst = p.add(2 * 4);
             std::ptr::copy_nonoverlapping(bitmap.as_ptr(), bmp_dst, 32);
@@ -1429,8 +1429,8 @@ impl ConcurrentCsppTrie {
     /// Realloc a node (for MarkFinalState on non-fast nodes).
     /// Allocates new, copies old, returns new slot. Old node is NOT freed here.
     fn realloc_node_concurrent(&self, old_slot: u32, old_size: usize, new_size: usize) -> u32 {
-        let old_slots = (old_size + 3) / 4;
-        let new_slots = (new_size + 3) / 4;
+        let old_slots = old_size.div_ceil(4);
+        let new_slots = new_size.div_ceil(4);
         if old_slots == new_slots {
             return old_slot;
         }
@@ -1754,8 +1754,8 @@ impl ConcurrentCsppTrie {
                 let old_zlen = old_meta.n_zpath_len as usize;
                 let old_is_final = old_meta.flags & FLAG_IS_FINAL != 0;
                 let old_node_slots = (old_skip + old_n)
-                    + ((old_zlen + 3) / 4)
-                    + if old_is_final { (self.valsize + 3) / 4 } else { 0 };
+                    + old_zlen.div_ceil(4)
+                    + if old_is_final { self.valsize.div_ceil(4) } else { 0 };
 
                 self.free_node_deferred(guard, old_slot, old_node_slots);
                 true
@@ -1777,7 +1777,7 @@ impl ConcurrentCsppTrie {
         let skip = SKIP_SLOTS[cnt as usize] as usize;
         let zlen = meta.n_zpath_len as usize;
         let is_final = meta.flags & FLAG_IS_FINAL != 0;
-        (skip + n_children) + ((zlen + 3) / 4) + if is_final { (self.valsize + 3) / 4 } else { 0 }
+        (skip + n_children) + zlen.div_ceil(4) + if is_final { self.valsize.div_ceil(4) } else { 0 }
     }
 
     /// Free a single unpublished node to thread-local freelist.

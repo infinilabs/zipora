@@ -115,7 +115,7 @@ impl ZReorderMap {
         let mmap = unsafe {
             memmap2::MmapOptions::new()
                 .map(&file)
-                .map_err(|e| ZiporaError::Io(e))?
+                .map_err(ZiporaError::Io)?
         };
 
         // Validate minimum file size
@@ -374,13 +374,12 @@ impl Iterator for ZReorderMap {
         self.seq_length -= 1;
 
         // Read next entry if sequence exhausted and more elements remain
-        if self.seq_length == 0 && !self.eof() {
-            if let Err(_) = self.read_entry() {
+        if self.seq_length == 0 && !self.eof()
+            && self.read_entry().is_err() {
                 // Error reading next entry - mark as EOF
                 self.index = self.size;
                 return Some(value);
             }
-        }
 
         Some(value)
     }

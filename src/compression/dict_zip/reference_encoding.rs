@@ -127,21 +127,21 @@ pub fn get_back_ref_encoding_meta(distance: usize, length: usize) -> DzEncodingM
         };
     }
     
-    if distance >= 2 && distance <= 9 && length <= 5 {
+    if (2..=9).contains(&distance) && length <= 5 {
         return DzEncodingMeta {
             dz_type: DzType::NearShort,
             len: 1,
         };
     }
     
-    if distance >= 2 && distance <= 257 && length <= 33 {
+    if (2..=257).contains(&distance) && length <= 33 {
         return DzEncodingMeta {
             dz_type: DzType::Far1Short,
             len: 2,
         };
     }
     
-    if distance >= 258 && distance <= 258 + 65535 && length <= 33 {
+    if (258..=258 + 65535).contains(&distance) && length <= 33 {
         return DzEncodingMeta {
             dz_type: DzType::Far2Short,
             len: 3,
@@ -236,7 +236,7 @@ impl<W: Write> ReferenceEncoder<W> {
     /// dio << byte_t(byte_t(DzType::RLE) | ((localmatchLen - 2) << 3));
     /// ```
     pub fn encode_rle(&mut self, length: usize) -> Result<()> {
-        debug_assert!(length >= 2 && length <= 33);
+        debug_assert!((2..=33).contains(&length));
         let encoded = DzType::RLE.as_u8() | (((length - 2) << 3) as u8);
         self.writer.write_all(&[encoded])?;
         Ok(())
@@ -252,8 +252,8 @@ impl<W: Write> ReferenceEncoder<W> {
     /// );
     /// ```
     pub fn encode_near_short(&mut self, distance: usize, length: usize) -> Result<()> {
-        debug_assert!(distance >= 2 && distance <= 9);
-        debug_assert!(length >= 2 && length <= 5);
+        debug_assert!((2..=9).contains(&distance));
+        debug_assert!((2..=5).contains(&length));
         let encoded = DzType::NearShort.as_u8()
             | (((length - 2) << 3) as u8)
             | (((distance - 2) << 5) as u8);
@@ -269,8 +269,8 @@ impl<W: Write> ReferenceEncoder<W> {
     /// dio << byte_t(j - localmatchPos - 2);
     /// ```
     pub fn encode_far1_short(&mut self, distance: usize, length: usize) -> Result<()> {
-        debug_assert!(distance >= 2 && distance <= 257);
-        debug_assert!(length >= 2 && length <= 33);
+        debug_assert!((2..=257).contains(&distance));
+        debug_assert!((2..=33).contains(&length));
         let encoded = DzType::Far1Short.as_u8() | (((length - 2) << 3) as u8);
         self.writer.write_all(&[encoded])?;
         self.writer.write_all(&[(distance - 2) as u8])?;
@@ -285,8 +285,8 @@ impl<W: Write> ReferenceEncoder<W> {
     /// dio << uint16_t(j - localmatchPos - 258);
     /// ```
     pub fn encode_far2_short(&mut self, distance: usize, length: usize) -> Result<()> {
-        debug_assert!(distance >= 258 && distance <= 258 + 65535);
-        debug_assert!(length >= 2 && length <= 33);
+        debug_assert!((258..=258 + 65535).contains(&distance));
+        debug_assert!((2..=33).contains(&length));
         let encoded = DzType::Far2Short.as_u8() | (((length - 2) << 3) as u8);
         self.writer.write_all(&[encoded])?;
         write_uint_bytes(&mut self.writer, (distance - 258) as u32, 2)?;
@@ -625,8 +625,8 @@ fn compress_record_with_hash_table<W: Write>(
         let mut best_cost = i32::MAX;
         
         // Step 1: Try to find local match using hash table
-        if let Some((distance, length)) = hash_table.find_match(input_data, pos, 16777215) {
-            if length >= 2 {
+        if let Some((distance, length)) = hash_table.find_match(input_data, pos, 16777215)
+            && length >= 2 {
                 let meta = get_back_ref_encoding_meta(distance, length);
                 let cost = meta.len as i32;
                 let benefit = (length as i32 * 8) - (cost * 8); // 8 bits per byte saved vs cost
@@ -636,12 +636,11 @@ fn compress_record_with_hash_table<W: Write>(
                     best_cost = benefit;
                 }
             }
-        }
         
         // Step 2: Try global dictionary match if available
-        if let Some(dict_data) = global_dictionary {
-            if let Some((dict_offset, length)) = find_global_match(input_data, pos, dict_data) {
-                if length >= 6 { // MIN_GLOBAL_LENGTH
+        if let Some(dict_data) = global_dictionary
+            && let Some((dict_offset, length)) = find_global_match(input_data, pos, dict_data)
+                && length >= 6 { // MIN_GLOBAL_LENGTH
                     let cost = if length <= g_max_short_len { 3 } else { 6 }; // Based on reference logic
                     let benefit = (length as i32 * 8) - (cost * 8);
                     
@@ -650,12 +649,10 @@ fn compress_record_with_hash_table<W: Write>(
                         best_cost = benefit;
                     }
                 }
-            }
-        }
         
         // Step 3: Decide whether to use match or continue literal
-        if let Some((distance_or_offset, length, dz_type)) = best_match {
-            if best_cost > 0 { // Only use match if beneficial
+        if let Some((distance_or_offset, length, dz_type)) = best_match
+            && best_cost > 0 { // Only use match if beneficial
                 // Flush any pending literals first
                 if literal_len > 0 {
                     encoder.encode_literal(&input_data[literal_start..literal_start + literal_len])?;
@@ -709,7 +706,6 @@ fn compress_record_with_hash_table<W: Write>(
                 pos += length;
                 continue;
             }
-        }
         
         // No beneficial match found, add to literal
         if literal_len == 0 {
@@ -756,8 +752,8 @@ fn compress_record_with_suffix_array<W: Write>(
         let mut best_cost = i32::MAX;
         
         // Step 1: Try to find local match using suffix array binary search
-        if let Some((distance, length)) = find_suffix_array_match(input_data, pos, &suffix_array, 30) {
-            if length >= 2 {
+        if let Some((distance, length)) = find_suffix_array_match(input_data, pos, &suffix_array, 30)
+            && length >= 2 {
                 let meta = get_back_ref_encoding_meta(distance, length);
                 let cost = meta.len as i32;
                 let benefit = (length as i32 * 8) - (cost * 8); // 8 bits per byte saved vs cost
@@ -767,12 +763,11 @@ fn compress_record_with_suffix_array<W: Write>(
                     best_cost = benefit;
                 }
             }
-        }
         
         // Step 2: Try global dictionary match if available  
-        if let Some(dict_data) = global_dictionary {
-            if let Some((dict_offset, length)) = find_global_match(input_data, pos, dict_data) {
-                if length >= 6 { // MIN_GLOBAL_LENGTH
+        if let Some(dict_data) = global_dictionary
+            && let Some((dict_offset, length)) = find_global_match(input_data, pos, dict_data)
+                && length >= 6 { // MIN_GLOBAL_LENGTH
                     let cost = if length <= g_max_short_len { 3 } else { 6 }; // Based on reference logic
                     let benefit = (length as i32 * 8) - (cost * 8);
                     
@@ -781,12 +776,10 @@ fn compress_record_with_suffix_array<W: Write>(
                         best_cost = benefit;
                     }
                 }
-            }
-        }
         
         // Step 3: Decide whether to use match or continue literal
-        if let Some((distance_or_offset, length, dz_type)) = best_match {
-            if best_cost > 0 { // Only use match if beneficial
+        if let Some((distance_or_offset, length, dz_type)) = best_match
+            && best_cost > 0 { // Only use match if beneficial
                 // Flush any pending literals first
                 if literal_len > 0 {
                     encoder.encode_literal(&input_data[literal_start..literal_start + literal_len])?;
@@ -833,7 +826,6 @@ fn compress_record_with_suffix_array<W: Write>(
                 pos += length;
                 continue;
             }
-        }
         
         // No beneficial match found, add to literal
         if literal_len == 0 {
@@ -946,11 +938,10 @@ fn find_suffix_array_match(
         let distance = pos - suffix_pos;
         if distance > 0 && distance < (1 << 24) {
             let length = find_match_length(data, suffix_pos, pos);
-            if length >= 2 {
-                if best_match.is_none() || length > best_match.expect("best_match set by condition").1 {
+            if length >= 2
+                && (best_match.is_none() || length > best_match.expect("best_match set by condition").1) {
                     best_match = Some((distance, length));
                 }
-            }
         }
         probes += 1;
     }
