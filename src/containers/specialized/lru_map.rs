@@ -236,7 +236,7 @@ struct LruNode<K, V> {
     next: AtomicU32,
     
     /// Hash value for the key (cached to avoid recomputation)
-    hash: u64,
+    _hash: u64,
     
     /// Access frequency counter (for statistics)
     access_count: AtomicU32,
@@ -256,7 +256,7 @@ impl<K, V> LruNode<K, V> {
             value,
             prev: AtomicU32::new(INVALID_NODE),
             next: AtomicU32::new(INVALID_NODE),
-            hash,
+            _hash: hash,
             access_count: AtomicU32::new(1),
             last_access: AtomicU64::new(Self::current_timestamp()),
             is_valid: true,
@@ -425,7 +425,7 @@ where
     eviction_callback: E,
     
     /// Memory pool for internal allocations
-    memory_pool: Option<Arc<SecureMemoryPool>>,
+    _memory_pool: Option<Arc<SecureMemoryPool>>,
 }
 
 impl<K, V> LruMap<K, V, NoOpEvictionCallback>
@@ -462,7 +462,7 @@ where
                 value: V::default(),
                 prev: AtomicU32::new(INVALID_NODE),
                 next: AtomicU32::new(INVALID_NODE),
-                hash: 0,
+                _hash: 0,
                 access_count: AtomicU32::new(0),
                 last_access: AtomicU64::new(0),
                 is_valid: false,
@@ -480,7 +480,7 @@ where
             free_nodes: Mutex::new(free_nodes),
             stats: Arc::new(LruMapStatistics::new()),
             eviction_callback: NoOpEvictionCallback,
-            memory_pool,
+            _memory_pool: memory_pool,
         })
     }
 }
@@ -520,7 +520,7 @@ where
                 value: V::default(),
                 prev: AtomicU32::new(INVALID_NODE),
                 next: AtomicU32::new(INVALID_NODE),
-                hash: 0,
+                _hash: 0,
                 access_count: AtomicU32::new(0),
                 last_access: AtomicU64::new(0),
                 is_valid: false,
@@ -538,7 +538,7 @@ where
             free_nodes: Mutex::new(free_nodes),
             stats: Arc::new(LruMapStatistics::new()),
             eviction_callback: callback,
-            memory_pool,
+            _memory_pool: memory_pool,
         })
     }
     

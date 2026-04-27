@@ -14,7 +14,7 @@ use std::marker::PhantomData;
 const RANS64_L: u64 = 1u64 << 16; // Lower bound: 65536 (optimized for 64-bit)
 const TF_SHIFT: u32 = 12; // Frequency table size: 4096
 const TOTFREQ: u32 = 1u32 << TF_SHIFT; // Total frequency: 4096
-const BLOCK_SIZE: usize = 4; // 4-byte read/write operations
+
 
 /// 64-bit rANS state with hardware optimizations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -458,7 +458,7 @@ impl<P: ParallelVariant> Rans64Encoder<P> {
 pub struct Rans64Decoder<P: ParallelVariant> {
     symbols: [Rans64Symbol; 256],
     decode_table: [u8; TOTFREQ as usize], // Direct lookup table for decoding
-    total_freq: u32,
+    _total_freq: u32,
     _phantom: PhantomData<P>,
 }
 
@@ -480,7 +480,7 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
         Self {
             symbols: encoder.symbols,
             decode_table,
-            total_freq: encoder.total_freq,
+            _total_freq: encoder.total_freq,
             _phantom: PhantomData,
         }
     }
@@ -646,14 +646,14 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
 
 /// Adaptive rANS encoder that selects optimal parallel variant based on data size
 pub struct AdaptiveRans64Encoder {
-    bit_ops: BitOps,
+    _bit_ops: BitOps,
 }
 
 impl AdaptiveRans64Encoder {
     /// Create new adaptive encoder
     pub fn new() -> Self {
         Self {
-            bit_ops: BitOps::new(),
+            _bit_ops: BitOps::new(),
         }
     }
 

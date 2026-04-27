@@ -355,7 +355,7 @@ pub struct PaZipCompressor {
     config: PaZipCompressorConfig,
     
     /// Memory pool for allocations
-    memory_pool: Arc<SecureMemoryPool>,
+    _memory_pool: Arc<SecureMemoryPool>,
     
     /// Current adaptive thresholds
     adaptive_thresholds: AdaptiveThresholds,
@@ -452,7 +452,7 @@ impl PaZipCompressor {
             dictionary,
             local_matcher,
             config,
-            memory_pool,
+            _memory_pool: memory_pool,
             adaptive_thresholds: AdaptiveThresholds::default(),
             stats: CompressionStats::new(),
             output_buffer,
@@ -1038,6 +1038,7 @@ impl PaZipCompressor {
     }
     
     /// Create appropriate Match from local match parameters
+    #[allow(dead_code)]
     fn create_local_match(&self, distance: u32, length: u32, match_type: CompressionType) -> Result<Match> {
         match match_type {
             CompressionType::RLE => {

@@ -179,6 +179,7 @@ impl DfaState {
     }
     
     /// Get the frequency (range size) of this state
+    #[allow(dead_code)]
     fn frequency(&self) -> u32 {
         self.suffix_hig.saturating_sub(self.suffix_low)
     }
@@ -228,7 +229,7 @@ struct TrieNode {
     /// Frequency of this prefix
     frequency: u32,
     /// Depth in the trie
-    depth: usize,
+    _depth: usize,
 }
 
 impl TrieNode {
@@ -237,10 +238,11 @@ impl TrieNode {
             children: HashMap::new(),
             pattern_info: None,
             frequency: 0,
-            depth,
+            _depth: depth,
         }
     }
 
+    #[allow(dead_code)]
     fn is_terminal(&self) -> bool {
         self.pattern_info.is_some()
     }
@@ -723,6 +725,7 @@ impl DfaCache {
     /// Binary search for upper bound of character in suffix array range
     /// 
     /// Finds the first position where suffix[pos + depth] > ch
+    #[allow(dead_code)]
     fn sa_upper_bound(&self, lo: usize, hi: usize, depth: usize, ch: u8) -> usize {
         let mut left = lo;
         let mut right = hi;
@@ -751,6 +754,7 @@ impl DfaCache {
     }
 
     /// Find equal range for character in suffix array
+    #[allow(dead_code)]
     fn sa_equal_range(&self, lo: usize, hi: usize, depth: usize, ch: u8) -> (usize, usize) {
         let lower = self.sa_lower_bound(lo, hi, depth, ch);
         let upper = self.sa_upper_bound(lo, hi, depth, ch);
@@ -758,6 +762,7 @@ impl DfaCache {
     }
 
     /// Binary search for lower bound of character in suffix array range
+    #[allow(dead_code)]
     fn sa_lower_bound(&self, lo: usize, hi: usize, depth: usize, ch: u8) -> usize {
         let mut left = lo;
         let mut right = hi;
@@ -811,6 +816,7 @@ impl DfaCache {
     }
 
     /// Extract frequent patterns from suffix array
+    #[allow(dead_code)]
     fn extract_frequent_patterns(
         suffix_array: &SuffixArray,
         text: &[u8],
@@ -857,6 +863,7 @@ impl DfaCache {
     }
 
     /// Build trie using BFS (Breadth-First Search)
+    #[allow(dead_code)]
     fn build_trie_bfs(patterns: &[PatternInfo], max_depth: usize) -> Result<Box<TrieNode>> {
         let mut root = Box::new(TrieNode::new(0));
         
@@ -886,6 +893,7 @@ impl DfaCache {
     }
 
     /// Convert trie to ZiporaTrie format (simplified version)
+    #[allow(dead_code)]
     fn convert_to_zipora_trie(
         root: Box<TrieNode>,
         config: &ZiporaTrieConfig,
@@ -908,6 +916,7 @@ impl DfaCache {
     }
 
     /// Collect all patterns from trie recursively
+    #[allow(dead_code)]
     fn collect_patterns_from_trie(
         node: &TrieNode,
         current_pattern: Vec<u8>,

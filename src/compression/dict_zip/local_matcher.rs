@@ -238,7 +238,7 @@ struct ChainEntry {
     /// Hash of the pattern at this position
     pattern_hash: u32,
     /// Length of valid data from this position
-    available_length: usize,
+    _available_length: usize,
 }
 
 impl ChainEntry {
@@ -246,7 +246,7 @@ impl ChainEntry {
         Self {
             position,
             pattern_hash,
-            available_length,
+            _available_length: available_length,
         }
     }
 }
@@ -422,9 +422,9 @@ pub struct LocalMatcher {
     /// Hash table mapping pattern hashes to chain entries
     hash_table: ZiporaHashMap<u32, Vec<ChainEntry>>,
     /// SIMD string operations
-    simd_ops: Arc<SimdStringOps>,
+    _simd_ops: Arc<SimdStringOps>,
     /// Memory pool for allocations
-    memory_pool: Arc<SecureMemoryPool>,
+    _memory_pool: Arc<SecureMemoryPool>,
     /// Performance statistics
     stats: LocalMatcherStats,
 }
@@ -444,8 +444,8 @@ impl LocalMatcher {
             window: VecDeque::with_capacity(window_size),
             current_position: 0,
             hash_table,
-            simd_ops,
-            memory_pool,
+            _simd_ops: simd_ops,
+            _memory_pool: memory_pool,
             stats: LocalMatcherStats::default(),
         })
     }

@@ -94,10 +94,12 @@ impl DaState {
 
     /// Get next free pointer (only valid when is_free()).
     #[inline(always)]
+    #[allow(dead_code)]
     fn free_next(&self) -> u32 { self.child0 }
 
     /// Get prev free pointer (only valid when is_free()).
     #[inline(always)]
+    #[allow(dead_code)]
     fn free_prev(&self) -> u32 { self.parent & VALUE_MASK }
 }
 
@@ -140,6 +142,7 @@ impl NInfo {
 }
 
 #[inline(always)]
+#[allow(dead_code)]
 fn ninfo_to_label(v: u16) -> Option<u8> {
     if v == 0 { None } else { Some((v - 1) as u8) }
 }
@@ -606,6 +609,7 @@ impl DoubleArrayTrie {
     /// Get sorted children of a state as (symbol, child_state) pairs.
     /// Matching C++ `get_all_move()`. Used by cursor for binary search.
     #[inline]
+    #[allow(dead_code)]
     fn get_children(&self, state: u32) -> Vec<(u8, u32)> {
         let mut c = self.ninfos[state as usize].first_child();
         if c == NINFO_NONE { return Vec::new(); }
@@ -799,6 +803,7 @@ impl DoubleArrayTrie {
     }
 
     /// Resolve collision by relocating the smaller side.
+    #[allow(dead_code)]
     fn consult_and_relocate(&mut self, curr: u32, ch: u8) -> Result<u32> {
         let base = self.states[curr as usize].child0();
         let conflict_pos = base ^ ch as u32;

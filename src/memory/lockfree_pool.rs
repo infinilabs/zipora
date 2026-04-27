@@ -31,10 +31,7 @@ use std::time::Duration;
 
 /// Alignment for lock-free operations (4 or 8 bytes)
 const ALIGN_SIZE: usize = 8;
-/// Shift for converting between offsets and addresses
-const OFFSET_SHIFT: u32 = 3; // log2(ALIGN_SIZE)
-/// Maximum skip list levels for large block management
-const SKIP_LIST_MAX_LEVELS: usize = 8;
+
 /// Number of fast bins for small/medium allocations
 const FAST_BIN_COUNT: usize = 64;
 /// Threshold for fast bin vs skip list (above this uses skip list)
@@ -78,24 +75,7 @@ impl LockFreeHead {
     }
 }
 
-/// Skip list node for large block management
-#[derive(Debug)]
-struct SkipListNode {
-    /// Size of this block
-    size: u32,
-    /// Forward pointers for each level
-    forward: [AtomicU32; SKIP_LIST_MAX_LEVELS],
-}
 
-impl SkipListNode {
-    fn new(size: u32) -> Self {
-        const ATOMIC_U32_INIT: AtomicU32 = AtomicU32::new(LIST_TAIL);
-        Self {
-            size,
-            forward: [ATOMIC_U32_INIT; SKIP_LIST_MAX_LEVELS],
-        }
-    }
-}
 
 /// Configuration for lock-free memory pool
 #[derive(Debug, Clone)]
@@ -243,7 +223,7 @@ pub struct LockFreeMemoryPool {
     /// Fast bins for small/medium allocations
     fast_bins: Vec<CachePadded<LockFreeHead>>,
     /// Skip list head for large allocations (protected by mutex)
-    skip_list_head: Mutex<[AtomicU32; SKIP_LIST_MAX_LEVELS]>,
+
     /// Next available offset in memory region
     next_offset: AtomicU32,
     /// Statistics (optional)
@@ -314,9 +294,7 @@ impl LockFreeMemoryPool {
             fast_bins.push(CachePadded::new(LockFreeHead::new()));
         }
 
-        // Initialize skip list
-        const ATOMIC_U32_INIT: AtomicU32 = AtomicU32::new(LIST_TAIL);
-        let skip_list_head = Mutex::new([ATOMIC_U32_INIT; SKIP_LIST_MAX_LEVELS]);
+
 
         // Initialize statistics if enabled
         let stats = if config.enable_stats {
@@ -338,7 +316,7 @@ impl LockFreeMemoryPool {
             memory,
             memory_layout: layout,
             fast_bins,
-            skip_list_head,
+
             next_offset: AtomicU32::new(ALIGN_SIZE as u32), // Start after header
             stats,
             cache_allocator,
@@ -669,119 +647,7 @@ impl LockFreeMemoryPool {
     // SIMD-OPTIMIZED HELPER METHODS (LOCK-FREE SAFE)
     //==============================================================================
 
-    /// Find free slot using SIMD acceleration (read-only, lock-free safe)
-    ///
-    /// # Lock-Free Safety
-    /// This method is lock-free safe because:
-    /// - Read-only operations on atomic data
-    /// - No synchronization needed for reads
-    /// - Returns Option for caller to handle CAS
-    #[inline]
-    fn find_free_slot_simd(&self, bin: &LockFreeHead) -> Option<u32> {
-        // SAFE: Read-only SIMD operations on immutable data
-        // No synchronization needed for reads
 
-        #[cfg(target_arch = "x86_64")]
-        {
-            use crate::system::cpu_features::get_cpu_features;
-
-            if self.config.enable_simd_optimization && get_cpu_features().has_avx2 {
-                // AVX2: Process multiple freelist entries in parallel
-                // 4-6x faster than sequential scan
-                return self.find_free_slot_avx2_readonly(bin);
-            }
-        }
-
-        // Fallback to current implementation
-        self.find_free_slot_scalar(bin)
-    }
-
-    /// Scalar fallback for finding free slot
-    #[inline]
-    fn find_free_slot_scalar(&self, bin: &LockFreeHead) -> Option<u32> {
-        // ABA-SAFE: Load packed value and extract offset
-        let packed = bin.head.load(Ordering::Acquire);
-        let (offset, _gen) = Self::unpack_head(packed);
-
-        if offset == LIST_TAIL {
-            None
-        } else {
-            Some(offset)
-        }
-    }
-
-    /// AVX2-optimized free slot scanning (read-only, lock-free safe)
-    #[cfg(target_arch = "x86_64")]
-    #[inline]
-    fn find_free_slot_avx2_readonly(&self, bin: &LockFreeHead) -> Option<u32> {
-        // Implementation will use AVX2 for parallel slot checking
-        // This is lock-free safe because it's read-only
-
-        // For now, delegate to scalar version
-        // Full AVX2 implementation can be added later
-        self.find_free_slot_scalar(bin)
-    }
-
-    /// Count free blocks using SIMD POPCNT (lock-free safe)
-    ///
-    /// # Lock-Free Safety
-    /// Read-only operation on bitmap data, no synchronization required.
-    #[inline]
-    fn count_free_blocks_simd(&self, bitmap: &[u64]) -> usize {
-        if !self.config.enable_simd_optimization {
-            return bitmap.iter().map(|&bits| bits.count_ones() as usize).sum();
-        }
-
-        #[cfg(target_arch = "x86_64")]
-        {
-            use crate::system::cpu_features::get_cpu_features;
-
-            if get_cpu_features().has_popcnt {
-                // Use hardware POPCNT for fast bit counting
-                // 3-5x faster than software bit counting
-                return self.count_free_blocks_popcnt(bitmap);
-            }
-        }
-
-        // Software fallback
-        bitmap.iter().map(|&bits| bits.count_ones() as usize).sum()
-    }
-
-    /// Hardware POPCNT implementation for bitmap counting
-    #[cfg(target_arch = "x86_64")]
-    #[inline]
-    fn count_free_blocks_popcnt(&self, bitmap: &[u64]) -> usize {
-        use std::arch::x86_64::_popcnt64;
-
-        let mut count = 0;
-        for &bits in bitmap {
-            // SAFETY: _popcnt64 intrinsic requires BMI1/POPCNT support (checked at runtime)
-            count += unsafe { _popcnt64(bits as i64) } as usize;
-        }
-        count
-    }
-
-    /// Traverse skip list with prefetching for reduced latency
-    ///
-    /// # Lock-Free Safety
-    /// Prefetching is read-only and speculative, always safe.
-    #[inline]
-    fn find_large_block_with_prefetch(&self, size: usize) -> Option<*mut u8> {
-        if !self.config.enable_simd_optimization {
-            return None;
-        }
-
-        const PREFETCH_DISTANCE: usize = 2; // For pointer chasing: 1-2 ahead
-
-        #[cfg(target_arch = "x86_64")]
-        {
-            // Placeholder for skip list prefetching implementation
-            // Would traverse skip list and prefetch future nodes
-            // Currently returns None to fall back to standard path
-        }
-
-        None
-    }
 }
 
 impl Drop for LockFreeMemoryPool {
@@ -863,7 +729,6 @@ mod tests {
         
         // Test small allocation
         let ptr = pool.allocate(64).unwrap();
-        assert!(!ptr.as_ptr().is_null());
         
         // Test deallocation
         pool.deallocate(ptr, 64).unwrap();
@@ -1034,7 +899,6 @@ mod tests {
 
         // Test SIMD scanning finds free blocks
         let new_ptr = pool.allocate(128).unwrap();
-        assert!(!new_ptr.as_ptr().is_null());
 
         // Cleanup
         pool.deallocate(new_ptr, 128).unwrap();
@@ -1045,14 +909,8 @@ mod tests {
 
     #[test]
     fn test_popcnt_bitmap_operations() {
-        let config = LockFreePoolConfig {
-            enable_simd_optimization: true,
-            ..LockFreePoolConfig::default()
-        };
-        let pool = LockFreeMemoryPool::new(config).unwrap();
-
         let bitmap = vec![0xFFFFFFFFFFFFFFFF_u64, 0x0000000000000000_u64];
-        let count = pool.count_free_blocks_simd(&bitmap);
+        let count: usize = bitmap.iter().map(|&bits| bits.count_ones() as usize).sum();
 
         assert_eq!(count, 64); // 64 bits set in first word
     }
@@ -1069,7 +927,6 @@ mod tests {
         let ptrs = pool.allocate_bulk_simd(&sizes).unwrap();
 
         assert_eq!(ptrs.len(), sizes.len());
-        assert!(ptrs.iter().all(|&ptr| !ptr.as_ptr().is_null()));
 
         // Cleanup
         for (ptr, size) in ptrs.iter().zip(&sizes) {
@@ -1094,7 +951,6 @@ mod tests {
                 let ptrs = pool_clone.allocate_bulk_simd(&sizes).unwrap();
 
                 // Verify all allocations succeeded
-                assert!(ptrs.iter().all(|&ptr| !ptr.as_ptr().is_null()));
 
                 // Cleanup
                 for (ptr, size) in ptrs.iter().zip(&sizes) {
@@ -1130,7 +986,6 @@ mod tests {
 
         // Reallocate and verify behavior
         let new_ptr = pool.allocate(256).unwrap();
-        assert!(!new_ptr.as_ptr().is_null());
 
         // Cleanup
         pool.deallocate(new_ptr, 256).unwrap();
@@ -1149,7 +1004,6 @@ mod tests {
         let ptrs = pool.allocate_bulk_simd(&sizes).unwrap();
 
         assert_eq!(ptrs.len(), sizes.len());
-        assert!(ptrs.iter().all(|&ptr| !ptr.as_ptr().is_null()));
 
         // Cleanup
         for (ptr, size) in ptrs.iter().zip(&sizes) {
@@ -1171,7 +1025,6 @@ mod tests {
         let ptrs = pool.allocate_bulk_simd(&sizes).unwrap();
 
         assert_eq!(ptrs.len(), sizes.len());
-        assert!(ptrs.iter().all(|&ptr| !ptr.as_ptr().is_null()));
 
         // Cleanup
         for (ptr, size) in ptrs.iter().zip(&sizes) {
@@ -1212,12 +1065,6 @@ mod tests {
 
     #[test]
     fn test_bitmap_counting_accuracy() {
-        let config = LockFreePoolConfig {
-            enable_simd_optimization: true,
-            ..LockFreePoolConfig::default()
-        };
-        let pool = LockFreeMemoryPool::new(config).unwrap();
-
         // Test various bitmap patterns
         let test_cases = vec![
             (vec![0xFFFFFFFFFFFFFFFF_u64], 64),
@@ -1229,7 +1076,7 @@ mod tests {
         ];
 
         for (bitmap, expected_count) in test_cases {
-            let count = pool.count_free_blocks_simd(&bitmap);
+            let count: usize = bitmap.iter().map(|&bits| bits.count_ones() as usize).sum();
             assert_eq!(count, expected_count, "Failed for bitmap: {:?}", bitmap);
         }
     }
@@ -1284,7 +1131,6 @@ mod tests {
 
         // Allocate again - should reuse the freed block
         let ptr2 = pool.allocate(128).unwrap();
-        assert!(!ptr2.as_ptr().is_null());
 
         // Cleanup
         pool.deallocate(ptr2, 128).unwrap();

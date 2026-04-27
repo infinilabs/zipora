@@ -278,9 +278,9 @@ pub struct EntropyAnalyzerCollection;
 // Buffer management stubs (from buffer_management.rs)
 // ============================================================================
 
-pub struct ContextBuffer { data: Vec<u8> }
+pub struct ContextBuffer { _data: Vec<u8> }
 impl ContextBuffer {
-    pub fn new(cap: usize) -> Self { Self { data: Vec::with_capacity(cap) } }
+    pub fn new(cap: usize) -> Self { Self { _data: Vec::with_capacity(cap) } }
 }
 
 #[derive(Debug, Clone)]

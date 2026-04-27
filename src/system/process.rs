@@ -57,7 +57,7 @@ pub struct BidirectionalPipe {
     stdin_writer: Arc<Mutex<Option<tokio::process::ChildStdin>>>,
     stdout_reader: Arc<Mutex<Option<AsyncBufReader<tokio::process::ChildStdout>>>>,
     stderr_reader: Arc<Mutex<Option<AsyncBufReader<tokio::process::ChildStderr>>>>,
-    config: ProcessConfig,
+    _config: ProcessConfig,
 }
 
 impl BidirectionalPipe {
@@ -96,7 +96,7 @@ impl BidirectionalPipe {
             stdin_writer: Arc::new(Mutex::new(Some(stdin))),
             stdout_reader: Arc::new(Mutex::new(Some(AsyncBufReader::new(stdout)))),
             stderr_reader: Arc::new(Mutex::new(Some(AsyncBufReader::new(stderr)))),
-            config,
+            _config: config,
         })
     }
 

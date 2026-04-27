@@ -331,15 +331,7 @@ impl Bmi2SelectOps {
         Self::select1_binary_search_optimized(word, k)
     }
 
-    /// Hardware PDEP implementation with advanced optimization
-    #[cfg(target_arch = "x86_64")]
-    #[target_feature(enable = "bmi1,bmi2")]
-    #[inline]
-    unsafe fn select1_pdep(word: u64, k: u32) -> u32 {
-        // Advanced optimization: use (1ull << r) pattern for better instruction scheduling
-        let deposited = std::arch::x86_64::_pdep_u64(1u64 << k, word);
-        std::arch::x86_64::_tzcnt_u64(deposited) as u32
-    }
+    
 
     /// Enhanced hardware PDEP implementation with compiler-specific optimizations
     #[cfg(target_arch = "x86_64")]

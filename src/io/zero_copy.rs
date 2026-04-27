@@ -56,7 +56,7 @@ pub struct ZeroCopyBuffer {
     buffer: Vec<u8>,
     read_pos: usize,
     write_pos: usize,
-    pool: Option<Arc<SecureMemoryPool>>,
+    _pool: Option<Arc<SecureMemoryPool>>,
 }
 
 impl ZeroCopyBuffer {
@@ -79,7 +79,7 @@ impl ZeroCopyBuffer {
             buffer: vec![0u8; capacity],
             read_pos: 0,
             write_pos: 0,
-            pool,
+            _pool: pool,
         })
     }
 

@@ -131,8 +131,6 @@ impl ThreadLocalPoolStats {
 
 /// Thread-local memory cache
 struct ThreadLocalCache {
-    /// Thread ID for debugging
-    thread_id: ThreadId,
     /// Current hot allocation area
     hot_area: Option<HotArea>,
     /// Free lists for each size class
@@ -191,10 +189,7 @@ impl HotArea {
         }
     }
 
-    /// Get remaining capacity
-    fn remaining(&self) -> usize {
-        self.end - self.pos
-    }
+
 }
 
 impl Drop for HotArea {
@@ -210,7 +205,6 @@ impl ThreadLocalCache {
     /// Create new thread-local cache
     fn new(global_pool: Weak<ThreadLocalMemoryPool>, stats: Option<Arc<ThreadLocalPoolStats>>) -> Self {
         Self {
-            thread_id: thread::current().id(),
             hot_area: None,
             free_lists: vec![Vec::new(); TLS_SIZE_CLASSES.len()],
             frag_inc: 0,
@@ -355,8 +349,6 @@ pub struct ThreadLocalMemoryPool {
     config: ThreadLocalPoolConfig,
     /// Global secure memory pool for fallback
     global_pool: Option<Arc<SecureMemoryPool>>,
-    /// Thread-local caches (protected by mutex)
-    thread_caches: Mutex<HashMap<ThreadId, RefCell<ThreadLocalCache>>>,
     /// Statistics (optional)
     stats: Option<Arc<ThreadLocalPoolStats>>,
 }
@@ -385,7 +377,6 @@ impl ThreadLocalMemoryPool {
         Ok(Arc::new(Self {
             config,
             global_pool,
-            thread_caches: Mutex::new(HashMap::new()),
             stats,
         }))
     }
@@ -431,22 +422,7 @@ impl ThreadLocalMemoryPool {
         })
     }
 
-    /// Allocate bypassing thread-local cache
-    fn allocate_bypass_cache(&self, size: usize) -> Result<NonNull<u8>> {
-        if let Some(ref global_pool) = self.global_pool {
-            let secure_ptr = global_pool.allocate()?;
-            NonNull::new(secure_ptr.as_ptr())
-                .ok_or_else(|| ZiporaError::out_of_memory(size))
-        } else {
-            // Fall back to system allocation
-            let layout = Layout::from_size_align(size, 8)
-                .map_err(|e| ZiporaError::invalid_data(&format!("Invalid layout: {}", e)))?;
 
-            // SAFETY: Allocating with valid layout
-            NonNull::new(unsafe { alloc(layout) })
-                .ok_or_else(|| ZiporaError::out_of_memory(size))
-        }
-    }
 
     /// Deallocate bypassing thread-local cache
     fn deallocate_bypass_cache(&self, ptr: NonNull<u8>, size: usize) -> Result<()> {

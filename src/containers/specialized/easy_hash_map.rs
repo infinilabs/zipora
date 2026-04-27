@@ -421,36 +421,36 @@ where
     }
 }
 
-/// Iterator over cloned values in EasyHashMap
-pub struct ValuesIterMut<'a, K, V>
-where
-    K: Hash + Eq + Clone,
-    V: Clone,
-{
-    keys: Vec<K>,
-    map: &'a EasyHashMap<K, V>,
-    current: usize,
-}
-
-impl<'a, K, V> Iterator for ValuesIterMut<'a, K, V>
-where
-    K: Hash + Eq + Clone,
-    V: Clone,
-{
-    type Item = V;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        while self.current < self.keys.len() {
-            let key = &self.keys[self.current];
-            self.current += 1;
-
-            if let Some(value) = self.map.inner.get(key) {
-                return Some(value.clone());
-            }
-        }
-        None
-    }
-}
+// /// Iterator over cloned values in EasyHashMap
+// pub struct ValuesIterMut<'a, K, V>
+// where
+//     K: Hash + Eq + Clone,
+//     V: Clone,
+// {
+//     keys: Vec<K>,
+//     map: &'a EasyHashMap<K, V>,
+//     current: usize,
+// }
+// 
+// impl<'a, K, V> Iterator for ValuesIterMut<'a, K, V>
+// where
+//     K: Hash + Eq + Clone,
+//     V: Clone,
+// {
+//     type Item = V;
+// 
+//     fn next(&mut self) -> Option<Self::Item> {
+//         while self.current < self.keys.len() {
+//             let key = &self.keys[self.current];
+//             self.current += 1;
+// 
+//             if let Some(value) = self.map.inner.get(key) {
+//                 return Some(value.clone());
+//             }
+//         }
+//         None
+//     }
+// }
 
 /// Statistics about EasyHashMap configuration and usage
 #[derive(Debug, Clone)]

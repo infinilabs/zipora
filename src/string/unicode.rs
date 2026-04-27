@@ -119,16 +119,12 @@ fn is_ascii_simd(bytes: &[u8]) -> bool {
     }
 }
 
-#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
-fn is_ascii_simd(bytes: &[u8]) -> bool {
-    bytes.iter().all(|&b| b < 0x80)
-}
+
 
 /// Unicode string processor with configurable strategies
 pub struct UnicodeProcessor {
     normalize: bool,
     case_fold: bool,
-    buffer: Vec<u8>,
 }
 
 impl UnicodeProcessor {
@@ -137,7 +133,6 @@ impl UnicodeProcessor {
         Self {
             normalize: false,
             case_fold: false,
-            buffer: Vec::new(),
         }
     }
 

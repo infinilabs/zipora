@@ -22,8 +22,7 @@ enum CompressionStrategy {
 const MIN_COMPRESSION_ELEMENTS: usize = 4; // Don't compress tiny datasets
 const MIN_COMPRESSION_RATIO: f64 = 0.8; // Only compress if <80% of raw size
 const MIN_ALLOCATION_SIZE: usize = 32; // Minimum allocation to avoid overhead
-const GOLDEN_RATIO_NUMERATOR: usize = 103; // Golden ratio growth pattern
-const GOLDEN_RATIO_DENOMINATOR: usize = 64; // 103/64 ≈ 1.609
+
 
 /// Compressed integer vector with specialized optimizations
 ///

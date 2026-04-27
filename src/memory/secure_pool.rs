@@ -48,7 +48,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 /// Magic constants for corruption detection
 const CHUNK_HEADER_MAGIC: u64 = 0xDEADBEEFCAFEBABE;
 const CHUNK_FOOTER_MAGIC: u64 = 0xFEEDFACEDEADBEEF;
-const POOL_MAGIC: u64 = 0xABCDEF0123456789;
+
 
 /// Size classes for efficient allocation (jemalloc-inspired)
 const SIZE_CLASSES: &[usize] = &[
@@ -752,10 +752,7 @@ impl<T> LockFreeStack<T> {
         }
     }
 
-    fn is_empty(&self) -> bool {
-        let guard = epoch::pin();
-        self.head.load(Ordering::Acquire, &guard).is_null()
-    }
+
 }
 
 impl<T> Drop for LockFreeStack<T> {
@@ -793,19 +790,7 @@ impl LocalCache {
         }
     }
 
-    fn is_empty(&self) -> bool {
-        self.chunks.is_empty()
-    }
 
-    fn len(&self) -> usize {
-        self.chunks.len()
-    }
-
-    fn clear(&mut self, zero_on_free: bool, enable_simd_ops: bool, simd_threshold: usize) {
-        for chunk in self.chunks.drain(..) {
-            chunk.deallocate(zero_on_free, enable_simd_ops, simd_threshold);
-        }
-    }
 }
 
 /// Production-ready secure memory pool
@@ -818,7 +803,6 @@ pub struct SecureMemoryPool {
     
     // Cache optimization infrastructure
     cache_allocator: Option<CacheOptimizedAllocator>,
-    hot_cold_separator: std::sync::Mutex<HotColdSeparator<usize>>,
 
     // Statistics (lock-free)
     alloc_count: CachePadded<AtomicU64>,
@@ -875,13 +859,7 @@ impl SecureMemoryPool {
             None
         };
 
-        // Initialize hot/cold separator if enabled
-        let hot_cold_separator = if config.enable_hot_cold_separation && config.cache_config.is_some() {
-            // SAFETY: is_some() check above guarantees this unwrap succeeds
-            HotColdSeparator::<usize>::new(config.cache_config.clone().expect("cache_config present when hot_cold_separation enabled"))
-        } else {
-            HotColdSeparator::<usize>::new(CacheLayoutConfig::default())
-        };
+
 
         Ok(Arc::new(Self {
             config,
@@ -890,7 +868,6 @@ impl SecureMemoryPool {
             next_generation: AtomicU32::new(1),
             local_caches: thread_local::ThreadLocal::new(),
             cache_allocator,
-            hot_cold_separator: std::sync::Mutex::new(hot_cold_separator),
             cache_aligned_allocs: CachePadded::new(AtomicU64::new(0)),
             numa_local_allocs: CachePadded::new(AtomicU64::new(0)),
             hot_data_allocs: CachePadded::new(AtomicU64::new(0)),

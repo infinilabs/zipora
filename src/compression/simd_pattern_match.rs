@@ -785,7 +785,7 @@ impl SimdPatternMatcher {
         self.scalar_pattern_search(input, pattern, max_matches)
     }
     
-    #[cfg(not(all(feature = "avx512", target_arch = "x86_64")))]
+    #[cfg(all(feature = "avx512", not(target_arch = "x86_64")))]
     fn avx512_single_pattern_search(
         &self,
         input: &[u8],
@@ -795,7 +795,7 @@ impl SimdPatternMatcher {
         self.sse42_single_pattern_search(input, pattern, max_matches)
     }
     
-    #[cfg(not(all(feature = "avx512", target_arch = "x86_64")))]
+    #[cfg(all(feature = "avx512", not(target_arch = "x86_64")))]
     fn avx512_cascaded_pattern_search(
         &self,
         input: &[u8],
@@ -805,7 +805,7 @@ impl SimdPatternMatcher {
         self.sse42_cascaded_pattern_search(input, pattern, max_matches)
     }
     
-    #[cfg(not(all(feature = "avx512", target_arch = "x86_64")))]
+    #[cfg(all(feature = "avx512", not(target_arch = "x86_64")))]
     fn avx512_vectorized_pattern_search(
         &self,
         input: &[u8],

@@ -516,7 +516,6 @@ impl CacheObliviousSort {
 /// Adaptive algorithm selector for choosing optimal sorting strategy
 pub struct AdaptiveAlgorithmSelector {
     cache_hierarchy: CacheHierarchy,
-    cpu_features: &'static CpuFeatures,
 }
 
 impl AdaptiveAlgorithmSelector {
@@ -524,7 +523,6 @@ impl AdaptiveAlgorithmSelector {
     pub fn new(config: &CacheObliviousConfig) -> Self {
         Self {
             cache_hierarchy: config.cache_hierarchy.clone(),
-            cpu_features: config.cpu_features,
         }
     }
 
@@ -587,8 +585,6 @@ pub struct DataCharacteristics {
 /// Enhanced with Zipora's cache optimization infrastructure
 pub struct VanEmdeBoas<T> {
     data: Vec<T>,
-    height: usize,
-    cache_hierarchy: CacheHierarchy,
     cpu_features: &'static CpuFeatures,
     cache_line_size: usize,
 }
@@ -596,13 +592,10 @@ pub struct VanEmdeBoas<T> {
 impl<T: Clone> VanEmdeBoas<T> {
     /// Create a new Van Emde Boas layout with enhanced cache optimization
     pub fn new(data: Vec<T>, cache_hierarchy: CacheHierarchy) -> Self {
-        let height = (data.len() as f64).log2().ceil() as usize;
         let cpu_features = get_cpu_features();
         let cache_line_size = cache_hierarchy.l1_line_size;
         Self {
             data,
-            height,
-            cache_hierarchy,
             cpu_features,
             cache_line_size,
         }
@@ -610,12 +603,9 @@ impl<T: Clone> VanEmdeBoas<T> {
     
     /// Create with custom CPU features for testing
     pub fn with_cpu_features(data: Vec<T>, cache_hierarchy: CacheHierarchy, cpu_features: &'static CpuFeatures) -> Self {
-        let height = (data.len() as f64).log2().ceil() as usize;
         let cache_line_size = cache_hierarchy.l1_line_size;
         Self {
             data,
-            height,
-            cache_hierarchy,
             cpu_features,
             cache_line_size,
         }

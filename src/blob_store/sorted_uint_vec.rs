@@ -110,8 +110,6 @@ pub struct SortedUintVec {
     config: SortedUintVecConfig,
     /// Number of stored values
     size: usize,
-    /// Memory pool for secure allocation
-    pool: Option<SecureMemoryPool>,
 }
 
 impl SortedUintVec {
@@ -129,22 +127,10 @@ impl SortedUintVec {
             index: FastVec::new(),
             config,
             size: 0,
-            pool: None,
         })
     }
 
-    /// Create SortedUintVec with memory pool
-    pub fn with_pool(config: SortedUintVecConfig, pool: SecureMemoryPool) -> Result<Self> {
-        config.validate()?;
-        
-        Ok(Self {
-            data: FastVec::new(),
-            index: FastVec::new(),
-            config,
-            size: 0,
-            pool: Some(pool),
-        })
-    }
+
 
     /// Get number of stored values
     #[inline]
@@ -645,7 +631,6 @@ impl Default for SortedUintVec {
 pub struct SortedUintVecBuilder {
     config: SortedUintVecConfig,
     values: FastVec<u64>,
-    pool: Option<SecureMemoryPool>,
 }
 
 impl SortedUintVecBuilder {
@@ -654,7 +639,6 @@ impl SortedUintVecBuilder {
         Self {
             config: SortedUintVecConfig::default(),
             values: FastVec::new(),
-            pool: None,
         }
     }
 
@@ -663,15 +647,10 @@ impl SortedUintVecBuilder {
         Self {
             config,
             values: FastVec::new(),
-            pool: None,
         }
     }
 
-    /// Set memory pool for secure allocation
-    pub fn with_pool(mut self, pool: SecureMemoryPool) -> Self {
-        self.pool = Some(pool);
-        self
-    }
+
 
     /// Add a value (must be >= previous value to maintain sorted order)
     #[inline]
@@ -709,11 +688,7 @@ impl SortedUintVecBuilder {
     /// Finish building and return compressed SortedUintVec
     pub fn finish(self) -> Result<SortedUintVec> {
         if self.values.is_empty() {
-            return if let Some(pool) = self.pool {
-                SortedUintVec::with_pool(self.config, pool)
-            } else {
-                SortedUintVec::with_config(self.config)
-            };
+            return SortedUintVec::with_config(self.config);
         }
 
         // Build compressed representation
@@ -724,13 +699,8 @@ impl SortedUintVecBuilder {
     fn compress_values(self) -> Result<SortedUintVec> {
         let config = self.config;
         let values = self.values;
-        let pool = self.pool;
         
-        let mut result = if let Some(pool) = pool {
-            SortedUintVec::with_pool(config, pool)?
-        } else {
-            SortedUintVec::with_config(config)?
-        };
+        let mut result = SortedUintVec::with_config(config)?;
 
         result.size = values.len();
 
@@ -784,6 +754,7 @@ impl SortedUintVecBuilder {
     }
 
     /// Store sample value in index with variable bit-width
+    #[allow(dead_code)]
     fn store_sample(&self, index: &mut FastVec<u8>, block_idx: usize, value: u64, bit_width: u8) -> Result<()> {
         let bit_offset = block_idx * bit_width as usize;
         self.store_bits(index, bit_offset, value, bit_width)
@@ -795,6 +766,7 @@ impl SortedUintVecBuilder {
     /// - Adaptive bit-width selection based on delta distribution
     /// - Run-length encoding for consecutive identical deltas
     /// - Bit-plane compression for sparse delta patterns
+    #[allow(dead_code)]
     fn store_delta(&self, data: &mut FastVec<u8>, block_idx: usize, offset_idx: usize, value: u32, bit_width: u8) -> Result<()> {
         let block_bit_offset = block_idx * self.config.block_size() * bit_width as usize;
         let bit_offset = block_bit_offset + offset_idx * bit_width as usize;
@@ -808,18 +780,21 @@ impl SortedUintVecBuilder {
     }
     
     /// Check if delta follows an optimizable pattern
+    #[allow(dead_code)]
     fn is_delta_pattern_optimizable(&self, value: u32, offset_idx: usize) -> bool {
         // Detect patterns suitable for run-length or bit-plane encoding
         offset_idx > 0 && (value == 0 || value.is_power_of_two() || value < 16)
     }
     
     /// Optimized delta storage for special patterns
+    #[allow(dead_code)]
     fn store_delta_optimized(&self, data: &mut FastVec<u8>, bit_offset: usize, value: u32, bit_width: u8) -> Result<()> {
         // For now, use standard storage - can be enhanced with pattern-specific encoding
         self.store_bits(data, bit_offset, value as u64, bit_width)
     }
 
     /// Store bits in byte array with variable bit-width
+    #[allow(dead_code)]
     fn store_bits(&self, data: &mut FastVec<u8>, bit_offset: usize, value: u64, bit_width: u8) -> Result<()> {
         let byte_offset = bit_offset / 8;
         let bit_shift = bit_offset % 8;

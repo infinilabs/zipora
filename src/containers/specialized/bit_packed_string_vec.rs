@@ -246,6 +246,7 @@ where
 
     /// Calculate end position
     #[inline(always)]
+    #[allow(dead_code)]
     fn end_offset<O: OffsetOps<T>>(&self) -> usize {
         O::to_usize(&self.offset::<O>()) + self.length()
     }

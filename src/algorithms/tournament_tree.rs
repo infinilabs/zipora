@@ -108,7 +108,6 @@ impl CacheAlignedNode {
 struct WayIterator<I, T> {
     iterator: I,
     current: Option<T>,
-    way_index: usize,
     position: usize,
     exhausted: bool,
 }
@@ -118,14 +117,13 @@ where
     I: Iterator<Item = T>,
     T: Clone,
 {
-    fn new(mut iterator: I, way_index: usize) -> Self {
+    fn new(mut iterator: I, _way_index: usize) -> Self {
         let current = iterator.next();
         let exhausted = current.is_none();
         
         Self {
             iterator,
             current,
-            way_index,
             position: 0,
             exhausted,
         }
@@ -199,8 +197,6 @@ pub struct EnhancedLoserTree<T, F = fn(&T, &T) -> Ordering> {
     comparator: F,
     /// Configuration
     config: LoserTreeConfig,
-    /// Optional secure memory pool
-    memory_pool: Option<Arc<SecureMemoryPool>>,
     /// Phantom data for type safety
     _phantom: PhantomData<T>,
 }
@@ -222,16 +218,6 @@ where
 {
     /// Create a new enhanced tournament tree with custom comparator
     pub fn with_comparator(config: LoserTreeConfig, comparator: F) -> Self {
-        let memory_pool = if config.use_secure_memory {
-            // Use default secure memory pool configuration
-            match SecureMemoryPool::new(crate::memory::SecurePoolConfig::medium_secure()) {
-                Ok(pool) => Some(pool),
-                Err(_) => None, // Fall back to regular allocation if secure pool fails
-            }
-        } else {
-            None
-        };
-
         Self {
             tree: Vec::with_capacity(config.initial_capacity),
             ways: Vec::new(),
@@ -239,7 +225,6 @@ where
             num_ways: 0,
             comparator,
             config,
-            memory_pool,
             _phantom: PhantomData,
         }
     }
@@ -446,80 +431,11 @@ where
 
 
 
-    /// Replay tournament matches to maintain tree consistency
-    fn replay_matches(&mut self) -> Result<()> {
-        let num_ways = self.ways.len();
-        
-        if num_ways <= 1 {
-            return Ok(());
-        }
 
-        // Build tree bottom-up
-        for level in 0..self.tree.len() {
-            let left_child = 2 * level + 1;
-            let right_child = 2 * level + 2;
 
-            if left_child < num_ways && right_child < num_ways {
-                // Compare leaf nodes
-                let (_winner, loser) = self.compare_ways(left_child, right_child)?;
-                self.tree[level] = CacheAlignedNode::new(loser, self.ways[loser].position);
-            } else if left_child < self.tree.len() && right_child < self.tree.len() {
-                // Compare internal nodes
-                let left_winner = self.get_node_winner(left_child);
-                let right_winner = self.get_node_winner(right_child);
-                let (_winner, loser) = self.compare_ways(left_winner, right_winner)?;
-                self.tree[level] = CacheAlignedNode::new(loser, self.ways[loser].position);
-            }
-        }
 
-        Ok(())
-    }
 
-    /// Compare two ways and return (winner_index, loser_index)
-    fn compare_ways(&self, way1: usize, way2: usize) -> Result<(usize, usize)> {
-        let value1 = self.ways.get(way1)
-            .ok_or_else(|| ZiporaError::out_of_bounds(way1, self.ways.len()))?
-            .peek();
-        
-        let value2 = self.ways.get(way2)
-            .ok_or_else(|| ZiporaError::out_of_bounds(way2, self.ways.len()))?
-            .peek();
 
-        match (value1, value2) {
-            (Some(v1), Some(v2)) => {
-                match (self.comparator)(v1, v2) {
-                    Ordering::Less => Ok((way1, way2)),
-                    Ordering::Greater => Ok((way2, way1)),
-                    Ordering::Equal => {
-                        // For stable sorting, prefer earlier sequence
-                        if self.config.stable_sort {
-                            if self.ways[way1].position <= self.ways[way2].position {
-                                Ok((way1, way2))
-                            } else {
-                                Ok((way2, way1))
-                            }
-                        } else {
-                            Ok((way1, way2))
-                        }
-                    }
-                }
-            }
-            (Some(_), None) => Ok((way1, way2)),
-            (None, Some(_)) => Ok((way2, way1)),
-            (None, None) => Ok((way1, way2)), // Both exhausted
-        }
-    }
-
-    /// Get the winner index for a tree node
-    fn get_node_winner(&self, node_index: usize) -> usize {
-        if node_index < self.tree.len() {
-            // This is simplified - in a full implementation, we'd need to
-            // traverse the tree to find the actual winner
-            self.winner
-        } else {
-            node_index
-        }
-    }
 
     /// Get the current minimum element without removing it
     pub fn peek(&self) -> Option<&T> {

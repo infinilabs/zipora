@@ -565,6 +565,28 @@ fn benchmark_rank_select_comparison(c: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_fast_vec_extend(c: &mut Criterion) {
+    let mut group = c.benchmark_group("FastVec Extend");
+
+    group.bench_function("FastVec::extend range", |b| {
+        b.iter(|| {
+            let mut vec = FastVec::new();
+            vec.extend(black_box(0..100_000)).unwrap();
+            vec
+        });
+    });
+
+    group.bench_function("std::Vec::extend range", |b| {
+        b.iter(|| {
+            let mut vec = Vec::new();
+            vec.extend(black_box(0..100_000));
+            vec
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     benchmark_fast_vec_push,
@@ -578,6 +600,7 @@ criterion_group!(
     benchmark_entropy_blob_store,
     benchmark_optimized_rank_select,
     benchmark_lookup_table_operations,
-    benchmark_rank_select_comparison
+    benchmark_rank_select_comparison,
+    benchmark_fast_vec_extend
 );
 criterion_main!(benches);

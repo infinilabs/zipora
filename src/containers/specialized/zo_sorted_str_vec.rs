@@ -54,7 +54,7 @@ use std::fs::File;
 #[derive(Debug, Clone)]
 pub struct ZoSortedStrVec {
     /// Bit vector marking string boundaries (1 = start of string)
-    boundaries: BitVector,
+    _boundaries: BitVector,
     /// RankSelect structure for fast offset calculation
     rank_select: RankSelectInterleaved256,
     /// Concatenated string data with null terminators
@@ -149,7 +149,7 @@ impl ZoSortedStrVec {
         });
 
         Self {
-            boundaries,
+            _boundaries: boundaries,
             rank_select,
             data: Vec::new(),
             len: 0,
@@ -217,7 +217,7 @@ impl ZoSortedStrVec {
                           std::mem::size_of::<Self>();
 
         Ok(Self {
-            boundaries: bit_vector,
+            _boundaries: bit_vector,
             rank_select,
             data,
             len,

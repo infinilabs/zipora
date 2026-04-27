@@ -624,6 +624,7 @@ impl RuntimeCpuFeatures {
     }
     
     /// Parse cache size string (e.g., "32K", "1M") to bytes
+    #[allow(dead_code)]
     fn parse_cache_size(&self, size_str: &str) -> Result<usize, std::num::ParseIntError> {
         let trimmed = size_str.trim().to_uppercase();
         if trimmed.ends_with('K') {
@@ -714,6 +715,7 @@ impl RuntimeCpuFeatures {
     }
 
     /// Get cache information (cache_line_size, l1_size, l2_size, l3_size)
+    #[allow(dead_code)]
     fn get_cache_info(&self) -> (usize, usize, usize, usize) {
         let mut cache_line_size = 64; // Default assumption
         let mut l1_size = 32 * 1024; // 32KB default

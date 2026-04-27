@@ -301,8 +301,6 @@ where
     config: TrieBlobStoreConfig,
     /// Statistics collection
     stats: TrieBlobStoreStats,
-    /// Memory pool for allocations
-    memory_pool: Arc<SecureMemoryPool>,
     /// Next available record ID
     next_record_id: RecordId,
     /// Whether the store has been finalized (no more writes allowed)
@@ -482,7 +480,6 @@ where
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
     pub fn new(config: TrieBlobStoreConfig) -> Result<Self> {
-        let memory_pool = SecureMemoryPool::new(config.memory_config.clone())?;
         let trie = ZiporaTrie::<R>::with_config(config.trie_config.clone());
         let blob_builder = Some(ZipOffsetBlobStoreBuilder::with_config(config.blob_config.clone())?);
         let record_to_node_map = Vec::new();
@@ -504,7 +501,6 @@ where
             key_cache,
             config,
             stats: TrieBlobStoreStats::new(),
-            memory_pool,
             next_record_id: 0,
             finalized: false,
             _phantom: PhantomData,
@@ -1105,8 +1101,6 @@ where
     config: TrieBlobStoreConfig,
     /// Temporary storage for key-value pairs during construction
     entries: Vec<(Vec<u8>, Vec<u8>)>,
-    /// Memory pool for construction
-    memory_pool: Arc<SecureMemoryPool>,
     /// Phantom data for the rank/select implementation
     _phantom: PhantomData<R>,
 }
@@ -1124,12 +1118,9 @@ where
     /// * `Ok(NestLoudsTrieBlobStoreBuilder)` - Successfully created builder
     /// * `Err(ZiporaError)` - If builder creation fails
     pub fn new(config: TrieBlobStoreConfig) -> Result<Self> {
-        let memory_pool = SecureMemoryPool::new(config.memory_config.clone())?;
-        
         Ok(Self {
             config,
             entries: Vec::new(),
-            memory_pool,
             _phantom: PhantomData,
         })
     }

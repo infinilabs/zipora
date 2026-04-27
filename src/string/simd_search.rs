@@ -31,8 +31,6 @@ use std::arch::x86_64::*;
 
 /// SSE4.2 PCMPESTRI-based string search operations
 pub struct SimdStringSearch {
-    /// CPU features available at runtime
-    cpu_features: &'static CpuFeatures,
     /// Selected implementation tier based on available features
     impl_tier: SearchTier,
 }
@@ -84,7 +82,6 @@ impl SimdStringSearch {
         let impl_tier = Self::select_optimal_tier(cpu_features);
         
         Self {
-            cpu_features,
             impl_tier,
         }
     }

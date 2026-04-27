@@ -570,7 +570,7 @@ fn detect_arm_cache_hierarchy() -> CacheHierarchy {
 }
 
 /// Parse cache size from string (e.g., "32K", "256K", "8M")
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 fn parse_cache_size(size_str: &str) -> Result<usize> {
     let size_str = size_str.trim();
     if size_str.is_empty() {
@@ -824,7 +824,7 @@ mod tests {
         assert!(read_heavy.is_empty());
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
     #[test]
     fn test_cache_size_parsing() {
         assert_eq!(parse_cache_size("32K").unwrap(), 32 * 1024);
@@ -832,7 +832,7 @@ mod tests {
         assert_eq!(parse_cache_size("8M").unwrap(), 8 * 1024 * 1024);
         assert_eq!(parse_cache_size("1G").unwrap(), 1024 * 1024 * 1024);
         assert_eq!(parse_cache_size("1024").unwrap(), 1024);
-        
+
         assert!(parse_cache_size("").is_err());
         assert!(parse_cache_size("invalid").is_err());
     }

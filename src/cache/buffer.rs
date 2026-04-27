@@ -28,8 +28,10 @@ pub struct CacheBuffer {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum BufferType {
     /// Direct cache page reference
+    #[allow(dead_code)]
     SinglePage,
     /// Multiple pages copied to buffer
+    #[allow(dead_code)]
     MultiPage,
     /// Data copied to internal buffer
     Copied,
@@ -51,6 +53,7 @@ impl CacheBuffer {
     }
     
     /// Set buffer to reference single cache node
+    #[allow(dead_code)]
     pub(crate) fn set_node(&mut self, cache: &SingleLruPageCache, node_idx: NodeIndex) {
         self.cleanup();
         self.buffer_type = BufferType::SinglePage;
@@ -60,6 +63,7 @@ impl CacheBuffer {
     }
     
     /// Setup buffer for multi-page operation
+    #[allow(dead_code)]
     pub(crate) fn setup_multi_page(
         &mut self, 
         cache: &SingleLruPageCache, 

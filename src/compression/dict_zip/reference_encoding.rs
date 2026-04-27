@@ -457,7 +457,7 @@ struct LocalMatchHashTable {
     /// Hash table entries: each entry contains a position offset
     table: Vec<u32>,
     /// Hash table size (power of 2)
-    table_size: usize,
+    _table_size: usize,
     /// Hash mask for fast modulo
     hash_mask: u32,
     /// Current base position for relative offsets
@@ -472,7 +472,7 @@ impl LocalMatchHashTable {
         
         Self {
             table: vec![0; table_size],
-            table_size,
+            _table_size: table_size,
             hash_mask,
             base_position: 0,
         }
@@ -568,6 +568,7 @@ impl LocalMatchHashTable {
     
     /// Update base position for sliding window
     #[inline]
+    #[allow(dead_code)]
     fn update_base_position(&mut self, new_base: usize) {
         self.base_position = new_base;
     }

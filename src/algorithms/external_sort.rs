@@ -92,15 +92,13 @@ impl ExternalSortStats {
 struct RunElement<T> {
     value: T,
     run_id: usize,
-    original_index: usize,
 }
 
 impl<T> RunElement<T> {
-    fn new(value: T, run_id: usize, original_index: usize) -> Self {
+    fn new(value: T, run_id: usize) -> Self {
         Self {
             value,
             run_id,
-            original_index,
         }
     }
 }
@@ -364,7 +362,7 @@ where
         // Fill initial heap
         for _ in 0..memory_items {
             if let Some(item) = input_iter.next() {
-                heap.push(RunElement::new(item, current_run, self.stats.items_sorted));
+                heap.push(RunElement::new(item, current_run));
                 self.stats.items_sorted += 1;
             } else {
                 break;
@@ -397,10 +395,10 @@ where
                 // Check if next item can be added to current run
                 if (self.comparator)(&next_item, &min_element.value) != Ordering::Less {
                     // Can extend current run
-                    heap.push(RunElement::new(next_item, current_run, self.stats.items_sorted));
+                    heap.push(RunElement::new(next_item, current_run));
                 } else {
                     // Must start new run
-                    heap.push(RunElement::new(next_item, current_run + 1, self.stats.items_sorted));
+                    heap.push(RunElement::new(next_item, current_run + 1));
 
                     // Close current run if heap is empty or next min is from new run
                     if heap.is_empty() || heap.peek().map(|e| e.run_id).unwrap_or(0) > current_run {
@@ -628,9 +626,9 @@ mod tests {
 
     #[test]
     fn test_run_element_ordering() {
-        let elem1 = RunElement::new(5, 0, 0);
-        let elem2 = RunElement::new(3, 0, 1);
-        let elem3 = RunElement::new(7, 0, 2);
+        let elem1 = RunElement::new(5, 0);
+        let elem2 = RunElement::new(3, 0);
+        let elem3 = RunElement::new(7, 0);
 
         // BinaryHeap is max-heap, but our elements reverse the order
         assert!(elem2 > elem1); // 3 > 5 in our reversed ordering

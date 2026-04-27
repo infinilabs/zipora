@@ -29,7 +29,7 @@ const ALIGN_SIZE: usize = 8;
 /// Magic value for free list termination (uses max value to avoid collision with valid offsets)
 const LIST_TAIL: u32 = u32::MAX;
 /// Default number of size classes
-const DEFAULT_SIZE_CLASSES: usize = 32;
+
 
 /// Configuration for fixed capacity memory pool
 #[derive(Debug, Clone)]

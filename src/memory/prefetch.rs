@@ -60,17 +60,7 @@ pub enum PrefetchLocality {
 }
 
 impl PrefetchLocality {
-    /// Convert to x86_64 prefetch hint
-    #[cfg(target_arch = "x86_64")]
-    #[inline]
-    fn to_x86_hint(self) -> i32 {
-        match self {
-            PrefetchLocality::L1Temporal => _MM_HINT_T0,
-            PrefetchLocality::L2Temporal => _MM_HINT_T1,
-            PrefetchLocality::L3Temporal => _MM_HINT_T2,
-            PrefetchLocality::NonTemporal => _MM_HINT_NTA,
-        }
-    }
+
 }
 
 /// Access pattern classification for prefetch optimization
@@ -410,7 +400,6 @@ impl PrefetchMetrics {
 /// Advanced prefetch strategy with adaptive capabilities
 pub struct PrefetchStrategy {
     config: PrefetchConfig,
-    cpu_features: &'static CpuFeatures,
     stride_detector: StrideDetector,
     bandwidth_monitor: BandwidthMonitor,
     accuracy_throttler: AccuracyThrottler,
@@ -424,7 +413,6 @@ impl PrefetchStrategy {
         Self {
             current_distance: config.base_distance,
             bandwidth_monitor: BandwidthMonitor::new(config.max_bandwidth_gbps),
-            cpu_features: get_cpu_features(),
             stride_detector: StrideDetector::new(),
             accuracy_throttler: AccuracyThrottler::new(),
             metrics: PrefetchMetrics::default(),
@@ -618,24 +606,7 @@ impl PrefetchStrategy {
         self.bandwidth_monitor.should_throttle() || self.accuracy_throttler.should_throttle()
     }
 
-    #[inline]
-    unsafe fn sequential_prefetch_internal(
-        &mut self,
-        base: *const u8,
-        stride: usize,
-        count: usize,
-        locality: PrefetchLocality,
-    ) {
-        let effective_count = count.min(self.config.max_degree);
 
-        for i in 1..=effective_count {
-            let offset = stride * i;
-            // SAFETY: Caller must ensure base.add(offset) is valid for all offsets
-            unsafe {
-                self.issue_prefetch(base.add(offset), locality);
-            }
-        }
-    }
 
     #[inline]
     fn sequential_prefetch_internal_safe(

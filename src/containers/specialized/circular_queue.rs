@@ -732,6 +732,7 @@ impl<T> AutoGrowCircularQueue<T> {
     }
 
     /// Reorganize elements after realloc for optimal layout
+    #[allow(dead_code)]
     fn reorganize_after_realloc(&mut self, new_buffer: *mut T, _new_capacity: usize) -> Result<()> {
         if self.len == 0 {
             return Ok(());
@@ -800,6 +801,7 @@ impl<T> AutoGrowCircularQueue<T> {
     /// SIMD-optimized bulk element copying when available
     #[cfg(feature = "simd")]
     #[inline(always)]
+    #[allow(dead_code)]
     unsafe fn simd_copy_elements(&self, src: *const T, dst: *mut T, count: usize) {
         if count == 0 {
             return;
@@ -841,6 +843,7 @@ impl<T> AutoGrowCircularQueue<T> {
     /// Fallback copy for non-SIMD builds
     #[cfg(not(feature = "simd"))]
     #[inline(always)]
+    #[allow(dead_code)]
     unsafe fn simd_copy_elements(&self, src: *const T, dst: *mut T, count: usize) {
         if count == 0 {
             return;

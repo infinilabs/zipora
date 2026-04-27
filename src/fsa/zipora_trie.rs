@@ -399,7 +399,7 @@ where
     /// Cache optimization components
     cache_allocator: Option<CacheOptimizedAllocator>,
     /// Memory pool for allocation
-    memory_pool: Option<Arc<SecureMemoryPool>>,
+    _memory_pool: Option<Arc<SecureMemoryPool>>,
     /// Root state for traversal
     root_state: StateId,
 }
@@ -448,23 +448,23 @@ struct PatriciaNode {
     /// Compact children storage: sorted Vec of (symbol, StateId) pairs
     children: Vec<(u8, StateId)>,
     /// Compressed path data offset
-    path_offset: u32,
+    _path_offset: u32,
     /// Compressed path length
-    path_length: u16,
+    _path_length: u16,
     /// Whether this node represents a complete key
     is_final: bool,
     /// Node flags for optimization
-    flags: u8,
+    _flags: u8,
 }
 
 impl Default for PatriciaNode {
     fn default() -> Self {
         Self {
             children: Vec::new(),
-            path_offset: 0,
-            path_length: 0,
+            _path_offset: 0,
+            _path_length: 0,
             is_final: false,
-            flags: 0,
+            _flags: 0,
         }
     }
 }
@@ -474,15 +474,15 @@ impl Default for PatriciaNode {
 #[derive(Debug, Clone)]
 struct CritBitNode {
     /// Critical byte position
-    crit_byte: usize,
+    _crit_byte: usize,
     /// Critical bit position (0-7)
-    crit_bit: u8,
+    _crit_bit: u8,
     /// Left child (bit = 0)
-    left_child: Option<StateId>,
+    _left_child: Option<StateId>,
     /// Right child (bit = 1)
-    right_child: Option<StateId>,
+    _right_child: Option<StateId>,
     /// Key stored at this node (for leaves)
-    key_index: Option<u32>,
+    _key_index: Option<u32>,
     /// Whether this is a final state
     is_final: bool,
 }
@@ -493,7 +493,7 @@ struct SparseNode {
     /// Sparse children map
     children: HashMap<u8, StateId>,
     /// Compressed edge label
-    edge_label: Option<u32>,
+    _edge_label: Option<u32>,
     /// Final state flag
     is_final: bool,
 }
@@ -523,7 +523,7 @@ where
             stats: TrieStats::new(),
             stats_dirty: false,
             cache_allocator,
-            memory_pool: None,
+            _memory_pool: None,
             root_state: 0,
         }
     }
@@ -674,6 +674,7 @@ where
     }
 
     /// Update internal statistics
+    #[allow(dead_code)]
     fn update_stats(&mut self) {
         // Update memory usage
         self.stats.memory_usage = self.memory_usage();
@@ -2118,7 +2119,7 @@ where
         if sparse_nodes.is_empty() {
             sparse_nodes.insert(0, SparseNode {
                 children: HashMap::new(),
-                edge_label: None,
+                _edge_label: None,
                 is_final: false,
             });
         }
@@ -2142,7 +2143,7 @@ where
                 // Create the new child node
                 sparse_nodes.insert(new_state, SparseNode {
                     children: HashMap::new(),
-                    edge_label: None,
+                    _edge_label: None,
                     is_final: false,
                 });
 
@@ -2637,6 +2638,7 @@ where
     }
 
     /// Check if a key exists in LOUDS trie storage
+    #[allow(dead_code)]
     fn contains_louds_actual(label_data: &FastVec<u8>, key: &[u8]) -> bool {
         if label_data.is_empty() {
             return false;
@@ -2675,7 +2677,7 @@ where
             return Vec::new();
         }
 
-        const TERMINAL_BIT: u32 = 0x8000_0000; // Bit 31 in base for terminal (referenced project)
+
         const VALUE_MASK: u32 = 0x7FFF_FFFF;   // Bits 0-30 for values (referenced project)
 
         // Navigate to the prefix position first
@@ -2772,6 +2774,7 @@ where
     }
 
     /// Get all keys from CompressedSparse trie storage
+    #[allow(dead_code)]
     fn keys_compressed_sparse_actual(sparse_nodes: &HashMap<StateId, SparseNode>) -> Vec<Vec<u8>> {
         let mut keys = Vec::new();
         let mut current_path = Vec::new();
@@ -2780,6 +2783,7 @@ where
     }
 
     /// Recursively collect all keys from CompressedSparse trie
+    #[allow(dead_code)]
     fn collect_keys_compressed_sparse_recursive(
         sparse_nodes: &HashMap<StateId, SparseNode>,
         state: StateId,
@@ -2803,6 +2807,7 @@ where
     }
 
     /// Get all keys with prefix from CompressedSparse trie storage
+    #[allow(dead_code)]
     fn keys_with_prefix_compressed_sparse_actual(
         sparse_nodes: &HashMap<StateId, SparseNode>,
         prefix: &[u8],
