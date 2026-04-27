@@ -248,7 +248,7 @@ impl HardwareCapabilities {
 ///
 /// For hot-path trie lookups, prefer calling `fast_search_byte()` directly.
 pub struct FastSearchEngine {
-    config: FastSearchConfig,
+    _config: FastSearchConfig,
     capabilities: HardwareCapabilities,
     // Removed rank_select_cache — not needed for sorted-array position lookup
 }
@@ -264,7 +264,7 @@ impl FastSearchEngine {
         } else {
             HardwareCapabilities { has_sse42: false, has_avx2: false, has_bmi2: false, has_popcnt: false }
         };
-        Self { config, capabilities }
+        Self { _config: config, capabilities }
     }
 
     /// Search for all occurrences of `target` in `data` (general search).

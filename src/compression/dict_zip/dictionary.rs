@@ -184,7 +184,7 @@ pub struct SuffixArrayDictionary {
     /// Pattern matcher for finding longest matches
     matcher: PatternMatcher,
     /// Memory pool for allocations
-    memory_pool: Option<Arc<SecureMemoryPool>>,
+    _memory_pool: Option<Arc<SecureMemoryPool>>,
     /// Configuration used to build this dictionary
     config: SuffixArrayDictionaryConfig,
     /// Match statistics
@@ -255,7 +255,7 @@ impl SuffixArrayDictionary {
             dfa_cache,
             dictionary_text,
             matcher,
-            memory_pool,
+            _memory_pool: memory_pool,
             config,
             stats: MatchStats::default(),
         })
@@ -461,7 +461,7 @@ impl SuffixArrayDictionary {
             dfa_cache,
             dictionary_text,
             matcher,
-            memory_pool: None, // Not serialized
+            _memory_pool: None, // Not serialized
             config,
             stats: MatchStats::default(),
         })

@@ -160,7 +160,7 @@ pub struct EnhancedSuffixArray {
     /// Construction statistics
     stats: SuffixArrayStats,
     /// Memory pool used for construction (if any)
-    memory_pool: Option<Arc<SecureMemoryPool>>,
+    _memory_pool: Option<Arc<SecureMemoryPool>>,
 }
 
 /// Statistics for suffix array construction and usage
@@ -474,7 +474,7 @@ impl SuffixArrayCompressor {
                 lcp_array: None,
                 text_len: 0,
                 stats: SuffixArrayStats::default(),
-                memory_pool: self.memory_pool.clone(),
+                _memory_pool: self.memory_pool.clone(),
             });
         }
 
@@ -543,7 +543,7 @@ impl SuffixArrayCompressor {
             lcp_array,
             text_len: text.len(),
             stats,
-            memory_pool: self.memory_pool.clone(),
+            _memory_pool: self.memory_pool.clone(),
         })
     }
 

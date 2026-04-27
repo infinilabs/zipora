@@ -141,44 +141,7 @@ impl<T: BlobStore> CachedBlobStore<T> {
         }
     }
     
-    /// Write data to cache and/or store based on strategy
-    fn write_cached(&mut self, id: RecordId, data: &[u8]) -> Result<()> {
-        let offset = self.next_offset.fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
-        
-        match self.write_strategy {
-            CacheWriteStrategy::WriteThrough => {
-                // Write to both store and cache
-                self.inner.put(data)?;
-                if self.cache_enabled {
-                    // Cache the written data
-                    self.cache_data_at_offset(offset, data)?;
-                }
-            }
-            CacheWriteStrategy::WriteBack => {
-                // Write to cache first, defer store write
-                if self.cache_enabled {
-                    self.cache_data_at_offset(offset, data)?;
-                    // Mark as dirty (would need dirty tracking in real implementation)
-                }
-                // In a real implementation, store write would be deferred
-                self.inner.put(data)?;
-            }
-            CacheWriteStrategy::WriteAround => {
-                // Write to store only, bypass cache
-                self.inner.put(data)?;
-                // Don't cache the data
-            }
-        }
-        
-        // Update metadata
-        {
-            let mut metadata = self.blob_metadata.lock()
-                .map_err(|_| crate::error::ZiporaError::invalid_data("Metadata lock poisoned".to_string()))?;
-            metadata.insert(id, (offset, data.len()));
-        }
-        
-        Ok(())
-    }
+
     
     /// Cache data at specific offset (helper method)
     fn cache_data_at_offset(&self, offset: u64, data: &[u8]) -> Result<()> {

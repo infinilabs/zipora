@@ -1,7 +1,7 @@
 // P0.1: Suppress warning categories that represent future cleanup work, not bugs.
 // These will be re-enabled as modules are cleaned up (P1-P3 tasks in plan.md).
 #![allow(missing_docs)] // P3.7: documentation task
-#![allow(dead_code)] // P3.3/P0.6: dead code removal is a separate task
+// #![allow(dead_code)] // P3.3/P0.6: dead code removal is a separate task
 #![allow(unused_variables)] // Stub implementations have unused params
 #![allow(unused_imports)] // Will be cleaned with dead code removal
 #![allow(unused_results)] // Will be fixed with unwrap elimination (P3.6)

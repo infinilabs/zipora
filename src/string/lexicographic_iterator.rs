@@ -186,7 +186,6 @@ impl<'a> LexicographicIterator for SortedVecLexIterator<'a> {
 pub struct StreamingLexIterator<R: std::io::Read> {
     reader: std::io::BufReader<R>,
     current_line: String,
-    buffer: Vec<u8>,
     finished: bool,
     line_number: usize,
 }
@@ -199,7 +198,6 @@ impl<R: std::io::Read> StreamingLexIterator<R> {
         Self {
             reader: std::io::BufReader::new(reader),
             current_line: String::new(),
-            buffer: Vec::with_capacity(8192), // 8KB initial buffer
             finished: false,
             line_number: 0,
         }

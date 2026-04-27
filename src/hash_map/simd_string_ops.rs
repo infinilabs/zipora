@@ -13,7 +13,7 @@ use std::arch::x86_64::*;
 /// SIMD-accelerated string operations for hash maps
 pub struct SimdStringOps {
     /// CPU features available at runtime
-    cpu_features: &'static CpuFeatures,
+    _cpu_features: &'static CpuFeatures,
     /// Selected implementation tier based on available features
     impl_tier: SimdTier,
 }
@@ -39,7 +39,7 @@ impl SimdStringOps {
         let impl_tier = Self::select_optimal_tier(cpu_features);
         
         Self {
-            cpu_features,
+            _cpu_features: cpu_features,
             impl_tier,
         }
     }
@@ -435,16 +435,19 @@ pub fn get_global_simd_ops() -> &'static SimdStringOps {
 
 /// Convenience function for fast string comparison using global SIMD operations
 /// Integrates with the core SIMD memory operations for optimal performance
+#[cfg(test)]
 pub fn fast_string_compare(str1: &str, str2: &str, cached_prefix: u64) -> bool {
     get_global_simd_ops().fast_string_compare(str1, str2, cached_prefix)
 }
 
 /// Convenience function for fast string hashing using global SIMD operations
+#[cfg(test)]
 pub fn fast_string_hash(s: &str, base_hash: u64) -> u64 {
     get_global_simd_ops().fast_string_hash(s, base_hash)
 }
 
 /// Convenience function for extracting string prefix using global SIMD operations
+#[cfg(test)]
 pub fn extract_string_prefix(s: &str) -> u64 {
     get_global_simd_ops().extract_prefix_simd(s)
 }

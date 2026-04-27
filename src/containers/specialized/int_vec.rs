@@ -27,6 +27,7 @@ mod unaligned_ops {
     impl UnalignedOps {
         /// Read u64 from unaligned memory address safely
         #[inline]
+        #[allow(dead_code)]
         pub unsafe fn read_u64_unaligned(ptr: *const u8) -> u64 {
             // SAFETY: caller ensures ptr is valid for 8 bytes (unsafe fn contract)
             unsafe { std::ptr::read_unaligned(ptr as *const u64) }
@@ -34,6 +35,7 @@ mod unaligned_ops {
 
         /// Write u64 to unaligned memory address safely
         #[inline]
+        #[allow(dead_code)]
         pub unsafe fn write_u64_unaligned(ptr: *mut u8, value: u64) {
             // SAFETY: caller ensures ptr is valid for 8 bytes (unsafe fn contract)
             unsafe { std::ptr::write_unaligned(ptr as *mut u64, value); }
@@ -41,6 +43,7 @@ mod unaligned_ops {
         
         /// Read multiple u64 values in bulk using SIMD-optimized memory operations
         #[inline]
+        #[allow(dead_code)]
         pub unsafe fn read_bulk_u64(ptr: *const u8, count: usize, output: &mut [u64]) {
             let byte_count = count * 8;
             if byte_count >= 64 && count == output.len() {
@@ -62,6 +65,7 @@ mod unaligned_ops {
 
         /// Write multiple u64 values in bulk using SIMD-optimized memory operations
         #[inline]
+        #[allow(dead_code)]
         pub unsafe fn write_bulk_u64(ptr: *mut u8, values: &[u64]) {
             let byte_count = values.len() * 8;
             if byte_count >= 64 {
@@ -157,6 +161,7 @@ mod int_vec_simd {
         
         /// Vectorized range analysis with unrolled loops for maximum performance
         #[inline]
+        #[allow(dead_code)]
         pub fn analyze_range_bulk_unrolled(values: &[u64]) -> (u64, u64) {
             if values.is_empty() {
                 return (0, 0);
@@ -289,6 +294,7 @@ mod int_vec_simd {
         /// This function is safe because it accepts a reference, ensuring the memory address is valid.
         /// Prefetch hints are advisory only and do not cause faults.
         #[inline]
+        #[allow(dead_code)]
         pub fn prefetch_write<T: ?Sized>(data: &T) {
             let addr = data as *const T as *const u8;
             #[cfg(target_arch = "x86_64")]
@@ -384,6 +390,7 @@ impl BlockSize {
     }
     
     #[inline]
+    #[allow(dead_code)]
     fn log2(self) -> u8 {
         self as u8
     }
@@ -464,7 +471,7 @@ struct CompressionStats {
     index_size: usize,
     compression_time_ns: u64,
     access_count: u64,
-    cache_hits: u64,
+    _cache_hits: u64,
 }
 
 impl<T: PackedInt> IntVec<T> {
@@ -708,6 +715,7 @@ impl<T: PackedInt> IntVec<T> {
     // Private implementation methods
 
     /// Fast bulk conversion to u64 using unaligned memory operations with Adaptive SIMD
+    #[allow(dead_code)]
     fn bulk_convert_to_u64(values: &[T]) -> Vec<u64> {
         let mut u64_values = Vec::with_capacity(values.len());
 
@@ -749,6 +757,7 @@ impl<T: PackedInt> IntVec<T> {
     /// - Minimal overhead for small datasets
     /// - Optimized memory access patterns
     /// Bulk constructor storing values as raw u64 without compression
+    #[allow(dead_code)]
     fn from_slice_bulk_zerocopy(values: &[T], start_time: std::time::Instant) -> Result<Self> {
         let mut result = Self::new();
         result.len = values.len();

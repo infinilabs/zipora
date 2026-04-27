@@ -97,7 +97,7 @@ pub struct StreamBufferedReader<R> {
     end: usize,      // End of valid data in buffer
     config: StreamBufferConfig,
     total_read: u64, // Total bytes read from underlying stream
-    pool: Option<Arc<SecureMemoryPool>>,
+    _pool: Option<Arc<SecureMemoryPool>>,
 }
 
 impl<R: Read> StreamBufferedReader<R> {
@@ -126,7 +126,7 @@ impl<R: Read> StreamBufferedReader<R> {
             end: 0,
             config,
             total_read: 0,
-            pool,
+            _pool: pool,
         })
     }
 
@@ -514,7 +514,7 @@ pub struct StreamBufferedWriter<W> {
     pos: usize,      // Current position in buffer
     config: StreamBufferConfig,
     total_written: u64,
-    pool: Option<Arc<SecureMemoryPool>>,
+    _pool: Option<Arc<SecureMemoryPool>>,
 }
 
 impl<W: Write> StreamBufferedWriter<W> {
@@ -544,7 +544,7 @@ impl<W: Write> StreamBufferedWriter<W> {
             pos: 0,
             config,
             total_written: 0,
-            pool,
+            _pool: pool,
         })
     }
 
@@ -661,18 +661,9 @@ impl<W: Write + Seek> Seek for StreamBufferedWriter<W> {
     }
 }
 
-// Branch prediction hints (would be actual intrinsics in real implementation)
-#[inline(always)]
-fn likely(condition: bool) -> bool {
-    // In real implementation, this would use compiler hints
-    // #[cfg(target_arch = "x86_64")]
-    // std::intrinsics::likely(condition)
-    condition
-}
 
-#[cold]
-#[inline(never)]
-fn unlikely() {}
+
+
 
 #[cfg(test)]
 mod tests {

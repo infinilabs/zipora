@@ -184,6 +184,7 @@ impl BitPackedEntry {
 
     /// Calculate end position
     #[inline(always)]
+    #[cfg(test)]
     fn end_offset(&self) -> usize {
         self.offset() + self.length()
     }
@@ -221,6 +222,7 @@ impl OverlapHashTable {
         }
     }
 
+    #[allow(dead_code)]
     fn clear(&mut self) {
         self.prefix3_map.clear();
         self.prefix4_map.clear();

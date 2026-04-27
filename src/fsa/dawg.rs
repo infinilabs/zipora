@@ -209,8 +209,6 @@ pub struct NestedTrieDawg {
     root_state: u32,
     /// Number of keys stored
     num_keys: usize,
-    /// Memory pool for allocation
-    memory_pool: Option<Arc<SecureMemoryPool>>,
 }
 
 impl NestedTrieDawg {
@@ -226,10 +224,6 @@ impl NestedTrieDawg {
         } else {
             None
         };
-
-        let memory_pool = Some(SecureMemoryPool::new(
-            crate::memory::SecurePoolConfig::small_secure()
-        )?);
 
         let transitions = TransitionTable::new(config.max_states as u32, false);
 
@@ -249,7 +243,6 @@ impl NestedTrieDawg {
             cache,
             root_state: 0,
             num_keys: 0,
-            memory_pool,
         })
     }
 

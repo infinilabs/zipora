@@ -712,7 +712,7 @@ pub struct FseEncoder {
     states: [u64; 4],  // Multiple states for advanced encoding (64-bit for optimal compatibility)
     
     /// Bit operations helper
-    bit_ops: BitOps,
+    _bit_ops: BitOps,
     
     /// State selector for advanced state management
     state_selector: u8,
@@ -730,7 +730,7 @@ impl FseEncoder {
             stats: EntropyStats::new(0, 0, 0.0),
             dictionary: None,
             states: [1, 1, 1, 1], // Initial states for advanced encoding
-            bit_ops: BitOps::new(),
+            _bit_ops: BitOps::new(),
             state_selector: 0,
         })
     }
@@ -942,6 +942,7 @@ impl FseEncoder {
     }
     
     /// Single-threaded compression (with table parameter)
+    #[allow(dead_code)]
     fn compress_single(&mut self, data: &[u8], table: &FseTable) -> Result<Vec<u8>> {
         let mut output = Vec::with_capacity(data.len());
         let mut current_state = self.states[0];
@@ -1054,6 +1055,7 @@ impl FseEncoder {
     }
     
     /// Get next state for advanced encoding
+    #[allow(dead_code)]
     fn next_state(&mut self) -> usize {
         if self.config.advanced_states {
             let state_idx = self.state_selector as usize % self.states.len();
@@ -1074,7 +1076,7 @@ pub struct FseDecoder {
     table: Option<FseTable>,
     
     /// Dictionary for improved decompression (optional)  
-    dictionary: Option<Vec<u8>>,
+    _dictionary: Option<Vec<u8>>,
     
     /// Current decoder state
     state: u64,
@@ -1086,7 +1088,7 @@ impl FseDecoder {
         Self {
             config: FseConfig::default(),
             table: None,
-            dictionary: None,
+            _dictionary: None,
             state: 1,
         }
     }
@@ -1097,7 +1099,7 @@ impl FseDecoder {
         Ok(Self {
             config,
             table: None,
-            dictionary: None,
+            _dictionary: None,
             state: 1,
         })
     }

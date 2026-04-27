@@ -144,6 +144,7 @@ impl BitStreamWriter {
 
     /// Get current buffer size in bits
     #[inline]
+    #[allow(dead_code)]
     fn len_bits(&self) -> usize {
         self.buffer.len() * 8 + self.bit_count
     }
@@ -197,6 +198,7 @@ impl<'a> BitStreamReader<'a> {
 
     /// Read `count` bits
     #[inline]
+    #[allow(dead_code)]
     fn read(&mut self, count: usize) -> u64 {
         if count > self.bit_count {
             self.refill();
@@ -208,12 +210,14 @@ impl<'a> BitStreamReader<'a> {
 
     /// Check if there are more bits available
     #[inline]
+    #[allow(dead_code)]
     fn has_bits(&self) -> bool {
         self.bit_count > 0 || self.byte_pos < self.data.len()
     }
 
     /// Get remaining bits
     #[inline]
+    #[allow(dead_code)]
     fn remaining_bits(&self) -> usize {
         self.bit_count + (self.data.len() - self.byte_pos) * 8
     }
@@ -222,14 +226,15 @@ impl<'a> BitStreamReader<'a> {
 /// Huffman symbol with code information
 #[derive(Debug, Clone, Copy)]
 struct HuffmanSymbol {
-    bits: u64,  // Changed from u16 to u64 to support longer codes
-    bit_count: u8,
+    _bits: u64,  // Changed from u16 to u64 to support longer codes
+    _bit_count: u8,
 }
 
 impl HuffmanSymbol {
     #[inline]
+    #[allow(dead_code)]
     fn new(bits: u64, bit_count: u8) -> Self {
-        Self { bits, bit_count }
+        Self { _bits: bits, _bit_count: bit_count }
     }
 }
 
@@ -1598,6 +1603,7 @@ impl ContextualHuffmanEncoder {
     }
 
     /// Build fast lookup table for encoding: (context, symbol) -> HuffmanSymbol
+    #[allow(dead_code)]
     fn build_symbol_table(&self) -> Result<HashMap<(u16, u8), HuffmanSymbol>> {
         let mut table = HashMap::new();
 

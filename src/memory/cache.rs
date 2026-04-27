@@ -295,6 +295,7 @@ struct NumaNodeManager {
 }
 
 /// NUMA-aware memory pool for each node
+#[allow(dead_code)]
 struct NumaMemoryPool {
     small_chunks: Vec<usize>, // < 1KB allocations (stored as usize for Send/Sync)
     medium_chunks: Vec<usize>, // 1KB - 64KB allocations
@@ -304,6 +305,7 @@ struct NumaMemoryPool {
     miss_count: AtomicUsize,
 }
 
+#[allow(dead_code)]
 impl NumaMemoryPool {
     fn new() -> Self {
         Self {
@@ -781,9 +783,7 @@ mod tests {
         let ptr1 = numa_alloc_aligned(1024, 64, 0).unwrap();
         let ptr2 = numa_alloc_aligned(512, 32, 0).unwrap();
 
-        // Verify allocations are valid (non-null, properly aligned)
-        assert!(!ptr1.as_ptr().is_null());
-        assert!(!ptr2.as_ptr().is_null());
+        // Verify allocations are properly aligned
         assert_eq!(ptr1.as_ptr() as usize % 64, 0);
         assert_eq!(ptr2.as_ptr() as usize % 32, 0);
 

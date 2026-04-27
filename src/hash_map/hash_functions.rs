@@ -44,10 +44,7 @@ use std::collections::HashMap;
 pub const GOLDEN_RATIO_FRAC_NUM: u64 = 103;
 pub const GOLDEN_RATIO_FRAC_DEN: u64 = 64;
 
-/// Alternative golden ratio approximation (13/8 = 1.625)
-/// Sometimes used for specific optimization scenarios
-pub const GOLDEN_RATIO_ALT_NUM: u64 = 13;
-pub const GOLDEN_RATIO_ALT_DEN: u64 = 8;
+
 
 /// Optimal load factor based on golden ratio (≈ 0.618)
 /// Expressed as a fraction of 256 for fast integer arithmetic
@@ -506,6 +503,7 @@ pub fn extract_hash_bucket_bmi2(hash: u64, bucket_bits: u32) -> u32 {
 /// 
 /// Efficiently extracts bucket indices from multiple hash values using
 /// vectorized BMI2 operations when available.
+#[cfg(test)]
 pub fn extract_hash_buckets_bulk_bmi2(hashes: &[u64], bucket_bits: u32) -> Vec<u32> {
     Bmi2HashOps::hash_buckets_bulk(hashes, bucket_bits)
 }
@@ -879,6 +877,7 @@ unsafe fn bmi2_double_hash_probe_hardware(hash: u64, occupied_mask: u64) -> Opti
 /// 
 /// Computes optimal load factors and resize thresholds using BMI2 BZHI
 /// for efficient bit manipulation and masking operations.
+#[cfg(test)]
 pub fn bmi2_load_factor_calculations(
     current_size: usize, 
     element_count: usize, 
@@ -899,6 +898,7 @@ pub fn bmi2_load_factor_calculations(
 
 /// Load factor information
 #[derive(Debug, Clone)]
+#[cfg(test)]
 pub struct LoadFactorInfo {
     pub current_load_factor: f64,
     pub should_resize: bool,
@@ -909,6 +909,7 @@ pub struct LoadFactorInfo {
 /// Hardware BMI2 load factor calculations
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "bmi2")]
+#[cfg(test)]
 unsafe fn bmi2_load_factor_hardware(
     current_size: usize, 
     element_count: usize, 
@@ -955,6 +956,7 @@ unsafe fn bmi2_load_factor_hardware(
 }
 
 /// Scalar load factor calculations
+#[cfg(test)]
 fn scalar_load_factor_calculations(
     current_size: usize, 
     element_count: usize, 

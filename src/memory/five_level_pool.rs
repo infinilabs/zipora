@@ -191,12 +191,8 @@ impl Default for LockFreeFreeListHead {
     }
 }
 
-/// Skip list node for large block management
-#[derive(Debug)]
-struct SkipListNode {
-    size: usize,
-    next: Vec<MemOffset>, // Variable number of forward pointers
-}
+
+
 
 /// Memory chunk representation
 #[derive(Debug)]
@@ -270,12 +266,12 @@ pub struct NoLockingPool {
     config: FiveLevelPoolConfig,
     memory: MemoryChunk,
     free_lists: Vec<FreeListHead>,
-    skip_list_head: SkipListNode,
+
     fragment_size: usize,
     huge_size_sum: usize,
     huge_node_count: usize,
     used_memory: usize, // Track actual used memory (high-water mark minus freed blocks)
-    rng_state: u32,
+
 }
 
 impl NoLockingPool {
@@ -284,21 +280,18 @@ impl NoLockingPool {
         let num_bins = config.max_fast_block_size / config.alignment;
         let free_lists = vec![FreeListHead::default(); num_bins];
         
-        let skip_list_head = SkipListNode {
-            size: 0,
-            next: vec![MemOffset::NULL; config.max_skip_levels],
-        };
+
         
         Ok(Self {
             config,
             memory,
             free_lists,
-            skip_list_head,
+
             fragment_size: 0,
             huge_size_sum: 0,
             huge_node_count: 0,
             used_memory: 0,
-            rng_state: 1,
+
         })
     }
     
@@ -408,15 +401,7 @@ impl NoLockingPool {
         Ok(())
     }
     
-    fn random_level(&mut self) -> usize {
-        self.rng_state = self.rng_state.wrapping_mul(1103515245).wrapping_add(12345);
-        let mut level = 1;
-        while (self.rng_state % 4 == 0) && (level < self.config.max_skip_levels) {
-            level += 1;
-            self.rng_state = self.rng_state.wrapping_mul(1103515245).wrapping_add(12345);
-        }
-        level.saturating_sub(1)
-    }
+
     
     pub fn stats(&self) -> PoolStats {
         PoolStats {
@@ -464,7 +449,7 @@ pub struct MutexBasedPool {
     config: FiveLevelPoolConfig,
     memory: Arc<Mutex<MemoryChunk>>,
     free_lists: Vec<Mutex<FreeListHead>>,
-    skip_list: Mutex<SkipListNode>,
+
     fragment_size: AtomicUsize,
     huge_mutex: Mutex<(usize, usize)>, // (huge_size_sum, huge_node_count)
 }
@@ -475,16 +460,13 @@ impl MutexBasedPool {
         let num_bins = config.max_fast_block_size / config.alignment;
         let free_lists = (0..num_bins).map(|_| Mutex::new(FreeListHead::default())).collect();
         
-        let skip_list_head = SkipListNode {
-            size: 0,
-            next: vec![MemOffset::NULL; config.max_skip_levels],
-        };
+
         
         Ok(Self {
             config,
             memory: Arc::new(Mutex::new(memory)),
             free_lists,
-            skip_list: Mutex::new(skip_list_head),
+
             fragment_size: AtomicUsize::new(0),
             huge_mutex: Mutex::new((0, 0)),
         })

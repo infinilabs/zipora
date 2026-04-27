@@ -131,14 +131,7 @@ impl InterleavedLine {
         rank + (word & mask).count_ones() as usize
     }
 
-    /// Count total set bits in this line
-    #[inline]
-    fn count_ones(&self) -> usize {
-        self.bit64
-            .iter()
-            .map(|&word| word.count_ones() as usize)
-            .sum()
-    }
+
 
     /// Get bit at specific offset within this line
     #[inline]
@@ -181,17 +174,7 @@ impl InterleavedLine {
         }
     }
 
-    /// Prefetch hint for sequential access optimization
-    #[inline(always)]
-    fn prefetch_hint(&self) {
-        #[cfg(target_arch = "x86_64")]
-        {
-            // SAFETY: Prefetch intrinsic is safe with any pointer (CPU handles invalid pointers gracefully)
-            unsafe {
-                _mm_prefetch(self as *const InterleavedLine as *const i8, _MM_HINT_T0);
-            }
-        }
-    }
+
 }
 
 impl RankSelectInterleaved256 {

@@ -241,8 +241,8 @@ pub struct MemoryDebugger {
 #[derive(Debug, Clone)]
 struct AllocationInfo {
     size: usize,
-    timestamp: Instant,
-    location: String,
+    _timestamp: Instant,
+    _location: String,
 }
 
 impl MemoryDebugger {
@@ -261,8 +261,8 @@ impl MemoryDebugger {
     pub fn record_allocation(&self, ptr: usize, size: usize, location: &str) {
         let info = AllocationInfo {
             size,
-            timestamp: Instant::now(),
-            location: location.to_string(),
+            _timestamp: Instant::now(),
+            _location: location.to_string(),
         };
 
         if let Ok(mut allocations) = self.allocations.lock() {

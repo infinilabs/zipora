@@ -291,9 +291,9 @@ where
     /// Performance statistics
     stats: HashMapStats,
     /// SIMD operations for acceleration
-    simd_ops: &'static SimdStringOps,
+    _simd_ops: &'static SimdStringOps,
     /// Cache optimization components
-    cache_allocator: Option<CacheOptimizedAllocator>,
+    _cache_allocator: Option<CacheOptimizedAllocator>,
     cache_metrics: CacheMetrics,
 }
 
@@ -334,22 +334,23 @@ where
 /// Standard hash table bucket
 #[repr(align(64))]
 struct StandardBucket<K, V> {
-    hash: u64,
-    key: K,
-    value: V,
-    probe_distance: u16,
-    is_occupied: bool,
+    _hash: u64,
+    _key: K,
+    _value: V,
+    _probe_distance: u16,
+    _is_occupied: bool,
 }
 
 /// Inline storage for small hash maps
 struct InlineStorage<K, V> {
-    data: [MaybeUninit<(K, V)>; 16], // Fixed size for simplicity
+    _data: [MaybeUninit<(K, V)>; 16], // Fixed size for simplicity
     occupied: u16, // Bit mask for occupied slots
 }
 
 impl<K, V> InlineStorage<K, V> {
     /// Get the number of occupied slots
     #[inline]
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.occupied.count_ones() as usize
     }
@@ -357,29 +358,29 @@ impl<K, V> InlineStorage<K, V> {
 
 /// String arena for interned strings
 struct StringArena {
-    data: FastVec<u8>,
-    offsets: FastVec<u32>,
-    interned: std::collections::HashMap<Vec<u8>, u32>,
+    _data: FastVec<u8>,
+    _offsets: FastVec<u32>,
+    _interned: std::collections::HashMap<Vec<u8>, u32>,
 }
 
 /// String bucket with prefix caching
 struct StringBucket {
-    hash: u64,
-    string_id: u32,
-    probe_distance: u16,
-    prefix_cache: u32,
+    _hash: u64,
+    _string_id: u32,
+    _probe_distance: u16,
+    _prefix_cache: u32,
 }
 
 /// String entry with value
 struct StringEntry<V> {
-    value: V,
-    next: Option<u32>,
+    _value: V,
+    _next: Option<u32>,
 }
 
 /// Prefix cache entry for fast string matching
 struct PrefixCacheEntry {
-    prefix: u64, // First 8 bytes of string
-    string_id: u32,
+    _prefix: u64, // First 8 bytes of string
+    _string_id: u32,
 }
 
 /// Hash entry for standard storage
@@ -387,7 +388,7 @@ struct HashEntry<K, V> {
     key: Option<K>,
     value: Option<V>,
     hash: u64,
-    next: Option<u32>,
+    _next: Option<u32>,
 }
 
 /// Performance statistics
@@ -460,8 +461,8 @@ where
             hash_builder,
             storage,
             stats: HashMapStats::default(),
-            simd_ops,
-            cache_allocator,
+            _simd_ops: simd_ops,
+            _cache_allocator: cache_allocator,
             cache_metrics: CacheMetrics::new(),
         })
     }
@@ -483,7 +484,7 @@ where
                         // MaybeUninit<T> does not require initialization, so an array of
                         // uninitialized MaybeUninit values is valid. Individual elements
                         // are only accessed after being explicitly initialized.
-                        data: unsafe { MaybeUninit::uninit().assume_init() },
+                        _data: unsafe { MaybeUninit::uninit().assume_init() },
                         occupied: 0,
                     },
                     fallback: None,
@@ -501,9 +502,9 @@ where
             StorageStrategy::StringOptimized { arena_size, .. } => {
                 Ok(HashMapStorage::StringOptimized {
                     arena: StringArena {
-                        data: FastVec::with_capacity(*arena_size)?,
-                        offsets: FastVec::with_capacity(256)?,
-                        interned: std::collections::HashMap::new(),
+                        _data: FastVec::with_capacity(*arena_size)?,
+                        _offsets: FastVec::with_capacity(256)?,
+                        _interned: std::collections::HashMap::new(),
                     },
                     buckets: FastVec::with_capacity(config.initial_capacity)?,
                     entries: FastVec::with_capacity(config.initial_capacity)?,
@@ -748,7 +749,7 @@ where
                             key: None,
                             value: None,
                             hash: 0,
-                            next: None,
+                            _next: None,
                         });
                     }
                 }
@@ -826,7 +827,7 @@ where
                         key: None,
                         value: None,
                         hash: 0,
-                        next: None,
+                        _next: None,
                     });
                 }
             }
@@ -1122,6 +1123,7 @@ where
     }
 
     /// Backward shift deletion to maintain linear probing invariant
+    #[cfg(test)]
     fn backward_shift_delete(
         entries: &mut FastVec<HashEntry<K, V>>,
         mask: usize,

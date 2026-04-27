@@ -88,7 +88,6 @@ pub struct LineProcessor<R: Read> {
     line_buffer: String,
     line_count: usize,
     byte_count: usize,
-    memory_pool: Option<Arc<SecureMemoryPool>>,
 }
 
 impl<R: Read> LineProcessor<R> {
@@ -100,15 +99,6 @@ impl<R: Read> LineProcessor<R> {
     /// Create a new line processor with custom configuration
     pub fn with_config(reader: R, config: LineProcessorConfig) -> Self {
         let reader = BufReader::with_capacity(config.buffer_size, reader);
-        let memory_pool = if config.use_secure_memory {
-            // SAFETY: SecureMemoryPool::new with small_secure() configuration is designed
-            // to never fail except in catastrophic OOM scenarios (out of physical memory).
-            // The small_secure() config uses minimal settings (small chunk sizes) that are
-            // virtually guaranteed to succeed in normal operation.
-            Some(SecureMemoryPool::new(SecurePoolConfig::small_secure()).expect("small secure pool creation"))
-        } else {
-            None
-        };
 
         Self {
             reader,
@@ -116,7 +106,6 @@ impl<R: Read> LineProcessor<R> {
             line_buffer: String::with_capacity(1024),
             line_count: 0,
             byte_count: 0,
-            memory_pool,
         }
     }
 
@@ -341,7 +330,7 @@ pub struct LineSplitter {
 enum SplitStrategy {
     Simple,      // Standard split()
     Optimized,   // SIMD-optimized for common delimiters
-    Custom(String), // Custom delimiter
+    Custom,      // Custom delimiter
 }
 
 impl LineSplitter {
@@ -360,8 +349,8 @@ impl LineSplitter {
     }
 
     /// Use custom delimiter
-    pub fn with_delimiter(mut self, delimiter: String) -> Self {
-        self.strategy = SplitStrategy::Custom(delimiter);
+    pub fn with_delimiter(mut self, _delimiter: String) -> Self {
+        self.strategy = SplitStrategy::Custom;
         self
     }
 
@@ -370,7 +359,7 @@ impl LineSplitter {
         self.buffer.clear();
 
         match &self.strategy {
-            SplitStrategy::Simple | SplitStrategy::Custom(_) => {
+            SplitStrategy::Simple | SplitStrategy::Custom => {
                 self.buffer.extend(line.split(delimiter).map(|s| s.to_string()));
             }
             SplitStrategy::Optimized => {

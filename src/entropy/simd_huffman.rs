@@ -37,7 +37,7 @@ use crate::succinct::rank_select::bmi2_acceleration::Bmi2Capabilities;
 use crate::system::cpu_features::{CpuFeatures, get_cpu_features};
 
 /// Size thresholds for different encoding strategies
-const SMALL_BATCH_THRESHOLD: usize = 64;
+
 const MEDIUM_BATCH_THRESHOLD: usize = 1024;
 const LARGE_BATCH_THRESHOLD: usize = 8192;
 
@@ -92,13 +92,13 @@ pub struct SimdHuffmanEncoder {
     /// Selected SIMD implementation tier
     tier: HuffmanSimdTier,
     /// BMI2 capabilities
-    bmi2_caps: &'static Bmi2Capabilities,
+    _bmi2_caps: &'static Bmi2Capabilities,
     /// CPU features
-    cpu_features: &'static CpuFeatures,
+    _cpu_features: &'static CpuFeatures,
     /// Configuration
     config: SimdHuffmanConfig,
     /// SIMD memory operations
-    simd_ops: SimdMemOps,
+    _simd_ops: SimdMemOps,
 }
 
 impl SimdHuffmanEncoder {
@@ -118,10 +118,10 @@ impl SimdHuffmanEncoder {
         Ok(Self {
             base_encoder,
             tier,
-            bmi2_caps,
-            cpu_features,
+            _bmi2_caps: bmi2_caps,
+            _cpu_features: cpu_features,
             config,
-            simd_ops,
+            _simd_ops: simd_ops,
         })
     }
 

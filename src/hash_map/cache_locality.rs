@@ -24,7 +24,7 @@ pub const L2_CACHE_SIZE: usize = 256 * 1024;
 pub const L3_CACHE_SIZE: usize = 8 * 1024 * 1024;
 
 /// Prefetch distance for sequential access patterns
-pub const PREFETCH_DISTANCE: usize = 4;
+
 
 /// NUMA node count (detected at runtime)
 static NUMA_NODE_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -212,6 +212,7 @@ pub struct BucketMetadata {
 
 impl<K, V, const N: usize> CacheOptimizedBucket<K, V, N> {
     /// Create a new empty bucket
+    #[cfg(test)]
     pub fn new() -> Self {
         Self {
             metadata: BucketMetadata {
@@ -233,18 +234,21 @@ impl<K, V, const N: usize> CacheOptimizedBucket<K, V, N> {
 
     /// Check if bucket is empty
     #[inline(always)]
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.metadata.occupancy == 0
     }
 
     /// Count occupied slots
     #[inline(always)]
+    #[cfg(test)]
     pub fn count(&self) -> usize {
         self.metadata.occupancy.count_ones() as usize
     }
 
     /// Find entry with matching hash (SIMD-optimizable)
     #[inline(always)]
+    #[cfg(test)]
     pub fn find_hash(&self, hash: u32) -> Option<usize> {
         // This can be SIMD-optimized with AVX2/AVX512
         for i in 0..N {
@@ -257,6 +261,7 @@ impl<K, V, const N: usize> CacheOptimizedBucket<K, V, N> {
 
     /// Prefetch bucket data
     #[inline(always)]
+    #[cfg(test)]
     pub unsafe fn prefetch(&self) {
         // SAFETY: self is a valid pointer to this bucket, prefetching self and self+CACHE_LINE_SIZE
         // is safe even if second line is partially out of bounds (prefetch doesn't dereference)
@@ -467,7 +472,7 @@ pub struct HotColdSeparator<T> {
     /// Access counter for migration decisions
     access_counts: Vec<AtomicU64>,
     /// Migration threshold
-    migration_threshold: u64,
+    _migration_threshold: u64,
 }
 
 impl<T: Clone> HotColdSeparator<T> {
@@ -480,7 +485,7 @@ impl<T: Clone> HotColdSeparator<T> {
             hot: Vec::with_capacity(hot_capacity),
             cold: Vec::with_capacity(cold_capacity),
             access_counts: Vec::with_capacity(capacity),
-            migration_threshold: 10, // Migrate after 10 accesses
+            _migration_threshold: 10, // Migrate after 10 accesses
         }
     }
 
@@ -536,7 +541,7 @@ pub struct CacheConsciousResizer {
     /// Incremental resize chunk size
     chunk_size: usize,
     /// Use copy-on-write strategy
-    use_cow: bool,
+    _use_cow: bool,
 }
 
 impl CacheConsciousResizer {
@@ -549,7 +554,7 @@ impl CacheConsciousResizer {
             current_size,
             target_size,
             chunk_size,
-            use_cow: target_size > L3_CACHE_SIZE,
+            _use_cow: target_size > L3_CACHE_SIZE,
         }
     }
 

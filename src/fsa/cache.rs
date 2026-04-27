@@ -235,7 +235,7 @@ pub struct FsaCache {
     /// Cache statistics
     stats: FsaCacheStats,
     /// Memory pool for efficient allocation
-    memory_pool: Option<Arc<SecureMemoryPool>>,
+    _memory_pool: Option<Arc<SecureMemoryPool>>,
 }
 
 impl FsaCache {
@@ -261,7 +261,7 @@ impl FsaCache {
             free_list: Vec::new(),
             next_state_id: 1, // Start from 1, reserve 0 for invalid state
             stats: FsaCacheStats::default(),
-            memory_pool,
+            _memory_pool: memory_pool,
         })
     }
 
@@ -488,8 +488,7 @@ impl Default for FsaCache {
 // Fast Vec-based state cache for dense state ID spaces
 // ============================================================================
 
-/// Sentinel value for unused/free states in the fast cache.
-const NIL_STATE: u32 = u32::MAX;
+
 
 /// Fast Vec-based state cache for dense state ID spaces.
 ///

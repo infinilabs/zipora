@@ -49,25 +49,21 @@ const U32_FLAG_LOCK: u32 = FLAG_LOCK as u32;
 
 #[inline(always)]
 fn node_to_u32(node: PatriciaNode) -> u32 {
-    // SAFETY: PatriciaNode is #[repr(C, align(4))] with size 4 = u32 size.
-    unsafe { std::mem::transmute(node) }
+    // SAFETY: PatriciaNode is a union, accessing its fields is unsafe.
+    // We read the `child` field which is a u32.
+    unsafe { node.child }
 }
 
-#[inline(always)]
-fn u32_to_node(bits: u32) -> PatriciaNode {
-    // SAFETY: Any u32 bit pattern is valid for PatriciaNode union.
-    unsafe { std::mem::transmute(bits) }
-}
+
 
 #[inline(always)]
 fn u32_to_meta(bits: u32) -> MetaInfo {
-    // SAFETY: MetaInfo is #[repr(C)] with size 4 = u32 size.
-    unsafe { std::mem::transmute(bits) }
+    bytemuck::cast(bits)
 }
 
 #[inline(always)]
 fn meta_to_u32(meta: MetaInfo) -> u32 {
-    unsafe { std::mem::transmute(meta) }
+    bytemuck::cast(meta)
 }
 
 // ============================================================================
@@ -174,9 +170,21 @@ impl SharedPool {
         unsafe { self.data.as_ptr().add(slot) as *const u8 }
     }
 
+    /// Get a slice of bytes from pool slots.
+    /// SAFETY: The caller must ensure the data is immutable and slot+len is within bounds.
+    #[inline(always)]
+    unsafe fn get_slice(&self, slot: usize, len: usize) -> &[u8] {
+        // SAFETY: caller guarantees data is immutable and slot+len within bounds
+        unsafe {
+            let ptr = self.raw_ptr(slot);
+            std::slice::from_raw_parts(ptr, len)
+        }
+    }
+
     /// Write raw bytes to pool slots (for initializing newly allocated nodes).
     /// SAFETY: Slots must be newly allocated (uncontested).
     #[inline]
+    #[allow(dead_code)]
     unsafe fn write_bytes(&self, slot: usize, byte_offset: usize, src: &[u8]) {
         // SAFETY: caller guarantees slot is within allocated bounds, dst doesn't overlap src
         unsafe {
@@ -187,12 +195,14 @@ impl SharedPool {
 
     /// Write a MetaInfo to a slot.
     #[inline(always)]
+    #[allow(dead_code)]
     fn store_meta(&self, pos: u32, meta: MetaInfo) {
         self.store_relaxed(pos as usize, meta_to_u32(meta));
     }
 
     /// Store a node (as u32) with release ordering (for synchronization).
     #[inline(always)]
+    #[allow(dead_code)]
     fn store_node_release(&self, pos: u32, node: PatriciaNode) {
         self.store_release(pos as usize, node_to_u32(node));
     }
@@ -379,7 +389,7 @@ impl<'a> ConcurrentNodeView<'a> {
         if t <= 6 {
             t as usize
         } else {
-            let big: BigCount = unsafe { std::mem::transmute(self.pool.load_relaxed(self.curr as usize)) };
+            let big: BigCount = bytemuck::cast(self.pool.load_relaxed(self.curr as usize));
             big.n_children as usize
         }
     }
@@ -453,10 +463,7 @@ impl<'a> ConcurrentNodeView<'a> {
             7 => {
                 let n_children = self.n_children();
                 // SAFETY: Labels at slots 1-4 (16 bytes), immutable after init.
-                let label_slice = unsafe {
-                    let ptr = self.pool.raw_ptr(self.curr as usize + 1);
-                    std::slice::from_raw_parts(ptr, 16)
-                };
+                let label_slice = unsafe { self.pool.get_slice(self.curr as usize + 1, 16) };
                 let idx = crate::fsa::fast_search::fast_search_byte_max_16(
                     &label_slice[..n_children], ch,
                 );
@@ -464,10 +471,7 @@ impl<'a> ConcurrentNodeView<'a> {
             }
             8 => {
                 // SAFETY: Bitmap at slots 2-9, immutable after init.
-                let bitmap_slice = unsafe {
-                    let ptr = self.pool.raw_ptr(self.curr as usize + 2);
-                    std::slice::from_raw_parts(ptr, 32)
-                };
+                let bitmap_slice = unsafe { self.pool.get_slice(self.curr as usize + 2, 32) };
                 let byte_idx = (ch / 8) as usize;
                 let bit_idx = ch % 8;
                 if (bitmap_slice[byte_idx] & (1 << bit_idx)) != 0 {
@@ -498,10 +502,7 @@ impl<'a> ConcurrentNodeView<'a> {
         let n_children = self.n_children();
         let offset = skip + n_children;
         // SAFETY: zpath is immutable after init, within bounds.
-        unsafe {
-            let ptr = self.pool.raw_ptr(self.curr as usize + offset);
-            std::slice::from_raw_parts(ptr, zlen)
-        }
+        unsafe { self.pool.get_slice(self.curr as usize + offset, zlen) }
     }
 
     fn valpos(&self) -> usize {
@@ -536,20 +537,14 @@ impl<'a> ConcurrentNodeView<'a> {
             }
             7 => {
                 let n = self.n_children();
-                let label_slice = unsafe {
-                    let ptr = self.pool.raw_ptr(self.curr as usize + 1);
-                    std::slice::from_raw_parts(ptr, 16)
-                };
+                let label_slice = unsafe { self.pool.get_slice(self.curr as usize + 1, 16) };
                 let idx = crate::fsa::fast_search::fast_search_byte_max_16(
                     &label_slice[..n], ch,
                 );
                 if idx < n { self.curr + 5 + idx as u32 } else { NIL_STATE }
             }
             8 => {
-                let bitmap_slice = unsafe {
-                    let ptr = self.pool.raw_ptr(self.curr as usize + 2);
-                    std::slice::from_raw_parts(ptr, 32)
-                };
+                let bitmap_slice = unsafe { self.pool.get_slice(self.curr as usize + 2, 32) };
                 let byte_idx = (ch / 8) as usize;
                 let bit_idx = ch % 8;
                 if (bitmap_slice[byte_idx] & (1 << bit_idx)) != 0 {
@@ -571,6 +566,7 @@ impl<'a> ConcurrentNodeView<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn for_each_child<F>(&self, mut f: F)
     where
         F: FnMut(u8, u32),
@@ -591,19 +587,13 @@ impl<'a> ConcurrentNodeView<'a> {
             }
             7 => {
                 let n = self.n_children();
-                let label_slice = unsafe {
-                    let ptr = self.pool.raw_ptr(self.curr as usize + 1);
-                    std::slice::from_raw_parts(ptr, 16)
-                };
+                let label_slice = unsafe { self.pool.get_slice(self.curr as usize + 1, 16) };
                 for i in 0..n {
                     f(label_slice[i], self.child(5 + i));
                 }
             }
             8 => {
-                let bitmap_slice = unsafe {
-                    let ptr = self.pool.raw_ptr(self.curr as usize + 2);
-                    std::slice::from_raw_parts(ptr, 32)
-                };
+                let bitmap_slice = unsafe { self.pool.get_slice(self.curr as usize + 2, 32) };
                 let mut child_idx = 0;
                 for byte_idx in 0..32 {
                     let mut b = bitmap_slice[byte_idx];
@@ -662,7 +652,7 @@ pub struct ConcurrentCsppTrie {
     inner: std::sync::Arc<SharedInner>,
     tls: ThreadLocal<RefCell<ThreadLocalAlloc>>,
     n_words: AtomicUsize,
-    n_nodes: AtomicUsize,
+    _n_nodes: AtomicUsize,
     valsize: usize,
     max_word_len: AtomicUsize,
     pub race_stats: RaceStats,
@@ -713,7 +703,7 @@ impl ConcurrentCsppTrie {
             }),
             tls: ThreadLocal::new(),
             n_words: AtomicUsize::new(0),
-            n_nodes: AtomicUsize::new(1),
+            _n_nodes: AtomicUsize::new(1),
             valsize,
             max_word_len: AtomicUsize::new(0),
             race_stats: RaceStats::new(),
@@ -804,6 +794,8 @@ impl ConcurrentCsppTrie {
     /// Read a value at a byte offset.
     pub fn get_value<T: Copy>(&self, valpos: usize) -> T {
         debug_assert!(valpos + std::mem::size_of::<T>() <= self.inner.pool.len() * 4);
+        // SAFETY: `valpos` is verified to be within bounds by the debug_assert above.
+        // `read_unaligned` is used because `valpos` might not be aligned to `T`.
         unsafe {
             let ptr = self.inner.pool.raw_ptr(0).add(valpos);
             std::ptr::read_unaligned(ptr as *const T)
@@ -813,7 +805,8 @@ impl ConcurrentCsppTrie {
     /// Get a raw mutable pointer for writing a value at the given byte offset.
     /// SAFETY: Caller must ensure no concurrent writes to the same valpos.
     pub unsafe fn write_value_ptr(&self, valpos: usize) -> *mut u8 {
-        // SAFETY: valpos is within allocated pool bounds
+        // SAFETY: `valpos` is assumed to be within allocated pool bounds by the caller.
+        // The caller must ensure no concurrent writes to the same `valpos`.
         unsafe {
             (self.inner.pool.data.as_ptr() as *mut u8).add(valpos)
         }
@@ -1061,7 +1054,7 @@ impl ConcurrentCsppTrie {
         let zpath_len = meta.n_zpath_len as usize;
         let is_final = meta.flags & FLAG_IS_FINAL != 0;
         let old_n = {
-            let big: BigCount = unsafe { std::mem::transmute(self.inner.pool.load_relaxed(curr as usize)) };
+            let big: BigCount = bytemuck::cast(self.inner.pool.load_relaxed(curr as usize));
             big.n_children as usize
         };
 
@@ -1154,7 +1147,7 @@ impl ConcurrentCsppTrie {
         let old_n: usize = if cnt_type <= 6 {
             cnt_type as usize
         } else {
-            let big: BigCount = unsafe { std::mem::transmute(self.inner.pool.load_relaxed(curr as usize)) };
+            let big: BigCount = bytemuck::cast(self.inner.pool.load_relaxed(curr as usize));
             big.n_children as usize
         };
 
@@ -1288,6 +1281,8 @@ impl ConcurrentCsppTrie {
         let suffix_size = (old_skip + old_n_children) * ALIGN_SIZE + suffix_zpath_padded + val_size;
 
         let suffix_node = self.alloc_node(suffix_size);
+        // SAFETY: `suffix_node` is newly allocated and uncontested.
+        // `curr` is a valid node. We are copying the structural part (header and children).
         unsafe {
             let base = self.inner.pool.data.as_ptr() as *mut u8;
             let src = (self.inner.pool.raw_ptr(curr as usize)) as *const u8;
@@ -1300,6 +1295,8 @@ impl ConcurrentCsppTrie {
         suffix_meta.n_zpath_len = suffix_zlen as u8;
         self.inner.pool.store_relaxed(suffix_node as usize, meta_to_u32(suffix_meta));
 
+        // SAFETY: `suffix_node` is newly allocated and uncontested.
+        // We are filling the zpath and value parts. Reads from `zpath_buf` and `curr` are safe.
         unsafe {
             let base = self.inner.pool.data.as_ptr() as *mut u8;
             let dst = base.add(suffix_node as usize * 4);
@@ -1339,6 +1336,8 @@ impl ConcurrentCsppTrie {
         self.inner.pool.store_relaxed(parent as usize + 1, child0);
         self.inner.pool.store_relaxed(parent as usize + 2, child1);
 
+        // SAFETY: `parent` is newly allocated and uncontested.
+        // Writing prefix zpath.
         unsafe {
             let zpath_dst = (self.inner.pool.data.as_ptr() as *mut u8)
                 .add((parent as usize + 3) * 4);
@@ -1365,6 +1364,8 @@ impl ConcurrentCsppTrie {
         let suffix_size = (old_skip + old_n_children) * ALIGN_SIZE + suffix_zpath_padded + val_size;
 
         let suffix_node = self.alloc_node(suffix_size);
+        // SAFETY: `suffix_node` is newly allocated and uncontested.
+        // Copying structural part from `curr`.
         unsafe {
             let base = self.inner.pool.data.as_ptr() as *mut u8;
             let src = (self.inner.pool.raw_ptr(curr as usize)) as *const u8;
@@ -1376,6 +1377,8 @@ impl ConcurrentCsppTrie {
         suffix_meta.n_zpath_len = suffix_zlen as u8;
         self.inner.pool.store_relaxed(suffix_node as usize, meta_to_u32(suffix_meta));
 
+        // SAFETY: `suffix_node` is newly allocated and uncontested.
+        // Copying zpath and value data from `curr` and `zpath_buf`.
         unsafe {
             let base = self.inner.pool.data.as_ptr() as *mut u8;
             let dst = base.add(suffix_node as usize * 4);
@@ -1635,12 +1638,12 @@ impl ConcurrentCsppTrie {
                                 // Atomically increment real count at slot 1
                                 loop {
                                     let old = self.inner.pool.load_acquire(curr as usize + 1);
-                                    let big: BigCount = unsafe { std::mem::transmute(old) };
+                                    let big: BigCount = bytemuck::cast(old);
                                     let new_big = BigCount {
                                         _unused: big._unused,
                                         n_children: big.n_children + 1,
                                     };
-                                    let new: u32 = unsafe { std::mem::transmute(new_big) };
+                                    let new: u32 = bytemuck::cast(new_big);
                                     if self.inner.pool.cas_weak(curr as usize + 1, old, new).is_ok() {
                                         break;
                                     }
@@ -1745,7 +1748,7 @@ impl ConcurrentCsppTrie {
                 let old_n: usize = if old_cnt <= 6 {
                     old_cnt as usize
                 } else {
-                    let big: BigCount = unsafe { std::mem::transmute(curr_original) };
+                    let big: BigCount = bytemuck::cast(curr_original);
                     big.n_children as usize
                 };
                 let old_zlen = old_meta.n_zpath_len as usize;
@@ -1787,7 +1790,7 @@ impl ConcurrentCsppTrie {
         let n: usize = if cnt <= 6 {
             cnt as usize
         } else {
-            let big: BigCount = unsafe { std::mem::transmute(self.inner.pool.load_relaxed(node as usize)) };
+            let big: BigCount = bytemuck::cast(self.inner.pool.load_relaxed(node as usize));
             big.n_children as usize
         };
         let slots = self.node_slots_from_meta(meta, n);
@@ -1801,7 +1804,7 @@ impl ConcurrentCsppTrie {
             let meta = u32_to_meta(self.inner.pool.load_relaxed(curr as usize));
             let cnt = meta.flags & FLAG_CNT_MASK;
             let n: usize = if cnt <= 6 { cnt as usize } else {
-                let big: BigCount = unsafe { std::mem::transmute(self.inner.pool.load_relaxed(curr as usize)) };
+                let big: BigCount = bytemuck::cast(self.inner.pool.load_relaxed(curr as usize));
                 big.n_children as usize
             };
             let slots = self.node_slots_from_meta(meta, n);

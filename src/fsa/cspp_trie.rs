@@ -4,6 +4,7 @@
 //! and concurrent read/write access. Ported from the C++ `topling-zip` reference.
 
 use crate::error::{Result, ZiporaError};
+use bytemuck::{Pod, Zeroable};
 
 pub const ALIGN_SIZE: usize = 4;
 pub const NIL_STATE: u32 = u32::MAX;
@@ -48,6 +49,12 @@ pub struct BigCount {
     pub _unused: u16,
     pub n_children: u16,
 }
+
+unsafe impl Zeroable for MetaInfo {}
+unsafe impl Pod for MetaInfo {}
+
+unsafe impl Zeroable for BigCount {}
+unsafe impl Pod for BigCount {}
 
 impl PatriciaNode {
     #[inline(always)]

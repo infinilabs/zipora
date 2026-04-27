@@ -312,7 +312,7 @@ macro_rules! register_factory_type {
 
 /// Builder pattern for complex object creation
 pub struct FactoryBuilder<T> {
-    name: String,
+    _name: String,
     registry: Arc<FactoryRegistry<T>>,
 }
 
@@ -320,7 +320,7 @@ impl<T> FactoryBuilder<T> {
     /// Create a new factory builder
     pub fn new(name: impl Into<String>) -> Self {
         Self {
-            name: name.into(),
+            _name: name.into(),
             registry: Arc::new(FactoryRegistry::new()),
         }
     }

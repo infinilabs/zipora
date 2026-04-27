@@ -40,27 +40,9 @@ impl CompactEntry {
 
     // Maximum values for validation
     const MAX_OFFSET: usize = (1usize << Self::OFFSET_BITS) - 1; // ~1TB
-    const MAX_LENGTH: usize = (1usize << Self::LENGTH_BITS) - 1; // ~1MB
 
-    /// Create a new CompactEntry with aggressive inlining for hot path
-    #[inline(always)]
-    fn new(offset: usize, length: usize, seq_id: u8) -> Result<Self> {
-        // Fast path validation with branch prediction hints
-        if offset > Self::MAX_OFFSET {
-            return Err(ZiporaError::out_of_memory(offset));
-        }
-        if length > Self::MAX_LENGTH {
-            return Err(ZiporaError::out_of_memory(length));
-        }
 
-        // Pack all fields into single u64 using bit shifts
-        // Layout: [seq_id:4][length:20][offset:40]
-        let packed = (offset as u64)
-            | ((length as u64) << Self::OFFSET_BITS)
-            | ((seq_id as u64 & Self::SEQ_ID_MASK) << (Self::OFFSET_BITS + Self::LENGTH_BITS));
 
-        Ok(CompactEntry(packed))
-    }
 
     /// Extract offset with force inline for maximum performance
     #[inline(always)]
@@ -113,15 +95,15 @@ impl Eq for CompactEntry {}
 #[derive(Debug, Clone)]
 struct SortConfig {
     /// Minimum string length to use radix sort
-    radix_threshold: usize,
+    _radix_threshold: usize,
     /// Cache block size for binary search
     cache_block_size: usize,
     /// Enable prefetching in searches
     enable_prefetch: bool,
     /// Use parallel sorting for large datasets
-    enable_parallel: bool,
+    _enable_parallel: bool,
     /// Threshold for parallel sorting
-    parallel_threshold: usize,
+    _parallel_threshold: usize,
 }
 
 impl Default for SortConfig {
@@ -129,7 +111,7 @@ impl Default for SortConfig {
         Self {
             // Match exact environment variable and default behavior
             // Default to u32::MAX to disable radix sort (prefer comparison sort)
-            radix_threshold: env::var("SORTABLE_STRVEC_MIN_RADIX_LEN")
+            _radix_threshold: env::var("SORTABLE_STRVEC_MIN_RADIX_LEN")
                 .or_else(|_| env::var("SortableStrVec_minRadixSortStrLen")) // compatibility
                 .ok()
                 .and_then(|s| s.parse::<f64>().ok())
@@ -142,11 +124,11 @@ impl Default for SortConfig {
                 .ok()
                 .map(|s| s == "1" || s.to_lowercase() == "true")
                 .unwrap_or(true),
-            enable_parallel: env::var("SORTABLE_PARALLEL")
+            _enable_parallel: env::var("SORTABLE_PARALLEL")
                 .ok()
                 .map(|s| s == "1" || s.to_lowercase() == "true")
                 .unwrap_or(true),
-            parallel_threshold: env::var("SORTABLE_PARALLEL_THRESHOLD")
+            _parallel_threshold: env::var("SORTABLE_PARALLEL_THRESHOLD")
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(10000),
@@ -188,8 +170,8 @@ struct SortableStats {
     total_bytes_stored: usize,
     last_sort_time_micros: u64,
     sort_algorithm_used: SortAlgorithm,
-    cache_hits: usize,
-    cache_misses: usize,
+    _cache_hits: usize,
+    _cache_misses: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -198,8 +180,11 @@ enum SortAlgorithm {
     None,
     Comparison,
     RadixMSD,
+    #[allow(dead_code)]
     RadixLSD,
+    #[allow(dead_code)]
     Hybrid,
+    #[allow(dead_code)]
     Parallel,
 }
 
@@ -443,6 +428,7 @@ impl SortableStrVec {
 
     /// Optimized lexicographic comparison
     #[inline(always)]
+    #[allow(dead_code)]
     unsafe fn fast_lexicographic_cmp(
         a_ptr: *const u8,
         a_len: usize,
@@ -484,6 +470,7 @@ impl SortableStrVec {
     }
 
     /// Optimized comparison sort implementation
+    #[allow(dead_code)]
     fn comparison_sort_optimized(&mut self) -> Result<()> {
         // Direct byte comparison on arena data for maximum performance
         // This matches an optimized comparison lambda approach
@@ -506,6 +493,7 @@ impl SortableStrVec {
     }
 
     /// Radix sort implementation for longer strings
+    #[allow(dead_code)]
     fn radix_sort_impl(&mut self) -> Result<()> {
         // Use the existing radix sort MSD implementation
         let indices = std::mem::take(&mut self.sorted_indices);
@@ -517,6 +505,7 @@ impl SortableStrVec {
     }
 
     /// Sort strings using optimized comparison sort (implementation)
+    #[allow(dead_code)]
     fn comparison_sort_impl(&self, mut indices: Vec<usize>) -> Vec<usize> {
         indices.sort_unstable_by(|&a, &b| {
             // SAFETY: indices contains values 0..self.len(), created by extend(0..self.entries.len())
@@ -546,6 +535,7 @@ impl SortableStrVec {
     /// SIMD-optimized string comparison (AVX2) - static version for better inlining
     #[cfg(all(target_arch = "x86_64", feature = "simd"))]
     #[inline(always)]
+    #[allow(dead_code)]
     unsafe fn simd_compare_static(a_bytes: &[u8], b_bytes: &[u8]) -> Ordering {
         use std::arch::x86_64::*;
 
@@ -588,12 +578,14 @@ impl SortableStrVec {
 
     /// SIMD-optimized string comparison (AVX2) - instance method for compatibility
     #[cfg(all(target_arch = "x86_64", feature = "simd"))]
+    #[allow(dead_code)]
     fn simd_compare(&self, a: &str, b: &str) -> Ordering {
         // SAFETY: simd_compare_static uses #[target_feature] for SIMD safety
         unsafe { Self::simd_compare_static(a.as_bytes(), b.as_bytes()) }
     }
 
     /// MSD radix sort implementation for longer strings
+    #[allow(dead_code)]
     fn radix_sort_msd_impl(&self, mut indices: Vec<usize>) -> Result<Vec<usize>> {
         if indices.is_empty() {
             return Ok(indices);
@@ -614,6 +606,7 @@ impl SortableStrVec {
     /// All indices in `indices` slice are valid (0..self.len()) because they originate
     /// from `extend(0..self.entries.len())` in sort_lexicographic(). The unwrap() calls
     /// on self.get(idx) are therefore guaranteed to succeed.
+    #[allow(dead_code)]
     fn radix_sort_msd_recursive(&self, indices: &mut [usize], buffer: &mut [usize], depth: usize) {
         if indices.len() <= 1 {
             return;
@@ -685,6 +678,7 @@ impl SortableStrVec {
     /// # Safety Invariant
     /// All indices are valid (0..self.len()) because they originate from
     /// `extend(0..self.entries.len())` in sort_lexicographic().
+    #[allow(dead_code)]
     fn parallel_sort_impl(&self, mut indices: Vec<usize>) -> Vec<usize> {
         // For simplicity, use standard parallel sort
         // In production, would use rayon or custom work-stealing implementation
@@ -728,6 +722,7 @@ impl SortableStrVec {
     }
 
     /// Counting sort by string length (implementation)
+    #[allow(dead_code)]
     fn counting_sort_by_length_impl(&self, indices: Vec<usize>, max_len: usize) -> Vec<usize> {
         let mut counts = vec![0usize; max_len + 1];
         let mut output = vec![0usize; indices.len()];

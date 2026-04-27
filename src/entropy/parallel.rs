@@ -206,6 +206,7 @@ impl<P: ParallelVariant> ParallelHuffmanEncoder<P> {
     }
     
     /// Merge compressed blocks into final output
+    #[allow(dead_code)]
     fn merge_blocks(&self, blocks: Vec<Vec<u8>>, original_data: &[u8]) -> Result<Vec<u8>> {
         let mut output = Vec::new();
         
@@ -249,7 +250,7 @@ impl<P: ParallelVariant> ParallelHuffmanEncoder<P> {
 pub struct ParallelHuffmanDecoder<P: ParallelVariant> {
     shared_tree: Option<HuffmanTree>,
     decoders: Vec<HuffmanDecoder>,
-    config: ParallelConfig,
+    _config: ParallelConfig,
     _phantom: PhantomData<P>,
 }
 
@@ -259,7 +260,7 @@ impl<P: ParallelVariant> ParallelHuffmanDecoder<P> {
         Self {
             shared_tree: None,
             decoders: Vec::new(),
-            config,
+            _config: config,
             _phantom: PhantomData,
         }
     }

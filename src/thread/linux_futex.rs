@@ -16,8 +16,7 @@ mod sys {
     use std::time::Duration;
 
     // Futex operation constants
-    pub const FUTEX_WAIT: c_int = 0;
-    pub const FUTEX_WAKE: c_int = 1;
+
     pub const FUTEX_WAIT_PRIVATE: c_int = 128;
     pub const FUTEX_WAKE_PRIVATE: c_int = 129;
 

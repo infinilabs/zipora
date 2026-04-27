@@ -753,46 +753,25 @@ impl<T> FastVec<T> {
         unsafe { &mut *self.ptr.unwrap_unchecked().as_ptr().add(index) }
     }
 
-    /// Extend the vector with elements from an iterator
+    /// Extend the vector with elements from an iterator.
+    /// For bulk slice copies, prefer `extend_from_slice_fast` which uses SIMD.
     pub fn extend<I>(&mut self, iter: I) -> Result<()>
     where
         I: IntoIterator<Item = T>,
         I::IntoIter: ExactSizeIterator,
     {
-        let mut iter = iter.into_iter();
+        let iter = iter.into_iter();
         let additional = iter.len();
         self.reserve(additional)?;
 
-        // For Copy types with large data, try to optimize with SIMD
-        if is_simd_safe::<T>() && is_simd_beneficial::<T>(additional) {
-            // Collect into a Vec first for SIMD optimization
-            let items: Vec<T> = iter.collect();
-            if items.len() == additional {
-                // Use SIMD-optimized copy from slice
-                // SAFETY: self.len + additional <= cap after reserve, items.len() == additional verified
-                unsafe {
-                    let src_bytes = slice_as_bytes(&items);
-                    let dst_bytes = slice_as_bytes_mut(slice::from_raw_parts_mut(
-                        self.as_mut_ptr().add(self.len),
-                        additional,
-                    ));
-                    fast_copy(src_bytes, dst_bytes)?;
-                }
-                self.len += additional;
-                return Ok(());
-            }
-        } else {
-            // Standard element-by-element extend for small operations or non-Copy types
-            for item in iter {
-                // We know we have capacity, so this won't fail
-                // SAFETY: self.len < self.len + additional <= cap after reserve
-                unsafe {
-                    ptr::write(self.as_mut_ptr().add(self.len), item);
-                    self.len += 1;
-                }
+        for item in iter {
+            // SAFETY: self.len < self.len + additional <= cap after reserve
+            unsafe {
+                ptr::write(self.as_mut_ptr().add(self.len), item);
+                self.len += 1;
             }
         }
-        
+
         Ok(())
     }
 

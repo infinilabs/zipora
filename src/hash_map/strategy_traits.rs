@@ -257,16 +257,16 @@ pub enum OptimizationHint {
 /// Robin Hood collision resolution strategy
 pub struct RobinHoodStrategy {
     max_probe_distance: u16,
-    variance_reduction: bool,
-    backward_shift: bool,
+    _variance_reduction: bool,
+    _backward_shift: bool,
 }
 
 impl RobinHoodStrategy {
     pub fn new(max_probe_distance: u16, variance_reduction: bool, backward_shift: bool) -> Self {
         Self {
             max_probe_distance,
-            variance_reduction,
-            backward_shift,
+            _variance_reduction: variance_reduction,
+            _backward_shift: backward_shift,
         }
     }
 }
@@ -555,12 +555,12 @@ impl<K, V> StorageLayoutStrategy<K, V> for StandardStorageStrategy {
 
 /// Cache-optimized storage layout strategy
 pub struct CacheOptimizedStorageStrategy {
-    allocator: CacheOptimizedAllocator,
+    _allocator: CacheOptimizedAllocator,
 }
 
 impl CacheOptimizedStorageStrategy {
     pub fn new(allocator: CacheOptimizedAllocator) -> Self {
-        Self { allocator }
+        Self { _allocator: allocator }
     }
 }
 
@@ -626,13 +626,13 @@ impl<K, V> StorageLayoutStrategy<K, V> for CacheOptimizedStorageStrategy {
 
 /// SIMD optimization strategy
 pub struct SimdOptimizationStrategy {
-    simd_ops: &'static SimdStringOps,
+    _simd_ops: &'static SimdStringOps,
 }
 
 impl SimdOptimizationStrategy {
     pub fn new() -> Self {
         Self {
-            simd_ops: crate::hash_map::simd_string_ops::get_global_simd_ops(),
+            _simd_ops: crate::hash_map::simd_string_ops::get_global_simd_ops(),
         }
     }
 }

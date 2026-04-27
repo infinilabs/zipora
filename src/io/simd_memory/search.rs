@@ -63,7 +63,6 @@ impl Default for SearchConfig {
 
 /// SIMD-accelerated string search operations
 pub struct SimdStringSearch {
-    config: SearchConfig,
     tier: SearchTier,
 }
 
@@ -76,7 +75,7 @@ impl SimdStringSearch {
     /// Create with custom configuration
     pub fn with_config(config: SearchConfig) -> Self {
         let tier = Self::detect_optimal_tier(&config);
-        Self { config, tier }
+        Self { tier }
     }
 
     /// Detect optimal SIMD tier based on CPU features

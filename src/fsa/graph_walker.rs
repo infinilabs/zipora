@@ -426,10 +426,8 @@ impl<V: Vertex> DfsGraphWalker<V> {
 /// Implements a hybrid approach: BFS for the first 2 levels to maximize cache locality,
 /// then switches to DFS for memory efficiency
 pub struct CfsGraphWalker<V: Vertex> {
-    config: WalkerConfig,
     bfs_walker: BfsGraphWalker<V>,
     dfs_walker: DfsGraphWalker<V>,
-    bfs_levels: usize,
     stats: WalkStats,
 }
 
@@ -444,8 +442,6 @@ impl<V: Vertex> CfsGraphWalker<V> {
         Self {
             bfs_walker: BfsGraphWalker::new(bfs_config),
             dfs_walker: DfsGraphWalker::new(config.clone()),
-            config,
-            bfs_levels: 2,
             stats: WalkStats::default(),
         }
     }

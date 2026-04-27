@@ -177,6 +177,7 @@ impl FileHeader {
     }
 
     /// Extract checksum type
+    #[allow(dead_code)]
     fn checksum_type(&self) -> u8 {
         ((self.records_checksum_version >> 40) & 0xFF) as u8
     }
@@ -187,11 +188,13 @@ impl FileHeader {
     }
 
     /// Get file size (safe for packed struct)
+    #[allow(dead_code)]
     fn file_size(&self) -> u64 {
         self.file_size
     }
 
     /// Get uncompressed size (safe for packed struct) 
+    #[allow(dead_code)]
     fn unzip_size(&self) -> u64 {
         self.unzip_size
     }
@@ -324,7 +327,7 @@ pub struct ZipOffsetBlobStore {
     /// Statistics for compression tracking
     stats: CompressionStats,
     /// Memory pool for secure allocation
-    pool: Option<SecureMemoryPool>,
+    _pool: Option<SecureMemoryPool>,
     /// Cache for block-based offset access
     offset_cache: Option<CacheOffsets>,
 }
@@ -348,7 +351,7 @@ impl ZipOffsetBlobStore {
             offsets,
             config,
             stats: CompressionStats::default(),
-            pool,
+            _pool: pool,
             offset_cache: None,
         })
     }
@@ -364,7 +367,7 @@ impl ZipOffsetBlobStore {
             offsets,
             config,
             stats: CompressionStats::default(),
-            pool: Some(pool),
+            _pool: Some(pool),
             offset_cache: None,
         })
     }
@@ -610,6 +613,7 @@ impl ZipOffsetBlobStore {
     }
 
     /// SIMD-optimized memory copy with fallback
+    #[allow(dead_code)]
     fn simd_copy(&self, src: &[u8], dst: &mut [u8]) -> Result<()> {
         if self.should_use_simd(src.len()) {
             fast_copy(src, dst)
@@ -655,6 +659,7 @@ impl ZipOffsetBlobStore {
     }
 
     /// Get record with cached offsets for better sequential performance
+    #[allow(dead_code)]
     fn get_record_cached<const COMPRESS: bool, const CHECKSUM_LEN: u8>(
         &mut self,
         id: RecordId,
