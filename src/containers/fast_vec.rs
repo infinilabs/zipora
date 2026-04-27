@@ -318,6 +318,18 @@ impl<T> FastVec<T> {
         }
     }
 
+    /// Set length without dropping or allocating
+    ///
+    /// # Safety
+    ///
+    /// - `new_len` must be less than or equal to `capacity()`.
+    /// - The elements at `old_len..new_len` must be initialized.
+    #[inline]
+    pub unsafe fn set_len(&mut self, new_len: usize) {
+        crate::zipora_verify_le!(new_len, self.cap);
+        self.len = new_len;
+    }
+
     /// Get the vector as a slice
     #[inline]
     pub fn as_slice(&self) -> &[T] {
@@ -2531,6 +2543,55 @@ mod tests {
             for i in 0..2000 {
                 assert_eq!(vec[i], i as u16);
             }
+        }
+
+        #[test]
+        fn test_set_len_basic() {
+            let mut v: FastVec<u32> = FastVec::with_capacity(16).unwrap();
+            assert_eq!(v.len(), 0);
+            unsafe {
+                v.set_len(8);
+                // Initialize the 8 elements so drop is safe
+                for i in 0..8 {
+                    std::ptr::write(v.as_mut_ptr().add(i), i as u32);
+                }
+            }
+            assert_eq!(v.len(), 8);
+            for i in 0..8 {
+                assert_eq!(v[i], i as u32);
+            }
+        }
+
+        #[test]
+        fn test_set_len_zero() {
+            let mut v: FastVec<u32> = FastVec::with_capacity(16).unwrap();
+            v.push(42).unwrap();
+            v.push(99).unwrap();
+            assert_eq!(v.len(), 2);
+            // SAFETY: shrinking len to 0 is always valid (drops are caller's responsibility)
+            unsafe { v.set_len(0); }
+            assert_eq!(v.len(), 0);
+        }
+
+        #[test]
+        fn test_set_len_exact_capacity() {
+            let mut v: FastVec<u32> = FastVec::with_capacity(4).unwrap();
+            assert_eq!(v.capacity(), 4);
+            unsafe {
+                v.set_len(4);
+                for i in 0..4 {
+                    std::ptr::write(v.as_mut_ptr().add(i), i as u32);
+                }
+            }
+            assert_eq!(v.len(), 4);
+            assert_eq!(v[3], 3);
+        }
+
+        #[test]
+        #[should_panic]
+        fn test_set_len_beyond_capacity_panics() {
+            let mut v: FastVec<u32> = FastVec::with_capacity(4).unwrap();
+            unsafe { v.set_len(5); }
         }
     }
 }

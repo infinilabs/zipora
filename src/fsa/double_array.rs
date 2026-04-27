@@ -244,8 +244,8 @@ impl DoubleArrayTrie {
         // SAFETY: same invariant as contains()
         debug_assert!(next < self.states.len());
         let next_state = unsafe { self.states.get_unchecked(next) };
-        if next_state.is_free() { return NIL_STATE; }
-        if next_state.parent() == curr {
+        
+        if next_state.parent == curr {
             next as u32
         } else {
             NIL_STATE
@@ -2435,6 +2435,72 @@ mod tests {
                     std::str::from_utf8(keys[j]).unwrap());
             }
         }
+    }
+
+    #[test]
+    fn test_state_move_free_state() {
+        let mut t = DoubleArrayTrie::new();
+        t.insert(b"a").unwrap();
+
+        // Transition with a byte that was never inserted — the target state
+        // is free (has FREE_BIT set in parent). The optimized state_move
+        // must return NIL_STATE because free parent can never equal curr.
+        for ch in 0u8..=255 {
+            if ch == b'a' { continue; }
+            assert_eq!(t.state_move(0, ch), NIL_STATE,
+                "state_move(0, {}) should be NIL for free state", ch);
+        }
+    }
+
+    #[test]
+    fn test_state_move_after_relocations() {
+        let mut t = DoubleArrayTrie::new();
+        // Insert many keys sharing prefix to force child array relocations.
+        // After relocations, state_move must still return correct results.
+        let keys: Vec<Vec<u8>> = (0u8..=127).map(|ch| vec![b'x', ch]).collect();
+        for k in &keys {
+            t.insert(k).unwrap();
+        }
+
+        let x_state = t.state_move(0, b'x');
+        assert_ne!(x_state, NIL_STATE);
+
+        for ch in 0u8..=127 {
+            let child = t.state_move(x_state, ch);
+            assert_ne!(child, NIL_STATE, "child for byte {} missing after relocations", ch);
+            assert!(t.is_term(child));
+        }
+        // Bytes not inserted should still return NIL
+        for ch in 128u8..=255 {
+            assert_eq!(t.state_move(x_state, ch), NIL_STATE);
+        }
+    }
+
+    #[test]
+    fn test_state_move_byte_zero() {
+        let mut t = DoubleArrayTrie::new();
+        // byte 0 is special: base ^ 0 = base, so next == base(curr)
+        t.insert(&[0u8]).unwrap();
+        let s = t.state_move(0, 0);
+        assert_ne!(s, NIL_STATE);
+        assert!(t.is_term(s));
+    }
+
+    #[test]
+    fn test_state_move_after_remove() {
+        let mut t = DoubleArrayTrie::new();
+        t.insert(b"ab").unwrap();
+        t.insert(b"ac").unwrap();
+
+        // Remove "ab", its leaf state becomes free
+        t.remove(b"ab");
+        assert_eq!(t.state_move(t.state_move(0, b'a'), b'b'), NIL_STATE);
+        // "ac" must still work
+        let a = t.state_move(0, b'a');
+        assert_ne!(a, NIL_STATE);
+        let ac = t.state_move(a, b'c');
+        assert_ne!(ac, NIL_STATE);
+        assert!(t.is_term(ac));
     }
 
     /// Performance test — only meaningful in release mode.
