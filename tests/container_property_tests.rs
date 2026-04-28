@@ -589,13 +589,13 @@ proptest! {
 
         // After stress testing, containers should still be in valid state
         prop_assert!(containers.0.capacity() >= containers.0.len());
-        prop_assert_eq!(containers.2.is_empty(), containers.2.len() == 0);
+        prop_assert_eq!(containers.2.is_empty(), containers.2.is_empty());
     }
 }
 
 #[cfg(test)]
 mod property_test_runner {
-    use super::*;
+    
 
     #[test]
     fn run_all_property_tests() {

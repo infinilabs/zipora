@@ -174,7 +174,7 @@ fn test_rank_select_performance_characteristics() {
         let rank_select = RankSelectInterleaved256::new(bv.clone()).unwrap();
 
         // Measure memory usage
-        let original_bytes = (bv.len() + 7) / 8;
+        let original_bytes = bv.len().div_ceil(8);
         let overhead = rank_select.space_overhead_percent();
 
         // Verify reasonableness of metrics

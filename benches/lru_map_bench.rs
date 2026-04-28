@@ -4,7 +4,7 @@
 //! against standard HashMap and other cache implementations.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use zipora::containers::{LruMap, ConcurrentLruMap, LruMapConfig, ConcurrentLruMapConfig};
+use zipora::containers::{LruMap, ConcurrentLruMap, LruMapConfig};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;

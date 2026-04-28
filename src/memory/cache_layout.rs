@@ -479,55 +479,61 @@ pub fn detect_cache_hierarchy() -> CacheHierarchy {
 /// Detect cache hierarchy on x86_64 using CPUID
 #[cfg(target_arch = "x86_64")]
 fn detect_x86_cache_hierarchy() -> CacheHierarchy {
-    use std::arch::x86_64::__cpuid;
+    #[cfg(miri)]
+    return CacheHierarchy::default();
 
-    // Default fallback
-    let mut hierarchy = CacheHierarchy::default();
-
-    // SAFETY: __cpuid is safe to call on x86_64 with valid leaf values
+    #[cfg(not(miri))]
     {
-        // Check if CPUID is available (for x86_64 we can assume it's available)
+        use std::arch::x86_64::__cpuid;
+
+        // Default fallback
+        let mut hierarchy = CacheHierarchy::default();
+
+        // SAFETY: __cpuid is safe to call on x86_64 with valid leaf values
         {
-            // Get cache information using CPUID leaf 4
-            let mut level = 0;
-            loop {
-                let result = __cpuid(0x4 | (level << 8));
-                let cache_type = result.eax & 0x1F;
+            // Check if CPUID is available (for x86_64 we can assume it's available)
+            {
+                // Get cache information using CPUID leaf 4
+                let mut level = 0;
+                loop {
+                    let result = __cpuid(0x4 | (level << 8));
+                    let cache_type = result.eax & 0x1F;
 
-                if cache_type == 0 {
-                    break; // No more cache levels
+                    if cache_type == 0 {
+                        break; // No more cache levels
+                    }
+
+                    let cache_level = (result.eax >> 5) & 0x7;
+                    let line_size = ((result.ebx & 0xFFF) + 1) as usize;
+                    let cache_size = (((result.ebx >> 22) + 1) as usize *
+                                     ((result.ecx + 1) as usize) *
+                                     line_size);
+
+                    match cache_level {
+                        1 => {
+                            hierarchy.l1_line_size = line_size;
+                            hierarchy.l1_size = cache_size;
+                        }
+                        2 => {
+                            hierarchy.l2_line_size = line_size;
+                            hierarchy.l2_size = cache_size;
+                        }
+                        3 => {
+                            hierarchy.l3_line_size = line_size;
+                            hierarchy.l3_size = cache_size;
+                        }
+                        _ => {}
+                    }
+
+                    level += 1;
                 }
-
-                let cache_level = (result.eax >> 5) & 0x7;
-                let line_size = ((result.ebx & 0xFFF) + 1) as usize;
-                let cache_size = (((result.ebx >> 22) + 1) as usize *
-                                 ((result.ecx + 1) as usize) *
-                                 line_size);
-
-                match cache_level {
-                    1 => {
-                        hierarchy.l1_line_size = line_size;
-                        hierarchy.l1_size = cache_size;
-                    }
-                    2 => {
-                        hierarchy.l2_line_size = line_size;
-                        hierarchy.l2_size = cache_size;
-                    }
-                    3 => {
-                        hierarchy.l3_line_size = line_size;
-                        hierarchy.l3_size = cache_size;
-                    }
-                    _ => {}
-                }
-
-                level += 1;
+            
+                hierarchy.levels = if level == 0 { 3 } else { level as usize }; // Default to 3 levels if detection fails
             }
-
-            hierarchy.levels = if level == 0 { 3 } else { level as usize }; // Default to 3 levels if detection fails
         }
+        
+        hierarchy
     }
-
-    hierarchy
 }
 
 /// Detect cache hierarchy on ARM64 using system information

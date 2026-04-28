@@ -55,7 +55,6 @@ pub const GOLDEN_LOAD_FACTOR: u8 = 158; // 158/256 ≈ 0.618
 /// This is provided through specialized implementations for u32 and u64.
 /// The generic version is removed to avoid complex trait bounds.
 /// BMI2 acceleration provides 3-5x faster bit mixing when available.
-
 /// Specialized FaboHashCombine for u32 values (most common case)
 /// 
 /// Performance: 3-5x faster with BMI2 acceleration
@@ -933,7 +932,7 @@ unsafe fn bmi2_load_factor_hardware(
     // Calculate load factor with BZHI-optimized precision
     let precision_bits = 32; // Use 32-bit precision
     // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 with index 63
-    let scaled_count = unsafe { _bzhi_u64(count_64 << precision_bits, 63) } / size_64;
+    let scaled_count = _bzhi_u64(count_64 << precision_bits, 63) / size_64;
     let scaled_target = (target_load_factor * (1u64 << precision_bits) as f64) as u64;
     
     let current_load_factor = element_count as f64 / current_size as f64;

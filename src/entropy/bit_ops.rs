@@ -1177,8 +1177,8 @@ mod tests {
         
         // Test bit extraction (using available extract_bits method)
         let packed_data = 0xABCDu64;
-        let extracted1 = entropy_ops.extract_bits(packed_data, 4, 8);
-        let extracted2 = entropy_ops.extract_bits(packed_data, 12, 4);
+        let _extracted1 = entropy_ops.extract_bits(packed_data, 4, 8);
+        let _extracted2 = entropy_ops.extract_bits(packed_data, 12, 4);
         
         // Test bit packing (using available pack_bits method)
         let mut stream = 0u64;

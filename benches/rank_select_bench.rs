@@ -47,7 +47,7 @@ fn create_test_data(size: usize, pattern: &str) -> BitVector {
             for i in 0..size {
                 let mut hasher = DefaultHasher::new();
                 i.hash(&mut hasher);
-                bv.push(hasher.finish() % 2 == 0).unwrap();
+                bv.push(hasher.finish().is_multiple_of(2)).unwrap();
             }
         }
         _ => panic!("Unknown pattern: {}", pattern),
@@ -125,8 +125,8 @@ fn benchmark_rank_operations(c: &mut Criterion) {
             });
 
             // Only benchmark sparse variant on sparse data
-            if *pattern == "sparse" {
-                if let Ok(sparse) = RankSelect256::new(bv.clone()) {
+            if *pattern == "sparse"
+                && let Ok(sparse) = RankSelect256::new(bv.clone()) {
                     group.bench_function("sparse", |b| {
                         b.iter(|| {
                             for &pos in &positions {
@@ -135,7 +135,6 @@ fn benchmark_rank_operations(c: &mut Criterion) {
                         })
                     });
                 }
-            }
 
             group.finish();
         }
@@ -210,8 +209,8 @@ fn benchmark_select_operations(c: &mut Criterion) {
             });
 
             // Only benchmark sparse variant on sparse data
-            if *pattern == "sparse" {
-                if let Ok(sparse) = RankSelect256::new(bv.clone()) {
+            if *pattern == "sparse"
+                && let Ok(sparse) = RankSelect256::new(bv.clone()) {
                     group.bench_function("sparse", |b| {
                         b.iter(|| {
                             for &idx in &indices {
@@ -222,7 +221,6 @@ fn benchmark_select_operations(c: &mut Criterion) {
                         })
                     });
                 }
-            }
 
             group.finish();
         }
@@ -291,10 +289,10 @@ fn benchmark_space_overhead(c: &mut Criterion) {
 
     for &size in &sizes {
         for pattern in &patterns {
-            let mut group = c.benchmark_group(format!("space_{}_{}", size, pattern));
+            let group = c.benchmark_group(format!("space_{}_{}", size, pattern));
 
             let bv = create_test_data(size, pattern);
-            let original_bytes = bv.len() / 8 + if bv.len() % 8 > 0 { 1 } else { 0 };
+            let original_bytes = bv.len() / 8 + if !bv.len().is_multiple_of(8) { 1 } else { 0 };
 
             // Test all variants
             let simple = RankSelect256::new(bv.clone()).unwrap();
@@ -319,15 +317,14 @@ fn benchmark_space_overhead(c: &mut Criterion) {
             eprintln!("  Interleaved:  {:.2}% overhead", overhead_interleaved);
 
             // Test sparse variant on sparse data
-            if *pattern == "sparse" {
-                if let Ok(sparse) = RankSelect256::new(bv.clone()) {
+            if *pattern == "sparse"
+                && let Ok(sparse) = RankSelect256::new(bv.clone()) {
                     let space_overhead = sparse.space_overhead_percent();
                     eprintln!(
                         "  Sparse:       {:.2}% space overhead",
                         space_overhead
                     );
                 }
-            }
 
             group.finish();
         }

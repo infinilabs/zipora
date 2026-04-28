@@ -899,7 +899,7 @@ impl SimdPatternMatcher {
                 if pattern_len <= 64 {
                     1
                 } else {
-                    (pattern_len + 63) / 64
+                    pattern_len.div_ceil(64)
                 }
             }
         }) as u32

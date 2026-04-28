@@ -1554,8 +1554,8 @@ mod bench_tests {
         
         // Test state transitions
         let mut state = 1u16 << config.table_log;
-        let mut bit_buffer = 0u64;
-        let mut bit_count = 0u8;
+        let mut _bit_buffer = 0u64;
+        let mut _bit_count = 0u8;
         
         for symbol in 0..5u8 {
             if let Some((new_state, _bits_needed)) = table.encode_symbol(symbol, state as u64) {

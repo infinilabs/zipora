@@ -1,6 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
 use zipora::entropy::*;
-use zipora::error::Result;
 
 fn generate_test_data(size: usize, entropy_level: f64) -> Vec<u8> {
     let mut data = Vec::with_capacity(size);

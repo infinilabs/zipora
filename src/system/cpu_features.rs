@@ -503,39 +503,45 @@ impl RuntimeCpuFeatures {
     /// Enhanced x86_64 feature detection for CpuFeatures
     #[cfg(target_arch = "x86_64")]
     fn detect_x86_features(&self, features: &mut CpuFeatures) {
-        let cpuid = raw_cpuid::CpuId::new();
+        #[cfg(miri)]
+        return;
         
-        // Basic features
-        if let Some(feature_info) = cpuid.get_feature_info() {
-            features.has_sse41 = feature_info.has_sse41();
-            features.has_sse42 = feature_info.has_sse42();
-            features.has_avx = feature_info.has_avx();
-            features.has_popcnt = feature_info.has_popcnt();
-        }
-        
-        // Extended features
-        if let Some(extended_features) = cpuid.get_extended_feature_info() {
-            features.has_avx2 = extended_features.has_avx2();
-            features.has_bmi1 = extended_features.has_bmi1();
-            features.has_bmi2 = extended_features.has_bmi2();
-            // Note: prefetchw detection varies by CPU architecture
-            features.has_prefetchw = false; // Default to false for compatibility
+        #[cfg(not(miri))]
+        {
+            let cpuid = raw_cpuid::CpuId::new();
             
-            // AVX-512 features
-            features.has_avx512f = extended_features.has_avx512f();
-            features.has_avx512vl = extended_features.has_avx512vl();
-            features.has_avx512bw = extended_features.has_avx512bw();
+            // Basic features
+            if let Some(feature_info) = cpuid.get_feature_info() {
+                features.has_sse41 = feature_info.has_sse41();
+                features.has_sse42 = feature_info.has_sse42();
+                features.has_avx = feature_info.has_avx();
+                features.has_popcnt = feature_info.has_popcnt();
+            }
             
-            // Check for AVX-512 VPOPCNTDQ through extended features
-            // This is a more advanced feature that might not be in basic detection
-            features.has_avx512vpopcntdq = false; // Default to false for compatibility
-        }
-        
-        // Extended processor info
-        if let Some(extended_info) = cpuid.get_extended_processor_and_feature_identifiers() {
-            features.has_lzcnt = extended_info.has_lzcnt();
-            // TZCNT is typically available with BMI1
-            features.has_tzcnt = features.has_bmi1;
+            // Extended features
+            if let Some(extended_features) = cpuid.get_extended_feature_info() {
+                features.has_avx2 = extended_features.has_avx2();
+                features.has_bmi1 = extended_features.has_bmi1();
+                features.has_bmi2 = extended_features.has_bmi2();
+                // Note: prefetchw detection varies by CPU architecture
+                features.has_prefetchw = false; // Default to false for compatibility
+                
+                // AVX-512 features
+                features.has_avx512f = extended_features.has_avx512f();
+                features.has_avx512vl = extended_features.has_avx512vl();
+                features.has_avx512bw = extended_features.has_avx512bw();
+                
+                // Check for AVX-512 VPOPCNTDQ through extended features
+                // This is a more advanced feature that might not be in basic detection
+                features.has_avx512vpopcntdq = false; // Default to false for compatibility
+            }
+            
+            // Extended processor info
+            if let Some(extended_info) = cpuid.get_extended_processor_and_feature_identifiers() {
+                features.has_lzcnt = extended_info.has_lzcnt();
+                // TZCNT is typically available with BMI1
+                features.has_tzcnt = features.has_bmi1;
+            }
         }
     }
     
@@ -575,26 +581,29 @@ impl RuntimeCpuFeatures {
         
         #[cfg(target_arch = "x86_64")]
         {
-            let cpuid = raw_cpuid::CpuId::new();
-            
-            // Enhanced cache line size detection
-            if let Some(cache_params) = cpuid.get_cache_parameters() {
-                for cache in cache_params {
-                    cache_line_size = cache.coherency_line_size();
-                    
-                    // Calculate cache size using available methods
-                    // Note: exact calculation varies by raw_cpuid version
-                    let cache_size = cache.associativity() * cache.coherency_line_size() 
-                                   * cache.physical_line_partitions();
-                    
-                    // Cache level determination is simplified for compatibility
-                    // Use cache_size for future enhanced detection
-                    let _cache_size = cache_size; // Store for potential future use
+            #[cfg(not(miri))]
+            {
+                let cpuid = raw_cpuid::CpuId::new();
+                
+                // Enhanced cache line size detection
+                if let Some(cache_params) = cpuid.get_cache_parameters() {
+                    for cache in cache_params {
+                        cache_line_size = cache.coherency_line_size();
+                        
+                        // Calculate cache size using available methods
+                        // Note: exact calculation varies by raw_cpuid version
+                        let cache_size = cache.associativity() * cache.coherency_line_size() 
+                                       * cache.physical_line_partitions();
+                        
+                        // Cache level determination is simplified for compatibility
+                        // Use cache_size for future enhanced detection
+                        let _cache_size = cache_size; // Store for potential future use
+                    }
                 }
+                
+                // Use fallback cache detection for compatibility
+                // Cache line size is typically 64 bytes on modern x86_64
             }
-            
-            // Use fallback cache detection for compatibility
-            // Cache line size is typically 64 bytes on modern x86_64
         }
         
         #[cfg(target_arch = "aarch64")]
@@ -649,7 +658,12 @@ impl RuntimeCpuFeatures {
 
     /// Get CPU vendor and model information
     fn get_cpu_info(&self) -> (String, String) {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(miri)]
+        {
+            ("Miri Emulator".to_string(), "Virtual CPU".to_string())
+        }
+
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
             let cpuid = raw_cpuid::CpuId::new();
             let vendor = cpuid.get_vendor_info()
@@ -702,12 +716,15 @@ impl RuntimeCpuFeatures {
 
         #[cfg(target_arch = "x86_64")]
         {
-            let cpuid = raw_cpuid::CpuId::new();
-            if let Some(feature_info) = cpuid.get_feature_info()
-                && feature_info.has_htt() {
-                    // Hyperthreading is enabled, so physical cores = logical / 2
-                    return (logical_cores, logical_cores / 2);
-                }
+            #[cfg(not(miri))]
+            {
+                let cpuid = raw_cpuid::CpuId::new();
+                if let Some(feature_info) = cpuid.get_feature_info()
+                    && feature_info.has_htt() {
+                        // Hyperthreading is enabled, so physical cores = logical / 2
+                        return (logical_cores, logical_cores / 2);
+                    }
+            }
         }
 
         (logical_cores, physical_cores)
@@ -723,9 +740,11 @@ impl RuntimeCpuFeatures {
 
         #[cfg(target_arch = "x86_64")]
         {
-            let cpuid = raw_cpuid::CpuId::new();
-            
-            // Get cache line size
+            #[cfg(not(miri))]
+            {
+                let cpuid = raw_cpuid::CpuId::new();
+                
+                // Get cache line size
             if let Some(mut cache_params) = cpuid.get_cache_parameters()
                 && let Some(cache) = cache_params.next() {
                     cache_line_size = cache.coherency_line_size();
@@ -734,6 +753,7 @@ impl RuntimeCpuFeatures {
             // Try to get cache sizes
             // Note: Cache size detection is complex and varies by CPU
             // For now, we use reasonable defaults and detect cache line size
+            }
         }
 
         (cache_line_size, l1_size, l2_size, l3_size)

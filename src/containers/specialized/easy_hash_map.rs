@@ -226,26 +226,26 @@ where
         }
     }
 
-    /// Get an iterator over key-value pairs
-    /// TODO: Implement when ZiporaHashMap has iter() support
+    // /// Get an iterator over key-value pairs
+    // /// TODO: Implement when ZiporaHashMap has iter() support
     // pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
     //     self.inner.iter()
     // }
 
-    /// Get an iterator over keys
-    /// TODO: Implement when ZiporaHashMap has keys() support
+    // /// Get an iterator over keys
+    // /// TODO: Implement when ZiporaHashMap has keys() support
     // pub fn keys(&self) -> impl Iterator<Item = &K> {
     //     self.inner.keys()
     // }
 
-    /// Get an iterator over values
-    /// TODO: Implement when ZiporaHashMap has values() support
+    // /// Get an iterator over values
+    // /// TODO: Implement when ZiporaHashMap has values() support
     // pub fn values(&self) -> impl Iterator<Item = &V> {
     //     self.inner.values()
     // }
 
-    /// Get an iterator over mutable values
-    /// TODO: Implement when ZiporaHashMap has iterator support
+    // /// Get an iterator over mutable values
+    // /// TODO: Implement when ZiporaHashMap has iterator support
     // pub fn values_mut(&mut self) -> ValuesIterMut<K, V> {
     //     ValuesIterMut {
     //         keys: self.inner.keys().cloned().collect(),

@@ -25,12 +25,10 @@ struct TestDataGenerator;
 impl TestDataGenerator {
     /// Generate highly repetitive text data (best case for compression)
     fn repetitive_text(size: usize) -> Vec<u8> {
-        let patterns = vec![
-            "the quick brown fox jumps over the lazy dog",
+        let patterns = ["the quick brown fox jumps over the lazy dog",
             "lorem ipsum dolor sit amet consectetur adipiscing elit",
             "compression algorithm performance testing benchmark",
-            "pattern matching dictionary suffix array implementation",
-        ];
+            "pattern matching dictionary suffix array implementation"];
 
         let mut data = Vec::with_capacity(size);
         let mut pattern_idx = 0;
@@ -53,14 +51,12 @@ impl TestDataGenerator {
 
     /// Generate log file data with timestamps and patterns
     fn log_data(size: usize) -> Vec<u8> {
-        let log_levels = vec!["INFO", "WARN", "ERROR", "DEBUG"];
-        let messages = vec![
-            "Request processed successfully",
+        let log_levels = ["INFO", "WARN", "ERROR", "DEBUG"];
+        let messages = ["Request processed successfully",
             "Connection established to database",
             "Cache miss, fetching from source",
             "Transaction completed in",
-            "Authentication successful for user",
-        ];
+            "Authentication successful for user"];
 
         let mut data = Vec::with_capacity(size);
         let mut line_num = 0;
@@ -352,7 +348,7 @@ fn bench_compression_ratio(c: &mut Criterion) {
                         let mut found = false;
                         
                         // Try to match against dictionary
-                        for (dict_idx, pattern) in dictionary.iter().enumerate() {
+                        for pattern in dictionary.iter() {
                             if pos + pattern.len() <= data.len() 
                                 && &data[pos..pos + pattern.len()] == pattern.as_slice() {
                                 compressed_size += 2; // Dictionary reference

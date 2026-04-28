@@ -384,11 +384,11 @@ mod tests {
         for _ in 0..1000 {
             sorted_union_adaptive(&a, &b, &mut out);
         }
-        let elapsed = start.elapsed();
+        let _elapsed = start.elapsed();
 
         #[cfg(not(debug_assertions))]
         {
-            let per_call = elapsed / 1000;
+            let per_call = _elapsed / 1000;
             eprintln!("Union 5K+3.3K: {:?}/call, {} output", per_call, out.len());
             assert!(per_call.as_micros() < 200, "Too slow: {:?}", per_call);
         }

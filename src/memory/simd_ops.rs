@@ -27,7 +27,6 @@ use crate::memory::cache_layout::{PrefetchHint, CacheLayoutConfig, align_to_cach
 use std::ptr;
 
 /// Size thresholds for different optimization strategies
-
 const MEDIUM_COPY_THRESHOLD: usize = 4096;
 const CACHE_LINE_SIZE: usize = 64;
 

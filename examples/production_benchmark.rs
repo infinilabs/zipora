@@ -9,7 +9,7 @@
  */
 
 use std::time::Instant;
-use zipora::system::{CpuFeatures, get_cpu_features};
+use zipora::system::get_cpu_features;
 use zipora::succinct::rank_select::{RankSelectPerformanceOps, RankSelectInterleaved256};
 use zipora::succinct::BitVector;
 

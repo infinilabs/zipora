@@ -106,8 +106,8 @@ fn benchmark_succinct_data_structures(c: &mut Criterion) {
 
     group.bench_function("RankSelect256 construction", |b| {
         b.iter(|| {
-            let rs = RankSelect256::new(black_box(bv.clone())).unwrap();
-            rs
+            
+            RankSelect256::new(black_box(bv.clone())).unwrap()
         });
     });
 
@@ -207,7 +207,7 @@ fn benchmark_memory_mapping(c: &mut Criterion) {
         let file_path = temp_file.path();
 
         // Benchmark memory mapped reading
-        group.bench_function(&format!("MemoryMappedInput read {}", size_name), |b| {
+        group.bench_function(format!("MemoryMappedInput read {}", size_name), |b| {
             b.iter(|| {
                 let file = File::open(file_path).unwrap();
                 let mut mmap_input = MemoryMappedInput::new(file).unwrap();
@@ -225,7 +225,7 @@ fn benchmark_memory_mapping(c: &mut Criterion) {
         });
 
         // Benchmark regular file I/O for comparison
-        group.bench_function(&format!("Regular File read {}", size_name), |b| {
+        group.bench_function(format!("Regular File read {}", size_name), |b| {
             b.iter(|| {
                 use std::io::Read;
                 let mut file = File::open(file_path).unwrap();
@@ -279,7 +279,7 @@ fn benchmark_entropy_coding(c: &mut Criterion) {
 
     for (name, data) in test_datasets.iter() {
         // Benchmark entropy calculation
-        group.bench_function(&format!("Entropy calculation {}", name), |b| {
+        group.bench_function(format!("Entropy calculation {}", name), |b| {
             b.iter(|| {
                 let entropy = EntropyStats::calculate_entropy(black_box(data));
                 black_box(entropy)
@@ -287,14 +287,14 @@ fn benchmark_entropy_coding(c: &mut Criterion) {
         });
 
         // Benchmark Huffman encoding
-        group.bench_function(&format!("Huffman tree construction {}", name), |b| {
+        group.bench_function(format!("Huffman tree construction {}", name), |b| {
             b.iter(|| {
                 let tree = HuffmanTree::from_data(black_box(data)).unwrap();
                 black_box(tree)
             });
         });
 
-        group.bench_function(&format!("Huffman encoding {}", name), |b| {
+        group.bench_function(format!("Huffman encoding {}", name), |b| {
             let encoder = HuffmanEncoder::new(data).unwrap();
             b.iter(|| {
                 let encoded = encoder.encode(black_box(data)).unwrap();
@@ -303,7 +303,7 @@ fn benchmark_entropy_coding(c: &mut Criterion) {
         });
 
         // Benchmark rANS encoding
-        group.bench_function(&format!("rANS encoder creation {}", name), |b| {
+        group.bench_function(format!("rANS encoder creation {}", name), |b| {
             b.iter(|| {
                 let mut frequencies = [0u32; 256];
                 for &byte in data.iter() {
@@ -315,7 +315,7 @@ fn benchmark_entropy_coding(c: &mut Criterion) {
         });
 
         // Benchmark dictionary compression
-        group.bench_function(&format!("Dictionary construction {}", name), |b| {
+        group.bench_function(format!("Dictionary construction {}", name), |b| {
             b.iter(|| {
                 let builder = DictionaryBuilder::new()
                     .min_match_length(3)
@@ -326,7 +326,7 @@ fn benchmark_entropy_coding(c: &mut Criterion) {
             });
         });
 
-        group.bench_function(&format!("Dictionary compression {}", name), |b| {
+        group.bench_function(format!("Dictionary compression {}", name), |b| {
             let builder = DictionaryBuilder::new();
             let dictionary = builder.build(data);
             let compressor = DictionaryCompressor::new(dictionary);
@@ -438,7 +438,7 @@ fn benchmark_optimized_rank_select(c: &mut Criterion) {
 
             // Benchmark optimized rank1
             group.bench_function(
-                &format!("rank1 size:{} density:{:.1}", size, density),
+                format!("rank1 size:{} density:{:.1}", size, density),
                 |b| {
                     b.iter(|| {
                         let pos = black_box(size / 2);
@@ -450,7 +450,7 @@ fn benchmark_optimized_rank_select(c: &mut Criterion) {
             // Benchmark optimized select1 (if we have enough ones)
             if ones_count > 1000 {
                 group.bench_function(
-                    &format!("select1_optimized size:{} density:{:.1}", size, density),
+                    format!("select1_optimized size:{} density:{:.1}", size, density),
                     |b| {
                         b.iter(|| {
                             let k = black_box(ones_count / 2);
@@ -461,7 +461,7 @@ fn benchmark_optimized_rank_select(c: &mut Criterion) {
 
                 // Compare with legacy implementation
                 group.bench_function(
-                    &format!("select1_legacy size:{} density:{:.1}", size, density),
+                    format!("select1_legacy size:{} density:{:.1}", size, density),
                     |b| {
                         b.iter(|| {
                             let k = black_box(ones_count / 2);
@@ -497,7 +497,7 @@ fn benchmark_lookup_table_operations(c: &mut Criterion) {
     ];
 
     for (i, &val) in test_values.iter().enumerate() {
-        group.bench_function(&format!("count_ones_pattern_{}", i), |b| {
+        group.bench_function(format!("count_ones_pattern_{}", i), |b| {
             b.iter(|| black_box(val).count_ones());
         });
     }

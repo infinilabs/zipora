@@ -187,7 +187,7 @@ fn bench_string_avx512(c: &mut Criterion) {
             BenchmarkId::new("find_avx512", size),
             &(&fs_large, &fs_pattern),
             |b, (haystack, needle)| {
-                b.iter(|| black_box(haystack.find((*needle).clone())));
+                b.iter(|| black_box(haystack.find(*(*needle))));
             },
         );
 
@@ -248,7 +248,8 @@ fn bench_radix_sort_avx512(c: &mut Criterion) {
                                 ..Default::default()
                             };
                             let mut sorter = RadixSort::with_config(config);
-                            black_box(sorter.sort_u32(&mut data).unwrap());
+                            sorter.sort_u32(&mut data).unwrap();
+                            black_box(());
                         },
                         criterion::BatchSize::SmallInput,
                     );
@@ -268,7 +269,8 @@ fn bench_radix_sort_avx512(c: &mut Criterion) {
                                 ..Default::default()
                             };
                             let mut sorter = RadixSort::with_config(config);
-                            black_box(sorter.sort_u32(&mut data).unwrap());
+                            sorter.sort_u32(&mut data).unwrap();
+                            black_box(());
                         },
                         criterion::BatchSize::SmallInput,
                     );
@@ -289,7 +291,8 @@ fn bench_radix_sort_avx512(c: &mut Criterion) {
                                 ..Default::default()
                             };
                             let mut sorter = RadixSort::with_config(config);
-                            black_box(sorter.sort_u32(&mut data).unwrap());
+                            sorter.sort_u32(&mut data).unwrap();
+                            black_box(());
                         },
                         criterion::BatchSize::SmallInput,
                     );
@@ -424,7 +427,8 @@ fn bench_overall_performance(c: &mut Criterion) {
                 ..Default::default()
             };
             let mut sorter = RadixSort::with_config(config);
-            black_box(sorter.sort_u32(&mut data).unwrap());
+            sorter.sort_u32(&mut data).unwrap();
+            black_box(());
         });
     });
 
@@ -446,7 +450,8 @@ fn bench_overall_performance(c: &mut Criterion) {
                 ..Default::default()
             };
             let mut sorter = RadixSort::with_config(config);
-            black_box(sorter.sort_u32(&mut data).unwrap());
+            sorter.sort_u32(&mut data).unwrap();
+            black_box(());
         });
     });
 

@@ -10,7 +10,6 @@
 
 use std::time::Instant;
 use zipora::{BitVector, BitwiseOp, RankSelect256, RankSelectOps, RankSelectPerformanceOps};
-use zipora::system::CpuFeatures;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🚀 SIMD Optimization Demo - Advanced Hardware Acceleration");
@@ -244,7 +243,7 @@ fn demonstrate_select_performance(rs: &RankSelect256) {
     println!();
 }
 
-fn demonstrate_simd_bulk_operations(mut test_data: BitVector) {
+fn demonstrate_simd_bulk_operations(test_data: BitVector) {
     println!("🔄 SIMD Bulk Operations Demo");
     println!("============================");
 

@@ -926,8 +926,8 @@ mod tests {
         let manager = VersionManager::new(ConcurrencyLevel::OneWriteMultiRead);
 
         // Acquire multiple reader tokens
-        let reader1 = manager.acquire_reader_token()?;
-        let reader2 = manager.acquire_reader_token()?;
+        let _reader1 = manager.acquire_reader_token()?;
+        let _reader2 = manager.acquire_reader_token()?;
 
         assert_eq!(manager.active_readers(), 2);
 

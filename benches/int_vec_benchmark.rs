@@ -70,7 +70,7 @@ fn benchmark_compression_ratio(c: &mut Criterion) {
         ];
 
         for (pattern, data) in test_cases {
-            let original_size = data.len() * 4; // u32 = 4 bytes
+            let _original_size = data.len() * 4; // u32 = 4 bytes
             
             group.bench_with_input(
                 BenchmarkId::new("IntVec", format!("{}_{}_{}", pattern, size, "compression")),
@@ -252,7 +252,7 @@ fn benchmark_integer_types(c: &mut Criterion) {
     
     let i8_data: Vec<i8> = (0..size).map(|i| ((i % 256) as i8).wrapping_sub(127)).collect();
     let i16_data: Vec<i16> = (0..size).map(|i| ((i % 65536) as i16).wrapping_sub(32767)).collect();
-    let i32_data: Vec<i32> = (0..size).map(|i| ((i % 1000000) as i32) - 500000).collect();
+    let i32_data: Vec<i32> = (0..size).map(|i| (i % 1000000) - 500000).collect();
     let i64_data: Vec<i64> = (0..size).map(|i| ((i % 1000000) as i64) - 500000).collect();
 
     group.bench_function("u8", |b| {

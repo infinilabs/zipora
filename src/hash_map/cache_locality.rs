@@ -23,9 +23,6 @@ pub const L2_CACHE_SIZE: usize = 256 * 1024;
 /// L3 cache size hint (typical: 8MB)
 pub const L3_CACHE_SIZE: usize = 8 * 1024 * 1024;
 
-/// Prefetch distance for sequential access patterns
-
-
 /// NUMA node count (detected at runtime)
 static NUMA_NODE_COUNT: AtomicUsize = AtomicUsize::new(0);
 

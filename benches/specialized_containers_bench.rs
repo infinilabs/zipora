@@ -143,13 +143,13 @@ fn bench_small_map_operations(c: &mut Criterion) {
 
                 // Insert phase
                 for i in 0..size {
-                    map.insert(black_box(i as i32), black_box(format!("value{}", i)))
+                    map.insert(black_box(i), black_box(format!("value{}", i)))
                         .unwrap();
                 }
 
                 // Lookup phase
                 for i in 0..size {
-                    let value = map.get(&black_box(i as i32));
+                    let value = map.get(&black_box(i));
                     black_box(value);
                 }
 
@@ -163,12 +163,12 @@ fn bench_small_map_operations(c: &mut Criterion) {
 
                 // Insert phase
                 for i in 0..size {
-                    map.insert(black_box(i as i32), black_box(format!("value{}", i)));
+                    map.insert(black_box(i), black_box(format!("value{}", i)));
                 }
 
                 // Lookup phase
                 for i in 0..size {
-                    let value = map.get(&black_box(i as i32));
+                    let value = map.get(&black_box(i));
                     black_box(value);
                 }
 

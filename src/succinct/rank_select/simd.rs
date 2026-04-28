@@ -275,7 +275,7 @@ pub fn bulk_popcount_simd(bit_data: &[u64]) -> Vec<usize> {
 // ================================================================================================
 
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
-fn bulk_rank1_avx512(bit_data: &[u64], positions: &[usize], chunk_size: usize) -> Vec<usize> {
+fn bulk_rank1_avx512(bit_data: &[u64], positions: &[usize], _chunk_size: usize) -> Vec<usize> {
     let mut results = Vec::with_capacity(positions.len());
 
     for &pos in positions {

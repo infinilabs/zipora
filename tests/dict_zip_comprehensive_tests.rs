@@ -6,22 +6,15 @@
 //! and error handling scenarios.
 
 use proptest::prelude::*;
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use zipora::compression::dict_zip::{
     // Main types
-    DictZipBlobStore, DictZipBlobStoreBuilder, DictZipBlobStoreStats, DictZipConfig,
-    DictionaryBuilder, DictionaryBuilderConfig, BuildPhase, BuildProgress, BuildStrategy,
-    SuffixArrayDictionary, SuffixArrayDictionaryConfig, ConcurrentSuffixArrayDictionary,
-    PaZipCompressor, PaZipCompressorConfig, CompressionStats, CompressionStrategy,
-    PatternMatcher, PatternMatcherBuilder, MatcherConfig, MatcherStats,
-    LocalMatcher, LocalMatcherConfig, LocalMatcherStats, LocalMatch,
-    DfaCache, DfaCacheConfig, CacheStats, CacheMatch,
-    // Compression types
-    CompressionType, Match, encode_match, decode_match, encode_matches, decode_matches,
-    calculate_encoding_cost, calculate_compression_efficiency, choose_best_compression_type,
+    DictZipBlobStoreBuilder, DictZipConfig,
+    DictionaryBuilder, DictionaryBuilderConfig, SuffixArrayDictionaryConfig, ConcurrentSuffixArrayDictionary,
+    PaZipCompressor, PaZipCompressorConfig,
+    LocalMatcher, LocalMatcherConfig, DfaCacheConfig, Match,
     // Utilities
     validate_parameters, calculate_optimal_dict_size, estimate_compression_ratio, QuickConfig,
     // Constants
@@ -215,7 +208,7 @@ impl PAZipTestDataGenerator {
             vec![255; 1000], // Long run of max bytes
             (0u8..=255u8).collect(), // All byte values
             (0u8..=255u8).rev().collect(), // All byte values reversed
-            vec![0, 255].repeat(500), // Alternating pattern
+            [0, 255].repeat(500), // Alternating pattern
             b"a".repeat(1000), // Single character repeated
             b"ab".repeat(500), // Two-character pattern
         ]
@@ -563,7 +556,7 @@ mod dfa_cache_tests {
 
 #[cfg(test)]
 mod pattern_matcher_tests {
-    use super::*;
+    
 
     // TODO: Re-enable when PatternMatcherBuilder API is fully implemented
     // #[test]

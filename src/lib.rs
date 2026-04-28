@@ -10,6 +10,7 @@
 #![allow(unused_doc_comments)] // Orphan doc comments from refactoring
 #![allow(redundant_semicolons)] // Style nit
 #![allow(clippy::needless_return)] // Style nit
+#![allow(clippy::incompatible_msrv)] // AVX-512 intrinsics require newer toolchain than 1.88.0
 #![allow(private_interfaces)] // Visibility issues are P3 cleanup
 // #![allow(unused_unsafe)] // Nested unsafe blocks from SIMD dispatch macros
 #![allow(mismatched_lifetime_syntaxes)] // Lifetime elision style - not a bug

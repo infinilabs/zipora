@@ -484,7 +484,7 @@ fn test_performance_throughput() {
     let duration = start.elapsed();
     println!(
         "Secure pool throughput: {} allocs/sec",
-        10_000 as f64 / duration.as_secs_f64()
+        10_000_f64 / duration.as_secs_f64()
     );
 
     let stats = pool.stats();

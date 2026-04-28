@@ -90,7 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
 
-            let decoder = RansDecoder::new(&encoder);
+            let _decoder = RansDecoder::new(&encoder);
             println!("   Created corresponding rANS decoder");
         }
         Err(e) => {
