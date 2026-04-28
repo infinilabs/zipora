@@ -481,7 +481,7 @@ where
                         // MaybeUninit<T> does not require initialization, so an array of
                         // uninitialized MaybeUninit values is valid. Individual elements
                         // are only accessed after being explicitly initialized.
-                        _data: unsafe { MaybeUninit::uninit().assume_init() },
+                        _data: [const { MaybeUninit::uninit() }; 16],
                         occupied: 0,
                     },
                     fallback: None,
@@ -857,14 +857,45 @@ where
     }
 
     fn insert_small_inline(
-        _inline_data: &mut InlineStorage<K, V>,
+        inline_data: &mut InlineStorage<K, V>,
         _fallback: &mut Option<Box<HashMapStorage<K, V>>>,
-        _len: &mut usize,
-        _key: K,
-        _value: V,
+        len: &mut usize,
+        key: K,
+        value: V,
     ) -> Result<Option<V>> {
-        // TODO: Implement inline insertion with fallback
-        Ok(None)
+        // Check if key already exists
+        for i in 0..16 {
+            if (inline_data.occupied >> i) & 1 == 1 {
+                // SAFETY: Bit i is set in occupied, so slot i is initialized
+                let (k, v) = unsafe { inline_data._data[i].assume_init_ref() };
+                if k == &key {
+                    // Update existing value
+                    let old_v = unsafe { std::ptr::read(v as *const V) };
+                    // SAFETY: We just read the old value, now we overwrite it with the new one
+                    unsafe {
+                        std::ptr::write(inline_data._data[i].as_mut_ptr(), (key, value));
+                    }
+                    return Ok(Some(old_v));
+                }
+            }
+        }
+
+        // Try to find an empty slot
+        if inline_data.occupied != 0xFFFF {
+            let slot = inline_data.occupied.trailing_ones() as usize;
+            // SAFETY: slot < 16 and is currently uninitialized (bit is 0)
+            unsafe {
+                std::ptr::write(inline_data._data[slot].as_mut_ptr(), (key, value));
+            }
+            inline_data.occupied |= 1 << slot;
+            *len += 1;
+            return Ok(None);
+        }
+
+        // Table is full, transition to fallback (Standard storage)
+        // For simplicity in this implementation, we'll just return an error or handle transition
+        // In a real implementation we would convert current data to Standard storage
+        Err(crate::error::ZiporaError::invalid_state("SmallInline storage full, fallback not yet implemented"))
     }
 
     fn insert_cache_optimized(
@@ -930,18 +961,26 @@ where
         None
     }
 
-    fn get_small_inline<Q>(
+    fn get_small_inline<'a, Q>(
         &self,
-        _inline_data: &InlineStorage<K, V>,
+        inline_data: &'a InlineStorage<K, V>,
         _fallback: &Option<Box<HashMapStorage<K, V>>>,
         _len: &usize,
-        _key: &Q,
-    ) -> Option<&V>
+        key: &Q,
+    ) -> Option<&'a V>
     where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        // TODO: Implement inline lookup with fallback
+        for i in 0..16 {
+            if (inline_data.occupied >> i) & 1 == 1 {
+                // SAFETY: Bit i is set in occupied, so slot i is initialized
+                let (k, v) = unsafe { inline_data._data[i].assume_init_ref() };
+                if k.borrow() == key {
+                    return Some(v);
+                }
+            }
+        }
         None
     }
 
@@ -1433,9 +1472,20 @@ mod tests {
 
     #[test]
     fn test_small_inline_config() {
-        let map: ZiporaHashMap<i32, String> =
+        let mut map: ZiporaHashMap<i32, String> =
             ZiporaHashMap::with_config(ZiporaHashMapConfig::small_inline(4)).unwrap();
         assert_eq!(map.len(), 0);
+
+        // Fill up to inline capacity
+        for i in 0..16 {
+            map.insert(i, i.to_string()).unwrap();
+        }
+        assert_eq!(map.len(), 16);
+
+        // Verify all entries
+        for i in 0..16 {
+            assert_eq!(map.get(&i), Some(&i.to_string()));
+        }
     }
 
     // ==================== Core operations ====================

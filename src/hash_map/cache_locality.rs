@@ -223,7 +223,7 @@ impl<K, V, const N: usize> CacheOptimizedBucket<K, V, N> {
             // MaybeUninit<T> does not require initialization, so an array of
             // uninitialized MaybeUninit values is valid. Individual elements
             // are only accessed after being explicitly initialized via write().
-            entries: unsafe { MaybeUninit::uninit().assume_init() },
+            entries: [const { MaybeUninit::uninit() }; N],
             overflow: None,
             _padding: [],
         }
@@ -651,9 +651,21 @@ mod tests {
         bucket.hashes[0] = 12345;
         bucket.hashes[1] = 67890;
         
+        // Initialize entries
+        bucket.entries[0] = MaybeUninit::new((12345, 100));
+        bucket.entries[1] = MaybeUninit::new((67890, 200));
+
         assert_eq!(bucket.find_hash(12345), Some(0));
         assert_eq!(bucket.find_hash(67890), Some(1));
         assert_eq!(bucket.find_hash(99999), None);
+
+        // Verify entries
+        unsafe {
+            assert_eq!(bucket.entries[0].assume_init().0, 12345);
+            assert_eq!(bucket.entries[0].assume_init().1, 100);
+            assert_eq!(bucket.entries[1].assume_init().0, 67890);
+            assert_eq!(bucket.entries[1].assume_init().1, 200);
+        }
     }
 
     #[test]
