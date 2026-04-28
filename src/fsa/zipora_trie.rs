@@ -1142,8 +1142,8 @@ where
 
             // Truncate to exact used length (referenced project: exact sizing)
             if actual_len < base.len() {
-                base.resize(actual_len, 0).ok();
-                check.resize(actual_len, 0).ok();
+                let _ = base.resize(actual_len, 0).ok();
+                let _ = check.resize(actual_len, 0).ok();
             }
 
             // Shrink capacity to size (referenced project: minimal memory)
@@ -1511,8 +1511,8 @@ where
         // Referenced project starts with 1 state (line 70: states.resize(1))
         // We initialize in storage creation, but check here for safety
         if base.is_empty() {
-            base.resize(1, NIL_STATE); // Just root state
-            check.resize(1, 0); // Root check is 0 (itself), no free bit
+            let _ = base.resize(1, NIL_STATE); // Just root state
+            let _ = check.resize(1, 0); // Root check is 0 (itself), no free bit
             // Use compact base allocation like referenced project
             base[0] = Self::find_free_base(base, check, 0)?;
             *state_count = 1;
@@ -1556,8 +1556,8 @@ where
             let required = next_state as usize + 1;
             if required > base.len() {
                 let new_size = required.max(base.len() * 3 / 2).max(256);
-                base.resize(new_size, NIL_STATE);
-                check.resize(new_size, NIL_STATE | FREE_BIT);
+                let _ = base.resize(new_size, NIL_STATE);
+                let _ = check.resize(new_size, NIL_STATE | FREE_BIT);
             }
 
             // Check if this transition already exists (referenced project style at line 106)
@@ -1596,8 +1596,8 @@ where
                     let required = new_next as usize + 1;
                     if required > base.len() {
                         let new_size = required.max(base.len() * 3 / 2).max(256);
-                        base.resize(new_size, NIL_STATE);
-                        check.resize(new_size, NIL_STATE | FREE_BIT);
+                        let _ = base.resize(new_size, NIL_STATE);
+                        let _ = check.resize(new_size, NIL_STATE | FREE_BIT);
                     }
 
                     // Allocate the state (referenced project: set_parent clears free bit)
@@ -1648,8 +1648,8 @@ where
                     let required = new_next as usize + 1;
                     if required > base.len() {
                         let new_size = required.max(base.len() * 3 / 2).max(256);
-                        base.resize(new_size, NIL_STATE);
-                        check.resize(new_size, NIL_STATE | FREE_BIT);
+                        let _ = base.resize(new_size, NIL_STATE);
+                        let _ = check.resize(new_size, NIL_STATE | FREE_BIT);
                     }
 
                     // Ensure the parent state fits within VALUE_MASK
@@ -1783,8 +1783,8 @@ where
             let required = max_pos as usize + 1;
             if required > base.len() {
                 let new_size = required.max(base.len() * 3 / 2).max(256);
-                base.resize(new_size, NIL_STATE);
-                check.resize(new_size, NIL_STATE | FREE_BIT);
+                let _ = base.resize(new_size, NIL_STATE);
+                let _ = check.resize(new_size, NIL_STATE | FREE_BIT);
             }
 
             // CRITICAL: Never allow any child to be relocated to state 0
@@ -2232,7 +2232,7 @@ where
     ) -> Result<StateId> {
         if nodes.is_empty() {
             // Initialize with root node
-            nodes.push(PatriciaNode::default());
+            let _ = nodes.push(PatriciaNode::default());
         }
 
         let mut current = 0;
@@ -2251,7 +2251,7 @@ where
             } else {
                 // Create new child node
                 let new_node_id = nodes.len();
-                nodes.push(PatriciaNode::default());
+                let _ = nodes.push(PatriciaNode::default());
 
                 // Insert into sorted children Vec
                 let insert_pos = nodes[current].children.binary_search_by_key(&symbol, |(s, _)| *s).unwrap_err();
@@ -2871,8 +2871,8 @@ where
                 const NIL_STATE: u32 = 0x7FFF_FFFF;
                 const FREE_BIT: u32 = 0x8000_0000;
 
-                base.resize(initial_size, NIL_STATE);
-                check.resize(initial_size, NIL_STATE | FREE_BIT);
+                let _ = base.resize(initial_size, NIL_STATE);
+                let _ = check.resize(initial_size, NIL_STATE | FREE_BIT);
             }
 
         // Insert keys in sorted order

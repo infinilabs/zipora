@@ -239,7 +239,7 @@ pub struct MemoryDebugger {
 }
 
 #[derive(Debug, Clone)]
-struct AllocationInfo {
+pub struct AllocationInfo {
     size: usize,
     _timestamp: Instant,
     _location: String,
@@ -364,7 +364,7 @@ pub struct PerformanceProfiler {
 }
 
 #[derive(Debug, Clone)]
-struct ProfileData {
+pub struct ProfileData {
     call_count: u64,
     total_duration: Duration,
     min_duration: Duration,

@@ -465,7 +465,7 @@ pub struct IntVec<T: PackedInt> {
 }
 
 #[derive(Debug, Default, Clone)]
-struct CompressionStats {
+pub struct CompressionStats {
     original_size: usize,
     compressed_size: usize,
     index_size: usize,
@@ -657,7 +657,7 @@ impl<T: PackedInt> IntVec<T> {
         // Verify index bounds with context
         crate::zipora_verify_bounds!(index, self.len);
 
-        self.stats.access_count.wrapping_add(1);
+        let _ = self.stats.access_count.wrapping_add(1);
 
         let result = match self.strategy {
             CompressionStrategy::Raw => self.get_raw(index),

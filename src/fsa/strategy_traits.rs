@@ -302,7 +302,7 @@ impl TrieAlgorithmStrategy for PatriciaAlgorithmStrategy {
         config: &Self::Config,
     ) -> Result<StateId> {
         if nodes.is_empty() {
-            nodes.push(PatriciaNode::default());
+            let _ = nodes.push(PatriciaNode::default());
         }
 
         let mut current = 0;
@@ -334,7 +334,7 @@ impl TrieAlgorithmStrategy for PatriciaAlgorithmStrategy {
             } else {
                 // Create new child
                 let new_node_id = nodes.len();
-                nodes.push(PatriciaNode::default());
+                let _ = nodes.push(PatriciaNode::default());
 
                 // Update parent to point to new child
                 nodes[current].children[symbol as usize] = Some(new_node_id as StateId);

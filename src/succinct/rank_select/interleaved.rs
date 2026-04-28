@@ -71,7 +71,7 @@ use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch, _popcnt64};
 /// data are co-located for maximum cache efficiency.
 #[repr(C, align(32))] // 32-byte alignment for cache efficiency
 #[derive(Clone, Debug)]
-struct InterleavedLine {
+pub struct InterleavedLine {
     /// Cumulative rank1 up to the start of this line
     rlev1: u32,
     /// Incremental rank1 for each 64-bit segment within this line
