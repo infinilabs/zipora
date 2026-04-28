@@ -5,13 +5,11 @@
 // #![allow(unused_variables)] // Stub implementations have unused params
 #![allow(unused_imports)] // Will be cleaned with dead code removal
 #![allow(unused_results)] // Will be fixed with unwrap elimination (P3.6)
-#![allow(unused_must_use)] // Same category as unused_results
 #![allow(unused_mut)] // Compiler can determine mutability needs
 #![allow(unused_doc_comments)] // Orphan doc comments from refactoring
 #![allow(redundant_semicolons)] // Style nit
 #![allow(clippy::needless_return)] // Style nit
 #![allow(clippy::incompatible_msrv)] // AVX-512 intrinsics require newer toolchain than 1.88.0
-#![allow(private_interfaces)] // Visibility issues are P3 cleanup
 // #![allow(unused_unsafe)] // Nested unsafe blocks from SIMD dispatch macros
 #![allow(mismatched_lifetime_syntaxes)] // Lifetime elision style - not a bug
 #![allow(dropping_references)] // drop() on references is intentional for clarity

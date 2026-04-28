@@ -864,7 +864,7 @@ impl LocalMatcher {
 
         // Add to hash table chain
         if self.hash_table.get(&pattern_hash).is_none() {
-            self.hash_table.insert(pattern_hash, Vec::new());
+            let _ = self.hash_table.insert(pattern_hash, Vec::new());
         }
         let chain = self.hash_table.get_mut(&pattern_hash)
             .ok_or_else(|| ZiporaError::invalid_data("Hash table entry unexpectedly missing"))?;

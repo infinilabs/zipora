@@ -886,7 +886,7 @@ impl DictZipBlobStore {
             
             // Clear storage and cache since they're tied to the old dictionary
             self.storage.clear();
-            self.cache.write()
+            let _ = self.cache.write()
                 .map_err(|_| ZiporaError::resource_busy("Cache write lock"))?
                 .clear();
             
@@ -942,7 +942,7 @@ impl DictZipBlobStore {
         {
             let mut cache = self.cache.write()
                 .map_err(|_| ZiporaError::resource_busy("Cache write lock"))?;
-            cache.clear();
+            let _ = cache.clear();
         }
 
         // Could add storage compaction here in the future
