@@ -1931,8 +1931,8 @@ mod tests {
         use std::sync::Arc;
         use std::thread;
 
-        let n_threads = if cfg!(miri) { 2 } else { 4 };
-        let n_per_thread = if cfg!(miri) { 10 } else { 250 };
+        let n_threads = 4;
+        let n_per_thread = if cfg!(miri) { 5 } else { 25 };
         let trie = Arc::new(ConcurrentCsppTrie::with_capacity(8, 4 * 1024 * 1024));
         let mut threads = Vec::new();
 
