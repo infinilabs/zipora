@@ -580,6 +580,8 @@ impl Config for NestLoudsTrieConfig {
     }
     
     fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        #[cfg(feature = "serde")]
+        {
         let serialized = serde_json::to_string_pretty(self)
             .map_err(|e| ZiporaError::configuration(format!("Failed to serialize config: {}", e)))?;
         
@@ -588,8 +590,13 @@ impl Config for NestLoudsTrieConfig {
         
         Ok(())
     }
+        #[cfg(not(feature = "serde"))]
+        Err(crate::error::ZiporaError::invalid_operation("Requires serde feature"))
+    }
     
     fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        #[cfg(feature = "serde")]
+        {
         let content = std::fs::read_to_string(path)
             .map_err(|e| ZiporaError::configuration(format!("Failed to read config file: {}", e)))?;
         
@@ -598,6 +605,9 @@ impl Config for NestLoudsTrieConfig {
         
         config.validate()?;
         Ok(config)
+    }
+        #[cfg(not(feature = "serde"))]
+        Err(crate::error::ZiporaError::invalid_operation("Requires serde feature"))
     }
 }
 
@@ -670,14 +680,17 @@ impl NestLoudsTrieConfig {
 }
 
 // Add serde support for JSON serialization
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-impl Serialize for NestLoudsTrieConfig {
+#[cfg(feature = "serde")]
+impl serde::Serialize for NestLoudsTrieConfig {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        use serde::ser::SerializeStruct;
+        #[cfg(feature = "serde")]
+use serde::ser::SerializeStruct;
         
         let mut state = serializer.serialize_struct("NestLoudsTrieConfig", 25)?;
         state.serialize_field("nest_level", &self.nest_level)?;
@@ -712,12 +725,14 @@ impl Serialize for NestLoudsTrieConfig {
     }
 }
 
-impl<'de> Deserialize<'de> for NestLoudsTrieConfig {
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for NestLoudsTrieConfig {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        use serde::de::{self, MapAccess, Visitor};
+        #[cfg(feature = "serde")]
+use serde::de::{self, MapAccess, Visitor};
         use std::fmt;
         
         struct ConfigVisitor;

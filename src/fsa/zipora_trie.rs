@@ -56,7 +56,8 @@ fn default_memory_pool() -> Arc<SecureMemoryPool> {
 }
 
 /// Trie algorithm strategy
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TrieStrategy {
     /// Patricia trie with path compression
     Patricia {
@@ -93,7 +94,8 @@ pub enum TrieStrategy {
 }
 
 /// Storage strategy for memory layout and data structures
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum StorageStrategy {
     /// Standard vector-based storage
     Standard {
@@ -114,7 +116,7 @@ pub enum StorageStrategy {
     },
     /// Memory pool allocation
     PoolAllocated {
-        #[serde(skip, default = "default_memory_pool")]
+        #[cfg_attr(feature = "serde", serde(skip, default = "default_memory_pool"))]
         pool: Arc<SecureMemoryPool>,
         size_class: usize,
         chunk_size: usize,
@@ -128,7 +130,8 @@ pub enum StorageStrategy {
 }
 
 /// Compression strategy for space optimization
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum CompressionStrategy {
     /// No compression - full node storage
     None,
@@ -158,7 +161,8 @@ pub enum CompressionStrategy {
 }
 
 /// Rank/select implementation choice
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RankSelectType {
     /// Interleaved 256-bit blocks
     Interleaved256,
@@ -175,7 +179,8 @@ pub enum RankSelectType {
 }
 
 /// Bit vector implementation choice
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum BitVectorType {
     /// Standard bit vector
     Standard,
@@ -188,7 +193,8 @@ pub enum BitVectorType {
 }
 
 /// Configuration for unified trie
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ZiporaTrieConfig {
     pub trie_strategy: TrieStrategy,
     pub storage_strategy: StorageStrategy,

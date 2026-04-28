@@ -56,6 +56,7 @@
 //! - **Cache efficiency**: 95%+ hit rate for type prediction in sequential decoding
 
 use crate::error::{Result, ZiporaError};
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -105,7 +106,8 @@ pub const FAR3_LONG_LENGTH_THRESHOLD: usize = 35;
 ///
 /// Represents the 8 different compression strategies used by the PA-Zip algorithm.
 /// Each type is optimized for different data patterns and distance/length combinations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
 pub enum CompressionType {
     /// Direct copy of literal bytes (length 1-32)
@@ -208,7 +210,8 @@ impl fmt::Display for CompressionType {
 ///
 /// This structure matches the `DzEncodingMeta` from the reference implementation
 /// implementation and provides the exact compression type selection logic.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EncodingMeta {
     /// The compression type to use
     pub compression_type: CompressionType,
@@ -330,7 +333,8 @@ pub fn get_encoding_meta(distance: usize, length: usize) -> EncodingMeta {
 ///
 /// Each variant contains the specific parameters needed for that compression type.
 /// The enum is designed to be memory-efficient while providing type safety.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Match {
     /// Literal bytes to copy directly
     Literal {

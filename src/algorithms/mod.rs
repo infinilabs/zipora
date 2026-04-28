@@ -5,6 +5,7 @@
 
 pub mod bit_ops;
 pub mod cache_oblivious;
+#[cfg(feature = "serde")]
 pub mod external_sort;
 pub mod multiway_merge;
 pub mod radix_sort;
@@ -24,6 +25,7 @@ pub use cache_oblivious::{
     DataCharacteristics as CacheObliviousDataCharacteristics, 
     CacheObliviousSortingStrategy, VanEmdeBoas
 };
+#[cfg(feature = "serde")]
 pub use external_sort::{ExternalSort, ReplaceSelectSort, ReplaceSelectSortConfig};
 pub use multiway_merge::{MergeSource, MultiWayMerge};
 pub use radix_sort::{

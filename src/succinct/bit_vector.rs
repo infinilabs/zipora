@@ -153,8 +153,10 @@ impl BitVector {
     /// let mut bv = BitVector::from_blocks(blocks, max_doc);
     ///
     /// // Scatter doc IDs
-    /// bv.set_bit_unchecked(42);
-    /// bv.set_bit_unchecked(1000);
+    /// unsafe {
+    ///     bv.set_bit_unchecked(42);
+    ///     bv.set_bit_unchecked(1000);
+    /// }
     /// assert_eq!(bv.count_ones(), 2);
     /// ```
     #[inline]

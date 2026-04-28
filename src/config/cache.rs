@@ -3,10 +3,12 @@
 use super::{Config, parse_env_var, parse_env_bool};
 use crate::error::{Result, ZiporaError};
 use std::path::Path;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 /// Cache configuration placeholder.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CacheConfig {
     /// Cache size in bytes
     pub size: usize,
@@ -56,19 +58,29 @@ impl Config for CacheConfig {
     }
     
     fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        #[cfg(feature = "serde")]
+        {
         let serialized = serde_json::to_string_pretty(self)
             .map_err(|e| ZiporaError::configuration(format!("Failed to serialize cache config: {}", e)))?;
         std::fs::write(path, serialized)
             .map_err(|e| ZiporaError::configuration(format!("Failed to write cache config file: {}", e)))?;
         Ok(())
     }
+        #[cfg(not(feature = "serde"))]
+        Err(crate::error::ZiporaError::invalid_operation("Requires serde feature"))
+    }
     
     fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        #[cfg(feature = "serde")]
+        {
         let content = std::fs::read_to_string(path)
             .map_err(|e| ZiporaError::configuration(format!("Failed to read cache config file: {}", e)))?;
         let config: Self = serde_json::from_str(&content)
             .map_err(|e| ZiporaError::configuration(format!("Failed to parse cache config file: {}", e)))?;
         config.validate()?;
         Ok(config)
+    }
+        #[cfg(not(feature = "serde"))]
+        Err(crate::error::ZiporaError::invalid_operation("Requires serde feature"))
     }
 }

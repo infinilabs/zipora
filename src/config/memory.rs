@@ -6,10 +6,12 @@
 use super::{Config, ValidationError, parse_env_var, parse_env_bool};
 use crate::error::{Result, ZiporaError};
 use std::path::Path;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 /// Memory allocation strategy for different scenarios.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Default)]
 pub enum AllocationStrategy {
     /// Default system allocator
@@ -29,7 +31,8 @@ pub enum AllocationStrategy {
 
 
 /// Cache optimization level for different performance requirements.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Default)]
 pub enum CacheOptimizationLevel {
     /// No cache optimization
@@ -45,7 +48,8 @@ pub enum CacheOptimizationLevel {
 
 
 /// NUMA (Non-Uniform Memory Access) configuration.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NumaConfig {
     /// Enable NUMA-aware allocation
     pub enable_numa_awareness: bool,
@@ -69,7 +73,8 @@ impl Default for NumaConfig {
 }
 
 /// Huge page configuration for large memory operations.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HugePageConfig {
     /// Enable huge page allocation
     pub enable_huge_pages: bool,
@@ -93,7 +98,8 @@ impl Default for HugePageConfig {
 }
 
 /// Comprehensive memory management configuration.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct MemoryConfig {
     /// Primary allocation strategy
     pub allocation_strategy: AllocationStrategy,
@@ -412,6 +418,8 @@ impl Config for MemoryConfig {
     }
     
     fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        #[cfg(feature = "serde")]
+        {
         let serialized = serde_json::to_string_pretty(self)
             .map_err(|e| ZiporaError::configuration(format!("Failed to serialize memory config: {}", e)))?;
         
@@ -420,8 +428,13 @@ impl Config for MemoryConfig {
         
         Ok(())
     }
+        #[cfg(not(feature = "serde"))]
+        Err(crate::error::ZiporaError::invalid_operation("Requires serde feature"))
+    }
     
     fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        #[cfg(feature = "serde")]
+        {
         let content = std::fs::read_to_string(path)
             .map_err(|e| ZiporaError::configuration(format!("Failed to read memory config file: {}", e)))?;
         
@@ -430,6 +443,9 @@ impl Config for MemoryConfig {
         
         config.validate()?;
         Ok(config)
+    }
+        #[cfg(not(feature = "serde"))]
+        Err(crate::error::ZiporaError::invalid_operation("Requires serde feature"))
     }
 }
 

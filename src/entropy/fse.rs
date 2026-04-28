@@ -7,6 +7,7 @@
 use crate::error::{Result, ZiporaError};
 use crate::entropy::{EntropyStats, bit_ops::BitOps};
 use crate::system::get_cpu_features;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 #[cfg(target_arch = "x86_64")]
