@@ -37,7 +37,6 @@ use crate::succinct::rank_select::bmi2_acceleration::Bmi2Capabilities;
 use crate::system::cpu_features::{CpuFeatures, get_cpu_features};
 
 /// Size thresholds for different encoding strategies
-
 const MEDIUM_BATCH_THRESHOLD: usize = 1024;
 const LARGE_BATCH_THRESHOLD: usize = 8192;
 

@@ -8,13 +8,13 @@ mod ffi_error_tests {
     use std::cell::RefCell;
     use std::ffi::{CStr, CString};
     use std::os::raw::c_char;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, Mutex};
     use std::thread;
 
     // Re-create the same error handling structure from c_api.rs for testing
     thread_local! {
-        static LAST_ERROR: RefCell<Option<CString>> = RefCell::new(None);
+        static LAST_ERROR: RefCell<Option<CString>> = const { RefCell::new(None) };
     }
 
     static ERROR_CALLBACK: Mutex<Option<unsafe extern "C" fn(*const c_char)>> = Mutex::new(None);
@@ -24,13 +24,12 @@ mod ffi_error_tests {
             if let Ok(cstring) = CString::new(msg) {
                 *error.borrow_mut() = Some(cstring.clone());
 
-                if let Ok(callback_guard) = ERROR_CALLBACK.lock() {
-                    if let Some(callback) = *callback_guard {
+                if let Ok(callback_guard) = ERROR_CALLBACK.lock()
+                    && let Some(callback) = *callback_guard {
                         unsafe {
                             callback(cstring.as_ptr());
                         }
                     }
-                }
             }
         });
     }
@@ -73,7 +72,7 @@ mod ffi_error_tests {
 
     #[test]
     fn test_error_callback() {
-        use std::sync::atomic::{AtomicPtr, Ordering};
+        use std::sync::atomic::Ordering;
 
         static CALLBACK_CALLED: AtomicBool = AtomicBool::new(false);
         static CALLBACK_MESSAGE: Mutex<Option<String>> = Mutex::new(None);
@@ -81,11 +80,10 @@ mod ffi_error_tests {
         unsafe extern "C" fn test_callback(msg: *const c_char) {
             CALLBACK_CALLED.store(true, Ordering::SeqCst);
             let c_str = unsafe { CStr::from_ptr(msg) };
-            if let Ok(str_slice) = c_str.to_str() {
-                if let Ok(mut callback_msg) = CALLBACK_MESSAGE.lock() {
+            if let Ok(str_slice) = c_str.to_str()
+                && let Ok(mut callback_msg) = CALLBACK_MESSAGE.lock() {
                     *callback_msg = Some(str_slice.to_string());
                 }
-            }
         }
 
         unsafe {

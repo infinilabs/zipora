@@ -5,7 +5,6 @@
 //! correctness, and basic performance validation.
 
 use proptest::prelude::*;
-use std::sync::Arc;
 use zipora::compression::dict_zip::{
     // Core types that are working
     CompressionType, Match, BitReader, BitWriter, 
@@ -14,7 +13,7 @@ use zipora::compression::dict_zip::{
     choose_best_compression_type, calculate_theoretical_compression_ratio,
     
     // Local matcher components
-    LocalMatcher, LocalMatcherConfig, LocalMatcherStats, LocalMatch,
+    LocalMatcher, LocalMatcherConfig,
     
     // Utility functions
     validate_parameters, calculate_optimal_dict_size, estimate_compression_ratio,
@@ -23,7 +22,7 @@ use zipora::compression::dict_zip::{
     PA_ZIP_VERSION, DEFAULT_MIN_PATTERN_LENGTH, DEFAULT_MAX_PATTERN_LENGTH,
     DEFAULT_MIN_FREQUENCY, DEFAULT_BFS_DEPTH,
 };
-use zipora::error::{Result, ZiporaError};
+use zipora::error::Result;
 use zipora::memory::{SecureMemoryPool, SecurePoolConfig};
 
 // =============================================================================
@@ -554,7 +553,7 @@ mod property_tests {
         #[test]
         fn test_encoding_decoding_roundtrip_property(
             length in 1u8..=32u8,
-            dict_position in 0u32..100000u32,
+            _dict_position in 0u32..100000u32,
             byte_value in any::<u8>(),
             distance in 2u8..=9u8,
             rle_length in 2u8..=33u8
@@ -586,8 +585,8 @@ mod property_tests {
             }
 
             // Test near short match
-            if distance <= 9 && length <= 5 {
-                if let Ok(near_match) = Match::near_short(distance, length.min(5)) {
+            if distance <= 9 && length <= 5
+                && let Ok(near_match) = Match::near_short(distance, length.min(5)) {
                     let mut writer = BitWriter::new();
                     let bits_written = encode_match(&near_match, &mut writer)?;
                     let buffer = writer.finish();
@@ -598,7 +597,6 @@ mod property_tests {
                     prop_assert_eq!(near_match, decoded_match);
                     prop_assert_eq!(bits_written, bits_read);
                 }
-            }
         }
 
         #[test]
@@ -644,25 +642,23 @@ mod property_tests {
         #[test]
         fn test_compression_efficiency_properties(
             length in 1usize..1000,
-            distance in 0usize..100000
+            _distance in 0usize..100000
         ) {
             // Test literal match efficiency
-            if length <= 32 {
-                if let Ok(literal_match) = Match::literal(length as u8) {
+            if length <= 32
+                && let Ok(literal_match) = Match::literal(length as u8) {
                     let efficiency = calculate_compression_efficiency(&literal_match);
                     prop_assert!(efficiency >= 0.0);
                     // Efficiency can be > 1.0 for good compression
                 }
-            }
 
             // Test encoding cost properties
-            if length <= 32 {
-                if let Ok(literal_match) = Match::literal(length as u8) {
+            if length <= 32
+                && let Ok(literal_match) = Match::literal(length as u8) {
                     let cost = calculate_encoding_cost(&literal_match);
                     prop_assert!(cost > 0);
                     prop_assert!(cost <= 280); // Should be reasonable (max: 3+5+32*8 = 264 bits)
                 }
-            }
         }
     }
 }
@@ -725,7 +721,7 @@ mod integration_tests {
             ("binary_patterns", TestDataGenerator::binary_patterns(500)),
         ];
         
-        for (name, data) in test_datasets {
+        for (name, _data) in test_datasets {
             println!("Testing encoding with {} data", name);
             
             // Create various match types based on data characteristics
@@ -755,7 +751,7 @@ mod integration_tests {
             let ratio = calculate_theoretical_compression_ratio(&matches);
             println!("  Theoretical compression ratio: {:.3}", ratio);
             
-            assert!(ratio >= 0.0 && ratio <= 1.0);
+            assert!((0.0..=1.0).contains(&ratio));
         }
         
         Ok(())
@@ -784,7 +780,7 @@ mod integration_tests {
             
             // Test compression ratio estimation
             let ratio = estimate_compression_ratio(5.0, 0.6, dict_size as f64 / input_size as f64);
-            assert!(ratio >= 0.1 && ratio <= 1.0);
+            assert!((0.1..=1.0).contains(&ratio));
             
             println!("  Estimated compression ratio: {:.3}", ratio);
         }

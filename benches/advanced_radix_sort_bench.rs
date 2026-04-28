@@ -17,14 +17,11 @@ use criterion::{
     BatchSize, PlotConfiguration, AxisScale
 };
 use std::time::Duration;
-use std::sync::Arc;
 
 use zipora::algorithms::radix_sort::{
     AdvancedRadixSortConfig, AdvancedU32RadixSort, AdvancedU64RadixSort,
-    AdvancedStringRadixSort, RadixSort, RadixString, SortingStrategy,
-    CpuFeatures, DataCharacteristics
+    AdvancedStringRadixSort, RadixSort, RadixString, SortingStrategy, DataCharacteristics
 };
-use zipora::memory::{SecureMemoryPool, SecurePoolConfig};
 
 // =============================================================================
 // BENCHMARK CONFIGURATION

@@ -21,7 +21,8 @@ fn bench_fsa_cache(c: &mut Criterion) {
                     || SimpleFsaCache::new(size),
                     |mut cache| {
                         for i in 0..1000 {
-                            black_box(cache.insert(i as u32, i as u32 * 2).unwrap());
+                            let _: () = cache.insert(i as u32, i as u32 * 2).unwrap();
+                            black_box(());
                         }
                     }
                 );
@@ -76,7 +77,8 @@ fn bench_simple_dawg(c: &mut Criterion) {
                 b.iter(|| {
                     let mut dawg = SimpleDawg::new();
                     for key in keys {
-                        black_box(dawg.insert(key).unwrap());
+                        dawg.insert(key).unwrap();
+                        black_box(());
                     }
                     black_box(dawg)
                 });
@@ -130,7 +132,8 @@ fn bench_graph_walker(c: &mut Criterion) {
                         }
                     };
                     
-                    black_box(walker.walk_bfs(0, graph_fn).unwrap());
+                    walker.walk_bfs(0, graph_fn).unwrap();
+                    black_box(());
                     black_box(walker.visited_count())
                 });
             },

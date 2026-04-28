@@ -171,15 +171,12 @@ fn analyze_memory_patterns() {
     // Large struct - 64 byte elements (cache line size)
     #[repr(C, align(64))]
     #[derive(Clone)]
+    #[derive(Default)]
     struct CacheLineStruct {
         data: [u64; 8],
     }
     
-    impl Default for CacheLineStruct {
-        fn default() -> Self {
-            CacheLineStruct { data: [0; 8] }
-        }
-    }
+    
     
     benchmark_type_size::<CacheLineStruct>("CacheLineStruct (64 bytes)");
 }

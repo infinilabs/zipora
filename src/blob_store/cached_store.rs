@@ -552,7 +552,7 @@ mod tests {
         assert!(!cached_store.contains(id));
         
         // Test flush functionality
-        let id2 = cached_store.put(data2).unwrap();
+        let _id2 = cached_store.put(data2).unwrap();
         assert!(cached_store.flush().is_ok());
     }
     

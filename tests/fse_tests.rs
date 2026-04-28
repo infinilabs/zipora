@@ -17,7 +17,6 @@ use zipora::compression::dict_zip::compression_types::{
     fse_zip_reference, fse_unzip_reference,
     FseConfig as PaZipFseConfig, FseCompressor
 };
-use zipora::error::ZiporaError;
 
 /// Test basic FSE functionality
 #[test]
@@ -33,7 +32,7 @@ fn test_fse_basic_functionality() {
     #[cfg(feature = "zstd")]
     {
         let mut encoder = encoder_result.unwrap();
-        let decoder = FseDecoder::new();
+        let _decoder = FseDecoder::new();
         
         // Test empty data
         let empty_compressed = encoder.compress(b"").unwrap();
@@ -132,7 +131,7 @@ fn test_fse_compression_data_types() {
         b"The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog.".to_vec(),
         
         // Binary data with repetition
-        vec![0x00, 0x01, 0x02, 0x03].repeat(50),
+        [0x00, 0x01, 0x02, 0x03].repeat(50),
         
         // Single character repetition
         vec![b'A'; 200],
@@ -381,13 +380,13 @@ fn test_fse_reference_compatibility() {
     let small_data = b"ab";
     let small_result = fse_zip_reference(small_data, &mut compressed_buffer, &mut compressed_size);
     assert!(small_result.is_ok());
-    assert_eq!(small_result.unwrap(), false);
+    assert!(!small_result.unwrap());
     
     // Test with single byte (should return false)
     let tiny_data = b"a";
     let tiny_result = fse_zip_reference(tiny_data, &mut compressed_buffer, &mut compressed_size);
     assert!(tiny_result.is_ok());
-    assert_eq!(tiny_result.unwrap(), false);
+    assert!(!tiny_result.unwrap());
 }
 
 /// Test FSE compressor state management
@@ -496,7 +495,7 @@ fn test_fse_data_sizes() {
             vec![b'A'; size]
         } else {
             // Create data with some patterns for better compression
-            "ABCDEF".repeat((size + 5) / 6)[..size].as_bytes().to_vec()
+            "ABCDEF".repeat(size.div_ceil(6))[..size].as_bytes().to_vec()
         };
         
         let compressed = encoder.compress(&test_data).unwrap();
@@ -581,7 +580,7 @@ fn test_fse_cross_module_integration() {
     
     // Test that configurations are compatible
     let entropy_config = FseConfig::balanced();
-    let pa_zip_config_default = PaZipFseConfig::default();
+    let _pa_zip_config_default = PaZipFseConfig::default();
     
     assert!(entropy_config.validate().is_ok());
     

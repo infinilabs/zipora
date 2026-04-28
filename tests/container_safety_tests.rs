@@ -53,6 +53,12 @@ pub struct MemoryUsageTracker {
     measurements: Vec<usize>,
 }
 
+impl Default for MemoryUsageTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryUsageTracker {
     pub fn new() -> Self {
         Self {
@@ -799,7 +805,7 @@ mod comprehensive_safety {
 
     #[test]
     fn test_containers_under_memory_pressure() {
-        let config = SafetyTestConfig::default();
+        let _config = SafetyTestConfig::default();
         let mut tracker = MemoryUsageTracker::new();
 
         {
@@ -960,7 +966,7 @@ mod comprehensive_safety {
 
 #[cfg(test)]
 mod safety_test_runner {
-    use super::*;
+    
 
     #[test]
     fn run_all_safety_tests() {
@@ -1085,7 +1091,7 @@ mod enhanced_memory_safety {
     /// Test memory bounds with large allocations
     #[test]
     fn test_large_allocation_bounds() {
-        let config = SafetyTestConfig::default();
+        let _config = SafetyTestConfig::default();
 
         // Test allocation of progressively larger sizes
         let mut successful_allocations = 0;
@@ -1306,7 +1312,7 @@ mod enhanced_memory_safety {
         // Container should still be usable
         vec.push(999).unwrap();
         assert_eq!(vec.len(), original_len + 1);
-        assert_eq!(vec[original_len as u32], 999);
+        assert_eq!(vec[original_len], 999);
 
         // Test SmallMap panic safety
         let mut map = SmallMap::new();

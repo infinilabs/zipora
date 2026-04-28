@@ -2492,7 +2492,7 @@ mod tests {
             // Test that performance monitoring works correctly
             use crate::simd::AdaptiveSimdSelector;
 
-            let selector = AdaptiveSimdSelector::global();
+            let _selector = AdaptiveSimdSelector::global();
 
             // Perform operations that should be monitored
             let mut vec: FastVec<u8> = FastVec::new();

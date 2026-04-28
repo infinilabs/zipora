@@ -2517,7 +2517,7 @@ mod tests {
         for term in &terms {
             t.insert(term.as_bytes()).unwrap();
         }
-        let insert_time = start.elapsed();
+        let _insert_time = start.elapsed();
 
         assert_eq!(t.len(), 5000);
 
@@ -2526,7 +2526,7 @@ mod tests {
         for term in &terms {
             assert!(t.contains(term.as_bytes()));
         }
-        let lookup_time = start.elapsed();
+        let _lookup_time = start.elapsed();
 
         // Lookup (all misses)
         let start = std::time::Instant::now();
@@ -2534,22 +2534,22 @@ mod tests {
             let miss = format!("miss_{:06}", i);
             assert!(!t.contains(miss.as_bytes()));
         }
-        let miss_time = start.elapsed();
+        let _miss_time = start.elapsed();
 
         // In release mode, all three should complete in well under 100ms
         // (Cedar does 5000 inserts in ~876µs)
         #[cfg(not(debug_assertions))]
         {
             eprintln!("DoubleArrayTrie 5000 terms: insert={:?}, lookup_hit={:?}, lookup_miss={:?}",
-                insert_time, lookup_time, miss_time);
+                _insert_time, _lookup_time, _miss_time);
             eprintln!("Memory: {} bytes ({} bytes/key), {} states",
                 t.mem_size(), t.mem_size() / 5000, t.total_states());
             // Sanity: insert should be under 50ms in release
-            assert!(insert_time.as_millis() < 50,
-                "Insert too slow: {:?}", insert_time);
+            assert!(_insert_time.as_millis() < 50,
+                "Insert too slow: {:?}", _insert_time);
             // Lookup should be under 10ms
-            assert!(lookup_time.as_millis() < 10,
-                "Lookup too slow: {:?}", lookup_time);
+            assert!(_lookup_time.as_millis() < 10,
+                "Lookup too slow: {:?}", _lookup_time);
         }
     }
 

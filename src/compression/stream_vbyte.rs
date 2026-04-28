@@ -409,22 +409,22 @@ mod tests {
 
         let start = std::time::Instant::now();
         let encoded = StreamVByte::encode_deltas(&values);
-        let encode_time = start.elapsed();
+        let _encode_time = start.elapsed();
 
         let start = std::time::Instant::now();
-        let mut total = 0usize;
+        let mut _total = 0usize;
         for _ in 0..100 {
             let decoded = StreamVByte::decode_deltas(&encoded, values.len());
-            total += decoded.len();
+            _total += decoded.len();
         }
-        let decode_time = start.elapsed();
+        let _decode_time = start.elapsed();
 
         #[cfg(not(debug_assertions))]
         {
             let ratio = StreamVByte::compression_ratio(&encoded);
-            let decode_per_call = decode_time / 100;
+            let decode_per_call = _decode_time / 100;
             eprintln!("StreamVByte 100K values: encode={:?}, decode={:?}/call, ratio={:.2}",
-                encode_time, decode_per_call, ratio);
+                _encode_time, decode_per_call, ratio);
         }
     }
 }

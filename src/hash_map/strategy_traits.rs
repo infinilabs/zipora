@@ -752,7 +752,7 @@ mod tests {
 
     #[test]
     fn test_standard_storage_strategy() {
-        let strategy = StandardStorageStrategy;
+        let _strategy = StandardStorageStrategy;
         let config = StandardStorageConfig {
             initial_capacity: 16,
             growth_factor: 2.0,

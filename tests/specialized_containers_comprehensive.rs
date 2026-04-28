@@ -6,23 +6,16 @@
 
 use proptest::prelude::*;
 use std::collections::HashMap;
-use std::sync::Arc;
-use zipora::error::{Result, ZiporaError};
 use zipora::memory::{SecureMemoryPool, SecurePoolConfig};
 
 // Import all specialized containers
 use zipora::containers::specialized::{
     AutoGrowCircularQueue,
-    EasyHashMap,
     FixedCircularQueue,
-    FixedLenStrVec,
     FixedStr4Vec,
     FixedStr8Vec,
     FixedStr16Vec,
     FixedStr32Vec,
-    FixedStr64Vec,
-    GoldHashIdx,
-    HashStrMap,
     SmallMap,
     SortableStrVec,
     // Phase 2 containers
@@ -935,7 +928,7 @@ pub mod phase3_tests {
 
     /// Comprehensive tests for hash-based containers  
     pub mod hash_container_tests {
-        use super::*;
+        
 
         #[test]
         fn test_gold_hash_idx_basic() {
@@ -973,7 +966,7 @@ pub mod integration_tests {
     #[test]
     fn test_container_memory_pool_integration() {
         let config = SecurePoolConfig::small_secure();
-        let pool = SecureMemoryPool::new(config).unwrap();
+        let _pool = SecureMemoryPool::new(config).unwrap();
 
         // Test containers that support memory pool integration
         // This will be expanded once compilation issues are resolved
@@ -995,7 +988,7 @@ pub mod integration_tests {
         // Verify cross-references work correctly
         for i in 0..10 {
             let index = *small_map.get(&i).unwrap();
-            let value = val_vec[index as u32];
+            let value = val_vec[index];
             assert_eq!(value, i * i);
         }
     }

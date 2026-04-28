@@ -10,7 +10,6 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use zipora::{BitVector, BitwiseOp, RankSelect256, RankSelectPerformanceOps};
 use zipora::succinct::rank_select::RankSelectOps;
-use zipora::system::CpuFeatures;
 
 fn create_benchmark_data(size: usize, density: f64) -> BitVector {
     let mut bv = BitVector::new();
@@ -132,7 +131,7 @@ fn bench_simd_bulk_operations(c: &mut Criterion) {
         // Benchmark bulk rank operations
         let positions: Vec<usize> = (0..size).step_by(size / 100).collect();
 
-        let mut group = c.benchmark_group(&format!("bulk_rank_size_{}", size));
+        let mut group = c.benchmark_group(format!("bulk_rank_size_{}", size));
 
         group.bench_function("simd_bulk", |b| {
             b.iter(|| {
@@ -153,7 +152,7 @@ fn bench_simd_bulk_operations(c: &mut Criterion) {
         group.finish();
 
         // Benchmark range setting operations
-        let mut group = c.benchmark_group(&format!("range_set_size_{}", size));
+        let mut group = c.benchmark_group(format!("range_set_size_{}", size));
         let range_size = size / 10;
 
         group.bench_function("simd_range", |b| {
@@ -179,7 +178,7 @@ fn bench_simd_bulk_operations(c: &mut Criterion) {
 
         // Benchmark bulk bitwise operations
         let other_data = create_benchmark_data(size, 0.4); // Different density
-        let mut group = c.benchmark_group(&format!("bulk_bitwise_size_{}", size));
+        let mut group = c.benchmark_group(format!("bulk_bitwise_size_{}", size));
         let op_range = size / 2;
 
         group.bench_function("simd_bitwise", |b| {

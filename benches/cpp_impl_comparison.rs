@@ -12,16 +12,13 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::time::Duration;
-use zipora::{
-    succinct::{
+use zipora::succinct::{
         rank_select::{
             interleaved::RankSelectInterleaved256,
             RankSelectOps,
-            RankSelectPerformanceOps,
         },
         BitVector,
-    },
-};
+    };
 
 // ============================================================================
 // Data Generation (matching C++ implementation patterns)
@@ -50,14 +47,14 @@ impl CppImplDataGenerator {
     /// - 25% all-one words
     /// - 55% random words
     pub fn generate_bitvector(&mut self, bits: usize) -> Vec<u64> {
-        let words = (bits + 63) / 64;
+        let words = bits.div_ceil(64);
         let mut data = Vec::with_capacity(words);
 
         for _ in 0..words {
             let r = self.next_u64();
             let word = match r % 5 {
                 0 => 0,                    // 20% all-zeros
-                _ if r % 4 == 0 => !0,     // 25% all-ones
+                _ if r.is_multiple_of(4) => !0,     // 25% all-ones
                 _ => self.next_u64(),      // 55% random
             };
             data.push(word);

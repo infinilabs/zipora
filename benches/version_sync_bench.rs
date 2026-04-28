@@ -1,7 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
 
 use zipora::fsa::version_sync::{ConcurrencyLevel, VersionManager};
 use zipora::fsa::token::{TokenManager, with_reader_token, with_writer_token};

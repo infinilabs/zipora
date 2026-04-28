@@ -203,8 +203,8 @@ fn test_integrated_hardware_acceleration() {
     let features = get_cpu_features();
 
     // Test realistic workload that would benefit from hardware acceleration
-    let data_size = 100_000;
-    let mut bit_vector = vec![0u64; (data_size + 63) / 64];
+    let data_size: usize = 100_000;
+    let mut bit_vector = vec![0u64; data_size.div_ceil(64)];
 
     // Set some bits in a pattern
     for i in 0..data_size {

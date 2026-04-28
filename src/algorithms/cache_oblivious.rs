@@ -355,9 +355,7 @@ impl CacheObliviousSort {
     fn l1_optimized_sort<T: Clone + Ord>(&mut self, data: &mut [T]) {
         // Use insertion sort with prefetching for L1 cache
         // Enhanced SIMD integration following Zipora's 6-tier framework
-        if self.config.use_simd && self.config.cpu_features.has_avx2 && data.len() >= 16 {
-            self.simd_insertion_sort(data);
-        } else if self.config.use_simd && self.config.cpu_features.has_sse42 && data.len() >= 8 {
+        if self.config.use_simd && ((self.config.cpu_features.has_avx2 && data.len() >= 16) || (self.config.cpu_features.has_sse42 && data.len() >= 8)) {
             self.simd_insertion_sort(data);
         } else {
             self.insertion_sort(data);

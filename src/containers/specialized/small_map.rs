@@ -1206,7 +1206,7 @@ mod tests {
     #[test]
     fn test_memory_efficiency() {
         // Test that SmallMap has reasonable memory footprint
-        let small_map = SmallMap::<u64, u64>::new();
+        let _small_map = SmallMap::<u64, u64>::new();
 
         let size = std::mem::size_of::<SmallMap<u64, u64>>();
         println!("SmallMap<u64, u64> size: {} bytes", size);

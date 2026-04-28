@@ -177,18 +177,18 @@ mod utility_tests {
         
         for (entropy, repetitiveness, dict_ratio) in extreme_cases {
             let ratio = estimate_compression_ratio(entropy, repetitiveness, dict_ratio);
-            assert!(ratio >= 0.1 && ratio <= 1.0, 
+            assert!((0.1..=1.0).contains(&ratio), 
                 "Invalid ratio {} for extreme case entropy={}, rep={}, dict={}", 
                 ratio, entropy, repetitiveness, dict_ratio);
         }
         
         // Test negative inputs (should be handled gracefully)
         let ratio = estimate_compression_ratio(-1.0, -0.5, -0.1);
-        assert!(ratio >= 0.1 && ratio <= 1.0);
+        assert!((0.1..=1.0).contains(&ratio));
         
         // Test very large inputs (should be clamped)
         let ratio = estimate_compression_ratio(100.0, 10.0, 5.0);
-        assert!(ratio >= 0.1 && ratio <= 1.0);
+        assert!((0.1..=1.0).contains(&ratio));
     }
 
     #[test]

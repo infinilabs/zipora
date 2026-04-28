@@ -1844,6 +1844,128 @@ impl ConcurrentCsppTrie {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_concurrent_trie_basic() {
+        let trie = ConcurrentCsppTrie::with_capacity(8, 1024 * 1024);
+        let key1 = b"hello";
+        let key2 = b"world";
+        
+        let (is_new, valpos) = trie.insert(key1);
+        assert!(is_new);
+        unsafe {
+            let ptr = trie.write_value_ptr(valpos) as *mut u64;
+            std::ptr::write_unaligned(ptr, 123);
+        }
+
+        let (is_new2, valpos2) = trie.insert(key2);
+        assert!(is_new2);
+        unsafe {
+            let ptr = trie.write_value_ptr(valpos2) as *mut u64;
+            std::ptr::write_unaligned(ptr, 456);
+        }
+
+        assert_eq!(trie.num_words(), 2);
+        
+        let res1 = trie.lookup(key1);
+        assert!(res1.is_some());
+        assert_eq!(trie.get_value::<u64>(res1.unwrap()), 123);
+
+        let res2 = trie.lookup(key2);
+        assert!(res2.is_some());
+        assert_eq!(trie.get_value::<u64>(res2.unwrap()), 456);
+
+        assert!(trie.lookup(b"hell").is_none());
+        assert!(trie.lookup(b"helloo").is_none());
+    }
+
+    #[test]
+    fn test_concurrent_trie_split_zpath() {
+        let trie = ConcurrentCsppTrie::with_capacity(8, 1024 * 1024);
+        trie.insert(b"abcde");
+        trie.insert(b"ab");
+        
+        assert!(trie.contains(b"abcde"));
+        assert!(trie.contains(b"ab"));
+        assert!(!trie.contains(b"abc"));
+    }
+
+    #[test]
+    fn test_concurrent_trie_fork() {
+        let trie = ConcurrentCsppTrie::with_capacity(8, 1024 * 1024);
+        trie.insert(b"abcd");
+        trie.insert(b"abef");
+        
+        assert!(trie.contains(b"abcd"));
+        assert!(trie.contains(b"abef"));
+        assert!(!trie.contains(b"ab"));
+    }
+
+    #[test]
+    fn test_concurrent_trie_many_small() {
+        let n = if cfg!(miri) { 20 } else { 100 };
+        let trie = ConcurrentCsppTrie::with_capacity(4, 1024 * 1024);
+        for i in 0..n {
+            let key = format!("key{:03}", i);
+            let (is_new, valpos) = trie.insert(key.as_bytes());
+            assert!(is_new);
+            unsafe {
+                let ptr = trie.write_value_ptr(valpos) as *mut u32;
+                std::ptr::write_unaligned(ptr, i as u32);
+            }
+        }
+        
+        for i in 0..n {
+            let key = format!("key{:03}", i);
+            let res = trie.lookup(key.as_bytes());
+            assert!(res.is_some());
+            assert_eq!(trie.get_value::<u32>(res.unwrap()), i as u32);
+        }
+    }
+
+    #[test]
+    fn test_concurrent_trie_multithreaded() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let n_threads = if cfg!(miri) { 2 } else { 4 };
+        let n_per_thread = if cfg!(miri) { 10 } else { 250 };
+        let trie = Arc::new(ConcurrentCsppTrie::with_capacity(8, 4 * 1024 * 1024));
+        let mut threads = Vec::new();
+
+        for t in 0..n_threads {
+            let trie = Arc::clone(&trie);
+            threads.push(thread::spawn(move || {
+                for i in 0..n_per_thread {
+                    let val = (t * n_per_thread + i) as u64;
+                    let key = format!("key{:06}", val);
+                    let (is_new, valpos) = trie.insert(key.as_bytes());
+                    if is_new {
+                        unsafe {
+                            let ptr = trie.write_value_ptr(valpos) as *mut u64;
+                            std::ptr::write_unaligned(ptr, val);
+                        }
+                    }
+                }
+            }));
+        }
+
+        for t in threads {
+            t.join().unwrap();
+        }
+
+        for i in 0..(n_threads * n_per_thread) {
+            let key = format!("key{:06}", i);
+            let res = trie.lookup(key.as_bytes());
+            assert!(res.is_some(), "Key {} not found", key);
+            assert_eq!(trie.get_value::<u64>(res.unwrap()), i as u64);
+        }
+    }
+}
+
 impl Drop for ConcurrentCsppTrie {
     fn drop(&mut self) {
         // Aggressively collect deferred epoch closures that hold Arc<SharedInner>.

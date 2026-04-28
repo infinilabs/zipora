@@ -28,6 +28,7 @@ lz4 = ["dep:lz4_flex"]
 ffi = ["dep:cbindgen"]
 serde = ["dep:serde", "dep:serde_json", "dep:bincode"]
 async = ["dep:tokio"]
+criterion = []
 
 [dependencies]
 crossbeam-epoch = "0.9"

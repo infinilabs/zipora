@@ -1,6 +1,3 @@
-use zipora::entropy::*;
-use zipora::error::Result;
-use std::time::Instant;
 
 /// Comprehensive performance test suite for entropy algorithms
 /// Only runs in release mode to ensure accurate performance measurements
@@ -419,7 +416,7 @@ mod performance_tests {
 // Stub tests for debug builds
 #[cfg(debug_assertions)]
 mod debug_build_stubs {
-    use super::*;
+    
     
     #[test]
     fn debug_build_notice() {

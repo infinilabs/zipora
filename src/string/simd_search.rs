@@ -685,9 +685,10 @@ impl SimdStringSearch {
         for i in 0..chunks {
             let offset = i * 64;
             // SAFETY: avx512f+avx512bw guaranteed by #[target_feature], pointer valid from slice, offset within bounds (chunks * 64 <= len)
-            let chunk = unsafe { _mm512_loadu_si512(haystack[offset..].as_ptr() as *const __m512i) };
-            // SAFETY: avx512f+avx512bw guaranteed by #[target_feature], chunk is valid __m512i
-            let mask = unsafe { _mm512_cmpeq_epi8_mask(chunk, needle_vec) };
+            let mask = unsafe {
+                let chunk = _mm512_loadu_si512(haystack[offset..].as_ptr() as *const __m512i);
+                _mm512_cmpeq_epi8_mask(chunk, needle_vec)
+            };
 
             if mask != 0 {
                 let first_match = mask.trailing_zeros() as usize;
@@ -752,11 +753,11 @@ impl SimdStringSearch {
         for i in 0..chunks {
             let offset = i * 64;
             // SAFETY: avx512f+avx512bw guaranteed by #[target_feature], pointers valid from slices, offset within bounds (chunks * 64 <= len)
-            let chunk_a = unsafe { _mm512_loadu_si512(a[offset..].as_ptr() as *const __m512i) };
-            // SAFETY: avx512f+avx512bw guaranteed by #[target_feature], pointers valid from slices, offset within bounds (chunks * 64 <= len)
-            let chunk_b = unsafe { _mm512_loadu_si512(b[offset..].as_ptr() as *const __m512i) };
-
-            let mask = _mm512_cmpeq_epi8_mask(chunk_a, chunk_b);
+            let mask = unsafe {
+                let chunk_a = _mm512_loadu_si512(a[offset..].as_ptr() as *const __m512i);
+                let chunk_b = _mm512_loadu_si512(b[offset..].as_ptr() as *const __m512i);
+                _mm512_cmpeq_epi8_mask(chunk_a, chunk_b)
+            };
 
             if mask != 0xFFFFFFFFFFFFFFFF {
                 // Found mismatch, find first differing byte
@@ -1018,8 +1019,10 @@ mod tests {
     #[cfg(any(feature = "criterion", test))]
     mod benchmarks {
         use super::*;
-        use criterion::{black_box, Criterion};
+        use std::hint::black_box;
+        use criterion::Criterion;
 
+        #[allow(dead_code)]
         pub fn bench_strchr(c: &mut Criterion) {
             let search = SimdStringSearch::new();
             let haystack = b"a".repeat(1000);
@@ -1039,6 +1042,7 @@ mod tests {
             });
         }
 
+        #[allow(dead_code)]
         pub fn bench_strstr(c: &mut Criterion) {
             let search = SimdStringSearch::new();
             let haystack = "hello world ".repeat(100);
@@ -1061,6 +1065,7 @@ mod tests {
             });
         }
 
+        #[allow(dead_code)]
         pub fn bench_multi_search(c: &mut Criterion) {
             let search = SimdStringSearch::new();
             let haystack = "hello world test string".repeat(50);
@@ -1076,6 +1081,7 @@ mod tests {
             });
         }
 
+        #[allow(dead_code)]
         pub fn bench_strcmp(c: &mut Criterion) {
             let search = SimdStringSearch::new();
             let str1 = "a".repeat(1000);

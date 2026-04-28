@@ -15,7 +15,7 @@ use std::sync::Mutex;
 
 // Thread-local storage for error messages
 thread_local! {
-    static LAST_ERROR: RefCell<Option<CString>> = RefCell::new(None);
+    static LAST_ERROR: RefCell<Option<CString>> = const { RefCell::new(None) };
 }
 
 // Global error callback storage
@@ -29,14 +29,13 @@ fn set_last_error(msg: &str) {
             *error.borrow_mut() = Some(cstring.clone());
 
             // Also call the error callback if one is set
-            if let Ok(callback_guard) = ERROR_CALLBACK.lock() {
-                if let Some(callback) = *callback_guard {
+            if let Ok(callback_guard) = ERROR_CALLBACK.lock()
+                && let Some(callback) = *callback_guard {
                     // SAFETY: callback function pointer is valid (set via zipora_set_error_callback), called with valid CString pointer
                     unsafe {
                         callback(cstring.as_ptr());
                     }
                 }
-            }
         }
     });
 }

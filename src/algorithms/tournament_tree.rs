@@ -254,11 +254,7 @@ where
         // For k ways, we need k-1 internal nodes + k leaf nodes = 2k-1 total
         let tree_size = self.num_ways.saturating_sub(1);
         
-        if self.config.cache_optimized {
-            self.tree.resize(tree_size, CacheAlignedNode::new(0, 0));
-        } else {
-            self.tree.resize(tree_size, CacheAlignedNode::new(0, 0));
-        }
+        self.tree.resize(tree_size, CacheAlignedNode::new(0, 0));
         
         // Build the initial tournament tree bottom-up
         self.build_enhanced_tree()?;

@@ -1301,7 +1301,7 @@ mod tests {
         
         // Should be able to allocate within capacity
         let offset1 = pool.alloc(1024)?;
-        let offset2 = pool.alloc(2048)?;
+        let _offset2 = pool.alloc(2048)?;
         
         assert_eq!(pool.remaining_capacity(), 8192 - 1024 - 2048);
         

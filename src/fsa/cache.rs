@@ -651,14 +651,14 @@ mod tests {
         let mut cache = FsaCache::with_config(config).unwrap();
         
         // Fill the cache
-        let id1 = cache.cache_state(0, 100, false).unwrap();
-        let id2 = cache.cache_state(0, 200, false).unwrap();
-        let id3 = cache.cache_state(0, 300, false).unwrap();
+        let _id1 = cache.cache_state(0, 100, false).unwrap();
+        let _id2 = cache.cache_state(0, 200, false).unwrap();
+        let _id3 = cache.cache_state(0, 300, false).unwrap();
         
         assert_eq!(cache.stats().cached_states, 3);
         
         // Add one more - should trigger eviction
-        let id4 = cache.cache_state(0, 400, false).unwrap();
+        let _id4 = cache.cache_state(0, 400, false).unwrap();
         
         // Should still have 3 states (or less due to eviction)
         assert!(cache.stats().cached_states <= 3);

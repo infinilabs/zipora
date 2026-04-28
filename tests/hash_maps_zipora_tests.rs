@@ -1,4 +1,4 @@
-use std::hash::{Hash, Hasher, BuildHasher};
+use std::hash::{Hasher, BuildHasher};
 use zipora::hash_map::{ZiporaHashMap, ZiporaHashMapConfig};
 use std::collections::hash_map::RandomState;
 

@@ -293,16 +293,16 @@ pub fn parse_env_bool(var_name: &str, default: bool) -> bool {
 }
 
 /// Common configuration presets for different use cases.
+///
+/// Pre-configured settings for common use cases.
+///
+/// This module provides configuration presets that are optimized for
+/// specific scenarios and workloads.
 pub mod presets {
-    //! Pre-configured settings for common use cases.
-    //! 
-    //! This module provides configuration presets that are optimized for
-    //! specific scenarios and workloads.
-    
     /// Performance-oriented configuration presets.
+    ///
+    /// Configurations optimized for maximum performance and throughput.
     pub mod performance {
-        //! Configurations optimized for maximum performance and throughput.
-        
         /// High-performance configuration for maximum throughput.
         /// 
         /// - Enables all SIMD optimizations
@@ -321,9 +321,9 @@ pub mod presets {
     }
     
     /// Memory-oriented configuration presets.
+    ///
+    /// Configurations optimized for minimal memory usage.
     pub mod memory {
-        //! Configurations optimized for minimal memory usage.
-        
         /// Memory-efficient configuration for constrained environments.
         /// 
         /// - Minimizes memory allocation
@@ -342,10 +342,9 @@ pub mod presets {
     }
     
     /// Application-specific configuration presets.
+    ///
+    /// Configurations optimized for specific application types.
     pub mod application {
-        //! Configurations optimized for specific application types.
-        
-        /// Configuration optimized for text processing applications.
         /// 
         /// - Optimized string handling
         /// - UTF-8 acceleration

@@ -307,31 +307,37 @@ fn has_fast_bmi2_detect() -> bool {
             return false;
         }
 
-        // SAFETY: __cpuid is always safe on x86_64 with leaf 0 and 1.
-        let cpuid0 = std::arch::x86_64::__cpuid(0);
+        #[cfg(miri)]
+        return false;
 
-        // Check "AuthenticAMD": ebx="Auth", edx="enti", ecx="cAMD"
-        let is_amd = cpuid0.ebx == 0x6874_7541
-            && cpuid0.edx == 0x6974_6E65
-            && cpuid0.ecx == 0x444D_4163;
+        #[cfg(not(miri))]
+        {
+            // SAFETY: __cpuid is always safe on x86_64 with leaf 0 and 1.
+            let cpuid0 = std::arch::x86_64::__cpuid(0);
 
-        if !is_amd {
-            // Intel (or other x86 vendor): BMI2 PDEP is always fast
-            return true;
+            // Check "AuthenticAMD": ebx="Auth", edx="enti", ecx="cAMD"
+            let is_amd = cpuid0.ebx == 0x6874_7541
+                && cpuid0.edx == 0x6974_6E65
+                && cpuid0.ecx == 0x444D_4163;
+
+            if !is_amd {
+                // Intel (or other x86 vendor): BMI2 PDEP is always fast
+                return true;
+            }
+
+            // AMD: only Zen 3+ has fast PDEP
+            // Zen 1/2 = family 0x17, Zen 3/4 = family 0x19, Zen 5 = family 0x1A
+            let cpuid1 = std::arch::x86_64::__cpuid(1);
+            let base_family = (cpuid1.eax >> 8) & 0xF;
+            let ext_family = (cpuid1.eax >> 20) & 0xFF;
+            let effective_family = if base_family == 0xF {
+                base_family + ext_family
+            } else {
+                base_family
+            };
+
+            effective_family >= 0x19
         }
-
-        // AMD: only Zen 3+ has fast PDEP
-        // Zen 1/2 = family 0x17, Zen 3/4 = family 0x19, Zen 5 = family 0x1A
-        let cpuid1 = std::arch::x86_64::__cpuid(1);
-        let base_family = (cpuid1.eax >> 8) & 0xF;
-        let ext_family = (cpuid1.eax >> 20) & 0xFF;
-        let effective_family = if base_family == 0xF {
-            base_family + ext_family
-        } else {
-            base_family
-        };
-
-        effective_family >= 0x19
     }
 
     #[cfg(not(target_arch = "x86_64"))]

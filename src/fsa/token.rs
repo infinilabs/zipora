@@ -705,7 +705,7 @@ mod tests {
 
         // Test that thread-local caches are isolated
         let handles: Vec<_> = (0..2)
-            .map(|thread_id| {
+            .map(|_thread_id| {
                 let manager_clone = Arc::clone(&manager);
                 thread::spawn(move || -> Result<()> {
                     // Each thread should have its own cache

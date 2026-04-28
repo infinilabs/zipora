@@ -490,11 +490,11 @@ mod tests {
         for _ in 0..1000 {
             sorted_intersect_adaptive(&a, &b, &mut out);
         }
-        let elapsed = start.elapsed();
+        let _elapsed = start.elapsed();
 
         #[cfg(not(debug_assertions))]
         {
-            let per_call = elapsed / 1000;
+            let per_call = _elapsed / 1000;
             eprintln!("SIMD intersect 5K×3.3K: {:?}/call, {} matches", per_call, out.len());
             // Should be under 50µs per call in release
             assert!(per_call.as_micros() < 100, "Too slow: {:?}", per_call);
@@ -511,11 +511,11 @@ mod tests {
         for _ in 0..1000 {
             sorted_intersect_adaptive(&small, &large, &mut out);
         }
-        let elapsed = start.elapsed();
+        let _elapsed = start.elapsed();
 
         #[cfg(not(debug_assertions))]
         {
-            let per_call = elapsed / 1000;
+            let per_call = _elapsed / 1000;
             eprintln!("Galloping intersect 100×100K: {:?}/call, {} matches", per_call, out.len());
             assert!(per_call.as_micros() < 50, "Too slow: {:?}", per_call);
         }

@@ -6,7 +6,6 @@
 //! **IMPORTANT**: These tests should only run in release mode. Debug mode has
 //! significantly different performance characteristics and will cause false failures.
 
-use std::alloc::{GlobalAlloc, Layout, System};
 
 /// Returns true if running in debug mode (debug_assertions enabled).
 /// Performance tests should be skipped in debug mode as results are meaningless.
@@ -30,13 +29,11 @@ macro_rules! require_release_mode {
         }
     };
 }
-use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use zipora::containers::specialized::{
-    AutoGrowCircularQueue, FixedCircularQueue, FixedStr8Vec, FixedStr16Vec, SmallMap,
-    SortableStrVec, UintVector, ValVec32,
+    FixedCircularQueue, FixedStr8Vec, FixedStr16Vec, SmallMap, UintVector, ValVec32,
 };
 
 // =============================================================================
@@ -185,7 +182,7 @@ impl BenchmarkRunner {
         benchmark_fn: F,
     ) -> PerformanceMetrics
     where
-        F: Fn() -> (),
+        F: Fn(),
     {
         // Warmup
         for _ in 0..self.config.warmup_iterations {
@@ -738,7 +735,7 @@ mod string_container_performance {
 
 #[cfg(test)]
 mod performance_report {
-    use super::*;
+    
 
     #[test]
     fn generate_comprehensive_performance_report() {
