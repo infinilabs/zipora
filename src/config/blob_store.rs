@@ -3,13 +3,15 @@
 use super::{Config, parse_env_var, parse_env_bool};
 use crate::error::{Result, ZiporaError};
 use std::path::Path;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 /// Blob store configuration placeholder.
 /// 
 /// This is a minimal implementation showing the configuration pattern.
 /// Future implementations will expand this with comprehensive blob store settings.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BlobStoreConfig {
     /// Default compression level
     pub compression_level: u8,
@@ -78,19 +80,29 @@ impl Config for BlobStoreConfig {
     }
     
     fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        #[cfg(feature = "serde")]
+        {
         let serialized = serde_json::to_string_pretty(self)
             .map_err(|e| ZiporaError::configuration(format!("Failed to serialize blob store config: {}", e)))?;
         std::fs::write(path, serialized)
             .map_err(|e| ZiporaError::configuration(format!("Failed to write blob store config file: {}", e)))?;
         Ok(())
     }
+        #[cfg(not(feature = "serde"))]
+        Err(crate::error::ZiporaError::invalid_operation("Requires serde feature"))
+    }
     
     fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        #[cfg(feature = "serde")]
+        {
         let content = std::fs::read_to_string(path)
             .map_err(|e| ZiporaError::configuration(format!("Failed to read blob store config file: {}", e)))?;
         let config: Self = serde_json::from_str(&content)
             .map_err(|e| ZiporaError::configuration(format!("Failed to parse blob store config file: {}", e)))?;
         config.validate()?;
         Ok(config)
+    }
+        #[cfg(not(feature = "serde"))]
+        Err(crate::error::ZiporaError::invalid_operation("Requires serde feature"))
     }
 }

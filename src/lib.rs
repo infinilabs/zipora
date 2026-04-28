@@ -291,8 +291,8 @@ pub use memory::{HugePage, HugePageAllocator};
 
 // Re-export Phase 4 implementations (algorithms)
 pub use algorithms::{
-    AlgorithmConfig, EnhancedLoserTree, ExternalSort, LcpArray, LoserTreeConfig, MergeSource, MultiWayMerge,
-    RadixSort, RadixSortConfig, ReplaceSelectSort, ReplaceSelectSortConfig, SuffixArray,
+    AlgorithmConfig, EnhancedLoserTree, LcpArray, LoserTreeConfig, MergeSource, MultiWayMerge,
+    RadixSort, RadixSortConfig, SuffixArray,
     SuffixArrayBuilder, TournamentNode,
     simd_gallop_to, simd_block_filter,
 };
