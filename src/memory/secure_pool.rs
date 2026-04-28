@@ -1005,37 +1005,42 @@ impl SecureMemoryPool {
         // Validate chunk before deallocation
         if let Err(e) = chunk.validate() {
             self.corruption_detected.fetch_add(1, Ordering::Relaxed);
+            chunk.deallocate(self.config.zero_on_free, self.config.enable_simd_ops, self.config.simd_threshold);
             return Err(e);
         }
 
         // Check for double-free
-        if let Some(allocation_info) =
-            self.active_allocations.write().expect("active_allocations lock").remove(&(chunk.as_ptr() as usize))
-        {
+        let mut allocs = self.active_allocations.write().expect("active_allocations lock");
+        let chunk_ptr = chunk.as_ptr() as usize;
+        
+        if let Some(&allocation_info) = allocs.get(&chunk_ptr) {
             let (original_generation, _): (u32, Instant) = allocation_info;
             if original_generation != chunk.generation() {
                 self.double_free_detected.fetch_add(1, Ordering::Relaxed);
+                chunk.deallocate(self.config.zero_on_free, self.config.enable_simd_ops, self.config.simd_threshold);
                 return Err(ZiporaError::invalid_data(
                     "Double-free detected: generation mismatch",
                 ));
+            } else {
+                allocs.remove(&chunk_ptr);
             }
         } else {
             self.double_free_detected.fetch_add(1, Ordering::Relaxed);
+            chunk.deallocate(self.config.zero_on_free, self.config.enable_simd_ops, self.config.simd_threshold);
             return Err(ZiporaError::invalid_data(
                 "Double-free detected: pointer not allocated",
             ));
         }
+        drop(allocs);
 
         // Try to return to thread-local cache
         let local_cache = self
             .local_caches
             .get_or(|| RefCell::new(LocalCache::new(self.config.local_cache_size)));
 
-        if local_cache.borrow_mut().try_push(chunk).is_err() {
-            // Local cache full, try global stack
-            // SAFETY: try_push() just failed at line 992, guaranteeing cache has at least one element
-            let chunk = local_cache.borrow_mut().try_pop().expect("local cache non-empty by count check");
-            self.global_stack.push(chunk);
+        if let Err(chunk_to_push) = local_cache.borrow_mut().try_push(chunk) {
+            // Local cache full, push the chunk directly to global stack
+            self.global_stack.push(chunk_to_push);
         }
 
         Ok(())
