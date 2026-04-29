@@ -1052,7 +1052,7 @@ impl DictZipBlobStore {
 
         // Get a clone of the encoder for use
         let binding = self.huffman_encoder.borrow();
-        let encoder = binding.as_ref().expect("encoder must be initialized").clone();
+        let encoder = binding.as_ref().expect("encoder must be initialized");
 
         // Apply encoding based on interleaving factor
         match self.config.entropy_interleaved {
@@ -1130,7 +1130,7 @@ impl DictZipBlobStore {
 
         // Get decoder clone for use
         let binding = self.huffman_decoder.borrow();
-        let decoder = binding.as_ref().expect("decoder must be initialized").clone();
+        let decoder = binding.as_ref().expect("decoder must be initialized");
 
         // The decoder's decode method already handles the encoding format
         // The interleaving is determined by how the data was encoded

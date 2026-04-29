@@ -12,7 +12,7 @@ categories = ["compression", "data-structures", "algorithms", "concurrency", "me
 
 [lib]
 name = "zipora"
-crate-type = ["rlib", "cdylib"]
+crate-type = ["rlib"]
 
 [features]
 default = ["simd", "mmap", "zstd", "serde", "lz4", "async"]

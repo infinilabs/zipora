@@ -1114,7 +1114,7 @@ impl<'a> Iterator for SortableStrSortedIter<'a> {
 
 impl SortableStrVec {
     /// Create an iterator over strings in insertion order
-    pub fn iter(&self) -> SortableStrIter {
+    pub fn iter(&self) -> SortableStrIter<'_> {
         SortableStrIter {
             vec: self,
             current: 0,
@@ -1122,7 +1122,7 @@ impl SortableStrVec {
     }
 
     /// Create an iterator over strings in sorted order
-    pub fn iter_sorted(&self) -> SortableStrSortedIter {
+    pub fn iter_sorted(&self) -> SortableStrSortedIter<'_> {
         SortableStrSortedIter {
             vec: self,
             current: 0,

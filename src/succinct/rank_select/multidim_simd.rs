@@ -373,8 +373,6 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
             )));
         }
 
-        let mut result = BitVector::new();
-
         // Get raw bit data from both dimensions
         let bits_a = self.dimensions[dim_a].get_bit_data();
         let bits_b = self.dimensions[dim_b].get_bit_data();
@@ -383,14 +381,12 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
         if self.cpu_features.has_avx2 {
             // SAFETY: AVX2 availability verified by has_avx2 check above
             let result_bits = unsafe { Self::intersect_avx2(&bits_a, &bits_b) };
-            result = BitVector::from_raw_bits(result_bits, self.total_bits)?;
-            return Ok(result);
+            return Ok(BitVector::from_raw_bits(result_bits, self.total_bits)?);
         }
 
         // Scalar fallback
         let result_bits = Self::intersect_scalar(&bits_a, &bits_b);
-        result = BitVector::from_raw_bits(result_bits, self.total_bits)?;
-        Ok(result)
+        Ok(BitVector::from_raw_bits(result_bits, self.total_bits)?)
     }
 
     /// Scalar intersection implementation
@@ -487,8 +483,6 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
             }
         }
 
-        let mut result = BitVector::new();
-
         // Collect bit data from all dimensions
         let bit_data_vecs: Vec<Vec<u64>> = dimensions.iter()
             .map(|&dim| self.dimensions[dim].get_bit_data())
@@ -501,14 +495,12 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
         if self.cpu_features.has_avx2 {
             // SAFETY: AVX2 availability verified by has_avx2 check above
             let result_bits = unsafe { Self::union_avx2(&bit_data) };
-            result = BitVector::from_raw_bits(result_bits, self.total_bits)?;
-            return Ok(result);
+            return Ok(BitVector::from_raw_bits(result_bits, self.total_bits)?);
         }
 
         // Scalar fallback
         let result_bits = Self::union_scalar(&bit_data);
-        result = BitVector::from_raw_bits(result_bits, self.total_bits)?;
-        Ok(result)
+        Ok(BitVector::from_raw_bits(result_bits, self.total_bits)?)
     }
 
     /// Scalar union implementation

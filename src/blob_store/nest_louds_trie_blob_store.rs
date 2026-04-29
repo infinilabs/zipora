@@ -1723,7 +1723,7 @@ mod tests {
 
         // Test compression ratio (may not be available depending on underlying implementation)
         let ratio1 = store.compression_ratio(id1).unwrap();
-        let ratio2 = store.compression_ratio(id2).unwrap();
+        let _ratio2 = store.compression_ratio(id2).unwrap();
         
         // These might be None if compression isn't tracked at blob level
         if ratio1.is_some() {

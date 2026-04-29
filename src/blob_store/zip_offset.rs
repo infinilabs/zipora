@@ -410,14 +410,13 @@ impl ZipOffsetBlobStore {
             // Pre-allocate and use SIMD copy
             let current_len = store.content.len();
             store.content.resize(current_len + content_bytes.len(), 0)?;
-            {
+            let copy_ok = {
                 let content_slice = &mut store.content.as_mut_slice()[current_len..];
-                if fast_copy(&content_bytes, content_slice).is_err() {
-                    // Fallback to standard extend on error
-                    drop(content_slice); // Explicitly drop the mutable reference
-                    store.content.resize(current_len, 0)?;
-                    store.content.extend(content_bytes)?;
-                }
+                fast_copy(&content_bytes, content_slice).is_ok()
+            };
+            if !copy_ok {
+                store.content.resize(current_len, 0)?;
+                store.content.extend(content_bytes)?;
             }
         } else {
             store.content.extend(content_bytes)?;

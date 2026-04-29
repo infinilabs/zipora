@@ -1271,19 +1271,57 @@ impl SecureMemoryPool {
             // SAFETY: header_ptr valid, aligned to ChunkHeader, from allocation
             let header = unsafe { &*header_ptr };
 
-            // Create temporary chunk for validation with correct canary
-            let chunk = SecureChunk {
-                // SAFETY: data_ptr non-null from active allocation
-                ptr: unsafe { NonNull::new_unchecked(data_ptr) },
-                size: self.config.chunk_size,
-                generation,
-                pool_id: self.pool_id,
-                canary: header.canary,
-            };
-
-            if let Err(e) = chunk.validate() {
+            // Validate header
+            if header.magic != CHUNK_HEADER_MAGIC {
                 self.corruption_detected.fetch_add(1, Ordering::Relaxed);
-                return Err(e);
+                return Err(ZiporaError::invalid_data(format!(
+                    "Header corruption detected: magic={:#x}, expected={:#x}",
+                    header.magic, CHUNK_HEADER_MAGIC
+                )));
+            }
+
+            if header.generation != generation {
+                self.corruption_detected.fetch_add(1, Ordering::Relaxed);
+                return Err(ZiporaError::invalid_data(format!(
+                    "Generation mismatch: header={}, tracking={}",
+                    header.generation, generation
+                )));
+            }
+
+            if header.pool_id != self.pool_id {
+                self.corruption_detected.fetch_add(1, Ordering::Relaxed);
+                return Err(ZiporaError::invalid_data(format!(
+                    "Pool ID mismatch: header={}, pool={}",
+                    header.pool_id, self.pool_id
+                )));
+            }
+
+            // Validate footer
+            let footer_ptr = unsafe { data_ptr.add(self.config.chunk_size) as *const ChunkFooter };
+            let footer = unsafe { &*footer_ptr };
+
+            if footer.magic != CHUNK_FOOTER_MAGIC {
+                self.corruption_detected.fetch_add(1, Ordering::Relaxed);
+                return Err(ZiporaError::invalid_data(format!(
+                    "Footer corruption detected: magic={:#x}, expected={:#x}",
+                    footer.magic, CHUNK_FOOTER_MAGIC
+                )));
+            }
+
+            if footer.canary != header.canary {
+                self.corruption_detected.fetch_add(1, Ordering::Relaxed);
+                return Err(ZiporaError::invalid_data(format!(
+                    "Canary mismatch between header and footer: header={:#x}, footer={:#x}",
+                    header.canary, footer.canary
+                )));
+            }
+
+            if footer.generation != generation {
+                self.corruption_detected.fetch_add(1, Ordering::Relaxed);
+                return Err(ZiporaError::invalid_data(format!(
+                    "Footer generation mismatch: footer={}, tracking={}",
+                    footer.generation, generation
+                )));
             }
         }
 

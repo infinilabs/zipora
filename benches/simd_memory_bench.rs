@@ -18,7 +18,7 @@ use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput,
 };
 use std::alloc::{alloc, dealloc, Layout};
-use zipora::memory::simd_ops::{SimdMemOps, SimdTier};
+use zipora::memory::simd_ops::SimdMemOps;
 
 //==============================================================================
 // TEST DATA GENERATION

@@ -484,7 +484,7 @@ fn detect_x86_cache_hierarchy() -> CacheHierarchy {
 
     #[cfg(not(miri))]
     {
-        use std::arch::x86_64::__cpuid;
+        use std::arch::x86_64::__cpuid_count;
 
         // Default fallback
         let mut hierarchy = CacheHierarchy::default();
@@ -496,7 +496,7 @@ fn detect_x86_cache_hierarchy() -> CacheHierarchy {
                 // Get cache information using CPUID leaf 4
                 let mut level = 0;
                 loop {
-                    let result = __cpuid(0x4 | (level << 8));
+                    let result = __cpuid_count(4, level);
                     let cache_type = result.eax & 0x1F;
 
                     if cache_type == 0 {

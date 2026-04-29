@@ -319,3 +319,165 @@ impl BufferPoolStats {
         self.available_count as f64 / self.max_size as f64
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_buffer_pool_basic() {
+        let pool = BufferPool::new(4);
+        assert_eq!(pool.stats().max_size, 4);
+
+        let buf = pool.get();
+        assert_eq!(buf.len(), 0);
+
+        let stats = pool.stats();
+        assert_eq!(stats.allocations, 1);
+
+        pool.put(buf);
+        let stats = pool.stats();
+        assert_eq!(stats.available_count, 1);
+    }
+
+    #[test]
+    fn test_buffer_new_is_empty() {
+        let buffer = CacheBuffer::new();
+        assert_eq!(buffer.len(), 0);
+        assert!(buffer.is_empty());
+        let empty: &[u8] = &[];
+        assert_eq!(buffer.data(), empty);
+    }
+
+    #[test]
+    fn test_buffer_copy_from_slice() {
+        let mut buffer = CacheBuffer::new();
+        let test_data = b"Hello, Cache Buffer!";
+
+        buffer.copy_from_slice(test_data);
+
+        assert_eq!(buffer.len(), test_data.len());
+        assert!(!buffer.is_empty());
+        assert_eq!(buffer.data(), test_data);
+        assert_eq!(buffer.hit_type(), CacheHitType::Hit);
+    }
+
+    #[test]
+    fn test_buffer_extend_multiple() {
+        let mut buffer = CacheBuffer::new();
+        let data1 = b"First ";
+        let data2 = b"Second";
+
+        buffer.copy_from_slice(data1);
+        buffer.extend_from_slice(data2);
+
+        let expected = b"First Second";
+        assert_eq!(buffer.data(), expected);
+        assert_eq!(buffer.len(), expected.len());
+    }
+
+    #[test]
+    fn test_buffer_clear_resets() {
+        let mut buffer = CacheBuffer::new();
+        buffer.copy_from_slice(b"Some data");
+
+        assert!(!buffer.is_empty());
+
+        buffer.clear();
+
+        assert!(buffer.is_empty());
+        assert_eq!(buffer.len(), 0);
+        let empty: &[u8] = &[];
+        assert_eq!(buffer.data(), empty);
+    }
+
+    #[test]
+    fn test_buffer_from_data_vec() {
+        let test_data = vec![1, 2, 3, 4, 5];
+        let buffer = CacheBuffer::from_data(test_data.clone());
+
+        assert_eq!(buffer.data(), &test_data[..]);
+        assert_eq!(buffer.len(), test_data.len());
+        assert!(!buffer.is_empty());
+    }
+
+    #[test]
+    fn test_buffer_reserve_capacity() {
+        let mut buffer = CacheBuffer::new();
+        assert!(buffer.capacity() < 1024);
+
+        buffer.reserve(1024);
+
+        assert!(buffer.capacity() >= 1024);
+    }
+
+    #[test]
+    fn test_buffer_send_across_thread() {
+        use std::sync::mpsc;
+        use std::thread;
+
+        let mut buffer = CacheBuffer::new();
+        let test_data = b"Thread-safe data";
+        buffer.copy_from_slice(test_data);
+
+        let (tx, rx) = mpsc::channel();
+
+        thread::spawn(move || {
+            // Send buffer to another thread
+            tx.send(buffer).expect("Failed to send buffer");
+        });
+
+        let received_buffer = rx.recv().expect("Failed to receive buffer");
+        assert_eq!(received_buffer.data(), test_data);
+    }
+
+    #[test]
+    fn test_buffer_pool_reuse_stats() {
+        let pool = BufferPool::new(10);
+
+        let mut buf1 = pool.get();
+        buf1.copy_from_slice(b"test");
+
+        let stats1 = pool.stats();
+        assert_eq!(stats1.allocations, 1);
+        assert_eq!(stats1.reuses, 0);
+
+        pool.put(buf1);
+
+        let buf2 = pool.get();
+
+        let stats2 = pool.stats();
+        assert_eq!(stats2.allocations, 1);
+        assert_eq!(stats2.reuses, 1);
+        assert!(buf2.is_empty()); // Should be cleared
+        assert!(stats2.reuse_ratio() > 0.0);
+    }
+
+    #[test]
+    fn test_buffer_pool_max_size() {
+        let pool = BufferPool::new(2);
+
+        let buf1 = pool.get();
+        let buf2 = pool.get();
+        let buf3 = pool.get();
+
+        pool.put(buf1);
+        pool.put(buf2);
+        pool.put(buf3);
+
+        let stats = pool.stats();
+        assert_eq!(stats.available_count, 2); // Max size is 2
+        assert_eq!(stats.max_size, 2);
+        assert!(stats.pool_utilization() == 1.0); // 2/2 = 100%
+    }
+
+    #[test]
+    fn test_buffer_hit_type_tracking() {
+        let mut buffer = CacheBuffer::new();
+
+        // Default hit type for new buffer
+        assert_eq!(buffer.hit_type(), CacheHitType::Hit);
+
+        buffer.copy_from_slice(b"test");
+        assert_eq!(buffer.hit_type(), CacheHitType::Hit);
+    }
+}

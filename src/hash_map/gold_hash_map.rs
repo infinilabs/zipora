@@ -328,7 +328,7 @@ where
     }
 
     /// Iterate with specific strategy
-    pub fn iter_with_strategy(&self, strategy: IterationStrategy) -> GoldHashMapIter<K, V, L> {
+    pub fn iter_with_strategy(&self, strategy: IterationStrategy) -> GoldHashMapIter<'_, K, V, L> {
         GoldHashMapIter {
             map: self,
             index: 0,
@@ -337,13 +337,13 @@ where
     }
 
     /// Default safe iteration (skips deleted entries)
-    pub fn iter(&self) -> GoldHashMapIter<K, V, L> {
+    pub fn iter(&self) -> GoldHashMapIter<'_, K, V, L> {
         self.iter_with_strategy(self.config.default_iteration_strategy)
     }
 
     /// Fast iteration (no deleted entry checks)
     /// WARNING: May include deleted entries, use only if you know the map has no deletions
-    pub fn iter_fast(&self) -> GoldHashMapIter<K, V, L> {
+    pub fn iter_fast(&self) -> GoldHashMapIter<'_, K, V, L> {
         self.iter_with_strategy(IterationStrategy::Fast)
     }
 

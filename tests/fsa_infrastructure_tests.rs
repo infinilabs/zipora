@@ -252,10 +252,10 @@ mod graph_walker_tests {
         let mut graph = std::collections::HashMap::new();
         
         // Create graph: 0 -> [1, 3], 1 -> [2], 2 -> [], 3 -> []
-        let mut v0 = SimpleVertex::with_edges(0, vec![1, 3]);
-        let mut v1 = SimpleVertex::with_edges(1, vec![2]);
-        let mut v2 = SimpleVertex::with_terminal(2, true);
-        let mut v3 = SimpleVertex::with_terminal(3, true);
+        let v0 = SimpleVertex::with_edges(0, vec![1, 3]);
+        let v1 = SimpleVertex::with_edges(1, vec![2]);
+        let v2 = SimpleVertex::with_terminal(2, true);
+        let v3 = SimpleVertex::with_terminal(3, true);
         
         graph.insert(0, v0);
         graph.insert(1, v1);

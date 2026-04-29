@@ -4,17 +4,12 @@
 // #![allow(dead_code)] // P3.3/P0.6: dead code removal is a separate task
 // #![allow(unused_variables)] // Stub implementations have unused params
 #![allow(unused_imports)] // Will be cleaned with dead code removal
-#![allow(unused_results)] // Will be fixed with unwrap elimination (P3.6)
 #![allow(unused_mut)] // Compiler can determine mutability needs
 #![allow(unused_doc_comments)] // Orphan doc comments from refactoring
 #![allow(redundant_semicolons)] // Style nit
 #![allow(clippy::needless_return)] // Style nit
 #![allow(clippy::incompatible_msrv)] // AVX-512 intrinsics require newer toolchain than 1.88.0
 // #![allow(unused_unsafe)] // Nested unsafe blocks from SIMD dispatch macros
-#![allow(mismatched_lifetime_syntaxes)] // Lifetime elision style - not a bug
-#![allow(dropping_references)] // drop() on references is intentional for clarity
-#![allow(noop_method_call)] // .clone() on references is harmless
-#![allow(unused_assignments)] // Assigned-but-not-read in stub implementations
 #![allow(unused_parens)] // Style nit
 
 //! # Zipora: High-Performance Data Structures and Compression
