@@ -140,13 +140,21 @@ impl WorkStealingQueue {
     /// Pop a task from the local queue (highest priority first)
     pub fn pop_local(&self) -> Option<Box<dyn Task>> {
         // Pop from front since tasks are sorted by priority (highest first)
-        self.local_queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front()
+        self.local_queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pop_front()
     }
 
     /// Steal a task from this queue (FIFO for load balancing)
     pub fn steal(&self) -> Option<Box<dyn Task>> {
         // First try the steal queue
-        if let Some(task) = self.steal_queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front() {
+        if let Some(task) = self
+            .steal_queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pop_front()
+        {
             return Some(task);
         }
 
@@ -198,7 +206,15 @@ impl WorkStealingQueue {
     /// Get the number of tasks in both queues
     #[inline]
     pub fn len(&self) -> usize {
-        self.local_queue.lock().unwrap_or_else(|e| e.into_inner()).len() + self.steal_queue.lock().unwrap_or_else(|e| e.into_inner()).len()
+        self.local_queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
+            + self
+                .steal_queue
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .len()
     }
 
     /// Check if both queues are empty
@@ -323,7 +339,10 @@ impl WorkStealingExecutor {
 
         // Check if local queue has space and submit directly to global if not
         let can_use_local = {
-            let queue = self.queues[worker_id].local_queue.lock().unwrap_or_else(|e| e.into_inner());
+            let queue = self.queues[worker_id]
+                .local_queue
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             queue.len() < self.queues[worker_id].capacity
         };
 
@@ -456,7 +475,11 @@ impl WorkStealingExecutor {
             }
 
             // Periodically balance the queue
-            if stats.total_executed.load(Ordering::Relaxed).is_multiple_of(100) {
+            if stats
+                .total_executed
+                .load(Ordering::Relaxed)
+                .is_multiple_of(100)
+            {
                 my_queue.balance();
             }
         }
@@ -476,9 +499,10 @@ impl WorkStealingExecutor {
 
         // 2. Try global queue
         if let Ok(mut queue) = global_queue.try_lock()
-            && let Some(task) = queue.pop_front() {
-                return Some(task);
-            }
+            && let Some(task) = queue.pop_front()
+        {
+            return Some(task);
+        }
 
         // 3. Try to steal from other workers
         for other_queue in other_queues {
@@ -494,7 +518,11 @@ impl WorkStealingExecutor {
     /// Get the total number of queued tasks across all workers
     pub fn total_queued(&self) -> usize {
         let worker_tasks: usize = self.queues.iter().map(|q| q.len()).sum();
-        let global_tasks = self.global_queue.lock().unwrap_or_else(|e| e.into_inner()).len();
+        let global_tasks = self
+            .global_queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len();
         worker_tasks + global_tasks
     }
 

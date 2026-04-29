@@ -9,9 +9,9 @@
  */
 
 use std::time::Instant;
-use zipora::system::get_cpu_features;
-use zipora::succinct::rank_select::{RankSelectPerformanceOps, RankSelectInterleaved256};
 use zipora::succinct::BitVector;
+use zipora::succinct::rank_select::{RankSelectInterleaved256, RankSelectPerformanceOps};
+use zipora::system::get_cpu_features;
 
 fn main() {
     println!("🚀 Zipora Production Performance Benchmark");
@@ -51,7 +51,10 @@ fn main() {
 }
 
 fn benchmark_rank_select(size: usize) {
-    println!("Testing rank/select with {} elements...", format_number(size));
+    println!(
+        "Testing rank/select with {} elements...",
+        format_number(size)
+    );
 
     // Create a bitvector with ~50% density for realistic testing
     let mut bitvec = BitVector::new();
@@ -76,7 +79,6 @@ fn benchmark_rank_select(size: usize) {
     test_rank_select_performance("RankSelectInterleaved256 (Best Performer)", &rs, size);
 }
 
-
 fn test_rank_select_performance<T: RankSelectPerformanceOps>(name: &str, rs: &T, size: usize) {
     // Warm up
     let mut rank_sum = 0;
@@ -97,17 +99,19 @@ fn test_rank_select_performance<T: RankSelectPerformanceOps>(name: &str, rs: &T,
     let ops_per_sec = iterations as f64 / elapsed.as_secs_f64();
     let ns_per_op = elapsed.as_nanos() as f64 / iterations as f64;
 
-    println!("    {} Size {}: {:.3} Mops/s ({:.2} ns/op)",
-             name,
-             format_number(size),
-             ops_per_sec / 1_000_000.0,
-             ns_per_op);
+    println!(
+        "    {} Size {}: {:.3} Mops/s ({:.2} ns/op)",
+        name,
+        format_number(size),
+        ops_per_sec / 1_000_000.0,
+        ns_per_op
+    );
 
     // Prevent optimization
-    if rank_sum == 0 { println!("Unexpected zero sum"); }
+    if rank_sum == 0 {
+        println!("Unexpected zero sum");
+    }
 }
-
-
 
 fn validate_performance_claims() {
     println!("Validating performance claims against actual measurements...");
@@ -158,17 +162,31 @@ fn validate_performance_claims() {
     let performance_ratio = gops_per_sec / expected_performance;
 
     println!("📊 Performance Analysis:");
-    println!("   Expected: {:.2} Gops/s (realistic hardware-accelerated)", expected_performance);
+    println!(
+        "   Expected: {:.2} Gops/s (realistic hardware-accelerated)",
+        expected_performance
+    );
     println!("   Measured: {:.3} Gops/s", gops_per_sec);
 
     if performance_ratio >= 0.8 {
-        println!("✅ PASS: Performance is {:.1}% of expected realistic range", performance_ratio * 100.0);
+        println!(
+            "✅ PASS: Performance is {:.1}% of expected realistic range",
+            performance_ratio * 100.0
+        );
         println!("   Hardware acceleration is working as expected.");
     } else if performance_ratio >= 0.5 {
-        println!("⚠️  ACCEPTABLE: Performance is {:.1}% of expected", performance_ratio * 100.0);
-        println!("   Performance is within acceptable range for different hardware configurations.");
+        println!(
+            "⚠️  ACCEPTABLE: Performance is {:.1}% of expected",
+            performance_ratio * 100.0
+        );
+        println!(
+            "   Performance is within acceptable range for different hardware configurations."
+        );
     } else {
-        println!("❌ BELOW EXPECTED: Performance is only {:.1}% of expected", performance_ratio * 100.0);
+        println!(
+            "❌ BELOW EXPECTED: Performance is only {:.1}% of expected",
+            performance_ratio * 100.0
+        );
         println!("   This may indicate suboptimal hardware or configuration issues.");
     }
 
@@ -176,13 +194,18 @@ fn validate_performance_claims() {
     let features = get_cpu_features();
     if features.has_bmi2 || features.has_avx2 || features.has_popcnt {
         println!("✅ Hardware acceleration available and enabled");
-        println!("   POPCNT: {}, BMI2: {}, AVX2: {}", features.has_popcnt, features.has_bmi2, features.has_avx2);
+        println!(
+            "   POPCNT: {}, BMI2: {}, AVX2: {}",
+            features.has_popcnt, features.has_bmi2, features.has_avx2
+        );
     } else {
         println!("❌ No hardware acceleration detected - running in scalar mode");
     }
 
     // Prevent optimization
-    if sum == 0 { println!("Unexpected zero sum"); }
+    if sum == 0 {
+        println!("Unexpected zero sum");
+    }
 }
 
 fn format_number(n: usize) -> String {

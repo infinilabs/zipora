@@ -48,8 +48,7 @@ impl PoolConfig {
 }
 
 /// Statistics for memory pool usage
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct PoolStats {
     /// Total bytes allocated
     pub allocated: u64,
@@ -66,7 +65,6 @@ pub struct PoolStats {
     /// Number of pool misses (new allocations)
     pub pool_misses: u64,
 }
-
 
 /// A memory pool for efficient allocation of fixed-size chunks
 ///
@@ -170,12 +168,13 @@ impl MemoryPool {
 
         // Try to get a chunk from the pool first
         if let Ok(mut free_chunks) = self.free_chunks.try_lock()
-            && let Some(chunk) = free_chunks.pop_front() {
-                self.pool_hits.fetch_add(1, Ordering::Relaxed);
-                self.update_stats_on_alloc(true);
-                // SAFETY: chunk came from our own allocation, verified non-null during push
-                return Ok(unsafe { NonNull::new_unchecked(chunk) });
-            }
+            && let Some(chunk) = free_chunks.pop_front()
+        {
+            self.pool_hits.fetch_add(1, Ordering::Relaxed);
+            self.update_stats_on_alloc(true);
+            // SAFETY: chunk came from our own allocation, verified non-null during push
+            return Ok(unsafe { NonNull::new_unchecked(chunk) });
+        }
 
         // Pool is empty or locked, allocate new chunk
         self.pool_misses.fetch_add(1, Ordering::Relaxed);
@@ -198,11 +197,12 @@ impl MemoryPool {
 
         // Try to return chunk to pool if not full
         if let Ok(mut free_chunks) = self.free_chunks.try_lock()
-            && free_chunks.len() < self.config.max_chunks {
-                free_chunks.push_back(chunk.as_ptr());
-                self.update_stats_on_dealloc(true);
-                return Ok(());
-            }
+            && free_chunks.len() < self.config.max_chunks
+        {
+            free_chunks.push_back(chunk.as_ptr());
+            self.update_stats_on_dealloc(true);
+            return Ok(());
+        }
 
         // Pool is full or locked, deallocate directly
         self.deallocate_chunk(chunk);
@@ -220,9 +220,7 @@ impl MemoryPool {
     /// 3. **TOCTOU races**: Statistics collected at different times may be inconsistent
     pub fn stats(&self) -> PoolStats {
         // SAFETY: Return default stats if RwLock is poisoned (graceful degradation)
-        let mut stats = self.stats.read()
-            .map(|s| s.clone())
-            .unwrap_or_default();
+        let mut stats = self.stats.read().map(|s| s.clone()).unwrap_or_default();
         stats.alloc_count = self.alloc_count.load(Ordering::Relaxed);
         stats.dealloc_count = self.dealloc_count.load(Ordering::Relaxed);
         stats.pool_hits = self.pool_hits.load(Ordering::Relaxed);
@@ -245,8 +243,9 @@ impl MemoryPool {
     /// 2. **Unsafe assumptions**: Assumes all pointers in pool are valid without verification
     /// 3. **Memory corruption**: If pool is corrupted, this will crash or corrupt memory
     pub fn clear(&self) -> Result<()> {
-        let mut free_chunks = self.free_chunks.lock()
-            .map_err(|e| ZiporaError::resource_busy(format!("Free chunks mutex poisoned: {}", e)))?;
+        let mut free_chunks = self.free_chunks.lock().map_err(|e| {
+            ZiporaError::resource_busy(format!("Free chunks mutex poisoned: {}", e))
+        })?;
 
         while let Some(chunk_ptr) = free_chunks.pop_front() {
             // SAFETY: chunk_ptr came from our own allocation, verified during push
@@ -255,7 +254,9 @@ impl MemoryPool {
         }
 
         // Reset stats
-        let mut stats = self.stats.write()
+        let mut stats = self
+            .stats
+            .write()
             .map_err(|e| ZiporaError::resource_busy(format!("Stats RwLock poisoned: {}", e)))?;
         stats.chunks = 0;
         stats.available = 0;
@@ -302,18 +303,20 @@ impl MemoryPool {
 
     fn update_stats_on_alloc(&self, from_pool: bool) {
         if let Ok(mut stats) = self.stats.try_write()
-            && !from_pool {
-                stats.allocated += self.config.chunk_size as u64;
-            }
+            && !from_pool
+        {
+            stats.allocated += self.config.chunk_size as u64;
+        }
     }
 
     fn update_stats_on_dealloc(&self, to_pool: bool) {
         if let Ok(mut stats) = self.stats.try_write()
-            && !to_pool {
-                stats.allocated = stats
-                    .allocated
-                    .saturating_sub(self.config.chunk_size as u64);
-            }
+            && !to_pool
+        {
+            stats.allocated = stats
+                .allocated
+                .saturating_sub(self.config.chunk_size as u64);
+        }
     }
 }
 
@@ -337,9 +340,15 @@ struct GlobalPools {
 impl GlobalPools {
     fn new() -> Self {
         Self {
-            small_pool: Arc::new(MemoryPool::new(PoolConfig::small()).expect("small pool creation")),
-            medium_pool: Arc::new(MemoryPool::new(PoolConfig::medium()).expect("medium pool creation")),
-            large_pool: Arc::new(MemoryPool::new(PoolConfig::large()).expect("large pool creation")),
+            small_pool: Arc::new(
+                MemoryPool::new(PoolConfig::small()).expect("small pool creation"),
+            ),
+            medium_pool: Arc::new(
+                MemoryPool::new(PoolConfig::medium()).expect("medium pool creation"),
+            ),
+            large_pool: Arc::new(
+                MemoryPool::new(PoolConfig::large()).expect("large pool creation"),
+            ),
         }
     }
 

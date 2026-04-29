@@ -391,7 +391,9 @@ impl Pipeline {
             let mut stage_input_rx = if i == 0 {
                 // First stage reads from pipeline input
                 // SAFETY: current_input initialized with Some(input_rx) at line 383
-                current_input.take().expect("input available for first stage")
+                current_input
+                    .take()
+                    .expect("input available for first stage")
             } else {
                 // SAFETY: channels[i-1] exists (i >= 1, channels has num_stages-1 elements) and is Some (initialized at line 378, taken exactly once)
                 channels[i - 1].take().expect("channel for prior stage").1

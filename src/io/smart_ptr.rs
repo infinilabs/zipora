@@ -31,7 +31,7 @@ impl SerializationContext {
             detect_cycles: true,
         }
     }
-    
+
     /// Create context with cycle detection disabled (for performance)
     pub fn without_cycle_detection() -> Self {
         Self {
@@ -40,11 +40,11 @@ impl SerializationContext {
             detect_cycles: false,
         }
     }
-    
+
     /// Get or assign an ID for an object
     fn get_or_assign_id<T>(&mut self, ptr: &T) -> u32 {
         let addr = ptr as *const T as usize;
-        
+
         if let Some(&id) = self.object_ids.get(&addr) {
             id
         } else {
@@ -56,17 +56,17 @@ impl SerializationContext {
             id
         }
     }
-    
+
     /// Check if an object has been seen before (for cycle detection)
     fn has_seen<T>(&self, ptr: &T) -> bool {
         if !self.detect_cycles {
             return false;
         }
-        
+
         let addr = ptr as *const T as usize;
         self.object_ids.contains_key(&addr)
     }
-    
+
     /// Clear the context for reuse
     pub fn clear(&mut self) {
         self.next_id = 1;
@@ -94,17 +94,17 @@ impl<T> DeserializationContext<T> {
             objects: HashMap::new(),
         }
     }
-    
+
     /// Store an object with its ID
     pub fn store_object(&mut self, id: u32, object: T) {
         self.objects.insert(id, object);
     }
-    
+
     /// Get an object by its ID
     pub fn get_object(&self, id: u32) -> Option<&T> {
         self.objects.get(&id)
     }
-    
+
     /// Clear the context for reuse
     pub fn clear(&mut self) {
         self.objects.clear();
@@ -125,7 +125,7 @@ pub trait SmartPtrSerialize<T> {
         output: &mut O,
         context: &mut SerializationContext,
     ) -> Result<()>;
-    
+
     /// Deserialize the smart pointer with context
     fn deserialize_with_context<I: DataInput>(
         input: &mut I,
@@ -133,13 +133,13 @@ pub trait SmartPtrSerialize<T> {
     ) -> Result<Self>
     where
         Self: Sized;
-    
+
     /// Serialize without context (simple case)
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         let mut context = SerializationContext::new();
         self.serialize_with_context(output, &mut context)
     }
-    
+
     /// Deserialize without context (simple case)
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self>
     where
@@ -169,7 +169,7 @@ impl<T: SerializableType> SmartPtrSerialize<T> for Box<T> {
         output.write_u8(1)?; // Non-null marker
         self.as_ref().serialize(output)
     }
-    
+
     fn deserialize_with_context<I: DataInput>(
         input: &mut I,
         _context: &mut DeserializationContext<Self>,
@@ -204,7 +204,7 @@ impl<T: SerializableType> SmartPtrSerialize<T> for Option<Box<T>> {
             }
         }
     }
-    
+
     fn deserialize_with_context<I: DataInput>(
         input: &mut I,
         _context: &mut DeserializationContext<Self>,
@@ -213,8 +213,8 @@ impl<T: SerializableType> SmartPtrSerialize<T> for Option<Box<T>> {
         match marker {
             0 => Ok(None),
             1 => {
-                let boxed = Box::<T>::deserialize_with_context(input, 
-                    &mut DeserializationContext::new())?;
+                let boxed =
+                    Box::<T>::deserialize_with_context(input, &mut DeserializationContext::new())?;
                 Ok(Some(boxed))
             }
             _ => Err(ZiporaError::invalid_data("Invalid Option<Box> marker")),
@@ -230,7 +230,7 @@ impl<T: SerializableType> SmartPtrSerialize<T> for Rc<T> {
         context: &mut SerializationContext,
     ) -> Result<()> {
         let obj_ref = self.as_ref();
-        
+
         if context.has_seen(obj_ref) {
             // Object already serialized, write reference
             let id = context.get_or_assign_id(obj_ref);
@@ -243,10 +243,10 @@ impl<T: SerializableType> SmartPtrSerialize<T> for Rc<T> {
             output.write_u32(id)?;
             obj_ref.serialize(output)?;
         }
-        
+
         Ok(())
     }
-    
+
     fn deserialize_with_context<I: DataInput>(
         input: &mut I,
         context: &mut DeserializationContext<Self>,
@@ -265,7 +265,8 @@ impl<T: SerializableType> SmartPtrSerialize<T> for Rc<T> {
             2 => {
                 // Reference to existing object
                 let id = input.read_u32()?;
-                context.get_object(id)
+                context
+                    .get_object(id)
                     .cloned()
                     .ok_or_else(|| ZiporaError::invalid_data("Referenced object not found"))
             }
@@ -282,7 +283,7 @@ impl<T: SerializableType + Send + Sync> SmartPtrSerialize<T> for Arc<T> {
         context: &mut SerializationContext,
     ) -> Result<()> {
         let obj_ref = self.as_ref();
-        
+
         if context.has_seen(obj_ref) {
             // Object already serialized, write reference
             let id = context.get_or_assign_id(obj_ref);
@@ -295,10 +296,10 @@ impl<T: SerializableType + Send + Sync> SmartPtrSerialize<T> for Arc<T> {
             output.write_u32(id)?;
             obj_ref.serialize(output)?;
         }
-        
+
         Ok(())
     }
-    
+
     fn deserialize_with_context<I: DataInput>(
         input: &mut I,
         context: &mut DeserializationContext<Self>,
@@ -317,7 +318,8 @@ impl<T: SerializableType + Send + Sync> SmartPtrSerialize<T> for Arc<T> {
             2 => {
                 // Reference to existing object
                 let id = input.read_u32()?;
-                context.get_object(id)
+                context
+                    .get_object(id)
                     .cloned()
                     .ok_or_else(|| ZiporaError::invalid_data("Referenced object not found"))
             }
@@ -344,7 +346,7 @@ impl<T: SerializableType> SmartPtrSerialize<T> for RcWeak<T> {
             }
         }
     }
-    
+
     fn deserialize_with_context<I: DataInput>(
         input: &mut I,
         _context: &mut DeserializationContext<Self>,
@@ -385,7 +387,7 @@ impl<T: SerializableType + Send + Sync> SmartPtrSerialize<T> for ArcWeak<T> {
             }
         }
     }
-    
+
     fn deserialize_with_context<I: DataInput>(
         input: &mut I,
         _context: &mut DeserializationContext<Self>,
@@ -428,7 +430,7 @@ impl SmartPtrConfig {
             compress_ids: false,
         }
     }
-    
+
     /// Configuration optimized for performance
     pub fn performance_optimized() -> Self {
         Self {
@@ -437,7 +439,7 @@ impl SmartPtrConfig {
             compress_ids: false,
         }
     }
-    
+
     /// Configuration optimized for space efficiency
     pub fn space_optimized() -> Self {
         Self {
@@ -446,7 +448,7 @@ impl SmartPtrConfig {
             compress_ids: true, // Smaller serialized size
         }
     }
-    
+
     /// Configuration for robust handling of complex graphs
     pub fn robust() -> Self {
         Self {
@@ -473,12 +475,12 @@ impl SmartPtrSerializer {
     pub fn new(config: SmartPtrConfig) -> Self {
         Self { config }
     }
-    
+
     /// Create a serializer with default configuration
     pub fn default() -> Self {
         Self::new(SmartPtrConfig::default())
     }
-    
+
     /// Serialize a smart pointer to bytes
     pub fn serialize_to_bytes<T, P>(&self, ptr: &P) -> Result<Vec<u8>>
     where
@@ -491,11 +493,11 @@ impl SmartPtrSerializer {
         } else {
             SerializationContext::without_cycle_detection()
         };
-        
+
         ptr.serialize_with_context(&mut output, &mut context)?;
         Ok(output.into_vec())
     }
-    
+
     /// Deserialize a smart pointer from bytes
     pub fn deserialize_from_bytes<T, P>(&self, bytes: &[u8]) -> Result<P>
     where
@@ -504,7 +506,7 @@ impl SmartPtrSerializer {
     {
         let mut input = crate::io::SliceDataInput::new(bytes);
         let mut context = DeserializationContext::new();
-        
+
         P::deserialize_with_context(&mut input, &mut context)
     }
 }
@@ -514,7 +516,7 @@ impl SerializableType for i32 {
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u32(*self as u32)
     }
-    
+
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         Ok(input.read_u32()? as i32)
     }
@@ -524,7 +526,7 @@ impl SerializableType for u32 {
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u32(*self)
     }
-    
+
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         input.read_u32()
     }
@@ -534,7 +536,7 @@ impl SerializableType for String {
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_length_prefixed_string(self)
     }
-    
+
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         input.read_length_prefixed_string()
     }
@@ -548,7 +550,7 @@ impl<T: SerializableType> SerializableType for Vec<T> {
         }
         Ok(())
     }
-    
+
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         let len = input.read_u32()? as usize;
         let mut vec = Vec::with_capacity(len);
@@ -564,7 +566,7 @@ impl<T: SerializableType> SerializableType for Rc<T> {
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         <Self as SmartPtrSerialize<T>>::serialize(self, output)
     }
-    
+
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         <Self as SmartPtrSerialize<T>>::deserialize(input)
     }
@@ -575,7 +577,7 @@ impl<T: SerializableType + Send + Sync> SerializableType for Arc<T> {
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         <Self as SmartPtrSerialize<T>>::serialize(self, output)
     }
-    
+
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         <Self as SmartPtrSerialize<T>>::deserialize(input)
     }
@@ -586,7 +588,7 @@ impl<T: SerializableType> SerializableType for Box<T> {
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         <Self as SmartPtrSerialize<T>>::serialize(self, output)
     }
-    
+
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         <Self as SmartPtrSerialize<T>>::deserialize(input)
     }
@@ -597,7 +599,7 @@ impl SerializableType for u8 {
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u8(*self)
     }
-    
+
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         input.read_u8()
     }
@@ -607,7 +609,7 @@ impl SerializableType for u16 {
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u16(*self)
     }
-    
+
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         input.read_u16()
     }
@@ -617,7 +619,7 @@ impl SerializableType for u64 {
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u64(*self)
     }
-    
+
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         input.read_u64()
     }
@@ -627,7 +629,7 @@ impl SerializableType for i8 {
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u8(*self as u8)
     }
-    
+
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         Ok(input.read_u8()? as i8)
     }
@@ -637,7 +639,7 @@ impl SerializableType for i16 {
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u16(*self as u16)
     }
-    
+
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         Ok(input.read_u16()? as i16)
     }
@@ -647,7 +649,7 @@ impl SerializableType for i64 {
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u64(*self as u64)
     }
-    
+
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         Ok(input.read_u64()? as i64)
     }
@@ -657,7 +659,7 @@ impl SerializableType for bool {
     fn serialize<O: DataOutput>(&self, output: &mut O) -> Result<()> {
         output.write_u8(if *self { 1 } else { 0 })
     }
-    
+
     fn deserialize<I: DataInput>(input: &mut I) -> Result<Self> {
         Ok(input.read_u8()? != 0)
     }
@@ -672,13 +674,13 @@ mod tests {
     fn test_box_serialization() {
         let boxed_value = Box::new(42i32);
         let mut output = VecDataOutput::new();
-        
+
         <Box<i32> as SerializableType>::serialize(&boxed_value, &mut output).unwrap();
         let bytes = output.into_vec();
-        
+
         let mut input = SliceDataInput::new(&bytes);
         let deserialized = <Box<i32> as SerializableType>::deserialize(&mut input).unwrap();
-        
+
         assert_eq!(*deserialized, 42);
     }
 
@@ -687,25 +689,27 @@ mod tests {
         // Test Some case
         let some_value = Some(Box::new(42i32));
         let mut output = VecDataOutput::new();
-        
+
         <Option<Box<i32>> as SmartPtrSerialize<i32>>::serialize(&some_value, &mut output).unwrap();
         let bytes = output.into_vec();
-        
+
         let mut input = SliceDataInput::new(&bytes);
-        let deserialized = <Option<Box<i32>> as SmartPtrSerialize<i32>>::deserialize(&mut input).unwrap();
-        
+        let deserialized =
+            <Option<Box<i32>> as SmartPtrSerialize<i32>>::deserialize(&mut input).unwrap();
+
         assert_eq!(deserialized.map(|b| *b), Some(42));
-        
+
         // Test None case
         let none_value: Option<Box<i32>> = None;
         let mut output = VecDataOutput::new();
-        
+
         <Option<Box<i32>> as SmartPtrSerialize<i32>>::serialize(&none_value, &mut output).unwrap();
         let bytes = output.into_vec();
-        
+
         let mut input = SliceDataInput::new(&bytes);
-        let deserialized = <Option<Box<i32>> as SmartPtrSerialize<i32>>::deserialize(&mut input).unwrap();
-        
+        let deserialized =
+            <Option<Box<i32>> as SmartPtrSerialize<i32>>::deserialize(&mut input).unwrap();
+
         assert!(deserialized.is_none());
     }
 
@@ -713,13 +717,13 @@ mod tests {
     fn test_rc_serialization() {
         let rc_value = Rc::new(42i32);
         let mut output = VecDataOutput::new();
-        
+
         <Rc<i32> as SerializableType>::serialize(&rc_value, &mut output).unwrap();
         let bytes = output.into_vec();
-        
+
         let mut input = SliceDataInput::new(&bytes);
         let deserialized = <Rc<i32> as SerializableType>::deserialize(&mut input).unwrap();
-        
+
         assert_eq!(*deserialized, 42);
     }
 
@@ -727,13 +731,13 @@ mod tests {
     fn test_arc_serialization() {
         let arc_value = Arc::new(42i32);
         let mut output = VecDataOutput::new();
-        
+
         <Arc<i32> as SerializableType>::serialize(&arc_value, &mut output).unwrap();
         let bytes = output.into_vec();
-        
+
         let mut input = SliceDataInput::new(&bytes);
         let deserialized = <Arc<i32> as SerializableType>::deserialize(&mut input).unwrap();
-        
+
         assert_eq!(*deserialized, 42);
     }
 
@@ -742,24 +746,42 @@ mod tests {
         let shared_value = Rc::new(42i32);
         let clone1 = shared_value.clone();
         let clone2 = shared_value.clone();
-        
+
         let mut context = SerializationContext::new();
         let mut output = VecDataOutput::new();
-        
+
         // Serialize multiple references to the same object
-        <Rc<i32> as SmartPtrSerialize<i32>>::serialize_with_context(&clone1, &mut output, &mut context).unwrap();
-        <Rc<i32> as SmartPtrSerialize<i32>>::serialize_with_context(&clone2, &mut output, &mut context).unwrap();
-        
+        <Rc<i32> as SmartPtrSerialize<i32>>::serialize_with_context(
+            &clone1,
+            &mut output,
+            &mut context,
+        )
+        .unwrap();
+        <Rc<i32> as SmartPtrSerialize<i32>>::serialize_with_context(
+            &clone2,
+            &mut output,
+            &mut context,
+        )
+        .unwrap();
+
         let bytes = output.into_vec();
         let mut input = SliceDataInput::new(&bytes);
         let mut deserialize_context = DeserializationContext::new();
-        
-        let deserialized1 = <Rc<i32> as SmartPtrSerialize<i32>>::deserialize_with_context(&mut input, &mut deserialize_context).unwrap();
-        let deserialized2 = <Rc<i32> as SmartPtrSerialize<i32>>::deserialize_with_context(&mut input, &mut deserialize_context).unwrap();
-        
+
+        let deserialized1 = <Rc<i32> as SmartPtrSerialize<i32>>::deserialize_with_context(
+            &mut input,
+            &mut deserialize_context,
+        )
+        .unwrap();
+        let deserialized2 = <Rc<i32> as SmartPtrSerialize<i32>>::deserialize_with_context(
+            &mut input,
+            &mut deserialize_context,
+        )
+        .unwrap();
+
         assert_eq!(*deserialized1, 42);
         assert_eq!(*deserialized2, 42);
-        
+
         // They should be the same object (same allocation)
         assert!(Rc::ptr_eq(&deserialized1, &deserialized2));
     }
@@ -767,19 +789,19 @@ mod tests {
     #[test]
     fn test_serialization_context() {
         let mut context = SerializationContext::new();
-        
+
         let value1 = 42i32;
         let value2 = 43i32;
-        
+
         // Same object should get the same ID
         let id1a = context.get_or_assign_id(&value1);
         let id1b = context.get_or_assign_id(&value1);
         assert_eq!(id1a, id1b);
-        
+
         // Different object should get different ID
         let id2 = context.get_or_assign_id(&value2);
         assert_ne!(id1a, id2);
-        
+
         // Should detect already seen objects
         assert!(context.has_seen(&value1));
         assert!(context.has_seen(&value2));
@@ -789,10 +811,10 @@ mod tests {
     fn test_smart_ptr_serializer() {
         let serializer = SmartPtrSerializer::default();
         let boxed_value = Box::new(42i32);
-        
+
         let bytes = serializer.serialize_to_bytes(&boxed_value).unwrap();
         let deserialized: Box<i32> = serializer.deserialize_from_bytes(&bytes).unwrap();
-        
+
         assert_eq!(*deserialized, 42);
     }
 
@@ -801,7 +823,7 @@ mod tests {
         let config = SmartPtrConfig::performance_optimized();
         assert!(!config.cycle_detection);
         assert_eq!(config.max_depth, 500);
-        
+
         let config = SmartPtrConfig::space_optimized();
         assert!(config.cycle_detection);
         assert!(config.compress_ids);
@@ -811,13 +833,13 @@ mod tests {
     fn test_vec_serialization() {
         let vec_value = vec![1i32, 2, 3, 4, 5];
         let mut output = VecDataOutput::new();
-        
+
         <Vec<i32> as SerializableType>::serialize(&vec_value, &mut output).unwrap();
         let bytes = output.into_vec();
-        
+
         let mut input = SliceDataInput::new(&bytes);
         let deserialized = <Vec<i32> as SerializableType>::deserialize(&mut input).unwrap();
-        
+
         assert_eq!(deserialized, vec_value);
     }
 
@@ -825,13 +847,13 @@ mod tests {
     fn test_string_serialization() {
         let string_value = "Hello, World!".to_string();
         let mut output = VecDataOutput::new();
-        
+
         <String as SerializableType>::serialize(&string_value, &mut output).unwrap();
         let bytes = output.into_vec();
-        
+
         let mut input = SliceDataInput::new(&bytes);
         let deserialized = <String as SerializableType>::deserialize(&mut input).unwrap();
-        
+
         assert_eq!(deserialized, string_value);
     }
 
@@ -841,14 +863,15 @@ mod tests {
             Rc::new("Hello".to_string()),
             Rc::new("World".to_string()),
         ]);
-        
+
         let mut output = VecDataOutput::new();
         <Box<Vec<Rc<String>>> as SerializableType>::serialize(&nested, &mut output).unwrap();
         let bytes = output.into_vec();
-        
+
         let mut input = SliceDataInput::new(&bytes);
-        let deserialized = <Box<Vec<Rc<String>>> as SerializableType>::deserialize(&mut input).unwrap();
-        
+        let deserialized =
+            <Box<Vec<Rc<String>>> as SerializableType>::deserialize(&mut input).unwrap();
+
         assert_eq!(deserialized.len(), 2);
         assert_eq!(*deserialized[0], "Hello");
         assert_eq!(*deserialized[1], "World");

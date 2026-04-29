@@ -4,11 +4,11 @@
 //! between different layers of the I/O stack. Features include direct buffer access,
 //! memory-mapped operations, and vectored I/O for maximum throughput.
 
-use std::io::{self, Read, Write, IoSlice, IoSliceMut};
+use std::io::{self, IoSlice, IoSliceMut, Read, Write};
 
 use crate::error::{Result, ZiporaError};
-use crate::memory::SecureMemoryPool;
 use crate::io::simd_validation::checksum;
+use crate::memory::SecureMemoryPool;
 use std::sync::Arc;
 
 /// Trait for zero-copy input operations
@@ -67,9 +67,7 @@ impl ZeroCopyBuffer {
 
     /// Create a new zero-copy buffer using a secure memory pool
     pub fn with_secure_pool(capacity: usize) -> Result<Self> {
-        let pool = SecureMemoryPool::new(
-            crate::memory::SecurePoolConfig::small_secure()
-        )?;
+        let pool = SecureMemoryPool::new(crate::memory::SecurePoolConfig::small_secure())?;
         Self::with_pool(capacity, Some(pool))
     }
 
@@ -160,7 +158,8 @@ impl ZeroCopyBuffer {
             return Ok(0);
         }
 
-        let bytes_read = reader.read(writable)
+        let bytes_read = reader
+            .read(writable)
             .map_err(|e| ZiporaError::io_error(format!("Failed to fill buffer: {}", e)))?;
 
         self.write_pos += bytes_read;
@@ -174,7 +173,8 @@ impl ZeroCopyBuffer {
             return Ok(0);
         }
 
-        let bytes_written = writer.write(readable)
+        let bytes_written = writer
+            .write(readable)
             .map_err(|e| ZiporaError::io_error(format!("Failed to drain buffer: {}", e)))?;
 
         self.read_pos += bytes_written;
@@ -193,7 +193,9 @@ impl ZeroCopyRead for ZeroCopyBuffer {
 
     fn zc_advance(&mut self, len: usize) -> Result<()> {
         if self.read_pos + len > self.write_pos {
-            return Err(ZiporaError::invalid_data("Cannot advance past available data"));
+            return Err(ZiporaError::invalid_data(
+                "Cannot advance past available data",
+            ));
         }
         self.read_pos += len;
         Ok(())
@@ -219,7 +221,9 @@ impl ZeroCopyWrite for ZeroCopyBuffer {
 
     fn zc_commit(&mut self, len: usize) -> Result<()> {
         if self.write_pos + len > self.buffer.len() {
-            return Err(ZiporaError::invalid_data("Cannot commit past buffer capacity"));
+            return Err(ZiporaError::invalid_data(
+                "Cannot commit past buffer capacity",
+            ));
         }
         self.write_pos += len;
         Ok(())
@@ -286,7 +290,9 @@ impl<R: Read> ZeroCopyReader<R> {
     /// Ensure the buffer has at least `len` bytes available
     fn ensure_buffered(&mut self, len: usize) -> Result<()> {
         while self.buffer.available() < len && !self.eof {
-            let bytes_read = self.buffer.fill_from(&mut self.inner)
+            let bytes_read = self
+                .buffer
+                .fill_from(&mut self.inner)
                 .map_err(|e| ZiporaError::io_error(format!("Fill buffer failed: {}", e)))?;
             if bytes_read == 0 {
                 self.eof = true;
@@ -307,7 +313,8 @@ impl<R: Read> ZeroCopyReader<R> {
         }
 
         // Fall back to normal read
-        self.read(buf).map_err(|e| ZiporaError::io_error(format!("Read failed: {}", e)))
+        self.read(buf)
+            .map_err(|e| ZiporaError::io_error(format!("Read failed: {}", e)))
     }
 
     /// Peek at data without consuming it
@@ -330,11 +337,15 @@ impl<R: Read> ZeroCopyReader<R> {
         let mut temp_buf = vec![0u8; 8192];
         while len > 0 {
             let to_skip = len.min(temp_buf.len());
-            let bytes_read = self.inner.read(&mut temp_buf[..to_skip])
+            let bytes_read = self
+                .inner
+                .read(&mut temp_buf[..to_skip])
                 .map_err(|e| ZiporaError::io_error(format!("Failed to skip bytes: {}", e)))?;
 
             if bytes_read == 0 {
-                return Err(ZiporaError::io_error("Unexpected end of stream while skipping"));
+                return Err(ZiporaError::io_error(
+                    "Unexpected end of stream while skipping",
+                ));
             }
 
             len -= bytes_read;
@@ -486,7 +497,9 @@ impl<R: Read> Read for ZeroCopyReader<R> {
 
         // Fill buffer and read from it
         if !self.eof {
-            let bytes_read = self.buffer.fill_from(&mut self.inner)
+            let bytes_read = self
+                .buffer
+                .fill_from(&mut self.inner)
                 .map_err(io::Error::other)?;
             if bytes_read == 0 {
                 self.eof = true;
@@ -564,10 +577,15 @@ impl<W: Write> ZeroCopyWriter<W> {
     /// Flush the internal buffer to the underlying writer
     fn flush_buffer(&mut self) -> io::Result<()> {
         while !self.buffer.is_empty() {
-            let bytes_written = self.buffer.drain_to(&mut self.inner)
+            let bytes_written = self
+                .buffer
+                .drain_to(&mut self.inner)
                 .map_err(io::Error::other)?;
             if bytes_written == 0 {
-                return Err(io::Error::new(io::ErrorKind::WriteZero, "Failed to drain buffer completely"));
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "Failed to drain buffer completely",
+                ));
             }
         }
         self.buffer.reset();
@@ -638,7 +656,10 @@ pub struct VectoredIO;
 
 impl VectoredIO {
     /// Read data into multiple buffers in a single system call
-    pub fn read_vectored<R: Read>(reader: &mut R, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
+    pub fn read_vectored<R: Read>(
+        reader: &mut R,
+        bufs: &mut [IoSliceMut<'_>],
+    ) -> io::Result<usize> {
         // Fallback implementation for readers that don't support vectored I/O
         let mut total = 0;
         for buf in bufs {
@@ -689,8 +710,9 @@ pub mod mmap {
         pub fn new(file: File) -> Result<Self> {
             // SAFETY: File is valid and open for reading, mmap follows standard OS guarantees for read-only memory maps
             let mmap = unsafe {
-                Mmap::map(&file)
-                    .map_err(|e| ZiporaError::io_error(format!("Failed to memory map file: {}", e)))?
+                Mmap::map(&file).map_err(|e| {
+                    ZiporaError::io_error(format!("Failed to memory map file: {}", e))
+                })?
             };
 
             Ok(Self { mmap, pos: 0 })
@@ -746,7 +768,9 @@ pub mod mmap {
 
         fn zc_advance(&mut self, len: usize) -> Result<()> {
             if self.pos + len > self.mmap.len() {
-                return Err(ZiporaError::invalid_data("Cannot advance past mapped region"));
+                return Err(ZiporaError::invalid_data(
+                    "Cannot advance past mapped region",
+                ));
             }
             self.pos += len;
             Ok(())
@@ -820,13 +844,13 @@ mod tests {
         assert_eq!(buffer.zc_commit(0).unwrap(), ());
 
         buffer.compact(); // Should be a no-op
-        buffer.reset();   // Should be a no-op
+        buffer.reset(); // Should be a no-op
     }
 
     #[test]
     fn test_zero_copy_buffer_read_write() {
         let mut buffer = ZeroCopyBuffer::new(1024).unwrap();
-        
+
         // Write some data
         if let Some(write_buf) = buffer.zc_write(5).unwrap() {
             write_buf.copy_from_slice(b"hello");
@@ -849,7 +873,7 @@ mod tests {
     #[test]
     fn test_zero_copy_buffer_compact() {
         let mut buffer = ZeroCopyBuffer::new(10).unwrap();
-        
+
         // Fill buffer
         if let Some(write_buf) = buffer.zc_write(10).unwrap() {
             write_buf.copy_from_slice(b"0123456789");
@@ -918,7 +942,7 @@ mod tests {
         let mut reader = ZeroCopyReader::new(cursor).unwrap();
 
         reader.skip_bytes(7).unwrap(); // Skip "Hello, "
-        
+
         let mut buf = [0u8; 5];
         reader.read_exact(&mut buf).unwrap();
         assert_eq!(&buf, b"World");
@@ -932,7 +956,7 @@ mod tests {
         let mut buf1 = [0u8; 5];
         let mut buf2 = [0u8; 2];
         let mut buf3 = [0u8; 6];
-        
+
         let mut bufs = [
             IoSliceMut::new(&mut buf1),
             IoSliceMut::new(&mut buf2),
@@ -1039,7 +1063,10 @@ mod tests {
 
         // Compute checksum of empty buffer
         let crc = reader.checksum_buffer_crc32c().unwrap();
-        assert_eq!(crc, 0xFFFFFFFF, "Empty buffer should return initial CRC value");
+        assert_eq!(
+            crc, 0xFFFFFFFF,
+            "Empty buffer should return initial CRC value"
+        );
     }
 
     #[test]
@@ -1059,17 +1086,20 @@ mod tests {
 
         // Verify CRC matches individual checksum
         let crc_separate = reader.checksum_buffer_crc32c().unwrap();
-        assert_eq!(crc, crc_separate, "Combined checksum should match separate checksum");
+        assert_eq!(
+            crc, crc_separate,
+            "Combined checksum should match separate checksum"
+        );
     }
 
     #[test]
     fn test_zero_copy_reader_utf8_validation_multibyte() {
         // Test various multibyte UTF-8 sequences
         let test_cases = vec![
-            ("café", true),                          // 2-byte sequences
-            ("日本語", true),                          // 3-byte sequences (CJK)
-            ("🦀🌍", true),                           // 4-byte sequences (emoji)
-            ("Hello, 世界! 🦀", true),                // Mixed ASCII and multibyte
+            ("café", true),            // 2-byte sequences
+            ("日本語", true),          // 3-byte sequences (CJK)
+            ("🦀🌍", true),            // 4-byte sequences (emoji)
+            ("Hello, 世界! 🦀", true), // Mixed ASCII and multibyte
         ];
 
         for (text, expected_valid) in test_cases {
@@ -1079,7 +1109,11 @@ mod tests {
             let _ = reader.peek(text.len()).unwrap();
             let is_valid = reader.validate_utf8_buffer().unwrap();
 
-            assert_eq!(is_valid, expected_valid, "UTF-8 validation mismatch for: {}", text);
+            assert_eq!(
+                is_valid, expected_valid,
+                "UTF-8 validation mismatch for: {}",
+                text
+            );
         }
     }
 

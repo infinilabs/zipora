@@ -8,8 +8,8 @@ use std::time::Duration;
 use zipora::{
     BitVector, RankSelect256,
     succinct::rank_select::{
-        RankSelectInterleaved256, RankSelectOps, SimdCapabilities, bulk_popcount_simd, bulk_rank1_simd,
-        bulk_select1_simd,
+        RankSelectInterleaved256, RankSelectOps, SimdCapabilities, bulk_popcount_simd,
+        bulk_rank1_simd, bulk_select1_simd,
     },
 };
 
@@ -126,15 +126,16 @@ fn benchmark_rank_operations(c: &mut Criterion) {
 
             // Only benchmark sparse variant on sparse data
             if *pattern == "sparse"
-                && let Ok(sparse) = RankSelect256::new(bv.clone()) {
-                    group.bench_function("sparse", |b| {
-                        b.iter(|| {
-                            for &pos in &positions {
-                                black_box(sparse.rank1(pos));
-                            }
-                        })
-                    });
-                }
+                && let Ok(sparse) = RankSelect256::new(bv.clone())
+            {
+                group.bench_function("sparse", |b| {
+                    b.iter(|| {
+                        for &pos in &positions {
+                            black_box(sparse.rank1(pos));
+                        }
+                    })
+                });
+            }
 
             group.finish();
         }
@@ -210,17 +211,18 @@ fn benchmark_select_operations(c: &mut Criterion) {
 
             // Only benchmark sparse variant on sparse data
             if *pattern == "sparse"
-                && let Ok(sparse) = RankSelect256::new(bv.clone()) {
-                    group.bench_function("sparse", |b| {
-                        b.iter(|| {
-                            for &idx in &indices {
-                                if let Ok(pos) = sparse.select1(idx) {
-                                    black_box(pos);
-                                }
+                && let Ok(sparse) = RankSelect256::new(bv.clone())
+            {
+                group.bench_function("sparse", |b| {
+                    b.iter(|| {
+                        for &idx in &indices {
+                            if let Ok(pos) = sparse.select1(idx) {
+                                black_box(pos);
                             }
-                        })
-                    });
-                }
+                        }
+                    })
+                });
+            }
 
             group.finish();
         }
@@ -318,13 +320,11 @@ fn benchmark_space_overhead(c: &mut Criterion) {
 
             // Test sparse variant on sparse data
             if *pattern == "sparse"
-                && let Ok(sparse) = RankSelect256::new(bv.clone()) {
-                    let space_overhead = sparse.space_overhead_percent();
-                    eprintln!(
-                        "  Sparse:       {:.2}% space overhead",
-                        space_overhead
-                    );
-                }
+                && let Ok(sparse) = RankSelect256::new(bv.clone())
+            {
+                let space_overhead = sparse.space_overhead_percent();
+                eprintln!("  Sparse:       {:.2}% space overhead", space_overhead);
+            }
 
             group.finish();
         }

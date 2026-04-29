@@ -71,47 +71,62 @@
 //! ```
 
 // Core implementation modules
-mod zipora_hash_map;
-mod strategy_traits;
 mod gold_hash_map;
+mod strategy_traits;
+mod zipora_hash_map;
 
 // Utility modules (keep these as they're used by core implementation)
+mod cache_locality;
 mod hash_functions;
 mod simd_string_ops;
-mod cache_locality;
 
 // Core ZiporaHashMap implementation
 pub use zipora_hash_map::{
-    ZiporaHashMap, ZiporaHashMapConfig, HashMapStats,
-    HashStrategy, StorageStrategy, OptimizationStrategy,
+    HashMapStats, HashStrategy, OptimizationStrategy, StorageStrategy, ZiporaHashMap,
+    ZiporaHashMapConfig,
 };
 
 // GoldHashMap - High-performance hash table with link-based collision resolution
 pub use gold_hash_map::{
-    GoldHashMap, GoldHashMapConfig, LinkType, IterationStrategy,
-    GoldHashMapIter,
+    GoldHashMap, GoldHashMapConfig, GoldHashMapIter, IterationStrategy, LinkType,
 };
 
 // Strategy traits for advanced configuration
 pub use strategy_traits::{
-    CollisionResolutionStrategy, StorageLayoutStrategy, HashOptimizationStrategy,
-    HashBucket, ProbeStats, OptimizationMetrics, OptimizationHint,
-    RobinHoodStrategy, RobinHoodConfig, RobinHoodContext,
-    StandardStorageStrategy, StandardStorageConfig,
-    CacheOptimizedStorageStrategy, CacheOptimizedStorageConfig,
-    SimdOptimizationStrategy, SimdOptimizationConfig, SimdOptimizationContext,
+    CacheOptimizedStorageConfig, CacheOptimizedStorageStrategy, CollisionResolutionStrategy,
+    HashBucket, HashOptimizationStrategy, OptimizationHint, OptimizationMetrics, ProbeStats,
+    RobinHoodConfig, RobinHoodContext, RobinHoodStrategy, SimdOptimizationConfig,
+    SimdOptimizationContext, SimdOptimizationStrategy, StandardStorageConfig,
+    StandardStorageStrategy, StorageLayoutStrategy,
 };
 
 // Export hash function utilities
 pub use hash_functions::{
-    fabo_hash_combine_u32, fabo_hash_combine_u64, golden_ratio_next_size, optimal_bucket_count,
-    advanced_hash_combine, HashFunctionBuilder, CombineStrategy, HashCombinable,
-    GOLDEN_RATIO_FRAC_NUM, GOLDEN_RATIO_FRAC_DEN, GOLDEN_LOAD_FACTOR,
+    Bmi2HashDispatcher,
+    CombineStrategy,
+    GOLDEN_LOAD_FACTOR,
+    GOLDEN_RATIO_FRAC_DEN,
+    GOLDEN_RATIO_FRAC_NUM,
+    HashCombinable,
+    HashFunctionBuilder,
+    HashOptimizationTier,
+    ProbeType,
+    advanced_hash_combine,
+    bmi2_collision_resolution,
     // Export BMI2-specific functions and types for advanced usage
-    bmi2_hash_combine_u32, bmi2_hash_combine_u64, extract_hash_bucket_bmi2,
-    Bmi2HashDispatcher, HashOptimizationTier, ProbeType,
-    bmi2_collision_resolution, fast_string_hash_bmi2, specialized,
-    get_global_bmi2_dispatcher, hash_with_bmi2, hash_combine_with_bmi2, extract_bucket_with_bmi2,
+    bmi2_hash_combine_u32,
+    bmi2_hash_combine_u64,
+    extract_bucket_with_bmi2,
+    extract_hash_bucket_bmi2,
+    fabo_hash_combine_u32,
+    fabo_hash_combine_u64,
+    fast_string_hash_bmi2,
+    get_global_bmi2_dispatcher,
+    golden_ratio_next_size,
+    hash_combine_with_bmi2,
+    hash_with_bmi2,
+    optimal_bucket_count,
+    specialized,
 };
 
 // Export SIMD string operations
@@ -119,12 +134,10 @@ pub use simd_string_ops::{SimdStringOps, SimdTier, get_global_simd_ops};
 
 // Export cache locality optimizations
 pub use cache_locality::{
-    CacheMetrics, CacheAligned, PrefetchHint, Prefetcher,
-    CacheLayoutOptimizer, CacheLevel, AccessPattern,
-    HotColdSeparator, NumaAllocator, AccessPatternAnalyzer,
-    CacheConsciousResizer, CACHE_LINE_SIZE,
+    AccessPattern, AccessPatternAnalyzer, CACHE_LINE_SIZE, CacheAligned, CacheConsciousResizer,
+    CacheLayoutOptimizer, CacheLevel, CacheMetrics, HotColdSeparator, NumaAllocator, PrefetchHint,
+    Prefetcher,
 };
-
 
 #[cfg(test)]
 mod tests {
@@ -204,8 +217,7 @@ mod tests {
 
     #[test]
     fn test_hash_function_builder() {
-        let builder = HashFunctionBuilder::new()
-            .with_strategy(CombineStrategy::Fabo);
+        let builder = HashFunctionBuilder::new().with_strategy(CombineStrategy::Fabo);
 
         let hash_fn = builder.build_u32();
         let result = hash_fn(0x12345678, 0xabcdef00);
@@ -241,4 +253,3 @@ mod tests {
         }
     }
 }
-

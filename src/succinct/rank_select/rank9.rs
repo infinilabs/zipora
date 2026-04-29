@@ -10,10 +10,10 @@
 //! Rank is O(1): one lookup in the block index + one popcount of a partial word.
 //! Select uses binary search on blocks + select_in_word within a block.
 
-use crate::error::{Result, ZiporaError};
 use super::RankSelectOps;
-use crate::succinct::BitVector;
 use crate::algorithms::bit_ops::select_in_word;
+use crate::error::{Result, ZiporaError};
+use crate::succinct::BitVector;
 
 /// Words per block. 8 words × 64 bits = 512 bits per block.
 const WORDS_PER_BLOCK: usize = 8;
@@ -88,7 +88,11 @@ impl Rank9 {
 
             for k in 0..WORDS_PER_BLOCK {
                 let word_idx = start_word + k;
-                let word = if word_idx < bv.blocks().len() { bv.blocks()[word_idx] } else { 0 };
+                let word = if word_idx < bv.blocks().len() {
+                    bv.blocks()[word_idx]
+                } else {
+                    0
+                };
                 block_cumul += word.count_ones() as u64;
                 // Store cumulative count after word k in sub-block position k
                 // (positions 0..6 are stored; position 7 is implied)
@@ -102,7 +106,10 @@ impl Rank9 {
         }
 
         // Sentinel entry
-        index.push(Rank9Entry { base: cumul, sub: 0 });
+        index.push(Rank9Entry {
+            base: cumul,
+            sub: 0,
+        });
 
         Ok(Self {
             bv,
@@ -115,7 +122,9 @@ impl Rank9 {
     /// O(1) rank1: count set bits in [0, pos).
     #[inline]
     pub fn rank1_fast(&self, pos: usize) -> usize {
-        if pos == 0 { return 0; }
+        if pos == 0 {
+            return 0;
+        }
         let pos = pos.min(self.len_bits);
 
         let block = pos / BITS_PER_BLOCK;
@@ -146,7 +155,9 @@ impl Rank9 {
     pub fn select1_fast(&self, k: usize) -> Result<usize> {
         if k >= self.total_ones {
             return Err(ZiporaError::invalid_data(format!(
-                "select1({}) out of range (total_ones={})", k, self.total_ones)));
+                "select1({}) out of range (total_ones={})",
+                k, self.total_ones
+            )));
         }
 
         let target = k as u64;
@@ -191,7 +202,9 @@ impl Rank9 {
             let bit_pos = select_in_word(word, remaining as usize);
             Ok(global_word * 64 + bit_pos)
         } else {
-            Err(ZiporaError::invalid_data("select1 internal error: word out of range"))
+            Err(ZiporaError::invalid_data(
+                "select1 internal error: word out of range",
+            ))
         }
     }
 
@@ -200,7 +213,9 @@ impl Rank9 {
         let total_zeros = self.len_bits - self.total_ones;
         if k >= total_zeros {
             return Err(ZiporaError::invalid_data(format!(
-                "select0({}) out of range (total_zeros={})", k, total_zeros)));
+                "select0({}) out of range (total_zeros={})",
+                k, total_zeros
+            )));
         }
 
         let target = k as u64;
@@ -231,7 +246,7 @@ impl Rank9 {
             let sub_ones = (entry.sub >> (j * 9)) & 0x1FF;
             let sub_bits = ((j + 1) * 64) as u64;
             let sub_zeros = sub_bits - sub_ones;
-            
+
             if sub_zeros > remaining {
                 break;
             }
@@ -252,7 +267,9 @@ impl Rank9 {
             let bit_pos = select_in_word(word, remaining as usize);
             Ok(global_word * 64 + bit_pos)
         } else {
-            Err(ZiporaError::invalid_data("select0 internal error: word out of range"))
+            Err(ZiporaError::invalid_data(
+                "select0 internal error: word out of range",
+            ))
         }
     }
 
@@ -264,22 +281,34 @@ impl Rank9 {
 
 impl RankSelectOps for Rank9 {
     #[inline]
-    fn rank1(&self, pos: usize) -> usize { self.rank1_fast(pos) }
+    fn rank1(&self, pos: usize) -> usize {
+        self.rank1_fast(pos)
+    }
 
     fn rank0(&self, pos: usize) -> usize {
         let pos = pos.min(self.len_bits);
         pos - self.rank1(pos)
     }
 
-    fn select1(&self, k: usize) -> Result<usize> { self.select1_fast(k) }
+    fn select1(&self, k: usize) -> Result<usize> {
+        self.select1_fast(k)
+    }
 
-    fn select0(&self, k: usize) -> Result<usize> { self.select0_fast(k) }
+    fn select0(&self, k: usize) -> Result<usize> {
+        self.select0_fast(k)
+    }
 
-    fn len(&self) -> usize { self.len_bits }
-    fn count_ones(&self) -> usize { self.total_ones }
+    fn len(&self) -> usize {
+        self.len_bits
+    }
+    fn count_ones(&self) -> usize {
+        self.total_ones
+    }
 
     fn get(&self, index: usize) -> Option<bool> {
-        if index >= self.len_bits { return None; }
+        if index >= self.len_bits {
+            return None;
+        }
         let word_idx = index / 64;
         let bit_idx = index % 64;
         if word_idx < self.bv.blocks().len() {
@@ -290,7 +319,9 @@ impl RankSelectOps for Rank9 {
     }
 
     fn space_overhead_percent(&self) -> f64 {
-        if self.len_bits == 0 { return 0.0; }
+        if self.len_bits == 0 {
+            return 0.0;
+        }
         let data_bytes = self.bv.blocks().len() * 8;
         let index_bytes = self.index.len() * std::mem::size_of::<Rank9Entry>();
         (index_bytes as f64 / data_bytes as f64) * 100.0
@@ -303,7 +334,10 @@ impl std::fmt::Debug for Rank9 {
             .field("len_bits", &self.len_bits)
             .field("total_ones", &self.total_ones)
             .field("blocks", &(self.index.len().saturating_sub(1)))
-            .field("overhead", &format!("{:.1}%", self.space_overhead_percent()))
+            .field(
+                "overhead",
+                &format!("{:.1}%", self.space_overhead_percent()),
+            )
             .finish()
     }
 }
@@ -314,7 +348,9 @@ mod tests {
 
     fn make_bv(pattern: &[bool]) -> BitVector {
         let mut bv = BitVector::new();
-        for &b in pattern { bv.push(b).unwrap(); }
+        for &b in pattern {
+            bv.push(b).unwrap();
+        }
         bv
     }
 
@@ -346,15 +382,18 @@ mod tests {
 
         // Rank invariant
         for pos in (0..=1000).step_by(50) {
-            assert_eq!(r9.rank0(pos) + r9.rank1(pos), pos,
-                "rank invariant at pos {}", pos);
+            assert_eq!(
+                r9.rank0(pos) + r9.rank1(pos),
+                pos,
+                "rank invariant at pos {}",
+                pos
+            );
         }
 
         // Select roundtrip
         for k in 0..500 {
             let pos = r9.select1(k).unwrap();
-            assert_eq!(r9.rank1(pos + 1), k + 1,
-                "select1({}) roundtrip failed", k);
+            assert_eq!(r9.rank1(pos + 1), k + 1, "select1({}) roundtrip failed", k);
         }
     }
 
@@ -428,8 +467,11 @@ mod tests {
 
         let overhead = r9.space_overhead_percent();
         // Rank9 should have ~25% overhead
-        assert!(overhead > 20.0 && overhead < 30.0,
-            "Expected ~25% overhead, got {:.1}%", overhead);
+        assert!(
+            overhead > 20.0 && overhead < 30.0,
+            "Expected ~25% overhead, got {:.1}%",
+            overhead
+        );
     }
 
     #[test]
@@ -458,7 +500,14 @@ mod tests {
         let total = r9.count_ones();
         for k in (0..total).step_by(total / 20 + 1) {
             let pos = r9.select1(k).unwrap();
-            assert_eq!(r9.rank1(pos), k, "select1({}) roundtrip: rank1({}) != {}", k, pos, k);
+            assert_eq!(
+                r9.rank1(pos),
+                k,
+                "select1({}) roundtrip: rank1({}) != {}",
+                k,
+                pos,
+                k
+            );
             assert_eq!(r9.get(pos), Some(true));
         }
     }
@@ -476,7 +525,13 @@ mod tests {
         let total_zeros = r9.len() - r9.count_ones();
         for k in (0..total_zeros).step_by(total_zeros / 5 + 1) {
             let pos = r9.select0(k).unwrap();
-            assert_eq!(r9.get(pos), Some(false), "select0({}) = {} is not a zero bit", k, pos);
+            assert_eq!(
+                r9.get(pos),
+                Some(false),
+                "select0({}) = {} is not a zero bit",
+                k,
+                pos
+            );
         }
     }
 
@@ -488,10 +543,14 @@ mod tests {
 
         for k in 0..total_zeros {
             let pos = r9.select0(k).unwrap();
-            assert_eq!(r9.get(pos), Some(false),
-                "select0({}) = {} is not a zero bit", k, pos);
-            assert_eq!(r9.rank0(pos), k,
-                "rank0(select0({})) != {}", k, k);
+            assert_eq!(
+                r9.get(pos),
+                Some(false),
+                "select0({}) = {} is not a zero bit",
+                k,
+                pos
+            );
+            assert_eq!(r9.rank0(pos), k, "rank0(select0({})) != {}", k, k);
         }
         assert!(r9.select0(total_zeros).is_err());
     }
@@ -543,6 +602,7 @@ mod tests {
     #[test]
     fn test_rank9_performance() {
         let pattern: Vec<bool> = (0..100000).map(|i| (i * 13 + 7) % 71 == 0).collect();
+        #[allow(unused_variables)]
         let r9 = Rank9::new(make_bv(&pattern)).unwrap();
 
         #[cfg(not(debug_assertions))]
@@ -560,8 +620,10 @@ mod tests {
             let elapsed = start.elapsed();
             let per_call = elapsed.as_nanos() as f64 / (iterations as f64 * positions.len() as f64);
 
-            eprintln!("Rank9 rank1: {per_call:.1}ns/call, overhead={:.1}%, [sink={sink}]",
-                r9.space_overhead_percent());
+            eprintln!(
+                "Rank9 rank1: {per_call:.1}ns/call, overhead={:.1}%, [sink={sink}]",
+                r9.space_overhead_percent()
+            );
         }
     }
 }

@@ -2,15 +2,17 @@ const BATCH_SIZE: usize = 8;
 const CHUNK_OVERHEAD_BITS: usize = 192;
 const MAX_CHUNK_SIZE: usize = 512;
 const MIN_CHUNK_SIZE: usize = 1;
-use crate::error::{Result, ZiporaError};
 use crate::algorithms::bit_ops::select_in_word;
+use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;
 use std::cmp::Ordering;
 
-use super::chunk::{PefChunkMeta, ChunkView, chunk_skip_to_high, chunk_scan_geq, chunk_get_delta, chunk_select1, chunk_get_low, chunk_first_one_cached};
 use super::basic::EliasFano;
+use super::chunk::{
+    ChunkView, PefChunkMeta, chunk_first_one_cached, chunk_get_delta, chunk_get_low,
+    chunk_scan_geq, chunk_select1, chunk_skip_to_high,
+};
 use super::partitioned::PartitionedEliasFano;
-
 
 /// DP-Optimal Partitioned Elias-Fano with variable-length chunks.
 ///
@@ -46,9 +48,13 @@ impl OptimalPartitionedEliasFano {
     pub fn from_sorted(values: &[u32]) -> Self {
         if values.is_empty() {
             return Self {
-                all_low_bits: Vec::new(), all_high_bits: Vec::new(),
-                meta: Vec::new(), chunk_starts: Vec::new(),
-                chunk_upper_bounds: Vec::new(), len: 0, universe: 0,
+                all_low_bits: Vec::new(),
+                all_high_bits: Vec::new(),
+                meta: Vec::new(),
+                chunk_starts: Vec::new(),
+                chunk_upper_bounds: Vec::new(),
+                len: 0,
+                universe: 0,
             };
         }
         let universe = values[values.len() - 1] as u64 + 1;
@@ -59,9 +65,13 @@ impl OptimalPartitionedEliasFano {
     pub fn from_sorted_u64(values: &[u64]) -> Self {
         if values.is_empty() {
             return Self {
-                all_low_bits: Vec::new(), all_high_bits: Vec::new(),
-                meta: Vec::new(), chunk_starts: Vec::new(),
-                chunk_upper_bounds: Vec::new(), len: 0, universe: 0,
+                all_low_bits: Vec::new(),
+                all_high_bits: Vec::new(),
+                meta: Vec::new(),
+                chunk_starts: Vec::new(),
+                chunk_upper_bounds: Vec::new(),
+                len: 0,
+                universe: 0,
             };
         }
         let universe = values[values.len() - 1] + 1;
@@ -71,7 +81,9 @@ impl OptimalPartitionedEliasFano {
     /// Compute the EF encoding cost in bits for values[start..end].
     #[inline]
     fn chunk_cost(n: usize, local_universe: u64) -> usize {
-        if n == 0 { return 0; }
+        if n == 0 {
+            return 0;
+        }
         let low_bit_width = if n as u64 >= local_universe {
             0u32
         } else {
@@ -96,7 +108,11 @@ impl OptimalPartitionedEliasFano {
 
         for i in 1..=n {
             let max_j_start = i.saturating_sub(MAX_CHUNK_SIZE);
-            let min_j_end = if i >= MIN_CHUNK_SIZE { i - MIN_CHUNK_SIZE + 1 } else { 0 };
+            let min_j_end = if i >= MIN_CHUNK_SIZE {
+                i - MIN_CHUNK_SIZE + 1
+            } else {
+                0
+            };
 
             // Only consider valid chunk sizes [MIN_CHUNK_SIZE, MAX_CHUNK_SIZE]
             // except the last chunk which can be smaller
@@ -110,12 +126,20 @@ impl OptimalPartitionedEliasFano {
 
             for j in j_start..j_end {
                 let chunk_n = i - j;
-                if chunk_n < 1 { continue; }
+                if chunk_n < 1 {
+                    continue;
+                }
                 // For non-last chunks, enforce minimum size
-                if i < n && chunk_n < MIN_CHUNK_SIZE { continue; }
-                if chunk_n > MAX_CHUNK_SIZE { continue; }
+                if i < n && chunk_n < MIN_CHUNK_SIZE {
+                    continue;
+                }
+                if chunk_n > MAX_CHUNK_SIZE {
+                    continue;
+                }
 
-                if dp[j] == usize::MAX { continue; }
+                if dp[j] == usize::MAX {
+                    continue;
+                }
 
                 let min_val = get_val(j);
                 let max_val = get_val(i - 1);
@@ -158,7 +182,11 @@ impl OptimalPartitionedEliasFano {
             } else {
                 (64 - (local_universe / count as u64).leading_zeros()).saturating_sub(1)
             };
-            let low_mask = if low_bit_width == 0 { 0u64 } else { (1u64 << low_bit_width) - 1 };
+            let low_mask = if low_bit_width == 0 {
+                0u64
+            } else {
+                (1u64 << low_bit_width) - 1
+            };
 
             // Pack low bits directly into flat array
             let total_low_bits = count as u64 * low_bit_width as u64;
@@ -219,14 +247,26 @@ impl OptimalPartitionedEliasFano {
         // Padding word for branchless u128 extraction in chunk_get_low
         all_low_bits.push(0);
 
-        Self { all_low_bits, all_high_bits, meta, chunk_starts, chunk_upper_bounds, len: n, universe }
+        Self {
+            all_low_bits,
+            all_high_bits,
+            meta,
+            chunk_starts,
+            chunk_upper_bounds,
+            len: n,
+            universe,
+        }
     }
 
     #[inline]
-    pub fn len(&self) -> usize { self.len }
+    pub fn len(&self) -> usize {
+        self.len
+    }
 
     #[inline]
-    pub fn is_empty(&self) -> bool { self.len == 0 }
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
 
     pub fn size_bytes(&self) -> usize {
         self.all_low_bits.len() * 8
@@ -239,13 +279,17 @@ impl OptimalPartitionedEliasFano {
 
     #[inline]
     pub fn bits_per_element(&self) -> f64 {
-        if self.len == 0 { return 0.0; }
+        if self.len == 0 {
+            return 0.0;
+        }
         (self.size_bytes() * 8) as f64 / self.len as f64
     }
 
     /// Get the i-th element.
     pub fn get(&self, index: usize) -> Option<u64> {
-        if index >= self.len { return None; }
+        if index >= self.len {
+            return None;
+        }
         // Binary search for the chunk containing this index
         let chunk_idx = match self.chunk_starts.binary_search(&index) {
             Ok(i) => i,
@@ -263,12 +307,16 @@ impl OptimalPartitionedEliasFano {
     /// the chunk to jump directly to the target's high-value bucket.
     #[inline]
     pub fn next_geq(&self, target: u64) -> Option<(usize, u64)> {
-        if self.len == 0 || target >= self.universe { return None; }
+        if self.len == 0 || target >= self.universe {
+            return None;
+        }
 
         let chunk_idx = match self.chunk_upper_bounds.binary_search(&target) {
             Ok(i) => i,
             Err(i) => {
-                if i >= self.meta.len() { return None; }
+                if i >= self.meta.len() {
+                    return None;
+                }
                 i
             }
         };
@@ -288,7 +336,9 @@ impl OptimalPartitionedEliasFano {
         let (start_idx, start_pos) = chunk_skip_to_high(&view, target_high);
 
         // Scan only from the skip point
-        if let Some((local_idx, delta, _)) = chunk_scan_geq(&view, target_delta, start_idx, start_pos) {
+        if let Some((local_idx, delta, _)) =
+            chunk_scan_geq(&view, target_delta, start_idx, start_pos)
+        {
             return Some((global_offset + local_idx, view.min_value + delta));
         }
 
@@ -395,19 +445,25 @@ impl<'a> Iterator for OptimalPefIter<'a> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.chunk_idx >= self.opef.meta.len() { return None; }
+        if self.chunk_idx >= self.opef.meta.len() {
+            return None;
+        }
         if self.local_idx >= self.cached_count {
             self.chunk_idx += 1;
             self.local_idx = 0;
             self.local_high_pos = 0;
-            if self.chunk_idx >= self.opef.meta.len() { return None; }
+            if self.chunk_idx >= self.opef.meta.len() {
+                return None;
+            }
             self.refresh_chunk_cache();
             return self.next();
         }
 
         let next_pos = self.local_high_pos;
         let mut word_idx = next_pos / 64;
-        if word_idx >= self.cached_high_bits.len() { return None; }
+        if word_idx >= self.cached_high_bits.len() {
+            return None;
+        }
 
         let bit_offset = next_pos % 64;
         let mut word = self.cached_high_bits[word_idx] >> bit_offset;
@@ -418,7 +474,9 @@ impl<'a> Iterator for OptimalPefIter<'a> {
         } else {
             loop {
                 word_idx += 1;
-                if word_idx >= self.cached_high_bits.len() { return None; }
+                if word_idx >= self.cached_high_bits.len() {
+                    return None;
+                }
                 word = self.cached_high_bits[word_idx];
                 if word != 0 {
                     self.local_high_pos = word_idx * 64 + word.trailing_zeros() as usize;
@@ -485,10 +543,17 @@ impl<'a> OptimalPefCursor<'a> {
     fn new(opef: &'a OptimalPartitionedEliasFano) -> Self {
         if opef.is_empty() {
             return Self {
-                opef, chunk_idx: 0, local_idx: 0, local_high_pos: 0, global_idx: 0,
+                opef,
+                chunk_idx: 0,
+                local_idx: 0,
+                local_high_pos: 0,
+                global_idx: 0,
                 cached_value: 0,
-                cached_high_bits: &[], cached_low_bits: &[],
-                cached_low_bit_width: 0, cached_count: 0, cached_min_value: 0,
+                cached_high_bits: &[],
+                cached_low_bits: &[],
+                cached_low_bit_width: 0,
+                cached_count: 0,
+                cached_min_value: 0,
             };
         }
         let view = opef.chunk_view(0);
@@ -503,10 +568,16 @@ impl<'a> OptimalPefCursor<'a> {
         let low = chunk_get_low(&view, 0);
         let initial_val = view.min_value + (high_val << view.low_bit_width) + low;
         Self {
-            opef, chunk_idx: 0, local_idx: 0, local_high_pos: high_pos, global_idx: 0,
+            opef,
+            chunk_idx: 0,
+            local_idx: 0,
+            local_high_pos: high_pos,
+            global_idx: 0,
             cached_value: initial_val,
-            cached_high_bits: view.high_bits, cached_low_bits: view.low_bits,
-            cached_low_bit_width: view.low_bit_width, cached_count: view.count,
+            cached_high_bits: view.high_bits,
+            cached_low_bits: view.low_bits,
+            cached_low_bit_width: view.low_bit_width,
+            cached_count: view.count,
             cached_min_value: view.min_value,
         }
     }
@@ -523,7 +594,9 @@ impl<'a> OptimalPefCursor<'a> {
 
     #[inline]
     fn get_low_cached(&self, local_idx: usize) -> u64 {
-        if self.cached_low_bit_width == 0 { return 0; }
+        if self.cached_low_bit_width == 0 {
+            return 0;
+        }
         let lbw = self.cached_low_bit_width as u64;
         let bit_pos = local_idx as u64 * lbw;
         let w_idx = (bit_pos / 64) as usize;
@@ -557,27 +630,39 @@ impl<'a> OptimalPefCursor<'a> {
     /// Current element value — O(1) from cached value.
     #[inline]
     pub fn current(&self) -> Option<u64> {
-        if self.global_idx >= self.opef.len { None } else { Some(self.cached_value) }
+        if self.global_idx >= self.opef.len {
+            None
+        } else {
+            Some(self.cached_value)
+        }
     }
 
     #[inline]
-    pub fn index(&self) -> usize { self.global_idx }
+    pub fn index(&self) -> usize {
+        self.global_idx
+    }
 
     #[inline]
-    pub fn is_exhausted(&self) -> bool { self.global_idx >= self.opef.len }
+    pub fn is_exhausted(&self) -> bool {
+        self.global_idx >= self.opef.len
+    }
 
     /// Advance to the next element.
     #[inline]
     pub fn advance(&mut self) -> bool {
         self.global_idx += 1;
-        if self.global_idx >= self.opef.len { return false; }
+        if self.global_idx >= self.opef.len {
+            return false;
+        }
 
         self.local_idx += 1;
 
         if self.local_idx >= self.cached_count {
             self.chunk_idx += 1;
             self.local_idx = 0;
-            if self.chunk_idx >= self.opef.meta.len() { return false; }
+            if self.chunk_idx >= self.opef.meta.len() {
+                return false;
+            }
             self.refresh_chunk_cache();
             self.local_high_pos = chunk_first_one_cached(self.cached_high_bits);
             self.recompute_value();
@@ -586,7 +671,9 @@ impl<'a> OptimalPefCursor<'a> {
 
         let next_pos = self.local_high_pos + 1;
         let mut word_idx = next_pos / 64;
-        if word_idx >= self.cached_high_bits.len() { return false; }
+        if word_idx >= self.cached_high_bits.len() {
+            return false;
+        }
 
         let bit_in_word = next_pos % 64;
         let mut word = self.cached_high_bits[word_idx] >> bit_in_word;
@@ -596,7 +683,9 @@ impl<'a> OptimalPefCursor<'a> {
         } else {
             loop {
                 word_idx += 1;
-                if word_idx >= self.cached_high_bits.len() { return false; }
+                if word_idx >= self.cached_high_bits.len() {
+                    return false;
+                }
                 word = self.cached_high_bits[word_idx];
                 if word != 0 {
                     self.local_high_pos = word_idx * 64 + word.trailing_zeros() as usize;
@@ -613,8 +702,12 @@ impl<'a> OptimalPefCursor<'a> {
     /// O(1) cached value check, same-chunk direct scan, galloping for cross-chunk.
     #[inline]
     pub fn advance_to_geq(&mut self, target: u64) -> bool {
-        if self.global_idx >= self.opef.len { return false; }
-        if self.cached_value >= target { return true; }
+        if self.global_idx >= self.opef.len {
+            return false;
+        }
+        if self.cached_value >= target {
+            return true;
+        }
 
         let num_chunks = self.opef.meta.len();
 
@@ -622,7 +715,9 @@ impl<'a> OptimalPefCursor<'a> {
         if target <= self.opef.chunk_upper_bounds[self.chunk_idx] {
             let target_delta = target - self.cached_min_value;
             let view = self.cached_view();
-            if let Some((local_idx, delta, hp)) = chunk_scan_geq(&view, target_delta, self.local_idx, self.local_high_pos) {
+            if let Some((local_idx, delta, hp)) =
+                chunk_scan_geq(&view, target_delta, self.local_idx, self.local_high_pos)
+            {
                 self.local_idx = local_idx;
                 self.global_idx = self.opef.chunk_starts[self.chunk_idx] + local_idx;
                 self.local_high_pos = hp;
@@ -641,8 +736,7 @@ impl<'a> OptimalPefCursor<'a> {
                 if s > hi {
                     break hi;
                 }
-                break s + self.opef.chunk_upper_bounds[s..=hi]
-                    .partition_point(|&x| x < target);
+                break s + self.opef.chunk_upper_bounds[s..=hi].partition_point(|&x| x < target);
             }
             if hi == num_chunks - 1 {
                 self.global_idx = self.opef.len;
@@ -697,8 +791,12 @@ impl<'a> OptimalPefCursor<'a> {
     /// Returns false (cursor unchanged) if `idx >= self.opef.len`.
     #[inline]
     pub fn advance_to_index(&mut self, idx: usize) -> bool {
-        if idx >= self.opef.len { return false; }
-        if idx == self.global_idx { return true; }
+        if idx >= self.opef.len {
+            return false;
+        }
+        if idx == self.global_idx {
+            return true;
+        }
 
         // Binary search chunk_starts to find which chunk contains idx
         let chunk_idx = self.opef.chunk_starts.partition_point(|&s| s <= idx) - 1;
@@ -810,7 +908,9 @@ impl<'a> OptimalPefBatchCursor<'a> {
         let mut filled = 0;
 
         while filled < count {
-            if self.chunk_idx >= self.opef.meta.len() { break; }
+            if self.chunk_idx >= self.opef.meta.len() {
+                break;
+            }
             let view = self.opef.chunk_view(self.chunk_idx);
 
             if self.local_idx == 0 {
@@ -846,16 +946,22 @@ impl<'a> OptimalPefBatchCursor<'a> {
             let mut low_bit_idx = (low_bit_pos % 64) as u32;
             let mut low_word = if lbw > 0 && low_word_idx < view.low_bits.len() {
                 view.low_bits[low_word_idx]
-            } else { 0 };
+            } else {
+                0
+            };
             let mut low_word_next = if lbw > 0 && low_word_idx + 1 < view.low_bits.len() {
                 view.low_bits[low_word_idx + 1]
-            } else { 0 };
+            } else {
+                0
+            };
 
             for k in 0..to_decode {
                 let li = self.local_idx + k;
                 while word == 0 {
                     word_idx += 1;
-                    if word_idx >= view.high_bits.len() { break; }
+                    if word_idx >= view.high_bits.len() {
+                        break;
+                    }
                     word = view.high_bits[word_idx];
                     bit_pos = word_idx * 64;
                 }
@@ -889,7 +995,9 @@ impl<'a> OptimalPefBatchCursor<'a> {
                         low_word = low_word_next;
                         low_word_next = if low_word_idx + 1 < view.low_bits.len() {
                             view.low_bits[low_word_idx + 1]
-                        } else { 0 };
+                        } else {
+                            0
+                        };
                     }
                 }
             }
@@ -914,4 +1022,3 @@ impl<'a> OptimalPefBatchCursor<'a> {
         *self = Self::new(self.opef);
     }
 }
-

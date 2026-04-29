@@ -1,19 +1,16 @@
 //! Comprehensive integration tests for CsppTrie
 
 use zipora::fsa::cspp_trie::CsppTrie;
-use rand::Rng;
 
 #[test]
-fn test_stress_1000_random_keys() {
+fn test_stress_1000_deterministic_keys() {
     let mut trie = CsppTrie::new(8);
-    let mut rng = rand::rng();
-    let mut keys = Vec::new();
+    let mut keys = std::collections::HashSet::new();
 
-    // Generate 1000 random keys
-    for _ in 0..1000 {
-        let len = rng.random_range(1..=50);
-        let key: Vec<u8> = (0..len).map(|_| rng.random()).collect();
-        keys.push(key);
+    // Generate 1000 deterministic keys
+    for i in 0..1000 {
+        let key_str = format!("det_key_{}_{:x}", i % 5, i);
+        keys.insert(key_str.into_bytes());
     }
 
     // Insert all keys
@@ -26,15 +23,15 @@ fn test_stress_1000_random_keys() {
 
     // Verify all keys are found
     for key in &keys {
-        assert!(trie.contains(key), "key should be found: {:?}", key);
-        let valpos = trie.lookup(key).expect("lookup should succeed");
+        let valpos_opt = trie.lookup(key);
+        assert!(valpos_opt.is_some());
+        let valpos = valpos_opt.unwrap();
         let stored_len: u64 = trie.get_value(valpos);
         assert_eq!(stored_len, key.len() as u64);
     }
 
-    // Verify count (may be less than 1000 if duplicates)
-    assert!(trie.num_words() <= 1000);
-    assert!(trie.num_words() > 0);
+    // Strict assertion based on Set size
+    assert_eq!(trie.num_words(), keys.len());
 }
 
 #[test]
@@ -169,13 +166,22 @@ fn test_memory_efficiency_tracking() {
 
     let stat_after = trie.mem_get_stat();
 
-    assert!(stat_after.used_size > initial_used, "used size should increase");
-    assert!(stat_after.capacity >= stat_after.used_size, "capacity should be sufficient");
+    assert!(
+        stat_after.used_size > initial_used,
+        "used size should increase"
+    );
+    assert!(
+        stat_after.capacity >= stat_after.used_size,
+        "capacity should be sufficient"
+    );
     assert_eq!(trie.num_words(), 200);
 
     // Check fragmentation is reasonable
     let frag = trie.mem_frag_size();
-    assert!(frag <= stat_after.used_size, "fragmentation should not exceed used size");
+    assert!(
+        frag <= stat_after.used_size,
+        "fragmentation should not exceed used size"
+    );
 }
 
 #[test]

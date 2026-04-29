@@ -69,11 +69,38 @@ pub const fn is_whitespace(c: u8) -> bool {
 /// Check if a byte is an ASCII punctuation character
 #[inline]
 pub const fn is_punctuation(c: u8) -> bool {
-    matches!(c,
-        b'!' | b'"' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'(' | b')' |
-        b'*' | b'+' | b',' | b'-' | b'.' | b'/' | b':' | b';' | b'<' |
-        b'=' | b'>' | b'?' | b'@' | b'[' | b'\\' | b']' | b'^' | b'`' |
-        b'{' | b'|' | b'}' | b'~'
+    matches!(
+        c,
+        b'!' | b'"'
+            | b'#'
+            | b'$'
+            | b'%'
+            | b'&'
+            | b'\''
+            | b'('
+            | b')'
+            | b'*'
+            | b'+'
+            | b','
+            | b'-'
+            | b'.'
+            | b'/'
+            | b':'
+            | b';'
+            | b'<'
+            | b'='
+            | b'>'
+            | b'?'
+            | b'@'
+            | b'['
+            | b'\\'
+            | b']'
+            | b'^'
+            | b'`'
+            | b'{'
+            | b'|'
+            | b'}'
+            | b'~'
     )
 }
 
@@ -280,12 +307,12 @@ mod tests {
         assert!(is_word_boundary(text, 11));
 
         // Boundary between word and space
-        assert!(is_word_boundary(text, 5));  // After "hello"
-        assert!(is_word_boundary(text, 6));  // Before "world"
+        assert!(is_word_boundary(text, 5)); // After "hello"
+        assert!(is_word_boundary(text, 6)); // Before "world"
 
         // Middle of words - not boundaries
-        assert!(!is_word_boundary(text, 1));  // Inside "hello"
-        assert!(!is_word_boundary(text, 7));  // Inside "world"
+        assert!(!is_word_boundary(text, 1)); // Inside "hello"
+        assert!(!is_word_boundary(text, 7)); // Inside "world"
     }
 
     #[test]

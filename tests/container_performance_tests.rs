@@ -6,7 +6,6 @@
 //! **IMPORTANT**: These tests should only run in release mode. Debug mode has
 //! significantly different performance characteristics and will cause false failures.
 
-
 /// Returns true if running in debug mode (debug_assertions enabled).
 /// Performance tests should be skipped in debug mode as results are meaningless.
 #[cfg(debug_assertions)]
@@ -257,12 +256,14 @@ mod valvec32_performance {
             let valvec32_struct_size = std::mem::size_of::<ValVec32<u64>>();
             let stdvec_struct_size = std::mem::size_of::<Vec<u64>>();
             let struct_memory_ratio = valvec32_struct_size as f64 / stdvec_struct_size as f64;
-            
+
             println!("ValVec32 vs std::Vec (size: {}):", size);
             println!("  Performance ratio: {:.2}x", performance_ratio);
             println!("  Memory ratio (heap): {:.2}x", memory_ratio);
-            println!("  Memory ratio (struct): {:.2}x ({}B vs {}B)", 
-                     struct_memory_ratio, valvec32_struct_size, stdvec_struct_size);
+            println!(
+                "  Memory ratio (struct): {:.2}x ({}B vs {}B)",
+                struct_memory_ratio, valvec32_struct_size, stdvec_struct_size
+            );
             println!(
                 "  ValVec32 throughput: {:.0} ops/sec",
                 valvec_metrics.throughput_ops_per_sec
@@ -297,9 +298,12 @@ mod valvec32_performance {
                 // Verify the actual memory benefit is achieved
                 let expected_struct_ratio = valvec_struct_size as f64 / stdvec_struct_size as f64;
                 if expected_struct_ratio < 0.75 {
-                    println!("  ✅ ValVec32 achieves {:.0}% struct memory reduction! ({}B vs {}B)", 
-                            (1.0 - expected_struct_ratio) * 100.0,
-                            valvec_struct_size, stdvec_struct_size);
+                    println!(
+                        "  ✅ ValVec32 achieves {:.0}% struct memory reduction! ({}B vs {}B)",
+                        (1.0 - expected_struct_ratio) * 100.0,
+                        valvec_struct_size,
+                        stdvec_struct_size
+                    );
                 }
 
                 // Note: Allocator-based measurement may not capture struct size differences for small tests
@@ -437,7 +441,6 @@ mod valvec32_performance {
 mod small_map_performance {
     use super::*;
 
-
     #[test]
     fn bench_small_map_cache_efficiency() {
         require_release_mode!();
@@ -486,7 +489,6 @@ mod small_map_performance {
 #[cfg(test)]
 mod circular_queue_performance {
     use super::*;
-
 
     #[test]
     fn bench_fixed_queue_vs_ring_buffer() {
@@ -688,7 +690,6 @@ mod string_container_performance {
         );
     }
 
-
     #[test]
     fn bench_fixed_str_vec_simd_operations() {
         require_release_mode!();
@@ -735,7 +736,6 @@ mod string_container_performance {
 
 #[cfg(test)]
 mod performance_report {
-    
 
     #[test]
     fn generate_comprehensive_performance_report() {

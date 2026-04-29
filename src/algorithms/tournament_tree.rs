@@ -16,7 +16,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 #[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
+use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
 
 /// Cache line size for optimal memory layout
 const CACHE_LINE_SIZE: usize = 64;
@@ -120,7 +120,7 @@ where
     fn new(mut iterator: I, _way_index: usize) -> Self {
         let current = iterator.next();
         let exhausted = current.is_none();
-        
+
         Self {
             iterator,
             current,
@@ -136,11 +136,11 @@ where
 
         self.current = self.iterator.next();
         self.position += 1;
-        
+
         if self.current.is_none() {
             self.exhausted = true;
         }
-        
+
         Ok(())
     }
 
@@ -154,7 +154,7 @@ where
 }
 
 /// Advanced high-performance tournament tree for k-way merging
-/// 
+///
 /// The enhanced loser tree implements true O(log k) complexity through proper tree
 /// traversal algorithms. Internal nodes store "losers" of comparisons while winners
 /// propagate up the tree. Features include:
@@ -168,19 +168,19 @@ where
 /// # Example
 /// ```
 /// use zipora::algorithms::{EnhancedLoserTree, LoserTreeConfig};
-/// 
+///
 /// let config = LoserTreeConfig::default();
 /// let mut tree = EnhancedLoserTree::new(config);
-/// 
+///
 /// // Add sorted input streams
 /// tree.add_way(vec![1, 4, 7, 10].into_iter())?;
 /// tree.add_way(vec![2, 5, 8, 11].into_iter())?;
 /// tree.add_way(vec![3, 6, 9, 12].into_iter())?;
-/// 
+///
 /// // Merge all streams with O(log k) complexity per element
 /// let mut result = Vec::new();
 /// tree.merge_all(&mut result)?;
-/// 
+///
 /// assert_eq!(result, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
 /// # Ok::<(), zipora::ZiporaError>(())
 /// ```
@@ -249,16 +249,16 @@ where
         }
 
         self.num_ways = self.ways.len();
-        
+
         // Create a complete binary tree structure
         // For k ways, we need k-1 internal nodes + k leaf nodes = 2k-1 total
         let tree_size = self.num_ways.saturating_sub(1);
-        
+
         self.tree.resize(tree_size, CacheAlignedNode::new(0, 0));
-        
+
         // Build the initial tournament tree bottom-up
         self.build_enhanced_tree()?;
-        
+
         Ok(())
     }
 
@@ -285,10 +285,15 @@ where
 
         for (way_idx, way) in self.ways.iter().enumerate() {
             if let Some(value) = way.peek()
-                && (min_value.is_none() || self.compare_optimized(value, min_value.expect("min_value set by prior iteration")) == Ordering::Less) {
-                    min_value = Some(value);
-                    min_way = way_idx;
-                }
+                && (min_value.is_none()
+                    || self.compare_optimized(
+                        value,
+                        min_value.expect("min_value set by prior iteration"),
+                    ) == Ordering::Less)
+            {
+                min_value = Some(value);
+                min_way = way_idx;
+            }
         }
 
         Ok(min_way)
@@ -309,7 +314,7 @@ where
     /// Build the tree structure with cache-friendly access patterns
     fn build_tree_structure(&mut self) -> Result<()> {
         let num_ways = self.num_ways;
-        
+
         if num_ways <= 1 {
             return Ok(());
         }
@@ -321,26 +326,30 @@ where
             let right_child_idx = 2 * level + 2;
 
             // Determine the competitors for this internal node
-            let (left_competitor, right_competitor) = if left_child_idx < self.tree.len() && right_child_idx < self.tree.len() {
-                // Both children are internal nodes
-                (self.get_subtree_winner(left_child_idx), self.get_subtree_winner(right_child_idx))
-            } else if left_child_idx >= self.tree.len() {
-                // Children are leaf nodes (ways)
-                let left_way = left_child_idx - self.tree.len();
-                let right_way = right_child_idx - self.tree.len();
-                
-                if left_way < num_ways && right_way < num_ways {
-                    (left_way, right_way)
+            let (left_competitor, right_competitor) =
+                if left_child_idx < self.tree.len() && right_child_idx < self.tree.len() {
+                    // Both children are internal nodes
+                    (
+                        self.get_subtree_winner(left_child_idx),
+                        self.get_subtree_winner(right_child_idx),
+                    )
+                } else if left_child_idx >= self.tree.len() {
+                    // Children are leaf nodes (ways)
+                    let left_way = left_child_idx - self.tree.len();
+                    let right_way = right_child_idx - self.tree.len();
+
+                    if left_way < num_ways && right_way < num_ways {
+                        (left_way, right_way)
+                    } else {
+                        continue;
+                    }
                 } else {
                     continue;
-                }
-            } else {
-                continue;
-            };
+                };
 
             // Compare and store the loser in this internal node
             let (_winner, loser) = self.compare_competitors(left_competitor, right_competitor)?;
-            
+
             // Prefetch next nodes if configured
             if self.config.cache_optimized && self.config.prefetch_distance > 0 {
                 self.prefetch_next_nodes(level);
@@ -363,11 +372,15 @@ where
 
     /// Compare two competitors and return (winner, loser)
     fn compare_competitors(&self, way1: usize, way2: usize) -> Result<(usize, usize)> {
-        let value1 = self.ways.get(way1)
+        let value1 = self
+            .ways
+            .get(way1)
             .ok_or_else(|| ZiporaError::out_of_bounds(way1, self.ways.len()))?
             .peek();
-        
-        let value2 = self.ways.get(way2)
+
+        let value2 = self
+            .ways
+            .get(way2)
             .ok_or_else(|| ZiporaError::out_of_bounds(way2, self.ways.len()))?
             .peek();
 
@@ -424,20 +437,12 @@ where
         Ok(())
     }
 
-
-
-
-
-
-
-
-
     /// Get the current minimum element without removing it
     pub fn peek(&self) -> Option<&T> {
         if self.ways.is_empty() || self.winner >= self.ways.len() {
             return None;
         }
-        
+
         self.ways[self.winner].peek()
     }
 
@@ -448,18 +453,17 @@ where
         }
 
         let result = self.ways[self.winner].current.clone();
-        
+
         if result.is_some() {
             // Advance the winner stream
             self.ways[self.winner].advance()?;
-            
+
             // Replay tournament to find new winner
             self.update_winner()?;
         }
 
         Ok(result)
     }
-
 
     /// Check if the tournament tree is empty (all ways exhausted)
     #[inline]
@@ -473,15 +477,15 @@ where
         O: Extend<T>,
     {
         self.initialize()?;
-        
+
         let mut result = Vec::new();
-        
+
         while !self.is_empty() {
             if let Some(value) = self.pop()? {
                 result.push(value);
             }
         }
-        
+
         output.extend(result);
         Ok(())
     }
@@ -541,7 +545,7 @@ mod tests {
     fn test_empty_tree() {
         let config = LoserTreeConfig::default();
         let mut tree = EnhancedLoserTree::<i32>::new(config);
-        
+
         assert!(tree.is_empty());
         assert_eq!(tree.num_ways(), 0);
         assert!(tree.peek().is_none());
@@ -552,12 +556,12 @@ mod tests {
     fn test_single_way() -> Result<()> {
         let config = LoserTreeConfig::default();
         let mut tree = EnhancedLoserTree::<i32>::new(config);
-        
+
         tree.add_way(vec![1, 2, 3].into_iter())?;
-        
+
         let result = tree.merge_to_vec()?;
         assert_eq!(result, vec![1, 2, 3]);
-        
+
         Ok(())
     }
 
@@ -565,13 +569,13 @@ mod tests {
     fn test_two_way_merge() -> Result<()> {
         let config = LoserTreeConfig::default();
         let mut tree = EnhancedLoserTree::<i32>::new(config);
-        
+
         tree.add_way(vec![1, 3, 5].into_iter())?;
         tree.add_way(vec![2, 4, 6].into_iter())?;
-        
+
         let result = tree.merge_to_vec()?;
         assert_eq!(result, vec![1, 2, 3, 4, 5, 6]);
-        
+
         Ok(())
     }
 
@@ -579,14 +583,14 @@ mod tests {
     fn test_three_way_merge() -> Result<()> {
         let config = LoserTreeConfig::default();
         let mut tree = EnhancedLoserTree::<i32>::new(config);
-        
+
         tree.add_way(vec![1, 4, 7].into_iter())?;
         tree.add_way(vec![2, 5, 8].into_iter())?;
         tree.add_way(vec![3, 6, 9].into_iter())?;
-        
+
         let result = tree.merge_to_vec()?;
         assert_eq!(result, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
-        
+
         Ok(())
     }
 
@@ -594,14 +598,14 @@ mod tests {
     fn test_uneven_lengths() -> Result<()> {
         let config = LoserTreeConfig::default();
         let mut tree = EnhancedLoserTree::<i32>::new(config);
-        
+
         tree.add_way(vec![1].into_iter())?;
         tree.add_way(vec![2, 3, 4, 5].into_iter())?;
         tree.add_way(vec![6, 7].into_iter())?;
-        
+
         let result = tree.merge_to_vec()?;
         assert_eq!(result, vec![1, 2, 3, 4, 5, 6, 7]);
-        
+
         Ok(())
     }
 
@@ -609,14 +613,14 @@ mod tests {
     fn test_empty_ways() -> Result<()> {
         let config = LoserTreeConfig::default();
         let mut tree = EnhancedLoserTree::<i32>::new(config);
-        
+
         tree.add_way(vec![1, 2].into_iter())?;
         tree.add_way(std::iter::empty())?;
         tree.add_way(vec![3, 4].into_iter())?;
-        
+
         let result = tree.merge_to_vec()?;
         assert_eq!(result, vec![1, 2, 3, 4]);
-        
+
         Ok(())
     }
 
@@ -624,13 +628,13 @@ mod tests {
     fn test_duplicate_values() -> Result<()> {
         let config = LoserTreeConfig::default();
         let mut tree = EnhancedLoserTree::<i32>::new(config);
-        
+
         tree.add_way(vec![1, 2, 2, 3].into_iter())?;
         tree.add_way(vec![2, 2, 4].into_iter())?;
-        
+
         let result = tree.merge_to_vec()?;
         assert_eq!(result, vec![1, 2, 2, 2, 2, 3, 4]);
-        
+
         Ok(())
     }
 
@@ -638,13 +642,13 @@ mod tests {
     fn test_custom_comparator() -> Result<()> {
         let config = LoserTreeConfig::default();
         let mut tree = EnhancedLoserTree::with_comparator(config, |a: &i32, b: &i32| b.cmp(a)); // Reverse order
-        
+
         tree.add_way(vec![5, 3, 1].into_iter())?;
         tree.add_way(vec![6, 4, 2].into_iter())?;
-        
+
         let result = tree.merge_to_vec()?;
         assert_eq!(result, vec![6, 5, 4, 3, 2, 1]);
-        
+
         Ok(())
     }
 
@@ -652,15 +656,15 @@ mod tests {
     fn test_iterator_interface() -> Result<()> {
         let config = LoserTreeConfig::default();
         let mut tree = EnhancedLoserTree::<i32>::new(config);
-        
+
         tree.add_way(vec![1, 3].into_iter())?;
         tree.add_way(vec![2, 4].into_iter())?;
-        
+
         tree.initialize()?;
-        
+
         let collected: Vec<_> = tree.collect();
         assert_eq!(collected, vec![1, 2, 3, 4]);
-        
+
         Ok(())
     }
 
@@ -668,18 +672,18 @@ mod tests {
     fn test_peek_before_pop() -> Result<()> {
         let config = LoserTreeConfig::default();
         let mut tree = EnhancedLoserTree::<i32>::new(config);
-        
+
         tree.add_way(vec![1, 3].into_iter())?;
         tree.add_way(vec![2, 4].into_iter())?;
-        
+
         tree.initialize()?;
-        
+
         assert_eq!(tree.peek(), Some(&1));
         assert_eq!(tree.pop()?, Some(1));
-        
+
         assert_eq!(tree.peek(), Some(&2));
         assert_eq!(tree.pop()?, Some(2));
-        
+
         Ok(())
     }
 
@@ -687,23 +691,23 @@ mod tests {
     fn test_large_merge() -> Result<()> {
         let config = LoserTreeConfig::default();
         let mut tree = EnhancedLoserTree::<i32>::new(config);
-        
+
         // Add 10 ways with 100 elements each
         for way in 0..10 {
             let values: Vec<i32> = (0..100).map(|i| way * 100 + i).collect();
             tree.add_way(values.into_iter())?;
         }
-        
+
         let result = tree.merge_to_vec()?;
-        
+
         // Should have 1000 elements total
         assert_eq!(result.len(), 1000);
-        
+
         // Should be sorted
         for i in 1..result.len() {
-            assert!(result[i] >= result[i-1]);
+            assert!(result[i] >= result[i - 1]);
         }
-        
+
         Ok(())
     }
 }

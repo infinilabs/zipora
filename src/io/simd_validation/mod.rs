@@ -4,4 +4,6 @@
 
 pub mod checksum;
 
-pub use checksum::{crc32c, crc32c_hash, crc32c_update, crc32c_finalize, detect_crc32c_impl, Crc32cImpl};
+pub use checksum::{
+    Crc32cImpl, crc32c, crc32c_finalize, crc32c_hash, crc32c_update, detect_crc32c_impl,
+};

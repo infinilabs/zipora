@@ -40,13 +40,17 @@ pub mod uint_vec_min0;
 pub mod zip_int_vec;
 
 pub use fast_vec::FastVec;
-pub use uint_vec_min0::UintVecMin0;
-pub use zip_int_vec::ZipIntVec;
 pub use specialized::{
     AutoGrowCircularQueue,
+    BlockSize,
+    CompressionStrategy,
+    ConcurrentLruMap,
+    ConcurrentLruMapConfig,
+    ConcurrentLruMapStatistics,
     EasyHashMap,
     EasyHashMapBuilder,
     EasyHashMapStats,
+    EvictionCallback,
     FixedCircularQueue,
     FixedLenStrVec,
     FixedStr4Vec,
@@ -57,34 +61,30 @@ pub use specialized::{
     GoldHashIdx,
     HashStrMap,
     HashStrMapStats,
-    SmallMap,
-    SortableStrIter,
-    SortableStrSortedIter,
-    SortableStrVec,
     // Phase 2 containers
     IntVec,
-    PackedInt,
-    CompressionStrategy,
-    BlockSize,
-    UintVector,
-    // Phase 1 containers
-    ValVec32,
-    // Phase 3 advanced containers
-    ZoSortedStrVec,
-    ZoSortedStrVecIter,
-    ZoSortedStrVecRange,
+    LoadBalancingStrategy,
     // Phase 4 LRU cache containers
     LruMap,
     LruMapConfig,
     LruMapStatistics,
-    EvictionCallback,
+    MinimalSso,
     NoOpEvictionCallback,
-    ConcurrentLruMap,
-    ConcurrentLruMapConfig,
-    ConcurrentLruMapStatistics,
-    LoadBalancingStrategy,
+    PackedInt,
+    SmallMap,
+    SortableStrIter,
+    SortableStrSortedIter,
+    SortableStrVec,
+    UintVector,
+    // Phase 1 containers
+    ValVec32,
+    VecTrbMap,
     // P1.4: Missing container types
     VecTrbSet,
-    VecTrbMap,
-    MinimalSso,
+    // Phase 3 advanced containers
+    ZoSortedStrVec,
+    ZoSortedStrVecIter,
+    ZoSortedStrVecRange,
 };
+pub use uint_vec_min0::UintVecMin0;
+pub use zip_int_vec::ZipIntVec;

@@ -7,10 +7,10 @@
 //! For actual profiling/timing, use `dev_infrastructure::debug` (ScopedTimer,
 //! HighPrecisionTimer, BenchmarkSuite).
 
+use crate::error::ZiporaError;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
-use crate::error::ZiporaError;
 
 // ============================================================================
 // Core types (from mod.rs)
@@ -32,7 +32,12 @@ impl Default for TrieStat {
 
 impl TrieStat {
     pub fn new() -> Self {
-        Self { insert_time: 0.0, lookup_time: 0.0, build_time: 0.0, total_bytes: 0 }
+        Self {
+            insert_time: 0.0,
+            lookup_time: 0.0,
+            build_time: 0.0,
+            total_bytes: 0,
+        }
     }
 }
 
@@ -47,26 +52,45 @@ pub struct TrieStatistics {
     pub timing: TimingStats,
 }
 
-impl Default for TrieStatistics { fn default() -> Self { Self::new() } }
+impl Default for TrieStatistics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl TrieStatistics {
     pub fn new() -> Self {
         Self {
-            memory: MemoryStats::new(), performance: PerformanceStats::new(),
-            compression: CompressionStats::new(), distribution: DistributionStats::new(),
-            errors: ErrorStats::new(), timing: TimingStats::new(),
+            memory: MemoryStats::new(),
+            performance: PerformanceStats::new(),
+            compression: CompressionStats::new(),
+            distribution: DistributionStats::new(),
+            errors: ErrorStats::new(),
+            timing: TimingStats::new(),
         }
     }
     pub fn merge(&mut self, _other: &TrieStatistics) {}
     pub fn reset(&mut self) {}
-    pub fn generate_report(&self) -> String { String::new() }
+    pub fn generate_report(&self) -> String {
+        String::new()
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum MemoryCategory { Nodes, Cache, Overhead }
+pub enum MemoryCategory {
+    Nodes,
+    Cache,
+    Overhead,
+}
 
 #[derive(Debug, Clone, Copy)]
-pub enum ErrorType { Memory, Io, Corruption, Timeout, Other }
+pub enum ErrorType {
+    Memory,
+    Io,
+    Corruption,
+    Timeout,
+    Other,
+}
 
 // ============================================================================
 // MemoryStats
@@ -92,9 +116,12 @@ impl Default for MemoryStats {
 impl MemoryStats {
     pub fn new() -> Self {
         Self {
-            total_allocated: AtomicUsize::new(0), nodes_memory: AtomicUsize::new(0),
-            cache_memory: AtomicUsize::new(0), overhead_memory: AtomicUsize::new(0),
-            peak_memory: AtomicUsize::new(0), allocation_count: AtomicU64::new(0),
+            total_allocated: AtomicUsize::new(0),
+            nodes_memory: AtomicUsize::new(0),
+            cache_memory: AtomicUsize::new(0),
+            overhead_memory: AtomicUsize::new(0),
+            peak_memory: AtomicUsize::new(0),
+            allocation_count: AtomicU64::new(0),
             deallocation_count: AtomicU64::new(0),
         }
     }
@@ -108,7 +135,9 @@ impl MemoryStats {
     }
     pub fn merge(&mut self, _other: &MemoryStats) {}
     pub fn reset(&mut self) {}
-    pub fn report(&self) -> String { String::new() }
+    pub fn report(&self) -> String {
+        String::new()
+    }
 }
 
 // ============================================================================
@@ -136,18 +165,30 @@ impl Default for PerformanceStats {
 impl PerformanceStats {
     pub fn new() -> Self {
         Self {
-            insert_count: AtomicU64::new(0), lookup_count: AtomicU64::new(0),
-            delete_count: AtomicU64::new(0), cache_hits: AtomicU64::new(0),
-            cache_misses: AtomicU64::new(0), total_operations: AtomicU64::new(0),
-            failed_operations: AtomicU64::new(0), average_operation_time_ns: AtomicU64::new(0),
+            insert_count: AtomicU64::new(0),
+            lookup_count: AtomicU64::new(0),
+            delete_count: AtomicU64::new(0),
+            cache_hits: AtomicU64::new(0),
+            cache_misses: AtomicU64::new(0),
+            total_operations: AtomicU64::new(0),
+            failed_operations: AtomicU64::new(0),
+            average_operation_time_ns: AtomicU64::new(0),
         }
     }
-    pub fn record_insert(&self) { self.insert_count.fetch_add(1, Ordering::Relaxed); }
-    pub fn record_lookup(&self, _hit: bool) { self.lookup_count.fetch_add(1, Ordering::Relaxed); }
-    pub fn record_delete(&self) { self.delete_count.fetch_add(1, Ordering::Relaxed); }
+    pub fn record_insert(&self) {
+        self.insert_count.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn record_lookup(&self, _hit: bool) {
+        self.lookup_count.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn record_delete(&self) {
+        self.delete_count.fetch_add(1, Ordering::Relaxed);
+    }
     pub fn merge(&mut self, _other: &PerformanceStats) {}
     pub fn reset(&mut self) {}
-    pub fn report(&self) -> String { String::new() }
+    pub fn report(&self) -> String {
+        String::new()
+    }
 }
 
 // ============================================================================
@@ -168,15 +209,22 @@ impl Default for CompressionStats {
 
 impl CompressionStats {
     pub fn new() -> Self {
-        Self { original_size: AtomicUsize::new(0), compressed_size: AtomicUsize::new(0) }
+        Self {
+            original_size: AtomicUsize::new(0),
+            compressed_size: AtomicUsize::new(0),
+        }
     }
     pub fn merge(&mut self, _other: &CompressionStats) {}
     pub fn reset(&mut self) {}
-    pub fn report(&self) -> String { String::new() }
+    pub fn report(&self) -> String {
+        String::new()
+    }
 }
 
 #[derive(Debug)]
-pub struct DistributionStats { pub total_samples: AtomicU64 }
+pub struct DistributionStats {
+    pub total_samples: AtomicU64,
+}
 
 impl Default for DistributionStats {
     fn default() -> Self {
@@ -185,14 +233,22 @@ impl Default for DistributionStats {
 }
 
 impl DistributionStats {
-    pub fn new() -> Self { Self { total_samples: AtomicU64::new(0) } }
+    pub fn new() -> Self {
+        Self {
+            total_samples: AtomicU64::new(0),
+        }
+    }
     pub fn merge(&mut self, _other: &DistributionStats) {}
     pub fn reset(&mut self) {}
-    pub fn report(&self) -> String { String::new() }
+    pub fn report(&self) -> String {
+        String::new()
+    }
 }
 
 #[derive(Debug)]
-pub struct ErrorStats { pub total_errors: AtomicU64 }
+pub struct ErrorStats {
+    pub total_errors: AtomicU64,
+}
 
 impl Default for ErrorStats {
     fn default() -> Self {
@@ -201,15 +257,25 @@ impl Default for ErrorStats {
 }
 
 impl ErrorStats {
-    pub fn new() -> Self { Self { total_errors: AtomicU64::new(0) } }
-    pub fn record_error(&self, _et: ErrorType) { self.total_errors.fetch_add(1, Ordering::Relaxed); }
+    pub fn new() -> Self {
+        Self {
+            total_errors: AtomicU64::new(0),
+        }
+    }
+    pub fn record_error(&self, _et: ErrorType) {
+        self.total_errors.fetch_add(1, Ordering::Relaxed);
+    }
     pub fn merge(&mut self, _other: &ErrorStats) {}
     pub fn reset(&mut self) {}
-    pub fn report(&self) -> String { String::new() }
+    pub fn report(&self) -> String {
+        String::new()
+    }
 }
 
 #[derive(Debug)]
-pub struct TimingStats { pub creation_time: Instant }
+pub struct TimingStats {
+    pub creation_time: Instant,
+}
 
 impl Default for TimingStats {
     fn default() -> Self {
@@ -218,11 +284,19 @@ impl Default for TimingStats {
 }
 
 impl TimingStats {
-    pub fn new() -> Self { Self { creation_time: Instant::now() } }
-    pub fn uptime(&self) -> Duration { self.creation_time.elapsed() }
+    pub fn new() -> Self {
+        Self {
+            creation_time: Instant::now(),
+        }
+    }
+    pub fn uptime(&self) -> Duration {
+        self.creation_time.elapsed()
+    }
     pub fn merge(&mut self, _other: &TimingStats) {}
     pub fn reset(&mut self) {}
-    pub fn report(&self) -> String { String::new() }
+    pub fn report(&self) -> String {
+        String::new()
+    }
 }
 
 // ============================================================================
@@ -230,7 +304,10 @@ impl TimingStats {
 // ============================================================================
 
 #[derive(Debug, Clone)]
-pub struct MemoryBreakdown { pub total: usize, pub components: HashMap<String, usize> }
+pub struct MemoryBreakdown {
+    pub total: usize,
+    pub components: HashMap<String, usize>,
+}
 
 impl Default for MemoryBreakdown {
     fn default() -> Self {
@@ -239,7 +316,12 @@ impl Default for MemoryBreakdown {
 }
 
 impl MemoryBreakdown {
-    pub fn new() -> Self { Self { total: 0, components: HashMap::new() } }
+    pub fn new() -> Self {
+        Self {
+            total: 0,
+            components: HashMap::new(),
+        }
+    }
     pub fn add_component(&mut self, name: &str, size: usize) {
         self.total += size;
         self.components.insert(name.to_string(), size);
@@ -253,7 +335,11 @@ impl Default for GlobalMemoryTracker {
     }
 }
 
-impl GlobalMemoryTracker { pub fn new() -> Self { Self } }
+impl GlobalMemoryTracker {
+    pub fn new() -> Self {
+        Self
+    }
+}
 
 pub struct TrackedObject;
 pub struct LocalMemoryTracker;
@@ -263,7 +349,11 @@ impl Default for LocalMemoryTracker {
     }
 }
 
-impl LocalMemoryTracker { pub fn new() -> Self { Self } }
+impl LocalMemoryTracker {
+    pub fn new() -> Self {
+        Self
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct FragmentationAnalysis;
@@ -276,7 +366,9 @@ pub struct Profiling;
 pub type QTime = Instant;
 pub type QDuration = Duration;
 
-pub struct PerfTimer { start: Instant }
+pub struct PerfTimer {
+    start: Instant,
+}
 impl Default for PerfTimer {
     fn default() -> Self {
         Self::new()
@@ -284,8 +376,14 @@ impl Default for PerfTimer {
 }
 
 impl PerfTimer {
-    pub fn new() -> Self { Self { start: Instant::now() } }
-    pub fn elapsed(&self) -> Duration { self.start.elapsed() }
+    pub fn new() -> Self {
+        Self {
+            start: Instant::now(),
+        }
+    }
+    pub fn elapsed(&self) -> Duration {
+        self.start.elapsed()
+    }
 }
 
 pub struct TimerCollection;
@@ -295,10 +393,18 @@ impl Default for TimerCollection {
     }
 }
 
-impl TimerCollection { pub fn new() -> Self { Self } }
+impl TimerCollection {
+    pub fn new() -> Self {
+        Self
+    }
+}
 
 pub struct ScopedTimer;
-impl ScopedTimer { pub fn new(_name: &str) -> Self { Self } }
+impl ScopedTimer {
+    pub fn new(_name: &str) -> Self {
+        Self
+    }
+}
 
 pub fn str_date_time_now() -> String {
     format!("{:?}", std::time::SystemTime::now())
@@ -309,7 +415,9 @@ pub fn str_date_time_now() -> String {
 // ============================================================================
 
 #[derive(Debug, Clone)]
-pub struct FreqHist { counts: Vec<u64> }
+pub struct FreqHist {
+    counts: Vec<u64>,
+}
 impl Default for FreqHist {
     fn default() -> Self {
         Self::new()
@@ -317,8 +425,14 @@ impl Default for FreqHist {
 }
 
 impl FreqHist {
-    pub fn new() -> Self { Self { counts: vec![0u64; 256] } }
-    pub fn add(&mut self, byte: u8) { self.counts[byte as usize] += 1; }
+    pub fn new() -> Self {
+        Self {
+            counts: vec![0u64; 256],
+        }
+    }
+    pub fn add(&mut self, byte: u8) {
+        self.counts[byte as usize] += 1;
+    }
 }
 
 pub type FreqHistO1 = FreqHist;
@@ -334,7 +448,11 @@ impl Default for HistogramCollection {
     }
 }
 
-impl HistogramCollection { pub fn new() -> Self { Self } }
+impl HistogramCollection {
+    pub fn new() -> Self {
+        Self
+    }
+}
 
 // ============================================================================
 // Entropy analysis stubs (from entropy_analysis.rs)
@@ -347,11 +465,19 @@ impl Default for EntropyAnalyzer {
     }
 }
 
-impl EntropyAnalyzer { pub fn new() -> Self { Self } }
+impl EntropyAnalyzer {
+    pub fn new() -> Self {
+        Self
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct EntropyConfig;
-impl Default for EntropyConfig { fn default() -> Self { Self } }
+impl Default for EntropyConfig {
+    fn default() -> Self {
+        Self
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct EntropyResults;
@@ -368,16 +494,27 @@ pub struct EntropyAnalyzerCollection;
 // Buffer management stubs (from buffer_management.rs)
 // ============================================================================
 
-pub struct ContextBuffer { _data: Vec<u8> }
+pub struct ContextBuffer {
+    _data: Vec<u8>,
+}
 impl ContextBuffer {
-    pub fn new(cap: usize) -> Self { Self { _data: Vec::with_capacity(cap) } }
+    pub fn new(cap: usize) -> Self {
+        Self {
+            _data: Vec::with_capacity(cap),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct BufferMetadata;
 
 #[derive(Debug, Clone, Copy)]
-pub enum BufferPriority { Low, Normal, High, Critical }
+pub enum BufferPriority {
+    Low,
+    Normal,
+    High,
+    Critical,
+}
 
 pub trait StatisticsContext: Send + Sync {}
 
@@ -385,11 +522,19 @@ pub struct DefaultStatisticsContext;
 impl StatisticsContext for DefaultStatisticsContext {}
 
 pub struct BufferPoolManager;
-impl BufferPoolManager { pub fn new(_config: BufferPoolConfig) -> Self { Self } }
+impl BufferPoolManager {
+    pub fn new(_config: BufferPoolConfig) -> Self {
+        Self
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct BufferPoolConfig;
-impl Default for BufferPoolConfig { fn default() -> Self { Self } }
+impl Default for BufferPoolConfig {
+    fn default() -> Self {
+        Self
+    }
+}
 
 pub struct PoolStatistics;
 pub struct ScopedBuffer;
@@ -400,9 +545,15 @@ pub struct ScopedBuffer;
 
 #[derive(Clone)]
 pub struct Profiler;
-impl Default for Profiler { fn default() -> Self { Self } }
+impl Default for Profiler {
+    fn default() -> Self {
+        Self
+    }
+}
 impl Profiler {
-    pub fn new(_config: ProfilerConfig) -> Self { Self }
+    pub fn new(_config: ProfilerConfig) -> Self {
+        Self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -411,7 +562,12 @@ pub struct ProfilerConfig {
     pub sample_rate: f64,
 }
 impl Default for ProfilerConfig {
-    fn default() -> Self { Self { enabled: false, sample_rate: 1.0 } }
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            sample_rate: 1.0,
+        }
+    }
 }
 
 pub struct OperationProfile;
@@ -425,7 +581,8 @@ pub fn global_profiler() -> &'static Profiler {
 }
 
 pub fn init_global_profiler(config: ProfilerConfig) -> Result<(), ZiporaError> {
-    GLOBAL_PROFILER.set(Profiler::new(config))
+    GLOBAL_PROFILER
+        .set(Profiler::new(config))
         .map_err(|_| ZiporaError::invalid_data("global profiler already initialized"))
 }
 

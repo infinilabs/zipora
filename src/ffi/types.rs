@@ -10,7 +10,7 @@ use std::os::raw::{c_char, c_int};
 /// Opaque handle for FastVec
 #[repr(C)]
 pub struct CFastVec {
-    inner: crate::containers::FastVec<u32>,
+    inner: crate::containers::FastVec<u8>,
 }
 
 impl CFastVec {
@@ -23,7 +23,7 @@ impl CFastVec {
 
     /// Add a value to the vector
     #[inline]
-    pub fn push(&mut self, value: u32) -> crate::Result<()> {
+    pub fn push(&mut self, value: u8) -> crate::Result<()> {
         self.inner.push(value)
     }
 
@@ -35,7 +35,7 @@ impl CFastVec {
 
     /// Get a reference to the element at the given index
     #[inline]
-    pub fn get(&self, index: usize) -> Option<&u32> {
+    pub fn get(&self, index: usize) -> Option<&u8> {
         self.inner.get(index)
     }
 }

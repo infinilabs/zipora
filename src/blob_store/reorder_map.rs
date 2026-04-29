@@ -106,9 +106,7 @@ impl ZReorderMap {
         let path_buf = path.as_ref().to_path_buf();
 
         // Open file in read-only mode
-        let file = OpenOptions::new()
-            .read(true)
-            .open(&path_buf)?;
+        let file = OpenOptions::new().read(true).open(&path_buf)?;
 
         // Memory-map the file
         // SAFETY: File is valid and open for reading, mmap follows standard OS guarantees for read-only memory maps
@@ -218,7 +216,7 @@ impl ZReorderMap {
     pub fn rewind(&mut self) -> Result<()> {
         if self.mmap.len() < 16 {
             return Err(ZiporaError::invalid_data(
-                "ZReorderMap file too small for header"
+                "ZReorderMap file too small for header",
             ));
         }
 
@@ -272,7 +270,7 @@ impl ZReorderMap {
         // Read 5 bytes for encoded value
         if self.pos + 5 > self.mmap.len() {
             return Err(ZiporaError::invalid_data(
-                "ZReorderMap: read value out of range"
+                "ZReorderMap: read value out of range",
             ));
         }
 
@@ -300,7 +298,7 @@ impl ZReorderMap {
         // Validate position after var_uint read
         if self.pos > self.mmap.len() {
             return Err(ZiporaError::invalid_data(
-                "ZReorderMap: read seq out of range"
+                "ZReorderMap: read seq out of range",
             ));
         }
 
@@ -317,7 +315,7 @@ impl ZReorderMap {
         loop {
             if self.pos >= self.mmap.len() {
                 return Err(ZiporaError::invalid_data(
-                    "ZReorderMap: var_uint extends beyond file"
+                    "ZReorderMap: var_uint extends beyond file",
                 ));
             }
 
@@ -326,9 +324,7 @@ impl ZReorderMap {
 
             // Check for overflow before shifting
             if shift >= 64 {
-                return Err(ZiporaError::invalid_data(
-                    "ZReorderMap: var_uint overflow"
-                ));
+                return Err(ZiporaError::invalid_data("ZReorderMap: var_uint overflow"));
             }
 
             // Add the lower 7 bits
@@ -374,12 +370,11 @@ impl Iterator for ZReorderMap {
         self.seq_length -= 1;
 
         // Read next entry if sequence exhausted and more elements remain
-        if self.seq_length == 0 && !self.eof()
-            && self.read_entry().is_err() {
-                // Error reading next entry - mark as EOF
-                self.index = self.size;
-                return Some(value);
-            }
+        if self.seq_length == 0 && !self.eof() && self.read_entry().is_err() {
+            // Error reading next entry - mark as EOF
+            self.index = self.size;
+            return Some(value);
+        }
 
         Some(value)
     }
@@ -486,7 +481,7 @@ impl ZReorderMapBuilder {
 
         Ok(Self {
             file,
-            base_value: usize::MAX,  // Invalid initial value
+            base_value: usize::MAX, // Invalid initial value
             seq_length: 0,
             sign,
             remaining_size: size,
@@ -532,7 +527,7 @@ impl ZReorderMapBuilder {
         // Validate remaining size
         if self.remaining_size == 0 {
             return Err(ZiporaError::invalid_data(
-                "Cannot push more values: size limit reached"
+                "Cannot push more values: size limit reached",
             ));
         }
 
@@ -547,7 +542,7 @@ impl ZReorderMapBuilder {
         // Calculate expected next value in sequence
         let next_expected = if self.seq_length == 0 {
             // First value - always starts new sequence
-            usize::MAX  // Will never match
+            usize::MAX // Will never match
         } else {
             // Calculate using signed arithmetic
             (self.base_value as i64 + self.seq_length as i64 * self.sign) as usize
@@ -657,7 +652,7 @@ impl ZReorderMapBuilder {
             value >>= 7;
 
             if value != 0 {
-                byte |= 0x80;  // Set continuation bit
+                byte |= 0x80; // Set continuation bit
             }
 
             self.buffer.push(byte);
@@ -838,7 +833,7 @@ mod tests {
         // Test: value exceeds 40-bit limit
         {
             let mut builder = ZReorderMapBuilder::new(path, 1, 1)?;
-            let result = builder.push(0x8000000000);  // > 40 bits
+            let result = builder.push(0x8000000000); // > 40 bits
             assert!(result.is_err());
         }
 
@@ -1016,11 +1011,11 @@ mod tests {
 
         // Alternating short sequences
         let input = vec![
-            0, 1, 2,       // Sequence 1
-            10, 11,        // Sequence 2
-            20, 21, 22, 23, // Sequence 3
-            100,           // Single value
-            200, 201,      // Sequence 4
+            0, 1, 2, // Sequence 1
+            10, 11, // Sequence 2
+            20, 21, 22, 23,  // Sequence 3
+            100, // Single value
+            200, 201, // Sequence 4
         ];
 
         {

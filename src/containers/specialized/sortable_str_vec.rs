@@ -41,9 +41,6 @@ impl CompactEntry {
     // Maximum values for validation
     const MAX_OFFSET: usize = (1usize << Self::OFFSET_BITS) - 1; // ~1TB
 
-
-
-
     /// Extract offset with force inline for maximum performance
     #[inline(always)]
     fn offset(&self) -> usize {
@@ -944,7 +941,9 @@ impl SortableStrVec {
             }
 
             // SAFETY: sorted_indices[idx] is 0..self.len(), see function doc
-            let mid_str = self.get(self.sorted_indices[idx]).expect("sorted index is valid");
+            let mid_str = self
+                .get(self.sorted_indices[idx])
+                .expect("sorted index is valid");
 
             match mid_str.cmp(needle) {
                 Ordering::Less => left_block = mid_block + 1,
@@ -959,7 +958,9 @@ impl SortableStrVec {
 
         for i in start..end {
             // SAFETY: sorted_indices[i] is 0..self.len(), see function doc
-            let str_val = self.get(self.sorted_indices[i]).expect("sorted index is valid");
+            let str_val = self
+                .get(self.sorted_indices[i])
+                .expect("sorted index is valid");
             match str_val.cmp(needle) {
                 Ordering::Less => continue,
                 Ordering::Equal => return Ok(i),

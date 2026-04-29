@@ -86,7 +86,12 @@ fn get_usable_size(ptr: *mut u8, size: usize) -> usize {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "ios", target_os = "windows")))]
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "windows"
+)))]
 fn get_usable_size(_ptr: *mut u8, size: usize) -> usize {
     // Fallback for other platforms
     size
@@ -120,7 +125,7 @@ fn larger_capacity(old_cap: u32) -> u32 {
 
     // referenced project pattern: oldcap * 103 / 64 ≈ 1.609375 (close to golden ratio 1.618)
     // This is mathematically optimal for amortized performance
-    
+
     (old_cap as u64 * 103 / 64) as u32
 }
 
@@ -233,11 +238,11 @@ impl<T> ValVec32<T> {
             }
             NonNull::new_unchecked(raw_ptr as *mut T)
         };
-        
+
         // Use malloc_usable_size to get actual allocated capacity
         let actual_size = get_usable_size(ptr.as_ptr() as *mut u8, size);
         let actual_capacity = (actual_size / mem::size_of::<T>()).min(MAX_CAPACITY as usize);
-        
+
         Ok(Self {
             ptr,
             len: 0,
@@ -279,7 +284,7 @@ impl<T> ValVec32<T> {
     pub fn len(&self) -> u32 {
         self.len
     }
-    
+
     /// Returns the number of elements in the vector (usize)
     #[inline]
     pub fn len_usize(&self) -> usize {
@@ -301,7 +306,7 @@ impl<T> ValVec32<T> {
     pub fn capacity(&self) -> u32 {
         self.capacity
     }
-    
+
     /// Returns the allocated capacity of the vector (usize)
     #[inline]
     pub fn capacity_usize(&self) -> usize {
@@ -351,7 +356,6 @@ impl<T> ValVec32<T> {
     /// Calculates new capacity using referenced project optimal growth strategy
     #[inline]
     fn calculate_new_capacity(&self, min_capacity: u32) -> u32 {
-        
         larger_capacity(self.capacity).max(min_capacity)
     }
 
@@ -450,7 +454,6 @@ impl<T> ValVec32<T> {
         }
     }
 
-
     /// Appends an element to the vector, panicking on failure (like std::Vec)
     ///
     /// This method matches the behavior of std::Vec::push, panicking if
@@ -529,16 +532,16 @@ impl<T> ValVec32<T> {
     }
 
     /// Unchecked push for when capacity is guaranteed - maximum performance
-    /// 
+    ///
     /// # Safety
-    /// 
+    ///
     /// Caller must ensure that `self.len < self.capacity`
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```rust
     /// use zipora::ValVec32;
-    /// 
+    ///
     /// let mut vec = ValVec32::with_capacity(10)?;
     /// unsafe {
     ///     vec.unchecked_push(42); // Safe because we reserved capacity
@@ -556,14 +559,14 @@ impl<T> ValVec32<T> {
     }
 
     /// Unchecked push for Copy types - even more optimized
-    /// 
+    ///
     /// # Safety
-    /// 
+    ///
     /// Caller must ensure that `self.len < self.capacity`
     #[inline(always)]
     pub unsafe fn unchecked_push_copy(&mut self, value: T)
     where
-        T: Copy
+        T: Copy,
     {
         debug_assert!(self.len < self.capacity);
         // SAFETY: caller guarantees len < capacity, so offset is within allocated buffer
@@ -572,7 +575,6 @@ impl<T> ValVec32<T> {
         }
         self.len += 1;
     }
-
 
     /// Slow path for push when growth is needed
     #[cold]
@@ -949,7 +951,6 @@ impl<T> ValVec32<T> {
         Ok(())
     }
 
-
     /// Returns an iterator over the elements
     ///
     /// # Examples
@@ -1006,7 +1007,7 @@ impl<T> Default for ValVec32<T> {
 impl<'a, T> IntoIterator for &'a ValVec32<T> {
     type Item = &'a T;
     type IntoIter = ValVec32Iter<'a, T>;
-    
+
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
@@ -1015,7 +1016,7 @@ impl<'a, T> IntoIterator for &'a ValVec32<T> {
 impl<'a, T> IntoIterator for &'a mut ValVec32<T> {
     type Item = &'a mut T;
     type IntoIter = ValVec32IterMut<'a, T>;
-    
+
     fn into_iter(self) -> Self::IntoIter {
         self.iter_mut()
     }
@@ -1084,8 +1085,8 @@ impl<T: fmt::Debug> fmt::Debug for ValVec32<T> {
 
 impl<T: Clone> Clone for ValVec32<T> {
     fn clone(&self) -> Self {
-        let mut new_vec = Self::with_capacity(self.len)
-            .expect("Memory allocation failed during clone");
+        let mut new_vec =
+            Self::with_capacity(self.len).expect("Memory allocation failed during clone");
 
         if self.len > 0 {
             // SAFETY: i < self.len, offsets within valid ranges for both vectors
@@ -1292,10 +1293,18 @@ mod tests {
             }
 
             let cloned = vec.clone();
-            assert_eq!(cloned.len(), vec.len(),
-                "clone must preserve exact length for n={}", n);
-            assert_eq!(cloned.as_slice(), vec.as_slice(),
-                "clone must preserve all elements for n={}", n);
+            assert_eq!(
+                cloned.len(),
+                vec.len(),
+                "clone must preserve exact length for n={}",
+                n
+            );
+            assert_eq!(
+                cloned.as_slice(),
+                vec.as_slice(),
+                "clone must preserve all elements for n={}",
+                n
+            );
         }
         Ok(())
     }
@@ -1373,9 +1382,6 @@ mod tests {
         Ok(())
     }
 
-
-
-
     #[test]
     fn test_branch_prediction_hints() {
         // Test that likely macro works correctly (just passes through on stable)
@@ -1387,7 +1393,7 @@ mod tests {
     fn test_small_size_growth() -> Result<()> {
         let mut vec = ValVec32::<i32>::new();
 
-        // First push should trigger initial allocation 
+        // First push should trigger initial allocation
         vec.push(1)?;
         let initial_capacity = vec.capacity();
 
@@ -1398,19 +1404,23 @@ mod tests {
         // With malloc_usable_size bonus, this could be slightly larger than expected
         let cache_line_elements = 64 / std::mem::size_of::<i32>();
         let max_reasonable = (cache_line_elements * 2).max(32) as u32; // Allow for malloc bonus
-        assert!(initial_capacity <= max_reasonable, 
-                "initial_capacity {} > max_reasonable {}", initial_capacity, max_reasonable);
+        assert!(
+            initial_capacity <= max_reasonable,
+            "initial_capacity {} > max_reasonable {}",
+            initial_capacity,
+            max_reasonable
+        );
 
         // Test that growth works properly
         let mut count = 1;
         let first_capacity = initial_capacity;
-        
+
         // Fill to capacity
         while count < first_capacity {
             vec.push(count as i32)?;
             count += 1;
         }
-        
+
         // Next push should trigger growth
         vec.push(count as i32)?;
         assert!(vec.capacity() > first_capacity);
@@ -1418,12 +1428,11 @@ mod tests {
         Ok(())
     }
 
-
     #[test]
     fn test_zero_sized_types() -> Result<()> {
         // Test basic ZST support
         let mut vec = ValVec32::<()>::new();
-        
+
         assert_eq!(vec.len(), 0);
         assert_eq!(vec.capacity(), 0);
         assert!(vec.is_empty());
@@ -1433,7 +1442,7 @@ mod tests {
             vec.push(())?;
         }
         assert_eq!(vec.len(), 10);
-        
+
         // Test indexing
         assert_eq!(vec.get(0), Some(&()));
         assert_eq!(vec.get(9), Some(&()));
@@ -1445,6 +1454,4 @@ mod tests {
 
         Ok(())
     }
-
-
 }

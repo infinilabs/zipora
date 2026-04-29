@@ -118,22 +118,22 @@ use std::fmt;
 
 // BEST PERFORMER: Use RankSelectInterleaved256 as the primary implementation (121-302 Mops/s)
 // This provides 50-150x better performance than the removed legacy implementations
-pub use interleaved::{RankSelectInterleaved256 as RankSelect256};
+pub use interleaved::RankSelectInterleaved256 as RankSelect256;
 
 // Core rank/select implementations
 pub mod builder;
 pub mod config;
-pub mod interleaved;    // rank_select_il_256: interleaved 256-bit blocks
-pub mod separated;      // rank_select_se_256: side-entry 256-bit blocks
-pub mod separated_512;  // rank_select_se_512: side-entry 512-bit blocks
-pub mod simple;         // rank_select_simple: minimal baseline
-pub mod trivial;        // rank_select_allzero / rank_select_allone
-pub mod few;            // rank_select_few: sparse bitvector (stores only pivot positions)
-pub mod mixed_il_256;   // rank_select_mixed_il_256: two-dimension interleaved 256-bit
-pub mod mixed_se_512;   // rank_select_mixed_se_512: two-dimension side-entry 512-bit
-pub mod mixed_xl_256;   // rank_select_mixed_xl_256: multi-dimension (2-4) interleaved 256-bit
-pub mod rank9;          // rank9: O(1) rank with 512-bit blocks, 25% overhead (Vigna 2008)
+pub mod few; // rank_select_few: sparse bitvector (stores only pivot positions)
+pub mod interleaved; // rank_select_il_256: interleaved 256-bit blocks
+pub mod mixed_il_256; // rank_select_mixed_il_256: two-dimension interleaved 256-bit
+pub mod mixed_se_512; // rank_select_mixed_se_512: two-dimension side-entry 512-bit
+pub mod mixed_xl_256; // rank_select_mixed_xl_256: multi-dimension (2-4) interleaved 256-bit
+pub mod rank9; // rank9: O(1) rank with 512-bit blocks, 25% overhead (Vigna 2008)
+pub mod separated; // rank_select_se_256: side-entry 256-bit blocks
+pub mod separated_512; // rank_select_se_512: side-entry 512-bit blocks
 pub mod simd;
+pub mod simple; // rank_select_simple: minimal baseline
+pub mod trivial; // rank_select_allzero / rank_select_allone
 
 // Advanced optimization modules
 pub mod adaptive;
@@ -141,33 +141,32 @@ pub mod bmi2_acceleration;
 pub mod multidim_simd;
 
 // Re-export all rank/select implementations
-pub use interleaved::RankSelectInterleaved256;
-pub use separated::RankSelectSE256;
-pub use separated_512::{RankSelectSE512, RankSelectSE512_32};
-pub use simple::RankSelectSimple;
-pub use trivial::{RankSelectAllZero, RankSelectAllOne};
-pub use few::{RankSelectFewOne, RankSelectFewZero};
-pub use mixed_il_256::{RankSelectMixedIL256, MixedDimView};
-pub use mixed_se_512::{RankSelectMixedSE512, MixedSE512DimView};
-pub use mixed_xl_256::{RankSelectMixedXL256, MixedXL256DimView};
-pub use rank9::Rank9;
-pub use separated_512::RankSelectSE512_64;
 pub use config::{
-    SeparatedStorageConfig, SeparatedStorageConfigBuilder, StorageLayout, MemoryStrategy,
-    CacheAlignment, MultiDimensionalConfig, HardwareOptimizations, PerformanceTuning,
-    AccessFrequency, DataDensity, SelectCacheDensity, FeatureDetection, CacheLevel,
-    ConfigSummary,
+    AccessFrequency, CacheAlignment, CacheLevel, ConfigSummary, DataDensity, FeatureDetection,
+    HardwareOptimizations, MemoryStrategy, MultiDimensionalConfig, PerformanceTuning,
+    SelectCacheDensity, SeparatedStorageConfig, SeparatedStorageConfigBuilder, StorageLayout,
 };
+pub use few::{RankSelectFewOne, RankSelectFewZero};
+pub use interleaved::RankSelectInterleaved256;
+pub use mixed_il_256::{MixedDimView, RankSelectMixedIL256};
+pub use mixed_se_512::{MixedSE512DimView, RankSelectMixedSE512};
+pub use mixed_xl_256::{MixedXL256DimView, RankSelectMixedXL256};
+pub use rank9::Rank9;
+pub use separated::RankSelectSE256;
+pub use separated_512::RankSelectSE512_64;
+pub use separated_512::{RankSelectSE512, RankSelectSE512_32};
 pub use simd::{SimdCapabilities, SimdOps, bulk_popcount_simd, bulk_rank1_simd, bulk_select1_simd};
+pub use simple::RankSelectSimple;
+pub use trivial::{RankSelectAllOne, RankSelectAllZero};
 // Note: RankSelectSimple and RankSelectFew implementations removed - using RankSelectInterleaved256 (best performer)
 
 // Re-export advanced optimization variants
 pub use adaptive::{
-    AdaptiveRankSelect, AdaptiveMultiDimensional, DataProfile, SelectionCriteria,
-    AccessPattern, SizeCategory, OptimizationStats, PerformanceTier,
+    AccessPattern, AdaptiveMultiDimensional, AdaptiveRankSelect, DataProfile, OptimizationStats,
+    PerformanceTier, SelectionCriteria, SizeCategory,
 };
 pub use bmi2_acceleration::{
-    Bmi2Accelerator, Bmi2BitOps, Bmi2BlockOps, Bmi2Capabilities, Bmi2PrefetchOps, Bmi2RangeOps, 
+    Bmi2Accelerator, Bmi2BitOps, Bmi2BlockOps, Bmi2Capabilities, Bmi2PrefetchOps, Bmi2RangeOps,
     Bmi2RankOps, Bmi2SelectOps, Bmi2SequenceOps, Bmi2Stats,
 };
 pub use multidim_simd::MultiDimRankSelect;
@@ -575,7 +574,9 @@ mod tests {
             assert!(
                 rank >= expected_approx && rank <= expected_approx + 1,
                 "Rank at position {} should be approximately {}, got {}",
-                pos, expected_approx, rank
+                pos,
+                expected_approx,
+                rank
             );
         }
 
@@ -596,7 +597,9 @@ mod tests {
                     interleaved.rank1(select_pos + 1),
                     k + 1,
                     "Round-trip failed: rank(select({}) + 1) = {} != {}",
-                    k, interleaved.rank1(select_pos + 1), k + 1
+                    k,
+                    interleaved.rank1(select_pos + 1),
+                    k + 1
                 );
             }
         }
@@ -611,7 +614,12 @@ mod tests {
                 rank0 + rank1,
                 pos,
                 "rank0({}) + rank1({}) = {} + {} = {} != {}",
-                pos, pos, rank0, rank1, rank0 + rank1, pos
+                pos,
+                pos,
+                rank0,
+                rank1,
+                rank0 + rank1,
+                pos
             );
         }
     }
@@ -663,14 +671,16 @@ mod tests {
             assert!(
                 alt_rank >= expected_alt && alt_rank <= expected_alt + 1,
                 "Alternating pattern rank unexpected: {} at pos {}",
-                alt_rank, pos
+                alt_rank,
+                pos
             );
 
             // For dense pattern, rank should be ~pos (most bits are 1)
             assert!(
-                dense_rank >= pos * 3 / 4,  // At least 75% should be 1s
+                dense_rank >= pos * 3 / 4, // At least 75% should be 1s
                 "Dense pattern rank too low: {} at pos {}",
-                dense_rank, pos
+                dense_rank,
+                pos
             );
         }
 
@@ -699,8 +709,14 @@ mod tests {
             let rank3 = rs3.rank1(pos);
 
             // Verify rank ordering: sparse < alternating < dense
-            assert!(rank2 <= rank1, "Sparse should have fewer 1s than alternating");
-            assert!(rank1 <= rank3, "Alternating should have fewer 1s than dense");
+            assert!(
+                rank2 <= rank1,
+                "Sparse should have fewer 1s than alternating"
+            );
+            assert!(
+                rank1 <= rank3,
+                "Alternating should have fewer 1s than dense"
+            );
 
             // Test rank0 + rank1 = pos for all patterns
             assert_eq!(rs1.rank0(pos) + rank1, pos);
@@ -860,8 +876,14 @@ mod tests {
             dense_rs.space_overhead_percent()
         );
 
-        println!("Alternating overhead: {:.2}%", alternating_rs.space_overhead_percent());
-        println!("Sparse overhead: {:.2}%", sparse_rs.space_overhead_percent());
+        println!(
+            "Alternating overhead: {:.2}%",
+            alternating_rs.space_overhead_percent()
+        );
+        println!(
+            "Sparse overhead: {:.2}%",
+            sparse_rs.space_overhead_percent()
+        );
         println!("Dense overhead: {:.2}%", dense_rs.space_overhead_percent());
     }
 
@@ -898,13 +920,17 @@ mod tests {
                     interleaved.rank1(select_pos + 1),
                     k + 1,
                     "Round-trip failed: rank(select({}) + 1) != {}",
-                    k, k + 1
+                    k,
+                    k + 1
                 );
             }
         }
 
-        println!("Large dataset ({} bits) test passed - {} ones found",
-                 large_bv.len(), ones_count);
+        println!(
+            "Large dataset ({} bits) test passed - {} ones found",
+            large_bv.len(),
+            ones_count
+        );
     }
 
     #[test]

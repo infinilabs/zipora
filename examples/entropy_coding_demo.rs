@@ -5,8 +5,7 @@
 
 use zipora::{
     BlobStore, DictionaryBuilder, DictionaryCompressor, EntropyStats, HuffmanBlobStore,
-    HuffmanEncoder, HuffmanTree, MemoryBlobStore, RansDecoder, Rans64Encoder,
-    entropy::{ParallelX1},
+    HuffmanEncoder, HuffmanTree, MemoryBlobStore, Rans64Encoder, RansDecoder, entropy::ParallelX1,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

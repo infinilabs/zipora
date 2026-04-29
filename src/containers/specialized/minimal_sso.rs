@@ -61,7 +61,9 @@ impl MinimalSso {
 
     /// Returns `true` if the string is stored inline (no heap allocation).
     #[inline]
-    pub fn is_local(&self) -> bool { self.bytes[31] != HEAP_FLAG }
+    pub fn is_local(&self) -> bool {
+        self.bytes[31] != HEAP_FLAG
+    }
 
     /// Returns the length in bytes.
     #[inline]
@@ -74,7 +76,9 @@ impl MinimalSso {
     }
 
     #[inline]
-    pub fn is_empty(&self) -> bool { self.len() == 0 }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 
     /// Returns the current capacity.
     #[inline]
@@ -121,7 +125,9 @@ impl MinimalSso {
 
     /// Append bytes, potentially spilling to heap.
     pub fn push_bytes(&mut self, data: &[u8]) {
-        if data.is_empty() { return; }
+        if data.is_empty() {
+            return;
+        }
         let old_len = self.len();
         let new_len = old_len + data.len();
 
@@ -172,9 +178,13 @@ impl MinimalSso {
             .expect("layout creation: non-zero size, power-of-two alignment");
         // SAFETY: Layout is valid (cap > 0, align = 1)
         let ptr = unsafe { std::alloc::alloc(layout) };
-        if ptr.is_null() { std::alloc::handle_alloc_error(layout); }
+        if ptr.is_null() {
+            std::alloc::handle_alloc_error(layout);
+        }
         // SAFETY: ptr valid from allocation, data.len() <= cap
-        unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len()); }
+        unsafe {
+            std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+        }
         self.write_heap(ptr, data.len(), cap);
     }
 
@@ -186,7 +196,9 @@ impl MinimalSso {
             .expect("layout creation: non-zero size, power-of-two alignment");
         // SAFETY: Layout is valid (cap > 0, align = 1)
         let ptr = unsafe { std::alloc::alloc(layout) };
-        if ptr.is_null() { std::alloc::handle_alloc_error(layout); }
+        if ptr.is_null() {
+            std::alloc::handle_alloc_error(layout);
+        }
         // SAFETY: ptr valid from allocation, old_len + extra.len() <= cap
         unsafe {
             // Copy existing inline data
@@ -256,7 +268,9 @@ impl Drop for MinimalSso {
                 let layout = std::alloc::Layout::from_size_align(cap, 1)
                     .expect("layout creation: non-zero size, power-of-two alignment");
                 // SAFETY: ptr from valid allocation, layout matches original alloc
-                unsafe { std::alloc::dealloc(ptr, layout); }
+                unsafe {
+                    std::alloc::dealloc(ptr, layout);
+                }
             }
         }
     }
@@ -269,12 +283,16 @@ impl Clone for MinimalSso {
 }
 
 impl Default for MinimalSso {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Deref for MinimalSso {
     type Target = [u8];
-    fn deref(&self) -> &[u8] { self.as_bytes() }
+    fn deref(&self) -> &[u8] {
+        self.as_bytes()
+    }
 }
 
 impl Hash for MinimalSso {
@@ -321,15 +339,21 @@ impl fmt::Display for MinimalSso {
 }
 
 impl From<&str> for MinimalSso {
-    fn from(s: &str) -> Self { Self::from_str(s) }
+    fn from(s: &str) -> Self {
+        Self::from_str(s)
+    }
 }
 
 impl From<String> for MinimalSso {
-    fn from(s: String) -> Self { Self::from_str(&s) }
+    fn from(s: String) -> Self {
+        Self::from_str(&s)
+    }
 }
 
 impl From<&[u8]> for MinimalSso {
-    fn from(s: &[u8]) -> Self { Self::from_bytes(s) }
+    fn from(s: &[u8]) -> Self {
+        Self::from_bytes(s)
+    }
 }
 
 // ============================================================================

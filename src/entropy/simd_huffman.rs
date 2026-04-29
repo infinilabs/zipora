@@ -30,8 +30,8 @@
 //!                   └────────┘ └─────┘ └────────┘
 //! ```
 
+use crate::entropy::huffman::{HuffmanEncoder, HuffmanTree};
 use crate::error::{Result, ZiporaError};
-use crate::entropy::huffman::{HuffmanTree, HuffmanEncoder};
 use crate::memory::simd_ops::SimdMemOps;
 use crate::succinct::rank_select::bmi2_acceleration::Bmi2Capabilities;
 use crate::system::cpu_features::{CpuFeatures, get_cpu_features};
@@ -309,22 +309,23 @@ impl SimdHuffmanEncoder {
         // Build lookup table for fast symbol encoding
         let mut symbol_codes = [0u32; 256];
         let mut symbol_lengths = [0u8; 256];
-        
+
         for symbol in 0u8..=255 {
             if let Some(code) = self.base_encoder.tree().get_code(symbol)
-                && code.len() <= 32 {
-                    // Pack bits into u32 (simple approach for now)
-                    let mut packed_code = 0u32;
-                    
-                    for (i, &bit) in code.iter().enumerate() {
-                        if bit {
-                            packed_code |= 1u32 << i;
-                        }
+                && code.len() <= 32
+            {
+                // Pack bits into u32 (simple approach for now)
+                let mut packed_code = 0u32;
+
+                for (i, &bit) in code.iter().enumerate() {
+                    if bit {
+                        packed_code |= 1u32 << i;
                     }
-                    
-                    symbol_codes[symbol as usize] = packed_code;
-                    symbol_lengths[symbol as usize] = code.len() as u8;
                 }
+
+                symbol_codes[symbol as usize] = packed_code;
+                symbol_lengths[symbol as usize] = code.len() as u8;
+            }
         }
 
         // Process data in batches of 32 bytes (AVX2 register size)
@@ -343,20 +344,26 @@ impl SimdHuffmanEncoder {
             // Load 32 symbols into AVX2 register
             // SAFETY: avx2 guaranteed by #[target_feature(enable = "avx2,bmi2")], chunk is 32 bytes from chunks_exact
             let _symbols = unsafe { _mm256_loadu_si256(chunk.as_ptr() as *const __m256i) };
-            
+
             // Process 8 symbols at a time using AVX2
             for i in (0..32).step_by(8) {
                 // Extract 8 symbols
                 let symbols_8 = [
-                    chunk[i], chunk[i+1], chunk[i+2], chunk[i+3],
-                    chunk[i+4], chunk[i+5], chunk[i+6], chunk[i+7]
+                    chunk[i],
+                    chunk[i + 1],
+                    chunk[i + 2],
+                    chunk[i + 3],
+                    chunk[i + 4],
+                    chunk[i + 5],
+                    chunk[i + 6],
+                    chunk[i + 7],
                 ];
 
                 // Encode symbols using BMI2-accelerated lookup
                 for &symbol in &symbols_8 {
                     let code = symbol_codes[symbol as usize];
                     let length = symbol_lengths[symbol as usize];
-                    
+
                     if length > 0 {
                         // Use BMI2 BZHI to extract only the needed bits
                         // SAFETY: bmi2 guaranteed by #[target_feature(enable = "avx2,bmi2")], operates on u32 with valid index
@@ -376,7 +383,7 @@ impl SimdHuffmanEncoder {
         for &symbol in remainder {
             let code = symbol_codes[symbol as usize];
             let length = symbol_lengths[symbol as usize];
-            
+
             if length > 0 {
                 // SAFETY: bmi2 guaranteed by #[target_feature(enable = "avx2,bmi2")], operates on u32 with valid index
                 let masked_code = _bzhi_u32(code, length as u32);
@@ -396,11 +403,10 @@ impl SimdHuffmanEncoder {
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
     unsafe fn encode_avx2_impl(&self, data: &[u8]) -> Result<Vec<u8>> {
-
         // Build symbol lookup table
         let mut symbol_codes = Vec::with_capacity(256);
         let mut symbol_lengths = Vec::with_capacity(256);
-        
+
         for symbol in 0u8..=255 {
             if let Some(code) = self.base_encoder.tree().get_code(symbol) {
                 if code.len() <= 32 {
@@ -432,7 +438,7 @@ impl SimdHuffmanEncoder {
             for &symbol in chunk {
                 let code = symbol_codes[symbol as usize];
                 let length = symbol_lengths[symbol as usize];
-                
+
                 if length > 0 {
                     bit_buffer.append_bits(code as u64, length)?;
                 } else {
@@ -493,7 +499,7 @@ impl SimdHuffmanEncoder {
                     bit_buffer.append_bits(final_code, length)?;
                 } else {
                     return Err(ZiporaError::invalid_data(
-                        "Code too long for BMI2 optimization"
+                        "Code too long for BMI2 optimization",
                     ));
                 }
             } else {
@@ -583,22 +589,26 @@ mod tests {
     #[test]
     fn test_simd_huffman_basic() -> Result<()> {
         let data = b"aaaaaabbbbbbccccccddddddeeeeeeffffffgggggg"; // More compressible data
-        
+
         let encoder = SimdHuffmanEncoder::new(data)?;
         let encoded = encoder.encode(data)?;
-        
+
         // Verify encoding is not empty
         assert!(!encoded.is_empty());
-        println!("Encoded {} bytes to {} bytes (tier: {:?})", 
-                 data.len(), encoded.len(), encoder.tier());
-        
+        println!(
+            "Encoded {} bytes to {} bytes (tier: {:?})",
+            data.len(),
+            encoded.len(),
+            encoder.tier()
+        );
+
         Ok(())
     }
 
     #[test]
     fn test_simd_huffman_tiers() -> Result<()> {
         let data = b"test data for simd tier testing";
-        
+
         // Test with different configurations
         let configs = [
             SimdHuffmanConfig {
@@ -622,32 +632,36 @@ mod tests {
         for config in &configs {
             let encoder = SimdHuffmanEncoder::with_config(data, config.clone())?;
             let encoded = encoder.encode(data)?;
-            
+
             assert!(!encoded.is_empty());
-            println!("Tier {:?}: {} bytes -> {} bytes", 
-                     encoder.tier(), data.len(), encoded.len());
+            println!(
+                "Tier {:?}: {} bytes -> {} bytes",
+                encoder.tier(),
+                data.len(),
+                encoded.len()
+            );
         }
-        
+
         Ok(())
     }
 
     #[test]
     fn test_bit_buffer() -> Result<()> {
         let mut buffer = BitBuffer::with_capacity(100);
-        
+
         // Test appending various bit patterns
-        buffer.append_bits(0b1010, 4)?;  // 4 bits: 1010
-        buffer.append_bits(0b11, 2)?;    // 2 bits: 11
-        buffer.append_bits(0b0, 1)?;     // 1 bit: 0
-        buffer.append_bits(0b1, 1)?;     // 1 bit: 1
-        
+        buffer.append_bits(0b1010, 4)?; // 4 bits: 1010
+        buffer.append_bits(0b11, 2)?; // 2 bits: 11
+        buffer.append_bits(0b0, 1)?; // 1 bit: 0
+        buffer.append_bits(0b1, 1)?; // 1 bit: 1
+
         let bytes = buffer.into_bytes();
         assert_eq!(bytes.len(), 1);
         // Our result is 186 = 0b10111010
         // Let me check what we actually produce
         println!("Actual byte: {} = 0b{:08b}", bytes[0], bytes[0]);
         assert_eq!(bytes[0], 186); // Update to match actual implementation
-        
+
         Ok(())
     }
 
@@ -656,14 +670,18 @@ mod tests {
         // Test with data larger than thresholds - use realistic text data
         let large_data = "This is a test message for large data encoding with SIMD Huffman compression. It has sufficient data volume to trigger large data processing paths in the encoder implementation.".repeat(100);
         let large_data = large_data.as_bytes();
-        
+
         let encoder = SimdHuffmanEncoder::new(&large_data)?;
         let encoded = encoder.encode(&large_data)?;
-        
+
         assert!(!encoded.is_empty());
-        println!("Large data: {} bytes -> {} bytes (tier: {:?})", 
-                 large_data.len(), encoded.len(), encoder.tier());
-        
+        println!(
+            "Large data: {} bytes -> {} bytes (tier: {:?})",
+            large_data.len(),
+            encoded.len(),
+            encoder.tier()
+        );
+
         Ok(())
     }
 }

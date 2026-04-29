@@ -13,7 +13,7 @@ pub mod pipeline;
 pub mod work_stealing;
 
 #[cfg(feature = "async")]
-pub use fiber_pool::{FiberHandle, FiberPool, FiberPoolConfig, FiberPoolBuilder, FiberStats};
+pub use fiber_pool::{FiberHandle, FiberPool, FiberPoolBuilder, FiberPoolConfig, FiberStats};
 #[cfg(feature = "async")]
 pub use parallel_trie::{ParallelLoudsTrie, ParallelTrieBuilder};
 #[cfg(feature = "async")]
@@ -86,7 +86,10 @@ pub struct ConcurrencyConfig {
 impl Default for ConcurrencyConfig {
     fn default() -> Self {
         Self {
-            max_fibers: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) * 2,
+            max_fibers: std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1)
+                * 2,
             queue_size: 1024,
         }
     }

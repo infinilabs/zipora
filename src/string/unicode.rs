@@ -48,7 +48,7 @@ pub fn utf8_byte_count(byte: u8) -> usize {
 /// falling back to scalar implementation otherwise.
 pub fn validate_utf8_and_count_chars(bytes: &[u8]) -> Result<usize> {
     let caps = SimdCapabilities::get();
-    
+
     if caps.cpu_features.has_avx2 && bytes.len() >= 32 {
         validate_utf8_and_count_chars_simd(bytes)
     } else {
@@ -75,7 +75,7 @@ fn validate_utf8_and_count_chars_simd(bytes: &[u8]) -> Result<usize> {
             return Ok(bytes.len());
         }
     }
-    
+
     // Fall back to scalar for complex cases
     validate_utf8_and_count_chars_scalar(bytes)
 }
@@ -118,8 +118,6 @@ fn is_ascii_simd(bytes: &[u8]) -> bool {
         true
     }
 }
-
-
 
 /// Unicode string processor with configurable strategies
 pub struct UnicodeProcessor {
@@ -174,30 +172,30 @@ impl UnicodeProcessor {
     /// Analyze Unicode properties of a string
     pub fn analyze(&self, input: &str) -> UnicodeAnalysis {
         let mut analysis = UnicodeAnalysis::default();
-        
+
         for ch in input.chars() {
             analysis.char_count += 1;
-            
+
             if ch.is_ascii() {
                 analysis.ascii_count += 1;
             }
-            
+
             if ch.is_alphabetic() {
                 analysis.alphabetic_count += 1;
             }
-            
+
             if ch.is_numeric() {
                 analysis.numeric_count += 1;
             }
-            
+
             if ch.is_whitespace() {
                 analysis.whitespace_count += 1;
             }
-            
+
             if ch.is_control() {
                 analysis.control_count += 1;
             }
-            
+
             // Track Unicode blocks
             let codepoint = ch as u32;
             if codepoint <= 0x7F {
@@ -210,7 +208,7 @@ impl UnicodeProcessor {
                 analysis.other_unicode += 1;
             }
         }
-        
+
         analysis.byte_count = input.len();
         analysis
     }
@@ -232,7 +230,7 @@ pub struct UnicodeAnalysis {
     pub numeric_count: usize,
     pub whitespace_count: usize,
     pub control_count: usize,
-    
+
     // Unicode block counts
     pub basic_latin: usize,
     pub latin_supplement: usize,
@@ -263,7 +261,7 @@ impl UnicodeAnalysis {
 
         let non_ascii_ratio = (self.char_count - self.ascii_count) as f64 / self.char_count as f64;
         let avg_bytes = self.avg_bytes_per_char();
-        
+
         // Combine non-ASCII ratio with average byte length
         (non_ascii_ratio * 0.7) + ((avg_bytes - 1.0) / 3.0 * 0.3).min(0.3)
     }
@@ -307,7 +305,7 @@ impl<'a> Utf8ToUtf32Iterator<'a> {
 
         let byte = self.bytes[self.position];
         let char_len = utf8_byte_count(byte);
-        
+
         if char_len == 0 || self.position + char_len > self.bytes.len() {
             self.current_char = None;
             return None;
@@ -336,7 +334,7 @@ impl<'a> Utf8ToUtf32Iterator<'a> {
 
         // Walk backward to find the start of the previous character
         let mut pos = self.position.saturating_sub(1);
-        
+
         // Skip continuation bytes
         while pos > 0 && (self.bytes[pos] & 0xC0) == 0x80 {
             pos -= 1;
@@ -345,7 +343,7 @@ impl<'a> Utf8ToUtf32Iterator<'a> {
         // Now at the start of a character
         let byte = self.bytes[pos];
         let char_len = utf8_byte_count(byte);
-        
+
         if char_len == 0 || pos + char_len > self.bytes.len() {
             self.current_char = None;
             return None;
@@ -395,22 +393,25 @@ pub mod utils {
     /// (accounting for wide characters, combining marks, etc.)
     pub fn display_width(input: &str) -> usize {
         // Simplified implementation - could use unicode-width crate for full support
-        input.chars().map(|ch| {
-            if ch.is_control() {
-                0
-            } else if ch as u32 > 0x1100 && is_wide_char(ch) {
-                2 // Wide characters (CJK, etc.)
-            } else {
-                1 // Normal width
-            }
-        }).sum()
+        input
+            .chars()
+            .map(|ch| {
+                if ch.is_control() {
+                    0
+                } else if ch as u32 > 0x1100 && is_wide_char(ch) {
+                    2 // Wide characters (CJK, etc.)
+                } else {
+                    1 // Normal width
+                }
+            })
+            .sum()
     }
 
     /// Check if a character is wide (occupies 2 terminal columns)
     fn is_wide_char(ch: char) -> bool {
         // Simplified check for wide characters
         let codepoint = ch as u32;
-        
+
         // CJK ranges (simplified)
         (0x1100..=0x115F).contains(&codepoint) ||  // Hangul Jamo
         (0x2E80..=0x2EFF).contains(&codepoint) ||  // CJK Radicals Supplement
@@ -439,7 +440,7 @@ pub mod utils {
         (0x20000..=0x2A6DF).contains(&codepoint) || // CJK Extension B
         (0x2A700..=0x2B73F).contains(&codepoint) || // CJK Extension C
         (0x2B740..=0x2B81F).contains(&codepoint) || // CJK Extension D
-        (0x2F800..=0x2FA1F).contains(&codepoint)    // CJK Compatibility Ideographs Supplement
+        (0x2F800..=0x2FA1F).contains(&codepoint) // CJK Compatibility Ideographs Supplement
     }
 
     /// Extract all Unicode codepoints from a string
@@ -449,7 +450,9 @@ pub mod utils {
 
     /// Check if string contains only printable Unicode characters
     pub fn is_printable(input: &str) -> bool {
-        input.chars().all(|ch| !ch.is_control() || ch == '\t' || ch == '\n' || ch == '\r')
+        input
+            .chars()
+            .all(|ch| !ch.is_control() || ch == '\t' || ch == '\n' || ch == '\r')
     }
 }
 
@@ -469,7 +472,7 @@ mod tests {
     #[test]
     fn test_unicode_analysis() {
         let processor = UnicodeProcessor::new();
-        
+
         // ASCII string
         let analysis = processor.analyze("Hello World!");
         assert!(analysis.is_ascii());
@@ -477,7 +480,7 @@ mod tests {
         assert_eq!(analysis.byte_count, 12);
         assert_eq!(analysis.ascii_count, 12);
         assert_eq!(analysis.avg_bytes_per_char(), 1.0);
-        
+
         // Mixed Unicode string
         let analysis = processor.analyze("Hello 世界!");
         assert!(!analysis.is_ascii());
@@ -491,14 +494,14 @@ mod tests {
     fn test_utf8_iterator() {
         let text = "Hello 世界!";
         let mut iter = Utf8ToUtf32Iterator::new(text.as_bytes()).unwrap();
-        
+
         let chars: Vec<char> = text.chars().collect();
         let mut collected = Vec::new();
-        
+
         while let Some(ch) = iter.next_char() {
             collected.push(ch);
         }
-        
+
         assert_eq!(chars, collected);
     }
 
@@ -506,19 +509,19 @@ mod tests {
     fn test_backward_iteration() {
         let text = "Héllo!";
         let mut iter = Utf8ToUtf32Iterator::new(text.as_bytes()).unwrap();
-        
+
         // Move to end
         while iter.next_char().is_some() {}
-        
+
         // Iterate backward
         let mut backward_chars = Vec::new();
         while let Some(ch) = iter.prev_char() {
             backward_chars.push(ch);
         }
-        
+
         let forward_chars: Vec<char> = text.chars().collect();
         backward_chars.reverse();
-        
+
         assert_eq!(forward_chars, backward_chars);
     }
 
@@ -527,7 +530,7 @@ mod tests {
         // Valid UTF-8
         let valid = "Hello 世界!";
         assert!(validate_utf8_and_count_chars(valid.as_bytes()).is_ok());
-        
+
         // Invalid UTF-8
         let invalid = &[0xFF, 0xFE, 0xFD];
         assert!(validate_utf8_and_count_chars(invalid).is_err());
@@ -544,7 +547,7 @@ mod tests {
     fn test_case_conversion() {
         assert_eq!(utils::to_lowercase_unicode("HELLO"), "hello");
         assert_eq!(utils::to_uppercase_unicode("hello"), "HELLO");
-        
+
         // Unicode case conversion
         assert_eq!(utils::to_lowercase_unicode("WORLD"), "world");
         assert_eq!(utils::to_uppercase_unicode("world"), "WORLD");
@@ -555,7 +558,7 @@ mod tests {
         let mut processor = UnicodeProcessor::new()
             .with_case_folding(true)
             .with_normalization(true);
-            
+
         let result = processor.process("HELLO World").unwrap();
         assert_eq!(result, "hello world");
     }

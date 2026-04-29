@@ -318,7 +318,9 @@ impl SeparatedStorageConfig {
         }
 
         // Validate relative rank bits
-        if self.enable_bit_packed_ranks && (self.relative_rank_bits < 7 || self.relative_rank_bits > 12) {
+        if self.enable_bit_packed_ranks
+            && (self.relative_rank_bits < 7 || self.relative_rank_bits > 12)
+        {
             return Err(ZiporaError::invalid_data(format!(
                 "Invalid relative_rank_bits {}. Must be between 7 and 12",
                 self.relative_rank_bits
@@ -341,7 +343,7 @@ impl SeparatedStorageConfig {
                     multi_config.arity
                 )));
             }
-            
+
             if multi_config.dimension_hints.len() != multi_config.arity {
                 return Err(ZiporaError::invalid_data(format!(
                     "Dimension hints count {} does not match arity {}",
@@ -392,7 +394,11 @@ impl SeparatedStorageConfig {
             MemoryStrategy::Balanced => 512,
             MemoryStrategy::MaximizePerformance => 256,
             MemoryStrategy::Adaptive => {
-                if self.enable_bit_packed_ranks { 512 } else { 256 }
+                if self.enable_bit_packed_ranks {
+                    512
+                } else {
+                    256
+                }
             }
         }
     }
@@ -611,10 +617,14 @@ impl SeparatedStorageConfig {
         // Size-based optimizations
         if len < 1_000_000 {
             // Small datasets: optimize for cache locality
-            builder = builder.block_size(256).cache_alignment(CacheAlignment::CacheLine64);
+            builder = builder
+                .block_size(256)
+                .cache_alignment(CacheAlignment::CacheLine64);
         } else if len < 100_000_000 {
             // Medium datasets: balance performance and space
-            builder = builder.block_size(512).cache_alignment(CacheAlignment::CacheLine64);
+            builder = builder
+                .block_size(512)
+                .cache_alignment(CacheAlignment::CacheLine64);
         } else {
             // Large datasets: optimize for space efficiency
             builder = builder

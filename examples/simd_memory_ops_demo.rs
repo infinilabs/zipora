@@ -8,12 +8,12 @@
 //! cargo run --example simd_memory_ops_demo --release
 //! ```
 
-use zipora::memory::simd_ops::{
-    fast_compare, fast_copy, fast_fill, fast_find_byte,
-    fast_prefetch_range, get_global_simd_ops, SimdMemOps,
-};
-use zipora::memory::cache_layout::CacheLayoutConfig;
 use std::time::Instant;
+use zipora::memory::cache_layout::CacheLayoutConfig;
+use zipora::memory::simd_ops::{
+    SimdMemOps, fast_compare, fast_copy, fast_fill, fast_find_byte, fast_prefetch_range,
+    get_global_simd_ops,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== SIMD Memory Operations Demo ===\n");
@@ -60,13 +60,22 @@ fn display_simd_capabilities() {
     println!("  L2 Cache: {} KB", features.l2_cache_size / 1024);
     println!("  L3 Cache: {} KB", features.l3_cache_size / 1024);
     println!("  Cache Line Size: {} bytes", features.cache_line_size);
-    println!("  Prefetch Distance: {} bytes", cache_config.prefetch_distance);
+    println!(
+        "  Prefetch Distance: {} bytes",
+        cache_config.prefetch_distance
+    );
     println!("  Prefetch Enabled: {}", cache_config.enable_prefetch);
 
     println!("\nOptimization Tier: {}", features.optimization_tier);
     println!("SIMD Tier: {}", features.simd_tier);
-    println!("Recommended Alignment: {} bytes", features.recommended_alignment());
-    println!("Recommended Chunk Size: {} KB", features.recommended_chunk_size() / 1024);
+    println!(
+        "Recommended Alignment: {} bytes",
+        features.recommended_alignment()
+    );
+    println!(
+        "Recommended Chunk Size: {} KB",
+        features.recommended_chunk_size() / 1024
+    );
     println!();
 }
 
@@ -91,7 +100,10 @@ fn demo_basic_operations() -> Result<(), Box<dyn std::error::Error>> {
     let c = b"Hello, SIMD!";
 
     println!("Compare equal: {} (expected: 0)", fast_compare(a, b));
-    println!("Compare different: {} (expected: non-zero)", fast_compare(a, c));
+    println!(
+        "Compare different: {} (expected: non-zero)",
+        fast_compare(a, c)
+    );
 
     // Byte Search
     println!("\n[Byte Search]");
@@ -133,7 +145,10 @@ fn demo_cache_optimized_operations() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Copied {} bytes with cache optimization", size);
     println!("Time: {:?}", duration);
-    println!("Throughput: {:.2} MB/s", size as f64 / duration.as_secs_f64() / 1_000_000.0);
+    println!(
+        "Throughput: {:.2} MB/s",
+        size as f64 / duration.as_secs_f64() / 1_000_000.0
+    );
     println!("Data matches: {}", src == dst);
 
     // Compare with cache optimization
@@ -221,8 +236,14 @@ fn demo_performance_comparison() -> Result<(), Box<dyn std::error::Error>> {
         let speedup = std_time.as_nanos() as f64 / simd_time.as_nanos() as f64;
 
         println!("\n  Haystack size: {}", size);
-        println!("    SIMD search: {:?} (found at: {:?})", simd_time, simd_result);
-        println!("    Std search:  {:?} (found at: {:?})", std_time, std_result);
+        println!(
+            "    SIMD search: {:?} (found at: {:?})",
+            simd_time, simd_result
+        );
+        println!(
+            "    Std search:  {:?} (found at: {:?})",
+            std_time, std_result
+        );
         println!("    Speedup: {:.2}x", speedup);
         println!("    Results match: {}", simd_result == std_result);
     }

@@ -9,8 +9,7 @@ use std::cmp::Ordering;
 use std::time::Instant;
 
 /// Suffix array construction algorithms
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SuffixArrayAlgorithm {
     /// SA-IS (Suffix Array by Induced Sorting) - linear time, good for general use
     SAIS,
@@ -25,7 +24,6 @@ pub enum SuffixArrayAlgorithm {
     Adaptive,
 }
 
-
 impl SuffixArrayAlgorithm {
     /// Get a human-readable description of the algorithm
     pub fn description(&self) -> &'static str {
@@ -34,7 +32,9 @@ impl SuffixArrayAlgorithm {
             Self::DivSufSort => "DivSufSort: Practical performance optimized algorithm",
             Self::DC3 => "DC3: Simple divide-and-conquer algorithm",
             Self::LarssonSadakane => "Larsson-Sadakane: Optimized for repetitive data",
-            Self::Adaptive => "Adaptive: Automatic algorithm selection based on data characteristics",
+            Self::Adaptive => {
+                "Adaptive: Automatic algorithm selection based on data characteristics"
+            }
         }
     }
 }
@@ -212,21 +212,21 @@ impl SuffixArray {
         }
 
         let text_length = text.len();
-        
+
         // Count character frequencies for alphabet size and entropy
         let mut freq = [0u32; 256];
         for &byte in text {
             freq[byte as usize] += 1;
         }
-        
+
         let alphabet_size = freq.iter().filter(|&&count| count > 0).count();
-        
+
         // Calculate entropy
         let entropy = Self::calculate_entropy(&freq, text_length);
-        
+
         // Calculate repetition ratio and average run length
         let (repetition_ratio, average_run_length) = Self::calculate_repetition_metrics(text);
-        
+
         DataCharacteristics {
             text_length,
             alphabet_size,
@@ -235,33 +235,33 @@ impl SuffixArray {
             entropy,
         }
     }
-    
+
     /// Calculate Shannon entropy of the text
     fn calculate_entropy(freq: &[u32; 256], text_length: usize) -> f64 {
         let mut entropy = 0.0;
         let len_f64 = text_length as f64;
-        
+
         for &count in freq.iter() {
             if count > 0 {
                 let p = count as f64 / len_f64;
                 entropy -= p * p.log2();
             }
         }
-        
+
         entropy
     }
-    
+
     /// Calculate repetition metrics (repetition ratio and average run length)
     fn calculate_repetition_metrics(text: &[u8]) -> (f64, f64) {
         if text.len() <= 1 {
             return (0.0, 1.0);
         }
-        
+
         let mut total_run_length = 0;
         let mut num_runs = 0;
         let mut current_run_length = 1;
         let mut repeated_chars = 0;
-        
+
         for i in 1..text.len() {
             if text[i] == text[i - 1] {
                 current_run_length += 1;
@@ -272,18 +272,18 @@ impl SuffixArray {
                 current_run_length = 1;
             }
         }
-        
+
         // Add the last run
         total_run_length += current_run_length;
         num_runs += 1;
-        
+
         let repetition_ratio = repeated_chars as f64 / text.len() as f64;
         let average_run_length = if num_runs > 0 {
             total_run_length as f64 / num_runs as f64
         } else {
             1.0
         };
-        
+
         (repetition_ratio, average_run_length)
     }
 }
@@ -311,7 +311,7 @@ impl SuffixArrayBuilder {
         }
 
         let characteristics = SuffixArray::analyze_text_characteristics(text);
-        
+
         // Decision logic based on data characteristics
         if characteristics.alphabet_size <= 4 {
             // Very small alphabet - SA-IS handles this well
@@ -386,7 +386,7 @@ impl SuffixArrayBuilder {
 
         // Select algorithm based on configuration and data characteristics
         let algorithm = self.select_algorithm(text);
-        
+
         match algorithm {
             SuffixArrayAlgorithm::SAIS => self.sais_construct(text),
             SuffixArrayAlgorithm::DC3 => self.dc3_construct(text),
@@ -404,7 +404,7 @@ impl SuffixArrayBuilder {
         // Add recursion depth limit to prevent stack overflow
         self.sais_construct_with_depth(text, 0)
     }
-    
+
     fn sais_construct_with_depth(&self, text: &[u8], depth: usize) -> Result<Vec<usize>> {
         // Prevent stack overflow with recursion depth limit
         const MAX_RECURSION_DEPTH: usize = 100;
@@ -412,17 +412,17 @@ impl SuffixArrayBuilder {
             // Fall back to simple sorting for deep recursion
             return self.fallback_sort(text);
         }
-        
+
         let n = text.len();
-        
+
         // Guard against excessive memory allocation
         const MAX_TEXT_SIZE: usize = 1 << 30; // 1GB limit
         if n > MAX_TEXT_SIZE {
             return Err(crate::error::ZiporaError::invalid_data(
-                "Text too large for suffix array construction"
+                "Text too large for suffix array construction",
             ));
         }
-        
+
         // Find alphabet size
         let alphabet_size = if self.config.optimize_small_alphabet {
             256 // Full byte alphabet
@@ -486,11 +486,11 @@ impl SuffixArrayBuilder {
 
         // Check if all LMS substrings are unique
         let max_name = lms_names.iter().max().copied().unwrap_or(0);
-        
+
         if (max_name as usize) < lms_suffixes.len() {
             // Not all LMS substrings are unique, recursively sort them with depth tracking
             let reduced_sa = self.sais_construct_with_depth(&lms_names, depth + 1)?;
-            
+
             // Map back to original indices
             let mut sorted_lms = Vec::new();
             for &rank in &reduced_sa {
@@ -510,19 +510,20 @@ impl SuffixArrayBuilder {
                         present[val] = true;
                     }
                 }
-                
+
                 let missing_indices: Vec<usize> = (0..n).filter(|&i| !present[i]).collect();
                 let mut missing_iter = missing_indices.into_iter();
-                
+
                 // Replace sentinel values with missing indices
                 for sa_val in sa.iter_mut() {
                     if *sa_val >= n
-                        && let Some(missing_idx) = missing_iter.next() {
-                            *sa_val = missing_idx;
-                        }
+                        && let Some(missing_idx) = missing_iter.next()
+                    {
+                        *sa_val = missing_idx;
+                    }
                 }
             }
-            
+
             Ok(sa)
         }
     }
@@ -564,7 +565,8 @@ impl SuffixArrayBuilder {
 
     /// Find all LMS suffix positions
     fn find_lms_suffixes(&self, is_lms: &[bool]) -> Vec<usize> {
-        is_lms.iter()
+        is_lms
+            .iter()
             .enumerate()
             .filter_map(|(i, &is_lms_pos)| if is_lms_pos { Some(i) } else { None })
             .collect()
@@ -681,16 +683,22 @@ impl SuffixArrayBuilder {
                 if !self.are_lms_substrings_equal(text, lms_sa[i - 1], lms_sa[i], lms_suffixes)? {
                     current_name = current_name.wrapping_add(1);
                 }
-                
+
                 // Find position of lms_sa[i] in lms_suffixes with bounds checking
                 if lms_sa[i] < text.len() {
-                    let pos = lms_suffixes.iter().position(|&x| x == lms_sa[i])
-                        .ok_or_else(|| crate::error::ZiporaError::invalid_data("LMS suffix not found"))?;
+                    let pos = lms_suffixes
+                        .iter()
+                        .position(|&x| x == lms_sa[i])
+                        .ok_or_else(|| {
+                            crate::error::ZiporaError::invalid_data("LMS suffix not found")
+                        })?;
                     if pos < names.len() {
                         names[pos] = current_name;
                     }
                 } else {
-                    return Err(crate::error::ZiporaError::invalid_data("Invalid LMS suffix index"));
+                    return Err(crate::error::ZiporaError::invalid_data(
+                        "Invalid LMS suffix index",
+                    ));
                 }
             }
         }
@@ -709,7 +717,7 @@ impl SuffixArrayBuilder {
         if pos1 >= text.len() || pos2 >= text.len() {
             return Ok(false);
         }
-        
+
         // Additional safety check for bounds
         if pos1 == pos2 {
             return Ok(true);
@@ -740,9 +748,15 @@ impl SuffixArrayBuilder {
     }
 
     /// Find the end position of an LMS substring
-    fn find_lms_substring_end(&self, start: usize, lms_suffixes: &[usize], text_len: usize) -> usize {
+    fn find_lms_substring_end(
+        &self,
+        start: usize,
+        lms_suffixes: &[usize],
+        text_len: usize,
+    ) -> usize {
         // Find next LMS position after start
-        lms_suffixes.iter()
+        lms_suffixes
+            .iter()
             .find(|&&pos| pos > start)
             .copied()
             .unwrap_or(text_len)
@@ -797,19 +811,20 @@ impl SuffixArrayBuilder {
                     present[val] = true;
                 }
             }
-            
+
             let missing_indices: Vec<usize> = (0..n).filter(|&i| !present[i]).collect();
             let mut missing_iter = missing_indices.into_iter();
-            
+
             // Replace sentinel values with missing indices
             for sa_val in sa.iter_mut() {
                 if *sa_val >= n
-                    && let Some(missing_idx) = missing_iter.next() {
-                        *sa_val = missing_idx;
-                    }
+                    && let Some(missing_idx) = missing_iter.next()
+                {
+                    *sa_val = missing_idx;
+                }
             }
         }
-        
+
         Ok(sa)
     }
 
@@ -824,7 +839,11 @@ impl SuffixArrayBuilder {
         }
 
         if text.len() == 2 {
-            return Ok(if text[0] <= text[1] { vec![0, 1] } else { vec![1, 0] });
+            return Ok(if text[0] <= text[1] {
+                vec![0, 1]
+            } else {
+                vec![1, 0]
+            });
         }
 
         // For now, use a simple sorting approach since the full DC3 is complex
@@ -835,10 +854,9 @@ impl SuffixArrayBuilder {
             let suffix_b = &text[b..];
             suffix_a.cmp(suffix_b)
         });
-        
+
         Ok(sa)
     }
-    
 
     /// DivSufSort-style algorithm implementation
     /// Based on divide-and-conquer with multikey quicksort principles
@@ -853,17 +871,16 @@ impl SuffixArrayBuilder {
 
         // Initialize suffix array with indices
         let mut sa: Vec<usize> = (0..n).collect();
-        
+
         // Sort suffixes using standard comparison
         sa.sort_by(|&a, &b| {
             let suffix_a = &text[a..];
             let suffix_b = &text[b..];
             suffix_a.cmp(suffix_b)
         });
-        
+
         Ok(sa)
     }
-
 
     /// Larsson-Sadakane algorithm implementation
     /// Uses prefix doubling technique, optimized for repetitive data
@@ -884,22 +901,21 @@ impl SuffixArrayBuilder {
             let suffix_b = &text[b..];
             suffix_a.cmp(suffix_b)
         });
-        
+
         Ok(sa)
     }
-
 
     fn build_parallel(&self, text: &[u8]) -> Result<Vec<usize>> {
         // For now, fall back to sequential - full parallel SA-IS is very complex
         self.build_sequential(text)
     }
-    
+
     /// Fallback sorting algorithm for when recursion depth is exceeded
     fn fallback_sort(&self, text: &[u8]) -> Result<Vec<usize>> {
         if text.is_empty() {
             return Ok(Vec::new());
         }
-        
+
         // Use simple sorting for small texts or deep recursion
         let mut sa: Vec<usize> = (0..text.len()).collect();
         sa.sort_by(|&a, &b| {
@@ -907,7 +923,7 @@ impl SuffixArrayBuilder {
             let suffix_b = &text[b..];
             suffix_a.cmp(suffix_b)
         });
-        
+
         Ok(sa)
     }
 }
@@ -1203,13 +1219,20 @@ mod tests {
 
     #[test]
     fn test_suffix_array_algorithm_enum() {
-        assert_eq!(SuffixArrayAlgorithm::default(), SuffixArrayAlgorithm::Adaptive);
-        
+        assert_eq!(
+            SuffixArrayAlgorithm::default(),
+            SuffixArrayAlgorithm::Adaptive
+        );
+
         // Test descriptions
         assert!(!SuffixArrayAlgorithm::SAIS.description().is_empty());
         assert!(!SuffixArrayAlgorithm::DC3.description().is_empty());
         assert!(!SuffixArrayAlgorithm::DivSufSort.description().is_empty());
-        assert!(!SuffixArrayAlgorithm::LarssonSadakane.description().is_empty());
+        assert!(
+            !SuffixArrayAlgorithm::LarssonSadakane
+                .description()
+                .is_empty()
+        );
         assert!(!SuffixArrayAlgorithm::Adaptive.description().is_empty());
     }
 
@@ -1219,20 +1242,20 @@ mod tests {
         let chars = SuffixArray::analyze_text_characteristics(b"");
         assert_eq!(chars.text_length, 0);
         assert_eq!(chars.alphabet_size, 0);
-        
+
         // Test simple string
         let chars = SuffixArray::analyze_text_characteristics(b"abcd");
         assert_eq!(chars.text_length, 4);
         assert_eq!(chars.alphabet_size, 4);
         assert!(chars.entropy > 0.0);
-        
+
         // Test repetitive string
         let chars = SuffixArray::analyze_text_characteristics(b"aaaa");
         assert_eq!(chars.text_length, 4);
         assert_eq!(chars.alphabet_size, 1);
         assert!(chars.repetition_ratio > 0.5);
         assert_eq!(chars.entropy, 0.0); // Single character has zero entropy
-        
+
         // Test mixed string
         let chars = SuffixArray::analyze_text_characteristics(b"banana");
         assert_eq!(chars.text_length, 6);
@@ -1249,15 +1272,15 @@ mod tests {
             ..Default::default()
         };
         let builder = SuffixArrayBuilder::new(config);
-        
+
         // Small input should select DC3
         let algorithm = builder.select_algorithm(b"small");
         assert_eq!(algorithm, SuffixArrayAlgorithm::DC3);
-        
+
         // Small alphabet should select SA-IS
         let algorithm = builder.select_algorithm(&vec![b'a'; 1000]);
         assert_eq!(algorithm, SuffixArrayAlgorithm::SAIS);
-        
+
         // Non-adaptive config should return the specified algorithm
         let config = SuffixArrayConfig {
             algorithm: SuffixArrayAlgorithm::SAIS,
@@ -1274,22 +1297,27 @@ mod tests {
             algorithm: SuffixArrayAlgorithm::DC3,
             ..Default::default()
         };
-        
+
         // Test simple string with DC3 (currently falls back to SA-IS)
         let text = b"banana";
         let sa = SuffixArray::with_config(text, &config).unwrap();
-        
+
         assert_eq!(sa.as_slice().len(), 6);
         assert_eq!(sa.text_len(), 6);
-        
+
         // Verify the result is properly sorted (should work since it falls back to SA-IS)
         let suffixes = sa.as_slice();
         for i in 1..suffixes.len() {
             let suffix1 = &text[suffixes[i - 1]..];
             let suffix2 = &text[suffixes[i]..];
-            assert!(suffix1 <= suffix2, 
-                "Suffix at {} ({:?}) should be <= suffix at {} ({:?})", 
-                i-1, suffix1, i, suffix2);
+            assert!(
+                suffix1 <= suffix2,
+                "Suffix at {} ({:?}) should be <= suffix at {} ({:?})",
+                i - 1,
+                suffix1,
+                i,
+                suffix2
+            );
         }
     }
 
@@ -1303,7 +1331,7 @@ mod tests {
             b"aaaaaa".as_slice(),
             b"abab".as_slice(),
         ];
-        
+
         for &text in &test_cases {
             // Build with DivSufSort (our working implementation)
             let config_div = SuffixArrayConfig {
@@ -1311,26 +1339,29 @@ mod tests {
                 ..Default::default()
             };
             let sa_div = SuffixArray::with_config(text, &config_div).unwrap();
-            
+
             // Build with Larsson-Sadakane (our working implementation)
             let config_ls = SuffixArrayConfig {
                 algorithm: SuffixArrayAlgorithm::LarssonSadakane,
                 ..Default::default()
             };
             let sa_ls = SuffixArray::with_config(text, &config_ls).unwrap();
-            
+
             // Verify both results are properly sorted suffix arrays
             verify_suffix_array_is_sorted(text, sa_div.as_slice());
             verify_suffix_array_is_sorted(text, sa_ls.as_slice());
         }
     }
-    
+
     fn verify_suffix_array_is_sorted(text: &[u8], sa: &[usize]) {
         for i in 1..sa.len() {
             let suffix1 = &text[sa[i - 1]..];
             let suffix2 = &text[sa[i]..];
-            assert!(suffix1 <= suffix2, 
-                "Suffix array not properly sorted at position {}", i);
+            assert!(
+                suffix1 <= suffix2,
+                "Suffix array not properly sorted at position {}",
+                i
+            );
         }
     }
 
@@ -1340,21 +1371,21 @@ mod tests {
             algorithm: SuffixArrayAlgorithm::DC3,
             ..Default::default()
         };
-        
+
         // Empty string (DC3 falls back to SA-IS)
         let sa = SuffixArray::with_config(b"", &config).unwrap();
         assert_eq!(sa.as_slice().len(), 0);
-        
+
         // Single character (DC3 falls back to SA-IS)
         let sa = SuffixArray::with_config(b"a", &config).unwrap();
         assert_eq!(sa.as_slice(), &[0]);
-        
+
         // Two characters (DC3 falls back to SA-IS)
         // Note: There may be edge cases in the SA-IS implementation for very short strings
         let text = b"ab";
         let sa = SuffixArray::with_config(text, &config).unwrap();
         assert_eq!(sa.as_slice().len(), 2);
-        
+
         let text = b"ba";
         let sa = SuffixArray::with_config(text, &config).unwrap();
         assert_eq!(sa.as_slice().len(), 2);
@@ -1367,7 +1398,7 @@ mod tests {
             adaptive_threshold: 10,
             ..Default::default()
         };
-        
+
         // Test various data patterns to ensure adaptive selection works
         let test_cases = [
             (b"xyz".as_slice(), "small input"), // Changed to avoid length issue
@@ -1375,21 +1406,33 @@ mod tests {
             (b"abcdefghijklmnopqrstuvwxyz".as_slice(), "diverse alphabet"),
             (&vec![b'a'; 2000], "large repetitive"),
         ];
-        
+
         for (text, description) in &test_cases {
             let sa = SuffixArray::with_config(text, &config).unwrap();
-            
+
             // Just verify basic properties - adaptive selection should produce valid suffix arrays
-            assert_eq!(sa.as_slice().len(), text.len(), 
-                "Suffix array length mismatch for {}", description);
-            assert_eq!(sa.text_len(), text.len(), 
-                "Text length mismatch for {}", description);
-            
+            assert_eq!(
+                sa.as_slice().len(),
+                text.len(),
+                "Suffix array length mismatch for {}",
+                description
+            );
+            assert_eq!(
+                sa.text_len(),
+                text.len(),
+                "Text length mismatch for {}",
+                description
+            );
+
             // Verify all indices are valid
             for &idx in sa.as_slice() {
-                assert!(idx < text.len(), 
-                    "Invalid suffix index {} for text length {} in {}", 
-                    idx, text.len(), description);
+                assert!(
+                    idx < text.len(),
+                    "Invalid suffix index {} for text length {} in {}",
+                    idx,
+                    text.len(),
+                    description
+                );
             }
         }
     }
@@ -1400,7 +1443,7 @@ mod tests {
             algorithm: SuffixArrayAlgorithm::DivSufSort,
             ..Default::default()
         };
-        
+
         let test_cases = [
             b"banana".as_slice(),
             b"abcdef".as_slice(),
@@ -1409,30 +1452,39 @@ mod tests {
             b"aaaa".as_slice(),
             b"abcdefghijklmnopqrstuvwxyz".as_slice(),
         ];
-        
+
         for &text in &test_cases {
             let sa = SuffixArray::with_config(text, &config).unwrap();
-            
+
             // Verify basic properties
-            assert_eq!(sa.as_slice().len(), text.len(), 
-                "DivSufSort length mismatch for text: {:?}", std::str::from_utf8(text));
+            assert_eq!(
+                sa.as_slice().len(),
+                text.len(),
+                "DivSufSort length mismatch for text: {:?}",
+                std::str::from_utf8(text)
+            );
             assert_eq!(sa.text_len(), text.len());
-            
+
             // Verify all indices are valid and unique
             let mut indices = sa.as_slice().to_vec();
             indices.sort_unstable();
             for (i, &idx) in indices.iter().enumerate() {
                 assert_eq!(idx, i, "Missing or duplicate index in DivSufSort result");
             }
-            
+
             // Verify suffix array is properly sorted
             let suffixes = sa.as_slice();
             for i in 1..suffixes.len() {
                 let suffix1 = &text[suffixes[i - 1]..];
                 let suffix2 = &text[suffixes[i]..];
-                assert!(suffix1 <= suffix2, 
-                    "DivSufSort: Suffix at {} ({:?}) should be <= suffix at {} ({:?})", 
-                    i-1, suffix1, i, suffix2);
+                assert!(
+                    suffix1 <= suffix2,
+                    "DivSufSort: Suffix at {} ({:?}) should be <= suffix at {} ({:?})",
+                    i - 1,
+                    suffix1,
+                    i,
+                    suffix2
+                );
             }
         }
     }
@@ -1443,40 +1495,52 @@ mod tests {
             algorithm: SuffixArrayAlgorithm::LarssonSadakane,
             ..Default::default()
         };
-        
+
         let test_cases = [
             b"banana".as_slice(),
             b"abcdef".as_slice(),
             b"mississippi".as_slice(),
             b"abab".as_slice(),
             b"aaaa".as_slice(),
-            b"ababababab".as_slice(), // Repetitive pattern
+            b"ababababab".as_slice(),   // Repetitive pattern
             b"aaaabbbbcccc".as_slice(), // Another repetitive pattern
         ];
-        
+
         for &text in &test_cases {
             let sa = SuffixArray::with_config(text, &config).unwrap();
-            
+
             // Verify basic properties
-            assert_eq!(sa.as_slice().len(), text.len(), 
-                "Larsson-Sadakane length mismatch for text: {:?}", std::str::from_utf8(text));
+            assert_eq!(
+                sa.as_slice().len(),
+                text.len(),
+                "Larsson-Sadakane length mismatch for text: {:?}",
+                std::str::from_utf8(text)
+            );
             assert_eq!(sa.text_len(), text.len());
-            
+
             // Verify all indices are valid and unique
             let mut indices = sa.as_slice().to_vec();
             indices.sort_unstable();
             for (i, &idx) in indices.iter().enumerate() {
-                assert_eq!(idx, i, "Missing or duplicate index in Larsson-Sadakane result");
+                assert_eq!(
+                    idx, i,
+                    "Missing or duplicate index in Larsson-Sadakane result"
+                );
             }
-            
+
             // Verify suffix array is properly sorted
             let suffixes = sa.as_slice();
             for i in 1..suffixes.len() {
                 let suffix1 = &text[suffixes[i - 1]..];
                 let suffix2 = &text[suffixes[i]..];
-                assert!(suffix1 <= suffix2, 
-                    "Larsson-Sadakane: Suffix at {} ({:?}) should be <= suffix at {} ({:?})", 
-                    i-1, suffix1, i, suffix2);
+                assert!(
+                    suffix1 <= suffix2,
+                    "Larsson-Sadakane: Suffix at {} ({:?}) should be <= suffix at {} ({:?})",
+                    i - 1,
+                    suffix1,
+                    i,
+                    suffix2
+                );
             }
         }
     }
@@ -1491,7 +1555,7 @@ mod tests {
             b"aaaa".as_slice(),
             b"abab".as_slice(),
         ];
-        
+
         for &text in &test_cases {
             // Build with our working algorithms
             let config_dc3 = SuffixArrayConfig {
@@ -1499,19 +1563,19 @@ mod tests {
                 ..Default::default()
             };
             let sa_dc3 = SuffixArray::with_config(text, &config_dc3).unwrap();
-            
+
             let config_divsufsort = SuffixArrayConfig {
                 algorithm: SuffixArrayAlgorithm::DivSufSort,
                 ..Default::default()
             };
             let sa_divsufsort = SuffixArray::with_config(text, &config_divsufsort).unwrap();
-            
+
             let config_ls = SuffixArrayConfig {
                 algorithm: SuffixArrayAlgorithm::LarssonSadakane,
                 ..Default::default()
             };
             let sa_ls = SuffixArray::with_config(text, &config_ls).unwrap();
-            
+
             // Verify all algorithms produce properly sorted suffix arrays
             verify_suffix_array_is_sorted(text, sa_dc3.as_slice());
             verify_suffix_array_is_sorted(text, sa_divsufsort.as_slice());
@@ -1525,21 +1589,23 @@ mod tests {
             algorithm: SuffixArrayAlgorithm::DivSufSort,
             ..Default::default()
         };
-        
+
         // Empty string
         let sa = SuffixArray::with_config(b"", &config).unwrap();
         assert_eq!(sa.as_slice().len(), 0);
-        
+
         // Single character
         let sa = SuffixArray::with_config(b"a", &config).unwrap();
         assert_eq!(sa.as_slice(), &[0]);
-        
+
         // Two characters
         let sa = SuffixArray::with_config(b"ab", &config).unwrap();
         assert_eq!(sa.as_slice().len(), 2);
-        assert!(sa.as_slice()[0] < sa.as_slice()[1] || 
-                b"ab"[sa.as_slice()[0]..] <= b"ab"[sa.as_slice()[1]..]);
-        
+        assert!(
+            sa.as_slice()[0] < sa.as_slice()[1]
+                || b"ab"[sa.as_slice()[0]..] <= b"ab"[sa.as_slice()[1]..]
+        );
+
         // All same characters
         let sa = SuffixArray::with_config(b"aaaa", &config).unwrap();
         assert_eq!(sa.as_slice(), &[3, 2, 1, 0]); // Longest suffix first when all equal
@@ -1551,29 +1617,31 @@ mod tests {
             algorithm: SuffixArrayAlgorithm::LarssonSadakane,
             ..Default::default()
         };
-        
+
         // Empty string
         let sa = SuffixArray::with_config(b"", &config).unwrap();
         assert_eq!(sa.as_slice().len(), 0);
-        
+
         // Single character
         let sa = SuffixArray::with_config(b"a", &config).unwrap();
         assert_eq!(sa.as_slice(), &[0]);
-        
+
         // Two characters
         let sa = SuffixArray::with_config(b"ab", &config).unwrap();
         assert_eq!(sa.as_slice().len(), 2);
-        assert!(sa.as_slice()[0] < sa.as_slice()[1] || 
-                b"ab"[sa.as_slice()[0]..] <= b"ab"[sa.as_slice()[1]..]);
-        
+        assert!(
+            sa.as_slice()[0] < sa.as_slice()[1]
+                || b"ab"[sa.as_slice()[0]..] <= b"ab"[sa.as_slice()[1]..]
+        );
+
         // All same characters (this should be efficient for Larsson-Sadakane)
         let sa = SuffixArray::with_config(b"aaaa", &config).unwrap();
         assert_eq!(sa.as_slice(), &[3, 2, 1, 0]); // Longest suffix first when all equal
-        
+
         // Highly repetitive pattern
         let sa = SuffixArray::with_config(b"abababab", &config).unwrap();
         assert_eq!(sa.as_slice().len(), 8);
-        
+
         // Verify it's sorted
         let text = b"abababab";
         let suffixes = sa.as_slice();
@@ -1592,21 +1660,24 @@ mod tests {
             ..Default::default()
         };
         let builder = SuffixArrayBuilder::new(config);
-        
+
         // Small input should select DC3 (less than adaptive_threshold)
         let algorithm = builder.select_algorithm(b"small");
         assert_eq!(algorithm, SuffixArrayAlgorithm::DC3);
-        
+
         // Highly repetitive should select Larsson-Sadakane
         let algorithm = builder.select_algorithm(&vec![b'a'; 1000]);
         // The adaptive logic may select SAIS for very small alphabets (size 1), so allow either
-        assert!(algorithm == SuffixArrayAlgorithm::LarssonSadakane || algorithm == SuffixArrayAlgorithm::SAIS);
-        
+        assert!(
+            algorithm == SuffixArrayAlgorithm::LarssonSadakane
+                || algorithm == SuffixArrayAlgorithm::SAIS
+        );
+
         // Large input should select DivSufSort
         let large_diverse: Vec<u8> = (0..100_000).map(|i| (i % 256) as u8).collect();
         let algorithm = builder.select_algorithm(&large_diverse);
         assert_eq!(algorithm, SuffixArrayAlgorithm::DivSufSort);
-        
+
         // Medium size should select DivSufSort
         let medium_diverse: Vec<u8> = (0..60_000).map(|i| (i % 256) as u8).collect();
         let algorithm = builder.select_algorithm(&medium_diverse);
@@ -1622,28 +1693,31 @@ mod tests {
             adaptive_threshold: 10,
             ..Default::default()
         };
-        
+
         // Create highly repetitive data (exactly 225 characters to match test expectation)
         let repetitive_text = b"abcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabcabc";
-        
+
         let builder = SuffixArrayBuilder::new(config);
         let _algorithm = builder.select_algorithm(repetitive_text);
-        
+
         // Algorithm selection may vary based on data characteristics
         // Just verify that the resulting suffix array is correct
-        
+
         let sa = SuffixArray::with_config(repetitive_text, &builder.config).unwrap();
-        
+
         // Verify the result is correct
         assert_eq!(sa.as_slice().len(), repetitive_text.len());
-        
+
         // Verify it's properly sorted
         let suffixes = sa.as_slice();
         for i in 1..suffixes.len() {
             let suffix1 = &repetitive_text[suffixes[i - 1]..];
             let suffix2 = &repetitive_text[suffixes[i]..];
-            assert!(suffix1 <= suffix2, 
-                "Repetitive data suffix array not properly sorted at position {}", i);
+            assert!(
+                suffix1 <= suffix2,
+                "Repetitive data suffix array not properly sorted at position {}",
+                i
+            );
         }
     }
 }

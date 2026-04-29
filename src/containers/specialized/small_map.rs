@@ -194,7 +194,12 @@ impl<K: PartialEq + Hash + Eq + 'static + Clone, V: Clone> SmallMap<K, V> {
         // 1. len is validated by insert() to never exceed SMALL_MAP_THRESHOLD
         // 2. Keys at indices 0..len are guaranteed initialized by insert()
         // 3. Each match arm only accesses indices that are < len
-        debug_assert!(len <= SMALL_MAP_THRESHOLD, "len {} exceeds SMALL_MAP_THRESHOLD {}", len, SMALL_MAP_THRESHOLD);
+        debug_assert!(
+            len <= SMALL_MAP_THRESHOLD,
+            "len {} exceeds SMALL_MAP_THRESHOLD {}",
+            len,
+            SMALL_MAP_THRESHOLD
+        );
         match len {
             1 => {
                 // SAFETY: len=1, so keys[0] is initialized
@@ -600,14 +605,14 @@ impl<K: PartialEq + Hash + Eq + 'static + Clone, V: Clone> SmallMap<K, V> {
             SmallMapStorage::Large(_map) => {
                 // TODO: Implement iterator support for ZiporaHashMap
                 panic!("Iterator not yet implemented for large maps with ZiporaHashMap")
-            },
+            }
         }
     }
 
     /// Promotes the small map to a large map
     ///
     /// This is called automatically when the size threshold is exceeded.
-    fn promote_to_large(&mut self) -> Result<()> 
+    fn promote_to_large(&mut self) -> Result<()>
     where
         K: Clone,
         V: Clone,
@@ -664,7 +669,9 @@ where
     }
 }
 
-impl<K: fmt::Debug + PartialEq + Hash + Eq + 'static + Clone, V: fmt::Debug + Clone> fmt::Debug for SmallMap<K, V> {
+impl<K: fmt::Debug + PartialEq + Hash + Eq + 'static + Clone, V: fmt::Debug + Clone> fmt::Debug
+    for SmallMap<K, V>
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_map().entries(self.iter()).finish()
     }
@@ -686,7 +693,9 @@ impl<K: Clone + PartialEq + Hash + Eq + 'static, V: Clone> Clone for SmallMap<K,
     }
 }
 
-impl<K: PartialEq + Hash + Eq + 'static + Clone, V: PartialEq + Clone> PartialEq for SmallMap<K, V> {
+impl<K: PartialEq + Hash + Eq + 'static + Clone, V: PartialEq + Clone> PartialEq
+    for SmallMap<K, V>
+{
     fn eq(&self, other: &Self) -> bool {
         if self.len() != other.len() {
             return false;
@@ -738,8 +747,7 @@ impl<'a, K, V> Iterator for SmallMapIter<'a, K, V> {
                 } else {
                     None
                 }
-            }
-            // SmallMapIter::Large(iter) => iter.next(),
+            } // SmallMapIter::Large(iter) => iter.next(),
         }
     }
 
@@ -748,8 +756,7 @@ impl<'a, K, V> Iterator for SmallMapIter<'a, K, V> {
             SmallMapIter::Small { index, len, .. } => {
                 let remaining = len - index;
                 (remaining, Some(remaining))
-            }
-            // SmallMapIter::Large(iter) => iter.size_hint(),
+            } // SmallMapIter::Large(iter) => iter.size_hint(),
         }
     }
 }
@@ -1007,7 +1014,7 @@ where
 
     /// Optimized get method using SIMD search for u8 keys
     #[inline(always)]
-    pub fn get_fast(&self, key: &u8) -> Option<&V> 
+    pub fn get_fast(&self, key: &u8) -> Option<&V>
     where
         V: Clone,
     {

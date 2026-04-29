@@ -3,10 +3,10 @@
 //! High-precision timing and benchmarking utilities for performance-critical code.
 //! Inspired by production-grade profiling systems with minimal overhead design.
 
-use std::time::{Duration, Instant};
 use std::collections::HashMap;
-use std::sync::Mutex;
 use std::fmt;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 /// High-precision timer with nanosecond accuracy
 #[derive(Debug, Clone)]
@@ -125,7 +125,7 @@ pub struct ProfiledFunction<T> {
 
 impl<T> ProfiledFunction<T> {
     /// Create a new profiled function
-    pub fn new<F>(name: impl Into<String>, func: F) -> Self 
+    pub fn new<F>(name: impl Into<String>, func: F) -> Self
     where
         F: Fn() -> T + Send + Sync + 'static,
     {
@@ -202,11 +202,11 @@ impl BenchmarkSuite {
 
     /// Add a benchmark with custom warmup iterations
     pub fn add_benchmark_with_warmup(
-        &mut self, 
-        name: impl Into<String>, 
-        iterations: usize, 
+        &mut self,
+        name: impl Into<String>,
+        iterations: usize,
         warmup_iterations: usize,
-        func: fn()
+        func: fn(),
     ) {
         self.benchmarks.push(BenchmarkCase {
             name: name.into(),
@@ -223,7 +223,7 @@ impl BenchmarkSuite {
 
         for benchmark in &self.benchmarks {
             let result = self.run_single_benchmark(benchmark);
-            
+
             // Store result
             if let Ok(mut results) = self.results.lock() {
                 results.insert(benchmark.name.clone(), result.clone());
@@ -257,7 +257,7 @@ impl BenchmarkSuite {
         let avg_time = total_time / benchmark.iterations as u32;
         let min_time = durations.iter().min().copied().unwrap_or(Duration::ZERO);
         let max_time = durations.iter().max().copied().unwrap_or(Duration::ZERO);
-        
+
         let ops_per_sec = if avg_time.as_nanos() > 0 {
             1_000_000_000.0 / avg_time.as_nanos() as f64
         } else {
@@ -277,11 +277,13 @@ impl BenchmarkSuite {
 
     /// Print benchmark result
     fn print_benchmark_result(&self, result: &BenchmarkResult) {
-        println!("{:<30} | {:>12} | {:>12} | {:>15}", 
-                 result.name,
-                 format_duration_auto(result.avg_time.as_nanos() as u64),
-                 format_duration_auto(result.min_time.as_nanos() as u64),
-                 format_ops_per_sec(result.ops_per_sec));
+        println!(
+            "{:<30} | {:>12} | {:>12} | {:>15}",
+            result.name,
+            format_duration_auto(result.avg_time.as_nanos() as u64),
+            format_duration_auto(result.min_time.as_nanos() as u64),
+            format_ops_per_sec(result.ops_per_sec)
+        );
     }
 
     /// Get results for a specific benchmark
@@ -291,18 +293,24 @@ impl BenchmarkSuite {
 
     /// Get all results
     pub fn get_all_results(&self) -> HashMap<String, BenchmarkResult> {
-        self.results.lock().map(|guard| guard.clone()).unwrap_or_else(|_| HashMap::new())
+        self.results
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_else(|_| HashMap::new())
     }
 }
 
 impl fmt::Display for BenchmarkResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: avg={}, min={}, max={}, ops/sec={:.2}", 
-               self.name,
-               format_duration_auto(self.avg_time.as_nanos() as u64),
-               format_duration_auto(self.min_time.as_nanos() as u64),
-               format_duration_auto(self.max_time.as_nanos() as u64),
-               self.ops_per_sec)
+        write!(
+            f,
+            "{}: avg={}, min={}, max={}, ops/sec={:.2}",
+            self.name,
+            format_duration_auto(self.avg_time.as_nanos() as u64),
+            format_duration_auto(self.min_time.as_nanos() as u64),
+            format_duration_auto(self.max_time.as_nanos() as u64),
+            self.ops_per_sec
+        )
     }
 }
 
@@ -337,25 +345,21 @@ pub fn format_ops_per_sec(ops: f64) -> String {
 /// Macro for timing code blocks
 #[macro_export]
 macro_rules! time_block {
-    ($name:expr, $block:block) => {
-        {
-            let _timer = $crate::system::profiling::PerfTimer::new($name);
-            $block
-        }
-    };
+    ($name:expr, $block:block) => {{
+        let _timer = $crate::system::profiling::PerfTimer::new($name);
+        $block
+    }};
 }
 
 /// Macro for timing expressions
 #[macro_export]
 macro_rules! time_expr {
-    ($name:expr, $expr:expr) => {
-        {
-            let timer = $crate::system::profiling::HighPrecisionTimer::named($name);
-            let result = $expr;
-            timer.print_elapsed();
-            result
-        }
-    };
+    ($name:expr, $expr:expr) => {{
+        let timer = $crate::system::profiling::HighPrecisionTimer::named($name);
+        let result = $expr;
+        timer.print_elapsed();
+        result
+    }};
 }
 
 #[cfg(test)]
@@ -397,7 +401,7 @@ mod tests {
     #[test]
     fn test_benchmark_suite() {
         let mut suite = BenchmarkSuite::new("test_suite");
-        
+
         suite.add_benchmark("fast_operation", 1000, || {
             // Fast operation
             let _ = 1 + 1;

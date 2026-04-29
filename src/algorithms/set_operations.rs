@@ -8,8 +8,8 @@
 //! - **Memory-efficient operations**: Streaming intersection and union
 //! - **Hardware acceleration**: SIMD optimizations where applicable
 
-use crate::error::{Result, ZiporaError};
 use crate::algorithms::tournament_tree::EnhancedLoserTree;
+use crate::error::{Result, ZiporaError};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
@@ -96,7 +96,9 @@ impl SetOperations {
 
         let start = std::time::Instant::now();
 
-        let result = if self.config.use_bit_mask_optimization && num_ways <= self.config.bit_mask_threshold {
+        let result = if self.config.use_bit_mask_optimization
+            && num_ways <= self.config.bit_mask_threshold
+        {
             self.stats.used_bit_mask = true;
             self.intersection_bit_mask(iterators)?
         } else {
@@ -128,7 +130,7 @@ impl SetOperations {
 
         let mut result = Vec::new();
         let mut current_values: Vec<Option<T>> = iterators.iter_mut().map(|it| it.next()).collect();
-        
+
         loop {
             // Find the minimum value among all current values
             let mut min_value: Option<&T> = None;
@@ -150,7 +152,7 @@ impl SetOperations {
                                 min_indices.push(idx);
                             }
                             Ordering::Greater => {}
-                        }
+                        },
                     }
                 }
             }
@@ -191,14 +193,14 @@ impl SetOperations {
     {
         let num_ways = iterators.len();
         let mut result = Vec::new();
-        
+
         // Convert iterators to way iterators for the tournament tree
         let mut tree = EnhancedLoserTree::new(crate::algorithms::LoserTreeConfig::default());
-        
+
         for iterator in iterators {
             tree.add_way(iterator)?;
         }
-        
+
         tree.initialize()?;
 
         // Process elements using the tournament tree
@@ -226,7 +228,9 @@ impl SetOperations {
                                 count = 1;
                             }
                             Ordering::Less => {
-                                return Err(ZiporaError::invalid_data("Input sequences not properly sorted"));
+                                return Err(ZiporaError::invalid_data(
+                                    "Input sequences not properly sorted",
+                                ));
                             }
                         }
                     }
@@ -237,9 +241,10 @@ impl SetOperations {
 
         // Check the last key
         if let Some(key) = current_key
-            && count == num_ways {
-                result.push(key);
-            }
+            && count == num_ways
+        {
+            result.push(key);
+        }
 
         Ok(result)
     }
@@ -260,11 +265,11 @@ impl SetOperations {
         self.stats.ways_processed = iterators.len();
 
         let mut tree = EnhancedLoserTree::new(crate::algorithms::LoserTreeConfig::default());
-        
+
         for iterator in iterators {
             tree.add_way(iterator)?;
         }
-        
+
         tree.initialize()?;
 
         let mut result = Vec::new();
@@ -306,11 +311,11 @@ impl SetOperations {
         self.stats.ways_processed = iterators.len();
 
         let mut tree = EnhancedLoserTree::new(crate::algorithms::LoserTreeConfig::default());
-        
+
         for iterator in iterators {
             tree.add_way(iterator)?;
         }
-        
+
         tree.initialize()?;
 
         let mut frequencies = HashMap::new();
@@ -342,11 +347,11 @@ impl SetOperations {
         self.stats.ways_processed = iterators.len();
 
         let mut tree = EnhancedLoserTree::new(crate::algorithms::LoserTreeConfig::default());
-        
+
         for iterator in iterators {
             tree.add_way(iterator)?;
         }
-        
+
         tree.initialize()?;
 
         let mut result = Vec::new();
@@ -399,7 +404,7 @@ mod tests {
     #[test]
     fn test_intersection_bit_mask() {
         let mut ops = SetOperations::new();
-        
+
         let sequences = vec![
             vec![1, 3, 5, 7, 9].into_iter(),
             vec![1, 2, 3, 8, 9].into_iter(),
@@ -408,7 +413,7 @@ mod tests {
 
         let result = ops.intersection(sequences).unwrap();
         assert_eq!(result, vec![1, 3, 9]);
-        
+
         let stats = ops.stats();
         assert_eq!(stats.ways_processed, 3);
         assert!(stats.used_bit_mask);
@@ -417,11 +422,8 @@ mod tests {
     #[test]
     fn test_intersection_empty() {
         let mut ops = SetOperations::new();
-        
-        let sequences = vec![
-            vec![1, 3, 5].into_iter(),
-            vec![2, 4, 6].into_iter(),
-        ];
+
+        let sequences = vec![vec![1, 3, 5].into_iter(), vec![2, 4, 6].into_iter()];
 
         let result = ops.intersection(sequences).unwrap();
         assert!(result.is_empty());
@@ -430,7 +432,7 @@ mod tests {
     #[test]
     fn test_union_operation() {
         let mut ops = SetOperations::new();
-        
+
         let sequences = vec![
             vec![1, 3, 5].into_iter(),
             vec![2, 4, 6].into_iter(),
@@ -444,7 +446,7 @@ mod tests {
     #[test]
     fn test_frequency_counting() {
         let mut ops = SetOperations::new();
-        
+
         let sequences = vec![
             vec![1, 2, 3].into_iter(),
             vec![1, 2, 4].into_iter(),
@@ -452,7 +454,7 @@ mod tests {
         ];
 
         let frequencies = ops.count_frequencies(sequences).unwrap();
-        
+
         assert_eq!(frequencies[&1], 3);
         assert_eq!(frequencies[&2], 2);
         assert_eq!(frequencies[&3], 2);
@@ -463,7 +465,7 @@ mod tests {
     #[test]
     fn test_filter_merge() {
         let mut ops = SetOperations::new();
-        
+
         let sequences = vec![
             vec![1, 2, 3, 4, 5].into_iter(),
             vec![2, 4, 6, 8].into_iter(),
@@ -478,9 +480,9 @@ mod tests {
     fn test_large_intersection_general_algorithm() {
         let mut config = SetOperationsConfig::default();
         config.bit_mask_threshold = 2; // Force general algorithm
-        
+
         let mut ops = SetOperations::with_config(config);
-        
+
         let sequences = vec![
             vec![1, 3, 5, 7, 9].into_iter(),
             vec![1, 2, 3, 8, 9].into_iter(),
@@ -489,7 +491,7 @@ mod tests {
 
         let result = ops.intersection(sequences).unwrap();
         assert_eq!(result, vec![1, 3, 9]);
-        
+
         let stats = ops.stats();
         assert!(!stats.used_bit_mask);
     }
@@ -497,15 +499,12 @@ mod tests {
     #[test]
     fn test_stats_reset() {
         let mut ops = SetOperations::new();
-        
-        let sequences = vec![
-            vec![1, 2, 3].into_iter(),
-            vec![1, 2, 4].into_iter(),
-        ];
+
+        let sequences = vec![vec![1, 2, 3].into_iter(), vec![1, 2, 4].into_iter()];
 
         ops.intersection(sequences).unwrap();
         assert!(ops.stats().elements_examined > 0);
-        
+
         ops.reset_stats();
         assert_eq!(ops.stats().elements_examined, 0);
     }
@@ -513,14 +512,14 @@ mod tests {
     #[test]
     fn test_performance_stats() {
         let mut ops = SetOperations::new();
-        
+
         let sequences = vec![
             vec![1, 2, 3, 4, 5].into_iter(),
             vec![1, 3, 5, 7, 9].into_iter(),
         ];
 
         let result = ops.intersection(sequences).unwrap();
-        
+
         let stats = ops.stats();
         assert!(stats.processing_time_us > 0);
         assert_eq!(stats.output_elements, result.len());

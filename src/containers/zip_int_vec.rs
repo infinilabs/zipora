@@ -110,7 +110,13 @@ impl ZipIntVec {
     ///
     /// SAFETY FIX (v2.1.1): Now returns Result for bounds checking
     #[inline]
-    pub fn fast_get(data: &[u8], bits: usize, mask: usize, min_val: usize, idx: usize) -> crate::error::Result<usize> {
+    pub fn fast_get(
+        data: &[u8],
+        bits: usize,
+        mask: usize,
+        min_val: usize,
+        idx: usize,
+    ) -> crate::error::Result<usize> {
         Ok(min_val + UintVecMin0::fast_get(data, bits, mask, idx)?)
     }
 
@@ -124,7 +130,12 @@ impl ZipIntVec {
     /// - value > min_val + uintmask
     #[inline]
     pub fn set(&mut self, idx: usize, val: usize) {
-        assert!(val >= self.min_val, "Value {} below minimum {}", val, self.min_val);
+        assert!(
+            val >= self.min_val,
+            "Value {} below minimum {}",
+            val,
+            self.min_val
+        );
         let max_val = self.min_val + self.inner.uintmask();
         assert!(val <= max_val, "Value {} exceeds maximum {}", val, max_val);
         self.inner.set(idx, val - self.min_val);
@@ -199,7 +210,12 @@ impl ZipIntVec {
 
     /// Push back value (may reallocate)
     pub fn push_back(&mut self, val: usize) {
-        assert!(val >= self.min_val, "Value {} below minimum {}", val, self.min_val);
+        assert!(
+            val >= self.min_val,
+            "Value {} below minimum {}",
+            val,
+            self.min_val
+        );
         self.inner.push_back(val - self.min_val);
     }
 
@@ -526,13 +542,8 @@ mod tests {
 
         // Test static method
         for i in 0..100 {
-            let val = ZipIntVec::fast_get(
-                vec.data(),
-                vec.uintbits(),
-                vec.uintmask(),
-                vec.min_val(),
-                i,
-            );
+            let val =
+                ZipIntVec::fast_get(vec.data(), vec.uintbits(), vec.uintmask(), vec.min_val(), i);
             assert_eq!(val.expect("fast_get should succeed"), 1000 + i);
         }
     }
@@ -641,7 +652,8 @@ mod tests {
         }
 
         // Memory should be much less than Vec<usize>
-        let compression_ratio = (1000 * std::mem::size_of::<usize>()) as f64 / vec.mem_size() as f64;
+        let compression_ratio =
+            (1000 * std::mem::size_of::<usize>()) as f64 / vec.mem_size() as f64;
         assert!(compression_ratio > 3.0); // At least 3x compression
     }
 }

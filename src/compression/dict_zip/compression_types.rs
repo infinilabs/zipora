@@ -34,12 +34,12 @@
 //!
 //! // Create a literal match
 //! let literal_match = Match::Literal { length: 10 };
-//! 
+//!
 //! // Encode to bit stream
 //! let mut writer = BitWriter::new();
 //! let bits_used = encode_match(&literal_match, &mut writer)?;
 //! let buffer = writer.finish();
-//! 
+//!
 //! // Decode from bit stream
 //! let mut reader = BitReader::new(&buffer);
 //! let (decoded_match, bits_consumed) = decode_match(&mut reader)?;
@@ -63,7 +63,7 @@ use std::fmt;
 /// Maximum literal length (1-32 bytes)
 pub const MAX_LITERAL_LENGTH: usize = 32;
 
-/// Maximum RLE length (2-33 bytes) 
+/// Maximum RLE length (2-33 bytes)
 pub const MAX_RLE_LENGTH: usize = 33;
 
 /// Maximum Far1Short length (2-33 bytes)
@@ -169,25 +169,19 @@ impl CompressionType {
     /// Check if this type supports the given distance and length
     pub fn supports(self, distance: usize, length: usize) -> bool {
         match self {
-            CompressionType::Literal => {
-                distance == 0 && (1..=MAX_LITERAL_LENGTH).contains(&length)
-            }
-            CompressionType::Global => {
-                length >= MIN_GLOBAL_LENGTH
-            }
-            CompressionType::RLE => {
-                distance == 1 && (2..=MAX_RLE_LENGTH).contains(&length)
-            }
+            CompressionType::Literal => distance == 0 && (1..=MAX_LITERAL_LENGTH).contains(&length),
+            CompressionType::Global => length >= MIN_GLOBAL_LENGTH,
+            CompressionType::RLE => distance == 1 && (2..=MAX_RLE_LENGTH).contains(&length),
             CompressionType::NearShort => {
-                (2..=MAX_NEAR_SHORT_DISTANCE).contains(&distance) 
+                (2..=MAX_NEAR_SHORT_DISTANCE).contains(&distance)
                     && (2..=MAX_NEAR_SHORT_LENGTH).contains(&length)
             }
             CompressionType::Far1Short => {
-                (2..=MAX_FAR1_SHORT_DISTANCE).contains(&distance) 
+                (2..=MAX_FAR1_SHORT_DISTANCE).contains(&distance)
                     && (2..=MAX_FAR1_SHORT_LENGTH).contains(&length)
             }
             CompressionType::Far2Short => {
-                (258..=MAX_FAR2_SHORT_DISTANCE).contains(&distance) 
+                (258..=MAX_FAR2_SHORT_DISTANCE).contains(&distance)
                     && (2..=MAX_FAR2_SHORT_LENGTH).contains(&length)
             }
             CompressionType::Far2Long => {
@@ -272,35 +266,35 @@ pub fn get_encoding_meta(distance: usize, length: usize) -> EncodingMeta {
             cost_bytes: 2,
         };
     }
-    
+
     if distance == 1 && length <= 33 {
         return EncodingMeta {
             compression_type: CompressionType::RLE,
             cost_bytes: 1,
         };
     }
-    
+
     if (2..=9).contains(&distance) && length <= 5 {
         return EncodingMeta {
             compression_type: CompressionType::NearShort,
             cost_bytes: 1,
         };
     }
-    
+
     if (2..=257).contains(&distance) && length <= 33 {
         return EncodingMeta {
             compression_type: CompressionType::Far1Short,
             cost_bytes: 2,
         };
     }
-    
+
     if (258..=258 + 65535).contains(&distance) && length <= 33 {
         return EncodingMeta {
             compression_type: CompressionType::Far2Short,
             cost_bytes: 3,
         };
     }
-    
+
     if distance <= 65535 && length >= 34 {
         if length <= 34 + 30 {
             return EncodingMeta {
@@ -314,7 +308,7 @@ pub fn get_encoding_meta(distance: usize, length: usize) -> EncodingMeta {
             };
         }
     }
-    
+
     // Far3Long (fallback case)
     if length <= 35 {
         EncodingMeta {
@@ -460,12 +454,14 @@ impl Match {
                     )));
                 }
             }
-            Match::Global { dict_position: _, length } => {
+            Match::Global {
+                dict_position: _,
+                length,
+            } => {
                 if *length < MIN_GLOBAL_LENGTH as u16 {
                     return Err(ZiporaError::invalid_data(format!(
                         "Global match length {} below minimum {}",
-                        length,
-                        MIN_GLOBAL_LENGTH
+                        length, MIN_GLOBAL_LENGTH
                     )));
                 }
                 // dict_position validation would depend on dictionary size
@@ -562,7 +558,10 @@ impl Match {
 
     /// Create a global dictionary match
     pub fn global(dict_position: u32, length: u16) -> Result<Self> {
-        let m = Match::Global { dict_position, length };
+        let m = Match::Global {
+            dict_position,
+            length,
+        };
         m.validate()?;
         Ok(m)
     }
@@ -616,7 +615,10 @@ impl fmt::Display for Match {
             Match::Literal { length } => {
                 write!(f, "Literal(len={})", length)
             }
-            Match::Global { dict_position, length } => {
+            Match::Global {
+                dict_position,
+                length,
+            } => {
                 write!(f, "Global(pos={}, len={})", dict_position, length)
             }
             Match::RLE { byte_value, length } => {
@@ -674,7 +676,11 @@ impl BitWriter {
             return Ok(());
         }
 
-        let mask = if bits == 32 { 0xFFFFFFFF } else { (1u32 << bits) - 1 };
+        let mask = if bits == 32 {
+            0xFFFFFFFF
+        } else {
+            (1u32 << bits) - 1
+        };
         let masked_value = value & mask;
 
         self.bit_buffer |= (masked_value as u64) << self.bit_count;
@@ -765,7 +771,11 @@ impl<'a> BitReader<'a> {
             ));
         }
 
-        let mask = if bits == 32 { 0xFFFFFFFF } else { (1u64 << bits) - 1 };
+        let mask = if bits == 32 {
+            0xFFFFFFFF
+        } else {
+            (1u64 << bits) - 1
+        };
         let result = (self.bit_buffer & mask) as u32;
 
         self.bit_buffer >>= bits;
@@ -825,12 +835,12 @@ pub fn calculate_encoding_cost(match_type: &Match) -> usize {
     // For backward compatibility, use the reference implementation when possible
     let distance = match_type.distance();
     let length = match_type.length();
-    
+
     // Use reference logic for supported cases
     if can_use_reference_logic(distance, length) {
         return calculate_encoding_cost_reference(distance, length);
     }
-    
+
     // Fall back to original logic for unsupported cases
     calculate_encoding_cost_legacy(match_type)
 }
@@ -841,12 +851,12 @@ fn can_use_reference_logic(distance: usize, length: usize) -> bool {
     if length == 0 {
         return false;
     }
-    
+
     // Literal case
     if distance == 0 {
         return length == 1; // Reference only supports length 1 literals
     }
-    
+
     // All other cases are covered by the reference logic
     true
 }
@@ -862,7 +872,10 @@ fn calculate_encoding_cost_legacy(match_type: &Match) -> usize {
             cost += 5; // Overhead for length encoding
             cost += (*length as usize) * 8; // Actual literal data bits
         }
-        Match::Global { dict_position: _, length: _ } => {
+        Match::Global {
+            dict_position: _,
+            length: _,
+        } => {
             // Dictionary position: variable based on dictionary size
             // For now, assume 32-bit position + 16-bit length
             cost += 32 + 16;
@@ -871,19 +884,31 @@ fn calculate_encoding_cost_legacy(match_type: &Match) -> usize {
             // 8 bits for byte value + 5 bits for length (2-33)
             cost += 8 + 5;
         }
-        Match::NearShort { distance: _, length: _ } => {
+        Match::NearShort {
+            distance: _,
+            length: _,
+        } => {
             // 3 bits for distance (2-9) + 2 bits for length (2-5)
             cost += 3 + 2;
         }
-        Match::Far1Short { distance: _, length: _ } => {
+        Match::Far1Short {
+            distance: _,
+            length: _,
+        } => {
             // 8 bits for distance (2-257) + 5 bits for length (2-33)
             cost += 8 + 5;
         }
-        Match::Far2Short { distance: _, length: _ } => {
+        Match::Far2Short {
+            distance: _,
+            length: _,
+        } => {
             // 16 bits for distance (258-65793) + 5 bits for length (2-33)
             cost += 16 + 5;
         }
-        Match::Far2Long { distance: _, length } => {
+        Match::Far2Long {
+            distance: _,
+            length,
+        } => {
             // 16 bits for distance + variable bits for length (34+)
             // Use reference logic for variable length encoding
             let length_cost = if *length <= FAR2_LONG_LENGTH_THRESHOLD as u16 {
@@ -893,7 +918,10 @@ fn calculate_encoding_cost_legacy(match_type: &Match) -> usize {
             };
             cost = length_cost; // Override with reference cost
         }
-        Match::Far3Long { distance: _, length } => {
+        Match::Far3Long {
+            distance: _,
+            length,
+        } => {
             // 24 bits for distance + variable bits for length
             // Use reference logic for variable length encoding
             let length_cost = if *length <= FAR3_LONG_LENGTH_THRESHOLD as u32 {
@@ -929,7 +957,10 @@ pub fn calculate_encoding_overhead(match_type: &Match) -> usize {
             // The actual data bits are not counted as overhead
             cost += 5;
         }
-        Match::Global { dict_position: _, length: _ } => {
+        Match::Global {
+            dict_position: _,
+            length: _,
+        } => {
             // Dictionary position: variable based on dictionary size
             // For now, assume 32-bit position + 16-bit length
             cost += 32 + 16;
@@ -938,26 +969,47 @@ pub fn calculate_encoding_overhead(match_type: &Match) -> usize {
             // 8 bits for byte value + 5 bits for length (2-33)
             cost += 8 + 5;
         }
-        Match::NearShort { distance: _, length: _ } => {
+        Match::NearShort {
+            distance: _,
+            length: _,
+        } => {
             // 3 bits for distance (2-9) + 2 bits for length (2-5)
             cost += 3 + 2;
         }
-        Match::Far1Short { distance: _, length: _ } => {
+        Match::Far1Short {
+            distance: _,
+            length: _,
+        } => {
             // 8 bits for distance (2-257) + 5 bits for length (2-33)
             cost += 8 + 5;
         }
-        Match::Far2Short { distance: _, length: _ } => {
+        Match::Far2Short {
+            distance: _,
+            length: _,
+        } => {
             // 16 bits for distance (258-65793) + 5 bits for length (2-33)
             cost += 16 + 5;
         }
-        Match::Far2Long { distance: _, length } => {
+        Match::Far2Long {
+            distance: _,
+            length,
+        } => {
             // 16 bits for distance + variable bits for length (34+)
             let length_bits = if *length < 128 { 7 } else { 15 };
             cost += 16 + length_bits;
         }
-        Match::Far3Long { distance: _, length } => {
+        Match::Far3Long {
+            distance: _,
+            length,
+        } => {
             // 24 bits for distance + variable bits for length
-            let length_bits = if *length < 128 { 7 } else if *length < 32768 { 15 } else { 31 };
+            let length_bits = if *length < 128 {
+                7
+            } else if *length < 32768 {
+                15
+            } else {
+                31
+            };
             cost += 24 + length_bits;
         }
     }
@@ -978,21 +1030,21 @@ pub fn calculate_encoding_overhead(match_type: &Match) -> usize {
 /// Compression efficiency ratio (data_bits / total_encoding_cost)
 pub fn calculate_compression_efficiency(match_type: &Match) -> f64 {
     let data_length = match_type.length();
-    
+
     // Total data bits represented by this match
     let data_bits = data_length * 8;
-    
+
     if data_bits == 0 {
         return 0.0;
     }
-    
+
     // Total encoding cost (overhead + data bits for literals, overhead only for compressed matches)
     let total_cost = calculate_encoding_cost(match_type);
-    
+
     if total_cost == 0 {
         return 0.0;
     }
-    
+
     // Efficiency = data_bits / total_encoding_cost (higher is better)
     data_bits as f64 / total_cost as f64
 }
@@ -1033,7 +1085,7 @@ pub fn choose_best_compression_type(distance: usize, length: usize) -> Option<Co
     if can_use_reference_logic(distance, length) {
         return Some(choose_best_compression_type_reference(distance, length));
     }
-    
+
     // Fall back to original logic for unsupported cases
     choose_best_compression_type_legacy(distance, length)
 }
@@ -1056,31 +1108,36 @@ fn choose_best_compression_type_legacy(distance: usize, length: usize) -> Option
         .min_by_key(|&comp_type| {
             // Create a dummy match to calculate cost
             let dummy_match = match comp_type {
-                CompressionType::Literal => Match::Literal { length: length as u8 },
-                CompressionType::RLE => Match::RLE { byte_value: 0, length: length as u8 },
-                CompressionType::NearShort => Match::NearShort { 
-                    distance: distance as u8, 
-                    length: length as u8 
+                CompressionType::Literal => Match::Literal {
+                    length: length as u8,
                 },
-                CompressionType::Far1Short => Match::Far1Short { 
-                    distance: distance as u16, 
-                    length: length as u8 
+                CompressionType::RLE => Match::RLE {
+                    byte_value: 0,
+                    length: length as u8,
                 },
-                CompressionType::Far2Short => Match::Far2Short { 
-                    distance: distance as u32, 
-                    length: length as u8 
+                CompressionType::NearShort => Match::NearShort {
+                    distance: distance as u8,
+                    length: length as u8,
                 },
-                CompressionType::Far2Long => Match::Far2Long { 
-                    distance: distance as u16, 
-                    length: length as u16 
+                CompressionType::Far1Short => Match::Far1Short {
+                    distance: distance as u16,
+                    length: length as u8,
                 },
-                CompressionType::Far3Long => Match::Far3Long { 
-                    distance: distance as u32, 
-                    length: length as u32 
+                CompressionType::Far2Short => Match::Far2Short {
+                    distance: distance as u32,
+                    length: length as u8,
+                },
+                CompressionType::Far2Long => Match::Far2Long {
+                    distance: distance as u16,
+                    length: length as u16,
+                },
+                CompressionType::Far3Long => Match::Far3Long {
+                    distance: distance as u32,
+                    length: length as u32,
                 },
                 CompressionType::Global => return usize::MAX, // Skip global for now
             };
-            
+
             calculate_encoding_cost_legacy(&dummy_match)
         })
         .copied()
@@ -1099,19 +1156,22 @@ fn choose_best_compression_type_legacy(distance: usize, length: usize) -> Option
 /// Number of bits written
 pub fn encode_match(match_type: &Match, writer: &mut BitWriter) -> Result<usize> {
     match_type.validate()?;
-    
+
     let initial_bits = writer.bits_written();
     let comp_type = match_type.compression_type();
-    
+
     // Write compression type (3 bits)
     writer.write_bits(comp_type as u32, CompressionType::type_bits())?;
-    
+
     match match_type {
         Match::Literal { length } => {
             // 5 bits for length (1-32), stored as length-1 to use full range
             writer.write_bits((*length - 1) as u32, 5)?;
         }
-        Match::Global { dict_position, length } => {
+        Match::Global {
+            dict_position,
+            length,
+        } => {
             // 32 bits for dictionary position + 16 bits for length
             writer.write_bits(*dict_position, 32)?;
             writer.write_bits(*length as u32, 16)?;
@@ -1150,7 +1210,7 @@ pub fn encode_match(match_type: &Match, writer: &mut BitWriter) -> Result<usize>
             encode_variable_length((*length - MIN_FAR2_LONG_LENGTH as u32), writer)?; // Store as offset
         }
     }
-    
+
     Ok(writer.bits_written() - initial_bits)
 }
 
@@ -1166,11 +1226,11 @@ pub fn encode_match(match_type: &Match, writer: &mut BitWriter) -> Result<usize>
 /// Decoded match and number of bits consumed
 pub fn decode_match(reader: &mut BitReader) -> Result<(Match, usize)> {
     let initial_pos = reader.bit_position();
-    
+
     // Read compression type (3 bits)
     let comp_type_u8 = reader.read_bits(CompressionType::type_bits())? as u8;
     let comp_type = CompressionType::from_u8(comp_type_u8)?;
-    
+
     let match_result = match comp_type {
         CompressionType::Literal => {
             let length = reader.read_bits(5)? as u8 + 1; // Stored as length-1
@@ -1179,7 +1239,10 @@ pub fn decode_match(reader: &mut BitReader) -> Result<(Match, usize)> {
         CompressionType::Global => {
             let dict_position = reader.read_bits(32)?;
             let length = reader.read_bits(16)? as u16;
-            Match::Global { dict_position, length }
+            Match::Global {
+                dict_position,
+                length,
+            }
         }
         CompressionType::RLE => {
             let byte_value = reader.read_bits(8)? as u8;
@@ -1212,10 +1275,10 @@ pub fn decode_match(reader: &mut BitReader) -> Result<(Match, usize)> {
             Match::Far3Long { distance, length }
         }
     };
-    
+
     // Validate the decoded match
     match_result.validate()?;
-    
+
     let bits_consumed = reader.bit_position() - initial_pos;
     Ok((match_result, bits_consumed))
 }
@@ -1233,13 +1296,13 @@ fn encode_variable_length(value: u32, writer: &mut BitWriter) -> Result<()> {
         writer.write_bits(value, 7)?;
     } else if value < 32768 {
         // 10xxxxxxxxxxxxxxxxxxxxxx format (10 + 15 bits)
-        writer.write_bits(1, 1)?;  // First bit: 1
-        writer.write_bits(0, 1)?;  // Second bit: 0  
+        writer.write_bits(1, 1)?; // First bit: 1
+        writer.write_bits(0, 1)?; // Second bit: 0  
         writer.write_bits(value - 128, 15)?; // Store as offset from 128
     } else {
         // 11xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx format (11 + 30 bits)
-        writer.write_bits(1, 1)?;  // First bit: 1
-        writer.write_bits(1, 1)?;  // Second bit: 1
+        writer.write_bits(1, 1)?; // First bit: 1
+        writer.write_bits(1, 1)?; // Second bit: 1
         writer.write_bits(value - 32768, 30)?; // Store as offset from 32768
     }
     Ok(())
@@ -1248,7 +1311,7 @@ fn encode_variable_length(value: u32, writer: &mut BitWriter) -> Result<()> {
 /// Decode a variable-length integer
 fn decode_variable_length(reader: &mut BitReader) -> Result<u32> {
     let first_bit = reader.read_bits(1)?;
-    
+
     if first_bit == 0 {
         // Format: 0 + 7 bits value
         reader.read_bits(7)
@@ -1280,12 +1343,12 @@ fn decode_variable_length(reader: &mut BitReader) -> Result<u32> {
 pub fn encode_matches(matches: &[Match]) -> Result<(Vec<u8>, usize)> {
     let mut writer = BitWriter::new();
     let mut total_bits = 0;
-    
+
     for match_type in matches {
         let bits_used = encode_match(match_type, &mut writer)?;
         total_bits += bits_used;
     }
-    
+
     Ok((writer.finish(), total_bits))
 }
 
@@ -1303,13 +1366,13 @@ pub fn decode_matches(buffer: &[u8]) -> Result<(Vec<Match>, usize)> {
     let mut reader = BitReader::new(buffer);
     let mut matches = Vec::new();
     let mut total_bits = 0;
-    
+
     while reader.has_bits(CompressionType::type_bits()) {
         let (match_type, bits_consumed) = decode_match(&mut reader)?;
         matches.push(match_type);
         total_bits += bits_consumed;
     }
-    
+
     Ok((matches, total_bits))
 }
 
@@ -1327,30 +1390,33 @@ pub fn calculate_theoretical_compression_ratio(matches: &[Match]) -> f64 {
     if matches.is_empty() {
         return 1.0;
     }
-    
+
     let uncompressed_bytes: usize = matches.iter().map(|m| m.length()).sum();
-    
+
     // Calculate total compressed bits: overhead + data for literals, just overhead for compressed matches
-    let compressed_bits: usize = matches.iter().map(|m| {
-        let overhead = calculate_encoding_overhead(m);
-        match m {
-            Match::Literal { length } => {
-                // For literals, we need overhead + actual data bits
-                overhead + (*length as usize * 8)
+    let compressed_bits: usize = matches
+        .iter()
+        .map(|m| {
+            let overhead = calculate_encoding_overhead(m);
+            match m {
+                Match::Literal { length } => {
+                    // For literals, we need overhead + actual data bits
+                    overhead + (*length as usize * 8)
+                }
+                _ => {
+                    // For compressed matches, only overhead (data is reconstructed)
+                    overhead
+                }
             }
-            _ => {
-                // For compressed matches, only overhead (data is reconstructed)
-                overhead
-            }
-        }
-    }).sum();
-    
+        })
+        .sum();
+
     let compressed_bytes = compressed_bits.div_ceil(8); // Round up to bytes
-    
+
     if uncompressed_bytes == 0 {
         return 1.0;
     }
-    
+
     // Clamp ratio to ensure it's never > 1.0 for test compatibility
     let ratio = compressed_bytes as f64 / uncompressed_bytes as f64;
     ratio.min(1.0)
@@ -1362,8 +1428,14 @@ mod tests {
 
     #[test]
     fn test_compression_type_from_u8() {
-        assert_eq!(CompressionType::from_u8(0).unwrap(), CompressionType::Literal);
-        assert_eq!(CompressionType::from_u8(7).unwrap(), CompressionType::Far3Long);
+        assert_eq!(
+            CompressionType::from_u8(0).unwrap(),
+            CompressionType::Literal
+        );
+        assert_eq!(
+            CompressionType::from_u8(7).unwrap(),
+            CompressionType::Far3Long
+        );
         assert!(CompressionType::from_u8(8).is_err());
     }
 
@@ -1417,11 +1489,11 @@ mod tests {
     #[test]
     fn test_bit_writer_basic() {
         let mut writer = BitWriter::new();
-        
+
         writer.write_bits(0b101, 3).unwrap();
         writer.write_bits(0b1100, 4).unwrap();
         writer.write_bits(0b1, 1).unwrap();
-        
+
         let buffer = writer.finish();
         // LSB first packing: first 3 bits: 101, next 4 bits: 1100, next 1 bit: 1
         // In a byte: 1100 1101 (bit 7-0: 1 1100 101)
@@ -1432,7 +1504,7 @@ mod tests {
     fn test_bit_reader_basic() {
         let data = vec![0b11100101]; // Same as above
         let mut reader = BitReader::new(&data);
-        
+
         assert_eq!(reader.read_bits(3).unwrap(), 0b101);
         assert_eq!(reader.read_bits(4).unwrap(), 0b1100);
         assert_eq!(reader.read_bits(1).unwrap(), 0b1);
@@ -1441,21 +1513,16 @@ mod tests {
     #[test]
     fn test_bit_writer_reader_roundtrip() {
         let mut writer = BitWriter::new();
-        
-        let values = [
-            (0b1010, 4),
-            (0b11, 2),
-            (0b10101010, 8),
-            (0b111, 3),
-        ];
-        
+
+        let values = [(0b1010, 4), (0b11, 2), (0b10101010, 8), (0b111, 3)];
+
         for (value, bits) in values.iter() {
             writer.write_bits(*value, *bits).unwrap();
         }
-        
+
         let buffer = writer.finish();
         let mut reader = BitReader::new(&buffer);
-        
+
         for (expected_value, bits) in values.iter() {
             let read_value = reader.read_bits(*bits).unwrap();
             assert_eq!(read_value, *expected_value);
@@ -1570,13 +1637,13 @@ mod tests {
     fn test_encode_decode_literal() {
         let original = Match::literal(15).unwrap();
         let mut writer = BitWriter::new();
-        
+
         let bits_written = encode_match(&original, &mut writer).unwrap();
         let buffer = writer.finish();
-        
+
         let mut reader = BitReader::new(&buffer);
         let (decoded, bits_read) = decode_match(&mut reader).unwrap();
-        
+
         assert_eq!(original, decoded);
         assert_eq!(bits_written, bits_read);
     }
@@ -1585,13 +1652,13 @@ mod tests {
     fn test_encode_decode_rle() {
         let original = Match::rle(65, 10).unwrap();
         let mut writer = BitWriter::new();
-        
+
         let bits_written = encode_match(&original, &mut writer).unwrap();
         let buffer = writer.finish();
-        
+
         let mut reader = BitReader::new(&buffer);
         let (decoded, bits_read) = decode_match(&mut reader).unwrap();
-        
+
         assert_eq!(original, decoded);
         assert_eq!(bits_written, bits_read);
     }
@@ -1600,13 +1667,13 @@ mod tests {
     fn test_encode_decode_near_short() {
         let original = Match::near_short(5, 4).unwrap();
         let mut writer = BitWriter::new();
-        
+
         let bits_written = encode_match(&original, &mut writer).unwrap();
         let buffer = writer.finish();
-        
+
         let mut reader = BitReader::new(&buffer);
         let (decoded, bits_read) = decode_match(&mut reader).unwrap();
-        
+
         assert_eq!(original, decoded);
         assert_eq!(bits_written, bits_read);
     }
@@ -1615,13 +1682,13 @@ mod tests {
     fn test_encode_decode_far1_short() {
         let original = Match::far1_short(100, 20).unwrap();
         let mut writer = BitWriter::new();
-        
+
         let bits_written = encode_match(&original, &mut writer).unwrap();
         let buffer = writer.finish();
-        
+
         let mut reader = BitReader::new(&buffer);
         let (decoded, bits_read) = decode_match(&mut reader).unwrap();
-        
+
         assert_eq!(original, decoded);
         assert_eq!(bits_written, bits_read);
     }
@@ -1630,13 +1697,13 @@ mod tests {
     fn test_encode_decode_far2_short() {
         let original = Match::far2_short(1000, 25).unwrap();
         let mut writer = BitWriter::new();
-        
+
         let bits_written = encode_match(&original, &mut writer).unwrap();
         let buffer = writer.finish();
-        
+
         let mut reader = BitReader::new(&buffer);
         let (decoded, bits_read) = decode_match(&mut reader).unwrap();
-        
+
         assert_eq!(original, decoded);
         assert_eq!(bits_written, bits_read);
     }
@@ -1645,13 +1712,13 @@ mod tests {
     fn test_encode_decode_far2_long() {
         let original = Match::far2_long(50000, 200).unwrap();
         let mut writer = BitWriter::new();
-        
+
         let bits_written = encode_match(&original, &mut writer).unwrap();
         let buffer = writer.finish();
-        
+
         let mut reader = BitReader::new(&buffer);
         let (decoded, bits_read) = decode_match(&mut reader).unwrap();
-        
+
         assert_eq!(original, decoded);
         assert_eq!(bits_written, bits_read);
     }
@@ -1660,13 +1727,13 @@ mod tests {
     fn test_encode_decode_far3_long() {
         let original = Match::far3_long(1_000_000, 1000).unwrap();
         let mut writer = BitWriter::new();
-        
+
         let bits_written = encode_match(&original, &mut writer).unwrap();
         let buffer = writer.finish();
-        
+
         let mut reader = BitReader::new(&buffer);
         let (decoded, bits_read) = decode_match(&mut reader).unwrap();
-        
+
         assert_eq!(original, decoded);
         assert_eq!(bits_written, bits_read);
     }
@@ -1675,13 +1742,13 @@ mod tests {
     fn test_encode_decode_global() {
         let original = Match::global(123456, 50).unwrap();
         let mut writer = BitWriter::new();
-        
+
         let bits_written = encode_match(&original, &mut writer).unwrap();
         let buffer = writer.finish();
-        
+
         let mut reader = BitReader::new(&buffer);
         let (decoded, bits_read) = decode_match(&mut reader).unwrap();
-        
+
         assert_eq!(original, decoded);
         assert_eq!(bits_written, bits_read);
     }
@@ -1695,21 +1762,21 @@ mod tests {
             Match::near_short(3, 4).unwrap(),
             Match::far1_short(100, 15).unwrap(),
         ];
-        
+
         let (buffer, total_bits_written) = encode_matches(&matches).unwrap();
         let (decoded_matches, total_bits_read) = decode_matches(&buffer).unwrap();
-        
+
         assert_eq!(matches, decoded_matches);
         assert_eq!(total_bits_written, total_bits_read);
     }
 
-    #[test]  
+    #[test]
     fn test_simple_bit_operations() {
         // Test encoding/decoding of 2 bits value 0b10
         let mut writer = BitWriter::new();
         writer.write_bits(0b10, 2).unwrap();
         let buffer = writer.finish();
-        
+
         let mut reader = BitReader::new(&buffer);
         let result = reader.read_bits(2).unwrap();
         assert_eq!(result, 0b10, "Simple 2-bit test failed");
@@ -1718,18 +1785,27 @@ mod tests {
     #[test]
     fn test_variable_length_encoding() {
         let test_values = [0, 127, 128, 166, 32767, 32768, 1000000];
-        
+
         for &value in &test_values {
             let mut writer = BitWriter::new();
             encode_variable_length(value, &mut writer).unwrap();
-            
+
             let buffer = writer.finish();
-            println!("Value {}: encoded to {} bytes: {:?}", value, buffer.len(), buffer);
-            
+            println!(
+                "Value {}: encoded to {} bytes: {:?}",
+                value,
+                buffer.len(),
+                buffer
+            );
+
             let mut reader = BitReader::new(&buffer);
             let decoded = decode_variable_length(&mut reader).unwrap();
-            
-            assert_eq!(value, decoded, "Failed for value {}, got {}", value, decoded);
+
+            assert_eq!(
+                value, decoded,
+                "Failed for value {}, got {}",
+                value, decoded
+            );
         }
     }
 
@@ -1737,7 +1813,7 @@ mod tests {
     fn test_variable_length_encoding_boundaries() {
         // Test boundary values for variable length encoding
         let mut writer = BitWriter::new();
-        
+
         // 7-bit value (127)
         encode_variable_length(127, &mut writer).unwrap();
         // 15-bit value (128)
@@ -1746,10 +1822,10 @@ mod tests {
         encode_variable_length(32767, &mut writer).unwrap();
         // 30-bit value (32768)
         encode_variable_length(32768, &mut writer).unwrap();
-        
+
         let buffer = writer.finish();
         let mut reader = BitReader::new(&buffer);
-        
+
         assert_eq!(decode_variable_length(&mut reader).unwrap(), 127);
         assert_eq!(decode_variable_length(&mut reader).unwrap(), 128);
         assert_eq!(decode_variable_length(&mut reader).unwrap(), 32767);
@@ -1759,14 +1835,14 @@ mod tests {
     #[test]
     fn test_compression_ratio_calculation() {
         let matches = vec![
-            Match::literal(5).unwrap(),   // 5 bytes uncompressed
-            Match::rle(65, 10).unwrap(),  // 10 bytes uncompressed
+            Match::literal(5).unwrap(),       // 5 bytes uncompressed
+            Match::rle(65, 10).unwrap(),      // 10 bytes uncompressed
             Match::near_short(3, 4).unwrap(), // 4 bytes uncompressed
         ];
-        
+
         let ratio = calculate_theoretical_compression_ratio(&matches);
         assert!(ratio > 0.0 && ratio <= 1.0);
-        
+
         // Empty matches should return 1.0
         let empty_ratio = calculate_theoretical_compression_ratio(&[]);
         assert_eq!(empty_ratio, 1.0);
@@ -1775,14 +1851,14 @@ mod tests {
     #[test]
     fn test_bit_writer_large_values() {
         let mut writer = BitWriter::new();
-        
+
         // Test writing 32-bit values
         writer.write_bits(0xFFFFFFFF, 32).unwrap();
         writer.write_bits(0x12345678, 32).unwrap();
-        
+
         let buffer = writer.finish();
         let mut reader = BitReader::new(&buffer);
-        
+
         assert_eq!(reader.read_bits(32).unwrap(), 0xFFFFFFFF);
         assert_eq!(reader.read_bits(32).unwrap(), 0x12345678);
     }
@@ -1791,10 +1867,10 @@ mod tests {
     fn test_bit_reader_insufficient_data() {
         let data = vec![0x00]; // Only 1 byte
         let mut reader = BitReader::new(&data);
-        
+
         // Should be able to read 8 bits
         assert!(reader.read_bits(8).is_ok());
-        
+
         // Should fail to read more bits
         assert!(reader.read_bits(8).is_err());
     }
@@ -1803,7 +1879,7 @@ mod tests {
     fn test_invalid_compression_type() {
         let data = vec![0xFF]; // Invalid type (all 1s)
         let mut reader = BitReader::new(&data);
-        
+
         // Should fail when trying to decode invalid compression type
         assert!(decode_match(&mut reader).is_err());
     }
@@ -1811,35 +1887,35 @@ mod tests {
     #[test]
     fn test_all_compression_type_boundary_values() {
         // Test each compression type with its boundary values
-        
+
         // Literal: 1-32
         assert!(Match::literal(1).is_ok());
         assert!(Match::literal(32).is_ok());
-        
+
         // RLE: length 2-33
         assert!(Match::rle(0, 2).is_ok());
         assert!(Match::rle(255, 33).is_ok());
-        
+
         // NearShort: distance 2-9, length 2-5
         assert!(Match::near_short(2, 2).is_ok());
         assert!(Match::near_short(9, 5).is_ok());
-        
+
         // Far1Short: distance 2-257, length 2-33
         assert!(Match::far1_short(2, 2).is_ok());
         assert!(Match::far1_short(257, 33).is_ok());
-        
+
         // Far2Short: distance 258-65793, length 2-33
         assert!(Match::far2_short(258, 2).is_ok());
         assert!(Match::far2_short(65793, 33).is_ok());
-        
+
         // Far2Long: distance 0-65535, length 34+
         assert!(Match::far2_long(0, 34).is_ok());
         assert!(Match::far2_long(65535, 65535).is_ok());
-        
+
         // Far3Long: distance 0-16M-1, length 34+
         assert!(Match::far3_long(0, 34).is_ok());
         assert!(Match::far3_long(16_777_215, 1000000).is_ok());
-        
+
         // Global: position any, length 6+
         assert!(Match::global(0, 6).is_ok());
         assert!(Match::global(0xFFFFFFFF, 65535).is_ok());
@@ -1857,53 +1933,50 @@ mod tests {
                 Match::literal(1).unwrap(),
                 Match::literal(16).unwrap(),
                 Match::literal(32).unwrap(),
-                
                 // RLE cases
                 Match::rle(0, 2).unwrap(),
                 Match::rle(127, 17).unwrap(),
                 Match::rle(255, 33).unwrap(),
-                
                 // NearShort cases
                 Match::near_short(2, 2).unwrap(),
                 Match::near_short(5, 3).unwrap(),
                 Match::near_short(9, 5).unwrap(),
-                
                 // Far1Short cases
                 Match::far1_short(2, 2).unwrap(),
                 Match::far1_short(128, 17).unwrap(),
                 Match::far1_short(257, 33).unwrap(),
-                
                 // Far2Short cases
                 Match::far2_short(258, 2).unwrap(),
                 Match::far2_short(32000, 17).unwrap(),
                 Match::far2_short(65793, 33).unwrap(),
-                
                 // Far2Long cases
                 Match::far2_long(0, 34).unwrap(),
                 Match::far2_long(32768, 500).unwrap(),
                 Match::far2_long(65535, 65535).unwrap(),
-                
                 // Far3Long cases
                 Match::far3_long(0, 34).unwrap(),
                 Match::far3_long(1000000, 1000).unwrap(),
                 Match::far3_long(16_777_215, 1000000).unwrap(),
-                
                 // Global cases
                 Match::global(0, 6).unwrap(),
                 Match::global(123456, 789).unwrap(),
                 Match::global(0xFFFFFFFF, 65535).unwrap(),
             ];
-            
+
             for original in test_cases {
                 let mut writer = BitWriter::new();
                 let bits_written = encode_match(&original, &mut writer).unwrap();
-                
+
                 let buffer = writer.finish();
                 let mut reader = BitReader::new(&buffer);
                 let (decoded, bits_read) = decode_match(&mut reader).unwrap();
-                
+
                 assert_eq!(original, decoded, "Roundtrip failed for: {}", original);
-                assert_eq!(bits_written, bits_read, "Bit count mismatch for: {}", original);
+                assert_eq!(
+                    bits_written, bits_read,
+                    "Bit count mismatch for: {}",
+                    original
+                );
             }
         }
 
@@ -1911,20 +1984,24 @@ mod tests {
         #[test]
         fn property_optimal_compression_type_selection() {
             let test_cases = vec![
-                (0, 10),   // Should select Literal
-                (1, 5),    // Should select RLE
-                (3, 4),    // Should select NearShort
-                (50, 10),  // Should select Far1Short
-                (1000, 15), // Should select Far2Short
-                (30000, 100), // Should select Far2Long
+                (0, 10),        // Should select Literal
+                (1, 5),         // Should select RLE
+                (3, 4),         // Should select NearShort
+                (50, 10),       // Should select Far1Short
+                (1000, 15),     // Should select Far2Short
+                (30000, 100),   // Should select Far2Long
                 (1000000, 500), // Should select Far3Long
             ];
-            
+
             for (distance, length) in test_cases {
                 if let Some(selected_type) = choose_best_compression_type(distance, length) {
-                    assert!(selected_type.supports(distance, length), 
-                           "Selected type {} doesn't support distance={}, length={}", 
-                           selected_type.name(), distance, length);
+                    assert!(
+                        selected_type.supports(distance, length),
+                        "Selected type {} doesn't support distance={}, length={}",
+                        selected_type.name(),
+                        distance,
+                        length
+                    );
                 }
             }
         }
@@ -1942,16 +2019,16 @@ mod tests {
                 Match::far3_long(500000, 500).unwrap(),
                 Match::global(123456, 50).unwrap(),
             ];
-            
+
             for m in matches {
                 let cost = calculate_encoding_cost(&m);
-                
+
                 // Cost should be at least the type bits
                 assert!(cost >= CompressionType::type_bits() as usize);
-                
+
                 // Cost should be reasonable (not more than 100 bits for typical cases)
                 assert!(cost <= 100, "Encoding cost too high: {} for {}", cost, m);
-                
+
                 // Efficiency should be positive
                 let efficiency = calculate_compression_efficiency(&m);
                 assert!(efficiency > 0.0, "Non-positive efficiency for {}", m);
@@ -1969,14 +2046,21 @@ mod tests {
                 Match::literal(12).unwrap(),
                 Match::far2_long(25000, 75).unwrap(),
             ];
-            
+
             // Skip test cases that hit encoding issues with complex matches
             if let Ok((buffer, _)) = encode_matches(&original_matches) {
                 if let Ok((decoded_matches, _)) = decode_matches(&buffer) {
-            
                     assert_eq!(original_matches.len(), decoded_matches.len());
-                    for (i, (original, decoded)) in original_matches.iter().zip(decoded_matches.iter()).enumerate() {
-                        assert_eq!(original, decoded, "Mismatch at index {}: {} != {}", i, original, decoded);
+                    for (i, (original, decoded)) in original_matches
+                        .iter()
+                        .zip(decoded_matches.iter())
+                        .enumerate()
+                    {
+                        assert_eq!(
+                            original, decoded,
+                            "Mismatch at index {}: {} != {}",
+                            i, original, decoded
+                        );
                     }
                 }
             }
@@ -1988,7 +2072,7 @@ mod tests {
 // FSE (Finite State Entropy) Integration
 // ============================================================================
 
-use crate::entropy::{FseEncoder, FseDecoder, FseConfig as EntropFseConfig};
+use crate::entropy::{FseConfig as EntropFseConfig, FseDecoder, FseEncoder};
 
 /// FSE compression configuration for PA-Zip integration
 ///
@@ -2040,23 +2124,23 @@ impl FseConfig {
             dict_size: 0,
         }
     }
-    
+
     /// Configuration optimized for PA-Zip bit streams
     pub fn for_pa_zip() -> Self {
         Self {
             max_symbol: 255,
-            table_log: 11,  // 2KB table - good for bit streams
+            table_log: 11, // 2KB table - good for bit streams
             adaptive: true,
-            compression_level: 6,  // Balanced for PA-Zip
+            compression_level: 6, // Balanced for PA-Zip
             fast_decode: false,
         }
     }
-    
+
     /// Fast configuration for real-time PA-Zip compression
     pub fn fast_pa_zip() -> Self {
         Self {
             max_symbol: 255,
-            table_log: 9,   // 512B table - very fast
+            table_log: 9, // 512B table - very fast
             adaptive: false,
             compression_level: 1,
             fast_decode: true,
@@ -2079,20 +2163,20 @@ impl FseCompressor {
     pub fn new() -> Result<Self> {
         Self::with_config(FseConfig::default())
     }
-    
+
     /// Create a new FSE compressor with custom configuration
     pub fn with_config(config: FseConfig) -> Result<Self> {
         let entropy_config = config.to_entropy_config();
         let encoder = FseEncoder::new(entropy_config.clone())?;
         let decoder = FseDecoder::with_config(entropy_config)?;
-        
-        Ok(Self { 
-            config, 
+
+        Ok(Self {
+            config,
             encoder: Some(encoder),
             decoder: Some(decoder),
         })
     }
-    
+
     /// Compress data using FSE
     ///
     /// Applies FSE compression to the input data, optimized for PA-Zip bit streams.
@@ -2101,7 +2185,7 @@ impl FseCompressor {
         if data.is_empty() {
             return Ok(Vec::new());
         }
-        
+
         // Always use stateful encoder to ensure statistics are tracked
         match &mut self.encoder {
             Some(encoder) => encoder.compress(data),
@@ -2114,7 +2198,7 @@ impl FseCompressor {
             }
         }
     }
-    
+
     /// Decompress FSE-compressed data
     ///
     /// Reverses FSE compression to restore the original PA-Zip bit stream.
@@ -2122,7 +2206,7 @@ impl FseCompressor {
         if data.is_empty() {
             return Ok(Vec::new());
         }
-        
+
         // Always use stateful decoder to match stateful encoder
         match &mut self.decoder {
             Some(decoder) => decoder.decompress(data),
@@ -2135,7 +2219,7 @@ impl FseCompressor {
             }
         }
     }
-    
+
     /// Reset compressor state
     pub fn reset(&mut self) -> Result<()> {
         if let Some(encoder) = &mut self.encoder {
@@ -2146,7 +2230,7 @@ impl FseCompressor {
         }
         Ok(())
     }
-    
+
     /// Get compression statistics
     pub fn stats(&self) -> Option<&crate::entropy::EntropyStats> {
         self.encoder.as_ref().map(|e| e.stats())
@@ -2184,7 +2268,7 @@ impl Default for FseCompressor {
 /// with additional entropy coding applied.
 ///
 /// # Performance
-/// 
+///
 /// FSE compression provides significant additional compression for PA-Zip
 /// bit streams, typically achieving 10-30% further size reduction depending
 /// on the entropy characteristics of the encoded matches.
@@ -2192,17 +2276,17 @@ pub fn apply_fse_compression(encoded_data: &[u8], config: &FseConfig) -> Result<
     if encoded_data.is_empty() {
         return Ok(Vec::new());
     }
-    
+
     // For very small data, FSE overhead may not be worth it
     if encoded_data.len() < 32 {
         let mut result = vec![0x55, 0x4E]; // "UN" magic for uncompressed
         result.extend_from_slice(encoded_data);
         return Ok(result);
     }
-    
+
     let mut compressor = FseCompressor::with_config(config.clone())?;
     let compressed = compressor.compress(encoded_data)?;
-    
+
     // Only return compressed data if it's actually smaller
     if compressed.len() < encoded_data.len() {
         // Add magic prefix to indicate compressed data
@@ -2232,19 +2316,19 @@ pub fn remove_fse_compression(fse_data: &[u8], config: &FseConfig) -> Result<Vec
     if fse_data.is_empty() {
         return Ok(Vec::new());
     }
-    
+
     // Check for magic prefixes
     if fse_data.len() >= 2 {
         match &fse_data[0..2] {
             [0x55, 0x4E] => {
                 // "UN" magic - uncompressed data
                 return Ok(fse_data[2..].to_vec());
-            },
+            }
             [0xFE, 0x53] => {
                 // "FS" magic - FSE compressed data
                 let mut compressor = FseCompressor::with_config(config.clone())?;
                 return compressor.decompress(&fse_data[2..]);
-            },
+            }
             _ => {
                 // No magic prefix - assume old format, try decompression
                 let mut compressor = FseCompressor::with_config(config.clone())?;
@@ -2252,14 +2336,14 @@ pub fn remove_fse_compression(fse_data: &[u8], config: &FseConfig) -> Result<Vec
             }
         }
     }
-    
+
     // Too short for magic prefix, return as-is
     Ok(fse_data.to_vec())
 }
 
 /// Reference implementation compatible FSE_zip function
 ///
-/// This function provides exact compatibility with the reference 
+/// This function provides exact compatibility with the reference
 /// implementation's FSE_zip function, maintaining the same interface and behavior.
 ///
 /// # Arguments
@@ -2272,7 +2356,7 @@ pub fn remove_fse_compression(fse_data: &[u8], config: &FseConfig) -> Result<Vec
 ///
 /// # Reference Implementation
 /// ```cpp
-/// void* FSE_zip(const void* data, size_t size, void* gz, size_t gzsize, 
+/// void* FSE_zip(const void* data, size_t size, void* gz, size_t gzsize,
 ///               FSE_CTable* gtable, size_t* ezsize) {
 ///     if (size > 2) {
 ///         gzsize = FSE_compress_usingCTable(gz, gzsize, data, size, gtable);
@@ -2291,60 +2375,57 @@ pub fn remove_fse_compression(fse_data: &[u8], config: &FseConfig) -> Result<Vec
 /// }
 /// ```
 pub fn fse_zip_reference(
-    data: &[u8], 
-    compressed_buffer: &mut [u8], 
-    compressed_size: &mut usize
+    data: &[u8],
+    compressed_buffer: &mut [u8],
+    compressed_size: &mut usize,
 ) -> Result<bool> {
     // Match reference logic: reject data <= 2 bytes
     if data.len() <= 2 {
         return Ok(false);
     }
-    
+
     // Apply FSE compression
     let config = FseConfig::for_pa_zip();
     let compressed = apply_fse_compression(data, &config)?;
-    
+
     // Check compression effectiveness (reference: gzsize < size)
     if compressed.len() >= data.len() || compressed.len() < 2 {
         return Ok(false); // Compression not beneficial
     }
-    
+
     // Check buffer size
     if compressed.len() > compressed_buffer.len() {
         return Err(ZiporaError::invalid_parameter("Output buffer too small"));
     }
-    
+
     // Copy to output buffer
     compressed_buffer[..compressed.len()].copy_from_slice(&compressed);
     *compressed_size = compressed.len();
-    
+
     Ok(true)
 }
 
 /// Reference implementation compatible FSE_unzip function
 ///
-/// This function provides exact compatibility with the reference 
+/// This function provides exact compatibility with the reference
 /// implementation's FSE_unzip function.
 ///
 /// # Reference Implementation
 /// ```cpp
-/// size_t FSE_unzip(const void* zdata, size_t zsize, void* udata, size_t usize, 
+/// size_t FSE_unzip(const void* zdata, size_t zsize, void* udata, size_t usize,
 ///                  const void* gtable) {
-///     return FSE_decompress_usingDTable(udata, usize, zdata, zsize, 
+///     return FSE_decompress_usingDTable(udata, usize, zdata, zsize,
 ///                                       (const FSE_DTable*)gtable);
 /// }
 /// ```
-pub fn fse_unzip_reference(
-    compressed_data: &[u8],
-    output_buffer: &mut [u8]
-) -> Result<usize> {
+pub fn fse_unzip_reference(compressed_data: &[u8], output_buffer: &mut [u8]) -> Result<usize> {
     let config = FseConfig::for_pa_zip();
     let decompressed = remove_fse_compression(compressed_data, &config)?;
-    
+
     if decompressed.len() > output_buffer.len() {
         return Err(ZiporaError::invalid_data("Output buffer too small"));
     }
-    
+
     output_buffer[..decompressed.len()].copy_from_slice(&decompressed);
     Ok(decompressed.len())
 }
@@ -2367,7 +2448,7 @@ mod reference_tests {
         let meta = get_encoding_meta(1, 5);
         assert_eq!(meta.compression_type, CompressionType::RLE);
         assert_eq!(meta.cost_bytes, 1);
-        
+
         let meta = get_encoding_meta(1, 33);
         assert_eq!(meta.compression_type, CompressionType::RLE);
         assert_eq!(meta.cost_bytes, 1);
@@ -2379,7 +2460,7 @@ mod reference_tests {
         let meta = get_encoding_meta(2, 5);
         assert_eq!(meta.compression_type, CompressionType::NearShort);
         assert_eq!(meta.cost_bytes, 1);
-        
+
         let meta = get_encoding_meta(9, 5);
         assert_eq!(meta.compression_type, CompressionType::NearShort);
         assert_eq!(meta.cost_bytes, 1);
@@ -2391,7 +2472,7 @@ mod reference_tests {
         let meta = get_encoding_meta(10, 20);
         assert_eq!(meta.compression_type, CompressionType::Far1Short);
         assert_eq!(meta.cost_bytes, 2);
-        
+
         let meta = get_encoding_meta(257, 33);
         assert_eq!(meta.compression_type, CompressionType::Far1Short);
         assert_eq!(meta.cost_bytes, 2);
@@ -2403,7 +2484,7 @@ mod reference_tests {
         let meta = get_encoding_meta(258, 20);
         assert_eq!(meta.compression_type, CompressionType::Far2Short);
         assert_eq!(meta.cost_bytes, 3);
-        
+
         let meta = get_encoding_meta(258 + 65535, 33);
         assert_eq!(meta.compression_type, CompressionType::Far2Short);
         assert_eq!(meta.cost_bytes, 3);
@@ -2414,21 +2495,21 @@ mod reference_tests {
         // Reference: if (distance <= 65535 && len >= 34)
         // if (len <= 34+30) return { DzType::Far2Long, 3 };
         // else return { DzType::Far2Long, 6 };
-        
+
         // Small Far2Long
         let meta = get_encoding_meta(30000, 50);
         assert_eq!(meta.compression_type, CompressionType::Far2Long);
         assert_eq!(meta.cost_bytes, 3);
-        
+
         let meta = get_encoding_meta(65535, 64); // 34 + 30 = 64
         assert_eq!(meta.compression_type, CompressionType::Far2Long);
         assert_eq!(meta.cost_bytes, 3);
-        
+
         // Large Far2Long
         let meta = get_encoding_meta(30000, 65);
         assert_eq!(meta.compression_type, CompressionType::Far2Long);
         assert_eq!(meta.cost_bytes, 6);
-        
+
         let meta = get_encoding_meta(65535, 1000);
         assert_eq!(meta.compression_type, CompressionType::Far2Long);
         assert_eq!(meta.cost_bytes, 6);
@@ -2439,17 +2520,17 @@ mod reference_tests {
         // Reference: Far3Long (fallback)
         // if (len <= 35) return { DzType::Far3Long, 4 };
         // else return { DzType::Far3Long, 7 };
-        
+
         // Small Far3Long
         let meta = get_encoding_meta(1000000, 35);
         assert_eq!(meta.compression_type, CompressionType::Far3Long);
         assert_eq!(meta.cost_bytes, 4);
-        
+
         // Large Far3Long
         let meta = get_encoding_meta(1000000, 36);
         assert_eq!(meta.compression_type, CompressionType::Far3Long);
         assert_eq!(meta.cost_bytes, 7);
-        
+
         let meta = get_encoding_meta(1000000, 1000);
         assert_eq!(meta.compression_type, CompressionType::Far3Long);
         assert_eq!(meta.cost_bytes, 7);
@@ -2458,31 +2539,31 @@ mod reference_tests {
     #[test]
     fn test_reference_cost_calculation() {
         // Test cost calculation in bits (converted from bytes)
-        
+
         let cost = calculate_encoding_cost_reference(0, 1); // Literal
         assert_eq!(cost, 2 * 8); // 2 bytes = 16 bits
-        
+
         let cost = calculate_encoding_cost_reference(1, 5); // RLE
         assert_eq!(cost, 1 * 8); // 1 byte = 8 bits
-        
+
         let cost = calculate_encoding_cost_reference(3, 4); // NearShort
         assert_eq!(cost, 1 * 8); // 1 byte = 8 bits
-        
+
         let cost = calculate_encoding_cost_reference(100, 20); // Far1Short
         assert_eq!(cost, 2 * 8); // 2 bytes = 16 bits
-        
+
         let cost = calculate_encoding_cost_reference(1000, 20); // Far2Short
         assert_eq!(cost, 3 * 8); // 3 bytes = 24 bits
-        
+
         let cost = calculate_encoding_cost_reference(30000, 50); // Far2Long (small)
         assert_eq!(cost, 3 * 8); // 3 bytes = 24 bits
-        
+
         let cost = calculate_encoding_cost_reference(30000, 100); // Far2Long (large)
         assert_eq!(cost, 6 * 8); // 6 bytes = 48 bits
-        
+
         let cost = calculate_encoding_cost_reference(1000000, 35); // Far3Long (small)
         assert_eq!(cost, 4 * 8); // 4 bytes = 32 bits
-        
+
         let cost = calculate_encoding_cost_reference(1000000, 100); // Far3Long (large)
         assert_eq!(cost, 7 * 8); // 7 bytes = 56 bits
     }
@@ -2490,54 +2571,126 @@ mod reference_tests {
     #[test]
     fn test_reference_compression_type_selection() {
         // Test that the reference selection matches the exact logic
-        
-        assert_eq!(choose_best_compression_type_reference(0, 1), CompressionType::Literal);
-        assert_eq!(choose_best_compression_type_reference(1, 5), CompressionType::RLE);
-        assert_eq!(choose_best_compression_type_reference(3, 4), CompressionType::NearShort);
-        assert_eq!(choose_best_compression_type_reference(100, 20), CompressionType::Far1Short);
-        assert_eq!(choose_best_compression_type_reference(1000, 20), CompressionType::Far2Short);
-        assert_eq!(choose_best_compression_type_reference(30000, 50), CompressionType::Far2Long);
-        assert_eq!(choose_best_compression_type_reference(1000000, 35), CompressionType::Far3Long);
+
+        assert_eq!(
+            choose_best_compression_type_reference(0, 1),
+            CompressionType::Literal
+        );
+        assert_eq!(
+            choose_best_compression_type_reference(1, 5),
+            CompressionType::RLE
+        );
+        assert_eq!(
+            choose_best_compression_type_reference(3, 4),
+            CompressionType::NearShort
+        );
+        assert_eq!(
+            choose_best_compression_type_reference(100, 20),
+            CompressionType::Far1Short
+        );
+        assert_eq!(
+            choose_best_compression_type_reference(1000, 20),
+            CompressionType::Far2Short
+        );
+        assert_eq!(
+            choose_best_compression_type_reference(30000, 50),
+            CompressionType::Far2Long
+        );
+        assert_eq!(
+            choose_best_compression_type_reference(1000000, 35),
+            CompressionType::Far3Long
+        );
     }
 
     #[test]
     fn test_reference_boundary_conditions() {
         // Test exact boundary conditions from the reference implementation
-        
+
         // Literal: only len == 1
-        assert_eq!(get_encoding_meta(0, 1).compression_type, CompressionType::Literal);
+        assert_eq!(
+            get_encoding_meta(0, 1).compression_type,
+            CompressionType::Literal
+        );
         // Note: len > 1 with distance 0 should fall through to Far3Long
-        
+
         // RLE: distance == 1 && len <= 33
-        assert_eq!(get_encoding_meta(1, 2).compression_type, CompressionType::RLE);
-        assert_eq!(get_encoding_meta(1, 33).compression_type, CompressionType::RLE);
-        assert_eq!(get_encoding_meta(1, 34).compression_type, CompressionType::Far2Long); // len > 33, falls to Far2Long
-        
+        assert_eq!(
+            get_encoding_meta(1, 2).compression_type,
+            CompressionType::RLE
+        );
+        assert_eq!(
+            get_encoding_meta(1, 33).compression_type,
+            CompressionType::RLE
+        );
+        assert_eq!(
+            get_encoding_meta(1, 34).compression_type,
+            CompressionType::Far2Long
+        ); // len > 33, falls to Far2Long
+
         // NearShort: distance 2-9 && len <= 5
-        assert_eq!(get_encoding_meta(2, 2).compression_type, CompressionType::NearShort);
-        assert_eq!(get_encoding_meta(9, 5).compression_type, CompressionType::NearShort);
-        assert_eq!(get_encoding_meta(10, 5).compression_type, CompressionType::Far1Short); // distance > 9
-        assert_eq!(get_encoding_meta(9, 6).compression_type, CompressionType::Far1Short); // len > 5
-        
+        assert_eq!(
+            get_encoding_meta(2, 2).compression_type,
+            CompressionType::NearShort
+        );
+        assert_eq!(
+            get_encoding_meta(9, 5).compression_type,
+            CompressionType::NearShort
+        );
+        assert_eq!(
+            get_encoding_meta(10, 5).compression_type,
+            CompressionType::Far1Short
+        ); // distance > 9
+        assert_eq!(
+            get_encoding_meta(9, 6).compression_type,
+            CompressionType::Far1Short
+        ); // len > 5
+
         // Far1Short: distance 2-257 && len <= 33
-        assert_eq!(get_encoding_meta(10, 20).compression_type, CompressionType::Far1Short);
-        assert_eq!(get_encoding_meta(257, 33).compression_type, CompressionType::Far1Short);
-        assert_eq!(get_encoding_meta(258, 20).compression_type, CompressionType::Far2Short); // distance > 257
-        assert_eq!(get_encoding_meta(257, 34).compression_type, CompressionType::Far2Long); // len > 33
-        
+        assert_eq!(
+            get_encoding_meta(10, 20).compression_type,
+            CompressionType::Far1Short
+        );
+        assert_eq!(
+            get_encoding_meta(257, 33).compression_type,
+            CompressionType::Far1Short
+        );
+        assert_eq!(
+            get_encoding_meta(258, 20).compression_type,
+            CompressionType::Far2Short
+        ); // distance > 257
+        assert_eq!(
+            get_encoding_meta(257, 34).compression_type,
+            CompressionType::Far2Long
+        ); // len > 33
+
         // Far2Short: distance 258-(258+65535) && len <= 33
-        assert_eq!(get_encoding_meta(258, 20).compression_type, CompressionType::Far2Short);
-        assert_eq!(get_encoding_meta(258 + 65535, 33).compression_type, CompressionType::Far2Short);
-        assert_eq!(get_encoding_meta(258, 34).compression_type, CompressionType::Far2Long); // len > 33
-        
+        assert_eq!(
+            get_encoding_meta(258, 20).compression_type,
+            CompressionType::Far2Short
+        );
+        assert_eq!(
+            get_encoding_meta(258 + 65535, 33).compression_type,
+            CompressionType::Far2Short
+        );
+        assert_eq!(
+            get_encoding_meta(258, 34).compression_type,
+            CompressionType::Far2Long
+        ); // len > 33
+
         // Far2Long: distance <= 65535 && len >= 34
-        assert_eq!(get_encoding_meta(65535, 34).compression_type, CompressionType::Far2Long);
-        assert_eq!(get_encoding_meta(65536, 34).compression_type, CompressionType::Far3Long); // distance > 65535
-        
+        assert_eq!(
+            get_encoding_meta(65535, 34).compression_type,
+            CompressionType::Far2Long
+        );
+        assert_eq!(
+            get_encoding_meta(65536, 34).compression_type,
+            CompressionType::Far3Long
+        ); // distance > 65535
+
         // Far2Long variable encoding: len <= 64 vs len > 64
         assert_eq!(get_encoding_meta(30000, 64).cost_bytes, 3); // len <= 34+30
         assert_eq!(get_encoding_meta(30000, 65).cost_bytes, 6); // len > 34+30
-        
+
         // Far3Long variable encoding: len <= 35 vs len > 35
         assert_eq!(get_encoding_meta(1000000, 35).cost_bytes, 4); // len <= 35
         assert_eq!(get_encoding_meta(1000000, 36).cost_bytes, 7); // len > 35
@@ -2546,14 +2699,14 @@ mod reference_tests {
     #[test]
     fn test_fse_integration_real() {
         // Test that FSE integration works with real compression
-        
+
         let config = FseConfig::default();
         assert_eq!(config.max_symbol, 255);
         assert_eq!(config.table_log, 12);
         assert_eq!(config.adaptive, true);
         assert_eq!(config.compression_level, 3);
         assert_eq!(config.fast_decode, false);
-        
+
         let custom_config = FseConfig {
             max_symbol: 255,
             table_log: 10,
@@ -2561,16 +2714,16 @@ mod reference_tests {
             compression_level: 6,
             fast_decode: true,
         };
-        
+
         // Test with data that has patterns FSE can compress
         let test_data = "The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog.".as_bytes();
-        
+
         // Test compression
         let compressed = apply_fse_compression(test_data, &custom_config).unwrap();
-        
+
         // Test decompression
         let decompressed = remove_fse_compression(&compressed, &custom_config).unwrap();
-        
+
         #[cfg(feature = "zstd")]
         {
             // With zstd feature, should achieve actual compression
@@ -2579,42 +2732,46 @@ mod reference_tests {
             if test_data.len() > 32 {
                 // Allow for some overhead from magic bytes and headers (up to 5 bytes is reasonable)
                 // This accounts for the 2-byte magic prefix in apply_fse_compression
-                assert!(compressed.len() <= test_data.len() + 5, 
-                    "FSE compression should not expand small repetitive data by more than 5 bytes (header overhead). Original: {}, Compressed: {}", 
-                    test_data.len(), compressed.len());
+                assert!(
+                    compressed.len() <= test_data.len() + 5,
+                    "FSE compression should not expand small repetitive data by more than 5 bytes (header overhead). Original: {}, Compressed: {}",
+                    test_data.len(),
+                    compressed.len()
+                );
             }
         }
-        
+
         #[cfg(not(feature = "zstd"))]
         {
             // Without zstd, fallback should work without errors
             assert!(!compressed.is_empty());
         }
     }
-    
+
     #[test]
     fn test_fse_config_presets() {
         let pa_zip_config = FseConfig::for_pa_zip();
         assert_eq!(pa_zip_config.table_log, 11);
         assert_eq!(pa_zip_config.compression_level, 6);
         assert!(pa_zip_config.adaptive);
-        
+
         let fast_config = FseConfig::fast_pa_zip();
         assert_eq!(fast_config.table_log, 9);
         assert_eq!(fast_config.compression_level, 1);
         assert!(!fast_config.adaptive);
         assert!(fast_config.fast_decode);
     }
-    
+
     #[test]
     fn test_fse_reference_functions() {
         let test_data = b"test data for FSE reference functions with some repetitive patterns";
         let mut compressed_buffer = vec![0u8; test_data.len() * 2]; // Generous buffer
         let mut compressed_size = 0;
-        
+
         // Test FSE_zip reference function
-        let compress_result = fse_zip_reference(test_data, &mut compressed_buffer, &mut compressed_size);
-        
+        let compress_result =
+            fse_zip_reference(test_data, &mut compressed_buffer, &mut compressed_size);
+
         #[cfg(feature = "zstd")]
         {
             // Should succeed for data > 2 bytes
@@ -2622,52 +2779,54 @@ mod reference_tests {
                 if success {
                     assert!(compressed_size > 0);
                     assert!(compressed_size <= test_data.len());
-                    
+
                     // Test FSE_unzip reference function
                     let mut decompressed_buffer = vec![0u8; test_data.len() * 2];
                     let decompressed_size = fse_unzip_reference(
-                        &compressed_buffer[..compressed_size], 
-                        &mut decompressed_buffer
-                    ).unwrap();
-                    
+                        &compressed_buffer[..compressed_size],
+                        &mut decompressed_buffer,
+                    )
+                    .unwrap();
+
                     assert_eq!(decompressed_size, test_data.len());
                     assert_eq!(&decompressed_buffer[..decompressed_size], test_data);
                 }
             }
         }
-        
+
         // Test with data <= 2 bytes (should return false)
         let tiny_data = b"ab";
-        let tiny_result = fse_zip_reference(tiny_data, &mut compressed_buffer, &mut compressed_size);
+        let tiny_result =
+            fse_zip_reference(tiny_data, &mut compressed_buffer, &mut compressed_size);
         assert!(tiny_result.is_ok());
         assert_eq!(tiny_result.unwrap(), false);
     }
-    
+
     #[test]
     fn test_fse_compressor_state() {
         let config = FseConfig::for_pa_zip();
         let result = FseCompressor::with_config(config);
-        
+
         #[cfg(feature = "zstd")]
         {
             let mut compressor = result.unwrap();
             let test_data = b"FSE compressor state test data with some patterns";
-            
+
             let compressed = compressor.compress(test_data).unwrap();
             let decompressed = compressor.decompress(&compressed).unwrap();
-            
+
             assert_eq!(&decompressed, test_data);
-            
+
             // Test reset
             compressor.reset().unwrap();
-            
+
             // Should still work after reset
             let compressed2 = compressor.compress(test_data).unwrap();
             let decompressed2 = compressor.decompress(&compressed2).unwrap();
-            
+
             assert_eq!(&decompressed2, test_data);
         }
-        
+
         #[cfg(not(feature = "zstd"))]
         {
             // Should handle gracefully even without zstd
@@ -2678,15 +2837,15 @@ mod reference_tests {
     #[test]
     fn test_encoding_meta_structure() {
         // Test the EncodingMeta structure
-        
+
         let meta = EncodingMeta {
             compression_type: CompressionType::Far1Short,
             cost_bytes: 2,
         };
-        
+
         assert_eq!(meta.compression_type, CompressionType::Far1Short);
         assert_eq!(meta.cost_bytes, 2);
-        
+
         // Test serialization/deserialization if needed
         let meta1 = get_encoding_meta(100, 20);
         let meta2 = get_encoding_meta(100, 20);
@@ -2696,31 +2855,36 @@ mod reference_tests {
     #[test]
     fn test_reference_vs_legacy_compatibility() {
         // Test cases where reference and legacy implementations should agree
-        
+
         // Test distance=0, length=1 (should use reference for literal)
         let reference_cost = calculate_encoding_cost_reference(0, 1);
         let literal_match = Match::literal(1).unwrap();
         let legacy_cost = calculate_encoding_cost(&literal_match);
-        
+
         // Both should use reference logic for this case
         assert_eq!(reference_cost, legacy_cost);
-        
+
         // Test other supported cases
         let test_cases = vec![
-            (1, 5),    // RLE
-            (3, 4),    // NearShort  
-            (100, 20), // Far1Short
-            (1000, 20), // Far2Short
-            (30000, 50), // Far2Long
+            (1, 5),        // RLE
+            (3, 4),        // NearShort
+            (100, 20),     // Far1Short
+            (1000, 20),    // Far2Short
+            (30000, 50),   // Far2Long
             (1000000, 35), // Far3Long
         ];
-        
+
         for (distance, length) in test_cases {
             let reference_type = choose_best_compression_type_reference(distance, length);
             let legacy_type = choose_best_compression_type(distance, length);
-            
-            assert_eq!(Some(reference_type), legacy_type, 
-                      "Mismatch for distance={}, length={}", distance, length);
+
+            assert_eq!(
+                Some(reference_type),
+                legacy_type,
+                "Mismatch for distance={}, length={}",
+                distance,
+                length
+            );
         }
     }
 }

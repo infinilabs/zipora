@@ -80,10 +80,8 @@ impl SimdStringSearch {
     pub fn new() -> Self {
         let cpu_features = crate::system::get_cpu_features();
         let impl_tier = Self::select_optimal_tier(cpu_features);
-        
-        Self {
-            impl_tier,
-        }
+
+        Self { impl_tier }
     }
 
     /// Selects the optimal SIMD implementation tier based on available CPU features
@@ -92,15 +90,15 @@ impl SimdStringSearch {
         if features.has_avx512f && features.has_avx512vl && features.has_avx512bw {
             return SearchTier::Avx512;
         }
-        
+
         if features.has_avx2 {
             return SearchTier::Avx2;
         }
-        
+
         if features.has_sse41 && features.has_sse42 {
             return SearchTier::Sse42;
         }
-        
+
         SearchTier::Scalar
     }
 
@@ -110,7 +108,7 @@ impl SimdStringSearch {
     }
 
     /// SSE4.2 PCMPESTRI-based character search (strchr equivalent)
-    /// 
+    ///
     /// Searches for the first occurrence of a character in a byte array.
     /// Uses hybrid strategy: SSE4.2 for ≤16 bytes, extended SSE4.2 for ≤35 bytes,
     /// binary search for larger arrays.
@@ -147,9 +145,7 @@ impl SimdStringSearch {
                 // SAFETY: avx512f+avx512bw guaranteed by impl_tier, haystack is valid slice
                 unsafe { self.avx512_strchr(haystack, needle) }
             }
-            SearchTier::Scalar => {
-                self.scalar_strchr(haystack, needle)
-            }
+            SearchTier::Scalar => self.scalar_strchr(haystack, needle),
         }
     }
 
@@ -188,9 +184,7 @@ impl SimdStringSearch {
                 // SAFETY: avx512f+avx512bw guaranteed by impl_tier, haystack and needle are valid slices
                 unsafe { self.avx512_strstr(haystack, needle) }
             }
-            SearchTier::Scalar => {
-                self.scalar_strstr(haystack, needle)
-            }
+            SearchTier::Scalar => self.scalar_strstr(haystack, needle),
         }
     }
 
@@ -227,9 +221,7 @@ impl SimdStringSearch {
                 // SAFETY: avx512f+avx512bw guaranteed by impl_tier, haystack and needles are valid slices
                 unsafe { self.avx512_multi_search(haystack, needles) }
             }
-            SearchTier::Scalar => {
-                self.scalar_multi_search(haystack, needles)
-            }
+            SearchTier::Scalar => self.scalar_multi_search(haystack, needles),
         }
     }
 
@@ -268,9 +260,7 @@ impl SimdStringSearch {
                 // SAFETY: avx512f+avx512bw guaranteed by impl_tier, a and b are valid slices
                 unsafe { self.avx512_strcmp(a, b) }
             }
-            SearchTier::Scalar => {
-                self.scalar_strcmp(a, b)
-            }
+            SearchTier::Scalar => self.scalar_strcmp(a, b),
         }
     }
 
@@ -285,7 +275,7 @@ impl SimdStringSearch {
 
         // Create needle vector with single character
         let needle_vec = _mm_set1_epi8(needle as i8);
-        
+
         // Load haystack data (up to 16 bytes)
         let haystack_vec = if haystack.len() == 16 {
             // SAFETY: sse4.2 guaranteed by #[target_feature], pointer valid from slice, len == 16 checked
@@ -294,7 +284,9 @@ impl SimdStringSearch {
             // For lengths < 16, we need to be careful about reading past the end
             let mut data = [0u8; 16];
             // SAFETY: pointer valid from slice, haystack.len() <= 16 from caller, copy within bounds
-            unsafe { std::ptr::copy_nonoverlapping(haystack.as_ptr(), data.as_mut_ptr(), haystack.len()) };
+            unsafe {
+                std::ptr::copy_nonoverlapping(haystack.as_ptr(), data.as_mut_ptr(), haystack.len())
+            };
             // SAFETY: sse4.2 guaranteed by #[target_feature], pointer valid from stack array
             unsafe { _mm_loadu_si128(data.as_ptr() as *const __m128i) }
         };
@@ -305,9 +297,9 @@ impl SimdStringSearch {
             1, // needle length is 1
             haystack_vec,
             haystack.len() as i32,
-            pcmpestri_flags::UBYTE_OPS 
-                | pcmpestri_flags::CMP_EQUAL_ORDERED 
-                | pcmpestri_flags::LEAST_SIGNIFICANT
+            pcmpestri_flags::UBYTE_OPS
+                | pcmpestri_flags::CMP_EQUAL_ORDERED
+                | pcmpestri_flags::LEAST_SIGNIFICANT,
         );
 
         if result < haystack.len() as i32 {
@@ -342,7 +334,7 @@ impl SimdStringSearch {
     fn hybrid_strchr_large(&self, haystack: &[u8], needle: u8) -> Option<usize> {
         // For large arrays, use binary search approach optimized for cache efficiency
         // This implements the strategy from the reference implementation
-        
+
         // Check if SSE4.2 is available for small chunks
         if matches!(self.impl_tier, SearchTier::Sse42) {
             // Process in 16-byte chunks with SSE4.2
@@ -369,7 +361,7 @@ impl SimdStringSearch {
                     }
                 }
             }
-            
+
             None
         } else {
             // Fallback to scalar for very large arrays without SSE4.2
@@ -384,7 +376,7 @@ impl SimdStringSearch {
             // For needles > 16 bytes, use first character matching + verification
             let first_char = needle[0];
             let mut pos = 0;
-            
+
             while pos <= haystack.len() - needle.len() {
                 if let Some(char_pos) = self.sse42_strchr(&haystack[pos..], first_char) {
                     let candidate_pos = pos + char_pos;
@@ -411,16 +403,18 @@ impl SimdStringSearch {
         } else {
             let mut data = [0u8; 16];
             // SAFETY: pointer valid from slice, needle.len() <= 16 (caller ensures), copy within bounds
-            unsafe { std::ptr::copy_nonoverlapping(needle.as_ptr(), data.as_mut_ptr(), needle.len()) };
+            unsafe {
+                std::ptr::copy_nonoverlapping(needle.as_ptr(), data.as_mut_ptr(), needle.len())
+            };
             // SAFETY: sse4.2 guaranteed by #[target_feature], pointer valid from stack array
             unsafe { _mm_loadu_si128(data.as_ptr() as *const __m128i) }
         };
 
         // Search through haystack in overlapping 16-byte windows
-        let max_start = if haystack.len() >= needle.len() { 
-            haystack.len() - needle.len() + 1 
-        } else { 
-            0 
+        let max_start = if haystack.len() >= needle.len() {
+            haystack.len() - needle.len() + 1
+        } else {
+            0
         };
 
         for start in 0..max_start {
@@ -439,7 +433,7 @@ impl SimdStringSearch {
                     std::ptr::copy_nonoverlapping(
                         haystack[start..].as_ptr(),
                         data.as_mut_ptr(),
-                        search_len
+                        search_len,
                     );
                 };
                 // SAFETY: sse4.2 guaranteed by #[target_feature], pointer valid from stack array
@@ -451,9 +445,9 @@ impl SimdStringSearch {
                 needle.len() as i32,
                 haystack_vec,
                 search_len as i32,
-                pcmpestri_flags::UBYTE_OPS 
-                    | pcmpestri_flags::CMP_EQUAL_ORDERED 
-                    | pcmpestri_flags::LEAST_SIGNIFICANT
+                pcmpestri_flags::UBYTE_OPS
+                    | pcmpestri_flags::CMP_EQUAL_ORDERED
+                    | pcmpestri_flags::LEAST_SIGNIFICANT,
             );
 
             if result == 0 {
@@ -482,7 +476,13 @@ impl SimdStringSearch {
             } else {
                 let mut data = [0u8; 16];
                 // SAFETY: pointer valid from slice, needles.len() <= 16 checked, copy within bounds
-                unsafe { std::ptr::copy_nonoverlapping(needles.as_ptr(), data.as_mut_ptr(), needles.len()) };
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        needles.as_ptr(),
+                        data.as_mut_ptr(),
+                        needles.len(),
+                    )
+                };
                 // SAFETY: sse4.2 guaranteed by #[target_feature], pointer valid from stack array
                 unsafe { _mm_loadu_si128(data.as_ptr() as *const __m128i) }
             };
@@ -500,7 +500,7 @@ impl SimdStringSearch {
                         std::ptr::copy_nonoverlapping(
                             haystack[pos..].as_ptr(),
                             data.as_mut_ptr(),
-                            search_len
+                            search_len,
                         );
                     };
                     // SAFETY: sse4.2 guaranteed by #[target_feature], pointer valid from stack array
@@ -512,9 +512,9 @@ impl SimdStringSearch {
                     needles.len() as i32,
                     haystack_vec,
                     search_len as i32,
-                    pcmpestri_flags::UBYTE_OPS 
-                        | pcmpestri_flags::CMP_EQUAL_ANY 
-                        | pcmpestri_flags::LEAST_SIGNIFICANT
+                    pcmpestri_flags::UBYTE_OPS
+                        | pcmpestri_flags::CMP_EQUAL_ANY
+                        | pcmpestri_flags::LEAST_SIGNIFICANT,
                 );
 
                 if result < search_len as i32 {
@@ -532,7 +532,10 @@ impl SimdStringSearch {
             return self.scalar_multi_search(haystack, needles);
         }
 
-        MultiSearchResult { positions, characters }
+        MultiSearchResult {
+            positions,
+            characters,
+        }
     }
 
     /// SSE4.2 string comparison implementation
@@ -583,7 +586,8 @@ impl SimdStringSearch {
         for i in 0..chunks {
             let offset = i * 32;
             // SAFETY: avx2 guaranteed by #[target_feature], pointer valid from slice, offset within bounds (chunks * 32 <= len)
-            let chunk = unsafe { _mm256_loadu_si256(haystack[offset..].as_ptr() as *const __m256i) };
+            let chunk =
+                unsafe { _mm256_loadu_si256(haystack[offset..].as_ptr() as *const __m256i) };
             let cmp = _mm256_cmpeq_epi8(chunk, needle_vec);
             let mask = _mm256_movemask_epi8(cmp);
 
@@ -596,7 +600,8 @@ impl SimdStringSearch {
         // Handle remaining bytes
         let remaining_start = chunks * 32;
         if remaining_start < haystack.len() {
-            return self.scalar_strchr(&haystack[remaining_start..], needle)
+            return self
+                .scalar_strchr(&haystack[remaining_start..], needle)
                 .map(|pos| remaining_start + pos);
         }
 
@@ -699,7 +704,8 @@ impl SimdStringSearch {
         // Handle remaining bytes
         let remaining_start = chunks * 64;
         if remaining_start < haystack.len() {
-            return self.scalar_strchr(&haystack[remaining_start..], needle)
+            return self
+                .scalar_strchr(&haystack[remaining_start..], needle)
                 .map(|pos| remaining_start + pos);
         }
 
@@ -789,7 +795,8 @@ impl SimdStringSearch {
             return Some(0);
         }
 
-        haystack.windows(needle.len())
+        haystack
+            .windows(needle.len())
             .position(|window| window == needle)
     }
 
@@ -804,7 +811,10 @@ impl SimdStringSearch {
             }
         }
 
-        MultiSearchResult { positions, characters }
+        MultiSearchResult {
+            positions,
+            characters,
+        }
     }
 
     fn scalar_strcmp(&self, a: &[u8], b: &[u8]) -> Ordering {
@@ -854,9 +864,10 @@ mod tests {
     fn test_simd_search_creation() {
         let search = SimdStringSearch::new();
         println!("Selected SIMD tier: {:?}", search.tier());
-        
+
         // Should always work regardless of available features
-        assert!(matches!(search.tier(), 
+        assert!(matches!(
+            search.tier(),
             SearchTier::Scalar | SearchTier::Sse42 | SearchTier::Avx2
         ));
     }
@@ -865,7 +876,7 @@ mod tests {
     fn test_global_simd_search() {
         let search1 = get_global_simd_search();
         let search2 = get_global_simd_search();
-        
+
         // Should be the same instance
         assert_eq!(search1.tier(), search2.tier());
     }
@@ -873,7 +884,7 @@ mod tests {
     #[test]
     fn test_strchr_basic() {
         let search = SimdStringSearch::new();
-        
+
         let haystack = b"hello world";
         assert_eq!(search.sse42_strchr(haystack, b'h'), Some(0));
         assert_eq!(search.sse42_strchr(haystack, b'o'), Some(4));
@@ -884,7 +895,7 @@ mod tests {
     #[test]
     fn test_strchr_empty() {
         let search = SimdStringSearch::new();
-        
+
         let empty = b"";
         assert_eq!(search.sse42_strchr(empty, b'a'), None);
     }
@@ -892,12 +903,12 @@ mod tests {
     #[test]
     fn test_strchr_large() {
         let search = SimdStringSearch::new();
-        
+
         // Test with strings large enough to trigger different code paths
         let mut large_haystack = b"a".repeat(100);
         large_haystack.push(b'x');
         large_haystack.extend_from_slice(&b"a".repeat(100));
-        
+
         assert_eq!(search.sse42_strchr(&large_haystack, b'x'), Some(100));
         assert_eq!(search.sse42_strchr(&large_haystack, b'y'), None);
     }
@@ -905,7 +916,7 @@ mod tests {
     #[test]
     fn test_strstr_basic() {
         let search = SimdStringSearch::new();
-        
+
         let haystack = b"hello world test";
         assert_eq!(search.sse42_strstr(haystack, b"hello"), Some(0));
         assert_eq!(search.sse42_strstr(haystack, b"world"), Some(6));
@@ -916,7 +927,7 @@ mod tests {
     #[test]
     fn test_strstr_single_char() {
         let search = SimdStringSearch::new();
-        
+
         let haystack = b"hello world";
         assert_eq!(search.sse42_strstr(haystack, b"o"), Some(4));
     }
@@ -924,7 +935,7 @@ mod tests {
     #[test]
     fn test_strstr_empty() {
         let search = SimdStringSearch::new();
-        
+
         let haystack = b"hello";
         assert_eq!(search.sse42_strstr(haystack, b""), None);
         assert_eq!(search.sse42_strstr(b"", b"hello"), None);
@@ -933,11 +944,11 @@ mod tests {
     #[test]
     fn test_multi_search_basic() {
         let search = SimdStringSearch::new();
-        
+
         let haystack = b"hello world";
         let needles = b"lo";
         let result = search.sse42_multi_search(haystack, needles);
-        
+
         // Should find 'l' at positions 2, 3, 9 and 'o' at positions 4, 7
         assert_eq!(result.positions, vec![2, 3, 4, 7, 9]);
         assert_eq!(result.characters, vec![b'l', b'l', b'o', b'o', b'l']);
@@ -946,11 +957,11 @@ mod tests {
     #[test]
     fn test_multi_search_empty() {
         let search = SimdStringSearch::new();
-        
+
         let haystack = b"hello";
         let result = search.sse42_multi_search(haystack, b"");
         assert!(result.positions.is_empty());
-        
+
         let result = search.sse42_multi_search(b"", b"abc");
         assert!(result.positions.is_empty());
     }
@@ -958,7 +969,7 @@ mod tests {
     #[test]
     fn test_strcmp_basic() {
         let search = SimdStringSearch::new();
-        
+
         assert_eq!(search.sse42_strcmp(b"hello", b"hello"), Ordering::Equal);
         assert_eq!(search.sse42_strcmp(b"hello", b"world"), Ordering::Less);
         assert_eq!(search.sse42_strcmp(b"world", b"hello"), Ordering::Greater);
@@ -967,7 +978,7 @@ mod tests {
     #[test]
     fn test_strcmp_different_lengths() {
         let search = SimdStringSearch::new();
-        
+
         assert_eq!(search.sse42_strcmp(b"short", b"longer"), Ordering::Less);
         assert_eq!(search.sse42_strcmp(b"longer", b"short"), Ordering::Greater);
     }
@@ -975,7 +986,7 @@ mod tests {
     #[test]
     fn test_strcmp_empty() {
         let search = SimdStringSearch::new();
-        
+
         assert_eq!(search.sse42_strcmp(b"", b""), Ordering::Equal);
         assert_eq!(search.sse42_strcmp(b"", b"non-empty"), Ordering::Less);
         assert_eq!(search.sse42_strcmp(b"non-empty", b""), Ordering::Greater);
@@ -984,11 +995,11 @@ mod tests {
     #[test]
     fn test_convenience_functions() {
         let haystack = b"hello world test";
-        
+
         assert_eq!(sse42_strchr(haystack, b'w'), Some(6));
         assert_eq!(sse42_strstr(haystack, b"world"), Some(6));
         assert_eq!(sse42_strcmp(b"hello", b"hello"), Ordering::Equal);
-        
+
         let needles = b"ld";
         let result = sse42_multi_search(haystack, needles);
         assert!(!result.positions.is_empty());
@@ -997,17 +1008,17 @@ mod tests {
     #[test]
     fn test_simd_size_thresholds() {
         let search = SimdStringSearch::new();
-        
+
         // Test various sizes around SIMD thresholds
         let sizes = [1, 8, 15, 16, 17, 31, 32, 35, 63, 64, 100];
-        
+
         for &size in &sizes {
             let haystack = b"a".repeat(size);
             let mut test_data = haystack.clone();
             if size > 0 {
                 test_data[size - 1] = b'x';
             }
-            
+
             if size > 0 {
                 assert_eq!(search.sse42_strchr(&test_data, b'x'), Some(size - 1));
             }
@@ -1019,8 +1030,8 @@ mod tests {
     #[cfg(any(feature = "criterion", test))]
     mod benchmarks {
         use super::*;
-        use std::hint::black_box;
         use criterion::Criterion;
+        use std::hint::black_box;
 
         #[allow(dead_code)]
         pub fn bench_strchr(c: &mut Criterion) {
@@ -1030,15 +1041,11 @@ mod tests {
             test_data[500] = b'x';
 
             c.bench_function("sse42_strchr_large", |b| {
-                b.iter(|| {
-                    black_box(search.sse42_strchr(black_box(&test_data), black_box(b'x')))
-                })
+                b.iter(|| black_box(search.sse42_strchr(black_box(&test_data), black_box(b'x'))))
             });
 
             c.bench_function("scalar_strchr_large", |b| {
-                b.iter(|| {
-                    black_box(test_data.iter().position(|&b| b == b'x'))
-                })
+                b.iter(|| black_box(test_data.iter().position(|&b| b == b'x')))
             });
         }
 
@@ -1050,17 +1057,20 @@ mod tests {
 
             c.bench_function("sse42_strstr", |b| {
                 b.iter(|| {
-                    black_box(search.sse42_strstr(
-                        black_box(haystack.as_bytes()), 
-                        black_box(needle)
-                    ))
+                    black_box(
+                        search.sse42_strstr(black_box(haystack.as_bytes()), black_box(needle)),
+                    )
                 })
             });
 
             c.bench_function("scalar_strstr", |b| {
                 b.iter(|| {
-                    black_box(haystack.as_bytes().windows(needle.len())
-                        .position(|window| window == needle))
+                    black_box(
+                        haystack
+                            .as_bytes()
+                            .windows(needle.len())
+                            .position(|window| window == needle),
+                    )
                 })
             });
         }
@@ -1073,10 +1083,10 @@ mod tests {
 
             c.bench_function("sse42_multi_search", |b| {
                 b.iter(|| {
-                    black_box(search.sse42_multi_search(
-                        black_box(haystack.as_bytes()), 
-                        black_box(needles)
-                    ))
+                    black_box(
+                        search
+                            .sse42_multi_search(black_box(haystack.as_bytes()), black_box(needles)),
+                    )
                 })
             });
         }
@@ -1090,17 +1100,14 @@ mod tests {
 
             c.bench_function("sse42_strcmp", |b| {
                 b.iter(|| {
-                    black_box(search.sse42_strcmp(
-                        black_box(str1.as_bytes()), 
-                        black_box(str2.as_bytes())
-                    ))
+                    black_box(
+                        search.sse42_strcmp(black_box(str1.as_bytes()), black_box(str2.as_bytes())),
+                    )
                 })
             });
 
             c.bench_function("scalar_strcmp", |b| {
-                b.iter(|| {
-                    black_box(str1.as_bytes().cmp(str2.as_bytes()))
-                })
+                b.iter(|| black_box(str1.as_bytes().cmp(str2.as_bytes())))
             });
         }
     }

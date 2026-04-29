@@ -10,8 +10,8 @@
 //! - `rank_cache: Vec<RankCacheSE>` — one 8-byte entry per 256-bit block
 //! - Optional `sel0_cache` / `sel1_cache` for accelerated select
 
-use crate::error::{Result, ZiporaError};
 use super::RankSelectOps;
+use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;
 
 const LINE_BITS: usize = 256;
@@ -82,17 +82,33 @@ impl RankSelectSE256 {
         // Build select acceleration tables
         let sel0_cache = if speed_select0 && max_rank0 > 0 {
             Some(Self::build_select0_cache(&rank_cache, max_rank0, nlines))
-        } else { None };
+        } else {
+            None
+        };
 
         let sel1_cache = if speed_select1 && max_rank1 > 0 {
             Some(Self::build_select1_cache(&rank_cache, max_rank1, nlines))
-        } else { None };
+        } else {
+            None
+        };
 
-        Ok(Self { bv, rank_cache, sel0_cache, sel1_cache, size, max_rank0, max_rank1 })
+        Ok(Self {
+            bv,
+            rank_cache,
+            sel0_cache,
+            sel1_cache,
+            size,
+            max_rank0,
+            max_rank1,
+        })
     }
 
     /// Build select0 acceleration: sel0_cache[r/256] = first block where cumulative rank0 >= r
-    fn build_select0_cache(rank_cache: &[RankCacheSE], max_rank0: usize, nlines: usize) -> Vec<u32> {
+    fn build_select0_cache(
+        rank_cache: &[RankCacheSE],
+        max_rank0: usize,
+        nlines: usize,
+    ) -> Vec<u32> {
         let slots = max_rank0.div_ceil(LINE_BITS);
         let mut cache = vec![0u32; slots + 1];
         cache[0] = 0;
@@ -108,7 +124,11 @@ impl RankSelectSE256 {
     }
 
     /// Build select1 acceleration: sel1_cache[r/256] = first block where cumulative rank1 >= r
-    fn build_select1_cache(rank_cache: &[RankCacheSE], max_rank1: usize, nlines: usize) -> Vec<u32> {
+    fn build_select1_cache(
+        rank_cache: &[RankCacheSE],
+        max_rank1: usize,
+        nlines: usize,
+    ) -> Vec<u32> {
         let slots = max_rank1.div_ceil(LINE_BITS);
         let mut cache = vec![0u32; slots + 1];
         cache[0] = 0;
@@ -125,8 +145,12 @@ impl RankSelectSE256 {
 
     #[inline(always)]
     fn popcount_trail(word: u64, bit_count: usize) -> usize {
-        if bit_count == 0 { return 0; }
-        if bit_count >= 64 { return word.count_ones() as usize; }
+        if bit_count == 0 {
+            return 0;
+        }
+        if bit_count >= 64 {
+            return word.count_ones() as usize;
+        }
         (word & ((1u64 << bit_count) - 1)).count_ones() as usize
     }
 
@@ -138,15 +162,19 @@ impl RankSelectSE256 {
     }
 
     #[inline]
-    pub fn max_rank0(&self) -> usize { self.max_rank0 }
-    pub fn max_rank1(&self) -> usize { self.max_rank1 }
+    pub fn max_rank0(&self) -> usize {
+        self.max_rank0
+    }
+    pub fn max_rank1(&self) -> usize {
+        self.max_rank1
+    }
 
     #[inline]
     pub fn mem_size(&self) -> usize {
         self.bv.blocks().len() * 8
-        + self.rank_cache.len() * std::mem::size_of::<RankCacheSE>()
-        + self.sel0_cache.as_ref().map_or(0, |c| c.len() * 4)
-        + self.sel1_cache.as_ref().map_or(0, |c| c.len() * 4)
+            + self.rank_cache.len() * std::mem::size_of::<RankCacheSE>()
+            + self.sel0_cache.as_ref().map_or(0, |c| c.len() * 4)
+            + self.sel1_cache.as_ref().map_or(0, |c| c.len() * 4)
     }
 
     /// Prefetch the rank cache entry for a given bit position.
@@ -176,7 +204,11 @@ impl RankSelectSE256 {
         while lo < hi {
             let mid = (lo + hi) / 2;
             let rank0_at_mid = mid * LINE_BITS - self.rank_cache[mid].lev1 as usize;
-            if rank0_at_mid <= rank0 { lo = mid + 1; } else { hi = mid; }
+            if rank0_at_mid <= rank0 {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
         }
         lo
     }
@@ -191,7 +223,11 @@ impl RankSelectSE256 {
         };
         while lo < hi {
             let mid = (lo + hi) / 2;
-            if (self.rank_cache[mid].lev1 as usize) <= rank1 { lo = mid + 1; } else { hi = mid; }
+            if (self.rank_cache[mid].lev1 as usize) <= rank1 {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
         }
         lo
     }
@@ -202,7 +238,9 @@ impl RankSelectOps for RankSelectSE256 {
     #[inline(always)]
     fn rank1(&self, bitpos: usize) -> usize {
         assert!(bitpos <= self.size);
-        if bitpos == 0 { return 0; }
+        if bitpos == 0 {
+            return 0;
+        }
         let block = bitpos / LINE_BITS;
         let rc = &self.rank_cache[block];
         let word_in_block = (bitpos / 64) % WORDS_PER_LINE;
@@ -212,13 +250,19 @@ impl RankSelectOps for RankSelectSE256 {
         rc.lev1 as usize
             + rc.lev2[word_in_block] as usize
             + Self::popcount_trail(
-                if word_idx < self.bv.blocks().len() { self.bv.blocks()[word_idx] } else { 0 },
+                if word_idx < self.bv.blocks().len() {
+                    self.bv.blocks()[word_idx]
+                } else {
+                    0
+                },
                 bit_in_word,
             )
     }
 
     #[inline(always)]
-    fn rank0(&self, pos: usize) -> usize { pos - self.rank1(pos) }
+    fn rank0(&self, pos: usize) -> usize {
+        pos - self.rank1(pos)
+    }
 
     fn select1(&self, k: usize) -> Result<usize> {
         if k >= self.max_rank1 {
@@ -239,7 +283,9 @@ impl RankSelectOps for RankSelectSE256 {
                 let word_idx = block * WORDS_PER_LINE + j;
                 if word_idx < self.bv.blocks().len() {
                     let word = self.bv.blocks()[word_idx];
-                    return Ok(base_bitpos + j * 64 + Self::select_in_word(word, remaining_in_word));
+                    return Ok(base_bitpos
+                        + j * 64
+                        + Self::select_in_word(word, remaining_in_word));
                 }
             }
         }
@@ -265,18 +311,28 @@ impl RankSelectOps for RankSelectSE256 {
             if remaining >= zeros_before_j {
                 let remaining_in_word = remaining - zeros_before_j;
                 let word_idx = block * WORDS_PER_LINE + j;
-                let word = if word_idx < self.bv.blocks().len() { self.bv.blocks()[word_idx] } else { 0 };
+                let word = if word_idx < self.bv.blocks().len() {
+                    self.bv.blocks()[word_idx]
+                } else {
+                    0
+                };
                 return Ok(base_bitpos + j * 64 + Self::select_in_word(!word, remaining_in_word));
             }
         }
         Err(ZiporaError::invalid_data("select0 internal error"))
     }
 
-    fn len(&self) -> usize { self.size }
-    fn count_ones(&self) -> usize { self.max_rank1 }
+    fn len(&self) -> usize {
+        self.size
+    }
+    fn count_ones(&self) -> usize {
+        self.max_rank1
+    }
 
     fn get(&self, index: usize) -> Option<bool> {
-        if index >= self.size { return None; }
+        if index >= self.size {
+            return None;
+        }
         let word_idx = index / 64;
         let bit_idx = index % 64;
         if word_idx < self.bv.blocks().len() {
@@ -287,7 +343,9 @@ impl RankSelectOps for RankSelectSE256 {
     }
 
     fn space_overhead_percent(&self) -> f64 {
-        if self.size == 0 { return 0.0; }
+        if self.size == 0 {
+            return 0.0;
+        }
         let bit_bytes = self.size.div_ceil(8);
         let overhead = self.mem_size() - bit_bytes;
         (overhead as f64 / bit_bytes as f64) * 100.0
@@ -311,7 +369,9 @@ mod tests {
 
     fn make_rs(pattern: &[bool]) -> RankSelectSE256 {
         let mut bv = BitVector::new();
-        for &b in pattern { bv.push(b).unwrap(); }
+        for &b in pattern {
+            bv.push(b).unwrap();
+        }
         RankSelectSE256::new(bv).unwrap()
     }
 
@@ -355,7 +415,13 @@ mod tests {
         let zeros = rs.len() - rs.count_ones();
         for k in 0..zeros {
             let pos = rs.select0(k).unwrap();
-            assert_eq!(rs.get(pos), Some(false), "select0({}) = {} should be zero", k, pos);
+            assert_eq!(
+                rs.get(pos),
+                Some(false),
+                "select0({}) = {} should be zero",
+                k,
+                pos
+            );
         }
     }
 

@@ -4,20 +4,20 @@
 //! associated with specific object instances. Based on matrix storage for
 //! efficient lookup and automatic cleanup.
 
-use std::sync::{Mutex, Arc, Weak, OnceLock};
-use std::collections::{VecDeque, HashMap};
-use std::marker::PhantomData;
-use std::cell::{RefCell, UnsafeCell};
-use std::any::{TypeId, Any};
-use std::sync::atomic::{AtomicU32, Ordering};
 use crate::error::{Result, ZiporaError};
+use std::any::{Any, TypeId};
+use std::cell::{RefCell, UnsafeCell};
+use std::collections::{HashMap, VecDeque};
+use std::marker::PhantomData;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 /// Default matrix dimensions for TLS storage
 const DEFAULT_ROWS: usize = 256;
 const DEFAULT_COLS: usize = 256;
 
 /// Instance-specific thread-local storage with matrix-based O(1) access
-pub struct InstanceTls<T, const ROWS: usize = DEFAULT_ROWS, const COLS: usize = DEFAULT_COLS> 
+pub struct InstanceTls<T, const ROWS: usize = DEFAULT_ROWS, const COLS: usize = DEFAULT_COLS>
 where
     T: Send + Sync + 'static,
 {
@@ -33,8 +33,8 @@ struct TlsMatrix<T, const ROWS: usize, const COLS: usize> {
 }
 
 /// Global state for managing TLS instance IDs
-struct GlobalTlsState<T, const ROWS: usize, const COLS: usize> 
-where 
+struct GlobalTlsState<T, const ROWS: usize, const COLS: usize>
+where
     T: Send + Sync + 'static,
 {
     /// Free list of recycled IDs
@@ -46,7 +46,7 @@ where
 }
 
 /// Cleanup handle for automatic resource deallocation
-struct CleanupHandle<T, const ROWS: usize, const COLS: usize> 
+struct CleanupHandle<T, const ROWS: usize, const COLS: usize>
 where
     T: Send + Sync + 'static,
 {
@@ -66,7 +66,9 @@ where
     /// Create a new instance-specific TLS
     pub fn new() -> Result<Self> {
         if ROWS * COLS == 0 {
-            return Err(ZiporaError::invalid_parameter("Matrix dimensions cannot be zero"));
+            return Err(ZiporaError::invalid_parameter(
+                "Matrix dimensions cannot be zero",
+            ));
         }
 
         let id = Self::allocate_id()?;
@@ -107,7 +109,7 @@ where
 
     /// Get copy of thread-local instance data if it exists
     #[inline]
-    pub fn get_value(&self) -> Option<T> 
+    pub fn get_value(&self) -> Option<T>
     where
         T: Clone,
     {
@@ -125,7 +127,7 @@ where
 
     /// Try to get value copy without creating default value
     #[inline]
-    pub fn try_get(&self) -> Option<T> 
+    pub fn try_get(&self) -> Option<T>
     where
         T: Clone,
     {
@@ -135,7 +137,8 @@ where
             let matrices = matrices.borrow();
             let type_id = TypeId::of::<TlsMatrix<T, ROWS, COLS>>();
 
-            let matrix = matrices.get(&type_id)?
+            let matrix = matrices
+                .get(&type_id)?
                 .downcast_ref::<TlsMatrix<T, ROWS, COLS>>()?;
 
             matrix.get_value(row, col)
@@ -190,71 +193,73 @@ where
 
     /// Allocate a unique instance ID
     fn allocate_id() -> Result<u32> {
-        use std::collections::HashMap;
         use std::any::Any;
+        use std::collections::HashMap;
         use std::sync::RwLock;
-        
-        static GLOBAL_REGISTRY: OnceLock<
-            RwLock<HashMap<TypeId, Box<dyn Any + Send + Sync>>>
-        > = OnceLock::new();
+
+        static GLOBAL_REGISTRY: OnceLock<RwLock<HashMap<TypeId, Box<dyn Any + Send + Sync>>>> =
+            OnceLock::new();
 
         let registry = GLOBAL_REGISTRY.get_or_init(|| RwLock::new(HashMap::new()));
-        
+
         // Try read lock first to see if we already have this type
         let type_id = TypeId::of::<(T, [(); ROWS], [(); COLS])>(); // Use a unique type ID with const generics
-        
+
         {
             let read_guard = registry.read().map_err(|_| {
                 ZiporaError::system_error("Failed to acquire TLS registry read lock")
             })?;
-            
+
             if let Some(state_box) = read_guard.get(&type_id)
-                && let Some(state_mutex) = state_box.downcast_ref::<Mutex<GlobalTlsState<T, ROWS, COLS>>>() {
-                    let mut state = state_mutex.lock().map_err(|_| {
-                        ZiporaError::system_error("Failed to acquire TLS state lock")
-                    })?;
+                && let Some(state_mutex) =
+                    state_box.downcast_ref::<Mutex<GlobalTlsState<T, ROWS, COLS>>>()
+            {
+                let mut state = state_mutex
+                    .lock()
+                    .map_err(|_| ZiporaError::system_error("Failed to acquire TLS state lock"))?;
 
-                    // Clean up dead handles
-                    state.cleanup_handles.retain(|handle| handle.strong_count() > 0);
+                // Clean up dead handles
+                state
+                    .cleanup_handles
+                    .retain(|handle| handle.strong_count() > 0);
 
-                    // Try to reuse a free ID
-                    if let Some(id) = state.free_ids.pop_front() {
-                        return Ok(id);
-                    } else {
-                        let id = state.next_id;
-                        if id as usize >= ROWS * COLS {
-                            return Err(ZiporaError::resource_exhausted(format!(
-                                "Too many TLS instances: max {}",
-                                ROWS * COLS
-                            )));
-                        }
-                        state.next_id += 1;
-                        return Ok(id);
+                // Try to reuse a free ID
+                if let Some(id) = state.free_ids.pop_front() {
+                    return Ok(id);
+                } else {
+                    let id = state.next_id;
+                    if id as usize >= ROWS * COLS {
+                        return Err(ZiporaError::resource_exhausted(format!(
+                            "Too many TLS instances: max {}",
+                            ROWS * COLS
+                        )));
                     }
+                    state.next_id += 1;
+                    return Ok(id);
                 }
+            }
         }
 
         // Need write lock to insert new type
-        let mut write_guard = registry.write().map_err(|_| {
-            ZiporaError::system_error("Failed to acquire TLS registry write lock")
-        })?;
-        
-        let state = write_guard
-            .entry(type_id)
-            .or_insert_with(|| {
-                Box::new(Mutex::new(GlobalTlsState::<T, ROWS, COLS> {
-                    free_ids: VecDeque::new(),
-                    next_id: 0,
-                    cleanup_handles: Vec::new(),
-                }))
-            });
+        let mut write_guard = registry
+            .write()
+            .map_err(|_| ZiporaError::system_error("Failed to acquire TLS registry write lock"))?;
 
-        let state_mutex = state.downcast_ref::<Mutex<GlobalTlsState<T, ROWS, COLS>>>()
+        let state = write_guard.entry(type_id).or_insert_with(|| {
+            Box::new(Mutex::new(GlobalTlsState::<T, ROWS, COLS> {
+                free_ids: VecDeque::new(),
+                next_id: 0,
+                cleanup_handles: Vec::new(),
+            }))
+        });
+
+        let state_mutex = state
+            .downcast_ref::<Mutex<GlobalTlsState<T, ROWS, COLS>>>()
             .ok_or_else(|| ZiporaError::system_error("Type downcast failed"))?;
 
-        let mut state = state_mutex.lock().map_err(|_| {
-            ZiporaError::system_error("Failed to acquire TLS state lock")
-        })?;
+        let mut state = state_mutex
+            .lock()
+            .map_err(|_| ZiporaError::system_error("Failed to acquire TLS state lock"))?;
 
         // Try to reuse a free ID
         if let Some(id) = state.free_ids.pop_front() {
@@ -302,9 +307,8 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
         // Ensure row exists
         if self.rows[row].is_none() {
             // Create array of UnsafeCell<Option<T>>
-            let new_row: Box<[UnsafeCell<Option<T>>; COLS]> = Box::new(
-                std::array::from_fn(|_| UnsafeCell::new(None))
-            );
+            let new_row: Box<[UnsafeCell<Option<T>>; COLS]> =
+                Box::new(std::array::from_fn(|_| UnsafeCell::new(None)));
             self.rows[row] = Some(new_row);
         }
 
@@ -321,7 +325,7 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
     }
 
     /// Get value copy if it exists
-    fn get_value(&self, row: usize, col: usize) -> Option<T> 
+    fn get_value(&self, row: usize, col: usize) -> Option<T>
     where
         T: Clone,
     {
@@ -334,14 +338,12 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
         }
     }
 
-
     /// Set value at specified position
     unsafe fn set(&mut self, row: usize, col: usize, value: T) {
         // Ensure row exists
         if self.rows[row].is_none() {
-            let new_row: Box<[UnsafeCell<Option<T>>; COLS]> = Box::new(
-                std::array::from_fn(|_| UnsafeCell::new(None))
-            );
+            let new_row: Box<[UnsafeCell<Option<T>>; COLS]> =
+                Box::new(std::array::from_fn(|_| UnsafeCell::new(None)));
             self.rows[row] = Some(new_row);
         }
 
@@ -365,16 +367,17 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
 
 unsafe impl<T: Send, const ROWS: usize, const COLS: usize> Send for TlsMatrix<T, ROWS, COLS> {}
 
-impl<T: Send + Sync + 'static, const ROWS: usize, const COLS: usize> Drop for CleanupHandle<T, ROWS, COLS> {
+impl<T: Send + Sync + 'static, const ROWS: usize, const COLS: usize> Drop
+    for CleanupHandle<T, ROWS, COLS>
+{
     fn drop(&mut self) {
         // Return ID to free list - use the same registry as allocation
-        use std::collections::HashMap;
         use std::any::Any;
+        use std::collections::HashMap;
         use std::sync::RwLock;
-        
-        static GLOBAL_REGISTRY: OnceLock<
-            RwLock<HashMap<TypeId, Box<dyn Any + Send + Sync>>>
-        > = OnceLock::new();
+
+        static GLOBAL_REGISTRY: OnceLock<RwLock<HashMap<TypeId, Box<dyn Any + Send + Sync>>>> =
+            OnceLock::new();
 
         let registry = GLOBAL_REGISTRY.get_or_init(|| RwLock::new(HashMap::new()));
 
@@ -382,16 +385,18 @@ impl<T: Send + Sync + 'static, const ROWS: usize, const COLS: usize> Drop for Cl
         if let Ok(read_guard) = registry.read() {
             let type_id = TypeId::of::<(T, [(); ROWS], [(); COLS])>();
             if let Some(state_box) = read_guard.get(&type_id)
-                && let Some(state_mutex) = state_box.downcast_ref::<Mutex<GlobalTlsState<T, ROWS, COLS>>>()
-                    && let Ok(mut state) = state_mutex.lock() {
-                        state.free_ids.push_back(self.id);
-                    }
+                && let Some(state_mutex) =
+                    state_box.downcast_ref::<Mutex<GlobalTlsState<T, ROWS, COLS>>>()
+                && let Ok(mut state) = state_mutex.lock()
+            {
+                state.free_ids.push_back(self.id);
+            }
         }
     }
 }
 
 /// Owner-based TLS that associates thread-local data with specific owners
-pub struct OwnerTls<T, O> 
+pub struct OwnerTls<T, O>
 where
     T: Send + Sync + 'static,
     O: Send + Sync + 'static,
@@ -416,14 +421,18 @@ where
     /// Get or create TLS for a specific owner
     pub fn get_or_create(&mut self, owner: &O) -> Result<T> {
         let owner_ptr = owner as *const O;
-        
+
         if let std::collections::hash_map::Entry::Vacant(e) = self.instances.entry(owner_ptr) {
             let instance = InstanceTls::new()?;
             e.insert(instance);
         }
 
         // SAFETY: Either key existed or we just inserted it above, so get() always succeeds
-        Ok(self.instances.get(&owner_ptr).expect("owner registered in instances").get())
+        Ok(self
+            .instances
+            .get(&owner_ptr)
+            .expect("owner registered in instances")
+            .get())
     }
 
     /// Get TLS for owner if it exists
@@ -478,7 +487,10 @@ where
     /// Get the next available TLS instance (round-robin)
     pub fn get_next(&self) -> T {
         let slot = self.next_slot.fetch_add(1, Ordering::Relaxed) as usize % POOL_SIZE;
-        self.pool[slot].as_ref().expect("pool slot is initialized").get()
+        self.pool[slot]
+            .as_ref()
+            .expect("pool slot is initialized")
+            .get()
     }
 
     /// Get TLS instance by slot index
@@ -509,13 +521,13 @@ mod tests {
         value: u32,
         name: String,
     }
-    
+
     // TestData is automatically Send + Sync since all its fields are Send + Sync
 
     #[test]
     fn test_instance_tls_basic() {
         let tls = InstanceTls::<TestData>::new().unwrap();
-        
+
         // Default value should be created
         assert_eq!(tls.get().value, 0);
         assert_eq!(tls.get().name, "");
@@ -536,25 +548,27 @@ mod tests {
     #[test]
     fn test_instance_tls_multiple_threads() {
         let tls = Arc::new(InstanceTls::<TestData>::new().unwrap());
-        
-        let handles: Vec<_> = (0..5).map(|i| {
-            let tls = Arc::clone(&tls);
-            thread::spawn(move || {
-                // Each thread should get its own instance
-                let test_data = TestData {
-                    value: i * 10,
-                    name: format!("thread_{}", i),
-                };
-                tls.set(test_data);
-                
-                thread::sleep(Duration::from_millis(10));
-                
-                // Value should remain unchanged
-                let retrieved = tls.get();
-                assert_eq!(retrieved.value, i * 10);
-                assert_eq!(retrieved.name, format!("thread_{}", i));
+
+        let handles: Vec<_> = (0..5)
+            .map(|i| {
+                let tls = Arc::clone(&tls);
+                thread::spawn(move || {
+                    // Each thread should get its own instance
+                    let test_data = TestData {
+                        value: i * 10,
+                        name: format!("thread_{}", i),
+                    };
+                    tls.set(test_data);
+
+                    thread::sleep(Duration::from_millis(10));
+
+                    // Value should remain unchanged
+                    let retrieved = tls.get();
+                    assert_eq!(retrieved.value, i * 10);
+                    assert_eq!(retrieved.name, format!("thread_{}", i));
+                })
             })
-        }).collect();
+            .collect();
 
         for handle in handles {
             handle.join().unwrap();
@@ -564,27 +578,27 @@ mod tests {
     #[test]
     fn test_instance_tls_set_remove() {
         let tls = InstanceTls::<TestData>::new().unwrap();
-        
+
         // Initially should be None using try_get (which doesn't create a default)
         assert!(tls.try_get().is_none());
-        
+
         // Set a value
         let test_data = TestData {
             value: 100,
             name: "test_set".to_string(),
         };
         tls.set(test_data);
-        
+
         // Should now exist
         assert!(tls.try_get().is_some());
         let retrieved = tls.try_get().unwrap();
         assert_eq!(retrieved.value, 100);
-        
+
         // Remove the value
         let removed = tls.remove().unwrap();
         assert_eq!(removed.value, 100);
         assert_eq!(removed.name, "test_set");
-        
+
         // Should be None again
         assert!(tls.try_get().is_none());
     }
@@ -597,32 +611,38 @@ mod tests {
 
         let owner1 = Owner { id: 1 };
         let owner2 = Owner { id: 2 };
-        
+
         let mut owner_tls = OwnerTls::<TestData, Owner>::new();
-        
+
         // Each owner should have separate TLS
         let mut data1 = owner_tls.get_or_create(&owner1).unwrap();
         data1.value = 11;
         owner_tls.get_or_create(&owner1).unwrap(); // This creates it with the modified value
-        
+
         let mut data2 = owner_tls.get_or_create(&owner2).unwrap();
         data2.value = 22;
         owner_tls.get_or_create(&owner2).unwrap(); // This creates it with the modified value
-        
+
         // Note: Since we're returning by value, we need to use set() to persist changes
         // Let's modify this test to use set() properly
-        let _test_data1 = TestData { value: 11, name: "owner1".to_string() };
-        let _test_data2 = TestData { value: 22, name: "owner2".to_string() };
-        
+        let _test_data1 = TestData {
+            value: 11,
+            name: "owner1".to_string(),
+        };
+        let _test_data2 = TestData {
+            value: 22,
+            name: "owner2".to_string(),
+        };
+
         // We need to access the instances to call set() on them
         // For this test, let's verify that different owners get different instances
         let retrieved1 = owner_tls.get_or_create(&owner1).unwrap();
         let retrieved2 = owner_tls.get_or_create(&owner2).unwrap();
-        
+
         // They should both start with default values (0, "")
         assert_eq!(retrieved1.value, 0);
         assert_eq!(retrieved2.value, 0);
-        
+
         // Remove owner1
         assert!(owner_tls.remove(&owner1).is_some());
         assert!(owner_tls.get(&owner1).is_none());
@@ -632,14 +652,14 @@ mod tests {
     #[test]
     fn test_tls_pool() {
         let pool = TlsPool::<TestData, 4>::new().unwrap();
-        
-        // Test round-robin access - since we return by value, 
+
+        // Test round-robin access - since we return by value,
         // we can't modify the stored values directly
         // Instead, let's just test that we get different values in round-robin
         for _i in 0..8 {
             let _tls = pool.get_next(); // Just test that it doesn't panic
         }
-        
+
         // Test that slots return default values
         assert_eq!(pool.get_slot(0).unwrap().value, 0);
         assert_eq!(pool.get_slot(1).unwrap().value, 0);
@@ -651,20 +671,20 @@ mod tests {
     fn test_tls_id_management() {
         let tls1 = InstanceTls::<TestData>::new().unwrap();
         let tls2 = InstanceTls::<TestData>::new().unwrap();
-        
+
         let id1 = tls1.id();
         let id2 = tls2.id();
-        
+
         // IDs should be different
         assert_ne!(id1, id2);
-        
+
         // Drop first instance
         drop(tls1);
-        
+
         // Create new instance - might reuse ID
         let tls3 = InstanceTls::<TestData>::new().unwrap();
         let _id3 = tls3.id();
-        
+
         // This tests the ID recycling mechanism
     }
 
@@ -672,7 +692,10 @@ mod tests {
     fn test_matrix_dimensions() {
         // Test custom matrix dimensions
         let tls = InstanceTls::<TestData, 4, 4>::new().unwrap();
-        let test_data = TestData { value: 99, name: "test".to_string() };
+        let test_data = TestData {
+            value: 99,
+            name: "test".to_string(),
+        };
         tls.set(test_data);
         assert_eq!(tls.get().value, 99);
     }

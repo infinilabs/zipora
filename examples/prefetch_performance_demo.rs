@@ -6,10 +6,10 @@
 //! - Lookahead prefetching in bulk operations
 
 use std::time::Instant;
-use zipora::succinct::rank_select::interleaved::RankSelectInterleaved256;
+use zipora::RankSelectPerformanceOps;
 use zipora::succinct::BitVector;
 use zipora::succinct::rank_select::RankSelectOps;
-use zipora::RankSelectPerformanceOps;
+use zipora::succinct::rank_select::interleaved::RankSelectInterleaved256;
 
 fn create_test_data(size: usize, density: f64) -> RankSelectInterleaved256 {
     let mut bv = BitVector::new();
@@ -53,19 +53,34 @@ fn bench_rank1_single_operation() {
     println!("Iterations: {}", iterations);
     println!("\nBaseline rank1:");
     println!("  Time: {:?}", base_duration);
-    println!("  Throughput: {:.2} M ops/sec", base_ops_per_sec / 1_000_000.0);
+    println!(
+        "  Throughput: {:.2} M ops/sec",
+        base_ops_per_sec / 1_000_000.0
+    );
 
     println!("\nrank1_adaptive (adaptive SIMD only):");
     println!("  Time: {:?}", adaptive_duration);
-    println!("  Throughput: {:.2} M ops/sec", adaptive_ops_per_sec / 1_000_000.0);
+    println!(
+        "  Throughput: {:.2} M ops/sec",
+        adaptive_ops_per_sec / 1_000_000.0
+    );
     println!("  Speedup: {:.3}x", adaptive_ops_per_sec / base_ops_per_sec);
-    println!("  Overhead: {:.1}%", ((adaptive_duration.as_nanos() as f64 / base_duration.as_nanos() as f64) - 1.0) * 100.0);
+    println!(
+        "  Overhead: {:.1}%",
+        ((adaptive_duration.as_nanos() as f64 / base_duration.as_nanos() as f64) - 1.0) * 100.0
+    );
 
     println!("\nrank1_optimized (prefetch + adaptive SIMD):");
     println!("  Time: {:?}", opt_duration);
-    println!("  Throughput: {:.2} M ops/sec", opt_ops_per_sec / 1_000_000.0);
+    println!(
+        "  Throughput: {:.2} M ops/sec",
+        opt_ops_per_sec / 1_000_000.0
+    );
     println!("  Speedup: {:.3}x", opt_ops_per_sec / base_ops_per_sec);
-    println!("  Improvement: {:.1}%", ((opt_ops_per_sec / base_ops_per_sec) - 1.0) * 100.0);
+    println!(
+        "  Improvement: {:.1}%",
+        ((opt_ops_per_sec / base_ops_per_sec) - 1.0) * 100.0
+    );
 }
 
 fn bench_bulk_operations() {
@@ -90,7 +105,8 @@ fn bench_bulk_operations() {
             std::hint::black_box(results);
         }
         let individual_duration = start.elapsed();
-        let individual_ops_per_sec = (iterations * batch_size) as f64 / individual_duration.as_secs_f64();
+        let individual_ops_per_sec =
+            (iterations * batch_size) as f64 / individual_duration.as_secs_f64();
 
         // Bulk optimized (with PREFETCH_DISTANCE=8 lookahead)
         let start = Instant::now();
@@ -103,12 +119,24 @@ fn bench_bulk_operations() {
         println!("\nBatch size: {}", batch_size);
         println!("  Individual calls:");
         println!("    Time: {:?}", individual_duration);
-        println!("    Throughput: {:.2} M ops/sec", individual_ops_per_sec / 1_000_000.0);
+        println!(
+            "    Throughput: {:.2} M ops/sec",
+            individual_ops_per_sec / 1_000_000.0
+        );
         println!("  Bulk with lookahead prefetch (PREFETCH_DISTANCE=8):");
         println!("    Time: {:?}", bulk_duration);
-        println!("    Throughput: {:.2} M ops/sec", bulk_ops_per_sec / 1_000_000.0);
-        println!("    Speedup: {:.3}x", bulk_ops_per_sec / individual_ops_per_sec);
-        println!("    Improvement: {:.1}%", ((bulk_ops_per_sec / individual_ops_per_sec) - 1.0) * 100.0);
+        println!(
+            "    Throughput: {:.2} M ops/sec",
+            bulk_ops_per_sec / 1_000_000.0
+        );
+        println!(
+            "    Speedup: {:.3}x",
+            bulk_ops_per_sec / individual_ops_per_sec
+        );
+        println!(
+            "    Improvement: {:.1}%",
+            ((bulk_ops_per_sec / individual_ops_per_sec) - 1.0) * 100.0
+        );
     }
 }
 
@@ -144,13 +172,22 @@ fn bench_select_operations() {
 
     println!("\nBaseline select1:");
     println!("  Time: {:?}", base_duration);
-    println!("  Throughput: {:.2} M ops/sec", base_ops_per_sec / 1_000_000.0);
+    println!(
+        "  Throughput: {:.2} M ops/sec",
+        base_ops_per_sec / 1_000_000.0
+    );
 
     println!("\nselect1_optimized (prefetch + adaptive):");
     println!("  Time: {:?}", opt_duration);
-    println!("  Throughput: {:.2} M ops/sec", opt_ops_per_sec / 1_000_000.0);
+    println!(
+        "  Throughput: {:.2} M ops/sec",
+        opt_ops_per_sec / 1_000_000.0
+    );
     println!("  Speedup: {:.3}x", opt_ops_per_sec / base_ops_per_sec);
-    println!("  Improvement: {:.1}%", ((opt_ops_per_sec / base_ops_per_sec) - 1.0) * 100.0);
+    println!(
+        "  Improvement: {:.1}%",
+        ((opt_ops_per_sec / base_ops_per_sec) - 1.0) * 100.0
+    );
 }
 
 fn main() {

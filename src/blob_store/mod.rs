@@ -21,16 +21,19 @@ pub mod zip_offset;
 pub mod zip_offset_builder;
 
 // Re-export core types
-pub use cached_store::{CachedBlobStore, BlobCacheStats};
+pub use cached_store::{BlobCacheStats, CachedBlobStore};
 pub use compressed::CompressionAlgorithm;
 pub use entropy::{
     DictionaryBlobStore, EntropyAlgorithm, EntropyCompressionStats, HuffmanBlobStore, RansBlobStore,
 };
+pub use file_header::{
+    BlobStoreFileFooter, ChecksumType, FILE_FOOTER_SIZE, FILE_HEADER_BASE_SIZE,
+    FILE_HEADER_FULL_SIZE, FileHeaderBase, MAGIC_STR_LEN, MAGIC_STRING, align_padding, align_up,
+};
 pub use memory::MemoryBlobStore;
 pub use mixed_len::MixedLenBlobStore;
 pub use nest_louds_trie_blob_store::{
-    NestLoudsTrieBlobStore, NestLoudsTrieBlobStoreBuilder, TrieBlobStoreConfig,
-    TrieBlobStoreStats,
+    NestLoudsTrieBlobStore, NestLoudsTrieBlobStoreBuilder, TrieBlobStoreConfig, TrieBlobStoreStats,
 };
 pub use plain::PlainBlobStore;
 #[cfg(feature = "mmap")]
@@ -41,18 +44,15 @@ pub use traits::{
     BatchBlobStore, BlobStore, BlobStoreStats, CompressedBlobStore, CompressionStats,
     IterableBlobStore,
 };
-pub use file_header::{
-    FileHeaderBase, BlobStoreFileFooter, ChecksumType,
-    MAGIC_STRING, MAGIC_STR_LEN, FILE_HEADER_BASE_SIZE, FILE_HEADER_FULL_SIZE, FILE_FOOTER_SIZE,
-    align_padding, align_up,
-};
 pub use zero_length::ZeroLengthBlobStore;
 pub use zip_offset::{ZipOffsetBlobStore, ZipOffsetBlobStoreConfig};
-pub use zip_offset_builder::{ZipOffsetBlobStoreBuilder, BatchZipOffsetBlobStoreBuilder, BuilderStats};
+pub use zip_offset_builder::{
+    BatchZipOffsetBlobStoreBuilder, BuilderStats, ZipOffsetBlobStoreBuilder,
+};
 
 // Re-export PA-Zip dictionary compression blob store
 pub use crate::compression::dict_zip::{
-    DictZipBlobStore, DictZipBlobStoreBuilder, DictZipBlobStoreStats, DictZipConfig
+    DictZipBlobStore, DictZipBlobStoreBuilder, DictZipBlobStoreStats, DictZipConfig,
 };
 
 #[cfg(feature = "zstd")]

@@ -966,7 +966,6 @@ mod comprehensive_safety {
 
 #[cfg(test)]
 mod safety_test_runner {
-    
 
     #[test]
     fn run_all_safety_tests() {

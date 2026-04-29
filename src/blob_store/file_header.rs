@@ -73,11 +73,7 @@ impl FileHeaderBase {
     /// Create from raw bytes. Returns None if magic is invalid.
     pub fn from_bytes(bytes: &[u8; 80]) -> Option<Self> {
         let h = Self { data: *bytes };
-        if h.validate_magic() {
-            Some(h)
-        } else {
-            None
-        }
+        if h.validate_magic() { Some(h) } else { None }
     }
 
     /// Get raw bytes for writing.
@@ -320,7 +316,10 @@ impl Default for BlobStoreFileFooter {
 impl std::fmt::Debug for BlobStoreFileFooter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BlobStoreFileFooter")
-            .field("zip_data_xxhash", &format!("0x{:016x}", self.zip_data_xxhash()))
+            .field(
+                "zip_data_xxhash",
+                &format!("0x{:016x}", self.zip_data_xxhash()),
+            )
             .field("file_xxhash", &format!("0x{:016x}", self.file_xxhash()))
             .field("footer_length", &self.footer_length())
             .finish()

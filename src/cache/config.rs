@@ -1,41 +1,41 @@
 //! Cache configuration and tuning parameters
 
+use super::{CacheError, HUGE_PAGE_SIZE, MAX_SHARDS, PAGE_SIZE};
 use crate::error::Result;
-use super::{CacheError, PAGE_SIZE, HUGE_PAGE_SIZE, MAX_SHARDS};
 
 /// Page cache configuration with various optimization profiles
 #[derive(Debug, Clone)]
 pub struct PageCacheConfig {
     /// Total cache capacity in bytes
     pub capacity: usize,
-    
+
     /// Number of shards for reduced contention
     pub num_shards: u32,
-    
+
     /// Page size (must be power of 2)
     pub page_size: usize,
-    
+
     /// Use huge pages for large allocations
     pub use_huge_pages: bool,
-    
+
     /// Enable hardware prefetching
     pub enable_prefetch: bool,
-    
+
     /// Hash table load factor (0.5 - 0.9)
     pub load_factor: f64,
-    
+
     /// Maximum conflict chain length before rehashing
     pub max_conflict_length: usize,
-    
+
     /// Enable detailed statistics collection
     pub enable_statistics: bool,
-    
+
     /// Locking strategy configuration
     pub locking: LockingConfig,
-    
+
     /// Memory allocation configuration
     pub memory: MemoryConfig,
-    
+
     /// Performance tuning parameters
     pub performance: PerformanceConfig,
 }
@@ -45,13 +45,13 @@ pub struct PageCacheConfig {
 pub struct LockingConfig {
     /// Use futex-based locks when available
     pub use_futex: bool,
-    
+
     /// Enable individual file vector locking
     pub individual_file_locks: bool,
-    
+
     /// Lock timeout in milliseconds
     pub lock_timeout_ms: u64,
-    
+
     /// Enable lock-free fast paths
     pub enable_lock_free: bool,
 }
@@ -61,16 +61,16 @@ pub struct LockingConfig {
 pub struct MemoryConfig {
     /// Memory alignment for cache blocks
     pub alignment: usize,
-    
+
     /// Enable NUMA awareness
     pub numa_aware: bool,
-    
+
     /// Pre-allocate all memory on startup
     pub pre_allocate: bool,
-    
+
     /// Use secure memory pools
     pub use_secure_pools: bool,
-    
+
     /// Memory advice for OS kernel
     pub kernel_advice: KernelAdvice,
 }
@@ -80,13 +80,13 @@ pub struct MemoryConfig {
 pub struct KernelAdvice {
     /// Use MADV_HUGEPAGE for large allocations
     pub huge_pages: bool,
-    
+
     /// Use MADV_WILLNEED for cache memory
     pub will_need: bool,
-    
+
     /// Use MADV_SEQUENTIAL for sequential access patterns
     pub sequential: bool,
-    
+
     /// Use MADV_DONTDUMP to exclude from core dumps
     pub dont_dump: bool,
 }
@@ -96,16 +96,16 @@ pub struct KernelAdvice {
 pub struct PerformanceConfig {
     /// Batch size for multi-page operations
     pub batch_size: usize,
-    
+
     /// Prefetch distance for sequential access
     pub prefetch_distance: usize,
-    
+
     /// Cache warming strategy
     pub warming_strategy: WarmingStrategy,
-    
+
     /// Eviction policy configuration
     pub eviction: EvictionConfig,
-    
+
     /// Background maintenance configuration
     pub maintenance: MaintenanceConfig,
 }
@@ -128,16 +128,16 @@ pub enum WarmingStrategy {
 pub struct EvictionConfig {
     /// Eviction algorithm
     pub algorithm: EvictionAlgorithm,
-    
+
     /// High water mark for eviction (percentage)
     pub high_water_mark: f64,
-    
+
     /// Low water mark for eviction (percentage)
     pub low_water_mark: f64,
-    
+
     /// Priority boost for recently accessed pages
     pub recency_boost: f64,
-    
+
     /// Priority boost for frequently accessed pages
     pub frequency_boost: f64,
 }
@@ -162,13 +162,13 @@ pub enum EvictionAlgorithm {
 pub struct MaintenanceConfig {
     /// Enable background defragmentation
     pub enable_defrag: bool,
-    
+
     /// Defragmentation threshold (fragmentation percentage)
     pub defrag_threshold: f64,
-    
+
     /// Enable background statistics collection
     pub enable_background_stats: bool,
-    
+
     /// Maintenance interval in milliseconds
     pub maintenance_interval_ms: u64,
 }
@@ -196,7 +196,7 @@ impl PageCacheConfig {
             performance: PerformanceConfig::balanced(),
         }
     }
-    
+
     /// Create a performance-optimized configuration
     pub fn performance_optimized() -> Self {
         Self {
@@ -213,7 +213,7 @@ impl PageCacheConfig {
             performance: PerformanceConfig::performance_optimized(),
         }
     }
-    
+
     /// Create a memory-efficient configuration
     pub fn memory_optimized() -> Self {
         Self {
@@ -230,7 +230,7 @@ impl PageCacheConfig {
             performance: PerformanceConfig::memory_optimized(),
         }
     }
-    
+
     /// Create a high-security configuration
     pub fn security_optimized() -> Self {
         Self {
@@ -247,78 +247,78 @@ impl PageCacheConfig {
             performance: PerformanceConfig::security_optimized(),
         }
     }
-    
+
     /// Builder pattern: Set cache capacity
     pub fn with_capacity(mut self, capacity: usize) -> Self {
         self.capacity = capacity;
         self
     }
-    
+
     /// Builder pattern: Set number of shards
     pub fn with_shards(mut self, shards: u32) -> Self {
         self.num_shards = shards;
         self
     }
-    
+
     /// Builder pattern: Enable/disable huge pages
     pub fn with_huge_pages(mut self, enable: bool) -> Self {
         self.use_huge_pages = enable;
         self
     }
-    
+
     /// Builder pattern: Enable/disable prefetching
     pub fn with_prefetch(mut self, enable: bool) -> Self {
         self.enable_prefetch = enable;
         self
     }
-    
+
     /// Builder pattern: Set load factor
     pub fn with_load_factor(mut self, factor: f64) -> Self {
         self.load_factor = factor;
         self
     }
-    
+
     /// Builder pattern: Enable/disable statistics
     pub fn with_statistics(mut self, enable: bool) -> Self {
         self.enable_statistics = enable;
         self
     }
-    
+
     /// Validate configuration parameters
     pub fn validate(&self) -> Result<()> {
         // Validate capacity
         if self.capacity == 0 {
             return Err(CacheError::InvalidPageSize.into());
         }
-        
+
         // Validate page size (must be power of 2)
         if !self.page_size.is_power_of_two() || self.page_size < 1024 {
             return Err(CacheError::InvalidPageSize.into());
         }
-        
+
         // Validate number of shards
         if self.num_shards == 0 || self.num_shards > MAX_SHARDS as u32 {
             return Err(CacheError::InvalidShardConfig.into());
         }
-        
+
         // Validate load factor
         if self.load_factor <= 0.0 || self.load_factor >= 1.0 {
             return Err(CacheError::InvalidShardConfig.into());
         }
-        
+
         // Validate huge page usage
         if self.use_huge_pages && self.capacity < HUGE_PAGE_SIZE {
             return Err(CacheError::InvalidPageSize.into());
         }
-        
+
         Ok(())
     }
-    
+
     /// Calculate number of pages based on configuration
     pub fn calculate_page_count(&self) -> usize {
         self.capacity / self.page_size
     }
-    
+
     /// Calculate hash table size for optimal performance
     pub fn calculate_hash_table_size(&self) -> usize {
         let pages = self.calculate_page_count();
@@ -336,7 +336,7 @@ impl LockingConfig {
             enable_lock_free: true,
         }
     }
-    
+
     pub fn performance_optimized() -> Self {
         Self {
             use_futex: true,
@@ -345,7 +345,7 @@ impl LockingConfig {
             enable_lock_free: true,
         }
     }
-    
+
     pub fn memory_optimized() -> Self {
         Self {
             use_futex: false,
@@ -354,7 +354,7 @@ impl LockingConfig {
             enable_lock_free: false,
         }
     }
-    
+
     pub fn security_optimized() -> Self {
         Self {
             use_futex: false,
@@ -375,7 +375,7 @@ impl MemoryConfig {
             kernel_advice: KernelAdvice::balanced(),
         }
     }
-    
+
     pub fn performance_optimized() -> Self {
         Self {
             alignment: HUGE_PAGE_SIZE,
@@ -385,7 +385,7 @@ impl MemoryConfig {
             kernel_advice: KernelAdvice::performance_optimized(),
         }
     }
-    
+
     pub fn memory_optimized() -> Self {
         Self {
             alignment: PAGE_SIZE,
@@ -395,7 +395,7 @@ impl MemoryConfig {
             kernel_advice: KernelAdvice::memory_optimized(),
         }
     }
-    
+
     pub fn security_optimized() -> Self {
         Self {
             alignment: PAGE_SIZE,
@@ -416,7 +416,7 @@ impl KernelAdvice {
             dont_dump: false,
         }
     }
-    
+
     pub fn performance_optimized() -> Self {
         Self {
             huge_pages: true,
@@ -425,7 +425,7 @@ impl KernelAdvice {
             dont_dump: false,
         }
     }
-    
+
     pub fn memory_optimized() -> Self {
         Self {
             huge_pages: false,
@@ -434,7 +434,7 @@ impl KernelAdvice {
             dont_dump: true,
         }
     }
-    
+
     pub fn security_optimized() -> Self {
         Self {
             huge_pages: false,
@@ -455,7 +455,7 @@ impl PerformanceConfig {
             maintenance: MaintenanceConfig::balanced(),
         }
     }
-    
+
     pub fn performance_optimized() -> Self {
         Self {
             batch_size: 16,
@@ -465,7 +465,7 @@ impl PerformanceConfig {
             maintenance: MaintenanceConfig::performance_optimized(),
         }
     }
-    
+
     pub fn memory_optimized() -> Self {
         Self {
             batch_size: 4,
@@ -475,7 +475,7 @@ impl PerformanceConfig {
             maintenance: MaintenanceConfig::memory_optimized(),
         }
     }
-    
+
     pub fn security_optimized() -> Self {
         Self {
             batch_size: 4,
@@ -497,7 +497,7 @@ impl EvictionConfig {
             frequency_boost: 1.1,
         }
     }
-    
+
     pub fn performance_optimized() -> Self {
         Self {
             algorithm: EvictionAlgorithm::Arc,
@@ -507,7 +507,7 @@ impl EvictionConfig {
             frequency_boost: 1.3,
         }
     }
-    
+
     pub fn memory_optimized() -> Self {
         Self {
             algorithm: EvictionAlgorithm::Clock,
@@ -517,7 +517,7 @@ impl EvictionConfig {
             frequency_boost: 1.0,
         }
     }
-    
+
     pub fn security_optimized() -> Self {
         Self {
             algorithm: EvictionAlgorithm::Lru,
@@ -538,7 +538,7 @@ impl MaintenanceConfig {
             maintenance_interval_ms: 5000,
         }
     }
-    
+
     pub fn performance_optimized() -> Self {
         Self {
             enable_defrag: true,
@@ -547,7 +547,7 @@ impl MaintenanceConfig {
             maintenance_interval_ms: 1000,
         }
     }
-    
+
     pub fn memory_optimized() -> Self {
         Self {
             enable_defrag: false,
@@ -556,7 +556,7 @@ impl MaintenanceConfig {
             maintenance_interval_ms: 30000,
         }
     }
-    
+
     pub fn security_optimized() -> Self {
         Self {
             enable_defrag: true,

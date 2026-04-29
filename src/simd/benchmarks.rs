@@ -48,7 +48,10 @@ impl BenchmarkResults {
 
     /// Calculate statistics from latency samples
     pub fn from_samples(latencies: &mut [Duration]) -> Self {
-        assert!(!latencies.is_empty(), "Cannot create benchmark results from empty samples");
+        assert!(
+            !latencies.is_empty(),
+            "Cannot create benchmark results from empty samples"
+        );
 
         latencies.sort();
 

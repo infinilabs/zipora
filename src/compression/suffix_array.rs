@@ -38,7 +38,9 @@
 //! # Ok::<(), zipora::ZiporaError>(())
 //! ```
 
-use crate::algorithms::{suffix_array::SuffixArrayBuilder as BaseSuffixArrayBuilder, Algorithm, AlgorithmStats};
+use crate::algorithms::{
+    Algorithm, AlgorithmStats, suffix_array::SuffixArrayBuilder as BaseSuffixArrayBuilder,
+};
 use crate::containers::specialized::IntVec;
 use crate::error::{Result, ZiporaError};
 use crate::memory::secure_pool::{SecureMemoryPool, SecurePoolConfig};
@@ -102,7 +104,7 @@ impl SuffixArrayConfig {
             use_simd: cfg!(feature = "simd"),
             use_secure_pool: true,
             secure_pool_threshold: 32 * 1024 * 1024, // Lower threshold for dictionaries
-            compute_lcp: true, // Essential for dictionary compression
+            compute_lcp: true,                       // Essential for dictionary compression
             optimize_for_dictionary: true,
             bucket_cache_size: 32 * 1024, // Smaller buckets for better cache utilization
             memory_budget: 256 * 1024 * 1024, // Conservative memory usage
@@ -124,7 +126,7 @@ impl SuffixArrayConfig {
             parallel_threshold: 50_000, // Lower threshold for large texts
             enable_streaming: true,
             memory_budget: 1024 * 1024 * 1024, // 1GB for large text processing
-            bucket_cache_size: 128 * 1024, // Larger buckets for bulk processing
+            bucket_cache_size: 128 * 1024,     // Larger buckets for bulk processing
             ..Default::default()
         }
     }
@@ -138,8 +140,8 @@ impl SuffixArrayConfig {
             use_compressed_storage: false, // Favor speed over memory
             use_simd: cfg!(feature = "simd"),
             use_secure_pool: false, // Direct allocation for speed
-            use_parallel: false, // Avoid threading overhead for small texts
-            compute_lcp: false, // Skip LCP for speed
+            use_parallel: false,    // Avoid threading overhead for small texts
+            compute_lcp: false,     // Skip LCP for speed
             optimize_for_dictionary: false,
             bucket_cache_size: 16 * 1024, // Small buckets for low latency
             enable_streaming: false,
@@ -192,7 +194,10 @@ impl std::fmt::Debug for EnhancedSuffixArray {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EnhancedSuffixArray")
             .field("suffix_array_len", &self.suffix_array.len())
-            .field("lcp_array_len", &self.lcp_array.as_ref().map(|lcp| lcp.len()))
+            .field(
+                "lcp_array_len",
+                &self.lcp_array.as_ref().map(|lcp| lcp.len()),
+            )
             .field("text_len", &self.text_len)
             .field("stats", &self.stats)
             .finish_non_exhaustive()
@@ -260,7 +265,7 @@ impl EnhancedSuffixArray {
     /// let text = b"banana$";
     /// let compressor = SuffixArrayCompressor::default();
     /// let sa = compressor.build_suffix_array(text)?;
-    /// 
+    ///
     /// let occurrences = sa.find_pattern(text, b"an");
     /// assert_eq!(occurrences, vec![1, 3]); // "an" occurs at positions 1 and 3
     /// # Ok::<(), zipora::ZiporaError>(())
@@ -301,7 +306,7 @@ impl EnhancedSuffixArray {
 
         let start_rank = self.lower_bound(text, pattern);
         let end_rank = self.upper_bound(text, pattern);
-        
+
         (start_rank, end_rank)
     }
 
@@ -326,9 +331,9 @@ impl EnhancedSuffixArray {
     /// Get total memory usage in bytes
     #[inline]
     pub fn memory_usage(&self) -> usize {
-        std::mem::size_of::<Self>() +
-        self.suffix_array.memory_usage() +
-        self.lcp_array.as_ref().map_or(0, |lcp| lcp.memory_usage())
+        std::mem::size_of::<Self>()
+            + self.suffix_array.memory_usage()
+            + self.lcp_array.as_ref().map_or(0, |lcp| lcp.memory_usage())
     }
 
     /// Get compression ratio achieved by using IntVec storage
@@ -350,7 +355,7 @@ impl EnhancedSuffixArray {
 
         while left < right {
             let mid = left + (right - left) / 2;
-            
+
             if let Some(suffix_pos) = self.suffix_at_rank(mid) {
                 let suffix = &text[suffix_pos..];
                 if Self::compare_suffix_pattern(suffix, pattern) == std::cmp::Ordering::Less {
@@ -372,7 +377,7 @@ impl EnhancedSuffixArray {
 
         while left < right {
             let mid = left + (right - left) / 2;
-            
+
             if let Some(suffix_pos) = self.suffix_at_rank(mid) {
                 let suffix = &text[suffix_pos..];
                 if Self::compare_suffix_pattern(suffix, pattern) != std::cmp::Ordering::Greater {
@@ -428,7 +433,7 @@ impl SuffixArrayCompressor {
                     .with_alignment(std::mem::align_of::<usize>())
                     .with_zero_on_free(true)
             };
-            
+
             Some(SecureMemoryPool::new(pool_config)?)
         } else {
             None
@@ -479,14 +484,15 @@ impl SuffixArrayCompressor {
         }
 
         // Build suffix array using the existing SAIS implementation
-        let base_builder = BaseSuffixArrayBuilder::new(crate::algorithms::suffix_array::SuffixArrayConfig {
-            algorithm: crate::algorithms::suffix_array::SuffixArrayAlgorithm::SAIS,
-            use_parallel: self.config.use_parallel,
-            parallel_threshold: self.config.parallel_threshold,
-            compute_lcp: false, // We'll compute LCP separately if needed
-            optimize_small_alphabet: true,
-            adaptive_threshold: 10_000,
-        });
+        let base_builder =
+            BaseSuffixArrayBuilder::new(crate::algorithms::suffix_array::SuffixArrayConfig {
+                algorithm: crate::algorithms::suffix_array::SuffixArrayAlgorithm::SAIS,
+                use_parallel: self.config.use_parallel,
+                parallel_threshold: self.config.parallel_threshold,
+                compute_lcp: false, // We'll compute LCP separately if needed
+                optimize_small_alphabet: true,
+                adaptive_threshold: 10_000,
+            });
 
         let base_suffix_array = base_builder.build(text)?;
         let raw_suffix_array = base_suffix_array.as_slice();
@@ -496,9 +502,11 @@ impl SuffixArrayCompressor {
         // Convert to memory-efficient IntVec storage with u32 for better compression
         // Ensure indices fit in u32
         if raw_suffix_array.iter().any(|&x| x > u32::MAX as usize) {
-            return Err(ZiporaError::invalid_data("Text too large for u32 suffix array indices"));
+            return Err(ZiporaError::invalid_data(
+                "Text too large for u32 suffix array indices",
+            ));
         }
-        
+
         let suffix_array_u32: Vec<u32> = raw_suffix_array.iter().map(|&x| x as u32).collect();
         let suffix_array = if self.config.use_compressed_storage {
             IntVec::from_slice(&suffix_array_u32)?
@@ -732,19 +740,25 @@ mod tests {
         assert_eq!(sa.lcp_at(0), Some(0)); // First LCP is always 0
 
         // Should achieve reasonable compression ratio (extremely lenient for test data)
-        assert!(sa.compression_ratio() < 10.0, "Should achieve reasonable compression");
+        assert!(
+            sa.compression_ratio() < 10.0,
+            "Should achieve reasonable compression"
+        );
     }
 
     #[test]
     fn test_large_text_config() {
-        let text = (0..1000).map(|i| (i % 256) as u8).chain(std::iter::once(0)).collect::<Vec<_>>();
+        let text = (0..1000)
+            .map(|i| (i % 256) as u8)
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
         let config = SuffixArrayConfig::for_large_text();
         let compressor = SuffixArrayCompressor::new(config).unwrap();
         let sa = compressor.build_suffix_array(&text).unwrap();
 
         assert_eq!(sa.len(), 1001);
         // Note: Parallel processing may not be used for test data
-        
+
         // Should use secure memory pool for large text
         assert!(sa.stats().used_secure_pool);
     }
@@ -758,7 +772,7 @@ mod tests {
 
         // Should not use parallel processing for small text in realtime mode
         assert!(!sa.stats().used_parallel);
-        
+
         // Should not compute LCP in realtime mode
         assert!(sa.lcp_array.is_none());
     }
@@ -776,7 +790,10 @@ mod tests {
 
     #[test]
     fn test_memory_efficiency() {
-        let text = (0..1000).map(|i| (i % 256) as u8).chain(std::iter::once(0)).collect::<Vec<_>>();
+        let text = (0..1000)
+            .map(|i| (i % 256) as u8)
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
         let compressor = SuffixArrayCompressor::default();
         let sa = compressor.build_suffix_array(&text).unwrap();
 
@@ -810,7 +827,7 @@ mod tests {
     fn test_algorithm_trait() {
         let compressor = SuffixArrayCompressor::default();
         assert!(compressor.supports_parallel());
-        
+
         #[cfg(feature = "simd")]
         assert!(compressor.supports_simd());
 

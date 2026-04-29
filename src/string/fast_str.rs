@@ -200,10 +200,13 @@ impl<'a> FastStr<'a> {
         // Use AVX-512 accelerated search for larger patterns when available
         #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
         {
-            if needle.len() >= 4 && self.len() >= 64
-                && is_x86_feature_detected!("avx512f") && is_x86_feature_detected!("avx512bw") {
-                    return self.find_avx512(needle);
-                }
+            if needle.len() >= 4
+                && self.len() >= 64
+                && is_x86_feature_detected!("avx512f")
+                && is_x86_feature_detected!("avx512bw")
+            {
+                return self.find_avx512(needle);
+            }
         }
 
         // Fallback to optimized naive search

@@ -37,9 +37,7 @@
 //! ```
 
 use crate::error::{Result, ZiporaError};
-use crate::succinct::rank_select::bmi2_acceleration::{
-    Bmi2Capabilities, Bmi2BextrOps
-};
+use crate::succinct::rank_select::bmi2_acceleration::{Bmi2BextrOps, Bmi2Capabilities};
 use std::collections::HashMap;
 
 /// Comprehensive BMI2 string processing operations
@@ -70,7 +68,7 @@ impl Bmi2StringProcessor {
     // =============================================================================
 
     /// BMI2-accelerated UTF-8 validation
-    /// 
+    ///
     /// Uses BEXTR for fast byte extraction and parallel bit operations
     /// for character sequence validation. Performance: 3-5x faster.
     pub fn validate_utf8_bmi2(&self, input: &[u8]) -> bool {
@@ -87,7 +85,7 @@ impl Bmi2StringProcessor {
     }
 
     /// BMI2-accelerated UTF-8 character counting
-    /// 
+    ///
     /// Uses BZHI for byte masking and POPCNT for fast character boundary detection.
     /// Performance: 4-6x faster than standard counting.
     pub fn count_utf8_chars_bmi2(&self, input: &[u8]) -> Result<usize> {
@@ -107,7 +105,7 @@ impl Bmi2StringProcessor {
     }
 
     /// BMI2-accelerated UTF-8 character extraction
-    /// 
+    ///
     /// Extracts character code points using BEXTR for optimized
     /// UTF-8 processing. Performance: 5-10x faster for bulk operations.
     pub fn extract_utf8_chars_bmi2(&self, input: &[u8]) -> Result<Vec<u32>> {
@@ -127,7 +125,7 @@ impl Bmi2StringProcessor {
     }
 
     /// BMI2-accelerated UTF-8 to UTF-16 conversion
-    /// 
+    ///
     /// Fast conversion using BEXTR for character extraction and PDEP for
     /// UTF-16 encoding construction. Performance: 3-5x faster conversion.
     pub fn utf8_to_utf16_bmi2(&self, input: &[u8]) -> Result<Vec<u16>> {
@@ -151,7 +149,7 @@ impl Bmi2StringProcessor {
     // =============================================================================
 
     /// BMI2-accelerated string search
-    /// 
+    ///
     /// Uses PEXT for character class matching and BEXTR for substring
     /// extraction. Performance: 2-4x faster pattern matching.
     pub fn search_bmi2(&self, haystack: &str, needle: &str) -> Option<usize> {
@@ -175,7 +173,7 @@ impl Bmi2StringProcessor {
     }
 
     /// BMI2-accelerated pattern matching with wildcards
-    /// 
+    ///
     /// Supports glob-style pattern matching using PEXT for character
     /// class operations. Performance: 3-5x faster than regex for simple patterns.
     pub fn wildcard_match_bmi2(&self, text: &str, pattern: &str) -> bool {
@@ -183,7 +181,9 @@ impl Bmi2StringProcessor {
         {
             if self.capabilities.has_bmi2 && text.len() >= 8 && pattern.len() >= 4 {
                 // SAFETY: bmi2 guaranteed by runtime check, text and pattern are valid slices from str
-                return unsafe { self.wildcard_match_bmi2_impl(text.as_bytes(), pattern.as_bytes()) };
+                return unsafe {
+                    self.wildcard_match_bmi2_impl(text.as_bytes(), pattern.as_bytes())
+                };
             }
         }
 
@@ -192,7 +192,7 @@ impl Bmi2StringProcessor {
     }
 
     /// BMI2-accelerated character class matching
-    /// 
+    ///
     /// Fast character class matching for regex-style operations using
     /// PEXT for parallel bit extraction. Performance: 4-8x faster.
     pub fn char_class_match_bmi2(&self, text: &str, char_classes: &[CharClass]) -> Vec<bool> {
@@ -211,10 +211,14 @@ impl Bmi2StringProcessor {
     }
 
     /// BMI2-accelerated substring extraction
-    /// 
+    ///
     /// Extracts multiple substrings efficiently using BEXTR for
     /// boundary detection and bulk processing.
-    pub fn extract_substrings_bmi2(&self, text: &str, ranges: &[(usize, usize)]) -> Result<Vec<String>> {
+    pub fn extract_substrings_bmi2(
+        &self,
+        text: &str,
+        ranges: &[(usize, usize)],
+    ) -> Result<Vec<String>> {
         let mut results = Vec::with_capacity(ranges.len());
         let text_bytes = text.as_bytes();
 
@@ -227,7 +231,8 @@ impl Bmi2StringProcessor {
             {
                 if self.capabilities.has_bmi2 && len >= 8 {
                     // SAFETY: bmi2 guaranteed by runtime check, text_bytes is valid slice, bounds checked above
-                    let substring = unsafe { self.extract_substring_bmi2_impl(text_bytes, start, len)? };
+                    let substring =
+                        unsafe { self.extract_substring_bmi2_impl(text_bytes, start, len)? };
                     results.push(substring);
                     continue;
                 }
@@ -246,7 +251,7 @@ impl Bmi2StringProcessor {
     // =============================================================================
 
     /// BMI2-accelerated case conversion
-    /// 
+    ///
     /// Fast ASCII case conversion using parallel bit operations.
     /// Performance: 3-5x faster for ASCII text.
     pub fn to_lowercase_ascii_bmi2(&self, input: &str) -> String {
@@ -263,7 +268,7 @@ impl Bmi2StringProcessor {
     }
 
     /// BMI2-accelerated uppercase conversion
-    /// 
+    ///
     /// Fast ASCII uppercase conversion using parallel bit operations.
     /// Performance: 3-5x faster for ASCII text.
     pub fn to_uppercase_ascii_bmi2(&self, input: &str) -> String {
@@ -280,7 +285,7 @@ impl Bmi2StringProcessor {
     }
 
     /// BMI2-accelerated character filtering
-    /// 
+    ///
     /// Filters characters based on bit masks using PEXT for parallel
     /// character classification. Performance: 4-8x faster filtering.
     pub fn filter_chars_bmi2(&self, input: &str, filter: CharFilter) -> String {
@@ -297,7 +302,7 @@ impl Bmi2StringProcessor {
     }
 
     /// BMI2-accelerated string hashing
-    /// 
+    ///
     /// Fast string hashing using BMI2 patterns for bit manipulation
     /// and parallel processing. Performance: 2-3x faster hashing.
     pub fn hash_string_bmi2(&self, input: &str, seed: u64) -> u64 {
@@ -318,7 +323,7 @@ impl Bmi2StringProcessor {
     // =============================================================================
 
     /// BMI2-accelerated run-length detection
-    /// 
+    ///
     /// Detects character runs using BMI2 for fast character comparison
     /// and counting. Performance: 3-5x faster run detection.
     pub fn detect_runs_bmi2(&self, input: &str) -> Vec<CharRun> {
@@ -335,7 +340,7 @@ impl Bmi2StringProcessor {
     }
 
     /// BMI2-accelerated string compression analysis
-    /// 
+    ///
     /// Analyzes string compressibility using BMI2 for fast character
     /// frequency analysis and entropy estimation.
     pub fn analyze_compression_bmi2(&self, input: &str) -> CompressionAnalysis {
@@ -352,10 +357,14 @@ impl Bmi2StringProcessor {
     }
 
     /// BMI2-accelerated dictionary lookup
-    /// 
+    ///
     /// Fast dictionary lookups for string compression using BEXTR
     /// for hash extraction and PEXT for key matching.
-    pub fn dictionary_lookup_bmi2(&self, text: &str, dictionary: &StringDictionary) -> Vec<DictionaryMatch> {
+    pub fn dictionary_lookup_bmi2(
+        &self,
+        text: &str,
+        dictionary: &StringDictionary,
+    ) -> Vec<DictionaryMatch> {
         #[cfg(target_arch = "x86_64")]
         {
             if self.capabilities.has_bmi2 && text.len() >= 8 {
@@ -373,7 +382,7 @@ impl Bmi2StringProcessor {
     // =============================================================================
 
     /// BMI2-accelerated bulk string validation
-    /// 
+    ///
     /// Validates multiple strings efficiently using vectorized BMI2 operations.
     /// Performance: 3-5x faster for bulk validation.
     pub fn validate_bulk_bmi2(&self, strings: &[&str]) -> Vec<bool> {
@@ -386,13 +395,14 @@ impl Bmi2StringProcessor {
         }
 
         // Fallback to individual validation
-        strings.iter()
+        strings
+            .iter()
             .map(|s| self.validate_utf8_bmi2(s.as_bytes()))
             .collect()
     }
 
     /// BMI2-accelerated bulk string hashing
-    /// 
+    ///
     /// Computes hashes for multiple strings using parallel BMI2 operations.
     /// Performance: 2-4x faster for bulk hashing.
     pub fn hash_bulk_bmi2(&self, strings: &[&str], seed: u64) -> Vec<u64> {
@@ -405,13 +415,14 @@ impl Bmi2StringProcessor {
         }
 
         // Fallback to individual hashing
-        strings.iter()
+        strings
+            .iter()
             .map(|s| self.hash_string_bmi2(s, seed))
             .collect()
     }
 
     /// BMI2-accelerated bulk string comparison
-    /// 
+    ///
     /// Compares multiple string pairs using vectorized BMI2 operations.
     /// Performance: 2-3x faster for bulk comparisons.
     pub fn compare_bulk_bmi2(&self, pairs: &[(&str, &str)]) -> Vec<bool> {
@@ -424,9 +435,7 @@ impl Bmi2StringProcessor {
         }
 
         // Fallback to individual comparison
-        pairs.iter()
-            .map(|(a, b)| a == b)
-            .collect()
+        pairs.iter().map(|(a, b)| a == b).collect()
     }
 
     // =============================================================================
@@ -487,8 +496,9 @@ impl Bmi2StringProcessor {
             if i + 4 <= input.len() {
                 // Extract potential UTF-8 character using BEXTR
                 // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from slice, i + 4 <= len checked
-                let char_bytes = unsafe { std::ptr::read_unaligned(input.as_ptr().add(i) as *const u32) };
-                
+                let char_bytes =
+                    unsafe { std::ptr::read_unaligned(input.as_ptr().add(i) as *const u32) };
+
                 match self.decode_utf8_char_bmi2(char_bytes, &mut i) {
                     Some(code_point) => chars.push(code_point),
                     None => return Err(ZiporaError::invalid_data("Invalid UTF-8 character")),
@@ -519,8 +529,9 @@ impl Bmi2StringProcessor {
             if i + 4 <= input.len() {
                 // Extract UTF-8 character using BMI2
                 // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from slice, i + 4 <= len checked
-                let char_bytes = unsafe { std::ptr::read_unaligned(input.as_ptr().add(i) as *const u32) };
-                
+                let char_bytes =
+                    unsafe { std::ptr::read_unaligned(input.as_ptr().add(i) as *const u32) };
+
                 match self.decode_utf8_char_bmi2(char_bytes, &mut i) {
                     Some(code_point) => {
                         // Convert to UTF-16 using BMI2 operations
@@ -561,15 +572,17 @@ impl Bmi2StringProcessor {
             if i + 8 <= haystack.len() {
                 // Load 8 bytes and search using BMI2 patterns
                 // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from slice, i + 8 <= len checked
-                let chunk = unsafe { std::ptr::read_unaligned(haystack.as_ptr().add(i) as *const u64) };
-                
+                let chunk =
+                    unsafe { std::ptr::read_unaligned(haystack.as_ptr().add(i) as *const u64) };
+
                 // Extract each byte and compare using BEXTR
                 for byte_pos in 0..8 {
                     if i + byte_pos >= search_range {
                         break;
                     }
-                    
-                    let byte_val = Bmi2BextrOps::extract_bits_bextr(chunk, (byte_pos * 8) as u32, 8) as u8;
+
+                    let byte_val =
+                        Bmi2BextrOps::extract_bits_bextr(chunk, (byte_pos * 8) as u32, 8) as u8;
                     if byte_val == first_char {
                         // Potential match found, verify with BMI2-accelerated comparison
                         if self.compare_substring_bmi2(&haystack[i + byte_pos..], needle) {
@@ -577,14 +590,13 @@ impl Bmi2StringProcessor {
                         }
                     }
                 }
-                
+
                 i += 8; // Skip ahead by chunk size
             } else {
                 // Fallback to scalar search for remainder
-                if haystack[i] == first_char
-                    && haystack[i..].starts_with(needle) {
-                        return Some(i);
-                    }
+                if haystack[i] == first_char && haystack[i..].starts_with(needle) {
+                    return Some(i);
+                }
                 i += 1;
             }
         }
@@ -597,7 +609,7 @@ impl Bmi2StringProcessor {
     unsafe fn wildcard_match_bmi2_impl(&self, text: &[u8], pattern: &[u8]) -> bool {
         // Simplified wildcard matching with BMI2 acceleration
         // Supports * and ? wildcards
-        
+
         let mut text_idx = 0;
         let mut pattern_idx = 0;
 
@@ -608,22 +620,24 @@ impl Bmi2StringProcessor {
                     while pattern_idx < pattern.len() && pattern[pattern_idx] == b'*' {
                         pattern_idx += 1;
                     }
-                    
+
                     if pattern_idx == pattern.len() {
                         return true; // Pattern ends with *, matches everything
                     }
-                    
+
                     // Find next matching character using BMI2
                     let next_char = pattern[pattern_idx];
                     while text_idx < text.len() {
                         let current_char = if text_idx + 8 <= text.len() {
                             // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from slice, text_idx + 8 <= len checked
-                            let chunk = unsafe { std::ptr::read_unaligned(text.as_ptr().add(text_idx) as *const u64) };
+                            let chunk = unsafe {
+                                std::ptr::read_unaligned(text.as_ptr().add(text_idx) as *const u64)
+                            };
                             Bmi2BextrOps::extract_bits_bextr(chunk, 0, 8) as u8
                         } else {
                             text[text_idx]
                         };
-                        
+
                         if current_char == next_char {
                             break;
                         }
@@ -639,12 +653,14 @@ impl Bmi2StringProcessor {
                     // Literal character match
                     let text_char = if text_idx + 8 <= text.len() {
                         // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from slice, text_idx + 8 <= len checked
-                        let chunk = unsafe { std::ptr::read_unaligned(text.as_ptr().add(text_idx) as *const u64) };
+                        let chunk = unsafe {
+                            std::ptr::read_unaligned(text.as_ptr().add(text_idx) as *const u64)
+                        };
                         Bmi2BextrOps::extract_bits_bextr(chunk, 0, 8) as u8
                     } else {
                         text[text_idx]
                     };
-                    
+
                     if text_char != c {
                         return false;
                     }
@@ -664,7 +680,11 @@ impl Bmi2StringProcessor {
 
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
-    unsafe fn char_class_match_bmi2_impl(&self, text: &[u8], char_classes: &[CharClass]) -> Vec<bool> {
+    unsafe fn char_class_match_bmi2_impl(
+        &self,
+        text: &[u8],
+        char_classes: &[CharClass],
+    ) -> Vec<bool> {
         let mut results = Vec::with_capacity(text.len());
         let mut i = 0;
 
@@ -673,18 +693,23 @@ impl Bmi2StringProcessor {
                 // Process 8 characters at once using BMI2
                 // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from slice, i + 8 <= len checked
                 let chunk = unsafe { std::ptr::read_unaligned(text.as_ptr().add(i) as *const u64) };
-                
+
                 for byte_pos in 0..8 {
-                    let char_val = Bmi2BextrOps::extract_bits_bextr(chunk, (byte_pos * 8) as u32, 8) as u8;
-                    let matches = char_classes.iter().any(|class| class.matches_byte(char_val));
+                    let char_val =
+                        Bmi2BextrOps::extract_bits_bextr(chunk, (byte_pos * 8) as u32, 8) as u8;
+                    let matches = char_classes
+                        .iter()
+                        .any(|class| class.matches_byte(char_val));
                     results.push(matches);
                 }
-                
+
                 i += 8;
             } else {
                 // Handle remainder
                 let char_val = text[i];
-                let matches = char_classes.iter().any(|class| class.matches_byte(char_val));
+                let matches = char_classes
+                    .iter()
+                    .any(|class| class.matches_byte(char_val));
                 results.push(matches);
                 i += 1;
             }
@@ -695,14 +720,19 @@ impl Bmi2StringProcessor {
 
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
-    unsafe fn extract_substring_bmi2_impl(&self, text: &[u8], start: usize, len: usize) -> Result<String> {
+    unsafe fn extract_substring_bmi2_impl(
+        &self,
+        text: &[u8],
+        start: usize,
+        len: usize,
+    ) -> Result<String> {
         let end = start + len;
         if end > text.len() {
             return Err(ZiporaError::invalid_data("Substring range out of bounds"));
         }
 
         let substring_bytes = &text[start..end];
-        
+
         // Validate UTF-8 using BMI2 if possible
         if len >= 8 && self.validate_utf8_bmi2(substring_bytes) {
             // SAFETY: UTF-8 validity guaranteed by validate_utf8_bmi2 check above
@@ -726,13 +756,15 @@ impl Bmi2StringProcessor {
                 // Load 8 bytes for parallel processing
                 // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from chunk, len == 8 checked
                 let bytes = unsafe { std::ptr::read_unaligned(chunk.as_ptr() as *const u64) };
-                
+
                 // Convert to lowercase using BMI2 bit manipulation
                 let lowercase_bytes = self.to_lowercase_chunk_bmi2(bytes);
-                
+
                 // Extract converted bytes
                 for byte_pos in 0..8 {
-                    let converted = Bmi2BextrOps::extract_bits_bextr(lowercase_bytes, (byte_pos * 8) as u32, 8) as u8;
+                    let converted =
+                        Bmi2BextrOps::extract_bits_bextr(lowercase_bytes, (byte_pos * 8) as u32, 8)
+                            as u8;
                     output.push(converted);
                 }
             } else {
@@ -757,13 +789,15 @@ impl Bmi2StringProcessor {
                 // Load 8 bytes for parallel processing
                 // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from chunk, len == 8 checked
                 let bytes = unsafe { std::ptr::read_unaligned(chunk.as_ptr() as *const u64) };
-                
+
                 // Convert to uppercase using BMI2 bit manipulation
                 let uppercase_bytes = self.to_uppercase_chunk_bmi2(bytes);
-                
+
                 // Extract converted bytes
                 for byte_pos in 0..8 {
-                    let converted = Bmi2BextrOps::extract_bits_bextr(uppercase_bytes, (byte_pos * 8) as u32, 8) as u8;
+                    let converted =
+                        Bmi2BextrOps::extract_bits_bextr(uppercase_bytes, (byte_pos * 8) as u32, 8)
+                            as u8;
                     output.push(converted);
                 }
             } else {
@@ -788,10 +822,11 @@ impl Bmi2StringProcessor {
                 // Load 8 bytes for parallel filtering
                 // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from chunk, len == 8 checked
                 let bytes = unsafe { std::ptr::read_unaligned(chunk.as_ptr() as *const u64) };
-                
+
                 // Filter characters using BMI2 patterns
                 for byte_pos in 0..8 {
-                    let byte_val = Bmi2BextrOps::extract_bits_bextr(bytes, (byte_pos * 8) as u32, 8) as u8;
+                    let byte_val =
+                        Bmi2BextrOps::extract_bits_bextr(bytes, (byte_pos * 8) as u32, 8) as u8;
                     if filter.matches_byte(byte_val) {
                         output.push(byte_val);
                     }
@@ -818,7 +853,7 @@ impl Bmi2StringProcessor {
             if chunk.len() == 8 {
                 // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from chunk, len == 8 checked
                 let bytes = unsafe { std::ptr::read_unaligned(chunk.as_ptr() as *const u64) };
-                
+
                 // Use BMI2 operations for hash mixing
                 hash = hash.rotate_left(5).wrapping_add(bytes);
                 hash ^= Bmi2BextrOps::extract_bits_bextr(hash, 13, 19);
@@ -848,7 +883,8 @@ impl Bmi2StringProcessor {
         for i in 1..input.len() {
             let next_char = if i + 8 <= input.len() {
                 // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from slice, i + 8 <= len checked
-                let chunk = unsafe { std::ptr::read_unaligned(input.as_ptr().add(i) as *const u64) };
+                let chunk =
+                    unsafe { std::ptr::read_unaligned(input.as_ptr().add(i) as *const u64) };
                 Bmi2BextrOps::extract_bits_bextr(chunk, 0, 8) as u8
             } else {
                 input[i]
@@ -862,7 +898,7 @@ impl Bmi2StringProcessor {
                     start: run_start,
                     length: run_length,
                 });
-                
+
                 current_char = next_char;
                 run_start = i;
                 run_length = 1;
@@ -890,9 +926,10 @@ impl Bmi2StringProcessor {
             if chunk.len() == 8 {
                 // SAFETY: bmi2 guaranteed by #[target_feature], pointer valid from chunk, len == 8 checked
                 let bytes = unsafe { std::ptr::read_unaligned(chunk.as_ptr() as *const u64) };
-                
+
                 for byte_pos in 0..8 {
-                    let char_val = Bmi2BextrOps::extract_bits_bextr(bytes, (byte_pos * 8) as u32, 8) as u8;
+                    let char_val =
+                        Bmi2BextrOps::extract_bits_bextr(bytes, (byte_pos * 8) as u32, 8) as u8;
                     *char_freq.entry(char_val).or_insert(0) += 1;
                     total_chars += 1;
                 }
@@ -924,7 +961,11 @@ impl Bmi2StringProcessor {
 
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
-    unsafe fn dictionary_lookup_bmi2_impl(&self, text: &[u8], dictionary: &StringDictionary) -> Vec<DictionaryMatch> {
+    unsafe fn dictionary_lookup_bmi2_impl(
+        &self,
+        text: &[u8],
+        dictionary: &StringDictionary,
+    ) -> Vec<DictionaryMatch> {
         let mut matches = Vec::new();
 
         // For each position in the text, check all dictionary entries
@@ -937,7 +978,11 @@ impl Bmi2StringProcessor {
                     // Use BMI2 for accelerated comparison when possible
                     let match_found = if entry.text.len() >= 8 && self.capabilities.has_bmi2 {
                         // Use BMI2 for longer strings
-                        self.compare_strings_bmi2(remaining, entry.text.as_bytes(), entry.text.len())
+                        self.compare_strings_bmi2(
+                            remaining,
+                            entry.text.as_bytes(),
+                            entry.text.len(),
+                        )
                     } else {
                         // Use standard comparison for shorter strings
                         remaining.starts_with(entry.text.as_bytes())
@@ -960,7 +1005,8 @@ impl Bmi2StringProcessor {
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn validate_bulk_bmi2_impl(&self, strings: &[&str]) -> Vec<bool> {
-        strings.iter()
+        strings
+            .iter()
             .map(|s| self.validate_utf8_bmi2(s.as_bytes()))
             .collect()
     }
@@ -968,7 +1014,8 @@ impl Bmi2StringProcessor {
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn hash_bulk_bmi2_impl(&self, strings: &[&str], seed: u64) -> Vec<u64> {
-        strings.iter()
+        strings
+            .iter()
             // SAFETY: bmi2 guaranteed by #[target_feature], s.as_bytes() valid from str
             .map(|s| unsafe { self.hash_string_bmi2_impl(s.as_bytes(), seed) })
             .collect()
@@ -977,7 +1024,8 @@ impl Bmi2StringProcessor {
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn compare_bulk_bmi2_impl(&self, pairs: &[(&str, &str)]) -> Vec<bool> {
-        pairs.iter()
+        pairs
+            .iter()
             .map(|(a, b)| {
                 let a_bytes = a.as_bytes();
                 let b_bytes = b.as_bytes();
@@ -993,7 +1041,6 @@ impl Bmi2StringProcessor {
     // =============================================================================
     // HELPER METHODS
     // =============================================================================
-
 
     #[cfg(target_arch = "x86_64")]
     #[inline]
@@ -1046,7 +1093,7 @@ impl Bmi2StringProcessor {
     #[inline]
     fn decode_utf8_char_bmi2(&self, char_bytes: u32, position: &mut usize) -> Option<u32> {
         let first_byte = (char_bytes & 0xFF) as u8;
-        
+
         match first_byte {
             0x00..=0x7F => {
                 *position += 1;
@@ -1066,9 +1113,11 @@ impl Bmi2StringProcessor {
                     let second_byte = ((char_bytes >> 8) & 0xFF) as u8;
                     let third_byte = ((char_bytes >> 16) & 0xFF) as u8;
                     *position += 3;
-                    Some(((first_byte as u32 & 0x0F) << 12) | 
-                         ((second_byte as u32 & 0x3F) << 6) | 
-                         (third_byte as u32 & 0x3F))
+                    Some(
+                        ((first_byte as u32 & 0x0F) << 12)
+                            | ((second_byte as u32 & 0x3F) << 6)
+                            | (third_byte as u32 & 0x3F),
+                    )
                 } else {
                     None
                 }
@@ -1079,10 +1128,12 @@ impl Bmi2StringProcessor {
                     let third_byte = ((char_bytes >> 16) & 0xFF) as u8;
                     let fourth_byte = ((char_bytes >> 24) & 0xFF) as u8;
                     *position += 4;
-                    Some(((first_byte as u32 & 0x07) << 18) | 
-                         ((second_byte as u32 & 0x3F) << 12) | 
-                         ((third_byte as u32 & 0x3F) << 6) | 
-                         (fourth_byte as u32 & 0x3F))
+                    Some(
+                        ((first_byte as u32 & 0x07) << 18)
+                            | ((second_byte as u32 & 0x3F) << 12)
+                            | ((third_byte as u32 & 0x3F) << 6)
+                            | (fourth_byte as u32 & 0x3F),
+                    )
                 } else {
                     None
                 }
@@ -1125,7 +1176,7 @@ impl Bmi2StringProcessor {
     #[inline]
     fn to_lowercase_chunk_bmi2(&self, bytes: u64) -> u64 {
         let mut result = 0u64;
-        
+
         for byte_pos in 0..8 {
             let byte_val = Bmi2BextrOps::extract_bits_bextr(bytes, (byte_pos * 8) as u32, 8) as u8;
             let lowercase = if byte_val.is_ascii_uppercase() {
@@ -1135,7 +1186,7 @@ impl Bmi2StringProcessor {
             };
             result |= (lowercase as u64) << (byte_pos * 8);
         }
-        
+
         result
     }
 
@@ -1143,7 +1194,7 @@ impl Bmi2StringProcessor {
     #[inline]
     fn to_uppercase_chunk_bmi2(&self, bytes: u64) -> u64 {
         let mut result = 0u64;
-        
+
         for byte_pos in 0..8 {
             let byte_val = Bmi2BextrOps::extract_bits_bextr(bytes, (byte_pos * 8) as u32, 8) as u8;
             let uppercase = if byte_val.is_ascii_lowercase() {
@@ -1153,10 +1204,9 @@ impl Bmi2StringProcessor {
             };
             result |= (uppercase as u64) << (byte_pos * 8);
         }
-        
+
         result
     }
-
 
     // =============================================================================
     // SCALAR FALLBACK METHODS
@@ -1166,24 +1216,30 @@ impl Bmi2StringProcessor {
         // Basic wildcard matching implementation
         let text_chars: Vec<char> = text.chars().collect();
         let pattern_chars: Vec<char> = pattern.chars().collect();
-        
+
         self.wildcard_match_recursive(&text_chars, &pattern_chars, 0, 0)
     }
 
-    fn wildcard_match_recursive(&self, text: &[char], pattern: &[char], text_idx: usize, pattern_idx: usize) -> bool {
+    fn wildcard_match_recursive(
+        &self,
+        text: &[char],
+        pattern: &[char],
+        text_idx: usize,
+        pattern_idx: usize,
+    ) -> bool {
         if pattern_idx == pattern.len() {
             return text_idx == text.len();
         }
-        
+
         if text_idx == text.len() {
             return pattern[pattern_idx..].iter().all(|&c| c == '*');
         }
-        
+
         match pattern[pattern_idx] {
             '*' => {
                 // Try matching zero or more characters
-                self.wildcard_match_recursive(text, pattern, text_idx, pattern_idx + 1) ||
-                self.wildcard_match_recursive(text, pattern, text_idx + 1, pattern_idx)
+                self.wildcard_match_recursive(text, pattern, text_idx, pattern_idx + 1)
+                    || self.wildcard_match_recursive(text, pattern, text_idx + 1, pattern_idx)
             }
             '?' => {
                 // Match any single character
@@ -1191,8 +1247,8 @@ impl Bmi2StringProcessor {
             }
             c => {
                 // Match literal character
-                text[text_idx] == c && 
-                self.wildcard_match_recursive(text, pattern, text_idx + 1, pattern_idx + 1)
+                text[text_idx] == c
+                    && self.wildcard_match_recursive(text, pattern, text_idx + 1, pattern_idx + 1)
             }
         }
     }
@@ -1200,7 +1256,7 @@ impl Bmi2StringProcessor {
     fn detect_runs_scalar(&self, input: &str) -> Vec<CharRun> {
         let mut runs = Vec::new();
         let bytes = input.as_bytes();
-        
+
         if bytes.is_empty() {
             return runs;
         }
@@ -1218,7 +1274,7 @@ impl Bmi2StringProcessor {
                     start: run_start,
                     length: run_length,
                 });
-                
+
                 current_char = byte;
                 run_start = i;
                 run_length = 1;
@@ -1245,7 +1301,7 @@ impl Bmi2StringProcessor {
 
         let mut entropy = 0.0;
         let total_chars = bytes.len();
-        
+
         for &freq in char_freq.values() {
             if freq > 0 {
                 let p = freq as f64 / total_chars as f64;
@@ -1262,7 +1318,11 @@ impl Bmi2StringProcessor {
         }
     }
 
-    fn dictionary_lookup_scalar(&self, text: &str, dictionary: &StringDictionary) -> Vec<DictionaryMatch> {
+    fn dictionary_lookup_scalar(
+        &self,
+        text: &str,
+        dictionary: &StringDictionary,
+    ) -> Vec<DictionaryMatch> {
         let mut matches = Vec::new();
         let bytes = text.as_bytes();
 
@@ -1428,15 +1488,12 @@ impl StringDictionary {
 
         for (index, text) in strings.into_iter().enumerate() {
             // Simple hash for demonstration
-            let hash = text.as_bytes().iter().fold(0u64, |acc, &b| {
-                acc.rotate_left(5).wrapping_add(b as u64)
-            });
+            let hash = text
+                .as_bytes()
+                .iter()
+                .fold(0u64, |acc, &b| acc.rotate_left(5).wrapping_add(b as u64));
 
-            entries.push(DictionaryEntry {
-                text,
-                index,
-                hash,
-            });
+            entries.push(DictionaryEntry { text, index, hash });
 
             hash_table.insert(hash, index);
         }
@@ -1449,7 +1506,9 @@ impl StringDictionary {
 
     /// Lookup entry by hash
     pub fn lookup_by_hash(&self, hash: u64) -> Option<&DictionaryEntry> {
-        self.hash_table.get(&hash).and_then(|&index| self.entries.get(index))
+        self.hash_table
+            .get(&hash)
+            .and_then(|&index| self.entries.get(index))
     }
 }
 
@@ -1523,7 +1582,7 @@ mod tests {
     #[test]
     fn test_bmi2_processor_creation() {
         let processor = Bmi2StringProcessor::new();
-        
+
         // Should always work regardless of BMI2 availability
         println!("BMI2 available: {}", processor.is_bmi2_available());
     }
@@ -1531,12 +1590,12 @@ mod tests {
     #[test]
     fn test_utf8_validation() {
         let processor = Bmi2StringProcessor::new();
-        
+
         // Valid UTF-8 strings
         assert!(processor.validate_utf8_bmi2("Hello, World!".as_bytes()));
         assert!(processor.validate_utf8_bmi2("こんにちは".as_bytes())); // Japanese
         assert!(processor.validate_utf8_bmi2("🦀 Rust".as_bytes())); // Emoji
-        
+
         // Invalid UTF-8
         assert!(!processor.validate_utf8_bmi2(&[0xFF, 0xFE, 0xFD]));
     }
@@ -1544,11 +1603,11 @@ mod tests {
     #[test]
     fn test_character_counting() {
         let processor = Bmi2StringProcessor::new();
-        
+
         let test_cases = vec![
             ("Hello", 5),
             ("こんにちは", 5), // 5 Japanese characters
-            ("🦀🔥⚡", 3), // 3 emoji
+            ("🦀🔥⚡", 3),     // 3 emoji
             ("", 0),
         ];
 
@@ -1561,9 +1620,9 @@ mod tests {
     #[test]
     fn test_string_search() {
         let processor = Bmi2StringProcessor::new();
-        
+
         let haystack = "The quick brown fox jumps over the lazy dog";
-        
+
         assert_eq!(processor.search_bmi2(haystack, "quick"), Some(4));
         assert_eq!(processor.search_bmi2(haystack, "fox"), Some(16));
         assert_eq!(processor.search_bmi2(haystack, "dog"), Some(40));
@@ -1574,13 +1633,13 @@ mod tests {
     #[test]
     fn test_wildcard_matching() {
         let processor = Bmi2StringProcessor::new();
-        
+
         assert!(processor.wildcard_match_bmi2("hello", "hello"));
         assert!(processor.wildcard_match_bmi2("hello", "h*"));
         assert!(processor.wildcard_match_bmi2("hello", "*o"));
         assert!(processor.wildcard_match_bmi2("hello", "h?llo"));
         assert!(processor.wildcard_match_bmi2("hello", "*"));
-        
+
         assert!(!processor.wildcard_match_bmi2("hello", "hi"));
         assert!(!processor.wildcard_match_bmi2("hello", "h?"));
         assert!(!processor.wildcard_match_bmi2("hello", "h??"));
@@ -1589,12 +1648,12 @@ mod tests {
     #[test]
     fn test_case_conversion() {
         let processor = Bmi2StringProcessor::new();
-        
+
         let test_string = "Hello World 123!";
-        
+
         let lowercase = processor.to_lowercase_ascii_bmi2(test_string);
         assert_eq!(lowercase, "hello world 123!");
-        
+
         let uppercase = processor.to_uppercase_ascii_bmi2(test_string);
         assert_eq!(uppercase, "HELLO WORLD 123!");
     }
@@ -1602,15 +1661,15 @@ mod tests {
     #[test]
     fn test_character_filtering() {
         let processor = Bmi2StringProcessor::new();
-        
+
         let test_string = "Hello, World! 123";
-        
+
         let alpha_only = processor.filter_chars_bmi2(test_string, CharFilter::AlphaOnly);
         assert_eq!(alpha_only, "HelloWorld");
-        
+
         let digit_only = processor.filter_chars_bmi2(test_string, CharFilter::DigitOnly);
         assert_eq!(digit_only, "123");
-        
+
         let no_whitespace = processor.filter_chars_bmi2(test_string, CharFilter::NoWhitespace);
         assert_eq!(no_whitespace, "Hello,World!123");
     }
@@ -1618,24 +1677,52 @@ mod tests {
     #[test]
     fn test_run_detection() {
         let processor = Bmi2StringProcessor::new();
-        
+
         let test_string = "aaabbccccdd";
         let runs = processor.detect_runs_bmi2(test_string);
-        
+
         assert_eq!(runs.len(), 4);
-        assert_eq!(runs[0], CharRun { character: b'a', start: 0, length: 3 });
-        assert_eq!(runs[1], CharRun { character: b'b', start: 3, length: 2 });
-        assert_eq!(runs[2], CharRun { character: b'c', start: 5, length: 4 });
-        assert_eq!(runs[3], CharRun { character: b'd', start: 9, length: 2 });
+        assert_eq!(
+            runs[0],
+            CharRun {
+                character: b'a',
+                start: 0,
+                length: 3
+            }
+        );
+        assert_eq!(
+            runs[1],
+            CharRun {
+                character: b'b',
+                start: 3,
+                length: 2
+            }
+        );
+        assert_eq!(
+            runs[2],
+            CharRun {
+                character: b'c',
+                start: 5,
+                length: 4
+            }
+        );
+        assert_eq!(
+            runs[3],
+            CharRun {
+                character: b'd',
+                start: 9,
+                length: 2
+            }
+        );
     }
 
     #[test]
     fn test_compression_analysis() {
         let processor = Bmi2StringProcessor::new();
-        
+
         let test_string = "aaabbbccc";
         let analysis = processor.analyze_compression_bmi2(test_string);
-        
+
         assert_eq!(analysis.unique_chars, 3);
         assert_eq!(analysis.total_chars, 9);
         assert!(analysis.entropy > 0.0);
@@ -1645,15 +1732,15 @@ mod tests {
     #[test]
     fn test_string_hashing() {
         let processor = Bmi2StringProcessor::new();
-        
+
         let test_string = "Hash this string";
         let hash1 = processor.hash_string_bmi2(test_string, 0);
         let hash2 = processor.hash_string_bmi2(test_string, 0);
         let hash3 = processor.hash_string_bmi2(test_string, 42);
-        
+
         // Same string with same seed should produce same hash
         assert_eq!(hash1, hash2);
-        
+
         // Same string with different seed should produce different hash
         assert_ne!(hash1, hash3);
     }
@@ -1661,18 +1748,18 @@ mod tests {
     #[test]
     fn test_bulk_operations() {
         let processor = Bmi2StringProcessor::new();
-        
+
         let strings = vec!["hello", "world", "test", "string"];
-        
+
         // Bulk validation
         let validations = processor.validate_bulk_bmi2(&strings);
         assert!(validations.iter().all(|&v| v));
-        
+
         // Bulk hashing
         let hashes = processor.hash_bulk_bmi2(&strings, 0);
         assert_eq!(hashes.len(), 4);
         assert!(hashes.iter().all(|&h| h != 0));
-        
+
         // Bulk comparison
         let pairs = vec![("hello", "hello"), ("world", "word"), ("test", "test")];
         let comparisons = processor.compare_bulk_bmi2(&pairs);
@@ -1688,10 +1775,10 @@ mod tests {
         assert!(wildcard_match_bmi2("hello", "h*o"));
         assert_eq!(to_lowercase_ascii_bmi2("HELLO"), "hello");
         assert_eq!(to_uppercase_ascii_bmi2("hello"), "HELLO");
-        
+
         let hash = hash_string_bmi2("test", 0);
         assert_ne!(hash, 0);
-        
+
         let runs = detect_runs_bmi2("aabbcc");
         assert_eq!(runs.len(), 3);
     }
@@ -1702,17 +1789,17 @@ mod tests {
         let digit = CharClass::Digit;
         let custom = CharClass::Custom(vec![b'x', b'y', b'z']);
         let range = CharClass::Range(b'a', b'z');
-        
+
         assert!(alpha.matches('A'));
         assert!(alpha.matches('z'));
         assert!(!alpha.matches('1'));
-        
+
         assert!(digit.matches('5'));
         assert!(!digit.matches('a'));
-        
+
         assert!(custom.matches('x'));
         assert!(!custom.matches('a'));
-        
+
         assert!(range.matches('m'));
         assert!(!range.matches('A'));
     }
@@ -1720,22 +1807,22 @@ mod tests {
     #[test]
     fn test_dictionary_operations() {
         let processor = Bmi2StringProcessor::new();
-        
+
         let dict_strings = vec![
             "the".to_string(),
             "quick".to_string(),
             "brown".to_string(),
             "fox".to_string(),
         ];
-        
+
         let dictionary = StringDictionary::new(dict_strings);
         let text = "the quick brown fox";
-        
+
         let matches = processor.dictionary_lookup_bmi2(text, &dictionary);
-        
+
         // Should find matches for all dictionary words
         assert!(!matches.is_empty());
-        
+
         // Verify at least some expected matches
         assert!(matches.iter().any(|m| m.position == 0 && m.length == 3)); // "the"
         assert!(matches.iter().any(|m| m.position == 4 && m.length == 5)); // "quick"
@@ -1744,20 +1831,25 @@ mod tests {
     #[test]
     fn test_edge_cases() {
         let processor = Bmi2StringProcessor::new();
-        
+
         // Empty strings
         assert!(processor.validate_utf8_bmi2(&[]));
         assert_eq!(processor.count_utf8_chars_bmi2(&[]).unwrap(), 0);
         assert_eq!(processor.search_bmi2("", ""), Some(0));
         assert_eq!(processor.search_bmi2("test", ""), Some(0));
-        
+
         // Single character
         assert!(processor.validate_utf8_bmi2("a".as_bytes()));
         assert_eq!(processor.count_utf8_chars_bmi2("a".as_bytes()).unwrap(), 1);
-        
+
         // Very long strings (test BMI2 chunking)
         let long_string = "a".repeat(1000);
         assert!(processor.validate_utf8_bmi2(long_string.as_bytes()));
-        assert_eq!(processor.count_utf8_chars_bmi2(long_string.as_bytes()).unwrap(), 1000);
+        assert_eq!(
+            processor
+                .count_utf8_chars_bmi2(long_string.as_bytes())
+                .unwrap(),
+            1000
+        );
     }
 }

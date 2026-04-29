@@ -4,11 +4,11 @@
 //! registration, discovery, and efficient runtime creation. Inspired by production
 //! infrastructure patterns while leveraging Rust's ownership and trait systems.
 
+use crate::error::{Result, ZiporaError};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock, OnceLock};
 use std::marker::PhantomData;
-use crate::error::{ZiporaError, Result};
+use std::sync::{Arc, OnceLock, RwLock};
 
 /// Type-erased creator function that can create objects of type T
 pub type Creator<T> = Box<dyn Fn() -> Result<T> + Send + Sync>;
@@ -41,13 +41,18 @@ impl<T> FactoryRegistry<T> {
     where
         F: Fn() -> Result<T> + Send + Sync + 'static,
     {
-        let mut creators = self.creators.write()
+        let mut creators = self
+            .creators
+            .write()
             .map_err(|_| ZiporaError::io_error("Failed to acquire write lock on creators"))?;
-        
+
         if creators.contains_key(name) {
-            return Err(ZiporaError::invalid_data(format!("Creator '{}' already registered", name)));
+            return Err(ZiporaError::invalid_data(format!(
+                "Creator '{}' already registered",
+                name
+            )));
         }
-        
+
         creators.insert(name.to_string(), Box::new(creator));
         Ok(())
     }
@@ -60,64 +65,84 @@ impl<T> FactoryRegistry<T> {
     {
         let type_name = std::any::type_name::<U>();
         let type_id = TypeId::of::<U>();
-        
+
         // Store type mapping
         {
-            let mut type_map = self.type_map.write()
+            let mut type_map = self
+                .type_map
+                .write()
                 .map_err(|_| ZiporaError::io_error("Failed to acquire write lock on type_map"))?;
             type_map.insert(type_id, type_name.to_string());
         }
-        
+
         self.register(type_name, creator)
     }
 
     /// Create an object by name
     pub fn create(&self, name: &str) -> Result<T> {
-        let creators = self.creators.read()
+        let creators = self
+            .creators
+            .read()
             .map_err(|_| ZiporaError::io_error("Failed to acquire read lock on creators"))?;
-        
-        let creator = creators.get(name)
+
+        let creator = creators
+            .get(name)
             .ok_or_else(|| ZiporaError::not_found(format!("Creator '{}' not found", name)))?;
-        
+
         creator()
     }
 
     /// Create an object by type
     pub fn create_by_type<U: 'static>(&self) -> Result<T> {
         let type_id = TypeId::of::<U>();
-        
-        let type_map = self.type_map.read()
+
+        let type_map = self
+            .type_map
+            .read()
             .map_err(|_| ZiporaError::io_error("Failed to acquire read lock on type_map"))?;
-        
-        let type_name = type_map.get(&type_id)
-            .ok_or_else(|| ZiporaError::not_found(format!("Type '{}' not registered", std::any::type_name::<U>())))?.clone();
-        
+
+        let type_name = type_map
+            .get(&type_id)
+            .ok_or_else(|| {
+                ZiporaError::not_found(format!(
+                    "Type '{}' not registered",
+                    std::any::type_name::<U>()
+                ))
+            })?
+            .clone();
+
         drop(type_map); // Release lock before calling create
         self.create(&type_name)
     }
 
     /// List all registered creator names
     pub fn list_creators(&self) -> Result<Vec<String>> {
-        let creators = self.creators.read()
+        let creators = self
+            .creators
+            .read()
             .map_err(|_| ZiporaError::io_error("Failed to acquire read lock on creators"))?;
-        
+
         Ok(creators.keys().cloned().collect())
     }
 
     /// Get the number of registered creators
     pub fn creator_count(&self) -> Result<usize> {
-        let creators = self.creators.read()
+        let creators = self
+            .creators
+            .read()
             .map_err(|_| ZiporaError::io_error("Failed to acquire read lock on creators"))?;
-        
+
         Ok(creators.len())
     }
 
     /// Check if a creator is registered
     #[inline]
     pub fn contains(&self, name: &str) -> Result<bool> {
-        let creators = self.creators.read()
+        let creators = self
+            .creators
+            .read()
             .map_err(|_| ZiporaError::io_error("Failed to acquire read lock on creators"))?;
-        
+
         Ok(creators.contains_key(name))
     }
 }
@@ -205,9 +230,10 @@ impl<T: Send + Sync + 'static> AutoRegister<T> {
     {
         // SAFETY: Static initialization - panic on registration failure is appropriate
         // because the program cannot continue without successfully registered creators
-        global_factory::<T>().register(name, creator)
+        global_factory::<T>()
+            .register(name, creator)
             .unwrap_or_else(|_| panic!("Failed to register creator '{}'", name));
-        
+
         Self {
             _phantom: PhantomData,
         }
@@ -221,9 +247,15 @@ impl<T: Send + Sync + 'static> AutoRegister<T> {
     {
         // SAFETY: Static initialization - panic on registration failure is appropriate
         // because the program cannot continue without successfully registered type creators
-        global_factory::<T>().register_type::<U, F>(creator)
-            .unwrap_or_else(|_| panic!("Failed to register creator for type '{}'", std::any::type_name::<U>()));
-        
+        global_factory::<T>()
+            .register_type::<U, F>(creator)
+            .unwrap_or_else(|_| {
+                panic!(
+                    "Failed to register creator for type '{}'",
+                    std::any::type_name::<U>()
+                )
+            });
+
         Self {
             _phantom: PhantomData,
         }
@@ -242,7 +274,8 @@ pub fn global_factory<T: Send + Sync + 'static>() -> &'static GlobalFactory<T> {
     {
         let factories = FACTORIES.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(factory_any) = factories.get(&type_id) {
-            let factory_ref = factory_any.downcast_ref::<&'static GlobalFactory<T>>()
+            let factory_ref = factory_any
+                .downcast_ref::<&'static GlobalFactory<T>>()
                 .expect("registered factory type");
             return factory_ref;
         }
@@ -253,7 +286,8 @@ pub fn global_factory<T: Send + Sync + 'static>() -> &'static GlobalFactory<T> {
         let mut factories = FACTORIES.lock().unwrap_or_else(|e| e.into_inner());
         // Double-check pattern in case another thread created it while we were waiting for the lock
         if let Some(factory_any) = factories.get(&type_id) {
-            let factory_ref = factory_any.downcast_ref::<&'static GlobalFactory<T>>()
+            let factory_ref = factory_any
+                .downcast_ref::<&'static GlobalFactory<T>>()
                 .expect("registered factory type");
             return factory_ref;
         }
@@ -269,10 +303,10 @@ pub fn global_factory<T: Send + Sync + 'static>() -> &'static GlobalFactory<T> {
 pub trait Factoryable: Sized {
     /// Create an instance by name using the global factory
     fn create(name: &str) -> Result<Self>;
-    
+
     /// List all available creator names
     fn list_creators() -> Result<Vec<String>>;
-    
+
     /// Check if a creator is available
     fn has_creator(name: &str) -> Result<bool>;
 }
@@ -282,11 +316,11 @@ impl<T: Send + Sync + 'static> Factoryable for T {
     fn create(name: &str) -> Result<Self> {
         global_factory::<T>().create(name)
     }
-    
+
     fn list_creators() -> Result<Vec<String>> {
         global_factory::<T>().list_creators()
     }
-    
+
     fn has_creator(name: &str) -> Result<bool> {
         global_factory::<T>().contains(name)
     }
@@ -296,7 +330,7 @@ impl<T: Send + Sync + 'static> Factoryable for T {
 #[macro_export]
 macro_rules! register_factory {
     ($type:ty, $name:expr, $creator:expr) => {
-        static _FACTORY_REG: $crate::dev_infrastructure::factory::AutoRegister<$type> = 
+        static _FACTORY_REG: $crate::dev_infrastructure::factory::AutoRegister<$type> =
             $crate::dev_infrastructure::factory::AutoRegister::new($name, $creator);
     };
 }
@@ -305,7 +339,7 @@ macro_rules! register_factory {
 #[macro_export]
 macro_rules! register_factory_type {
     ($impl_type:ty, $trait_type:ty, $creator:expr) => {
-        static _FACTORY_REG: $crate::dev_infrastructure::factory::AutoRegister<$trait_type> = 
+        static _FACTORY_REG: $crate::dev_infrastructure::factory::AutoRegister<$trait_type> =
             $crate::dev_infrastructure::factory::AutoRegister::new_type::<$impl_type, _>($creator);
     };
 }
@@ -368,19 +402,21 @@ mod tests {
     #[test]
     fn test_factory_registry_basic() {
         let registry = FactoryRegistry::new();
-        
+
         // Register a creator
-        registry.register("test", || Ok(TestObject::new(42))).unwrap();
-        
+        registry
+            .register("test", || Ok(TestObject::new(42)))
+            .unwrap();
+
         // Create an object
         let obj = registry.create("test").unwrap();
         assert_eq!(obj.value, 42);
-        
+
         // Check registry properties
         assert_eq!(registry.creator_count().unwrap(), 1);
         assert!(registry.contains("test").unwrap());
         assert!(!registry.contains("nonexistent").unwrap());
-        
+
         let creators = registry.list_creators().unwrap();
         assert_eq!(creators.len(), 1);
         assert!(creators.contains(&"test".to_string()));
@@ -389,10 +425,12 @@ mod tests {
     #[test]
     fn test_factory_registry_type_registration() {
         let registry = FactoryRegistry::new();
-        
+
         // Register by type
-        registry.register_type::<TestObject, _>(|| Ok(TestObject::new(99))).unwrap();
-        
+        registry
+            .register_type::<TestObject, _>(|| Ok(TestObject::new(99)))
+            .unwrap();
+
         // Create by type
         let obj = registry.create_by_type::<TestObject>().unwrap();
         assert_eq!(obj.value, 99);
@@ -401,14 +439,16 @@ mod tests {
     #[test]
     fn test_global_factory() {
         let factory = global_factory::<TestObject>();
-        
+
         // Register a creator
-        factory.register("global_test", || Ok(TestObject::new(123))).unwrap();
-        
+        factory
+            .register("global_test", || Ok(TestObject::new(123)))
+            .unwrap();
+
         // Create an object
         let obj = factory.create("global_test").unwrap();
         assert_eq!(obj.value, 123);
-        
+
         // Test Factoryable trait
         TestObject::create("global_test").unwrap();
         assert!(TestObject::has_creator("global_test").unwrap());
@@ -417,9 +457,10 @@ mod tests {
     #[test]
     fn test_factory_builder() {
         let factory = FactoryBuilder::new("test_factory")
-            .with_creator("builder_test", || Ok(TestObject::new(456))).unwrap()
+            .with_creator("builder_test", || Ok(TestObject::new(456)))
+            .unwrap()
             .build();
-        
+
         let obj = factory.create("builder_test").unwrap();
         assert_eq!(obj.value, 456);
     }
@@ -427,23 +468,31 @@ mod tests {
     #[test]
     fn test_factory_errors() {
         let registry = FactoryRegistry::new();
-        
+
         // Test creating non-existent object
         assert!(registry.create("nonexistent").is_err());
-        
+
         // Test duplicate registration
-        registry.register("duplicate", || Ok(TestObject::new(1))).unwrap();
-        assert!(registry.register("duplicate", || Ok(TestObject::new(2))).is_err());
+        registry
+            .register("duplicate", || Ok(TestObject::new(1)))
+            .unwrap();
+        assert!(
+            registry
+                .register("duplicate", || Ok(TestObject::new(2)))
+                .is_err()
+        );
     }
 
     #[test]
     fn test_trait_objects() {
         let registry = FactoryRegistry::<Box<dyn TestTrait>>::new();
-        
-        registry.register("trait_obj", || {
-            Ok(Box::new(TestObject::new(789)) as Box<dyn TestTrait>)
-        }).unwrap();
-        
+
+        registry
+            .register("trait_obj", || {
+                Ok(Box::new(TestObject::new(789)) as Box<dyn TestTrait>)
+            })
+            .unwrap();
+
         let obj = registry.create("trait_obj").unwrap();
         assert_eq!(obj.get_value(), 789);
     }

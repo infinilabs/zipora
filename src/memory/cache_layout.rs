@@ -29,14 +29,14 @@ use crate::error::{Result, ZiporaError};
 use crate::memory::simd_ops::{SimdMemOps, SimdTier};
 use crate::system::cpu_features::{CpuFeatures, get_cpu_features};
 use std::alloc::{Layout, alloc, dealloc};
+use std::mem;
 use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::mem;
 
 /// Cache line size detection and optimization constants
 pub const DEFAULT_CACHE_LINE_SIZE: usize = 64;
-pub const L1_CACHE_SIZE: usize = 32 * 1024;      // 32KB typical L1 cache
-pub const L2_CACHE_SIZE: usize = 256 * 1024;     // 256KB typical L2 cache
+pub const L1_CACHE_SIZE: usize = 32 * 1024; // 32KB typical L1 cache
+pub const L2_CACHE_SIZE: usize = 256 * 1024; // 256KB typical L2 cache
 pub const L3_CACHE_SIZE: usize = 8 * 1024 * 1024; // 8MB typical L3 cache
 
 /// Memory access pattern hints for optimization
@@ -193,8 +193,14 @@ impl Clone for CacheOptimizedAllocator {
         Self {
             config: self.config.clone(),
             simd_ops: self.simd_ops.clone(),
-            hot_allocations: AtomicUsize::new(self.hot_allocations.load(std::sync::atomic::Ordering::Relaxed)),
-            cold_allocations: AtomicUsize::new(self.cold_allocations.load(std::sync::atomic::Ordering::Relaxed)),
+            hot_allocations: AtomicUsize::new(
+                self.hot_allocations
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ),
+            cold_allocations: AtomicUsize::new(
+                self.cold_allocations
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ),
         }
     }
 }
@@ -216,12 +222,18 @@ impl CacheOptimizedAllocator {
     }
 
     /// Allocate cache-aligned memory with specified layout hints
-    pub fn allocate_aligned(&self, size: usize, alignment: usize, is_hot: bool) -> Result<NonNull<u8>> {
+    pub fn allocate_aligned(
+        &self,
+        size: usize,
+        alignment: usize,
+        is_hot: bool,
+    ) -> Result<NonNull<u8>> {
         let effective_alignment = alignment.max(self.config.cache_line_size);
         let aligned_size = align_to_cache_line(size, self.config.cache_line_size);
 
-        let layout = Layout::from_size_align(aligned_size, effective_alignment)
-            .map_err(|_| ZiporaError::invalid_data("Invalid layout for cache-aligned allocation"))?;
+        let layout = Layout::from_size_align(aligned_size, effective_alignment).map_err(|_| {
+            ZiporaError::invalid_data("Invalid layout for cache-aligned allocation")
+        })?;
 
         // SAFETY: Allocating with valid layout
         let ptr = unsafe { alloc(layout) };
@@ -241,12 +253,18 @@ impl CacheOptimizedAllocator {
     }
 
     /// Deallocate cache-aligned memory
-    pub fn deallocate_aligned(&self, ptr: NonNull<u8>, size: usize, alignment: usize) -> Result<()> {
+    pub fn deallocate_aligned(
+        &self,
+        ptr: NonNull<u8>,
+        size: usize,
+        alignment: usize,
+    ) -> Result<()> {
         let effective_alignment = alignment.max(self.config.cache_line_size);
         let aligned_size = align_to_cache_line(size, self.config.cache_line_size);
 
-        let layout = Layout::from_size_align(aligned_size, effective_alignment)
-            .map_err(|_| ZiporaError::invalid_data("Invalid layout for cache-aligned deallocation"))?;
+        let layout = Layout::from_size_align(aligned_size, effective_alignment).map_err(|_| {
+            ZiporaError::invalid_data("Invalid layout for cache-aligned deallocation")
+        })?;
 
         // SAFETY: ptr was allocated with this layout in allocate_aligned
         unsafe {
@@ -266,10 +284,22 @@ impl CacheOptimizedAllocator {
         // SAFETY: _mm_prefetch is a hint, safe to call with any pointer, no dereference
         unsafe {
             match hint {
-                PrefetchHint::T0 => std::arch::x86_64::_mm_prefetch(addr as *const i8, std::arch::x86_64::_MM_HINT_T0),
-                PrefetchHint::T1 => std::arch::x86_64::_mm_prefetch(addr as *const i8, std::arch::x86_64::_MM_HINT_T1),
-                PrefetchHint::T2 => std::arch::x86_64::_mm_prefetch(addr as *const i8, std::arch::x86_64::_MM_HINT_T2),
-                PrefetchHint::NTA => std::arch::x86_64::_mm_prefetch(addr as *const i8, std::arch::x86_64::_MM_HINT_NTA),
+                PrefetchHint::T0 => std::arch::x86_64::_mm_prefetch(
+                    addr as *const i8,
+                    std::arch::x86_64::_MM_HINT_T0,
+                ),
+                PrefetchHint::T1 => std::arch::x86_64::_mm_prefetch(
+                    addr as *const i8,
+                    std::arch::x86_64::_MM_HINT_T1,
+                ),
+                PrefetchHint::T2 => std::arch::x86_64::_mm_prefetch(
+                    addr as *const i8,
+                    std::arch::x86_64::_MM_HINT_T2,
+                ),
+                PrefetchHint::NTA => std::arch::x86_64::_mm_prefetch(
+                    addr as *const i8,
+                    std::arch::x86_64::_MM_HINT_NTA,
+                ),
             }
         }
 
@@ -505,9 +535,9 @@ fn detect_x86_cache_hierarchy() -> CacheHierarchy {
 
                     let cache_level = (result.eax >> 5) & 0x7;
                     let line_size = ((result.ebx & 0xFFF) + 1) as usize;
-                    let cache_size = (((result.ebx >> 22) + 1) as usize *
-                                     ((result.ecx + 1) as usize) *
-                                     line_size);
+                    let cache_size = (((result.ebx >> 22) + 1) as usize
+                        * ((result.ecx + 1) as usize)
+                        * line_size);
 
                     match cache_level {
                         1 => {
@@ -527,11 +557,11 @@ fn detect_x86_cache_hierarchy() -> CacheHierarchy {
 
                     level += 1;
                 }
-            
+
                 hierarchy.levels = if level == 0 { 3 } else { level as usize }; // Default to 3 levels if detection fails
             }
         }
-        
+
         hierarchy
     }
 }
@@ -544,26 +574,34 @@ fn detect_arm_cache_hierarchy() -> CacheHierarchy {
     // Try to read cache information from /sys/devices/system/cpu/
     #[cfg(target_os = "linux")]
     {
-        if let Ok(l1_size) = std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cache/index0/size") {
+        if let Ok(l1_size) =
+            std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cache/index0/size")
+        {
             if let Ok(size) = parse_cache_size(&l1_size) {
                 hierarchy.l1_size = size;
             }
         }
 
-        if let Ok(l2_size) = std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cache/index2/size") {
+        if let Ok(l2_size) =
+            std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cache/index2/size")
+        {
             if let Ok(size) = parse_cache_size(&l2_size) {
                 hierarchy.l2_size = size;
             }
         }
 
-        if let Ok(l3_size) = std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cache/index3/size") {
+        if let Ok(l3_size) =
+            std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cache/index3/size")
+        {
             if let Ok(size) = parse_cache_size(&l3_size) {
                 hierarchy.l3_size = size;
             }
         }
 
         // Read cache line size
-        if let Ok(line_size) = std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cache/index0/coherency_line_size") {
+        if let Ok(line_size) =
+            std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cache/index0/coherency_line_size")
+        {
             if let Ok(size) = line_size.trim().parse::<usize>() {
                 hierarchy.l1_line_size = size;
                 hierarchy.l2_line_size = size;
@@ -584,17 +622,18 @@ fn parse_cache_size(size_str: &str) -> Result<usize> {
     }
 
     let (number_part, unit) = if size_str.ends_with('K') {
-        (&size_str[..size_str.len()-1], 1024)
+        (&size_str[..size_str.len() - 1], 1024)
     } else if size_str.ends_with('M') {
-        (&size_str[..size_str.len()-1], 1024 * 1024)
+        (&size_str[..size_str.len() - 1], 1024 * 1024)
     } else if size_str.ends_with('G') {
-        (&size_str[..size_str.len()-1], 1024 * 1024 * 1024)
+        (&size_str[..size_str.len() - 1], 1024 * 1024 * 1024)
     } else {
         (size_str, 1)
     };
 
-    let number: usize = number_part.parse()
-        .map_err(|_| ZiporaError::invalid_data(&format!("Invalid cache size number: {}", number_part)))?;
+    let number: usize = number_part.parse().map_err(|_| {
+        ZiporaError::invalid_data(&format!("Invalid cache size number: {}", number_part))
+    })?;
 
     Ok(number * unit)
 }
@@ -636,16 +675,17 @@ impl<T> CacheAlignedVec<T> {
     /// Push element with cache optimization
     pub fn push(&mut self, value: T) {
         self.data.push(value);
-        
+
         // Prefetch next cache line if sequential access
         if matches!(self.access_pattern, AccessPattern::Sequential) {
             let len = self.data.len();
-            if len > 0 && len.is_multiple_of(8) { // Every 8 elements (cache line worth)
+            if len > 0 && len.is_multiple_of(8) {
+                // Every 8 elements (cache line worth)
                 // SAFETY: data.as_ptr() is valid for len elements of T, converting to bytes
                 let byte_slice = unsafe {
                     std::slice::from_raw_parts(
                         self.data.as_ptr() as *const u8,
-                        mem::size_of::<T>() * len
+                        mem::size_of::<T>() * len,
                     )
                 };
                 self.allocator.prefetch_range(byte_slice);
@@ -679,12 +719,12 @@ impl<T> CacheAlignedVec<T> {
                 let byte_slice = unsafe {
                     std::slice::from_raw_parts(
                         slice.as_ptr() as *const u8,
-                        std::mem::size_of_val(slice)
+                        std::mem::size_of_val(slice),
                     )
                 };
                 self.allocator.prefetch_range(byte_slice);
             }
-            
+
             Some(slice)
         } else {
             None
@@ -744,7 +784,7 @@ mod tests {
     #[test]
     fn test_cache_optimized_allocator() {
         let allocator = CacheOptimizedAllocator::optimal();
-        
+
         // Test allocation
         let ptr = allocator.allocate_aligned(1024, 64, true).unwrap();
         assert_eq!(ptr.as_ptr() as usize % 64, 0); // Should be cache-line aligned
@@ -789,7 +829,7 @@ mod tests {
     #[test]
     fn test_cache_aligned_vec() {
         let mut vec = CacheAlignedVec::with_access_pattern(AccessPattern::Sequential);
-        
+
         vec.push(1);
         vec.push(2);
         vec.push(3);
@@ -806,13 +846,13 @@ mod tests {
     fn test_prefetch_operations() {
         let allocator = CacheOptimizedAllocator::optimal();
         let data = vec![1u8; 1024];
-        
+
         // Test single prefetch
         allocator.prefetch(data.as_ptr(), PrefetchHint::T0);
 
         // Test range prefetch
         allocator.prefetch_range(&data);
-        
+
         // Should not panic - these are essentially no-ops on unsupported platforms
     }
 
@@ -846,7 +886,7 @@ mod tests {
     #[test]
     fn test_cache_layout_stats() {
         let allocator = CacheOptimizedAllocator::optimal();
-        
+
         // Allocate some hot and cold data
         let _hot1 = allocator.allocate_aligned(64, 64, true).unwrap();
         let _hot2 = allocator.allocate_aligned(128, 64, true).unwrap();
@@ -874,7 +914,7 @@ mod tests {
 
         // Test reorganization (simplified)
         separator.reorganize();
-        
+
         let stats = separator.separation_stats();
         assert!(stats.total_accesses > 0);
     }

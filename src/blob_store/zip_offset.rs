@@ -4,15 +4,13 @@
 //! indexing with advanced compression. Based on research from advanced data
 //! compression and storage systems.
 
+use crate::RecordId;
 use crate::blob_store::sorted_uint_vec::{SortedUintVec, SortedUintVecConfig};
-use crate::blob_store::traits::{
-    BlobStore, BlobStoreStats, CompressedBlobStore, CompressionStats,
-};
+use crate::blob_store::traits::{BlobStore, BlobStoreStats, CompressedBlobStore, CompressionStats};
 use crate::containers::FastVec;
 use crate::error::{Result, ZiporaError};
 use crate::memory::SecureMemoryPool;
-use crate::memory::simd_ops::{fast_copy, fast_compare, fast_fill};
-use crate::RecordId;
+use crate::memory::simd_ops::{fast_compare, fast_copy, fast_fill};
 
 use std::io::{Read, Write};
 use std::path::Path;
@@ -57,8 +55,8 @@ pub struct ZipOffsetBlobStoreConfig {
 impl Default for ZipOffsetBlobStoreConfig {
     fn default() -> Self {
         Self {
-            compress_level: 3,      // Moderate ZSTD compression
-            checksum_level: 2,      // Checksum records
+            compress_level: 3, // Moderate ZSTD compression
+            checksum_level: 2, // Checksum records
             offset_config: SortedUintVecConfig::default(),
             use_secure_memory: true,
             enable_simd: true,
@@ -70,8 +68,8 @@ impl ZipOffsetBlobStoreConfig {
     /// Create configuration optimized for performance
     pub fn performance_optimized() -> Self {
         Self {
-            compress_level: 1,      // Fast compression
-            checksum_level: 1,      // Minimal checksums
+            compress_level: 1, // Fast compression
+            checksum_level: 1, // Minimal checksums
             offset_config: SortedUintVecConfig::performance_optimized(),
             use_secure_memory: true,
             enable_simd: true,
@@ -81,8 +79,8 @@ impl ZipOffsetBlobStoreConfig {
     /// Create configuration optimized for compression ratio
     pub fn compression_optimized() -> Self {
         Self {
-            compress_level: 9,      // High compression
-            checksum_level: 3,      // Full checksums
+            compress_level: 9, // High compression
+            checksum_level: 3, // Full checksums
             offset_config: SortedUintVecConfig::memory_optimized(),
             use_secure_memory: true,
             enable_simd: true,
@@ -92,11 +90,11 @@ impl ZipOffsetBlobStoreConfig {
     /// Create configuration for secure applications
     pub fn security_optimized() -> Self {
         Self {
-            compress_level: 6,      // Balanced compression
-            checksum_level: 3,      // Full checksums for integrity
+            compress_level: 6, // Balanced compression
+            checksum_level: 3, // Full checksums for integrity
             offset_config: SortedUintVecConfig::default(),
             use_secure_memory: true,
-            enable_simd: false,     // Disable for security if needed
+            enable_simd: false, // Disable for security if needed
         }
     }
 
@@ -151,10 +149,9 @@ impl FileHeader {
         offsets_bytes: u64,
         config: &ZipOffsetBlobStoreConfig,
     ) -> Self {
-        let records_checksum_version = 
-            (records & 0xFFFFFFFFFF) |                    // 40 bits for records
+        let records_checksum_version = (records & 0xFFFFFFFFFF) |                    // 40 bits for records
             ((config.checksum_level as u64) << 40) |       // 8 bits for checksum
-            ((FORMAT_VERSION as u64) << 48);               // 16 bits for version
+            ((FORMAT_VERSION as u64) << 48); // 16 bits for version
 
         Self {
             magic: *MAGIC_SIGNATURE,
@@ -193,7 +190,7 @@ impl FileHeader {
         self.file_size
     }
 
-    /// Get uncompressed size (safe for packed struct) 
+    /// Get uncompressed size (safe for packed struct)
     #[allow(dead_code)]
     fn unzip_size(&self) -> u64 {
         self.unzip_size
@@ -216,7 +213,7 @@ impl FileHeader {
     /// Convert to bytes for writing
     fn to_bytes(&self) -> [u8; HEADER_SIZE] {
         let mut bytes = [0u8; HEADER_SIZE];
-        
+
         // Manually serialize the header fields
         bytes[0..20].copy_from_slice(&self.magic);
         bytes[20..40].copy_from_slice(&self.class_name);
@@ -229,7 +226,7 @@ impl FileHeader {
         bytes[81] = self.checksum_level;
         bytes[82] = self.compress_level;
         // bytes[83..112] remain zero (padding)
-        
+
         bytes
     }
 
@@ -238,31 +235,26 @@ impl FileHeader {
         let mut magic = [0u8; 20];
         let mut class_name = [0u8; 20];
         let padding = [0u8; 29];
-        
+
         magic.copy_from_slice(&bytes[0..20]);
         class_name.copy_from_slice(&bytes[20..40]);
-        
+
         let file_size = u64::from_le_bytes([
-            bytes[40], bytes[41], bytes[42], bytes[43],
-            bytes[44], bytes[45], bytes[46], bytes[47]
+            bytes[40], bytes[41], bytes[42], bytes[43], bytes[44], bytes[45], bytes[46], bytes[47],
         ]);
         let unzip_size = u64::from_le_bytes([
-            bytes[48], bytes[49], bytes[50], bytes[51],
-            bytes[52], bytes[53], bytes[54], bytes[55]
+            bytes[48], bytes[49], bytes[50], bytes[51], bytes[52], bytes[53], bytes[54], bytes[55],
         ]);
         let records_checksum_version = u64::from_le_bytes([
-            bytes[56], bytes[57], bytes[58], bytes[59],
-            bytes[60], bytes[61], bytes[62], bytes[63]
+            bytes[56], bytes[57], bytes[58], bytes[59], bytes[60], bytes[61], bytes[62], bytes[63],
         ]);
         let content_bytes = u64::from_le_bytes([
-            bytes[64], bytes[65], bytes[66], bytes[67],
-            bytes[68], bytes[69], bytes[70], bytes[71]
+            bytes[64], bytes[65], bytes[66], bytes[67], bytes[68], bytes[69], bytes[70], bytes[71],
         ]);
         let offsets_bytes = u64::from_le_bytes([
-            bytes[72], bytes[73], bytes[74], bytes[75],
-            bytes[76], bytes[77], bytes[78], bytes[79]
+            bytes[72], bytes[73], bytes[74], bytes[75], bytes[76], bytes[77], bytes[78], bytes[79],
         ]);
-        
+
         Self {
             magic,
             class_name,
@@ -291,7 +283,7 @@ struct CacheOffsets {
 impl CacheOffsets {
     fn new(block_size: usize) -> Self {
         Self {
-            block_id: usize::MAX, // Invalid initial value
+            block_id: usize::MAX,             // Invalid initial value
             offsets: vec![0; block_size + 1], // +1 for end offset
         }
     }
@@ -404,7 +396,7 @@ impl ZipOffsetBlobStore {
         store.content.reserve(header.content_bytes as usize)?;
         let mut content_bytes = vec![0u8; header.content_bytes as usize];
         reader.read_exact(&mut content_bytes)?;
-        
+
         // Use SIMD-optimized extend for large content
         if store.should_use_simd(content_bytes.len()) {
             // Pre-allocate and use SIMD copy
@@ -454,7 +446,11 @@ impl ZipOffsetBlobStore {
         let content_bytes = self.content.len() as u64;
         let offsets_bytes = self.offsets.memory_usage() as u64;
         let content_padding = (16 - (content_bytes % 16)) % 16;
-        let file_size = HEADER_SIZE as u64 + content_bytes + content_padding + offsets_bytes + FOOTER_SIZE as u64;
+        let file_size = HEADER_SIZE as u64
+            + content_bytes
+            + content_padding
+            + offsets_bytes
+            + FOOTER_SIZE as u64;
 
         // Create and write header
         let header = FileHeader::new(
@@ -493,9 +489,7 @@ impl ZipOffsetBlobStore {
     /// Get total memory usage
     #[inline]
     pub fn memory_usage(&self) -> usize {
-        self.content.len() + 
-        self.offsets.memory_usage() + 
-        std::mem::size_of::<Self>()
+        self.content.len() + self.offsets.memory_usage() + std::mem::size_of::<Self>()
     }
 
     /// Get record with template optimization
@@ -510,7 +504,7 @@ impl ZipOffsetBlobStore {
         // Get record boundaries from offset index
         let (start_offset, end_offset) = self.offsets.get2(id as usize)?;
         let mut record_len = (end_offset - start_offset) as usize;
-        
+
         if start_offset >= self.content.len() as u64 || end_offset > self.content.len() as u64 {
             return Err(ZiporaError::invalid_data("offset out of bounds"));
         }
@@ -535,16 +529,15 @@ impl ZipOffsetBlobStore {
             if record_len < CHECKSUM_LEN as usize {
                 return Err(ZiporaError::invalid_data("record too small for checksum"));
             }
-            
+
             record_len -= CHECKSUM_LEN as usize;
             let data_part = &record_data[..record_len];
             let checksum_part = &record_data[record_len..];
 
             // Verify checksum using SIMD-optimized comparison
-            if CHECKSUM_LEN == 4
-                && !self.verify_checksum(data_part, checksum_part)? {
-                    return Err(ZiporaError::invalid_data("checksum verification failed"));
-                }
+            if CHECKSUM_LEN == 4 && !self.verify_checksum(data_part, checksum_part)? {
+                return Err(ZiporaError::invalid_data("checksum verification failed"));
+            }
         }
 
         let final_data = &record_data[..record_len];
@@ -575,14 +568,17 @@ impl ZipOffsetBlobStore {
             // This is a placeholder - actual implementation would use hardware CRC32C
             let mut checksum = 0u32;
             let chunk_size = 64;
-            
+
             for chunk in data.chunks(chunk_size) {
-                checksum = chunk.iter().fold(checksum, |acc, &byte| acc.wrapping_add(byte as u32));
+                checksum = chunk
+                    .iter()
+                    .fold(checksum, |acc, &byte| acc.wrapping_add(byte as u32));
             }
             checksum
         } else {
             // Standard implementation for small data
-            data.iter().fold(0u32, |acc, &byte| acc.wrapping_add(byte as u32))
+            data.iter()
+                .fold(0u32, |acc, &byte| acc.wrapping_add(byte as u32))
         }
     }
 
@@ -590,7 +586,7 @@ impl ZipOffsetBlobStore {
     fn verify_checksum(&self, data: &[u8], stored_checksum: &[u8]) -> Result<bool> {
         let calculated = self.calculate_crc32c(data);
         let calculated_bytes = calculated.to_le_bytes();
-        
+
         // Use SIMD comparison for checksum verification
         let comparison_result = self.simd_compare(&calculated_bytes, stored_checksum);
         Ok(comparison_result == 0)
@@ -617,7 +613,9 @@ impl ZipOffsetBlobStore {
             fast_copy(src, dst)
         } else {
             if src.len() != dst.len() {
-                return Err(ZiporaError::invalid_data("source and destination length mismatch"));
+                return Err(ZiporaError::invalid_data(
+                    "source and destination length mismatch",
+                ));
             }
             dst.copy_from_slice(src);
             Ok(())
@@ -666,29 +664,37 @@ impl ZipOffsetBlobStore {
             self.enable_offset_cache();
         }
 
-        let cache = self.offset_cache.as_mut().expect("cache initialized when caching enabled");
+        let cache = self
+            .offset_cache
+            .as_mut()
+            .expect("cache initialized when caching enabled");
         let block_idx = (id as usize) >> self.config.offset_config.log2_block_units;
         let offset_idx = (id as usize) & self.config.offset_config.block_mask();
 
         // Check cache hit
         if block_idx != cache.block_id {
             // Cache miss - load entire block of offsets
-            self.offsets.get_block(block_idx, &mut cache.offsets[..self.config.offset_config.block_size()])?;
-            
+            self.offsets.get_block(
+                block_idx,
+                &mut cache.offsets[..self.config.offset_config.block_size()],
+            )?;
+
             // Add end offset for the block
             if block_idx + 1 < self.offsets.num_blocks() {
-                cache.offsets[self.config.offset_config.block_size()] = self.offsets.get((block_idx + 1) << self.config.offset_config.log2_block_units)?;
+                cache.offsets[self.config.offset_config.block_size()] = self
+                    .offsets
+                    .get((block_idx + 1) << self.config.offset_config.log2_block_units)?;
             } else {
                 cache.offsets[self.config.offset_config.block_size()] = self.content.len() as u64;
             }
-            
+
             cache.block_id = block_idx;
         }
 
         // Use cached offsets
         let start_offset = cache.offsets[offset_idx];
         let end_offset = cache.offsets[offset_idx + 1];
-        
+
         // Process record using cached offsets
         let mut record_len = (end_offset - start_offset) as usize;
         let record_data = &self.content.as_slice()[start_offset as usize..end_offset as usize];
@@ -698,16 +704,15 @@ impl ZipOffsetBlobStore {
             if record_len < CHECKSUM_LEN as usize {
                 return Err(ZiporaError::invalid_data("record too small for checksum"));
             }
-            
+
             record_len -= CHECKSUM_LEN as usize;
             let data_part = &record_data[..record_len];
             let checksum_part = &record_data[record_len..];
 
             // Use SIMD-optimized checksum verification
-            if CHECKSUM_LEN == 4
-                && !self.verify_checksum(data_part, checksum_part)? {
-                    return Err(ZiporaError::invalid_data("checksum verification failed"));
-                }
+            if CHECKSUM_LEN == 4 && !self.verify_checksum(data_part, checksum_part)? {
+                return Err(ZiporaError::invalid_data("checksum verification failed"));
+            }
         }
 
         let final_data = &record_data[..record_len];
@@ -745,12 +750,16 @@ impl BlobStore for ZipOffsetBlobStore {
     fn put(&mut self, _data: &[u8]) -> Result<RecordId> {
         // ZipOffsetBlobStore is read-only after construction
         // Records are added via ZipOffsetBlobStoreBuilder
-        Err(ZiporaError::invalid_operation("ZipOffsetBlobStore is read-only, use builder to create"))
+        Err(ZiporaError::invalid_operation(
+            "ZipOffsetBlobStore is read-only, use builder to create",
+        ))
     }
 
     fn remove(&mut self, _id: RecordId) -> Result<()> {
         // ZipOffsetBlobStore doesn't support removal
-        Err(ZiporaError::invalid_operation("ZipOffsetBlobStore doesn't support removal"))
+        Err(ZiporaError::invalid_operation(
+            "ZipOffsetBlobStore doesn't support removal",
+        ))
     }
 
     fn contains(&self, id: RecordId) -> bool {
@@ -831,8 +840,11 @@ impl Default for ZipOffsetBlobStore {
         // SAFETY: ZipOffsetBlobStore::new() only fails on memory allocation errors.
         // Use unwrap_or_else with panic as this type has non-trivial dependencies.
         Self::new().unwrap_or_else(|e| {
-            panic!("ZipOffsetBlobStore creation failed in Default: {}. \
-                   This indicates severe memory pressure.", e)
+            panic!(
+                "ZipOffsetBlobStore creation failed in Default: {}. \
+                   This indicates severe memory pressure.",
+                e
+            )
         })
     }
 }
@@ -895,18 +907,18 @@ mod tests {
     #[test]
     fn test_zip_offset_blob_store_read_only() {
         let mut store = ZipOffsetBlobStore::new().unwrap();
-        
+
         // Should not support put operations
         assert!(store.put(b"test data").is_err());
-        
-        // Should not support remove operations  
+
+        // Should not support remove operations
         assert!(store.remove(0).is_err());
     }
 
     #[test]
     fn test_zip_offset_blob_store_bounds_checking() {
         let store = ZipOffsetBlobStore::new().unwrap();
-        
+
         // Empty store bounds checking
         assert!(!store.contains(0));
         assert!(store.get(0).is_err());
@@ -931,7 +943,7 @@ mod tests {
     fn test_zip_offset_blob_store_enable_cache() {
         let mut store = ZipOffsetBlobStore::new().unwrap();
         assert!(store.offset_cache.is_none());
-        
+
         store.enable_offset_cache();
         assert!(store.offset_cache.is_some());
     }
@@ -939,14 +951,14 @@ mod tests {
     #[test]
     fn test_simd_optimization_threshold() {
         let store = ZipOffsetBlobStore::new().unwrap();
-        
+
         // Test SIMD threshold logic
-        assert!(!store.should_use_simd(32));    // Below threshold
-        assert!(!store.should_use_simd(63));    // Just below threshold
-        assert!(store.should_use_simd(64));     // At threshold
-        assert!(store.should_use_simd(128));    // Above threshold
-        assert!(store.should_use_simd(4096));   // Large data
-        
+        assert!(!store.should_use_simd(32)); // Below threshold
+        assert!(!store.should_use_simd(63)); // Just below threshold
+        assert!(store.should_use_simd(64)); // At threshold
+        assert!(store.should_use_simd(128)); // Above threshold
+        assert!(store.should_use_simd(4096)); // Large data
+
         // Test with SIMD disabled
         let config = ZipOffsetBlobStoreConfig {
             enable_simd: false,
@@ -959,22 +971,22 @@ mod tests {
     #[test]
     fn test_simd_memory_operations() {
         let store = ZipOffsetBlobStore::new().unwrap();
-        
+
         // Test SIMD copy
         let src = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
         let mut dst = vec![0u8; src.len()];
         assert!(store.simd_copy(&src, &mut dst).is_ok());
         assert_eq!(src, dst);
-        
+
         // Test SIMD compare
         let a = vec![1u8, 2, 3, 4];
         let b = vec![1u8, 2, 3, 4];
         let c = vec![1u8, 2, 3, 5];
-        
-        assert_eq!(store.simd_compare(&a, &b), 0);  // Equal
-        assert!(store.simd_compare(&a, &c) < 0);   // a < c
-        assert!(store.simd_compare(&c, &a) > 0);   // c > a
-        
+
+        assert_eq!(store.simd_compare(&a, &b), 0); // Equal
+        assert!(store.simd_compare(&a, &c) < 0); // a < c
+        assert!(store.simd_compare(&c, &a) > 0); // c > a
+
         // Test SIMD fill
         let mut buffer = vec![1u8; 10];
         store.simd_fill(&mut buffer, 42);
@@ -984,16 +996,16 @@ mod tests {
     #[test]
     fn test_simd_checksum_operations() {
         let store = ZipOffsetBlobStore::new().unwrap();
-        
+
         // Test checksum calculation
         let data = vec![1u8, 2, 3, 4, 5, 6, 7, 8];
         let checksum = store.calculate_crc32c(&data);
         assert!(checksum > 0); // Should produce non-zero checksum
-        
+
         // Test checksum verification
         let checksum_bytes = checksum.to_le_bytes();
         assert!(store.verify_checksum(&data, &checksum_bytes).unwrap());
-        
+
         // Test invalid checksum detection
         let invalid_checksum = [0u8, 0, 0, 0];
         assert!(!store.verify_checksum(&data, &invalid_checksum).unwrap());
@@ -1002,24 +1014,24 @@ mod tests {
     #[test]
     fn test_simd_with_large_data() {
         let store = ZipOffsetBlobStore::new().unwrap();
-        
+
         // Create large data (above SIMD threshold)
         let large_data = vec![42u8; 1024];
-        
+
         // Test large copy operation
         let mut dst = vec![0u8; large_data.len()];
         assert!(store.simd_copy(&large_data, &mut dst).is_ok());
         assert_eq!(large_data, dst);
-        
+
         // Test large comparison
         let comparison_result = store.simd_compare(&large_data, &dst);
         assert_eq!(comparison_result, 0);
-        
+
         // Test large fill
         let mut buffer = vec![0u8; 1024];
         store.simd_fill(&mut buffer, 255);
         assert_eq!(buffer, vec![255u8; 1024]);
-        
+
         // Test large checksum
         let checksum = store.calculate_crc32c(&large_data);
         assert!(checksum > 0);
@@ -1028,12 +1040,12 @@ mod tests {
     #[test]
     fn test_simd_fallback_behavior() {
         let store = ZipOffsetBlobStore::new().unwrap();
-        
+
         // Test with mismatched lengths (should return error)
         let src = vec![1u8, 2, 3];
         let mut dst = vec![0u8; 5]; // Different length
         assert!(store.simd_copy(&src, &mut dst).is_err());
-        
+
         // Test comparison with different lengths
         let a = vec![1u8, 2, 3];
         let b = vec![1u8, 2];

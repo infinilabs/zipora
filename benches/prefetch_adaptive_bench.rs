@@ -10,11 +10,11 @@
 //! - Single operations vs bulk operations (with lookahead prefetching)
 //! - Cache-optimized vs adaptive SIMD vs fully optimized
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use zipora::succinct::rank_select::interleaved::RankSelectInterleaved256;
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use zipora::RankSelectPerformanceOps;
 use zipora::succinct::BitVector;
 use zipora::succinct::rank_select::RankSelectOps;
-use zipora::RankSelectPerformanceOps;
+use zipora::succinct::rank_select::interleaved::RankSelectInterleaved256;
 
 /// Create test bitvector with controlled density
 fn create_test_bitvector(size: usize, density: f64) -> BitVector {
@@ -47,22 +47,14 @@ fn bench_rank1_base_vs_optimized(c: &mut Criterion) {
             group.bench_with_input(
                 BenchmarkId::new("base_rank1", &bench_name),
                 &(&rs, test_pos),
-                |b, (rs, pos)| {
-                    b.iter(|| {
-                        black_box(rs.rank1(*pos))
-                    })
-                },
+                |b, (rs, pos)| b.iter(|| black_box(rs.rank1(*pos))),
             );
 
             // Optimized: rank1_optimized (with prefetch + adaptive SIMD)
             group.bench_with_input(
                 BenchmarkId::new("optimized", &bench_name),
                 &(&rs, test_pos),
-                |b, (rs, pos)| {
-                    b.iter(|| {
-                        black_box(rs.rank1_optimized(*pos))
-                    })
-                },
+                |b, (rs, pos)| b.iter(|| black_box(rs.rank1_optimized(*pos))),
             );
         }
     }
@@ -121,11 +113,7 @@ fn bench_bulk_operations_lookahead(c: &mut Criterion) {
                 group.bench_with_input(
                     BenchmarkId::new("bulk_with_lookahead", &bench_name),
                     &(&rs, &positions),
-                    |b, (rs, positions)| {
-                        b.iter(|| {
-                            black_box(rs.rank1_bulk_optimized(positions))
-                        })
-                    },
+                    |b, (rs, positions)| b.iter(|| black_box(rs.rank1_bulk_optimized(positions))),
                 );
             }
         }
@@ -161,22 +149,14 @@ fn bench_select1_base_vs_optimized(c: &mut Criterion) {
             group.bench_with_input(
                 BenchmarkId::new("base_select1", &bench_name),
                 &(&rs, test_id),
-                |b, (rs, id)| {
-                    b.iter(|| {
-                        black_box(rs.select1(*id).ok())
-                    })
-                },
+                |b, (rs, id)| b.iter(|| black_box(rs.select1(*id).ok())),
             );
 
             // Optimized: select1_optimized (with prefetch + adaptive SIMD)
             group.bench_with_input(
                 BenchmarkId::new("optimized", &bench_name),
                 &(&rs, test_id),
-                |b, (rs, id)| {
-                    b.iter(|| {
-                        black_box(rs.select1_optimized(*id).ok())
-                    })
-                },
+                |b, (rs, id)| b.iter(|| black_box(rs.select1_optimized(*id).ok())),
             );
         }
     }
@@ -236,11 +216,7 @@ fn bench_select_bulk_lookahead(c: &mut Criterion) {
                 group.bench_with_input(
                     BenchmarkId::new("bulk_with_lookahead", &bench_name),
                     &(&rs, &ids),
-                    |b, (rs, ids)| {
-                        b.iter(|| {
-                            black_box(rs.select1_bulk_optimized(ids).ok())
-                        })
-                    },
+                    |b, (rs, ids)| b.iter(|| black_box(rs.select1_bulk_optimized(ids).ok())),
                 );
             }
         }
@@ -263,24 +239,16 @@ fn bench_adaptive_simd_overhead(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1));
 
     // Baseline: Direct rank1 (no adaptive overhead)
-    group.bench_function("no_adaptive", |b| {
-        b.iter(|| {
-            black_box(rs.rank1(test_pos))
-        })
-    });
+    group.bench_function("no_adaptive", |b| b.iter(|| black_box(rs.rank1(test_pos))));
 
     // With adaptive: rank1_adaptive (includes selection + monitoring)
     group.bench_function("with_adaptive", |b| {
-        b.iter(|| {
-            black_box(rs.rank1_adaptive(test_pos))
-        })
+        b.iter(|| black_box(rs.rank1_adaptive(test_pos)))
     });
 
     // Fully optimized: rank1_optimized (prefetch + adaptive)
     group.bench_function("fully_optimized", |b| {
-        b.iter(|| {
-            black_box(rs.rank1_optimized(test_pos))
-        })
+        b.iter(|| black_box(rs.rank1_optimized(test_pos)))
     });
 
     group.finish();
@@ -323,11 +291,7 @@ fn bench_prefetch_impact(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("with_prefetch", &bench_name),
             &(&rs, &positions),
-            |b, (rs, positions)| {
-                b.iter(|| {
-                    black_box(rs.rank1_bulk_optimized(positions))
-                })
-            },
+            |b, (rs, positions)| b.iter(|| black_box(rs.rank1_bulk_optimized(positions))),
         );
     }
 

@@ -1,6 +1,7 @@
 // P0.1: Suppress warning categories that represent future cleanup work, not bugs.
 // These will be re-enabled as modules are cleaned up (P1-P3 tasks in plan.md).
-#![allow(missing_docs)] // P3.7: documentation task
+#![allow(missing_docs)]
+// P3.7: documentation task
 // #![allow(dead_code)] // P3.3/P0.6: dead code removal is a separate task
 // #![allow(unused_variables)] // Stub implementations have unused params
 #![allow(unused_imports)] // Will be cleaned with dead code removal
@@ -8,7 +9,8 @@
 #![allow(unused_doc_comments)] // Orphan doc comments from refactoring
 #![allow(redundant_semicolons)] // Style nit
 #![allow(clippy::needless_return)] // Style nit
-#![allow(clippy::incompatible_msrv)] // AVX-512 intrinsics require newer toolchain than 1.88.0
+#![allow(clippy::incompatible_msrv)]
+// AVX-512 intrinsics require newer toolchain than 1.88.0
 // #![allow(unused_unsafe)] // Nested unsafe blocks from SIMD dispatch macros
 #![allow(unused_parens)] // Style nit
 
@@ -117,17 +119,19 @@ pub mod fsa;
 pub mod hash_map;
 pub mod io;
 pub mod memory;
-pub mod simd;
-pub mod string;
 pub mod scoring;
-pub mod succinct;
+pub mod simd;
 pub mod statistics;
+pub mod string;
+pub mod succinct;
 pub mod system;
 pub mod thread;
 
 // Re-export core types
 pub use containers::{
     AutoGrowCircularQueue,
+    BlockSize,
+    CompressionStrategy,
     EasyHashMap,
     EasyHashMapBuilder,
     EasyHashMapStats,
@@ -143,15 +147,13 @@ pub use containers::{
     GoldHashIdx,
     HashStrMap,
     HashStrMapStats,
+    // Phase 2 specialized containers
+    IntVec,
+    PackedInt,
     SmallMap,
     SortableStrIter,
     SortableStrSortedIter,
     SortableStrVec,
-    // Phase 2 specialized containers
-    IntVec,
-    PackedInt,
-    CompressionStrategy,
-    BlockSize,
     UintVector,
     // Phase 1 specialized containers
     ValVec32,
@@ -162,31 +164,20 @@ pub use containers::{
 };
 pub use error::{Result, ZiporaError};
 pub use error_recovery::{
-    verify_alignment, verify_power_of_2, verify_allocation_success, 
-    verify_bounds_check, verify_range_check
+    verify_alignment, verify_allocation_success, verify_bounds_check, verify_power_of_2,
+    verify_range_check,
 };
 pub use string::{
-    FastStr, LexicographicIterator, SortedVecLexIterator, StreamingLexIterator,
-    LexIteratorBuilder, UnicodeProcessor, UnicodeAnalysis, Utf8ToUtf32Iterator,
-    LineProcessor, LineProcessorConfig, LineProcessorStats, LineSplitter,
-    utf8_byte_count, validate_utf8_and_count_chars,
+    FastStr, LexIteratorBuilder, LexicographicIterator, LineProcessor, LineProcessorConfig,
+    LineProcessorStats, LineSplitter, SortedVecLexIterator, StreamingLexIterator, UnicodeAnalysis,
+    UnicodeProcessor, Utf8ToUtf32Iterator, utf8_byte_count, validate_utf8_and_count_chars,
 };
 pub use succinct::{
-    BitVector,
-    BitwiseOp,
-    BuilderOptions,
-    PerformanceStats,
-    RankSelect256,
-    RankSelectBuilder,
-    RankSelectInterleaved256,
-    // Advanced rank/select variants (Phase 7A)
-    RankSelectOps,
-    RankSelectPerformanceOps,
+    AdaptiveMultiDimensional,
     // Advanced optimization variants
     AdaptiveRankSelect,
-    AdaptiveMultiDimensional,
-    DataProfile,
-    SelectionCriteria,
+    BitVector,
+    BitwiseOp,
     // BMI2 acceleration
     Bmi2Accelerator,
     Bmi2BitOps,
@@ -198,6 +189,16 @@ pub use succinct::{
     Bmi2SelectOps,
     Bmi2SequenceOps,
     Bmi2Stats,
+    BuilderOptions,
+    DataProfile,
+    PerformanceStats,
+    RankSelect256,
+    RankSelectBuilder,
+    RankSelectInterleaved256,
+    // Advanced rank/select variants (Phase 7A)
+    RankSelectOps,
+    RankSelectPerformanceOps,
+    SelectionCriteria,
     SimdCapabilities,
     // SIMD operations
     SimdOps,
@@ -209,28 +210,59 @@ pub use succinct::{
 // Re-export Phase 1 implementations
 pub use blob_store::{BlobStore, MemoryBlobStore, PlainBlobStore};
 pub use fsa::{
-    ZiporaTrie, ZiporaTrieConfig, TrieStrategy, StorageStrategy, CompressionStrategy as TrieCompressionStrategy,
-    RankSelectType, BitVectorType, FiniteStateAutomaton, Trie,
+    BitVectorType,
+    CompressedSparseTrie,
+    CompressionStrategy as TrieCompressionStrategy,
+    ConcurrencyLevel,
+    CritBitTrie,
     // Primary trie implementation — 8 bytes/state, faithful C++ reference port
-    DoubleArrayTrie, DoubleArrayTrieMap, MapValue,
+    DoubleArrayTrie,
+    DoubleArrayTrieMap,
+    FiniteStateAutomaton,
+    FragmentStats,
+    MapValue,
     // Other trie strategies (available via explicit config)
-    NestedLoudsTrie, NestingConfig, NestedTrieStats, FragmentStats,
-    CompressedSparseTrie, ConcurrencyLevel, ReaderToken, WriterToken,
-    PatriciaTrie, CritBitTrie,
+    NestedLoudsTrie,
+    NestedTrieStats,
+    NestingConfig,
+    PatriciaTrie,
+    RankSelectType,
+    ReaderToken,
+    StorageStrategy,
+    Trie,
+    TrieStrategy,
+    WriterToken,
+    ZiporaTrie,
+    ZiporaTrieConfig,
 };
 pub use io::{DataInput, DataOutput, VarInt};
 
 // Re-export Phase 2 implementations
 pub use hash_map::{
-    // Core unified hash map implementation
-    ZiporaHashMap, ZiporaHashMapConfig, HashMapStats,
-    HashStrategy, StorageStrategy as HashStorageStrategy, OptimizationStrategy,
-    // Hash function utilities
-    fabo_hash_combine_u32, fabo_hash_combine_u64, golden_ratio_next_size, optimal_bucket_count,
-    advanced_hash_combine, HashFunctionBuilder, CombineStrategy, HashCombinable,
-    GOLDEN_RATIO_FRAC_NUM, GOLDEN_RATIO_FRAC_DEN, GOLDEN_LOAD_FACTOR,
+    CacheMetrics,
+    CombineStrategy,
+    GOLDEN_LOAD_FACTOR,
+    GOLDEN_RATIO_FRAC_DEN,
+    GOLDEN_RATIO_FRAC_NUM,
+    HashCombinable,
+    HashFunctionBuilder,
+    HashMapStats,
+    HashStrategy,
+    OptimizationStrategy,
+    Prefetcher,
     // SIMD and cache optimization utilities
-    SimdStringOps, SimdTier, CacheMetrics, Prefetcher,
+    SimdStringOps,
+    SimdTier,
+    StorageStrategy as HashStorageStrategy,
+    // Core unified hash map implementation
+    ZiporaHashMap,
+    ZiporaHashMapConfig,
+    advanced_hash_combine,
+    // Hash function utilities
+    fabo_hash_combine_u32,
+    fabo_hash_combine_u64,
+    golden_ratio_next_size,
+    optimal_bucket_count,
 };
 
 // Re-export Phase 2.5 implementations (memory mapping)
@@ -245,7 +277,7 @@ pub use entropy::dictionary::Dictionary;
 pub use entropy::rans::Rans64Symbol;
 pub use entropy::{
     DictionaryBuilder, DictionaryCompressor, EntropyStats, HuffmanDecoder, HuffmanEncoder,
-    HuffmanTree, OptimizedDictionaryCompressor, RansDecoder, Rans64Encoder, RansState,
+    HuffmanTree, OptimizedDictionaryCompressor, Rans64Encoder, RansDecoder, RansState,
 };
 
 // Re-export Phase 4 implementations (memory management)
@@ -285,114 +317,205 @@ pub use memory::{HugePage, HugePageAllocator};
 // Re-export Phase 4 implementations (algorithms)
 pub use algorithms::{
     AlgorithmConfig, EnhancedLoserTree, LcpArray, LoserTreeConfig, MergeSource, MultiWayMerge,
-    RadixSort, RadixSortConfig, SuffixArray,
-    SuffixArrayBuilder, TournamentNode,
-    simd_gallop_to, simd_block_filter,
+    RadixSort, RadixSortConfig, SuffixArray, SuffixArrayBuilder, TournamentNode, simd_block_filter,
+    simd_gallop_to,
 };
 
 // Re-export Phase 5 implementations (concurrency)
 #[cfg(feature = "async")]
 pub use concurrency::{
-    FiberHandle, FiberPool, FiberPoolBuilder, FiberPoolConfig, FiberStats,
-    ParallelLoudsTrie, ParallelTrieBuilder,
-    Pipeline, PipelineBuilder, PipelineStage, PipelineStats,
-    Task, WorkStealingExecutor, WorkStealingQueue,
+    FiberHandle, FiberPool, FiberPoolBuilder, FiberPoolConfig, FiberStats, ParallelLoudsTrie,
+    ParallelTrieBuilder, Pipeline, PipelineBuilder, PipelineStage, PipelineStats, Task,
+    WorkStealingExecutor, WorkStealingQueue,
 };
 
 // Re-export compression implementations
 pub use compression::{
-    AdaptiveCompressor, AdaptiveConfig, Algorithm, CompressionProfile,
-    CompressionStats, Compressor, CompressorFactory, PerformanceRequirements,
+    AdaptiveCompressor, AdaptiveConfig, Algorithm, CompressionProfile, CompressionStats,
+    Compressor, CompressorFactory, PerformanceRequirements,
 };
 
 // Re-export System Utilities (Phase 10A)
 pub use system::{
-    // CPU feature detection
-    RuntimeCpuFeatures, get_cpu_features, has_cpu_feature,
-    // Performance profiling
-    PerfTimer, BenchmarkSuite, HighPrecisionTimer, ProfiledFunction,
     // Base64 SIMD
-    AdaptiveBase64, SimdBase64Encoder, SimdBase64Decoder, base64_encode_simd, base64_decode_simd,
+    AdaptiveBase64,
+    BenchmarkSuite,
+    HighPrecisionTimer,
+    KernelInfo,
+    PageAlignedAlloc,
+    // Performance profiling
+    PerfTimer,
+    ProfiledFunction,
+    // CPU feature detection
+    RuntimeCpuFeatures,
+    SimdBase64Decoder,
+    SimdBase64Encoder,
     // Virtual memory management
-    VmManager, PageAlignedAlloc, KernelInfo, vm_prefetch, get_kernel_info,
+    VmManager,
+    base64_decode_simd,
+    base64_encode_simd,
+    get_cpu_features,
+    get_kernel_info,
+    has_cpu_feature,
+    vm_prefetch,
 };
 #[cfg(feature = "async")]
-pub use system::{
-    ProcessManager, ProcessPool, BidirectionalPipe, ProcessExecutor,
-};
+pub use system::{BidirectionalPipe, ProcessExecutor, ProcessManager, ProcessPool};
 
 // Re-export Development Infrastructure (Phase 10B)
 pub use dev_infrastructure::{
+    AccumulatorStats,
+    AutoRegister,
+    BenchmarkResult,
+    BenchmarkSuite as DevBenchmarkSuite,
+    FactoryBuilder,
     // Factory Pattern
-    FactoryRegistry, GlobalFactory, AutoRegister, Factoryable, FactoryBuilder,
-    global_factory,
+    FactoryRegistry,
+    Factoryable,
+    GlobalFactory,
+    GlobalStatsRegistry,
     // Debugging Framework
-    HighPrecisionTimer as DevHighPrecisionTimer, ScopedTimer, BenchmarkSuite as DevBenchmarkSuite,
-    BenchmarkResult, MemoryDebugger, MemoryStats as DevMemoryStats, PerformanceProfiler,
-    global_profiler, global_memory_debugger, format_duration,
+    HighPrecisionTimer as DevHighPrecisionTimer,
     // Statistical Analysis
-    Histogram, U32Histogram, U64Histogram, HistogramStats,
-    StatAccumulator, AccumulatorStats, MultiDimensionalStats, GlobalStatsRegistry,
-    global_stats, StatIndex,
+    Histogram,
+    HistogramStats,
+    MemoryDebugger,
+    MemoryStats as DevMemoryStats,
+    MultiDimensionalStats,
+    PerformanceProfiler,
+    ScopedTimer,
+    StatAccumulator,
+    StatIndex,
+    U32Histogram,
+    U64Histogram,
+    format_duration,
+    global_factory,
+    global_memory_debugger,
+    global_profiler,
+    global_stats,
 };
 
-// Re-export Advanced Statistics and Monitoring Framework  
+// Re-export Advanced Statistics and Monitoring Framework
 pub use statistics::{
-    // Core statistics
-    TrieStatistics, MemoryStats as StatsMemoryStats, PerformanceStats as StatsPerformanceStats, 
-    CompressionStats as StatsCompressionStats, DistributionStats, ErrorStats, TimingStats, 
-    MemoryCategory, ErrorType,
-    // Memory tracking
-    MemoryBreakdown, GlobalMemoryTracker, TrackedObject, LocalMemoryTracker,
-    FragmentationAnalysis,
-    // High-precision timing
-    Profiling, QTime, QDuration, PerfTimer as StatsPerfTimer, TimerCollection,
-    ScopedTimer as StatsScopedTimer, str_date_time_now,
-    // Histogram framework
-    FreqHist, FreqHistO1, FreqHistO2, HistogramData, HistogramDataO1, HistogramDataO2,
-    HistogramCollection,
-    // Entropy analysis
-    EntropyAnalyzer, EntropyConfig, EntropyResults, CompressionEstimates, DistributionInfo,
-    EntropyAnalyzerCollection,
+    BufferMetadata,
+    BufferPoolConfig,
+    BufferPoolManager,
+    BufferPriority,
+    CompressionEstimates,
+    CompressionStats as StatsCompressionStats,
     // Buffer management
-    ContextBuffer, BufferMetadata, BufferPriority, StatisticsContext, DefaultStatisticsContext,
-    BufferPoolManager, BufferPoolConfig, PoolStatistics, ScopedBuffer,
+    ContextBuffer,
+    DefaultStatisticsContext,
+    DistributionInfo,
+    DistributionStats,
+    // Entropy analysis
+    EntropyAnalyzer,
+    EntropyAnalyzerCollection,
+    EntropyConfig,
+    EntropyResults,
+    ErrorStats,
+    ErrorType,
+    FragmentationAnalysis,
+    // Histogram framework
+    FreqHist,
+    FreqHistO1,
+    FreqHistO2,
+    GlobalMemoryTracker,
+    HistogramCollection,
+    HistogramData,
+    HistogramDataO1,
+    HistogramDataO2,
+    LocalMemoryTracker,
+    // Memory tracking
+    MemoryBreakdown,
+    MemoryCategory,
+    MemoryStats as StatsMemoryStats,
+    OperationProfile,
+    PerfTimer as StatsPerfTimer,
+    PerformanceStats as StatsPerformanceStats,
+    PoolStatistics,
+    ProfiledOperation,
     // Profiling
-    Profiler, ProfilerConfig, OperationProfile, ProfiledOperation,
-    global_profiler as stats_global_profiler, init_global_profiler,
+    Profiler,
+    ProfilerConfig,
+    // High-precision timing
+    Profiling,
+    QDuration,
+    QTime,
+    ScopedBuffer,
+    ScopedTimer as StatsScopedTimer,
+    StatisticsContext,
+    TimerCollection,
+    TimingStats,
+    TrackedObject,
+    // Core statistics
+    TrieStatistics,
+    global_profiler as stats_global_profiler,
+    init_global_profiler,
+    str_date_time_now,
 };
 
 // Re-export Low-Level Synchronization (Phase 11A)
 pub use thread::{
-    // Linux Futex Integration
-    PlatformSync, DefaultPlatformSync,
-    // Instance-Specific Thread-Local Storage
-    InstanceTls, OwnerTls, TlsPool,
+    AsAtomic,
+    AtomicBitOps,
     // Atomic Operations Framework
-    AtomicExt, AsAtomic, AtomicBitOps, spin_loop_hint,
+    AtomicExt,
+    DefaultPlatformSync,
+    // Instance-Specific Thread-Local Storage
+    InstanceTls,
+    OwnerTls,
+    // Linux Futex Integration
+    PlatformSync,
+    TlsPool,
     memory_ordering,
+    spin_loop_hint,
 };
 
 // Re-export LRU Page Cache (New Feature)
 pub use cache::{
-    // Core cache types
-    LruPageCache, SingleLruPageCache, PageCacheConfig, CacheBuffer,
-    // Configuration types
-    LockingConfig, MemoryConfig as CacheMemoryConfig, KernelAdvice, PerformanceConfig,
-    EvictionConfig, EvictionAlgorithm, WarmingStrategy, MaintenanceConfig,
-    // Statistics and monitoring
-    CacheStatistics, CacheStatsSnapshot, BufferPool, BufferPoolStats,
+    BufferPool,
+    BufferPoolStats,
+    CACHE_LINE_SIZE as CACHE_CACHE_LINE_SIZE,
+    CacheBuffer,
     // Cache operation types
-    CacheError, CacheHitType, FileId, PageId, NodeIndex,
-    // Utility functions
-    hash_file_page, get_shard_id, prefetch_hint,
+    CacheError,
+    CacheHitType,
+    // Statistics and monitoring
+    CacheStatistics,
+    CacheStatsSnapshot,
+    EvictionAlgorithm,
+    EvictionConfig,
+    FileId,
+    HUGE_PAGE_SIZE,
+    KernelAdvice,
+    // Configuration types
+    LockingConfig,
+    // Core cache types
+    LruPageCache,
+    MAX_SHARDS,
+    MaintenanceConfig,
+    MemoryConfig as CacheMemoryConfig,
+    NodeIndex,
+    PAGE_BITS,
     // Constants
-    PAGE_SIZE, PAGE_BITS, HUGE_PAGE_SIZE, MAX_SHARDS, CACHE_LINE_SIZE as CACHE_CACHE_LINE_SIZE,
+    PAGE_SIZE,
+    PageCacheConfig,
+    PageId,
+    PerformanceConfig,
+    SingleLruPageCache,
+    WarmingStrategy,
+    get_shard_id,
+    // Utility functions
+    hash_file_page,
+    prefetch_hint,
 };
 
 // Platform-specific re-exports
 #[cfg(target_os = "linux")]
-pub use thread::{LinuxFutex, FutexMutex, FutexCondvar, FutexRwLock, FutexGuard, FutexReadGuard, FutexWriteGuard};
+pub use thread::{
+    FutexCondvar, FutexGuard, FutexMutex, FutexReadGuard, FutexRwLock, FutexWriteGuard, LinuxFutex,
+};
 
 #[cfg(target_arch = "x86_64")]
 pub use thread::x86_64_optimized;

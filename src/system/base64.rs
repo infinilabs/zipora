@@ -5,8 +5,8 @@
 //! is heavily optimized and widely used in production.
 
 use crate::error::{Result, ZiporaError};
-use base64::engine::general_purpose;
 use base64::Engine;
+use base64::engine::general_purpose;
 
 /// Base64 encoding/decoding configuration
 #[derive(Debug, Clone)]
@@ -105,12 +105,16 @@ pub struct SimdBase64Encoder {
 impl SimdBase64Encoder {
     /// Create a new encoder
     pub fn new() -> Self {
-        Self { codec: AdaptiveBase64::new() }
+        Self {
+            codec: AdaptiveBase64::new(),
+        }
     }
 
     /// Create a new encoder with custom configuration
     pub fn with_config(config: Base64Config) -> Self {
-        Self { codec: AdaptiveBase64::with_config(config) }
+        Self {
+            codec: AdaptiveBase64::with_config(config),
+        }
     }
 
     /// Encode binary data to Base64 string
@@ -120,7 +124,9 @@ impl SimdBase64Encoder {
 }
 
 impl Default for SimdBase64Encoder {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// SIMD Base64 decoder (wraps AdaptiveBase64)
@@ -131,12 +137,16 @@ pub struct SimdBase64Decoder {
 impl SimdBase64Decoder {
     /// Create a new decoder
     pub fn new() -> Self {
-        Self { codec: AdaptiveBase64::new() }
+        Self {
+            codec: AdaptiveBase64::new(),
+        }
     }
 
     /// Create a new decoder with custom configuration
     pub fn with_config(config: Base64Config) -> Self {
-        Self { codec: AdaptiveBase64::with_config(config) }
+        Self {
+            codec: AdaptiveBase64::with_config(config),
+        }
     }
 
     /// Decode Base64 string to binary data
@@ -146,7 +156,9 @@ impl SimdBase64Decoder {
 }
 
 impl Default for SimdBase64Decoder {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Convenience function: encode binary data to Base64

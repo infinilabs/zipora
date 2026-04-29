@@ -1,13 +1,15 @@
 const BATCH_SIZE: usize = 8;
 const PEF_CHUNK_SIZE: usize = 128;
-use crate::error::{Result, ZiporaError};
 use crate::algorithms::bit_ops::select_in_word;
+use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;
 use std::cmp::Ordering;
 
-use super::chunk::{PefChunkMeta, ChunkView, chunk_skip_to_high, chunk_scan_geq, chunk_get_delta, chunk_select1, chunk_get_low, chunk_first_one_cached};
 use super::basic::EliasFano;
-
+use super::chunk::{
+    ChunkView, PefChunkMeta, chunk_first_one_cached, chunk_get_delta, chunk_get_low,
+    chunk_scan_geq, chunk_select1, chunk_skip_to_high,
+};
 
 /// Partitioned Elias-Fano with uniform 128-element chunks.
 ///
@@ -62,8 +64,12 @@ impl PartitionedEliasFano {
     pub fn from_sorted(values: &[u32]) -> Self {
         if values.is_empty() {
             return Self {
-                all_low_bits: Vec::new(), all_high_bits: Vec::new(),
-                meta: Vec::new(), chunk_upper_bounds: Vec::new(), len: 0, universe: 0,
+                all_low_bits: Vec::new(),
+                all_high_bits: Vec::new(),
+                meta: Vec::new(),
+                chunk_upper_bounds: Vec::new(),
+                len: 0,
+                universe: 0,
             };
         }
         let universe = values[values.len() - 1] as u64 + 1;
@@ -74,8 +80,12 @@ impl PartitionedEliasFano {
     pub fn from_sorted_u64(values: &[u64]) -> Self {
         if values.is_empty() {
             return Self {
-                all_low_bits: Vec::new(), all_high_bits: Vec::new(),
-                meta: Vec::new(), chunk_upper_bounds: Vec::new(), len: 0, universe: 0,
+                all_low_bits: Vec::new(),
+                all_high_bits: Vec::new(),
+                meta: Vec::new(),
+                chunk_upper_bounds: Vec::new(),
+                len: 0,
+                universe: 0,
             };
         }
         let universe = values[values.len() - 1] + 1;
@@ -105,7 +115,11 @@ impl PartitionedEliasFano {
                 (64 - (local_universe / count as u64).leading_zeros()).saturating_sub(1)
             };
 
-            let low_mask = if low_bit_width == 0 { 0u64 } else { (1u64 << low_bit_width) - 1 };
+            let low_mask = if low_bit_width == 0 {
+                0u64
+            } else {
+                (1u64 << low_bit_width) - 1
+            };
 
             // Pack low bits directly into flat array
             let total_low_bits = count as u64 * low_bit_width as u64;
@@ -167,16 +181,27 @@ impl PartitionedEliasFano {
         // Padding word for branchless u128 extraction in chunk_get_low
         all_low_bits.push(0);
 
-        Self { all_low_bits, all_high_bits, meta, chunk_upper_bounds, len: n, universe }
+        Self {
+            all_low_bits,
+            all_high_bits,
+            meta,
+            chunk_upper_bounds,
+            len: n,
+            universe,
+        }
     }
 
     /// Number of elements.
     #[inline]
-    pub fn len(&self) -> usize { self.len }
+    pub fn len(&self) -> usize {
+        self.len
+    }
 
     /// Check if empty.
     #[inline]
-    pub fn is_empty(&self) -> bool { self.len == 0 }
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
 
     /// Memory usage in bytes.
     pub fn size_bytes(&self) -> usize {
@@ -190,13 +215,17 @@ impl PartitionedEliasFano {
     /// Bits per element.
     #[inline]
     pub fn bits_per_element(&self) -> f64 {
-        if self.len == 0 { return 0.0; }
+        if self.len == 0 {
+            return 0.0;
+        }
         (self.size_bytes() * 8) as f64 / self.len as f64
     }
 
     /// Get the i-th element. O(1) via chunk index arithmetic.
     pub fn get(&self, index: usize) -> Option<u64> {
-        if index >= self.len { return None; }
+        if index >= self.len {
+            return None;
+        }
         let chunk_idx = index / PEF_CHUNK_SIZE;
         let local_idx = index % PEF_CHUNK_SIZE;
         let view = self.chunk_view(chunk_idx);
@@ -212,13 +241,17 @@ impl PartitionedEliasFano {
     /// 1-5 elements instead of the full 128-element chunk.
     #[inline]
     pub fn next_geq(&self, target: u64) -> Option<(usize, u64)> {
-        if self.len == 0 || target >= self.universe { return None; }
+        if self.len == 0 || target >= self.universe {
+            return None;
+        }
 
         // Binary search: find first chunk whose upper_bound >= target
         let chunk_idx = match self.chunk_upper_bounds.binary_search(&target) {
-            Ok(i) => i,      // exact match on upper bound
+            Ok(i) => i, // exact match on upper bound
             Err(i) => {
-                if i >= self.meta.len() { return None; }
+                if i >= self.meta.len() {
+                    return None;
+                }
                 i
             }
         };
@@ -240,7 +273,9 @@ impl PartitionedEliasFano {
         let (start_idx, start_pos) = chunk_skip_to_high(&view, target_high);
 
         // Scan only from the skip point — typically 1-5 elements
-        if let Some((local_idx, delta, _)) = chunk_scan_geq(&view, target_delta, start_idx, start_pos) {
+        if let Some((local_idx, delta, _)) =
+            chunk_scan_geq(&view, target_delta, start_idx, start_pos)
+        {
             return Some((global_offset + local_idx, view.min_value + delta));
         }
 
@@ -354,13 +389,17 @@ impl<'a> Iterator for PartitionedEliasFanoIter<'a> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.chunk_idx >= self.pef.meta.len() { return None; }
+        if self.chunk_idx >= self.pef.meta.len() {
+            return None;
+        }
         if self.local_idx >= self.cached_count {
             // Move to next chunk — refresh cache
             self.chunk_idx += 1;
             self.local_idx = 0;
             self.local_high_pos = 0;
-            if self.chunk_idx >= self.pef.meta.len() { return None; }
+            if self.chunk_idx >= self.pef.meta.len() {
+                return None;
+            }
             self.refresh_chunk_cache();
             return self.next(); // recurse once to process the new chunk
         }
@@ -368,7 +407,9 @@ impl<'a> Iterator for PartitionedEliasFanoIter<'a> {
         // Find next 1-bit in cached high_bits
         let next_pos = self.local_high_pos;
         let mut word_idx = next_pos / 64;
-        if word_idx >= self.cached_high_bits.len() { return None; }
+        if word_idx >= self.cached_high_bits.len() {
+            return None;
+        }
 
         let bit_offset = next_pos % 64;
         let mut word = self.cached_high_bits[word_idx] >> bit_offset;
@@ -379,7 +420,9 @@ impl<'a> Iterator for PartitionedEliasFanoIter<'a> {
         } else {
             loop {
                 word_idx += 1;
-                if word_idx >= self.cached_high_bits.len() { return None; }
+                if word_idx >= self.cached_high_bits.len() {
+                    return None;
+                }
                 word = self.cached_high_bits[word_idx];
                 if word != 0 {
                     self.local_high_pos = word_idx * 64 + word.trailing_zeros() as usize;
@@ -442,10 +485,17 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
     fn new(pef: &'a PartitionedEliasFano) -> Self {
         if pef.is_empty() {
             return Self {
-                pef, chunk_idx: 0, local_idx: 0, local_high_pos: 0, global_idx: 0,
+                pef,
+                chunk_idx: 0,
+                local_idx: 0,
+                local_high_pos: 0,
+                global_idx: 0,
                 cached_value: 0,
-                cached_high_bits: &[], cached_low_bits: &[],
-                cached_low_bit_width: 0, cached_count: 0, cached_min_value: 0,
+                cached_high_bits: &[],
+                cached_low_bits: &[],
+                cached_low_bit_width: 0,
+                cached_count: 0,
+                cached_min_value: 0,
             };
         }
         let view = pef.chunk_view(0);
@@ -461,10 +511,16 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
         let low = chunk_get_low(&view, 0);
         let initial_val = view.min_value + (high_val << view.low_bit_width) + low;
         Self {
-            pef, chunk_idx: 0, local_idx: 0, local_high_pos: high_pos, global_idx: 0,
+            pef,
+            chunk_idx: 0,
+            local_idx: 0,
+            local_high_pos: high_pos,
+            global_idx: 0,
             cached_value: initial_val,
-            cached_high_bits: view.high_bits, cached_low_bits: view.low_bits,
-            cached_low_bit_width: view.low_bit_width, cached_count: view.count,
+            cached_high_bits: view.high_bits,
+            cached_low_bits: view.low_bits,
+            cached_low_bit_width: view.low_bit_width,
+            cached_count: view.count,
             cached_min_value: view.min_value,
         }
     }
@@ -483,7 +539,9 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
     /// Inline low-bit extraction from cached slices.
     #[inline]
     fn get_low_cached(&self, local_idx: usize) -> u64 {
-        if self.cached_low_bit_width == 0 { return 0; }
+        if self.cached_low_bit_width == 0 {
+            return 0;
+        }
         let lbw = self.cached_low_bit_width as u64;
         let bit_pos = local_idx as u64 * lbw;
         let w_idx = (bit_pos / 64) as usize;
@@ -505,22 +563,32 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
     /// Current element value — O(1) from cached value.
     #[inline]
     pub fn current(&self) -> Option<u64> {
-        if self.global_idx >= self.pef.len { None } else { Some(self.cached_value) }
+        if self.global_idx >= self.pef.len {
+            None
+        } else {
+            Some(self.cached_value)
+        }
     }
 
     /// Current global element index.
     #[inline]
-    pub fn index(&self) -> usize { self.global_idx }
+    pub fn index(&self) -> usize {
+        self.global_idx
+    }
 
     /// Whether the cursor is past the last element.
     #[inline]
-    pub fn is_exhausted(&self) -> bool { self.global_idx >= self.pef.len }
+    pub fn is_exhausted(&self) -> bool {
+        self.global_idx >= self.pef.len
+    }
 
     /// Advance to the next element.
     #[inline]
     pub fn advance(&mut self) -> bool {
         self.global_idx += 1;
-        if self.global_idx >= self.pef.len { return false; }
+        if self.global_idx >= self.pef.len {
+            return false;
+        }
 
         self.local_idx += 1;
 
@@ -528,7 +596,9 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
         if self.local_idx >= self.cached_count {
             self.chunk_idx += 1;
             self.local_idx = 0;
-            if self.chunk_idx >= self.pef.meta.len() { return false; }
+            if self.chunk_idx >= self.pef.meta.len() {
+                return false;
+            }
             self.refresh_chunk_cache();
             self.local_high_pos = chunk_first_one_cached(self.cached_high_bits);
             self.recompute_value();
@@ -538,7 +608,9 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
         // Find next 1-bit within current chunk — use cached high_bits
         let next_pos = self.local_high_pos + 1;
         let mut word_idx = next_pos / 64;
-        if word_idx >= self.cached_high_bits.len() { return false; }
+        if word_idx >= self.cached_high_bits.len() {
+            return false;
+        }
 
         let bit_in_word = next_pos % 64;
         let mut word = self.cached_high_bits[word_idx] >> bit_in_word;
@@ -548,7 +620,9 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
         } else {
             loop {
                 word_idx += 1;
-                if word_idx >= self.cached_high_bits.len() { return false; }
+                if word_idx >= self.cached_high_bits.len() {
+                    return false;
+                }
                 word = self.cached_high_bits[word_idx];
                 if word != 0 {
                     self.local_high_pos = word_idx * 64 + word.trailing_zeros() as usize;
@@ -571,8 +645,12 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
     #[inline]
     pub fn advance_to_geq(&mut self, target: u64) -> bool {
         // Fast path 1: cached_value >= target — O(1), no computation
-        if self.global_idx >= self.pef.len { return false; }
-        if self.cached_value >= target { return true; }
+        if self.global_idx >= self.pef.len {
+            return false;
+        }
+        if self.cached_value >= target {
+            return true;
+        }
 
         let num_chunks = self.pef.meta.len();
 
@@ -590,7 +668,9 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
                 min_value: self.cached_min_value,
                 high_len_bits: self.pef.meta[self.chunk_idx].high_len_bits as usize,
             };
-            if let Some((local_idx, delta, hp)) = chunk_scan_geq(&view, target_delta, self.local_idx, self.local_high_pos) {
+            if let Some((local_idx, delta, hp)) =
+                chunk_scan_geq(&view, target_delta, self.local_idx, self.local_high_pos)
+            {
                 self.local_idx = local_idx;
                 self.global_idx = self.chunk_idx * PEF_CHUNK_SIZE + local_idx;
                 self.local_high_pos = hp;
@@ -609,8 +689,7 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
                 if s > hi {
                     break hi;
                 }
-                break s + self.pef.chunk_upper_bounds[s..=hi]
-                    .partition_point(|&x| x < target);
+                break s + self.pef.chunk_upper_bounds[s..=hi].partition_point(|&x| x < target);
             }
             if hi == num_chunks - 1 {
                 self.global_idx = self.pef.len;
@@ -634,8 +713,10 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
         }
 
         let view = ChunkView {
-            low_bits: self.cached_low_bits, high_bits: self.cached_high_bits,
-            low_bit_width: self.cached_low_bit_width, count: self.cached_count,
+            low_bits: self.cached_low_bits,
+            high_bits: self.cached_high_bits,
+            low_bit_width: self.cached_low_bit_width,
+            count: self.cached_count,
             min_value: self.cached_min_value,
             high_len_bits: self.pef.meta[self.chunk_idx].high_len_bits as usize,
         };
@@ -670,8 +751,12 @@ impl<'a> PartitionedEliasFanoCursor<'a> {
     /// Returns false (cursor unchanged) if `idx >= self.pef.len`.
     #[inline]
     pub fn advance_to_index(&mut self, idx: usize) -> bool {
-        if idx >= self.pef.len { return false; }
-        if idx == self.global_idx { return true; }
+        if idx >= self.pef.len {
+            return false;
+        }
+        if idx == self.global_idx {
+            return true;
+        }
 
         let chunk_idx = idx / PEF_CHUNK_SIZE;
         let local_idx = idx % PEF_CHUNK_SIZE;
@@ -826,17 +911,23 @@ impl<'a> PartitionedEliasFanoBatchCursor<'a> {
             let mut low_bit_idx = (low_bit_pos % 64) as u32;
             let mut low_word = if lbw > 0 && low_word_idx < view.low_bits.len() {
                 view.low_bits[low_word_idx]
-            } else { 0 };
+            } else {
+                0
+            };
             let mut low_word_next = if lbw > 0 && low_word_idx + 1 < view.low_bits.len() {
                 view.low_bits[low_word_idx + 1]
-            } else { 0 };
+            } else {
+                0
+            };
 
             for k in 0..to_decode {
                 let li = self.local_idx + k;
 
                 while word == 0 {
                     word_idx += 1;
-                    if word_idx >= view.high_bits.len() { break; }
+                    if word_idx >= view.high_bits.len() {
+                        break;
+                    }
                     word = view.high_bits[word_idx];
                     bit_pos = word_idx * 64;
                 }
@@ -872,7 +963,9 @@ impl<'a> PartitionedEliasFanoBatchCursor<'a> {
                         low_word = low_word_next;
                         low_word_next = if low_word_idx + 1 < view.low_bits.len() {
                             view.low_bits[low_word_idx + 1]
-                        } else { 0 };
+                        } else {
+                            0
+                        };
                     }
                 }
             }
@@ -898,4 +991,3 @@ impl<'a> PartitionedEliasFanoBatchCursor<'a> {
         *self = Self::new(self.pef);
     }
 }
-

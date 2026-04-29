@@ -2,17 +2,17 @@
 //!
 //! This module provides efficient external sorting using replacement selection
 //! and k-way merging. The algorithm is designed to handle datasets that exceed
-//! available memory by using disk-based temporary storage and efficient 
+//! available memory by using disk-based temporary storage and efficient
 //! merge operations.
 
 use crate::algorithms::tournament_tree::{EnhancedLoserTree, LoserTreeConfig};
 use crate::error::{Result, ZiporaError};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
-use std::path::PathBuf;
 use std::fs::{File, remove_file};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::marker::PhantomData;
+use std::path::PathBuf;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -96,10 +96,7 @@ struct RunElement<T> {
 
 impl<T> RunElement<T> {
     fn new(value: T, run_id: usize) -> Self {
-        Self {
-            value,
-            run_id,
-        }
+        Self { value, run_id }
     }
 }
 
@@ -145,25 +142,28 @@ impl TempRun {
         T: serde::de::DeserializeOwned,
     {
         if !self.file_path.exists() {
-            return Err(ZiporaError::io_error(format!("Temp file does not exist: {:?}", self.file_path)));
+            return Err(ZiporaError::io_error(format!(
+                "Temp file does not exist: {:?}",
+                self.file_path
+            )));
         }
-        
+
         // Verify file is readable and has content
         let metadata = std::fs::metadata(&self.file_path)
             .map_err(|e| ZiporaError::io_error(format!("Failed to read file metadata: {}", e)))?;
-        
+
         if metadata.len() == 0 && self.items_count > 0 {
             return Err(ZiporaError::io_error(format!(
-                "Temp file is empty but expected {} items: {:?}", 
+                "Temp file is empty but expected {} items: {:?}",
                 self.items_count, self.file_path
             )));
         }
-        
+
         let file = File::open(&self.file_path)
             .map_err(|e| ZiporaError::io_error(format!("Failed to open temp file: {}", e)))?;
-        
+
         let reader = BufReader::new(file);
-        
+
         Ok(TempRunIterator {
             reader,
             items_remaining: self.items_count,
@@ -204,33 +204,38 @@ where
         // Read size header with robust error handling
         let mut size_bytes = [0u8; 8];
         match self.reader.read_exact(&mut size_bytes) {
-            Ok(()) => {},
+            Ok(()) => {}
             Err(e) => {
                 return Some(Err(ZiporaError::io_error(format!(
-                    "Failed to read size header (items remaining: {}): {}", 
-                    self.items_remaining + 1, e
+                    "Failed to read size header (items remaining: {}): {}",
+                    self.items_remaining + 1,
+                    e
                 ))));
             }
         }
 
         let size = usize::from_le_bytes(size_bytes);
-        
+
         // Validate size to prevent excessive allocations
-        if size > 1024 * 1024 * 100 { // 100MB limit
+        if size > 1024 * 1024 * 100 {
+            // 100MB limit
             return Some(Err(ZiporaError::io_error(format!(
-                "Invalid data size: {} bytes", size
+                "Invalid data size: {} bytes",
+                size
             ))));
         }
-        
+
         let mut data = vec![0u8; size];
-        
+
         // Read data with robust error handling
         match self.reader.read_exact(&mut data) {
-            Ok(()) => {},
+            Ok(()) => {}
             Err(e) => {
                 return Some(Err(ZiporaError::io_error(format!(
-                    "Failed to read data ({} bytes, items remaining: {}): {}", 
-                    size, self.items_remaining + 1, e
+                    "Failed to read data ({} bytes, items remaining: {}): {}",
+                    size,
+                    self.items_remaining + 1,
+                    e
                 ))));
             }
         }
@@ -239,7 +244,8 @@ where
         match bincode::deserialize(&data) {
             Ok(value) => Some(Ok(value)),
             Err(e) => Some(Err(ZiporaError::io_error(format!(
-                "Deserialization failed for {} bytes: {}", size, e
+                "Deserialization failed for {} bytes: {}",
+                size, e
             )))),
         }
     }
@@ -254,18 +260,18 @@ where
 /// ```
 /// use zipora::algorithms::{ReplaceSelectSort, ReplaceSelectSortConfig};
 /// use std::path::PathBuf;
-/// 
+///
 /// let config = ReplaceSelectSortConfig {
 ///     memory_buffer_size: 1024 * 1024, // 1MB
 ///     temp_dir: PathBuf::from("/tmp"),
 ///     ..Default::default()
 /// };
-/// 
+///
 /// let mut sorter = ReplaceSelectSort::new(config);
-/// 
+///
 /// let data = vec![5, 2, 8, 1, 9, 3];
 /// let sorted = sorter.sort(data)?;
-/// 
+///
 /// assert_eq!(sorted, vec![1, 2, 3, 5, 8, 9]);
 /// # Ok::<(), zipora::ZiporaError>(())
 /// ```
@@ -301,11 +307,12 @@ where
             .expect("temp file path is valid UTF-8")
             .as_nanos();
         let thread_id = format!("{:?}", thread::current().id());
-        let instance_id = format!("sort_{}_{}",
+        let instance_id = format!(
+            "sort_{}_{}",
             timestamp,
             thread_id.replace("ThreadId(", "").replace(")", "")
         );
-        
+
         Self {
             config,
             comparator,
@@ -376,16 +383,25 @@ where
 
             // Start new run file if needed
             if temp_writer.is_none() {
-                let temp_path = self.config.temp_dir.join(format!("{}_{}.tmp", self.instance_id, current_run));
-                let file = File::create(&temp_path)
-                    .map_err(|e| ZiporaError::io_error(format!("Failed to create temp file: {}", e)))?;
+                let temp_path = self
+                    .config
+                    .temp_dir
+                    .join(format!("{}_{}.tmp", self.instance_id, current_run));
+                let file = File::create(&temp_path).map_err(|e| {
+                    ZiporaError::io_error(format!("Failed to create temp file: {}", e))
+                })?;
                 temp_writer = Some(BufWriter::new(file));
                 current_temp_path = Some(temp_path);
                 run_items = 0;
             }
 
             // Write element to current run
-            self.write_element(&mut temp_writer.as_mut().expect("temp_writer initialized in loop"), &min_element.value)?;
+            self.write_element(
+                &mut temp_writer
+                    .as_mut()
+                    .expect("temp_writer initialized in loop"),
+                &min_element.value,
+            )?;
             run_items += 1;
 
             // Try to read next element
@@ -402,14 +418,26 @@ where
 
                     // Close current run if heap is empty or next min is from new run
                     if heap.is_empty() || heap.peek().map(|e| e.run_id).unwrap_or(0) > current_run {
-                        self.finish_run(&mut temp_writer, current_temp_path.take().expect("temp path set at run start"), run_items)?;
+                        self.finish_run(
+                            &mut temp_writer,
+                            current_temp_path
+                                .take()
+                                .expect("temp path set at run start"),
+                            run_items,
+                        )?;
                         current_run += 1;
                     }
                 }
             } else {
                 // No more input, finish current run when heap empties
                 if heap.is_empty() || heap.peek().map(|e| e.run_id).unwrap_or(0) > current_run {
-                    self.finish_run(&mut temp_writer, current_temp_path.take().expect("temp path set at run start"), run_items)?;
+                    self.finish_run(
+                        &mut temp_writer,
+                        current_temp_path
+                            .take()
+                            .expect("temp path set at run start"),
+                        run_items,
+                    )?;
                     current_run += 1;
                 }
             }
@@ -424,10 +452,12 @@ where
             .map_err(|e| ZiporaError::io_error(format!("Serialization failed: {}", e)))?;
 
         let size_bytes = serialized.len().to_le_bytes();
-        writer.write_all(&size_bytes)
+        writer
+            .write_all(&size_bytes)
             .map_err(|e| ZiporaError::io_error(format!("Failed to write size: {}", e)))?;
-        
-        writer.write_all(&serialized)
+
+        writer
+            .write_all(&serialized)
             .map_err(|e| ZiporaError::io_error(format!("Failed to write data: {}", e)))?;
 
         self.stats.temp_bytes_written += size_bytes.len() + serialized.len();
@@ -446,14 +476,19 @@ where
                 .map_err(|e| ZiporaError::io_error(format!("Failed to flush temp file: {}", e)))?;
             // Ensure data is synced to disk
             w.into_inner()
-                .map_err(|e| ZiporaError::io_error(format!("Failed to unwrap buffered writer: {}", e)))?
+                .map_err(|e| {
+                    ZiporaError::io_error(format!("Failed to unwrap buffered writer: {}", e))
+                })?
                 .sync_all()
                 .map_err(|e| ZiporaError::io_error(format!("Failed to sync temp file: {}", e)))?;
         }
 
         // Verify file exists and has the expected size before adding to temp files
         if !temp_path.exists() {
-            return Err(ZiporaError::io_error(format!("Temp file was not created: {:?}", temp_path)));
+            return Err(ZiporaError::io_error(format!(
+                "Temp file was not created: {:?}",
+                temp_path
+            )));
         }
 
         self.temp_files.push(TempRun::new(temp_path, items_count));
@@ -483,12 +518,12 @@ where
             alignment: 64,
         };
 
-        let mut tournament_tree = EnhancedLoserTree::with_comparator(tree_config, self.comparator.clone());
+        let mut tournament_tree =
+            EnhancedLoserTree::with_comparator(tree_config, self.comparator.clone());
 
         // Add all runs to the tournament tree
         for run in &self.temp_files {
-            let iter = run.iter::<T>()?
-                .filter_map(|result| result.ok()); // Skip errors instead of panicking
+            let iter = run.iter::<T>()?.filter_map(|result| result.ok()); // Skip errors instead of panicking
             tournament_tree.add_way(iter)?;
         }
 
@@ -506,7 +541,7 @@ where
 
         let run = &self.temp_files[0];
         let mut result = Vec::with_capacity(run.items_count);
-        
+
         for item_result in run.iter::<T>()? {
             result.push(item_result?);
         }
@@ -535,7 +570,7 @@ where
 pub trait ExternalSort<T> {
     /// Sort the collection using external sorting if it exceeds memory limits
     fn external_sort(&mut self) -> Result<()>;
-    
+
     /// Sort with custom configuration
     fn external_sort_with_config(&mut self, config: ReplaceSelectSortConfig) -> Result<()>;
 }
@@ -552,7 +587,7 @@ where
 
     fn external_sort_with_config(&mut self, config: ReplaceSelectSortConfig) -> Result<()> {
         let estimated_size = self.len() * std::mem::size_of::<T>();
-        
+
         if estimated_size <= config.memory_buffer_size {
             // Use in-memory sort for small datasets
             self.sort();
@@ -585,7 +620,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let counter = TEST_COUNTER.fetch_add(1, AtomicOrdering::SeqCst);
-        
+
         let unique_name = format!(
             "zipora_external_sort_test_{}_{}_{}_{}",
             process_id,
@@ -593,7 +628,7 @@ mod tests {
             timestamp,
             counter
         );
-        
+
         let temp = std::env::temp_dir().join(unique_name);
         create_dir_all(&temp).unwrap();
         temp
@@ -768,7 +803,7 @@ mod tests {
         };
 
         let mut sorter = ReplaceSelectSort::new(config);
-        
+
         // Generate larger dataset
         let mut data: Vec<i32> = (0..100).rev().collect();
         data.extend_from_slice(&[50, 25, 75]);
@@ -777,7 +812,7 @@ mod tests {
 
         // Verify it's sorted
         for i in 1..sorted.len() {
-            assert!(sorted[i] >= sorted[i-1]);
+            assert!(sorted[i] >= sorted[i - 1]);
         }
 
         // Should have generated multiple runs due to small buffer

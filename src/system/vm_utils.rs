@@ -3,8 +3,8 @@
 //! Advanced virtual memory operations with kernel-aware optimizations.
 //! Inspired by production-grade VM management with cross-platform support.
 
-use std::sync::OnceLock;
 use crate::error::{Result, ZiporaError};
+use std::sync::OnceLock;
 
 /// Kernel information and capabilities
 #[derive(Debug, Clone)]
@@ -28,14 +28,14 @@ impl KernelInfo {
     pub fn detect() -> Self {
         let os_name = std::env::consts::OS.to_string();
         let page_size = Self::get_page_size();
-        
+
         #[cfg(target_os = "linux")]
         {
             let kernel_version = Self::get_linux_kernel_version();
             let has_madv_populate = Self::check_madv_populate_support(&kernel_version);
             let has_thp = Self::check_thp_support();
             let has_numa = Self::check_numa_support();
-            
+
             Self {
                 os_name,
                 kernel_version,
@@ -45,7 +45,7 @@ impl KernelInfo {
                 has_numa,
             }
         }
-        
+
         #[cfg(not(target_os = "linux"))]
         {
             Self {
@@ -89,7 +89,9 @@ impl KernelInfo {
     #[cfg(target_os = "linux")]
     fn get_linux_kernel_version() -> String {
         if let Ok(uname_output) = std::process::Command::new("uname").arg("-r").output() {
-            String::from_utf8_lossy(&uname_output.stdout).trim().to_string()
+            String::from_utf8_lossy(&uname_output.stdout)
+                .trim()
+                .to_string()
         } else {
             "Unknown".to_string()
         }
@@ -102,9 +104,10 @@ impl KernelInfo {
         if let Some(version_part) = kernel_version.split('-').next() {
             let parts: Vec<&str> = version_part.split('.').collect();
             if parts.len() >= 2
-                && let (Ok(major), Ok(minor)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
-                    return major > 5 || (major == 5 && minor >= 14);
-                }
+                && let (Ok(major), Ok(minor)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>())
+            {
+                return major > 5 || (major == 5 && minor >= 14);
+            }
         }
         false
     }
@@ -122,11 +125,17 @@ impl KernelInfo {
     }
 
     #[cfg(not(target_os = "linux"))]
-    fn check_madv_populate_support(_kernel_version: &str) -> bool { false }
+    fn check_madv_populate_support(_kernel_version: &str) -> bool {
+        false
+    }
     #[cfg(not(target_os = "linux"))]
-    fn check_thp_support() -> bool { false }
+    fn check_thp_support() -> bool {
+        false
+    }
     #[cfg(not(target_os = "linux"))]
-    fn check_numa_support() -> bool { false }
+    fn check_numa_support() -> bool {
+        false
+    }
 }
 
 /// Virtual memory manager for advanced operations
@@ -200,12 +209,16 @@ impl VmManager {
                     if self.kernel_info.has_madv_populate {
                         self.madv_populate_read(aligned_addr as *const u8, aligned_len)
                     } else {
-                        Err(ZiporaError::invalid_data("MADV_POPULATE_READ not supported"))
+                        Err(ZiporaError::invalid_data(
+                            "MADV_POPULATE_READ not supported",
+                        ))
                     }
                 }
                 #[cfg(not(target_os = "linux"))]
                 {
-                    Err(ZiporaError::invalid_data("MADV_POPULATE_READ only available on Linux"))
+                    Err(ZiporaError::invalid_data(
+                        "MADV_POPULATE_READ only available on Linux",
+                    ))
                 }
             }
             PrefetchStrategy::WillNeed => {
@@ -230,15 +243,15 @@ impl VmManager {
         const MADV_POPULATE_READ: libc::c_int = 22;
 
         // SAFETY: pointer and length derived from valid slice (page-aligned), madvise returns error code (not UB)
-        let result = unsafe {
-            libc::madvise(addr as *mut libc::c_void, len, MADV_POPULATE_READ)
-        };
-        
+        let result = unsafe { libc::madvise(addr as *mut libc::c_void, len, MADV_POPULATE_READ) };
+
         if result == 0 {
             Ok(())
         } else {
-            Err(ZiporaError::invalid_data(format!("madvise MADV_POPULATE_READ failed: {}", 
-                std::io::Error::last_os_error())))
+            Err(ZiporaError::invalid_data(format!(
+                "madvise MADV_POPULATE_READ failed: {}",
+                std::io::Error::last_os_error()
+            )))
         }
     }
 
@@ -246,15 +259,15 @@ impl VmManager {
     #[cfg(unix)]
     fn madv_willneed(&self, addr: *const u8, len: usize) -> Result<()> {
         // SAFETY: pointer and length derived from valid slice (page-aligned), madvise returns error code (not UB)
-        let result = unsafe {
-            libc::madvise(addr as *mut libc::c_void, len, libc::MADV_WILLNEED)
-        };
-        
+        let result = unsafe { libc::madvise(addr as *mut libc::c_void, len, libc::MADV_WILLNEED) };
+
         if result == 0 {
             Ok(())
         } else {
-            Err(ZiporaError::invalid_data(format!("madvise MADV_WILLNEED failed: {}", 
-                std::io::Error::last_os_error())))
+            Err(ZiporaError::invalid_data(format!(
+                "madvise MADV_WILLNEED failed: {}",
+                std::io::Error::last_os_error()
+            )))
         }
     }
 
@@ -264,17 +277,15 @@ impl VmManager {
         use winapi::um::memoryapi::PrefetchVirtualMemory;
         use winapi::um::processthreadsapi::GetCurrentProcess;
         use winapi::um::winnt::WIN32_MEMORY_RANGE_ENTRY;
-        
+
         let range = WIN32_MEMORY_RANGE_ENTRY {
             VirtualAddress: addr as *mut std::ffi::c_void,
             NumberOfBytes: len,
         };
 
         // SAFETY: pointer and length derived from valid slice, GetCurrentProcess() always valid, range is properly initialized
-        let result = unsafe {
-            PrefetchVirtualMemory(GetCurrentProcess(), 1, &range, 0)
-        };
-        
+        let result = unsafe { PrefetchVirtualMemory(GetCurrentProcess(), 1, &range, 0) };
+
         if result != 0 {
             Ok(())
         } else {
@@ -287,7 +298,7 @@ impl VmManager {
         let page_size = self.kernel_info.page_size;
         let mut current = addr as usize;
         let end = current + len;
-        
+
         while current < end {
             // SAFETY: pointer is within valid range derived from slice, read is aligned to page boundary
             unsafe {
@@ -296,7 +307,7 @@ impl VmManager {
             }
             current += page_size;
         }
-        
+
         Ok(())
     }
 
@@ -323,19 +334,23 @@ impl VmManager {
                 #[cfg(target_os = "linux")]
                 MemoryAdvice::HugePage => libc::MADV_HUGEPAGE,
                 #[cfg(not(target_os = "linux"))]
-                MemoryAdvice::HugePage => return Err(ZiporaError::invalid_data("MADV_HUGEPAGE only available on Linux")),
+                MemoryAdvice::HugePage => {
+                    return Err(ZiporaError::invalid_data(
+                        "MADV_HUGEPAGE only available on Linux",
+                    ));
+                }
             };
 
             // SAFETY: pointer and length derived from valid slice, madvise returns error code (not UB)
-            let result = unsafe {
-                libc::madvise(addr as *mut libc::c_void, len, madvise_flag)
-            };
+            let result = unsafe { libc::madvise(addr as *mut libc::c_void, len, madvise_flag) };
 
             if result == 0 {
                 Ok(())
             } else {
-                Err(ZiporaError::invalid_data(format!("madvise failed: {}", 
-                    std::io::Error::last_os_error())))
+                Err(ZiporaError::invalid_data(format!(
+                    "madvise failed: {}",
+                    std::io::Error::last_os_error()
+                )))
             }
         }
 
@@ -365,15 +380,15 @@ impl VmManager {
         #[cfg(unix)]
         {
             // SAFETY: pointer and length derived from valid slice, mlock returns error code (not UB)
-            let result = unsafe {
-                libc::mlock(addr as *const libc::c_void, len)
-            };
+            let result = unsafe { libc::mlock(addr as *const libc::c_void, len) };
 
             if result == 0 {
                 Ok(())
             } else {
-                Err(ZiporaError::invalid_data(format!("mlock failed: {}", 
-                    std::io::Error::last_os_error())))
+                Err(ZiporaError::invalid_data(format!(
+                    "mlock failed: {}",
+                    std::io::Error::last_os_error()
+                )))
             }
         }
 
@@ -382,9 +397,7 @@ impl VmManager {
             use winapi::um::memoryapi::VirtualLock;
 
             // SAFETY: pointer and length derived from valid slice, VirtualLock returns non-zero on success
-            let result = unsafe {
-                VirtualLock(addr as *mut std::ffi::c_void, len)
-            };
+            let result = unsafe { VirtualLock(addr as *mut std::ffi::c_void, len) };
 
             if result != 0 {
                 Ok(())
@@ -395,7 +408,9 @@ impl VmManager {
 
         #[cfg(not(any(unix, target_os = "windows")))]
         {
-            Err(ZiporaError::invalid_data("Memory locking not supported on this platform"))
+            Err(ZiporaError::invalid_data(
+                "Memory locking not supported on this platform",
+            ))
         }
     }
 
@@ -415,15 +430,15 @@ impl VmManager {
         #[cfg(unix)]
         {
             // SAFETY: pointer and length derived from valid slice, munlock returns error code (not UB)
-            let result = unsafe {
-                libc::munlock(addr as *const libc::c_void, len)
-            };
+            let result = unsafe { libc::munlock(addr as *const libc::c_void, len) };
 
             if result == 0 {
                 Ok(())
             } else {
-                Err(ZiporaError::invalid_data(format!("munlock failed: {}", 
-                    std::io::Error::last_os_error())))
+                Err(ZiporaError::invalid_data(format!(
+                    "munlock failed: {}",
+                    std::io::Error::last_os_error()
+                )))
             }
         }
 
@@ -432,9 +447,7 @@ impl VmManager {
             use winapi::um::memoryapi::VirtualUnlock;
 
             // SAFETY: pointer and length derived from valid slice, VirtualUnlock returns non-zero on success
-            let result = unsafe {
-                VirtualUnlock(addr as *mut std::ffi::c_void, len)
-            };
+            let result = unsafe { VirtualUnlock(addr as *mut std::ffi::c_void, len) };
 
             if result != 0 {
                 Ok(())
@@ -445,7 +458,9 @@ impl VmManager {
 
         #[cfg(not(any(unix, target_os = "windows")))]
         {
-            Err(ZiporaError::invalid_data("Memory unlocking not supported on this platform"))
+            Err(ZiporaError::invalid_data(
+                "Memory unlocking not supported on this platform",
+            ))
         }
     }
 }
@@ -505,12 +520,12 @@ impl PageAlignedAlloc {
         #[cfg(unix)]
         {
             // SAFETY: page_size is power-of-two alignment, aligned_size is multiple of page_size, returns null on failure
-            let ptr = unsafe {
-                libc::aligned_alloc(page_size, aligned_size)
-            };
+            let ptr = unsafe { libc::aligned_alloc(page_size, aligned_size) };
 
             if ptr.is_null() {
-                Err(ZiporaError::invalid_data("Failed to allocate page-aligned memory"))
+                Err(ZiporaError::invalid_data(
+                    "Failed to allocate page-aligned memory",
+                ))
             } else {
                 Ok(PageAlignedBuffer {
                     ptr: ptr as *mut u8,
@@ -536,7 +551,9 @@ impl PageAlignedAlloc {
             };
 
             if ptr.is_null() {
-                Err(ZiporaError::invalid_data("Failed to allocate page-aligned memory"))
+                Err(ZiporaError::invalid_data(
+                    "Failed to allocate page-aligned memory",
+                ))
             } else {
                 Ok(PageAlignedBuffer {
                     ptr: ptr as *mut u8,
@@ -687,11 +704,11 @@ mod tests {
     #[test]
     fn test_kernel_info_detection() {
         let kernel_info = get_kernel_info();
-        
+
         assert!(!kernel_info.os_name.is_empty());
         assert!(kernel_info.page_size > 0);
         assert!(kernel_info.page_size.is_power_of_two());
-        
+
         println!("OS: {}", kernel_info.os_name);
         println!("Kernel: {}", kernel_info.kernel_version);
         println!("Page size: {} bytes", kernel_info.page_size);
@@ -704,9 +721,9 @@ mod tests {
     fn test_vm_manager() {
         let vm_manager = VmManager::new();
         let kernel_info = vm_manager.kernel_info();
-        
+
         assert!(kernel_info.page_size > 0);
-        
+
         // Test with a small buffer
         let buffer = vec![0u8; 4096];
         let result = vm_manager.prefetch(&buffer);
@@ -717,16 +734,16 @@ mod tests {
     #[test]
     fn test_page_aligned_alloc() {
         let allocator = PageAlignedAlloc::new();
-        
+
         // Test allocation
         let buffer = allocator.allocate(1000).unwrap();
         assert!(buffer.size() >= 1000);
         assert_eq!(buffer.actual_size(), 1000);
-        
+
         // Check alignment
         let page_size = get_kernel_info().page_size;
         assert_eq!(buffer.as_ptr() as usize % page_size, 0);
-        
+
         // Test slice access
         let slice = buffer.as_slice();
         assert_eq!(slice.len(), 1000);
@@ -736,14 +753,14 @@ mod tests {
     fn test_memory_advice() {
         let vm_manager = VmManager::new();
         let buffer = vec![0u8; 8192];
-        
+
         // Test various memory advice (should not fail on most systems)
         let advice_types = vec![
             MemoryAdvice::Sequential,
             MemoryAdvice::Random,
             MemoryAdvice::WillNeed,
         ];
-        
+
         for advice in advice_types {
             let result = vm_manager.advise_memory_usage(&buffer, advice);
             // Should either succeed or fail gracefully

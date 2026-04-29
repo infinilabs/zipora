@@ -21,6 +21,6 @@
 pub mod search;
 
 pub use search::{
-    find_char, find_pattern, find_any_of, compare_strings,
-    SimdStringSearch, SearchTier, SearchConfig,
+    SearchConfig, SearchTier, SimdStringSearch, compare_strings, find_any_of, find_char,
+    find_pattern,
 };

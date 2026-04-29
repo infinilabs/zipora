@@ -69,12 +69,12 @@ use crate::blob_store::zip_offset::{ZipOffsetBlobStore, ZipOffsetBlobStoreConfig
 use crate::blob_store::zip_offset_builder::ZipOffsetBlobStoreBuilder;
 //use crate::blob_store::sorted_uint_vec::SortedUintVec;
 //use crate::containers::specialized::UintVector;
-use crate::error::{Result, ZiporaError};
-use crate::fsa::{ZiporaTrie, ZiporaTrieConfig};
-use crate::fsa::traits::Trie;
-use crate::memory::{SecureMemoryPool, SecurePoolConfig};
-use crate::succinct::{RankSelectOps, RankSelectBuilder};
 use crate::RecordId;
+use crate::error::{Result, ZiporaError};
+use crate::fsa::traits::Trie;
+use crate::fsa::{ZiporaTrie, ZiporaTrieConfig};
+use crate::memory::{SecureMemoryPool, SecurePoolConfig};
+use crate::succinct::{RankSelectBuilder, RankSelectOps};
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -131,27 +131,58 @@ impl TrieBlobStoreConfig {
     }
 
     /// Create a builder (returns Self with Default values for fluent configuration).
-    pub fn builder() -> Self { Self::default() }
+    pub fn builder() -> Self {
+        Self::default()
+    }
     /// Set trie config.
-    pub fn trie_config(mut self, v: ZiporaTrieConfig) -> Self { self.trie_config = v; self }
+    pub fn trie_config(mut self, v: ZiporaTrieConfig) -> Self {
+        self.trie_config = v;
+        self
+    }
     /// Set blob config.
-    pub fn blob_config(mut self, v: ZipOffsetBlobStoreConfig) -> Self { self.blob_config = v; self }
+    pub fn blob_config(mut self, v: ZipOffsetBlobStoreConfig) -> Self {
+        self.blob_config = v;
+        self
+    }
     /// Set key compression.
-    pub fn enable_key_compression(mut self, v: bool) -> Self { self.enable_key_compression = v; self }
+    pub fn enable_key_compression(mut self, v: bool) -> Self {
+        self.enable_key_compression = v;
+        self
+    }
     /// Set batch optimization.
-    pub fn enable_batch_optimization(mut self, v: bool) -> Self { self.enable_batch_optimization = v; self }
+    pub fn enable_batch_optimization(mut self, v: bool) -> Self {
+        self.enable_batch_optimization = v;
+        self
+    }
     /// Set key cache size.
-    pub fn key_cache_size(mut self, v: usize) -> Self { self.key_cache_size = v; self }
+    pub fn key_cache_size(mut self, v: usize) -> Self {
+        self.key_cache_size = v;
+        self
+    }
     /// Set statistics collection.
-    pub fn enable_statistics(mut self, v: bool) -> Self { self.enable_statistics = v; self }
+    pub fn enable_statistics(mut self, v: bool) -> Self {
+        self.enable_statistics = v;
+        self
+    }
     /// Finalize configuration.
-    pub fn build(self) -> Result<Self> { Ok(self) }
+    pub fn build(self) -> Result<Self> {
+        Ok(self)
+    }
     /// Enable key compression.
-    pub fn key_compression(mut self, v: bool) -> Self { self.enable_key_compression = v; self }
+    pub fn key_compression(mut self, v: bool) -> Self {
+        self.enable_key_compression = v;
+        self
+    }
     /// Enable statistics.
-    pub fn statistics(mut self, v: bool) -> Self { self.enable_statistics = v; self }
+    pub fn statistics(mut self, v: bool) -> Self {
+        self.enable_statistics = v;
+        self
+    }
     /// Enable batch optimization.
-    pub fn batch_optimization(mut self, v: bool) -> Self { self.enable_batch_optimization = v; self }
+    pub fn batch_optimization(mut self, v: bool) -> Self {
+        self.enable_batch_optimization = v;
+        self
+    }
 
     /// Create a configuration optimized for performance
     pub fn performance_optimized() -> Self {
@@ -254,7 +285,8 @@ impl TrieBlobStoreStats {
     pub fn record_key_cache_access(&mut self, hit: bool) {
         let total_accesses = self.blob_stats.get_count + 1;
         if hit {
-            self.key_cache_hit_ratio = (self.key_cache_hit_ratio * (total_accesses - 1) as f64 + 1.0)
+            self.key_cache_hit_ratio = (self.key_cache_hit_ratio * (total_accesses - 1) as f64
+                + 1.0)
                 / total_accesses as f64;
         } else {
             self.key_cache_hit_ratio =
@@ -321,7 +353,7 @@ where
     ) -> Result<Self> {
         // Convert SortableStrVec to key-value pairs for the trie blob store
         let mut store = Self::new(Self::convert_config_from_nest_louds_trie(config)?)?;
-        
+
         // Add each string as both key and data
         for i in 0..keys.len() {
             if let Some(key) = keys.get(i) {
@@ -329,7 +361,7 @@ where
                 store.put_with_key(key_bytes, key_bytes)?;
             }
         }
-        
+
         Ok(store)
     }
 
@@ -340,7 +372,7 @@ where
     ) -> Result<Self> {
         // Convert ZoSortedStrVec to key-value pairs for the trie blob store
         let mut store = Self::new(Self::convert_config_from_nest_louds_trie(config)?)?;
-        
+
         // Add each string as both key and data
         for i in 0..keys.len() {
             if let Some(key) = keys.get(i) {
@@ -348,7 +380,7 @@ where
                 store.put_with_key(key_bytes, key_bytes)?;
             }
         }
-        
+
         Ok(store)
     }
 
@@ -359,7 +391,7 @@ where
     ) -> Result<Self> {
         // Convert FixedLenStrVec to key-value pairs for the trie blob store
         let mut store = Self::new(Self::convert_config_from_nest_louds_trie(config)?)?;
-        
+
         // Add each string as both key and data
         for i in 0..keys.len() {
             if let Some(key) = keys.get(i) {
@@ -367,7 +399,7 @@ where
                 store.put_with_key(key_bytes, key_bytes)?;
             }
         }
-        
+
         Ok(store)
     }
 
@@ -381,10 +413,10 @@ where
         }
 
         let mut store = Self::new(Self::convert_config_from_nest_louds_trie(config)?)?;
-        
+
         // Use the entire data as a single key-value pair
         store.put_with_key(data, data)?;
-        
+
         Ok(store)
     }
 
@@ -406,12 +438,12 @@ where
         }
 
         let mut store = Self::new(Self::convert_config_from_nest_louds_trie(config)?)?;
-        
+
         // Add each key-value pair to the store
         for (key, value) in pairs {
             store.put_with_key(key, value)?;
         }
-        
+
         Ok(store)
     }
 
@@ -422,9 +454,10 @@ where
         use crate::blob_store::zip_offset::ZipOffsetBlobStoreConfig;
 
         // Create ZiporaTrieConfig based on optimization flags
-        let trie_config = if config.optimization_flags.contains(
-            crate::config::nest_louds_trie::OptimizationFlags::ENABLE_CACHE_OPTIMIZATION
-        ) {
+        let trie_config = if config
+            .optimization_flags
+            .contains(crate::config::nest_louds_trie::OptimizationFlags::ENABLE_CACHE_OPTIMIZATION)
+        {
             ZiporaTrieConfig::cache_optimized()
         } else if config.enable_queue_compression {
             ZiporaTrieConfig::space_optimized()
@@ -433,15 +466,17 @@ where
         };
 
         // Create blob store config based on optimization flags
-        let blob_config = if config.optimization_flags.contains(
-            crate::config::nest_louds_trie::OptimizationFlags::ENABLE_FAST_SEARCH
-        ) {
+        let blob_config = if config
+            .optimization_flags
+            .contains(crate::config::nest_louds_trie::OptimizationFlags::ENABLE_FAST_SEARCH)
+        {
             ZipOffsetBlobStoreConfig::performance_optimized()
         } else if config.enable_queue_compression {
             ZipOffsetBlobStoreConfig::compression_optimized()
-        } else if config.optimization_flags.contains(
-            crate::config::nest_louds_trie::OptimizationFlags::USE_HUGEPAGES
-        ) {
+        } else if config
+            .optimization_flags
+            .contains(crate::config::nest_louds_trie::OptimizationFlags::USE_HUGEPAGES)
+        {
             ZipOffsetBlobStoreConfig::security_optimized()
         } else {
             ZipOffsetBlobStoreConfig::default()
@@ -453,9 +488,13 @@ where
             memory_config: crate::memory::SecurePoolConfig::small_secure(),
             enable_key_compression: config.enable_queue_compression,
             enable_batch_optimization: config.optimization_flags.contains(
-                crate::config::nest_louds_trie::OptimizationFlags::ENABLE_PARALLEL_CONSTRUCTION
+                crate::config::nest_louds_trie::OptimizationFlags::ENABLE_PARALLEL_CONSTRUCTION,
             ),
-            key_cache_size: if config.node_cache_size > 0 { config.node_cache_size } else { 1024 },
+            key_cache_size: if config.node_cache_size > 0 {
+                config.node_cache_size
+            } else {
+                1024
+            },
             enable_statistics: config.enable_statistics,
         })
     }
@@ -481,7 +520,9 @@ where
     /// ```
     pub fn new(config: TrieBlobStoreConfig) -> Result<Self> {
         let trie = ZiporaTrie::<R>::with_config(config.trie_config.clone());
-        let blob_builder = Some(ZipOffsetBlobStoreBuilder::with_config(config.blob_config.clone())?);
+        let blob_builder = Some(ZipOffsetBlobStoreBuilder::with_config(
+            config.blob_config.clone(),
+        )?);
         let record_to_node_map = Vec::new();
         let record_to_blob_map = Vec::new();
         let key_cache = if config.key_cache_size > 0 {
@@ -550,7 +591,9 @@ where
     /// ```
     pub fn put_with_key(&mut self, key: &[u8], data: &[u8]) -> Result<RecordId> {
         if self.finalized {
-            return Err(ZiporaError::invalid_operation("Store has been finalized - no more writes allowed"));
+            return Err(ZiporaError::invalid_operation(
+                "Store has been finalized - no more writes allowed",
+            ));
         }
 
         // Insert key into trie to get node ID
@@ -558,7 +601,8 @@ where
 
         // Always create a new blob record for each put operation (even for duplicate keys)
         let blob_id = self.next_record_id;
-        self.temp_blob_storage.insert(blob_id as usize, data.to_vec());
+        self.temp_blob_storage
+            .insert(blob_id as usize, data.to_vec());
 
         // Also store in blob builder for completeness (though it doesn't work yet)
         if let Some(ref mut builder) = self.blob_builder {
@@ -570,16 +614,17 @@ where
         let record_id = self.next_record_id;
         self.next_record_id += 1;
 
-        // Update mappings: 
+        // Update mappings:
         // - For duplicate keys, update the node-to-blob mapping to point to the latest blob
         // - Always add new entries to record-to-node and record-to-blob mappings
-        self.node_to_blob_map.insert(node_id as usize, blob_id as usize);
-        
+        self.node_to_blob_map
+            .insert(node_id as usize, blob_id as usize);
+
         while self.record_to_node_map.len() <= record_id as usize {
             self.record_to_node_map.push(usize::MAX);
         }
         self.record_to_node_map[record_id as usize] = node_id as usize;
-        
+
         while self.record_to_blob_map.len() <= record_id as usize {
             self.record_to_blob_map.push(usize::MAX);
         }
@@ -601,7 +646,7 @@ where
             self.stats.blob_stats.record_put(data.len());
             self.stats.key_count += 1;
             self.stats.total_key_size += key.len();
-            self.stats.average_key_length = 
+            self.stats.average_key_length =
                 self.stats.total_key_size as f64 / self.stats.key_count as f64;
         }
 
@@ -634,24 +679,31 @@ where
 
         // Check cache first - but we need to verify the key still exists in trie
         if self.config.key_cache_size > 0
-            && let Some(&_cached_record_id) = self.key_cache.get(key) {
-                // Cache hit - still need to verify through trie since we changed the design
-                if self.config.enable_statistics {
-                    self.stats.record_key_cache_access(true);
-                }
-                // Fall through to trie lookup for now - cache will be optimized later
+            && let Some(&_cached_record_id) = self.key_cache.get(key)
+        {
+            // Cache hit - still need to verify through trie since we changed the design
+            if self.config.enable_statistics {
+                self.stats.record_key_cache_access(true);
             }
+            // Fall through to trie lookup for now - cache will be optimized later
+        }
 
         // Look up key in trie
-        let node_id = self.trie.lookup_node_id(key)
+        let node_id = self
+            .trie
+            .lookup_node_id(key)
             .ok_or_else(|| ZiporaError::not_found("key not found in trie"))?;
 
         // Get blob ID from node mapping
-        let blob_id = *self.node_to_blob_map.get(&(node_id as usize))
+        let blob_id = *self
+            .node_to_blob_map
+            .get(&(node_id as usize))
             .ok_or_else(|| ZiporaError::not_found("node mapping not found"))?;
 
         // Retrieve data from temporary storage (until ZipOffsetBlobStore is fixed)
-        let data = self.temp_blob_storage.get(&blob_id)
+        let data = self
+            .temp_blob_storage
+            .get(&blob_id)
             .ok_or_else(|| ZiporaError::not_found("blob data not found"))?
             .clone();
 
@@ -707,9 +759,10 @@ where
             // Look up key in trie to get node ID (don't call get_by_key to avoid auto-finalization)
             if let Some(node_id) = self.trie.lookup_node_id(&key)
                 && let Some(&blob_id) = self.node_to_blob_map.get(&(node_id as usize))
-                    && let Some(data) = self.temp_blob_storage.get(&blob_id) {
-                        results.push((key, data.clone()));
-                    }
+                && let Some(data) = self.temp_blob_storage.get(&blob_id)
+            {
+                results.push((key, data.clone()));
+            }
         }
 
         if self.config.enable_statistics {
@@ -741,7 +794,7 @@ where
     ///
     /// This provides access to the underlying ZipOffsetBlobStore for advanced
     /// operations not exposed through the trie blob store interface.
-    /// 
+    ///
     /// # Returns
     /// * `Some(&ZipOffsetBlobStore)` if the store has been finalized
     /// * `None` if the store is still in building mode
@@ -768,7 +821,9 @@ where
             self.finalized = true;
             Ok(())
         } else {
-            Err(ZiporaError::invalid_operation("No builder available to finalize"))
+            Err(ZiporaError::invalid_operation(
+                "No builder available to finalize",
+            ))
         }
     }
 
@@ -789,17 +844,21 @@ where
     /// in the underlying ZipOffsetBlobStore.
     fn get(&self, id: RecordId) -> Result<Vec<u8>> {
         // Get blob ID directly from record mapping
-        let blob_id = self.record_to_blob_map.get(id as usize)
+        let blob_id = self
+            .record_to_blob_map
+            .get(id as usize)
             .copied()
             .ok_or_else(|| ZiporaError::not_found("record ID not found"))?;
-        
+
         if blob_id == usize::MAX {
             return Err(ZiporaError::not_found("invalid record ID"));
         }
 
         // Retrieve data from temporary storage (until ZipOffsetBlobStore is fixed)
-        self.temp_blob_storage.get(&blob_id)
-            .ok_or_else(|| ZiporaError::not_found("blob data not found")).cloned()
+        self.temp_blob_storage
+            .get(&blob_id)
+            .ok_or_else(|| ZiporaError::not_found("blob data not found"))
+            .cloned()
     }
 
     /// Store a blob and return its unique ID
@@ -815,25 +874,33 @@ where
     /// Remove a blob by its record ID
     fn remove(&mut self, id: RecordId) -> Result<()> {
         // Get node ID from record mapping
-        let node_id = self.record_to_node_map.get(id as usize)
+        let node_id = self
+            .record_to_node_map
+            .get(id as usize)
             .copied()
             .ok_or_else(|| ZiporaError::not_found("record ID not found"))?;
-        
+
         if node_id == usize::MAX {
             return Err(ZiporaError::not_found("invalid record ID"));
         }
 
         // Get blob ID from node mapping
-        let _blob_id = *self.node_to_blob_map.get(&{ node_id })
+        let _blob_id = *self
+            .node_to_blob_map
+            .get(&{ node_id })
             .ok_or_else(|| ZiporaError::not_found("node mapping not found"))?;
 
         // Remove from blob store (only allowed if not finalized, since finalized stores are read-only)
         if self.finalized {
-            return Err(ZiporaError::invalid_operation("Cannot remove from finalized store"));
+            return Err(ZiporaError::invalid_operation(
+                "Cannot remove from finalized store",
+            ));
         }
 
         // Remove from trie (reconstruct key first)
-        let key = self.trie.restore_string(node_id as u32)
+        let key = self
+            .trie
+            .restore_string(node_id as u32)
             .ok_or_else(|| ZiporaError::not_found("Could not restore key from node ID"))?;
         self.trie.remove(&key)?;
 
@@ -879,16 +946,19 @@ where
     /// Get the size of a blob without retrieving its data
     fn size(&self, id: RecordId) -> Result<Option<usize>> {
         // Get blob ID directly from record mapping
-        let blob_id = self.record_to_blob_map.get(id as usize)
+        let blob_id = self
+            .record_to_blob_map
+            .get(id as usize)
             .copied()
             .ok_or_else(|| ZiporaError::not_found("record ID not found"))?;
-        
+
         if blob_id == usize::MAX {
             return Ok(None);
         }
 
         // Get size from temporary storage (until ZipOffsetBlobStore is fixed)
-        self.temp_blob_storage.get(&blob_id)
+        self.temp_blob_storage
+            .get(&blob_id)
             .map(|data| Some(data.len()))
             .ok_or_else(|| ZiporaError::not_found("blob data not found"))
     }
@@ -926,9 +996,10 @@ where
         let mut ids = Vec::new();
         for i in 0..self.record_to_node_map.len() {
             if let Some(&node_id) = self.record_to_node_map.get(i)
-                && node_id != usize::MAX {
-                    ids.push(i as RecordId);
-                }
+                && node_id != usize::MAX
+            {
+                ids.push(i as RecordId);
+            }
         }
         ids.into_iter()
     }
@@ -945,12 +1016,12 @@ where
         I: IntoIterator<Item = Vec<u8>>,
     {
         let mut record_ids = Vec::new();
-        
+
         for data in blobs {
             let record_id = self.put(&data)?;
             record_ids.push(record_id);
         }
-        
+
         Ok(record_ids)
     }
 
@@ -960,14 +1031,14 @@ where
         I: IntoIterator<Item = RecordId>,
     {
         let mut results = Vec::new();
-        
+
         for id in ids {
             match self.get(id) {
                 Ok(data) => results.push(Some(data)),
                 Err(_) => results.push(None),
             }
         }
-        
+
         Ok(results)
     }
 
@@ -977,13 +1048,13 @@ where
         I: IntoIterator<Item = RecordId>,
     {
         let mut removed_count = 0;
-        
+
         for id in ids {
             if self.remove(id).is_ok() {
                 removed_count += 1;
             }
         }
-        
+
         Ok(removed_count)
     }
 }
@@ -996,16 +1067,20 @@ where
     /// Get the compression ratio for a specific blob
     fn compression_ratio(&self, id: RecordId) -> Result<Option<f32>> {
         // Get node ID from record mapping
-        let node_id = self.record_to_node_map.get(id as usize)
+        let node_id = self
+            .record_to_node_map
+            .get(id as usize)
             .copied()
             .ok_or_else(|| ZiporaError::not_found("record ID not found"))?;
-        
+
         if node_id == usize::MAX {
             return Ok(None);
         }
 
         // Get blob ID from node mapping
-        let blob_id = *self.node_to_blob_map.get(&{ node_id })
+        let blob_id = *self
+            .node_to_blob_map
+            .get(&{ node_id })
             .ok_or_else(|| ZiporaError::not_found("node mapping not found"))?;
 
         // For temporary storage, return 1.0 (no compression)
@@ -1019,20 +1094,25 @@ where
     /// Get the compressed size of a blob
     fn compressed_size(&self, id: RecordId) -> Result<Option<usize>> {
         // Get node ID from record mapping
-        let node_id = self.record_to_node_map.get(id as usize)
+        let node_id = self
+            .record_to_node_map
+            .get(id as usize)
             .copied()
             .ok_or_else(|| ZiporaError::not_found("record ID not found"))?;
-        
+
         if node_id == usize::MAX {
             return Ok(None);
         }
 
         // Get blob ID from node mapping
-        let blob_id = *self.node_to_blob_map.get(&{ node_id })
+        let blob_id = *self
+            .node_to_blob_map
+            .get(&{ node_id })
             .ok_or_else(|| ZiporaError::not_found("node mapping not found"))?;
 
         // For temporary storage, compressed size equals uncompressed size
-        self.temp_blob_storage.get(&blob_id)
+        self.temp_blob_storage
+            .get(&blob_id)
             .map(|data| Some(data.len()))
             .ok_or_else(|| ZiporaError::not_found("blob data not found"))
     }
@@ -1045,13 +1125,14 @@ where
             // If not finalized, return default stats
             CompressionStats::default()
         };
-        
+
         // Add trie compression benefits to the overall stats
         if self.config.enable_statistics {
             // Estimate space saved by trie structure for keys
             let estimated_key_overhead = self.stats.total_key_size * 2; // Rough estimate
-            let trie_space_saved = (estimated_key_overhead as f32 * self.stats.trie_compression_ratio) as usize;
-            
+            let trie_space_saved =
+                (estimated_key_overhead as f32 * self.stats.trie_compression_ratio) as usize;
+
             blob_stats.uncompressed_size += estimated_key_overhead;
             blob_stats.compressed_size += estimated_key_overhead - trie_space_saved;
             blob_stats.compression_ratio = if blob_stats.uncompressed_size > 0 {
@@ -1060,7 +1141,7 @@ where
                 1.0
             };
         }
-        
+
         blob_stats
     }
 }
@@ -1262,7 +1343,10 @@ where
     /// # Returns
     /// * `Ok(NestLoudsTrieBlobStore)` - Successfully built store
     /// * `Err(ZiporaError)` - If construction fails
-    pub fn finish_with_progress<F>(mut self, mut progress_callback: F) -> Result<NestLoudsTrieBlobStore<R>>
+    pub fn finish_with_progress<F>(
+        mut self,
+        mut progress_callback: F,
+    ) -> Result<NestLoudsTrieBlobStore<R>>
     where
         F: FnMut(usize, usize),
     {
@@ -1277,7 +1361,7 @@ where
         // Insert all entries with progress tracking
         for (i, (key, data)) in self.entries.into_iter().enumerate() {
             store.put_with_key(&key, &data)?;
-            
+
             // Call progress callback every 100 entries or on the last entry
             if i % 100 == 0 || i == total_entries - 1 {
                 progress_callback(i + 1, total_entries);
@@ -1329,12 +1413,12 @@ where
         I: IntoIterator<Item = (Vec<u8>, Vec<u8>)>,
     {
         let mut record_ids = Vec::new();
-        
+
         for (key, data) in entries {
             let record_id = self.put_with_key(&key, &data)?;
             record_ids.push(record_id);
         }
-        
+
         Ok(record_ids)
     }
 
@@ -1477,11 +1561,21 @@ mod tests {
         let mut store = TestStore::default().unwrap();
 
         // Insert hierarchical data
-        store.put_with_key(b"user/john/profile", b"John's profile").unwrap();
-        store.put_with_key(b"user/john/settings", b"John's settings").unwrap();
-        store.put_with_key(b"user/jane/profile", b"Jane's profile").unwrap();
-        store.put_with_key(b"user/jane/settings", b"Jane's settings").unwrap();
-        store.put_with_key(b"system/config", b"System config").unwrap();
+        store
+            .put_with_key(b"user/john/profile", b"John's profile")
+            .unwrap();
+        store
+            .put_with_key(b"user/john/settings", b"John's settings")
+            .unwrap();
+        store
+            .put_with_key(b"user/jane/profile", b"Jane's profile")
+            .unwrap();
+        store
+            .put_with_key(b"user/jane/settings", b"Jane's settings")
+            .unwrap();
+        store
+            .put_with_key(b"system/config", b"System config")
+            .unwrap();
 
         // Test prefix queries
         let john_data = store.get_by_prefix(b"user/john/").unwrap();
@@ -1643,13 +1737,15 @@ mod tests {
         }
 
         let mut progress_updates = Vec::new();
-        let store = builder.finish_with_progress(|current, total| {
-            progress_updates.push((current, total));
-        }).unwrap();
+        let store = builder
+            .finish_with_progress(|current, total| {
+                progress_updates.push((current, total));
+            })
+            .unwrap();
 
         assert_eq!(store.len(), 500);
         assert!(!progress_updates.is_empty());
-        
+
         // Should have received progress updates
         let last_update = progress_updates.last().unwrap();
         assert_eq!(last_update.0, 500); // current
@@ -1668,9 +1764,10 @@ mod tests {
         // Test getting all keys
         let all_keys = store.keys().unwrap();
         assert_eq!(all_keys.len(), 4);
-        
+
         // Keys should be in lexicographic order due to trie structure
-        let key_strings: Vec<String> = all_keys.iter()
+        let key_strings: Vec<String> = all_keys
+            .iter()
             .map(|k| String::from_utf8(k.clone()).unwrap())
             .collect();
         let mut sorted_keys = key_strings.clone();
@@ -1718,13 +1815,15 @@ mod tests {
     fn test_compressed_blob_store_trait() {
         let mut store = TestStore::default().unwrap();
 
-        let id1 = store.put_with_key(b"key1", b"some compressible data that should compress well").unwrap();
+        let id1 = store
+            .put_with_key(b"key1", b"some compressible data that should compress well")
+            .unwrap();
         let id2 = store.put_with_key(b"key2", b"x").unwrap(); // Small data
 
         // Test compression ratio (may not be available depending on underlying implementation)
         let ratio1 = store.compression_ratio(id1).unwrap();
         let _ratio2 = store.compression_ratio(id2).unwrap();
-        
+
         // These might be None if compression isn't tracked at blob level
         if ratio1.is_some() {
             assert!(ratio1.unwrap() >= 0.0);
@@ -1734,7 +1833,7 @@ mod tests {
         // Test compressed size
         let compressed_size1 = store.compressed_size(id1).unwrap();
         let compressed_size2 = store.compressed_size(id2).unwrap();
-        
+
         if compressed_size1.is_some() && compressed_size2.is_some() {
             // Compressed sizes should be reasonable
             assert!(compressed_size1.unwrap() > 0);
@@ -1828,8 +1927,13 @@ mod tests {
 
         // Test key with all possible byte values
         let full_byte_key: Vec<u8> = (0..=255).collect();
-        store.put_with_key(&full_byte_key, b"full byte range").unwrap();
-        assert_eq!(store.get_by_key(&full_byte_key).unwrap(), b"full byte range");
+        store
+            .put_with_key(&full_byte_key, b"full byte range")
+            .unwrap();
+        assert_eq!(
+            store.get_by_key(&full_byte_key).unwrap(),
+            b"full byte range"
+        );
     }
 
     #[test]
@@ -1869,8 +1973,13 @@ mod tests {
 
         // Test keys with special characters
         let special_chars = b"!@#$%^&*()_+-=[]{}|;:,.<>?";
-        store.put_with_key(special_chars, b"special char data").unwrap();
-        assert_eq!(store.get_by_key(special_chars).unwrap(), b"special char data");
+        store
+            .put_with_key(special_chars, b"special char data")
+            .unwrap();
+        assert_eq!(
+            store.get_by_key(special_chars).unwrap(),
+            b"special char data"
+        );
 
         // Test control characters
         let control_chars = vec![0x01, 0x02, 0x03, 0x7F, 0x80, 0xFF];
@@ -1925,7 +2034,9 @@ mod tests {
         ];
 
         for (i, key) in keys.iter().enumerate() {
-            store.put_with_key(key, format!("data_{}", i).as_bytes()).unwrap();
+            store
+                .put_with_key(key, format!("data_{}", i).as_bytes())
+                .unwrap();
         }
 
         // Verify all keys are accessible
@@ -2011,20 +2122,35 @@ mod tests {
         // Test memory optimized configuration
         let mem_config = TrieBlobStoreConfig::memory_optimized();
         let mut mem_store = TestStore::new(mem_config).unwrap();
-        mem_store.put_with_key(b"test_mem", b"memory optimized").unwrap();
-        assert_eq!(mem_store.get_by_key(b"test_mem").unwrap(), b"memory optimized");
+        mem_store
+            .put_with_key(b"test_mem", b"memory optimized")
+            .unwrap();
+        assert_eq!(
+            mem_store.get_by_key(b"test_mem").unwrap(),
+            b"memory optimized"
+        );
 
         // Test security optimized configuration
         let sec_config = TrieBlobStoreConfig::security_optimized();
         let mut sec_store = TestStore::new(sec_config).unwrap();
-        sec_store.put_with_key(b"test_sec", b"security optimized").unwrap();
-        assert_eq!(sec_store.get_by_key(b"test_sec").unwrap(), b"security optimized");
+        sec_store
+            .put_with_key(b"test_sec", b"security optimized")
+            .unwrap();
+        assert_eq!(
+            sec_store.get_by_key(b"test_sec").unwrap(),
+            b"security optimized"
+        );
 
         // Test performance optimized configuration
         let perf_config = TrieBlobStoreConfig::performance_optimized();
         let mut perf_store = TestStore::new(perf_config).unwrap();
-        perf_store.put_with_key(b"test_perf", b"performance optimized").unwrap();
-        assert_eq!(perf_store.get_by_key(b"test_perf").unwrap(), b"performance optimized");
+        perf_store
+            .put_with_key(b"test_perf", b"performance optimized")
+            .unwrap();
+        assert_eq!(
+            perf_store.get_by_key(b"test_perf").unwrap(),
+            b"performance optimized"
+        );
     }
 
     #[test]
@@ -2045,7 +2171,8 @@ mod tests {
         assert_eq!(store.len(), NUM_KEYS);
 
         // Test random access
-        for i in (0..NUM_KEYS).step_by(337) { // Use prime step to get good distribution
+        for i in (0..NUM_KEYS).step_by(337) {
+            // Use prime step to get good distribution
             let (key, expected_data) = &inserted_keys[i];
             let retrieved_data = store.get_by_key(key.as_bytes()).unwrap();
             assert_eq!(retrieved_data, expected_data.as_bytes());
@@ -2061,7 +2188,7 @@ mod tests {
 
         // Verify keys are sorted
         for i in 1..all_keys.len() {
-            assert!(all_keys[i-1] < all_keys[i]);
+            assert!(all_keys[i - 1] < all_keys[i]);
         }
     }
 
@@ -2224,7 +2351,7 @@ mod tests {
         let mut store = TestStore::default().unwrap();
 
         // Test various error conditions and ensure proper error propagation
-        
+
         // Non-existent key
         match store.get_by_key(b"nonexistent") {
             Err(e) => assert!(e.to_string().contains("not found")),

@@ -62,7 +62,7 @@ pub fn popcount_slice(words: &[u64]) -> usize {
         // POPCNT before AVX2: on CPUs with both (Haswell+), hardware POPCNT
         // beats vpshufb nibble-lookup because popcnt is single-cycle per word.
         // AVX2 vpshufb is only useful on (theoretical) CPUs with AVX2 but no POPCNT.
-        if std::arch::is_x86_feature_detected!("popcnt") {
+        if has_popcnt() {
             // SAFETY: POPCNT support verified by runtime feature check.
             return unsafe { popcount_hw(words) };
         }
@@ -152,8 +152,8 @@ unsafe fn popcount_avx2(words: &[u64]) -> usize {
     unsafe {
         // Nibble → popcount lookup table: LUT[nibble] = popcount(nibble)
         let lut = _mm256_setr_epi8(
-            0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4,
-            0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4,
+            0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4, 0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2,
+            3, 3, 4,
         );
         let lo_mask = _mm256_set1_epi8(0x0F);
         let mut total_acc = _mm256_setzero_si256(); // u64 accumulators
@@ -221,15 +221,25 @@ unsafe fn popcount_avx2(words: &[u64]) -> usize {
 unsafe fn popcount_hw(words: &[u64]) -> usize {
     use std::arch::x86_64::_popcnt64;
 
-    // Simple iterator loop — LLVM will auto-unroll and pipeline.
-    // This matches LLVM's own optimization of count_ones() on POPCNT-capable
-    // CPUs, but guarantees hardware POPCNT regardless of -C target-cpu.
-    let mut sum: usize = 0;
-    for &w in words {
-        // SAFETY: POPCNT guaranteed by #[target_feature(enable = "popcnt")].
-        sum += _popcnt64(w as i64) as usize;
+    let mut sum0 = 0usize;
+    let mut sum1 = 0usize;
+    let mut sum2 = 0usize;
+    let mut sum3 = 0usize;
+
+    let mut chunks = words.chunks_exact(4);
+    for chunk in &mut chunks {
+        sum0 += _popcnt64(chunk[0] as i64) as usize;
+        sum1 += _popcnt64(chunk[1] as i64) as usize;
+        sum2 += _popcnt64(chunk[2] as i64) as usize;
+        sum3 += _popcnt64(chunk[3] as i64) as usize;
     }
-    sum
+
+    let mut remainder = 0usize;
+    for &w in chunks.remainder() {
+        remainder += _popcnt64(w as i64) as usize;
+    }
+
+    sum0 + sum1 + sum2 + sum3 + remainder
 }
 
 // ============================================================================
@@ -253,9 +263,9 @@ unsafe fn popcount_neon(words: &[u64]) -> usize {
             let v = vld1q_u64(words.as_ptr().add(base));
             // vcntq_u8: popcount per byte, then pairwise add to u64
             let byte_counts = vcntq_u8(vreinterpretq_u8_u64(v));
-            let pair_sums = vpaddlq_u8(byte_counts);   // u8 → u16
-            let quad_sums = vpaddlq_u16(pair_sums);     // u16 → u32
-            let oct_sums = vpaddlq_u32(quad_sums);      // u32 → u64
+            let pair_sums = vpaddlq_u8(byte_counts); // u8 → u16
+            let quad_sums = vpaddlq_u16(pair_sums); // u16 → u32
+            let oct_sums = vpaddlq_u32(quad_sums); // u32 → u64
             acc = vaddq_u64(acc, oct_sums);
         }
 
@@ -294,7 +304,23 @@ unsafe fn popcount_neon(words: &[u64]) -> usize {
 /// - Other/ARM: returns false
 ///
 /// The result is cached in a `OnceLock` — the CPUID check runs at most once.
+
+/// Check if POPCNT is available, cached for performance.
 #[inline]
+pub fn has_popcnt() -> bool {
+    static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHE.get_or_init(|| {
+        #[cfg(target_arch = "x86_64")]
+        {
+            std::arch::is_x86_feature_detected!("popcnt")
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
+        }
+    })
+}
+
 pub fn has_fast_bmi2() -> bool {
     static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *CACHE.get_or_init(has_fast_bmi2_detect)
@@ -316,9 +342,8 @@ fn has_fast_bmi2_detect() -> bool {
             let cpuid0 = std::arch::x86_64::__cpuid(0);
 
             // Check "AuthenticAMD": ebx="Auth", edx="enti", ecx="cAMD"
-            let is_amd = cpuid0.ebx == 0x6874_7541
-                && cpuid0.edx == 0x6974_6E65
-                && cpuid0.ecx == 0x444D_4163;
+            let is_amd =
+                cpuid0.ebx == 0x6874_7541 && cpuid0.edx == 0x6974_6E65 && cpuid0.ecx == 0x444D_4163;
 
             if !is_amd {
                 // Intel (or other x86 vendor): BMI2 PDEP is always fast
@@ -349,7 +374,7 @@ fn has_fast_bmi2_detect() -> bool {
 /// Select the `rank`-th set bit in a 64-bit word (0-indexed).
 /// Returns the bit position (0..63).
 ///
-/// Three-tier dispatch:
+/// Three-tier dispatch (resolved once via cached function pointer):
 /// 1. **BMI2 PDEP** (3 cycles) — Intel Haswell+ and AMD Zen 3+
 /// 2. **POPCNT binary search** (O(1), ~18 instructions) — any CPU with POPCNT
 /// 3. **Scalar bit-clearing loop** (O(rank)) — universal fallback
@@ -358,24 +383,32 @@ fn has_fast_bmi2_detect() -> bool {
 /// AMD Zen 1/2's microcoded PDEP (250-300 cycles).
 #[inline(always)]
 pub fn select_in_word(word: u64, rank: usize) -> usize {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if has_fast_bmi2() {
-            // SAFETY: BMI2 available and fast (verified by has_fast_bmi2).
-            // _pdep_u64(1 << rank, word) places a 1-bit at the position of the
-            // rank-th set bit in `word`. trailing_zeros gives that position.
-            return unsafe {
-                let mask = std::arch::x86_64::_pdep_u64(1u64 << rank, word);
-                mask.trailing_zeros() as usize
-            };
-        }
+    type SelectFn = fn(u64, usize) -> usize;
+    static DISPATCH: std::sync::OnceLock<SelectFn> = std::sync::OnceLock::new();
 
-        if std::arch::is_x86_feature_detected!("popcnt") {
-            return select_in_word_popcnt(word, rank);
+    let f = *DISPATCH.get_or_init(|| {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if has_fast_bmi2() {
+                return select_in_word_pdep as SelectFn;
+            }
+            if has_popcnt() {
+                return select_in_word_popcnt as SelectFn;
+            }
         }
+        select_in_word_scalar as SelectFn
+    });
+    f(word, rank)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn select_in_word_pdep(word: u64, rank: usize) -> usize {
+    // SAFETY: BMI2 availability verified at dispatch time by has_fast_bmi2().
+    unsafe {
+        let mask = std::arch::x86_64::_pdep_u64(1u64 << rank, word);
+        mask.trailing_zeros() as usize
     }
-
-    select_in_word_scalar(word, rank)
 }
 
 /// POPCNT-based binary search select — O(1) with ~18 instructions.
@@ -389,22 +422,39 @@ fn select_in_word_popcnt(word: u64, rank: usize) -> usize {
     let mut pos = 0usize;
 
     let count = (word & 0xFFFF_FFFF).count_ones() as usize;
-    if count <= r { r -= count; pos += 32; }
+    if count <= r {
+        r -= count;
+        pos += 32;
+    }
 
     let count = ((word >> pos) & 0xFFFF).count_ones() as usize;
-    if count <= r { r -= count; pos += 16; }
+    if count <= r {
+        r -= count;
+        pos += 16;
+    }
 
     let count = ((word >> pos) & 0xFF).count_ones() as usize;
-    if count <= r { r -= count; pos += 8; }
+    if count <= r {
+        r -= count;
+        pos += 8;
+    }
 
     let count = ((word >> pos) & 0xF).count_ones() as usize;
-    if count <= r { r -= count; pos += 4; }
+    if count <= r {
+        r -= count;
+        pos += 4;
+    }
 
     let count = ((word >> pos) & 0x3).count_ones() as usize;
-    if count <= r { r -= count; pos += 2; }
+    if count <= r {
+        r -= count;
+        pos += 2;
+    }
 
     let count = ((word >> pos) & 0x1) as usize;
-    if count <= r { pos += 1; }
+    if count <= r {
+        pos += 1;
+    }
 
     pos
 }
@@ -454,7 +504,9 @@ mod tests {
     fn test_matches_scalar_small() {
         // Below SIMD_THRESHOLD — exercises scalar path
         for len in 0..SIMD_THRESHOLD {
-            let words: Vec<u64> = (0..len as u64).map(|i| i.wrapping_mul(0x1234_5678_9ABC_DEF0)).collect();
+            let words: Vec<u64> = (0..len as u64)
+                .map(|i| i.wrapping_mul(0x1234_5678_9ABC_DEF0))
+                .collect();
             let expected: usize = words.iter().map(|w| w.count_ones() as usize).sum();
             assert_eq!(popcount_slice(&words), expected, "mismatch at len={len}");
         }
@@ -463,7 +515,9 @@ mod tests {
     #[test]
     fn test_matches_scalar_simd_range() {
         // At and above SIMD_THRESHOLD — exercises SIMD paths
-        for len in [16, 17, 31, 32, 33, 63, 64, 100, 127, 128, 255, 256, 500, 1000] {
+        for len in [
+            16, 17, 31, 32, 33, 63, 64, 100, 127, 128, 255, 256, 500, 1000,
+        ] {
             let words: Vec<u64> = (0..len as u64)
                 .map(|i| i.wrapping_mul(0xDEAD_BEEF_CAFE_BABE).wrapping_add(i))
                 .collect();
@@ -532,7 +586,7 @@ mod tests {
                 let avx2 = unsafe { popcount_avx2(&words) };
                 assert_eq!(avx2, scalar, "AVX2 vs scalar mismatch");
             }
-            if std::arch::is_x86_feature_detected!("popcnt") {
+            if has_popcnt() {
                 let hw = unsafe { popcount_hw(&words) };
                 assert_eq!(hw, scalar, "POPCNT vs scalar mismatch");
             }
@@ -626,9 +680,16 @@ mod tests {
     fn test_select_in_word_popcnt_matches_scalar() {
         // Verify POPCNT fallback matches scalar for many patterns
         let test_words: Vec<u64> = vec![
-            0, 1, 0xFF, 0xAAAA_AAAA_AAAA_AAAA, 0x5555_5555_5555_5555,
-            u64::MAX, 0x8000_0000_0000_0001, 0x0123_4567_89AB_CDEF,
-            0xFEDC_BA98_7654_3210, 0x0F0F_0F0F_0F0F_0F0F,
+            0,
+            1,
+            0xFF,
+            0xAAAA_AAAA_AAAA_AAAA,
+            0x5555_5555_5555_5555,
+            u64::MAX,
+            0x8000_0000_0000_0001,
+            0x0123_4567_89AB_CDEF,
+            0xFEDC_BA98_7654_3210,
+            0x0F0F_0F0F_0F0F_0F0F,
         ];
 
         for &word in &test_words {
@@ -657,10 +718,7 @@ mod tests {
             for rank in 0..ones {
                 let result = select_in_word(word, rank);
                 let scalar = select_in_word_scalar(word, rank);
-                assert_eq!(
-                    result, scalar,
-                    "mismatch word=0x{word:016X} rank={rank}"
-                );
+                assert_eq!(result, scalar, "mismatch word=0x{word:016X} rank={rank}");
             }
         }
     }

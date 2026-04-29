@@ -6,8 +6,8 @@
 //!
 //! Better space efficiency than MixedIL256 (0.375 bits/bit/dim vs 2.5).
 
-use crate::error::{Result, ZiporaError};
 use super::RankSelectOps;
+use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;
 
 const LINE_BITS: usize = 512;
@@ -23,7 +23,9 @@ struct RankCacheMixed {
 
 #[inline(always)]
 fn get_rela(rela: u64, k: usize) -> usize {
-    if k == 0 { return 0; }
+    if k == 0 {
+        return 0;
+    }
     ((rela >> ((k - 1) * 9)) & 0x1FF) as usize
 }
 
@@ -81,7 +83,10 @@ impl RankSelectMixedSE512 {
         let mut rank_cache = Vec::with_capacity(nlines + 1);
         let mut cum = [0u32; 2];
         for i in 0..nlines {
-            let mut rc = RankCacheMixed { base: cum, rela: [0; 2] };
+            let mut rc = RankCacheMixed {
+                base: cum,
+                rela: [0; 2],
+            };
             for d in 0..2 {
                 let mut r = 0u64;
                 let mut rela = 0u64;
@@ -97,7 +102,10 @@ impl RankSelectMixedSE512 {
             }
             rank_cache.push(rc);
         }
-        rank_cache.push(RankCacheMixed { base: cum, rela: [0; 2] });
+        rank_cache.push(RankCacheMixed {
+            base: cum,
+            rela: [0; 2],
+        });
 
         Ok(Self {
             words,
@@ -108,27 +116,47 @@ impl RankSelectMixedSE512 {
     }
 
     #[inline]
-    pub fn dim0(&self) -> MixedSE512DimView<'_> { MixedSE512DimView { parent: self, dim: 0 } }
-    pub fn dim1(&self) -> MixedSE512DimView<'_> { MixedSE512DimView { parent: self, dim: 1 } }
+    pub fn dim0(&self) -> MixedSE512DimView<'_> {
+        MixedSE512DimView {
+            parent: self,
+            dim: 0,
+        }
+    }
+    pub fn dim1(&self) -> MixedSE512DimView<'_> {
+        MixedSE512DimView {
+            parent: self,
+            dim: 1,
+        }
+    }
 
     #[inline]
     pub fn rank1_dim(&self, dim: usize, pos: usize) -> usize {
         assert!(pos <= self.size[dim]);
-        if pos == 0 { return 0; }
+        if pos == 0 {
+            return 0;
+        }
         let block = pos / LINE_BITS;
         let rc = &self.rank_cache[block];
         let k = (pos % LINE_BITS) / 64;
         let word_idx = (pos / 64) * 2 + dim;
         let bit_in_word = pos % 64;
-        let word = if word_idx < self.words.len() { self.words[word_idx] } else { 0 };
+        let word = if word_idx < self.words.len() {
+            self.words[word_idx]
+        } else {
+            0
+        };
         let tail = if bit_in_word > 0 {
             (word & ((1u64 << bit_in_word) - 1)).count_ones() as usize
-        } else { 0 };
+        } else {
+            0
+        };
         rc.base[dim] as usize + get_rela(rc.rela[dim], k) + tail
     }
 
     #[inline]
-    pub fn rank0_dim(&self, dim: usize, pos: usize) -> usize { pos - self.rank1_dim(dim, pos) }
+    pub fn rank0_dim(&self, dim: usize, pos: usize) -> usize {
+        pos - self.rank1_dim(dim, pos)
+    }
 
     pub fn select1_dim(&self, dim: usize, k: usize) -> Result<usize> {
         if k >= self.max_rank1[dim] {
@@ -139,7 +167,11 @@ impl RankSelectMixedSE512 {
         let mut hi = nlines;
         while lo < hi {
             let mid = (lo + hi) / 2;
-            if (self.rank_cache[mid].base[dim] as usize) <= k { lo = mid + 1; } else { hi = mid; }
+            if (self.rank_cache[mid].base[dim] as usize) <= k {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
         }
         let block = lo - 1;
         let rc = &self.rank_cache[block];
@@ -153,7 +185,9 @@ impl RankSelectMixedSE512 {
                 let remaining = target - rank_before_j;
                 let word_idx = (block * WORDS_PER_LINE + j) * 2 + dim;
                 if word_idx < self.words.len() {
-                    return Ok(base_bitpos + j * 64 + select_in_word(self.words[word_idx], remaining));
+                    return Ok(base_bitpos
+                        + j * 64
+                        + select_in_word(self.words[word_idx], remaining));
                 }
             }
         }
@@ -162,12 +196,16 @@ impl RankSelectMixedSE512 {
 
     #[inline]
     pub fn get_dim(&self, dim: usize, index: usize) -> Option<bool> {
-        if index >= self.size[dim] { return None; }
+        if index >= self.size[dim] {
+            return None;
+        }
         let word_idx = (index / 64) * 2 + dim;
         let bit_idx = index % 64;
         if word_idx < self.words.len() {
             Some((self.words[word_idx] >> bit_idx) & 1 == 1)
-        } else { Some(false) }
+        } else {
+            Some(false)
+        }
     }
 
     #[inline]
@@ -178,17 +216,33 @@ impl RankSelectMixedSE512 {
 
 impl RankSelectOps for MixedSE512DimView<'_> {
     #[inline]
-    fn rank1(&self, pos: usize) -> usize { self.parent.rank1_dim(self.dim, pos) }
-    fn rank0(&self, pos: usize) -> usize { self.parent.rank0_dim(self.dim, pos) }
-    #[inline]
-    fn select1(&self, k: usize) -> Result<usize> { self.parent.select1_dim(self.dim, k) }
-    fn select0(&self, _k: usize) -> Result<usize> {
-        Err(ZiporaError::invalid_data("select0 not implemented for mixed_se_512"))
+    fn rank1(&self, pos: usize) -> usize {
+        self.parent.rank1_dim(self.dim, pos)
     }
-    fn len(&self) -> usize { self.parent.size[self.dim] }
-    fn count_ones(&self) -> usize { self.parent.max_rank1[self.dim] }
-    fn get(&self, index: usize) -> Option<bool> { self.parent.get_dim(self.dim, index) }
-    fn space_overhead_percent(&self) -> f64 { 0.0 }
+    fn rank0(&self, pos: usize) -> usize {
+        self.parent.rank0_dim(self.dim, pos)
+    }
+    #[inline]
+    fn select1(&self, k: usize) -> Result<usize> {
+        self.parent.select1_dim(self.dim, k)
+    }
+    fn select0(&self, _k: usize) -> Result<usize> {
+        Err(ZiporaError::invalid_data(
+            "select0 not implemented for mixed_se_512",
+        ))
+    }
+    fn len(&self) -> usize {
+        self.parent.size[self.dim]
+    }
+    fn count_ones(&self) -> usize {
+        self.parent.max_rank1[self.dim]
+    }
+    fn get(&self, index: usize) -> Option<bool> {
+        self.parent.get_dim(self.dim, index)
+    }
+    fn space_overhead_percent(&self) -> f64 {
+        0.0
+    }
 }
 
 /// Select k-th set bit within a u64 word.
@@ -213,7 +267,9 @@ mod tests {
 
     fn make_bv(pattern: &[bool]) -> BitVector {
         let mut bv = BitVector::new();
-        for &b in pattern { bv.push(b).unwrap(); }
+        for &b in pattern {
+            bv.push(b).unwrap();
+        }
         bv
     }
 
@@ -290,7 +346,8 @@ mod tests {
 
     #[test]
     fn test_different_sizes() {
-        let rs = RankSelectMixedSE512::new(make_bv(&vec![true; 100]), make_bv(&vec![false; 50])).unwrap();
+        let rs = RankSelectMixedSE512::new(make_bv(&vec![true; 100]), make_bv(&vec![false; 50]))
+            .unwrap();
         assert_eq!(rs.dim0().len(), 100);
         assert_eq!(rs.dim1().len(), 50);
         assert_eq!(rs.dim0().count_ones(), 100);

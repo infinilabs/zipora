@@ -9,10 +9,7 @@
 //! - Scalability across data types and sizes
 //! - Configuration impact analysis
 
-use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkId, Criterion,
-    Throughput,
-};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use std::time::Duration;
 
 // =============================================================================
@@ -25,10 +22,12 @@ struct TestDataGenerator;
 impl TestDataGenerator {
     /// Generate highly repetitive text data (best case for compression)
     fn repetitive_text(size: usize) -> Vec<u8> {
-        let patterns = ["the quick brown fox jumps over the lazy dog",
+        let patterns = [
+            "the quick brown fox jumps over the lazy dog",
             "lorem ipsum dolor sit amet consectetur adipiscing elit",
             "compression algorithm performance testing benchmark",
-            "pattern matching dictionary suffix array implementation"];
+            "pattern matching dictionary suffix array implementation",
+        ];
 
         let mut data = Vec::with_capacity(size);
         let mut pattern_idx = 0;
@@ -52,11 +51,13 @@ impl TestDataGenerator {
     /// Generate log file data with timestamps and patterns
     fn log_data(size: usize) -> Vec<u8> {
         let log_levels = ["INFO", "WARN", "ERROR", "DEBUG"];
-        let messages = ["Request processed successfully",
+        let messages = [
+            "Request processed successfully",
             "Connection established to database",
             "Cache miss, fetching from source",
             "Transaction completed in",
-            "Authentication successful for user"];
+            "Authentication successful for user",
+        ];
 
         let mut data = Vec::with_capacity(size);
         let mut line_num = 0;
@@ -213,7 +214,7 @@ fn bench_suffix_array_construction(c: &mut Criterion) {
         for (name, generator) in &data_types {
             let mut data = generator(*size);
             data.push(0); // Add sentinel for suffix array
-            
+
             group.throughput(Throughput::Bytes(data.len() as u64));
 
             // Test suffix array construction performance
@@ -244,11 +245,20 @@ fn bench_pattern_matching(c: &mut Criterion) {
 
     // Create test data with known patterns
     let test_cases = vec![
-        ("high_repetition", TestDataGenerator::repetitive_text(50_000)),
+        (
+            "high_repetition",
+            TestDataGenerator::repetitive_text(50_000),
+        ),
         ("medium_repetition", TestDataGenerator::log_data(50_000)),
         ("low_repetition", TestDataGenerator::source_code(50_000)),
-        ("binary_low_entropy", TestDataGenerator::binary_data(50_000, 0.2)),
-        ("binary_high_entropy", TestDataGenerator::binary_data(50_000, 0.8)),
+        (
+            "binary_low_entropy",
+            TestDataGenerator::binary_data(50_000, 0.2),
+        ),
+        (
+            "binary_high_entropy",
+            TestDataGenerator::binary_data(50_000, 0.8),
+        ),
     ];
 
     for (name, data) in test_cases {
@@ -271,10 +281,11 @@ fn bench_pattern_matching(c: &mut Criterion) {
                     for pos in (0..data.len()).step_by(1000) {
                         let pattern_len = (20).min(data.len() - pos);
                         let pattern = &data[pos..pos + pattern_len];
-                        
+
                         // Binary search in suffix array
                         let result = sa.search(&sa_data, pattern);
-                        if result.1 > 0 { // Check if any matches found (count > 0)
+                        if result.1 > 0 {
+                            // Check if any matches found (count > 0)
                             matches += 1;
                         }
                     }
@@ -296,13 +307,22 @@ fn bench_compression_ratio(c: &mut Criterion) {
     group.sample_size(10);
 
     let test_data = vec![
-        ("text_repetitive", TestDataGenerator::repetitive_text(100_000)),
+        (
+            "text_repetitive",
+            TestDataGenerator::repetitive_text(100_000),
+        ),
         ("log_structured", TestDataGenerator::log_data(100_000)),
         ("source_code", TestDataGenerator::source_code(100_000)),
         ("json_data", TestDataGenerator::json_data(100_000)),
         ("dna_sequence", TestDataGenerator::dna_sequence(100_000)),
-        ("binary_low_entropy", TestDataGenerator::binary_data(100_000, 0.2)),
-        ("binary_high_entropy", TestDataGenerator::binary_data(100_000, 0.8)),
+        (
+            "binary_low_entropy",
+            TestDataGenerator::binary_data(100_000, 0.2),
+        ),
+        (
+            "binary_high_entropy",
+            TestDataGenerator::binary_data(100_000, 0.8),
+        ),
     ];
 
     for (name, data) in test_data {
@@ -317,7 +337,7 @@ fn bench_compression_ratio(c: &mut Criterion) {
                     // Build a simple dictionary of frequent patterns
                     let mut dictionary = Vec::new();
                     let mut pattern_counts = std::collections::HashMap::new();
-                    
+
                     // Find frequent patterns of length 4-32
                     for window_size in [4, 8, 16, 32] {
                         if data.len() >= window_size {
@@ -326,44 +346,46 @@ fn bench_compression_ratio(c: &mut Criterion) {
                             }
                         }
                     }
-                    
+
                     // Select top patterns for dictionary
-                    let mut patterns: Vec<_> = pattern_counts.into_iter()
+                    let mut patterns: Vec<_> = pattern_counts
+                        .into_iter()
                         .filter(|(_, count)| *count > 2)
                         .collect();
                     patterns.sort_by_key(|(pattern, count)| {
                         // Prioritize by savings: (length * count)
                         -(pattern.len() as i32 * *count)
                     });
-                    
+
                     for (pattern, _) in patterns.iter().take(256) {
                         dictionary.push(pattern.clone());
                     }
-                    
+
                     // Simulate compression
                     let mut compressed_size = 0;
                     let mut pos = 0;
-                    
+
                     while pos < data.len() {
                         let mut found = false;
-                        
+
                         // Try to match against dictionary
                         for pattern in dictionary.iter() {
-                            if pos + pattern.len() <= data.len() 
-                                && &data[pos..pos + pattern.len()] == pattern.as_slice() {
+                            if pos + pattern.len() <= data.len()
+                                && &data[pos..pos + pattern.len()] == pattern.as_slice()
+                            {
                                 compressed_size += 2; // Dictionary reference
                                 pos += pattern.len();
                                 found = true;
                                 break;
                             }
                         }
-                        
+
                         if !found {
                             compressed_size += 1; // Literal byte
                             pos += 1;
                         }
                     }
-                    
+
                     let compression_ratio = data.len() as f64 / compressed_size as f64;
                     black_box(compression_ratio)
                 });
@@ -458,11 +480,11 @@ fn bench_memory_usage(c: &mut Criterion) {
                     let mut sa_data = data.clone();
                     sa_data.push(0);
                     let sa = SuffixArray::new(&sa_data).unwrap();
-                    
+
                     // Calculate memory usage
                     let sa_memory = sa.as_slice().len() * std::mem::size_of::<u32>();
                     let overhead = sa_memory as f64 / data.len() as f64;
-                    
+
                     black_box((sa_memory, overhead))
                 });
             },
@@ -476,7 +498,7 @@ fn bench_memory_usage(c: &mut Criterion) {
                 b.iter(|| {
                     let mut dictionary = Vec::new();
                     let mut pattern_set = std::collections::HashSet::new();
-                    
+
                     // Build dictionary with deduplication
                     for window_size in [8, 16, 32] {
                         if data.len() >= window_size {
@@ -493,10 +515,10 @@ fn bench_memory_usage(c: &mut Criterion) {
                             break;
                         }
                     }
-                    
+
                     let dict_memory: usize = dictionary.iter().map(|p| p.len()).sum();
                     let overhead = dict_memory as f64 / data.len() as f64;
-                    
+
                     black_box((dict_memory, overhead))
                 });
             },
@@ -554,7 +576,8 @@ fn bench_scalability(c: &mut Criterion) {
                         if i + 20 <= data.len() {
                             let pattern = &data[i..i + 20];
                             let result = sa.search(&sa_data, pattern);
-                            if result.1 > 0 { // Check if any matches found (count > 0)
+                            if result.1 > 0 {
+                                // Check if any matches found (count > 0)
                                 found += 1;
                             }
                         }
@@ -606,10 +629,11 @@ fn bench_throughput(c: &mut Criterion) {
                         let search_start = pos.saturating_sub(window_size);
                         for i in search_start..pos {
                             let mut match_len = 0;
-                            while pos + match_len < data.len() 
-                                && i + match_len < pos 
-                                && data[pos + match_len] == data[i + match_len] 
-                                && match_len < 255 {
+                            while pos + match_len < data.len()
+                                && i + match_len < pos
+                                && data[pos + match_len] == data[i + match_len]
+                                && match_len < 255
+                            {
                                 match_len += 1;
                             }
 
@@ -655,10 +679,11 @@ fn bench_throughput(c: &mut Criterion) {
                     let search_start = pos.saturating_sub(window_size);
                     for i in search_start..pos {
                         let mut match_len = 0;
-                        while pos + match_len < original.len() 
-                            && i + match_len < pos 
-                            && original[pos + match_len] == original[i + match_len] 
-                            && match_len < 255 {
+                        while pos + match_len < original.len()
+                            && i + match_len < pos
+                            && original[pos + match_len] == original[i + match_len]
+                            && match_len < 255
+                        {
                             match_len += 1;
                         }
 
@@ -688,7 +713,8 @@ fn bench_throughput(c: &mut Criterion) {
                         if compressed[i] == 0x80 && i + 3 < compressed.len() {
                             // Match
                             i += 1;
-                            let match_pos = compressed[i] as usize | ((compressed[i + 1] as usize) << 8);
+                            let match_pos =
+                                compressed[i] as usize | ((compressed[i + 1] as usize) << 8);
                             i += 2;
                             let match_len = compressed[i] as usize;
                             i += 1;
@@ -747,8 +773,4 @@ criterion_group! {
     targets = bench_throughput
 }
 
-criterion_main!(
-    core_benches,
-    memory_benches,
-    throughput_benches
-);
+criterion_main!(core_benches, memory_benches, throughput_benches);

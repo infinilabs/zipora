@@ -13,36 +13,35 @@ pub mod rans;
 pub mod simd_huffman;
 
 // Re-export main types
-pub use bit_ops::{BitOps, BitOpsConfig, EntropyBitOps, BitOpsStats};
-pub use context::{EntropyContext, EntropyContextConfig, ContextBuffer, EntropyResult, ContextStats};
+pub use bit_ops::{BitOps, BitOpsConfig, BitOpsStats, EntropyBitOps};
+pub use context::{
+    ContextBuffer, ContextStats, EntropyContext, EntropyContextConfig, EntropyResult,
+};
 pub use dictionary::{DictionaryBuilder, DictionaryCompressor, OptimizedDictionaryCompressor};
 pub use fse::{
-    FseEncoder, FseDecoder, FseConfig, FseTable, 
-    fse_compress, fse_decompress, fse_zip, fse_unzip,
-    fse_compress_with_config, fse_decompress_with_config,
-    HardwareCapabilities, FastDivision, EntropyNormalizer
+    EntropyNormalizer, FastDivision, FseConfig, FseDecoder, FseEncoder, FseTable,
+    HardwareCapabilities, fse_compress, fse_compress_with_config, fse_decompress,
+    fse_decompress_with_config, fse_unzip, fse_zip,
 };
 
 // Type aliases for benchmark compatibility
 pub type EnhancedFseEncoder = FseEncoder;
 pub type EnhancedFseConfig = FseConfig;
 pub use huffman::{
-    HuffmanDecoder, HuffmanEncoder, HuffmanTree,
-    ContextualHuffmanEncoder, ContextualHuffmanDecoder, HuffmanOrder
-};
-pub use simd_huffman::{
-    SimdHuffmanEncoder, SimdHuffmanConfig, HuffmanSimdTier
-};
-pub use rans::{
-    Rans64Decoder as RansDecoder, Rans64Encoder, Rans64State as RansState, 
-    Rans64Symbol as RansSymbol, AdaptiveRans64Encoder as AdaptiveRansEncoder,
-    ParallelX1, ParallelX2, ParallelX4, ParallelX8
+    ContextualHuffmanDecoder, ContextualHuffmanEncoder, HuffmanDecoder, HuffmanEncoder,
+    HuffmanOrder, HuffmanTree,
 };
 pub use parallel::{
-    ParallelVariant, ParallelX2Variant, ParallelX4Variant, ParallelX8Variant,
-    ParallelConfig, ParallelHuffmanEncoder, ParallelHuffmanDecoder,
-    AdaptiveParallelEncoder, ParallelBenchmark, BenchmarkResult
+    AdaptiveParallelEncoder, BenchmarkResult, ParallelBenchmark, ParallelConfig,
+    ParallelHuffmanDecoder, ParallelHuffmanEncoder, ParallelVariant, ParallelX2Variant,
+    ParallelX4Variant, ParallelX8Variant,
 };
+pub use rans::{
+    AdaptiveRans64Encoder as AdaptiveRansEncoder, ParallelX1, ParallelX2, ParallelX4, ParallelX8,
+    Rans64Decoder as RansDecoder, Rans64Encoder, Rans64State as RansState,
+    Rans64Symbol as RansSymbol,
+};
+pub use simd_huffman::{HuffmanSimdTier, SimdHuffmanConfig, SimdHuffmanEncoder};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -75,7 +74,6 @@ pub enum EntropyAlgorithm {
     Auto,
 }
 
-
 impl EntropyAlgorithm {
     /// Get the name of the algorithm
     pub fn name(self) -> &'static str {
@@ -90,7 +88,7 @@ impl EntropyAlgorithm {
             EntropyAlgorithm::Auto => "Auto",
         }
     }
-    
+
     /// Check if the algorithm is available in the current build
     pub fn is_available(self) -> bool {
         match self {
@@ -106,34 +104,29 @@ impl EntropyAlgorithm {
             EntropyAlgorithm::Auto => true,
         }
     }
-    
+
     /// Get all available algorithms for the current build
     pub fn available_algorithms() -> Vec<Self> {
-        let mut algorithms = vec![
-            Self::Huffman,
-            Self::Rans,
-            Self::Dictionary,
-            Self::Auto,
-        ];
-        
+        let mut algorithms = vec![Self::Huffman, Self::Rans, Self::Dictionary, Self::Auto];
+
         #[cfg(feature = "zstd")]
         {
             algorithms.push(Self::Fse);
             algorithms.push(Self::KFse);
         }
-        
+
         algorithms
     }
-    
+
     /// Select optimal algorithm based on data characteristics
     pub fn select_for_data(data: &[u8]) -> Self {
         if data.is_empty() {
             return Self::Huffman; // Default for empty data
         }
-        
+
         let entropy = EntropyStats::calculate_entropy(data);
         let size = data.len();
-        
+
         // Calculate repetitiveness
         let mut char_counts = std::collections::HashMap::new();
         for &byte in data {
@@ -141,18 +134,18 @@ impl EntropyAlgorithm {
         }
         let unique_chars = char_counts.len();
         let repetitiveness = 1.0 - (unique_chars as f64 / 256.0);
-        
+
         match (entropy, size, repetitiveness) {
             // High repetitiveness - use dictionary compression
             (_, _, r) if r > 0.8 => Self::Dictionary,
-            
+
             // Low entropy, larger data - FSE is excellent
             #[cfg(feature = "zstd")]
             (e, s, _) if e < 4.0 && s > 1024 => Self::Fse,
-            
+
             // Medium entropy, medium size - rANS is balanced
             (e, s, _) if (4.0..=6.0).contains(&e) && s > 256 => Self::Rans,
-            
+
             // High entropy or small data - Huffman is simple and effective
             _ => Self::Huffman,
         }
@@ -167,20 +160,20 @@ impl EntropyAlgorithm {
 pub struct EntropyConfig {
     /// Selected entropy algorithm
     pub algorithm: EntropyAlgorithm,
-    
+
     /// FSE-specific configuration
     #[cfg(feature = "zstd")]
     pub fse_config: Option<FseConfig>,
-    
+
     /// Compression level (1-22, where higher = better compression but slower)
     pub compression_level: i32,
-    
+
     /// Enable adaptive mode for dynamic algorithm selection
     pub adaptive: bool,
-    
+
     /// Dictionary size for dictionary-based algorithms
     pub dict_size: usize,
-    
+
     /// Enable fast decode mode (may reduce compression ratio)
     pub fast_decode: bool,
 }
@@ -211,7 +204,7 @@ impl EntropyConfig {
             ..Default::default()
         }
     }
-    
+
     /// Configuration optimized for high compression ratio
     pub fn high_compression() -> Self {
         Self {
@@ -227,7 +220,7 @@ impl EntropyConfig {
             ..Default::default()
         }
     }
-    
+
     /// Configuration optimized for balanced performance
     pub fn balanced() -> Self {
         Self::default()

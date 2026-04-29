@@ -1,15 +1,14 @@
 const DENSE_THRESHOLD: usize = 64;
 const PARTITION_THRESHOLD: usize = 256;
 const OPTIMAL_THRESHOLD: usize = 4096;
-use crate::error::{Result, ZiporaError};
 use crate::algorithms::bit_ops::select_in_word;
+use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;
 use std::cmp::Ordering;
 
 use super::basic::{EliasFano, EliasFanoCursor};
-use super::partitioned::{PartitionedEliasFano, PartitionedEliasFanoCursor};
 use super::optimal::{OptimalPartitionedEliasFano, OptimalPefCursor};
-
+use super::partitioned::{PartitionedEliasFano, PartitionedEliasFanoCursor};
 
 /// Adaptive posting list that selects the best encoding based on list statistics.
 ///
@@ -66,8 +65,12 @@ impl HybridPostingList {
         match encoding {
             PostingEncoding::Dense => Self::Dense(values.to_vec()),
             PostingEncoding::EliasFano => Self::EliasFano(EliasFano::from_sorted(values)),
-            PostingEncoding::Partitioned => Self::Partitioned(PartitionedEliasFano::from_sorted(values)),
-            PostingEncoding::Optimal => Self::Optimal(OptimalPartitionedEliasFano::from_sorted(values)),
+            PostingEncoding::Partitioned => {
+                Self::Partitioned(PartitionedEliasFano::from_sorted(values))
+            }
+            PostingEncoding::Optimal => {
+                Self::Optimal(OptimalPartitionedEliasFano::from_sorted(values))
+            }
         }
     }
 
@@ -82,7 +85,9 @@ impl HybridPostingList {
     }
 
     #[inline]
-    pub fn is_empty(&self) -> bool { self.len() == 0 }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 
     pub fn size_bytes(&self) -> usize {
         match self {
@@ -95,7 +100,9 @@ impl HybridPostingList {
 
     #[inline]
     pub fn bits_per_element(&self) -> f64 {
-        if self.is_empty() { return 0.0; }
+        if self.is_empty() {
+            return 0.0;
+        }
         (self.size_bytes() * 8) as f64 / self.len() as f64
     }
 
@@ -152,4 +159,3 @@ pub enum PostingEncoding {
     Partitioned,
     Optimal,
 }
-

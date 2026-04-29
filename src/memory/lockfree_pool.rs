@@ -17,11 +17,13 @@
 //! - **Cache efficiency**: Offset-based addressing improves cache utilization
 //! - **Concurrent throughput**: Scales with number of CPU cores
 
-use crate::error::{Result, ZiporaError};
-use crate::memory::cache_layout::{CacheOptimizedAllocator, CacheLayoutConfig, align_to_cache_line, AccessPattern, PrefetchHint};
-use crate::memory::{get_optimal_numa_node, numa_alloc_aligned, numa_dealloc};
-use crate::memory::simd_ops::{fast_fill, fast_prefetch};
 use super::CachePadded;
+use crate::error::{Result, ZiporaError};
+use crate::memory::cache_layout::{
+    AccessPattern, CacheLayoutConfig, CacheOptimizedAllocator, PrefetchHint, align_to_cache_line,
+};
+use crate::memory::simd_ops::{fast_fill, fast_prefetch};
+use crate::memory::{get_optimal_numa_node, numa_alloc_aligned, numa_dealloc};
 use std::alloc::{Layout, alloc, dealloc};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -41,10 +43,10 @@ const LIST_TAIL: u32 = 0;
 
 /// Size classes for fast bins (similar to jemalloc)
 const FAST_BIN_SIZES: &[usize] = &[
-    8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128,
-    144, 160, 176, 192, 208, 224, 240, 256, 288, 320, 352, 384, 416, 448, 480, 512,
-    576, 640, 704, 768, 832, 896, 960, 1024, 1152, 1280, 1408, 1536, 1664, 1792, 1920, 2048,
-    2304, 2560, 2816, 3072, 3328, 3584, 3840, 4096, 4608, 5120, 5632, 6144, 6656, 7168, 7680, 8192,
+    8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 144, 160, 176, 192, 208,
+    224, 240, 256, 288, 320, 352, 384, 416, 448, 480, 512, 576, 640, 704, 768, 832, 896, 960, 1024,
+    1152, 1280, 1408, 1536, 1664, 1792, 1920, 2048, 2304, 2560, 2816, 3072, 3328, 3584, 3840, 4096,
+    4608, 5120, 5632, 6144, 6656, 7168, 7680, 8192,
 ];
 
 /// Lock-free head for a free list with cache line padding
@@ -74,8 +76,6 @@ impl LockFreeHead {
         }
     }
 }
-
-
 
 /// Configuration for lock-free memory pool
 #[derive(Debug, Clone)]
@@ -138,7 +138,7 @@ impl LockFreePoolConfig {
     pub fn high_performance() -> Self {
         Self {
             memory_size: 256 * 1024 * 1024, // 256MB
-            enable_stats: false, // Disable for maximum performance
+            enable_stats: false,            // Disable for maximum performance
             max_cas_retries: 10000,
             backoff_strategy: BackoffStrategy::Exponential { max_delay_us: 100 },
             enable_cache_alignment: true,
@@ -197,8 +197,8 @@ pub struct LockFreePoolStats {
 impl LockFreePoolStats {
     /// Get current allocation rate (allocs per second)
     pub fn allocation_rate(&self) -> f64 {
-        let total_allocs = self.fast_allocs.load(Ordering::Relaxed) + 
-                          self.skip_allocs.load(Ordering::Relaxed);
+        let total_allocs =
+            self.fast_allocs.load(Ordering::Relaxed) + self.skip_allocs.load(Ordering::Relaxed);
         // Simplified calculation - in practice would track time
         total_allocs as f64
     }
@@ -208,7 +208,11 @@ impl LockFreePoolStats {
         let failures = self.cas_failures.load(Ordering::Relaxed);
         let successes = self.cas_successes.load(Ordering::Relaxed);
         let total = failures + successes;
-        if total == 0 { 0.0 } else { failures as f64 / total as f64 }
+        if total == 0 {
+            0.0
+        } else {
+            failures as f64 / total as f64
+        }
     }
 }
 
@@ -294,8 +298,6 @@ impl LockFreeMemoryPool {
             fast_bins.push(CachePadded::new(LockFreeHead::new()));
         }
 
-
-
         // Initialize statistics if enabled
         let stats = if config.enable_stats {
             Some(Arc::new(LockFreePoolStats::default()))
@@ -306,7 +308,12 @@ impl LockFreeMemoryPool {
         // Initialize cache allocator if enabled
         let cache_allocator = if config.enable_cache_alignment && config.cache_config.is_some() {
             // SAFETY: is_some() check above guarantees this unwrap succeeds
-            Some(CacheOptimizedAllocator::new(config.cache_config.clone().expect("cache_config present when cache_friendly enabled")))
+            Some(CacheOptimizedAllocator::new(
+                config
+                    .cache_config
+                    .clone()
+                    .expect("cache_config present when cache_friendly enabled"),
+            ))
         } else {
             None
         };
@@ -392,12 +399,13 @@ impl LockFreeMemoryPool {
                 let aligned_future_size = self.align_size(future_size);
 
                 if aligned_future_size <= FAST_BIN_THRESHOLD
-                    && let Ok(bin_idx) = self.size_to_bin_index(aligned_future_size) {
-                        #[cfg(target_arch = "x86_64")]
-                        {
-                            fast_prefetch(&self.fast_bins[bin_idx], PrefetchHint::T0);
-                        }
+                    && let Ok(bin_idx) = self.size_to_bin_index(aligned_future_size)
+                {
+                    #[cfg(target_arch = "x86_64")]
+                    {
+                        fast_prefetch(&self.fast_bins[bin_idx], PrefetchHint::T0);
                     }
+                }
             }
 
             // Perform allocation
@@ -436,7 +444,8 @@ impl LockFreeMemoryPool {
             // doesn't affect correctness since we retry the loop.
             let next_offset = unsafe {
                 let current_ptr = self.offset_to_ptr(current_offset)?;
-                (*(current_ptr.as_ptr() as *const std::sync::atomic::AtomicU32)).load(std::sync::atomic::Ordering::Relaxed)
+                (*(current_ptr.as_ptr() as *const std::sync::atomic::AtomicU32))
+                    .load(std::sync::atomic::Ordering::Relaxed)
             };
 
             // ABA-SAFE: Pack next offset with INCREMENTED generation counter
@@ -445,8 +454,8 @@ impl LockFreeMemoryPool {
 
             // Try to update head atomically
             match bin.head.compare_exchange_weak(
-                packed,  // Compare full packed value (offset + generation)
-                next_packed,  // New packed value with incremented generation
+                packed,      // Compare full packed value (offset + generation)
+                next_packed, // New packed value with incremented generation
                 Ordering::AcqRel,
                 Ordering::Acquire,
             ) {
@@ -469,7 +478,7 @@ impl LockFreeMemoryPool {
                     if let Some(stats) = &self.stats {
                         stats.cas_failures.fetch_add(1, Ordering::Relaxed);
                     }
-                    
+
                     self.backoff(retry);
                 }
             }
@@ -495,7 +504,8 @@ impl LockFreeMemoryPool {
             // The next pointer only needs the offset, not the generation counter
             // SAFETY: ptr validated by ptr_to_offset above, aligned to u32
             unsafe {
-                (*(ptr.as_ptr() as *const std::sync::atomic::AtomicU32)).store(current_offset, std::sync::atomic::Ordering::Relaxed);
+                (*(ptr.as_ptr() as *const std::sync::atomic::AtomicU32))
+                    .store(current_offset, std::sync::atomic::Ordering::Relaxed);
             }
 
             // ABA-SAFE: Pack new offset with INCREMENTED generation counter
@@ -503,8 +513,8 @@ impl LockFreeMemoryPool {
 
             // Try to update head atomically
             match bin.head.compare_exchange_weak(
-                packed,  // Compare full packed value (offset + generation)
-                new_packed,  // New packed value with incremented generation
+                packed,     // Compare full packed value (offset + generation)
+                new_packed, // New packed value with incremented generation
                 Ordering::Release,
                 Ordering::Relaxed,
             ) {
@@ -524,13 +534,15 @@ impl LockFreeMemoryPool {
                     if let Some(stats) = &self.stats {
                         stats.cas_failures.fetch_add(1, Ordering::Relaxed);
                     }
-                    
+
                     self.backoff(retry);
                 }
             }
         }
 
-        Err(ZiporaError::invalid_data("Failed to deallocate after max retries"))
+        Err(ZiporaError::invalid_data(
+            "Failed to deallocate after max retries",
+        ))
     }
 
     /// Allocate from skip list (for large blocks)
@@ -552,38 +564,46 @@ impl LockFreeMemoryPool {
     /// Allocate a new block from the backing memory with cache optimizations
     fn allocate_new_block(&self, size: usize) -> Result<NonNull<u8>> {
         let aligned_size = self.align_size(size);
-        
+
         // Always allocate from backing memory to ensure consistent pointer validation
         // External cache allocations would cause pointer validation failures in deallocate
-        let offset = self.next_offset.fetch_add(aligned_size as u32, Ordering::Relaxed);
-        
+        let offset = self
+            .next_offset
+            .fetch_add(aligned_size as u32, Ordering::Relaxed);
+
         if offset as usize + aligned_size > self.config.memory_size {
             return Err(ZiporaError::out_of_memory(aligned_size));
         }
 
         let ptr = self.offset_to_ptr(offset)?;
-        
+
         // Apply cache optimization hints if enabled
         if let Some(ref _cache_allocator) = self.cache_allocator
-            && self.config.enable_cache_alignment {
-                if let Some(stats) = &self.stats {
-                    stats.cache_aligned_allocs.fetch_add(1, Ordering::Relaxed);
-                }
-
-                // Apply cache-friendly operations on the pool memory
-                #[cfg(target_arch = "x86_64")]
-                // SAFETY: pointer valid from allocation, prefetch doesn't require alignment
-                unsafe {
-                    // Prefetch the allocated memory for cache optimization
-                    std::arch::x86_64::_mm_prefetch(ptr.as_ptr() as *const i8, std::arch::x86_64::_MM_HINT_T0);
-                }
-
-                // Memory is already zeroed by default in most allocators
-                // Additional zeroing could be added here if needed for security
+            && self.config.enable_cache_alignment
+        {
+            if let Some(stats) = &self.stats {
+                stats.cache_aligned_allocs.fetch_add(1, Ordering::Relaxed);
             }
-        
+
+            // Apply cache-friendly operations on the pool memory
+            #[cfg(target_arch = "x86_64")]
+            // SAFETY: pointer valid from allocation, prefetch doesn't require alignment
+            unsafe {
+                // Prefetch the allocated memory for cache optimization
+                std::arch::x86_64::_mm_prefetch(
+                    ptr.as_ptr() as *const i8,
+                    std::arch::x86_64::_MM_HINT_T0,
+                );
+            }
+
+            // Memory is already zeroed by default in most allocators
+            // Additional zeroing could be added here if needed for security
+        }
+
         if let Some(stats) = &self.stats {
-            stats.memory_usage.fetch_add(aligned_size as u64, Ordering::Relaxed);
+            stats
+                .memory_usage
+                .fetch_add(aligned_size as u64, Ordering::Relaxed);
         }
 
         Ok(ptr)
@@ -619,33 +639,31 @@ impl LockFreeMemoryPool {
     fn ptr_to_offset(&self, ptr: NonNull<u8>) -> Result<u32> {
         let base = self.memory.as_ptr() as usize;
         let addr = ptr.as_ptr() as usize;
-        
+
         if addr < base || addr >= base + self.config.memory_size {
             return Err(ZiporaError::invalid_data("Pointer outside pool memory"));
         }
-        
+
         Ok((addr - base) as u32)
     }
 
     /// Implement backoff strategy for failed CAS operations
     fn backoff(&self, retry_count: u32) {
         match self.config.backoff_strategy {
-            BackoffStrategy::None => {},
+            BackoffStrategy::None => {}
             BackoffStrategy::Linear => {
                 thread::sleep(Duration::from_micros(retry_count as u64));
-            },
+            }
             BackoffStrategy::Exponential { max_delay_us } => {
                 let delay = std::cmp::min(1u64 << retry_count, max_delay_us);
                 thread::sleep(Duration::from_micros(delay));
-            },
+            }
         }
     }
 
     //==============================================================================
     // SIMD-OPTIMIZED HELPER METHODS (LOCK-FREE SAFE)
     //==============================================================================
-
-
 }
 
 impl Drop for LockFreeMemoryPool {
@@ -715,7 +733,7 @@ mod tests {
     fn test_lockfree_pool_creation() {
         let config = LockFreePoolConfig::default();
         let pool = LockFreeMemoryPool::new(config).unwrap();
-        
+
         // Verify pool was created successfully
         assert!(pool.stats.is_some());
     }
@@ -724,10 +742,10 @@ mod tests {
     fn test_basic_allocation_deallocation() {
         let config = LockFreePoolConfig::default();
         let pool = Arc::new(LockFreeMemoryPool::new(config).unwrap());
-        
+
         // Test small allocation
         let ptr = pool.allocate(64).unwrap();
-        
+
         // Test deallocation
         pool.deallocate(ptr, 64).unwrap();
     }
@@ -736,16 +754,16 @@ mod tests {
     fn test_fast_bin_allocation() {
         let config = LockFreePoolConfig::default();
         let pool = Arc::new(LockFreeMemoryPool::new(config).unwrap());
-        
+
         // Allocate and deallocate multiple blocks
         let mut ptrs = Vec::new();
-        
+
         for i in 0..10 {
             let size = (i + 1) * 64;
             let ptr = pool.allocate(size).unwrap();
             ptrs.push((ptr, size));
         }
-        
+
         // Deallocate all
         for (ptr, size) in ptrs {
             pool.deallocate(ptr, size).unwrap();
@@ -757,23 +775,25 @@ mod tests {
     fn test_concurrent_allocation() {
         let config = LockFreePoolConfig::high_performance();
         let pool = Arc::new(LockFreeMemoryPool::new(config).unwrap());
-        
+
         let mut handles = Vec::new();
-        
+
         // Spawn multiple threads doing allocations
-        for thread_id in 0..2 { // Reduce thread count for release mode
+        for thread_id in 0..2 {
+            // Reduce thread count for release mode
             let pool_clone = Arc::clone(&pool);
             let handle = thread::spawn(move || {
                 let mut allocations = Vec::new();
-                
+
                 // Each thread allocates different sizes
-                for i in 0..10 { // Reduce iterations for release mode
+                for i in 0..10 {
+                    // Reduce iterations for release mode
                     let size = (thread_id + 1) * 32 + i;
                     if let Ok(ptr) = pool_clone.allocate(size) {
                         allocations.push((ptr, size));
                     }
                 }
-                
+
                 // Deallocate everything
                 for (ptr, size) in allocations {
                     let _ = pool_clone.deallocate(ptr, size);
@@ -781,12 +801,12 @@ mod tests {
             });
             handles.push(handle);
         }
-        
+
         // Wait for all threads
         for handle in handles {
             handle.join().unwrap();
         }
-        
+
         // Check statistics
         if let Some(stats) = pool.stats() {
             let contention = stats.contention_ratio();
@@ -799,14 +819,14 @@ mod tests {
     fn test_raii_allocation() {
         let config = LockFreePoolConfig::default();
         let pool = Arc::new(LockFreeMemoryPool::new(config).unwrap());
-        
+
         {
             let ptr = pool.allocate(128).unwrap();
             let _alloc = LockFreeAllocation::new(ptr, 128, Arc::clone(&pool));
-            
+
             // Allocation should be automatically freed when going out of scope
         }
-        
+
         // Pool should have higher deallocation count
         if let Some(stats) = pool.stats() {
             assert!(stats.fast_deallocs.load(Ordering::Relaxed) > 0);
@@ -817,7 +837,7 @@ mod tests {
     fn test_size_alignment() {
         let config = LockFreePoolConfig::default();
         let pool = LockFreeMemoryPool::new(config).unwrap();
-        
+
         assert_eq!(pool.align_size(1), 8);
         assert_eq!(pool.align_size(8), 8);
         assert_eq!(pool.align_size(9), 16);
@@ -831,14 +851,14 @@ mod tests {
         use std::time::{Duration, Instant};
 
         let config = LockFreePoolConfig {
-            memory_size: 1024, // Very small pool
-            max_cas_retries: 3, // Very low retries to speed up test
+            memory_size: 1024,                       // Very small pool
+            max_cas_retries: 3,                      // Very low retries to speed up test
             backoff_strategy: BackoffStrategy::None, // No backoff for faster failure
-            enable_cache_alignment: false, // Disable to force backing memory usage
-            cache_config: None, // Disable cache allocator
-            enable_numa_awareness: false, // Disable for simpler test
-            enable_huge_pages: false, // Disable for simpler test
-            enable_stats: false, // Disable stats for performance
+            enable_cache_alignment: false,           // Disable to force backing memory usage
+            cache_config: None,                      // Disable cache allocator
+            enable_numa_awareness: false,            // Disable for simpler test
+            enable_huge_pages: false,                // Disable for simpler test
+            enable_stats: false,                     // Disable stats for performance
             enable_simd_optimization: false,
             zero_on_free: false,
             ..LockFreePoolConfig::default()
@@ -852,7 +872,10 @@ mod tests {
 
         loop {
             if start.elapsed() > timeout {
-                panic!("Test timed out after 5 seconds with {} allocations", allocations.len());
+                panic!(
+                    "Test timed out after 5 seconds with {} allocations",
+                    allocations.len()
+                );
             }
 
             match pool.allocate(64) {
@@ -861,16 +884,30 @@ mod tests {
                     // Extra safety check - with 1024 byte pool and 64 byte allocations,
                     // we should never get more than ~16 allocations
                     if allocations.len() > 20 {
-                        panic!("Too many allocations: {} - possible infinite loop", allocations.len());
+                        panic!(
+                            "Too many allocations: {} - possible infinite loop",
+                            allocations.len()
+                        );
                     }
                 }
                 Err(_) => break, // Pool exhausted
             }
         }
 
-        assert!(allocations.len() > 0, "Should have allocated at least one block");
-        assert!(allocations.len() < 20, "Should be limited by small pool size, got {}", allocations.len());
-        println!("Pool exhaustion test completed in {:?} with {} allocations", start.elapsed(), allocations.len());
+        assert!(
+            allocations.len() > 0,
+            "Should have allocated at least one block"
+        );
+        assert!(
+            allocations.len() < 20,
+            "Should be limited by small pool size, got {}",
+            allocations.len()
+        );
+        println!(
+            "Pool exhaustion test completed in {:?} with {} allocations",
+            start.elapsed(),
+            allocations.len()
+        );
     }
 
     //==============================================================================
@@ -886,9 +923,7 @@ mod tests {
         let pool = Arc::new(LockFreeMemoryPool::new(config).unwrap());
 
         // Allocate some blocks
-        let ptrs: Vec<_> = (0..10)
-            .map(|_| pool.allocate(128).unwrap())
-            .collect();
+        let ptrs: Vec<_> = (0..10).map(|_| pool.allocate(128).unwrap()).collect();
 
         // Free some blocks
         for ptr in &ptrs[0..5] {

@@ -2,7 +2,7 @@
 //!
 //! This module provides a complete implementation of the PA-Zip compression algorithm
 //! using suffix arrays and DFA caches for high-performance pattern matching.
-//! 
+//!
 //! # Overview
 //!
 //! PA-Zip (Pattern Array Zip) is an advanced dictionary compression algorithm that combines:
@@ -32,7 +32,7 @@
 //! // Use dictionary for pattern matching
 //! let input = b"pattern to compress";
 //! let match_result = dictionary.find_longest_match(input, 0, 100)?;
-//! 
+//!
 //! if let Some(m) = match_result {
 //!     println!("Found match: length={}, position={}", m.length, m.dict_position);
 //! }
@@ -98,26 +98,31 @@ pub mod reference_encoding;
 // Re-export main types for convenient access
 pub use blob_store::{
     DictZipBlobStore, DictZipBlobStoreBuilder, DictZipBlobStoreStats, DictZipConfig,
-    EntropyAlgorithm
+    EntropyAlgorithm,
 };
-pub use builder::{BuildPhase, BuildProgress, BuildStrategy, DictionaryBuilder, DictionaryBuilderConfig, SampleSortPolicy};
+pub use builder::{
+    BuildPhase, BuildProgress, BuildStrategy, DictionaryBuilder, DictionaryBuilderConfig,
+    SampleSortPolicy,
+};
 pub use compression_types::{
-    CompressionType, Match, BitReader, BitWriter, encode_match, decode_match, 
-    encode_matches, decode_matches, calculate_encoding_cost, calculate_encoding_overhead,
-    calculate_compression_efficiency, choose_best_compression_type, calculate_theoretical_compression_ratio
+    BitReader, BitWriter, CompressionType, Match, calculate_compression_efficiency,
+    calculate_encoding_cost, calculate_encoding_overhead, calculate_theoretical_compression_ratio,
+    choose_best_compression_type, decode_match, decode_matches, encode_match, encode_matches,
 };
 pub use compressor::{
-    CompressionStats, CompressionStrategy, CostAnalysis, PaZipCompressor, PaZipCompressorConfig
+    CompressionStats, CompressionStrategy, CostAnalysis, PaZipCompressor, PaZipCompressorConfig,
 };
 pub use dfa_cache::{CacheMatch, CacheStats, DfaCache, DfaCacheConfig};
 pub use dictionary::{
     ConcurrentSuffixArrayDictionary, MatchStats, SuffixArrayDictionary, SuffixArrayDictionaryConfig,
 };
 pub use local_matcher::{LocalMatch, LocalMatcher, LocalMatcherConfig, LocalMatcherStats};
-pub use matcher::{Match as PatternMatch, MatcherConfig, MatcherStats, PatternMatcher, PatternMatcherBuilder};
+pub use matcher::{
+    Match as PatternMatch, MatcherConfig, MatcherStats, PatternMatcher, PatternMatcherBuilder,
+};
 pub use reference_encoding::{
-    DzType, DzEncodingMeta, ReferenceEncoder, get_back_ref_encoding_meta, 
-    write_uint_bytes, write_var_size_t, compress_record_reference
+    DzEncodingMeta, DzType, ReferenceEncoder, compress_record_reference,
+    get_back_ref_encoding_meta, write_uint_bytes, write_var_size_t,
 };
 
 use crate::error::{Result, ZiporaError};
@@ -157,7 +162,9 @@ pub fn validate_parameters(
     max_bfs_depth: u32,
 ) -> Result<()> {
     if min_pattern_length == 0 {
-        return Err(ZiporaError::invalid_data("Minimum pattern length must be > 0"));
+        return Err(ZiporaError::invalid_data(
+            "Minimum pattern length must be > 0",
+        ));
     }
 
     if max_pattern_length < min_pattern_length {
@@ -199,15 +206,15 @@ pub fn calculate_optimal_dict_size(input_size: usize, max_memory: usize) -> usiz
     if input_size == 0 {
         return 0;
     }
-    
+
     // Heuristic: dictionary should be 5-15% of input size
     let theoretical_min = (input_size / 20).max(256); // Start with smaller minimum
     let theoretical_max = (input_size / 6).max(theoretical_min);
-    
+
     // Never exceed input size - dictionary can't be useful if larger than input
     let input_constrained_max = theoretical_max.min(input_size);
     let input_constrained_min = theoretical_min.min(input_size);
-    
+
     // Respect memory limits if specified
     let final_size = if max_memory > 0 {
         let budget_limit = max_memory / 2; // Use half of memory budget for dictionary
@@ -215,7 +222,7 @@ pub fn calculate_optimal_dict_size(input_size: usize, max_memory: usize) -> usiz
     } else {
         input_constrained_max
     };
-    
+
     // Ensure we don't go below the constrained minimum, but NEVER violate memory constraints
     if max_memory > 0 {
         let memory_limit = max_memory / 2;
@@ -244,13 +251,13 @@ pub fn estimate_compression_ratio(
 ) -> f64 {
     // Base compression depends on entropy and repetitiveness
     let base_ratio = (data_entropy / 8.0) * (1.0 - repetitiveness * 0.7);
-    
+
     // Dictionary overhead
     let dict_overhead = dict_size_ratio * 0.1;
-    
+
     // PA-Zip effectiveness factor
     let pa_zip_factor = 0.7 + repetitiveness * 0.2;
-    
+
     (base_ratio * pa_zip_factor + dict_overhead).clamp(0.1, 1.0)
 }
 
@@ -459,7 +466,7 @@ mod tests {
     fn test_integration_workflow() {
         // Test complete workflow from building to matching
         let training_data = b"the quick brown fox jumps over the lazy dog. the quick brown fox.";
-        
+
         // Build dictionary
         let config = DictionaryBuilderConfig {
             target_dict_size: 2048,
@@ -467,23 +474,23 @@ mod tests {
             validate_result: true,
             ..Default::default()
         };
-        
+
         let builder = DictionaryBuilder::with_config(config);
         let mut dictionary = builder.build(training_data).unwrap();
-        
+
         // Test pattern matching
         let input = b"the quick brown";
         let result = dictionary.find_longest_match(input, 0, 50).unwrap();
-        
+
         assert!(result.is_some());
         let match_info = result.unwrap();
         assert!(match_info.length > 0);
         assert!(match_info.quality > 0.0);
-        
+
         // Test statistics
         let stats = dictionary.match_stats();
         assert_eq!(stats.total_searches, 1);
-        
+
         // Validate dictionary
         assert!(dictionary.validate().is_ok());
     }

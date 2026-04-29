@@ -3,14 +3,14 @@
 //! High-performance synchronization primitives using direct futex syscalls.
 //! This provides zero-overhead synchronization for Linux platforms.
 
+use super::PlatformSync;
+use crate::error::{Result, ZiporaError};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
-use crate::error::{Result, ZiporaError};
-use super::PlatformSync;
 
 #[cfg(target_os = "linux")]
 mod sys {
-    use libc::{syscall, SYS_futex, timespec};
+    use libc::{SYS_futex, syscall, timespec};
     use std::ffi::c_int;
     use std::ptr;
     use std::time::Duration;
@@ -57,7 +57,14 @@ mod sys {
 
         // SAFETY: uaddr is valid atomic u32 pointer, timeout_ptr is either null or valid timespec
         unsafe {
-            futex(uaddr, FUTEX_WAIT_PRIVATE, val, timeout_ptr, std::ptr::null(), 0)
+            futex(
+                uaddr,
+                FUTEX_WAIT_PRIVATE,
+                val,
+                timeout_ptr,
+                std::ptr::null(),
+                0,
+            )
         }
     }
 
@@ -66,7 +73,14 @@ mod sys {
     pub unsafe fn futex_wake(uaddr: *const u32, count: u32) -> c_int {
         // SAFETY: uaddr is valid atomic u32 pointer
         unsafe {
-            futex(uaddr, FUTEX_WAKE_PRIVATE, count, std::ptr::null(), std::ptr::null(), 0)
+            futex(
+                uaddr,
+                FUTEX_WAKE_PRIVATE,
+                count,
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+            )
         }
     }
 }
@@ -85,7 +99,10 @@ impl PlatformSync for LinuxFutex {
                     libc::EAGAIN => Ok(()), // Value changed before wait
                     libc::ETIMEDOUT => Err(ZiporaError::timeout("Futex wait timed out")),
                     libc::EINTR => Ok(()), // Interrupted by signal
-                    _ => Err(ZiporaError::system_error(format!("Futex wait failed: errno {}", errno))),
+                    _ => Err(ZiporaError::system_error(format!(
+                        "Futex wait failed: errno {}",
+                        errno
+                    ))),
                 }
             } else {
                 Ok(())
@@ -99,7 +116,10 @@ impl PlatformSync for LinuxFutex {
             let result = sys::futex_wake(addr.as_ptr(), count);
             if result == -1 {
                 let errno = *libc::__errno_location();
-                Err(ZiporaError::system_error(format!("Futex wake failed: errno {}", errno)))
+                Err(ZiporaError::system_error(format!(
+                    "Futex wake failed: errno {}",
+                    errno
+                )))
             } else {
                 Ok(result as usize)
             }
@@ -124,7 +144,11 @@ impl FutexMutex {
     /// Lock the mutex
     pub fn lock(&self) -> Result<FutexGuard<'_>> {
         // Fast path: try to acquire lock immediately
-        if self.state.compare_exchange_weak(0, 1, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+        if self
+            .state
+            .compare_exchange_weak(0, 1, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
             return Ok(FutexGuard { mutex: self });
         }
 
@@ -135,7 +159,10 @@ impl FutexMutex {
 
     /// Try to lock the mutex without blocking
     pub fn try_lock(&self) -> Result<Option<FutexGuard<'_>>> {
-        match self.state.compare_exchange_weak(0, 1, Ordering::Acquire, Ordering::Relaxed) {
+        match self
+            .state
+            .compare_exchange_weak(0, 1, Ordering::Acquire, Ordering::Relaxed)
+        {
             Ok(_) => Ok(Some(FutexGuard { mutex: self })),
             Err(_) => Ok(None),
         }
@@ -212,7 +239,7 @@ impl FutexCondvar {
     /// Wait on the condition variable
     pub fn wait<'a>(&self, guard: FutexGuard<'a>) -> Result<FutexGuard<'a>> {
         let futex_val = self.futex.load(Ordering::Relaxed);
-        
+
         // Release the mutex
         let mutex = guard.mutex;
         drop(guard);
@@ -231,7 +258,7 @@ impl FutexCondvar {
         timeout: Duration,
     ) -> Result<(FutexGuard<'a>, bool)> {
         let futex_val = self.futex.load(Ordering::Relaxed);
-        
+
         // Release the mutex
         let mutex = guard.mutex;
         drop(guard);
@@ -298,7 +325,7 @@ impl FutexRwLock {
     pub fn read(&self) -> Result<FutexReadGuard<'_>> {
         loop {
             let state = self.state.load(Ordering::Acquire);
-            
+
             // Check if write-locked
             if state & 0x80000000 != 0 {
                 LinuxFutex::futex_wait(&self.state, state, None)?;
@@ -312,7 +339,11 @@ impl FutexRwLock {
             }
 
             let new_state = state + 1;
-            if self.state.compare_exchange_weak(state, new_state, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+            if self
+                .state
+                .compare_exchange_weak(state, new_state, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
                 return Ok(FutexReadGuard { lock: self });
             }
         }
@@ -322,10 +353,14 @@ impl FutexRwLock {
     pub fn write(&self) -> Result<FutexWriteGuard<'_>> {
         loop {
             let state = self.state.load(Ordering::Acquire);
-            
+
             // Try to acquire write lock (state must be 0)
             if state == 0 {
-                if self.state.compare_exchange_weak(0, 0x80000000, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+                if self
+                    .state
+                    .compare_exchange_weak(0, 0x80000000, Ordering::Acquire, Ordering::Relaxed)
+                    .is_ok()
+                {
                     return Ok(FutexWriteGuard { lock: self });
                 }
             } else {
@@ -338,7 +373,7 @@ impl FutexRwLock {
     fn unlock_read(&self) {
         let old_state = self.state.fetch_sub(1, Ordering::Release);
         let reader_count = old_state & 0xFFFF;
-        
+
         // If this was the last reader, wake writers
         if reader_count == 1 {
             let _ = LinuxFutex::futex_wake(&self.state, u32::MAX);
@@ -411,20 +446,22 @@ mod tests {
     fn test_futex_mutex_contention() {
         let mutex = Arc::new(FutexMutex::new());
         let counter = Arc::new(AtomicU32::new(0));
-        
-        let handles: Vec<_> = (0..10).map(|_| {
-            let mutex = Arc::clone(&mutex);
-            let counter = Arc::clone(&counter);
-            
-            thread::spawn(move || {
-                for _ in 0..100 {
-                    let _guard = mutex.lock().unwrap();
-                    let old = counter.load(Ordering::Relaxed);
-                    thread::sleep(Duration::from_nanos(1));
-                    counter.store(old + 1, Ordering::Relaxed);
-                }
+
+        let handles: Vec<_> = (0..10)
+            .map(|_| {
+                let mutex = Arc::clone(&mutex);
+                let counter = Arc::clone(&counter);
+
+                thread::spawn(move || {
+                    for _ in 0..100 {
+                        let _guard = mutex.lock().unwrap();
+                        let old = counter.load(Ordering::Relaxed);
+                        thread::sleep(Duration::from_nanos(1));
+                        counter.store(old + 1, Ordering::Relaxed);
+                    }
+                })
             })
-        }).collect();
+            .collect();
 
         for handle in handles {
             handle.join().unwrap();
@@ -465,24 +502,26 @@ mod tests {
         let counter = Arc::new(AtomicU32::new(0));
 
         // Spawn multiple readers
-        let read_handles: Vec<_> = (0..5).map(|_| {
-            let lock = Arc::clone(&lock);
-            let counter = Arc::clone(&counter);
-            
-            thread::spawn(move || {
-                for _ in 0..100 {
-                    let _guard = lock.read().unwrap();
-                    let _val = counter.load(Ordering::Relaxed);
-                    thread::sleep(Duration::from_nanos(10));
-                }
+        let read_handles: Vec<_> = (0..5)
+            .map(|_| {
+                let lock = Arc::clone(&lock);
+                let counter = Arc::clone(&counter);
+
+                thread::spawn(move || {
+                    for _ in 0..100 {
+                        let _guard = lock.read().unwrap();
+                        let _val = counter.load(Ordering::Relaxed);
+                        thread::sleep(Duration::from_nanos(10));
+                    }
+                })
             })
-        }).collect();
+            .collect();
 
         // Spawn a writer
         let write_handle = {
             let lock = Arc::clone(&lock);
             let counter = Arc::clone(&counter);
-            
+
             thread::spawn(move || {
                 for _ in 0..50 {
                     let _guard = lock.write().unwrap();

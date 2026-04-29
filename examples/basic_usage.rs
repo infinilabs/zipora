@@ -1,8 +1,8 @@
-use zipora::{
-    BlobStore, FastStr, FastVec, ZiporaHashMap, HuffmanEncoder, ZiporaTrie, MemoryBlobStore, Result,
-    succinct::RankSelectInterleaved256,
-};
 use std::collections::hash_map::RandomState;
+use zipora::{
+    BlobStore, FastStr, FastVec, HuffmanEncoder, MemoryBlobStore, Result, ZiporaHashMap,
+    ZiporaTrie, succinct::RankSelectInterleaved256,
+};
 
 fn main() -> Result<()> {
     println!("=== Zipora Rust Demo ===\n");

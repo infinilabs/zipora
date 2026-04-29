@@ -194,7 +194,11 @@ mod tests {
         for i in 0..8u32 {
             let byte = FieldnormEncoder::encode(i);
             assert_eq!(byte, i as u8, "encode({i}) should be {i}");
-            assert_eq!(FieldnormEncoder::decode(byte), i, "decode(encode({i})) should be {i}");
+            assert_eq!(
+                FieldnormEncoder::decode(byte),
+                i,
+                "decode(encode({i})) should be {i}"
+            );
         }
     }
 
@@ -214,7 +218,7 @@ mod tests {
         assert_eq!(FieldnormEncoder::encode(0), 0);
         assert_eq!(FieldnormEncoder::encode(1), 1);
         assert_eq!(FieldnormEncoder::encode(7), 7);
-        assert_eq!(FieldnormEncoder::encode(8), 8);  // 1.000 × 2^0 → exp=1, mant=0
+        assert_eq!(FieldnormEncoder::encode(8), 8); // 1.000 × 2^0 → exp=1, mant=0
         assert_eq!(FieldnormEncoder::encode(15), 15); // 1.111 × 2^0 → exp=1, mant=7
         assert_eq!(FieldnormEncoder::encode(16), 16); // 1.000 × 2^1 → exp=2, mant=0
         assert_eq!(FieldnormEncoder::encode(18), 17); // 1.001 × 2^1 → exp=2, mant=1
@@ -289,7 +293,10 @@ mod tests {
             seen[FieldnormEncoder::encode(i) as usize] = true;
         }
         let used = seen.iter().filter(|&&s| s).count();
-        assert!(used >= 150, "only {used} distinct byte values used — expected >=150");
+        assert!(
+            used >= 150,
+            "only {used} distinct byte values used — expected >=150"
+        );
 
         // Verify max byte value
         let max_byte = FieldnormEncoder::encode(u32::MAX);
@@ -303,7 +310,10 @@ mod tests {
         let byte = FieldnormEncoder::encode(large);
         let decoded = FieldnormEncoder::decode(byte);
         assert!(decoded <= large);
-        assert!(decoded > large / 2, "decoded {decoded} too far from {large}");
+        assert!(
+            decoded > large / 2,
+            "decoded {decoded} too far from {large}"
+        );
 
         // u32::MAX
         let byte_max = FieldnormEncoder::encode(u32::MAX);
@@ -407,7 +417,10 @@ mod tests {
     fn test_bm25_scoring_workflow() {
         // End-to-end: encode doc lengths, build norm table, score
         let doc_lengths = vec![50u32, 100, 150, 200, 300];
-        let fieldnorm_bytes: Vec<u8> = doc_lengths.iter().map(|&l| FieldnormEncoder::encode(l)).collect();
+        let fieldnorm_bytes: Vec<u8> = doc_lengths
+            .iter()
+            .map(|&l| FieldnormEncoder::encode(l))
+            .collect();
 
         let avg_dl: f32 = doc_lengths.iter().sum::<u32>() as f32 / doc_lengths.len() as f32;
         let k1 = 1.2f32;
@@ -484,8 +497,8 @@ mod tests {
     #[test]
     #[cfg(not(debug_assertions))]
     fn test_norm_table_vs_float_math() {
-        use std::time::Instant;
         use crate::containers::UintVecMin0;
+        use std::time::Instant;
 
         let n = 1_000_000usize;
         let k1 = 1.2f32;
@@ -494,7 +507,10 @@ mod tests {
 
         // Setup: create doc lengths and encode them
         let doc_lengths: Vec<u32> = (0..n).map(|i| (i % 500 + 1) as u32).collect();
-        let fieldnorm_bytes: Vec<u8> = doc_lengths.iter().map(|&l| FieldnormEncoder::encode(l)).collect();
+        let fieldnorm_bytes: Vec<u8> = doc_lengths
+            .iter()
+            .map(|&l| FieldnormEncoder::encode(l))
+            .collect();
 
         // Setup: UintVecMin0 with decoded values
         let max_val = *doc_lengths.iter().max().unwrap() as usize;
@@ -529,7 +545,8 @@ mod tests {
 
         eprintln!(
             "BM25 scoring ({n} docs): Vec<u8>+table={:?}, UintVecMin0+float={:?}, speedup={:.1}x",
-            table_time, uint_time,
+            table_time,
+            uint_time,
             uint_time.as_nanos() as f64 / table_time.as_nanos().max(1) as f64
         );
 
@@ -538,8 +555,10 @@ mod tests {
         let uint_mem = uint_vec.mem_size();
         eprintln!(
             "Memory: Vec<u8>={} bytes ({:.2} B/doc), UintVecMin0={} bytes ({:.2} B/doc)",
-            fieldnorm_mem, fieldnorm_mem as f64 / n as f64,
-            uint_mem, uint_mem as f64 / n as f64
+            fieldnorm_mem,
+            fieldnorm_mem as f64 / n as f64,
+            uint_mem,
+            uint_mem as f64 / n as f64
         );
 
         assert!(sum1 > 0.0 && sum2 > 0.0);

@@ -91,10 +91,10 @@ pub struct CachedState {
 impl CachedState {
     /// Create a new cached state
     pub fn new(child_base: u32, parent: u32, is_terminal: bool, is_free: bool) -> Self {
-        let parent_and_flags = (parent & 0x00FFFFFF) 
+        let parent_and_flags = (parent & 0x00FFFFFF)
             | if is_terminal { 0x80000000 } else { 0 }
             | if is_free { 0x40000000 } else { 0 };
-        
+
         Self {
             child_base,
             parent_and_flags,
@@ -155,11 +155,11 @@ impl ZeroPathData {
         if data.len() > 255 {
             return Err(ZiporaError::invalid_data("Path segment too long"));
         }
-        
+
         self.segments.extend_from_slice(data);
         self.lengths.push(data.len() as u8);
         self.total_length += data.len() as u16;
-        
+
         Ok(())
     }
 
@@ -173,7 +173,7 @@ impl ZeroPathData {
         if self.total_length == 0 {
             return 0.0;
         }
-        
+
         let compressed_size = self.segments.len() + self.lengths.len();
         compressed_size as f64 / self.total_length as f64
     }
@@ -271,7 +271,12 @@ impl FsaCache {
     }
 
     /// Cache a new state
-    pub fn cache_state(&mut self, parent_id: u32, child_base: u32, is_terminal: bool) -> Result<u32> {
+    pub fn cache_state(
+        &mut self,
+        parent_id: u32,
+        child_base: u32,
+        is_terminal: bool,
+    ) -> Result<u32> {
         // Check if we need to evict states
         if self.states.len() >= self.config.max_states {
             self.evict_states()?;
@@ -289,7 +294,7 @@ impl FsaCache {
         // Create and cache the state
         let state = CachedState::new(child_base, parent_id, is_terminal, false);
         self.states.insert(state_id, state);
-        
+
         // Update statistics
         self.stats.cached_states = self.states.len();
         self.stats.memory_usage = self.estimate_memory_usage();
@@ -302,11 +307,11 @@ impl FsaCache {
         if self.states.remove(&state_id).is_some() {
             self.zero_paths.remove(&state_id);
             self.free_list.push(state_id);
-            
+
             // Update statistics
             self.stats.cached_states = self.states.len();
             self.stats.memory_usage = self.estimate_memory_usage();
-            
+
             true
         } else {
             false
@@ -334,7 +339,7 @@ impl FsaCache {
         self.zero_paths.clear();
         self.free_list.clear();
         self.next_state_id = 1;
-        
+
         // Reset statistics
         self.stats = FsaCacheStats::default();
     }
@@ -358,18 +363,20 @@ impl FsaCache {
     /// Estimate current memory usage
     fn estimate_memory_usage(&self) -> usize {
         let states_size = self.states.len() * std::mem::size_of::<(u32, CachedState)>();
-        let zero_paths_size: usize = self.zero_paths.values()
+        let zero_paths_size: usize = self
+            .zero_paths
+            .values()
             .map(|zp| zp.segments.len() + zp.lengths.len() + std::mem::size_of::<ZeroPathData>())
             .sum();
         let free_list_size = self.free_list.len() * std::mem::size_of::<u32>();
-        
+
         states_size + zero_paths_size + free_list_size
     }
 
     /// Evict states based on strategy
     fn evict_states(&mut self) -> Result<()> {
         let evict_count = std::cmp::max(1, self.config.max_states / 10); // Evict 10%
-        
+
         match self.config.strategy {
             CacheStrategy::BreadthFirst => self.evict_breadth_first(evict_count),
             CacheStrategy::DepthFirst => self.evict_depth_first(evict_count),
@@ -383,13 +390,13 @@ impl FsaCache {
         let mut to_remove: Vec<u32> = self.states.keys().copied().collect();
         to_remove.sort();
         to_remove.truncate(count);
-        
+
         for state_id in to_remove {
             self.states.remove(&state_id);
             self.zero_paths.remove(&state_id);
             self.free_list.push(state_id);
         }
-        
+
         self.stats.evictions += count as u64;
         Ok(())
     }
@@ -400,13 +407,13 @@ impl FsaCache {
         let mut to_remove: Vec<u32> = self.states.keys().copied().collect();
         to_remove.sort_by(|a, b| b.cmp(a));
         to_remove.truncate(count);
-        
+
         for state_id in to_remove {
             self.states.remove(&state_id);
             self.zero_paths.remove(&state_id);
             self.free_list.push(state_id);
         }
-        
+
         self.stats.evictions += count as u64;
         Ok(())
     }
@@ -416,7 +423,7 @@ impl FsaCache {
         // Hybrid approach: prefer evicting non-terminal states first
         let mut terminal_states = Vec::new();
         let mut non_terminal_states = Vec::new();
-        
+
         for (&state_id, &state) in &self.states {
             if state.is_terminal() {
                 terminal_states.push(state_id);
@@ -424,30 +431,30 @@ impl FsaCache {
                 non_terminal_states.push(state_id);
             }
         }
-        
+
         // Sort by state ID for consistent eviction
         non_terminal_states.sort();
         terminal_states.sort();
-        
+
         let mut to_remove = Vec::new();
-        
+
         // First evict non-terminal states
         let non_terminal_to_remove = std::cmp::min(count, non_terminal_states.len());
         to_remove.extend_from_slice(&non_terminal_states[..non_terminal_to_remove]);
-        
+
         // If we need more, evict terminal states
         let remaining = count.saturating_sub(non_terminal_to_remove);
         if remaining > 0 {
             let terminal_to_remove = std::cmp::min(remaining, terminal_states.len());
             to_remove.extend_from_slice(&terminal_states[..terminal_to_remove]);
         }
-        
+
         for state_id in to_remove {
             self.states.remove(&state_id);
             self.zero_paths.remove(&state_id);
             self.free_list.push(state_id);
         }
-        
+
         self.stats.evictions += count as u64;
         Ok(())
     }
@@ -458,11 +465,13 @@ impl FsaCache {
             self.stats.avg_compression_ratio = 0.0;
             return;
         }
-        
-        let total_ratio: f64 = self.zero_paths.values()
+
+        let total_ratio: f64 = self
+            .zero_paths
+            .values()
             .map(|zp| zp.compression_ratio())
             .sum();
-        
+
         self.stats.avg_compression_ratio = total_ratio / self.zero_paths.len() as f64;
     }
 }
@@ -472,8 +481,11 @@ impl Default for FsaCache {
         // SAFETY: FsaCache::new() only fails on memory pool allocation errors.
         // Use unwrap_or_else with panic as this type has non-trivial dependencies.
         Self::new().unwrap_or_else(|e| {
-            panic!("FsaCache creation failed in Default: {}. \
-                   This indicates severe memory pressure.", e)
+            panic!(
+                "FsaCache creation failed in Default: {}. \
+                   This indicates severe memory pressure.",
+                e
+            )
         })
     }
 }
@@ -481,8 +493,6 @@ impl Default for FsaCache {
 // ============================================================================
 // Fast Vec-based state cache for dense state ID spaces
 // ============================================================================
-
-
 
 /// Fast Vec-based state cache for dense state ID spaces.
 ///
@@ -584,10 +594,10 @@ mod tests {
         let mut state = CachedState::new(100, 50, false, false);
         assert!(!state.is_terminal());
         assert!(!state.is_free());
-        
+
         state.mark_free();
         assert!(state.is_free());
-        
+
         state.mark_used();
         assert!(!state.is_free());
     }
@@ -596,13 +606,13 @@ mod tests {
     fn test_zero_path_data() {
         let mut zp = ZeroPathData::new();
         assert_eq!(zp.total_length, 0);
-        
+
         zp.add_segment(b"hello").unwrap();
         zp.add_segment(b"world").unwrap();
-        
+
         assert_eq!(zp.total_length, 10);
         assert_eq!(zp.get_full_path(), b"helloworld");
-        
+
         // Compression ratio should be < 1.0 due to length storage overhead
         assert!(zp.compression_ratio() > 0.0);
     }
@@ -610,17 +620,17 @@ mod tests {
     #[test]
     fn test_fsa_cache_basic_operations() {
         let mut cache = FsaCache::new().unwrap();
-        
+
         // Cache a state
         let state_id = cache.cache_state(0, 100, true).unwrap();
         assert!(state_id > 0);
-        
+
         // Retrieve the state
         let state = cache.get_state(state_id).unwrap();
         assert_eq!(state.child_base, 100);
         assert_eq!(state.parent(), 0);
         assert!(state.is_terminal());
-        
+
         // Remove the state
         assert!(cache.remove_state(state_id));
         assert!(cache.get_state(state_id).is_none());
@@ -630,11 +640,11 @@ mod tests {
     fn test_fsa_cache_configurations() {
         let small_cache = FsaCache::with_config(FsaCacheConfig::small()).unwrap();
         assert_eq!(small_cache.config.max_states, 10_000);
-        
+
         let large_cache = FsaCache::with_config(FsaCacheConfig::large()).unwrap();
         assert_eq!(large_cache.config.max_states, 10_000_000);
         assert!(large_cache.config.use_hugepages);
-        
+
         let efficient_cache = FsaCache::with_config(FsaCacheConfig::memory_efficient()).unwrap();
         assert_eq!(efficient_cache.config.strategy, CacheStrategy::DepthFirst);
         assert!(efficient_cache.config.compressed_paths);
@@ -647,19 +657,19 @@ mod tests {
             strategy: CacheStrategy::BreadthFirst,
             ..Default::default()
         };
-        
+
         let mut cache = FsaCache::with_config(config).unwrap();
-        
+
         // Fill the cache
         let _id1 = cache.cache_state(0, 100, false).unwrap();
         let _id2 = cache.cache_state(0, 200, false).unwrap();
         let _id3 = cache.cache_state(0, 300, false).unwrap();
-        
+
         assert_eq!(cache.stats().cached_states, 3);
-        
+
         // Add one more - should trigger eviction
         let _id4 = cache.cache_state(0, 400, false).unwrap();
-        
+
         // Should still have 3 states (or less due to eviction)
         assert!(cache.stats().cached_states <= 3);
         assert!(cache.stats().evictions > 0);
@@ -669,12 +679,12 @@ mod tests {
     fn test_zero_path_integration() {
         let mut cache = FsaCache::new().unwrap();
         let state_id = cache.cache_state(0, 100, false).unwrap();
-        
+
         let mut zp = ZeroPathData::new();
         zp.add_segment(b"test").unwrap();
-        
+
         cache.add_zero_path(state_id, zp).unwrap();
-        
+
         let retrieved_zp = cache.get_zero_path(state_id).unwrap();
         assert_eq!(retrieved_zp.get_full_path(), b"test");
     }
@@ -682,16 +692,16 @@ mod tests {
     #[test]
     fn test_cache_statistics() {
         let mut cache = FsaCache::new().unwrap();
-        
+
         // Initially empty
         let stats = cache.stats();
         assert_eq!(stats.cached_states, 0);
         assert_eq!(stats.memory_usage, 0);
-        
+
         // Add some states
         cache.cache_state(0, 100, true).unwrap();
         cache.cache_state(0, 200, false).unwrap();
-        
+
         let stats = cache.stats();
         assert_eq!(stats.cached_states, 2);
         assert!(stats.memory_usage > 0);

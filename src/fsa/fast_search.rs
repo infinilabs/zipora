@@ -63,8 +63,10 @@ unsafe fn sse4_2_search_byte(data: *const u8, len: i32, key: u8) -> usize {
         let data128 = _mm_loadu_si128(buf.as_ptr() as *const __m128i);
         // pcmpestri: find first position of key in data[0..len]
         let idx = _mm_cmpestri(
-            key128, 1,           // needle: single byte
-            data128, len,        // haystack: data[0..len]
+            key128,
+            1, // needle: single byte
+            data128,
+            len, // haystack: data[0..len]
             _SIDD_UBYTE_OPS | _SIDD_CMP_EQUAL_ORDERED | _SIDD_LEAST_SIGNIFICANT,
         );
         idx as usize
@@ -200,13 +202,30 @@ impl Default for FastSearchConfig {
 
 impl FastSearchConfig {
     pub fn for_small_arrays() -> Self {
-        Self { strategy: SearchStrategy::Simd, rank_select_threshold: 1024, enable_parallel: false, ..Default::default() }
+        Self {
+            strategy: SearchStrategy::Simd,
+            rank_select_threshold: 1024,
+            enable_parallel: false,
+            ..Default::default()
+        }
     }
     pub fn for_large_arrays() -> Self {
-        Self { strategy: SearchStrategy::RankSelect, rank_select_threshold: 16, enable_parallel: true, parallel_chunk_size: 8192, ..Default::default() }
+        Self {
+            strategy: SearchStrategy::RankSelect,
+            rank_select_threshold: 16,
+            enable_parallel: true,
+            parallel_chunk_size: 8192,
+            ..Default::default()
+        }
     }
     pub fn performance_optimized() -> Self {
-        Self { strategy: SearchStrategy::Adaptive, rank_select_threshold: 64, auto_detect_features: true, enable_parallel: true, parallel_chunk_size: 16384 }
+        Self {
+            strategy: SearchStrategy::Adaptive,
+            rank_select_threshold: 64,
+            auto_detect_features: true,
+            enable_parallel: true,
+            parallel_chunk_size: 16384,
+        }
     }
 }
 
@@ -232,15 +251,25 @@ impl HardwareCapabilities {
         }
         #[cfg(not(target_arch = "x86_64"))]
         {
-            Self { has_sse42: false, has_avx2: false, has_bmi2: false, has_popcnt: false }
+            Self {
+                has_sse42: false,
+                has_avx2: false,
+                has_bmi2: false,
+                has_popcnt: false,
+            }
         }
     }
 
     pub fn best_strategy(&self, data_size: usize, rank_select_threshold: usize) -> SearchStrategy {
-        if data_size >= rank_select_threshold { SearchStrategy::RankSelect }
-        else if data_size <= 35 && self.has_sse42 { SearchStrategy::Sse42 }
-        else if data_size <= 128 { SearchStrategy::Simd }
-        else { SearchStrategy::Linear }
+        if data_size >= rank_select_threshold {
+            SearchStrategy::RankSelect
+        } else if data_size <= 35 && self.has_sse42 {
+            SearchStrategy::Sse42
+        } else if data_size <= 128 {
+            SearchStrategy::Simd
+        } else {
+            SearchStrategy::Linear
+        }
     }
 }
 
@@ -262,14 +291,24 @@ impl FastSearchEngine {
         let capabilities = if config.auto_detect_features {
             HardwareCapabilities::detect()
         } else {
-            HardwareCapabilities { has_sse42: false, has_avx2: false, has_bmi2: false, has_popcnt: false }
+            HardwareCapabilities {
+                has_sse42: false,
+                has_avx2: false,
+                has_bmi2: false,
+                has_popcnt: false,
+            }
         };
-        Self { _config: config, capabilities }
+        Self {
+            _config: config,
+            capabilities,
+        }
     }
 
     /// Search for all occurrences of `target` in `data` (general search).
     pub fn search_byte(&mut self, data: &[u8], target: u8) -> Result<Vec<usize>> {
-        Ok(data.iter().enumerate()
+        Ok(data
+            .iter()
+            .enumerate()
             .filter_map(|(i, &b)| if b == target { Some(i) } else { None })
             .collect())
     }
@@ -304,7 +343,9 @@ impl FastSearchEngine {
 }
 
 impl Default for FastSearchEngine {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Utility functions for fast byte search operations.
@@ -375,10 +416,10 @@ mod tests {
     #[test]
     fn test_binary_search_byte_not_found() {
         let data = [2, 5, 8, 12, 15, 20];
-        assert_eq!(binary_search_byte(&data, 1), 6);   // before first
-        assert_eq!(binary_search_byte(&data, 3), 6);   // between
-        assert_eq!(binary_search_byte(&data, 21), 6);  // after last
-        assert_eq!(binary_search_byte(&data, 10), 6);  // between
+        assert_eq!(binary_search_byte(&data, 1), 6); // before first
+        assert_eq!(binary_search_byte(&data, 3), 6); // between
+        assert_eq!(binary_search_byte(&data, 21), 6); // after last
+        assert_eq!(binary_search_byte(&data, 10), 6); // between
     }
 
     #[test]
@@ -589,7 +630,10 @@ mod tests {
     fn test_empty_data() {
         let mut engine = FastSearchEngine::new();
         let empty_data = b"";
-        assert_eq!(engine.search_byte(empty_data, b'a').unwrap(), Vec::<usize>::new());
+        assert_eq!(
+            engine.search_byte(empty_data, b'a').unwrap(),
+            Vec::<usize>::new()
+        );
         assert_eq!(engine.find_first(empty_data, b'a'), None);
         assert_eq!(engine.find_last(empty_data, b'a'), None);
         assert_eq!(engine.count_byte(empty_data, b'a').unwrap(), 0);

@@ -51,13 +51,11 @@
 //! # Ok::<(), zipora::ZiporaError>(())
 //! ```
 
-use super::{
-    BuilderOptions, RankSelectBuilder, RankSelectOps, RankSelectPerformanceOps,
-};
-use crate::system::{CpuFeatures, get_cpu_features};
+use super::{BuilderOptions, RankSelectBuilder, RankSelectOps, RankSelectPerformanceOps};
 use crate::FastVec;
 use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;
+use crate::system::{CpuFeatures, get_cpu_features};
 use std::fmt;
 
 // Hardware acceleration imports
@@ -127,11 +125,9 @@ impl InterleavedLine {
         // SAFETY: word_idx bounds-checked by modulo BITS_PER_WORD and LINE_BITS
         let word = unsafe { *self.bit64.get_unchecked(word_idx) };
         let mask = (1u64.wrapping_shl(bit_in_word as u32)) - 1;
-        
+
         rank + (word & mask).count_ones() as usize
     }
-
-
 
     /// Get bit at specific offset within this line
     #[inline]
@@ -173,8 +169,6 @@ impl InterleavedLine {
             x.count_ones()
         }
     }
-
-
 }
 
 impl RankSelectInterleaved256 {
@@ -415,16 +409,29 @@ impl RankSelectInterleaved256 {
         // SAFETY: line_idx bounds-checked above (line 444: if line_idx >= self.lines.len())
         unsafe {
             // SAFETY: line_idx bounds-checked above (line 444: if line_idx >= self.lines.len())
-            debug_assert!(line_idx < self.lines.len(), "line_idx {} >= lines.len() {}", line_idx, self.lines.len());
+            debug_assert!(
+                line_idx < self.lines.len(),
+                "line_idx {} >= lines.len() {}",
+                line_idx,
+                self.lines.len()
+            );
             let line = self.lines.get_unchecked(line_idx);
 
             // Prefetch next cache line for sequential access (referenced project pattern)
             if line_idx + 1 < self.lines.len() {
                 #[cfg(target_arch = "x86_64")]
                 {
-                    debug_assert!(line_idx + 1 < self.lines.len(), "line_idx + 1 {} >= lines.len() {}", line_idx + 1, self.lines.len());
-                    let next_line_ptr = self.lines.get_unchecked(line_idx + 1) as *const _ as *const i8;
-                    std::arch::x86_64::_mm_prefetch::<{std::arch::x86_64::_MM_HINT_T0}>(next_line_ptr);
+                    debug_assert!(
+                        line_idx + 1 < self.lines.len(),
+                        "line_idx + 1 {} >= lines.len() {}",
+                        line_idx + 1,
+                        self.lines.len()
+                    );
+                    let next_line_ptr =
+                        self.lines.get_unchecked(line_idx + 1) as *const _ as *const i8;
+                    std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(
+                        next_line_ptr,
+                    );
                 }
             }
 
@@ -525,18 +532,28 @@ impl RankSelectInterleaved256 {
         if target_rank0 < rlev2[2] as usize {
             if target_rank0 < rlev2[1] as usize {
                 // rlev2[0] is always 0 implicitly
-                let bit_in_word = crate::algorithms::bit_ops::select_in_word(bit64[0], target_rank0);
+                let bit_in_word =
+                    crate::algorithms::bit_ops::select_in_word(bit64[0], target_rank0);
                 Ok(line_start_bit + bit_in_word)
             } else {
-                let bit_in_word = crate::algorithms::bit_ops::select_in_word(bit64[1], target_rank0 - rlev2[1] as usize);
+                let bit_in_word = crate::algorithms::bit_ops::select_in_word(
+                    bit64[1],
+                    target_rank0 - rlev2[1] as usize,
+                );
                 Ok(line_start_bit + 64 + bit_in_word)
             }
         } else {
             if target_rank0 < rlev2[3] as usize {
-                let bit_in_word = crate::algorithms::bit_ops::select_in_word(bit64[2], target_rank0 - rlev2[2] as usize);
+                let bit_in_word = crate::algorithms::bit_ops::select_in_word(
+                    bit64[2],
+                    target_rank0 - rlev2[2] as usize,
+                );
                 Ok(line_start_bit + 128 + bit_in_word)
             } else {
-                let bit_in_word = crate::algorithms::bit_ops::select_in_word(bit64[3], target_rank0 - rlev2[3] as usize);
+                let bit_in_word = crate::algorithms::bit_ops::select_in_word(
+                    bit64[3],
+                    target_rank0 - rlev2[3] as usize,
+                );
                 Ok(line_start_bit + 192 + bit_in_word)
             }
         }
@@ -797,7 +814,7 @@ impl RankSelectInterleaved256 {
             let num_lines = end_line - start_line;
             let slice_bytes = std::slice::from_raw_parts(
                 (&self.lines[start_line] as *const InterleavedLine) as *const u8,
-                num_lines * std::mem::size_of::<InterleavedLine>()
+                num_lines * std::mem::size_of::<InterleavedLine>(),
             );
             let stride = std::mem::size_of::<InterleavedLine>();
             let prefetch_count = num_lines.min(8); // Limit to 8 lines ahead
@@ -854,10 +871,15 @@ impl RankSelectOps for RankSelectInterleaved256 {
         while lo < hi {
             let mid = (lo + hi) / 2;
             let bitpos = mid * LINE_BITS;
-            let rank1_at_line = if mid == 0 { 0 } else { self.lines[mid].rlev1 as usize };
-            let rank0_at_line = bitpos - rank1_at_line;  // rank0 = bitpos - rank1
+            let rank1_at_line = if mid == 0 {
+                0
+            } else {
+                self.lines[mid].rlev1 as usize
+            };
+            let rank0_at_line = bitpos - rank1_at_line; // rank0 = bitpos - rank1
 
-            if rank0_at_line <= k {  // upper_bound semantics like referenced project
+            if rank0_at_line <= k {
+                // upper_bound semantics like referenced project
                 lo = mid + 1;
             } else {
                 hi = mid;
@@ -885,18 +907,28 @@ impl RankSelectOps for RankSelectInterleaved256 {
         if target_rank_in_line < 128 - rlev2[2] as usize {
             if target_rank_in_line < 64 - rlev2[1] as usize {
                 // rlev2[0] is always 0 implicitly
-                let bit_in_word = crate::algorithms::bit_ops::select_in_word(!bit64[0], target_rank_in_line);
+                let bit_in_word =
+                    crate::algorithms::bit_ops::select_in_word(!bit64[0], target_rank_in_line);
                 Ok(base_bitpos + bit_in_word)
             } else {
-                let bit_in_word = crate::algorithms::bit_ops::select_in_word(!bit64[1], target_rank_in_line - (64 - rlev2[1] as usize));
+                let bit_in_word = crate::algorithms::bit_ops::select_in_word(
+                    !bit64[1],
+                    target_rank_in_line - (64 - rlev2[1] as usize),
+                );
                 Ok(base_bitpos + 64 + bit_in_word)
             }
         } else {
             if target_rank_in_line < 192 - rlev2[3] as usize {
-                let bit_in_word = crate::algorithms::bit_ops::select_in_word(!bit64[2], target_rank_in_line - (128 - rlev2[2] as usize));
+                let bit_in_word = crate::algorithms::bit_ops::select_in_word(
+                    !bit64[2],
+                    target_rank_in_line - (128 - rlev2[2] as usize),
+                );
                 Ok(base_bitpos + 128 + bit_in_word)
             } else {
-                let bit_in_word = crate::algorithms::bit_ops::select_in_word(!bit64[3], target_rank_in_line - (192 - rlev2[3] as usize));
+                let bit_in_word = crate::algorithms::bit_ops::select_in_word(
+                    !bit64[3],
+                    target_rank_in_line - (192 - rlev2[3] as usize),
+                );
                 Ok(base_bitpos + 192 + bit_in_word)
             }
         }
@@ -1081,10 +1113,10 @@ mod tests {
     fn debug_rank_select_semantics() -> Result<()> {
         // Create a simple bit vector: 1010
         let mut bv = BitVector::new();
-        bv.push(true)?;   // position 0: 1
-        bv.push(false)?;  // position 1: 0
-        bv.push(true)?;   // position 2: 1
-        bv.push(false)?;  // position 3: 0
+        bv.push(true)?; // position 0: 1
+        bv.push(false)?; // position 1: 0
+        bv.push(true)?; // position 2: 1
+        bv.push(false)?; // position 3: 0
 
         let rs = RankSelectInterleaved256::new(bv)?;
 
@@ -1102,15 +1134,31 @@ mod tests {
 
         // Test round-trip
         if let Ok(pos0) = rs.select1(0) {
-            println!("Round-trip: select1(0)={}, rank1({})={}", pos0, pos0, rs.rank1(pos0));
-            println!("Round-trip: select1(0)={}, rank1({})={}", pos0, pos0+1, rs.rank1(pos0+1));
+            println!(
+                "Round-trip: select1(0)={}, rank1({})={}",
+                pos0,
+                pos0,
+                rs.rank1(pos0)
+            );
+            println!(
+                "Round-trip: select1(0)={}, rank1({})={}",
+                pos0,
+                pos0 + 1,
+                rs.rank1(pos0 + 1)
+            );
         }
 
         // Test rank0 + rank1 invariant
         for i in 0..=4 {
             let r0 = rs.rank0(i);
             let r1 = rs.rank1(i);
-            println!("Position {}: rank0={}, rank1={}, sum={}", i, r0, r1, r0 + r1);
+            println!(
+                "Position {}: rank0={}, rank1={}, sum={}",
+                i,
+                r0,
+                r1,
+                r0 + r1
+            );
         }
 
         Ok(())
@@ -1293,8 +1341,11 @@ mod tests {
         for pos in [0, 50, 100, 250, 500, 750, 999] {
             let base_result = rs.rank1_cache_optimized(pos);
             let optimized_result = rs.rank1_optimized(pos);
-            assert_eq!(base_result, optimized_result,
-                "rank1_optimized({}) should match base implementation", pos);
+            assert_eq!(
+                base_result, optimized_result,
+                "rank1_optimized({}) should match base implementation",
+                pos
+            );
         }
 
         // Test select operations
@@ -1303,8 +1354,11 @@ mod tests {
             for id in [0, ones_count / 4, ones_count / 2, ones_count - 1] {
                 let base_result = rs.select1(id)?;
                 let optimized_result = rs.select1_optimized(id)?;
-                assert_eq!(base_result, optimized_result,
-                    "select1_optimized({}) should match base implementation", id);
+                assert_eq!(
+                    base_result, optimized_result,
+                    "select1_optimized({}) should match base implementation",
+                    id
+                );
             }
         }
 
@@ -1329,8 +1383,11 @@ mod tests {
         // Verify results match individual operations
         for (i, &pos) in positions.iter().enumerate() {
             let individual_result = rs.rank1(pos);
-            assert_eq!(bulk_results[i], individual_result,
-                "Bulk rank at position {} should match individual rank", pos);
+            assert_eq!(
+                bulk_results[i], individual_result,
+                "Bulk rank at position {} should match individual rank",
+                pos
+            );
         }
 
         // Test bulk select with prefetching
@@ -1344,8 +1401,11 @@ mod tests {
             // Verify results
             for (i, &id) in ids.iter().enumerate() {
                 let individual_result = rs.select1(id)?;
-                assert_eq!(bulk_select_results[i], individual_result,
-                    "Bulk select for id {} should match individual select", id);
+                assert_eq!(
+                    bulk_select_results[i], individual_result,
+                    "Bulk select for id {} should match individual select",
+                    id
+                );
             }
         }
 
@@ -1405,8 +1465,12 @@ mod tests {
         // Verify all results are correct
         assert_eq!(results.len(), positions.len());
         for (i, &pos) in positions.iter().enumerate() {
-            assert_eq!(results[i], rs.rank1(pos),
-                "Lookahead prefetching should not affect correctness at position {}", pos);
+            assert_eq!(
+                results[i],
+                rs.rank1(pos),
+                "Lookahead prefetching should not affect correctness at position {}",
+                pos
+            );
         }
 
         Ok(())
@@ -1426,8 +1490,11 @@ mod tests {
         for pos in [0, 100, 500, 999] {
             let adaptive_result = rs.rank1_adaptive(pos);
             let expected = rs.rank1_cache_optimized(pos);
-            assert_eq!(adaptive_result, expected,
-                "Adaptive SIMD selection should produce correct results at position {}", pos);
+            assert_eq!(
+                adaptive_result, expected,
+                "Adaptive SIMD selection should produce correct results at position {}",
+                pos
+            );
         }
 
         // Test select adaptive
@@ -1436,8 +1503,11 @@ mod tests {
             for id in [0, ones_count / 2, ones_count - 1] {
                 let adaptive_result = rs.select1_adaptive(id)?;
                 let expected = rs.select1(id)?;
-                assert_eq!(adaptive_result, expected,
-                    "Adaptive SIMD selection should produce correct results for id {}", id);
+                assert_eq!(
+                    adaptive_result, expected,
+                    "Adaptive SIMD selection should produce correct results for id {}",
+                    id
+                );
             }
         }
 
@@ -1493,7 +1563,7 @@ mod tests {
         #[cfg(target_arch = "x86_64")]
         {
             // x86_64 specific: verify intrinsics are available
-            use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
+            use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
             if !rs.lines.is_empty() {
                 // SAFETY: Pointer derived from valid slice element (index 0 checked by is_empty above)
                 unsafe {

@@ -1,11 +1,11 @@
 //! Quick benchmark for prefetching + adaptive SIMD integration
 //! Fast benchmark to verify performance improvements
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use zipora::succinct::rank_select::interleaved::RankSelectInterleaved256;
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use zipora::RankSelectPerformanceOps;
 use zipora::succinct::BitVector;
 use zipora::succinct::rank_select::RankSelectOps;
-use zipora::RankSelectPerformanceOps;
+use zipora::succinct::rank_select::interleaved::RankSelectInterleaved256;
 
 fn create_test_data(size: usize) -> RankSelectInterleaved256 {
     let mut bv = BitVector::new();
@@ -22,9 +22,7 @@ fn bench_rank1_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("rank1_quick");
 
     // Baseline: rank1 (standard)
-    group.bench_function("base", |b| {
-        b.iter(|| black_box(rs.rank1(test_pos)))
-    });
+    group.bench_function("base", |b| b.iter(|| black_box(rs.rank1(test_pos))));
 
     // Optimized: rank1_optimized (prefetch + adaptive)
     group.bench_function("optimized", |b| {

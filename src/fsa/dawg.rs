@@ -3,13 +3,13 @@
 //! This module provides high-performance DAWG and DFA structures with advanced optimization
 //! techniques including nested trie DAWG, rank-select integration, and compressed storage.
 
+use crate::StateId;
 use crate::error::{Result, ZiporaError};
 use crate::fsa::cache::{FsaCache, FsaCacheConfig};
-use crate::fsa::traits::{FiniteStateAutomaton, Trie, TrieStats, StatisticsProvider};
-use crate::StateId;
+use crate::fsa::traits::{FiniteStateAutomaton, StatisticsProvider, Trie, TrieStats};
 use crate::memory::SecureMemoryPool;
-use crate::succinct::rank_select::{RankSelectInterleaved256, RankSelectOps};
 use crate::succinct::BitVector;
+use crate::succinct::rank_select::{RankSelectInterleaved256, RankSelectOps};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -88,7 +88,7 @@ impl DawgState {
     pub fn new(child_base: u32, parent: u32, is_terminal: bool, is_final: bool) -> Self {
         let flags = if is_terminal { 0x80 } else { 0 } | if is_final { 0x40 } else { 0 };
         let flags_and_parent = (parent & 0x00FFFFFF) | ((flags as u32) << 24);
-        
+
         Self {
             child_base,
             flags_and_parent,
@@ -173,9 +173,15 @@ impl TransitionTable {
 
     /// Get all outgoing transitions from a state (sorted by symbol).
     pub fn get_outgoing_transitions(&self, from_state: u32) -> Vec<(u8, u32)> {
-        let mut transitions: Vec<(u8, u32)> = self.sparse_table.iter()
+        let mut transitions: Vec<(u8, u32)> = self
+            .sparse_table
+            .iter()
             .filter_map(|(&(state, symbol), &target)| {
-                if state == from_state { Some((symbol, target)) } else { None }
+                if state == from_state {
+                    Some((symbol, target))
+                } else {
+                    None
+                }
             })
             .collect();
         transitions.sort_unstable_by_key(|(symbol, _)| *symbol);
@@ -285,7 +291,8 @@ impl NestedTrieDawg {
             } else {
                 // Create new state
                 let new_state = self.add_state(current_state, false, false)?;
-                self.transitions.add_transition(current_state, symbol, new_state)?;
+                self.transitions
+                    .add_transition(current_state, symbol, new_state)?;
                 current_state = new_state;
             }
         }
@@ -302,7 +309,7 @@ impl NestedTrieDawg {
     /// Add a new state to the DAWG
     fn add_state(&mut self, parent: u32, is_terminal: bool, is_final: bool) -> Result<u32> {
         let state_id = self.states.len() as u32;
-        
+
         if state_id >= self.config.max_states as u32 {
             return Err(ZiporaError::invalid_data("Maximum states exceeded"));
         }
@@ -327,7 +334,7 @@ impl NestedTrieDawg {
         // Process states bottom-up (reverse topological order)
         for state_id in (0..self.states.len()).rev() {
             let signature = self.compute_state_signature(state_id as u32)?;
-            
+
             if let Some(&equivalent_state) = state_signatures.get(&signature) {
                 // Found equivalent state - merge
                 state_mapping.insert(state_id as u32, equivalent_state);
@@ -352,7 +359,11 @@ impl NestedTrieDawg {
         let mut signature = Vec::new();
 
         // Add terminal flag
-        signature.push(if self.states[state_id as usize].is_terminal() { 1 } else { 0 });
+        signature.push(if self.states[state_id as usize].is_terminal() {
+            1
+        } else {
+            0
+        });
 
         // Add sorted outgoing transitions
         let mut transitions = self.transitions.get_outgoing_transitions(state_id);
@@ -370,12 +381,13 @@ impl NestedTrieDawg {
     fn remap_transitions(&mut self, state_mapping: &HashMap<u32, u32>) -> Result<()> {
         let old_transitions = std::mem::replace(
             &mut self.transitions,
-            TransitionTable::new(self.states.len() as u32, false)
+            TransitionTable::new(self.states.len() as u32, false),
         );
 
         for (&(from_state, symbol), &to_state) in &old_transitions.sparse_table {
             if let (Some(&new_from), Some(&new_to)) =
-                (state_mapping.get(&from_state), state_mapping.get(&to_state)) {
+                (state_mapping.get(&from_state), state_mapping.get(&to_state))
+            {
                 self.transitions.add_transition(new_from, symbol, new_to)?;
             }
         }
@@ -391,26 +403,33 @@ impl NestedTrieDawg {
         let mut new_id = 0u32;
         for old_id in 0..self.states.len() as u32 {
             if let Some(&mapped_id) = state_mapping.get(&old_id)
-                && mapped_id == old_id {
-                    compaction_mapping.insert(old_id, new_id);
-                    new_states.push(self.states[old_id as usize]);
-                    new_id += 1;
-                }
+                && mapped_id == old_id
+            {
+                compaction_mapping.insert(old_id, new_id);
+                new_states.push(self.states[old_id as usize]);
+                new_id += 1;
+            }
         }
 
         let old_transitions = std::mem::replace(
             &mut self.transitions,
-            TransitionTable::new(new_states.len() as u32, false)
+            TransitionTable::new(new_states.len() as u32, false),
         );
 
         for (&(from_state, symbol), &to_state) in &old_transitions.sparse_table {
-            if let (Some(&compact_from), Some(&compact_to)) =
-                (compaction_mapping.get(&from_state), compaction_mapping.get(&to_state)) {
-                self.transitions.add_transition(compact_from, symbol, compact_to)?;
+            if let (Some(&compact_from), Some(&compact_to)) = (
+                compaction_mapping.get(&from_state),
+                compaction_mapping.get(&to_state),
+            ) {
+                self.transitions
+                    .add_transition(compact_from, symbol, compact_to)?;
             }
         }
 
-        self.root_state = compaction_mapping.get(&self.root_state).copied().unwrap_or(0);
+        self.root_state = compaction_mapping
+            .get(&self.root_state)
+            .copied()
+            .unwrap_or(0);
         self.states = new_states;
 
         Ok(())
@@ -458,7 +477,13 @@ impl NestedTrieDawg {
             Some(rs.rank1(idx))
         } else {
             // Fallback: linear count
-            Some(self.states[..=idx].iter().filter(|s| s.is_terminal()).count() - 1)
+            Some(
+                self.states[..=idx]
+                    .iter()
+                    .filter(|s| s.is_terminal())
+                    .count()
+                    - 1,
+            )
         }
     }
 
@@ -472,10 +497,14 @@ impl NestedTrieDawg {
     pub fn statistics(&self) -> DawgStats {
         let transition_memory = self.transitions.memory_usage();
         let state_memory = self.states.len() * std::mem::size_of::<DawgState>();
-        let terminal_memory = self.terminal_bits.as_ref()
+        let terminal_memory = self
+            .terminal_bits
+            .as_ref()
             .map(|_bv| std::mem::size_of::<BitVector>())
-            .unwrap_or(0) + 
-            self.terminal_rank_select.as_ref()
+            .unwrap_or(0)
+            + self
+                .terminal_rank_select
+                .as_ref()
                 .map(|_rs| std::mem::size_of::<RankSelectInterleaved256>())
                 .unwrap_or(0);
 
@@ -489,7 +518,9 @@ impl NestedTrieDawg {
             } else {
                 0.0
             },
-            cache_hit_ratio: self.cache.as_ref()
+            cache_hit_ratio: self
+                .cache
+                .as_ref()
                 .map(|c| c.stats().hit_ratio())
                 .unwrap_or(0.0),
         }
@@ -527,11 +558,14 @@ impl FiniteStateAutomaton for NestedTrieDawg {
     }
 
     fn transition(&self, state: StateId, symbol: u8) -> Option<StateId> {
-        self.transitions.get_transition(state, symbol).map(|s| s as StateId)
+        self.transitions
+            .get_transition(state, symbol)
+            .map(|s| s as StateId)
     }
 
     fn transitions(&self, state: StateId) -> Vec<(u8, StateId)> {
-        self.transitions.get_outgoing_transitions(state)
+        self.transitions
+            .get_outgoing_transitions(state)
             .into_iter()
             .map(|(symbol, target)| (symbol, target as StateId))
             .collect()
@@ -542,7 +576,7 @@ impl Trie for NestedTrieDawg {
     fn insert(&mut self, key: &[u8]) -> Result<StateId> {
         let _old_len = self.num_keys;
         self.insert_key(key)?;
-        
+
         // Return the state ID for the inserted key
         let mut current_state = self.root_state;
         for &symbol in key {
@@ -553,7 +587,7 @@ impl Trie for NestedTrieDawg {
                 return Err(ZiporaError::invalid_data("Failed to find inserted key"));
             }
         }
-        
+
         Ok(current_state as StateId)
     }
 
@@ -563,7 +597,7 @@ impl Trie for NestedTrieDawg {
 
     fn contains(&self, key: &[u8]) -> bool {
         let mut current_state = self.root_state;
-        
+
         for &symbol in key {
             if let Some(next_state) = self.transitions.get_transition(current_state, symbol) {
                 current_state = next_state;
@@ -571,9 +605,10 @@ impl Trie for NestedTrieDawg {
                 return false;
             }
         }
-        
+
         // Check if the final state is terminal
-        (current_state as usize) < self.states.len() && self.states[current_state as usize].is_terminal()
+        (current_state as usize) < self.states.len()
+            && self.states[current_state as usize].is_terminal()
     }
 
     fn is_empty(&self) -> bool {
@@ -584,12 +619,12 @@ impl Trie for NestedTrieDawg {
 impl StatisticsProvider for NestedTrieDawg {
     fn stats(&self) -> TrieStats {
         let dawg_stats = self.statistics();
-        
+
         TrieStats {
             num_states: dawg_stats.num_states,
             num_keys: dawg_stats.num_keys,
             num_transitions: dawg_stats.num_transitions,
-            max_depth: 0, // Would need tree traversal to calculate accurately
+            max_depth: 0,   // Would need tree traversal to calculate accurately
             avg_depth: 0.0, // Would need tree traversal to calculate accurately
             memory_usage: dawg_stats.memory_usage,
             bits_per_key: if dawg_stats.num_keys > 0 {
@@ -619,10 +654,10 @@ mod tests {
         let mut state = DawgState::new(100, 50, false, false);
         assert!(!state.is_terminal());
         assert!(!state.is_final());
-        
+
         state.set_terminal(true);
         assert!(state.is_terminal());
-        
+
         state.set_final(true);
         assert!(state.is_final());
     }
@@ -630,14 +665,14 @@ mod tests {
     #[test]
     fn test_transition_table_dense() {
         let mut table = TransitionTable::new(10, true);
-        
+
         table.add_transition(0, b'a', 1).unwrap();
         table.add_transition(0, b'b', 2).unwrap();
-        
+
         assert_eq!(table.get_transition(0, b'a'), Some(1));
         assert_eq!(table.get_transition(0, b'b'), Some(2));
         assert_eq!(table.get_transition(0, b'c'), None);
-        
+
         let transitions = table.get_outgoing_transitions(0);
         assert_eq!(transitions.len(), 2);
         assert!(transitions.contains(&(b'a', 1)));
@@ -647,14 +682,14 @@ mod tests {
     #[test]
     fn test_transition_table_sparse() {
         let mut table = TransitionTable::new(10, false);
-        
+
         table.add_transition(0, b'a', 1).unwrap();
         table.add_transition(0, b'b', 2).unwrap();
-        
+
         assert_eq!(table.get_transition(0, b'a'), Some(1));
         assert_eq!(table.get_transition(0, b'b'), Some(2));
         assert_eq!(table.get_transition(0, b'c'), None);
-        
+
         let transitions = table.get_outgoing_transitions(0);
         assert_eq!(transitions.len(), 2);
         assert!(transitions.contains(&(b'a', 1)));
@@ -664,11 +699,17 @@ mod tests {
     #[test]
     fn test_nested_trie_dawg_basic() {
         let mut dawg = NestedTrieDawg::new().unwrap();
-        
+
         // Build from simple keys
-        let keys = vec!["cat".as_bytes(), "car".as_bytes(), "card".as_bytes(), "care".as_bytes(), "careful".as_bytes()];
+        let keys = vec![
+            "cat".as_bytes(),
+            "car".as_bytes(),
+            "card".as_bytes(),
+            "care".as_bytes(),
+            "careful".as_bytes(),
+        ];
         dawg.build_from_keys(keys).unwrap();
-        
+
         // Test containment
         assert!(dawg.contains(b"cat"));
         assert!(dawg.contains(b"car"));
@@ -677,7 +718,7 @@ mod tests {
         assert!(dawg.contains(b"careful"));
         assert!(!dawg.contains(b"dog"));
         assert!(!dawg.contains(b"ca"));
-        
+
         // Test statistics
         let stats = dawg.statistics();
         assert_eq!(stats.num_keys, 5);
@@ -688,14 +729,19 @@ mod tests {
     #[test]
     fn test_nested_trie_dawg_prefix_search() {
         let mut dawg = NestedTrieDawg::new().unwrap();
-        
-        let keys = vec!["computer".as_bytes(), "computation".as_bytes(), "compute".as_bytes(), "computing".as_bytes()];
+
+        let keys = vec![
+            "computer".as_bytes(),
+            "computation".as_bytes(),
+            "compute".as_bytes(),
+            "computing".as_bytes(),
+        ];
         dawg.build_from_keys(keys).unwrap();
-        
+
         // Test prefix search - TODO: implement prefix_search method
         // let results = dawg.prefix_search(b"comput").unwrap();
         // assert_eq!(results.len(), 4);
-        
+
         // Test basic contains functionality for now
         assert!(dawg.contains(b"computer"));
         assert!(dawg.contains(b"computation"));
@@ -706,10 +752,14 @@ mod tests {
     #[test]
     fn test_nested_trie_dawg_longest_prefix() {
         let mut dawg = NestedTrieDawg::new().unwrap();
-        
-        let keys = vec!["app".as_bytes(), "apple".as_bytes(), "application".as_bytes()];
+
+        let keys = vec![
+            "app".as_bytes(),
+            "apple".as_bytes(),
+            "application".as_bytes(),
+        ];
         dawg.build_from_keys(keys).unwrap();
-        
+
         assert_eq!(dawg.longest_prefix(b"app"), Some(3));
         assert_eq!(dawg.longest_prefix(b"apple"), Some(5));
         assert_eq!(dawg.longest_prefix(b"application"), Some(11));
@@ -720,17 +770,23 @@ mod tests {
     #[test]
     fn test_dawg_compression() {
         let mut dawg = NestedTrieDawg::new().unwrap();
-        
+
         // Keys with shared suffixes should compress well in DAWG
         let keys = vec![
-            "ending".as_bytes(), "reading".as_bytes(), "heading".as_bytes(), "leading".as_bytes(),
-            "sending".as_bytes(), "bending".as_bytes(), "pending".as_bytes(), "mending".as_bytes()
+            "ending".as_bytes(),
+            "reading".as_bytes(),
+            "heading".as_bytes(),
+            "leading".as_bytes(),
+            "sending".as_bytes(),
+            "bending".as_bytes(),
+            "pending".as_bytes(),
+            "mending".as_bytes(),
         ];
         dawg.build_from_keys(keys).unwrap();
-        
+
         let stats = dawg.statistics();
         assert_eq!(stats.num_keys, 8);
-        
+
         // DAWG should have fewer states than a trie due to suffix sharing
         // (exact number depends on implementation details)
         assert!(stats.num_states < stats.num_keys * 7); // Rough upper bound
@@ -741,7 +797,7 @@ mod tests {
     fn test_dawg_config_variants() {
         let memory_config = DawgConfig::memory_efficient();
         let performance_config = DawgConfig::performance_optimized();
-        
+
         assert!(memory_config.max_states < performance_config.max_states);
         assert!(memory_config.compressed_storage);
     }
@@ -751,11 +807,11 @@ mod tests {
         let mut dawg = NestedTrieDawg::new().unwrap();
         assert!(dawg.is_empty());
         assert_eq!(dawg.len(), 0);
-        
+
         dawg.build_from_keys(vec![b"test"]).unwrap();
         assert!(!dawg.is_empty());
         assert_eq!(dawg.len(), 1);
-        
+
         dawg.clear();
         assert!(dawg.is_empty());
         assert_eq!(dawg.len(), 0);

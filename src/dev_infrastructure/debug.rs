@@ -5,11 +5,11 @@
 //! logging infrastructure. Inspired by production debugging frameworks while leveraging
 //! Rust's compile-time optimization and zero-cost abstractions.
 
+use crate::error::{Result, ZiporaError};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use crate::error::{ZiporaError, Result};
 
 /// High-precision timer for performance measurements
 #[derive(Debug, Clone)]
@@ -94,7 +94,7 @@ impl Default for HighPrecisionTimer {
 /// Format duration with automatic unit selection for readability
 pub fn format_duration(duration: Duration) -> String {
     let nanos = duration.as_nanos();
-    
+
     if nanos < 1_000 {
         format!("{}ns", nanos)
     } else if nanos < 1_000_000 {
@@ -168,18 +168,18 @@ impl BenchmarkSuite {
         F: FnMut(),
     {
         let _timer = HighPrecisionTimer::named(name);
-        
+
         // Warmup
         for _ in 0..std::cmp::min(iterations / 10, 100) {
             operation();
         }
-        
+
         let start = Instant::now();
         for _ in 0..iterations {
             operation();
         }
         let duration = start.elapsed();
-        
+
         let result = BenchmarkResult {
             name: name.to_string(),
             iterations,
@@ -191,7 +191,7 @@ impl BenchmarkSuite {
                 f64::INFINITY
             },
         };
-        
+
         self.benchmarks.push(result);
     }
 
@@ -199,11 +199,15 @@ impl BenchmarkSuite {
     pub fn run_all(&self) {
         println!("Benchmark Suite: {}", self.name);
         println!("{:-<80}", "");
-        println!("{:<30} {:>12} {:>15} {:>15}", "Name", "Iterations", "Avg Time", "Ops/sec");
+        println!(
+            "{:<30} {:>12} {:>15} {:>15}",
+            "Name", "Iterations", "Avg Time", "Ops/sec"
+        );
         println!("{:-<80}", "");
-        
+
         for benchmark in &self.benchmarks {
-            println!("{:<30} {:>12} {:>15} {:>15.0}",
+            println!(
+                "{:<30} {:>12} {:>15} {:>15.0}",
                 benchmark.name,
                 benchmark.iterations,
                 format_duration(benchmark.avg_duration),
@@ -269,7 +273,10 @@ impl MemoryDebugger {
             allocations.insert(ptr, info);
         }
 
-        let current_allocated = self.total_allocated.fetch_add(size as u64, Ordering::SeqCst) + size as u64;
+        let current_allocated = self
+            .total_allocated
+            .fetch_add(size as u64, Ordering::SeqCst)
+            + size as u64;
         self.allocation_count.fetch_add(1, Ordering::SeqCst);
 
         // Update peak usage
@@ -288,7 +295,8 @@ impl MemoryDebugger {
         };
 
         if let Some(size) = size {
-            self.total_deallocated.fetch_add(size as u64, Ordering::SeqCst);
+            self.total_deallocated
+                .fetch_add(size as u64, Ordering::SeqCst);
             Some(size)
         } else {
             None
@@ -302,7 +310,7 @@ impl MemoryDebugger {
         let current_usage = allocated.saturating_sub(deallocated);
         let peak_usage = self.peak_usage.load(Ordering::SeqCst);
         let allocation_count = self.allocation_count.load(Ordering::SeqCst);
-        
+
         let active_allocations = if let Ok(allocations) = self.allocations.lock() {
             allocations.len()
         } else {
@@ -334,7 +342,10 @@ impl MemoryDebugger {
     /// Check for memory leaks
     pub fn check_leaks(&self) -> Vec<(usize, AllocationInfo)> {
         if let Ok(allocations) = self.allocations.lock() {
-            allocations.iter().map(|(&ptr, info)| (ptr, info.clone())).collect()
+            allocations
+                .iter()
+                .map(|(&ptr, info)| (ptr, info.clone()))
+                .collect()
         } else {
             Vec::new()
         }
@@ -395,16 +406,20 @@ impl PerformanceProfiler {
 
     /// Record a measurement manually
     pub fn record_measurement(&self, name: &str, duration: Duration) -> Result<()> {
-        let mut profiles = self.profiles.write()
+        let mut profiles = self
+            .profiles
+            .write()
             .map_err(|_| ZiporaError::io_error("Failed to acquire write lock on profiles"))?;
 
-        let profile = profiles.entry(name.to_string()).or_insert_with(|| ProfileData {
-            call_count: 0,
-            total_duration: Duration::ZERO,
-            min_duration: Duration::MAX,
-            max_duration: Duration::ZERO,
-            avg_duration: Duration::ZERO,
-        });
+        let profile = profiles
+            .entry(name.to_string())
+            .or_insert_with(|| ProfileData {
+                call_count: 0,
+                total_duration: Duration::ZERO,
+                min_duration: Duration::MAX,
+                max_duration: Duration::ZERO,
+                avg_duration: Duration::ZERO,
+            });
 
         profile.call_count += 1;
         profile.total_duration += duration;
@@ -417,25 +432,32 @@ impl PerformanceProfiler {
 
     /// Get profile data for a specific operation
     pub fn get_profile(&self, name: &str) -> Result<Option<ProfileData>> {
-        let profiles = self.profiles.read()
+        let profiles = self
+            .profiles
+            .read()
             .map_err(|_| ZiporaError::io_error("Failed to acquire read lock on profiles"))?;
-        
+
         Ok(profiles.get(name).cloned())
     }
 
     /// Print performance report
     pub fn print_report(&self) -> Result<()> {
-        let profiles = self.profiles.read()
+        let profiles = self
+            .profiles
+            .read()
             .map_err(|_| ZiporaError::io_error("Failed to acquire read lock on profiles"))?;
 
         println!("Performance Profiling Report:");
         println!("{:-<100}", "");
-        println!("{:<30} {:>10} {:>15} {:>15} {:>15} {:>15}",
-            "Operation", "Calls", "Total", "Average", "Min", "Max");
+        println!(
+            "{:<30} {:>10} {:>15} {:>15} {:>15} {:>15}",
+            "Operation", "Calls", "Total", "Average", "Min", "Max"
+        );
         println!("{:-<100}", "");
 
         for (name, profile) in profiles.iter() {
-            println!("{:<30} {:>10} {:>15} {:>15} {:>15} {:>15}",
+            println!(
+                "{:<30} {:>10} {:>15} {:>15} {:>15} {:>15}",
                 name,
                 profile.call_count,
                 format_duration(profile.total_duration),
@@ -451,9 +473,11 @@ impl PerformanceProfiler {
 
     /// Clear all profile data
     pub fn clear(&self) -> Result<()> {
-        let mut profiles = self.profiles.write()
+        let mut profiles = self
+            .profiles
+            .write()
             .map_err(|_| ZiporaError::io_error("Failed to acquire write lock on profiles"))?;
-        
+
         profiles.clear();
         Ok(())
     }
@@ -510,7 +534,7 @@ macro_rules! measure_time {
 }
 
 /// Global performance profiler instance
-static GLOBAL_PROFILER: std::sync::LazyLock<PerformanceProfiler> = 
+static GLOBAL_PROFILER: std::sync::LazyLock<PerformanceProfiler> =
     std::sync::LazyLock::new(PerformanceProfiler::new);
 
 /// Get the global performance profiler
@@ -519,7 +543,7 @@ pub fn global_profiler() -> &'static PerformanceProfiler {
 }
 
 /// Global memory debugger instance
-static GLOBAL_MEMORY_DEBUGGER: std::sync::LazyLock<MemoryDebugger> = 
+static GLOBAL_MEMORY_DEBUGGER: std::sync::LazyLock<MemoryDebugger> =
     std::sync::LazyLock::new(MemoryDebugger::new);
 
 /// Get the global memory debugger
@@ -537,11 +561,11 @@ mod tests {
     fn test_high_precision_timer() {
         let timer = HighPrecisionTimer::named("test_timer");
         thread::sleep(Duration::from_millis(10));
-        
+
         let elapsed = timer.elapsed();
         assert!(elapsed >= Duration::from_millis(10));
         assert!(elapsed < Duration::from_millis(50));
-        
+
         let formatted = timer.elapsed_string();
         assert!(formatted.contains("ms"));
     }
@@ -558,12 +582,12 @@ mod tests {
     #[test]
     fn test_benchmark_suite() {
         let mut suite = BenchmarkSuite::new("test_suite");
-        
+
         suite.add_benchmark("simple_op", 1000, || {
             // Simulate some work
             let _x = (0..100).sum::<i32>();
         });
-        
+
         assert_eq!(suite.results().len(), 1);
         let result = &suite.results()[0];
         assert_eq!(result.name, "simple_op");
@@ -574,20 +598,20 @@ mod tests {
     #[test]
     fn test_memory_debugger() {
         let debugger = MemoryDebugger::new();
-        
+
         // Record some allocations
         debugger.record_allocation(0x1000, 1024, "test:1");
         debugger.record_allocation(0x2000, 2048, "test:2");
-        
+
         let stats = debugger.get_stats();
         assert_eq!(stats.total_allocated, 3072);
         assert_eq!(stats.allocation_count, 2);
         assert_eq!(stats.active_allocations, 2);
-        
+
         // Record deallocation
         let size = debugger.record_deallocation(0x1000);
         assert_eq!(size, Some(1024));
-        
+
         let stats = debugger.get_stats();
         assert_eq!(stats.total_deallocated, 1024);
         assert_eq!(stats.current_usage, 2048);
@@ -597,25 +621,29 @@ mod tests {
     #[test]
     fn test_performance_profiler() {
         let profiler = PerformanceProfiler::new();
-        
+
         // Profile some operations
-        let result = profiler.profile("test_op", || {
-            thread::sleep(Duration::from_millis(1));
-            Ok(42)
-        }).unwrap();
-        
+        let result = profiler
+            .profile("test_op", || {
+                thread::sleep(Duration::from_millis(1));
+                Ok(42)
+            })
+            .unwrap();
+
         assert_eq!(result, 42);
-        
+
         let profile = profiler.get_profile("test_op").unwrap().unwrap();
         assert_eq!(profile.call_count, 1);
         assert!(profile.total_duration >= Duration::from_millis(1));
-        
+
         // Profile same operation again
-        profiler.profile("test_op", || {
-            thread::sleep(Duration::from_millis(1));
-            Ok(24)
-        }).unwrap();
-        
+        profiler
+            .profile("test_op", || {
+                thread::sleep(Duration::from_millis(1));
+                Ok(24)
+            })
+            .unwrap();
+
         let profile = profiler.get_profile("test_op").unwrap().unwrap();
         assert_eq!(profile.call_count, 2);
     }
@@ -632,7 +660,7 @@ mod tests {
     fn test_global_instances() {
         let profiler = global_profiler();
         let debugger = global_memory_debugger();
-        
+
         // These should be the same instances across calls
         assert!(std::ptr::eq(profiler, global_profiler()));
         assert!(std::ptr::eq(debugger, global_memory_debugger()));

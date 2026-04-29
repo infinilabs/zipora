@@ -5,8 +5,8 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use zipora::{
-    CacheAlignedVec, FastVec, get_numa_stats, get_optimal_numa_node,
-    init_numa_pools, set_current_numa_node,
+    CacheAlignedVec, FastVec, get_numa_stats, get_optimal_numa_node, init_numa_pools,
+    set_current_numa_node,
 };
 
 /// Benchmark cache-aligned vector vs standard vector for bulk operations

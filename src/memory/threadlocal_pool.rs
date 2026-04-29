@@ -35,7 +35,7 @@ const SYNC_THRESHOLD: isize = 256 * 1024;
 const MAX_CACHED_CHUNKS: usize = 64;
 /// Size classes for thread-local caching
 const TLS_SIZE_CLASSES: &[usize] = &[
-    16, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096
+    16, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096,
 ];
 
 /// Configuration for thread-local memory pool
@@ -117,7 +117,11 @@ impl ThreadLocalPoolStats {
         let hits = self.cache_hits.load(Ordering::Relaxed);
         let misses = self.cache_misses.load(Ordering::Relaxed);
         let total = hits + misses;
-        if total == 0 { 0.0 } else { hits as f64 / total as f64 }
+        if total == 0 {
+            0.0
+        } else {
+            hits as f64 / total as f64
+        }
     }
 
     /// Get average allocation locality (higher is better)
@@ -125,7 +129,11 @@ impl ThreadLocalPoolStats {
         let hot = self.hot_allocations.load(Ordering::Relaxed);
         let arena = self.arena_allocations.load(Ordering::Relaxed);
         let total = hot + arena;
-        if total == 0 { 0.0 } else { hot as f64 / total as f64 }
+        if total == 0 {
+            0.0
+        } else {
+            hot as f64 / total as f64
+        }
     }
 }
 
@@ -176,20 +184,16 @@ impl HotArea {
     /// Try to allocate from hot area
     fn try_allocate(&mut self, size: usize) -> Option<NonNull<u8>> {
         let aligned_size = (size + 7) & !7; // 8-byte alignment
-        
+
         if self.pos + aligned_size <= self.end {
             // SAFETY: pos + aligned_size <= end checked above, start.as_ptr() is valid
-            let ptr = unsafe {
-                NonNull::new_unchecked(self.start.as_ptr().add(self.pos))
-            };
+            let ptr = unsafe { NonNull::new_unchecked(self.start.as_ptr().add(self.pos)) };
             self.pos += aligned_size;
             Some(ptr)
         } else {
             None
         }
     }
-
-
 }
 
 impl Drop for HotArea {
@@ -203,7 +207,10 @@ impl Drop for HotArea {
 
 impl ThreadLocalCache {
     /// Create new thread-local cache
-    fn new(global_pool: Weak<ThreadLocalMemoryPool>, stats: Option<Arc<ThreadLocalPoolStats>>) -> Self {
+    fn new(
+        global_pool: Weak<ThreadLocalMemoryPool>,
+        stats: Option<Arc<ThreadLocalPoolStats>>,
+    ) -> Self {
         Self {
             hot_area: None,
             free_lists: vec![Vec::new(); TLS_SIZE_CLASSES.len()],
@@ -217,42 +224,49 @@ impl ThreadLocalCache {
     fn allocate(&mut self, size: usize, config: &ThreadLocalPoolConfig) -> Result<NonNull<u8>> {
         // Try size class free list first
         if let Some(list_index) = self.size_to_list_index(size)
-            && let Some(ptr) = self.free_lists[list_index].pop() {
-                if let Some(stats) = &self.stats {
-                    stats.cache_hits.fetch_add(1, Ordering::Relaxed);
-                }
-                return Ok(ptr);
+            && let Some(ptr) = self.free_lists[list_index].pop()
+        {
+            if let Some(stats) = &self.stats {
+                stats.cache_hits.fetch_add(1, Ordering::Relaxed);
             }
+            return Ok(ptr);
+        }
 
         // Try hot area allocation
         if let Some(ref mut hot_area) = self.hot_area
-            && let Some(ptr) = hot_area.try_allocate(size) {
-                if let Some(stats) = &self.stats {
-                    stats.hot_allocations.fetch_add(1, Ordering::Relaxed);
-                }
-                return Ok(ptr);
+            && let Some(ptr) = hot_area.try_allocate(size)
+        {
+            if let Some(stats) = &self.stats {
+                stats.hot_allocations.fetch_add(1, Ordering::Relaxed);
             }
+            return Ok(ptr);
+        }
 
         // Need to allocate new hot area or fall back to global pool
         self.allocate_new_area_or_fallback(size, config)
     }
 
     /// Deallocate memory to thread-local cache
-    fn deallocate(&mut self, ptr: NonNull<u8>, size: usize, config: &ThreadLocalPoolConfig) -> Result<()> {
+    fn deallocate(
+        &mut self,
+        ptr: NonNull<u8>,
+        size: usize,
+        config: &ThreadLocalPoolConfig,
+    ) -> Result<()> {
         // Find appropriate size class
         if let Some(list_index) = self.size_to_list_index(size) {
             let free_list = &mut self.free_lists[list_index];
-            
+
             // Check if we have room in cache
             if free_list.len() < config.max_cached_chunks {
                 free_list.push(ptr);
-                
+
                 // Update lazy synchronization counter
                 self.frag_inc -= size as isize;
                 if self.frag_inc < -config.sync_threshold {
                     self.sync_with_global()?;
                 }
-                
+
                 return Ok(());
             }
         }
@@ -262,7 +276,11 @@ impl ThreadLocalCache {
     }
 
     /// Allocate new hot area or fall back to global pool
-    fn allocate_new_area_or_fallback(&mut self, size: usize, config: &ThreadLocalPoolConfig) -> Result<NonNull<u8>> {
+    fn allocate_new_area_or_fallback(
+        &mut self,
+        size: usize,
+        config: &ThreadLocalPoolConfig,
+    ) -> Result<NonNull<u8>> {
         // If size is too large for hot area, use global pool directly
         if size > config.arena_size / 4 {
             return self.allocate_from_global(size);
@@ -274,15 +292,15 @@ impl ThreadLocalCache {
                 // Try to allocate from new hot area
                 if let Some(ptr) = hot_area.try_allocate(size) {
                     self.hot_area = Some(hot_area);
-                    
+
                     if let Some(stats) = &self.stats {
                         stats.arena_allocations.fetch_add(1, Ordering::Relaxed);
                         stats.hot_allocations.fetch_add(1, Ordering::Relaxed);
                     }
-                    
+
                     return Ok(ptr);
                 }
-                
+
                 // Hot area too small for request
                 self.allocate_from_global(size)
             }
@@ -302,8 +320,7 @@ impl ThreadLocalCache {
         if let Some(global_pool) = self.global_pool.upgrade() {
             // Use the regular allocate method since we don't have bypass_cache
             global_pool.allocate(size).and_then(|alloc| {
-                NonNull::new(alloc.as_ptr())
-                    .ok_or_else(|| ZiporaError::out_of_memory(size))
+                NonNull::new(alloc.as_ptr()).ok_or_else(|| ZiporaError::out_of_memory(size))
             })
         } else {
             Err(ZiporaError::invalid_data("Global pool unavailable"))
@@ -329,7 +346,7 @@ impl ThreadLocalCache {
         if let Some(stats) = &self.stats {
             stats.batch_syncs.fetch_add(1, Ordering::Relaxed);
         }
-        
+
         // Reset lazy counter
         self.frag_inc = 0;
         Ok(())
@@ -337,7 +354,9 @@ impl ThreadLocalCache {
 
     /// Convert size to free list index
     fn size_to_list_index(&self, size: usize) -> Option<usize> {
-        TLS_SIZE_CLASSES.iter().position(|&class_size| size <= class_size)
+        TLS_SIZE_CLASSES
+            .iter()
+            .position(|&class_size| size <= class_size)
     }
 }
 
@@ -388,18 +407,20 @@ impl ThreadLocalMemoryPool {
         // Get or create thread-local cache
         let ptr = CURRENT_CACHE.with(|cache_cell| {
             let mut cache_opt = cache_cell.borrow_mut();
-            
+
             // Initialize cache if needed
             if cache_opt.is_none() {
                 let weak_self = Arc::downgrade(self);
                 *cache_opt = Some(ThreadLocalCache::new(weak_self, self.stats.clone()));
             }
-            
+
             // Allocate using thread-local cache
             if let Some(ref mut cache) = *cache_opt {
                 cache.allocate(size, &self.config)
             } else {
-                Err(ZiporaError::invalid_data("Failed to initialize thread cache"))
+                Err(ZiporaError::invalid_data(
+                    "Failed to initialize thread cache",
+                ))
             }
         })?;
 
@@ -410,7 +431,7 @@ impl ThreadLocalMemoryPool {
     fn deallocate(&self, ptr: NonNull<u8>, size: usize) -> Result<()> {
         CURRENT_CACHE.with(|cache_cell| {
             let mut cache_opt = cache_cell.borrow_mut();
-            
+
             if let Some(ref mut cache) = *cache_opt {
                 cache.deallocate(ptr, size, &self.config)
             } else {
@@ -419,8 +440,6 @@ impl ThreadLocalMemoryPool {
             }
         })
     }
-
-
 
     /// Deallocate bypassing thread-local cache
     fn deallocate_bypass_cache(&self, ptr: NonNull<u8>, size: usize) -> Result<()> {
@@ -520,7 +539,7 @@ mod tests {
     fn test_threadlocal_pool_creation() {
         let config = ThreadLocalPoolConfig::default();
         let pool = ThreadLocalMemoryPool::new(config).unwrap();
-        
+
         // Verify pool was created successfully
         assert!(pool.stats.is_some());
     }
@@ -529,12 +548,12 @@ mod tests {
     fn test_basic_allocation_deallocation() {
         let config = ThreadLocalPoolConfig::default();
         let pool = ThreadLocalMemoryPool::new(config).unwrap();
-        
+
         // Test allocation
         let alloc = pool.allocate(64).unwrap();
         assert_eq!(alloc.size(), 64);
         assert!(!alloc.as_ptr().is_null());
-        
+
         // Allocation automatically freed on drop
     }
 
@@ -542,14 +561,14 @@ mod tests {
     fn test_thread_local_caching() {
         let config = ThreadLocalPoolConfig::default();
         let pool = ThreadLocalMemoryPool::new(config).unwrap();
-        
+
         // Multiple allocations should use cache
         {
             let _alloc1 = pool.allocate(64).unwrap();
             let _alloc2 = pool.allocate(128).unwrap();
             let _alloc3 = pool.allocate(64).unwrap(); // Should hit cache
         }
-        
+
         // Check statistics
         if let Some(stats) = pool.stats() {
             let hits = stats.cache_hits.load(Ordering::Relaxed);
@@ -564,19 +583,22 @@ mod tests {
             ..ThreadLocalPoolConfig::default()
         };
         let pool = ThreadLocalMemoryPool::new(config).unwrap();
-        
+
         // Allocate many small blocks (should use hot area)
         let mut allocations = Vec::new();
         for i in 0..10 {
             let alloc = pool.allocate(32 + i).unwrap();
             allocations.push(alloc);
         }
-        
+
         // Check statistics
         if let Some(stats) = pool.stats() {
             let hot_allocs = stats.hot_allocations.load(Ordering::Relaxed);
             let arena_allocs = stats.arena_allocations.load(Ordering::Relaxed);
-            println!("Hot allocations: {}, Arena allocations: {}", hot_allocs, arena_allocs);
+            println!(
+                "Hot allocations: {}, Arena allocations: {}",
+                hot_allocs, arena_allocs
+            );
             assert!(hot_allocs > 0);
         }
     }
@@ -587,19 +609,22 @@ mod tests {
         // In a real implementation, we would need proper Send/Sync bounds
         let config = ThreadLocalPoolConfig::high_performance();
         let pool = ThreadLocalMemoryPool::new(config).unwrap();
-        
+
         // Just test single-threaded for now
         let mut allocations = Vec::new();
         for i in 0..10 {
             let alloc = pool.allocate(64 + i).unwrap();
             allocations.push(alloc);
         }
-        
+
         // Check statistics
         if let Some(stats) = pool.stats() {
             let hit_ratio = stats.hit_ratio();
             let locality = stats.locality_score();
-            println!("Hit ratio: {:.2}, Locality score: {:.2}", hit_ratio, locality);
+            println!(
+                "Hit ratio: {:.2}, Locality score: {:.2}",
+                hit_ratio, locality
+            );
         }
     }
 
@@ -607,13 +632,13 @@ mod tests {
     fn test_size_class_mapping() {
         let pool_weak = Weak::new();
         let mut cache = ThreadLocalCache::new(pool_weak, None);
-        
+
         // Test size class mapping
-        assert_eq!(cache.size_to_list_index(8), Some(0));  // -> 16
+        assert_eq!(cache.size_to_list_index(8), Some(0)); // -> 16
         assert_eq!(cache.size_to_list_index(16), Some(0)); // -> 16
         assert_eq!(cache.size_to_list_index(17), Some(1)); // -> 32
         assert_eq!(cache.size_to_list_index(64), Some(3)); // -> 64
-        assert_eq!(cache.size_to_list_index(5000), None);  // Too large
+        assert_eq!(cache.size_to_list_index(5000), None); // Too large
     }
 
     #[test]
@@ -623,13 +648,13 @@ mod tests {
             ..ThreadLocalPoolConfig::default()
         };
         let pool = ThreadLocalMemoryPool::new(config).unwrap();
-        
+
         // Allocate and deallocate more than cache capacity
         for _ in 0..5 {
             let alloc = pool.allocate(64).unwrap();
             drop(alloc); // Force deallocation
         }
-        
+
         // Should not crash and should fall back gracefully
     }
 
@@ -639,7 +664,7 @@ mod tests {
         let hp_config = ThreadLocalPoolConfig::high_performance();
         let hp_pool = ThreadLocalMemoryPool::new(hp_config).unwrap();
         assert!(hp_pool.stats.is_none()); // Stats disabled for performance
-        
+
         // Test compact config
         let compact_config = ThreadLocalPoolConfig::compact();
         let compact_pool = ThreadLocalMemoryPool::new(compact_config).unwrap();

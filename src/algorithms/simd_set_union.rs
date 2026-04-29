@@ -31,15 +31,22 @@ const SIMD_MIN_SIZE: usize = 8;
 #[inline]
 pub fn sorted_union_adaptive(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize {
     out.clear();
-    if a.is_empty() { out.extend_from_slice(b); return b.len(); }
-    if b.is_empty() { out.extend_from_slice(a); return a.len(); }
+    if a.is_empty() {
+        out.extend_from_slice(b);
+        return b.len();
+    }
+    if b.is_empty() {
+        out.extend_from_slice(a);
+        return a.len();
+    }
 
     let total = a.len() + b.len();
     out.reserve(total);
 
     #[cfg(target_arch = "x86_64")]
     {
-        if a.len() >= SIMD_MIN_SIZE && b.len() >= SIMD_MIN_SIZE
+        if a.len() >= SIMD_MIN_SIZE
+            && b.len() >= SIMD_MIN_SIZE
             && std::arch::is_x86_feature_detected!("sse4.1")
         {
             return unsafe { union_simd_sse41(a, b, out) };
@@ -53,8 +60,14 @@ pub fn sorted_union_adaptive(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize 
 #[inline]
 pub fn sorted_union_simd(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize {
     out.clear();
-    if a.is_empty() { out.extend_from_slice(b); return b.len(); }
-    if b.is_empty() { out.extend_from_slice(a); return a.len(); }
+    if a.is_empty() {
+        out.extend_from_slice(b);
+        return b.len();
+    }
+    if b.is_empty() {
+        out.extend_from_slice(a);
+        return a.len();
+    }
 
     out.reserve(a.len() + b.len());
 
@@ -79,8 +92,12 @@ pub fn sorted_union_simd(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize {
 /// - Large lists (10K+): benefits from SIMD intersection parallelism
 #[inline]
 pub fn sorted_union_count(a: &[u32], b: &[u32]) -> usize {
-    if a.is_empty() { return b.len(); }
-    if b.is_empty() { return a.len(); }
+    if a.is_empty() {
+        return b.len();
+    }
+    if b.is_empty() {
+        return a.len();
+    }
 
     // |A ∪ B| = |A| + |B| - |A ∩ B|
     a.len() + b.len() - super::sorted_intersect_count(a, b)
@@ -113,8 +130,12 @@ fn union_scalar_merge(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize {
     }
 
     // Append remaining
-    if i < a.len() { out.extend_from_slice(&a[i..]); }
-    if j < b.len() { out.extend_from_slice(&b[j..]); }
+    if i < a.len() {
+        out.extend_from_slice(&a[i..]);
+    }
+    if j < b.len() {
+        out.extend_from_slice(&b[j..]);
+    }
 
     out.len()
 }
@@ -248,9 +269,15 @@ mod tests {
             // Small
             ((0..100).step_by(2).collect(), (0..100).step_by(3).collect()),
             // Medium (1K-5K range)
-            ((0..5000).step_by(2).collect(), (0..5000).step_by(3).collect()),
+            (
+                (0..5000).step_by(2).collect(),
+                (0..5000).step_by(3).collect(),
+            ),
             // Large (10K+)
-            ((0..20000).step_by(2).collect(), (0..20000).step_by(3).collect()),
+            (
+                (0..20000).step_by(2).collect(),
+                (0..20000).step_by(3).collect(),
+            ),
             // Skewed
             ((0..100).collect(), (0..10000).step_by(7).collect()),
             // High overlap
@@ -263,9 +290,15 @@ mod tests {
             let count = sorted_union_count(a, b);
             let mut out = Vec::new();
             sorted_union_adaptive(a, b, &mut out);
-            assert_eq!(count, out.len(),
+            assert_eq!(
+                count,
+                out.len(),
                 "count mismatch for a.len()={}, b.len()={}: count={}, materialize={}",
-                a.len(), b.len(), count, out.len());
+                a.len(),
+                b.len(),
+                count,
+                out.len()
+            );
         }
     }
 
@@ -282,7 +315,13 @@ mod tests {
         }
         // Should be sorted
         for i in 1..out.len() {
-            assert!(out[i - 1] < out[i], "not sorted at {}: {} >= {}", i, out[i-1], out[i]);
+            assert!(
+                out[i - 1] < out[i],
+                "not sorted at {}: {} >= {}",
+                i,
+                out[i - 1],
+                out[i]
+            );
         }
     }
 
@@ -311,17 +350,29 @@ mod tests {
 
     /// Old branching scalar merge for benchmark comparison.
     fn sorted_union_count_branching(a: &[u32], b: &[u32]) -> usize {
-        if a.is_empty() { return b.len(); }
-        if b.is_empty() { return a.len(); }
+        if a.is_empty() {
+            return b.len();
+        }
+        if b.is_empty() {
+            return a.len();
+        }
         let mut count = 0;
         let mut i = 0usize;
         let mut j = 0usize;
         while i < a.len() && j < b.len() {
             let va = a[i];
             let vb = b[j];
-            if va == vb { count += 1; i += 1; j += 1; }
-            else if va < vb { count += 1; i += 1; }
-            else { count += 1; j += 1; }
+            if va == vb {
+                count += 1;
+                i += 1;
+                j += 1;
+            } else if va < vb {
+                count += 1;
+                i += 1;
+            } else {
+                count += 1;
+                j += 1;
+            }
         }
         count + (a.len() - i) + (b.len() - j)
     }
@@ -355,15 +406,23 @@ mod tests {
 
             let mut sink = 0usize;
             // Warmup
-            for _ in 0..100 { sink += sorted_union_count_branching(&a, &b); }
-            for _ in 0..100 { sink += sorted_union_count(&a, &b); }
+            for _ in 0..100 {
+                sink += sorted_union_count_branching(&a, &b);
+            }
+            for _ in 0..100 {
+                sink += sorted_union_count(&a, &b);
+            }
 
             let start = std::time::Instant::now();
-            for _ in 0..iterations { sink += sorted_union_count_branching(&a, &b); }
+            for _ in 0..iterations {
+                sink += sorted_union_count_branching(&a, &b);
+            }
             let old_ns = start.elapsed().as_nanos() as f64 / iterations as f64;
 
             let start = std::time::Instant::now();
-            for _ in 0..iterations { sink += sorted_union_count(&a, &b); }
+            for _ in 0..iterations {
+                sink += sorted_union_count(&a, &b);
+            }
             let new_ns = start.elapsed().as_nanos() as f64 / iterations as f64;
 
             let speedup = old_ns / new_ns;

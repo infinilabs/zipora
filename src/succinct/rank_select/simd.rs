@@ -486,7 +486,8 @@ fn bulk_select1_bmi2(bit_data: &[u64], indices: &[usize]) -> Result<Vec<usize>> 
 
         while left < right {
             let mid = (left + right) / 2;
-            let rank_at_mid = bulk_rank1_simd(bit_data, &[mid * 64]).first()
+            let rank_at_mid = bulk_rank1_simd(bit_data, &[mid * 64])
+                .first()
                 .copied()
                 .unwrap_or(0);
 
@@ -499,7 +500,8 @@ fn bulk_select1_bmi2(bit_data: &[u64], indices: &[usize]) -> Result<Vec<usize>> 
 
         let mut word_idx = if left > 0 { left - 1 } else { 0 };
         if word_idx > 0 {
-            cumulative_rank = bulk_rank1_simd(bit_data, &[word_idx * 64]).first()
+            cumulative_rank = bulk_rank1_simd(bit_data, &[word_idx * 64])
+                .first()
                 .copied()
                 .unwrap_or(0);
         }
@@ -963,7 +965,10 @@ mod tests {
         let indices = vec![];
 
         assert_eq!(bulk_rank1_simd(&bit_data, &positions), Vec::<usize>::new());
-        assert_eq!(bulk_select1_simd(&bit_data, &indices).unwrap(), Vec::<usize>::new());
+        assert_eq!(
+            bulk_select1_simd(&bit_data, &indices).unwrap(),
+            Vec::<usize>::new()
+        );
         assert_eq!(bulk_popcount_simd(&bit_data), Vec::<usize>::new());
     }
 

@@ -11,6 +11,38 @@
 // Public API
 // ============================================================================
 
+/// Check if AVX2 is available, cached for performance.
+#[inline]
+pub fn has_avx2() -> bool {
+    static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHE.get_or_init(|| {
+        #[cfg(target_arch = "x86_64")]
+        {
+            std::arch::is_x86_feature_detected!("avx2")
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
+        }
+    })
+}
+
+/// Check if SSE2 is available, cached for performance.
+#[inline]
+pub fn has_sse2() -> bool {
+    static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHE.get_or_init(|| {
+        #[cfg(target_arch = "x86_64")]
+        {
+            std::arch::is_x86_feature_detected!("sse2")
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
+        }
+    })
+}
+
 /// SIMD-accelerated galloping search within a sorted u32 slice.
 /// Advances `*cursor` to the first position where `arr[*cursor] >= target`.
 /// Returns true if such a position exists, false if target > last element.
@@ -73,11 +105,11 @@ pub fn simd_gallop_to(arr: &[u32], cursor: &mut usize, target: u32) -> bool {
     // SIMD scan phase within [lo, hi)
     #[cfg(target_arch = "x86_64")]
     {
-        if std::arch::is_x86_feature_detected!("avx2") {
+        if has_avx2() {
             // SAFETY: AVX2 support verified by runtime check
             return unsafe { gallop_scan_avx2(arr, lo, hi, target, cursor) };
         }
-        if std::arch::is_x86_feature_detected!("sse2") {
+        if has_sse2() {
             // SAFETY: SSE2 support verified by runtime check
             return unsafe { gallop_scan_sse2(arr, lo, hi, target, cursor) };
         }
@@ -109,7 +141,11 @@ pub fn simd_gallop_to(arr: &[u32], cursor: &mut usize, target: u32) -> bool {
 #[inline]
 pub fn simd_block_filter(doc_ids: &[u32], scores: &[f32], theta: f32) -> (u64, usize) {
     assert!(scores.len() <= 64, "Block size must be <= 64 elements");
-    assert_eq!(doc_ids.len(), scores.len(), "doc_ids and scores must have same length");
+    assert_eq!(
+        doc_ids.len(),
+        scores.len(),
+        "doc_ids and scores must have same length"
+    );
 
     if scores.is_empty() {
         return (0, 0);
@@ -117,7 +153,7 @@ pub fn simd_block_filter(doc_ids: &[u32], scores: &[f32], theta: f32) -> (u64, u
 
     #[cfg(target_arch = "x86_64")]
     {
-        if std::arch::is_x86_feature_detected!("avx2") {
+        if has_avx2() {
             // SAFETY: AVX2 support verified by runtime check
             return unsafe { block_filter_avx2(scores, theta) };
         }
@@ -263,13 +299,7 @@ unsafe fn block_filter_avx2(scores: &[f32], theta: f32) -> (u64, usize) {
 // Scalar fallback
 // ============================================================================
 
-fn gallop_scan_scalar(
-    arr: &[u32],
-    lo: usize,
-    hi: usize,
-    target: u32,
-    cursor: &mut usize,
-) -> bool {
+fn gallop_scan_scalar(arr: &[u32], lo: usize, hi: usize, target: u32, cursor: &mut usize) -> bool {
     let mut pos = lo;
 
     while pos < hi {
@@ -501,9 +531,9 @@ mod tests {
         // scores[0]=10 > 7, scores[2]=15 > 7, scores[4]=20 > 7, scores[5]=7.5 > 7
         assert_eq!(count, 4);
         assert_eq!(mask & (1 << 0), 1 << 0); // bit 0 set
-        assert_eq!(mask & (1 << 1), 0);      // bit 1 not set
+        assert_eq!(mask & (1 << 1), 0); // bit 1 not set
         assert_eq!(mask & (1 << 2), 1 << 2); // bit 2 set
-        assert_eq!(mask & (1 << 3), 0);      // bit 3 not set
+        assert_eq!(mask & (1 << 3), 0); // bit 3 not set
         assert_eq!(mask & (1 << 4), 1 << 4); // bit 4 set
         assert_eq!(mask & (1 << 5), 1 << 5); // bit 5 set
     }

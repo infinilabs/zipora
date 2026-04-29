@@ -88,7 +88,7 @@ impl FixedCapacityPoolConfig {
         Self {
             max_block_size: 8192,
             total_blocks: 5000,
-            alignment: 64, // Cache line aligned
+            alignment: 64,       // Cache line aligned
             enable_stats: false, // Minimize overhead
             eager_allocation: true,
             secure_clear: false,
@@ -136,7 +136,11 @@ impl FixedCapacityPoolStats {
         let successes = self.allocations.load(Ordering::Relaxed);
         let failures = self.allocation_failures.load(Ordering::Relaxed);
         let total = successes + failures;
-        if total == 0 { 1.0 } else { successes as f64 / total as f64 }
+        if total == 0 {
+            1.0
+        } else {
+            successes as f64 / total as f64
+        }
     }
 
     /// Check if pool is at capacity
@@ -265,7 +269,8 @@ impl FixedCapacityMemoryPool {
 
         if size > self.config.max_block_size {
             return Err(ZiporaError::invalid_data(format!(
-                "Allocation size {} exceeds maximum {}", size, self.config.max_block_size
+                "Allocation size {} exceeds maximum {}",
+                size, self.config.max_block_size
             )));
         }
 
@@ -283,14 +288,21 @@ impl FixedCapacityMemoryPool {
         if let Some(stats) = &self.stats {
             stats.allocations.fetch_add(1, Ordering::Relaxed);
             let active = stats.active_blocks.fetch_add(1, Ordering::Relaxed) + 1;
-            
+
             // Update peak
             loop {
                 let current_peak = stats.peak_blocks.load(Ordering::Relaxed);
-                if active <= current_peak || 
-                   stats.peak_blocks.compare_exchange_weak(
-                       current_peak, active, Ordering::Relaxed, Ordering::Relaxed
-                   ).is_ok() {
+                if active <= current_peak
+                    || stats
+                        .peak_blocks
+                        .compare_exchange_weak(
+                            current_peak,
+                            active,
+                            Ordering::Relaxed,
+                            Ordering::Relaxed,
+                        )
+                        .is_ok()
+                {
                     break;
                 }
             }
@@ -300,7 +312,12 @@ impl FixedCapacityMemoryPool {
             stats.utilization.store(utilization, Ordering::Relaxed);
         }
 
-        Ok(FixedCapacityAllocation::new(ptr, actual_size, size_class_index, self))
+        Ok(FixedCapacityAllocation::new(
+            ptr,
+            actual_size,
+            size_class_index,
+            self,
+        ))
     }
 
     /// Deallocate memory back to the pool
@@ -324,7 +341,7 @@ impl FixedCapacityMemoryPool {
         if let Some(stats) = &self.stats {
             stats.deallocations.fetch_add(1, Ordering::Relaxed);
             let active = stats.active_blocks.fetch_sub(1, Ordering::Relaxed) - 1;
-            
+
             // Update utilization
             let utilization = (active * 10000 / self.config.total_blocks) as u32;
             stats.utilization.store(utilization, Ordering::Relaxed);
@@ -421,7 +438,9 @@ impl FixedCapacityMemoryPool {
         }
 
         // Use mutex to prevent race conditions during initialization
-        let mut initialized = self.init_mutex.lock()
+        let mut initialized = self
+            .init_mutex
+            .lock()
             .map_err(|e| ZiporaError::resource_busy(format!("Init mutex poisoned: {}", e)))?;
         if !*initialized {
             // Initialize memory using UnsafeCell for interior mutability
@@ -435,8 +454,9 @@ impl FixedCapacityMemoryPool {
     /// Initialize free lists with all available blocks (for mutable access)
     fn initialize_free_lists(&mut self) -> Result<()> {
         // SAFETY: UnsafeCell access protected by &mut self exclusive borrow
-        let memory = unsafe { (*self.memory.get()).ok_or_else(||
-            ZiporaError::invalid_data("Memory not allocated"))? };
+        let memory = unsafe {
+            (*self.memory.get()).ok_or_else(|| ZiporaError::invalid_data("Memory not allocated"))?
+        };
 
         let block_size = self.config.max_block_size;
 
@@ -455,7 +475,7 @@ impl FixedCapacityMemoryPool {
             let header = unsafe { &mut *(block_ptr as *mut BlockHeader) };
             header.size_class = largest_class as u32;
             header.magic = BLOCK_HEADER_MAGIC;
-            
+
             if i < self.config.total_blocks - 1 {
                 header.next = ((i + 1) * block_size) as u32;
             } else {
@@ -465,7 +485,9 @@ impl FixedCapacityMemoryPool {
 
         // Set up free list head
         free_list.head.store(0, Ordering::Relaxed);
-        free_list.count.store(self.config.total_blocks as u32, Ordering::Relaxed);
+        free_list
+            .count
+            .store(self.config.total_blocks as u32, Ordering::Relaxed);
 
         Ok(())
     }
@@ -473,8 +495,9 @@ impl FixedCapacityMemoryPool {
     /// Initialize free lists with all available blocks (for shared access via UnsafeCell)
     fn initialize_free_lists_internal(&self) -> Result<()> {
         // SAFETY: UnsafeCell access protected by init_mutex in allocate_backing_memory_internal
-        let memory = unsafe { (*self.memory.get()).ok_or_else(||
-            ZiporaError::invalid_data("Memory not allocated"))? };
+        let memory = unsafe {
+            (*self.memory.get()).ok_or_else(|| ZiporaError::invalid_data("Memory not allocated"))?
+        };
 
         let block_size = self.config.max_block_size;
 
@@ -493,7 +516,7 @@ impl FixedCapacityMemoryPool {
             let header = unsafe { &mut *(block_ptr as *mut BlockHeader) };
             header.size_class = largest_class as u32;
             header.magic = BLOCK_HEADER_MAGIC;
-            
+
             if i < self.config.total_blocks - 1 {
                 header.next = ((i + 1) * block_size) as u32;
             } else {
@@ -503,7 +526,9 @@ impl FixedCapacityMemoryPool {
 
         // Set up free list head
         free_list.head.store(0, Ordering::Relaxed);
-        free_list.count.store(self.config.total_blocks as u32, Ordering::Relaxed);
+        free_list
+            .count
+            .store(self.config.total_blocks as u32, Ordering::Relaxed);
 
         Ok(())
     }
@@ -524,8 +549,10 @@ impl FixedCapacityMemoryPool {
             }
 
             // SAFETY: memory initialized by ensure_memory_allocated before allocate_from_free_list
-            let memory = unsafe { (*self.memory.get()).ok_or_else(||
-                ZiporaError::invalid_data("Memory not allocated"))? };
+            let memory = unsafe {
+                (*self.memory.get())
+                    .ok_or_else(|| ZiporaError::invalid_data("Memory not allocated"))?
+            };
             // SAFETY: pointer valid from alloc, current_head offset validated by free list
             let block_ptr = unsafe { memory.as_ptr().add(current_head as usize) };
             // SAFETY: block_ptr valid, aligned to BlockHeader, within allocated region
@@ -539,17 +566,21 @@ impl FixedCapacityMemoryPool {
             let next_offset = header.next;
 
             // Try to update head atomically
-            if free_list.head.compare_exchange_weak(
-                current_head,
-                next_offset,
-                Ordering::Release,
-                Ordering::Relaxed,
-            ).is_ok() {
+            if free_list
+                .head
+                .compare_exchange_weak(
+                    current_head,
+                    next_offset,
+                    Ordering::Release,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
+            {
                 free_list.count.fetch_sub(1, Ordering::Relaxed);
                 return NonNull::new(block_ptr)
                     .ok_or_else(|| ZiporaError::invalid_data("Null block pointer"));
             }
-            
+
             // CAS failed, retry
         }
     }
@@ -562,7 +593,7 @@ impl FixedCapacityMemoryPool {
             let free_lists = unsafe { &*self.free_lists.get() };
             let free_list = &free_lists[larger_class];
             let head = free_list.head.load(Ordering::Acquire);
-            
+
             if head != LIST_TAIL {
                 // Try to allocate from larger class and split
                 if let Ok(ptr) = self.allocate_from_free_list(larger_class) {
@@ -577,7 +608,7 @@ impl FixedCapacityMemoryPool {
         if let Some(stats) = &self.stats {
             stats.allocation_failures.fetch_add(1, Ordering::Relaxed);
         }
-        
+
         Err(ZiporaError::out_of_memory(0))
     }
 
@@ -598,12 +629,11 @@ impl FixedCapacityMemoryPool {
             let current_head = free_list.head.load(Ordering::Acquire);
             header.next = current_head;
 
-            if free_list.head.compare_exchange_weak(
-                current_head,
-                offset,
-                Ordering::Release,
-                Ordering::Relaxed,
-            ).is_ok() {
+            if free_list
+                .head
+                .compare_exchange_weak(current_head, offset, Ordering::Release, Ordering::Relaxed)
+                .is_ok()
+            {
                 free_list.count.fetch_add(1, Ordering::Relaxed);
                 return Ok(());
             }
@@ -627,7 +657,7 @@ impl FixedCapacityMemoryPool {
 
         while current_size <= max_size {
             classes.push(current_size);
-            
+
             // Use fibonacci-like growth for size classes
             if current_size < 128 {
                 current_size += alignment;
@@ -636,7 +666,7 @@ impl FixedCapacityMemoryPool {
             } else {
                 current_size *= 2;
             }
-            
+
             // Align to boundary
             current_size = (current_size + alignment - 1) & !(alignment - 1);
         }
@@ -652,16 +682,17 @@ impl FixedCapacityMemoryPool {
     /// Convert pointer to offset
     fn ptr_to_offset(&self, ptr: NonNull<u8>) -> Result<u32> {
         // SAFETY: memory initialized before ptr_to_offset called in allocation/deallocation
-        let memory = unsafe { (*self.memory.get()).ok_or_else(||
-            ZiporaError::invalid_data("Memory not allocated"))? };
-        
+        let memory = unsafe {
+            (*self.memory.get()).ok_or_else(|| ZiporaError::invalid_data("Memory not allocated"))?
+        };
+
         let base = memory.as_ptr() as usize;
         let addr = ptr.as_ptr() as usize;
-        
+
         if addr < base || addr >= base + self.total_capacity() {
             return Err(ZiporaError::invalid_data("Pointer outside pool"));
         }
-        
+
         Ok((addr - base) as u32)
     }
 
@@ -694,16 +725,16 @@ pub struct FixedCapacityAllocation {
 impl FixedCapacityAllocation {
     /// Create new allocation wrapper
     fn new(
-        ptr: NonNull<u8>, 
-        size: usize, 
-        size_class_index: usize, 
-        pool: &FixedCapacityMemoryPool
+        ptr: NonNull<u8>,
+        size: usize,
+        size_class_index: usize,
+        pool: &FixedCapacityMemoryPool,
     ) -> Self {
-        Self { 
-            ptr, 
-            size, 
-            size_class_index, 
-            pool: pool as *const _
+        Self {
+            ptr,
+            size,
+            size_class_index,
+            pool: pool as *const _,
         }
     }
 
@@ -753,7 +784,7 @@ mod tests {
     fn test_pool_creation() {
         let config = FixedCapacityPoolConfig::default();
         let pool = FixedCapacityMemoryPool::new(config).unwrap();
-        
+
         assert!(pool.stats.is_some());
         assert_eq!(pool.total_capacity(), 4096 * 1000);
     }
@@ -762,7 +793,7 @@ mod tests {
     fn test_basic_allocation() {
         let config = FixedCapacityPoolConfig::small_objects();
         let pool = FixedCapacityMemoryPool::new(config).unwrap();
-        
+
         let alloc = pool.allocate(64).unwrap();
         assert_eq!(alloc.size(), 64); // Should match exact size class
         assert!(!alloc.as_ptr().is_null());
@@ -776,11 +807,12 @@ mod tests {
             ..FixedCapacityPoolConfig::default()
         };
         let pool = FixedCapacityMemoryPool::new(config).unwrap();
-        
+
         // Allocate until capacity is reached
         let mut allocations = Vec::new();
-        
-        for i in 0..15 { // Try more than capacity
+
+        for i in 0..15 {
+            // Try more than capacity
             match pool.allocate(64) {
                 Ok(alloc) => allocations.push(alloc),
                 Err(_) => {
@@ -789,10 +821,10 @@ mod tests {
                 }
             }
         }
-        
+
         // Should have allocated exactly the capacity
         assert!(allocations.len() <= 10);
-        
+
         // Check statistics
         if let Some(stats) = pool.stats() {
             assert!(stats.allocation_failures.load(Ordering::Relaxed) > 0);
@@ -802,15 +834,15 @@ mod tests {
     #[test]
     fn test_size_classes() {
         let classes = FixedCapacityMemoryPool::generate_size_classes(1024, 8);
-        
+
         // Should include multiple size classes
         assert!(classes.len() > 1);
-        
+
         // Should be sorted
         for i in 1..classes.len() {
-            assert!(classes[i] > classes[i-1]);
+            assert!(classes[i] > classes[i - 1]);
         }
-        
+
         // Should end with max size
         assert_eq!(classes[classes.len() - 1], 1024);
     }
@@ -821,7 +853,7 @@ mod tests {
         let rt_config = FixedCapacityPoolConfig::realtime();
         let rt_pool = FixedCapacityMemoryPool::new(rt_config).unwrap();
         assert!(rt_pool.stats.is_none()); // Stats disabled for performance
-        
+
         // Test secure config
         let secure_config = FixedCapacityPoolConfig::secure();
         let secure_pool = FixedCapacityMemoryPool::new(secure_config).unwrap();
@@ -835,38 +867,42 @@ mod tests {
             ..FixedCapacityPoolConfig::default()
         };
         let pool = FixedCapacityMemoryPool::new(config).unwrap();
-        
+
         // Memory should not be allocated yet
         // SAFETY: test code, single-threaded access to check initialization state
-        unsafe { assert!((*pool.memory.get()).is_none()); }
+        unsafe {
+            assert!((*pool.memory.get()).is_none());
+        }
 
         // First allocation should trigger memory allocation
         let _alloc = pool.allocate(64).unwrap();
         // SAFETY: test code, single-threaded access to check initialization state
-        unsafe { assert!((*pool.memory.get()).is_some()); }
+        unsafe {
+            assert!((*pool.memory.get()).is_some());
+        }
     }
 
     #[test]
     fn test_allocation_statistics() {
         let config = FixedCapacityPoolConfig::small_objects();
         let pool = FixedCapacityMemoryPool::new(config).unwrap();
-        
+
         // Allocate some blocks
         let mut allocations = Vec::new();
         for _ in 0..5 {
             allocations.push(pool.allocate(32).unwrap());
         }
-        
+
         // Check statistics
         if let Some(stats) = pool.stats() {
             assert_eq!(stats.allocations.load(Ordering::Relaxed), 5);
             assert_eq!(stats.active_blocks.load(Ordering::Relaxed), 5);
             assert!(stats.utilization_percent() > 0.0);
         }
-        
+
         // Drop allocations to test deallocation stats
         allocations.clear();
-        
+
         if let Some(stats) = pool.stats() {
             assert_eq!(stats.deallocations.load(Ordering::Relaxed), 5);
             assert_eq!(stats.active_blocks.load(Ordering::Relaxed), 0);
@@ -877,18 +913,18 @@ mod tests {
     fn test_secure_clearing() {
         let config = FixedCapacityPoolConfig::secure();
         let pool = FixedCapacityMemoryPool::new(config).unwrap();
-        
+
         // Allocate and write data
         {
             let mut alloc = pool.allocate(64).unwrap();
             let slice = alloc.as_mut_slice();
             slice.fill(0xAA); // Write pattern
         } // Memory should be cleared on drop
-        
+
         // Allocate again and check if cleared
         let alloc = pool.allocate(64).unwrap();
         let slice = alloc.as_slice();
-        
+
         // In secure mode, memory should be zeroed
         // Note: This test assumes the same block is reused
         for &byte in slice.iter().take(64) {

@@ -3,7 +3,7 @@
 use crate::StateId;
 use crate::error::{Result, ZiporaError};
 use crate::fsa::traits::PrefixIterable;
-use crate::fsa::{ZiporaTrie, Trie};
+use crate::fsa::{Trie, ZiporaTrie};
 use rayon::prelude::*;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -19,7 +19,9 @@ impl ParallelTrieBuilder {
     pub fn new() -> Self {
         Self {
             chunk_size: 10000,
-            max_workers: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
+            max_workers: std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1),
         }
     }
 
@@ -63,10 +65,8 @@ impl ParallelTrieBuilder {
                 }
                 Ok(trie)
             })
-                .await
-                .map_err(|e| {
-                    ZiporaError::configuration(format!("parallel build failed: {}", e))
-                })??;
+            .await
+            .map_err(|e| ZiporaError::configuration(format!("parallel build failed: {}", e)))??;
 
             partial_tries.push(trie);
         }
@@ -102,16 +102,15 @@ impl ParallelTrieBuilder {
         all_keys.dedup();
 
         // Build final trie
-        let final_trie =
-            tokio::task::spawn_blocking(move || -> Result<ZiporaTrie> {
-                let mut trie = ZiporaTrie::new();
-                for key in all_keys {
-                    trie.insert(&key)?;
-                }
-                Ok(trie)
-            })
-                .await
-                .map_err(|e| ZiporaError::configuration(format!("final build failed: {}", e)))??;
+        let final_trie = tokio::task::spawn_blocking(move || -> Result<ZiporaTrie> {
+            let mut trie = ZiporaTrie::new();
+            for key in all_keys {
+                trie.insert(&key)?;
+            }
+            Ok(trie)
+        })
+        .await
+        .map_err(|e| ZiporaError::configuration(format!("final build failed: {}", e)))??;
 
         Ok(ParallelLoudsTrie::from_trie(final_trie))
     }
@@ -140,7 +139,9 @@ pub struct ParallelLoudsTrie {
 impl ParallelLoudsTrie {
     /// Create a new empty parallel trie
     pub fn new() -> Self {
-        let replica_count = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let replica_count = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
         let empty_trie = ZiporaTrie::new();
         let mut read_replicas = Vec::with_capacity(replica_count);
 
@@ -158,7 +159,9 @@ impl ParallelLoudsTrie {
 
     /// Create from an existing trie
     pub fn from_trie(trie: ZiporaTrie) -> Self {
-        let replica_count = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let replica_count = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
         let mut read_replicas = Vec::with_capacity(replica_count);
 
         // Create read replicas by cloning the main trie

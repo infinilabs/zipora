@@ -66,26 +66,26 @@
 //! # }
 //! ```
 
+pub mod basic_cache;
+pub mod buffer;
 pub mod config;
 pub mod stats;
-pub mod buffer;
-pub mod basic_cache;
 
 #[cfg(test)]
 mod simple_tests;
 
+pub use basic_cache::{LruPageCache, SingleLruPageCache};
+pub use buffer::*;
 pub use config::*;
 pub use stats::*;
-pub use buffer::*;
-pub use basic_cache::{LruPageCache, SingleLruPageCache};
 
 use crate::error::{Result, ZiporaError};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Standard page size for cache operations (4KB)
 pub const PAGE_SIZE: usize = 4096;
@@ -262,30 +262,39 @@ impl FileManager {
     /// Open a file and register it with the manager
     pub fn open_file<P: AsRef<Path>>(&self, path: P) -> Result<FileId> {
         let path = path.as_ref().to_path_buf();
-        let file = File::open(&path)
-            .map_err(|e| ZiporaError::invalid_data(format!("Failed to open file {:?}: {}", path, e)))?;
-        
-        let size = file.metadata()
-            .map_err(|e| ZiporaError::invalid_data(format!("Failed to get file metadata {:?}: {}", path, e)))?
+        let file = File::open(&path).map_err(|e| {
+            ZiporaError::invalid_data(format!("Failed to open file {:?}: {}", path, e))
+        })?;
+
+        let size = file
+            .metadata()
+            .map_err(|e| {
+                ZiporaError::invalid_data(format!("Failed to get file metadata {:?}: {}", path, e))
+            })?
             .len();
 
         let file_id = self.next_file_id.fetch_add(1, Ordering::Relaxed);
-        
+
         let entry = FileEntry { file, path, size };
-        
-        let mut files = self.files.write()
+
+        let mut files = self
+            .files
+            .write()
             .map_err(|_| ZiporaError::invalid_data("FileManager lock poisoned".to_string()))?;
         files.insert(file_id, entry);
-        
+
         Ok(file_id)
     }
 
     /// Get file size
     pub fn file_size(&self, file_id: FileId) -> Result<u64> {
-        let files = self.files.read()
+        let files = self
+            .files
+            .read()
             .map_err(|_| ZiporaError::invalid_data("FileManager lock poisoned".to_string()))?;
-        
-        files.get(&file_id)
+
+        files
+            .get(&file_id)
             .map(|entry| entry.size)
             .ok_or_else(|| ZiporaError::invalid_data(format!("File ID {} not found", file_id)))
     }
@@ -309,40 +318,50 @@ impl FileManager {
     pub fn read_page(&self, file_id: FileId, page_id: PageId, buffer: &mut [u8]) -> Result<usize> {
         if buffer.len() != PAGE_SIZE {
             return Err(ZiporaError::invalid_data(format!(
-                "Buffer size {} != PAGE_SIZE {}", buffer.len(), PAGE_SIZE
+                "Buffer size {} != PAGE_SIZE {}",
+                buffer.len(),
+                PAGE_SIZE
             )));
         }
 
-        let mut files = self.files.write()
+        let mut files = self
+            .files
+            .write()
             .map_err(|_| ZiporaError::invalid_data("FileManager lock poisoned".to_string()))?;
-        
-        let entry = files.get_mut(&file_id)
+
+        let entry = files
+            .get_mut(&file_id)
             .ok_or_else(|| ZiporaError::invalid_data(format!("File ID {} not found", file_id)))?;
 
         let offset = Self::page_aligned_offset(page_id);
-        
+
         // Check if offset is within file bounds
         if offset >= entry.size {
             return Ok(0); // End of file
         }
 
         // Seek to the desired position
-        entry.file.seek(SeekFrom::Start(offset))
-            .map_err(|e| ZiporaError::invalid_data(format!(
-                "Failed to seek to offset {} in file {:?}: {}", offset, entry.path, e
-            )))?;
+        entry.file.seek(SeekFrom::Start(offset)).map_err(|e| {
+            ZiporaError::invalid_data(format!(
+                "Failed to seek to offset {} in file {:?}: {}",
+                offset, entry.path, e
+            ))
+        })?;
 
         // Read the page data
         let bytes_to_read = std::cmp::min(PAGE_SIZE, (entry.size - offset) as usize);
         let mut bytes_read = 0;
-        
+
         while bytes_read < bytes_to_read {
             match entry.file.read(&mut buffer[bytes_read..bytes_to_read]) {
                 Ok(0) => break, // EOF reached
                 Ok(n) => bytes_read += n,
-                Err(e) => return Err(ZiporaError::invalid_data(format!(
-                    "Failed to read from file {:?} at offset {}: {}", entry.path, offset, e
-                ))),
+                Err(e) => {
+                    return Err(ZiporaError::invalid_data(format!(
+                        "Failed to read from file {:?} at offset {}: {}",
+                        entry.path, offset, e
+                    )));
+                }
             }
         }
 
@@ -355,17 +374,28 @@ impl FileManager {
     }
 
     /// Read partial data that may span multiple pages
-    pub fn read_data(&self, file_id: FileId, offset: u64, length: usize, buffer: &mut [u8]) -> Result<usize> {
+    pub fn read_data(
+        &self,
+        file_id: FileId,
+        offset: u64,
+        length: usize,
+        buffer: &mut [u8],
+    ) -> Result<usize> {
         if buffer.len() < length {
             return Err(ZiporaError::invalid_data(format!(
-                "Buffer size {} < requested length {}", buffer.len(), length
+                "Buffer size {} < requested length {}",
+                buffer.len(),
+                length
             )));
         }
 
-        let files = self.files.read()
+        let files = self
+            .files
+            .read()
             .map_err(|_| ZiporaError::invalid_data("FileManager lock poisoned".to_string()))?;
-        
-        let entry = files.get(&file_id)
+
+        let entry = files
+            .get(&file_id)
             .ok_or_else(|| ZiporaError::invalid_data(format!("File ID {} not found", file_id)))?;
 
         // Check bounds
@@ -374,30 +404,38 @@ impl FileManager {
         }
 
         let bytes_to_read = std::cmp::min(length, (entry.size - offset) as usize);
-        
+
         drop(files); // Release read lock before potentially long I/O operation
-        
+
         // Re-acquire write lock for file operations
-        let mut files = self.files.write()
+        let mut files = self
+            .files
+            .write()
             .map_err(|_| ZiporaError::invalid_data("FileManager lock poisoned".to_string()))?;
-        
-        let entry = files.get_mut(&file_id)
+
+        let entry = files
+            .get_mut(&file_id)
             .ok_or_else(|| ZiporaError::invalid_data(format!("File ID {} not found", file_id)))?;
 
         // Seek and read
-        entry.file.seek(SeekFrom::Start(offset))
-            .map_err(|e| ZiporaError::invalid_data(format!(
-                "Failed to seek to offset {} in file {:?}: {}", offset, entry.path, e
-            )))?;
+        entry.file.seek(SeekFrom::Start(offset)).map_err(|e| {
+            ZiporaError::invalid_data(format!(
+                "Failed to seek to offset {} in file {:?}: {}",
+                offset, entry.path, e
+            ))
+        })?;
 
         let mut bytes_read = 0;
         while bytes_read < bytes_to_read {
             match entry.file.read(&mut buffer[bytes_read..bytes_to_read]) {
                 Ok(0) => break,
                 Ok(n) => bytes_read += n,
-                Err(e) => return Err(ZiporaError::invalid_data(format!(
-                    "Failed to read from file {:?} at offset {}: {}", entry.path, offset, e
-                ))),
+                Err(e) => {
+                    return Err(ZiporaError::invalid_data(format!(
+                        "Failed to read from file {:?} at offset {}: {}",
+                        entry.path, offset, e
+                    )));
+                }
             }
         }
 
@@ -406,12 +444,15 @@ impl FileManager {
 
     /// Close a file and remove it from management
     pub fn close_file(&self, file_id: FileId) -> Result<()> {
-        let mut files = self.files.write()
+        let mut files = self
+            .files
+            .write()
             .map_err(|_| ZiporaError::invalid_data("FileManager lock poisoned".to_string()))?;
-        
-        files.remove(&file_id)
+
+        files
+            .remove(&file_id)
             .ok_or_else(|| ZiporaError::invalid_data(format!("File ID {} not found", file_id)))?;
-        
+
         Ok(())
     }
 }

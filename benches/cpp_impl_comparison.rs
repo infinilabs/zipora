@@ -10,15 +10,12 @@
 //! - Adaptive SIMD selection vs compile-time optimization
 //! - Memory efficiency and overhead ratios
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use std::time::Duration;
 use zipora::succinct::{
-        rank_select::{
-            interleaved::RankSelectInterleaved256,
-            RankSelectOps,
-        },
-        BitVector,
-    };
+    BitVector,
+    rank_select::{RankSelectOps, interleaved::RankSelectInterleaved256},
+};
 
 // ============================================================================
 // Data Generation (matching C++ implementation patterns)
@@ -53,9 +50,9 @@ impl CppImplDataGenerator {
         for _ in 0..words {
             let r = self.next_u64();
             let word = match r % 5 {
-                0 => 0,                    // 20% all-zeros
-                _ if r.is_multiple_of(4) => !0,     // 25% all-ones
-                _ => self.next_u64(),      // 55% random
+                0 => 0,                         // 20% all-zeros
+                _ if r.is_multiple_of(4) => !0, // 25% all-ones
+                _ => self.next_u64(),           // 55% random
             };
             data.push(word);
         }
@@ -164,7 +161,7 @@ fn bench_rank_ordered(c: &mut Criterion) {
 
     // Test configurations matching C++ implementation
     let configs = vec![
-        (4 * 1024 * 1024 * 8, "4MB"),    // 4MB of bits
+        (4 * 1024 * 1024 * 8, "4MB"),     // 4MB of bits
         (128 * 1024 * 1024 * 8, "128MB"), // 128MB of bits
     ];
 
@@ -509,11 +506,7 @@ fn bench_memory_and_construction(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("zipora_construction", size_label),
             &bv,
-            |b, bv| {
-                b.iter(|| {
-                    black_box(RankSelectInterleaved256::new(bv.clone()).unwrap())
-                })
-            },
+            |b, bv| b.iter(|| black_box(RankSelectInterleaved256::new(bv.clone()).unwrap())),
         );
 
         // Measure memory overhead

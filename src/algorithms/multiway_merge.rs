@@ -296,7 +296,9 @@ impl MultiWayMerge {
                 if let Some(item) = sources[source_id].peek() {
                     // SAFETY: Short-circuit OR evaluation guarantees that if we reach unwrap(),
                     // min_item.is_none() was false, meaning min_item is Some.
-                    if min_item.is_none() || item < min_item.as_ref().expect("min_item set by prior iteration") {
+                    if min_item.is_none()
+                        || item < min_item.as_ref().expect("min_item set by prior iteration")
+                    {
                         min_item = Some(item);
                         min_source = source_id;
                     }
@@ -398,21 +400,33 @@ impl MergeOperations {
                     } else {
                         // SAFETY: Match arm (Some(l), Some(r)) guarantees right_current is Some,
                         // so take() returns Some and unwrap() is safe.
-                        result.push(right_current.take().expect("right_current set by comparison"));
+                        result.push(
+                            right_current
+                                .take()
+                                .expect("right_current set by comparison"),
+                        );
                         right_current = right_iter.next();
                     }
                 }
                 (Some(_), None) => {
                     // SAFETY: Match arm (Some(_), None) guarantees left_current is Some,
                     // so take() returns Some and unwrap() is safe.
-                    result.push(left_current.take().expect("left_current has remaining value"));
+                    result.push(
+                        left_current
+                            .take()
+                            .expect("left_current has remaining value"),
+                    );
                     result.extend(left_iter);
                     break;
                 }
                 (None, Some(_)) => {
                     // SAFETY: Match arm (None, Some(_)) guarantees right_current is Some,
                     // so take() returns Some and unwrap() is safe.
-                    result.push(right_current.take().expect("right_current has remaining value"));
+                    result.push(
+                        right_current
+                            .take()
+                            .expect("right_current has remaining value"),
+                    );
                     result.extend(right_iter);
                     break;
                 }

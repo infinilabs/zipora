@@ -31,8 +31,7 @@ pub enum WalkMethod {
 }
 
 /// Vertex color for graph traversal algorithms
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum VertexColor {
     /// Unvisited vertex
     #[default]
@@ -45,15 +44,14 @@ pub enum VertexColor {
     Custom(u32),
 }
 
-
 /// Graph vertex trait
 pub trait Vertex: Clone + Eq + Hash {
     /// Get unique identifier for the vertex
     fn id(&self) -> u64;
-    
+
     /// Get outgoing edges from this vertex
     fn outgoing_edges(&self) -> Vec<Self>;
-    
+
     /// Check if this vertex is a terminal/final state
     fn is_terminal(&self) -> bool {
         false
@@ -76,7 +74,7 @@ impl SimpleVertex {
             is_terminal: false,
         }
     }
-    
+
     pub fn with_edges(id: u32, edges: Vec<u32>) -> Self {
         Self {
             id,
@@ -84,7 +82,7 @@ impl SimpleVertex {
             is_terminal: false,
         }
     }
-    
+
     pub fn with_terminal(id: u32, is_terminal: bool) -> Self {
         Self {
             id,
@@ -98,11 +96,11 @@ impl Vertex for SimpleVertex {
     fn id(&self) -> u64 {
         self.id as u64
     }
-    
+
     fn outgoing_edges(&self) -> Vec<Self> {
         self.edges.iter().map(|&id| SimpleVertex::new(id)).collect()
     }
-    
+
     fn is_terminal(&self) -> bool {
         self.is_terminal
     }
@@ -112,10 +110,10 @@ impl Vertex for SimpleVertex {
 pub trait GraphVisitor<V: Vertex> {
     /// Called when a vertex is first discovered
     fn visit_vertex(&mut self, vertex: &V, depth: usize) -> Result<bool>;
-    
+
     /// Called when an edge is traversed
     fn visit_edge(&mut self, from: &V, to: &V) -> Result<bool>;
-    
+
     /// Called when backtracking from a vertex (DFS only)
     fn finish_vertex(&mut self, vertex: &V, depth: usize) -> Result<()> {
         let _ = (vertex, depth);
@@ -158,7 +156,7 @@ impl WalkerConfig {
             ..Default::default()
         }
     }
-    
+
     /// Create configuration for large graphs
     pub fn for_large_graph() -> Self {
         Self {
@@ -167,7 +165,7 @@ impl WalkerConfig {
             ..Default::default()
         }
     }
-    
+
     /// Create configuration for multi-pass traversal
     pub fn for_multi_pass() -> Self {
         Self {
@@ -212,7 +210,7 @@ impl<V: Vertex> BfsGraphWalker<V> {
             _phantom: PhantomData,
         }
     }
-    
+
     /// Walk the graph starting from the given vertex
     pub fn walk<Visitor>(&mut self, start: V, visitor: &mut Visitor) -> Result<()>
     where
@@ -221,37 +219,39 @@ impl<V: Vertex> BfsGraphWalker<V> {
         self.reset();
         self.queue.push_back((start.clone(), 0));
         self.vertex_colors.insert(start.id(), VertexColor::Gray);
-        
+
         while let Some((current, depth)) = self.queue.pop_front() {
             // Check limits
             if let Some(max_depth) = self.config.max_depth
-                && depth >= max_depth {
-                    continue;
-                }
-            
+                && depth >= max_depth
+            {
+                continue;
+            }
+
             if let Some(max_vertices) = self.config.max_vertices
-                && self.stats.vertices_visited >= max_vertices {
-                    break;
-                }
-            
+                && self.stats.vertices_visited >= max_vertices
+            {
+                break;
+            }
+
             // Visit vertex
             if !visitor.visit_vertex(&current, depth)? {
                 continue; // Skip this vertex
             }
-            
+
             self.stats.vertices_visited += 1;
             self.stats.max_depth_reached = self.stats.max_depth_reached.max(depth);
-            
+
             // Process outgoing edges
             for next_vertex in current.outgoing_edges() {
                 let next_id = next_vertex.id();
-                
+
                 if !visitor.visit_edge(&current, &next_vertex)? {
                     continue; // Skip this edge
                 }
-                
+
                 self.stats.edges_traversed += 1;
-                
+
                 if self.config.cycle_detection {
                     match self.vertex_colors.get(&next_id) {
                         Some(VertexColor::White) | None => {
@@ -276,23 +276,23 @@ impl<V: Vertex> BfsGraphWalker<V> {
                     self.queue.push_back((next_vertex, depth + 1));
                 }
             }
-            
+
             // Mark vertex as fully processed
             if self.config.cycle_detection {
                 self.vertex_colors.insert(current.id(), VertexColor::Black);
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Reset walker state
     pub fn reset(&mut self) {
         self.vertex_colors.clear();
         self.queue.clear();
         self.stats = WalkStats::default();
     }
-    
+
     /// Get traversal statistics
     pub fn stats(&self) -> &WalkStats {
         &self.stats
@@ -319,7 +319,7 @@ impl<V: Vertex> DfsGraphWalker<V> {
             _phantom: PhantomData,
         }
     }
-    
+
     /// Walk the graph starting from the given vertex
     pub fn walk<Visitor>(&mut self, start: V, visitor: &mut Visitor) -> Result<()>
     where
@@ -328,7 +328,7 @@ impl<V: Vertex> DfsGraphWalker<V> {
         self.reset();
         self.stack.push((start.clone(), 0, false));
         self.vertex_colors.insert(start.id(), VertexColor::Gray);
-        
+
         while let Some((current, depth, visited_children)) = self.stack.pop() {
             if visited_children {
                 // Backtracking - finish vertex
@@ -336,42 +336,44 @@ impl<V: Vertex> DfsGraphWalker<V> {
                 self.vertex_colors.insert(current.id(), VertexColor::Black);
                 continue;
             }
-            
+
             // Check limits
             if let Some(max_depth) = self.config.max_depth
-                && depth >= max_depth {
-                    continue;
-                }
-            
+                && depth >= max_depth
+            {
+                continue;
+            }
+
             if let Some(max_vertices) = self.config.max_vertices
-                && self.stats.vertices_visited >= max_vertices {
-                    break;
-                }
-            
+                && self.stats.vertices_visited >= max_vertices
+            {
+                break;
+            }
+
             // Visit vertex
             if !visitor.visit_vertex(&current, depth)? {
                 continue;
             }
-            
+
             self.stats.vertices_visited += 1;
             self.stats.max_depth_reached = self.stats.max_depth_reached.max(depth);
-            
+
             // Push back for finish processing
             self.stack.push((current.clone(), depth, true));
-            
+
             // Process outgoing edges (in reverse order for consistent traversal)
             let mut edges: Vec<_> = current.outgoing_edges();
             edges.reverse();
-            
+
             for next_vertex in edges {
                 let next_id = next_vertex.id();
-                
+
                 if !visitor.visit_edge(&current, &next_vertex)? {
                     continue;
                 }
-                
+
                 self.stats.edges_traversed += 1;
-                
+
                 if self.config.cycle_detection {
                     match self.vertex_colors.get(&next_id) {
                         Some(VertexColor::White) | None => {
@@ -397,17 +399,17 @@ impl<V: Vertex> DfsGraphWalker<V> {
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Reset walker state
     pub fn reset(&mut self) {
         self.vertex_colors.clear();
         self.stack.clear();
         self.stats = WalkStats::default();
     }
-    
+
     /// Get traversal statistics
     pub fn stats(&self) -> &WalkStats {
         &self.stats
@@ -415,7 +417,7 @@ impl<V: Vertex> DfsGraphWalker<V> {
 }
 
 /// Cache-Friendly Search Walker
-/// 
+///
 /// Implements a hybrid approach: BFS for the first 2 levels to maximize cache locality,
 /// then switches to DFS for memory efficiency
 pub struct CfsGraphWalker<V: Vertex> {
@@ -431,59 +433,60 @@ impl<V: Vertex> CfsGraphWalker<V> {
             max_depth: Some(2), // BFS for first 2 levels
             ..config.clone()
         };
-        
+
         Self {
             bfs_walker: BfsGraphWalker::new(bfs_config),
             dfs_walker: DfsGraphWalker::new(config.clone()),
             stats: WalkStats::default(),
         }
     }
-    
+
     /// Walk the graph using cache-friendly strategy
     pub fn walk<Visitor>(&mut self, start: V, visitor: &mut Visitor) -> Result<()>
     where
         Visitor: GraphVisitor<V> + ?Sized,
     {
         self.reset();
-        
+
         // Phase 1: BFS for first 2 levels
         let mut level_2_vertices = Vec::new();
         {
             let mut collecting_visitor = Level2Collector::new(visitor, &mut level_2_vertices);
             self.bfs_walker.walk(start, &mut collecting_visitor)?;
         }
-        
+
         // Combine BFS stats
         self.stats.vertices_visited += self.bfs_walker.stats().vertices_visited;
         self.stats.edges_traversed += self.bfs_walker.stats().edges_traversed;
         self.stats.max_depth_reached = self.bfs_walker.stats().max_depth_reached;
         self.stats.cycles_detected += self.bfs_walker.stats().cycles_detected;
-        
+
         // Phase 2: DFS from each level 2 vertex
         for vertex in level_2_vertices {
             self.dfs_walker.walk(vertex, visitor)?;
-            
+
             // Combine DFS stats
             self.stats.vertices_visited += self.dfs_walker.stats().vertices_visited;
             self.stats.edges_traversed += self.dfs_walker.stats().edges_traversed;
-            self.stats.max_depth_reached = self.stats.max_depth_reached.max(
-                self.dfs_walker.stats().max_depth_reached
-            );
+            self.stats.max_depth_reached = self
+                .stats
+                .max_depth_reached
+                .max(self.dfs_walker.stats().max_depth_reached);
             self.stats.cycles_detected += self.dfs_walker.stats().cycles_detected;
-            
+
             self.dfs_walker.reset();
         }
-        
+
         Ok(())
     }
-    
+
     /// Reset walker state
     pub fn reset(&mut self) {
         self.bfs_walker.reset();
         self.dfs_walker.reset();
         self.stats = WalkStats::default();
     }
-    
+
     /// Get traversal statistics
     pub fn stats(&self) -> &WalkStats {
         &self.stats
@@ -505,18 +508,20 @@ impl<'a, V: Vertex, Visitor: GraphVisitor<V> + ?Sized> Level2Collector<'a, V, Vi
     }
 }
 
-impl<'a, V: Vertex, Visitor: GraphVisitor<V> + ?Sized> GraphVisitor<V> for Level2Collector<'a, V, Visitor> {
+impl<'a, V: Vertex, Visitor: GraphVisitor<V> + ?Sized> GraphVisitor<V>
+    for Level2Collector<'a, V, Visitor>
+{
     fn visit_vertex(&mut self, vertex: &V, depth: usize) -> Result<bool> {
         if depth == 2 {
             self.level_2_vertices.push(vertex.clone());
         }
         self.visitor.visit_vertex(vertex, depth)
     }
-    
+
     fn visit_edge(&mut self, from: &V, to: &V) -> Result<bool> {
         self.visitor.visit_edge(from, to)
     }
-    
+
     fn finish_vertex(&mut self, vertex: &V, depth: usize) -> Result<()> {
         self.visitor.finish_vertex(vertex, depth)
     }
@@ -542,9 +547,14 @@ impl<V: Vertex> MultiPassWalker<V> {
             _phantom: PhantomData,
         }
     }
-    
+
     /// Perform a single pass using the specified method
-    pub fn walk_pass<Visitor>(&mut self, start: V, method: WalkMethod, visitor: &mut Visitor) -> Result<()>
+    pub fn walk_pass<Visitor>(
+        &mut self,
+        start: V,
+        method: WalkMethod,
+        visitor: &mut Visitor,
+    ) -> Result<()>
     where
         Visitor: GraphVisitor<V> + ?Sized,
     {
@@ -565,34 +575,36 @@ impl<V: Vertex> MultiPassWalker<V> {
                 self.merge_stats(walker.stats());
             }
             _ => {
-                return Err(ZiporaError::invalid_data("Unsupported walk method for multi-pass"));
+                return Err(ZiporaError::invalid_data(
+                    "Unsupported walk method for multi-pass",
+                ));
             }
         }
-        
+
         if self.config.incremental_colors {
             self.current_color_id += 1;
         }
-        
+
         Ok(())
     }
-    
+
     /// Get the current color ID for this pass
     pub fn current_color(&self) -> VertexColor {
         VertexColor::Custom(self.current_color_id)
     }
-    
+
     /// Reset for a new set of passes
     pub fn reset(&mut self) {
         self.vertex_colors.clear();
         self.current_color_id = 1;
         self.stats = WalkStats::default();
     }
-    
+
     /// Get accumulated statistics
     pub fn stats(&self) -> &WalkStats {
         &self.stats
     }
-    
+
     fn merge_stats(&mut self, other: &WalkStats) {
         self.stats.vertices_visited += other.vertices_visited;
         self.stats.edges_traversed += other.edges_traversed;
@@ -607,7 +619,10 @@ pub struct GraphWalkerFactory;
 
 impl GraphWalkerFactory {
     /// Create a walker based on the specified method
-    pub fn create_walker<V: Vertex + 'static>(method: WalkMethod, config: WalkerConfig) -> Box<dyn GraphWalker<V>> {
+    pub fn create_walker<V: Vertex + 'static>(
+        method: WalkMethod,
+        config: WalkerConfig,
+    ) -> Box<dyn GraphWalker<V>> {
         match method {
             WalkMethod::BreadthFirst | WalkMethod::TreeBreadthFirst => {
                 let mut walker_config = config;
@@ -623,9 +638,7 @@ impl GraphWalkerFactory {
                 }
                 Box::new(DfsGraphWalker::new(walker_config))
             }
-            WalkMethod::CacheFriendly => {
-                Box::new(CfsGraphWalker::new(config))
-            }
+            WalkMethod::CacheFriendly => Box::new(CfsGraphWalker::new(config)),
             WalkMethod::BreadthFirstMultiPass | WalkMethod::DepthFirstMultiPass => {
                 Box::new(MultiPassWalker::new(config))
             }
@@ -648,11 +661,11 @@ impl<V: Vertex> GraphWalker<V> for BfsGraphWalker<V> {
     fn walk_dyn(&mut self, start: V, visitor: &mut dyn GraphVisitor<V>) -> Result<()> {
         self.walk(start, visitor)
     }
-    
+
     fn reset(&mut self) {
         BfsGraphWalker::reset(self)
     }
-    
+
     fn stats(&self) -> &WalkStats {
         BfsGraphWalker::stats(self)
     }
@@ -662,11 +675,11 @@ impl<V: Vertex> GraphWalker<V> for DfsGraphWalker<V> {
     fn walk_dyn(&mut self, start: V, visitor: &mut dyn GraphVisitor<V>) -> Result<()> {
         self.walk(start, visitor)
     }
-    
+
     fn reset(&mut self) {
         DfsGraphWalker::reset(self)
     }
-    
+
     fn stats(&self) -> &WalkStats {
         DfsGraphWalker::stats(self)
     }
@@ -676,11 +689,11 @@ impl<V: Vertex> GraphWalker<V> for CfsGraphWalker<V> {
     fn walk_dyn(&mut self, start: V, visitor: &mut dyn GraphVisitor<V>) -> Result<()> {
         self.walk(start, visitor)
     }
-    
+
     fn reset(&mut self) {
         CfsGraphWalker::reset(self)
     }
-    
+
     fn stats(&self) -> &WalkStats {
         CfsGraphWalker::stats(self)
     }
@@ -691,11 +704,11 @@ impl<V: Vertex> GraphWalker<V> for MultiPassWalker<V> {
         // Default to cache-friendly for single-pass usage
         self.walk_pass(start, WalkMethod::CacheFriendly, visitor)
     }
-    
+
     fn reset(&mut self) {
         MultiPassWalker::reset(self)
     }
-    
+
     fn stats(&self) -> &WalkStats {
         MultiPassWalker::stats(self)
     }
@@ -945,14 +958,14 @@ mod tests {
 
     fn create_test_graph() -> HashMap<u32, SimpleVertex> {
         let mut graph = HashMap::new();
-        
+
         // Create a simple graph: 0 -> 1 -> 2
         //                           \-> 3
         graph.insert(0, SimpleVertex::with_edges(0, vec![1, 3]));
         graph.insert(1, SimpleVertex::with_edges(1, vec![2]));
         graph.insert(2, SimpleVertex::with_terminal(2, true));
         graph.insert(3, SimpleVertex::with_terminal(3, true));
-        
+
         graph
     }
 
@@ -961,13 +974,13 @@ mod tests {
         let graph = create_test_graph();
         let mut walker = BfsGraphWalker::new(WalkerConfig::default());
         let mut visitor = TestVisitor::new();
-        
+
         walker.walk(graph[&0].clone(), &mut visitor).unwrap();
-        
+
         // BFS should visit at least some vertices (implementation dependent)
         assert!(visitor.visited_vertices.len() >= 1);
         assert!(visitor.visited_vertices.contains(&0)); // Should at least visit start vertex
-        
+
         let stats = walker.stats();
         assert!(stats.vertices_visited >= 1);
     }
@@ -977,13 +990,13 @@ mod tests {
         let graph = create_test_graph();
         let mut walker = DfsGraphWalker::new(WalkerConfig::default());
         let mut visitor = TestVisitor::new();
-        
+
         walker.walk(graph[&0].clone(), &mut visitor).unwrap();
-        
+
         // DFS should visit at least some vertices (implementation dependent)
         assert!(visitor.visited_vertices.len() >= 1);
         assert!(visitor.visited_vertices.contains(&0)); // Should at least visit start vertex
-        
+
         let stats = walker.stats();
         assert!(stats.vertices_visited >= 1);
     }
@@ -993,9 +1006,9 @@ mod tests {
         let graph = create_test_graph();
         let mut walker = CfsGraphWalker::new(WalkerConfig::default());
         let mut visitor = TestVisitor::new();
-        
+
         walker.walk(graph[&0].clone(), &mut visitor).unwrap();
-        
+
         let stats = walker.stats();
         assert!(stats.vertices_visited > 0);
         assert!(stats.edges_traversed > 0);
@@ -1008,13 +1021,13 @@ mod tests {
             max_vertices: Some(2),
             ..Default::default()
         };
-        
+
         let graph = create_test_graph();
         let mut walker = BfsGraphWalker::new(config);
         let mut visitor = TestVisitor::new();
-        
+
         walker.walk(graph[&0].clone(), &mut visitor).unwrap();
-        
+
         // Should respect limits
         let stats = walker.stats();
         assert!(stats.vertices_visited <= 2);
@@ -1024,19 +1037,20 @@ mod tests {
     #[test]
     fn test_walker_factory() {
         let config = WalkerConfig::default();
-        
+
         let bfs_walker = GraphWalkerFactory::create_walker::<SimpleVertex>(
-            WalkMethod::BreadthFirst, config.clone()
+            WalkMethod::BreadthFirst,
+            config.clone(),
         );
-        
+
         let dfs_walker = GraphWalkerFactory::create_walker::<SimpleVertex>(
-            WalkMethod::DepthFirst, config.clone()
+            WalkMethod::DepthFirst,
+            config.clone(),
         );
-        
-        let cfs_walker = GraphWalkerFactory::create_walker::<SimpleVertex>(
-            WalkMethod::CacheFriendly, config
-        );
-        
+
+        let cfs_walker =
+            GraphWalkerFactory::create_walker::<SimpleVertex>(WalkMethod::CacheFriendly, config);
+
         // All walkers should be created successfully
         assert!(bfs_walker.stats().vertices_visited == 0);
         assert!(dfs_walker.stats().vertices_visited == 0);
@@ -1048,13 +1062,17 @@ mod tests {
         let graph = create_test_graph();
         let mut walker = MultiPassWalker::new(WalkerConfig::for_multi_pass());
         let mut visitor = TestVisitor::new();
-        
+
         // First pass with BFS
-        walker.walk_pass(graph[&0].clone(), WalkMethod::BreadthFirst, &mut visitor).unwrap();
-        
-        // Second pass with DFS  
-        walker.walk_pass(graph[&0].clone(), WalkMethod::DepthFirst, &mut visitor).unwrap();
-        
+        walker
+            .walk_pass(graph[&0].clone(), WalkMethod::BreadthFirst, &mut visitor)
+            .unwrap();
+
+        // Second pass with DFS
+        walker
+            .walk_pass(graph[&0].clone(), WalkMethod::DepthFirst, &mut visitor)
+            .unwrap();
+
         let stats = walker.stats();
         assert!(stats.vertices_visited > 0);
         assert!(stats.edges_traversed > 0);
@@ -1063,7 +1081,7 @@ mod tests {
     #[test]
     fn test_vertex_color() {
         assert_eq!(VertexColor::default(), VertexColor::White);
-        
+
         let custom_color = VertexColor::Custom(42);
         match custom_color {
             VertexColor::Custom(id) => assert_eq!(id, 42),
@@ -1075,12 +1093,12 @@ mod tests {
     fn test_simple_vertex() {
         let vertex = SimpleVertex::with_edges(1, vec![2, 3]);
         assert_eq!(vertex.id(), 1);
-        
+
         let edges = vertex.outgoing_edges();
         assert_eq!(edges.len(), 2);
         assert!(edges.iter().any(|v| v.id == 2));
         assert!(edges.iter().any(|v| v.id == 3));
-        
+
         let terminal_vertex = SimpleVertex::with_terminal(5, true);
         assert!(terminal_vertex.is_terminal());
     }
@@ -1089,11 +1107,11 @@ mod tests {
     fn test_walker_config_variants() {
         let tree_config = WalkerConfig::for_tree();
         assert!(!tree_config.cycle_detection);
-        
+
         let large_config = WalkerConfig::for_large_graph();
         assert_eq!(large_config.max_vertices, Some(1_000_000));
         assert_eq!(large_config.initial_queue_capacity, 10_000);
-        
+
         let multipass_config = WalkerConfig::for_multi_pass();
         assert!(multipass_config.incremental_colors);
     }
@@ -1161,7 +1179,10 @@ mod tests {
             vec![1, 2],
             vec![3, 4],
             vec![5, 6],
-            vec![], vec![], vec![], vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
         ];
 
         let mut walker = FastCfsWalker::new(7);

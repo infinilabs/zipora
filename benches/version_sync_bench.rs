@@ -1,9 +1,9 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use std::sync::Arc;
 use std::thread;
 
-use zipora::fsa::version_sync::{ConcurrencyLevel, VersionManager};
 use zipora::fsa::token::{TokenManager, with_reader_token, with_writer_token};
+use zipora::fsa::version_sync::{ConcurrencyLevel, VersionManager};
 
 fn version_manager_benchmarks(c: &mut Criterion) {
     let mut group = c.benchmark_group("version_manager");
@@ -47,7 +47,7 @@ fn token_manager_benchmarks(c: &mut Criterion) {
     // Benchmark token caching performance
     group.bench_function("cached_reader_token", |b| {
         let manager = TokenManager::new(ConcurrencyLevel::OneWriteMultiRead);
-        
+
         // Prime the cache
         let token = manager.acquire_reader_token().unwrap();
         manager.return_reader_token(token);
@@ -60,7 +60,7 @@ fn token_manager_benchmarks(c: &mut Criterion) {
 
     group.bench_function("cached_writer_token", |b| {
         let manager = TokenManager::new(ConcurrencyLevel::OneWriteMultiRead);
-        
+
         // Prime the cache
         let token = manager.acquire_writer_token().unwrap();
         manager.return_writer_token(token);
@@ -78,7 +78,8 @@ fn token_manager_benchmarks(c: &mut Criterion) {
             with_reader_token(&manager, |token| {
                 black_box(token.is_valid());
                 Ok(())
-            }).unwrap();
+            })
+            .unwrap();
         });
     });
 
@@ -88,7 +89,8 @@ fn token_manager_benchmarks(c: &mut Criterion) {
             with_writer_token(&manager, |token| {
                 black_box(token.is_valid());
                 Ok(())
-            }).unwrap();
+            })
+            .unwrap();
         });
     });
 
@@ -157,7 +159,7 @@ fn threading_overhead_benchmarks(c: &mut Criterion) {
                     })
                 })
                 .collect();
-            
+
             for handle in handles {
                 handle.join().unwrap();
             }
@@ -173,7 +175,7 @@ fn cache_performance_benchmarks(c: &mut Criterion) {
     // Benchmark cache hit vs cache miss performance
     group.bench_function("cache_hit_reader", |b| {
         let manager = TokenManager::new(ConcurrencyLevel::OneWriteMultiRead);
-        
+
         // Prime the cache
         let token = manager.acquire_reader_token().unwrap();
         manager.return_reader_token(token);

@@ -3,13 +3,13 @@
 //! High-performance process spawning, control, and bidirectional communication.
 //! Inspired by production-grade process management with async/await integration.
 
+use crate::error::{Result, ZiporaError};
+use std::collections::HashMap;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::collections::HashMap;
-use tokio::sync::{Mutex, RwLock};
-use tokio::process::{Command as AsyncCommand};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as AsyncBufReader};
-use crate::error::{Result, ZiporaError};
+use tokio::process::Command as AsyncCommand;
+use tokio::sync::{Mutex, RwLock};
 
 /// Process execution configuration
 #[derive(Debug, Clone)]
@@ -80,15 +80,22 @@ impl BidirectionalPipe {
         }
 
         // Spawn the process
-        let mut child = cmd.spawn()
+        let mut child = cmd
+            .spawn()
             .map_err(|e| ZiporaError::invalid_data(format!("Failed to spawn process: {}", e)))?;
 
         // Extract pipes
-        let stdin = child.stdin.take()
+        let stdin = child
+            .stdin
+            .take()
             .ok_or_else(|| ZiporaError::invalid_data("Failed to get stdin pipe"))?;
-        let stdout = child.stdout.take()
+        let stdout = child
+            .stdout
+            .take()
             .ok_or_else(|| ZiporaError::invalid_data("Failed to get stdout pipe"))?;
-        let stderr = child.stderr.take()
+        let stderr = child
+            .stderr
+            .take()
             .ok_or_else(|| ZiporaError::invalid_data("Failed to get stderr pipe"))?;
 
         Ok(Self {
@@ -104,11 +111,15 @@ impl BidirectionalPipe {
     pub async fn write_line(&self, line: &str) -> Result<()> {
         let mut stdin_guard = self.stdin_writer.lock().await;
         if let Some(ref mut stdin) = *stdin_guard {
-            stdin.write_all(line.as_bytes()).await
-                .map_err(|e| ZiporaError::invalid_data(format!("Failed to write to stdin: {}", e)))?;
-            stdin.write_all(b"\n").await
-                .map_err(|e| ZiporaError::invalid_data(format!("Failed to write newline: {}", e)))?;
-            stdin.flush().await
+            stdin.write_all(line.as_bytes()).await.map_err(|e| {
+                ZiporaError::invalid_data(format!("Failed to write to stdin: {}", e))
+            })?;
+            stdin.write_all(b"\n").await.map_err(|e| {
+                ZiporaError::invalid_data(format!("Failed to write newline: {}", e))
+            })?;
+            stdin
+                .flush()
+                .await
                 .map_err(|e| ZiporaError::invalid_data(format!("Failed to flush stdin: {}", e)))?;
             Ok(())
         } else {
@@ -132,7 +143,10 @@ impl BidirectionalPipe {
                     }
                     Ok(Some(line))
                 }
-                Err(e) => Err(ZiporaError::invalid_data(format!("Failed to read stdout: {}", e))),
+                Err(e) => Err(ZiporaError::invalid_data(format!(
+                    "Failed to read stdout: {}",
+                    e
+                ))),
             }
         } else {
             Err(ZiporaError::invalid_data("Stdout pipe is not available"))
@@ -155,7 +169,10 @@ impl BidirectionalPipe {
                     }
                     Ok(Some(line))
                 }
-                Err(e) => Err(ZiporaError::invalid_data(format!("Failed to read stderr: {}", e))),
+                Err(e) => Err(ZiporaError::invalid_data(format!(
+                    "Failed to read stderr: {}",
+                    e
+                ))),
             }
         } else {
             Err(ZiporaError::invalid_data("Stderr pipe is not available"))
@@ -166,8 +183,9 @@ impl BidirectionalPipe {
     pub async fn wait(&self) -> Result<i32> {
         let mut process_guard = self.process.lock().await;
         if let Some(mut child) = process_guard.take() {
-            let status = child.wait().await
-                .map_err(|e| ZiporaError::invalid_data(format!("Failed to wait for process: {}", e)))?;
+            let status = child.wait().await.map_err(|e| {
+                ZiporaError::invalid_data(format!("Failed to wait for process: {}", e))
+            })?;
             Ok(status.code().unwrap_or(-1))
         } else {
             Err(ZiporaError::invalid_data("Process is not available"))
@@ -178,7 +196,9 @@ impl BidirectionalPipe {
     pub async fn kill(&self) -> Result<()> {
         let mut process_guard = self.process.lock().await;
         if let Some(ref mut child) = *process_guard {
-            child.kill().await
+            child
+                .kill()
+                .await
                 .map_err(|e| ZiporaError::invalid_data(format!("Failed to kill process: {}", e)))?;
         }
         Ok(())
@@ -223,7 +243,8 @@ impl ProcessExecutor {
         }
 
         // Execute the command
-        let output = cmd.output()
+        let output = cmd
+            .output()
             .map_err(|e| ZiporaError::invalid_data(format!("Failed to execute command: {}", e)))?;
 
         let execution_time_ms = start_time.elapsed().as_millis() as u64;
@@ -258,12 +279,16 @@ impl ProcessExecutor {
         // Execute the command with timeout
         let output = if let Some(timeout_ms) = self.config.timeout_ms {
             let timeout_duration = std::time::Duration::from_millis(timeout_ms);
-            tokio::time::timeout(timeout_duration, cmd.output()).await
+            tokio::time::timeout(timeout_duration, cmd.output())
+                .await
                 .map_err(|_| ZiporaError::invalid_data("Process execution timed out"))?
-                .map_err(|e| ZiporaError::invalid_data(format!("Failed to execute command: {}", e)))?
+                .map_err(|e| {
+                    ZiporaError::invalid_data(format!("Failed to execute command: {}", e))
+                })?
         } else {
-            cmd.output().await
-                .map_err(|e| ZiporaError::invalid_data(format!("Failed to execute command: {}", e)))?
+            cmd.output().await.map_err(|e| {
+                ZiporaError::invalid_data(format!("Failed to execute command: {}", e))
+            })?
         };
 
         let execution_time_ms = start_time.elapsed().as_millis() as u64;
@@ -335,10 +360,17 @@ impl ProcessPool {
     }
 
     /// Spawn a new process and add it to the pool
-    pub async fn spawn_process(&self, command: &str, args: &[&str], config: ProcessConfig) -> Result<u64> {
+    pub async fn spawn_process(
+        &self,
+        command: &str,
+        args: &[&str],
+        config: ProcessConfig,
+    ) -> Result<u64> {
         // Check capacity
         if !self.has_capacity().await {
-            return Err(ZiporaError::invalid_data("Process pool at maximum capacity"));
+            return Err(ZiporaError::invalid_data(
+                "Process pool at maximum capacity",
+            ));
         }
 
         // Create the command
@@ -354,7 +386,8 @@ impl ProcessPool {
         }
 
         // Spawn the process
-        let child = cmd.spawn()
+        let child = cmd
+            .spawn()
             .map_err(|e| ZiporaError::invalid_data(format!("Failed to spawn process: {}", e)))?;
 
         // Generate unique ID
@@ -373,12 +406,16 @@ impl ProcessPool {
     pub async fn wait_for_process(&self, process_id: u64) -> Result<i32> {
         let process_arc = {
             let processes = self.active_processes.read().await;
-            processes.get(&process_id).cloned()
+            processes
+                .get(&process_id)
+                .cloned()
                 .ok_or_else(|| ZiporaError::invalid_data("Process not found in pool"))?
         };
 
         let mut child = process_arc.lock().await;
-        let status = child.wait().await
+        let status = child
+            .wait()
+            .await
             .map_err(|e| ZiporaError::invalid_data(format!("Failed to wait for process: {}", e)))?;
 
         // Remove from active processes
@@ -392,12 +429,16 @@ impl ProcessPool {
     pub async fn kill_process(&self, process_id: u64) -> Result<()> {
         let process_arc = {
             let processes = self.active_processes.read().await;
-            processes.get(&process_id).cloned()
+            processes
+                .get(&process_id)
+                .cloned()
                 .ok_or_else(|| ZiporaError::invalid_data("Process not found in pool"))?
         };
 
         let mut child = process_arc.lock().await;
-        child.kill().await
+        child
+            .kill()
+            .await
             .map_err(|e| ZiporaError::invalid_data(format!("Failed to kill process: {}", e)))?;
 
         // Remove from active processes
@@ -461,7 +502,12 @@ impl ProcessManager {
     }
 
     /// Create a bidirectional pipe for interactive processes
-    pub async fn create_pipe(&self, command: &str, args: &[&str], config: ProcessConfig) -> Result<BidirectionalPipe> {
+    pub async fn create_pipe(
+        &self,
+        command: &str,
+        args: &[&str],
+        config: ProcessConfig,
+    ) -> Result<BidirectionalPipe> {
         BidirectionalPipe::new(command, args, config).await
     }
 }
@@ -473,7 +519,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_executor() {
         let executor = ProcessExecutor::new();
-        
+
         // Test simple command execution
         let result = executor.execute_shell("echo hello").unwrap();
         assert_eq!(result.exit_code, 0);
@@ -483,9 +529,12 @@ mod tests {
     #[tokio::test]
     async fn test_process_executor_async() {
         let executor = ProcessExecutor::new();
-        
+
         // Test async command execution
-        let result = executor.execute_shell_async("echo async_hello").await.unwrap();
+        let result = executor
+            .execute_shell_async("echo async_hello")
+            .await
+            .unwrap();
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("async_hello"));
     }
@@ -493,7 +542,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_pool() {
         let pool = ProcessPool::new(2);
-        
+
         // Test capacity checking
         assert!(pool.has_capacity().await);
         assert_eq!(pool.active_count().await, 0);
@@ -502,19 +551,27 @@ mod tests {
     #[test]
     fn test_process_config() {
         let mut config = ProcessConfig::default();
-        config.env_vars.insert("TEST_VAR".to_string(), "test_value".to_string());
+        config
+            .env_vars
+            .insert("TEST_VAR".to_string(), "test_value".to_string());
         config.working_dir = Some("/tmp".to_string());
-        
-        assert_eq!(config.env_vars.get("TEST_VAR"), Some(&"test_value".to_string()));
+
+        assert_eq!(
+            config.env_vars.get("TEST_VAR"),
+            Some(&"test_value".to_string())
+        );
         assert_eq!(config.working_dir.as_ref(), Some(&"/tmp".to_string()));
     }
 
     #[tokio::test]
     async fn test_process_manager() {
         let manager = ProcessManager::new(5);
-        
+
         // Test managed execution
-        let result = manager.execute_managed("echo", &["manager_test"]).await.unwrap();
+        let result = manager
+            .execute_managed("echo", &["manager_test"])
+            .await
+            .unwrap();
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("manager_test"));
     }

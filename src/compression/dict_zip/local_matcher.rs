@@ -65,7 +65,7 @@
 
 use crate::compression::dict_zip::compression_types::{CompressionType, MAX_FAR3_LONG_DISTANCE};
 use crate::error::{Result, ZiporaError};
-use crate::hash_map::{ZiporaHashMap, fabo_hash_combine_u32, SimdStringOps};
+use crate::hash_map::{SimdStringOps, ZiporaHashMap, fabo_hash_combine_u32};
 use crate::memory::SecureMemoryPool;
 
 #[cfg(test)]
@@ -164,7 +164,11 @@ impl LocalMatch {
     }
 
     /// Calculate match quality based on length, distance, and compression type
-    fn calculate_quality(length: usize, _distance: usize, compression_type: CompressionType) -> f64 {
+    fn calculate_quality(
+        length: usize,
+        _distance: usize,
+        compression_type: CompressionType,
+    ) -> f64 {
         // Base quality from length (longer matches are better)
         let length_quality = 1.0 - (-(length as f64) / 50.0).exp();
 
@@ -197,13 +201,13 @@ impl LocalMatch {
     fn calculate_compression_benefit(length: usize, compression_type: CompressionType) -> isize {
         // Estimate encoding cost for this compression type
         let encoding_cost = match compression_type {
-            CompressionType::RLE => 2, // Type + length
+            CompressionType::RLE => 2,       // Type + length
             CompressionType::NearShort => 2, // Type + distance + length
             CompressionType::Far1Short => 3, // Type + distance (1-2 bytes) + length
             CompressionType::Far2Short => 4, // Type + distance (2 bytes) + length
-            CompressionType::Far2Long => 4, // Type + distance (2 bytes) + length
-            CompressionType::Far3Long => 5, // Type + distance (3 bytes) + length
-            _ => 4, // Conservative estimate
+            CompressionType::Far2Long => 4,  // Type + distance (2 bytes) + length
+            CompressionType::Far3Long => 5,  // Type + distance (3 bytes) + length
+            _ => 4,                          // Conservative estimate
         };
 
         length as isize - encoding_cost
@@ -299,7 +303,9 @@ impl LocalMatcherConfig {
         }
 
         if self.window_size > 16 * 1024 * 1024 {
-            return Err(ZiporaError::invalid_data("Window size too large (max 16MB)"));
+            return Err(ZiporaError::invalid_data(
+                "Window size too large (max 16MB)",
+            ));
         }
 
         if self.max_probe_distance == 0 {
@@ -308,7 +314,7 @@ impl LocalMatcherConfig {
 
         if self.max_probe_distance > MAX_CHAIN_LENGTH {
             return Err(ZiporaError::invalid_data(
-                format!("Max probe distance must be <= {}", MAX_CHAIN_LENGTH).as_str()
+                format!("Max probe distance must be <= {}", MAX_CHAIN_LENGTH).as_str(),
             ));
         }
 
@@ -318,12 +324,14 @@ impl LocalMatcherConfig {
 
         if self.max_match_length < self.min_match_length {
             return Err(ZiporaError::invalid_data(
-                "Max match length must be >= min match length"
+                "Max match length must be >= min match length",
             ));
         }
 
         if self.max_match_length > 65536 {
-            return Err(ZiporaError::invalid_data("Max match length too large (max 64KB)"));
+            return Err(ZiporaError::invalid_data(
+                "Max match length too large (max 64KB)",
+            ));
         }
 
         Ok(())
@@ -403,7 +411,11 @@ impl LocalMatcherStats {
     /// Calculate average search efficiency (matches per collision)
     pub fn search_efficiency(&self) -> f64 {
         if self.hash_collisions == 0 {
-            if self.matches_found > 0 { f64::INFINITY } else { 0.0 }
+            if self.matches_found > 0 {
+                f64::INFINITY
+            } else {
+                0.0
+            }
         } else {
             self.matches_found as f64 / self.hash_collisions as f64
         }
@@ -453,15 +465,16 @@ impl LocalMatcher {
     /// Add a byte to the sliding window and update hash table
     pub fn add_byte(&mut self, byte: u8, position: usize) -> Result<()> {
         self.current_position = position;
-        
+
         // Add byte to sliding window
         if self.window.len() >= self.config.window_size {
             // Remove oldest byte and clean up hash table
-            let _removed_byte = self.window.pop_front()
-                .ok_or_else(|| ZiporaError::invalid_data("Window unexpectedly empty during byte removal"))?;
+            let _removed_byte = self.window.pop_front().ok_or_else(|| {
+                ZiporaError::invalid_data("Window unexpectedly empty during byte removal")
+            })?;
             self.cleanup_hash_table_entry(position - self.config.window_size)?;
         }
-        
+
         self.window.push_back(byte);
         self.stats.bytes_added += 1;
 
@@ -492,14 +505,8 @@ impl LocalMatcher {
             return Ok(Vec::new());
         }
 
-        let search_end = min(
-            input_pos + max_search_length,
-            input.len()
-        );
-        let pattern_len = min(
-            search_end - input_pos,
-            self.config.max_match_length
-        );
+        let search_end = min(input_pos + max_search_length, input.len());
+        let pattern_len = min(search_end - input_pos, self.config.max_match_length);
 
         if pattern_len < self.config.min_match_length {
             return Ok(Vec::new());
@@ -509,9 +516,10 @@ impl LocalMatcher {
 
         // First check for RLE (run-length encoding)
         if self.config.enable_rle_detection
-            && let Some(rle_match) = self.find_rle_match(input, input_pos, pattern_len)? {
-                matches.push(rle_match);
-            }
+            && let Some(rle_match) = self.find_rle_match(input, input_pos, pattern_len)?
+        {
+            matches.push(rle_match);
+        }
 
         // Then search for general pattern matches
         let pattern_matches = self.find_pattern_matches(input, input_pos, pattern_len)?;
@@ -519,7 +527,9 @@ impl LocalMatcher {
 
         // Sort by quality and return best matches
         matches.sort_by(|a, b| {
-            b.quality.partial_cmp(&a.quality).unwrap_or(Ordering::Equal)
+            b.quality
+                .partial_cmp(&a.quality)
+                .unwrap_or(Ordering::Equal)
                 .then_with(|| b.compression_benefit.cmp(&a.compression_benefit))
         });
 
@@ -531,8 +541,9 @@ impl LocalMatcher {
         if !matches.is_empty() {
             let total_length: usize = matches.iter().map(|m| m.length).sum();
             let avg_length = total_length as f64 / matches.len() as f64;
-            self.stats.avg_match_length = 
-                (self.stats.avg_match_length * (self.stats.searches_performed - 1) as f64 + avg_length) 
+            self.stats.avg_match_length = (self.stats.avg_match_length
+                * (self.stats.searches_performed - 1) as f64
+                + avg_length)
                 / self.stats.searches_performed as f64;
         }
 
@@ -595,7 +606,6 @@ impl LocalMatcher {
 
         let mut matches = Vec::new();
 
-
         // First get a copy of the chain to avoid borrowing conflicts
         let chain_copy = match self.hash_table.get(&pattern_hash) {
             Some(chain) => {
@@ -631,20 +641,12 @@ impl LocalMatcher {
             }
 
             // Perform string comparison to find actual match length
-            let match_length = self.compare_strings_and_find_length(
-                input,
-                input_pos,
-                entry.position,
-                max_length,
-            )?;
+            let match_length =
+                self.compare_strings_and_find_length(input, input_pos, entry.position, max_length)?;
 
             if match_length >= self.config.min_match_length {
-                let local_match = LocalMatch::new(
-                    match_length,
-                    distance,
-                    input_pos,
-                    entry.position,
-                );
+                let local_match =
+                    LocalMatch::new(match_length, distance, input_pos, entry.position);
 
                 matches.push(local_match);
             }
@@ -679,13 +681,13 @@ impl LocalMatcher {
         max_length: usize,
     ) -> Result<usize> {
         let input_slice = &input[input_pos..min(input_pos + max_length, input.len())];
-        
+
         // Get history slice from sliding window
         let window_idx = match self.get_window_position(history_pos) {
             Some(idx) => idx,
             None => return Ok(0),
         };
-        
+
         if window_idx + max_length > self.window.len() {
             return Ok(0);
         }
@@ -739,7 +741,7 @@ impl LocalMatcher {
             let first_chunk_len = min(first.len() - window_pos, search_len);
             let first_chunk = &first[window_pos..window_pos + first_chunk_len];
             let input_chunk = &input_slice[input_pos..input_pos + first_chunk_len];
-            
+
             // Compare chunk efficiently using memcmp-style comparison
             for i in 0..first_chunk_len {
                 if input_chunk[i] == first_chunk[i] {
@@ -748,7 +750,7 @@ impl LocalMatcher {
                     return Ok(match_length);
                 }
             }
-            
+
             input_pos += first_chunk_len;
             window_pos = 0; // Move to start of second slice
         } else {
@@ -763,7 +765,7 @@ impl LocalMatcher {
             if second_chunk_len > 0 {
                 let second_chunk = &second[window_pos..window_pos + second_chunk_len];
                 let input_chunk = &input_slice[input_pos..input_pos + second_chunk_len];
-                
+
                 // Compare second chunk efficiently
                 for i in 0..second_chunk_len {
                     if input_chunk[i] == second_chunk[i] {
@@ -780,9 +782,14 @@ impl LocalMatcher {
 
     /// SIMD-accelerated string comparison and find length
     #[cfg(feature = "simd")]
-    fn simd_compare_and_find_length(&self, input: &[u8], history: &[u8], max_length: usize) -> usize {
+    fn simd_compare_and_find_length(
+        &self,
+        input: &[u8],
+        history: &[u8],
+        max_length: usize,
+    ) -> usize {
         use std::arch::x86_64::*;
-        
+
         let max_len = min(min(input.len(), history.len()), max_length);
         let mut pos = 0;
 
@@ -797,7 +804,7 @@ impl LocalMatcher {
 
                 let input_chunk = _mm_loadu_si128(input.as_ptr().add(pos) as *const __m128i);
                 let history_chunk = _mm_loadu_si128(history.as_ptr().add(pos) as *const __m128i);
-                
+
                 let comparison = _mm_cmpeq_epi8(input_chunk, history_chunk);
                 let mask = _mm_movemask_epi8(comparison) as u16;
 
@@ -825,7 +832,7 @@ impl LocalMatcher {
     /// Scalar string comparison (fallback)
     fn scalar_compare_and_find_length(&self, input: &[u8], history: &[u8]) -> usize {
         let max_len = min(input.len(), history.len());
-        
+
         for i in 0..max_len {
             if input[i] != history[i] {
                 return i;
@@ -852,7 +859,6 @@ impl LocalMatcher {
         let pattern_bytes: Vec<u8> = self.window.range(pattern_start..).copied().collect();
         let pattern_hash = self.hash_pattern(&pattern_bytes);
 
-
         // The pattern starts at position - HASH_PATTERN_LENGTH + 1
         // Rewrite to avoid usize underflow: position - HASH_PATTERN_LENGTH + 1 = position + 1 - HASH_PATTERN_LENGTH
         let pattern_start_position = position + 1 - HASH_PATTERN_LENGTH;
@@ -866,7 +872,9 @@ impl LocalMatcher {
         if self.hash_table.get(&pattern_hash).is_none() {
             let _ = self.hash_table.insert(pattern_hash, Vec::new());
         }
-        let chain = self.hash_table.get_mut(&pattern_hash)
+        let chain = self
+            .hash_table
+            .get_mut(&pattern_hash)
             .ok_or_else(|| ZiporaError::invalid_data("Hash table entry unexpectedly missing"))?;
 
         // Keep chain length limited
@@ -878,7 +886,7 @@ impl LocalMatcher {
         chain.push(entry);
 
         // Update hash table load factor
-        self.stats.hash_table_load_factor = 
+        self.stats.hash_table_load_factor =
             self.hash_table.len() as f64 / self.config.hash_table_capacity as f64;
 
         Ok(())
@@ -890,7 +898,9 @@ impl LocalMatcher {
         // garbage collection to avoid iterating through all chains
         let mut _empty_keys: Vec<u32> = Vec::new();
 
-        let keys_to_remove: Vec<u32> = self.hash_table.iter()
+        let keys_to_remove: Vec<u32> = self
+            .hash_table
+            .iter()
             .filter_map(|(hash, chain)| {
                 if chain.iter().all(|entry| entry.position <= evicted_position) {
                     Some(*hash)
@@ -959,13 +969,17 @@ impl LocalMatcher {
     pub fn validate(&self) -> Result<()> {
         // Check window size
         if self.window.len() > self.config.window_size {
-            return Err(ZiporaError::invalid_data("Window size exceeds configuration limit"));
+            return Err(ZiporaError::invalid_data(
+                "Window size exceeds configuration limit",
+            ));
         }
 
         // Check hash table chain lengths
         for (_, chain) in self.hash_table.iter() {
             if chain.len() > MAX_CHAIN_LENGTH {
-                return Err(ZiporaError::invalid_data("Hash chain exceeds maximum length"));
+                return Err(ZiporaError::invalid_data(
+                    "Hash chain exceeds maximum length",
+                ));
             }
         }
 
@@ -985,7 +999,7 @@ impl LocalMatcher {
 
         // Use find_matches and return the best one
         let matches = self.find_matches(remaining, 0, max_length)?;
-        
+
         // Return the longest match that doesn't exceed probe distance
         Ok(matches
             .into_iter()
@@ -1023,7 +1037,7 @@ mod tests {
     fn test_add_bytes() {
         let mut matcher = create_test_matcher();
         let data = b"hello world hello";
-        
+
         for (i, &byte) in data.iter().enumerate() {
             matcher.add_byte(byte, i).unwrap();
         }
@@ -1039,18 +1053,19 @@ mod tests {
                 window_size: 8,
                 ..Default::default()
             },
-            get_global_pool_for_size(1024).clone()
-        ).unwrap();
+            get_global_pool_for_size(1024).clone(),
+        )
+        .unwrap();
 
         let data = b"0123456789abcdef"; // 16 bytes, window is 8
-        
+
         for (i, &byte) in data.iter().enumerate() {
             matcher.add_byte(byte, i).unwrap();
         }
 
         assert_eq!(matcher.window_size(), 8);
         assert!(matcher.is_window_full());
-        
+
         // Window should contain the last 8 bytes: "9abcdef"
         let window_data: Vec<u8> = matcher.window.iter().copied().collect();
         assert_eq!(window_data, b"89abcdef");
@@ -1060,13 +1075,13 @@ mod tests {
     fn test_rle_detection() {
         let mut matcher = create_test_matcher();
         let data = b"abcaaaa"; // Should detect RLE for 'aaaa'
-        
+
         for (i, &byte) in data.iter().enumerate() {
             matcher.add_byte(byte, i).unwrap();
         }
 
         let matches = matcher.find_matches(data, 4, 10).unwrap(); // Search at 'a' after 'c'
-        
+
         assert!(!matches.is_empty());
         let rle_match = &matches[0];
         assert_eq!(rle_match.compression_type, CompressionType::RLE);
@@ -1077,20 +1092,23 @@ mod tests {
     #[test]
     fn test_pattern_matching() {
         let mut matcher = create_test_matcher();
-        
+
         // Use a simpler test case with clear repetition
         let data = b"abcabcabc"; // Clear pattern repetition
-        
+
         // Add all data to sliding window
         for (i, &byte) in data.iter().enumerate() {
             matcher.add_byte(byte, i).unwrap();
         }
 
         // Search for "abc" at position 3 (should match "abc" at position 0)
-        let matches = matcher.find_matches(data, 3, 6).unwrap(); 
-        
-        assert!(!matches.is_empty(), "Should find pattern match in 'abcabcabc'");
-        
+        let matches = matcher.find_matches(data, 3, 6).unwrap();
+
+        assert!(
+            !matches.is_empty(),
+            "Should find pattern match in 'abcabcabc'"
+        );
+
         let best_match = &matches[0];
         assert!(best_match.length >= 3); // At least "abc"
         assert!(best_match.distance > 0 && best_match.distance <= 6); // Reasonable distance  
@@ -1120,7 +1138,7 @@ mod tests {
     fn test_match_quality_calculation() {
         let short_match = LocalMatch::new(3, 5, 0, 0);
         let long_match = LocalMatch::new(20, 5, 0, 0);
-        
+
         assert!(long_match.quality > short_match.quality);
         assert!(long_match.is_better_than(&short_match));
     }
@@ -1165,7 +1183,7 @@ mod tests {
     #[test]
     fn test_hash_pattern() {
         let matcher = create_test_matcher();
-        
+
         let pattern1 = b"test";
         let pattern2 = b"test";
         let pattern3 = b"TEST";
@@ -1182,7 +1200,7 @@ mod tests {
     fn test_statistics_tracking() {
         let mut matcher = create_test_matcher();
         let data = b"test data test";
-        
+
         // Add data
         for (i, &byte) in data.iter().enumerate() {
             matcher.add_byte(byte, i).unwrap();
@@ -1202,7 +1220,7 @@ mod tests {
     fn test_clear_and_reset() {
         let mut matcher = create_test_matcher();
         let data = b"some test data";
-        
+
         for (i, &byte) in data.iter().enumerate() {
             matcher.add_byte(byte, i).unwrap();
         }

@@ -65,11 +65,11 @@
 //! - **Space**: Optimal when ≥50% records share the same length
 //! - **Read-Only**: No dynamic updates after build
 
-use crate::containers::UintVecMin0;
-use crate::succinct::rank_select::{RankSelectInterleaved256, RankSelectOps};
-use crate::blob_store::traits::{BlobStore, BatchBlobStore, IterableBlobStore, BlobStoreStats};
-use crate::error::{Result, ZiporaError};
 use crate::RecordId;
+use crate::blob_store::traits::{BatchBlobStore, BlobStore, BlobStoreStats, IterableBlobStore};
+use crate::containers::UintVecMin0;
+use crate::error::{Result, ZiporaError};
+use crate::succinct::rank_select::{RankSelectInterleaved256, RankSelectOps};
 use std::collections::HashMap;
 
 /// Record access mode, determined at build time.
@@ -356,7 +356,9 @@ impl MixedLenBlobStore {
             match self.mode {
                 RecordMode::AllFixed => {
                     let offset = idx * self.fixed_len;
-                    Ok(self.fixed_len_values.get_unchecked(offset..offset + self.fixed_len))
+                    Ok(self
+                        .fixed_len_values
+                        .get_unchecked(offset..offset + self.fixed_len))
                 }
                 RecordMode::AllVariable => {
                     let beg = self.var_len_offsets.get_unchecked(idx);
@@ -367,7 +369,9 @@ impl MixedLenBlobStore {
                     if self.is_fixed_len.get(idx).unwrap_or(false) {
                         let fixed_id = self.is_fixed_len.rank1(idx);
                         let offset = fixed_id * self.fixed_len;
-                        Ok(self.fixed_len_values.get_unchecked(offset..offset + self.fixed_len))
+                        Ok(self
+                            .fixed_len_values
+                            .get_unchecked(offset..offset + self.fixed_len))
                     } else {
                         let var_id = self.is_fixed_len.rank0(idx);
                         let beg = self.var_len_offsets.get_unchecked(var_id);
@@ -382,7 +386,9 @@ impl MixedLenBlobStore {
     #[cold]
     fn out_of_bounds_error(&self, id: RecordId) -> ZiporaError {
         ZiporaError::not_found(format!(
-            "Record {} not found (max {})", id, self.num_records - 1
+            "Record {} not found (max {})",
+            id,
+            self.num_records - 1
         ))
     }
 
@@ -408,9 +414,8 @@ impl MixedLenBlobStore {
 impl Default for MixedLenBlobStore {
     fn default() -> Self {
         let empty_bv = crate::succinct::BitVector::new();
-        let empty_bitmap = RankSelectInterleaved256::new(empty_bv).unwrap_or_else(|_| {
-            panic!("Failed to create empty RankSelectInterleaved256")
-        });
+        let empty_bitmap = RankSelectInterleaved256::new(empty_bv)
+            .unwrap_or_else(|_| panic!("Failed to create empty RankSelectInterleaved256"));
 
         Self {
             fixed_len: 0,
@@ -433,14 +438,12 @@ impl BlobStore for MixedLenBlobStore {
 
     fn put(&mut self, _data: &[u8]) -> Result<RecordId> {
         Err(ZiporaError::not_supported(
-            "MixedLenBlobStore is read-only after build"
+            "MixedLenBlobStore is read-only after build",
         ))
     }
 
     fn remove(&mut self, _id: RecordId) -> Result<()> {
-        Err(ZiporaError::not_supported(
-            "MixedLenBlobStore is read-only"
-        ))
+        Err(ZiporaError::not_supported("MixedLenBlobStore is read-only"))
     }
 
     fn contains(&self, id: RecordId) -> bool {
@@ -486,9 +489,7 @@ impl BatchBlobStore for MixedLenBlobStore {
     where
         I: IntoIterator<Item = Vec<u8>>,
     {
-        Err(ZiporaError::not_supported(
-            "MixedLenBlobStore is read-only"
-        ))
+        Err(ZiporaError::not_supported("MixedLenBlobStore is read-only"))
     }
 
     fn get_batch<I>(&self, ids: I) -> Result<Vec<Option<Vec<u8>>>>
@@ -510,9 +511,7 @@ impl BatchBlobStore for MixedLenBlobStore {
     where
         I: IntoIterator<Item = RecordId>,
     {
-        Err(ZiporaError::not_supported(
-            "MixedLenBlobStore is read-only"
-        ))
+        Err(ZiporaError::not_supported("MixedLenBlobStore is read-only"))
     }
 }
 
@@ -653,9 +652,9 @@ mod tests {
     #[test]
     fn test_dominant_fixed_length_detection() {
         let data = vec![
-            vec![1, 2, 3],     // len=3 (appears 5 times)
+            vec![1, 2, 3], // len=3 (appears 5 times)
             vec![4, 5, 6],
-            vec![7, 8],        // len=2 (appears 2 times)
+            vec![7, 8], // len=2 (appears 2 times)
             vec![9, 10, 11],
             vec![12, 13],
             vec![14, 15, 16],
@@ -694,9 +693,9 @@ mod tests {
     #[test]
     fn test_size_method() {
         let data = vec![
-            vec![1, 2, 3, 4, 5],      // len=5 (fixed)
-            vec![6, 7, 8],            // len=3 (variable)
-            vec![9, 10, 11, 12, 13],  // len=5 (fixed)
+            vec![1, 2, 3, 4, 5],     // len=5 (fixed)
+            vec![6, 7, 8],           // len=3 (variable)
+            vec![9, 10, 11, 12, 13], // len=5 (fixed)
         ];
 
         let store = MixedLenBlobStore::build_from(&data).unwrap();
@@ -709,11 +708,7 @@ mod tests {
 
     #[test]
     fn test_batch_operations() {
-        let data = vec![
-            vec![1, 2, 3],
-            vec![4, 5, 6],
-            vec![7, 8],
-        ];
+        let data = vec![vec![1, 2, 3], vec![4, 5, 6], vec![7, 8]];
 
         let store = MixedLenBlobStore::build_from(&data).unwrap();
 
@@ -725,11 +720,7 @@ mod tests {
 
     #[test]
     fn test_iteration() {
-        let data = vec![
-            vec![1, 2, 3],
-            vec![4, 5, 6],
-            vec![7, 8, 9],
-        ];
+        let data = vec![vec![1, 2, 3], vec![4, 5, 6], vec![7, 8, 9]];
 
         let store = MixedLenBlobStore::build_from(&data).unwrap();
 
@@ -787,17 +778,15 @@ mod tests {
         println!("Bitmap: {} bytes", stats.bitmap_size);
         println!("Total: {} bytes", stats.total_size);
         println!("Fixed percentage: {:.2}%", stats.fixed_percentage());
-        println!("Metadata overhead: {:.2}%", stats.metadata_overhead_percent());
+        println!(
+            "Metadata overhead: {:.2}%",
+            stats.metadata_overhead_percent()
+        );
     }
 
     #[test]
     fn test_zero_length_records() {
-        let data = vec![
-            vec![],
-            vec![],
-            vec![1, 2, 3],
-            vec![],
-        ];
+        let data = vec![vec![], vec![], vec![1, 2, 3], vec![]];
 
         let store = MixedLenBlobStore::build_from(&data).unwrap();
 

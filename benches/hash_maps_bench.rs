@@ -8,15 +8,13 @@
 //! - std::HashMap (baseline comparison)
 
 use criterion::{
-    BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
-    measurement::WallTime, BenchmarkGroup
+    BenchmarkGroup, BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
+    measurement::WallTime,
 };
 use std::collections::HashMap;
 use std::time::Duration;
 
-use zipora::hash_map::{
-    GoldHashMap, GoldenRatioHashMap, StringOptimizedHashMap, SmallHashMap
-};
+use zipora::hash_map::{GoldHashMap, GoldenRatioHashMap, SmallHashMap, StringOptimizedHashMap};
 
 // =============================================================================
 // BENCHMARK CONFIGURATION
@@ -64,27 +62,35 @@ fn bench_integer_insertion(c: &mut Criterion) {
         });
 
         // GoldenRatioHashMap (new)
-        group.bench_with_input(BenchmarkId::new("GoldenRatioHashMap", size), &size, |b, &size| {
-            b.iter(|| {
-                let mut map = GoldenRatioHashMap::with_capacity(size).unwrap();
-                for i in 0..size {
-                    map.insert(black_box(i), black_box(i * 2)).unwrap();
-                }
-                black_box(map)
-            });
-        });
-
-        // SmallHashMap (for small sizes only)
-        if size <= 16 {
-            group.bench_with_input(BenchmarkId::new("SmallHashMap<64>", size), &size, |b, &size| {
+        group.bench_with_input(
+            BenchmarkId::new("GoldenRatioHashMap", size),
+            &size,
+            |b, &size| {
                 b.iter(|| {
-                    let mut map: SmallHashMap<usize, usize, 64> = SmallHashMap::new();
+                    let mut map = GoldenRatioHashMap::with_capacity(size).unwrap();
                     for i in 0..size {
                         map.insert(black_box(i), black_box(i * 2)).unwrap();
                     }
                     black_box(map)
                 });
-            });
+            },
+        );
+
+        // SmallHashMap (for small sizes only)
+        if size <= 16 {
+            group.bench_with_input(
+                BenchmarkId::new("SmallHashMap<64>", size),
+                &size,
+                |b, &size| {
+                    b.iter(|| {
+                        let mut map: SmallHashMap<usize, usize, 64> = SmallHashMap::new();
+                        for i in 0..size {
+                            map.insert(black_box(i), black_box(i * 2)).unwrap();
+                        }
+                        black_box(map)
+                    });
+                },
+            );
         }
     }
 
@@ -101,19 +107,19 @@ fn bench_integer_lookup(c: &mut Criterion) {
 
         // Prepare data
         let keys: Vec<usize> = (0..size).collect();
-        
+
         // std::HashMap
         let mut std_map = HashMap::with_capacity(size);
         for &key in &keys {
             std_map.insert(key, key * 2);
         }
-        
+
         // GoldHashMap
         let mut gold_map = GoldHashMap::new().unwrap();
         for &key in &keys {
             gold_map.insert(key, key * 2).unwrap();
         }
-        
+
         // GoldenRatioHashMap
         let mut golden_map = GoldenRatioHashMap::with_capacity(size).unwrap();
         for &key in &keys {
@@ -136,13 +142,17 @@ fn bench_integer_lookup(c: &mut Criterion) {
             });
         });
 
-        group.bench_with_input(BenchmarkId::new("GoldenRatioHashMap", size), &size, |b, _| {
-            b.iter(|| {
-                for &key in &keys {
-                    black_box(golden_map.get(&black_box(key)));
-                }
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("GoldenRatioHashMap", size),
+            &size,
+            |b, _| {
+                b.iter(|| {
+                    for &key in &keys {
+                        black_box(golden_map.get(&black_box(key)));
+                    }
+                });
+            },
+        );
 
         // SmallHashMap for small sizes
         if size <= 16 {
@@ -165,7 +175,7 @@ fn bench_integer_lookup(c: &mut Criterion) {
 }
 
 // =============================================================================
-// STRING KEY BENCHMARKS  
+// STRING KEY BENCHMARKS
 // =============================================================================
 
 fn bench_string_insertion(c: &mut Criterion) {
@@ -177,9 +187,7 @@ fn bench_string_insertion(c: &mut Criterion) {
         group.throughput(Throughput::Elements(size as u64));
 
         // Generate string keys
-        let keys: Vec<String> = (0..size)
-            .map(|i| format!("key_{:06}", i))
-            .collect();
+        let keys: Vec<String> = (0..size).map(|i| format!("key_{:06}", i)).collect();
 
         // std::HashMap baseline
         group.bench_with_input(BenchmarkId::new("std::HashMap", size), &size, |b, _| {
@@ -204,26 +212,34 @@ fn bench_string_insertion(c: &mut Criterion) {
         });
 
         // GoldenRatioHashMap
-        group.bench_with_input(BenchmarkId::new("GoldenRatioHashMap", size), &size, |b, _| {
-            b.iter(|| {
-                let mut map = GoldenRatioHashMap::with_capacity(size).unwrap();
-                for (i, key) in keys.iter().enumerate() {
-                    map.insert(black_box(key.clone()), black_box(i)).unwrap();
-                }
-                black_box(map)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("GoldenRatioHashMap", size),
+            &size,
+            |b, _| {
+                b.iter(|| {
+                    let mut map = GoldenRatioHashMap::with_capacity(size).unwrap();
+                    for (i, key) in keys.iter().enumerate() {
+                        map.insert(black_box(key.clone()), black_box(i)).unwrap();
+                    }
+                    black_box(map)
+                });
+            },
+        );
 
         // StringOptimizedHashMap (should excel here)
-        group.bench_with_input(BenchmarkId::new("StringOptimizedHashMap", size), &size, |b, _| {
-            b.iter(|| {
-                let mut map = StringOptimizedHashMap::with_capacity(size).unwrap();
-                for (i, key) in keys.iter().enumerate() {
-                    map.insert(black_box(key.as_str()), black_box(i)).unwrap();
-                }
-                black_box(map)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("StringOptimizedHashMap", size),
+            &size,
+            |b, _| {
+                b.iter(|| {
+                    let mut map = StringOptimizedHashMap::with_capacity(size).unwrap();
+                    for (i, key) in keys.iter().enumerate() {
+                        map.insert(black_box(key.as_str()), black_box(i)).unwrap();
+                    }
+                    black_box(map)
+                });
+            },
+        );
     }
 
     group.finish();
@@ -238,9 +254,7 @@ fn bench_string_lookup(c: &mut Criterion) {
         group.throughput(Throughput::Elements(size as u64));
 
         // Generate string keys
-        let keys: Vec<String> = (0..size)
-            .map(|i| format!("key_{:06}", i))
-            .collect();
+        let keys: Vec<String> = (0..size).map(|i| format!("key_{:06}", i)).collect();
 
         // Prepare maps
         let mut std_map = HashMap::with_capacity(size);
@@ -271,21 +285,29 @@ fn bench_string_lookup(c: &mut Criterion) {
             });
         });
 
-        group.bench_with_input(BenchmarkId::new("GoldenRatioHashMap", size), &size, |b, _| {
-            b.iter(|| {
-                for key in &keys {
-                    black_box(golden_map.get(black_box(key)));
-                }
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("GoldenRatioHashMap", size),
+            &size,
+            |b, _| {
+                b.iter(|| {
+                    for key in &keys {
+                        black_box(golden_map.get(black_box(key)));
+                    }
+                });
+            },
+        );
 
-        group.bench_with_input(BenchmarkId::new("StringOptimizedHashMap", size), &size, |b, _| {
-            b.iter(|| {
-                for key in &keys {
-                    black_box(string_map.get(black_box(key.as_str())));
-                }
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("StringOptimizedHashMap", size),
+            &size,
+            |b, _| {
+                b.iter(|| {
+                    for key in &keys {
+                        black_box(string_map.get(black_box(key.as_str())));
+                    }
+                });
+            },
+        );
     }
 
     group.finish();
@@ -304,39 +326,51 @@ fn bench_small_map_inline_vs_heap(c: &mut Criterion) {
         group.throughput(Throughput::Elements(size as u64));
 
         // SmallHashMap with different inline capacities
-        group.bench_with_input(BenchmarkId::new("SmallHashMap<4>", size), &size, |b, &size| {
-            b.iter(|| {
-                let mut map: SmallHashMap<i32, i32, 4> = SmallHashMap::new();
-                for i in 0..size as i32 {
-                    map.insert(black_box(i), black_box(i * 2)).unwrap();
-                }
-                // Verify inline/heap status
-                let is_inline = map.is_inline();
-                black_box((map, is_inline))
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("SmallHashMap<4>", size),
+            &size,
+            |b, &size| {
+                b.iter(|| {
+                    let mut map: SmallHashMap<i32, i32, 4> = SmallHashMap::new();
+                    for i in 0..size as i32 {
+                        map.insert(black_box(i), black_box(i * 2)).unwrap();
+                    }
+                    // Verify inline/heap status
+                    let is_inline = map.is_inline();
+                    black_box((map, is_inline))
+                });
+            },
+        );
 
-        group.bench_with_input(BenchmarkId::new("SmallHashMap<8>", size), &size, |b, &size| {
-            b.iter(|| {
-                let mut map: SmallHashMap<i32, i32, 8> = SmallHashMap::new();
-                for i in 0..size as i32 {
-                    map.insert(black_box(i), black_box(i * 2)).unwrap();
-                }
-                let is_inline = map.is_inline();
-                black_box((map, is_inline))
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("SmallHashMap<8>", size),
+            &size,
+            |b, &size| {
+                b.iter(|| {
+                    let mut map: SmallHashMap<i32, i32, 8> = SmallHashMap::new();
+                    for i in 0..size as i32 {
+                        map.insert(black_box(i), black_box(i * 2)).unwrap();
+                    }
+                    let is_inline = map.is_inline();
+                    black_box((map, is_inline))
+                });
+            },
+        );
 
-        group.bench_with_input(BenchmarkId::new("SmallHashMap<16>", size), &size, |b, &size| {
-            b.iter(|| {
-                let mut map: SmallHashMap<i32, i32, 16> = SmallHashMap::new();
-                for i in 0..size as i32 {
-                    map.insert(black_box(i), black_box(i * 2)).unwrap();
-                }
-                let is_inline = map.is_inline();
-                black_box((map, is_inline))
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("SmallHashMap<16>", size),
+            &size,
+            |b, &size| {
+                b.iter(|| {
+                    let mut map: SmallHashMap<i32, i32, 16> = SmallHashMap::new();
+                    for i in 0..size as i32 {
+                        map.insert(black_box(i), black_box(i * 2)).unwrap();
+                    }
+                    let is_inline = map.is_inline();
+                    black_box((map, is_inline))
+                });
+            },
+        );
 
         // std::HashMap for comparison
         group.bench_with_input(BenchmarkId::new("std::HashMap", size), &size, |b, &size| {
@@ -366,44 +400,53 @@ fn bench_memory_efficiency(c: &mut Criterion) {
         group.throughput(Throughput::Elements(size as u64));
 
         // Test golden ratio growth efficiency
-        group.bench_with_input(BenchmarkId::new("GoldenRatioHashMap_growth", size), &size, |b, &size| {
-            b.iter(|| {
-                let mut map = GoldenRatioHashMap::new();
-                let mut load_factors = Vec::new();
-                
-                for i in 0..size {
-                    map.insert(black_box(i), black_box(i)).unwrap();
-                    
-                    // Sample load factor periodically
-                    if i % (size / 10).max(1) == 0 {
-                        load_factors.push(map.load_factor());
+        group.bench_with_input(
+            BenchmarkId::new("GoldenRatioHashMap_growth", size),
+            &size,
+            |b, &size| {
+                b.iter(|| {
+                    let mut map = GoldenRatioHashMap::new();
+                    let mut load_factors = Vec::new();
+
+                    for i in 0..size {
+                        map.insert(black_box(i), black_box(i)).unwrap();
+
+                        // Sample load factor periodically
+                        if i % (size / 10).max(1) == 0 {
+                            load_factors.push(map.load_factor());
+                        }
                     }
-                }
-                
-                black_box((map, load_factors))
-            });
-        });
+
+                    black_box((map, load_factors))
+                });
+            },
+        );
 
         // Test string arena efficiency
-        group.bench_with_input(BenchmarkId::new("StringOptimizedHashMap_arena", size), &size, |b, &size| {
-            b.iter(|| {
-                let mut map = StringOptimizedHashMap::new();
-                
-                // Test with duplicate strings to verify interning
-                let base_strings = ["prefix_", "common_", "shared_"];
-                
-                for i in 0..size {
-                    let key = format!("{}{}", 
-                        base_strings[i % base_strings.len()], 
-                        i / base_strings.len()
-                    );
-                    map.insert(&key, black_box(i)).unwrap();
-                }
-                
-                let stats = map.string_arena_stats();
-                black_box((map, stats))
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("StringOptimizedHashMap_arena", size),
+            &size,
+            |b, &size| {
+                b.iter(|| {
+                    let mut map = StringOptimizedHashMap::new();
+
+                    // Test with duplicate strings to verify interning
+                    let base_strings = ["prefix_", "common_", "shared_"];
+
+                    for i in 0..size {
+                        let key = format!(
+                            "{}{}",
+                            base_strings[i % base_strings.len()],
+                            i / base_strings.len()
+                        );
+                        map.insert(&key, black_box(i)).unwrap();
+                    }
+
+                    let stats = map.string_arena_stats();
+                    black_box((map, stats))
+                });
+            },
+        );
     }
 
     group.finish();
@@ -425,7 +468,7 @@ fn bench_collision_resistance(c: &mut Criterion) {
     let pathological_keys: Vec<String> = (0..size)
         .map(|i| {
             // Create keys that might hash to similar values
-            let base = i % 100;  // Many keys will have same base
+            let base = i % 100; // Many keys will have same base
             format!("collision_key_{}_{}", base, i / 100)
         })
         .collect();
@@ -436,12 +479,12 @@ fn bench_collision_resistance(c: &mut Criterion) {
             for (i, key) in pathological_keys.iter().enumerate() {
                 map.insert(black_box(key.clone()), black_box(i)).unwrap();
             }
-            
+
             // Verify all keys can be found
             for (i, key) in pathological_keys.iter().enumerate() {
                 assert_eq!(map.get(key), Some(&i));
             }
-            
+
             black_box(map)
         });
     });
@@ -452,12 +495,12 @@ fn bench_collision_resistance(c: &mut Criterion) {
             for (i, key) in pathological_keys.iter().enumerate() {
                 map.insert(black_box(key.as_str()), black_box(i)).unwrap();
             }
-            
+
             // Verify all keys can be found
             for (i, key) in pathological_keys.iter().enumerate() {
                 assert_eq!(map.get(key.as_str()), Some(&i));
             }
-            
+
             black_box(map)
         });
     });
@@ -468,12 +511,12 @@ fn bench_collision_resistance(c: &mut Criterion) {
             for (i, key) in pathological_keys.iter().enumerate() {
                 map.insert(black_box(key.clone()), black_box(i));
             }
-            
+
             // Verify all keys can be found
             for (i, key) in pathological_keys.iter().enumerate() {
                 assert_eq!(map.get(key), Some(&i));
             }
-            
+
             black_box(map)
         });
     });
@@ -508,7 +551,7 @@ fn bench_random_access(c: &mut Criterion) {
     // Prepare maps
     let mut golden_map = GoldenRatioHashMap::new();
     let mut std_map = HashMap::new();
-    
+
     for i in 0..size {
         golden_map.insert(i, i * 2).unwrap();
         std_map.insert(i, i * 2);

@@ -126,18 +126,19 @@ impl<S: BlobStore> BlobStore for ZstdBlobStore<S> {
     fn remove(&mut self, id: RecordId) -> Result<()> {
         // Update stats before removal
         if let Ok(compressed_data) = self.inner.get(id)
-            && let Ok(original_data) = self.decompress(&compressed_data) {
-                self.stats.uncompressed_size = self
-                    .stats
-                    .uncompressed_size
-                    .saturating_sub(original_data.len());
-                self.stats.compressed_size = self
-                    .stats
-                    .compressed_size
-                    .saturating_sub(compressed_data.len());
-                self.stats.compressed_count = self.stats.compressed_count.saturating_sub(1);
-                self.stats.compression_ratio = self.stats.ratio();
-            }
+            && let Ok(original_data) = self.decompress(&compressed_data)
+        {
+            self.stats.uncompressed_size = self
+                .stats
+                .uncompressed_size
+                .saturating_sub(original_data.len());
+            self.stats.compressed_size = self
+                .stats
+                .compressed_size
+                .saturating_sub(compressed_data.len());
+            self.stats.compressed_count = self.stats.compressed_count.saturating_sub(1);
+            self.stats.compression_ratio = self.stats.ratio();
+        }
 
         self.inner.remove(id)
     }
@@ -224,17 +225,18 @@ impl<S: BatchBlobStore> BatchBlobStore for ZstdBlobStore<S> {
         // Update stats before removal
         for &id in &ids_vec {
             if let Ok(compressed_data) = self.inner.get(id)
-                && let Ok(original_data) = self.decompress(&compressed_data) {
-                    self.stats.uncompressed_size = self
-                        .stats
-                        .uncompressed_size
-                        .saturating_sub(original_data.len());
-                    self.stats.compressed_size = self
-                        .stats
-                        .compressed_size
-                        .saturating_sub(compressed_data.len());
-                    self.stats.compressed_count = self.stats.compressed_count.saturating_sub(1);
-                }
+                && let Ok(original_data) = self.decompress(&compressed_data)
+            {
+                self.stats.uncompressed_size = self
+                    .stats
+                    .uncompressed_size
+                    .saturating_sub(original_data.len());
+                self.stats.compressed_size = self
+                    .stats
+                    .compressed_size
+                    .saturating_sub(compressed_data.len());
+                self.stats.compressed_count = self.stats.compressed_count.saturating_sub(1);
+            }
         }
 
         let removed = self.inner.remove_batch(ids_vec)?;

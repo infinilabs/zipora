@@ -19,39 +19,36 @@ pub mod suffix_array;
 pub mod tournament_tree;
 
 // Re-export main types
-pub use bit_ops::{popcount_slice, select_in_word, has_fast_bmi2};
+pub use bit_ops::{has_fast_bmi2, popcount_slice, select_in_word};
 pub use cache_oblivious::{
     AdaptiveAlgorithmSelector, CacheObliviousConfig, CacheObliviousSort,
-    DataCharacteristics as CacheObliviousDataCharacteristics, 
-    CacheObliviousSortingStrategy, VanEmdeBoas
+    CacheObliviousSortingStrategy, DataCharacteristics as CacheObliviousDataCharacteristics,
+    VanEmdeBoas,
 };
 #[cfg(feature = "serde")]
 pub use external_sort::{ExternalSort, ReplaceSelectSort, ReplaceSelectSortConfig};
 pub use multiway_merge::{MergeSource, MultiWayMerge};
 pub use radix_sort::{
-    AdvancedRadixSort, AdvancedRadixSortConfig, AdvancedStringRadixSort, AdvancedU32RadixSort, 
-    AdvancedU64RadixSort, CpuFeatures, DataCharacteristics, RadixSort, RadixSortConfig, 
-    RadixSortable, SortingStrategy as RadixSortingStrategy
+    AdvancedRadixSort, AdvancedRadixSortConfig, AdvancedStringRadixSort, AdvancedU32RadixSort,
+    AdvancedU64RadixSort, CpuFeatures, DataCharacteristics, RadixSort, RadixSortConfig,
+    RadixSortable, SortingStrategy as RadixSortingStrategy,
 };
-pub use set_operations::{SetOperations, SetOperationsConfig, SetOperationStats};
+pub use set_operations::{SetOperationStats, SetOperations, SetOperationsConfig};
 pub use set_ops::{
-    multiset_intersection, multiset_1small_intersection, multiset_fast_intersection,
-    multiset_intersection2, multiset_1small_intersection2, multiset_fast_intersection2,
+    multiset_1small_intersection, multiset_1small_intersection2, multiset_difference,
+    multiset_fast_intersection, multiset_fast_intersection2, multiset_intersection,
+    multiset_intersection2, multiset_union, set_difference, set_intersection, set_union,
     set_unique, set_unique_default,
-    multiset_union, multiset_difference,
-    set_intersection, set_union, set_difference
 };
 pub use simd_merge::{SimdComparator, SimdConfig, SimdOperations};
-pub use simd_search::{simd_gallop_to, simd_block_filter};
+pub use simd_search::{simd_block_filter, simd_gallop_to};
 pub use simd_set_intersect::{
-    sorted_intersect_adaptive, sorted_intersect_simd, sorted_intersect_count,
-    sorted_intersect_galloping,
+    sorted_intersect_adaptive, sorted_intersect_count, sorted_intersect_galloping,
+    sorted_intersect_simd,
 };
-pub use simd_set_union::{
-    sorted_union_adaptive, sorted_union_simd, sorted_union_count,
-};
+pub use simd_set_union::{sorted_union_adaptive, sorted_union_count, sorted_union_simd};
 pub use suffix_array::{LcpArray, SuffixArray, SuffixArrayBuilder};
-pub use tournament_tree::{EnhancedLoserTree, LoserTreeConfig, TournamentNode, CacheAlignedNode};
+pub use tournament_tree::{CacheAlignedNode, EnhancedLoserTree, LoserTreeConfig, TournamentNode};
 
 /// Configuration for algorithm behavior
 #[derive(Debug, Clone)]

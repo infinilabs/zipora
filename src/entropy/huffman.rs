@@ -22,8 +22,7 @@ use std::collections::{BinaryHeap, HashMap};
 ///
 /// Interleaving splits input data into N independent streams that can be
 /// processed in parallel, improving throughput on modern CPUs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InterleavingFactor {
     /// Single stream (no interleaving) - baseline performance
     #[default]
@@ -64,7 +63,6 @@ impl InterleavingFactor {
         false
     }
 }
-
 
 // ============================================================================
 // Fast Symbol Table for Huffman Encoding Optimization
@@ -223,7 +221,7 @@ impl<'a> BitStreamReader<'a> {
 /// Huffman symbol with code information
 #[derive(Debug, Clone, Copy)]
 struct HuffmanSymbol {
-    _bits: u64,  // Changed from u16 to u64 to support longer codes
+    _bits: u64, // Changed from u16 to u64 to support longer codes
     _bit_count: u8,
 }
 
@@ -231,7 +229,10 @@ impl HuffmanSymbol {
     #[inline]
     #[allow(dead_code)]
     fn new(bits: u64, bit_count: u8) -> Self {
-        Self { _bits: bits, _bit_count: bit_count }
+        Self {
+            _bits: bits,
+            _bit_count: bit_count,
+        }
     }
 }
 
@@ -361,7 +362,8 @@ impl HuffmanTree {
     /// Build tree with fixed-length codes for pathological cases
     fn from_frequencies_fixed_length(frequencies: &[u32; 256]) -> Result<Self> {
         // Count symbols
-        let symbols: Vec<u8> = frequencies.iter()
+        let symbols: Vec<u8> = frequencies
+            .iter()
             .enumerate()
             .filter(|(_, f)| **f > 0)
             .map(|(s, _)| s as u8)
@@ -845,9 +847,10 @@ impl HuffmanDecoder {
 
         // Handle final symbol if we're at a leaf
         if let HuffmanNode::Leaf { symbol, .. } = current_node
-            && result.len() < output_length {
-                result.push(*symbol);
-            }
+            && result.len() < output_length
+        {
+            result.push(*symbol);
+        }
 
         if result.len() != output_length {
             return Err(ZiporaError::invalid_data(format!(
@@ -862,8 +865,7 @@ impl HuffmanDecoder {
 }
 
 /// Context-based Huffman encoding models for improved compression
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HuffmanOrder {
     /// Order-0: Classic Huffman coding (symbols are independent)
     #[default]
@@ -873,7 +875,6 @@ pub enum HuffmanOrder {
     /// Order-2: Symbol frequencies depend on the previous two symbols  
     Order2,
 }
-
 
 /// Enhanced Huffman encoder with context-based models
 #[derive(Debug)]
@@ -1083,7 +1084,8 @@ impl ContextualHuffmanEncoder {
                         bits.extend_from_slice(code);
                     } else {
                         return Err(ZiporaError::invalid_data(format!(
-                            "Symbol {} not in Huffman tree", symbol
+                            "Symbol {} not in Huffman tree",
+                            symbol
                         )));
                     }
                 }
@@ -1095,7 +1097,8 @@ impl ContextualHuffmanEncoder {
                     bits.extend_from_slice(code);
                 } else {
                     return Err(ZiporaError::invalid_data(format!(
-                        "First symbol {} not in Order-0 tree", data[0]
+                        "First symbol {} not in Order-0 tree",
+                        data[0]
                     )));
                 }
 
@@ -1103,7 +1106,7 @@ impl ContextualHuffmanEncoder {
                 for i in 1..data.len() {
                     let context = data[i - 1] as u32;
                     let symbol = data[i];
-                    
+
                     // Try context-specific tree first
                     if let Some(&tree_idx) = self.context_map.get(&context) {
                         let tree = &self.trees[tree_idx];
@@ -1112,13 +1115,14 @@ impl ContextualHuffmanEncoder {
                             continue;
                         }
                     }
-                    
+
                     // Fallback to Order-0 tree for unknown contexts/symbols
                     if let Some(code) = self.trees[0].get_code(symbol) {
                         bits.extend_from_slice(code);
                     } else {
                         return Err(ZiporaError::invalid_data(format!(
-                            "Symbol {} not found in any tree", symbol
+                            "Symbol {} not found in any tree",
+                            symbol
                         )));
                     }
                 }
@@ -1131,7 +1135,8 @@ impl ContextualHuffmanEncoder {
                         bits.extend_from_slice(code);
                     } else {
                         return Err(ZiporaError::invalid_data(format!(
-                            "Symbol {} not in Order-0 tree", data[i]
+                            "Symbol {} not in Order-0 tree",
+                            data[i]
                         )));
                     }
                 }
@@ -1140,7 +1145,7 @@ impl ContextualHuffmanEncoder {
                 for i in 2..data.len() {
                     let context = ((data[i - 2] as u32) << 8) | (data[i - 1] as u32);
                     let symbol = data[i];
-                    
+
                     // Try context-specific tree first
                     if let Some(&tree_idx) = self.context_map.get(&context) {
                         let tree = &self.trees[tree_idx];
@@ -1149,13 +1154,14 @@ impl ContextualHuffmanEncoder {
                             continue;
                         }
                     }
-                    
+
                     // Fallback to Order-0 tree for unknown contexts/symbols
                     if let Some(code) = self.trees[0].get_code(symbol) {
                         bits.extend_from_slice(code);
                     } else {
                         return Err(ZiporaError::invalid_data(format!(
-                            "Symbol {} not found in any tree", symbol
+                            "Symbol {} not found in any tree",
+                            symbol
                         )));
                     }
                 }
@@ -1218,18 +1224,19 @@ impl ContextualHuffmanEncoder {
             HuffmanOrder::Order1 => {
                 // First symbol
                 if let Some(tree) = self.trees.first()
-                    && let Some(code) = tree.get_code(data[0]) {
-                        total_bits += code.len();
-                    }
+                    && let Some(code) = tree.get_code(data[0])
+                {
+                    total_bits += code.len();
+                }
 
                 // Context-dependent symbols
                 for i in 1..data.len() {
                     let context = data[i - 1] as u32;
                     let symbol = data[i];
-                    
+
                     let tree_idx = self.context_map.get(&context).copied().unwrap_or(0);
                     let tree = &self.trees[tree_idx];
-                    
+
                     if let Some(code) = tree.get_code(symbol) {
                         total_bits += code.len();
                     } else if let Some(code) = self.trees[0].get_code(symbol) {
@@ -1241,19 +1248,20 @@ impl ContextualHuffmanEncoder {
                 // First two symbols
                 for i in 0..2.min(data.len()) {
                     if let Some(tree) = self.trees.first()
-                        && let Some(code) = tree.get_code(data[i]) {
-                            total_bits += code.len();
-                        }
+                        && let Some(code) = tree.get_code(data[i])
+                    {
+                        total_bits += code.len();
+                    }
                 }
 
                 // Context-dependent symbols
                 for i in 2..data.len() {
                     let context = ((data[i - 2] as u32) << 8) | (data[i - 1] as u32);
                     let symbol = data[i];
-                    
+
                     let tree_idx = self.context_map.get(&context).copied().unwrap_or(0);
                     let tree = &self.trees[tree_idx];
-                    
+
                     if let Some(code) = tree.get_code(symbol) {
                         total_bits += code.len();
                     } else if let Some(code) = self.trees[0].get_code(symbol) {
@@ -1318,14 +1326,24 @@ impl ContextualHuffmanEncoder {
         if offset + 4 > data.len() {
             return Err(ZiporaError::invalid_data("Truncated tree count"));
         }
-        let tree_count = u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]) as usize;
+        let tree_count = u32::from_le_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]) as usize;
         offset += 4;
 
         // Read context map
         if offset + 4 > data.len() {
             return Err(ZiporaError::invalid_data("Truncated context count"));
         }
-        let context_count = u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]) as usize;
+        let context_count = u32::from_le_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]) as usize;
         offset += 4;
 
         let mut context_map = HashMap::new();
@@ -1333,9 +1351,19 @@ impl ContextualHuffmanEncoder {
             if offset + 8 > data.len() {
                 return Err(ZiporaError::invalid_data("Truncated context map"));
             }
-            let context = u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]);
+            let context = u32::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]);
             offset += 4;
-            let tree_idx = u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]) as usize;
+            let tree_idx = u32::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]) as usize;
             offset += 4;
             context_map.insert(context, tree_idx);
         }
@@ -1346,7 +1374,12 @@ impl ContextualHuffmanEncoder {
             if offset + 4 > data.len() {
                 return Err(ZiporaError::invalid_data("Truncated tree size"));
             }
-            let tree_size = u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]) as usize;
+            let tree_size = u32::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]) as usize;
             offset += 4;
 
             if offset + tree_size > data.len() {
@@ -1617,9 +1650,10 @@ impl ContextualHuffmanEncoder {
                     let bit_count = code.len() as u8;
 
                     if bit_count > 64 {
-                        return Err(ZiporaError::invalid_data(
-                            format!("Huffman code too long: {} bits", bit_count)
-                        ));
+                        return Err(ZiporaError::invalid_data(format!(
+                            "Huffman code too long: {} bits",
+                            bit_count
+                        )));
                     }
 
                     for (i, &bit) in code.iter().enumerate() {
@@ -1631,9 +1665,10 @@ impl ContextualHuffmanEncoder {
                     table.insert((context, symbol), HuffmanSymbol::new(bits, bit_count));
                 } else {
                     // This should not happen if new_order1 works correctly
-                    return Err(ZiporaError::invalid_data(
-                        format!("Symbol {} not found in tree for context {}", symbol, context)
-                    ));
+                    return Err(ZiporaError::invalid_data(format!(
+                        "Symbol {} not found in tree for context {}",
+                        symbol, context
+                    )));
                 }
             }
         }
@@ -1646,9 +1681,8 @@ impl ContextualHuffmanEncoder {
     /// The table is built lazily on first access and cached for subsequent calls.
     /// This amortizes the ~263KB allocation cost across multiple encode calls.
     fn get_or_init_fast_symbol_table(&self) -> &FastSymbolTable {
-        self.fast_symbol_table.get_or_init(|| {
-            self.build_fast_symbol_table_inner()
-        })
+        self.fast_symbol_table
+            .get_or_init(|| self.build_fast_symbol_table_inner())
     }
 
     /// Build fast symbol table for ILP-optimized encoding
@@ -1744,9 +1778,10 @@ impl ContextualHuffmanEncoder {
 
                     // If we ended on a leaf after using all BLOCK_BITS, record it
                     if let HuffmanNode::Leaf { symbol, .. } = current
-                        && tree_table[peek_value].2 == 0 {
-                            tree_table[peek_value] = (code_bits, *symbol, bits_used);
-                        }
+                        && tree_table[peek_value].2 == 0
+                    {
+                        tree_table[peek_value] = (code_bits, *symbol, bits_used);
+                    }
                 }
             }
 
@@ -1787,8 +1822,9 @@ impl ContextualHuffmanEncoder {
             return self.decode_one_symbol_tree(reader, context);
         }
 
-        let context_table = decode_table.get(&context)
-            .ok_or_else(|| ZiporaError::invalid_data(format!("Context {} not found in decode table", context)))?;
+        let context_table = decode_table.get(&context).ok_or_else(|| {
+            ZiporaError::invalid_data(format!("Context {} not found in decode table", context))
+        })?;
 
         // Peek at BLOCK_BITS
         let peek_bits = reader.peek(BLOCK_BITS);
@@ -1813,11 +1849,7 @@ impl ContextualHuffmanEncoder {
     }
 
     /// Decode a single symbol using tree-based decoding (fallback for end-of-stream)
-    fn decode_one_symbol_tree(
-        &self,
-        reader: &mut BitStreamReader,
-        context: u16,
-    ) -> Result<u8> {
+    fn decode_one_symbol_tree(&self, reader: &mut BitStreamReader, context: u16) -> Result<u8> {
         // Get the tree for this context
         let tree_idx = if context == 256 {
             0
@@ -1826,7 +1858,9 @@ impl ContextualHuffmanEncoder {
         };
 
         let tree = &self.trees[tree_idx];
-        let root = tree.root().ok_or_else(|| ZiporaError::invalid_data("Empty tree"))?;
+        let root = tree
+            .root()
+            .ok_or_else(|| ZiporaError::invalid_data("Empty tree"))?;
 
         let mut current = root;
 
@@ -1852,7 +1886,6 @@ impl ContextualHuffmanEncoder {
             }
         }
     }
-
 }
 
 /// Context-aware Huffman decoder
@@ -1878,12 +1911,8 @@ impl ContextualHuffmanDecoder {
                 let tree = &self.encoder.trees[0];
                 self.decode_order0(encoded_data, tree, output_length)?
             }
-            HuffmanOrder::Order1 => {
-                self.decode_order1(encoded_data, output_length)?
-            }
-            HuffmanOrder::Order2 => {
-                self.decode_order2(encoded_data, output_length)?
-            }
+            HuffmanOrder::Order1 => self.decode_order1(encoded_data, output_length)?,
+            HuffmanOrder::Order2 => self.decode_order2(encoded_data, output_length)?,
         };
 
         if result.len() != output_length {
@@ -1898,8 +1927,15 @@ impl ContextualHuffmanDecoder {
     }
 
     /// Decode Order-0 (classic Huffman)
-    fn decode_order0(&self, encoded_data: &[u8], tree: &HuffmanTree, output_length: usize) -> Result<Vec<u8>> {
-        let root = tree.root().ok_or_else(|| ZiporaError::invalid_data("Empty tree"))?;
+    fn decode_order0(
+        &self,
+        encoded_data: &[u8],
+        tree: &HuffmanTree,
+        output_length: usize,
+    ) -> Result<Vec<u8>> {
+        let root = tree
+            .root()
+            .ok_or_else(|| ZiporaError::invalid_data("Empty tree"))?;
         let mut result = Vec::with_capacity(output_length);
         let mut current_node = root;
 
@@ -1919,7 +1955,11 @@ impl ContextualHuffmanDecoder {
                         current_node = match current_node {
                             HuffmanNode::Leaf { .. } => current_node,
                             HuffmanNode::Internal { left, right, .. } => {
-                                if bit { right } else { left }
+                                if bit {
+                                    right
+                                } else {
+                                    left
+                                }
                             }
                         };
                     }
@@ -1936,9 +1976,10 @@ impl ContextualHuffmanDecoder {
 
         // Handle final symbol if we're at a leaf
         if let HuffmanNode::Leaf { symbol, .. } = current_node
-            && result.len() < output_length {
-                result.push(*symbol);
-            }
+            && result.len() < output_length
+        {
+            result.push(*symbol);
+        }
 
         Ok(result)
     }
@@ -1955,7 +1996,9 @@ impl ContextualHuffmanDecoder {
 
         // Decode first symbol with first tree
         let first_tree = &self.encoder.trees[0];
-        if let Ok(first_symbol) = self.decode_next_symbol(encoded_data, &mut byte_idx, &mut bit_pos, first_tree) {
+        if let Ok(first_symbol) =
+            self.decode_next_symbol(encoded_data, &mut byte_idx, &mut bit_pos, first_tree)
+        {
             result.push(first_symbol);
         }
 
@@ -1965,8 +2008,10 @@ impl ContextualHuffmanDecoder {
             let context = *result.last().expect("result non-empty after push") as u32;
             let tree_idx = self.encoder.context_map.get(&context).copied().unwrap_or(0);
             let tree = &self.encoder.trees[tree_idx];
-            
-            if let Ok(symbol) = self.decode_next_symbol(encoded_data, &mut byte_idx, &mut bit_pos, tree) {
+
+            if let Ok(symbol) =
+                self.decode_next_symbol(encoded_data, &mut byte_idx, &mut bit_pos, tree)
+            {
                 result.push(symbol);
             } else {
                 break;
@@ -1989,7 +2034,9 @@ impl ContextualHuffmanDecoder {
         // Decode first two symbols with first tree
         let first_tree = &self.encoder.trees[0];
         for _ in 0..2.min(output_length) {
-            if let Ok(symbol) = self.decode_next_symbol(encoded_data, &mut byte_idx, &mut bit_pos, first_tree) {
+            if let Ok(symbol) =
+                self.decode_next_symbol(encoded_data, &mut byte_idx, &mut bit_pos, first_tree)
+            {
                 result.push(symbol);
             } else {
                 break;
@@ -2002,8 +2049,10 @@ impl ContextualHuffmanDecoder {
             let context = ((result[len - 2] as u32) << 8) | (result[len - 1] as u32);
             let tree_idx = self.encoder.context_map.get(&context).copied().unwrap_or(0);
             let tree = &self.encoder.trees[tree_idx];
-            
-            if let Ok(symbol) = self.decode_next_symbol(encoded_data, &mut byte_idx, &mut bit_pos, tree) {
+
+            if let Ok(symbol) =
+                self.decode_next_symbol(encoded_data, &mut byte_idx, &mut bit_pos, tree)
+            {
                 result.push(symbol);
             } else {
                 break;
@@ -2014,13 +2063,21 @@ impl ContextualHuffmanDecoder {
     }
 
     /// Decode next symbol using the original bit processing logic
-    fn decode_next_symbol(&self, encoded_data: &[u8], byte_idx: &mut usize, bit_pos: &mut usize, tree: &HuffmanTree) -> Result<u8> {
-        let root = tree.root().ok_or_else(|| ZiporaError::invalid_data("Empty tree"))?;
+    fn decode_next_symbol(
+        &self,
+        encoded_data: &[u8],
+        byte_idx: &mut usize,
+        bit_pos: &mut usize,
+        tree: &HuffmanTree,
+    ) -> Result<u8> {
+        let root = tree
+            .root()
+            .ok_or_else(|| ZiporaError::invalid_data("Empty tree"))?;
         let mut current_node = root;
 
         while *byte_idx < encoded_data.len() {
             let byte = encoded_data[*byte_idx];
-            
+
             while *bit_pos < 8 {
                 let bit = (byte >> *bit_pos) & 1 == 1;
 
@@ -2046,7 +2103,6 @@ impl ContextualHuffmanDecoder {
             Err(ZiporaError::invalid_data("Incomplete symbol"))
         }
     }
-
 }
 
 #[cfg(test)]
@@ -2172,7 +2228,7 @@ mod tests {
         assert_eq!(encoder.tree_count(), 1);
 
         let encoded = encoder.encode(data).unwrap();
-        
+
         let decoder = ContextualHuffmanDecoder::new(encoder);
         let decoded = decoder.decode(&encoded, data.len()).unwrap();
 
@@ -2188,7 +2244,7 @@ mod tests {
         assert!(encoder.tree_count() >= 1);
 
         let encoded = encoder.encode(data).unwrap();
-        
+
         let decoder = ContextualHuffmanDecoder::new(encoder);
         let decoded = decoder.decode(&encoded, data.len()).unwrap();
 
@@ -2204,7 +2260,7 @@ mod tests {
         assert!(encoder.tree_count() >= 1);
 
         let encoded = encoder.encode(data).unwrap();
-        
+
         let decoder = ContextualHuffmanDecoder::new(encoder);
         let decoded = decoder.decode(&encoded, data.len()).unwrap();
 
@@ -2231,7 +2287,11 @@ mod tests {
         println!("Order-2 ratio: {:.3}", ratio2);
 
         // Order-0 should achieve compression since it only includes seen symbols
-        assert!(ratio0 < 1.0, "Order-0 ratio should be < 1.0, got {:.3}", ratio0);
+        assert!(
+            ratio0 < 1.0,
+            "Order-0 ratio should be < 1.0, got {:.3}",
+            ratio0
+        );
 
         // Order-1/2 include all symbols for correctness, so just check they don't expand too much
         assert!(ratio1 <= 1.5, "Order-1 ratio too high, got {:.3}", ratio1);
@@ -2262,9 +2322,9 @@ mod tests {
 
         let encoder = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order1).unwrap();
         let serialized = encoder.serialize();
-        
+
         let deserialized = ContextualHuffmanEncoder::deserialize(&serialized).unwrap();
-        
+
         assert_eq!(encoder.order(), deserialized.order());
         assert_eq!(encoder.tree_count(), deserialized.tree_count());
 
@@ -2292,7 +2352,7 @@ mod tests {
         let repeated_data = b"aaaaaaaaaa";
         let encoder = ContextualHuffmanEncoder::new(repeated_data, HuffmanOrder::Order1).unwrap();
         let encoded = encoder.encode(repeated_data).unwrap();
-        
+
         let decoder = ContextualHuffmanDecoder::new(encoder);
         let decoded = decoder.decode(&encoded, repeated_data.len()).unwrap();
         assert_eq!(repeated_data.to_vec(), decoded);
@@ -2302,7 +2362,11 @@ mod tests {
     fn test_huffman_order_enum() {
         assert_eq!(HuffmanOrder::default(), HuffmanOrder::Order0);
 
-        let orders = [HuffmanOrder::Order0, HuffmanOrder::Order1, HuffmanOrder::Order2];
+        let orders = [
+            HuffmanOrder::Order0,
+            HuffmanOrder::Order1,
+            HuffmanOrder::Order2,
+        ];
         for order in orders {
             let data = b"test data";
             let encoder = ContextualHuffmanEncoder::new(data, order).unwrap();
@@ -2327,7 +2391,8 @@ mod tests {
 
     #[test]
     fn test_encode_x1_basic() {
-        let data = b"hello world! this is a test for interleaved huffman coding with order-1 context.";
+        let data =
+            b"hello world! this is a test for interleaved huffman coding with order-1 context.";
         let encoder = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order1).unwrap();
 
         let encoded = encoder.encode_x1(data).unwrap();
@@ -2375,20 +2440,31 @@ mod tests {
         let encoder = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order1).unwrap();
 
         // Test all 4 variants
-        for factor in [InterleavingFactor::X1, InterleavingFactor::X2,
-                      InterleavingFactor::X4, InterleavingFactor::X8] {
+        for factor in [
+            InterleavingFactor::X1,
+            InterleavingFactor::X2,
+            InterleavingFactor::X4,
+            InterleavingFactor::X8,
+        ] {
             let encoded = encoder.encode_with_interleaving(data, factor).unwrap();
-            let decoded = encoder.decode_with_interleaving(&encoded, data.len(), factor).unwrap();
+            let decoded = encoder
+                .decode_with_interleaving(&encoded, data.len(), factor)
+                .unwrap();
 
-            assert_eq!(data.to_vec(), decoded,
-                "Round trip failed for {:?} interleaving", factor);
+            assert_eq!(
+                data.to_vec(),
+                decoded,
+                "Round trip failed for {:?} interleaving",
+                factor
+            );
         }
     }
 
     #[test]
     fn test_interleaving_empty_data() {
         let data = b"";
-        let encoder = ContextualHuffmanEncoder::new(b"training data", HuffmanOrder::Order1).unwrap();
+        let encoder =
+            ContextualHuffmanEncoder::new(b"training data", HuffmanOrder::Order1).unwrap();
 
         let encoded = encoder.encode_x1(data).unwrap();
         assert!(encoded.is_empty());
@@ -2402,13 +2478,23 @@ mod tests {
         let data = b"a";
         let encoder = ContextualHuffmanEncoder::new(b"abcdef", HuffmanOrder::Order1).unwrap();
 
-        for factor in [InterleavingFactor::X1, InterleavingFactor::X2,
-                      InterleavingFactor::X4, InterleavingFactor::X8] {
+        for factor in [
+            InterleavingFactor::X1,
+            InterleavingFactor::X2,
+            InterleavingFactor::X4,
+            InterleavingFactor::X8,
+        ] {
             let encoded = encoder.encode_with_interleaving(data, factor).unwrap();
-            let decoded = encoder.decode_with_interleaving(&encoded, data.len(), factor).unwrap();
+            let decoded = encoder
+                .decode_with_interleaving(&encoded, data.len(), factor)
+                .unwrap();
 
-            assert_eq!(data.to_vec(), decoded,
-                "Single byte failed for {:?}", factor);
+            assert_eq!(
+                data.to_vec(),
+                decoded,
+                "Single byte failed for {:?}",
+                factor
+            );
         }
     }
 
@@ -2417,13 +2503,18 @@ mod tests {
         let data = b"ab";
         let encoder = ContextualHuffmanEncoder::new(b"abcdef", HuffmanOrder::Order1).unwrap();
 
-        for factor in [InterleavingFactor::X1, InterleavingFactor::X2,
-                      InterleavingFactor::X4, InterleavingFactor::X8] {
+        for factor in [
+            InterleavingFactor::X1,
+            InterleavingFactor::X2,
+            InterleavingFactor::X4,
+            InterleavingFactor::X8,
+        ] {
             let encoded = encoder.encode_with_interleaving(data, factor).unwrap();
-            let decoded = encoder.decode_with_interleaving(&encoded, data.len(), factor).unwrap();
+            let decoded = encoder
+                .decode_with_interleaving(&encoded, data.len(), factor)
+                .unwrap();
 
-            assert_eq!(data.to_vec(), decoded,
-                "Two bytes failed for {:?}", factor);
+            assert_eq!(data.to_vec(), decoded, "Two bytes failed for {:?}", factor);
         }
     }
 
@@ -2436,13 +2527,22 @@ mod tests {
         for size in [8, 16, 32, 64, 128, 256] {
             let data: Vec<u8> = training_data.iter().cycle().take(size).copied().collect();
 
-            for factor in [InterleavingFactor::X1, InterleavingFactor::X2,
-                          InterleavingFactor::X4, InterleavingFactor::X8] {
+            for factor in [
+                InterleavingFactor::X1,
+                InterleavingFactor::X2,
+                InterleavingFactor::X4,
+                InterleavingFactor::X8,
+            ] {
                 let encoded = encoder.encode_with_interleaving(&data, factor).unwrap();
-                let decoded = encoder.decode_with_interleaving(&encoded, data.len(), factor).unwrap();
+                let decoded = encoder
+                    .decode_with_interleaving(&encoded, data.len(), factor)
+                    .unwrap();
 
-                assert_eq!(data, decoded,
-                    "Power-of-2 size {} failed for {:?}", size, factor);
+                assert_eq!(
+                    data, decoded,
+                    "Power-of-2 size {} failed for {:?}",
+                    size, factor
+                );
             }
         }
     }
@@ -2456,13 +2556,22 @@ mod tests {
         for size in [7, 15, 31, 63, 127, 255] {
             let data: Vec<u8> = training_data.iter().cycle().take(size).copied().collect();
 
-            for factor in [InterleavingFactor::X1, InterleavingFactor::X2,
-                          InterleavingFactor::X4, InterleavingFactor::X8] {
+            for factor in [
+                InterleavingFactor::X1,
+                InterleavingFactor::X2,
+                InterleavingFactor::X4,
+                InterleavingFactor::X8,
+            ] {
                 let encoded = encoder.encode_with_interleaving(&data, factor).unwrap();
-                let decoded = encoder.decode_with_interleaving(&encoded, data.len(), factor).unwrap();
+                let decoded = encoder
+                    .decode_with_interleaving(&encoded, data.len(), factor)
+                    .unwrap();
 
-                assert_eq!(data, decoded,
-                    "Non-power-of-2 size {} failed for {:?}", size, factor);
+                assert_eq!(
+                    data, decoded,
+                    "Non-power-of-2 size {} failed for {:?}",
+                    size, factor
+                );
             }
         }
     }
@@ -2472,13 +2581,23 @@ mod tests {
         let data = b"aaaaaaaaaaaaaaaa"; // 16 'a's
         let encoder = ContextualHuffmanEncoder::new(b"abc", HuffmanOrder::Order1).unwrap();
 
-        for factor in [InterleavingFactor::X1, InterleavingFactor::X2,
-                      InterleavingFactor::X4, InterleavingFactor::X8] {
+        for factor in [
+            InterleavingFactor::X1,
+            InterleavingFactor::X2,
+            InterleavingFactor::X4,
+            InterleavingFactor::X8,
+        ] {
             let encoded = encoder.encode_with_interleaving(data, factor).unwrap();
-            let decoded = encoder.decode_with_interleaving(&encoded, data.len(), factor).unwrap();
+            let decoded = encoder
+                .decode_with_interleaving(&encoded, data.len(), factor)
+                .unwrap();
 
-            assert_eq!(data.to_vec(), decoded,
-                "Repeated symbols failed for {:?}", factor);
+            assert_eq!(
+                data.to_vec(),
+                decoded,
+                "Repeated symbols failed for {:?}",
+                factor
+            );
         }
     }
 
@@ -2487,13 +2606,23 @@ mod tests {
         let data = b"abababababababab"; // Alternating pattern
         let encoder = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order1).unwrap();
 
-        for factor in [InterleavingFactor::X1, InterleavingFactor::X2,
-                      InterleavingFactor::X4, InterleavingFactor::X8] {
+        for factor in [
+            InterleavingFactor::X1,
+            InterleavingFactor::X2,
+            InterleavingFactor::X4,
+            InterleavingFactor::X8,
+        ] {
             let encoded = encoder.encode_with_interleaving(data, factor).unwrap();
-            let decoded = encoder.decode_with_interleaving(&encoded, data.len(), factor).unwrap();
+            let decoded = encoder
+                .decode_with_interleaving(&encoded, data.len(), factor)
+                .unwrap();
 
-            assert_eq!(data.to_vec(), decoded,
-                "Alternating pattern failed for {:?}", factor);
+            assert_eq!(
+                data.to_vec(),
+                decoded,
+                "Alternating pattern failed for {:?}",
+                factor
+            );
         }
     }
 
@@ -2503,13 +2632,18 @@ mod tests {
         let data: Vec<u8> = (0..=255u8).cycle().take(512).collect();
         let encoder = ContextualHuffmanEncoder::new(&data, HuffmanOrder::Order1).unwrap();
 
-        for factor in [InterleavingFactor::X1, InterleavingFactor::X2,
-                      InterleavingFactor::X4, InterleavingFactor::X8] {
+        for factor in [
+            InterleavingFactor::X1,
+            InterleavingFactor::X2,
+            InterleavingFactor::X4,
+            InterleavingFactor::X8,
+        ] {
             let encoded = encoder.encode_with_interleaving(&data, factor).unwrap();
-            let decoded = encoder.decode_with_interleaving(&encoded, data.len(), factor).unwrap();
+            let decoded = encoder
+                .decode_with_interleaving(&encoded, data.len(), factor)
+                .unwrap();
 
-            assert_eq!(data, decoded,
-                "All bytes test failed for {:?}", factor);
+            assert_eq!(data, decoded, "All bytes test failed for {:?}", factor);
         }
     }
 
@@ -2520,13 +2654,18 @@ mod tests {
         let data: Vec<u8> = base.iter().cycle().take(1024).copied().collect();
         let encoder = ContextualHuffmanEncoder::new(&data, HuffmanOrder::Order1).unwrap();
 
-        for factor in [InterleavingFactor::X1, InterleavingFactor::X2,
-                      InterleavingFactor::X4, InterleavingFactor::X8] {
+        for factor in [
+            InterleavingFactor::X1,
+            InterleavingFactor::X2,
+            InterleavingFactor::X4,
+            InterleavingFactor::X8,
+        ] {
             let encoded = encoder.encode_with_interleaving(&data, factor).unwrap();
-            let decoded = encoder.decode_with_interleaving(&encoded, data.len(), factor).unwrap();
+            let decoded = encoder
+                .decode_with_interleaving(&encoded, data.len(), factor)
+                .unwrap();
 
-            assert_eq!(data, decoded,
-                "Large data (1KB) failed for {:?}", factor);
+            assert_eq!(data, decoded, "Large data (1KB) failed for {:?}", factor);
         }
     }
 
@@ -2536,15 +2675,27 @@ mod tests {
 
         // Order-0 should fail
         let encoder0 = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order0).unwrap();
-        assert!(encoder0.encode_with_interleaving(data, InterleavingFactor::X2).is_err());
+        assert!(
+            encoder0
+                .encode_with_interleaving(data, InterleavingFactor::X2)
+                .is_err()
+        );
 
         // Order-2 should fail
         let encoder2 = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order2).unwrap();
-        assert!(encoder2.encode_with_interleaving(data, InterleavingFactor::X2).is_err());
+        assert!(
+            encoder2
+                .encode_with_interleaving(data, InterleavingFactor::X2)
+                .is_err()
+        );
 
         // Order-1 should succeed
         let encoder1 = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order1).unwrap();
-        assert!(encoder1.encode_with_interleaving(data, InterleavingFactor::X2).is_ok());
+        assert!(
+            encoder1
+                .encode_with_interleaving(data, InterleavingFactor::X2)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -2555,19 +2706,28 @@ mod tests {
         let data = b"The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog.";
         let encoder = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order1).unwrap();
 
-        for factor in [InterleavingFactor::X1, InterleavingFactor::X2,
-                      InterleavingFactor::X4, InterleavingFactor::X8] {
+        for factor in [
+            InterleavingFactor::X1,
+            InterleavingFactor::X2,
+            InterleavingFactor::X4,
+            InterleavingFactor::X8,
+        ] {
             let encoded = encoder.encode_with_interleaving(data, factor).unwrap();
-            let decoded = encoder.decode_with_interleaving(&encoded, data.len(), factor).unwrap();
+            let decoded = encoder
+                .decode_with_interleaving(&encoded, data.len(), factor)
+                .unwrap();
 
             // Verify round-trip correctness
-            assert_eq!(data.to_vec(), decoded,
-                "Round trip failed for {:?}", factor);
+            assert_eq!(data.to_vec(), decoded, "Round trip failed for {:?}", factor);
 
             // Compression ratio should be reasonable (not expanding too much)
             let ratio = encoded.len() as f64 / data.len() as f64;
-            assert!(ratio <= 1.2,
-                "Compression ratio too high for {:?}, ratio: {:.3}", factor, ratio);
+            assert!(
+                ratio <= 1.2,
+                "Compression ratio too high for {:?}, ratio: {:.3}",
+                factor,
+                ratio
+            );
         }
     }
 

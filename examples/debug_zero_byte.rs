@@ -1,8 +1,11 @@
 //! Debug the zero byte issue in critical-bit trie
 
-use zipora::fsa::{ZiporaTrie, ZiporaTrieConfig, TrieStrategy, StorageStrategy, CompressionStrategy, RankSelectType, Trie};
-use zipora::succinct::RankSelectInterleaved256;
 use zipora::Result;
+use zipora::fsa::{
+    CompressionStrategy, RankSelectType, StorageStrategy, Trie, TrieStrategy, ZiporaTrie,
+    ZiporaTrieConfig,
+};
+use zipora::succinct::RankSelectInterleaved256;
 
 fn analyze_key_bits(key: &[u8]) {
     println!(

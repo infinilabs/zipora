@@ -21,17 +21,16 @@
 //! - **Memory Pool Integration**: SecureMemoryPool for high-performance allocation
 //! - **Concurrent Access**: Lock-free and token-based synchronization
 
-use crate::containers::specialized::UintVector;
+use crate::StateId;
 use crate::containers::FastVec;
+use crate::containers::specialized::UintVector;
 use crate::error::{Result, ZiporaError};
 use crate::fsa::traits::{
-    FiniteStateAutomaton, PrefixIterable, StatisticsProvider, Trie,
-    TrieStats,
+    FiniteStateAutomaton, PrefixIterable, StatisticsProvider, Trie, TrieStats,
 };
-use crate::memory::cache_layout::{CacheOptimizedAllocator, CacheLayoutConfig, PrefetchHint};
+use crate::memory::cache_layout::{CacheLayoutConfig, CacheOptimizedAllocator, PrefetchHint};
 use crate::memory::{SecureMemoryPool, SecurePoolConfig};
 use crate::succinct::{BitVector, RankSelectBuilder, RankSelectOps};
-use crate::StateId;
 use std::collections::{HashMap, VecDeque};
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -449,8 +448,7 @@ where
 }
 
 /// Patricia trie node with path compression (compact representation)
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 struct PatriciaNode {
     /// Compact children storage: sorted Vec of (symbol, StateId) pairs
     children: Vec<(u8, StateId)>,
@@ -463,7 +461,6 @@ struct PatriciaNode {
     /// Node flags for optimization
     _flags: u8,
 }
-
 
 /// Critical-bit trie node
 #[repr(align(64))]
@@ -537,7 +534,9 @@ where
                 keys: FastVec::new(),
                 critical_cache: HashMap::new(),
             },
-            TrieStrategy::DoubleArray { initial_capacity, .. } => {
+            TrieStrategy::DoubleArray {
+                initial_capacity, ..
+            } => {
                 // Referenced project pattern: start minimal SIZE, but respect CAPACITY hint
                 // Referenced C++ implementation line 70: states.resize(1) - minimal size
                 // Our approach: reserve capacity but only allocate 1 state (minimal memory)
@@ -547,8 +546,7 @@ where
                     Ok(vec) => vec,
                     Err(_) => {
                         // Fallback to minimal capacity if requested capacity fails
-                        FastVec::with_capacity(1)
-                            .unwrap_or_else(|_| FastVec::new())
+                        FastVec::with_capacity(1).unwrap_or_else(|_| FastVec::new())
                     }
                 };
 
@@ -556,8 +554,7 @@ where
                     Ok(vec) => vec,
                     Err(_) => {
                         // Fallback to minimal capacity if requested capacity fails
-                        FastVec::with_capacity(1)
-                            .unwrap_or_else(|_| FastVec::new())
+                        FastVec::with_capacity(1).unwrap_or_else(|_| FastVec::new())
                     }
                 };
 
@@ -575,7 +572,7 @@ where
                     free_list: VecDeque::new(),
                     state_count: 1, // Start with root state
                 }
-            },
+            }
             TrieStrategy::Louds { .. } => TrieStorage::Louds {
                 louds: R::default(),
                 is_link: R::default(),
@@ -584,7 +581,9 @@ where
                 core_data: FastVec::new(),
                 next_trie: None,
             },
-            TrieStrategy::CompressedSparse { .. } => TrieStorage::CompressedSparse(crate::fsa::cspp_trie::CsppTrie::new(4)),
+            TrieStrategy::CompressedSparse { .. } => {
+                TrieStorage::CompressedSparse(crate::fsa::cspp_trie::CsppTrie::new(4))
+            }
         }
     }
 
@@ -596,7 +595,6 @@ where
 
     /// Get performance statistics
     pub fn stats(&self) -> TrieStats {
-
         // Return a copy with updated statistics
         let mut stats = self.stats.clone();
 
@@ -630,9 +628,7 @@ where
 
         // Update number of transitions
         stats.num_transitions = match &self.storage {
-            TrieStorage::Patricia { nodes, .. } => {
-                nodes.iter().map(|n| n.children.len()).sum()
-            }
+            TrieStorage::Patricia { nodes, .. } => nodes.iter().map(|n| n.children.len()).sum(),
             TrieStorage::CriticalBit { .. } => 0, // TODO: implement
             TrieStorage::DoubleArray { base, check, .. } => {
                 const STATE_MASK: u32 = 0x3FFF_FFFF;
@@ -650,7 +646,8 @@ where
                         // Special handling for root's children
                         if (check_val & STATE_MASK) == 0 {
                             // This is a child of root - only count if it's properly initialized
-                            if (check_val & TERMINAL_FLAG) != 0 || (i < base.len() && base[i] != 0) {
+                            if (check_val & TERMINAL_FLAG) != 0 || (i < base.len() && base[i] != 0)
+                            {
                                 transition_count += 1;
                             }
                         } else {
@@ -677,7 +674,8 @@ where
 
         // Update bits per key
         if self.stats.num_keys > 0 {
-            self.stats.bits_per_key = (self.stats.memory_usage as f64 * 8.0) / self.stats.num_keys as f64;
+            self.stats.bits_per_key =
+                (self.stats.memory_usage as f64 * 8.0) / self.stats.num_keys as f64;
         } else {
             self.stats.bits_per_key = 0.0;
         }
@@ -693,9 +691,7 @@ where
 
         // Update number of transitions
         self.stats.num_transitions = match &self.storage {
-            TrieStorage::Patricia { nodes, .. } => {
-                nodes.iter().map(|n| n.children.len()).sum()
-            }
+            TrieStorage::Patricia { nodes, .. } => nodes.iter().map(|n| n.children.len()).sum(),
             TrieStorage::CriticalBit { .. } => 0, // TODO: implement
             TrieStorage::DoubleArray { base: _, check, .. } => {
                 // Count non-zero check values (excluding root) as transitions
@@ -737,12 +733,20 @@ where
         }
 
         match &self.storage {
-            TrieStorage::Patricia { nodes, edge_data, compressed_paths } => {
+            TrieStorage::Patricia {
+                nodes,
+                edge_data,
+                compressed_paths,
+            } => {
                 nodes.capacity() * std::mem::size_of::<PatriciaNode>()
                     + edge_data.capacity()
                     + compressed_paths.capacity() * 64 // Rough estimate
             }
-            TrieStorage::CriticalBit { nodes, keys, critical_cache } => {
+            TrieStorage::CriticalBit {
+                nodes,
+                keys,
+                critical_cache,
+            } => {
                 nodes.capacity() * std::mem::size_of::<CritBitNode>()
                     + keys.capacity() * 32 // Rough estimate per key
                     + critical_cache.capacity() * 9 // usize + u8
@@ -752,12 +756,14 @@ where
                 // Each element is 4 bytes (u32)
                 base.len() * 4 + check.len() * 4
             }
-            TrieStorage::Louds { label_data, core_data, .. } => {
+            TrieStorage::Louds {
+                label_data,
+                core_data,
+                ..
+            } => {
                 label_data.capacity() + core_data.capacity() + 1024 // Rank/select overhead
             }
-            TrieStorage::CompressedSparse(cspp) => {
-                cspp.total_states() * 4
-            }
+            TrieStorage::CompressedSparse(cspp) => cspp.total_states() * 4,
         }
     }
 
@@ -780,8 +786,13 @@ where
     /// Remove a key from the trie
     pub fn remove(&mut self, key: &[u8]) -> Result<bool> {
         match &mut self.storage {
-            TrieStorage::Patricia { nodes, edge_data, compressed_paths } => {
-                let removed = Self::remove_patricia_actual(nodes, edge_data, compressed_paths, key)?;
+            TrieStorage::Patricia {
+                nodes,
+                edge_data,
+                compressed_paths,
+            } => {
+                let removed =
+                    Self::remove_patricia_actual(nodes, edge_data, compressed_paths, key)?;
                 if removed {
                     self.stats.num_keys = self.stats.num_keys.saturating_sub(1);
                     self.stats_dirty = true;
@@ -801,9 +812,7 @@ where
                     Ok(false)
                 }
             }
-            _ => {
-                Ok(false)
-            }
+            _ => Ok(false),
         }
     }
 
@@ -822,12 +831,12 @@ where
     /// Get all keys in the trie
     pub fn keys(&self) -> Vec<Vec<u8>> {
         match &self.storage {
-            TrieStorage::Patricia { nodes, edge_data, compressed_paths } => {
-                Self::keys_patricia_actual(nodes, edge_data, compressed_paths)
-            }
-            TrieStorage::Louds { label_data, .. } => {
-                Self::keys_louds_actual(label_data)
-            }
+            TrieStorage::Patricia {
+                nodes,
+                edge_data,
+                compressed_paths,
+            } => Self::keys_patricia_actual(nodes, edge_data, compressed_paths),
+            TrieStorage::Louds { label_data, .. } => Self::keys_louds_actual(label_data),
             TrieStorage::DoubleArray { base, check, .. } => {
                 Self::keys_double_array_actual(base, check)
             }
@@ -842,9 +851,11 @@ where
     /// Get all keys with a given prefix
     pub fn keys_with_prefix(&self, prefix: &[u8]) -> Vec<Vec<u8>> {
         match &self.storage {
-            TrieStorage::Patricia { nodes, edge_data, compressed_paths } => {
-                Self::keys_with_prefix_patricia_actual(nodes, edge_data, compressed_paths, prefix)
-            }
+            TrieStorage::Patricia {
+                nodes,
+                edge_data,
+                compressed_paths,
+            } => Self::keys_with_prefix_patricia_actual(nodes, edge_data, compressed_paths, prefix),
             TrieStorage::Louds { label_data, .. } => {
                 Self::keys_with_prefix_louds_actual(label_data, prefix)
             }
@@ -878,9 +889,7 @@ where
                 // Patricia trie capacity is number of nodes * growth headroom
                 nodes.capacity().max(nodes.len() * 2)
             }
-            TrieStorage::CriticalBit { nodes, .. } => {
-                nodes.capacity().max(nodes.len() * 2)
-            }
+            TrieStorage::CriticalBit { nodes, .. } => nodes.capacity().max(nodes.len() * 2),
             TrieStorage::DoubleArray { base, .. } => {
                 // Double array capacity is the size of the base array
                 base.capacity().max(base.len())
@@ -889,9 +898,7 @@ where
                 // LOUDS capacity based on label data size
                 label_data.capacity().max(label_data.len() * 2)
             }
-            TrieStorage::CompressedSparse(cspp) => {
-                cspp.total_states() * 4
-            }
+            TrieStorage::CompressedSparse(cspp) => cspp.total_states() * 4,
         }
     }
 
@@ -913,18 +920,49 @@ where
     /// Insert and get node ID
     pub fn insert_and_get_node_id(&mut self, key: &[u8]) -> Result<StateId> {
         match &mut self.storage {
-            TrieStorage::Patricia { nodes, edge_data, compressed_paths } => {
-                let node_id = Self::insert_patricia_actual(nodes, edge_data, compressed_paths, key, &mut self.stats.num_keys)?;
+            TrieStorage::Patricia {
+                nodes,
+                edge_data,
+                compressed_paths,
+            } => {
+                let node_id = Self::insert_patricia_actual(
+                    nodes,
+                    edge_data,
+                    compressed_paths,
+                    key,
+                    &mut self.stats.num_keys,
+                )?;
                 Ok(node_id)
             }
-            TrieStorage::Louds { louds, is_link, next_link, label_data, core_data, next_trie } => {
-                let node_id = Self::insert_louds(louds, is_link, next_link, label_data, core_data, next_trie, key)?;
+            TrieStorage::Louds {
+                louds,
+                is_link,
+                next_link,
+                label_data,
+                core_data,
+                next_trie,
+            } => {
+                let node_id = Self::insert_louds(
+                    louds, is_link, next_link, label_data, core_data, next_trie, key,
+                )?;
                 self.stats.num_keys += 1;
                 Ok(node_id)
             }
-            TrieStorage::DoubleArray { base, check, free_list, state_count } => {
+            TrieStorage::DoubleArray {
+                base,
+                check,
+                free_list,
+                state_count,
+            } => {
                 // insert_double_array handles num_keys internally (checks was_new)
-                let node_id = Self::insert_double_array(base, check, free_list, state_count, key, &mut self.stats.num_keys)?;
+                let node_id = Self::insert_double_array(
+                    base,
+                    check,
+                    free_list,
+                    state_count,
+                    key,
+                    &mut self.stats.num_keys,
+                )?;
                 self.stats_dirty = true;
                 Ok(node_id)
             }
@@ -938,12 +976,12 @@ where
     /// Lookup node ID for a key
     pub fn lookup_node_id(&self, key: &[u8]) -> Option<StateId> {
         match &self.storage {
-            TrieStorage::Patricia { nodes, edge_data, compressed_paths } => {
-                Self::lookup_node_id_patricia_actual(nodes, edge_data, compressed_paths, key)
-            }
-            TrieStorage::Louds { label_data, .. } => {
-                Self::find_key_position(label_data, key)
-            }
+            TrieStorage::Patricia {
+                nodes,
+                edge_data,
+                compressed_paths,
+            } => Self::lookup_node_id_patricia_actual(nodes, edge_data, compressed_paths, key),
+            TrieStorage::Louds { label_data, .. } => Self::find_key_position(label_data, key),
             TrieStorage::DoubleArray { base, check, .. } => {
                 Self::lookup_node_id_double_array(base, check, key)
             }
@@ -952,7 +990,11 @@ where
     }
 
     /// Lookup node ID in DoubleArray storage
-    fn lookup_node_id_double_array(base: &FastVec<u32>, check: &FastVec<u32>, key: &[u8]) -> Option<StateId> {
+    fn lookup_node_id_double_array(
+        base: &FastVec<u32>,
+        check: &FastVec<u32>,
+        key: &[u8],
+    ) -> Option<StateId> {
         const TERMINAL_BIT: u32 = 0x8000_0000;
         const VALUE_MASK: u32 = 0x7FFF_FFFF;
         const FREE_BIT: u32 = 0x8000_0000;
@@ -965,7 +1007,11 @@ where
 
         if key.is_empty() {
             let base_val = base[0];
-            return if (base_val & TERMINAL_BIT) != 0 { Some(0) } else { None };
+            return if (base_val & TERMINAL_BIT) != 0 {
+                Some(0)
+            } else {
+                None
+            };
         }
 
         for &symbol in key {
@@ -997,9 +1043,11 @@ where
     /// Restore string from state ID
     pub fn restore_string(&self, state_id: StateId) -> Option<Vec<u8>> {
         match &self.storage {
-            TrieStorage::Patricia { nodes, edge_data, compressed_paths } => {
-                Self::restore_string_patricia_actual(nodes, edge_data, compressed_paths, state_id)
-            }
+            TrieStorage::Patricia {
+                nodes,
+                edge_data,
+                compressed_paths,
+            } => Self::restore_string_patricia_actual(nodes, edge_data, compressed_paths, state_id),
             TrieStorage::Louds { label_data, .. } => {
                 Self::restore_string_louds(label_data, state_id)
             }
@@ -1011,7 +1059,11 @@ where
     }
 
     /// Restore string from DoubleArray state by walking parent chain
-    fn restore_string_double_array(base: &FastVec<u32>, check: &FastVec<u32>, state_id: StateId) -> Option<Vec<u8>> {
+    fn restore_string_double_array(
+        base: &FastVec<u32>,
+        check: &FastVec<u32>,
+        state_id: StateId,
+    ) -> Option<Vec<u8>> {
         const VALUE_MASK: u32 = 0x7FFF_FFFF;
         const FREE_BIT: u32 = 0x8000_0000;
 
@@ -1063,7 +1115,7 @@ where
                 // Check the FREE_BIT (referenced project line 33: is_free)
                 (check[state as usize] & FREE_BIT) != 0
             }
-            _ => false
+            _ => false,
         }
     }
 
@@ -1078,7 +1130,7 @@ where
                     0 // Default to root
                 }
             }
-            _ => 0
+            _ => 0,
         }
     }
 
@@ -1093,7 +1145,7 @@ where
                     0
                 }
             }
-            _ => 0
+            _ => 0,
         }
     }
 
@@ -1108,7 +1160,7 @@ where
                     0
                 }
             }
-            _ => 0
+            _ => 0,
         }
     }
 
@@ -1168,11 +1220,7 @@ where
             key.push(label_data[i]);
         }
 
-        if key.is_empty() {
-            None
-        } else {
-            Some(key)
-        }
+        if key.is_empty() { None } else { Some(key) }
     }
 }
 
@@ -1252,21 +1300,50 @@ where
     fn insert(&mut self, key: &[u8]) -> Result<StateId> {
         // Track if this was a new key insertion
         let result = match &mut self.storage {
-            TrieStorage::Patricia { nodes, edge_data, compressed_paths } => {
-                Self::insert_patricia(nodes, edge_data, compressed_paths, key, &mut self.stats.num_keys)
-            }
-            TrieStorage::CriticalBit { nodes, keys, critical_cache } => {
-                Self::insert_critical_bit(nodes, keys, critical_cache, key)
-            }
-            TrieStorage::DoubleArray { base, check, free_list, state_count } => {
-                Self::insert_double_array(base, check, free_list, state_count, key, &mut self.stats.num_keys)
-            }
-            TrieStorage::Louds { louds, is_link, next_link, label_data, core_data, next_trie } => {
-                Self::insert_louds(louds, is_link, next_link, label_data, core_data, next_trie, key)
-            }
+            TrieStorage::Patricia {
+                nodes,
+                edge_data,
+                compressed_paths,
+            } => Self::insert_patricia(
+                nodes,
+                edge_data,
+                compressed_paths,
+                key,
+                &mut self.stats.num_keys,
+            ),
+            TrieStorage::CriticalBit {
+                nodes,
+                keys,
+                critical_cache,
+            } => Self::insert_critical_bit(nodes, keys, critical_cache, key),
+            TrieStorage::DoubleArray {
+                base,
+                check,
+                free_list,
+                state_count,
+            } => Self::insert_double_array(
+                base,
+                check,
+                free_list,
+                state_count,
+                key,
+                &mut self.stats.num_keys,
+            ),
+            TrieStorage::Louds {
+                louds,
+                is_link,
+                next_link,
+                label_data,
+                core_data,
+                next_trie,
+            } => Self::insert_louds(
+                louds, is_link, next_link, label_data, core_data, next_trie, key,
+            ),
             TrieStorage::CompressedSparse(cspp) => {
                 let (is_new, _) = cspp.insert(key);
-                if is_new { self.stats.num_keys += 1; }
+                if is_new {
+                    self.stats.num_keys += 1;
+                }
                 Ok(0)
             }
         }?;
@@ -1276,21 +1353,30 @@ where
 
     fn contains(&self, key: &[u8]) -> bool {
         match &self.storage {
-            TrieStorage::Patricia { nodes, edge_data, compressed_paths } => {
-                self.contains_patricia(nodes, edge_data, compressed_paths, key)
-            }
-            TrieStorage::CriticalBit { nodes, keys, critical_cache } => {
-                self.contains_critical_bit(nodes, keys, critical_cache, key)
-            }
+            TrieStorage::Patricia {
+                nodes,
+                edge_data,
+                compressed_paths,
+            } => self.contains_patricia(nodes, edge_data, compressed_paths, key),
+            TrieStorage::CriticalBit {
+                nodes,
+                keys,
+                critical_cache,
+            } => self.contains_critical_bit(nodes, keys, critical_cache, key),
             TrieStorage::DoubleArray { base, check, .. } => {
                 self.contains_double_array(base, check, key)
             }
-            TrieStorage::Louds { louds, is_link, next_link, label_data, core_data, next_trie } => {
-                self.contains_louds(louds, is_link, next_link, label_data, core_data, next_trie, key)
-            }
-            TrieStorage::CompressedSparse(cspp) => {
-                cspp.contains(key)
-            }
+            TrieStorage::Louds {
+                louds,
+                is_link,
+                next_link,
+                label_data,
+                core_data,
+                next_trie,
+            } => self.contains_louds(
+                louds, is_link, next_link, label_data, core_data, next_trie, key,
+            ),
+            TrieStorage::CompressedSparse(cspp) => cspp.contains(key),
         }
     }
 
@@ -1313,16 +1399,20 @@ where
 
     fn is_final(&self, state: StateId) -> bool {
         match &self.storage {
-            TrieStorage::Patricia { nodes, .. } => {
-                nodes.get(state as usize).map(|n| n.is_final).unwrap_or(false)
-            }
-            TrieStorage::CriticalBit { nodes, .. } => {
-                nodes.get(state as usize).map(|n| n.is_final).unwrap_or(false)
-            }
+            TrieStorage::Patricia { nodes, .. } => nodes
+                .get(state as usize)
+                .map(|n| n.is_final)
+                .unwrap_or(false),
+            TrieStorage::CriticalBit { nodes, .. } => nodes
+                .get(state as usize)
+                .map(|n| n.is_final)
+                .unwrap_or(false),
             TrieStorage::DoubleArray { base, .. } => {
                 // Check the terminal bit in the BASE array (referenced project line 32: is_term)
                 const TERMINAL_BIT: u32 = 0x8000_0000;
-                base.get(state as usize).map(|b| (b & TERMINAL_BIT) != 0).unwrap_or(false)
+                base.get(state as usize)
+                    .map(|b| (b & TERMINAL_BIT) != 0)
+                    .unwrap_or(false)
             }
             TrieStorage::Louds { .. } => {
                 // TODO: Implement LOUDS final state check
@@ -1336,7 +1426,8 @@ where
         match &self.storage {
             TrieStorage::Patricia { nodes, .. } => {
                 let node = nodes.get(state as usize)?;
-                node.children.binary_search_by_key(&symbol, |(s, _)| *s)
+                node.children
+                    .binary_search_by_key(&symbol, |(s, _)| *s)
                     .ok()
                     .map(|idx| node.children[idx].1)
             }
@@ -1390,22 +1481,28 @@ where
                 const STATE_MASK: u32 = 0x3FFF_FFFF;
                 const TERMINAL_FLAG: u32 = 0x4000_0000;
 
-                (0u8..=255u8).filter_map(|symbol| {
-                    let next_state = base_val.saturating_add(symbol as u32);
-                    if (next_state as usize) >= check.len() {
-                        return None;
-                    }
-                    let check_val = check[next_state as usize];
-                    let is_valid_child = if state == 0 {
-                        (check_val & STATE_MASK) == 0 && (
-                            (check_val & TERMINAL_FLAG) != 0 ||
-                            ((next_state as usize) < base.len() && base[next_state as usize] != 0)
-                        )
-                    } else {
-                        check_val != 0 && (check_val & STATE_MASK) == state
-                    };
-                    if is_valid_child { Some((symbol, next_state)) } else { None }
-                }).collect()
+                (0u8..=255u8)
+                    .filter_map(|symbol| {
+                        let next_state = base_val.saturating_add(symbol as u32);
+                        if (next_state as usize) >= check.len() {
+                            return None;
+                        }
+                        let check_val = check[next_state as usize];
+                        let is_valid_child = if state == 0 {
+                            (check_val & STATE_MASK) == 0
+                                && ((check_val & TERMINAL_FLAG) != 0
+                                    || ((next_state as usize) < base.len()
+                                        && base[next_state as usize] != 0))
+                        } else {
+                            check_val != 0 && (check_val & STATE_MASK) == state
+                        };
+                        if is_valid_child {
+                            Some((symbol, next_state))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
             }
             _ => Vec::new(),
         }
@@ -1502,10 +1599,10 @@ where
         // Check array (m_parent): bits 0-30 = parent state, bit 31 = free bit
 
         const TERMINAL_BIT: u32 = 0x8000_0000; // Bit 31 in base for terminal states (referenced project)
-        const FREE_BIT: u32 = 0x8000_0000;     // Bit 31 in check for free states (referenced project)
-        const VALUE_MASK: u32 = 0x7FFF_FFFF;   // Bits 0-30 for actual values (referenced project)
-        const MAX_STATE: u32 = 0x7FFF_FFFE;    // Maximum valid state value (referenced project)
-        const NIL_STATE: u32 = 0x7FFF_FFFF;    // Nil state marker (referenced project)
+        const FREE_BIT: u32 = 0x8000_0000; // Bit 31 in check for free states (referenced project)
+        const VALUE_MASK: u32 = 0x7FFF_FFFF; // Bits 0-30 for actual values (referenced project)
+        const MAX_STATE: u32 = 0x7FFF_FFFE; // Maximum valid state value (referenced project)
+        const NIL_STATE: u32 = 0x7FFF_FFFF; // Nil state marker (referenced project)
 
         // Ensure we have at least the root state
         // Referenced project starts with 1 state (line 70: states.resize(1))
@@ -1531,8 +1628,10 @@ where
         let mut current_state = 0u32;
 
         #[cfg(debug_assertions)]
-        eprintln!("DEBUG insert: Starting insertion of key: {:?}",
-            std::str::from_utf8(key).unwrap_or("<non-utf8>"));
+        eprintln!(
+            "DEBUG insert: Starting insertion of key: {:?}",
+            std::str::from_utf8(key).unwrap_or("<non-utf8>")
+        );
 
         // Traverse the trie for each symbol in the key
         #[cfg(debug_assertions)]
@@ -1570,7 +1669,10 @@ where
             if transition_exists {
                 // Transition exists, follow it
                 #[cfg(debug_assertions)]
-                eprintln!("  [{}] '{:02x}' state {} -> {} (existing)", pos, symbol, current_state, next_state);
+                eprintln!(
+                    "  [{}] '{:02x}' state {} -> {} (existing)",
+                    pos, symbol, current_state, next_state
+                );
                 current_state = next_state;
             } else {
                 // Need to create new transition
@@ -1578,16 +1680,14 @@ where
                 if next_state == 0 {
                     // State 0 is reserved, need to relocate
                     #[cfg(debug_assertions)]
-                    eprintln!("  [{}] '{:02x}' conflict: next_state would be 0 (reserved for root)", pos, symbol);
+                    eprintln!(
+                        "  [{}] '{:02x}' conflict: next_state would be 0 (reserved for root)",
+                        pos, symbol
+                    );
 
                     // We must relocate ALL children of current_state to maintain consistency
-                    let new_base = Self::relocate_state(
-                        base,
-                        check,
-                        current_state,
-                        symbol,
-                        state_count
-                    )?;
+                    let new_base =
+                        Self::relocate_state(base, check, current_state, symbol, state_count)?;
 
                     // Now the transition should be available at the new location
                     let new_next = new_base.saturating_add(symbol as u32);
@@ -1610,7 +1710,10 @@ where
                 } else if is_free {
                     // Position is free and not state 0, use it directly
                     #[cfg(debug_assertions)]
-                    eprintln!("  [{}] '{:02x}' state {} -> {} (new, free)", pos, symbol, current_state, next_state);
+                    eprintln!(
+                        "  [{}] '{:02x}' state {} -> {} (new, free)",
+                        pos, symbol, current_state, next_state
+                    );
 
                     // Ensure the parent state fits within VALUE_MASK
                     if current_state > MAX_STATE {
@@ -1626,23 +1729,22 @@ where
                 } else {
                     // Position is occupied - need to relocate
                     #[cfg(debug_assertions)]
-                    eprintln!("  [{}] '{:02x}' conflict at state {}, next_state {} already has check={:08x}",
-                        pos, symbol, current_state, next_state, check[next_state as usize]);
+                    eprintln!(
+                        "  [{}] '{:02x}' conflict at state {}, next_state {} already has check={:08x}",
+                        pos, symbol, current_state, next_state, check[next_state as usize]
+                    );
                     // We must relocate ALL children of current_state to maintain consistency
-                    let new_base = Self::relocate_state(
-                        base,
-                        check,
-                        current_state,
-                        symbol,
-                        state_count
-                    )?;
+                    let new_base =
+                        Self::relocate_state(base, check, current_state, symbol, state_count)?;
 
                     // Now the transition should be available
                     let new_next = new_base.saturating_add(symbol as u32);
 
                     #[cfg(debug_assertions)]
-                    eprintln!("  Relocated state {} to new_base {}, new transition {} -> {}",
-                        current_state, new_base, current_state, new_next);
+                    eprintln!(
+                        "  Relocated state {} to new_base {}, new transition {} -> {}",
+                        current_state, new_base, current_state, new_next
+                    );
 
                     // Expand if needed - use amortized growth
                     let required = new_next as usize + 1;
@@ -1654,7 +1756,9 @@ where
 
                     // Ensure the parent state fits within VALUE_MASK
                     if current_state > MAX_STATE {
-                        return Err(ZiporaError::invalid_data("State value exceeds maximum during relocation"));
+                        return Err(ZiporaError::invalid_data(
+                            "State value exceeds maximum during relocation",
+                        ));
                     }
                     // Allocate the state (referenced project: set_parent clears free bit)
                     check[new_next as usize] = current_state; // No free bit
@@ -1666,7 +1770,9 @@ where
                 }
             }
             #[cfg(debug_assertions)]
-            { pos += 1; }
+            {
+                pos += 1;
+            }
         }
 
         // Mark the final state as terminal (referenced project: set_term_bit on base at line 27)
@@ -1682,8 +1788,15 @@ where
         // Debug: Verify what we just inserted
         #[cfg(debug_assertions)]
         {
-            eprintln!("DEBUG insert_double_array: Inserted key, final state={}, base[{}]={:08x}, check[{}]={:08x}, was_new={}",
-                current_state, current_state, base[current_state as usize], current_state, check[current_state as usize], was_new);
+            eprintln!(
+                "DEBUG insert_double_array: Inserted key, final state={}, base[{}]={:08x}, check[{}]={:08x}, was_new={}",
+                current_state,
+                current_state,
+                base[current_state as usize],
+                current_state,
+                check[current_state as usize],
+                was_new
+            );
         }
 
         Ok(current_state)
@@ -1721,10 +1834,10 @@ where
         new_symbol: u8,
         _state_count: &mut usize,
     ) -> Result<u32> {
-        const VALUE_MASK: u32 = 0x7FFF_FFFF;   // Bits 0-30 for values (referenced project)
+        const VALUE_MASK: u32 = 0x7FFF_FFFF; // Bits 0-30 for values (referenced project)
         const TERMINAL_BIT: u32 = 0x8000_0000; // Bit 31 in base for terminal (referenced project)
-        const FREE_BIT: u32 = 0x8000_0000;     // Bit 31 in check for free (referenced project)
-        const NIL_STATE: u32 = 0x7FFF_FFFF;    // Match referenced project's nil_state
+        const FREE_BIT: u32 = 0x8000_0000; // Bit 31 in check for free (referenced project)
+        const NIL_STATE: u32 = 0x7FFF_FFFF; // Match referenced project's nil_state
 
         // Special handling for root state - try to avoid relocating it
         if state == 0 {
@@ -1765,7 +1878,9 @@ where
 
         'search: loop {
             if attempts > 1_000_000 || new_base > MAX_BASE {
-                return Err(ZiporaError::invalid_data("Cannot relocate state in double array"));
+                return Err(ZiporaError::invalid_data(
+                    "Cannot relocate state in double array",
+                ));
             }
             attempts += 1;
 
@@ -1773,7 +1888,8 @@ where
             let new_pos = new_base.saturating_add(new_symbol as u32);
 
             // Ensure arrays are large enough
-            let max_pos = children.iter()
+            let max_pos = children
+                .iter()
                 .map(|(sym, _, _, _)| new_base.saturating_add(*sym as u32))
                 .chain(std::iter::once(new_pos))
                 .max()
@@ -1835,9 +1951,7 @@ where
                 // CRITICAL: Update any grandchildren that point to the old child position
                 // to point to the new child position
                 if base_value != 0 && base_value != NIL_STATE {
-                    Self::update_grandchildren_check_values(
-                        base, check, *old_pos, new_child_pos
-                    );
+                    Self::update_grandchildren_check_values(base, check, *old_pos, new_child_pos);
                 }
             }
 
@@ -1862,7 +1976,7 @@ where
         new_parent_pos: u32,
     ) {
         const VALUE_MASK: u32 = 0x7FFF_FFFF; // Bits 0-30 for values (referenced project)
-        const FREE_BIT: u32 = 0x8000_0000;   // Bit 31 in check for free (referenced project)
+        const FREE_BIT: u32 = 0x8000_0000; // Bit 31 in check for free (referenced project)
 
         // Get the base value of the relocated child to find its children
         if let Some(&child_base_raw) = base.get(new_parent_pos as usize) {
@@ -1885,15 +1999,10 @@ where
         }
     }
 
-    fn contains_double_array(
-        &self,
-        base: &FastVec<u32>,
-        check: &FastVec<u32>,
-        key: &[u8],
-    ) -> bool {
+    fn contains_double_array(&self, base: &FastVec<u32>, check: &FastVec<u32>, key: &[u8]) -> bool {
         // Following referenced project's double array trie lookup (line 100-110)
         const TERMINAL_BIT: u32 = 0x8000_0000; // Bit 31 in base for terminal states
-        const VALUE_MASK: u32 = 0x7FFF_FFFF;   // Bits 0-30 for actual values
+        const VALUE_MASK: u32 = 0x7FFF_FFFF; // Bits 0-30 for actual values
 
         if base.is_empty() {
             return false;
@@ -1901,7 +2010,8 @@ where
 
         // Special case for empty key - check if root is terminal (check terminal bit in base)
         if key.is_empty() {
-            return base.first()
+            return base
+                .first()
                 .map(|b| (b & TERMINAL_BIT) != 0)
                 .unwrap_or(false);
         }
@@ -1928,7 +2038,11 @@ where
             // Check if the transition is valid (referenced project line 106: states[next].parent() == curr)
             if next_state as usize >= check.len() {
                 #[cfg(debug_assertions)]
-                eprintln!("DEBUG contains: next_state {} >= check.len() {}", next_state, check.len());
+                eprintln!(
+                    "DEBUG contains: next_state {} >= check.len() {}",
+                    next_state,
+                    check.len()
+                );
                 return false;
             }
 
@@ -1938,18 +2052,23 @@ where
             if check_val != current_state {
                 // Invalid transition
                 #[cfg(debug_assertions)]
-                eprintln!("DEBUG contains: Invalid transition at pos {}, symbol {:02x}, state {}->{}, check[{}]={:08x}, expected parent {}",
-                    i, symbol, current_state, next_state, next_state, check_val, current_state);
+                eprintln!(
+                    "DEBUG contains: Invalid transition at pos {}, symbol {:02x}, state {}->{}, check[{}]={:08x}, expected parent {}",
+                    i, symbol, current_state, next_state, next_state, check_val, current_state
+                );
                 return false;
             }
 
             current_state = next_state;
             #[cfg(debug_assertions)]
-            { i += 1; }
+            {
+                i += 1;
+            }
         }
 
         // Check if the final state is marked as terminal (check terminal bit in base)
-        let is_terminal = base.get(current_state as usize)
+        let is_terminal = base
+            .get(current_state as usize)
             .map(|b| (b & TERMINAL_BIT) != 0)
             .unwrap_or(false);
 
@@ -1957,8 +2076,10 @@ where
         {
             let base_val = base.get(current_state as usize).unwrap_or(&0);
             let check_val = check.get(current_state as usize).unwrap_or(&0);
-            eprintln!("DEBUG contains: Final state={}, base[{}]={:08x}, check[{}]={:08x}, is_terminal={}",
-                current_state, current_state, base_val, current_state, check_val, is_terminal);
+            eprintln!(
+                "DEBUG contains: Final state={}, base[{}]={:08x}, check[{}]={:08x}, is_terminal={}",
+                current_state, current_state, base_val, current_state, check_val, is_terminal
+            );
         }
 
         is_terminal
@@ -1990,7 +2111,9 @@ where
 
         // Store length (limited to 255 for single-byte length)
         if key.len() > 255 {
-            return Err(ZiporaError::invalid_data("Key too long for LOUDS (max 255 bytes)"));
+            return Err(ZiporaError::invalid_data(
+                "Key too long for LOUDS (max 255 bytes)",
+            ));
         }
         label_data.push(key.len() as u8);
 
@@ -2125,11 +2248,14 @@ where
     ) -> Result<StateId> {
         // Initialize root node if not present
         if sparse_nodes.is_empty() {
-            sparse_nodes.insert(0, SparseNode {
-                children: HashMap::new(),
-                _edge_label: None,
-                is_final: false,
-            });
+            sparse_nodes.insert(
+                0,
+                SparseNode {
+                    children: HashMap::new(),
+                    _edge_label: None,
+                    is_final: false,
+                },
+            );
         }
 
         let mut current_state = 0;
@@ -2137,7 +2263,8 @@ where
 
         for &symbol in key {
             // First check if an edge exists for this symbol
-            let existing_child = sparse_nodes.get(&current_state)
+            let existing_child = sparse_nodes
+                .get(&current_state)
                 .and_then(|node| node.children.get(&symbol).copied());
 
             let child_state = if let Some(existing) = existing_child {
@@ -2149,20 +2276,24 @@ where
                 next_state_id += 1;
 
                 // Create the new child node
-                sparse_nodes.insert(new_state, SparseNode {
-                    children: HashMap::new(),
-                    _edge_label: None,
-                    is_final: false,
-                });
+                sparse_nodes.insert(
+                    new_state,
+                    SparseNode {
+                        children: HashMap::new(),
+                        _edge_label: None,
+                        is_final: false,
+                    },
+                );
 
                 // Update parent to point to child
                 if let Some(parent_node) = sparse_nodes.get_mut(&current_state) {
                     parent_node.children.insert(symbol, new_state);
                 } else {
                     // This shouldn't happen as we ensure current_state exists
-                    return Err(crate::error::ZiporaError::invalid_state(
-                        format!("State {} not found during insertion", current_state)
-                    ));
+                    return Err(crate::error::ZiporaError::invalid_state(format!(
+                        "State {} not found during insertion",
+                        current_state
+                    )));
                 }
 
                 new_state
@@ -2217,7 +2348,8 @@ where
         }
 
         // Check if we've consumed the entire key and reached a final state
-        sparse_nodes.get(&current_state)
+        sparse_nodes
+            .get(&current_state)
             .map(|node| node.is_final)
             .unwrap_or(false)
     }
@@ -2254,8 +2386,13 @@ where
                 let _ = nodes.push(PatriciaNode::default());
 
                 // Insert into sorted children Vec
-                let insert_pos = nodes[current].children.binary_search_by_key(&symbol, |(s, _)| *s).unwrap_err();
-                nodes[current].children.insert(insert_pos, (symbol, new_node_id as StateId));
+                let insert_pos = nodes[current]
+                    .children
+                    .binary_search_by_key(&symbol, |(s, _)| *s)
+                    .unwrap_err();
+                nodes[current]
+                    .children
+                    .insert(insert_pos, (symbol, new_node_id as StateId));
 
                 current = new_node_id;
                 key_pos += 1;
@@ -2349,7 +2486,10 @@ where
             // Walk back up the path and remove unnecessary nodes
             for &(parent_idx, symbol) in path.iter().rev() {
                 // Remove the child pointer from parent
-                if let Ok(idx) = nodes[parent_idx].children.binary_search_by_key(&symbol, |(s, _)| *s) {
+                if let Ok(idx) = nodes[parent_idx]
+                    .children
+                    .binary_search_by_key(&symbol, |(s, _)| *s)
+                {
                     nodes[parent_idx].children.remove(idx);
                 }
 
@@ -2484,7 +2624,14 @@ where
 
         let mut keys = Vec::new();
         let mut current_path = Vec::new();
-        Self::collect_keys_patricia_recursive(nodes, edge_data, compressed_paths, 0, &mut current_path, &mut keys);
+        Self::collect_keys_patricia_recursive(
+            nodes,
+            edge_data,
+            compressed_paths,
+            0,
+            &mut current_path,
+            &mut keys,
+        );
         keys
     }
 
@@ -2547,10 +2694,19 @@ where
         // Now collect all keys from this point
         let mut keys = Vec::new();
         let mut current_path = path_to_prefix;
-        Self::collect_keys_patricia_recursive(nodes, edge_data, compressed_paths, current, &mut current_path, &mut keys);
+        Self::collect_keys_patricia_recursive(
+            nodes,
+            edge_data,
+            compressed_paths,
+            current,
+            &mut current_path,
+            &mut keys,
+        );
 
         // Filter to only include keys that actually start with the prefix
-        keys.into_iter().filter(|key| key.starts_with(prefix)).collect()
+        keys.into_iter()
+            .filter(|key| key.starts_with(prefix))
+            .collect()
     }
 
     /// Recursively collect all keys from Patricia trie
@@ -2587,7 +2743,14 @@ where
             }
 
             // Recursively collect from child
-            Self::collect_keys_patricia_recursive(nodes, edge_data, compressed_paths, child_id_usize, current_path, keys);
+            Self::collect_keys_patricia_recursive(
+                nodes,
+                edge_data,
+                compressed_paths,
+                child_id_usize,
+                current_path,
+                keys,
+            );
 
             // Backtrack: remove the path we added
             current_path.truncate(path_start_len - 1);
@@ -2651,7 +2814,9 @@ where
 
         // Look for the key with separator in the label_data
         // Since we store keys with separators, we need to find the exact match
-        label_data.windows(key_with_separator.len()).any(|window| window == key_with_separator)
+        label_data
+            .windows(key_with_separator.len())
+            .any(|window| window == key_with_separator)
     }
 
     /// Get all keys from DoubleArray trie storage
@@ -2664,7 +2829,10 @@ where
         let mut current_path = Vec::new();
 
         #[cfg(debug_assertions)]
-        eprintln!("DEBUG keys_double_array: Starting from root state 0, base[0]={:?}", base.first());
+        eprintln!(
+            "DEBUG keys_double_array: Starting from root state 0, base[0]={:?}",
+            base.first()
+        );
 
         Self::collect_keys_double_array_recursive(base, check, 0, &mut current_path, &mut keys);
         keys
@@ -2680,8 +2848,7 @@ where
             return Vec::new();
         }
 
-
-        const VALUE_MASK: u32 = 0x7FFF_FFFF;   // Bits 0-30 for values (referenced project)
+        const VALUE_MASK: u32 = 0x7FFF_FFFF; // Bits 0-30 for values (referenced project)
 
         // Navigate to the prefix position first
         let mut current_state = 0u32;
@@ -2708,7 +2875,13 @@ where
         // Now collect all keys from this point
         let mut keys = Vec::new();
         let mut current_path = prefix.to_vec();
-        Self::collect_keys_double_array_recursive(base, check, current_state, &mut current_path, &mut keys);
+        Self::collect_keys_double_array_recursive(
+            base,
+            check,
+            current_state,
+            &mut current_path,
+            &mut keys,
+        );
         keys
     }
 
@@ -2721,7 +2894,7 @@ where
         keys: &mut Vec<Vec<u8>>,
     ) {
         const TERMINAL_BIT: u32 = 0x8000_0000; // Bit 31 in base for terminal (referenced project)
-        const VALUE_MASK: u32 = 0x7FFF_FFFF;   // Bits 0-30 for values (referenced project)
+        const VALUE_MASK: u32 = 0x7FFF_FFFF; // Bits 0-30 for values (referenced project)
 
         #[cfg(debug_assertions)]
         if state == 0 && current_path.is_empty() {
@@ -2731,8 +2904,11 @@ where
         // If this is a terminal state, add the current path as a key (check base array)
         if (state as usize) < base.len() && (base[state as usize] & TERMINAL_BIT) != 0 {
             #[cfg(debug_assertions)]
-            eprintln!("DEBUG collect_keys: Found terminal state {} with path {:?}",
-                state, std::str::from_utf8(current_path).unwrap_or("<non-utf8>"));
+            eprintln!(
+                "DEBUG collect_keys: Found terminal state {} with path {:?}",
+                state,
+                std::str::from_utf8(current_path).unwrap_or("<non-utf8>")
+            );
             keys.push(current_path.clone());
         }
 
@@ -2741,13 +2917,19 @@ where
             let base_val = base_raw & VALUE_MASK;
             if base_val == 0 || base_val == 0x7FFF_FFFF {
                 #[cfg(debug_assertions)]
-                eprintln!("DEBUG collect_keys: State {} has base={}, no children", state, base_val);
+                eprintln!(
+                    "DEBUG collect_keys: State {} has base={}, no children",
+                    state, base_val
+                );
                 return; // No children
             }
 
             #[cfg(debug_assertions)]
             if state == 0 {
-                eprintln!("DEBUG collect_keys: Root state 0 has base={}, checking all 256 symbols...", base_val);
+                eprintln!(
+                    "DEBUG collect_keys: Root state 0 has base={}, checking all 256 symbols...",
+                    base_val
+                );
             }
 
             // Try all possible symbols
@@ -2764,11 +2946,19 @@ where
                         // Valid transition found
                         #[cfg(debug_assertions)]
                         if state == 0 {
-                            eprintln!("DEBUG collect_keys: Found valid transition from root: symbol={:02x} ('{}'), next_state={}",
-                                symbol, symbol as char, next_state);
+                            eprintln!(
+                                "DEBUG collect_keys: Found valid transition from root: symbol={:02x} ('{}'), next_state={}",
+                                symbol, symbol as char, next_state
+                            );
                         }
                         current_path.push(symbol);
-                        Self::collect_keys_double_array_recursive(base, check, next_state, current_path, keys);
+                        Self::collect_keys_double_array_recursive(
+                            base,
+                            check,
+                            next_state,
+                            current_path,
+                            keys,
+                        );
                         current_path.pop();
                     }
                 }
@@ -2781,7 +2971,12 @@ where
     fn keys_compressed_sparse_actual(sparse_nodes: &HashMap<StateId, SparseNode>) -> Vec<Vec<u8>> {
         let mut keys = Vec::new();
         let mut current_path = Vec::new();
-        Self::collect_keys_compressed_sparse_recursive(sparse_nodes, 0, &mut current_path, &mut keys);
+        Self::collect_keys_compressed_sparse_recursive(
+            sparse_nodes,
+            0,
+            &mut current_path,
+            &mut keys,
+        );
         keys
     }
 
@@ -2803,7 +2998,12 @@ where
             // Traverse all children
             for (&symbol, &child_state) in &node.children {
                 current_path.push(symbol);
-                Self::collect_keys_compressed_sparse_recursive(sparse_nodes, child_state, current_path, keys);
+                Self::collect_keys_compressed_sparse_recursive(
+                    sparse_nodes,
+                    child_state,
+                    current_path,
+                    keys,
+                );
                 current_path.pop();
             }
         }
@@ -2832,7 +3032,12 @@ where
         // Collect all keys from this point
         let mut keys = Vec::new();
         let mut current_path = prefix.to_vec();
-        Self::collect_keys_compressed_sparse_recursive(sparse_nodes, current_state, &mut current_path, &mut keys);
+        Self::collect_keys_compressed_sparse_recursive(
+            sparse_nodes,
+            current_state,
+            &mut current_path,
+            &mut keys,
+        );
         keys
     }
 
@@ -2863,17 +3068,18 @@ where
 
         // Estimate size and pre-allocate for DoubleArray strategy
         if let TrieStrategy::DoubleArray { .. } = &trie.config.trie_strategy
-            && let TrieStorage::DoubleArray { base, check, .. } = &mut trie.storage {
-                // Estimate: each key adds ~key_length states on average
-                let estimated_states = keys.iter().map(|k| k.len()).sum::<usize>() / 2;
-                let initial_size = estimated_states.max(256);
+            && let TrieStorage::DoubleArray { base, check, .. } = &mut trie.storage
+        {
+            // Estimate: each key adds ~key_length states on average
+            let estimated_states = keys.iter().map(|k| k.len()).sum::<usize>() / 2;
+            let initial_size = estimated_states.max(256);
 
-                const NIL_STATE: u32 = 0x7FFF_FFFF;
-                const FREE_BIT: u32 = 0x8000_0000;
+            const NIL_STATE: u32 = 0x7FFF_FFFF;
+            const FREE_BIT: u32 = 0x8000_0000;
 
-                let _ = base.resize(initial_size, NIL_STATE);
-                let _ = check.resize(initial_size, NIL_STATE | FREE_BIT);
-            }
+            let _ = base.resize(initial_size, NIL_STATE);
+            let _ = check.resize(initial_size, NIL_STATE | FREE_BIT);
+        }
 
         // Insert keys in sorted order
         // Sorted order tends to result in fewer relocations
@@ -3005,7 +3211,6 @@ where
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3085,7 +3290,11 @@ mod tests {
         trie.insert(b"b").unwrap();
 
         let all = trie.keys_with_prefix(b"");
-        assert_eq!(all.len(), 6, "keys_with_prefix('') should return all 6 keys");
+        assert_eq!(
+            all.len(),
+            6,
+            "keys_with_prefix('') should return all 6 keys"
+        );
     }
 
     #[test]
@@ -3213,7 +3422,8 @@ mod tests {
     #[test]
     fn test_build_from_sorted() {
         let keys: Vec<&[u8]> = vec![b"apple", b"application", b"apply", b"banana", b"band"];
-        let trie: ZiporaTrie = ZiporaTrie::build_from_sorted(&keys, ZiporaTrieConfig::default()).unwrap();
+        let trie: ZiporaTrie =
+            ZiporaTrie::build_from_sorted(&keys, ZiporaTrieConfig::default()).unwrap();
 
         assert_eq!(trie.len(), 5);
         assert!(trie.contains(b"apple"));
@@ -3228,7 +3438,10 @@ mod tests {
     #[test]
     fn test_default_is_double_array() {
         let config = ZiporaTrieConfig::default();
-        assert!(matches!(config.trie_strategy, crate::fsa::TrieStrategy::DoubleArray { .. }));
+        assert!(matches!(
+            config.trie_strategy,
+            crate::fsa::TrieStrategy::DoubleArray { .. }
+        ));
     }
 
     /// DoubleArray remove support

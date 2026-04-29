@@ -65,11 +65,7 @@ pub fn decimal_strcmp_with_sign(a: &str, a_neg: bool, b: &str, b_neg: bool) -> O
     let cmp = compare_decimal_magnitude(a, b);
 
     // For negative numbers, reverse the comparison
-    if a_neg {
-        cmp.reverse()
-    } else {
-        cmp
-    }
+    if a_neg { cmp.reverse() } else { cmp }
 }
 
 /// Compare two real number strings (with optional decimal point)
@@ -130,11 +126,7 @@ pub fn realnum_strcmp_with_sign(a: &str, a_neg: bool, b: &str, b_neg: bool) -> O
     };
 
     // For negative numbers, reverse the comparison
-    if a_neg {
-        cmp.reverse()
-    } else {
-        cmp
-    }
+    if a_neg { cmp.reverse() } else { cmp }
 }
 
 // Helper: parse optional sign, return (remaining_str, is_negative)
@@ -192,8 +184,16 @@ fn compare_decimal_magnitude(a: &str, b: &str) -> Ordering {
     let b_stripped = b.trim_start_matches('0');
 
     // Handle empty after stripping (means value is 0)
-    let a_stripped = if a_stripped.is_empty() { "0" } else { a_stripped };
-    let b_stripped = if b_stripped.is_empty() { "0" } else { b_stripped };
+    let a_stripped = if a_stripped.is_empty() {
+        "0"
+    } else {
+        a_stripped
+    };
+    let b_stripped = if b_stripped.is_empty() {
+        "0"
+    } else {
+        b_stripped
+    };
 
     // Compare by length first (longer = larger for positive integers)
     match a_stripped.len().cmp(&b_stripped.len()) {

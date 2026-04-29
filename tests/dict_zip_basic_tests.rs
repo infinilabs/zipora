@@ -6,21 +6,36 @@
 
 use proptest::prelude::*;
 use zipora::compression::dict_zip::{
+    BitReader,
+    BitWriter,
     // Core types that are working
-    CompressionType, Match, BitReader, BitWriter, 
-    encode_match, decode_match, encode_matches, decode_matches,
-    calculate_encoding_cost, calculate_encoding_overhead, calculate_compression_efficiency,
-    choose_best_compression_type, calculate_theoretical_compression_ratio,
-    
+    CompressionType,
+    DEFAULT_BFS_DEPTH,
+    DEFAULT_MAX_PATTERN_LENGTH,
+    DEFAULT_MIN_FREQUENCY,
+    DEFAULT_MIN_PATTERN_LENGTH,
     // Local matcher components
-    LocalMatcher, LocalMatcherConfig,
-    
-    // Utility functions
-    validate_parameters, calculate_optimal_dict_size, estimate_compression_ratio,
-    
+    LocalMatcher,
+    LocalMatcherConfig,
+
+    Match,
     // Constants
-    PA_ZIP_VERSION, DEFAULT_MIN_PATTERN_LENGTH, DEFAULT_MAX_PATTERN_LENGTH,
-    DEFAULT_MIN_FREQUENCY, DEFAULT_BFS_DEPTH,
+    PA_ZIP_VERSION,
+    calculate_compression_efficiency,
+    calculate_encoding_cost,
+    calculate_encoding_overhead,
+    calculate_optimal_dict_size,
+    calculate_theoretical_compression_ratio,
+
+    choose_best_compression_type,
+    decode_match,
+    decode_matches,
+    encode_match,
+    encode_matches,
+    estimate_compression_ratio,
+
+    // Utility functions
+    validate_parameters,
 };
 use zipora::error::Result;
 use zipora::memory::{SecureMemoryPool, SecurePoolConfig};
@@ -67,7 +82,7 @@ impl TestDataGenerator {
             vec![0xFF, 0xFE, 0xFD, 0xFC],
             vec![0xAA, 0xBB, 0xCC, 0xDD],
         ];
-        
+
         let mut pattern_idx = 0;
         while data.len() < size {
             let pattern = &patterns[pattern_idx % patterns.len()];
@@ -110,7 +125,7 @@ mod compression_types_tests {
             // Test basic properties
             assert!(!comp_type.name().is_empty());
             assert!(CompressionType::type_bits() > 0);
-            
+
             // Test conversion to/from u8
             let type_value = comp_type as u8;
             let restored = CompressionType::from_u8(type_value).unwrap();
@@ -135,7 +150,7 @@ mod compression_types_tests {
         for m in &valid_matches {
             assert!(m.validate().is_ok());
             assert!(m.length() > 0);
-            
+
             // Test compression type consistency
             let comp_type = m.compression_type();
             assert!(comp_type.supports(m.distance(), m.length()));
@@ -148,13 +163,13 @@ mod compression_types_tests {
     fn test_match_invalid_parameters() {
         // Test invalid literal length (too large)
         assert!(Match::literal(40).is_err());
-        
+
         // Test invalid RLE length (too large)
         assert!(Match::rle(65, 40).is_err());
-        
+
         // Test invalid near short distance (too large)
         assert!(Match::near_short(15, 3).is_err());
-        
+
         // Test invalid near short length (too large)
         assert!(Match::near_short(5, 10).is_err());
     }
@@ -162,14 +177,14 @@ mod compression_types_tests {
     #[test]
     fn test_bit_writer_basic_operations() -> Result<()> {
         let mut writer = BitWriter::new();
-        
+
         // Write some bits
         writer.write_bits(0b101, 3)?; // Write 3 bits: 101
         writer.write_bits(0b1100, 4)?; // Write 4 bits: 1100
-        
+
         let buffer = writer.finish();
         assert!(!buffer.is_empty());
-        
+
         Ok(())
     }
 
@@ -180,15 +195,15 @@ mod compression_types_tests {
         writer.write_bits(0b101, 3)?;
         writer.write_bits(0b1100, 4)?;
         let buffer = writer.finish();
-        
+
         // Read back the data
         let mut reader = BitReader::new(&buffer);
         let val1 = reader.read_bits(3)?;
         let val2 = reader.read_bits(4)?;
-        
+
         assert_eq!(val1, 0b101);
         assert_eq!(val2, 0b1100);
-        
+
         Ok(())
     }
 
@@ -207,10 +222,10 @@ mod compression_types_tests {
             let mut writer = BitWriter::new();
             let bits_written = encode_match(&original_match, &mut writer)?;
             let buffer = writer.finish();
-            
+
             let mut reader = BitReader::new(&buffer);
             let (decoded_match, bits_read) = decode_match(&mut reader)?;
-            
+
             assert_eq!(original_match, decoded_match);
             assert_eq!(bits_written, bits_read);
         }
@@ -234,7 +249,7 @@ mod compression_types_tests {
 
         // Decode all matches
         let (decoded_matches, bits_consumed) = decode_matches(&encoded_buffer)?;
-        
+
         assert_eq!(matches, decoded_matches);
         assert_eq!(total_bits, bits_consumed);
 
@@ -245,9 +260,18 @@ mod compression_types_tests {
     fn test_encoding_cost_calculation() {
         let test_cases = vec![
             Match::Literal { length: 10 },
-            Match::Global { dict_position: 100, length: 20 },
-            Match::RLE { byte_value: 65, length: 15 },
-            Match::NearShort { distance: 5, length: 3 },
+            Match::Global {
+                dict_position: 100,
+                length: 20,
+            },
+            Match::RLE {
+                byte_value: 65,
+                length: 15,
+            },
+            Match::NearShort {
+                distance: 5,
+                length: 3,
+            },
         ];
 
         for m in test_cases {
@@ -261,8 +285,14 @@ mod compression_types_tests {
     fn test_compression_efficiency_calculation() {
         let test_cases = vec![
             Match::Literal { length: 10 },
-            Match::Global { dict_position: 500, length: 25 },
-            Match::RLE { byte_value: 42, length: 20 },
+            Match::Global {
+                dict_position: 500,
+                length: 25,
+            },
+            Match::RLE {
+                byte_value: 42,
+                length: 20,
+            },
         ];
 
         for m in test_cases {
@@ -275,9 +305,9 @@ mod compression_types_tests {
     #[test]
     fn test_best_compression_type_selection() {
         let test_cases = vec![
-            (1, 10),   // Distance 1 - should consider RLE
-            (5, 4),    // Small distance, short length - NearShort
-            (100, 15), // Medium distance - Far1Short or Far2Short
+            (1, 10),      // Distance 1 - should consider RLE
+            (5, 4),       // Small distance, short length - NearShort
+            (100, 15),    // Medium distance - Far1Short or Far2Short
             (50000, 100), // Large distance, long length - Far2Long or Far3Long
         ];
 
@@ -292,8 +322,14 @@ mod compression_types_tests {
     fn test_theoretical_compression_ratio() {
         let matches = vec![
             Match::Literal { length: 10 },
-            Match::RLE { byte_value: 65, length: 20 },
-            Match::Global { dict_position: 100, length: 30 },
+            Match::RLE {
+                byte_value: 65,
+                length: 20,
+            },
+            Match::Global {
+                dict_position: 100,
+                length: 30,
+            },
         ];
 
         let ratio = calculate_theoretical_compression_ratio(&matches);
@@ -359,13 +395,13 @@ mod local_matcher_tests {
     fn test_local_matcher_creation() -> Result<()> {
         let config = LocalMatcherConfig::default();
         let pool = SecureMemoryPool::new(SecurePoolConfig::small_secure())?;
-        
+
         let matcher = LocalMatcher::new(config.clone(), pool)?;
-        
+
         assert_eq!(matcher.config(), &config);
         assert_eq!(matcher.window_size(), 0); // Initially empty
         assert!(!matcher.is_window_full());
-        
+
         Ok(())
     }
 
@@ -377,18 +413,18 @@ mod local_matcher_tests {
         };
         let pool = SecureMemoryPool::new(SecurePoolConfig::small_secure())?;
         let mut matcher = LocalMatcher::new(config, pool)?;
-        
+
         // Add some bytes
         let test_data = b"hello world testing";
         matcher.add_bytes(test_data, 0)?;
-        
+
         assert_eq!(matcher.window_size(), test_data.len());
         assert!(!matcher.is_window_full());
-        
+
         // Clear window
         matcher.clear();
         assert_eq!(matcher.window_size(), 0);
-        
+
         Ok(())
     }
 
@@ -397,14 +433,14 @@ mod local_matcher_tests {
         let config = LocalMatcherConfig::default();
         let pool = SecureMemoryPool::new(SecurePoolConfig::small_secure())?;
         let mut matcher = LocalMatcher::new(config, pool)?;
-        
+
         // Add test data with a pattern that repeats
         let test_data = b"abcdefabcdefghijklmnop";
         matcher.add_bytes(&test_data[..6], 0)?; // Add "abcdef"
-        
+
         // Look for matches in the repeated pattern
         let matches = matcher.find_matches(test_data, 6, 6)?;
-        
+
         // Should find the "abcdef" pattern that was added to window
         if !matches.is_empty() {
             let best_match = &matches[0];
@@ -412,7 +448,7 @@ mod local_matcher_tests {
             assert!(best_match.length > 0);
             assert!(best_match.compression_benefit > 0);
         }
-        
+
         Ok(())
     }
 
@@ -421,28 +457,28 @@ mod local_matcher_tests {
         let config = LocalMatcherConfig::default();
         let pool = SecureMemoryPool::new(SecurePoolConfig::small_secure())?;
         let mut matcher = LocalMatcher::new(config, pool)?;
-        
+
         // Initial stats should be zeros
         let initial_stats = matcher.stats();
         assert_eq!(initial_stats.searches_performed, 0);
         assert_eq!(initial_stats.bytes_added, 0);
-        
+
         // Perform some operations
         let test_data = b"statistics test data";
         matcher.add_bytes(test_data, 0)?;
         let _matches = matcher.find_matches(test_data, 5, 10)?;
-        
+
         // Stats should be updated
         let updated_stats = matcher.stats();
         assert!(updated_stats.searches_performed > 0);
         assert!(updated_stats.bytes_added > 0);
-        
+
         // Test stats reset
         matcher.reset_stats();
         let reset_stats = matcher.stats();
         assert_eq!(reset_stats.searches_performed, 0);
         assert_eq!(reset_stats.bytes_added, 0);
-        
+
         Ok(())
     }
 
@@ -451,10 +487,10 @@ mod local_matcher_tests {
         let config = LocalMatcherConfig::default();
         let pool = SecureMemoryPool::new(SecurePoolConfig::small_secure())?;
         let matcher = LocalMatcher::new(config, pool)?;
-        
+
         // Matcher should be valid after creation
         assert!(matcher.validate().is_ok());
-        
+
         Ok(())
     }
 
@@ -478,10 +514,10 @@ mod utility_tests {
     fn test_parameter_validation() {
         // Valid parameters
         assert!(validate_parameters(4, 256, 4, 6).is_ok());
-        
+
         // Invalid cases
         assert!(validate_parameters(0, 256, 4, 6).is_err()); // min_length = 0
-        assert!(validate_parameters(10, 5, 4, 6).is_err());  // max < min
+        assert!(validate_parameters(10, 5, 4, 6).is_err()); // max < min
         assert!(validate_parameters(4, 256, 0, 6).is_err()); // frequency = 0
         assert!(validate_parameters(4, 256, 4, 25).is_err()); // depth too large
         assert!(validate_parameters(4, 2000, 4, 6).is_err()); // max_length too large
@@ -491,14 +527,14 @@ mod utility_tests {
     fn test_optimal_dict_size_calculation() {
         // Test various input sizes
         let test_cases = vec![
-            (1000, 10000),      // Small input
-            (100000, 1000000),  // Medium input
-            (1000000, 500000),  // Large input with memory constraint
+            (1000, 10000),     // Small input
+            (100000, 1000000), // Medium input
+            (1000000, 500000), // Large input with memory constraint
         ];
 
         for (input_size, max_memory) in test_cases {
             let dict_size = calculate_optimal_dict_size(input_size, max_memory);
-            
+
             assert!(dict_size > 0);
             assert!(dict_size <= max_memory / 2); // Should respect memory limits
             assert!(dict_size <= input_size); // Dictionary shouldn't exceed input size
@@ -516,7 +552,7 @@ mod utility_tests {
 
         for (entropy, repetitiveness, dict_ratio) in test_cases {
             let ratio = estimate_compression_ratio(entropy, repetitiveness, dict_ratio);
-            
+
             assert!(ratio >= 0.1);
             assert!(ratio <= 1.0);
         }
@@ -527,12 +563,12 @@ mod utility_tests {
         // Test that constants are reasonable
         assert!(!PA_ZIP_VERSION.is_empty());
         assert!(PA_ZIP_VERSION.contains('.'));
-        
+
         assert_eq!(DEFAULT_MIN_PATTERN_LENGTH, 4);
         assert_eq!(DEFAULT_MAX_PATTERN_LENGTH, 256);
         assert_eq!(DEFAULT_MIN_FREQUENCY, 4);
         assert_eq!(DEFAULT_BFS_DEPTH, 6);
-        
+
         // Validate constant relationships
         assert!(DEFAULT_MIN_PATTERN_LENGTH > 0);
         assert!(DEFAULT_MAX_PATTERN_LENGTH >= DEFAULT_MIN_PATTERN_LENGTH);
@@ -563,10 +599,10 @@ mod property_tests {
                 let mut writer = BitWriter::new();
                 let bits_written = encode_match(&literal_match, &mut writer)?;
                 let buffer = writer.finish();
-                
+
                 let mut reader = BitReader::new(&buffer);
                 let (decoded_match, bits_read) = decode_match(&mut reader)?;
-                
+
                 prop_assert_eq!(literal_match, decoded_match);
                 prop_assert_eq!(bits_written, bits_read);
             }
@@ -576,10 +612,10 @@ mod property_tests {
                 let mut writer = BitWriter::new();
                 let bits_written = encode_match(&rle_match, &mut writer)?;
                 let buffer = writer.finish();
-                
+
                 let mut reader = BitReader::new(&buffer);
                 let (decoded_match, bits_read) = decode_match(&mut reader)?;
-                
+
                 prop_assert_eq!(rle_match, decoded_match);
                 prop_assert_eq!(bits_written, bits_read);
             }
@@ -590,10 +626,10 @@ mod property_tests {
                     let mut writer = BitWriter::new();
                     let bits_written = encode_match(&near_match, &mut writer)?;
                     let buffer = writer.finish();
-                    
+
                     let mut reader = BitReader::new(&buffer);
                     let (decoded_match, bits_read) = decode_match(&mut reader)?;
-                    
+
                     prop_assert_eq!(near_match, decoded_match);
                     prop_assert_eq!(bits_written, bits_read);
                 }
@@ -608,33 +644,33 @@ mod property_tests {
             if search_pos >= data.len() {
                 return Ok(());
             }
-            
+
             let config = LocalMatcherConfig {
                 window_size,
                 min_match_length: 3,
                 max_match_length: 20,
                 ..Default::default()
             };
-            
+
             let pool = SecureMemoryPool::new(SecurePoolConfig::small_secure())?;
             let mut matcher = LocalMatcher::new(config, pool)?;
-            
+
             // Add data to window
             if search_pos > 0 {
                 matcher.add_bytes(&data[..search_pos], 0)?;
             }
-            
+
             // Find matches
             let max_length = (data.len() - search_pos).min(20);
             let matches = matcher.find_matches(&data, search_pos, max_length)?;
-            
+
             // Property: All matches should be valid
             for m in matches {
                 prop_assert!(m.distance > 0);
                 prop_assert!(m.length > 0);
                 prop_assert!(m.compression_benefit >= 0);
             }
-            
+
             // Property: Matcher should remain valid
             prop_assert!(matcher.validate().is_ok());
         }
@@ -676,21 +712,21 @@ mod integration_tests {
         let config = LocalMatcherConfig::default();
         let pool = SecureMemoryPool::new(SecurePoolConfig::small_secure())?;
         let mut matcher = LocalMatcher::new(config, pool)?;
-        
+
         // Test with repetitive data
         let test_data = TestDataGenerator::repetitive_text(1000);
-        
+
         // Add data to window progressively and search for matches
         let mut total_matches = 0;
         let chunk_size = 50;
-        
+
         for i in (0..test_data.len()).step_by(chunk_size) {
             let end = (i + chunk_size).min(test_data.len());
             let chunk = &test_data[i..end];
-            
+
             // Add chunk to matcher
             matcher.add_bytes(chunk, i)?;
-            
+
             // Search for matches in the next chunk (if exists)
             if end < test_data.len() {
                 let search_end = (end + chunk_size).min(test_data.len());
@@ -698,17 +734,17 @@ mod integration_tests {
                 total_matches += matches.len();
             }
         }
-        
+
         // Should find some matches in repetitive data
         println!("Total matches found: {}", total_matches);
-        
+
         // Verify final state
         assert!(matcher.validate().is_ok());
-        
+
         let final_stats = matcher.stats();
         assert!(final_stats.bytes_added > 0);
         println!("Final stats: {:?}", final_stats);
-        
+
         Ok(())
     }
 
@@ -717,43 +753,44 @@ mod integration_tests {
         let test_datasets = vec![
             ("repetitive", TestDataGenerator::repetitive_text(500)),
             ("random", TestDataGenerator::random_data(500)),
-            ("repeated_bytes", TestDataGenerator::repeated_bytes(500, 0x55)),
+            (
+                "repeated_bytes",
+                TestDataGenerator::repeated_bytes(500, 0x55),
+            ),
             ("binary_patterns", TestDataGenerator::binary_patterns(500)),
         ];
-        
+
         for (name, _data) in test_datasets {
             println!("Testing encoding with {} data", name);
-            
+
             // Create various match types based on data characteristics
-            let mut matches = vec![
-                Match::literal(10)?,
-            ];
-            
+            let mut matches = vec![Match::literal(10)?];
+
             // Add RLE matches for repeated byte data
             if name == "repeated_bytes" {
                 matches.push(Match::rle(0x55, 20)?);
             }
-            
+
             // Add pattern matches for structured data
             if name == "binary_patterns" {
                 matches.push(Match::near_short(4, 3)?);
                 matches.push(Match::far1_short(16, 8)?);
             }
-            
+
             // Test encoding and decoding
             let (encoded, total_bits) = encode_matches(&matches)?;
             let (decoded_matches, bits_consumed) = decode_matches(&encoded)?;
-            
+
             assert_eq!(matches, decoded_matches);
             assert_eq!(total_bits, bits_consumed);
-            
+
             // Calculate theoretical compression ratio
             let ratio = calculate_theoretical_compression_ratio(&matches);
             println!("  Theoretical compression ratio: {:.3}", ratio);
-            
+
             assert!((0.0..=1.0).contains(&ratio));
         }
-        
+
         Ok(())
     }
 
@@ -762,29 +799,31 @@ mod integration_tests {
         // Test optimal dictionary size calculation for various scenarios
         let scenarios = vec![
             ("small_files", 10_000, 100_000),
-            ("medium_files", 1_000_000, 10_000_000), 
+            ("medium_files", 1_000_000, 10_000_000),
             ("large_files", 100_000_000, 500_000_000),
             ("memory_constrained", 10_000_000, 1_000_000),
         ];
-        
+
         for (scenario, input_size, max_memory) in scenarios {
             let dict_size = calculate_optimal_dict_size(input_size, max_memory);
-            
-            println!("{}: input={}, memory={}, dict={}", 
-                scenario, input_size, max_memory, dict_size);
-            
+
+            println!(
+                "{}: input={}, memory={}, dict={}",
+                scenario, input_size, max_memory, dict_size
+            );
+
             // Validate constraints
             assert!(dict_size > 0);
             assert!(dict_size <= max_memory / 2);
             assert!(dict_size >= 1024);
-            
+
             // Test compression ratio estimation
             let ratio = estimate_compression_ratio(5.0, 0.6, dict_size as f64 / input_size as f64);
             assert!((0.1..=1.0).contains(&ratio));
-            
+
             println!("  Estimated compression ratio: {:.3}", ratio);
         }
-        
+
         Ok(())
     }
 }
@@ -811,30 +850,34 @@ mod performance_tests {
             };
             matches.push(match_type);
         }
-        
+
         // Measure encoding performance
         let start = Instant::now();
         let (encoded, _) = encode_matches(&matches)?;
         let encoding_time = start.elapsed();
-        
+
         // Measure decoding performance
         let start = Instant::now();
         let (decoded_matches, _) = decode_matches(&encoded)?;
         let decoding_time = start.elapsed();
-        
+
         assert_eq!(matches, decoded_matches);
-        
+
         println!("Encoded {} matches in {:?}", matches.len(), encoding_time);
         println!("Decoded {} matches in {:?}", matches.len(), decoding_time);
-        println!("Encoding throughput: {:.0} matches/sec", 
-            matches.len() as f64 / encoding_time.as_secs_f64());
-        println!("Decoding throughput: {:.0} matches/sec", 
-            matches.len() as f64 / decoding_time.as_secs_f64());
-        
+        println!(
+            "Encoding throughput: {:.0} matches/sec",
+            matches.len() as f64 / encoding_time.as_secs_f64()
+        );
+        println!(
+            "Decoding throughput: {:.0} matches/sec",
+            matches.len() as f64 / decoding_time.as_secs_f64()
+        );
+
         // Performance assertions
         assert!(encoding_time.as_millis() < 1000); // Should encode 10k matches in < 1 second
         assert!(decoding_time.as_millis() < 1000); // Should decode 10k matches in < 1 second
-        
+
         Ok(())
     }
 
@@ -843,38 +886,38 @@ mod performance_tests {
         let config = LocalMatcherConfig::default();
         let pool = SecureMemoryPool::new(SecurePoolConfig::small_secure())?;
         let mut matcher = LocalMatcher::new(config, pool)?;
-        
+
         // Generate large test data
         let test_data = TestDataGenerator::repetitive_text(100_000);
-        
+
         // Measure performance of adding data to window
         let start = Instant::now();
-        matcher.add_bytes(&test_data[..test_data.len()/2], 0)?;
+        matcher.add_bytes(&test_data[..test_data.len() / 2], 0)?;
         let add_time = start.elapsed();
-        
+
         // Measure performance of pattern matching
         let start = Instant::now();
         let mut total_matches = 0;
-        for i in (test_data.len()/2..test_data.len()).step_by(100) {
+        for i in (test_data.len() / 2..test_data.len()).step_by(100) {
             let end = (i + 50).min(test_data.len());
             let matches = matcher.find_matches(&test_data, i, end - i)?;
             total_matches += matches.len();
         }
         let search_time = start.elapsed();
-        
-        println!("Added {} bytes in {:?}", test_data.len()/2, add_time);
+
+        println!("Added {} bytes in {:?}", test_data.len() / 2, add_time);
         println!("Found {} matches in {:?}", total_matches, search_time);
-        
-        let add_throughput = (test_data.len()/2) as f64 / add_time.as_secs_f64();
-        let search_throughput = (test_data.len()/2) as f64 / search_time.as_secs_f64();
-        
+
+        let add_throughput = (test_data.len() / 2) as f64 / add_time.as_secs_f64();
+        let search_throughput = (test_data.len() / 2) as f64 / search_time.as_secs_f64();
+
         println!("Add throughput: {:.0} bytes/sec", add_throughput);
         println!("Search throughput: {:.0} bytes/sec", search_throughput);
-        
+
         // Performance assertions
         assert!(add_throughput > 1_000_000.0); // At least 1MB/s for adding data
         assert!(search_throughput > 100_000.0); // At least 100KB/s for searching
-        
+
         Ok(())
     }
 }
@@ -890,11 +933,11 @@ mod error_handling_tests {
     #[test]
     fn test_invalid_bit_operations() {
         let mut writer = BitWriter::new();
-        
+
         // Try to write too many bits
         let result = writer.write_bits(0, 64); // More than 32 bits
         assert!(result.is_err());
-        
+
         // Test reading from empty buffer
         let mut reader = BitReader::new(&[]);
         let result = reader.read_bits(8);
@@ -915,16 +958,19 @@ mod error_handling_tests {
         // Create valid encoded data
         let matches = vec![
             Match::Literal { length: 10 },
-            Match::RLE { byte_value: 65, length: 15 },
+            Match::RLE {
+                byte_value: 65,
+                length: 15,
+            },
         ];
-        
+
         let (mut encoded, _) = encode_matches(&matches).unwrap();
-        
+
         // Corrupt the data
         if !encoded.is_empty() {
             encoded[0] = encoded[0].wrapping_add(1);
         }
-        
+
         // Try to decode corrupted data
         let result = decode_matches(&encoded);
         // Should either return an error or return different matches
@@ -935,7 +981,7 @@ mod error_handling_tests {
                 if encoded.len() > 1 {
                     assert_ne!(matches, decoded_matches);
                 }
-            },
+            }
             Err(_) => {
                 // Decoding error is also acceptable for corrupted data
             }
@@ -951,58 +997,58 @@ mod error_handling_tests {
             max_match_length: 10,
             ..Default::default()
         };
-        
+
         let pool = SecureMemoryPool::new(SecurePoolConfig::small_secure())?;
         let mut matcher = LocalMatcher::new(config, pool)?;
-        
+
         // Add more data than window can hold
         let large_data = TestDataGenerator::repetitive_text(1000);
         matcher.add_bytes(&large_data, 0)?;
-        
+
         // Window should respect size limit
         assert!(matcher.window_size() <= 1);
-        
+
         // Should still be valid
         assert!(matcher.validate().is_ok());
-        
+
         Ok(())
     }
 
     #[test]
     fn test_edge_case_data() -> Result<()> {
         let edge_cases = vec![
-            vec![], // Empty data
-            vec![0], // Single byte
-            vec![0; 1000], // All zeros
-            vec![255; 1000], // All max bytes
+            vec![],                  // Empty data
+            vec![0],                 // Single byte
+            vec![0; 1000],           // All zeros
+            vec![255; 1000],         // All max bytes
             (0u8..=255u8).collect(), // All byte values
         ];
-        
+
         for (i, data) in edge_cases.iter().enumerate() {
             println!("Testing edge case {}: {} bytes", i, data.len());
-            
+
             if data.is_empty() {
                 continue; // Skip empty data for local matcher
             }
-            
+
             let config = LocalMatcherConfig::default();
             let pool = SecureMemoryPool::new(SecurePoolConfig::small_secure())?;
             let mut matcher = LocalMatcher::new(config, pool)?;
-            
+
             // Should handle edge case data without panicking
             let result = matcher.add_bytes(data, 0);
             match result {
                 Ok(_) => {
                     // If adding succeeds, matcher should remain valid
                     assert!(matcher.validate().is_ok());
-                },
+                }
                 Err(_) => {
                     // Some edge cases might reasonably fail
                     println!("  Edge case {} failed as expected", i);
                 }
             }
         }
-        
+
         Ok(())
     }
 }
@@ -1018,14 +1064,14 @@ mod test_runner {
     #[test]
     fn run_basic_pa_zip_tests() -> Result<()> {
         println!("Running basic PA-Zip dictionary compression tests...");
-        
+
         // Test core constants and version
         assert_eq!(PA_ZIP_VERSION, "1.0.0");
         assert_eq!(DEFAULT_MIN_PATTERN_LENGTH, 4);
         assert_eq!(DEFAULT_MAX_PATTERN_LENGTH, 256);
         assert_eq!(DEFAULT_MIN_FREQUENCY, 4);
         assert_eq!(DEFAULT_BFS_DEPTH, 6);
-        
+
         println!("✓ Constants and version validation");
         println!("✓ Compression types encoding/decoding");
         println!("✓ Local matcher functionality");
@@ -1034,9 +1080,9 @@ mod test_runner {
         println!("✓ Integration scenarios");
         println!("✓ Performance validation");
         println!("✓ Error handling");
-        
+
         println!("All basic PA-Zip tests completed successfully!");
-        
+
         Ok(())
     }
 }

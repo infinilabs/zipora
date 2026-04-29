@@ -10,23 +10,13 @@ pub mod rank_select;
 
 pub use bit_vector::{BitVector, BitwiseOp};
 pub use elias_fano::{
-    EliasFano, PartitionedEliasFano, OptimalPartitionedEliasFano,
-    HybridPostingList, PostingEncoding,
+    EliasFano, HybridPostingList, OptimalPartitionedEliasFano, PartitionedEliasFano,
+    PostingEncoding,
 };
 pub use rank_select::{
-    BuilderOptions,
-    PerformanceStats,
-    RankSelect256,
-    RankSelectBuilder,
-    RankSelectInterleaved256,
-    // New rank/select variants
-    RankSelectOps,
-    RankSelectPerformanceOps,
+    AdaptiveMultiDimensional,
     // Advanced optimization variants
     AdaptiveRankSelect,
-    AdaptiveMultiDimensional,
-    DataProfile,
-    SelectionCriteria,
     // BMI2 acceleration
     Bmi2Accelerator,
     Bmi2BitOps,
@@ -38,12 +28,22 @@ pub use rank_select::{
     Bmi2SelectOps,
     Bmi2SequenceOps,
     Bmi2Stats,
+    BuilderOptions,
+    DataProfile,
+    PerformanceStats,
+    // Rank9
+    Rank9,
+    RankSelect256,
+    RankSelectBuilder,
+    RankSelectInterleaved256,
+    // New rank/select variants
+    RankSelectOps,
+    RankSelectPerformanceOps,
+    SelectionCriteria,
     SimdCapabilities,
     // SIMD operations
     SimdOps,
     bulk_popcount_simd,
     bulk_rank1_simd,
     bulk_select1_simd,
-    // Rank9
-    Rank9,
 };

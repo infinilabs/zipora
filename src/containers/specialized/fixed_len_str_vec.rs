@@ -241,9 +241,10 @@ impl<const N: usize> FixedLenStrVec<N> {
             // Quick length check before string comparison
             if length == needle_len
                 && let Some(s) = self.get(i)
-                    && s == needle {
-                        return Some(i);
-                    }
+                && s == needle
+            {
+                return Some(i);
+            }
         }
         None
     }
@@ -260,9 +261,10 @@ impl<const N: usize> FixedLenStrVec<N> {
             // Quick length check - string must be at least as long as prefix
             if length >= prefix_len
                 && let Some(s) = self.get(i)
-                    && s.starts_with(prefix) {
-                        count += 1;
-                    }
+                && s.starts_with(prefix)
+            {
+                count += 1;
+            }
         }
         count
     }

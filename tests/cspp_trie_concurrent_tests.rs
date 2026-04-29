@@ -1,8 +1,8 @@
-use zipora::fsa::cspp_trie_concurrent::ConcurrentCsppTrie;
 use crossbeam_epoch as epoch;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::thread;
-use std::collections::BTreeSet;
+use zipora::fsa::cspp_trie_concurrent::ConcurrentCsppTrie;
 
 // Concurrent tests need smaller key counts in debug mode (unoptimized atomics are slow)
 #[cfg(debug_assertions)]
@@ -102,17 +102,27 @@ fn test_concurrent_trie_10k_single_thread() {
     let mut expected = BTreeSet::new();
     let mut rng_state: u64 = 12345;
     for _ in 0..10_000 {
-        rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        rng_state = rng_state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let len = ((rng_state >> 32) % 20 + 1) as usize;
-        let key: Vec<u8> = (0..len).map(|_| {
-            rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-            ((rng_state >> 40) % 26 + 97) as u8
-        }).collect();
+        let key: Vec<u8> = (0..len)
+            .map(|_| {
+                rng_state = rng_state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                ((rng_state >> 40) % 26 + 97) as u8
+            })
+            .collect();
         expected.insert(key.clone());
         trie.insert(&key);
     }
     for key in &expected {
-        assert!(trie.contains(key), "Missing key: {:?}", std::str::from_utf8(key));
+        assert!(
+            trie.contains(key),
+            "Missing key: {:?}",
+            std::str::from_utf8(key)
+        );
     }
     assert_eq!(trie.num_words(), expected.len());
 }
@@ -165,15 +175,17 @@ fn test_concurrent_insert_4_threads_shared_prefix() {
         trie.insert(seed_key.as_bytes());
     }
 
-    let handles: Vec<_> = (0..num_threads).map(|tid| {
-        let trie = Arc::clone(&trie);
-        thread::spawn(move || {
-            for i in 1..n {
-                let key = format!("shared_prefix_{}_key_{:05}", tid, i);
-                trie.insert(key.as_bytes());
-            }
+    let handles: Vec<_> = (0..num_threads)
+        .map(|tid| {
+            let trie = Arc::clone(&trie);
+            thread::spawn(move || {
+                for i in 1..n {
+                    let key = format!("shared_prefix_{}_key_{:05}", tid, i);
+                    trie.insert(key.as_bytes());
+                }
+            })
         })
-    }).collect();
+        .collect();
 
     for h in handles {
         h.join().unwrap();
@@ -194,21 +206,23 @@ fn test_concurrent_insert_8_threads_stress() {
     let n = CONCURRENT_KEYS;
     let num_threads = 8;
 
-    let handles: Vec<_> = (0..num_threads).map(|tid| {
-        let trie = Arc::clone(&trie);
-        thread::spawn(move || {
-            let mut inserted = Vec::with_capacity(n);
-            for i in 0..n {
-                let prefix = (b'A' + tid as u8) as char;
-                let key = format!("{}_stress_{:05}", prefix, i);
-                let (is_new, _) = trie.insert(key.as_bytes());
-                if is_new {
-                    inserted.push(key);
+    let handles: Vec<_> = (0..num_threads)
+        .map(|tid| {
+            let trie = Arc::clone(&trie);
+            thread::spawn(move || {
+                let mut inserted = Vec::with_capacity(n);
+                for i in 0..n {
+                    let prefix = (b'A' + tid as u8) as char;
+                    let key = format!("{}_stress_{:05}", prefix, i);
+                    let (is_new, _) = trie.insert(key.as_bytes());
+                    if is_new {
+                        inserted.push(key);
+                    }
                 }
-            }
-            inserted
+                inserted
+            })
         })
-    }).collect();
+        .collect();
 
     let mut all_keys = Vec::new();
     for h in handles {
@@ -287,25 +301,39 @@ fn test_concurrent_race_stats() {
     let trie = Arc::new(ConcurrentCsppTrie::with_capacity(0, 40_000_000));
     let n = CONCURRENT_KEYS;
 
-    let handles: Vec<_> = (0..4).map(|tid| {
-        let trie = Arc::clone(&trie);
-        thread::spawn(move || {
-            for i in 0..n {
-                // All threads insert keys with the same prefix to maximize contention
-                let key = format!("contest_{:05}_{}", i, tid);
-                trie.insert(key.as_bytes());
-            }
+    let handles: Vec<_> = (0..4)
+        .map(|tid| {
+            let trie = Arc::clone(&trie);
+            thread::spawn(move || {
+                for i in 0..n {
+                    // All threads insert keys with the same prefix to maximize contention
+                    let key = format!("contest_{:05}_{}", i, tid);
+                    trie.insert(key.as_bytes());
+                }
+            })
         })
-    }).collect();
+        .collect();
 
     for h in handles {
         h.join().unwrap();
     }
 
-    let retries = trie.race_stats.retries.load(std::sync::atomic::Ordering::Relaxed);
-    let parent_fail = trie.race_stats.parent_lock_fail.load(std::sync::atomic::Ordering::Relaxed);
-    let lazy_fail = trie.race_stats.lazy_free_fail.load(std::sync::atomic::Ordering::Relaxed);
-    let child_fail = trie.race_stats.child_cas_fail.load(std::sync::atomic::Ordering::Relaxed);
+    let retries = trie
+        .race_stats
+        .retries
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let parent_fail = trie
+        .race_stats
+        .parent_lock_fail
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let lazy_fail = trie
+        .race_stats
+        .lazy_free_fail
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let child_fail = trie
+        .race_stats
+        .child_cas_fail
+        .load(std::sync::atomic::Ordering::Relaxed);
 
     // Just verify we completed without deadlock or panic
     assert_eq!(trie.num_words(), n * 4);
@@ -326,16 +354,18 @@ fn test_concurrent_long_keys() {
         trie.insert(key.as_bytes());
     }
 
-    let handles: Vec<_> = (0..4).map(|tid| {
-        let trie = Arc::clone(&trie);
-        thread::spawn(move || {
-            let prefix = "a".repeat(100);
-            for i in 1..if cfg!(miri) { 10 } else { 50 } {
-                let key = format!("{}{:03}_{}", prefix, i, tid);
-                assert!(trie.insert(key.as_bytes()).0);
-            }
+    let handles: Vec<_> = (0..4)
+        .map(|tid| {
+            let trie = Arc::clone(&trie);
+            thread::spawn(move || {
+                let prefix = "a".repeat(100);
+                for i in 1..if cfg!(miri) { 10 } else { 50 } {
+                    let key = format!("{}{:03}_{}", prefix, i, tid);
+                    assert!(trie.insert(key.as_bytes()).0);
+                }
+            })
         })
-    }).collect();
+        .collect();
 
     for h in handles {
         h.join().unwrap();
@@ -354,16 +384,18 @@ fn test_concurrent_insert_throughput() {
 
     let start = std::time::Instant::now();
 
-    let handles: Vec<_> = (0..num_threads).map(|tid| {
-        let trie = Arc::clone(&trie);
-        thread::spawn(move || {
-            let prefix = (b'A' + tid as u8) as char;
-            for i in 0..n {
-                let key = format!("{}_perf_{:06}", prefix, i);
-                trie.insert(key.as_bytes());
-            }
+    let handles: Vec<_> = (0..num_threads)
+        .map(|tid| {
+            let trie = Arc::clone(&trie);
+            thread::spawn(move || {
+                let prefix = (b'A' + tid as u8) as char;
+                for i in 0..n {
+                    let key = format!("{}_perf_{:06}", prefix, i);
+                    trie.insert(key.as_bytes());
+                }
+            })
         })
-    }).collect();
+        .collect();
 
     for h in handles {
         h.join().unwrap();
@@ -376,6 +408,9 @@ fn test_concurrent_insert_throughput() {
     assert_eq!(trie.num_words(), total_keys);
     eprintln!(
         "Concurrent insert: {} keys in {:.2}ms ({:.0} K keys/sec, {} threads)",
-        total_keys, elapsed.as_secs_f64() * 1000.0, kps / 1000.0, num_threads
+        total_keys,
+        elapsed.as_secs_f64() * 1000.0,
+        kps / 1000.0,
+        num_threads
     );
 }

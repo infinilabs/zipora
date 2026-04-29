@@ -476,7 +476,9 @@ impl TieredAllocation {
 
 /// Global tiered allocator instance
 static GLOBAL_TIERED_ALLOCATOR: once_cell::sync::Lazy<TieredMemoryAllocator> =
-    once_cell::sync::Lazy::new(|| TieredMemoryAllocator::default().expect("default allocator creation"));
+    once_cell::sync::Lazy::new(|| {
+        TieredMemoryAllocator::default().expect("default allocator creation")
+    });
 
 /// Allocate memory using the global tiered allocator
 pub fn tiered_allocate(size: usize) -> Result<TieredAllocation> {

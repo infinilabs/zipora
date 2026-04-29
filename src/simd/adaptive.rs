@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
+use super::{BenchmarkResults, Operation, PerformanceHistory};
 use crate::system::cpu_features::{CpuFeatures, get_cpu_features};
-use super::{Operation, BenchmarkResults, PerformanceHistory};
 
 /// SIMD implementation tier matching zipora's 6-tier framework
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -69,8 +69,8 @@ pub enum SimdImpl {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SelectionKey {
     pub operation: Operation,
-    pub size_bucket: usize,  // Bucketed size for cache efficiency
-    pub density_bucket: u8,  // Bucketed density (0-255)
+    pub size_bucket: usize, // Bucketed size for cache efficiency
+    pub density_bucket: u8, // Bucketed density (0-255)
 }
 
 impl SelectionKey {
@@ -241,7 +241,12 @@ impl AdaptiveSimdSelector {
         // Check cache first
         let key = SelectionKey::new(operation, data_size, data_density);
 
-        if let Some(&impl_type) = self.selection_cache.read().expect("selection_cache lock").get(&key) {
+        if let Some(&impl_type) = self
+            .selection_cache
+            .read()
+            .expect("selection_cache lock")
+            .get(&key)
+        {
             return impl_type;
         }
 
@@ -314,15 +319,14 @@ impl AdaptiveSimdSelector {
             }
 
             // BMI2 tier (Tier 3)
-            (
-                SimdTier::Tier3Bmi2 | SimdTier::Tier4Avx2 | SimdTier::Tier5Avx512,
-                size,
-            ) if size >= bmi2_min => SimdImpl::Bmi2,
+            (SimdTier::Tier3Bmi2 | SimdTier::Tier4Avx2 | SimdTier::Tier5Avx512, size)
+                if size >= bmi2_min =>
+            {
+                SimdImpl::Bmi2
+            }
 
             // SSE2 tier (Tier 2)
-            (tier, size) if tier >= SimdTier::Tier2Popcnt && size >= sse2_min => {
-                SimdImpl::Sse2
-            }
+            (tier, size) if tier >= SimdTier::Tier2Popcnt && size >= sse2_min => SimdImpl::Sse2,
 
             // NEON tier (Tier 1 - ARM)
             (SimdTier::Tier1Neon, size) if size >= 64 => SimdImpl::Neon,
@@ -348,19 +352,24 @@ impl AdaptiveSimdSelector {
             // Check for performance degradation
             if self.config.enable_adaptation
                 && let Ok(benchmarks) = self.operation_benchmarks.read()
-                    && let Some(benchmark) = benchmarks.get(&operation)
-                        && history.check_performance_degradation(benchmark.throughput,
-                                                                 self.config.degradation_trigger_count) {
-                            // Clear cache for this operation to force re-evaluation
-                            drop(benchmarks); // Release read lock before write
-                            self.clear_operation_cache(operation);
-                        }
+                && let Some(benchmark) = benchmarks.get(&operation)
+                && history.check_performance_degradation(
+                    benchmark.throughput,
+                    self.config.degradation_trigger_count,
+                )
+            {
+                // Clear cache for this operation to force re-evaluation
+                drop(benchmarks); // Release read lock before write
+                self.clear_operation_cache(operation);
+            }
         }
     }
 
     /// Clear cache entries for a specific operation
     fn clear_operation_cache(&self, operation: Operation) {
-        self.selection_cache.write().expect("selection_cache lock")
+        self.selection_cache
+            .write()
+            .expect("selection_cache lock")
             .retain(|k, _| k.operation != operation);
     }
 
@@ -406,9 +415,9 @@ impl AdaptiveSimdSelector {
                                         count += byte.count_ones() as u64;
                                     }
                                     black_box(count);
-                                }
+                                },
                             )
-                        },
+                        }
                         Operation::Rank | Operation::Select => {
                             benchmark.run_with_data(
                                 || test_data.clone(),
@@ -421,9 +430,9 @@ impl AdaptiveSimdSelector {
                                         }
                                     }
                                     black_box(result);
-                                }
+                                },
                             )
-                        },
+                        }
                         Operation::Search => {
                             benchmark.run_with_data(
                                 || test_data.clone(),
@@ -437,9 +446,9 @@ impl AdaptiveSimdSelector {
                                         }
                                     }
                                     black_box(positions);
-                                }
+                                },
                             )
-                        },
+                        }
                         Operation::Sort => {
                             benchmark.run_with_data(
                                 || test_data.clone(),
@@ -448,9 +457,9 @@ impl AdaptiveSimdSelector {
                                     let mut data_copy = data.to_vec();
                                     data_copy.sort_unstable();
                                     black_box(data_copy);
-                                }
+                                },
                             )
-                        },
+                        }
                         _ => {
                             // Default benchmark for other operations
                             benchmark.run_with_data(
@@ -458,7 +467,7 @@ impl AdaptiveSimdSelector {
                                 |data| {
                                     let sum = data.iter().fold(0u64, |acc, &x| acc + x as u64);
                                     black_box(sum);
-                                }
+                                },
                             )
                         }
                     };
@@ -504,19 +513,15 @@ impl AdaptiveSimdSelector {
             Operation::Popcount | Operation::Rank | Operation::Select => {
                 // Sparse data pattern (10-30% density)
                 for i in 0..size {
-                    
-                    
                     let hash = hasher.hash_one(i);
                     if hash % 100 < 20 {
                         data[i] = (hash & 0xFF) as u8;
                     }
                 }
-            },
+            }
             Operation::Search => {
                 // Random data with occasional needle values
                 for i in 0..size {
-                    
-                    
                     let hash = hasher.hash_one(i);
                     data[i] = if hash % 100 < 5 {
                         0x42 // Needle value
@@ -524,15 +529,13 @@ impl AdaptiveSimdSelector {
                         (hash & 0xFF) as u8
                     };
                 }
-            },
+            }
             Operation::Sort => {
                 // Random data for sorting
                 for i in 0..size {
-                    
-                    
                     data[i] = (hasher.hash_one(i) & 0xFF) as u8;
                 }
-            },
+            }
             _ => {
                 // Default: sequential pattern
                 for i in 0..size {
@@ -563,7 +566,10 @@ impl AdaptiveSimdSelector {
     pub fn set_thresholds(&mut self, thresholds: SelectionThresholds) {
         self.thresholds = thresholds;
         // Clear cache when thresholds change
-        self.selection_cache.write().expect("selection_cache lock").clear();
+        self.selection_cache
+            .write()
+            .expect("selection_cache lock")
+            .clear();
     }
 }
 
@@ -627,7 +633,10 @@ mod tests {
         }
 
         // Results may differ based on density
-        println!("Sparse impl: {:?}, Dense impl: {:?}", impl_sparse, impl_dense);
+        println!(
+            "Sparse impl: {:?}, Dense impl: {:?}",
+            impl_sparse, impl_dense
+        );
     }
 
     #[test]
@@ -729,11 +738,31 @@ mod tests {
 
             // Verify benchmark results are valid
             for (op, results) in benchmarks.iter() {
-                assert!(results.samples > 0, "Operation {:?} should have samples", op);
-                assert!(results.throughput > 0.0, "Operation {:?} should have positive throughput", op);
-                assert!(results.median_latency > Duration::ZERO, "Operation {:?} should have positive latency", op);
-                assert!(results.p95_latency >= results.median_latency, "Operation {:?} p95 should be >= median", op);
-                assert!(results.p99_latency >= results.p95_latency, "Operation {:?} p99 should be >= p95", op);
+                assert!(
+                    results.samples > 0,
+                    "Operation {:?} should have samples",
+                    op
+                );
+                assert!(
+                    results.throughput > 0.0,
+                    "Operation {:?} should have positive throughput",
+                    op
+                );
+                assert!(
+                    results.median_latency > Duration::ZERO,
+                    "Operation {:?} should have positive latency",
+                    op
+                );
+                assert!(
+                    results.p95_latency >= results.median_latency,
+                    "Operation {:?} p95 should be >= median",
+                    op
+                );
+                assert!(
+                    results.p99_latency >= results.p95_latency,
+                    "Operation {:?} p99 should be >= p95",
+                    op
+                );
             }
         } else {
             panic!("Failed to read benchmarks");

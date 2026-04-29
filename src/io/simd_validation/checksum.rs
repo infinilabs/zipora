@@ -289,7 +289,7 @@ unsafe fn crc32c_sse42(data: &[u8], mut crc: u32) -> u32 {
     }
 
     // Process 2 bytes with _mm_crc32_u16
-        // SAFETY: We check remaining >= 2, so ptr is valid for 2 bytes
+    // SAFETY: We check remaining >= 2, so ptr is valid for 2 bytes
     if remaining >= 2 {
         // SAFETY: We check remaining >= 2, so this is safe
         let value = unsafe { ptr.cast::<u16>().read_unaligned() };
@@ -299,7 +299,7 @@ unsafe fn crc32c_sse42(data: &[u8], mut crc: u32) -> u32 {
         remaining -= 2;
     }
 
-        // SAFETY: We check remaining == 1, so dereferencing ptr is safe
+    // SAFETY: We check remaining == 1, so dereferencing ptr is safe
     // Process remaining byte with _mm_crc32_u8
     if remaining == 1 {
         // SAFETY: We check remaining == 1, so this is safe
@@ -355,7 +355,7 @@ unsafe fn crc32c_arm(data: &[u8], mut crc: u32) -> u32 {
         ptr = unsafe { ptr.add(2) };
         remaining -= 2;
     }
-        // SAFETY: We check remaining == 1, so dereferencing ptr is safe
+    // SAFETY: We check remaining == 1, so dereferencing ptr is safe
 
     // Process remaining byte with __crc32cb
     if remaining == 1 {
@@ -482,7 +482,9 @@ mod tests {
     #[test]
     fn test_crc32c_different_sizes() {
         // Test various sizes to ensure proper handling
-        for size in [0, 1, 2, 3, 4, 5, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 1023, 1024] {
+        for size in [
+            0, 1, 2, 3, 4, 5, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 1023, 1024,
+        ] {
             let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
             let crc = crc32c_hash(&data).unwrap();
 
@@ -571,8 +573,13 @@ mod benches {
         let bytes_processed = data.len() * iterations;
         let throughput_gbps = (bytes_processed as f64 / elapsed.as_secs_f64()) / 1_000_000_000.0;
 
-        println!("{}: {:.2} GB/s ({} iterations, {} bytes)",
-                 name, throughput_gbps, iterations, data.len());
+        println!(
+            "{}: {:.2} GB/s ({} iterations, {} bytes)",
+            name,
+            throughput_gbps,
+            iterations,
+            data.len()
+        );
     }
 
     #[test]
@@ -632,6 +639,9 @@ mod benches {
         let bytes_processed = data.len() * 100_000;
         let throughput_gbps = (bytes_processed as f64 / elapsed.as_secs_f64()) / 1_000_000_000.0;
 
-        println!("CRC32C SSE4.2 (1 KB): {:.2} GB/s (target: 25 GB/s)", throughput_gbps);
+        println!(
+            "CRC32C SSE4.2 (1 KB): {:.2} GB/s (target: 25 GB/s)",
+            throughput_gbps
+        );
     }
 }
