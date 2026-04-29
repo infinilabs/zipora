@@ -5,7 +5,7 @@
 //! sizes, and configurations.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use zipora::algorithms::suffix_array::{SuffixArray as BaseSuffixArray, SuffixArrayBuilder as BaseBuilder};
+use zipora::algorithms::suffix_array::SuffixArray as BaseSuffixArray;
 use zipora::compression::suffix_array::{SuffixArrayCompressor, SuffixArrayConfig};
 use std::time::Duration;
 

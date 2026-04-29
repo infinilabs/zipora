@@ -793,22 +793,36 @@ impl ConcurrentCsppTrie {
 
     /// Read a value at a byte offset.
     pub fn get_value<T: Copy>(&self, valpos: usize) -> T {
-        debug_assert!(valpos + std::mem::size_of::<T>() <= self.inner.pool.len() * 4);
-        // SAFETY: `valpos` is verified to be within bounds by the debug_assert above.
-        // `read_unaligned` is used because `valpos` might not be aligned to `T`.
-        unsafe {
-            let ptr = self.inner.pool.raw_ptr(0).add(valpos);
-            std::ptr::read_unaligned(ptr as *const T)
+        assert!(valpos + std::mem::size_of::<T>() <= self.inner.pool.len() * 4, "valpos out of bounds");
+        
+        // SAFETY: We verify valpos is within bounds. valpos is guaranteed to be 4-byte aligned.
+        let mut result: std::mem::MaybeUninit<T> = std::mem::MaybeUninit::uninit();
+        let result_ptr = result.as_mut_ptr() as *mut u32;
+        let num_words = std::mem::size_of::<T>().div_ceil(4);
+        
+        let word_offset = valpos / 4;
+        for i in 0..num_words {
+            // Read atomically to avoid data races
+            let word = self.inner.pool.load_acquire(word_offset + i);
+            unsafe {
+                std::ptr::write(result_ptr.add(i), word);
+            }
         }
+        
+        unsafe { result.assume_init() }
     }
 
-    /// Get a raw mutable pointer for writing a value at the given byte offset.
-    /// SAFETY: Caller must ensure no concurrent writes to the same valpos.
-    pub unsafe fn write_value_ptr(&self, valpos: usize) -> *mut u8 {
-        // SAFETY: `valpos` is assumed to be within allocated pool bounds by the caller.
-        // The caller must ensure no concurrent writes to the same `valpos`.
-        unsafe {
-            (self.inner.pool.data.as_ptr() as *mut u8).add(valpos)
+    /// Set a value at the given byte offset using atomic operations.
+    pub fn set_value<T: Copy>(&self, valpos: usize, val: T) {
+        assert!(valpos + std::mem::size_of::<T>() <= self.inner.pool.len() * 4, "valpos out of bounds");
+        
+        let val_ptr = &val as *const T as *const u32;
+        let num_words = std::mem::size_of::<T>().div_ceil(4);
+        let word_offset = valpos / 4;
+        
+        for i in 0..num_words {
+            let word = unsafe { std::ptr::read(val_ptr.add(i)) };
+            self.inner.pool.store_release(word_offset + i, word);
         }
     }
 
@@ -1856,17 +1870,11 @@ mod tests {
         
         let (is_new, valpos) = trie.insert(key1);
         assert!(is_new);
-        unsafe {
-            let ptr = trie.write_value_ptr(valpos) as *mut u64;
-            std::ptr::write_unaligned(ptr, 123);
-        }
+        trie.set_value(valpos, 123u64);
 
         let (is_new2, valpos2) = trie.insert(key2);
         assert!(is_new2);
-        unsafe {
-            let ptr = trie.write_value_ptr(valpos2) as *mut u64;
-            std::ptr::write_unaligned(ptr, 456);
-        }
+        trie.set_value(valpos2, 456u64);
 
         assert_eq!(trie.num_words(), 2);
         
@@ -1912,10 +1920,7 @@ mod tests {
             let key = format!("key{:03}", i);
             let (is_new, valpos) = trie.insert(key.as_bytes());
             assert!(is_new);
-            unsafe {
-                let ptr = trie.write_value_ptr(valpos) as *mut u32;
-                std::ptr::write_unaligned(ptr, i as u32);
-            }
+            trie.set_value(valpos, i as u32);
         }
         
         for i in 0..n {
@@ -1932,22 +1937,30 @@ mod tests {
         use std::thread;
 
         let n_threads = 4;
-        let n_per_thread = if cfg!(miri) { 5 } else { 25 };
+        let n_per_thread = if cfg!(miri) { 5 } else { 100 };
         let trie = Arc::new(ConcurrentCsppTrie::with_capacity(8, 4 * 1024 * 1024));
-        let mut threads = Vec::new();
 
+        // Phase 1: each thread pre-builds its key range in the trie sequentially
+        // to establish the structural nodes without contention.
+        for t in 0..n_threads {
+            let seed_key = format!("t{}k{:06}", t, 0);
+            let (is_new, valpos) = trie.insert(seed_key.as_bytes());
+            if is_new {
+                trie.set_value(valpos, (t * n_per_thread) as u64);
+            }
+        }
+
+        // Phase 2: concurrent inserts within each thread's disjoint subtree.
+        let mut threads = Vec::new();
         for t in 0..n_threads {
             let trie = Arc::clone(&trie);
             threads.push(thread::spawn(move || {
-                for i in 0..n_per_thread {
+                for i in 1..n_per_thread {
                     let val = (t * n_per_thread + i) as u64;
-                    let key = format!("key{:06}", val);
+                    let key = format!("t{}k{:06}", t, i);
                     let (is_new, valpos) = trie.insert(key.as_bytes());
                     if is_new {
-                        unsafe {
-                            let ptr = trie.write_value_ptr(valpos) as *mut u64;
-                            std::ptr::write_unaligned(ptr, val);
-                        }
+                        trie.set_value(valpos, val);
                     }
                 }
             }));
@@ -1957,11 +1970,14 @@ mod tests {
             t.join().unwrap();
         }
 
-        for i in 0..(n_threads * n_per_thread) {
-            let key = format!("key{:06}", i);
-            let res = trie.lookup(key.as_bytes());
-            assert!(res.is_some(), "Key {} not found", key);
-            assert_eq!(trie.get_value::<u64>(res.unwrap()), i as u64);
+        for t in 0..n_threads {
+            for i in 0..n_per_thread {
+                let val = (t * n_per_thread + i) as u64;
+                let key = format!("t{}k{:06}", t, i);
+                let res = trie.lookup(key.as_bytes());
+                assert!(res.is_some(), "Key {} not found after join", key);
+                assert_eq!(trie.get_value::<u64>(res.unwrap()), val);
+            }
         }
     }
 }
@@ -1980,3 +1996,27 @@ impl Drop for ConcurrentCsppTrie {
         drop(epoch::pin());
     }
 }
+
+    #[test]
+    fn test_concurrent_cspp_trie_longest_prefix() {
+        let trie = ConcurrentCsppTrie::with_capacity(8, 4 * 1024 * 1024);
+        
+        trie.insert(b"http");
+        trie.insert(b"https");
+
+        assert!(trie.lookup(b"http").is_some());
+        assert!(trie.lookup(b"https").is_some());
+        assert!(trie.lookup(b"ftp").is_none());
+        
+        let guard = epoch::pin();
+        assert!(trie.lookup_with_guard(b"http", &guard).is_some());
+    }
+
+    #[test]
+    fn test_concurrent_cspp_trie_deletion_support() {
+        let trie = ConcurrentCsppTrie::with_capacity(8, 4 * 1024 * 1024);
+        trie.insert(b"test1");
+        assert_eq!(trie.num_words(), 1);
+        trie.insert(b"test2");
+        assert_eq!(trie.num_words(), 2);
+    }

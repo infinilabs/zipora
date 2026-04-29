@@ -2,7 +2,6 @@
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use zipora::{BitVector, RankSelect256, RankSelectPerformanceOps};
-use zipora::system::CpuFeatures;
 use zipora::succinct::rank_select::RankSelectOps;
 
 fn create_test_bitvector(size: usize, density: f64) -> BitVector {

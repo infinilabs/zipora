@@ -709,9 +709,9 @@ mod tests {
         }
 
         // Test select operations consistency
-        let ones1 = rs1.count_ones();
-        let ones2 = rs2.count_ones();
-        let ones3 = rs3.count_ones();
+        let _ones1 = rs1.count_ones();
+        let _ones2 = rs2.count_ones();
+        let _ones3 = rs3.count_ones();
 
         for rs in [&rs1, &rs2, &rs3] {
             let ones = rs.count_ones();

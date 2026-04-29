@@ -1873,20 +1873,18 @@ impl ContextualHuffmanDecoder {
             return Ok(Vec::new());
         }
 
-        let mut result = Vec::with_capacity(output_length);
-
-        match self.encoder.order {
+        let result = match self.encoder.order {
             HuffmanOrder::Order0 => {
                 let tree = &self.encoder.trees[0];
-                result = self.decode_order0(encoded_data, tree, output_length)?;
+                self.decode_order0(encoded_data, tree, output_length)?
             }
             HuffmanOrder::Order1 => {
-                result = self.decode_order1(encoded_data, output_length)?;
+                self.decode_order1(encoded_data, output_length)?
             }
             HuffmanOrder::Order2 => {
-                result = self.decode_order2(encoded_data, output_length)?;
+                self.decode_order2(encoded_data, output_length)?
             }
-        }
+        };
 
         if result.len() != output_length {
             return Err(ZiporaError::invalid_data(format!(

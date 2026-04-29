@@ -358,3 +358,15 @@ impl SingleLruPageCache {
         &self.config
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_page_cache_initialization() {
+        let cache = PageCache::new(4, 1024).unwrap();
+        assert_eq!(cache.stats().capacity_pages, 4);
+        assert_eq!(cache.stats().page_size, 1024);
+        assert_eq!(cache.stats().used_pages, 0);
+    }
+}

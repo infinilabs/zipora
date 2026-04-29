@@ -611,8 +611,8 @@ mod tests {
         
         // Note: Since we're returning by value, we need to use set() to persist changes
         // Let's modify this test to use set() properly
-        let test_data1 = TestData { value: 11, name: "owner1".to_string() };
-        let test_data2 = TestData { value: 22, name: "owner2".to_string() };
+        let _test_data1 = TestData { value: 11, name: "owner1".to_string() };
+        let _test_data2 = TestData { value: 22, name: "owner2".to_string() };
         
         // We need to access the instances to call set() on them
         // For this test, let's verify that different owners get different instances

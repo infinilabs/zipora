@@ -1,10 +1,18 @@
-
 /// Comprehensive performance test suite for entropy algorithms
 /// Only runs in release mode to ensure accurate performance measurements
 
 #[cfg(not(debug_assertions))]
 mod performance_tests {
-    use super::*;
+    use std::time::Instant;
+    use zipora::Result;
+    use zipora::entropy::{
+        HuffmanEncoder, ContextualHuffmanEncoder, HuffmanOrder,
+        Rans64Encoder, ParallelX1, ParallelX2, ParallelX4,
+        FseEncoder, FseConfig,
+        ParallelHuffmanEncoder, ParallelX4Variant, ParallelConfig,
+        AdaptiveParallelEncoder,
+        BitOps, EntropyBitOps, EntropyContext,
+    };
 
     fn generate_test_datasets() -> Vec<(&'static str, Vec<u8>)> {
         vec![

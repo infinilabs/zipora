@@ -428,7 +428,7 @@ impl CsppTrie {
     }
 
     #[inline]
-    pub fn node_view(&self, pos: u32) -> NodeView {
+    pub fn node_view(&self, pos: u32) -> NodeView<'_> {
         NodeView::new(&self.mempool, pos)
     }
 
@@ -448,6 +448,15 @@ impl CsppTrie {
         unsafe {
             let ptr = self.mempool.as_ptr() as *const u8;
             std::ptr::read_unaligned(ptr.add(valpos) as *const T)
+        }
+    }
+
+    #[inline]
+    pub fn set_value<T: Copy>(&mut self, valpos: usize, val: T) {
+        debug_assert!(valpos + std::mem::size_of::<T>() <= self.mempool.len() * 4);
+        unsafe {
+            let ptr = self.mempool.as_mut_ptr() as *mut u8;
+            std::ptr::write_unaligned(ptr.add(valpos) as *mut T, val);
         }
     }
 
@@ -1470,5 +1479,413 @@ impl<'a, T: Copy> CsppTrieIterator<'a, T> {
         let top = self.stack.last().unwrap();
         let view = self.trie.node_view(top.state);
         self.trie.get_value(view.valpos())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fsa::traits::Trie;
+
+    #[test]
+    fn test_cspp_trie_basic_insertion_and_lookup() {
+        let mut trie = CsppTrie::new(16);
+        assert_eq!(trie.num_words(), 0);
+
+        let key1 = b"apple";
+        let key2 = b"application";
+        let key3 = b"banana";
+
+        trie.insert(key1);
+        trie.insert(key2);
+        trie.insert(key3);
+
+        assert_eq!(trie.num_words(), 3);
+
+        assert!(trie.contains(key1));
+        assert!(trie.contains(key2));
+        assert!(trie.contains(key3));
+        assert!(!trie.contains(b"app"));
+        assert!(!trie.contains(b"bananas"));
+    }
+
+    #[test]
+    fn test_cspp_trie_large_dataset() {
+        let mut trie = CsppTrie::new(16);
+        for i in 0..1000 {
+            let key = format!("key{:05}", i);
+            trie.insert(key.as_bytes());
+        }
+
+        assert_eq!(trie.num_words(), 1000);
+        for i in 0..1000 {
+            let key = format!("key{:05}", i);
+            assert!(trie.contains(key.as_bytes()));
+        }
+        assert!(!trie.contains(b"key10000"));
+    }
+
+    // ========== Core Operations Tests ==========
+
+    #[test]
+    fn test_empty_trie_state() {
+        let trie = CsppTrie::new(0);
+        assert_eq!(trie.num_words(), 0);
+        assert!(trie.total_states() >= 1, "root node should exist");
+        assert!(!trie.contains(b"anything"));
+    }
+
+    #[test]
+    fn test_single_key_insert_lookup() {
+        let mut trie = CsppTrie::new(0);
+        let key = b"hello";
+        let (is_new, _valpos) = trie.insert(key);
+        assert!(is_new);
+        assert_eq!(trie.num_words(), 1);
+        assert!(trie.lookup(key).is_some());
+        assert!(trie.contains(key));
+    }
+
+    #[test]
+    fn test_duplicate_insert_returns_same_valpos() {
+        let mut trie = CsppTrie::new(4);
+        let key = b"duplicate";
+        let (is_new1, valpos1) = trie.insert(key);
+        assert!(is_new1);
+        let (is_new2, valpos2) = trie.insert(key);
+        assert!(!is_new2, "second insert should not be new");
+        assert_eq!(valpos1, valpos2, "valpos should be identical");
+        assert_eq!(trie.num_words(), 1, "word count should not increase");
+    }
+
+    #[test]
+    fn test_empty_key_insertion() {
+        let mut trie = CsppTrie::new(0);
+        let (is_new, _valpos) = trie.insert(b"");
+        assert!(is_new);
+        assert_eq!(trie.num_words(), 1);
+        assert!(trie.contains(b""));
+        assert!(!trie.contains(b"x"));
+    }
+
+    #[test]
+    fn test_prefix_keys() {
+        let mut trie = CsppTrie::new(0);
+        trie.insert(b"a");
+        trie.insert(b"ab");
+        trie.insert(b"abc");
+
+        assert_eq!(trie.num_words(), 3);
+        assert!(trie.contains(b"a"));
+        assert!(trie.contains(b"ab"));
+        assert!(trie.contains(b"abc"));
+        assert!(!trie.contains(b"abcd"));
+    }
+
+    #[test]
+    fn test_shared_prefix_keys() {
+        let mut trie = CsppTrie::new(0);
+        trie.insert(b"apple");
+        trie.insert(b"application");
+        trie.insert(b"app");
+
+        assert_eq!(trie.num_words(), 3);
+        assert!(trie.contains(b"apple"));
+        assert!(trie.contains(b"application"));
+        assert!(trie.contains(b"app"));
+        assert!(!trie.contains(b"appl"));
+    }
+
+    #[test]
+    fn test_diverging_keys() {
+        let mut trie = CsppTrie::new(0);
+        trie.insert(b"cat");
+        trie.insert(b"car");
+        trie.insert(b"cab");
+
+        assert_eq!(trie.num_words(), 3);
+        assert!(trie.contains(b"cat"));
+        assert!(trie.contains(b"car"));
+        assert!(trie.contains(b"cab"));
+        assert!(!trie.contains(b"ca"));
+        assert!(!trie.contains(b"can"));
+    }
+
+    #[test]
+    fn test_contains_method() {
+        let mut trie = CsppTrie::new(0);
+        let keys = [b"foo", b"bar", b"baz"];
+        for &key in &keys {
+            trie.insert(key);
+        }
+
+        for &key in &keys {
+            assert!(trie.contains(key), "should contain inserted key");
+        }
+        assert!(!trie.contains(b"missing"), "should not contain missing key");
+        assert!(!trie.contains(b"fo"), "should not contain prefix");
+        assert!(!trie.contains(b"foobar"), "should not contain extension");
+    }
+
+    // ========== Value Storage Tests ==========
+
+    #[test]
+    fn test_value_u32() {
+        let mut trie = CsppTrie::new(4);
+        let key = b"test";
+        let (is_new, valpos) = trie.insert(key);
+        assert!(is_new);
+
+        let value = 0x12345678u32;
+        trie.set_value(valpos, value);
+        let retrieved: u32 = trie.get_value(valpos);
+        assert_eq!(retrieved, value);
+    }
+
+    #[test]
+    fn test_value_u64() {
+        let mut trie = CsppTrie::new(8);
+        let key = b"test64";
+        let (is_new, valpos) = trie.insert(key);
+        assert!(is_new);
+
+        let value = 0x123456789ABCDEF0u64;
+        trie.set_value(valpos, value);
+        let retrieved: u64 = trie.get_value(valpos);
+        assert_eq!(retrieved, value);
+    }
+
+    #[test]
+    fn test_valsize_zero() {
+        let mut trie = CsppTrie::new(0);
+        trie.insert(b"key1");
+        trie.insert(b"key2");
+        trie.insert(b"key3");
+
+        assert_eq!(trie.num_words(), 3);
+        assert!(trie.lookup(b"key1").is_some());
+        assert!(trie.lookup(b"key2").is_some());
+        assert!(trie.lookup(b"key3").is_some());
+    }
+
+    // ========== Node Type Transition Tests ==========
+
+    #[test]
+    fn test_cnt_type_growth() {
+        let mut trie = CsppTrie::new(0);
+        // Insert keys forcing cnt_type transitions: 0 -> 1 -> 2 -> ... -> 8
+        for i in 0u8..17 {
+            let key = [b'x', i];
+            trie.insert(&key);
+        }
+        assert_eq!(trie.num_words(), 17);
+        for i in 0u8..17 {
+            let key = [b'x', i];
+            assert!(trie.contains(&key));
+        }
+    }
+
+    #[test]
+    fn test_bitmap_node_17_children() {
+        let mut trie = CsppTrie::new(0);
+        // 17 children forces cnt_type 8 (bitmap)
+        for i in 0u8..17 {
+            let key = [i];
+            trie.insert(&key);
+        }
+        assert_eq!(trie.num_words(), 17);
+        for i in 0u8..17 {
+            assert!(trie.contains(&[i]));
+        }
+    }
+
+    #[test]
+    fn test_many_children_single_parent() {
+        let mut trie = CsppTrie::new(0);
+        // Insert all 256 single-byte keys (forces fast node at root)
+        for i in 0u8..=255 {
+            trie.insert(&[i]);
+        }
+        assert_eq!(trie.num_words(), 256);
+        for i in 0u8..=255 {
+            assert!(trie.contains(&[i]));
+        }
+    }
+
+    #[test]
+    fn test_mixed_depth_keys() {
+        let mut trie = CsppTrie::new(0);
+        trie.insert(b"a");
+        trie.insert(b"ab");
+        trie.insert(b"abc");
+        trie.insert(b"abcd");
+        trie.insert(b"abcde");
+        trie.insert(b"b");
+        trie.insert(b"bc");
+
+        assert_eq!(trie.num_words(), 7);
+        assert!(trie.contains(b"a"));
+        assert!(trie.contains(b"ab"));
+        assert!(trie.contains(b"abc"));
+        assert!(trie.contains(b"abcd"));
+        assert!(trie.contains(b"abcde"));
+        assert!(trie.contains(b"b"));
+        assert!(trie.contains(b"bc"));
+    }
+
+    // ========== Zpath Operations Tests ==========
+
+    #[test]
+    fn test_long_common_prefix() {
+        let mut trie = CsppTrie::new(0);
+        let mut key1 = vec![b'a'; 200];
+        key1.push(b'x');
+        let mut key2 = vec![b'a'; 200];
+        key2.push(b'y');
+
+        trie.insert(&key1);
+        trie.insert(&key2);
+
+        assert_eq!(trie.num_words(), 2);
+        assert!(trie.contains(&key1));
+        assert!(trie.contains(&key2));
+    }
+
+    #[test]
+    fn test_max_zpath_boundary() {
+        let mut trie = CsppTrie::new(0);
+        let key = vec![b'z'; 254];
+        trie.insert(&key);
+
+        assert_eq!(trie.num_words(), 1);
+        assert!(trie.contains(&key));
+    }
+
+    #[test]
+    fn test_very_long_key() {
+        let mut trie = CsppTrie::new(0);
+        let key = vec![b'm'; 1000];
+        trie.insert(&key);
+
+        assert_eq!(trie.num_words(), 1);
+        assert!(trie.contains(&key));
+        assert!(!trie.contains(&key[..999]));
+    }
+
+    // ========== Memory Management Tests ==========
+
+    #[test]
+    fn test_mem_stat_after_inserts() {
+        let mut trie = CsppTrie::new(4);
+        for i in 0..100 {
+            let key = format!("key{:03}", i);
+            trie.insert(key.as_bytes());
+        }
+
+        let stat = trie.mem_get_stat();
+        assert!(stat.used_size > 0, "used_size should be non-zero");
+        assert!(stat.capacity >= stat.used_size, "capacity should be >= used_size");
+    }
+
+    #[test]
+    fn test_mem_frag_size() {
+        let trie = CsppTrie::new(0);
+        let frag = trie.mem_frag_size();
+        assert_eq!(frag, 0, "new trie should have zero fragmentation");
+    }
+
+    #[test]
+    fn test_lazy_free_and_reclaim() {
+        let mut trie = CsppTrie::new(4);
+        trie.insert(b"test");
+
+        // Defer freeing a small node (1 slot = 4 bytes)
+        trie.free_node_deferred_pub(10, 4);
+
+        let stat_before = trie.mem_get_stat();
+        assert_eq!(stat_before.lazy_free_cnt, 1);
+        assert_eq!(stat_before.lazy_free_sum, 4);
+
+        // Reclaim lazy frees
+        trie.reclaim_lazy_frees();
+
+        let stat_after = trie.mem_get_stat();
+        assert_eq!(stat_after.lazy_free_cnt, 0);
+        assert_eq!(stat_after.lazy_free_sum, 0);
+    }
+
+    // ========== Iterator Tests ==========
+
+    #[test]
+    fn test_iterator_empty() {
+        let trie = CsppTrie::new(0);
+        let mut iter = CsppTrieIterator::<u32>::new(&trie);
+        assert!(!iter.seek_begin(), "seek_begin on empty trie should return false");
+    }
+
+    #[test]
+    fn test_iterator_sorted_order() {
+        let mut trie = CsppTrie::new(0);
+        let keys = [b"dog".as_slice(), b"cat", b"bird", b"ant", b"elephant"];
+        for &key in &keys {
+            trie.insert(key);
+        }
+
+        let mut iter = CsppTrieIterator::<u32>::new(&trie);
+        let mut words = Vec::new();
+        if iter.seek_begin() {
+            words.push(iter.word().to_vec());
+            while iter.incr() {
+                words.push(iter.word().to_vec());
+            }
+        }
+
+        // Should be in lexicographic order
+        let mut expected: Vec<Vec<u8>> = keys.iter().map(|k| k.to_vec()).collect();
+        expected.sort();
+        assert_eq!(words, expected);
+    }
+
+    #[test]
+    fn test_iterator_all_words() {
+        let mut trie = CsppTrie::new(0);
+        let n = 20;
+        for i in 0..n {
+            let key = format!("key{:02}", i);
+            trie.insert(key.as_bytes());
+        }
+
+        let mut iter = CsppTrieIterator::<u32>::new(&trie);
+        let mut count = 0;
+        if iter.seek_begin() {
+            count = 1;
+            while iter.incr() {
+                count += 1;
+            }
+        }
+
+        assert_eq!(count, n, "iterator should visit all words");
+    }
+
+    #[test]
+    fn test_iterator_word_reconstruction() {
+        let mut trie = CsppTrie::new(0);
+        let keys = [b"hello".as_slice(), b"world".as_slice(), b"test".as_slice()];
+        for &key in &keys {
+            trie.insert(key);
+        }
+
+        let mut iter = CsppTrieIterator::<u32>::new(&trie);
+        let mut found_keys = Vec::new();
+        if iter.seek_begin() {
+            found_keys.push(iter.word().to_vec());
+            while iter.incr() {
+                found_keys.push(iter.word().to_vec());
+            }
+        }
+
+        for key in &keys {
+            assert!(found_keys.contains(&key.to_vec()), "iterator should reconstruct key {:?}", key);
+        }
     }
 }

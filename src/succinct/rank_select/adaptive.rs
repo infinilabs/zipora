@@ -1089,7 +1089,7 @@ mod tests {
         };
         
         let profile = AdaptiveRankSelect::analyze_data(&clustered_bv, &criteria);
-        let (adaptive_sparse, adaptive_dense) = AdaptiveRankSelect::tune_thresholds(&profile, &criteria);
+        let (adaptive_sparse, _adaptive_dense) = AdaptiveRankSelect::tune_thresholds(&profile, &criteria);
         
         // Adaptive thresholds should be different from defaults for clustered data
         assert!(profile.clustering_coefficient > 0.5);
