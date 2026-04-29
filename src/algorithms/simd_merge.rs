@@ -58,14 +58,18 @@ impl SimdComparator {
     pub fn compare_i32_slices(&self, left: &[i32], right: &[i32]) -> Result<Vec<Ordering>> {
         if left.len() != right.len() {
             return Err(ZiporaError::invalid_parameter(
-                "Input slices must have equal length"
+                "Input slices must have equal length",
             ));
         }
 
         if self.config.use_avx2 && left.len() >= self.config.min_vector_size {
             self.compare_i32_simd(left, right)
         } else {
-            Ok(left.iter().zip(right.iter()).map(|(a, b)| a.cmp(b)).collect())
+            Ok(left
+                .iter()
+                .zip(right.iter())
+                .map(|(a, b)| a.cmp(b))
+                .collect())
         }
     }
 
@@ -73,7 +77,11 @@ impl SimdComparator {
     #[cfg(target_arch = "x86_64")]
     fn compare_i32_simd(&self, left: &[i32], right: &[i32]) -> Result<Vec<Ordering>> {
         if !is_x86_feature_detected!("avx2") {
-            return Ok(left.iter().zip(right.iter()).map(|(a, b)| a.cmp(b)).collect());
+            return Ok(left
+                .iter()
+                .zip(right.iter())
+                .map(|(a, b)| a.cmp(b))
+                .collect());
         }
 
         let mut results = Vec::with_capacity(left.len());
@@ -82,14 +90,16 @@ impl SimdComparator {
         // SAFETY: AVX2 feature detected at runtime, all pointer arithmetic bounds-checked below
         unsafe {
             let mut i = 0;
-            
+
             // Process chunks of 8 elements with AVX2
             while i + chunk_size <= left.len() {
                 let left_ptr = left.as_ptr().add(i);
                 let right_ptr = right.as_ptr().add(i);
 
                 // Prefetch next chunk if configured
-                if self.config.prefetch_distance > 0 && i + chunk_size * self.config.prefetch_distance < left.len() {
+                if self.config.prefetch_distance > 0
+                    && i + chunk_size * self.config.prefetch_distance < left.len()
+                {
                     let prefetch_left = left_ptr.add(chunk_size * self.config.prefetch_distance);
                     let prefetch_right = right_ptr.add(chunk_size * self.config.prefetch_distance);
                     _mm_prefetch(prefetch_left as *const i8, _MM_HINT_T0);
@@ -121,7 +131,7 @@ impl SimdComparator {
                     } else {
                         Ordering::Less
                     };
-                    
+
                     results.push(ordering);
                 }
 
@@ -141,7 +151,11 @@ impl SimdComparator {
     /// Fallback implementation for non-x86_64 architectures
     #[cfg(not(target_arch = "x86_64"))]
     fn compare_i32_simd(&self, left: &[i32], right: &[i32]) -> Result<Vec<Ordering>> {
-        Ok(left.iter().zip(right.iter()).map(|(a, b)| a.cmp(b)).collect())
+        Ok(left
+            .iter()
+            .zip(right.iter())
+            .map(|(a, b)| a.cmp(b))
+            .collect())
     }
 
     /// Find minimum value in an array using SIMD
@@ -153,7 +167,11 @@ impl SimdComparator {
         if self.config.use_avx2 && values.len() >= self.config.min_vector_size {
             self.find_min_i32_simd(values)
         } else {
-            values.iter().enumerate().min_by_key(|(_, val)| *val).map(|(idx, val)| (idx, *val))
+            values
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, val)| *val)
+                .map(|(idx, val)| (idx, *val))
         }
     }
 
@@ -161,7 +179,11 @@ impl SimdComparator {
     #[cfg(target_arch = "x86_64")]
     fn find_min_i32_simd(&self, values: &[i32]) -> Option<(usize, i32)> {
         if !is_x86_feature_detected!("avx2") || values.is_empty() {
-            return values.iter().enumerate().min_by_key(|(_, val)| *val).map(|(idx, val)| (idx, *val));
+            return values
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, val)| *val)
+                .map(|(idx, val)| (idx, *val));
         }
 
         // SAFETY: AVX2 feature detected at runtime, pointer arithmetic bounds-checked before AVX2 intrinsics
@@ -208,7 +230,11 @@ impl SimdComparator {
     /// Fallback implementation for non-x86_64 architectures
     #[cfg(not(target_arch = "x86_64"))]
     fn find_min_i32_simd(&self, values: &[i32]) -> Option<(usize, i32)> {
-        values.iter().enumerate().min_by_key(|(_, val)| *val).map(|(idx, val)| (idx, *val))
+        values
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, val)| *val)
+            .map(|(idx, val)| (idx, *val))
     }
 
     /// Merge two sorted i32 arrays using SIMD optimizations
@@ -366,23 +392,26 @@ impl SimdOperations {
     /// Parallel comparison of multiple value pairs
     pub fn parallel_compare_i32(pairs: &[(i32, i32)]) -> Vec<Ordering> {
         let comparator = SimdComparator::new();
-        
+
         if pairs.is_empty() {
             return Vec::new();
         }
 
         let (left, right): (Vec<i32>, Vec<i32>) = pairs.iter().copied().unzip();
-        
-        comparator.compare_i32_slices(&left, &right).unwrap_or_else(|_| {
-            pairs.iter().map(|(a, b)| a.cmp(b)).collect()
-        })
+
+        comparator
+            .compare_i32_slices(&left, &right)
+            .unwrap_or_else(|_| pairs.iter().map(|(a, b)| a.cmp(b)).collect())
     }
 
     /// Find indices of minimum values in multiple arrays
     pub fn find_multiple_mins(arrays: &[&[i32]]) -> Vec<Option<(usize, i32)>> {
         let comparator = SimdComparator::new();
-        
-        arrays.iter().map(|arr| comparator.find_min_i32(arr)).collect()
+
+        arrays
+            .iter()
+            .map(|arr| comparator.find_min_i32(arr))
+            .collect()
     }
 
     /// Merge multiple sorted arrays using SIMD optimizations
@@ -397,31 +426,40 @@ impl SimdOperations {
         }
 
         let comparator = SimdComparator::new();
-        
+
         // Binary merge tree approach
         let mut current_arrays = arrays;
-        
+
         while current_arrays.len() > 1 {
             let mut next_arrays = Vec::new();
-            
+
             let mut i = 0;
             while i + 1 < current_arrays.len() {
-                let merged = comparator.merge_sorted_i32(&current_arrays[i], &current_arrays[i + 1]);
+                let merged =
+                    comparator.merge_sorted_i32(&current_arrays[i], &current_arrays[i + 1]);
                 next_arrays.push(merged);
                 i += 2;
             }
-            
+
             // Handle odd number of arrays
             if i < current_arrays.len() {
                 // SAFETY: i < current_arrays.len() check above guarantees nth(i) succeeds
-                next_arrays.push(current_arrays.into_iter().nth(i).expect("valid merge index"));
+                next_arrays.push(
+                    current_arrays
+                        .into_iter()
+                        .nth(i)
+                        .expect("valid merge index"),
+                );
             }
 
             current_arrays = next_arrays;
         }
 
         // SAFETY: After while loop, len() <= 1. Empty case returned early at line 382-384, so len() == 1
-        current_arrays.into_iter().next().expect("single remaining array")
+        current_arrays
+            .into_iter()
+            .next()
+            .expect("single remaining array")
     }
 }
 
@@ -438,28 +476,31 @@ mod tests {
     #[test]
     fn test_compare_i32_slices() {
         let comparator = SimdComparator::new();
-        
+
         let left = vec![1, 5, 3, 8, 2];
         let right = vec![2, 4, 3, 6, 1];
-        
+
         let result = comparator.compare_i32_slices(&left, &right).unwrap();
-        
-        assert_eq!(result, vec![
-            Ordering::Less,    // 1 < 2
-            Ordering::Greater, // 5 > 4
-            Ordering::Equal,   // 3 == 3
-            Ordering::Greater, // 8 > 6
-            Ordering::Greater, // 2 > 1
-        ]);
+
+        assert_eq!(
+            result,
+            vec![
+                Ordering::Less,    // 1 < 2
+                Ordering::Greater, // 5 > 4
+                Ordering::Equal,   // 3 == 3
+                Ordering::Greater, // 8 > 6
+                Ordering::Greater, // 2 > 1
+            ]
+        );
     }
 
     #[test]
     fn test_find_min_i32() {
         let comparator = SimdComparator::new();
-        
+
         let values = vec![5, 2, 8, 1, 9, 3];
         let result = comparator.find_min_i32(&values).unwrap();
-        
+
         assert_eq!(result, (3, 1));
     }
 
@@ -473,10 +514,10 @@ mod tests {
     #[test]
     fn test_merge_sorted_i32() {
         let comparator = SimdComparator::new();
-        
+
         let left = vec![1, 3, 5, 7];
         let right = vec![2, 4, 6, 8];
-        
+
         let result = comparator.merge_sorted_i32(&left, &right);
         assert_eq!(result, vec![1, 2, 3, 4, 5, 6, 7, 8]);
     }
@@ -484,10 +525,10 @@ mod tests {
     #[test]
     fn test_merge_uneven_arrays() {
         let comparator = SimdComparator::new();
-        
+
         let left = vec![1, 5, 9];
         let right = vec![2, 3, 4, 6, 7, 8];
-        
+
         let result = comparator.merge_sorted_i32(&left, &right);
         assert_eq!(result, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
     }
@@ -496,13 +537,16 @@ mod tests {
     fn test_parallel_compare() {
         let pairs = vec![(1, 2), (5, 3), (4, 4), (9, 7)];
         let result = SimdOperations::parallel_compare_i32(&pairs);
-        
-        assert_eq!(result, vec![
-            Ordering::Less,
-            Ordering::Greater,
-            Ordering::Equal,
-            Ordering::Greater,
-        ]);
+
+        assert_eq!(
+            result,
+            vec![
+                Ordering::Less,
+                Ordering::Greater,
+                Ordering::Equal,
+                Ordering::Greater,
+            ]
+        );
     }
 
     #[test]
@@ -510,25 +554,17 @@ mod tests {
         let arr1 = vec![5, 2, 8, 1];
         let arr2 = vec![9, 3, 7, 4];
         let arr3 = vec![6];
-        
+
         let arrays = vec![&arr1[..], &arr2[..], &arr3[..]];
         let result = SimdOperations::find_multiple_mins(&arrays);
-        
-        assert_eq!(result, vec![
-            Some((3, 1)),
-            Some((1, 3)),
-            Some((0, 6)),
-        ]);
+
+        assert_eq!(result, vec![Some((3, 1)), Some((1, 3)), Some((0, 6)),]);
     }
 
     #[test]
     fn test_merge_multiple_sorted() {
-        let arrays = vec![
-            vec![1, 4, 7],
-            vec![2, 5, 8],
-            vec![3, 6, 9],
-        ];
-        
+        let arrays = vec![vec![1, 4, 7], vec![2, 5, 8], vec![3, 6, 9]];
+
         let result = SimdOperations::merge_multiple_sorted(arrays);
         assert_eq!(result, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
     }
@@ -543,10 +579,10 @@ mod tests {
     #[test]
     fn test_mismatched_slice_lengths() {
         let comparator = SimdComparator::new();
-        
+
         let left = vec![1, 2, 3];
         let right = vec![1, 2];
-        
+
         let result = comparator.compare_i32_slices(&left, &right);
         assert!(result.is_err());
     }
@@ -555,14 +591,14 @@ mod tests {
     fn test_large_array_simd_path() {
         let mut config = SimdConfig::default();
         config.min_vector_size = 4; // Lower threshold for testing
-        
+
         let comparator = SimdComparator::with_config(config);
-        
+
         let left: Vec<i32> = (0..16).collect();
         let right: Vec<i32> = (1..17).collect();
-        
+
         let result = comparator.compare_i32_slices(&left, &right).unwrap();
-        
+
         // All should be Less since left[i] < right[i] for all i
         assert!(result.iter().all(|&ord| ord == Ordering::Less));
         assert_eq!(result.len(), 16);

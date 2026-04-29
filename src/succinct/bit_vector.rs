@@ -108,7 +108,9 @@ impl BitVector {
         if raw_bits.len() < required_blocks {
             return Err(ZiporaError::invalid_data(format!(
                 "Insufficient raw bits: need {} blocks for {} bits, got {}",
-                required_blocks, total_bits, raw_bits.len()
+                required_blocks,
+                total_bits,
+                raw_bits.len()
             )));
         }
 
@@ -215,7 +217,7 @@ impl BitVector {
         let block_index = index / BITS_PER_BLOCK;
         let bit_index = index % BITS_PER_BLOCK;
 
-// SAFETY: Caller must ensure index < self.len()
+        // SAFETY: Caller must ensure index < self.len()
 
         (unsafe { self.blocks.get_unchecked(block_index) } >> bit_index) & 1 == 1
     }
@@ -370,7 +372,8 @@ impl BitVector {
                     (self.len..=i).all(|j| {
                         let block_idx = j / BITS_PER_BLOCK;
                         let bit_idx = j % BITS_PER_BLOCK;
-                        block_idx >= self.blocks.len() || (self.blocks[block_idx] >> bit_idx) & 1 == 0
+                        block_idx >= self.blocks.len()
+                            || (self.blocks[block_idx] >> bit_idx) & 1 == 0
                     }),
                     "fast_ensure_set1 invariant violated: unused bits must be 0"
                 );
@@ -648,7 +651,7 @@ impl BitVector {
     pub unsafe fn set_bit_unchecked(&mut self, index: usize) {
         debug_assert!(index < self.len);
         let block_index = index >> 6; // / 64
-        let bit_index = index & 63;   // % 64
+        let bit_index = index & 63; // % 64
         // SAFETY: index < len guarantees block_index < blocks.len()
         unsafe {
             *self.blocks.get_unchecked_mut(block_index) |= 1u64 << bit_index;
@@ -686,7 +689,9 @@ impl BitVector {
             let w = idx as usize >> 6;
             let b = idx as usize & 63;
             // SAFETY: caller guarantees all indices < self.len()
-            unsafe { *blocks.get_unchecked_mut(w) |= 1u64 << b; }
+            unsafe {
+                *blocks.get_unchecked_mut(w) |= 1u64 << b;
+            }
         }
     }
 
@@ -712,7 +717,9 @@ impl BitVector {
     /// For true O(1) per-query rank with precomputed indices, use
     /// `AdaptiveRankSelect` from `src/succinct/`.
     pub fn rank1_bulk(&self, positions: &[usize]) -> Vec<usize> {
-        if positions.is_empty() { return Vec::new(); }
+        if positions.is_empty() {
+            return Vec::new();
+        }
 
         // Check if positions are sorted — enables single-pass optimization
         let sorted = positions.windows(2).all(|w| w[0] <= w[1]);
@@ -771,20 +778,26 @@ impl BitVector {
         if start > end || end > self.len {
             return Err(ZiporaError::out_of_bounds(end, self.len));
         }
-        if start == end { return Ok(()); }
+        if start == end {
+            return Ok(());
+        }
 
         let start_block = start / BITS_PER_BLOCK;
         let end_block = (end - 1) / BITS_PER_BLOCK;
 
         for block_idx in start_block..=end_block {
-            if block_idx >= self.blocks.len() { break; }
+            if block_idx >= self.blocks.len() {
+                break;
+            }
 
             let block_start = block_idx * BITS_PER_BLOCK;
             let block_end = ((block_idx + 1) * BITS_PER_BLOCK).min(end);
             let range_start = start.max(block_start);
             let range_end = end.min(block_end);
 
-            if range_start >= range_end { continue; }
+            if range_start >= range_end {
+                continue;
+            }
 
             let start_bit = range_start - block_start;
             let end_bit = range_end - block_start;
@@ -998,7 +1011,15 @@ impl fmt::Debug for BitVector {
         write!(f, "BitVector {{ len: {}, bits: [", self.len)?;
         for i in 0..self.len.min(64) {
             // SAFETY: Loop bounds are 0..self.len.min(64), so i < self.len always.
-            write!(f, "{}", if self.get(i).expect("index within bitvector length") { '1' } else { '0' })?;
+            write!(
+                f,
+                "{}",
+                if self.get(i).expect("index within bitvector length") {
+                    '1'
+                } else {
+                    '0'
+                }
+            )?;
         }
         if self.len > 64 {
             write!(f, "...")?;
@@ -1522,7 +1543,12 @@ mod tests {
 
         assert_eq!(bv.count_ones(), 7);
         for &doc_id in &doc_ids {
-            assert_eq!(bv.get(doc_id as usize), Some(true), "bit {} should be set", doc_id);
+            assert_eq!(
+                bv.get(doc_id as usize),
+                Some(true),
+                "bit {} should be set",
+                doc_id
+            );
         }
         assert_eq!(bv.get(2), Some(false));
         assert_eq!(bv.get(998), Some(false));
@@ -1570,11 +1596,17 @@ mod tests {
         let mut bv = BitVector::with_size(10000, false).unwrap();
         let indices: Vec<u32> = (0..1000).map(|i| i * 10).collect();
 
-        unsafe { bv.set_bits_bulk_unchecked(&indices); }
+        unsafe {
+            bv.set_bits_bulk_unchecked(&indices);
+        }
 
         assert_eq!(bv.count_ones(), 1000);
         for &idx in &indices {
-            assert!(bv.get(idx as usize) == Some(true), "bit {} should be set", idx);
+            assert!(
+                bv.get(idx as usize) == Some(true),
+                "bit {} should be set",
+                idx
+            );
         }
         assert_eq!(bv.get(1), Some(false));
         assert_eq!(bv.get(9999), Some(false));
@@ -1697,14 +1729,24 @@ mod tests {
             }
             let from_blocks_time = start.elapsed();
 
-            eprintln!("1M-bit allocation ×100: Vec={:?}, with_size={:?}, from_blocks={:?}",
-                vec_time, bv_time, from_blocks_time);
+            eprintln!(
+                "1M-bit allocation ×100: Vec={:?}, with_size={:?}, from_blocks={:?}",
+                vec_time, bv_time, from_blocks_time
+            );
 
             // Both should be within 2× of Vec (previously was 30× slower)
-            assert!(bv_time.as_micros() < vec_time.as_micros() * 3,
-                "with_size too slow: {:?} vs Vec {:?}", bv_time, vec_time);
-            assert!(from_blocks_time.as_micros() < vec_time.as_micros() * 3,
-                "from_blocks too slow: {:?} vs Vec {:?}", from_blocks_time, vec_time);
+            assert!(
+                bv_time.as_micros() < vec_time.as_micros() * 3,
+                "with_size too slow: {:?} vs Vec {:?}",
+                bv_time,
+                vec_time
+            );
+            assert!(
+                from_blocks_time.as_micros() < vec_time.as_micros() * 3,
+                "from_blocks too slow: {:?} vs Vec {:?}",
+                from_blocks_time,
+                vec_time
+            );
         }
     }
 
@@ -1717,9 +1759,13 @@ mod tests {
             let num_words = (max_doc + 63) / 64;
 
             // Generate posting lists: 20 lists × 5K docs (Large workload)
-            let posting_lists: Vec<Vec<u32>> = (0..20).map(|i| {
-                (0..5000u32).map(|j| ((i * 50000 + j * 200) % max_doc as u32)).collect()
-            }).collect();
+            let posting_lists: Vec<Vec<u32>> = (0..20)
+                .map(|i| {
+                    (0..5000u32)
+                        .map(|j| ((i * 50000 + j * 200) % max_doc as u32))
+                        .collect()
+                })
+                .collect();
 
             let iters = 20;
 
@@ -1731,7 +1777,9 @@ mod tests {
                     for &doc in list {
                         let w = doc as usize >> 6;
                         let b = doc as usize & 63;
-                        unsafe { *bits.get_unchecked_mut(w) |= 1u64 << b; }
+                        unsafe {
+                            *bits.get_unchecked_mut(w) |= 1u64 << b;
+                        }
                     }
                 }
                 let count: u32 = bits.iter().map(|w| w.count_ones()).sum();
@@ -1749,7 +1797,9 @@ mod tests {
                     for &doc in list {
                         let w = doc as usize >> 6;
                         let b = doc as usize & 63;
-                        unsafe { *blks.get_unchecked_mut(w) |= 1u64 << b; }
+                        unsafe {
+                            *blks.get_unchecked_mut(w) |= 1u64 << b;
+                        }
                     }
                 }
                 let count = bv.count_ones();
@@ -1758,11 +1808,16 @@ mod tests {
             let bv_time = start.elapsed();
 
             let ratio = bv_time.as_nanos() as f64 / scalar_time.as_nanos() as f64;
-            eprintln!("Scatter+popcount (20×5K, 1M): Scalar={:?}, BitVector={:?}, ratio={:.2}×",
-                scalar_time, bv_time, ratio);
+            eprintln!(
+                "Scatter+popcount (20×5K, 1M): Scalar={:?}, BitVector={:?}, ratio={:.2}×",
+                scalar_time, bv_time, ratio
+            );
 
-            assert!(ratio < 1.2,
-                "BitVector too slow: {:.2}× vs scalar (expected <1.2×)", ratio);
+            assert!(
+                ratio < 1.2,
+                "BitVector too slow: {:.2}× vs scalar (expected <1.2×)",
+                ratio
+            );
         }
     }
 }

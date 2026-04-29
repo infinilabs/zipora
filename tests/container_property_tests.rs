@@ -595,7 +595,6 @@ proptest! {
 
 #[cfg(test)]
 mod property_test_runner {
-    
 
     #[test]
     fn run_all_property_tests() {

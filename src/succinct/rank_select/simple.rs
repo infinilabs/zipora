@@ -9,8 +9,8 @@
 //! - Slowest select (binary search, no acceleration table)
 //! - Good baseline for testing and small bitvectors
 
-use crate::error::{Result, ZiporaError};
 use super::RankSelectOps;
+use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;
 
 const LINE_BITS: usize = 256;
@@ -49,7 +49,13 @@ impl RankSelectSimple {
         let max_rank1 = cumulative_rank1 as usize;
         let max_rank0 = size - max_rank1;
 
-        Ok(Self { bv, rank_cache, size, max_rank0, max_rank1 })
+        Ok(Self {
+            bv,
+            rank_cache,
+            size,
+            max_rank0,
+            max_rank1,
+        })
     }
 
     /// Build from raw bit words.
@@ -58,7 +64,11 @@ impl RankSelectSimple {
         for i in 0..size {
             let word_idx = i / 64;
             let bit_idx = i % 64;
-            let bit = if word_idx < words.len() { (words[word_idx] >> bit_idx) & 1 == 1 } else { false };
+            let bit = if word_idx < words.len() {
+                (words[word_idx] >> bit_idx) & 1 == 1
+            } else {
+                false
+            };
             bv.push(bit)?;
         }
         Self::new(bv)
@@ -66,13 +76,19 @@ impl RankSelectSimple {
 
     #[inline(always)]
     fn popcount_trail(word: u64, bit_count: usize) -> usize {
-        if bit_count == 0 { return 0; }
+        if bit_count == 0 {
+            return 0;
+        }
         (word & ((1u64 << bit_count) - 1)).count_ones() as usize
     }
 
     #[inline]
-    pub fn max_rank0(&self) -> usize { self.max_rank0 }
-    pub fn max_rank1(&self) -> usize { self.max_rank1 }
+    pub fn max_rank0(&self) -> usize {
+        self.max_rank0
+    }
+    pub fn max_rank1(&self) -> usize {
+        self.max_rank1
+    }
     #[inline]
     pub fn mem_size(&self) -> usize {
         self.bv.blocks().len() * 8 + self.rank_cache.len() * 4
@@ -83,7 +99,9 @@ impl RankSelectOps for RankSelectSimple {
     #[inline]
     fn rank1(&self, pos: usize) -> usize {
         assert!(pos <= self.size);
-        if pos == 0 { return 0; }
+        if pos == 0 {
+            return 0;
+        }
         let block = pos / LINE_BITS;
         let mut rank = self.rank_cache[block] as usize;
 
@@ -135,7 +153,9 @@ impl RankSelectOps for RankSelectSimple {
         // Linear scan within the block
         for j in 0..WORDS_PER_LINE {
             let word_idx = block * WORDS_PER_LINE + j;
-            if word_idx >= blocks.len() { break; }
+            if word_idx >= blocks.len() {
+                break;
+            }
             let word = blocks[word_idx];
             let ones = word.count_ones() as usize;
             if remaining < ones {
@@ -173,16 +193,22 @@ impl RankSelectOps for RankSelectSimple {
 
         for j in 0..WORDS_PER_LINE {
             let word_idx = block * WORDS_PER_LINE + j;
-            if word_idx >= blocks.len() { break; }
+            if word_idx >= blocks.len() {
+                break;
+            }
             let word = blocks[word_idx];
             let zeros = (!word).count_ones() as usize;
             // Clamp zeros for partial last word
             let max_bits = if base_bitpos + (j + 1) * 64 > self.size {
                 self.size - (base_bitpos + j * 64)
-            } else { 64 };
+            } else {
+                64
+            };
             let zeros_in_range = if max_bits < 64 {
                 ((!word) & ((1u64 << max_bits) - 1)).count_ones() as usize
-            } else { zeros };
+            } else {
+                zeros
+            };
 
             if remaining < zeros_in_range {
                 return Ok(base_bitpos + j * 64 + Self::select_in_word(!word, remaining));
@@ -192,11 +218,17 @@ impl RankSelectOps for RankSelectSimple {
         Err(ZiporaError::invalid_data("select0 internal error"))
     }
 
-    fn len(&self) -> usize { self.size }
-    fn count_ones(&self) -> usize { self.max_rank1 }
+    fn len(&self) -> usize {
+        self.size
+    }
+    fn count_ones(&self) -> usize {
+        self.max_rank1
+    }
 
     fn get(&self, index: usize) -> Option<bool> {
-        if index >= self.size { return None; }
+        if index >= self.size {
+            return None;
+        }
         let word_idx = index / 64;
         let bit_idx = index % 64;
         let blocks = self.bv.blocks();
@@ -208,7 +240,9 @@ impl RankSelectOps for RankSelectSimple {
     }
 
     fn space_overhead_percent(&self) -> f64 {
-        if self.size == 0 { return 0.0; }
+        if self.size == 0 {
+            return 0.0;
+        }
         let bit_bytes = self.size.div_ceil(8);
         let cache_bytes = self.rank_cache.len() * 4;
         (cache_bytes as f64 / bit_bytes as f64) * 100.0
@@ -230,7 +264,9 @@ mod tests {
 
     fn make_rs(pattern: &[bool]) -> RankSelectSimple {
         let mut bv = BitVector::new();
-        for &b in pattern { bv.push(b).unwrap(); }
+        for &b in pattern {
+            bv.push(b).unwrap();
+        }
         RankSelectSimple::new(bv).unwrap()
     }
 
@@ -263,7 +299,13 @@ mod tests {
         let rs = make_rs(&pattern);
         for k in 0..rs.count_ones() {
             let pos = rs.select1(k).unwrap();
-            assert_eq!(rs.get(pos), Some(true), "select1({}) = {} should be set", k, pos);
+            assert_eq!(
+                rs.get(pos),
+                Some(true),
+                "select1({}) = {} should be set",
+                k,
+                pos
+            );
             // rank1(pos+1) should be k+1 (rank counts bits BEFORE pos)
             assert_eq!(rs.rank1(pos + 1), k + 1);
         }
@@ -302,9 +344,9 @@ mod tests {
         // Spot check
         assert_eq!(rs.select1(0).unwrap(), 0);
         assert_eq!(rs.select1(1).unwrap(), 13);
-        assert_eq!(rs.rank1(13), 1);  // bit 0 set before pos 13
-        assert_eq!(rs.rank1(14), 2);  // bits 0,13 set before pos 14
-        assert_eq!(rs.rank1(26), 2);  // bits 0,13 set before pos 26
+        assert_eq!(rs.rank1(13), 1); // bit 0 set before pos 13
+        assert_eq!(rs.rank1(14), 2); // bits 0,13 set before pos 14
+        assert_eq!(rs.rank1(26), 2); // bits 0,13 set before pos 26
     }
 
     #[test]

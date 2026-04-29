@@ -321,7 +321,11 @@ where
         // Only shrink if we can save significant space
         if current_len < current_capacity / 2 && current_capacity > 32 {
             // Collect all entries using the iterator
-            let entries: Vec<(K, V)> = self.inner.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let entries: Vec<(K, V)> = self
+                .inner
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
 
             // Calculate new capacity - at least 2x the current length, minimum 16
             let new_capacity = (current_len * 2).max(16);
@@ -431,19 +435,19 @@ where
 //     map: &'a EasyHashMap<K, V>,
 //     current: usize,
 // }
-// 
+//
 // impl<'a, K, V> Iterator for ValuesIterMut<'a, K, V>
 // where
 //     K: Hash + Eq + Clone,
 //     V: Clone,
 // {
 //     type Item = V;
-// 
+//
 //     fn next(&mut self) -> Option<Self::Item> {
 //         while self.current < self.keys.len() {
 //             let key = &self.keys[self.current];
 //             self.current += 1;
-// 
+//
 //             if let Some(value) = self.map.inner.get(key) {
 //                 return Some(value.clone());
 //             }

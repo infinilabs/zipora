@@ -178,7 +178,7 @@ impl BlobStore for ZeroLengthBlobStore {
         // in the record ID sequence
         if (id as usize) < self.num_records {
             Err(ZiporaError::not_supported(
-                "ZeroLengthBlobStore does not support removal (would create ID gaps)"
+                "ZeroLengthBlobStore does not support removal (would create ID gaps)",
             ))
         } else {
             Err(ZiporaError::not_found(format!(
@@ -260,7 +260,7 @@ impl BatchBlobStore for ZeroLengthBlobStore {
 
         if count > 0 {
             Err(ZiporaError::not_supported(
-                "ZeroLengthBlobStore does not support removal"
+                "ZeroLengthBlobStore does not support removal",
             ))
         } else {
             Ok(0)
@@ -308,10 +308,12 @@ mod tests {
         // Reject non-empty data
         let result = store.put(b"data");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("only accepts empty blobs"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("only accepts empty blobs")
+        );
 
         // Store should remain empty
         assert_eq!(store.len(), 0);

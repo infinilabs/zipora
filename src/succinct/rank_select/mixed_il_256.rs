@@ -12,8 +12,8 @@
 //! [dim1: rlev1(4) + rlev2(4) + bit64(32)] = 40 bytes
 //! ```
 
-use crate::error::{Result, ZiporaError};
 use super::RankSelectOps;
+use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;
 
 const LINE_BITS: usize = 256;
@@ -30,7 +30,11 @@ struct DimLine {
 
 impl DimLine {
     fn new() -> Self {
-        Self { rlev1: 0, rlev2: [0; 4], bit64: [0; 4] }
+        Self {
+            rlev1: 0,
+            rlev2: [0; 4],
+            bit64: [0; 4],
+        }
     }
 
     #[inline(always)]
@@ -55,7 +59,9 @@ struct MixedLine {
 
 impl MixedLine {
     fn new() -> Self {
-        Self { dim: [DimLine::new(), DimLine::new()] }
+        Self {
+            dim: [DimLine::new(), DimLine::new()],
+        }
     }
 }
 
@@ -65,7 +71,7 @@ impl MixedLine {
 /// or use `rank1_dim`/`select1_dim` directly.
 pub struct RankSelectMixedIL256 {
     lines: Vec<MixedLine>,
-    size: [usize; 2],        // bit count per dimension
+    size: [usize; 2], // bit count per dimension
     max_rank1: [usize; 2],
 }
 
@@ -99,7 +105,11 @@ impl RankSelectMixedIL256 {
                 for j in 0..WORDS_PER_LINE {
                     ml.dim[d].rlev2[j] = r as u8;
                     let word_idx = i * WORDS_PER_LINE + j;
-                    let word = if word_idx < blocks.len() { blocks[word_idx] } else { 0 };
+                    let word = if word_idx < blocks.len() {
+                        blocks[word_idx]
+                    } else {
+                        0
+                    };
                     // Mask off bits beyond dimension size
                     let global_bit = i * LINE_BITS + j * 64;
                     let effective_word = if global_bit + 64 > dim_size && global_bit < dim_size {
@@ -127,17 +137,29 @@ impl RankSelectMixedIL256 {
 
     /// Get a read-only view of dimension 0.
     #[inline]
-    pub fn dim0(&self) -> MixedDimView<'_> { MixedDimView { parent: self, dim: 0 } }
+    pub fn dim0(&self) -> MixedDimView<'_> {
+        MixedDimView {
+            parent: self,
+            dim: 0,
+        }
+    }
     /// Get a read-only view of dimension 1.
     #[inline]
-    pub fn dim1(&self) -> MixedDimView<'_> { MixedDimView { parent: self, dim: 1 } }
+    pub fn dim1(&self) -> MixedDimView<'_> {
+        MixedDimView {
+            parent: self,
+            dim: 1,
+        }
+    }
 
     /// rank1 for a specific dimension.
     #[inline]
     pub fn rank1_dim(&self, dim: usize, pos: usize) -> usize {
         assert!(dim < 2);
         assert!(pos <= self.size[dim]);
-        if pos == 0 { return 0; }
+        if pos == 0 {
+            return 0;
+        }
         let line_idx = pos / LINE_BITS;
         let bit_in_line = pos % LINE_BITS;
         let dl = &self.lines[line_idx].dim[dim];
@@ -163,7 +185,11 @@ impl RankSelectMixedIL256 {
         let mut hi = nlines;
         while lo < hi {
             let mid = (lo + hi) / 2;
-            if (self.lines[mid].dim[dim].rlev1 as usize) <= k { lo = mid + 1; } else { hi = mid; }
+            if (self.lines[mid].dim[dim].rlev1 as usize) <= k {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
         }
         let block = lo - 1;
         let dl = &self.lines[block].dim[dim];
@@ -184,7 +210,9 @@ impl RankSelectMixedIL256 {
     /// Get bit value for a specific dimension.
     #[inline]
     pub fn get_dim(&self, dim: usize, index: usize) -> Option<bool> {
-        if index >= self.size[dim] { return None; }
+        if index >= self.size[dim] {
+            return None;
+        }
         let line_idx = index / LINE_BITS;
         let word_idx = (index % LINE_BITS) / 64;
         let bit_idx = index % 64;
@@ -192,8 +220,12 @@ impl RankSelectMixedIL256 {
     }
 
     #[inline]
-    pub fn size_dim(&self, dim: usize) -> usize { self.size[dim] }
-    pub fn max_rank1_dim(&self, dim: usize) -> usize { self.max_rank1[dim] }
+    pub fn size_dim(&self, dim: usize) -> usize {
+        self.size[dim]
+    }
+    pub fn max_rank1_dim(&self, dim: usize) -> usize {
+        self.max_rank1[dim]
+    }
 
     #[inline]
     pub fn mem_size(&self) -> usize {
@@ -204,19 +236,35 @@ impl RankSelectMixedIL256 {
 /// View of one dimension — implements RankSelectOps.
 impl RankSelectOps for MixedDimView<'_> {
     #[inline]
-    fn rank1(&self, pos: usize) -> usize { self.parent.rank1_dim(self.dim, pos) }
+    fn rank1(&self, pos: usize) -> usize {
+        self.parent.rank1_dim(self.dim, pos)
+    }
     #[inline]
-    fn rank0(&self, pos: usize) -> usize { self.parent.rank0_dim(self.dim, pos) }
-    fn select1(&self, k: usize) -> Result<usize> { self.parent.select1_dim(self.dim, k) }
+    fn rank0(&self, pos: usize) -> usize {
+        self.parent.rank0_dim(self.dim, pos)
+    }
+    fn select1(&self, k: usize) -> Result<usize> {
+        self.parent.select1_dim(self.dim, k)
+    }
     #[inline]
     fn select0(&self, _k: usize) -> Result<usize> {
-        Err(ZiporaError::invalid_data("select0 not yet implemented for mixed"))
+        Err(ZiporaError::invalid_data(
+            "select0 not yet implemented for mixed",
+        ))
     }
-    fn len(&self) -> usize { self.parent.size[self.dim] }
-    fn count_ones(&self) -> usize { self.parent.max_rank1[self.dim] }
-    fn get(&self, index: usize) -> Option<bool> { self.parent.get_dim(self.dim, index) }
+    fn len(&self) -> usize {
+        self.parent.size[self.dim]
+    }
+    fn count_ones(&self) -> usize {
+        self.parent.max_rank1[self.dim]
+    }
+    fn get(&self, index: usize) -> Option<bool> {
+        self.parent.get_dim(self.dim, index)
+    }
     fn space_overhead_percent(&self) -> f64 {
-        if self.parent.size[self.dim] == 0 { return 0.0; }
+        if self.parent.size[self.dim] == 0 {
+            return 0.0;
+        }
         let bit_bytes = self.parent.size[self.dim].div_ceil(8);
         let cache_bytes = self.parent.lines.len() * 8; // rank cache portion
         (cache_bytes as f64 / bit_bytes as f64) * 100.0
@@ -246,7 +294,9 @@ mod tests {
 
     fn make_bv(pattern: &[bool]) -> BitVector {
         let mut bv = BitVector::new();
-        for &b in pattern { bv.push(b).unwrap(); }
+        for &b in pattern {
+            bv.push(b).unwrap();
+        }
         bv
     }
 
@@ -291,8 +341,18 @@ mod tests {
         let rs = RankSelectMixedIL256::new(make_bv(&p0), make_bv(&p1)).unwrap();
 
         for i in 0..=1000 {
-            assert_eq!(rs.dim0().rank0(i) + rs.dim0().rank1(i), i, "dim0 invariant at {}", i);
-            assert_eq!(rs.dim1().rank0(i) + rs.dim1().rank1(i), i, "dim1 invariant at {}", i);
+            assert_eq!(
+                rs.dim0().rank0(i) + rs.dim0().rank1(i),
+                i,
+                "dim0 invariant at {}",
+                i
+            );
+            assert_eq!(
+                rs.dim1().rank0(i) + rs.dim1().rank1(i),
+                i,
+                "dim1 invariant at {}",
+                i
+            );
         }
     }
 
@@ -353,10 +413,8 @@ mod tests {
 
     #[test]
     fn test_all_zeros_all_ones() {
-        let rs = RankSelectMixedIL256::new(
-            make_bv(&vec![false; 100]),
-            make_bv(&vec![true; 100]),
-        ).unwrap();
+        let rs = RankSelectMixedIL256::new(make_bv(&vec![false; 100]), make_bv(&vec![true; 100]))
+            .unwrap();
         assert_eq!(rs.dim0().count_ones(), 0);
         assert_eq!(rs.dim1().count_ones(), 100);
         assert!(rs.dim0().select1(0).is_err());

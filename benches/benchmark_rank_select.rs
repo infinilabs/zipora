@@ -1,8 +1,8 @@
 //! Comprehensive rank-select hardware acceleration benchmarks
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use zipora::{BitVector, RankSelect256, RankSelectPerformanceOps};
 use zipora::succinct::rank_select::RankSelectOps;
+use zipora::{BitVector, RankSelect256, RankSelectPerformanceOps};
 
 fn create_test_bitvector(size: usize, density: f64) -> BitVector {
     let mut bv = BitVector::new();

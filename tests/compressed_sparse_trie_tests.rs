@@ -1,5 +1,5 @@
 use zipora::fsa::cspp_trie::{
-    CsppTrie, CsppTrieIterator, MetaInfo, BigCount, PatriciaNode, NIL_STATE
+    BigCount, CsppTrie, CsppTrieIterator, MetaInfo, NIL_STATE, PatriciaNode,
 };
 
 #[test]
@@ -13,12 +13,12 @@ fn test_node_size() {
 fn test_root_node_creation() {
     let trie = CsppTrie::new(4);
     assert_eq!(trie.total_states(), 2 + 256 + 1); // meta + real_cnt + 256 children + 1 val_slot (valsize=4 -> 1 slot)
-    
+
     let root_view = trie.node_view(0);
     assert_eq!(root_view.cnt_type(), 15);
     assert!(!root_view.is_final());
     assert_eq!(root_view.n_children(), 256);
-    
+
     // All 256 children should be NIL_STATE initially
     for ch in 0..=255 {
         assert_eq!(root_view.child(2 + ch), NIL_STATE);
@@ -28,43 +28,69 @@ fn test_root_node_creation() {
 #[test]
 fn test_manual_trie_construction_and_lookup() {
     let mut trie = CsppTrie::new(4);
-    
+
     // We will manually construct a trie for keys "a", "b", "ccc"
     // Root is at slot 0.
-    
+
     // Node 1: leaf for "a" (valpos = slot 300)
     // Needs 1 slot [meta] + 1 value slot
     let node_a_state = trie.mempool.len() as u32;
-    trie.mempool.push(PatriciaNode { meta: MetaInfo { flags: 0x10, n_zpath_len: 0, c_label: [0, 0] } });
-    trie.mempool.push(PatriciaNode { bytes: [10, 0, 0, 0] }); // value = 10
-    
+    trie.mempool.push(PatriciaNode {
+        meta: MetaInfo {
+            flags: 0x10,
+            n_zpath_len: 0,
+            c_label: [0, 0],
+        },
+    });
+    trie.mempool.push(PatriciaNode {
+        bytes: [10, 0, 0, 0],
+    }); // value = 10
+
     // Node 2: leaf for "b" (valpos = slot 302)
     let node_b_state = trie.mempool.len() as u32;
-    trie.mempool.push(PatriciaNode { meta: MetaInfo { flags: 0x10, n_zpath_len: 0, c_label: [0, 0] } });
-    trie.mempool.push(PatriciaNode { bytes: [20, 0, 0, 0] }); // value = 20
-    
+    trie.mempool.push(PatriciaNode {
+        meta: MetaInfo {
+            flags: 0x10,
+            n_zpath_len: 0,
+            c_label: [0, 0],
+        },
+    });
+    trie.mempool.push(PatriciaNode {
+        bytes: [20, 0, 0, 0],
+    }); // value = 20
+
     // Node 3: leaf for "ccc" (zpath="cc", valpos = slot 304)
     // Needs 1 slot [meta] + zpath bytes + value slot
     let node_c_state = trie.mempool.len() as u32;
-    trie.mempool.push(PatriciaNode { meta: MetaInfo { flags: 0x10, n_zpath_len: 2, c_label: [0, 0] } });
-    trie.mempool.push(PatriciaNode { bytes: [b'c', b'c', 0, 0] }); // zpath padded to 4 bytes
-    trie.mempool.push(PatriciaNode { bytes: [30, 0, 0, 0] }); // value = 30
-    
+    trie.mempool.push(PatriciaNode {
+        meta: MetaInfo {
+            flags: 0x10,
+            n_zpath_len: 2,
+            c_label: [0, 0],
+        },
+    });
+    trie.mempool.push(PatriciaNode {
+        bytes: [b'c', b'c', 0, 0],
+    }); // zpath padded to 4 bytes
+    trie.mempool.push(PatriciaNode {
+        bytes: [30, 0, 0, 0],
+    }); // value = 30
+
     // Link from root
     trie.mempool[2 + b'a' as usize].child = node_a_state;
     trie.mempool[2 + b'b' as usize].child = node_b_state;
     trie.mempool[2 + b'c' as usize].child = node_c_state;
-    
+
     // Test lookups
     let pos_a = trie.lookup(b"a").unwrap();
     assert_eq!(trie.get_value::<u32>(pos_a), 10);
-    
+
     let pos_b = trie.lookup(b"b").unwrap();
     assert_eq!(trie.get_value::<u32>(pos_b), 20);
-    
+
     let pos_c = trie.lookup(b"ccc").unwrap();
     assert_eq!(trie.get_value::<u32>(pos_c), 30);
-    
+
     assert!(trie.lookup(b"c").is_none());
     assert!(trie.lookup(b"cc").is_none());
     assert!(trie.lookup(b"cccc").is_none());
@@ -72,19 +98,19 @@ fn test_manual_trie_construction_and_lookup() {
 
     // Test iteration
     let mut iter = CsppTrieIterator::<u32>::new(&trie);
-    
+
     assert!(iter.seek_begin());
     assert_eq!(iter.word(), b"a");
     assert_eq!(iter.value(), 10);
-    
+
     assert!(iter.incr());
     assert_eq!(iter.word(), b"b");
     assert_eq!(iter.value(), 20);
-    
+
     assert!(iter.incr());
     assert_eq!(iter.word(), b"ccc");
     assert_eq!(iter.value(), 30);
-    
+
     assert!(!iter.incr());
 }
 
@@ -143,11 +169,19 @@ fn test_insert_cnt_type_transitions_0_to_7() {
     let mut trie = CsppTrie::new(0);
     let keys: Vec<&[u8]> = vec![b"d", b"b", b"f", b"a", b"c", b"e", b"g"];
     for key in &keys {
-        assert!(trie.insert(key).0, "Failed to insert {:?}", std::str::from_utf8(key));
+        assert!(
+            trie.insert(key).0,
+            "Failed to insert {:?}",
+            std::str::from_utf8(key)
+        );
     }
     assert_eq!(trie.num_words(), 7);
     for key in &keys {
-        assert!(trie.contains(key), "Failed to find {:?}", std::str::from_utf8(key));
+        assert!(
+            trie.contains(key),
+            "Failed to find {:?}",
+            std::str::from_utf8(key)
+        );
     }
 }
 
@@ -231,19 +265,29 @@ fn test_insert_10k_random_keys() {
     // Generate deterministic pseudo-random keys
     let mut rng_state: u64 = 12345;
     for _ in 0..10_000 {
-        rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        rng_state = rng_state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let len = ((rng_state >> 32) % 20 + 1) as usize;
-        let key: Vec<u8> = (0..len).map(|_| {
-            rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-            ((rng_state >> 40) % 26 + 97) as u8 // lowercase a-z
-        }).collect();
+        let key: Vec<u8> = (0..len)
+            .map(|_| {
+                rng_state = rng_state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                ((rng_state >> 40) % 26 + 97) as u8 // lowercase a-z
+            })
+            .collect();
         expected.insert(key.clone());
         trie.insert(&key);
     }
 
     // Verify all keys can be looked up
     for key in &expected {
-        assert!(trie.contains(key), "Missing key: {:?}", std::str::from_utf8(key));
+        assert!(
+            trie.contains(key),
+            "Missing key: {:?}",
+            std::str::from_utf8(key)
+        );
     }
     assert_eq!(trie.num_words(), expected.len());
 }
@@ -252,9 +296,14 @@ fn test_insert_10k_random_keys() {
 fn test_insert_and_iterate_sorted() {
     let mut trie = CsppTrie::new(4);
     let keys = vec![
-        b"banana".to_vec(), b"apple".to_vec(), b"cherry".to_vec(),
-        b"date".to_vec(), b"elderberry".to_vec(), b"fig".to_vec(),
-        b"app".to_vec(), b"application".to_vec(),
+        b"banana".to_vec(),
+        b"apple".to_vec(),
+        b"cherry".to_vec(),
+        b"date".to_vec(),
+        b"elderberry".to_vec(),
+        b"fig".to_vec(),
+        b"app".to_vec(),
+        b"application".to_vec(),
     ];
     for key in &keys {
         let (is_new, valpos) = trie.insert(key);
@@ -282,7 +331,12 @@ fn test_insert_and_iterate_sorted() {
     assert_eq!(collected.len(), sorted_keys.len());
     for (i, (word, val)) in collected.iter().enumerate() {
         assert_eq!(word, &sorted_keys[i], "Mismatch at position {}", i);
-        assert_eq!(*val, sorted_keys[i].len() as u32, "Value mismatch for {:?}", std::str::from_utf8(word));
+        assert_eq!(
+            *val,
+            sorted_keys[i].len() as u32,
+            "Value mismatch for {:?}",
+            std::str::from_utf8(word)
+        );
     }
 }
 
@@ -359,8 +413,11 @@ fn test_free_list_reuse() {
     let stat = trie.mem_get_stat();
     let total_free_bins: usize = stat.fastbin.iter().sum();
     // There should be some free list entries from replaced interior nodes
-    assert!(stat.frag_size > 0 || total_free_bins > 0,
-        "Expected some free list entries from interior node transitions, frag={}", stat.frag_size);
+    assert!(
+        stat.frag_size > 0 || total_free_bins > 0,
+        "Expected some free list entries from interior node transitions, frag={}",
+        stat.frag_size
+    );
 }
 
 #[test]
@@ -385,8 +442,11 @@ fn test_lazy_free_and_reclaim() {
     let stat_reclaimed = trie.mem_get_stat();
     assert_eq!(stat_reclaimed.lazy_free_cnt, 0);
     // The reclaimed node goes to free list (not at end of mempool)
-    assert!(stat_reclaimed.frag_size >= 8,
-        "Expected frag_size >= 8 after reclaim, got {}", stat_reclaimed.frag_size);
+    assert!(
+        stat_reclaimed.frag_size >= 8,
+        "Expected frag_size >= 8 after reclaim, got {}",
+        stat_reclaimed.frag_size
+    );
 }
 
 #[test]
@@ -424,7 +484,11 @@ fn test_10k_insert_memory_efficiency() {
     // Memory efficiency: bytes per key should be reasonable
     let bytes_per_key = stat.used_size as f64 / 10_000.0;
     // With 4-byte values and ~8-byte keys, expect < 100 bytes/key
-    assert!(bytes_per_key < 200.0, "bytes_per_key={:.1} too high", bytes_per_key);
+    assert!(
+        bytes_per_key < 200.0,
+        "bytes_per_key={:.1} too high",
+        bytes_per_key
+    );
     // Fragmentation ratio should be manageable
     let frag_ratio = stat.frag_size as f64 / stat.used_size as f64;
     assert!(frag_ratio < 0.5, "frag_ratio={:.2} too high", frag_ratio);

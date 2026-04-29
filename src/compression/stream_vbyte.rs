@@ -41,7 +41,11 @@ impl StreamVByte {
     /// Delta-encodes first (val[i] - val[i-1]), then vbyte-encodes the deltas.
     pub fn encode_deltas(values: &[u32]) -> EncodedStream {
         if values.is_empty() {
-            return EncodedStream { controls: Vec::new(), data: Vec::new(), count: 0 };
+            return EncodedStream {
+                controls: Vec::new(),
+                data: Vec::new(),
+                count: 0,
+            };
         }
 
         // Delta encode
@@ -87,7 +91,11 @@ impl StreamVByte {
             controls.push(ctrl);
         }
 
-        EncodedStream { controls, data, count: n }
+        EncodedStream {
+            controls,
+            data,
+            count: n,
+        }
     }
 
     /// Decode delta-encoded stream back to sorted u32 values.
@@ -122,7 +130,9 @@ impl StreamVByte {
             }
 
             remaining -= group_size;
-            if remaining == 0 { break; }
+            if remaining == 0 {
+                break;
+            }
         }
 
         values
@@ -145,7 +155,9 @@ impl StreamVByte {
             }
 
             remaining -= group_size;
-            if remaining == 0 { break; }
+            if remaining == 0 {
+                break;
+            }
         }
     }
 
@@ -153,7 +165,9 @@ impl StreamVByte {
     pub fn compression_ratio(stream: &EncodedStream) -> f64 {
         let raw_size = stream.count * 4; // 4 bytes per u32
         let encoded_size = stream.controls.len() + stream.data.len();
-        if raw_size == 0 { return 1.0; }
+        if raw_size == 0 {
+            return 1.0;
+        }
         encoded_size as f64 / raw_size as f64
     }
 
@@ -162,10 +176,15 @@ impl StreamVByte {
     /// Number of bytes needed to encode a u32 value.
     #[inline(always)]
     fn byte_length(v: u32) -> usize {
-        if v < (1 << 8) { 1 }
-        else if v < (1 << 16) { 2 }
-        else if v < (1 << 24) { 3 }
-        else { 4 }
+        if v < (1 << 8) {
+            1
+        } else if v < (1 << 16) {
+            2
+        } else if v < (1 << 24) {
+            3
+        } else {
+            4
+        }
     }
 
     /// Write a value using `len` bytes (little-endian).
@@ -190,7 +209,9 @@ pub struct GroupVarint;
 impl GroupVarint {
     /// Encode sorted values with delta + group varint.
     pub fn encode_deltas(values: &[u32]) -> Vec<u8> {
-        if values.is_empty() { return Vec::new(); }
+        if values.is_empty() {
+            return Vec::new();
+        }
 
         let mut deltas = Vec::with_capacity(values.len());
         deltas.push(values[0]);
@@ -216,8 +237,10 @@ impl GroupVarint {
             ];
 
             // Control byte
-            let ctrl = ((lengths[0] - 1) | ((lengths[1] - 1) << 2) |
-                        ((lengths[2] - 1) << 4) | ((lengths[3] - 1) << 6)) as u8;
+            let ctrl = ((lengths[0] - 1)
+                | ((lengths[1] - 1) << 2)
+                | ((lengths[2] - 1) << 4)
+                | ((lengths[3] - 1) << 6)) as u8;
             output.push(ctrl);
 
             // Data
@@ -268,7 +291,9 @@ impl GroupVarint {
 
             for k in 0..4 {
                 let len = ((ctrl >> (k * 2)) & 0x03) as usize + 1;
-                if pos + len > data.len() { break; }
+                if pos + len > data.len() {
+                    break;
+                }
                 let mut bytes = [0u8; 4];
                 bytes[..len].copy_from_slice(&data[pos..pos + len]);
                 values.push(u32::from_le_bytes(bytes));
@@ -323,7 +348,11 @@ mod tests {
 
         // Small deltas should compress well
         let ratio = StreamVByte::compression_ratio(&encoded);
-        assert!(ratio < 0.5, "ratio should be < 0.5 for small values, got {}", ratio);
+        assert!(
+            ratio < 0.5,
+            "ratio should be < 0.5 for small values, got {}",
+            ratio
+        );
     }
 
     #[test]
@@ -343,9 +372,16 @@ mod tests {
         assert_eq!(decoded, values);
 
         let ratio = StreamVByte::compression_ratio(&encoded);
-        eprintln!("StreamVByte: 1000 posting IDs, ratio={:.2}, {} bytes",
-            ratio, encoded.controls.len() + encoded.data.len());
-        assert!(ratio < 0.75, "Should compress posting list well, got {}", ratio);
+        eprintln!(
+            "StreamVByte: 1000 posting IDs, ratio={:.2}, {} bytes",
+            ratio,
+            encoded.controls.len() + encoded.data.len()
+        );
+        assert!(
+            ratio < 0.75,
+            "Should compress posting list well, got {}",
+            ratio
+        );
     }
 
     #[test]
@@ -377,7 +413,19 @@ mod tests {
 
     #[test]
     fn test_stream_vbyte_raw_roundtrip() {
-        let values = vec![0, 1, 127, 128, 255, 256, 65535, 65536, 16777215, 16777216, u32::MAX];
+        let values = vec![
+            0,
+            1,
+            127,
+            128,
+            255,
+            256,
+            65535,
+            65536,
+            16777215,
+            16777216,
+            u32::MAX,
+        ];
         let encoded = StreamVByte::encode_raw(&values);
         let decoded = StreamVByte::decode_raw(&encoded, values.len());
         assert_eq!(decoded, values);
@@ -423,8 +471,10 @@ mod tests {
         {
             let ratio = StreamVByte::compression_ratio(&encoded);
             let decode_per_call = _decode_time / 100;
-            eprintln!("StreamVByte 100K values: encode={:?}, decode={:?}/call, ratio={:.2}",
-                _encode_time, decode_per_call, ratio);
+            eprintln!(
+                "StreamVByte 100K values: encode={:?}, decode={:?}/call, ratio={:.2}",
+                _encode_time, decode_per_call, ratio
+            );
         }
     }
 }

@@ -49,10 +49,10 @@
 //! ```
 
 use super::{RankSelectInterleaved256, RankSelectOps};
+use crate::FastVec;
 use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;
 use crate::system::{CpuFeatures, get_cpu_features};
-use crate::FastVec;
 use std::sync::Arc;
 
 // Platform-specific intrinsics
@@ -141,7 +141,8 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
         }
 
         // Verify all dimensions have same length
-        let total_bits = bit_vectors.first()
+        let total_bits = bit_vectors
+            .first()
             .ok_or_else(|| ZiporaError::invalid_data("Empty bit vectors"))?
             .len();
 
@@ -277,7 +278,7 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
                         // SAFETY: Prefetch intrinsic is safe even with any pointer value (CPU handles gracefully)
                         {
                             _mm_prefetch::<_MM_HINT_T0>(
-                                &self.dimensions[dim + 1] as *const _ as *const i8
+                                &self.dimensions[dim + 1] as *const _ as *const i8,
                             );
                         }
                     }
@@ -471,7 +472,9 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
     /// ```
     pub fn union_dimensions(&self, dimensions: &[usize]) -> Result<BitVector> {
         if dimensions.is_empty() {
-            return Err(ZiporaError::invalid_data("No dimensions specified for union"));
+            return Err(ZiporaError::invalid_data(
+                "No dimensions specified for union",
+            ));
         }
 
         for &dim in dimensions {
@@ -484,12 +487,11 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
         }
 
         // Collect bit data from all dimensions
-        let bit_data_vecs: Vec<Vec<u64>> = dimensions.iter()
+        let bit_data_vecs: Vec<Vec<u64>> = dimensions
+            .iter()
             .map(|&dim| self.dimensions[dim].get_bit_data())
             .collect();
-        let bit_data: Vec<&[u64]> = bit_data_vecs.iter()
-            .map(|v| v.as_slice())
-            .collect();
+        let bit_data: Vec<&[u64]> = bit_data_vecs.iter().map(|v| v.as_slice()).collect();
 
         #[cfg(target_arch = "x86_64")]
         if self.cpu_features.has_avx2 {
@@ -571,7 +573,9 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
     }
 }
 
-impl<const DIMS: usize, const BLOCK_SIZE: usize> std::fmt::Debug for MultiDimRankSelect<DIMS, BLOCK_SIZE> {
+impl<const DIMS: usize, const BLOCK_SIZE: usize> std::fmt::Debug
+    for MultiDimRankSelect<DIMS, BLOCK_SIZE>
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MultiDimRankSelect")
             .field("dimensions", &DIMS)
@@ -667,7 +671,9 @@ mod tests {
         // Intersection should have bits set where both conditions are true (i % 6 == 0)
         for i in 0..100 {
             let expected = i % 2 == 0 && i % 3 == 0;
-            let actual = intersection.get(i).ok_or_else(|| ZiporaError::out_of_bounds(i, 100))?;
+            let actual = intersection
+                .get(i)
+                .ok_or_else(|| ZiporaError::out_of_bounds(i, 100))?;
             assert_eq!(actual, expected, "Bit {} mismatch", i);
         }
 
@@ -693,7 +699,9 @@ mod tests {
         // Union should have bits set where any condition is true
         for i in 0..100 {
             let expected = i % 4 == 0 || i % 6 == 0 || i % 8 == 0;
-            let actual = union.get(i).ok_or_else(|| ZiporaError::out_of_bounds(i, 100))?;
+            let actual = union
+                .get(i)
+                .ok_or_else(|| ZiporaError::out_of_bounds(i, 100))?;
             assert_eq!(actual, expected, "Bit {} mismatch", i);
         }
 
@@ -763,13 +771,23 @@ mod tests {
             let multi_rs: MultiDimRankSelect<2> = MultiDimRankSelect::new(dims)?;
 
             let intersection = multi_rs.intersect_dimensions(0, 1)?;
-            assert_eq!(intersection.len(), size, "Intersection length mismatch for size {}", size);
+            assert_eq!(
+                intersection.len(),
+                size,
+                "Intersection length mismatch for size {}",
+                size
+            );
 
             for i in 0..size {
                 let expected = i % 2 == 0 && i % 3 == 0;
-                let actual = intersection.get(i)
+                let actual = intersection
+                    .get(i)
                     .ok_or_else(|| ZiporaError::out_of_bounds(i, size))?;
-                assert_eq!(actual, expected, "Intersect bit {} mismatch for size {}", i, size);
+                assert_eq!(
+                    actual, expected,
+                    "Intersect bit {} mismatch for size {}",
+                    i, size
+                );
             }
         }
         Ok(())
@@ -790,9 +808,14 @@ mod tests {
 
             for i in 0..size {
                 let expected = i % 4 == 0 || i % 6 == 0 || i % 8 == 0;
-                let actual = union.get(i)
+                let actual = union
+                    .get(i)
                     .ok_or_else(|| ZiporaError::out_of_bounds(i, size))?;
-                assert_eq!(actual, expected, "Union bit {} mismatch for size {}", i, size);
+                assert_eq!(
+                    actual, expected,
+                    "Union bit {} mismatch for size {}",
+                    i, size
+                );
             }
         }
         Ok(())

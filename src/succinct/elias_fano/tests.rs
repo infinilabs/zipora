@@ -104,7 +104,14 @@ mod tests {
 
         // Verify all elements
         for (i, &v) in docs.iter().enumerate() {
-            assert_eq!(ef.get(i), Some(v as u64), "get({}) = {:?}, expected {}", i, ef.get(i), v);
+            assert_eq!(
+                ef.get(i),
+                Some(v as u64),
+                "get({}) = {:?}, expected {}",
+                i,
+                ef.get(i),
+                v
+            );
         }
 
         // Verify iterator matches
@@ -116,7 +123,11 @@ mod tests {
 
         // Space efficiency
         let bits_per_elem = ef.bits_per_element();
-        assert!(bits_per_elem < 32.0, "Should be much less than 32 bits/elem, got {:.1}", bits_per_elem);
+        assert!(
+            bits_per_elem < 32.0,
+            "Should be much less than 32 bits/elem, got {:.1}",
+            bits_per_elem
+        );
     }
 
     #[test]
@@ -146,8 +157,12 @@ mod tests {
         let ef = EliasFano::from_sorted(&docs);
 
         let bpe = ef.bits_per_element();
-        eprintln!("Elias-Fano: {} elements, {:.1} bits/elem, {} bytes total",
-            ef.len(), bpe, ef.size_bytes());
+        eprintln!(
+            "Elias-Fano: {} elements, {:.1} bits/elem, {} bytes total",
+            ef.len(),
+            bpe,
+            ef.size_bytes()
+        );
 
         // Theoretical: 2 + log2(1M/10K) ≈ 2 + 6.6 ≈ 8.6 bits
         // Practical overhead pushes to ~10-15 bits
@@ -175,9 +190,12 @@ mod tests {
         let mut found = 0usize;
         for _ in 0..100 {
             for &t in &targets {
-                if ef.next_geq(t).is_some() { found += 1; }
+                if ef.next_geq(t).is_some() {
+                    found += 1;
+                }
             }
         }
+        #[allow(unused_variables)]
         let elapsed = start.elapsed();
 
         #[cfg(not(debug_assertions))]
@@ -268,6 +286,7 @@ mod tests {
     #[test]
     fn test_cursor_performance() {
         let docs: Vec<u32> = (0..100000).map(|i| i * 10).collect();
+        #[allow(unused_variables)]
         let ef = EliasFano::from_sorted(&docs);
 
         #[cfg(not(debug_assertions))]
@@ -297,11 +316,16 @@ mod tests {
             assert_eq!(sum1, sum2, "cursor and get must produce same sum");
 
             let speedup = get_time.as_nanos() as f64 / cursor_time.as_nanos() as f64;
-            eprintln!("Sequential 100K: get={:?}, cursor={:?}, speedup={:.1}×",
-                get_time, cursor_time, speedup);
+            eprintln!(
+                "Sequential 100K: get={:?}, cursor={:?}, speedup={:.1}×",
+                get_time, cursor_time, speedup
+            );
 
-            assert!(speedup > 2.0,
-                "cursor should be at least 2× faster than get(), got {:.1}×", speedup);
+            assert!(
+                speedup > 2.0,
+                "cursor should be at least 2× faster than get(), got {:.1}×",
+                speedup
+            );
         }
     }
 
@@ -445,8 +469,10 @@ mod tests {
         // next_geq() must match
         for target in (0..5010).step_by(7) {
             assert_eq!(
-                ef.next_geq(target), pef.next_geq(target),
-                "next_geq({}) mismatch", target
+                ef.next_geq(target),
+                pef.next_geq(target),
+                "next_geq({}) mismatch",
+                target
             );
         }
 
@@ -551,14 +577,26 @@ mod tests {
         let ef = EliasFano::from_sorted(&docs);
         let pef = PartitionedEliasFano::from_sorted(&docs);
 
-        eprintln!("EF:  {} elements, {:.1} bits/elem, {} bytes",
-            ef.len(), ef.bits_per_element(), ef.size_bytes());
-        eprintln!("PEF: {} elements, {:.1} bits/elem, {} bytes",
-            pef.len(), pef.bits_per_element(), pef.size_bytes());
+        eprintln!(
+            "EF:  {} elements, {:.1} bits/elem, {} bytes",
+            ef.len(),
+            ef.bits_per_element(),
+            ef.size_bytes()
+        );
+        eprintln!(
+            "PEF: {} elements, {:.1} bits/elem, {} bytes",
+            pef.len(),
+            pef.bits_per_element(),
+            pef.size_bytes()
+        );
 
         // PEF should be within 2x of EF space (chunk overhead)
-        assert!(pef.bits_per_element() < ef.bits_per_element() * 2.5,
-            "PEF too large: {:.1} vs EF {:.1}", pef.bits_per_element(), ef.bits_per_element());
+        assert!(
+            pef.bits_per_element() < ef.bits_per_element() * 2.5,
+            "PEF too large: {:.1} vs EF {:.1}",
+            pef.bits_per_element(),
+            ef.bits_per_element()
+        );
     }
 
     #[test]
@@ -592,9 +630,12 @@ mod tests {
     #[test]
     fn test_pef_performance_next_geq() {
         let docs: Vec<u32> = (0..100000).map(|i| i * 10).collect();
+        #[allow(unused_variables)]
         let ef = EliasFano::from_sorted(&docs);
+        #[allow(unused_variables)]
         let pef = PartitionedEliasFano::from_sorted(&docs);
 
+        #[allow(unused_variables)]
         let targets: Vec<u64> = (0..10000).map(|i| (i * 100) as u64).collect();
 
         #[cfg(not(debug_assertions))]
@@ -603,8 +644,12 @@ mod tests {
 
             // Warmup
             for &t in &targets {
-                if ef.next_geq(t).is_some() { sink += 1; }
-                if pef.next_geq(t).is_some() { sink += 1; }
+                if ef.next_geq(t).is_some() {
+                    sink += 1;
+                }
+                if pef.next_geq(t).is_some() {
+                    sink += 1;
+                }
             }
 
             let iterations = 100;
@@ -612,7 +657,9 @@ mod tests {
             let start = std::time::Instant::now();
             for _ in 0..iterations {
                 for &t in &targets {
-                    if ef.next_geq(t).is_some() { sink += 1; }
+                    if ef.next_geq(t).is_some() {
+                        sink += 1;
+                    }
                 }
             }
             let ef_time = start.elapsed();
@@ -620,7 +667,9 @@ mod tests {
             let start = std::time::Instant::now();
             for _ in 0..iterations {
                 for &t in &targets {
-                    if pef.next_geq(t).is_some() { sink += 1; }
+                    if pef.next_geq(t).is_some() {
+                        sink += 1;
+                    }
                 }
             }
             let pef_time = start.elapsed();
@@ -640,7 +689,9 @@ mod tests {
     #[test]
     fn test_pef_performance_cursor() {
         let docs: Vec<u32> = (0..100000).map(|i| i * 10).collect();
+        #[allow(unused_variables)]
         let ef = EliasFano::from_sorted(&docs);
+        #[allow(unused_variables)]
         let pef = PartitionedEliasFano::from_sorted(&docs);
 
         #[cfg(not(debug_assertions))]
@@ -731,7 +782,9 @@ mod tests {
         for i in 0..100 {
             assert_eq!(bc.index(), i, "index mismatch at {}", i);
             assert_eq!(bc.current(), Some(docs[i] as u64));
-            if i < 99 { bc.advance(); }
+            if i < 99 {
+                bc.advance();
+            }
         }
     }
 
@@ -779,7 +832,9 @@ mod tests {
         let mut count = 0;
         if bc.current().is_some() {
             count += 1;
-            while bc.advance() { count += 1; }
+            while bc.advance() {
+                count += 1;
+            }
         }
         assert_eq!(count, 300);
     }
@@ -788,6 +843,7 @@ mod tests {
     #[test]
     fn test_batch_cursor_performance() {
         let docs: Vec<u32> = (0..100000).map(|i| i * 10).collect();
+        #[allow(unused_variables)]
         let ef = EliasFano::from_sorted(&docs);
 
         #[cfg(not(debug_assertions))]
@@ -822,7 +878,8 @@ mod tests {
 
             eprintln!(
                 "Sequential 100K: cursor={:?}, batch={:?}, ratio={:.2}×",
-                cursor_time, batch_time,
+                cursor_time,
+                batch_time,
                 cursor_time.as_nanos() as f64 / batch_time.as_nanos() as f64
             );
         }
@@ -863,15 +920,23 @@ mod tests {
 
         // get() must match
         for i in 0..docs.len() {
-            assert_eq!(ef.get(i), opef.get(i), "get({}) mismatch: ef={:?} opef={:?}",
-                i, ef.get(i), opef.get(i));
+            assert_eq!(
+                ef.get(i),
+                opef.get(i),
+                "get({}) mismatch: ef={:?} opef={:?}",
+                i,
+                ef.get(i),
+                opef.get(i)
+            );
         }
 
         // next_geq() must match
         for target in (0..5010).step_by(7) {
             assert_eq!(
-                ef.next_geq(target), opef.next_geq(target),
-                "next_geq({}) mismatch", target
+                ef.next_geq(target),
+                opef.next_geq(target),
+                "next_geq({}) mismatch",
+                target
             );
         }
 
@@ -907,15 +972,24 @@ mod tests {
         let pef = PartitionedEliasFano::from_sorted(&docs);
         let opef = OptimalPartitionedEliasFano::from_sorted(&docs);
 
-        eprintln!("Uniform PEF: {:.1} bits/elem, {} bytes",
-            pef.bits_per_element(), pef.size_bytes());
-        eprintln!("Optimal PEF: {:.1} bits/elem, {} bytes",
-            opef.bits_per_element(), opef.size_bytes());
+        eprintln!(
+            "Uniform PEF: {:.1} bits/elem, {} bytes",
+            pef.bits_per_element(),
+            pef.size_bytes()
+        );
+        eprintln!(
+            "Optimal PEF: {:.1} bits/elem, {} bytes",
+            opef.bits_per_element(),
+            opef.size_bytes()
+        );
 
         // Optimal should be no worse than 1.5× uniform (usually better)
-        assert!(opef.bits_per_element() < pef.bits_per_element() * 1.5,
+        assert!(
+            opef.bits_per_element() < pef.bits_per_element() * 1.5,
             "Optimal PEF too large: {:.1} vs uniform {:.1}",
-            opef.bits_per_element(), pef.bits_per_element());
+            opef.bits_per_element(),
+            pef.bits_per_element()
+        );
     }
 
     #[test]
@@ -1108,28 +1182,42 @@ mod tests {
     #[test]
     fn test_hybrid_performance_comparison() {
         let docs: Vec<u32> = (0..100000).map(|i| i * 10).collect();
+        #[allow(unused_variables)]
         let targets: Vec<u64> = (0..10000).map(|i| (i * 100) as u64).collect();
 
+        #[allow(unused_variables)]
         let dense = HybridPostingList::with_encoding(&docs, PostingEncoding::Dense);
+        #[allow(unused_variables)]
         let ef = HybridPostingList::with_encoding(&docs, PostingEncoding::EliasFano);
+        #[allow(unused_variables)]
         let pef = HybridPostingList::with_encoding(&docs, PostingEncoding::Partitioned);
+        #[allow(unused_variables)]
         let opef = HybridPostingList::with_encoding(&docs, PostingEncoding::Optimal);
 
         #[cfg(not(debug_assertions))]
         {
             let iters = 50;
-            for (name, h) in [("Dense", &dense), ("EF", &ef), ("PEF", &pef), ("OPEF", &opef)] {
+            for (name, h) in [
+                ("Dense", &dense),
+                ("EF", &ef),
+                ("PEF", &pef),
+                ("OPEF", &opef),
+            ] {
                 let start = std::time::Instant::now();
                 let mut sink = 0usize;
                 for _ in 0..iters {
                     for &t in &targets {
-                        if h.next_geq(t).is_some() { sink += 1; }
+                        if h.next_geq(t).is_some() {
+                            sink += 1;
+                        }
                     }
                 }
                 let elapsed = start.elapsed();
                 let per_call = elapsed.as_nanos() as f64 / (iters as f64 * targets.len() as f64);
-                eprintln!("{name}: {per_call:.1}ns/call, {:.1} bits/elem [sink={sink}]",
-                    h.bits_per_element());
+                eprintln!(
+                    "{name}: {per_call:.1}ns/call, {:.1} bits/elem [sink={sink}]",
+                    h.bits_per_element()
+                );
             }
         }
     }
@@ -1242,8 +1330,15 @@ mod tests {
 
         // Test various indices across chunks
         for &idx in &[0, 1, 127, 128, 129, 255, 256, 300, 499] {
-            assert!(cursor.advance_to_index(idx), "advance_to_index({idx}) failed");
-            assert_eq!(cursor.current(), Some(vals[idx] as u64), "wrong value at {idx}");
+            assert!(
+                cursor.advance_to_index(idx),
+                "advance_to_index({idx}) failed"
+            );
+            assert_eq!(
+                cursor.current(),
+                Some(vals[idx] as u64),
+                "wrong value at {idx}"
+            );
             assert_eq!(cursor.index(), idx);
         }
 
@@ -1263,8 +1358,15 @@ mod tests {
         let mut cursor = opef.cursor();
 
         for &idx in &[0, 1, 50, 100, 200, 300, 499] {
-            assert!(cursor.advance_to_index(idx), "advance_to_index({idx}) failed");
-            assert_eq!(cursor.current(), Some(vals[idx] as u64), "wrong value at {idx}");
+            assert!(
+                cursor.advance_to_index(idx),
+                "advance_to_index({idx}) failed"
+            );
+            assert_eq!(
+                cursor.current(),
+                Some(vals[idx] as u64),
+                "wrong value at {idx}"
+            );
             assert_eq!(cursor.index(), idx);
         }
 

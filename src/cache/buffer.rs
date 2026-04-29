@@ -1,25 +1,28 @@
 //! Cache buffer management for efficient data access
 
 use super::*;
-use std::sync::{Mutex, atomic::{AtomicU64, Ordering}};
+use std::sync::{
+    Mutex,
+    atomic::{AtomicU64, Ordering},
+};
 
 /// Cache buffer for managing cached data and automatic cleanup
 pub struct CacheBuffer {
     /// Buffer type indicating source
     buffer_type: BufferType,
-    
+
     /// Owning cache reference
     cache: Option<*const SingleLruPageCache>,
-    
+
     /// Node indices for cleanup
     node_indices: Vec<NodeIndex>,
-    
+
     /// Buffer for multi-page data
     data_buffer: Vec<u8>,
-    
+
     /// Data slice (points to either cache page or buffer)
     data_slice: Option<&'static [u8]>,
-    
+
     /// Cache hit type for statistics
     hit_type: CacheHitType,
 }
@@ -51,7 +54,7 @@ impl CacheBuffer {
             hit_type: CacheHitType::Hit,
         }
     }
-    
+
     /// Set buffer to reference single cache node
     #[allow(dead_code)]
     pub(crate) fn set_node(&mut self, cache: &SingleLruPageCache, node_idx: NodeIndex) {
@@ -61,32 +64,32 @@ impl CacheBuffer {
         self.node_indices.push(node_idx);
         self.hit_type = CacheHitType::Hit;
     }
-    
+
     /// Setup buffer for multi-page operation
     #[allow(dead_code)]
     pub(crate) fn setup_multi_page(
-        &mut self, 
-        cache: &SingleLruPageCache, 
-        node_indices: Vec<NodeIndex>, 
-        offset: u64, 
-        length: usize
+        &mut self,
+        cache: &SingleLruPageCache,
+        node_indices: Vec<NodeIndex>,
+        offset: u64,
+        length: usize,
     ) {
         self.cleanup();
         self.buffer_type = BufferType::MultiPage;
         self.cache = Some(cache as *const _);
-        
+
         // Copy data from multiple pages
         self.data_buffer.clear();
         self.data_buffer.reserve(length);
-        
+
         let _start_page = (offset / PAGE_SIZE as u64) as PageId;
         let page_offset = (offset % PAGE_SIZE as u64) as usize;
         let _remaining = length;
         let _current_offset = page_offset;
-        
+
         // Simplified for basic implementation
         self.data_buffer.resize(length, 0);
-        
+
         self.node_indices = node_indices;
         self.hit_type = CacheHitType::Mix;
 
@@ -95,7 +98,7 @@ impl CacheBuffer {
         // SAFETY: data_ptr from as_ptr() is valid, length matches data_buffer size after resize()
         self.data_slice = Some(unsafe { std::slice::from_raw_parts(data_ptr, length) });
     }
-    
+
     /// Copy data to internal buffer
     pub fn copy_from_slice(&mut self, data: &[u8]) {
         self.cleanup();
@@ -108,13 +111,13 @@ impl CacheBuffer {
         self.data_slice = Some(unsafe { std::slice::from_raw_parts(data_ptr, data.len()) });
         self.hit_type = CacheHitType::Hit;
     }
-    
+
     /// Extend buffer with additional data
     pub fn extend_from_slice(&mut self, data: &[u8]) {
         if data.is_empty() {
             return;
         }
-        
+
         // Convert to copied buffer if not already
         if !matches!(self.buffer_type, BufferType::Copied) {
             let existing_data = self.data().to_vec();
@@ -122,15 +125,16 @@ impl CacheBuffer {
             self.buffer_type = BufferType::Copied;
             self.data_buffer = existing_data;
         }
-        
+
         self.data_buffer.extend_from_slice(data);
 
         // Update data slice
         let data_ptr = self.data_buffer.as_ptr();
         // SAFETY: data_ptr from as_ptr() is valid, data_buffer.len() is correct after extend_from_slice()
-        self.data_slice = Some(unsafe { std::slice::from_raw_parts(data_ptr, self.data_buffer.len()) });
+        self.data_slice =
+            Some(unsafe { std::slice::from_raw_parts(data_ptr, self.data_buffer.len()) });
     }
-    
+
     /// Get buffered data
     pub fn data(&self) -> &[u8] {
         match self.buffer_type {
@@ -138,35 +142,33 @@ impl CacheBuffer {
                 // Simplified for basic implementation
                 &self.data_buffer
             }
-            BufferType::MultiPage | BufferType::Copied => {
-                self.data_slice.unwrap_or(&[])
-            }
+            BufferType::MultiPage | BufferType::Copied => self.data_slice.unwrap_or(&[]),
             BufferType::Empty => &[],
         }
     }
-    
+
     /// Get data length
     #[inline]
     pub fn len(&self) -> usize {
         self.data().len()
     }
-    
+
     /// Check if buffer is empty
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    
+
     /// Get cache hit type
     pub fn hit_type(&self) -> CacheHitType {
         self.hit_type
     }
-    
+
     /// Check if data is available
     pub fn has_data(&self) -> bool {
         !matches!(self.buffer_type, BufferType::Empty)
     }
-    
+
     /// Clear buffer and release resources
     pub fn clear(&mut self) {
         self.cleanup();
@@ -174,14 +176,14 @@ impl CacheBuffer {
         self.data_buffer.clear();
         self.data_slice = None;
     }
-    
+
     /// Internal cleanup of cache references
     fn cleanup(&mut self) {
         // Simplified for basic implementation
         self.cache = None;
         self.node_indices.clear();
     }
-    
+
     /// Create buffer from raw data
     pub fn from_data(data: Vec<u8>) -> Self {
         let len = data.len();
@@ -195,12 +197,12 @@ impl CacheBuffer {
 
         buffer
     }
-    
+
     /// Reserve capacity for buffer
     pub fn reserve(&mut self, capacity: usize) {
         self.data_buffer.reserve(capacity);
     }
-    
+
     /// Get buffer capacity
     #[inline]
     pub fn capacity(&self) -> usize {
@@ -241,10 +243,10 @@ unsafe impl Send for CacheBuffer {}
 pub struct BufferPool {
     /// Available buffers
     available: Mutex<Vec<CacheBuffer>>,
-    
+
     /// Maximum pool size
     max_size: usize,
-    
+
     /// Statistics
     allocations: AtomicU64,
     reuses: AtomicU64,
@@ -260,34 +262,38 @@ impl BufferPool {
             reuses: AtomicU64::new(0),
         }
     }
-    
+
     /// Get buffer from pool or create new one
     pub fn get(&self) -> CacheBuffer {
         if let Ok(mut buffers) = self.available.lock()
-            && let Some(mut buffer) = buffers.pop() {
-                buffer.clear();
-                self.reuses.fetch_add(1, Ordering::Relaxed);
-                return buffer;
-            }
-        
+            && let Some(mut buffer) = buffers.pop()
+        {
+            buffer.clear();
+            self.reuses.fetch_add(1, Ordering::Relaxed);
+            return buffer;
+        }
+
         self.allocations.fetch_add(1, Ordering::Relaxed);
         CacheBuffer::new()
     }
-    
+
     /// Return buffer to pool
     pub fn put(&self, buffer: CacheBuffer) {
         if let Ok(mut buffers) = self.available.lock()
-            && buffers.len() < self.max_size {
-                buffers.push(buffer);
-            }
+            && buffers.len() < self.max_size
+        {
+            buffers.push(buffer);
+        }
     }
-    
+
     /// Get pool statistics
     pub fn stats(&self) -> BufferPoolStats {
-        let available_count = self.available.lock()
+        let available_count = self
+            .available
+            .lock()
             .map(|buffers| buffers.len())
             .unwrap_or(0);
-        
+
         BufferPoolStats {
             allocations: self.allocations.load(Ordering::Relaxed),
             reuses: self.reuses.load(Ordering::Relaxed),
@@ -314,7 +320,7 @@ impl BufferPoolStats {
             self.reuses as f64 / (self.allocations + self.reuses) as f64
         }
     }
-    
+
     pub fn pool_utilization(&self) -> f64 {
         self.available_count as f64 / self.max_size as f64
     }
@@ -479,5 +485,16 @@ mod tests {
 
         buffer.copy_from_slice(b"test");
         assert_eq!(buffer.hit_type(), CacheHitType::Hit);
+
+        // Test multi-page setup explicitly sets hit_type to Mix
+        // Create a dummy SingleLruPageCache. Since we can't easily create one safely
+        // with real config in this minimal test, we'll just skip the full setup,
+        // wait, setup_multi_page takes an &SingleLruPageCache.
+        // We can just rely on the implementation changing it when calling `setup_multi_page`.
+        // Let's create a minimal test cache
+        let config = crate::cache::PageCacheConfig::balanced();
+        let cache = crate::cache::SingleLruPageCache::new(config).unwrap();
+        buffer.setup_multi_page(&cache, vec![1, 2], 0, 1024);
+        assert_eq!(buffer.hit_type(), CacheHitType::Mix);
     }
 }

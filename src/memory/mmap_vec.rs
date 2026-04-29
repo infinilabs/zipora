@@ -20,10 +20,14 @@
 //! - **Database storage**: Efficient file-based storage
 
 use crate::error::{Result, ZiporaError};
-use crate::memory::mmap::{MemoryMappedAllocator, MmapAllocation};
-use crate::memory::cache_layout::{CacheOptimizedAllocator, CacheLayoutConfig, align_to_cache_line, AccessPattern, PrefetchHint};
 use crate::memory::cache::{get_optimal_numa_node, numa_alloc_aligned};
-use crate::memory::simd_ops::{fast_fill, fast_copy_cache_optimized, fast_compare, fast_prefetch_range};
+use crate::memory::cache_layout::{
+    AccessPattern, CacheLayoutConfig, CacheOptimizedAllocator, PrefetchHint, align_to_cache_line,
+};
+use crate::memory::mmap::{MemoryMappedAllocator, MmapAllocation};
+use crate::memory::simd_ops::{
+    fast_compare, fast_copy_cache_optimized, fast_fill, fast_prefetch_range,
+};
 use crate::simd::{AdaptiveSimdSelector, Operation};
 use bytemuck::Pod;
 use std::fs::OpenOptions;
@@ -134,17 +138,33 @@ impl Default for MmapVecConfig {
 
 impl MmapVecConfig {
     /// Create a builder (returns Self with Default values for fluent configuration).
-    pub fn builder() -> Self { Self::default() }
+    pub fn builder() -> Self {
+        Self::default()
+    }
     /// Set initial capacity.
-    pub fn with_initial_capacity(mut self, v: usize) -> Self { self.initial_capacity = v; self }
+    pub fn with_initial_capacity(mut self, v: usize) -> Self {
+        self.initial_capacity = v;
+        self
+    }
     /// Set growth factor.
-    pub fn with_growth_factor(mut self, v: f64) -> Self { self.growth_factor = v; self }
+    pub fn with_growth_factor(mut self, v: f64) -> Self {
+        self.growth_factor = v;
+        self
+    }
     /// Set populate pages.
-    pub fn with_populate_pages(mut self, v: bool) -> Self { self.populate_pages = v; self }
+    pub fn with_populate_pages(mut self, v: bool) -> Self {
+        self.populate_pages = v;
+        self
+    }
     /// Set sync on write.
-    pub fn with_sync_on_write(mut self, v: bool) -> Self { self.sync_on_write = v; self }
+    pub fn with_sync_on_write(mut self, v: bool) -> Self {
+        self.sync_on_write = v;
+        self
+    }
     /// Finalize.
-    pub fn build(self) -> Self { self }
+    pub fn build(self) -> Self {
+        self
+    }
 
     /// Create configuration for read-only vectors
     pub fn read_only() -> Self {
@@ -159,8 +179,8 @@ impl MmapVecConfig {
     pub fn large_dataset() -> Self {
         Self {
             initial_capacity: 1024 * 1024, // 1M elements
-            growth_factor: 1.5, // Conservative growth
-            populate_pages: false, // Lazy loading
+            growth_factor: 1.5,            // Conservative growth
+            populate_pages: false,         // Lazy loading
             use_huge_pages: true,
             ..Self::default()
         }
@@ -170,7 +190,7 @@ impl MmapVecConfig {
     pub fn persistent_cache() -> Self {
         Self {
             initial_capacity: 16384,
-            growth_factor: 2.0, // Aggressive growth
+            growth_factor: 2.0,  // Aggressive growth
             sync_on_write: true, // Ensure persistence
             ..Self::default()
         }
@@ -204,7 +224,7 @@ impl MmapVecConfig {
     pub fn realtime() -> Self {
         Self {
             initial_capacity: 1024,
-            growth_factor: 1.5, // Predictable growth
+            growth_factor: 1.5,   // Predictable growth
             populate_pages: true, // Avoid page faults
             use_huge_pages: true, // Reduce TLB misses
             sync_on_write: false, // Avoid I/O in real-time path
@@ -280,14 +300,14 @@ where
     /// Create a new memory-mapped vector
     pub fn create<P: AsRef<Path>>(path: P, config: MmapVecConfig) -> Result<Self> {
         let file_path = path.as_ref().to_path_buf();
-        
+
         // Create the backing file
         let initial_file_size = Self::calculate_file_size(config.initial_capacity);
         Self::create_backing_file(&file_path, initial_file_size)?;
 
         // Create memory mapping
         let mmap = Self::create_mmap(&file_path, &config)?;
-        
+
         let mut vec = Self {
             file_path,
             mmap: Some(mmap),
@@ -308,14 +328,14 @@ where
     /// Open an existing memory-mapped vector
     pub fn open<P: AsRef<Path>>(path: P, config: MmapVecConfig) -> Result<Self> {
         let file_path = path.as_ref().to_path_buf();
-        
+
         if !file_path.exists() {
             return Err(ZiporaError::invalid_data("File does not exist"));
         }
 
         // Create memory mapping
         let mmap = Self::create_mmap(&file_path, &config)?;
-        
+
         let mut vec = Self {
             file_path,
             mmap: Some(mmap),
@@ -507,9 +527,8 @@ where
         let required_capacity = current_len + additional;
 
         if required_capacity > current_capacity {
-            let new_capacity = required_capacity.max(
-                (current_capacity as f64 * self.config.growth_factor) as usize
-            );
+            let new_capacity = required_capacity
+                .max((current_capacity as f64 * self.config.growth_factor) as usize);
             self.resize_to_capacity(new_capacity)?;
         }
 
@@ -522,16 +541,14 @@ where
         if let Some(mmap) = &self.mmap {
             let file_size = self.file_size_from_header()?;
             // SAFETY: mmap.as_ptr() valid for file_size bytes, mapping valid for lifetime of self
-            let content = unsafe {
-                std::slice::from_raw_parts(mmap.as_ptr(), file_size)
-            };
+            let content = unsafe { std::slice::from_raw_parts(mmap.as_ptr(), file_size) };
 
             std::fs::write(&self.file_path, content)
                 .map_err(|e| ZiporaError::io_error(format!("Failed to sync to file: {}", e)))?;
         }
         Ok(())
     }
-    
+
     /// Get current file size based on header
     fn file_size_from_header(&self) -> Result<usize> {
         let capacity = self.capacity();
@@ -605,7 +622,7 @@ where
 
         let iter = iter.into_iter();
         let (lower, _) = iter.size_hint();
-        
+
         // Reserve space for at least the lower bound
         if lower > 0 {
             self.reserve(lower)?;
@@ -643,12 +660,12 @@ where
         }
 
         let current_len = self.len();
-        
+
         if len > current_len {
             // Need to grow
             let additional = len - current_len;
             self.reserve(additional)?;
-            
+
             // Fill with the specified value
             // SAFETY: reserve called above ensures capacity >= len, data_ptr valid, i < len within allocation
             unsafe {
@@ -657,7 +674,7 @@ where
                     std::ptr::write(data_ptr.add(i), value);
                 }
             }
-            
+
             self.set_length(len)?;
         } else if len < current_len {
             // Need to shrink
@@ -696,16 +713,17 @@ where
         let file_size = std::fs::metadata(path)
             .map_err(|e| ZiporaError::io_error(format!("Failed to get file size: {}", e)))?
             .len() as usize;
-            
+
         // Use a minimum size that's appropriate for memory mapping
         // but not too large to waste space for small vectors
         let min_mmap_size = 64 * 1024; // 64KB minimum instead of 1MB
         let allocation_size = file_size.max(min_mmap_size);
-        
+
         let allocator = MemoryMappedAllocator::new(min_mmap_size);
-        let mut allocation = allocator.allocate(allocation_size)
+        let mut allocation = allocator
+            .allocate(allocation_size)
             .map_err(|e| ZiporaError::io_error(format!("Failed to create mmap: {}", e)))?;
-        
+
         // Read file content into the memory mapping
         // This is a temporary implementation - real mmap would map the file directly
         if file_size > 0 {
@@ -718,12 +736,12 @@ where
                     std::ptr::copy_nonoverlapping(
                         file_content.as_ptr(),
                         allocation.as_mut_ptr(),
-                        file_content.len()
+                        file_content.len(),
                     );
                 }
             }
         }
-        
+
         Ok(allocation)
     }
 
@@ -734,20 +752,26 @@ where
 
     /// Update header and data pointers
     fn update_pointers(&mut self) -> Result<()> {
-        let mmap = self.mmap.as_ref()
+        let mmap = self
+            .mmap
+            .as_ref()
             .ok_or_else(|| ZiporaError::invalid_data("No memory mapping"))?;
 
         let base_ptr = mmap.as_ptr() as *mut u8;
-        
+
         // Header is at the beginning
-        self.header = Some(NonNull::new(base_ptr as *mut MmapVecHeader)
-            .ok_or_else(|| ZiporaError::invalid_data("Invalid header pointer"))?);
+        self.header = Some(
+            NonNull::new(base_ptr as *mut MmapVecHeader)
+                .ok_or_else(|| ZiporaError::invalid_data("Invalid header pointer"))?,
+        );
 
         // Data follows the header
         // SAFETY: base_ptr valid from mmap, HEADER_SIZE within allocation
         let data_ptr = unsafe { base_ptr.add(HEADER_SIZE) } as *mut T;
-        self.data = Some(NonNull::new(data_ptr)
-            .ok_or_else(|| ZiporaError::invalid_data("Invalid data pointer"))?);
+        self.data = Some(
+            NonNull::new(data_ptr)
+                .ok_or_else(|| ZiporaError::invalid_data("Invalid data pointer"))?,
+        );
 
         Ok(())
     }
@@ -776,12 +800,14 @@ where
 
     /// Get header pointer
     fn header(&self) -> Result<NonNull<MmapVecHeader>> {
-        self.header.ok_or_else(|| ZiporaError::invalid_data("Header not initialized"))
+        self.header
+            .ok_or_else(|| ZiporaError::invalid_data("Header not initialized"))
     }
 
     /// Get data pointer
     fn data_ptr(&self) -> Result<NonNull<T>> {
-        self.data.ok_or_else(|| ZiporaError::invalid_data("Data not initialized"))
+        self.data
+            .ok_or_else(|| ZiporaError::invalid_data("Data not initialized"))
     }
 
     /// Set length in header
@@ -818,28 +844,28 @@ where
     fn resize_to_capacity(&mut self, new_capacity: usize) -> Result<()> {
         // First, sync current data to file to preserve it
         self.sync()?;
-        
+
         let new_file_size = Self::calculate_file_size(new_capacity);
-        
+
         // Extend the file
         let file = OpenOptions::new()
             .write(true)
             .open(&self.file_path)
             .map_err(|e| ZiporaError::io_error(format!("Failed to open file: {}", e)))?;
-        
+
         file.set_len(new_file_size)
             .map_err(|e| ZiporaError::io_error(format!("Failed to resize file: {}", e)))?;
 
         // Recreate memory mapping with new size
         drop(self.mmap.take()); // Unmap old mapping
         self.mmap = Some(Self::create_mmap(&self.file_path, &self.config)?);
-        
+
         // Update pointers
         self.update_pointers()?;
-        
+
         // Update capacity in header
         self.set_capacity(new_capacity)?;
-        
+
         // Sync the updated header to file
         self.sync()?;
 
@@ -856,7 +882,7 @@ where
     /// 6-10x faster than standard initialization for large capacities (≥256 bytes)
     pub fn with_capacity_simd(capacity: usize) -> Result<Self>
     where
-        T: Copy + 'static
+        T: Copy + 'static,
     {
         // Create a temporary file for the SIMD-optimized vector
         // Use thread ID + timestamp + random to avoid conflicts in parallel tests
@@ -880,13 +906,11 @@ where
         // Zero-initialize using SIMD (6-10x faster for large allocations)
         if capacity > 0 && !std::mem::needs_drop::<T>() {
             let size_bytes = capacity * std::mem::size_of::<T>();
-            if size_bytes >= 64 {  // SIMD threshold
+            if size_bytes >= 64 {
+                // SIMD threshold
                 // SAFETY: data_ptr valid, size_bytes <= capacity * sizeof(T), mapping valid for vec lifetime
                 let slice = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        vec.data_ptr()?.as_ptr() as *mut u8,
-                        size_bytes
-                    )
+                    std::slice::from_raw_parts_mut(vec.data_ptr()?.as_ptr() as *mut u8, size_bytes)
                 };
 
                 fast_fill(slice, 0);
@@ -925,26 +949,21 @@ where
         let dst_ptr = unsafe { self.data_ptr()?.as_ptr().add(self.len()) };
         let size_bytes = std::mem::size_of_val(items);
 
-        if size_bytes >= 64 {  // SIMD threshold
+        if size_bytes >= 64 {
+            // SIMD threshold
             // Cache-optimized SIMD copy
             // SAFETY: src is items.len() * sizeof(T) bytes, dst has same size reserved
-            let src_slice = unsafe {
-                std::slice::from_raw_parts(items.as_ptr() as *const u8, size_bytes)
-            };
-            let dst_slice = unsafe {
-                std::slice::from_raw_parts_mut(dst_ptr as *mut u8, size_bytes)
-            };
+            let src_slice =
+                unsafe { std::slice::from_raw_parts(items.as_ptr() as *const u8, size_bytes) };
+            let dst_slice =
+                unsafe { std::slice::from_raw_parts_mut(dst_ptr as *mut u8, size_bytes) };
 
             fast_copy_cache_optimized(src_slice, dst_slice)?;
         } else {
             // Small copy: use standard approach
             // SAFETY: src is items.len() elements, dst has capacity, no overlap
             unsafe {
-                std::ptr::copy_nonoverlapping(
-                    items.as_ptr(),
-                    dst_ptr,
-                    items.len(),
-                );
+                std::ptr::copy_nonoverlapping(items.as_ptr(), dst_ptr, items.len());
             }
         }
 
@@ -993,30 +1012,23 @@ where
         let size_bytes = count * std::mem::size_of::<T>();
         if size_bytes >= 64 {
             // SAFETY: src_ptr valid for count elements, dst has capacity count, size_bytes matches
-            let src_slice = unsafe {
-                std::slice::from_raw_parts(src_ptr as *const u8, size_bytes)
-            };
+            let src_slice = unsafe { std::slice::from_raw_parts(src_ptr as *const u8, size_bytes) };
             let dst_slice = unsafe {
-                std::slice::from_raw_parts_mut(
-                    result.as_mut_ptr() as *mut u8,
-                    size_bytes,
-                )
+                std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut u8, size_bytes)
             };
 
             fast_copy_cache_optimized(src_slice, dst_slice)?;
         } else {
             // SAFETY: src_ptr valid for count elements, dst has capacity count, no overlap
             unsafe {
-                std::ptr::copy_nonoverlapping(
-                    src_ptr,
-                    result.as_mut_ptr(),
-                    count,
-                );
+                std::ptr::copy_nonoverlapping(src_ptr, result.as_mut_ptr(), count);
             }
         }
 
         // SAFETY: count elements copied into result with capacity count
-        unsafe { result.set_len(count); }
+        unsafe {
+            result.set_len(count);
+        }
         self.set_length(new_len)?;
 
         // Monitor performance
@@ -1075,10 +1087,7 @@ where
                     std::slice::from_raw_parts(other.data_ptr()?.as_ptr() as *const u8, size_bytes)
                 };
                 let dst_slice = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        self.data_ptr()?.as_ptr() as *mut u8,
-                        size_bytes,
-                    )
+                    std::slice::from_raw_parts_mut(self.data_ptr()?.as_ptr() as *mut u8, size_bytes)
                 };
 
                 fast_copy_cache_optimized(src_slice, dst_slice)?;
@@ -1158,11 +1167,7 @@ where
     ///
     /// # Performance
     /// 8-12x faster with SIMD comparison for large ranges
-    pub fn compare_range_simd(
-        &self,
-        range: std::ops::Range<usize>,
-        other: &Self,
-    ) -> Result<bool>
+    pub fn compare_range_simd(&self, range: std::ops::Range<usize>, other: &Self) -> Result<bool>
     where
         T: PartialEq + Copy,
     {
@@ -1278,10 +1283,10 @@ mod tests {
     fn test_create_mmap_vec() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test_vec.mmap");
-        
+
         let config = MmapVecConfig::default();
         let vec = MmapVec::<u64>::create(&file_path, config).unwrap();
-        
+
         assert_eq!(vec.len(), 0);
         assert_eq!(vec.capacity(), 1024);
         assert!(file_path.exists());
@@ -1291,15 +1296,15 @@ mod tests {
     fn test_push_and_get() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test_vec.mmap");
-        
+
         let config = MmapVecConfig::default();
         let mut vec = MmapVec::<u32>::create(&file_path, config).unwrap();
-        
+
         // Push some elements
         vec.push(10).unwrap();
         vec.push(20).unwrap();
         vec.push(30).unwrap();
-        
+
         assert_eq!(vec.len(), 3);
         assert_eq!(vec.get(0), Some(&10));
         assert_eq!(vec.get(1), Some(&20));
@@ -1311,13 +1316,13 @@ mod tests {
     fn test_pop() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test_vec.mmap");
-        
+
         let config = MmapVecConfig::default();
         let mut vec = MmapVec::<i32>::create(&file_path, config).unwrap();
-        
+
         vec.push(100).unwrap();
         vec.push(200).unwrap();
-        
+
         assert_eq!(vec.pop(), Some(200));
         assert_eq!(vec.pop(), Some(100));
         assert_eq!(vec.pop(), None);
@@ -1328,23 +1333,23 @@ mod tests {
     fn test_persistence() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test_vec.mmap");
-        
+
         // Create vector and add data
         {
             let config = MmapVecConfig::persistent_cache();
             let mut vec = MmapVec::<u64>::create(&file_path, config).unwrap();
-            
+
             for i in 0..100 {
                 vec.push(i * 2).unwrap();
             }
             vec.sync().unwrap();
         } // Vector dropped, file should persist
-        
+
         // Open existing vector
         {
             let config = MmapVecConfig::default();
             let vec = MmapVec::<u64>::open(&file_path, config).unwrap();
-            
+
             assert_eq!(vec.len(), 100);
             assert_eq!(vec.get(0), Some(&0));
             assert_eq!(vec.get(50), Some(&100));
@@ -1356,24 +1361,24 @@ mod tests {
     fn test_growth() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test_vec.mmap");
-        
+
         let config = MmapVecConfig {
             initial_capacity: 10,
             growth_factor: 2.0,
             ..MmapVecConfig::default()
         };
         let mut vec = MmapVec::<u8>::create(&file_path, config).unwrap();
-        
+
         assert_eq!(vec.capacity(), 10);
-        
+
         // Fill beyond initial capacity
         for i in 0..20 {
             vec.push(i as u8).unwrap();
         }
-        
+
         assert_eq!(vec.len(), 20);
         assert!(vec.capacity() >= 20);
-        
+
         // Verify all data is correct
         for i in 0..20 {
             assert_eq!(vec.get(i), Some(&(i as u8)));
@@ -1384,18 +1389,18 @@ mod tests {
     fn test_slice_access() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test_vec.mmap");
-        
+
         let config = MmapVecConfig::default();
         let mut vec = MmapVec::<u16>::create(&file_path, config).unwrap();
-        
+
         for i in 0..10 {
             vec.push(i * 3).unwrap();
         }
-        
+
         let slice = vec.as_slice();
         assert_eq!(slice.len(), 10);
         assert_eq!(slice[5], 15);
-        
+
         let mut_slice = vec.as_mut_slice();
         mut_slice[5] = 999;
         assert_eq!(vec.get(5), Some(&999));
@@ -1405,15 +1410,15 @@ mod tests {
     fn test_iterator() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test_vec.mmap");
-        
+
         let config = MmapVecConfig::default();
         let mut vec = MmapVec::<usize>::create(&file_path, config).unwrap();
-        
+
         let values = vec![1, 4, 9, 16, 25];
         for &value in &values {
             vec.push(value).unwrap();
         }
-        
+
         let collected: Vec<_> = vec.into_iter().copied().collect();
         assert_eq!(collected, values);
     }
@@ -1422,7 +1427,7 @@ mod tests {
     fn test_read_only() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test_vec.mmap");
-        
+
         // Create and populate vector
         {
             let config = MmapVecConfig::default();
@@ -1431,15 +1436,15 @@ mod tests {
             vec.push(456).unwrap();
             vec.sync().unwrap();
         }
-        
+
         // Open as read-only
         {
             let config = MmapVecConfig::read_only();
             let mut vec = MmapVec::<i64>::open(&file_path, config).unwrap();
-            
+
             assert_eq!(vec.len(), 2);
             assert_eq!(vec.get(0), Some(&123));
-            
+
             // Should fail to modify
             assert!(vec.push(789).is_err());
             assert_eq!(vec.pop(), None);
@@ -1451,18 +1456,18 @@ mod tests {
     fn test_reserve() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("test_vec.mmap");
-        
+
         let config = MmapVecConfig {
             initial_capacity: 5,
             ..MmapVecConfig::default()
         };
         let mut vec = MmapVec::<u32>::create(&file_path, config).unwrap();
-        
+
         assert_eq!(vec.capacity(), 5);
-        
+
         vec.reserve(100).unwrap();
         assert!(vec.capacity() >= 100);
-        
+
         // Should be able to add reserved elements without reallocation
         let capacity_before = vec.capacity();
         for i in 0..100 {
@@ -1474,13 +1479,13 @@ mod tests {
     #[test]
     fn test_different_configs() {
         let temp_dir = tempdir().unwrap();
-        
+
         // Test large dataset config
         let file_path = temp_dir.path().join("large.mmap");
         let config = MmapVecConfig::large_dataset();
         let vec = MmapVec::<u64>::create(&file_path, config).unwrap();
         assert_eq!(vec.capacity(), 1024 * 1024);
-        
+
         // Test persistent cache config
         let file_path2 = temp_dir.path().join("cache.mmap");
         let config = MmapVecConfig::persistent_cache();
@@ -1492,14 +1497,14 @@ mod tests {
     fn test_builder_pattern() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("builder.mmap");
-        
+
         let config = MmapVecConfig::builder()
             .with_initial_capacity(5000)
             .with_growth_factor(1.5)
             .with_populate_pages(true)
             .with_sync_on_write(false)
             .build();
-        
+
         let vec = MmapVec::<i32>::create(&file_path, config).unwrap();
         assert_eq!(vec.capacity(), 5000);
         assert!(!vec.config.sync_on_write);
@@ -1510,18 +1515,18 @@ mod tests {
     fn test_stats() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("stats.mmap");
-        
+
         let config = MmapVecConfig {
             initial_capacity: 100,
             ..MmapVecConfig::default()
         };
         let mut vec = MmapVec::<u64>::create(&file_path, config).unwrap();
-        
+
         // Add some data
         for i in 0..50 {
             vec.push(i).unwrap();
         }
-        
+
         let stats = vec.stats();
         assert_eq!(stats.len, 50);
         assert_eq!(stats.capacity, 100);
@@ -1537,16 +1542,16 @@ mod tests {
     fn test_extend() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("extend.mmap");
-        
+
         let config = MmapVecConfig::default();
         let mut vec = MmapVec::<u16>::create(&file_path, config).unwrap();
-        
+
         // Extend with a range
         vec.extend(1..=10).unwrap();
         assert_eq!(vec.len(), 10);
         assert_eq!(vec.get(0), Some(&1));
         assert_eq!(vec.get(9), Some(&10));
-        
+
         // Extend with an iterator
         let more_data = vec![100, 200, 300];
         vec.extend(more_data.into_iter()).unwrap();
@@ -1559,22 +1564,22 @@ mod tests {
     fn test_truncate() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("truncate.mmap");
-        
+
         let config = MmapVecConfig::default();
         let mut vec = MmapVec::<i16>::create(&file_path, config).unwrap();
-        
+
         // Fill with data
         for i in 0..20 {
             vec.push(i).unwrap();
         }
         assert_eq!(vec.len(), 20);
-        
+
         // Truncate
         vec.truncate(10).unwrap();
         assert_eq!(vec.len(), 10);
         assert_eq!(vec.get(9), Some(&9));
         assert_eq!(vec.get(10), None);
-        
+
         // Truncate to larger size should not change anything
         vec.truncate(15).unwrap();
         assert_eq!(vec.len(), 10);
@@ -1584,15 +1589,15 @@ mod tests {
     fn test_resize_with_value() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("resize_val.mmap");
-        
+
         let config = MmapVecConfig::default();
         let mut vec = MmapVec::<i8>::create(&file_path, config).unwrap();
-        
+
         // Start with some data
         vec.push(1).unwrap();
         vec.push(2).unwrap();
         assert_eq!(vec.len(), 2);
-        
+
         // Resize larger with specific value
         vec.resize(5, 99).unwrap();
         assert_eq!(vec.len(), 5);
@@ -1601,7 +1606,7 @@ mod tests {
         assert_eq!(vec.get(2), Some(&99));
         assert_eq!(vec.get(3), Some(&99));
         assert_eq!(vec.get(4), Some(&99));
-        
+
         // Resize smaller
         vec.resize(3, 0).unwrap();
         assert_eq!(vec.len(), 3);
@@ -1613,27 +1618,27 @@ mod tests {
     fn test_shrink_to_fit() {
         let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("shrink.mmap");
-        
+
         let config = MmapVecConfig {
             initial_capacity: 1000,
             ..MmapVecConfig::default()
         };
         let mut vec = MmapVec::<u32>::create(&file_path, config).unwrap();
-        
+
         assert_eq!(vec.capacity(), 1000);
-        
+
         // Add only a few elements
         for i in 0..10 {
             vec.push(i).unwrap();
         }
         assert_eq!(vec.len(), 10);
         assert_eq!(vec.capacity(), 1000);
-        
+
         // Shrink to fit
         vec.shrink_to_fit().unwrap();
         assert_eq!(vec.len(), 10);
         assert!(vec.capacity() <= 10);
-        
+
         // Verify data is still intact
         for i in 0..10 {
             assert_eq!(vec.get(i), Some(&(i as u32)));

@@ -2,9 +2,9 @@
 
 use super::{Config, parse_env_bool};
 use crate::error::{Result, ZiporaError};
-use std::path::Path;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 /// SIMD configuration placeholder.
 #[derive(Debug, Clone, PartialEq)]
@@ -33,7 +33,7 @@ impl Config for SIMDConfig {
         // SIMD configuration is always valid
         Ok(())
     }
-    
+
     fn from_env_with_prefix(prefix: &str) -> Result<Self> {
         let mut config = Self::default();
         config.enable_simd = parse_env_bool(&format!("{}SIMD_ENABLE", prefix), config.enable_simd);
@@ -42,43 +42,63 @@ impl Config for SIMDConfig {
         config.validate()?;
         Ok(config)
     }
-    
+
     fn performance_preset() -> Self {
-        Self { enable_simd: true, enable_avx2: true, enable_bmi2: true }
+        Self {
+            enable_simd: true,
+            enable_avx2: true,
+            enable_bmi2: true,
+        }
     }
-    
+
     fn memory_preset() -> Self {
-        Self { enable_simd: false, enable_avx2: false, enable_bmi2: false }
+        Self {
+            enable_simd: false,
+            enable_avx2: false,
+            enable_bmi2: false,
+        }
     }
-    
+
     fn realtime_preset() -> Self {
-        Self { enable_simd: true, enable_avx2: true, enable_bmi2: true }
+        Self {
+            enable_simd: true,
+            enable_avx2: true,
+            enable_bmi2: true,
+        }
     }
-    
+
     fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         #[cfg(feature = "serde")]
         {
-        let serialized = serde_json::to_string_pretty(self)
-            .map_err(|e| ZiporaError::configuration(format!("Failed to serialize SIMD config: {}", e)))?;
-        std::fs::write(path, serialized)
-            .map_err(|e| ZiporaError::configuration(format!("Failed to write SIMD config file: {}", e)))?;
-        Ok(())
-    }
+            let serialized = serde_json::to_string_pretty(self).map_err(|e| {
+                ZiporaError::configuration(format!("Failed to serialize SIMD config: {}", e))
+            })?;
+            std::fs::write(path, serialized).map_err(|e| {
+                ZiporaError::configuration(format!("Failed to write SIMD config file: {}", e))
+            })?;
+            Ok(())
+        }
         #[cfg(not(feature = "serde"))]
-        Err(crate::error::ZiporaError::invalid_operation("Requires serde feature"))
+        Err(crate::error::ZiporaError::invalid_operation(
+            "Requires serde feature",
+        ))
     }
-    
+
     fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         #[cfg(feature = "serde")]
         {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| ZiporaError::configuration(format!("Failed to read SIMD config file: {}", e)))?;
-        let config: Self = serde_json::from_str(&content)
-            .map_err(|e| ZiporaError::configuration(format!("Failed to parse SIMD config file: {}", e)))?;
-        config.validate()?;
-        Ok(config)
-    }
+            let content = std::fs::read_to_string(path).map_err(|e| {
+                ZiporaError::configuration(format!("Failed to read SIMD config file: {}", e))
+            })?;
+            let config: Self = serde_json::from_str(&content).map_err(|e| {
+                ZiporaError::configuration(format!("Failed to parse SIMD config file: {}", e))
+            })?;
+            config.validate()?;
+            Ok(config)
+        }
         #[cfg(not(feature = "serde"))]
-        Err(crate::error::ZiporaError::invalid_operation("Requires serde feature"))
+        Err(crate::error::ZiporaError::invalid_operation(
+            "Requires serde feature",
+        ))
     }
 }

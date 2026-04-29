@@ -56,10 +56,10 @@
 //! - **Space**: Excellent for data with high fragment reuse (50-90% compression typical)
 //! - **Read-Only**: No dynamic updates after build
 
-use crate::containers::UintVecMin0;
-use crate::blob_store::traits::{BlobStore, BatchBlobStore, IterableBlobStore, BlobStoreStats};
-use crate::error::{Result, ZiporaError};
 use crate::RecordId;
+use crate::blob_store::traits::{BatchBlobStore, BlobStore, BlobStoreStats, IterableBlobStore};
+use crate::containers::UintVecMin0;
+use crate::error::{Result, ZiporaError};
 use std::collections::HashMap;
 
 /// Configuration for SimpleZipBlobStore fragmentation
@@ -85,15 +85,29 @@ impl Default for SimpleZipConfig {
 
 impl SimpleZipConfig {
     /// Create a builder (returns Self with Default values for fluent configuration).
-    pub fn builder() -> Self { Self::default() }
+    pub fn builder() -> Self {
+        Self::default()
+    }
     /// Set minimum fragment length.
-    pub fn min_frag_len(mut self, v: usize) -> Self { self.min_frag_len = v; self }
+    pub fn min_frag_len(mut self, v: usize) -> Self {
+        self.min_frag_len = v;
+        self
+    }
     /// Set maximum fragment length.
-    pub fn max_frag_len(mut self, v: usize) -> Self { self.max_frag_len = v; self }
+    pub fn max_frag_len(mut self, v: usize) -> Self {
+        self.max_frag_len = v;
+        self
+    }
     /// Set delimiters.
-    pub fn delimiters(mut self, v: Vec<u8>) -> Self { self.delimiters = v; self }
+    pub fn delimiters(mut self, v: Vec<u8>) -> Self {
+        self.delimiters = v;
+        self
+    }
     /// Finalize configuration.
-    pub fn build(self) -> Result<Self> { self.validate()?; Ok(self) }
+    pub fn build(self) -> Result<Self> {
+        self.validate()?;
+        Ok(self)
+    }
 
     /// Validate configuration parameters
     pub fn validate(&self) -> Result<()> {
@@ -102,12 +116,12 @@ impl SimpleZipConfig {
         }
         if self.max_frag_len < self.min_frag_len {
             return Err(ZiporaError::invalid_parameter(
-                "max_frag_len must be >= min_frag_len"
+                "max_frag_len must be >= min_frag_len",
             ));
         }
         if self.max_frag_len > 1024 * 1024 {
             return Err(ZiporaError::invalid_parameter(
-                "max_frag_len must be <= 1MB (fragmentation efficiency)"
+                "max_frag_len must be <= 1MB (fragmentation efficiency)",
             ));
         }
         Ok(())
@@ -177,8 +191,14 @@ impl SimpleZipBlobStore {
 
         // Step 3: Pack offset|length into single u64
         let max_len = lengths.iter().copied().max().unwrap_or(0);
-        let len_bits = if max_len == 0 { 0 } else { (usize::BITS - max_len.leading_zeros()) };
-        let off_len: Vec<u64> = offsets.iter().zip(lengths.iter())
+        let len_bits = if max_len == 0 {
+            0
+        } else {
+            (usize::BITS - max_len.leading_zeros())
+        };
+        let off_len: Vec<u64> = offsets
+            .iter()
+            .zip(lengths.iter())
             .map(|(&offset, &length)| ((offset as u64) << len_bits) | (length as u64))
             .collect();
 
@@ -269,7 +289,9 @@ impl SimpleZipBlobStore {
     fn get_record_append_imp(&self, rec_id: usize, rec_data: &mut Vec<u8>) -> Result<()> {
         if rec_id >= self.num_records {
             return Err(ZiporaError::not_found(format!(
-                "Record {} not found (max {})", rec_id, self.num_records - 1
+                "Record {} not found (max {})",
+                rec_id,
+                self.num_records - 1
             )));
         }
 
@@ -324,7 +346,6 @@ impl SimpleZipBlobStore {
     }
 }
 
-
 impl BlobStore for SimpleZipBlobStore {
     fn get(&self, id: RecordId) -> Result<Vec<u8>> {
         let mut data = Vec::new();
@@ -334,13 +355,13 @@ impl BlobStore for SimpleZipBlobStore {
 
     fn put(&mut self, _data: &[u8]) -> Result<RecordId> {
         Err(ZiporaError::not_supported(
-            "SimpleZipBlobStore is read-only after build"
+            "SimpleZipBlobStore is read-only after build",
         ))
     }
 
     fn remove(&mut self, _id: RecordId) -> Result<()> {
         Err(ZiporaError::not_supported(
-            "SimpleZipBlobStore is read-only"
+            "SimpleZipBlobStore is read-only",
         ))
     }
 
@@ -374,7 +395,7 @@ impl BatchBlobStore for SimpleZipBlobStore {
         I: IntoIterator<Item = Vec<u8>>,
     {
         Err(ZiporaError::not_supported(
-            "SimpleZipBlobStore is read-only"
+            "SimpleZipBlobStore is read-only",
         ))
     }
 
@@ -398,7 +419,7 @@ impl BatchBlobStore for SimpleZipBlobStore {
         I: IntoIterator<Item = RecordId>,
     {
         Err(ZiporaError::not_supported(
-            "SimpleZipBlobStore is read-only"
+            "SimpleZipBlobStore is read-only",
         ))
     }
 }
@@ -474,9 +495,7 @@ mod tests {
     #[test]
     fn test_config_validation() {
         // min_frag_len = 0 should fail
-        let result = SimpleZipConfig::builder()
-            .min_frag_len(0)
-            .build();
+        let result = SimpleZipConfig::builder().min_frag_len(0).build();
         assert!(result.is_err());
 
         // max < min should fail
@@ -557,7 +576,10 @@ mod tests {
 
         // "line1\n" should be shared - strpool smaller than uncompressed
         let stats = store.memory_stats();
-        assert!(stats.strpool_size < store.unzip_size, "Fragment deduplication should reduce strpool size");
+        assert!(
+            stats.strpool_size < store.unzip_size,
+            "Fragment deduplication should reduce strpool size"
+        );
     }
 
     #[test]
@@ -601,7 +623,10 @@ mod tests {
         // Check that timestamp is shared (strpool much smaller than uncompressed)
         let stats = store.memory_stats();
         // Timestamp appears 100 times but stored once - strpool should be much smaller
-        assert!(stats.strpool_size < store.unzip_size / 2, "Timestamp deduplication should save space");
+        assert!(
+            stats.strpool_size < store.unzip_size / 2,
+            "Timestamp deduplication should save space"
+        );
         println!("Space saved: {:.2}%", stats.space_saved_percent());
     }
 
@@ -618,7 +643,10 @@ mod tests {
 
         assert_eq!(store.size(0).unwrap(), Some(5));
         assert_eq!(store.size(1).unwrap(), Some(13));
-        assert_eq!(store.size(2).unwrap(), Some(b"a much longer string with more content".len()));
+        assert_eq!(
+            store.size(2).unwrap(),
+            Some(b"a much longer string with more content".len())
+        );
         assert_eq!(store.size(999).unwrap(), None);
     }
 
@@ -641,11 +669,7 @@ mod tests {
 
     #[test]
     fn test_iteration() {
-        let data = vec![
-            b"A".to_vec(),
-            b"B".to_vec(),
-            b"C".to_vec(),
-        ];
+        let data = vec![b"A".to_vec(), b"B".to_vec(), b"C".to_vec()];
 
         let config = SimpleZipConfig::default();
         let store = SimpleZipBlobStore::build_from(&data, &config).unwrap();
@@ -683,10 +707,7 @@ mod tests {
 
     #[test]
     fn test_memory_stats() {
-        let data = vec![
-            b"Hello World\n".to_vec(),
-            b"Hello Rust\n".to_vec(),
-        ];
+        let data = vec![b"Hello World\n".to_vec(), b"Hello Rust\n".to_vec()];
 
         let config = SimpleZipConfig::default();
         let store = SimpleZipBlobStore::build_from(&data, &config).unwrap();
@@ -695,7 +716,10 @@ mod tests {
         assert!(stats.strpool_size > 0);
         assert!(stats.off_len_size > 0);
         assert!(stats.records_size > 0);
-        assert_eq!(stats.total_size, stats.strpool_size + stats.off_len_size + stats.records_size);
+        assert_eq!(
+            stats.total_size,
+            stats.strpool_size + stats.off_len_size + stats.records_size
+        );
         assert!(stats.compression_ratio > 0.0);
         // NOTE: With Vec<usize> metadata, compression ratio may exceed 1.0 for small data
 
@@ -705,7 +729,10 @@ mod tests {
         println!("Total: {} bytes", stats.total_size);
         println!("Uncompressed: {} bytes", stats.uncompressed_size);
         println!("Ratio: {:.2}%", stats.compression_ratio * 100.0);
-        println!("Metadata overhead: {:.2}%", stats.metadata_overhead_percent());
+        println!(
+            "Metadata overhead: {:.2}%",
+            stats.metadata_overhead_percent()
+        );
     }
 
     #[test]
@@ -720,14 +747,29 @@ mod tests {
         let store = SimpleZipBlobStore::build_from(&data, &config).unwrap();
 
         // Verify random samples
-        assert_eq!(store.get(0).unwrap(), b"Record 0: Some common prefix data\n");
-        assert_eq!(store.get(500).unwrap(), b"Record 500: Some common prefix data\n");
-        assert_eq!(store.get(999).unwrap(), b"Record 999: Some common prefix data\n");
+        assert_eq!(
+            store.get(0).unwrap(),
+            b"Record 0: Some common prefix data\n"
+        );
+        assert_eq!(
+            store.get(500).unwrap(),
+            b"Record 500: Some common prefix data\n"
+        );
+        assert_eq!(
+            store.get(999).unwrap(),
+            b"Record 999: Some common prefix data\n"
+        );
 
         let stats = store.memory_stats();
-        println!("Large dataset compression: {:.2}%", stats.compression_ratio * 100.0);
+        println!(
+            "Large dataset compression: {:.2}%",
+            stats.compression_ratio * 100.0
+        );
         // Check that common prefix is deduplicated (strpool much smaller)
-        assert!(stats.strpool_size < store.unzip_size / 2, "Common prefix should be deduplicated");
+        assert!(
+            stats.strpool_size < store.unzip_size / 2,
+            "Common prefix should be deduplicated"
+        );
     }
 
     #[test]
@@ -752,6 +794,9 @@ mod tests {
 
         // "a,", "b,", and other fragments should be shared
         let stats = store.memory_stats();
-        assert!(stats.strpool_size < store.unzip_size, "Fragment deduplication should work");
+        assert!(
+            stats.strpool_size < store.unzip_size,
+            "Fragment deduplication should work"
+        );
     }
 }

@@ -4,9 +4,9 @@
 //! achieved through AVX-512 SIMD optimizations across all major components.
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use zipora::*;
 use zipora::algorithms::{RadixSort, RadixSortConfig};
-use zipora::compression::{HuffmanCompressor, DictCompressor, Compressor};
+use zipora::compression::{Compressor, DictCompressor, HuffmanCompressor};
+use zipora::*;
 
 /// Benchmark AVX-512 vs standard rank/select operations
 fn bench_rank_select_avx512(c: &mut Criterion) {

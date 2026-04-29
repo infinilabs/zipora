@@ -22,7 +22,9 @@
 
 use crate::algorithms::suffix_array::{SuffixArray, SuffixArrayConfig};
 use crate::compression::dict_zip::dfa_cache::DfaCacheConfig;
-use crate::compression::dict_zip::dictionary::{SuffixArrayDictionary, SuffixArrayDictionaryConfig};
+use crate::compression::dict_zip::dictionary::{
+    SuffixArrayDictionary, SuffixArrayDictionaryConfig,
+};
 use crate::error::{Result, ZiporaError};
 use crate::memory::{SecureMemoryPool, SecurePoolConfig};
 
@@ -50,7 +52,6 @@ pub enum SampleSortPolicy {
     SortBoth,
 }
 
-
 /// Building strategy for dictionary construction
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -68,7 +69,6 @@ pub enum BuildStrategy {
     /// Custom strategy with manual parameters
     Custom,
 }
-
 
 /// Configuration for dictionary builder
 #[derive(Debug, Clone)]
@@ -112,11 +112,11 @@ impl DictionaryBuilderConfig {
         Self {
             strategy: BuildStrategy::MaxCompression,
             sample_sort_policy: SampleSortPolicy::SortBoth, // Use best sorting for maximum compression
-            max_build_time: Duration::from_secs(300), // 5 minutes
-            target_dict_size: 32 * 1024 * 1024,       // 32MB
-            max_dict_size: 128 * 1024 * 1024,         // 128MB
-            sample_ratio: 1.0,                        // Use all data
-            min_frequency: 3,                         // Lower threshold for more patterns
+            max_build_time: Duration::from_secs(300),       // 5 minutes
+            target_dict_size: 32 * 1024 * 1024,             // 32MB
+            max_dict_size: 128 * 1024 * 1024,               // 128MB
+            sample_ratio: 1.0,                              // Use all data
+            min_frequency: 3,                               // Lower threshold for more patterns
             max_frequency: u32::MAX,
             min_pattern_length: 4,
             max_pattern_length: 512, // Longer patterns
@@ -133,11 +133,11 @@ impl DictionaryBuilderConfig {
         Self {
             strategy: BuildStrategy::MaxSpeed,
             sample_sort_policy: SampleSortPolicy::SortNone, // No sorting for maximum speed
-            max_build_time: Duration::from_secs(30), // 30 seconds
-            target_dict_size: 8 * 1024 * 1024,      // 8MB
-            max_dict_size: 16 * 1024 * 1024,        // 16MB
-            sample_ratio: 0.5,                      // Sample half the data
-            min_frequency: 8,                       // Higher threshold
+            max_build_time: Duration::from_secs(30),        // 30 seconds
+            target_dict_size: 8 * 1024 * 1024,              // 8MB
+            max_dict_size: 16 * 1024 * 1024,                // 16MB
+            sample_ratio: 0.5,                              // Sample half the data
+            min_frequency: 8,                               // Higher threshold
             max_frequency: u32::MAX,
             min_pattern_length: 4,
             max_pattern_length: 64, // Shorter patterns
@@ -154,11 +154,11 @@ impl DictionaryBuilderConfig {
         Self {
             strategy: BuildStrategy::MinMemory,
             sample_sort_policy: SampleSortPolicy::SortLeft, // Left sorting for good compression with less memory
-            max_build_time: Duration::from_secs(120), // 2 minutes
-            target_dict_size: 2 * 1024 * 1024,       // 2MB
-            max_dict_size: 4 * 1024 * 1024,          // 4MB
-            sample_ratio: 0.25,                      // Quarter sample
-            min_frequency: 12,                       // High threshold
+            max_build_time: Duration::from_secs(120),       // 2 minutes
+            target_dict_size: 2 * 1024 * 1024,              // 2MB
+            max_dict_size: 4 * 1024 * 1024,                 // 4MB
+            sample_ratio: 0.25,                             // Quarter sample
+            min_frequency: 12,                              // High threshold
             max_frequency: u32::MAX,
             min_pattern_length: 6,
             max_pattern_length: 32,
@@ -305,18 +305,18 @@ impl<'a> PosLenCmpLeft<'a> {
     fn new(base: &'a [u8]) -> Self {
         Self { base }
     }
-    
+
     fn compare(&self, x: &PosLen, y: &PosLen) -> std::cmp::Ordering {
         let sx = &self.base[x.pos..x.pos + x.len];
         let sy = &self.base[y.pos..y.pos + y.len];
         let min_len = std::cmp::min(x.len, y.len);
-        
+
         // Compare the actual content
         let cmp_result = sx[..min_len].cmp(&sy[..min_len]);
         if cmp_result != std::cmp::Ordering::Equal {
             return cmp_result;
         }
-        
+
         // If prefixes are equal, longer is "less" (preferred)
         // This matches the reference behavior: return x.len > y.len
         y.len.cmp(&x.len)
@@ -333,12 +333,12 @@ impl<'a> PosLenCmpRight<'a> {
     fn new(base: &'a [u8]) -> Self {
         Self { base }
     }
-    
+
     fn compare(&self, x: &PosLen, y: &PosLen) -> std::cmp::Ordering {
         let sx = &self.base[x.pos..x.pos + x.len];
         let sy = &self.base[y.pos..y.pos + y.len];
         let min_len = std::cmp::min(x.len, y.len);
-        
+
         // Compare from the end (reverse)
         for i in 0..min_len {
             let x_byte = sx[x.len - 1 - i];
@@ -348,7 +348,7 @@ impl<'a> PosLenCmpRight<'a> {
                 other => return other,
             }
         }
-        
+
         // If suffixes are equal, longer is "less" (preferred)
         // This matches the reference behavior: return x.len > y.len
         y.len.cmp(&x.len)
@@ -397,41 +397,41 @@ impl DictionaryBuilder {
         // Check for zero target dictionary size
         if self.config.target_dict_size == 0 {
             return Err(ZiporaError::invalid_data(
-                "Target dictionary size cannot be zero"
+                "Target dictionary size cannot be zero",
             ));
         }
 
         // Check that max_dict_size is not smaller than target_dict_size
         if self.config.max_dict_size < self.config.target_dict_size {
             return Err(ZiporaError::invalid_data(
-                "Maximum dictionary size cannot be smaller than target dictionary size"
+                "Maximum dictionary size cannot be smaller than target dictionary size",
             ));
         }
 
         // Check minimum frequency
         if self.config.min_frequency == 0 {
             return Err(ZiporaError::invalid_data(
-                "Minimum frequency must be greater than zero"
+                "Minimum frequency must be greater than zero",
             ));
         }
 
         // Check pattern length constraints
         if self.config.min_pattern_length == 0 {
             return Err(ZiporaError::invalid_data(
-                "Minimum pattern length must be greater than zero"
+                "Minimum pattern length must be greater than zero",
             ));
         }
 
         if self.config.max_pattern_length < self.config.min_pattern_length {
             return Err(ZiporaError::invalid_data(
-                "Maximum pattern length cannot be smaller than minimum pattern length"
+                "Maximum pattern length cannot be smaller than minimum pattern length",
             ));
         }
 
         // Check sampling ratio
         if !(0.0..=1.0).contains(&self.config.sample_ratio) {
             return Err(ZiporaError::invalid_data(
-                "Sample ratio must be between 0.0 and 1.0"
+                "Sample ratio must be between 0.0 and 1.0",
             ));
         }
 
@@ -467,20 +467,25 @@ impl DictionaryBuilder {
         if training_data.len() < self.config.max_dict_size / 10 {
             // Training data is less than 10% of max size - adjust down
             self.config.max_dict_size = (training_data.len() * 20).min(self.config.max_dict_size);
-            self.config.target_dict_size = self.config.target_dict_size.min(self.config.max_dict_size);
+            self.config.target_dict_size =
+                self.config.target_dict_size.min(self.config.max_dict_size);
         }
 
         // Initialize memory pool if needed
         if self.memory_pool.is_none() {
-            let pool_config = SecurePoolConfig::medium_secure()
-                .with_local_cache_size(32);
+            let pool_config = SecurePoolConfig::medium_secure().with_local_cache_size(32);
             self.memory_pool = Some(SecureMemoryPool::new(pool_config)?);
         }
 
         // Phase 1: Data Analysis
         self.report_progress(BuildPhase::DataAnalysis, 0.0, 0.05, "Analyzing input data")?;
         let analysis = self.analyze_data(training_data)?;
-        self.report_progress(BuildPhase::DataAnalysis, 1.0, 0.10, "Data analysis complete")?;
+        self.report_progress(
+            BuildPhase::DataAnalysis,
+            1.0,
+            0.10,
+            "Data analysis complete",
+        )?;
 
         // Phase 2: Sample data if needed
         let sampled_data = if self.config.sample_ratio < 1.0 {
@@ -490,23 +495,48 @@ impl DictionaryBuilder {
         };
 
         // Phase 3: Build suffix array
-        self.report_progress(BuildPhase::SuffixArrayConstruction, 0.0, 0.15, "Building suffix array")?;
+        self.report_progress(
+            BuildPhase::SuffixArrayConstruction,
+            0.0,
+            0.15,
+            "Building suffix array",
+        )?;
         let suffix_array = self.build_suffix_array(&sampled_data)?;
-        self.report_progress(BuildPhase::SuffixArrayConstruction, 1.0, 0.40, "Suffix array complete")?;
+        self.report_progress(
+            BuildPhase::SuffixArrayConstruction,
+            1.0,
+            0.40,
+            "Suffix array complete",
+        )?;
 
         // Phase 4: Extract patterns
-        self.report_progress(BuildPhase::PatternExtraction, 0.0, 0.45, "Extracting patterns")?;
+        self.report_progress(
+            BuildPhase::PatternExtraction,
+            0.0,
+            0.45,
+            "Extracting patterns",
+        )?;
         let patterns = self.extract_patterns(&suffix_array, &sampled_data)?;
         self.stats.patterns_extracted = patterns.len();
-        self.report_progress(BuildPhase::PatternExtraction, 1.0, 0.60, 
-                           &format!("Extracted {} patterns", patterns.len()))?;
+        self.report_progress(
+            BuildPhase::PatternExtraction,
+            1.0,
+            0.60,
+            &format!("Extracted {} patterns", patterns.len()),
+        )?;
 
         // Phase 5: Build DFA cache
-        self.report_progress(BuildPhase::DfaCacheConstruction, 0.0, 0.65, "Building DFA cache")?;
+        self.report_progress(
+            BuildPhase::DfaCacheConstruction,
+            0.0,
+            0.65,
+            "Building DFA cache",
+        )?;
         let dict_config = self.create_dictionary_config(&analysis)?;
 
         // For very small dictionaries, severely limit training data to prevent suffix array overhead
-        let final_training_data = if self.config.max_dict_size <= 1024 { // For ultra-small dictionaries (≤1KB)
+        let final_training_data = if self.config.max_dict_size <= 1024 {
+            // For ultra-small dictionaries (≤1KB)
             // For dictionaries under 1KB, use minimal training data
             let max_training_size = if self.config.max_dict_size <= 256 {
                 16 // Extreme limit for tiny dictionaries - only 16 bytes of training data
@@ -519,7 +549,8 @@ impl DictionaryBuilder {
             } else {
                 &sampled_data
             }
-        } else if self.config.max_dict_size <= 16384 { // 16KB or smaller
+        } else if self.config.max_dict_size <= 16384 {
+            // 16KB or smaller
             // Limit training data to prevent memory explosion
             // Use much smaller training data for tiny dictionaries
             let max_training_size = if self.config.max_dict_size <= 8192 {
@@ -539,7 +570,12 @@ impl DictionaryBuilder {
 
         let dictionary = SuffixArrayDictionary::new(final_training_data, dict_config)?;
         self.stats.dfa_cache_states = dictionary.cache_states();
-        self.report_progress(BuildPhase::DfaCacheConstruction, 1.0, 0.80, "DFA cache complete")?;
+        self.report_progress(
+            BuildPhase::DfaCacheConstruction,
+            1.0,
+            0.80,
+            "DFA cache complete",
+        )?;
 
         // Phase 6: Optimization
         self.report_progress(BuildPhase::Optimization, 0.0, 0.85, "Optimizing dictionary")?;
@@ -556,7 +592,8 @@ impl DictionaryBuilder {
         // Finalize statistics
         self.stats.total_build_time = start_time.elapsed();
         self.stats.final_dict_size = optimized_dictionary.dictionary_size();
-        self.stats.estimated_compression_ratio = self.estimate_compression_ratio(&optimized_dictionary);
+        self.stats.estimated_compression_ratio =
+            self.estimate_compression_ratio(&optimized_dictionary);
 
         self.report_progress(BuildPhase::Complete, 1.0, 1.0, "Dictionary build complete")?;
 
@@ -606,11 +643,11 @@ impl DictionaryBuilder {
     /// Implements reference sample sorting with deduplication
     fn sample_data(&self, data: &[u8], _analysis: &DataAnalysis) -> Result<Vec<u8>> {
         let target_size = (data.len() as f64 * self.config.sample_ratio) as usize;
-        
+
         if target_size == 0 {
             return Ok(Vec::new());
         }
-        
+
         if target_size >= data.len() {
             // Use full data when sample ratio is >= 1.0, just apply sorting if configured
             return match self.config.sample_sort_policy {
@@ -625,7 +662,7 @@ impl DictionaryBuilder {
         // First do systematic sampling for representativeness
         let step = data.len() / target_size;
         let mut sampled = Vec::with_capacity(target_size);
-        
+
         for i in (0..data.len()).step_by(step.max(1)) {
             sampled.push(data[i]);
             if sampled.len() >= target_size {
@@ -652,27 +689,27 @@ impl DictionaryBuilder {
     fn generate_and_sort_pattern_samples(&self, data: &[u8]) -> Result<Vec<u8>> {
         // For now, implement a basic version that respects size constraints
         // The full implementation would extract patterns like the reference does
-        
+
         if data.len() <= self.config.max_pattern_length {
             return Ok(data.to_vec());
         }
-        
+
         // Generate some representative patterns to avoid size explosion
         let max_samples = 1000; // Limit number of patterns
         let pattern_len = self.config.min_pattern_length.max(4);
         let step = (data.len() / max_samples).max(1);
-        
+
         let mut patterns = Vec::new();
         for i in (0..data.len().saturating_sub(pattern_len)).step_by(step) {
             let end = (i + pattern_len).min(data.len());
             patterns.extend_from_slice(&data[i..end]);
-            
+
             // Limit total size to prevent explosion
             if patterns.len() > self.config.max_dict_size.saturating_sub(1024) {
                 break;
             }
         }
-        
+
         Ok(patterns)
     }
 
@@ -685,17 +722,13 @@ impl DictionaryBuilder {
                 // No sorting - return data as-is
                 Ok(data.to_vec())
             }
-            SampleSortPolicy::SortLeft => {
-                self.sort_samples_left(data)
-            }
-            SampleSortPolicy::SortRight => {
-                self.sort_samples_right(data)
-            }
+            SampleSortPolicy::SortLeft => self.sort_samples_left(data),
+            SampleSortPolicy::SortRight => self.sort_samples_right(data),
             SampleSortPolicy::SortBoth => {
                 // Try both sorting methods and keep the smaller result
                 let left_result = self.sort_samples_left(data)?;
                 let right_result = self.sort_samples_right(data)?;
-                
+
                 if left_result.len() <= right_result.len() {
                     Ok(left_result)
                 } else {
@@ -715,18 +748,18 @@ impl DictionaryBuilder {
         // Create sample windows with position/length tracking
         let min_len = self.config.min_pattern_length;
         let max_len = self.config.max_pattern_length.min(data.len());
-        
+
         let mut samples = Vec::new();
         let mut total_sample_bytes = 0usize;
         let max_sample_bytes = self.config.max_dict_size.saturating_sub(1024); // Reserve space for overhead
-        
+
         // Generate samples with size constraints to prevent explosion
-        let step_size = if data.len() > 1000 { 
+        let step_size = if data.len() > 1000 {
             (data.len() / 500).max(1) // Limit to ~500 start positions for large data
-        } else { 
-            1 
+        } else {
+            1
         };
-        
+
         for start in (0..data.len()).step_by(step_size) {
             for len in min_len..=max_len {
                 if start + len <= data.len() {
@@ -740,7 +773,7 @@ impl DictionaryBuilder {
                     break;
                 }
             }
-            
+
             // Early termination if we're approaching size limits
             if total_sample_bytes > max_sample_bytes {
                 break;
@@ -757,7 +790,7 @@ impl DictionaryBuilder {
         while i < samples.len() {
             let current = &samples[i];
             let mut j = i + 1;
-            
+
             // Skip samples that are prefixes of the current one
             while j < samples.len() {
                 let next = &samples[j];
@@ -767,7 +800,7 @@ impl DictionaryBuilder {
                     break; // Different pattern, not a prefix
                 }
             }
-            
+
             deduplicated.push(*current);
             i = j;
         }
@@ -786,18 +819,18 @@ impl DictionaryBuilder {
         // Create sample windows with position/length tracking
         let min_len = self.config.min_pattern_length;
         let max_len = self.config.max_pattern_length.min(data.len());
-        
+
         let mut samples = Vec::new();
         let mut total_sample_bytes = 0usize;
         let max_sample_bytes = self.config.max_dict_size.saturating_sub(1024); // Reserve space for overhead
-        
+
         // Generate samples with size constraints to prevent explosion
-        let step_size = if data.len() > 1000 { 
+        let step_size = if data.len() > 1000 {
             (data.len() / 500).max(1) // Limit to ~500 start positions for large data
-        } else { 
-            1 
+        } else {
+            1
         };
-        
+
         for start in (0..data.len()).step_by(step_size) {
             for len in min_len..=max_len {
                 if start + len <= data.len() {
@@ -811,7 +844,7 @@ impl DictionaryBuilder {
                     break;
                 }
             }
-            
+
             // Early termination if we're approaching size limits
             if total_sample_bytes > max_sample_bytes {
                 break;
@@ -828,7 +861,7 @@ impl DictionaryBuilder {
         while i < samples.len() {
             let current = &samples[i];
             let mut j = i + 1;
-            
+
             // Skip samples that are suffixes of the current one
             while j < samples.len() {
                 let next = &samples[j];
@@ -838,7 +871,7 @@ impl DictionaryBuilder {
                     break; // Different pattern, not a suffix
                 }
             }
-            
+
             deduplicated.push(*current);
             i = j;
         }
@@ -853,10 +886,10 @@ impl DictionaryBuilder {
         if shorter.len >= longer.len {
             return false;
         }
-        
+
         let shorter_slice = &data[shorter.pos..shorter.pos + shorter.len];
         let longer_slice = &data[longer.pos..longer.pos + shorter.len];
-        
+
         shorter_slice == longer_slice
     }
 
@@ -866,11 +899,11 @@ impl DictionaryBuilder {
         if shorter.len >= longer.len {
             return false;
         }
-        
+
         let shorter_slice = &data[shorter.pos..shorter.pos + shorter.len];
         let longer_end = longer.pos + longer.len;
         let longer_slice = &data[longer_end - shorter.len..longer_end];
-        
+
         shorter_slice == longer_slice
     }
 
@@ -884,7 +917,7 @@ impl DictionaryBuilder {
         // For now, return the concatenation of all unique samples
         // In a more sophisticated implementation, we might optimize the order
         let mut result = Vec::new();
-        
+
         for sample in samples {
             let sample_data = &data[sample.pos..sample.pos + sample.len];
             result.extend_from_slice(sample_data);
@@ -896,31 +929,41 @@ impl DictionaryBuilder {
     /// Build suffix array from sampled data
     fn build_suffix_array(&mut self, data: &[u8]) -> Result<Arc<SuffixArray>> {
         let phase_start = Instant::now();
-        
+
         let sa_config = SuffixArrayConfig {
             algorithm: crate::algorithms::suffix_array::SuffixArrayAlgorithm::SAIS,
             use_parallel: self.config.use_parallel,
-            parallel_threshold: if self.config.use_parallel { 10000 } else { usize::MAX },
+            parallel_threshold: if self.config.use_parallel {
+                10000
+            } else {
+                usize::MAX
+            },
             compute_lcp: false, // Not needed for dictionary building
             optimize_small_alphabet: true,
             adaptive_threshold: 10_000,
         };
 
         let suffix_array = SuffixArray::with_config(data, &sa_config)?;
-        
-        self.stats.phase_times.insert(BuildPhase::SuffixArrayConstruction, phase_start.elapsed());
+
+        self.stats
+            .phase_times
+            .insert(BuildPhase::SuffixArrayConstruction, phase_start.elapsed());
         Ok(Arc::new(suffix_array))
     }
 
     /// Extract frequent patterns from suffix array
-    fn extract_patterns(&mut self, suffix_array: &SuffixArray, data: &[u8]) -> Result<Vec<PatternInfo>> {
+    fn extract_patterns(
+        &mut self,
+        suffix_array: &SuffixArray,
+        data: &[u8],
+    ) -> Result<Vec<PatternInfo>> {
         let phase_start = Instant::now();
         let mut patterns = Vec::new();
-        
+
         // Extract patterns of different lengths
         for pattern_len in self.config.min_pattern_length..=self.config.max_pattern_length {
             let mut pattern_counts: HashMap<&[u8], u32> = HashMap::new();
-            
+
             // Count occurrences of all patterns of this length
             for &start_pos in suffix_array.as_slice() {
                 if start_pos + pattern_len <= data.len() {
@@ -928,10 +971,11 @@ impl DictionaryBuilder {
                     *pattern_counts.entry(pattern).or_insert(0) += 1;
                 }
             }
-            
+
             // Add frequent patterns
             for (pattern, frequency) in pattern_counts {
-                if frequency >= self.config.min_frequency && frequency <= self.config.max_frequency {
+                if frequency >= self.config.min_frequency && frequency <= self.config.max_frequency
+                {
                     patterns.push(PatternInfo {
                         _pattern: pattern.to_vec(),
                         frequency,
@@ -943,7 +987,8 @@ impl DictionaryBuilder {
 
         // Sort by frequency (descending) and then by length (descending)
         patterns.sort_by(|a, b| {
-            b.frequency.cmp(&a.frequency)
+            b.frequency
+                .cmp(&a.frequency)
                 .then_with(|| b.length.cmp(&a.length))
         });
 
@@ -951,12 +996,17 @@ impl DictionaryBuilder {
         let target_patterns = self.calculate_target_pattern_count(&patterns);
         patterns.truncate(target_patterns);
 
-        self.stats.phase_times.insert(BuildPhase::PatternExtraction, phase_start.elapsed());
+        self.stats
+            .phase_times
+            .insert(BuildPhase::PatternExtraction, phase_start.elapsed());
         Ok(patterns)
     }
 
     /// Create dictionary configuration based on analysis
-    fn create_dictionary_config(&self, analysis: &DataAnalysis) -> Result<SuffixArrayDictionaryConfig> {
+    fn create_dictionary_config(
+        &self,
+        analysis: &DataAnalysis,
+    ) -> Result<SuffixArrayDictionaryConfig> {
         // Use the actual (possibly adjusted) max_dict_size
         let actual_dict_budget = self.config.max_dict_size.min(analysis.data_size * 20);
 
@@ -968,7 +1018,7 @@ impl DictionaryBuilder {
             external_mode: false, // Internal mode for building
             use_memory_pool: self.config.max_dict_size > 1024, // Disable pool for tiny dicts
             enable_simd: self.config.max_dict_size > 1024, // Disable SIMD for tiny dicts
-            sample_ratio: 1.0, // Already sampled
+            sample_ratio: 1.0,    // Already sampled
             min_pattern_length: self.config.min_pattern_length,
             max_pattern_length: self.config.max_pattern_length,
             dfa_cache_config: if actual_dict_budget <= 1024 {
@@ -1023,7 +1073,10 @@ impl DictionaryBuilder {
     }
 
     /// Optimize dictionary after construction
-    fn optimize_dictionary(&mut self, mut dictionary: SuffixArrayDictionary) -> Result<SuffixArrayDictionary> {
+    fn optimize_dictionary(
+        &mut self,
+        mut dictionary: SuffixArrayDictionary,
+    ) -> Result<SuffixArrayDictionary> {
         let phase_start = Instant::now();
 
         // Optimize DFA cache
@@ -1034,31 +1087,41 @@ impl DictionaryBuilder {
         // Following referenced project philosophy: focus on dictionary data, not metadata
         let dict_text_size = dictionary.dictionary_size();
         if dict_text_size > self.config.max_dict_size {
-            return Err(ZiporaError::invalid_data(
-                format!("Dictionary size {} exceeds maximum {}", dict_text_size, self.config.max_dict_size)
-            ));
+            return Err(ZiporaError::invalid_data(format!(
+                "Dictionary size {} exceeds maximum {}",
+                dict_text_size, self.config.max_dict_size
+            )));
         }
 
-        self.stats.phase_times.insert(BuildPhase::Optimization, phase_start.elapsed());
+        self.stats
+            .phase_times
+            .insert(BuildPhase::Optimization, phase_start.elapsed());
         Ok(dictionary)
     }
 
     /// Report progress to callback if set
-    fn report_progress(&self, phase: BuildPhase, phase_progress: f64, overall_progress: f64, message: &str) -> Result<()> {
+    fn report_progress(
+        &self,
+        phase: BuildPhase,
+        phase_progress: f64,
+        overall_progress: f64,
+        message: &str,
+    ) -> Result<()> {
         if let Some(ref callback) = self.progress_callback
-            && self.config.enable_progress {
-                let progress = BuildProgress {
-                    phase,
-                    phase_progress,
-                    overall_progress,
-                    elapsed_time: self.stats.total_build_time,
-                    estimated_remaining: self.estimate_remaining_time(overall_progress),
-                    current_dict_size: self.stats.final_dict_size,
-                    patterns_processed: self.stats.patterns_extracted,
-                    message: message.to_string(),
-                };
-                callback(&progress);
-            }
+            && self.config.enable_progress
+        {
+            let progress = BuildProgress {
+                phase,
+                phase_progress,
+                overall_progress,
+                elapsed_time: self.stats.total_build_time,
+                estimated_remaining: self.estimate_remaining_time(overall_progress),
+                current_dict_size: self.stats.final_dict_size,
+                patterns_processed: self.stats.patterns_extracted,
+                message: message.to_string(),
+            };
+            callback(&progress);
+        }
         Ok(())
     }
 
@@ -1134,7 +1197,8 @@ impl DictionaryBuilder {
         }
 
         // For very small dictionaries, ensure we don't select too many patterns
-        if self.config.max_dict_size <= 16384 { // 16KB or smaller
+        if self.config.max_dict_size <= 16384 {
+            // 16KB or smaller
             count = count.min(32); // Limit to 32 patterns max for small dictionaries
         }
 
@@ -1145,10 +1209,12 @@ impl DictionaryBuilder {
     fn calculate_cache_states(&self, analysis: &DataAnalysis) -> usize {
         // Base states proportional to dictionary size budget
         // For small dictionaries, use much fewer cache states
-        let base_states = if self.config.max_dict_size <= 16384 { // 16KB or smaller
+        let base_states = if self.config.max_dict_size <= 16384 {
+            // 16KB or smaller
             // For small dictionaries, use minimal cache states
             64.min(self.config.max_dict_size / 128) // ~64 states for 8KB, fewer for smaller
-        } else if self.config.max_dict_size <= 1024 * 1024 { // 1MB or smaller
+        } else if self.config.max_dict_size <= 1024 * 1024 {
+            // 1MB or smaller
             512.min(self.config.max_dict_size / 2048) // Scale with dictionary size
         } else {
             8192 // Original default for large dictionaries
@@ -1197,7 +1263,7 @@ impl DictionaryBuilder {
         // Simple estimate based on dictionary efficiency
         let dict_overhead = dictionary.memory_usage() as f64 / self.stats.original_data_size as f64;
         let pattern_efficiency = self.stats.pattern_efficiency();
-        
+
         // Compression ratio estimate (lower is better)
         (0.3 + dict_overhead * 0.1) * (1.0 - pattern_efficiency * 0.5)
     }
@@ -1260,10 +1326,11 @@ mod tests {
 
     #[test]
     fn test_build_simple_dictionary() {
-        let training_data = b"the quick brown fox jumps over the lazy dog. the quick brown fox jumps.";
+        let training_data =
+            b"the quick brown fox jumps over the lazy dog. the quick brown fox jumps.";
         let config = DictionaryBuilderConfig {
             target_dict_size: 2048,
-            max_dict_size: 4096,  // Increased to accommodate the training data
+            max_dict_size: 4096, // Increased to accommodate the training data
             sample_ratio: 1.0,
             validate_result: true,
             ..Default::default()
@@ -1271,7 +1338,7 @@ mod tests {
 
         let builder = DictionaryBuilder::with_config(config);
         let result = builder.build(training_data);
-        
+
         if let Err(ref e) = result {
             eprintln!("Dictionary building failed: {:?}", e);
         }
@@ -1285,7 +1352,7 @@ mod tests {
     fn test_progress_callback() {
         let _training_data = b"test data for progress callback";
         let _progress_reports: Vec<String> = Vec::new();
-        
+
         let builder = DictionaryBuilder::new().with_progress_callback(|_progress| {
             // This would be called during building in a real scenario
             // For testing, we just verify the callback signature works
@@ -1299,13 +1366,13 @@ mod tests {
     #[test]
     fn test_data_analysis() {
         let mut builder = DictionaryBuilder::new();
-        
+
         // Test with repetitive data
         let repetitive_data = b"abcabc".repeat(100);
         let analysis = builder.analyze_data(&repetitive_data).unwrap();
         assert!(analysis.repetitiveness > 0.0);
         assert!(analysis.entropy > 0.0);
-        
+
         // Test with random-like data
         let random_data: Vec<u8> = (0..=255).cycle().take(1000).collect();
         let analysis = builder.analyze_data(&random_data).unwrap();
@@ -1318,11 +1385,11 @@ mod tests {
             sample_ratio: 0.5,
             ..Default::default()
         });
-        
+
         let large_data = vec![b'a'; 1000];
         let analysis = DataAnalysis::default();
         let sampled = builder.sample_data(&large_data, &analysis).unwrap();
-        
+
         assert!(sampled.len() <= 500);
         assert!(!sampled.is_empty());
     }
@@ -1332,7 +1399,7 @@ mod tests {
         let training_data = b"statistics test data with some repeated patterns";
         let builder = DictionaryBuilder::new();
         let dictionary = builder.build(training_data).unwrap();
-        
+
         // Since build() consumes the builder, we can't access its stats afterward
         // Instead, verify the dictionary was created successfully
         assert!(dictionary.dictionary_size() > 0);
@@ -1355,7 +1422,7 @@ mod tests {
         let mut stats = BuildStats::default();
         stats.patterns_extracted = 100;
         stats.patterns_included = 75;
-        
+
         assert_eq!(stats.pattern_efficiency(), 0.75);
     }
 
@@ -1364,7 +1431,7 @@ mod tests {
         let mut stats = BuildStats::default();
         stats.original_data_size = 1000;
         stats.final_dict_size = 200;
-        
+
         assert_eq!(stats.dictionary_overhead(), 0.2);
     }
 
@@ -1381,7 +1448,7 @@ mod tests {
         let test_data = b"abcdefabcdef";
         let analysis = DataAnalysis::default();
         let result = builder.sample_data(test_data, &analysis).unwrap();
-        
+
         // SortNone should return data as-is
         assert_eq!(result, test_data);
     }
@@ -1399,7 +1466,7 @@ mod tests {
         let test_data = b"abcabc";
         let analysis = DataAnalysis::default();
         let result = builder.sample_data(test_data, &analysis).unwrap();
-        
+
         // Should perform left sorting and deduplication
         assert!(!result.is_empty());
         // The exact result depends on the sorting and deduplication logic
@@ -1419,7 +1486,7 @@ mod tests {
         let test_data = b"abcabc";
         let analysis = DataAnalysis::default();
         let result = builder.sample_data(test_data, &analysis).unwrap();
-        
+
         // Should perform right sorting and deduplication
         assert!(!result.is_empty());
     }
@@ -1437,7 +1504,7 @@ mod tests {
         let test_data = b"abcabc";
         let analysis = DataAnalysis::default();
         let result = builder.sample_data(test_data, &analysis).unwrap();
-        
+
         // Should try both sorting methods and return the smaller result
         assert!(!result.is_empty());
     }
@@ -1446,14 +1513,14 @@ mod tests {
     fn test_pos_len_cmp_left() {
         let data = b"abcdefabc";
         let cmp = PosLenCmpLeft::new(data);
-        
+
         let pos1 = PosLen::new(0, 3); // "abc"
         let pos2 = PosLen::new(6, 3); // "abc"
         let pos3 = PosLen::new(0, 4); // "abcd"
-        
+
         // Same content, equal length should be equal
         assert_eq!(cmp.compare(&pos1, &pos2), std::cmp::Ordering::Equal);
-        
+
         // Longer pattern should be "less" (preferred)
         assert_eq!(cmp.compare(&pos3, &pos1), std::cmp::Ordering::Less);
     }
@@ -1462,14 +1529,14 @@ mod tests {
     fn test_pos_len_cmp_right() {
         let data = b"abcdefabc";
         let cmp = PosLenCmpRight::new(data);
-        
+
         let pos1 = PosLen::new(0, 3); // "abc"
         let pos2 = PosLen::new(6, 3); // "abc"
         let pos3 = PosLen::new(2, 4); // "cdef"
-        
+
         // Same suffix content should be equal
         assert_eq!(cmp.compare(&pos1, &pos2), std::cmp::Ordering::Equal);
-        
+
         // Different suffixes should compare lexicographically
         assert_ne!(cmp.compare(&pos1, &pos3), std::cmp::Ordering::Equal);
     }
@@ -1478,11 +1545,11 @@ mod tests {
     fn test_is_left_prefix() {
         let builder = DictionaryBuilder::new();
         let data = b"abcdefg";
-        
+
         let shorter = PosLen::new(0, 3); // "abc"
-        let longer = PosLen::new(0, 5);  // "abcde"
+        let longer = PosLen::new(0, 5); // "abcde"
         let different = PosLen::new(3, 3); // "def"
-        
+
         assert!(builder.is_left_prefix(data, &shorter, &longer));
         assert!(!builder.is_left_prefix(data, &shorter, &different));
         assert!(!builder.is_left_prefix(data, &longer, &shorter)); // longer can't be prefix of shorter
@@ -1492,11 +1559,11 @@ mod tests {
     fn test_is_right_suffix() {
         let builder = DictionaryBuilder::new();
         let data = b"abcdefg";
-        
+
         let shorter = PosLen::new(4, 3); // "efg"
-        let longer = PosLen::new(2, 5);  // "cdefg"
+        let longer = PosLen::new(2, 5); // "cdefg"
         let different = PosLen::new(0, 3); // "abc"
-        
+
         assert!(builder.is_right_suffix(data, &shorter, &longer));
         assert!(!builder.is_right_suffix(data, &shorter, &different));
         assert!(!builder.is_right_suffix(data, &longer, &shorter)); // longer can't be suffix of shorter
@@ -1512,7 +1579,7 @@ mod tests {
         let empty_data = b"";
         let analysis = DataAnalysis::default();
         let result = builder.sample_data(empty_data, &analysis).unwrap();
-        
+
         assert!(result.is_empty());
     }
 
@@ -1529,7 +1596,7 @@ mod tests {
         let single_byte = b"a";
         let analysis = DataAnalysis::default();
         let result = builder.sample_data(single_byte, &analysis).unwrap();
-        
+
         assert!(!result.is_empty());
     }
 
@@ -1546,7 +1613,7 @@ mod tests {
         let test_data = b"abcdefghijklmnopqrstuvwxyz";
         let analysis = DataAnalysis::default();
         let result = builder.sample_data(test_data, &analysis).unwrap();
-        
+
         // Should apply sampling first, then sorting
         assert!(!result.is_empty());
     }
@@ -1555,7 +1622,10 @@ mod tests {
     fn test_configuration_presets_have_sorting() {
         // Test that our configuration presets include sample sorting policies
         let max_compression = DictionaryBuilderConfig::max_compression();
-        assert_eq!(max_compression.sample_sort_policy, SampleSortPolicy::SortBoth);
+        assert_eq!(
+            max_compression.sample_sort_policy,
+            SampleSortPolicy::SortBoth
+        );
 
         let max_speed = DictionaryBuilderConfig::max_speed();
         assert_eq!(max_speed.sample_sort_policy, SampleSortPolicy::SortNone);
@@ -1581,7 +1651,7 @@ mod tests {
         let repetitive_data = b"abababab";
         let analysis = DataAnalysis::default();
         let result = builder.sample_data(repetitive_data, &analysis).unwrap();
-        
+
         // After deduplication, result should be smaller than if we included all overlaps
         assert!(!result.is_empty());
         // The exact size depends on deduplication efficiency, but it should be reasonable

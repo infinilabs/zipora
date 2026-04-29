@@ -1,4 +1,7 @@
-use zipora::fsa::{ZiporaTrie, ZiporaTrieConfig, TrieStrategy, StorageStrategy, CompressionStrategy, RankSelectType, FiniteStateAutomaton, Trie};
+use zipora::fsa::{
+    CompressionStrategy, FiniteStateAutomaton, RankSelectType, StorageStrategy, Trie, TrieStrategy,
+    ZiporaTrie, ZiporaTrieConfig,
+};
 use zipora::succinct::RankSelectInterleaved256;
 
 fn main() {

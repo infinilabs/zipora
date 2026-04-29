@@ -158,7 +158,7 @@ fn test_ffi_memory_pool_multiple_allocs() {
 
         // Verify all chunks are different
         for i in 0..chunks.len() {
-            for j in i+1..chunks.len() {
+            for j in i + 1..chunks.len() {
                 assert_ne!(chunks[i], chunks[j]);
             }
         }
@@ -212,12 +212,7 @@ fn test_ffi_blob_store_put_get() {
         let test_data = b"Hello, Zipora FFI!";
         let mut record_id: u32 = 0;
 
-        let result = blob_store_put(
-            store,
-            test_data.as_ptr(),
-            test_data.len(),
-            &mut record_id
-        );
+        let result = blob_store_put(store, test_data.as_ptr(), test_data.len(), &mut record_id);
         assert_eq!(result, CResult::Success);
 
         // Get data back from store
@@ -260,6 +255,40 @@ fn test_ffi_blob_store_get_missing() {
 }
 
 #[test]
+fn test_ffi_blob_store_output_ptr_null_safety() {
+    unsafe {
+        let store = blob_store_new();
+        let test_data = b"test";
+
+        // Null output parameter for record_id
+        let result = blob_store_put(
+            store,
+            test_data.as_ptr(),
+            test_data.len(),
+            std::ptr::null_mut(),
+        );
+        assert_eq!(result, CResult::InvalidInput);
+
+        // Put a valid record to test get
+        let mut record_id = 0;
+        blob_store_put(store, test_data.as_ptr(), test_data.len(), &mut record_id);
+
+        let mut data_ptr: *const u8 = std::ptr::null();
+        let mut size: usize = 0;
+
+        // Null output parameter for data ptr
+        let result = blob_store_get(store, record_id, std::ptr::null_mut(), &mut size);
+        assert_eq!(result, CResult::InvalidInput);
+
+        // Null output parameter for size ptr
+        let result = blob_store_get(store, record_id, &mut data_ptr, std::ptr::null_mut());
+        assert_eq!(result, CResult::InvalidInput);
+
+        blob_store_free(store);
+    }
+}
+
+#[test]
 fn test_ffi_blob_store_null_safety() {
     unsafe {
         // Free null store should be safe
@@ -272,7 +301,7 @@ fn test_ffi_blob_store_null_safety() {
             ptr::null_mut(),
             test_data.as_ptr(),
             test_data.len(),
-            &mut record_id
+            &mut record_id,
         );
         assert_eq!(result, CResult::InvalidInput);
 
@@ -284,12 +313,7 @@ fn test_ffi_blob_store_null_safety() {
 
         // Test null data pointer
         let store = blob_store_new();
-        let result = blob_store_put(
-            store,
-            ptr::null(),
-            10,
-            &mut record_id
-        );
+        let result = blob_store_put(store, ptr::null(), 10, &mut record_id);
         assert_eq!(result, CResult::InvalidInput);
         blob_store_free(store);
     }
@@ -322,7 +346,7 @@ fn test_ffi_suffix_array_lifecycle() {
             pattern.as_ptr(),
             pattern.len(),
             &mut start,
-            &mut count
+            &mut count,
         );
         assert_eq!(result, CResult::Success);
 
@@ -353,7 +377,7 @@ fn test_ffi_suffix_array_search_patterns() {
             pattern1.as_ptr(),
             pattern1.len(),
             &mut start,
-            &mut count
+            &mut count,
         );
         assert_eq!(result, CResult::Success);
         // "the" appears 2 times
@@ -368,7 +392,7 @@ fn test_ffi_suffix_array_search_patterns() {
             pattern2.as_ptr(),
             pattern2.len(),
             &mut start,
-            &mut count
+            &mut count,
         );
         assert_eq!(result, CResult::Success);
         assert_eq!(count, 0); // "cat" doesn't exist
@@ -382,7 +406,7 @@ fn test_ffi_suffix_array_search_patterns() {
             pattern3.as_ptr(),
             pattern3.len(),
             &mut start,
-            &mut count
+            &mut count,
         );
         assert_eq!(result, CResult::Success);
         assert!(count >= 4); // "o" appears in "brown", "fox", "over", "dog"
@@ -410,10 +434,8 @@ fn test_ffi_radix_sort() {
 
         // Test with random-ish data
         let mut data2 = vec![
-            42, 17, 89, 3, 56, 91, 23, 67, 8, 45,
-            71, 34, 95, 12, 58, 84, 29, 63, 6, 39,
-            77, 21, 88, 14, 52, 96, 31, 69, 5, 48,
-            82, 25, 93, 11, 61, 87, 36, 74, 19, 55,
+            42, 17, 89, 3, 56, 91, 23, 67, 8, 45, 71, 34, 95, 12, 58, 84, 29, 63, 6, 39, 77, 21,
+            88, 14, 52, 96, 31, 69, 5, 48, 82, 25, 93, 11, 61, 87, 36, 74, 19, 55,
         ];
         let mut expected = data2.clone();
         expected.sort();
@@ -519,6 +541,44 @@ fn test_ffi_blob_store_multiple_records() {
 }
 
 #[test]
+fn test_ffi_suffix_array_output_ptr_null_safety() {
+    unsafe {
+        let text = b"test string";
+        let sa = suffix_array_new(text.as_ptr(), text.len());
+
+        let pattern = b"test";
+        let mut start: usize = 0;
+        let mut count: usize = 0;
+
+        // Null output parameter for start
+        let result = suffix_array_search(
+            sa,
+            text.as_ptr(),
+            text.len(),
+            pattern.as_ptr(),
+            pattern.len(),
+            std::ptr::null_mut(),
+            &mut count,
+        );
+        assert_eq!(result, CResult::InvalidInput);
+
+        // Null output parameter for count
+        let result = suffix_array_search(
+            sa,
+            text.as_ptr(),
+            text.len(),
+            pattern.as_ptr(),
+            pattern.len(),
+            &mut start,
+            std::ptr::null_mut(),
+        );
+        assert_eq!(result, CResult::InvalidInput);
+
+        suffix_array_free(sa);
+    }
+}
+
+#[test]
 fn test_ffi_suffix_array_null_safety() {
     unsafe {
         // Create with null text should return null
@@ -547,7 +607,7 @@ fn test_ffi_suffix_array_null_safety() {
             pattern.as_ptr(),
             pattern.len(),
             &mut start,
-            &mut count
+            &mut count,
         );
         assert_eq!(result, CResult::InvalidInput);
     }

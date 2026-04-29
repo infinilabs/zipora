@@ -4,8 +4,8 @@
 //! SIMD base64, now delegates to the well-tested `base64` crate.
 
 use crate::error::{Result, ZiporaError};
-use base64::engine::general_purpose;
 use base64::Engine;
+use base64::engine::general_purpose;
 
 /// Encodes binary data to Base64 string
 pub fn encode_base64(data: &[u8]) -> Result<String> {
@@ -24,7 +24,9 @@ pub fn encode_base64_to_buffer(data: &[u8], output: &mut [u8]) -> Result<usize> 
     let encoded = general_purpose::STANDARD.encode(data);
     let bytes = encoded.as_bytes();
     if bytes.len() > output.len() {
-        return Err(ZiporaError::invalid_data("output buffer too small for base64 encoding"));
+        return Err(ZiporaError::invalid_data(
+            "output buffer too small for base64 encoding",
+        ));
     }
     output[..bytes.len()].copy_from_slice(bytes);
     Ok(bytes.len())
@@ -38,7 +40,9 @@ pub fn decode_base64_from_buffer(data: &[u8], output: &mut [u8]) -> Result<usize
         .decode(input_str)
         .map_err(|e| ZiporaError::invalid_data(format!("base64 decode error: {}", e)))?;
     if decoded.len() > output.len() {
-        return Err(ZiporaError::invalid_data("output buffer too small for base64 decoding"));
+        return Err(ZiporaError::invalid_data(
+            "output buffer too small for base64 decoding",
+        ));
     }
     output[..decoded.len()].copy_from_slice(&decoded);
     Ok(decoded.len())

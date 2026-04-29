@@ -13,14 +13,14 @@
 //! 7. **CPU Feature Detection** - Performance across different CPU capabilities
 
 use criterion::{
-    BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
-    BatchSize, PlotConfiguration, AxisScale
+    AxisScale, BatchSize, BenchmarkId, Criterion, PlotConfiguration, Throughput, black_box,
+    criterion_group, criterion_main,
 };
 use std::time::Duration;
 
 use zipora::algorithms::radix_sort::{
-    AdvancedRadixSortConfig, AdvancedU32RadixSort, AdvancedU64RadixSort,
-    AdvancedStringRadixSort, RadixSort, RadixString, SortingStrategy, DataCharacteristics
+    AdvancedRadixSortConfig, AdvancedStringRadixSort, AdvancedU32RadixSort, AdvancedU64RadixSort,
+    DataCharacteristics, RadixSort, RadixString, SortingStrategy,
 };
 
 // =============================================================================
@@ -76,7 +76,7 @@ impl DataGenerator {
     /// Generate nearly sorted data (90% sorted)
     fn generate_nearly_sorted_u32(&mut self, size: usize) -> Vec<u32> {
         let mut data: Vec<u32> = (0..size).map(|i| i as u32).collect();
-        
+
         // Randomly swap 10% of elements
         let swaps = size / 10;
         for _ in 0..swaps {
@@ -84,20 +84,20 @@ impl DataGenerator {
             let j = (self.next_u32() as usize) % size;
             data.swap(i, j);
         }
-        
+
         data
     }
 
     fn generate_nearly_sorted_u64(&mut self, size: usize) -> Vec<u64> {
         let mut data: Vec<u64> = (0..size).map(|i| i as u64).collect();
-        
+
         let swaps = size / 10;
         for _ in 0..swaps {
             let i = (self.next_u32() as usize) % size;
             let j = (self.next_u32() as usize) % size;
             data.swap(i, j);
         }
-        
+
         data
     }
 
@@ -124,12 +124,14 @@ impl DataGenerator {
     /// Generate string data with different characteristics
     fn generate_random_strings(&mut self, count: usize, avg_length: usize) -> Vec<Vec<u8>> {
         let chars = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        (0..count).map(|_| {
-            let length = (avg_length / 2) + ((self.next_u32() as usize) % avg_length);
-            (0..length).map(|_| {
-                chars[(self.next_u32() as usize) % chars.len()]
-            }).collect()
-        }).collect()
+        (0..count)
+            .map(|_| {
+                let length = (avg_length / 2) + ((self.next_u32() as usize) % avg_length);
+                (0..length)
+                    .map(|_| chars[(self.next_u32() as usize) % chars.len()])
+                    .collect()
+            })
+            .collect()
     }
 
     fn generate_sorted_strings(&mut self, count: usize, avg_length: usize) -> Vec<Vec<u8>> {
@@ -140,12 +142,14 @@ impl DataGenerator {
 
     fn generate_prefix_strings(&mut self, count: usize, _prefix_length: usize) -> Vec<Vec<u8>> {
         let prefix = b"common_prefix_";
-        (0..count).map(|i| {
-            let mut s = prefix.to_vec();
-            let suffix = format!("{:010}", i);
-            s.extend_from_slice(suffix.as_bytes());
-            s
-        }).collect()
+        (0..count)
+            .map(|i| {
+                let mut s = prefix.to_vec();
+                let suffix = format!("{:010}", i);
+                s.extend_from_slice(suffix.as_bytes());
+                s
+            })
+            .collect()
     }
 }
 
@@ -175,14 +179,14 @@ fn benchmark_strategy_comparison_u32(c: &mut Criterion) {
                 b.iter_batched(
                     || data.clone(),
                     |mut data| {
-                        let mut sorter = AdvancedU32RadixSort::with_config(
-                            AdvancedRadixSortConfig {
+                        let mut sorter =
+                            AdvancedU32RadixSort::with_config(AdvancedRadixSortConfig {
                                 force_strategy: Some(SortingStrategy::LsdRadix),
                                 use_parallel: false,
                                 use_simd: false,
                                 ..Default::default()
-                            }
-                        ).unwrap();
+                            })
+                            .unwrap();
                         sorter.sort(&mut data).unwrap();
                         black_box(data)
                     },
@@ -199,14 +203,14 @@ fn benchmark_strategy_comparison_u32(c: &mut Criterion) {
                 b.iter_batched(
                     || data.clone(),
                     |mut data| {
-                        let mut sorter = AdvancedU32RadixSort::with_config(
-                            AdvancedRadixSortConfig {
+                        let mut sorter =
+                            AdvancedU32RadixSort::with_config(AdvancedRadixSortConfig {
                                 force_strategy: Some(SortingStrategy::MsdRadix),
                                 use_parallel: false,
                                 use_simd: false,
                                 ..Default::default()
-                            }
-                        ).unwrap();
+                            })
+                            .unwrap();
                         sorter.sort(&mut data).unwrap();
                         black_box(data)
                     },
@@ -223,14 +227,14 @@ fn benchmark_strategy_comparison_u32(c: &mut Criterion) {
                 b.iter_batched(
                     || data.clone(),
                     |mut data| {
-                        let mut sorter = AdvancedU32RadixSort::with_config(
-                            AdvancedRadixSortConfig {
+                        let mut sorter =
+                            AdvancedU32RadixSort::with_config(AdvancedRadixSortConfig {
                                 force_strategy: Some(SortingStrategy::Insertion),
                                 use_parallel: false,
                                 use_simd: false,
                                 ..Default::default()
-                            }
-                        ).unwrap();
+                            })
+                            .unwrap();
                         sorter.sort(&mut data).unwrap();
                         black_box(data)
                     },
@@ -240,53 +244,43 @@ fn benchmark_strategy_comparison_u32(c: &mut Criterion) {
         );
 
         // Tim Sort
-        group.bench_with_input(
-            BenchmarkId::new("TimSort", size),
-            &test_data,
-            |b, data| {
-                b.iter_batched(
-                    || data.clone(),
-                    |mut data| {
-                        let mut sorter = AdvancedU32RadixSort::with_config(
-                            AdvancedRadixSortConfig {
-                                force_strategy: Some(SortingStrategy::TimSort),
-                                use_parallel: false,
-                                use_simd: false,
-                                ..Default::default()
-                            }
-                        ).unwrap();
-                        sorter.sort(&mut data).unwrap();
-                        black_box(data)
-                    },
-                    BatchSize::SmallInput,
-                )
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("TimSort", size), &test_data, |b, data| {
+            b.iter_batched(
+                || data.clone(),
+                |mut data| {
+                    let mut sorter = AdvancedU32RadixSort::with_config(AdvancedRadixSortConfig {
+                        force_strategy: Some(SortingStrategy::TimSort),
+                        use_parallel: false,
+                        use_simd: false,
+                        ..Default::default()
+                    })
+                    .unwrap();
+                    sorter.sort(&mut data).unwrap();
+                    black_box(data)
+                },
+                BatchSize::SmallInput,
+            )
+        });
 
         // Adaptive Strategy
-        group.bench_with_input(
-            BenchmarkId::new("Adaptive", size),
-            &test_data,
-            |b, data| {
-                b.iter_batched(
-                    || data.clone(),
-                    |mut data| {
-                        let mut sorter = AdvancedU32RadixSort::with_config(
-                            AdvancedRadixSortConfig {
-                                adaptive_strategy: true,
-                                force_strategy: None,
-                                use_parallel: false,
-                                use_simd: false,
-                                ..Default::default()
-                            }
-                        ).unwrap();
-                        sorter.sort(&mut data).unwrap();
-                        black_box(data)
-                    },
-                    BatchSize::SmallInput,
-                )
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("Adaptive", size), &test_data, |b, data| {
+            b.iter_batched(
+                || data.clone(),
+                |mut data| {
+                    let mut sorter = AdvancedU32RadixSort::with_config(AdvancedRadixSortConfig {
+                        adaptive_strategy: true,
+                        force_strategy: None,
+                        use_parallel: false,
+                        use_simd: false,
+                        ..Default::default()
+                    })
+                    .unwrap();
+                    sorter.sort(&mut data).unwrap();
+                    black_box(data)
+                },
+                BatchSize::SmallInput,
+            )
+        });
 
         // Standard library for comparison
         group.bench_with_input(
@@ -328,13 +322,13 @@ fn benchmark_strategy_comparison_u64(c: &mut Criterion) {
                 b.iter_batched(
                     || data.clone(),
                     |mut data| {
-                        let mut sorter = AdvancedU64RadixSort::with_config(
-                            AdvancedRadixSortConfig {
+                        let mut sorter =
+                            AdvancedU64RadixSort::with_config(AdvancedRadixSortConfig {
                                 force_strategy: Some(SortingStrategy::LsdRadix),
                                 use_parallel: false,
                                 ..Default::default()
-                            }
-                        ).unwrap();
+                            })
+                            .unwrap();
                         sorter.sort(&mut data).unwrap();
                         black_box(data)
                     },
@@ -344,21 +338,17 @@ fn benchmark_strategy_comparison_u64(c: &mut Criterion) {
         );
 
         // Adaptive Strategy
-        group.bench_with_input(
-            BenchmarkId::new("Adaptive", size),
-            &test_data,
-            |b, data| {
-                b.iter_batched(
-                    || data.clone(),
-                    |mut data| {
-                        let mut sorter = AdvancedU64RadixSort::new().unwrap();
-                        sorter.sort(&mut data).unwrap();
-                        black_box(data)
-                    },
-                    BatchSize::SmallInput,
-                )
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("Adaptive", size), &test_data, |b, data| {
+            b.iter_batched(
+                || data.clone(),
+                |mut data| {
+                    let mut sorter = AdvancedU64RadixSort::new().unwrap();
+                    sorter.sort(&mut data).unwrap();
+                    black_box(data)
+                },
+                BatchSize::SmallInput,
+            )
+        });
 
         // Standard library
         group.bench_with_input(
@@ -462,12 +452,18 @@ fn benchmark_data_pattern_performance_u32(c: &mut Criterion) {
     group.throughput(Throughput::Elements(size as u64));
 
     let mut generator = DataGenerator::new(42);
-    
+
     let patterns = vec![
         ("random", generator.generate_random_u32(size)),
         ("nearly_sorted", generator.generate_nearly_sorted_u32(size)),
-        ("reverse_sorted", generator.generate_reverse_sorted_u32(size)),
-        ("many_duplicates", generator.generate_many_duplicates_u32(size)),
+        (
+            "reverse_sorted",
+            generator.generate_reverse_sorted_u32(size),
+        ),
+        (
+            "many_duplicates",
+            generator.generate_many_duplicates_u32(size),
+        ),
     ];
 
     for (pattern_name, test_data) in patterns {
@@ -496,12 +492,12 @@ fn benchmark_data_pattern_performance_u32(c: &mut Criterion) {
                 b.iter_batched(
                     || data.clone(),
                     |mut data| {
-                        let mut sorter = AdvancedU32RadixSort::with_config(
-                            AdvancedRadixSortConfig {
+                        let mut sorter =
+                            AdvancedU32RadixSort::with_config(AdvancedRadixSortConfig {
                                 force_strategy: Some(SortingStrategy::LsdRadix),
                                 ..Default::default()
-                            }
-                        ).unwrap();
+                            })
+                            .unwrap();
                         sorter.sort(&mut data).unwrap();
                         black_box(data)
                     },
@@ -540,16 +536,26 @@ fn benchmark_string_data_patterns(c: &mut Criterion) {
     group.throughput(Throughput::Elements(count as u64));
 
     let mut generator = DataGenerator::new(42);
-    
+
     let string_patterns = vec![
-        ("random_strings", generator.generate_random_strings(count, 10)),
-        ("sorted_strings", generator.generate_sorted_strings(count, 10)),
-        ("prefix_strings", generator.generate_prefix_strings(count, 5)),
+        (
+            "random_strings",
+            generator.generate_random_strings(count, 10),
+        ),
+        (
+            "sorted_strings",
+            generator.generate_sorted_strings(count, 10),
+        ),
+        (
+            "prefix_strings",
+            generator.generate_prefix_strings(count, 5),
+        ),
     ];
 
     for (pattern_name, test_strings) in string_patterns {
         // Convert to RadixString for testing
-        let radix_strings: Vec<RadixString> = test_strings.iter()
+        let radix_strings: Vec<RadixString> = test_strings
+            .iter()
             .map(|s| RadixString::new(s.as_slice()))
             .collect();
 
@@ -560,12 +566,12 @@ fn benchmark_string_data_patterns(c: &mut Criterion) {
                 b.iter_batched(
                     || data.clone(),
                     |mut data| {
-                        let mut sorter = AdvancedStringRadixSort::with_config(
-                            AdvancedRadixSortConfig {
+                        let mut sorter =
+                            AdvancedStringRadixSort::with_config(AdvancedRadixSortConfig {
                                 force_strategy: Some(SortingStrategy::MsdRadix),
                                 ..Default::default()
-                            }
-                        ).unwrap();
+                            })
+                            .unwrap();
                         sorter.sort(&mut data).unwrap();
                         black_box(data)
                     },
@@ -634,14 +640,14 @@ fn benchmark_simd_acceleration(c: &mut Criterion) {
                 b.iter_batched(
                     || data.clone(),
                     |mut data| {
-                        let mut sorter = AdvancedU32RadixSort::with_config(
-                            AdvancedRadixSortConfig {
+                        let mut sorter =
+                            AdvancedU32RadixSort::with_config(AdvancedRadixSortConfig {
                                 use_simd: true,
                                 use_parallel: false,
                                 force_strategy: Some(SortingStrategy::LsdRadix),
                                 ..Default::default()
-                            }
-                        ).unwrap();
+                            })
+                            .unwrap();
                         sorter.sort(&mut data).unwrap();
                         black_box(data)
                     },
@@ -658,14 +664,14 @@ fn benchmark_simd_acceleration(c: &mut Criterion) {
                 b.iter_batched(
                     || data.clone(),
                     |mut data| {
-                        let mut sorter = AdvancedU32RadixSort::with_config(
-                            AdvancedRadixSortConfig {
+                        let mut sorter =
+                            AdvancedU32RadixSort::with_config(AdvancedRadixSortConfig {
                                 use_simd: false,
                                 use_parallel: false,
                                 force_strategy: Some(SortingStrategy::LsdRadix),
                                 ..Default::default()
-                            }
-                        ).unwrap();
+                            })
+                            .unwrap();
                         sorter.sort(&mut data).unwrap();
                         black_box(data)
                     },
@@ -698,28 +704,23 @@ fn benchmark_parallel_vs_sequential(c: &mut Criterion) {
         let test_data = generator.generate_random_u32(size);
 
         // Parallel execution
-        group.bench_with_input(
-            BenchmarkId::new("Parallel", size),
-            &test_data,
-            |b, data| {
-                b.iter_batched(
-                    || data.clone(),
-                    |mut data| {
-                        let mut sorter = AdvancedU32RadixSort::with_config(
-                            AdvancedRadixSortConfig {
-                                use_parallel: true,
-                                parallel_threshold: size / 4, // Force parallel execution
-                                force_strategy: Some(SortingStrategy::LsdRadix),
-                                ..Default::default()
-                            }
-                        ).unwrap();
-                        sorter.sort(&mut data).unwrap();
-                        black_box(data)
-                    },
-                    BatchSize::SmallInput,
-                )
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("Parallel", size), &test_data, |b, data| {
+            b.iter_batched(
+                || data.clone(),
+                |mut data| {
+                    let mut sorter = AdvancedU32RadixSort::with_config(AdvancedRadixSortConfig {
+                        use_parallel: true,
+                        parallel_threshold: size / 4, // Force parallel execution
+                        force_strategy: Some(SortingStrategy::LsdRadix),
+                        ..Default::default()
+                    })
+                    .unwrap();
+                    sorter.sort(&mut data).unwrap();
+                    black_box(data)
+                },
+                BatchSize::SmallInput,
+            )
+        });
 
         // Sequential execution
         group.bench_with_input(
@@ -729,13 +730,13 @@ fn benchmark_parallel_vs_sequential(c: &mut Criterion) {
                 b.iter_batched(
                     || data.clone(),
                     |mut data| {
-                        let mut sorter = AdvancedU32RadixSort::with_config(
-                            AdvancedRadixSortConfig {
+                        let mut sorter =
+                            AdvancedU32RadixSort::with_config(AdvancedRadixSortConfig {
                                 use_parallel: false,
                                 force_strategy: Some(SortingStrategy::LsdRadix),
                                 ..Default::default()
-                            }
-                        ).unwrap();
+                            })
+                            .unwrap();
                         sorter.sort(&mut data).unwrap();
                         black_box(data)
                     },
@@ -772,13 +773,13 @@ fn benchmark_memory_pool_performance(c: &mut Criterion) {
                 b.iter_batched(
                     || data.clone(),
                     |mut data| {
-                        let mut sorter = AdvancedU32RadixSort::with_config(
-                            AdvancedRadixSortConfig {
+                        let mut sorter =
+                            AdvancedU32RadixSort::with_config(AdvancedRadixSortConfig {
                                 use_secure_memory: true,
                                 use_parallel: false,
                                 ..Default::default()
-                            }
-                        ).unwrap();
+                            })
+                            .unwrap();
                         sorter.sort(&mut data).unwrap();
                         black_box(data)
                     },
@@ -795,13 +796,13 @@ fn benchmark_memory_pool_performance(c: &mut Criterion) {
                 b.iter_batched(
                     || data.clone(),
                     |mut data| {
-                        let mut sorter = AdvancedU32RadixSort::with_config(
-                            AdvancedRadixSortConfig {
+                        let mut sorter =
+                            AdvancedU32RadixSort::with_config(AdvancedRadixSortConfig {
                                 use_secure_memory: false,
                                 use_parallel: false,
                                 ..Default::default()
-                            }
-                        ).unwrap();
+                            })
+                            .unwrap();
                         sorter.sort(&mut data).unwrap();
                         black_box(data)
                     },
@@ -835,9 +836,7 @@ fn benchmark_cpu_feature_detection(c: &mut Criterion) {
 
     // Test different feature combinations
     group.bench_function("cpu_feature_detection_overhead", |b| {
-        b.iter(|| {
-            black_box(zipora::system::get_cpu_features())
-        })
+        b.iter(|| black_box(zipora::system::get_cpu_features()))
     });
 
     // Test with detected features
@@ -848,13 +847,12 @@ fn benchmark_cpu_feature_detection(c: &mut Criterion) {
             b.iter_batched(
                 || data.clone(),
                 |mut data| {
-                    let mut sorter = AdvancedU32RadixSort::with_config(
-                        AdvancedRadixSortConfig {
-                            use_simd: cpu_features.has_avx2,
-                            use_parallel: true,
-                            ..Default::default()
-                        }
-                    ).unwrap();
+                    let mut sorter = AdvancedU32RadixSort::with_config(AdvancedRadixSortConfig {
+                        use_simd: cpu_features.has_avx2,
+                        use_parallel: true,
+                        ..Default::default()
+                    })
+                    .unwrap();
                     sorter.sort(&mut data).unwrap();
                     black_box(data)
                 },
@@ -871,13 +869,12 @@ fn benchmark_cpu_feature_detection(c: &mut Criterion) {
             b.iter_batched(
                 || data.clone(),
                 |mut data| {
-                    let mut sorter = AdvancedU32RadixSort::with_config(
-                        AdvancedRadixSortConfig {
-                            use_simd: false,
-                            use_parallel: false,
-                            ..Default::default()
-                        }
-                    ).unwrap();
+                    let mut sorter = AdvancedU32RadixSort::with_config(AdvancedRadixSortConfig {
+                        use_simd: false,
+                        use_parallel: false,
+                        ..Default::default()
+                    })
+                    .unwrap();
                     sorter.sort(&mut data).unwrap();
                     black_box(data)
                 },
@@ -931,13 +928,12 @@ fn benchmark_comprehensive_comparison(c: &mut Criterion) {
             b.iter_batched(
                 || data.clone(),
                 |mut data| {
-                    let mut sorter = AdvancedU32RadixSort::with_config(
-                        AdvancedRadixSortConfig {
-                            use_simd: true,
-                            use_parallel: false,
-                            ..Default::default()
-                        }
-                    ).unwrap();
+                    let mut sorter = AdvancedU32RadixSort::with_config(AdvancedRadixSortConfig {
+                        use_simd: true,
+                        use_parallel: false,
+                        ..Default::default()
+                    })
+                    .unwrap();
                     sorter.sort(&mut data).unwrap();
                     black_box(data)
                 },
@@ -954,13 +950,12 @@ fn benchmark_comprehensive_comparison(c: &mut Criterion) {
             b.iter_batched(
                 || data.clone(),
                 |mut data| {
-                    let mut sorter = AdvancedU32RadixSort::with_config(
-                        AdvancedRadixSortConfig {
-                            use_simd: false,
-                            use_parallel: true,
-                            ..Default::default()
-                        }
-                    ).unwrap();
+                    let mut sorter = AdvancedU32RadixSort::with_config(AdvancedRadixSortConfig {
+                        use_simd: false,
+                        use_parallel: true,
+                        ..Default::default()
+                    })
+                    .unwrap();
                     sorter.sort(&mut data).unwrap();
                     black_box(data)
                 },
@@ -1002,20 +997,16 @@ fn benchmark_comprehensive_comparison(c: &mut Criterion) {
         },
     );
 
-    group.bench_with_input(
-        BenchmarkId::new("std", "sort"),
-        &test_data,
-        |b, data| {
-            b.iter_batched(
-                || data.clone(),
-                |mut data| {
-                    data.sort();
-                    black_box(data)
-                },
-                BatchSize::SmallInput,
-            )
-        },
-    );
+    group.bench_with_input(BenchmarkId::new("std", "sort"), &test_data, |b, data| {
+        b.iter_batched(
+            || data.clone(),
+            |mut data| {
+                data.sort();
+                black_box(data)
+            },
+            BatchSize::SmallInput,
+        )
+    });
 
     group.finish();
 }
@@ -1034,7 +1025,7 @@ fn benchmark_algorithm_statistics(c: &mut Criterion) {
     group.throughput(Throughput::Elements(size as u64));
 
     let mut generator = DataGenerator::new(42);
-    
+
     // Test data characteristics analysis
     let random_data = generator.generate_random_u32(size);
     let nearly_sorted_data = generator.generate_nearly_sorted_u32(size);

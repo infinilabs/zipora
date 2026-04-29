@@ -8,8 +8,8 @@
 
 use crate::containers::SortableStrVec;
 use crate::error::{Result, ZiporaError};
-use crate::succinct::{BitVector, RankSelectInterleaved256};
 use crate::succinct::rank_select::RankSelectOps;
+use crate::succinct::{BitVector, RankSelectInterleaved256};
 use std::cmp::Ordering;
 
 #[cfg(feature = "mmap")]

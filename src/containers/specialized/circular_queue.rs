@@ -581,8 +581,10 @@ impl<T> AutoGrowCircularQueue<T> {
         // Try cache-line alignment, fall back to type alignment
         Layout::from_size_align(size, align)
             .or_else(|_| Layout::from_size_align(size, align_of::<T>()))
-            .unwrap_or_else(|_| Layout::from_size_align(size, 1)
-                .expect("layout creation: non-zero size, power-of-two alignment"))
+            .unwrap_or_else(|_| {
+                Layout::from_size_align(size, 1)
+                    .expect("layout creation: non-zero size, power-of-two alignment")
+            })
     }
 
     /// Gets current memory layout
@@ -876,7 +878,9 @@ impl<T> AutoGrowCircularQueue<T> {
         }
 
         // SAFETY: caller guarantees non-null, aligned, non-overlapping pointers.
-        unsafe { ptr::copy_nonoverlapping(src, dst, count); }
+        unsafe {
+            ptr::copy_nonoverlapping(src, dst, count);
+        }
     }
 
     /// Ultra-fast element addition with fast/slow path separation

@@ -145,10 +145,12 @@ impl AdaptiveCompressor {
 
         // Perform compression
         let compressed = {
-            let compressor = self.current_compressor.read()
-                .map_err(|e| crate::error::ZiporaError::system_error(
-                    format!("AdaptiveCompressor: current_compressor RwLock poisoned: {}", e)
-                ))?;
+            let compressor = self.current_compressor.read().map_err(|e| {
+                crate::error::ZiporaError::system_error(format!(
+                    "AdaptiveCompressor: current_compressor RwLock poisoned: {}",
+                    e
+                ))
+            })?;
             compressor.compress(data)?
         };
 
@@ -162,10 +164,12 @@ impl AdaptiveCompressor {
 
     /// Decompress data
     pub fn decompress(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let compressor = self.current_compressor.read()
-            .map_err(|e| crate::error::ZiporaError::system_error(
-                format!("AdaptiveCompressor: current_compressor RwLock poisoned: {}", e)
-            ))?;
+        let compressor = self.current_compressor.read().map_err(|e| {
+            crate::error::ZiporaError::system_error(format!(
+                "AdaptiveCompressor: current_compressor RwLock poisoned: {}",
+                e
+            ))
+        })?;
         compressor.decompress(data)
     }
 
@@ -173,9 +177,7 @@ impl AdaptiveCompressor {
     pub fn stats(&self) -> CompressionStats {
         // SAFETY: Returns default stats if RwLock is poisoned (graceful degradation)
         // This is a read-only getter; returning empty stats is safe fallback
-        self.stats.read()
-            .map(|s| s.clone())
-            .unwrap_or_default()
+        self.stats.read().map(|s| s.clone()).unwrap_or_default()
     }
 
     /// Get current algorithm
@@ -188,10 +190,12 @@ impl AdaptiveCompressor {
         let new_compressor = CompressorFactory::create(algorithm, None)?;
 
         {
-            let mut compressor = self.current_compressor.write()
-                .map_err(|e| crate::error::ZiporaError::system_error(
-                    format!("AdaptiveCompressor: current_compressor RwLock poisoned: {}", e)
-                ))?;
+            let mut compressor = self.current_compressor.write().map_err(|e| {
+                crate::error::ZiporaError::system_error(format!(
+                    "AdaptiveCompressor: current_compressor RwLock poisoned: {}",
+                    e
+                ))
+            })?;
             *compressor = new_compressor;
         }
 
@@ -203,9 +207,7 @@ impl AdaptiveCompressor {
     pub fn profiles(&self) -> HashMap<String, CompressionProfile> {
         // SAFETY: Returns empty HashMap if RwLock is poisoned (graceful degradation)
         // This is a read-only getter; returning empty map is safe fallback
-        self.profiles.read()
-            .map(|p| p.clone())
-            .unwrap_or_default()
+        self.profiles.read().map(|p| p.clone()).unwrap_or_default()
     }
 
     /// Train the compressor with sample data
@@ -241,10 +243,12 @@ impl AdaptiveCompressor {
 
     /// Maybe adapt the algorithm based on recent performance
     fn maybe_adapt(&self, data: &[u8]) -> Result<()> {
-        let mut operation_count = self.operation_count.write()
-            .map_err(|e| crate::error::ZiporaError::system_error(
-                format!("AdaptiveCompressor: operation_count RwLock poisoned: {}", e)
-            ))?;
+        let mut operation_count = self.operation_count.write().map_err(|e| {
+            crate::error::ZiporaError::system_error(format!(
+                "AdaptiveCompressor: operation_count RwLock poisoned: {}",
+                e
+            ))
+        })?;
         *operation_count += 1;
         let count = *operation_count;
         drop(operation_count);
@@ -281,10 +285,12 @@ impl AdaptiveCompressor {
 
     /// Find the best algorithm for the current workload
     fn find_best_algorithm(&self, sample_data: &[u8]) -> Result<Algorithm> {
-        let history = self.performance_history.read()
-            .map_err(|e| crate::error::ZiporaError::system_error(
-                format!("AdaptiveCompressor: performance_history RwLock poisoned: {}", e)
-            ))?;
+        let history = self.performance_history.read().map_err(|e| {
+            crate::error::ZiporaError::system_error(format!(
+                "AdaptiveCompressor: performance_history RwLock poisoned: {}",
+                e
+            ))
+        })?;
 
         if history.len() < self.config.min_operations {
             return Ok(self.current_algorithm);
@@ -321,10 +327,12 @@ impl AdaptiveCompressor {
 
         // If aggressive learning is enabled, occasionally test new algorithms
         let should_test = self.config.aggressive_learning && {
-            let count = self.operation_count.read()
-                .map_err(|e| crate::error::ZiporaError::system_error(
-                    format!("AdaptiveCompressor: operation_count RwLock poisoned: {}", e)
-                ))?;
+            let count = self.operation_count.read().map_err(|e| {
+                crate::error::ZiporaError::system_error(format!(
+                    "AdaptiveCompressor: operation_count RwLock poisoned: {}",
+                    e
+                ))
+            })?;
             *count % (self.config.evaluation_interval * 5) == 0
         };
         if should_test {
@@ -340,10 +348,12 @@ impl AdaptiveCompressor {
         let current = self.current_algorithm;
 
         // Find an algorithm we haven't tested much recently
-        let history = self.performance_history.read()
-            .map_err(|e| crate::error::ZiporaError::system_error(
-                format!("AdaptiveCompressor: performance_history RwLock poisoned: {}", e)
-            ))?;
+        let history = self.performance_history.read().map_err(|e| {
+            crate::error::ZiporaError::system_error(format!(
+                "AdaptiveCompressor: performance_history RwLock poisoned: {}",
+                e
+            ))
+        })?;
         let mut usage_counts: HashMap<Algorithm, usize> = HashMap::new();
 
         for measurement in history.iter().rev().take(100) {
@@ -405,10 +415,12 @@ impl AdaptiveCompressor {
         let new_compressor = CompressorFactory::create(algorithm, None)?;
 
         {
-            let mut compressor = self.current_compressor.write()
-                .map_err(|e| crate::error::ZiporaError::system_error(
-                    format!("AdaptiveCompressor: current_compressor RwLock poisoned: {}", e)
-                ))?;
+            let mut compressor = self.current_compressor.write().map_err(|e| {
+                crate::error::ZiporaError::system_error(format!(
+                    "AdaptiveCompressor: current_compressor RwLock poisoned: {}",
+                    e
+                ))
+            })?;
             *compressor = new_compressor;
         }
 

@@ -18,12 +18,22 @@ const FREE_LIST_MAX_SLOTS: usize = 128;
 const FREE_LIST_NIL: u32 = u32::MAX;
 
 pub const SKIP_SLOTS: [u32; 16] = [
-    1, 1, 1,           // 0, 1, 2
-    2, 2, 2, 2,        // 3, 4, 5, 6
-    5,                 // 7
-    10,                // 8
-    u32::MAX, u32::MAX, u32::MAX, u32::MAX, u32::MAX, u32::MAX, // 9-14
-    2,                 // 15
+    1,
+    1,
+    1, // 0, 1, 2
+    2,
+    2,
+    2,
+    2,  // 3, 4, 5, 6
+    5,  // 7
+    10, // 8
+    u32::MAX,
+    u32::MAX,
+    u32::MAX,
+    u32::MAX,
+    u32::MAX,
+    u32::MAX, // 9-14
+    2,        // 15
 ];
 
 #[repr(C, align(4))]
@@ -38,7 +48,7 @@ pub union PatriciaNode {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct MetaInfo {
-    pub flags: u8,        // n_cnt_type:4 | b_is_final:1 | b_lazy_free:1 | b_set_final:1 | b_lock:1
+    pub flags: u8, // n_cnt_type:4 | b_is_final:1 | b_lazy_free:1 | b_set_final:1 | b_lock:1
     pub n_zpath_len: u8,
     pub c_label: [u8; 2],
 }
@@ -143,7 +153,6 @@ impl<'a> NodeView<'a> {
         }
     }
 
-
     #[inline(always)]
     pub fn skip_slots(&self) -> usize {
         SKIP_SLOTS[self.cnt_type() as usize] as usize
@@ -181,33 +190,69 @@ impl<'a> NodeView<'a> {
                 }
             }
             3 => {
-                if ch == self.get_label(2) { return self.child(4); }
-                if ch == self.get_label(1) { return self.child(3); }
-                if ch == self.get_label(0) { return self.child(2); }
+                if ch == self.get_label(2) {
+                    return self.child(4);
+                }
+                if ch == self.get_label(1) {
+                    return self.child(3);
+                }
+                if ch == self.get_label(0) {
+                    return self.child(2);
+                }
                 NIL_STATE
             }
             4 => {
-                if ch == self.get_label(3) { return self.child(5); }
-                if ch == self.get_label(2) { return self.child(4); }
-                if ch == self.get_label(1) { return self.child(3); }
-                if ch == self.get_label(0) { return self.child(2); }
+                if ch == self.get_label(3) {
+                    return self.child(5);
+                }
+                if ch == self.get_label(2) {
+                    return self.child(4);
+                }
+                if ch == self.get_label(1) {
+                    return self.child(3);
+                }
+                if ch == self.get_label(0) {
+                    return self.child(2);
+                }
                 NIL_STATE
             }
             5 => {
-                if ch == self.get_label(4) { return self.child(6); }
-                if ch == self.get_label(3) { return self.child(5); }
-                if ch == self.get_label(2) { return self.child(4); }
-                if ch == self.get_label(1) { return self.child(3); }
-                if ch == self.get_label(0) { return self.child(2); }
+                if ch == self.get_label(4) {
+                    return self.child(6);
+                }
+                if ch == self.get_label(3) {
+                    return self.child(5);
+                }
+                if ch == self.get_label(2) {
+                    return self.child(4);
+                }
+                if ch == self.get_label(1) {
+                    return self.child(3);
+                }
+                if ch == self.get_label(0) {
+                    return self.child(2);
+                }
                 NIL_STATE
             }
             6 => {
-                if ch == self.get_label(5) { return self.child(7); }
-                if ch == self.get_label(4) { return self.child(6); }
-                if ch == self.get_label(3) { return self.child(5); }
-                if ch == self.get_label(2) { return self.child(4); }
-                if ch == self.get_label(1) { return self.child(3); }
-                if ch == self.get_label(0) { return self.child(2); }
+                if ch == self.get_label(5) {
+                    return self.child(7);
+                }
+                if ch == self.get_label(4) {
+                    return self.child(6);
+                }
+                if ch == self.get_label(3) {
+                    return self.child(5);
+                }
+                if ch == self.get_label(2) {
+                    return self.child(4);
+                }
+                if ch == self.get_label(1) {
+                    return self.child(3);
+                }
+                if ch == self.get_label(0) {
+                    return self.child(2);
+                }
                 NIL_STATE
             }
             7 => {
@@ -218,7 +263,10 @@ impl<'a> NodeView<'a> {
                     let ptr = self.nodes.as_ptr().add(self.curr as usize + 1) as *const u8;
                     std::slice::from_raw_parts(ptr, 16)
                 };
-                let idx = crate::fsa::fast_search::fast_search_byte_max_16(&label_slice[0..n_children], ch);
+                let idx = crate::fsa::fast_search::fast_search_byte_max_16(
+                    &label_slice[0..n_children],
+                    ch,
+                );
                 if idx < n_children {
                     self.child(5 + idx)
                 } else {
@@ -233,11 +281,11 @@ impl<'a> NodeView<'a> {
                 let byte_idx = (ch / 8) as usize;
                 let bit_idx = ch % 8;
                 if (bitmap_slice[byte_idx] & (1 << bit_idx)) != 0 {
-                    let data_ptr = unsafe { self.nodes.as_ptr().add(self.curr as usize + 1) as *const u8 };
+                    let data_ptr =
+                        unsafe { self.nodes.as_ptr().add(self.curr as usize + 1) as *const u8 };
                     let i = (ch / 64) as usize;
-                    let w = unsafe {
-                        std::ptr::read_unaligned(data_ptr.add(4 + i * 8) as *const u64)
-                    };
+                    let w =
+                        unsafe { std::ptr::read_unaligned(data_ptr.add(4 + i * 8) as *const u64) };
                     let b = unsafe { *data_ptr.add(i) } as usize;
                     let mask = (1u64 << (ch % 64)) - 1;
                     let idx = b + (w & mask).count_ones() as usize;
@@ -246,9 +294,7 @@ impl<'a> NodeView<'a> {
                     NIL_STATE
                 }
             }
-            15 => {
-                self.child(2 + ch as usize)
-            }
+            15 => self.child(2 + ch as usize),
             _ => NIL_STATE,
         }
     }
@@ -356,15 +402,14 @@ impl<'a> NodeView<'a> {
             _ => {}
         }
     }
-
 }
 
 impl std::fmt::Debug for CsppTrie {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CsppTrie")
-         .field("n_words", &self.n_words)
-         .field("n_nodes", &self.n_nodes)
-         .finish()
+            .field("n_words", &self.n_words)
+            .field("n_nodes", &self.n_nodes)
+            .finish()
     }
 }
 
@@ -375,9 +420,9 @@ pub struct CsppTrie {
     pub valsize: usize,
     pub max_word_len: usize,
     // Phase C: size-bucketed free list (intrusive linked list per slot-count bucket)
-    fast_bins: Vec<u32>,        // fast_bins[slots-1] = head of free list for that slot count
+    fast_bins: Vec<u32>, // fast_bins[slots-1] = head of free list for that slot count
     large_list: Vec<(u32, u32)>, // (slot, n_slots) for blocks > FREE_LIST_MAX_SLOTS
-    frag_size: usize,           // total bytes in all free lists
+    frag_size: usize,    // total bytes in all free lists
     // Phase C.2: lazy free list for reader safety
     lazy_free_list: Vec<LazyFreeItem>,
 }
@@ -405,7 +450,7 @@ impl CsppTrie {
         let val_slots = self.valsize.div_ceil(4);
         let root_slots = 2 + 256 + val_slots;
         self.mempool.resize(root_slots, PatriciaNode::empty());
-        
+
         // Setup root meta
         self.mempool[0].meta = MetaInfo {
             flags: 15, // cnt_type = 15
@@ -461,7 +506,6 @@ impl CsppTrie {
     }
 
     pub fn lookup(&self, key: &[u8]) -> Option<usize> {
-
         let mut curr = INITIAL_STATE;
         let mut pos = 0;
 
@@ -476,7 +520,8 @@ impl CsppTrie {
                     return None;
                 }
                 pos += match_len;
-                if key.len() - pos < zlen - match_len { // key ended before zpath
+                if key.len() - pos < zlen - match_len {
+                    // key ended before zpath
                     return None;
                 }
                 if key.len() == pos {
@@ -527,7 +572,11 @@ impl CsppTrie {
             }
         } else if slots > FREE_LIST_MAX_SLOTS {
             // Search large block list for first-fit
-            if let Some(idx) = self.large_list.iter().position(|&(_, s)| s as usize >= slots) {
+            if let Some(idx) = self
+                .large_list
+                .iter()
+                .position(|&(_, s)| s as usize >= slots)
+            {
                 let (pos, block_slots) = self.large_list.swap_remove(idx);
                 self.frag_size -= block_slots as usize * ALIGN_SIZE;
                 // Split remainder back to free list if leftover is significant
@@ -541,14 +590,17 @@ impl CsppTrie {
 
         // Slow path: bump allocation
         let pos = self.mempool.len() as u32;
-        self.mempool.resize(self.mempool.len() + slots, PatriciaNode::empty());
+        self.mempool
+            .resize(self.mempool.len() + slots, PatriciaNode::empty());
         pos
     }
 
     /// Free `byte_size` bytes starting at `slot` back to the free list.
     fn free_node(&mut self, slot: u32, byte_size: usize) {
         let slots = byte_size.div_ceil(4);
-        if slots == 0 { return; }
+        if slots == 0 {
+            return;
+        }
 
         // Shrink-from-end optimization
         if slot as usize + slots == self.mempool.len() {
@@ -592,10 +644,13 @@ impl CsppTrie {
     fn realloc_node(&mut self, old_slot: u32, old_size: usize, new_size: usize) -> u32 {
         let old_slots = old_size.div_ceil(4);
         let new_slots = new_size.div_ceil(4);
-        if old_slots == new_slots { return old_slot; }
+        if old_slots == new_slots {
+            return old_slot;
+        }
         // If at end of mempool, extend in place
         if old_slot as usize + old_slots == self.mempool.len() {
-            self.mempool.resize(old_slot as usize + new_slots, PatriciaNode::empty());
+            self.mempool
+                .resize(old_slot as usize + new_slots, PatriciaNode::empty());
             return old_slot;
         }
         // Allocate new, copy old data
@@ -623,8 +678,16 @@ impl CsppTrie {
             fastbin.push(count);
         }
 
-        let large_size: usize = self.large_list.iter().map(|&(_, s)| s as usize * ALIGN_SIZE).sum();
-        let lazy_sum: usize = self.lazy_free_list.iter().map(|i| i.slots as usize * ALIGN_SIZE).sum();
+        let large_size: usize = self
+            .large_list
+            .iter()
+            .map(|&(_, s)| s as usize * ALIGN_SIZE)
+            .sum();
+        let lazy_sum: usize = self
+            .lazy_free_list
+            .iter()
+            .map(|i| i.slots as usize * ALIGN_SIZE)
+            .sum();
 
         MemStat {
             fastbin,
@@ -669,9 +732,13 @@ impl CsppTrie {
                 *zpath_dst.add(254) = 0;
                 *zpath_dst.add(255) = 0;
             }
-            if head == NIL_STATE { head = node; }
+            if head == NIL_STATE {
+                head = node;
+            }
             if prev_child_slot != NIL_STATE {
-                unsafe { (*self.mempool.as_mut_ptr().add(prev_child_slot as usize)).child = node; }
+                unsafe {
+                    (*self.mempool.as_mut_ptr().add(prev_child_slot as usize)).child = node;
+                }
             }
             prev_child_slot = node + 1; // child pointer is at slot node+1
             remaining = &remaining[MAX_ZPATH + 1..];
@@ -697,17 +764,27 @@ impl CsppTrie {
             }
             valpos = (node as usize + 1) * ALIGN_SIZE + zpath_padded;
         }
-        if head == NIL_STATE { head = node; }
+        if head == NIL_STATE {
+            head = node;
+        }
         if prev_child_slot != NIL_STATE {
-            unsafe { (*self.mempool.as_mut_ptr().add(prev_child_slot as usize)).child = node; }
+            unsafe {
+                (*self.mempool.as_mut_ptr().add(prev_child_slot as usize)).child = node;
+            }
         }
         (head, valpos)
     }
 
     /// Build a cnt_type 8 (bitmap) node from sorted labels and children.
     fn build_bitmap_node(
-        &mut self, labels: &[u8], children: &[u32], n_children: usize,
-        flags: u8, zpath_len: usize, trailing: &[u8], trailing_len: usize,
+        &mut self,
+        labels: &[u8],
+        children: &[u32],
+        n_children: usize,
+        flags: u8,
+        zpath_len: usize,
+        trailing: &[u8],
+        trailing_len: usize,
     ) -> u32 {
         let node_size = (10 + n_children) * ALIGN_SIZE + trailing_len;
         let node = self.alloc_node(node_size);
@@ -855,21 +932,25 @@ impl CsppTrie {
             0 => {}
             1 | 2 => {
                 labels[0] = meta.c_label[0];
-                if cnt_type >= 2 { labels[1] = meta.c_label[1]; }
+                if cnt_type >= 2 {
+                    labels[1] = meta.c_label[1];
+                }
             }
             3..=6 => {
                 labels[0] = meta.c_label[0];
                 labels[1] = meta.c_label[1];
                 let pad = unsafe { self.mempool[curr as usize + 1].bytes };
-                for i in 2..old_n { labels[i] = pad[i - 2]; }
-            }
-            7 => {
-                unsafe {
-                    let src = self.mempool.as_ptr().add(curr as usize + 1) as *const u8;
-                    for i in 0..old_n { labels[i] = *src.add(i); }
+                for i in 2..old_n {
+                    labels[i] = pad[i - 2];
                 }
             }
-            _ => unreachable!()
+            7 => unsafe {
+                let src = self.mempool.as_ptr().add(curr as usize + 1) as *const u8;
+                for i in 0..old_n {
+                    labels[i] = *src.add(i);
+                }
+            },
+            _ => unreachable!(),
         }
 
         // Extract children
@@ -885,7 +966,8 @@ impl CsppTrie {
         if trailing_len > 0 {
             let trailing_start = (old_skip + old_n) * ALIGN_SIZE;
             unsafe {
-                let src = (self.mempool.as_ptr().add(curr as usize) as *const u8).add(trailing_start);
+                let src =
+                    (self.mempool.as_ptr().add(curr as usize) as *const u8).add(trailing_start);
                 std::ptr::copy_nonoverlapping(src, trailing.as_mut_ptr(), trailing_len);
             }
         }
@@ -906,13 +988,18 @@ impl CsppTrie {
             6 => 7,
             7 if old_n < 16 => 7,
             7 => 8, // 16 → 17
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
         if new_cnt_type == 8 {
             return self.build_bitmap_node(
-                &labels, &children, new_n,
-                meta.flags, zpath_len, &trailing, trailing_len,
+                &labels,
+                &children,
+                new_n,
+                meta.flags,
+                zpath_len,
+                &trailing,
+                trailing_len,
             );
         }
 
@@ -940,8 +1027,12 @@ impl CsppTrie {
                     };
                     // Extra labels in slot 1 bytes
                     let pad_ptr = p.add(1) as *mut u8;
-                    for i in 2..new_n { *pad_ptr.add(i - 2) = labels[i]; }
-                    for i in (new_n - 2)..4 { *pad_ptr.add(i) = 0; }
+                    for i in 2..new_n {
+                        *pad_ptr.add(i - 2) = labels[i];
+                    }
+                    for i in (new_n - 2)..4 {
+                        *pad_ptr.add(i) = 0;
+                    }
                 }
                 7 => {
                     (*p).meta = MetaInfo {
@@ -953,10 +1044,14 @@ impl CsppTrie {
                     std::ptr::write_unaligned((p as *mut u8).add(2) as *mut u16, new_n as u16);
                     // Labels in slots 1-4
                     let lbl_ptr = p.add(1) as *mut u8;
-                    for i in 0..new_n { *lbl_ptr.add(i) = labels[i]; }
-                    for i in new_n..16 { *lbl_ptr.add(i) = 0; }
+                    for i in 0..new_n {
+                        *lbl_ptr.add(i) = labels[i];
+                    }
+                    for i in new_n..16 {
+                        *lbl_ptr.add(i) = 0;
+                    }
                 }
-                _ => unreachable!()
+                _ => unreachable!(),
             }
 
             // Write children
@@ -977,15 +1072,22 @@ impl CsppTrie {
     /// Creates a new parent (cnt_type=2) with two children: old suffix and new suffix.
     /// Returns (new_parent_slot, old_suffix_slot).
     fn fork(
-        &mut self, curr: u32, zidx: usize,
-        old_skip: usize, old_n_children: usize, zpath_len: usize,
-        node_size: usize, zpath_buf: &[u8],
-        new_char: u8, new_suffix_node: u32,
+        &mut self,
+        curr: u32,
+        zidx: usize,
+        old_skip: usize,
+        old_n_children: usize,
+        zpath_len: usize,
+        node_size: usize,
+        zpath_buf: &[u8],
+        new_char: u8,
+        new_suffix_node: u32,
     ) -> (u32, u32) {
         let old_char = zpath_buf[zidx];
         let suffix_zlen = zpath_len - zidx - 1;
         let suffix_zpath_padded = (suffix_zlen + 3) & !3;
-        let val_size = node_size - ((old_skip + old_n_children) * ALIGN_SIZE + ((zpath_len + 3) & !3));
+        let val_size =
+            node_size - ((old_skip + old_n_children) * ALIGN_SIZE + ((zpath_len + 3) & !3));
         let suffix_size = (old_skip + old_n_children) * ALIGN_SIZE + suffix_zpath_padded + val_size;
 
         // Allocate suffix node (copy of old node with shortened zpath)
@@ -1053,15 +1155,20 @@ impl CsppTrie {
     /// Creates a prefix node (cnt_type=1, is_final) and a suffix node.
     /// Returns (prefix_node_slot, valpos).
     fn split_zpath(
-        &mut self, curr: u32,
+        &mut self,
+        curr: u32,
         split_pos: usize,
-        old_skip: usize, old_n_children: usize, zpath_len: usize,
-        node_size: usize, zpath_buf: &[u8],
+        old_skip: usize,
+        old_n_children: usize,
+        zpath_len: usize,
+        node_size: usize,
+        zpath_buf: &[u8],
     ) -> (u32, usize) {
         let split_char = zpath_buf[split_pos];
         let suffix_zlen = zpath_len - split_pos - 1;
         let suffix_zpath_padded = (suffix_zlen + 3) & !3;
-        let val_size = node_size - ((old_skip + old_n_children) * ALIGN_SIZE + ((zpath_len + 3) & !3));
+        let val_size =
+            node_size - ((old_skip + old_n_children) * ALIGN_SIZE + ((zpath_len + 3) & !3));
         let suffix_size = (old_skip + old_n_children) * ALIGN_SIZE + suffix_zpath_padded + val_size;
 
         // Allocate suffix (same structure as old node, shortened zpath)
@@ -1124,13 +1231,21 @@ impl CsppTrie {
         match cnt_type {
             0 => NIL_STATE,
             1 => {
-                if ch == view.meta().c_label[0] { curr + 1 } else { NIL_STATE }
+                if ch == view.meta().c_label[0] {
+                    curr + 1
+                } else {
+                    NIL_STATE
+                }
             }
             2 => {
                 let meta = view.meta();
-                if ch == meta.c_label[0] { curr + 1 }
-                else if ch == meta.c_label[1] { curr + 2 }
-                else { NIL_STATE }
+                if ch == meta.c_label[0] {
+                    curr + 1
+                } else if ch == meta.c_label[1] {
+                    curr + 2
+                } else {
+                    NIL_STATE
+                }
             }
             3..=6 => {
                 for i in 0..cnt_type as usize {
@@ -1147,7 +1262,11 @@ impl CsppTrie {
                     std::slice::from_raw_parts(ptr, 16)
                 };
                 let idx = crate::fsa::fast_search::fast_search_byte_max_16(&label_slice[..n], ch);
-                if idx < n { curr + 5 + idx as u32 } else { NIL_STATE }
+                if idx < n {
+                    curr + 5 + idx as u32
+                } else {
+                    NIL_STATE
+                }
             }
             8 => {
                 let bitmap_slice = unsafe {
@@ -1157,11 +1276,11 @@ impl CsppTrie {
                 let byte_idx = (ch / 8) as usize;
                 let bit_idx = ch % 8;
                 if (bitmap_slice[byte_idx] & (1 << bit_idx)) != 0 {
-                    let data_ptr = unsafe {
-                        self.mempool.as_ptr().add(curr as usize + 1) as *const u8
-                    };
+                    let data_ptr =
+                        unsafe { self.mempool.as_ptr().add(curr as usize + 1) as *const u8 };
                     let i = (ch / 64) as usize;
-                    let w = unsafe { std::ptr::read_unaligned(data_ptr.add(4 + i * 8) as *const u64) };
+                    let w =
+                        unsafe { std::ptr::read_unaligned(data_ptr.add(4 + i * 8) as *const u64) };
                     let b = unsafe { *data_ptr.add(i) } as usize;
                     let mask = (1u64 << (ch % 64)) - 1;
                     let idx = b + (w & mask).count_ones() as usize;
@@ -1186,8 +1305,13 @@ impl CsppTrie {
             // Extract node properties (drop borrow before any mutation)
             let (cnt_type, zpath_len, is_final, skip, n_children) = {
                 let view = self.node_view(curr);
-                (view.cnt_type(), view.zpath_len(), view.is_final(),
-                 view.skip_slots(), view.n_children())
+                (
+                    view.cnt_type(),
+                    view.zpath_len(),
+                    view.is_final(),
+                    view.skip_slots(),
+                    view.n_children(),
+                )
             };
 
             let node_size = (skip + n_children) * ALIGN_SIZE
@@ -1199,7 +1323,8 @@ impl CsppTrie {
                 let mut zpath_buf = [0u8; 256];
                 let zpath_off = (skip + n_children) * ALIGN_SIZE;
                 unsafe {
-                    let src = (self.mempool.as_ptr().add(curr as usize) as *const u8).add(zpath_off);
+                    let src =
+                        (self.mempool.as_ptr().add(curr as usize) as *const u8).add(zpath_off);
                     std::ptr::copy_nonoverlapping(src, zpath_buf.as_mut_ptr(), zpath_len);
                 }
 
@@ -1218,15 +1343,26 @@ impl CsppTrie {
                     // ForkBranch: divergence within zpath
                     let (new_suffix, valpos) = self.new_suffix_chain(&key[pos + zidx + 1..]);
                     let (new_parent, _old_suffix) = self.fork(
-                        curr, zidx, skip, n_children, zpath_len, node_size,
-                        &zpath_buf[..zpath_len], key[pos + zidx], new_suffix,
+                        curr,
+                        zidx,
+                        skip,
+                        n_children,
+                        zpath_len,
+                        node_size,
+                        &zpath_buf[..zpath_len],
+                        key[pos + zidx],
+                        new_suffix,
                     );
                     if curr_slot != NIL_STATE {
-                        unsafe { (*self.mempool.as_mut_ptr().add(curr_slot as usize)).child = new_parent; }
+                        unsafe {
+                            (*self.mempool.as_mut_ptr().add(curr_slot as usize)).child = new_parent;
+                        }
                     }
                     self.free_node(curr, node_size);
                     self.n_words += 1;
-                    if key.len() > self.max_word_len { self.max_word_len = key.len(); }
+                    if key.len() > self.max_word_len {
+                        self.max_word_len = key.len();
+                    }
                     return (true, valpos);
                 }
 
@@ -1235,22 +1371,33 @@ impl CsppTrie {
                 if remaining_key < zpath_len {
                     // SplitZpath: key exhausted within zpath
                     let (prefix_node, valpos) = self.split_zpath(
-                        curr, match_len, skip, n_children, zpath_len, node_size,
+                        curr,
+                        match_len,
+                        skip,
+                        n_children,
+                        zpath_len,
+                        node_size,
                         &zpath_buf[..zpath_len],
                     );
                     if curr_slot != NIL_STATE {
-                        unsafe { (*self.mempool.as_mut_ptr().add(curr_slot as usize)).child = prefix_node; }
+                        unsafe {
+                            (*self.mempool.as_mut_ptr().add(curr_slot as usize)).child =
+                                prefix_node;
+                        }
                     }
                     self.free_node(curr, node_size);
                     self.n_words += 1;
-                    if key.len() > self.max_word_len { self.max_word_len = key.len(); }
+                    if key.len() > self.max_word_len {
+                        self.max_word_len = key.len();
+                    }
                     return (true, valpos);
                 }
 
                 if pos == key.len() {
                     // Key exhausted at zpath end
                     if is_final {
-                        let vp = (curr as usize + skip + n_children) * ALIGN_SIZE + ((zpath_len + 3) & !3);
+                        let vp = (curr as usize + skip + n_children) * ALIGN_SIZE
+                            + ((zpath_len + 3) & !3);
                         return (false, vp);
                     }
                     // MarkFinalState
@@ -1258,14 +1405,21 @@ impl CsppTrie {
                     let new_size = old_size + self.valsize;
                     let new_curr = self.realloc_node(curr, old_size, new_size);
                     unsafe {
-                        (*self.mempool.as_mut_ptr().add(new_curr as usize)).meta.flags |= 0x10;
+                        (*self.mempool.as_mut_ptr().add(new_curr as usize))
+                            .meta
+                            .flags |= 0x10;
                     }
                     if curr_slot != NIL_STATE && new_curr != curr {
-                        unsafe { (*self.mempool.as_mut_ptr().add(curr_slot as usize)).child = new_curr; }
+                        unsafe {
+                            (*self.mempool.as_mut_ptr().add(curr_slot as usize)).child = new_curr;
+                        }
                     }
-                    let vp = (new_curr as usize + skip + n_children) * ALIGN_SIZE + ((zpath_len + 3) & !3);
+                    let vp = (new_curr as usize + skip + n_children) * ALIGN_SIZE
+                        + ((zpath_len + 3) & !3);
                     self.n_words += 1;
-                    if key.len() > self.max_word_len { self.max_word_len = key.len(); }
+                    if key.len() > self.max_word_len {
+                        self.max_word_len = key.len();
+                    }
                     return (true, vp);
                 }
             } else {
@@ -1282,7 +1436,9 @@ impl CsppTrie {
                         }
                         let vp = (curr as usize + 2 + 256) * ALIGN_SIZE;
                         self.n_words += 1;
-                        if key.len() > self.max_word_len { self.max_word_len = key.len(); }
+                        if key.len() > self.max_word_len {
+                            self.max_word_len = key.len();
+                        }
                         return (true, vp);
                     }
                     // MarkFinalState for non-fast node
@@ -1290,14 +1446,20 @@ impl CsppTrie {
                     let new_size = old_size + self.valsize;
                     let new_curr = self.realloc_node(curr, old_size, new_size);
                     unsafe {
-                        (*self.mempool.as_mut_ptr().add(new_curr as usize)).meta.flags |= 0x10;
+                        (*self.mempool.as_mut_ptr().add(new_curr as usize))
+                            .meta
+                            .flags |= 0x10;
                     }
                     if curr_slot != NIL_STATE && new_curr != curr {
-                        unsafe { (*self.mempool.as_mut_ptr().add(curr_slot as usize)).child = new_curr; }
+                        unsafe {
+                            (*self.mempool.as_mut_ptr().add(curr_slot as usize)).child = new_curr;
+                        }
                     }
                     let vp = (new_curr as usize + skip + n_children) * ALIGN_SIZE;
                     self.n_words += 1;
-                    if key.len() > self.max_word_len { self.max_word_len = key.len(); }
+                    if key.len() > self.max_word_len {
+                        self.max_word_len = key.len();
+                    }
                     return (true, vp);
                 }
             }
@@ -1313,20 +1475,28 @@ impl CsppTrie {
                 if cnt_type != 15 {
                     let new_curr = self.add_state_move(curr, ch, suffix_node);
                     if curr_slot != NIL_STATE {
-                        unsafe { (*self.mempool.as_mut_ptr().add(curr_slot as usize)).child = new_curr; }
+                        unsafe {
+                            (*self.mempool.as_mut_ptr().add(curr_slot as usize)).child = new_curr;
+                        }
                     }
                     self.free_node(curr, node_size);
                 } else {
                     // Fast node: direct child write
                     unsafe {
-                        (*self.mempool.as_mut_ptr().add(curr as usize + 2 + ch as usize)).child = suffix_node;
+                        (*self
+                            .mempool
+                            .as_mut_ptr()
+                            .add(curr as usize + 2 + ch as usize))
+                        .child = suffix_node;
                         // Increment real count at slot 1
                         let real_cnt = &mut (*self.mempool.as_mut_ptr().add(curr as usize + 1)).big;
                         real_cnt.n_children += 1;
                     }
                 }
                 self.n_words += 1;
-                if key.len() > self.max_word_len { self.max_word_len = key.len(); }
+                if key.len() > self.max_word_len {
+                    self.max_word_len = key.len();
+                }
                 return (true, valpos);
             }
 
@@ -1337,7 +1507,6 @@ impl CsppTrie {
         }
     }
 }
-
 
 pub struct IterEntry {
     pub state: u32,
@@ -1363,12 +1532,6 @@ impl<'a, T: Copy> CsppTrieIterator<'a, T> {
         }
     }
 
-
-
-
-
-
-
     pub fn seek_begin(&mut self) -> bool {
         self.stack.clear();
         self.word.clear();
@@ -1384,14 +1547,14 @@ impl<'a, T: Copy> CsppTrieIterator<'a, T> {
     fn descend_leftmost(&mut self) -> bool {
         while let Some(mut top) = self.stack.pop() {
             let view = self.trie.node_view(top.state);
-            
+
             if !top.zpath_consumed {
                 let zlen = view.zpath_len();
                 if zlen > 0 {
                     self.word.extend_from_slice(view.zpath_slice());
                 }
                 top.zpath_consumed = true;
-                
+
                 self.stack.push(top);
                 if view.is_final() {
                     return true;
@@ -1432,7 +1595,7 @@ impl<'a, T: Copy> CsppTrieIterator<'a, T> {
     pub fn incr(&mut self) -> bool {
         while let Some(mut top) = self.stack.pop() {
             let view = self.trie.node_view(top.state);
-            
+
             if top.child_idx < view.n_children() {
                 let mut next_child = None;
                 let mut current_idx = 0;
@@ -1442,7 +1605,7 @@ impl<'a, T: Copy> CsppTrieIterator<'a, T> {
                     }
                     current_idx += 1;
                 });
-                
+
                 top.child_idx += 1;
                 self.stack.push(top);
 
@@ -1461,7 +1624,8 @@ impl<'a, T: Copy> CsppTrieIterator<'a, T> {
             } else {
                 if self.stack.last().is_some() {
                     let backtrack_len = 1 + view.zpath_len();
-                    self.word.truncate(self.word.len().saturating_sub(backtrack_len));
+                    self.word
+                        .truncate(self.word.len().saturating_sub(backtrack_len));
                 } else {
                     self.word.clear();
                     return false;
@@ -1783,15 +1947,46 @@ mod tests {
         }
 
         let stat = trie.mem_get_stat();
-        assert!(stat.used_size > 0, "used_size should be non-zero");
-        assert!(stat.capacity >= stat.used_size, "capacity should be >= used_size");
+        assert_eq!(trie.num_words(), 100);
+        assert!(
+            stat.used_size > 1000,
+            "used_size should reflect 100 insertions (usually > 1000 bytes, got {})",
+            stat.used_size
+        );
+        assert!(
+            stat.capacity >= stat.used_size,
+            "capacity {} should be >= used_size {}",
+            stat.capacity,
+            stat.used_size
+        );
+        // The node pool usually expands to at least 4096 capacity during this test
+        assert!(
+            stat.capacity >= 4096,
+            "capacity should have grown significantly, got {}",
+            stat.capacity
+        );
     }
 
     #[test]
     fn test_mem_frag_size() {
-        let trie = CsppTrie::new(0);
-        let frag = trie.mem_frag_size();
-        assert_eq!(frag, 0, "new trie should have zero fragmentation");
+        let mut trie = CsppTrie::new(0);
+        let frag_initial = trie.mem_frag_size();
+        assert_eq!(frag_initial, 0, "new trie should have zero fragmentation");
+
+        trie.insert(b"test1");
+        trie.insert(b"test2");
+        trie.insert(b"test3");
+
+        // Let's cause structural mutations, which will leave old nodes in memory.
+        trie.insert(b"test1xyz");
+        trie.insert(b"test2abc");
+
+        trie.reclaim_lazy_frees(); // Reclaim memory to turn it into proper fragmentation
+        let frag_after = trie.mem_frag_size();
+        assert!(
+            frag_after > 0,
+            "Trie should have memory fragmentation after mutations"
+        );
     }
 
     #[test]
@@ -1820,7 +2015,10 @@ mod tests {
     fn test_iterator_empty() {
         let trie = CsppTrie::new(0);
         let mut iter = CsppTrieIterator::<u32>::new(&trie);
-        assert!(!iter.seek_begin(), "seek_begin on empty trie should return false");
+        assert!(
+            !iter.seek_begin(),
+            "seek_begin on empty trie should return false"
+        );
     }
 
     #[test]
@@ -1868,24 +2066,29 @@ mod tests {
     }
 
     #[test]
-    fn test_iterator_word_reconstruction() {
-        let mut trie = CsppTrie::new(0);
-        let keys = [b"hello".as_slice(), b"world".as_slice(), b"test".as_slice()];
-        for &key in &keys {
-            trie.insert(key);
+    fn test_iterator_value_retrieval() {
+        let mut trie = CsppTrie::new(8); // Allocate space for values
+
+        let keys = [
+            b"apple".as_slice(),
+            b"banana".as_slice(),
+            b"cherry".as_slice(),
+        ];
+        for (i, &key) in keys.iter().enumerate() {
+            let (_, valpos) = trie.insert(key);
+            trie.set_value::<u64>(valpos, (i * 100) as u64);
         }
 
-        let mut iter = CsppTrieIterator::<u32>::new(&trie);
-        let mut found_keys = Vec::new();
+        let mut iter = CsppTrieIterator::<u64>::new(&trie);
+        let mut found_values = Vec::new();
         if iter.seek_begin() {
-            found_keys.push(iter.word().to_vec());
+            found_values.push(iter.value());
             while iter.incr() {
-                found_keys.push(iter.word().to_vec());
+                found_values.push(iter.value());
             }
         }
 
-        for key in &keys {
-            assert!(found_keys.contains(&key.to_vec()), "iterator should reconstruct key {:?}", key);
-        }
+        // Lexicographical order: "apple" (0), "banana" (100), "cherry" (200)
+        assert_eq!(found_values, vec![0, 100, 200]);
     }
 }

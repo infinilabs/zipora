@@ -1,12 +1,12 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use std::collections::HashMap;
+use zipora::entropy::ParallelX1;
+use zipora::succinct::rank_select::RankSelectOps;
 use zipora::{
     BitVector, BlobStore, DictionaryBuilder, DictionaryCompressor, EntropyStats, FastStr, FastVec,
-    HuffmanBlobStore, HuffmanEncoder, HuffmanTree, MemoryBlobStore, RankSelect256,
-    Rans64Encoder, ZiporaHashMap,
+    HuffmanBlobStore, HuffmanEncoder, HuffmanTree, MemoryBlobStore, RankSelect256, Rans64Encoder,
+    ZiporaHashMap,
 };
-use zipora::succinct::rank_select::RankSelectOps;
-use zipora::entropy::ParallelX1;
 
 #[cfg(feature = "mmap")]
 use zipora::{DataInput, DataOutput, MemoryMappedInput, MemoryMappedOutput};
@@ -105,10 +105,7 @@ fn benchmark_succinct_data_structures(c: &mut Criterion) {
     });
 
     group.bench_function("RankSelect256 construction", |b| {
-        b.iter(|| {
-            
-            RankSelect256::new(black_box(bv.clone())).unwrap()
-        });
+        b.iter(|| RankSelect256::new(black_box(bv.clone())).unwrap());
     });
 
     let rs = RankSelect256::new(bv.clone()).unwrap();
@@ -309,7 +306,8 @@ fn benchmark_entropy_coding(c: &mut Criterion) {
                 for &byte in data.iter() {
                     frequencies[byte as usize] += 1;
                 }
-                let encoder: Rans64Encoder<ParallelX1> = Rans64Encoder::new(black_box(&frequencies)).unwrap();
+                let encoder: Rans64Encoder<ParallelX1> =
+                    Rans64Encoder::new(black_box(&frequencies)).unwrap();
                 black_box(encoder)
             });
         });
@@ -437,15 +435,12 @@ fn benchmark_optimized_rank_select(c: &mut Criterion) {
             let ones_count = rs.count_ones();
 
             // Benchmark optimized rank1
-            group.bench_function(
-                format!("rank1 size:{} density:{:.1}", size, density),
-                |b| {
-                    b.iter(|| {
-                        let pos = black_box(size / 2);
-                        rs.rank1(pos)
-                    });
-                },
-            );
+            group.bench_function(format!("rank1 size:{} density:{:.1}", size, density), |b| {
+                b.iter(|| {
+                    let pos = black_box(size / 2);
+                    rs.rank1(pos)
+                });
+            });
 
             // Benchmark optimized select1 (if we have enough ones)
             if ones_count > 1000 {

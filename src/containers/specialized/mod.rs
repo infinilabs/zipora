@@ -76,12 +76,12 @@ mod hash_str_map;
 mod zo_sorted_str_vec;
 
 // Phase 4 LRU cache containers
-mod lru_map;
 mod concurrent_lru_map;
+mod lru_map;
 
 // P1.4: Additional container types
-pub mod vec_trb;
 mod minimal_sso;
+pub mod vec_trb;
 
 // Phase 1 exports
 pub use circular_queue::{AutoGrowCircularQueue, FixedCircularQueue};
@@ -92,7 +92,7 @@ pub use valvec32::ValVec32;
 pub use fixed_len_str_vec::{
     FixedLenStrVec, FixedStr4Vec, FixedStr8Vec, FixedStr16Vec, FixedStr32Vec, FixedStr64Vec,
 };
-pub use int_vec::{IntVec, PackedInt, CompressionStrategy, BlockSize};
+pub use int_vec::{BlockSize, CompressionStrategy, IntVec, PackedInt};
 pub use sortable_str_vec::{SortableStrIter, SortableStrSortedIter, SortableStrVec};
 pub use uint_vector::UintVector;
 
@@ -103,10 +103,11 @@ pub use hash_str_map::{HashStrMap, HashStrMapStats};
 pub use zo_sorted_str_vec::{ZoSortedStrVec, ZoSortedStrVecIter, ZoSortedStrVecRange};
 
 // Phase 4 exports
-pub use lru_map::{LruMap, LruMapConfig, LruMapStatistics, EvictionCallback, NoOpEvictionCallback};
-pub use concurrent_lru_map::{ConcurrentLruMap, ConcurrentLruMapConfig, ConcurrentLruMapStatistics, LoadBalancingStrategy};
+pub use concurrent_lru_map::{
+    ConcurrentLruMap, ConcurrentLruMapConfig, ConcurrentLruMapStatistics, LoadBalancingStrategy,
+};
+pub use lru_map::{EvictionCallback, LruMap, LruMapConfig, LruMapStatistics, NoOpEvictionCallback};
 
 // P1.4 exports
-pub use vec_trb::{VecTrbSet, VecTrbMap};
 pub use minimal_sso::MinimalSso;
-
+pub use vec_trb::{VecTrbMap, VecTrbSet};

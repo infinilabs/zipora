@@ -11,8 +11,8 @@
 //! Example: For a 10,000-bit vector with 100 ones, stores 100 positions (400 bytes)
 //! instead of 1,250 bytes for the full bitvector + rank cache.
 
-use crate::error::{Result, ZiporaError};
 use super::RankSelectOps;
+use crate::error::{Result, ZiporaError};
 
 /// Sparse bitvector for data where 1-bits are rare.
 ///
@@ -34,7 +34,9 @@ impl RankSelectFewOne {
                 return Err(ZiporaError::invalid_data("position out of bounds"));
             }
             if i > 0 && pos <= positions[i - 1] {
-                return Err(ZiporaError::invalid_data("positions must be strictly sorted"));
+                return Err(ZiporaError::invalid_data(
+                    "positions must be strictly sorted",
+                ));
             }
         }
         Ok(Self { positions, size })
@@ -52,9 +54,13 @@ impl RankSelectFewOne {
     }
 
     /// Number of 1-bits (pivots)
-    pub fn num_ones(&self) -> usize { self.positions.len() }
+    pub fn num_ones(&self) -> usize {
+        self.positions.len()
+    }
     /// Number of 0-bits
-    pub fn num_zeros(&self) -> usize { self.size - self.positions.len() }
+    pub fn num_zeros(&self) -> usize {
+        self.size - self.positions.len()
+    }
 
     #[inline]
     pub fn mem_size(&self) -> usize {
@@ -111,19 +117,31 @@ impl RankSelectOps for RankSelectFewOne {
             }
         }
         // lo is the position where zeros_before = k+1, so k-th zero is at lo-1
-        if lo > 0 { Ok(lo - 1) } else { Err(ZiporaError::invalid_data("select0 error")) }
+        if lo > 0 {
+            Ok(lo - 1)
+        } else {
+            Err(ZiporaError::invalid_data("select0 error"))
+        }
     }
 
-    fn len(&self) -> usize { self.size }
-    fn count_ones(&self) -> usize { self.positions.len() }
+    fn len(&self) -> usize {
+        self.size
+    }
+    fn count_ones(&self) -> usize {
+        self.positions.len()
+    }
 
     fn get(&self, index: usize) -> Option<bool> {
-        if index >= self.size { return None; }
+        if index >= self.size {
+            return None;
+        }
         Some(self.positions.binary_search(&(index as u32)).is_ok())
     }
 
     fn space_overhead_percent(&self) -> f64 {
-        if self.size == 0 { return 0.0; }
+        if self.size == 0 {
+            return 0.0;
+        }
         let minimal_bytes = self.size.div_ceil(8);
         let actual_bytes = self.mem_size();
         if actual_bytes < minimal_bytes {
@@ -153,7 +171,9 @@ impl RankSelectFewZero {
                 return Err(ZiporaError::invalid_data("position out of bounds"));
             }
             if i > 0 && pos <= positions[i - 1] {
-                return Err(ZiporaError::invalid_data("positions must be strictly sorted"));
+                return Err(ZiporaError::invalid_data(
+                    "positions must be strictly sorted",
+                ));
             }
         }
         Ok(Self { positions, size })
@@ -169,8 +189,12 @@ impl RankSelectFewZero {
         Self::new(positions, bv.len())
     }
 
-    pub fn num_zeros(&self) -> usize { self.positions.len() }
-    pub fn num_ones(&self) -> usize { self.size - self.positions.len() }
+    pub fn num_zeros(&self) -> usize {
+        self.positions.len()
+    }
+    pub fn num_ones(&self) -> usize {
+        self.size - self.positions.len()
+    }
 
     #[inline]
     pub fn mem_size(&self) -> usize {
@@ -208,9 +232,17 @@ impl RankSelectOps for RankSelectFewZero {
         while lo < hi {
             let mid = (lo + hi) / 2;
             let ones_before_mid = mid - self.lower_bound(mid);
-            if ones_before_mid <= k { lo = mid + 1; } else { hi = mid; }
+            if ones_before_mid <= k {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
         }
-        if lo > 0 { Ok(lo - 1) } else { Err(ZiporaError::invalid_data("select1 error")) }
+        if lo > 0 {
+            Ok(lo - 1)
+        } else {
+            Err(ZiporaError::invalid_data("select1 error"))
+        }
     }
 
     /// O(1) select0 — direct lookup.
@@ -222,17 +254,25 @@ impl RankSelectOps for RankSelectFewZero {
         Ok(self.positions[k] as usize)
     }
 
-    fn len(&self) -> usize { self.size }
-    fn count_ones(&self) -> usize { self.num_ones() }
+    fn len(&self) -> usize {
+        self.size
+    }
+    fn count_ones(&self) -> usize {
+        self.num_ones()
+    }
 
     fn get(&self, index: usize) -> Option<bool> {
-        if index >= self.size { return None; }
+        if index >= self.size {
+            return None;
+        }
         // If position is in zeros list, it's a 0; otherwise 1
         Some(self.positions.binary_search(&(index as u32)).is_err())
     }
 
     fn space_overhead_percent(&self) -> f64 {
-        if self.size == 0 { return 0.0; }
+        if self.size == 0 {
+            return 0.0;
+        }
         let minimal_bytes = self.size.div_ceil(8);
         let actual_bytes = self.mem_size();
         if actual_bytes < minimal_bytes {

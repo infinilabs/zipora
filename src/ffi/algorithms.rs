@@ -4,8 +4,8 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::ffi::c_api::*;
     use crate::ffi::CResult;
+    use crate::ffi::c_api::*;
 
     #[test]
     fn test_radix_sort_basic() {
@@ -30,7 +30,10 @@ mod tests {
     #[test]
     fn test_radix_sort_null_safety() {
         unsafe {
-            assert_eq!(radix_sort_u32(std::ptr::null_mut(), 5), CResult::InvalidInput);
+            assert_eq!(
+                radix_sort_u32(std::ptr::null_mut(), 5),
+                CResult::InvalidInput
+            );
             let mut data = vec![1u32];
             assert_eq!(radix_sort_u32(data.as_mut_ptr(), 0), CResult::InvalidInput);
         }

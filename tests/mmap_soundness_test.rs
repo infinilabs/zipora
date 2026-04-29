@@ -1,4 +1,4 @@
-use zipora::memory::{mmap_vec::MmapVec, MmapVecConfig};
+use zipora::memory::{MmapVecConfig, mmap_vec::MmapVec};
 
 /// Helper: create a temp path under target/ so test artifacts don't pollute the project root.
 fn test_path(name: &str) -> std::path::PathBuf {
@@ -45,7 +45,7 @@ fn test_mmap_vec_corrupted_pod_data_is_safe() {
 
     // Corrupt the data with arbitrary bytes
     {
-        use std::io::{Write, Seek, SeekFrom};
+        use std::io::{Seek, SeekFrom, Write};
         let mut file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
         file.seek(SeekFrom::Start(80)).unwrap();
         file.write_all(&[0xFF, 0xFF, 0xFF, 0xFF]).unwrap();

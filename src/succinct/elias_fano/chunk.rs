@@ -1,5 +1,5 @@
-use crate::error::{Result, ZiporaError};
 use crate::algorithms::bit_ops::select_in_word;
+use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;
 use std::cmp::Ordering;
 
@@ -75,12 +75,20 @@ pub(crate) fn chunk_select1(chunk: &ChunkView<'_>, rank: usize) -> usize {
 /// Branchless: always loads 2 words via u128, ChunkView slice includes +1 padding.
 #[inline]
 pub(crate) fn chunk_get_low(chunk: &ChunkView<'_>, index: usize) -> u64 {
-    if chunk.low_bit_width == 0 { return 0; }
+    if chunk.low_bit_width == 0 {
+        return 0;
+    }
     let bit_pos = index as u64 * chunk.low_bit_width as u64;
     let word_idx = (bit_pos / 64) as usize;
     let bit_idx = (bit_pos % 64) as u32;
-    let w0 = chunk.low_bits[word_idx];
-    let w1 = chunk.low_bits[word_idx + 1];
+
+    // SAFETY: The `low_bits` array is padded during construction, ensuring `word_idx + 1` is safe.
+    let (w0, w1) = unsafe {
+        (
+            *chunk.low_bits.get_unchecked(word_idx),
+            *chunk.low_bits.get_unchecked(word_idx + 1),
+        )
+    };
     let combined = w0 as u128 | ((w1 as u128) << 64);
     (combined >> bit_idx) as u64 & ((1u64 << chunk.low_bit_width) - 1)
 }
@@ -104,15 +112,20 @@ pub(crate) fn chunk_skip_to_high(chunk: &ChunkView<'_>, target_high: usize) -> (
     let mut ones_count = 0usize;
     let last_wi = chunk.high_bits.len().saturating_sub(1);
 
+    // Pre-compute the mask for the last word (all other words use u64::MAX)
+    let last_valid_bits = {
+        let rem = chunk.high_len_bits % 64;
+        if rem == 0 && chunk.high_len_bits > 0 { 64 } else { rem }
+    };
+    let last_word_mask = if last_valid_bits >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << last_valid_bits) - 1
+    };
+
     for (wi, &w) in chunk.high_bits.iter().enumerate() {
-        // Mask out padding bits in the last word
-        let valid_bits = if wi == last_wi {
-            let rem = chunk.high_len_bits % 64;
-            if rem == 0 && chunk.high_len_bits > 0 { 64 } else { rem }
-        } else {
-            64
-        };
-        let valid_mask = if valid_bits >= 64 { u64::MAX } else { (1u64 << valid_bits) - 1 };
+        let valid_bits = if wi == last_wi { last_valid_bits } else { 64 };
+        let valid_mask = if wi == last_wi { last_word_mask } else { u64::MAX };
         let masked = w & valid_mask;
 
         let ones = masked.count_ones() as usize;
@@ -128,7 +141,11 @@ pub(crate) fn chunk_skip_to_high(chunk: &ChunkView<'_>, target_high: usize) -> (
 
             // Count ones before abs_pos + 1 (rank1 up to and including abs_pos)
             let bits_up_to = zero_pos_in_word + 1;
-            let partial_mask = if bits_up_to >= 64 { u64::MAX } else { (1u64 << bits_up_to) - 1 };
+            let partial_mask = if bits_up_to >= 64 {
+                u64::MAX
+            } else {
+                (1u64 << bits_up_to) - 1
+            };
             ones_count += (w & partial_mask).count_ones() as usize;
 
             // Start scanning from the bit after the target zero
@@ -163,14 +180,18 @@ pub(crate) fn chunk_scan_geq(
     }
 
     let start_bit = bit_pos % 64;
-    let mut word = chunk.high_bits[word_idx] >> start_bit;
+    // SAFETY: word_idx is verified < len above
+    let mut word = unsafe { *chunk.high_bits.get_unchecked(word_idx) } >> start_bit;
     bit_pos = word_idx * 64 + start_bit;
 
     while idx < chunk.count {
         if word == 0 {
             word_idx += 1;
-            if word_idx >= chunk.high_bits.len() { break; }
-            word = chunk.high_bits[word_idx];
+            if word_idx >= chunk.high_bits.len() {
+                break;
+            }
+            // SAFETY: word_idx is verified < len above
+            word = unsafe { *chunk.high_bits.get_unchecked(word_idx) };
             bit_pos = word_idx * 64;
             continue;
         }
@@ -194,7 +215,6 @@ pub(crate) fn chunk_scan_geq(
 
     None
 }
-
 
 #[inline]
 pub(crate) fn chunk_first_one_cached(high_bits: &[u64]) -> usize {

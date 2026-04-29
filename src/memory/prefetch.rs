@@ -59,9 +59,7 @@ pub enum PrefetchLocality {
     NonTemporal,
 }
 
-impl PrefetchLocality {
-
-}
+impl PrefetchLocality {}
 
 /// Access pattern classification for prefetch optimization
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -99,7 +97,7 @@ impl AccessPattern {
                 base_distance * 2 // Aggressive for confirmed sequential
             }
             AccessPattern::Random { .. } => base_distance / 4, // Conservative for random
-            AccessPattern::PointerChasing { .. } => 1, // Immediate next
+            AccessPattern::PointerChasing { .. } => 1,         // Immediate next
             _ => base_distance,
         }
     }
@@ -336,10 +334,10 @@ impl AccuracyThrottler {
         let accuracy = self.prefetches_used as f32 / self.prefetches_issued as f32;
 
         self.aggressiveness = match accuracy {
-            a if a > 0.85 => 1.2,  // Increase aggressiveness
-            a if a > 0.60 => 1.0,  // Maintain current
-            a if a > 0.40 => 0.7,  // Reduce slightly
-            _ => 0.3,              // Aggressive reduction
+            a if a > 0.85 => 1.2, // Increase aggressiveness
+            a if a > 0.60 => 1.0, // Maintain current
+            a if a > 0.40 => 0.7, // Reduce slightly
+            _ => 0.3,             // Aggressive reduction
         };
 
         // Reset counters for next interval
@@ -459,9 +457,9 @@ impl PrefetchStrategy {
 
             // Adjust distance based on pattern
             if self.config.adaptive_distance {
-                self.current_distance = self.accuracy_throttler.scale_distance(
-                    pat.optimal_distance(self.config.base_distance),
-                );
+                self.current_distance = self
+                    .accuracy_throttler
+                    .scale_distance(pat.optimal_distance(self.config.base_distance));
             }
 
             let locality = pat.optimal_locality();
@@ -470,10 +468,20 @@ impl PrefetchStrategy {
             // Issue prefetches based on pattern
             match pat {
                 AccessPattern::Sequential { stride, .. } => {
-                    self.sequential_prefetch_internal_safe(data, stride.unsigned_abs(), self.current_distance, locality);
+                    self.sequential_prefetch_internal_safe(
+                        data,
+                        stride.unsigned_abs(),
+                        self.current_distance,
+                        locality,
+                    );
                 }
                 AccessPattern::Strided { stride, .. } => {
-                    self.sequential_prefetch_internal_safe(data, stride.unsigned_abs(), self.current_distance, locality);
+                    self.sequential_prefetch_internal_safe(
+                        data,
+                        stride.unsigned_abs(),
+                        self.current_distance,
+                        locality,
+                    );
                 }
                 AccessPattern::Random { .. } => {
                     // Prefetch predicted addresses conservatively (with bounds checking)
@@ -519,12 +527,7 @@ impl PrefetchStrategy {
             return;
         }
 
-        self.sequential_prefetch_internal_safe(
-            data,
-            stride,
-            count,
-            PrefetchLocality::NonTemporal,
-        );
+        self.sequential_prefetch_internal_safe(data, stride, count, PrefetchLocality::NonTemporal);
     }
 
     /// Random access prefetching with prediction
@@ -606,8 +609,6 @@ impl PrefetchStrategy {
         self.bandwidth_monitor.should_throttle() || self.accuracy_throttler.should_throttle()
     }
 
-
-
     #[inline]
     fn sequential_prefetch_internal_safe(
         &mut self,
@@ -639,14 +640,16 @@ impl PrefetchStrategy {
 
         #[cfg(target_arch = "x86_64")]
         {
-            use std::arch::x86_64::{_MM_HINT_T0, _MM_HINT_T1, _MM_HINT_T2, _MM_HINT_NTA, _mm_prefetch};
+            use std::arch::x86_64::{
+                _MM_HINT_NTA, _MM_HINT_T0, _MM_HINT_T1, _MM_HINT_T2, _mm_prefetch,
+            };
             // SAFETY: prefetch is advisory; CPU handles gracefully if address is invalid
             // SAFETY: prefetch is advisory, CPU handles gracefully
             unsafe {
                 match locality {
                     PrefetchLocality::L1Temporal => {
                         _mm_prefetch::<_MM_HINT_T0>(addr as *const i8);
-                    // SAFETY: prefetch intrinsic safe with any pointer
+                        // SAFETY: prefetch intrinsic safe with any pointer
                     }
                     PrefetchLocality::L2Temporal => {
                         _mm_prefetch::<_MM_HINT_T1>(addr as *const i8);
@@ -670,18 +673,22 @@ impl PrefetchStrategy {
             match locality {
                 PrefetchLocality::L1Temporal => {
                     // SAFETY: ARM prefetch intrinsic safe with any pointer
-                    unsafe { std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) addr, options(nostack)); }
+                    unsafe {
+                        std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) addr, options(nostack));
+                    }
                 }
-                PrefetchLocality::L2Temporal => {
-                    unsafe { std::arch::asm!("prfm pldl2keep, [{0}]", in(reg) addr, options(nostack)); }
-                }
+                PrefetchLocality::L2Temporal => unsafe {
+                    std::arch::asm!("prfm pldl2keep, [{0}]", in(reg) addr, options(nostack));
+                },
                 PrefetchLocality::L3Temporal => {
                     // SAFETY: ARM prefetch intrinsic safe with any pointer
-                    unsafe { std::arch::asm!("prfm pldl3keep, [{0}]", in(reg) addr, options(nostack)); }
+                    unsafe {
+                        std::arch::asm!("prfm pldl3keep, [{0}]", in(reg) addr, options(nostack));
+                    }
                 }
-                PrefetchLocality::NonTemporal => {
-                    unsafe { std::arch::asm!("prfm pldl1strm, [{0}]", in(reg) addr, options(nostack)); }
-                }
+                PrefetchLocality::NonTemporal => unsafe {
+                    std::arch::asm!("prfm pldl1strm, [{0}]", in(reg) addr, options(nostack));
+                },
             }
         }
 
@@ -819,9 +826,8 @@ mod tests {
 
         // SAFETY FIX (v2.1.1): Convert u64 vector to byte slice for safe API
         // SAFETY: Hardware features verified or caller ensures safety invariants
-        let data_bytes = unsafe {
-            std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 8)
-        };
+        let data_bytes =
+            unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 8) };
         strategy.sequential_prefetch(data_bytes, 64, 8);
 
         // Should have issued prefetches
@@ -837,13 +843,9 @@ mod tests {
             // SAFETY FIX (v2.1.1): Create byte references from u64 data
             // Convert u64 vector to byte slice, then take references
             // SAFETY: Hardware features verified or caller ensures safety invariants
-            let data_bytes = unsafe {
-                std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 8)
-            };
-            let addrs = [
-                &data_bytes[10 * 8],
-                &data_bytes[20 * 8],
-            ];
+            let data_bytes =
+                unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 8) };
+            let addrs = [&data_bytes[10 * 8], &data_bytes[20 * 8]];
             strategy.random_prefetch(&addrs);
         }
 
@@ -861,9 +863,8 @@ mod tests {
 
         // SAFETY FIX (v2.1.1): Pass byte slice instead of raw pointer
         // SAFETY: Hardware features verified or caller ensures safety invariants
-        let data_bytes = unsafe {
-            std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 8)
-        };
+        let data_bytes =
+            unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 8) };
         strategy.adaptive_prefetch(data_bytes, &pattern);
 
         // Should detect sequential pattern after enough samples
@@ -886,9 +887,8 @@ mod tests {
 
         // SAFETY FIX (v2.1.1): Convert to byte slice for safe API
         // SAFETY: Hardware features verified or caller ensures safety invariants
-        let data_bytes = unsafe {
-            std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 8)
-        };
+        let data_bytes =
+            unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 8) };
 
         // Issue many prefetches to accumulate bandwidth
         for _ in 0..5000 {
@@ -902,7 +902,10 @@ mod tests {
         // That's ~23.3 MB/s which is >> 0.8 MB/s threshold (max_bandwidth * 0.8)
         let should_be_throttled = strategy.bandwidth_monitor.should_throttle();
 
-        assert!(should_be_throttled, "Bandwidth throttling should trigger: ~23 MB/s >> 0.8 MB/s threshold");
+        assert!(
+            should_be_throttled,
+            "Bandwidth throttling should trigger: ~23 MB/s >> 0.8 MB/s threshold"
+        );
     }
 
     #[test]

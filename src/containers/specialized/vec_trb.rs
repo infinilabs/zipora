@@ -31,20 +31,35 @@ impl Node {
     const fn new_empty() -> Self {
         Self {
             ch: [
-                NIL | TYPE_BIT,              // left: thread(NIL), black
-                NIL | TYPE_BIT | FLAG_BIT,   // right: thread(NIL), empty
+                NIL | TYPE_BIT,            // left: thread(NIL), black
+                NIL | TYPE_BIT | FLAG_BIT, // right: thread(NIL), empty
             ],
         }
     }
 
     // -- link extraction --
-    #[inline] fn link(&self, side: usize) -> u32 { self.ch[side] & LINK_MASK }
-    #[inline] fn left_link(&self) -> u32 { self.link(0) }
-    #[inline] fn right_link(&self) -> u32 { self.link(1) }
+    #[inline]
+    fn link(&self, side: usize) -> u32 {
+        self.ch[side] & LINK_MASK
+    }
+    #[inline]
+    fn left_link(&self) -> u32 {
+        self.link(0)
+    }
+    #[inline]
+    fn right_link(&self) -> u32 {
+        self.link(1)
+    }
 
     // -- type queries --
-    #[inline] fn is_child(&self, side: usize) -> bool { (self.ch[side] & TYPE_BIT) == 0 }
-    #[inline] fn is_thread(&self, side: usize) -> bool { (self.ch[side] & TYPE_BIT) != 0 }
+    #[inline]
+    fn is_child(&self, side: usize) -> bool {
+        (self.ch[side] & TYPE_BIT) == 0
+    }
+    #[inline]
+    fn is_thread(&self, side: usize) -> bool {
+        (self.ch[side] & TYPE_BIT) != 0
+    }
 
     // -- set child link (clears TYPE_BIT, preserves FLAG_BIT) --
     #[inline]
@@ -65,15 +80,36 @@ impl Node {
     }
 
     // -- color (FLAG_BIT of children[0]) --
-    #[inline] fn is_red(&self) -> bool { (self.ch[0] & FLAG_BIT) != 0 }
-    #[inline] fn is_black(&self) -> bool { !self.is_red() }
-    #[inline] fn set_red(&mut self) { self.ch[0] |= FLAG_BIT; }
-    #[inline] fn set_black(&mut self) { self.ch[0] &= !FLAG_BIT; }
+    #[inline]
+    fn is_red(&self) -> bool {
+        (self.ch[0] & FLAG_BIT) != 0
+    }
+    #[inline]
+    fn is_black(&self) -> bool {
+        !self.is_red()
+    }
+    #[inline]
+    fn set_red(&mut self) {
+        self.ch[0] |= FLAG_BIT;
+    }
+    #[inline]
+    fn set_black(&mut self) {
+        self.ch[0] &= !FLAG_BIT;
+    }
 
     // -- used/empty (FLAG_BIT of children[1]) --
-    #[inline] fn is_used(&self) -> bool { (self.ch[1] & FLAG_BIT) == 0 }
-    #[inline] fn set_used(&mut self) { self.ch[1] &= !FLAG_BIT; }
-    #[inline] fn set_empty(&mut self) { self.ch[1] |= FLAG_BIT; }
+    #[inline]
+    fn is_used(&self) -> bool {
+        (self.ch[1] & FLAG_BIT) == 0
+    }
+    #[inline]
+    fn set_used(&mut self) {
+        self.ch[1] &= !FLAG_BIT;
+    }
+    #[inline]
+    fn set_empty(&mut self) {
+        self.ch[1] |= FLAG_BIT;
+    }
 }
 
 // ============================================================================
@@ -89,7 +125,10 @@ struct PathStack {
 
 impl PathStack {
     fn new() -> Self {
-        Self { entries: [(NIL, false); MAX_DEPTH], len: 0 }
+        Self {
+            entries: [(NIL, false); MAX_DEPTH],
+            len: 0,
+        }
     }
     #[inline]
     fn push(&mut self, idx: u32, went_left: bool) {
@@ -98,9 +137,13 @@ impl PathStack {
         self.len += 1;
     }
     #[inline]
-    fn idx(&self, k: usize) -> u32 { self.entries[k].0 }
+    fn idx(&self, k: usize) -> u32 {
+        self.entries[k].0
+    }
     #[inline]
-    fn is_left(&self, k: usize) -> bool { self.entries[k].1 }
+    fn is_left(&self, k: usize) -> bool {
+        self.entries[k].1
+    }
 }
 
 // ============================================================================
@@ -116,7 +159,12 @@ struct Core<T> {
 
 impl<T> Core<T> {
     fn new() -> Self {
-        Self { units: Vec::new(), root: NIL, count: 0, free_head: NIL }
+        Self {
+            units: Vec::new(),
+            root: NIL,
+            count: 0,
+            free_head: NIL,
+        }
     }
 
     fn alloc(&mut self) -> u32 {
@@ -139,20 +187,30 @@ impl<T> Core<T> {
     }
 
     #[inline]
-    fn n(&self, i: u32) -> &Node { &self.units[i as usize].0 }
+    fn n(&self, i: u32) -> &Node {
+        &self.units[i as usize].0
+    }
     #[inline]
-    fn n_mut(&mut self, i: u32) -> &mut Node { &mut self.units[i as usize].0 }
+    fn n_mut(&mut self, i: u32) -> &mut Node {
+        &mut self.units[i as usize].0
+    }
     #[inline]
     // SAFETY: caller must ensure i < units.len() and units[i].1 is initialized
-    unsafe fn data(&self, i: u32) -> &T { unsafe { &*self.units[i as usize].1.as_ptr() } }
+    unsafe fn data(&self, i: u32) -> &T {
+        unsafe { &*self.units[i as usize].1.as_ptr() }
+    }
     #[inline]
     // SAFETY: caller must ensure i < units.len() and units[i].1 is initialized
-    unsafe fn data_mut(&mut self, i: u32) -> &mut T { unsafe { &mut *self.units[i as usize].1.as_mut_ptr() } }
+    unsafe fn data_mut(&mut self, i: u32) -> &mut T {
+        unsafe { &mut *self.units[i as usize].1.as_mut_ptr() }
+    }
 
     // -- navigation --
 
     fn leftmost(&self, mut i: u32) -> u32 {
-        while self.n(i).is_child(0) { i = self.n(i).left_link(); }
+        while self.n(i).is_child(0) {
+            i = self.n(i).left_link();
+        }
         i
     }
 
@@ -169,7 +227,8 @@ impl<T> Core<T> {
     // -- search --
 
     fn find_unique<K, F>(&self, key: &K, mut cmp: F) -> (PathStack, bool)
-    where F: FnMut(&T, &K) -> Ordering,
+    where
+        F: FnMut(&T, &K) -> Ordering,
     {
         let mut stk = PathStack::new();
         let mut p = self.root;
@@ -179,13 +238,19 @@ impl<T> Core<T> {
             match ord {
                 Ordering::Greater => {
                     stk.push(p, true);
-                    if self.n(p).is_child(0) { p = self.n(p).left_link(); }
-                    else { return (stk, false); }
+                    if self.n(p).is_child(0) {
+                        p = self.n(p).left_link();
+                    } else {
+                        return (stk, false);
+                    }
                 }
                 Ordering::Less => {
                     stk.push(p, false);
-                    if self.n(p).is_child(1) { p = self.n(p).right_link(); }
-                    else { return (stk, false); }
+                    if self.n(p).is_child(1) {
+                        p = self.n(p).right_link();
+                    } else {
+                        return (stk, false);
+                    }
                 }
                 Ordering::Equal => {
                     stk.push(p, false); // direction irrelevant for found
@@ -238,8 +303,10 @@ impl<T> Core<T> {
         let mut k = stk.len - 1; // k = parent's index in stack
 
         loop {
-            let p1 = stk.idx(k);   // parent
-            if self.n(p1).is_black() { break; }
+            let p1 = stk.idx(k); // parent
+            if self.n(p1).is_black() {
+                break;
+            }
 
             if k == 0 {
                 // parent is root — blacken it
@@ -254,14 +321,18 @@ impl<T> Core<T> {
             let uncle_side: usize = if parent_is_left { 1 } else { 0 };
             let uncle = if self.n(p2).is_child(uncle_side) {
                 self.n(p2).link(uncle_side)
-            } else { NIL };
+            } else {
+                NIL
+            };
 
             if uncle != NIL && self.n(uncle).is_red() {
                 // Case 1: uncle is red — recolor and continue 2 levels up
                 self.n_mut(p1).set_black();
                 self.n_mut(uncle).set_black();
                 self.n_mut(p2).set_red();
-                if k < 2 { break; }
+                if k < 2 {
+                    break;
+                }
                 k -= 2;
                 continue;
             }
@@ -386,7 +457,9 @@ impl<T> Core<T> {
             let child = self.n(target).left_link();
             // rightmost of left subtree's right-thread should be updated
             let mut rm = child;
-            while self.n(rm).is_child(1) { rm = self.n(rm).right_link(); }
+            while self.n(rm).is_child(1) {
+                rm = self.n(rm).right_link();
+            }
             let right_thread = self.n(target).right_link();
             self.n_mut(rm).set_thread(1, right_thread);
 
@@ -395,14 +468,17 @@ impl<T> Core<T> {
             } else {
                 let parent = stk.idx(stk.len - 2);
                 let is_left = stk.is_left(stk.len - 2);
-                self.n_mut(parent).set_child(if is_left { 0 } else { 1 }, child);
+                self.n_mut(parent)
+                    .set_child(if is_left { 0 } else { 1 }, child);
             }
             self.dealloc(target);
         } else if !has_left && has_right {
             // Has only right child
             let child = self.n(target).right_link();
             let mut lm = child;
-            while self.n(lm).is_child(0) { lm = self.n(lm).left_link(); }
+            while self.n(lm).is_child(0) {
+                lm = self.n(lm).left_link();
+            }
             let left_thread = self.n(target).left_link();
             self.n_mut(lm).set_thread(0, left_thread);
 
@@ -411,7 +487,8 @@ impl<T> Core<T> {
             } else {
                 let parent = stk.idx(stk.len - 2);
                 let is_left = stk.is_left(stk.len - 2);
-                self.n_mut(parent).set_child(if is_left { 0 } else { 1 }, child);
+                self.n_mut(parent)
+                    .set_child(if is_left { 0 } else { 1 }, child);
             }
             self.dealloc(target);
         } else {
@@ -438,7 +515,9 @@ impl<T> Core<T> {
                 let sr = self.n(succ).right_link();
                 // leftmost of sr's left-thread should point to target (succ's predecessor)
                 let mut lm = sr;
-                while self.n(lm).is_child(0) { lm = self.n(lm).left_link(); }
+                while self.n(lm).is_child(0) {
+                    lm = self.n(lm).left_link();
+                }
                 self.n_mut(lm).set_thread(0, target);
 
                 if succ_parent == target {
@@ -462,7 +541,8 @@ impl<T> Core<T> {
     // -- lower_bound / upper_bound --
 
     fn lower_bound<K, F>(&self, key: &K, mut cmp: F) -> u32
-    where F: FnMut(&T, &K) -> Ordering,
+    where
+        F: FnMut(&T, &K) -> Ordering,
     {
         let mut p = self.root;
         let mut result = NIL;
@@ -470,13 +550,19 @@ impl<T> Core<T> {
             // SAFETY: p is a valid node index in tree, node data is initialized
             match cmp(unsafe { self.data(p) }, key) {
                 Ordering::Less => {
-                    if self.n(p).is_child(1) { p = self.n(p).right_link(); }
-                    else { break; }
+                    if self.n(p).is_child(1) {
+                        p = self.n(p).right_link();
+                    } else {
+                        break;
+                    }
                 }
                 _ => {
                     result = p;
-                    if self.n(p).is_child(0) { p = self.n(p).left_link(); }
-                    else { break; }
+                    if self.n(p).is_child(0) {
+                        p = self.n(p).left_link();
+                    } else {
+                        break;
+                    }
                 }
             }
         }
@@ -484,7 +570,8 @@ impl<T> Core<T> {
     }
 
     fn upper_bound<K, F>(&self, key: &K, mut cmp: F) -> u32
-    where F: FnMut(&T, &K) -> Ordering,
+    where
+        F: FnMut(&T, &K) -> Ordering,
     {
         let mut p = self.root;
         let mut result = NIL;
@@ -493,12 +580,18 @@ impl<T> Core<T> {
             match cmp(unsafe { self.data(p) }, key) {
                 Ordering::Greater => {
                     result = p;
-                    if self.n(p).is_child(0) { p = self.n(p).left_link(); }
-                    else { break; }
+                    if self.n(p).is_child(0) {
+                        p = self.n(p).left_link();
+                    } else {
+                        break;
+                    }
                 }
                 _ => {
-                    if self.n(p).is_child(1) { p = self.n(p).right_link(); }
-                    else { break; }
+                    if self.n(p).is_child(1) {
+                        p = self.n(p).right_link();
+                    } else {
+                        break;
+                    }
                 }
             }
         }
@@ -512,7 +605,9 @@ impl<T> Drop for Core<T> {
             for i in 0..self.units.len() {
                 if self.units[i].0.is_used() {
                     // SAFETY: is_used() guarantees data is initialized
-                    unsafe { self.units[i].1.assume_init_drop(); }
+                    unsafe {
+                        self.units[i].1.assume_init_drop();
+                    }
                 }
             }
         }
@@ -536,12 +631,16 @@ impl<K: Ord> Default for VecTrbSet<K> {
 }
 
 impl<K: Ord> VecTrbSet<K> {
-    pub fn new() -> Self { Self { core: Core::new() } }
+    pub fn new() -> Self {
+        Self { core: Core::new() }
+    }
 
     /// Insert `key`. Returns `true` if inserted, `false` if already present.
     pub fn insert(&mut self, key: K) -> bool {
         let (stk, found) = self.core.find_unique(&key, |a, b| a.cmp(b));
-        if found { return false; }
+        if found {
+            return false;
+        }
         let idx = self.core.alloc();
         self.core.units[idx as usize].1 = MaybeUninit::new(key);
         self.core.insert_at(&stk, idx);
@@ -551,7 +650,9 @@ impl<K: Ord> VecTrbSet<K> {
     /// Remove `key`. Returns `true` if removed.
     pub fn remove(&mut self, key: &K) -> bool {
         let (stk, found) = self.core.find_unique(key, |a, b| a.cmp(b));
-        if !found { return false; }
+        if !found {
+            return false;
+        }
         let target = stk.idx(stk.len - 1);
         self.core.remove_idx(target, &stk);
         true
@@ -564,8 +665,12 @@ impl<K: Ord> VecTrbSet<K> {
     }
 
     #[inline]
-    pub fn len(&self) -> usize { self.core.count }
-    pub fn is_empty(&self) -> bool { self.core.count == 0 }
+    pub fn len(&self) -> usize {
+        self.core.count
+    }
+    pub fn is_empty(&self) -> bool {
+        self.core.count == 0
+    }
 
     pub fn clear(&mut self) {
         self.core = Core::new();
@@ -574,20 +679,33 @@ impl<K: Ord> VecTrbSet<K> {
     pub fn iter(&self) -> SetIter<'_, K> {
         let start = if self.core.root != NIL {
             self.core.leftmost(self.core.root)
-        } else { NIL };
-        SetIter { core: &self.core, curr: start }
+        } else {
+            NIL
+        };
+        SetIter {
+            core: &self.core,
+            curr: start,
+        }
     }
 
     pub fn lower_bound(&self, key: &K) -> Option<&K> {
         let i = self.core.lower_bound(key, |a, b| a.cmp(b));
         // SAFETY: i returned by lower_bound is valid node index with initialized data
-        if i != NIL { Some(unsafe { self.core.data(i) }) } else { None }
+        if i != NIL {
+            Some(unsafe { self.core.data(i) })
+        } else {
+            None
+        }
     }
 
     pub fn upper_bound(&self, key: &K) -> Option<&K> {
         let i = self.core.upper_bound(key, |a, b| a.cmp(b));
         // SAFETY: i returned by upper_bound is valid node index with initialized data
-        if i != NIL { Some(unsafe { self.core.data(i) }) } else { None }
+        if i != NIL {
+            Some(unsafe { self.core.data(i) })
+        } else {
+            None
+        }
     }
 }
 
@@ -599,7 +717,9 @@ pub struct SetIter<'a, K> {
 impl<'a, K> Iterator for SetIter<'a, K> {
     type Item = &'a K;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.curr == NIL { return None; }
+        if self.curr == NIL {
+            return None;
+        }
         // SAFETY: curr is valid node index in tree with initialized data
         let r = unsafe { self.core.data(self.curr) };
         self.curr = self.core.move_next(self.curr);
@@ -623,7 +743,9 @@ impl<K: Ord, V> Default for VecTrbMap<K, V> {
 }
 
 impl<K: Ord, V> VecTrbMap<K, V> {
-    pub fn new() -> Self { Self { core: Core::new() } }
+    pub fn new() -> Self {
+        Self { core: Core::new() }
+    }
 
     /// Insert or update. Returns `Some(old_value)` if key existed.
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
@@ -647,7 +769,9 @@ impl<K: Ord, V> VecTrbMap<K, V> {
         if found {
             // SAFETY: found=true guarantees valid node index with initialized data
             Some(unsafe { &self.core.data(stk.idx(stk.len - 1)).1 })
-        } else { None }
+        } else {
+            None
+        }
     }
 
     pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
@@ -655,20 +779,30 @@ impl<K: Ord, V> VecTrbMap<K, V> {
         if found {
             // SAFETY: found=true guarantees valid node index with initialized data
             Some(unsafe { &mut self.core.data_mut(stk.idx(stk.len - 1)).1 })
-        } else { None }
+        } else {
+            None
+        }
     }
 
     pub fn remove(&mut self, key: &K) -> Option<V> {
         let (stk, found) = self.core.find_unique(key, |a, b| a.0.cmp(b));
-        if !found { return None; }
+        if !found {
+            return None;
+        }
         let target = stk.idx(stk.len - 1);
         Some(self.core.remove_idx(target, &stk).1)
     }
 
-    pub fn contains_key(&self, key: &K) -> bool { self.get(key).is_some() }
+    pub fn contains_key(&self, key: &K) -> bool {
+        self.get(key).is_some()
+    }
     #[inline]
-    pub fn len(&self) -> usize { self.core.count }
-    pub fn is_empty(&self) -> bool { self.core.count == 0 }
+    pub fn len(&self) -> usize {
+        self.core.count
+    }
+    pub fn is_empty(&self) -> bool {
+        self.core.count == 0
+    }
 
     pub fn clear(&mut self) {
         self.core = Core::new();
@@ -677,8 +811,13 @@ impl<K: Ord, V> VecTrbMap<K, V> {
     pub fn iter(&self) -> MapIter<'_, K, V> {
         let start = if self.core.root != NIL {
             self.core.leftmost(self.core.root)
-        } else { NIL };
-        MapIter { core: &self.core, curr: start }
+        } else {
+            NIL
+        };
+        MapIter {
+            core: &self.core,
+            curr: start,
+        }
     }
 }
 
@@ -690,7 +829,9 @@ pub struct MapIter<'a, K, V> {
 impl<'a, K, V> Iterator for MapIter<'a, K, V> {
     type Item = (&'a K, &'a V);
     fn next(&mut self) -> Option<Self::Item> {
-        if self.curr == NIL { return None; }
+        if self.curr == NIL {
+            return None;
+        }
         // SAFETY: curr is valid node index in tree with initialized data
         let pair = unsafe { self.core.data(self.curr) };
         self.curr = self.core.move_next(self.curr);
@@ -730,7 +871,9 @@ mod tests {
     #[test]
     fn test_set_remove() {
         let mut s = VecTrbSet::new();
-        s.insert(5); s.insert(3); s.insert(7);
+        s.insert(5);
+        s.insert(3);
+        s.insert(7);
         assert!(s.remove(&3));
         assert!(!s.remove(&3));
         assert!(!s.contains(&3));
@@ -740,7 +883,9 @@ mod tests {
     #[test]
     fn test_set_iteration_order() {
         let mut s = VecTrbSet::new();
-        for v in [8, 3, 10, 1, 6, 14, 4, 7, 13] { s.insert(v); }
+        for v in [8, 3, 10, 1, 6, 14, 4, 7, 13] {
+            s.insert(v);
+        }
         let v: Vec<i32> = s.iter().copied().collect();
         assert_eq!(v, vec![1, 3, 4, 6, 7, 8, 10, 13, 14]);
     }
@@ -748,7 +893,9 @@ mod tests {
     #[test]
     fn test_set_lower_upper_bound() {
         let mut s = VecTrbSet::new();
-        for i in [1, 3, 5, 7, 9] { s.insert(i); }
+        for i in [1, 3, 5, 7, 9] {
+            s.insert(i);
+        }
         assert_eq!(s.lower_bound(&0), Some(&1));
         assert_eq!(s.lower_bound(&3), Some(&3));
         assert_eq!(s.lower_bound(&4), Some(&5));
@@ -761,30 +908,46 @@ mod tests {
     #[test]
     fn test_set_large_sequential() {
         let mut s = VecTrbSet::new();
-        for i in 0..1000 { assert!(s.insert(i)); }
+        for i in 0..1000 {
+            assert!(s.insert(i));
+        }
         assert_eq!(s.len(), 1000);
-        for i in 0..1000 { assert!(s.contains(&i)); }
+        for i in 0..1000 {
+            assert!(s.contains(&i));
+        }
         let v: Vec<i32> = s.iter().copied().collect();
         assert_eq!(v.len(), 1000);
-        for (i, &val) in v.iter().enumerate() { assert_eq!(val, i as i32); }
+        for (i, &val) in v.iter().enumerate() {
+            assert_eq!(val, i as i32);
+        }
     }
 
     #[test]
     fn test_set_large_reverse() {
         let mut s = VecTrbSet::new();
-        for i in (0..500).rev() { assert!(s.insert(i)); }
+        for i in (0..500).rev() {
+            assert!(s.insert(i));
+        }
         assert_eq!(s.len(), 500);
         let v: Vec<i32> = s.iter().copied().collect();
-        for (i, &val) in v.iter().enumerate() { assert_eq!(val, i as i32); }
+        for (i, &val) in v.iter().enumerate() {
+            assert_eq!(val, i as i32);
+        }
     }
 
     #[test]
     fn test_set_remove_reinsert() {
         let mut s = VecTrbSet::new();
-        for i in 0..20 { s.insert(i); }
-        for i in (0..20).step_by(2) { assert!(s.remove(&i)); }
+        for i in 0..20 {
+            s.insert(i);
+        }
+        for i in (0..20).step_by(2) {
+            assert!(s.remove(&i));
+        }
         assert_eq!(s.len(), 10);
-        for i in (0..20).step_by(2) { assert!(s.insert(i)); }
+        for i in (0..20).step_by(2) {
+            assert!(s.insert(i));
+        }
         assert_eq!(s.len(), 20);
         let v: Vec<i32> = s.iter().copied().collect();
         assert_eq!(v.len(), 20);
@@ -803,7 +966,9 @@ mod tests {
     #[test]
     fn test_set_clear() {
         let mut s = VecTrbSet::new();
-        for i in 0..10 { s.insert(i); }
+        for i in 0..10 {
+            s.insert(i);
+        }
         s.clear();
         assert!(s.is_empty());
         s.insert(100);
@@ -836,7 +1001,9 @@ mod tests {
     #[test]
     fn test_map_remove() {
         let mut m = VecTrbMap::new();
-        m.insert(1, "one"); m.insert(2, "two"); m.insert(3, "three");
+        m.insert(1, "one");
+        m.insert(2, "two");
+        m.insert(3, "three");
         assert_eq!(m.remove(&2), Some("two"));
         assert_eq!(m.remove(&2), None);
         assert!(!m.contains_key(&2));
@@ -846,7 +1013,10 @@ mod tests {
     #[test]
     fn test_map_iteration_order() {
         let mut m = VecTrbMap::new();
-        m.insert(8, "a"); m.insert(3, "b"); m.insert(10, "c"); m.insert(1, "d");
+        m.insert(8, "a");
+        m.insert(3, "b");
+        m.insert(10, "c");
+        m.insert(1, "d");
         let keys: Vec<i32> = m.iter().map(|(k, _)| *k).collect();
         assert_eq!(keys, vec![1, 3, 8, 10]);
     }
@@ -854,20 +1024,30 @@ mod tests {
     #[test]
     fn test_map_large_dataset() {
         let mut m = VecTrbMap::new();
-        for i in 0..1000 { assert_eq!(m.insert(i, i * 2), None); }
+        for i in 0..1000 {
+            assert_eq!(m.insert(i, i * 2), None);
+        }
         assert_eq!(m.len(), 1000);
-        for i in 0..1000 { assert_eq!(m.get(&i), Some(&(i * 2))); }
+        for i in 0..1000 {
+            assert_eq!(m.get(&i), Some(&(i * 2)));
+        }
     }
 
     #[test]
     fn test_sorted_invariant_stress() {
         let mut s = VecTrbSet::new();
         // Sequential inserts
-        for i in 0..200 { s.insert(i); }
+        for i in 0..200 {
+            s.insert(i);
+        }
         // Reverse inserts
-        for i in (200..400).rev() { s.insert(i); }
+        for i in (200..400).rev() {
+            s.insert(i);
+        }
         // Remove some
-        for i in (0..400).step_by(3) { s.remove(&i); }
+        for i in (0..400).step_by(3) {
+            s.remove(&i);
+        }
         // Verify sorted
         let v: Vec<i32> = s.iter().copied().collect();
         assert!(v.windows(2).all(|w| w[0] < w[1]));

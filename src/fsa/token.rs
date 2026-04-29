@@ -43,8 +43,8 @@ use std::sync::Arc;
 // use std::thread::{self, ThreadId};
 use std::time::{Duration, Instant};
 
-use crate::error::{ZiporaError, Result};
-use crate::fsa::version_sync::{ConcurrencyLevel, VersionManager, ReaderToken, WriterToken};
+use crate::error::{Result, ZiporaError};
+use crate::fsa::version_sync::{ConcurrencyLevel, ReaderToken, VersionManager, WriterToken};
 
 /// Thread-local token cache for high-performance token reuse.
 ///
@@ -149,7 +149,7 @@ pub struct TokenCacheStats {
     pub reader_cache_invalidations: u64,
     /// Number of reader tokens cached.
     pub reader_tokens_cached: u64,
-    
+
     /// Number of successful writer token cache hits.
     pub writer_cache_hits: u64,
     /// Number of writer token cache misses.
@@ -158,7 +158,7 @@ pub struct TokenCacheStats {
     pub writer_cache_invalidations: u64,
     /// Number of writer tokens cached.
     pub writer_tokens_cached: u64,
-    
+
     /// Number of cache clear operations.
     pub cache_clears: u64,
 }
@@ -264,9 +264,7 @@ impl TokenManager {
         let start_time = Instant::now();
 
         // Try to get a cached token first
-        let token = TOKEN_CACHE.with(|cache| {
-            cache.borrow_mut().get_reader_token()
-        });
+        let token = TOKEN_CACHE.with(|cache| cache.borrow_mut().get_reader_token());
 
         let token = if let Some(cached_token) = token {
             // Update global cache hit statistics
@@ -277,13 +275,13 @@ impl TokenManager {
         } else {
             // Acquire new token from version manager
             let new_token = self.version_manager.acquire_reader_token()?;
-            
+
             // Update global cache miss statistics
             if let Ok(mut stats) = self.global_stats.lock() {
                 stats.total_reader_cache_misses += 1;
                 stats.total_reader_acquisition_time += start_time.elapsed();
             }
-            
+
             new_token
         };
 
@@ -298,9 +296,7 @@ impl TokenManager {
         let start_time = Instant::now();
 
         // Try to get a cached token first
-        let token = TOKEN_CACHE.with(|cache| {
-            cache.borrow_mut().get_writer_token()
-        });
+        let token = TOKEN_CACHE.with(|cache| cache.borrow_mut().get_writer_token());
 
         let token = if let Some(cached_token) = token {
             // Update global cache hit statistics
@@ -311,13 +307,13 @@ impl TokenManager {
         } else {
             // Acquire new token from version manager
             let new_token = self.version_manager.acquire_writer_token()?;
-            
+
             // Update global cache miss statistics
             if let Ok(mut stats) = self.global_stats.lock() {
                 stats.total_writer_cache_misses += 1;
                 stats.total_writer_acquisition_time += start_time.elapsed();
             }
-            
+
             new_token
         };
 
@@ -376,9 +372,7 @@ impl TokenManager {
 
     /// Returns thread-local cache statistics.
     pub fn thread_cache_stats(&self) -> TokenCacheStats {
-        TOKEN_CACHE.with(|cache| {
-            cache.borrow().stats().clone()
-        })
+        TOKEN_CACHE.with(|cache| cache.borrow().stats().clone())
     }
 
     /// Clears all statistics (global and thread-local).
@@ -410,7 +404,7 @@ pub struct GlobalTokenStats {
     pub total_reader_tokens_returned: u64,
     /// Total time spent acquiring reader tokens across all threads.
     pub total_reader_acquisition_time: Duration,
-    
+
     /// Total writer token cache hits across all threads.
     pub total_writer_cache_hits: u64,
     /// Total writer token cache misses across all threads.
@@ -445,7 +439,8 @@ impl GlobalTokenStats {
     /// Returns the overall global cache hit rate (0.0 to 1.0).
     pub fn overall_hit_rate(&self) -> f64 {
         let total_hits = self.total_reader_cache_hits + self.total_writer_cache_hits;
-        let total_requests = total_hits + self.total_reader_cache_misses + self.total_writer_cache_misses;
+        let total_requests =
+            total_hits + self.total_reader_cache_misses + self.total_writer_cache_misses;
         if total_requests == 0 {
             0.0
         } else {
@@ -553,7 +548,7 @@ mod tests {
 
         // Create a token manager for testing
         let manager = TokenManager::new(ConcurrencyLevel::OneWriteMultiRead);
-        
+
         // Acquire tokens
         let reader_token = manager.acquire_reader_token().unwrap();
         let writer_token = manager.acquire_writer_token().unwrap();
@@ -587,7 +582,7 @@ mod tests {
         assert!(reader_token.is_valid());
         manager.return_reader_token(reader_token);
 
-        // Test writer token acquisition and return  
+        // Test writer token acquisition and return
         let writer_token = manager.acquire_writer_token()?;
         assert!(writer_token.is_valid());
         manager.return_writer_token(writer_token);
@@ -714,7 +709,7 @@ mod tests {
 
                     // Get thread-local stats
                     let thread_stats = manager_clone.thread_cache_stats();
-                    
+
                     // Each thread should have exactly one cache miss and one token cached
                     assert_eq!(thread_stats.reader_cache_misses, 1);
                     assert_eq!(thread_stats.reader_tokens_cached, 1);

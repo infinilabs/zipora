@@ -4,10 +4,10 @@
 //! featuring memory layout optimizations, prefetching strategies, NUMA awareness, and cache
 //! performance monitoring. Inspired by state-of-the-art research in cache-conscious data structures.
 
-use std::alloc::{alloc_zeroed, dealloc, Layout};
-use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0, _MM_HINT_T1, _MM_HINT_T2, _MM_HINT_NTA};
+use std::alloc::{Layout, alloc_zeroed, dealloc};
+use std::arch::x86_64::{_MM_HINT_NTA, _MM_HINT_T0, _MM_HINT_T1, _MM_HINT_T2, _mm_prefetch};
 use std::marker::PhantomData;
-use std::mem::{align_of, size_of, MaybeUninit};
+use std::mem::{MaybeUninit, align_of, size_of};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
@@ -286,7 +286,7 @@ impl NumaAllocator {
     pub fn new() -> Self {
         let node_count = Self::detect_numa_nodes();
         NUMA_NODE_COUNT.store(node_count, Ordering::Relaxed);
-        
+
         Self {
             preferred_node: Self::current_numa_node(),
             node_stats: (0..node_count).map(|_| AtomicU64::new(0)).collect(),
@@ -426,7 +426,7 @@ impl<K, V> CacheLayoutOptimizer<K, V> {
     pub fn optimal_bucket_size(&self) -> usize {
         let entry_size = size_of::<(K, V)>() + size_of::<u32>(); // Entry + hash
         let cache_line_capacity = CACHE_LINE_SIZE / entry_size;
-        
+
         match self.target_cache_level {
             CacheLevel::L1 => {
                 // For L1, minimize bucket size for best latency
@@ -446,9 +446,9 @@ impl<K, V> CacheLayoutOptimizer<K, V> {
     /// Calculate optimal load factor based on cache constraints
     pub fn optimal_load_factor(&self) -> f64 {
         match self.target_cache_level {
-            CacheLevel::L1 => 0.5,  // Lower load factor for L1 efficiency
-            CacheLevel::L2 => 0.65, // Moderate load factor
-            CacheLevel::L3 => 0.75, // Standard load factor
+            CacheLevel::L1 => 0.5,      // Lower load factor for L1 efficiency
+            CacheLevel::L2 => 0.65,     // Moderate load factor
+            CacheLevel::L3 => 0.75,     // Standard load factor
             CacheLevel::Memory => 0.85, // Higher load factor for memory
         }
     }
@@ -477,7 +477,7 @@ impl<T: Clone> HotColdSeparator<T> {
     pub fn new(capacity: usize, hot_ratio: f64) -> Self {
         let hot_capacity = ((capacity as f64) * hot_ratio) as usize;
         let cold_capacity = capacity - hot_capacity;
-        
+
         Self {
             hot: Vec::with_capacity(hot_capacity),
             cold: Vec::with_capacity(cold_capacity),
@@ -489,7 +489,7 @@ impl<T: Clone> HotColdSeparator<T> {
     /// Access an element and track access pattern
     pub fn access(&self, index: usize) -> Option<&T> {
         self.access_counts[index].fetch_add(1, Ordering::Relaxed);
-        
+
         if index < self.hot.len() {
             Some(self.hot[index].get())
         } else {
@@ -524,7 +524,7 @@ impl CacheConsciousResizer {
     pub fn new(current_size: usize, target_size: usize) -> Self {
         // Calculate chunk size based on L3 cache size
         let chunk_size = (L3_CACHE_SIZE / CACHE_LINE_SIZE).min(target_size / 16);
-        
+
         Self {
             current_size,
             target_size,
@@ -544,13 +544,13 @@ impl CacheConsciousResizer {
         }
 
         let step_end = (self.current_size + self.chunk_size).min(self.target_size);
-        
+
         // Resize incrementally to avoid cache thrashing
         data.reserve(step_end - self.current_size);
-        
+
         // Update current size
         self.current_size = step_end;
-        
+
         false // Resize not complete
     }
 }
@@ -582,7 +582,7 @@ impl AccessPatternAnalyzer {
     pub fn record_access(&mut self, address: usize) {
         self.access_history[self.history_pos] = address;
         self.history_pos = (self.history_pos + 1) % self.access_history.len();
-        
+
         // Analyze pattern periodically
         if self.history_pos == 0 {
             self.analyze_pattern();
@@ -593,19 +593,19 @@ impl AccessPatternAnalyzer {
     fn analyze_pattern(&mut self) {
         let mut sequential_count = 0;
         let mut stride_counts = std::collections::HashMap::new();
-        
+
         for i in 1..self.access_history.len() {
             let diff = self.access_history[i].wrapping_sub(self.access_history[i - 1]);
-            
+
             if diff == 1 {
                 sequential_count += 1;
             } else if diff > 0 && diff < 1024 {
                 *stride_counts.entry(diff).or_insert(0) += 1;
             }
         }
-        
+
         let total = self.access_history.len() as f64;
-        
+
         if sequential_count as f64 / total > 0.7 {
             self.detected_pattern = AccessPattern::Sequential;
             self.confidence = sequential_count as f64 / total;
@@ -634,7 +634,7 @@ mod tests {
     fn test_cache_aligned() {
         let aligned: CacheAligned<u64> = CacheAligned::new(42);
         assert_eq!(*aligned.get(), 42);
-        
+
         // Check alignment
         let ptr = aligned.get() as *const _ as usize;
         assert_eq!(ptr % CACHE_LINE_SIZE, 0);
@@ -645,12 +645,12 @@ mod tests {
         let mut bucket: CacheOptimizedBucket<u32, u64, 7> = CacheOptimizedBucket::new();
         assert!(bucket.is_empty());
         assert_eq!(bucket.count(), 0);
-        
+
         // Test find_hash
         bucket.metadata.occupancy = 0b0000011; // First two slots occupied
         bucket.hashes[0] = 12345;
         bucket.hashes[1] = 67890;
-        
+
         // Initialize entries
         bucket.entries[0] = MaybeUninit::new((12345, 100));
         bucket.entries[1] = MaybeUninit::new((67890, 200));
@@ -674,7 +674,7 @@ mod tests {
         let optimizer: CacheLayoutOptimizer<u64, u64> = CacheLayoutOptimizer::new(16 * 1024);
         assert!(matches!(optimizer.target_cache_level, CacheLevel::L1));
         assert!(optimizer.optimal_load_factor() < 0.6);
-        
+
         // Test L3 optimization
         let optimizer: CacheLayoutOptimizer<u64, u64> = CacheLayoutOptimizer::new(4 * 1024 * 1024);
         assert!(matches!(optimizer.target_cache_level, CacheLevel::L3));
@@ -684,7 +684,7 @@ mod tests {
     #[test]
     fn test_hot_cold_separator() {
         let mut separator: HotColdSeparator<u32> = HotColdSeparator::new(100, 0.2);
-        
+
         // Add some data
         for i in 0..20 {
             separator.hot.push(CacheAligned::new(i));
@@ -694,7 +694,7 @@ mod tests {
             separator.cold.push(i);
             separator.access_counts.push(AtomicU64::new(0));
         }
-        
+
         // Simulate access pattern
         for _ in 0..50 {
             separator.access(5); // Hot access
@@ -702,7 +702,7 @@ mod tests {
         for _ in 0..5 {
             separator.access(50); // Cold access
         }
-        
+
         assert_eq!(separator.access_counts[5].load(Ordering::Relaxed), 50);
         assert_eq!(separator.access_counts[50].load(Ordering::Relaxed), 5);
     }
@@ -710,12 +710,12 @@ mod tests {
     #[test]
     fn test_access_pattern_analyzer() {
         let mut analyzer = AccessPatternAnalyzer::new(100);
-        
+
         // Generate sequential pattern
         for i in 0..100 {
             analyzer.record_access(1000 + i);
         }
-        
+
         let (pattern, confidence) = analyzer.get_pattern();
         assert!(matches!(pattern, AccessPattern::Sequential));
         assert!(confidence > 0.6);
@@ -728,10 +728,10 @@ mod tests {
         metrics.l1_misses = 100;
         metrics.l2_hits = 50;
         metrics.l2_misses = 10;
-        
+
         let hit_ratio = metrics.hit_ratio();
         assert!(hit_ratio > 0.9);
-        
+
         let bandwidth = metrics.estimated_bandwidth_gb();
         assert!(bandwidth > 0.0);
     }
@@ -772,11 +772,11 @@ mod tests {
     #[test]
     fn test_cache_conscious_resizer() {
         let mut resizer = CacheConsciousResizer::new(1000, 10000);
-        
+
         assert!(resizer.chunk_size > 0);
         assert_eq!(resizer.current_size, 1000);
         assert_eq!(resizer.target_size, 10000);
-        
+
         let mut data = vec![0u64; 1000];
         let complete = resizer.resize_step(&mut data, |&x, _| x as usize);
         assert!(!complete); // Should not be complete in one step

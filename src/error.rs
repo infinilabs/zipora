@@ -187,9 +187,7 @@ impl ZiporaError {
 
     /// Create an I/O error from a message
     pub fn io_error<S: Into<String>>(message: S) -> Self {
-        Self::Io(std::io::Error::other(
-            message.into(),
-        ))
+        Self::Io(std::io::Error::other(message.into()))
     }
 
     /// Create a not found error (convenience method for I/O errors)
@@ -525,10 +523,10 @@ mod tests {
         let invalid_json = "{ invalid json }";
         let serde_error = serde_json::from_str::<serde_json::Value>(invalid_json).unwrap_err();
         let zipora_error: ZiporaError = serde_error.into();
-        
+
         assert_eq!(zipora_error.category(), "serialization");
         assert!(!zipora_error.is_recoverable());
-        
+
         let display = format!("{}", zipora_error);
         assert!(display.contains("Serialization error"));
     }

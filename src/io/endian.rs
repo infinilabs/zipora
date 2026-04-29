@@ -52,16 +52,16 @@ impl Endianness {
 pub trait EndianConvert: Sized + Copy {
     /// Convert from little endian to native endianness
     fn from_le(self) -> Self;
-    
+
     /// Convert from big endian to native endianness
     fn from_be(self) -> Self;
-    
+
     /// Convert from native endianness to little endian
     fn to_le(self) -> Self;
-    
+
     /// Convert from native endianness to big endian
     fn to_be(self) -> Self;
-    
+
     /// Convert from specified endianness to native
     #[inline]
     fn from_endian(self, endian: Endianness) -> Self {
@@ -71,7 +71,7 @@ pub trait EndianConvert: Sized + Copy {
             Endianness::Native => self,
         }
     }
-    
+
     /// Convert from native to specified endianness
     #[inline]
     fn to_endian(self, endian: Endianness) -> Self {
@@ -81,7 +81,7 @@ pub trait EndianConvert: Sized + Copy {
             Endianness::Native => self,
         }
     }
-    
+
     /// Check if this type needs byte swapping for the given endianness
     #[inline]
     fn needs_swap_for(endian: Endianness) -> bool {
@@ -98,17 +98,17 @@ macro_rules! impl_endian_convert {
                 fn from_le(self) -> Self {
                     <$t>::from_le(self)
                 }
-                
+
                 #[inline]
                 fn from_be(self) -> Self {
                     <$t>::from_be(self)
                 }
-                
+
                 #[inline]
                 fn to_le(self) -> Self {
                     <$t>::to_le(self)
                 }
-                
+
                 #[inline]
                 fn to_be(self) -> Self {
                     <$t>::to_be(self)
@@ -125,28 +125,48 @@ impl_endian_convert!(i16, i32, i64, i128, isize);
 // Special implementation for single-byte types (no conversion needed)
 impl EndianConvert for u8 {
     #[inline]
-    fn from_le(self) -> Self { self }
+    fn from_le(self) -> Self {
+        self
+    }
     #[inline]
-    fn from_be(self) -> Self { self }
+    fn from_be(self) -> Self {
+        self
+    }
     #[inline]
-    fn to_le(self) -> Self { self }
+    fn to_le(self) -> Self {
+        self
+    }
     #[inline]
-    fn to_be(self) -> Self { self }
+    fn to_be(self) -> Self {
+        self
+    }
     #[inline]
-    fn needs_swap_for(_endian: Endianness) -> bool { false }
+    fn needs_swap_for(_endian: Endianness) -> bool {
+        false
+    }
 }
 
 impl EndianConvert for i8 {
     #[inline]
-    fn from_le(self) -> Self { self }
+    fn from_le(self) -> Self {
+        self
+    }
     #[inline]
-    fn from_be(self) -> Self { self }
+    fn from_be(self) -> Self {
+        self
+    }
     #[inline]
-    fn to_le(self) -> Self { self }
+    fn to_le(self) -> Self {
+        self
+    }
     #[inline]
-    fn to_be(self) -> Self { self }
+    fn to_be(self) -> Self {
+        self
+    }
     #[inline]
-    fn needs_swap_for(_endian: Endianness) -> bool { false }
+    fn needs_swap_for(_endian: Endianness) -> bool {
+        false
+    }
 }
 
 // Floating point implementations
@@ -155,17 +175,17 @@ impl EndianConvert for f32 {
     fn from_le(self) -> Self {
         f32::from_bits(self.to_bits().from_le())
     }
-    
+
     #[inline]
     fn from_be(self) -> Self {
         f32::from_bits(self.to_bits().from_be())
     }
-    
+
     #[inline]
     fn to_le(self) -> Self {
         f32::from_bits(self.to_bits().to_le())
     }
-    
+
     #[inline]
     fn to_be(self) -> Self {
         f32::from_bits(self.to_bits().to_be())
@@ -177,17 +197,17 @@ impl EndianConvert for f64 {
     fn from_le(self) -> Self {
         f64::from_bits(self.to_bits().from_le())
     }
-    
+
     #[inline]
     fn from_be(self) -> Self {
         f64::from_bits(self.to_bits().from_be())
     }
-    
+
     #[inline]
     fn to_le(self) -> Self {
         f64::from_bits(self.to_bits().to_le())
     }
-    
+
     #[inline]
     fn to_be(self) -> Self {
         f64::from_bits(self.to_bits().to_be())
@@ -209,51 +229,47 @@ impl<T: EndianConvert> EndianIO<T> {
             _phantom: std::marker::PhantomData,
         }
     }
-    
+
     /// Create EndianIO for little endian format
     #[inline]
     pub const fn little_endian() -> Self {
         Self::new(Endianness::Little)
     }
-    
+
     /// Create EndianIO for big endian format
     #[inline]
     pub const fn big_endian() -> Self {
         Self::new(Endianness::Big)
     }
-    
+
     /// Create EndianIO for native endian format
     #[inline]
     pub const fn native_endian() -> Self {
         Self::new(Endianness::Native)
     }
-    
+
     /// Read a value from bytes with endian conversion
     #[inline]
     pub fn read_from_bytes(&self, bytes: &[u8]) -> Result<T> {
         if bytes.len() < size_of::<T>() {
-            return Err(ZiporaError::invalid_data(
-                "Insufficient bytes for type"
-            ));
+            return Err(ZiporaError::invalid_data("Insufficient bytes for type"));
         }
-        
+
         // SAFETY: bytes.len() >= size_of::<T>() ensures valid read, unaligned is safe
-        let value = unsafe {
-            std::ptr::read_unaligned(bytes.as_ptr() as *const T)
-        };
+        let value = unsafe { std::ptr::read_unaligned(bytes.as_ptr() as *const T) };
 
         Ok(value.from_endian(self.endianness))
     }
-    
+
     /// Write a value to bytes with endian conversion
     #[inline]
     pub fn write_to_bytes(&self, value: T, bytes: &mut [u8]) -> Result<()> {
         if bytes.len() < size_of::<T>() {
             return Err(ZiporaError::invalid_data(
-                "Insufficient buffer size for type"
+                "Insufficient buffer size for type",
             ));
         }
-        
+
         let converted = value.to_endian(self.endianness);
         // SAFETY: bytes.len() >= size_of::<T>() ensures valid write, unaligned is safe
         unsafe {
@@ -262,35 +278,35 @@ impl<T: EndianConvert> EndianIO<T> {
 
         Ok(())
     }
-    
+
     /// Convert a slice of values to the specified endianness
     pub fn convert_slice_to_endian(&self, values: &mut [T]) {
         if !self.endianness.needs_conversion() {
             return; // No conversion needed for native endianness
         }
-        
+
         for value in values.iter_mut() {
             *value = value.to_endian(self.endianness);
         }
     }
-    
+
     /// Convert a slice of values from the specified endianness to native
     pub fn convert_slice_from_endian(&self, values: &mut [T]) {
         if !self.endianness.needs_conversion() {
             return; // No conversion needed for native endianness
         }
-        
+
         for value in values.iter_mut() {
             *value = value.from_endian(self.endianness);
         }
     }
-    
+
     /// Get the endianness
     #[inline]
     pub const fn endianness(&self) -> Endianness {
         self.endianness
     }
-    
+
     /// Check if this EndianIO needs conversion
     #[inline]
     pub const fn needs_conversion(&self) -> bool {
@@ -303,23 +319,23 @@ impl<T: EndianConvert> EndianIO<T> {
 pub mod simd {
     // SIMD endian operations (currently unused but available for optimization)
     // use super::{Endianness, EndianConvert, EndianIO, EndianConfig, detect_endianness_from_magic, ENDIAN_MAGIC_LITTLE, ENDIAN_MAGIC_BIG};
-    
+
     #[cfg(target_feature = "sse2")]
     /// SIMD-accelerated conversion for u16 arrays
     pub fn convert_u16_slice_simd(values: &mut [u16], from_little: bool) {
         if from_little != cfg!(target_endian = "little") {
             return; // No conversion needed
         }
-        
+
         // Use SIMD for bulk conversion when available
         #[cfg(target_feature = "sse2")]
         {
             use std::arch::x86_64::*;
-            
+
             let mut chunks = values.chunks_exact_mut(8);
             let chunk_iter: Vec<_> = chunks.by_ref().collect();
             let remainder = chunks.into_remainder();
-            
+
             for chunk in chunk_iter {
                 // SAFETY: chunk is exactly 8 u16 elements, SSE2 support checked via target_feature
                 unsafe {
@@ -327,37 +343,34 @@ pub mod simd {
                     let data = _mm_loadu_si128(ptr);
 
                     // Byte swap using SIMD shuffle
-                    let swapped = _mm_or_si128(
-                        _mm_slli_epi16(data, 8),
-                        _mm_srli_epi16(data, 8)
-                    );
+                    let swapped = _mm_or_si128(_mm_slli_epi16(data, 8), _mm_srli_epi16(data, 8));
 
                     _mm_storeu_si128(ptr, swapped);
                 }
             }
-            
+
             // Handle remainder with scalar operations
             for value in remainder {
                 *value = value.swap_bytes();
             }
         }
     }
-    
+
     #[cfg(target_feature = "sse2")]
     /// SIMD-accelerated conversion for u32 arrays
     pub fn convert_u32_slice_simd(values: &mut [u32], from_little: bool) {
         if from_little != cfg!(target_endian = "little") {
             return; // No conversion needed
         }
-        
+
         #[cfg(target_feature = "sse2")]
         {
             use std::arch::x86_64::*;
-            
+
             let mut chunks = values.chunks_exact_mut(4);
             let chunk_iter: Vec<_> = chunks.by_ref().collect();
             let remainder = chunks.into_remainder();
-            
+
             for chunk in chunk_iter {
                 // SAFETY: chunk is exactly 4 u32 elements, SSE2 support checked via target_feature
                 unsafe {
@@ -365,13 +378,15 @@ pub mod simd {
                     let data = _mm_loadu_si128(ptr);
 
                     // 32-bit byte swap using SIMD
-                    let swapped = _mm_shuffle_epi8(data,
-                        _mm_set_epi8(12, 13, 14, 15, 8, 9, 10, 11, 4, 5, 6, 7, 0, 1, 2, 3));
+                    let swapped = _mm_shuffle_epi8(
+                        data,
+                        _mm_set_epi8(12, 13, 14, 15, 8, 9, 10, 11, 4, 5, 6, 7, 0, 1, 2, 3),
+                    );
 
                     _mm_storeu_si128(ptr, swapped);
                 }
             }
-            
+
             // Handle remainder
             for value in remainder {
                 *value = value.swap_bytes();
@@ -396,25 +411,25 @@ impl EndianConfig {
             simd_acceleration: true,
         }
     }
-    
+
     /// Set the default endianness
     pub fn with_default_endianness(mut self, endianness: Endianness) -> Self {
         self.default_endianness = endianness;
         self
     }
-    
+
     /// Enable automatic endianness detection from data headers
     pub fn with_auto_detect(mut self, enable: bool) -> Self {
         self.auto_detect = enable;
         self
     }
-    
+
     /// Enable SIMD acceleration for bulk conversions
     pub fn with_simd_acceleration(mut self, enable: bool) -> Self {
         self.simd_acceleration = enable;
         self
     }
-    
+
     /// Create configuration optimized for performance
     pub fn performance_optimized() -> Self {
         Self {
@@ -423,7 +438,7 @@ impl EndianConfig {
             simd_acceleration: true,
         }
     }
-    
+
     /// Create configuration for cross-platform compatibility
     pub fn cross_platform() -> Self {
         Self {
@@ -468,19 +483,22 @@ pub fn write_endianness_magic(endianness: Endianness) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Endianness, EndianConvert, EndianIO, EndianConfig, detect_endianness_from_magic, ENDIAN_MAGIC_LITTLE, ENDIAN_MAGIC_BIG};
+    use super::{
+        ENDIAN_MAGIC_BIG, ENDIAN_MAGIC_LITTLE, EndianConfig, EndianConvert, EndianIO, Endianness,
+        detect_endianness_from_magic,
+    };
 
     #[test]
     fn test_endianness_detection() {
         assert_eq!(Endianness::native().is_native(), true);
-        
+
         #[cfg(target_endian = "little")]
         {
             assert_eq!(Endianness::native(), Endianness::Little);
             assert!(Endianness::Little.is_native());
             assert!(!Endianness::Big.is_native());
         }
-        
+
         #[cfg(target_endian = "big")]
         {
             assert_eq!(Endianness::native(), Endianness::Big);
@@ -492,15 +510,15 @@ mod tests {
     #[test]
     fn test_basic_endian_conversion() {
         let value: u32 = 0x12345678;
-        
+
         // Test round-trip conversions
         assert_eq!(value.to_le().from_le(), value);
         assert_eq!(value.to_be().from_be(), value);
-        
+
         // Test endianness-specific conversions
         let le_bytes = value.to_le_bytes();
         let be_bytes = value.to_be_bytes();
-        
+
         assert_eq!(u32::from_le_bytes(le_bytes), value);
         assert_eq!(u32::from_be_bytes(be_bytes), value);
     }
@@ -509,26 +527,26 @@ mod tests {
     fn test_endian_io_operations() {
         let value: u32 = 0x12345678;
         let mut buffer = [0u8; 4];
-        
+
         // Test little endian I/O
         let le_io = EndianIO::<u32>::little_endian();
         le_io.write_to_bytes(value, &mut buffer).unwrap();
         let read_value = le_io.read_from_bytes(&buffer).unwrap();
         assert_eq!(read_value, value);
-        
+
         // Test big endian I/O
         let be_io = EndianIO::<u32>::big_endian();
         be_io.write_to_bytes(value, &mut buffer).unwrap();
         let read_value = be_io.read_from_bytes(&buffer).unwrap();
         assert_eq!(read_value, value);
-        
+
         // Verify that little and big endian produce different byte patterns
         let mut le_buffer = [0u8; 4];
         let mut be_buffer = [0u8; 4];
-        
+
         le_io.write_to_bytes(value, &mut le_buffer).unwrap();
         be_io.write_to_bytes(value, &mut be_buffer).unwrap();
-        
+
         if cfg!(target_endian = "little") {
             assert_ne!(le_buffer, be_buffer);
         }
@@ -537,13 +555,13 @@ mod tests {
     #[test]
     fn test_single_byte_types() {
         let value: u8 = 0x42;
-        
+
         // Single byte types should not need conversion
         assert!(!u8::needs_swap_for(Endianness::Little));
         assert!(!u8::needs_swap_for(Endianness::Big));
         assert!(!i8::needs_swap_for(Endianness::Little));
         assert!(!i8::needs_swap_for(Endianness::Big));
-        
+
         // All operations should be no-ops
         assert_eq!(value.to_le(), value);
         assert_eq!(value.to_be(), value);
@@ -554,11 +572,11 @@ mod tests {
     #[test]
     fn test_floating_point_endian() {
         let value: f32 = 3.14159;
-        
+
         // Test round-trip conversion
         assert_eq!(value.to_le().from_le(), value);
         assert_eq!(value.to_be().from_be(), value);
-        
+
         let value: f64 = 2.718281828459045;
         assert_eq!(value.to_le().from_le(), value);
         assert_eq!(value.to_be().from_be(), value);
@@ -568,13 +586,13 @@ mod tests {
     fn test_slice_conversion() {
         let mut values = vec![0x1234u16, 0x5678u16, 0x9abcu16, 0xdef0u16];
         let original = values.clone();
-        
+
         let le_io = EndianIO::<u16>::little_endian();
-        
+
         // Convert to endian and back
         le_io.convert_slice_to_endian(&mut values);
         le_io.convert_slice_from_endian(&mut values);
-        
+
         assert_eq!(values, original);
     }
 
@@ -597,7 +615,7 @@ mod tests {
         assert_eq!(config.default_endianness, Endianness::Native);
         assert!(!config.auto_detect);
         assert!(config.simd_acceleration);
-        
+
         let config = EndianConfig::cross_platform();
         assert_eq!(config.default_endianness, Endianness::Little);
         assert!(config.auto_detect);
@@ -608,11 +626,11 @@ mod tests {
     fn test_insufficient_buffer_error() {
         let value: u32 = 0x12345678;
         let mut small_buffer = [0u8; 2]; // Too small for u32
-        
+
         let io = EndianIO::<u32>::native_endian();
         let result = io.write_to_bytes(value, &mut small_buffer);
         assert!(result.is_err());
-        
+
         let result = io.read_from_bytes(&small_buffer);
         assert!(result.is_err());
     }
@@ -621,21 +639,21 @@ mod tests {
     fn test_needs_conversion() {
         let native_io = EndianIO::<u32>::native_endian();
         assert!(!native_io.needs_conversion());
-        
+
         #[cfg(target_endian = "little")]
         {
             let be_io = EndianIO::<u32>::big_endian();
             assert!(be_io.needs_conversion());
-            
+
             let le_io = EndianIO::<u32>::little_endian();
             assert!(!le_io.needs_conversion());
         }
-        
+
         #[cfg(target_endian = "big")]
         {
             let le_io = EndianIO::<u32>::little_endian();
             assert!(le_io.needs_conversion());
-            
+
             let be_io = EndianIO::<u32>::big_endian();
             assert!(!be_io.needs_conversion());
         }
@@ -644,15 +662,15 @@ mod tests {
     #[test]
     fn test_endian_conversion_traits() {
         let value: u32 = 0x12345678;
-        
+
         // Test from_endian and to_endian methods
         assert_eq!(value.from_endian(Endianness::Native), value);
         assert_eq!(value.to_endian(Endianness::Native), value);
-        
+
         // Test that conversion is consistent
         let le_converted = value.to_endian(Endianness::Little);
         assert_eq!(le_converted.from_endian(Endianness::Little), value);
-        
+
         let be_converted = value.to_endian(Endianness::Big);
         assert_eq!(be_converted.from_endian(Endianness::Big), value);
     }

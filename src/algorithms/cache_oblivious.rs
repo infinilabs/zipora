@@ -29,12 +29,12 @@
 
 use crate::algorithms::{Algorithm, AlgorithmStats};
 use crate::error::Result;
-use crate::memory::cache_layout::{CacheHierarchy, detect_cache_hierarchy};
 use crate::memory::SecureMemoryPool;
+use crate::memory::cache_layout::{CacheHierarchy, detect_cache_hierarchy};
 use crate::system::cpu_features::{CpuFeatures, get_cpu_features};
 use std::cmp;
-use std::time::Instant;
 use std::sync::Arc;
+use std::time::Instant;
 
 /// Configuration for cache-oblivious algorithms
 #[derive(Debug, Clone)]
@@ -95,7 +95,7 @@ impl CacheObliviousSort {
     /// Sort using cache-oblivious funnel sort
     pub fn sort<T: Clone + Ord>(&mut self, data: &mut [T]) -> Result<()> {
         let start_time = Instant::now();
-        
+
         if data.is_empty() {
             return Ok(());
         }
@@ -136,14 +136,14 @@ impl CacheObliviousSort {
         // Cache-oblivious recursive subdivision
         let k = self.calculate_funnel_width(data.len());
         self.funnel_sort_recursive(data, k)?;
-        
+
         Ok(())
     }
 
     /// Recursive funnel sort with optimal cache complexity
     fn funnel_sort_recursive<T: Clone + Ord>(&mut self, data: &mut [T], k: usize) -> Result<()> {
         let n = data.len();
-        
+
         if n <= self.config.small_threshold {
             self.insertion_sort(data);
             return Ok(());
@@ -152,12 +152,12 @@ impl CacheObliviousSort {
         // Calculate optimal subdivision parameters
         let sqrt_k = (k as f64).sqrt() as usize;
         let chunk_size = n / k;
-        
+
         // Recursively sort k sublists
         for i in 0..k {
             let start = i * chunk_size;
             let end = if i == k - 1 { n } else { (i + 1) * chunk_size };
-            
+
             if start < end {
                 self.funnel_sort_recursive(&mut data[start..end], sqrt_k)?;
             }
@@ -165,12 +165,17 @@ impl CacheObliviousSort {
 
         // Cache-oblivious k-way merge using funnel
         self.cache_oblivious_merge(data, k, chunk_size)?;
-        
+
         Ok(())
     }
 
     /// Cache-oblivious k-way merge with SIMD optimization and cache awareness
-    fn cache_oblivious_merge<T: Clone + Ord>(&mut self, data: &mut [T], k: usize, chunk_size: usize) -> Result<()> {
+    fn cache_oblivious_merge<T: Clone + Ord>(
+        &mut self,
+        data: &mut [T],
+        k: usize,
+        chunk_size: usize,
+    ) -> Result<()> {
         if k <= 1 {
             return Ok(());
         }
@@ -178,7 +183,7 @@ impl CacheObliviousSort {
         // Create temporary buffer for merging with cache-line alignment
         let mut temp = data.to_vec();
         let mut segments = Vec::new();
-        
+
         // Prefetch initial data for all segments
         if self.config.cpu_features.has_avx2 && data.len() > 64 {
             #[cfg(target_arch = "x86_64")]
@@ -195,12 +200,16 @@ impl CacheObliviousSort {
                 }
             }
         }
-        
+
         // Set up merge segments
         for i in 0..k {
             let start = i * chunk_size;
-            let end = if i == k - 1 { data.len() } else { (i + 1) * chunk_size };
-            
+            let end = if i == k - 1 {
+                data.len()
+            } else {
+                (i + 1) * chunk_size
+            };
+
             if start < end {
                 segments.push((start, end, start)); // (start, end, current_pos)
             }
@@ -208,7 +217,7 @@ impl CacheObliviousSort {
 
         // Perform k-way merge with cache-oblivious access pattern and SIMD prefetching
         let mut output_pos = 0;
-        
+
         while !segments.is_empty() {
             // Prefetch upcoming data for active segments
             if self.config.cpu_features.has_avx2 && output_pos % 16 == 0 {
@@ -219,35 +228,40 @@ impl CacheObliviousSort {
                             // SAFETY: pos + 16 < end <= data.len() ensures valid pointer within slice bounds
                             unsafe {
                                 let ptr = data.as_ptr().add(pos + 16) as *const i8;
-                                std::arch::x86_64::_mm_prefetch(ptr, std::arch::x86_64::_MM_HINT_T1);
+                                std::arch::x86_64::_mm_prefetch(
+                                    ptr,
+                                    std::arch::x86_64::_MM_HINT_T1,
+                                );
                             }
                         }
                     }
                 }
             }
-            
+
             // Find minimum element across all segments with cache-optimized comparison
             let mut min_segment = 0;
             let mut min_value = None;
-            
+
             for (i, &(_start, end, pos)) in segments.iter().enumerate() {
                 if pos < end {
                     let current_value = &data[pos];
-                    if min_value.is_none() || current_value < min_value.expect("min_value set by prior iteration") {
+                    if min_value.is_none()
+                        || current_value < min_value.expect("min_value set by prior iteration")
+                    {
                         min_value = Some(current_value);
                         min_segment = i;
                     }
                 }
             }
-            
+
             if min_value.is_some() {
                 // Move minimum element to output
                 temp[output_pos] = data[segments[min_segment].2].clone();
                 output_pos += 1;
-                
+
                 // Advance the segment pointer
                 segments[min_segment].2 += 1;
-                
+
                 // Remove exhausted segments
                 if segments[min_segment].2 >= segments[min_segment].1 {
                     segments.remove(min_segment);
@@ -259,17 +273,17 @@ impl CacheObliviousSort {
 
         // Copy back to original array with cache-optimized transfer
         self.cache_optimized_copy(&temp, data);
-        
+
         Ok(())
     }
-    
+
     /// Cache-optimized data copying with SIMD acceleration
     fn cache_optimized_copy<T: Clone>(&self, src: &[T], dst: &mut [T]) {
         if src.len() != dst.len() {
             dst.clone_from_slice(src);
             return;
         }
-        
+
         // For large arrays, use cache-aware copying with prefetch
         if src.len() > 256 && self.config.cpu_features.has_avx2 {
             #[cfg(target_arch = "x86_64")]
@@ -284,8 +298,14 @@ impl CacheObliviousSort {
                         unsafe {
                             let src_ptr = src.as_ptr().add(end + chunk_size) as *const i8;
                             let dst_ptr = dst.as_mut_ptr().add(end + chunk_size) as *const i8;
-                            std::arch::x86_64::_mm_prefetch(src_ptr, std::arch::x86_64::_MM_HINT_T0);
-                            std::arch::x86_64::_mm_prefetch(dst_ptr, std::arch::x86_64::_MM_HINT_T0);
+                            std::arch::x86_64::_mm_prefetch(
+                                src_ptr,
+                                std::arch::x86_64::_MM_HINT_T0,
+                            );
+                            std::arch::x86_64::_mm_prefetch(
+                                dst_ptr,
+                                std::arch::x86_64::_MM_HINT_T0,
+                            );
                         }
                     }
 
@@ -315,7 +335,7 @@ impl CacheObliviousSort {
     /// Hybrid approach combining cache-aware and cache-oblivious
     fn hybrid_sort<T: Clone + Ord>(&mut self, data: &mut [T]) -> Result<()> {
         let data_size = std::mem::size_of_val(data);
-        
+
         if data_size <= self.config.cache_hierarchy.l2_size {
             // Use cache-aware for data that fits in L2
             self.cache_aware_sort(data)
@@ -331,7 +351,7 @@ impl CacheObliviousSort {
         // k = Θ(√(M/B)) where M is cache size and B is block size
         let cache_size = self.config.cache_hierarchy.l2_size;
         let block_size = self.config.cache_hierarchy.l2_line_size;
-        
+
         let k = ((cache_size / block_size) as f64).sqrt() as usize;
         cmp::max(k, 2).min(cmp::min(n, 64)) // Bounded between 2 and 64
     }
@@ -341,12 +361,12 @@ impl CacheObliviousSort {
         for i in 1..data.len() {
             let key = data[i].clone();
             let mut j = i;
-            
+
             while j > 0 && data[j - 1] > key {
                 data[j] = data[j - 1].clone();
                 j -= 1;
             }
-            
+
             data[j] = key;
         }
     }
@@ -355,7 +375,10 @@ impl CacheObliviousSort {
     fn l1_optimized_sort<T: Clone + Ord>(&mut self, data: &mut [T]) {
         // Use insertion sort with prefetching for L1 cache
         // Enhanced SIMD integration following Zipora's 6-tier framework
-        if self.config.use_simd && ((self.config.cpu_features.has_avx2 && data.len() >= 16) || (self.config.cpu_features.has_sse42 && data.len() >= 8)) {
+        if self.config.use_simd
+            && ((self.config.cpu_features.has_avx2 && data.len() >= 16)
+                || (self.config.cpu_features.has_sse42 && data.len() >= 8))
+        {
             self.simd_insertion_sort(data);
         } else {
             self.insertion_sort(data);
@@ -386,7 +409,7 @@ impl CacheObliviousSort {
     fn simd_insertion_sort<T: Clone + Ord>(&mut self, data: &mut [T]) {
         // Enhanced SIMD insertion sort with cache prefetching
         // Following Zipora's 6-tier SIMD framework patterns
-        
+
         // Prefetch data for cache optimization
         if data.len() > 64 {
             // Prefetch cache lines ahead for better memory access patterns
@@ -403,17 +426,17 @@ impl CacheObliviousSort {
                 }
             }
         }
-        
+
         // Use cache-aware insertion sort with optimized memory access patterns
         self.cache_aware_insertion_sort(data);
     }
-    
+
     /// Cache-aware insertion sort with prefetch optimization
     fn cache_aware_insertion_sort<T: Clone + Ord>(&mut self, data: &mut [T]) {
         for i in 1..data.len() {
             let key = data[i].clone();
             let mut j = i;
-            
+
             // Prefetch next cache line for better memory access
             if i + 8 < data.len() && self.config.cpu_features.has_avx2 {
                 #[cfg(target_arch = "x86_64")]
@@ -423,12 +446,12 @@ impl CacheObliviousSort {
                     std::arch::x86_64::_mm_prefetch(ptr, std::arch::x86_64::_MM_HINT_T1);
                 }
             }
-            
+
             while j > 0 && data[j - 1] > key {
                 data[j] = data[j - 1].clone();
                 j -= 1;
             }
-            
+
             data[j] = key;
         }
     }
@@ -437,7 +460,7 @@ impl CacheObliviousSort {
     fn cache_aware_quicksort<T: Clone + Ord>(&mut self, data: &mut [T], low: usize, high: usize) {
         if low < high {
             let pivot = self.cache_aware_partition(data, low, high);
-            
+
             if pivot > 0 {
                 self.cache_aware_quicksort(data, low, pivot - 1);
             }
@@ -448,17 +471,22 @@ impl CacheObliviousSort {
     }
 
     /// Cache-aware partitioning for quicksort
-    fn cache_aware_partition<T: Clone + Ord>(&mut self, data: &mut [T], low: usize, high: usize) -> usize {
+    fn cache_aware_partition<T: Clone + Ord>(
+        &mut self,
+        data: &mut [T],
+        low: usize,
+        high: usize,
+    ) -> usize {
         let pivot = data[high].clone();
         let mut i = low;
-        
+
         for j in low..high {
             if data[j] <= pivot {
                 data.swap(i, j);
                 i += 1;
             }
         }
-        
+
         data.swap(i, high);
         i
     }
@@ -469,14 +497,14 @@ impl CacheObliviousSort {
         if len <= 1 {
             return;
         }
-        
+
         let mid = len / 2;
         let mut left = data[..mid].to_vec();
         let mut right = data[mid..].to_vec();
-        
+
         self.cache_aware_mergesort(&mut left);
         self.cache_aware_mergesort(&mut right);
-        
+
         self.cache_aware_merge(data, &left, &right);
     }
 
@@ -485,7 +513,7 @@ impl CacheObliviousSort {
         let mut i = 0;
         let mut j = 0;
         let mut k = 0;
-        
+
         while i < left.len() && j < right.len() {
             if left[i] <= right[j] {
                 data[k] = left[i].clone();
@@ -496,13 +524,13 @@ impl CacheObliviousSort {
             }
             k += 1;
         }
-        
+
         while i < left.len() {
             data[k] = left[i].clone();
             i += 1;
             k += 1;
         }
-        
+
         while j < right.len() {
             data[k] = right[j].clone();
             j += 1;
@@ -525,7 +553,11 @@ impl AdaptiveAlgorithmSelector {
     }
 
     /// Select optimal sorting strategy based on data characteristics
-    pub fn select_strategy(&self, data_size: usize, cache_hierarchy: &CacheHierarchy) -> CacheObliviousSortingStrategy {
+    pub fn select_strategy(
+        &self,
+        data_size: usize,
+        cache_hierarchy: &CacheHierarchy,
+    ) -> CacheObliviousSortingStrategy {
         let element_size = std::mem::size_of::<u64>(); // Assume worst-case element size
         let data_bytes = data_size * element_size;
 
@@ -598,9 +630,13 @@ impl<T: Clone> VanEmdeBoas<T> {
             cache_line_size,
         }
     }
-    
+
     /// Create with custom CPU features for testing
-    pub fn with_cpu_features(data: Vec<T>, cache_hierarchy: CacheHierarchy, cpu_features: &'static CpuFeatures) -> Self {
+    pub fn with_cpu_features(
+        data: Vec<T>,
+        cache_hierarchy: CacheHierarchy,
+        cpu_features: &'static CpuFeatures,
+    ) -> Self {
         let cache_line_size = cache_hierarchy.l1_line_size;
         Self {
             data,
@@ -613,7 +649,7 @@ impl<T: Clone> VanEmdeBoas<T> {
     pub fn get(&self, index: usize) -> Option<&T> {
         if index < self.data.len() {
             let physical_index = self.cache_optimal_index(index);
-            
+
             // Prefetch nearby cache lines for better performance
             if self.cpu_features.has_avx2 && self.data.len() > 64 {
                 #[cfg(target_arch = "x86_64")]
@@ -623,13 +659,14 @@ impl<T: Clone> VanEmdeBoas<T> {
                     if physical_index + cache_line_elements < self.data.len() {
                         // SAFETY: physical_index + cache_line_elements < data.len() ensures valid pointer within slice bounds
                         unsafe {
-                            let ptr = self.data.as_ptr().add(physical_index + cache_line_elements) as *const i8;
+                            let ptr = self.data.as_ptr().add(physical_index + cache_line_elements)
+                                as *const i8;
                             std::arch::x86_64::_mm_prefetch(ptr, std::arch::x86_64::_MM_HINT_T1);
                         }
                     }
                 }
             }
-            
+
             Some(&self.data[physical_index])
         } else {
             None
@@ -648,7 +685,13 @@ impl<T: Clone> VanEmdeBoas<T> {
     }
 
     /// Recursive Van Emde Boas layout calculation (simplified implementation)
-    fn _veb_layout_recursive(&self, index: usize, offset: usize, size: usize, height: usize) -> usize {
+    fn _veb_layout_recursive(
+        &self,
+        index: usize,
+        offset: usize,
+        size: usize,
+        height: usize,
+    ) -> usize {
         if height <= 1 || size <= 1 || index >= size {
             return (offset + index).min(self.data.len() - 1);
         }
@@ -719,7 +762,7 @@ mod tests {
     fn test_cache_oblivious_sort_basic() {
         let mut sorter = CacheObliviousSort::new();
         let mut data = vec![3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5];
-        
+
         assert!(sorter.sort(&mut data).is_ok());
         assert_eq!(data, vec![1, 1, 2, 3, 3, 4, 5, 5, 5, 6, 9]);
     }
@@ -728,7 +771,7 @@ mod tests {
     fn test_cache_oblivious_sort_empty() {
         let mut sorter = CacheObliviousSort::new();
         let mut data: Vec<i32> = vec![];
-        
+
         assert!(sorter.sort(&mut data).is_ok());
         assert!(data.is_empty());
     }
@@ -737,7 +780,7 @@ mod tests {
     fn test_cache_oblivious_sort_single_element() {
         let mut sorter = CacheObliviousSort::new();
         let mut data = vec![42];
-        
+
         assert!(sorter.sort(&mut data).is_ok());
         assert_eq!(data, vec![42]);
     }
@@ -747,7 +790,7 @@ mod tests {
         let mut sorter = CacheObliviousSort::new();
         let mut data: Vec<i32> = (0..10000).rev().collect();
         let expected: Vec<i32> = (0..10000).collect();
-        
+
         assert!(sorter.sort(&mut data).is_ok());
         assert_eq!(data, expected);
     }
@@ -756,11 +799,11 @@ mod tests {
     fn test_adaptive_algorithm_selector() {
         let config = CacheObliviousConfig::default();
         let selector = AdaptiveAlgorithmSelector::new(&config);
-        
+
         // Small data should use cache-aware
         let strategy = selector.select_strategy(100, &config.cache_hierarchy);
         assert_eq!(strategy, CacheObliviousSortingStrategy::CacheAware);
-        
+
         // Large data should use hybrid (larger than L3 cache)
         let large_size = config.cache_hierarchy.l3_size / 8 + 1000; // Exceed L3 cache
         let strategy = selector.select_strategy(large_size, &config.cache_hierarchy);
@@ -772,10 +815,13 @@ mod tests {
         let config = CacheObliviousConfig::default();
         let selector = AdaptiveAlgorithmSelector::new(&config);
         let data = vec![1, 2, 3, 4, 5];
-        
+
         let characteristics = selector.analyze_data(&data);
         assert_eq!(characteristics.size, 5);
-        assert_eq!(characteristics.memory_footprint, 5 * std::mem::size_of::<i32>());
+        assert_eq!(
+            characteristics.memory_footprint,
+            5 * std::mem::size_of::<i32>()
+        );
         assert!(characteristics.fits_in_l1);
     }
 
@@ -784,7 +830,7 @@ mod tests {
         let cache_hierarchy = CacheHierarchy::default();
         let data = vec![1, 2, 3, 4, 5, 6, 7, 8];
         let veb = VanEmdeBoas::new(data, cache_hierarchy);
-        
+
         // Test basic access
         assert_eq!(veb.get(0), Some(&1));
         assert_eq!(veb.get(7), Some(&8));
@@ -802,7 +848,7 @@ mod tests {
     fn test_insertion_sort() {
         let mut sorter = CacheObliviousSort::new();
         let mut data = vec![5, 2, 8, 1, 9];
-        
+
         sorter.insertion_sort(&mut data);
         assert_eq!(data, vec![1, 2, 5, 8, 9]);
     }
@@ -812,11 +858,11 @@ mod tests {
         let sorter = CacheObliviousSort::new();
         let config = CacheObliviousConfig::default();
         let input = vec![3, 1, 4, 1, 5];
-        
+
         let result = sorter.execute(&config, input);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), vec![1, 1, 3, 4, 5]);
-        
+
         assert!(sorter.supports_parallel());
         assert!(sorter.supports_simd());
         assert!(sorter.estimate_memory(1000) > 0);
@@ -838,7 +884,7 @@ mod tests {
             CacheObliviousSortingStrategy::CacheOblivious,
             CacheObliviousSortingStrategy::Hybrid,
         ];
-        
+
         for strategy in &strategies {
             assert_ne!(format!("{:?}", strategy), "");
         }

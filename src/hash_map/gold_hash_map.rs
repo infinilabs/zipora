@@ -25,9 +25,8 @@ use std::marker::PhantomData;
 
 /// Prime numbers used for bucket sizing
 const PRIMES: &[usize] = &[
-    5, 11, 23, 47, 97, 199, 409, 823, 1741, 3469, 6949, 14033, 28411,
-    57557, 116731, 236897, 480881, 976369, 1982627, 4026031,
-    8175383, 16601593, 33712729, 68460391, 139022417, 282312799,
+    5, 11, 23, 47, 97, 199, 409, 823, 1741, 3469, 6949, 14033, 28411, 57557, 116731, 236897,
+    480881, 976369, 1982627, 4026031, 8175383, 16601593, 33712729, 68460391, 139022417, 282312799,
     573292817, 1164186217,
 ];
 
@@ -133,7 +132,7 @@ impl Default for GoldHashMapConfig {
         Self {
             initial_capacity: 16,
             load_factor: 0.7,
-            enable_hash_cache: false,  // Disabled by default for memory efficiency
+            enable_hash_cache: false, // Disabled by default for memory efficiency
             enable_auto_gc: false,
             enable_freelist_reuse: true,
             default_iteration_strategy: IterationStrategy::Safe,
@@ -147,7 +146,7 @@ impl GoldHashMapConfig {
         Self {
             initial_capacity: 16,
             load_factor: 0.7,
-            enable_hash_cache: true,  // Hash caching beneficial for small maps
+            enable_hash_cache: true, // Hash caching beneficial for small maps
             enable_auto_gc: false,
             enable_freelist_reuse: true,
             default_iteration_strategy: IterationStrategy::Safe,
@@ -159,8 +158,8 @@ impl GoldHashMapConfig {
         Self {
             initial_capacity: 1024,
             load_factor: 0.7,
-            enable_hash_cache: false,  // Save memory on large maps
-            enable_auto_gc: true,      // Auto GC helpful for large maps
+            enable_hash_cache: false, // Save memory on large maps
+            enable_auto_gc: true,     // Auto GC helpful for large maps
             enable_freelist_reuse: true,
             default_iteration_strategy: IterationStrategy::Safe,
         }
@@ -170,9 +169,9 @@ impl GoldHashMapConfig {
     pub fn high_churn() -> Self {
         Self {
             initial_capacity: 64,
-            load_factor: 0.6,  // Lower load factor reduces collisions
+            load_factor: 0.6, // Lower load factor reduces collisions
             enable_hash_cache: false,
-            enable_auto_gc: true,  // Important for high churn
+            enable_auto_gc: true, // Important for high churn
             enable_freelist_reuse: true,
             default_iteration_strategy: IterationStrategy::Safe,
         }
@@ -231,7 +230,8 @@ where
     pub fn with_config(mut config: GoldHashMapConfig) -> Self {
         // SAFETY FIX: Validate and clamp load_factor to prevent division by zero
         // and other arithmetic issues. Valid range is (0.0, 1.0).
-        if config.load_factor <= 0.0 || config.load_factor >= 1.0 || !config.load_factor.is_finite() {
+        if config.load_factor <= 0.0 || config.load_factor >= 1.0 || !config.load_factor.is_finite()
+        {
             // Invalid load_factor (≤0, ≥1, NaN, or infinity) - use safe default
             config.load_factor = 0.7;
         }
@@ -250,7 +250,7 @@ where
             len: 0,
             max_load,
             freelist_size: 0,
-            freelist: Vec::new(),  // O(1) freelist stack (v2.1.1)
+            freelist: Vec::new(), // O(1) freelist stack (v2.1.1)
             config,
         }
     }
@@ -356,7 +356,7 @@ where
         }
         self.len = 0;
         self.freelist_size = 0;
-        self.freelist.clear();  // O(1) freelist stack (v2.1.1)
+        self.freelist.clear(); // O(1) freelist stack (v2.1.1)
     }
 
     /// Enable or disable hash caching at runtime
@@ -395,10 +395,11 @@ where
     fn allocate_slot(&mut self) -> usize {
         // O(1) freelist pop - no more linear scanning!
         if self.config.enable_freelist_reuse
-            && let Some(idx) = self.freelist.pop() {
-                self.freelist_size -= 1;
-                return idx;
-            }
+            && let Some(idx) = self.freelist.pop()
+        {
+            self.freelist_size -= 1;
+            return idx;
+        }
 
         // Append new entry - we'll overwrite it immediately in insert()
         let idx = self.entries.len();
@@ -468,15 +469,16 @@ where
 
                 // SAFETY FIX: Check capacity before converting to link type
                 if i > L::MAX.as_usize() {
-                    return Err(ZiporaError::resource_exhausted(
-                        format!("HashMap entry index {} exceeds link type capacity (max {}). Consider using GoldHashMap<K, V, u64> for larger maps.",
-                                i, L::MAX.as_usize())
-                    ));
+                    return Err(ZiporaError::resource_exhausted(format!(
+                        "HashMap entry index {} exceeds link type capacity (max {}). Consider using GoldHashMap<K, V, u64> for larger maps.",
+                        i,
+                        L::MAX.as_usize()
+                    )));
                 }
 
                 // SAFETY: Capacity check above guarantees i fits in link type L
-                self.buckets[bucket_idx] = L::from_usize(i)
-                    .expect("Capacity check above ensures this succeeds");
+                self.buckets[bucket_idx] =
+                    L::from_usize(i).expect("Capacity check above ensures this succeeds");
             }
         }
 
@@ -485,7 +487,7 @@ where
 
     // Internal: Hash a key
     fn hash_key(&self, key: &K) -> u64 {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = ahash::AHasher::default();
         key.hash(&mut hasher);
         hasher.finish()
     }
@@ -531,10 +533,11 @@ where
 
         // SAFETY FIX: Check capacity before converting to link type
         if entry_idx > L::MAX.as_usize() {
-            return Err(ZiporaError::resource_exhausted(
-                format!("HashMap entry index {} exceeds link type capacity (max {}). Consider using GoldHashMap<K, V, u64> for larger maps.",
-                        entry_idx, L::MAX.as_usize())
-            ));
+            return Err(ZiporaError::resource_exhausted(format!(
+                "HashMap entry index {} exceeds link type capacity (max {}). Consider using GoldHashMap<K, V, u64> for larger maps.",
+                entry_idx,
+                L::MAX.as_usize()
+            )));
         }
 
         // Update entry data - either overwrite existing or push new
@@ -554,14 +557,15 @@ where
 
         // Link into bucket chain (insert at head)
         // SAFETY: Capacity check above guarantees entry_idx fits in link type L
-        self.buckets[bucket_idx] = L::from_usize(entry_idx)
-            .expect("Capacity check above ensures this succeeds");
+        self.buckets[bucket_idx] =
+            L::from_usize(entry_idx).expect("Capacity check above ensures this succeeds");
 
         // Update hash cache if enabled
         if let Some(ref mut cache) = self.hash_cache
-            && entry_idx < cache.len() {
-                cache[entry_idx] = hash;
-            }
+            && entry_idx < cache.len()
+        {
+            cache[entry_idx] = hash;
+        }
 
         self.len += 1;
         Ok(None)
@@ -625,7 +629,7 @@ where
                     self.entries[write_idx] = Entry {
                         key: self.entries[read_idx].key.clone(),
                         value: self.entries[read_idx].value.clone(),
-                        link: L::TAIL,  // Will be fixed in relink
+                        link: L::TAIL, // Will be fixed in relink
                     };
                     if let Some(ref mut cache) = self.hash_cache {
                         cache[write_idx] = cache[read_idx];
@@ -852,10 +856,10 @@ mod tests {
         assert_eq!(map.len(), 2);
         assert_eq!(map.deleted_count(), 1);
 
-        map.insert(4, 40).unwrap();  // Should reuse slot from removed entry
+        map.insert(4, 40).unwrap(); // Should reuse slot from removed entry
         assert_eq!(map.len(), 3);
         assert_eq!(map.deleted_count(), 0);
-        assert_eq!(map.entries.len(), entries_count);  // No new allocation
+        assert_eq!(map.entries.len(), entries_count); // No new allocation
     }
 
     #[test]
@@ -938,7 +942,7 @@ mod tests {
 
         assert_eq!(map.len(), 20);
         // Auto GC should have kicked in
-        assert!(map.deleted_count() < 40);  // Should be much less than 80
+        assert!(map.deleted_count() < 40); // Should be much less than 80
     }
 
     #[test]
@@ -1008,21 +1012,21 @@ mod tests {
     #[test]
     fn test_config_small() {
         let map = GoldHashMap::<i32, i32>::with_config(GoldHashMapConfig::small());
-        assert!(map.is_hash_cached());  // Small config enables hash caching
+        assert!(map.is_hash_cached()); // Small config enables hash caching
     }
 
     #[test]
     fn test_config_large() {
         let map = GoldHashMap::<i32, i32>::with_config(GoldHashMapConfig::large());
-        assert!(!map.is_hash_cached());  // Large config disables hash caching
+        assert!(!map.is_hash_cached()); // Large config disables hash caching
         assert!(map.capacity() >= 1024);
     }
 
     #[test]
     fn test_config_high_churn() {
         let config = GoldHashMapConfig::high_churn();
-        assert!(config.load_factor < 0.7);  // Lower load factor
-        assert!(config.enable_auto_gc);     // Auto GC enabled
+        assert!(config.load_factor < 0.7); // Lower load factor
+        assert!(config.enable_auto_gc); // Auto GC enabled
     }
 
     /// Non-Clone type for testing relaxed Clone bounds

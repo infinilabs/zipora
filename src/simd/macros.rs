@@ -107,9 +107,7 @@ macro_rules! simd_dispatch {
     (avx2_bmi2 => $avx2_bmi2:expr, avx2 => $avx2:expr, _ => $fallback:expr) => {{
         #[cfg(target_arch = "x86_64")]
         {
-            if ::std::is_x86_feature_detected!("avx2")
-                && ::std::is_x86_feature_detected!("bmi2")
-            {
+            if ::std::is_x86_feature_detected!("avx2") && ::std::is_x86_feature_detected!("bmi2") {
                 return $avx2_bmi2;
             }
             if ::std::is_x86_feature_detected!("avx2") {
@@ -183,16 +181,13 @@ macro_rules! simd_dispatch {
                     return $avx512;
                 }
             }
-            if ::std::is_x86_feature_detected!("avx2")
-                && ::std::is_x86_feature_detected!("bmi2")
-            {
+            if ::std::is_x86_feature_detected!("avx2") && ::std::is_x86_feature_detected!("bmi2") {
                 return $avx2_bmi2;
             }
             if ::std::is_x86_feature_detected!("avx2") {
                 return $avx2;
             }
-            if ::std::is_x86_feature_detected!("sse4.2")
-                && ::std::is_x86_feature_detected!("bmi2")
+            if ::std::is_x86_feature_detected!("sse4.2") && ::std::is_x86_feature_detected!("bmi2")
             {
                 return $sse42_bmi2;
             }
@@ -239,9 +234,7 @@ macro_rules! simd_feature_check {
     ($feat1:tt, $feat2:tt, $simd_expr:expr, $fallback:expr) => {{
         #[cfg(target_arch = "x86_64")]
         {
-            if ::std::is_x86_feature_detected!($feat1)
-                && ::std::is_x86_feature_detected!($feat2)
-            {
+            if ::std::is_x86_feature_detected!($feat1) && ::std::is_x86_feature_detected!($feat2) {
                 return $simd_expr;
             }
         }
@@ -344,8 +337,7 @@ macro_rules! simd_available {
     ($feat1:tt, $feat2:tt) => {{
         #[cfg(target_arch = "x86_64")]
         {
-            ::std::is_x86_feature_detected!($feat1)
-                && ::std::is_x86_feature_detected!($feat2)
+            ::std::is_x86_feature_detected!($feat1) && ::std::is_x86_feature_detected!($feat2)
         }
         #[cfg(not(target_arch = "x86_64"))]
         {
@@ -429,11 +421,7 @@ mod tests {
 
     // Test single feature check
     fn feature_check_test_fn(val: i32) -> i32 {
-        crate::simd_feature_check!(
-            "avx2",
-            val * 3,
-            val
-        )
+        crate::simd_feature_check!("avx2", val * 3, val)
     }
 
     #[test]
@@ -445,11 +433,7 @@ mod tests {
 
     // Test dual feature check
     fn dual_feature_test_fn(val: i32) -> i32 {
-        crate::simd_feature_check!(
-            "avx2", "bmi2",
-            val * 4,
-            val
-        )
+        crate::simd_feature_check!("avx2", "bmi2", val * 4, val)
     }
 
     #[test]

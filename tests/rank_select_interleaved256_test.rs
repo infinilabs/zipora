@@ -6,7 +6,7 @@
 
 use zipora::{
     BitVector,
-    succinct::rank_select::{RankSelectOps, RankSelectInterleaved256},
+    succinct::rank_select::{RankSelectInterleaved256, RankSelectOps},
 };
 
 /// Test data generator for different bit patterns
@@ -91,8 +91,12 @@ impl TestDataGenerator {
 #[test]
 fn test_rank_select_interleaved256_correctness() {
     for (pattern_name, bv) in TestDataGenerator::all_patterns() {
-        println!("Testing pattern: {} (length: {}, ones: {})",
-                 pattern_name, bv.len(), bv.count_ones());
+        println!(
+            "Testing pattern: {} (length: {}, ones: {})",
+            pattern_name,
+            bv.len(),
+            bv.count_ones()
+        );
 
         // Create RankSelectInterleaved256 implementation
         let rank_select = RankSelectInterleaved256::new(bv.clone()).unwrap();
@@ -103,16 +107,30 @@ fn test_rank_select_interleaved256_correctness() {
         assert_eq!(rank_select.count_zeros(), bv.count_zeros());
 
         // Test rank operations
-        let test_positions = (0..bv.len()).step_by((bv.len() / 100).max(1)).collect::<Vec<_>>();
+        let test_positions = (0..bv.len())
+            .step_by((bv.len() / 100).max(1))
+            .collect::<Vec<_>>();
         for &pos in &test_positions {
             // Calculate expected rank by counting bits in original BitVector
-            let expected_rank1 = (0..pos).map(|i| if bv.get(i).unwrap() { 1 } else { 0 }).sum::<usize>();
+            let expected_rank1 = (0..pos)
+                .map(|i| if bv.get(i).unwrap() { 1 } else { 0 })
+                .sum::<usize>();
             let expected_rank0 = pos - expected_rank1;
 
-            assert_eq!(rank_select.rank1(pos), expected_rank1,
-                      "Pattern {}: rank1 mismatch at pos {}", pattern_name, pos);
-            assert_eq!(rank_select.rank0(pos), expected_rank0,
-                      "Pattern {}: rank0 mismatch at pos {}", pattern_name, pos);
+            assert_eq!(
+                rank_select.rank1(pos),
+                expected_rank1,
+                "Pattern {}: rank1 mismatch at pos {}",
+                pattern_name,
+                pos
+            );
+            assert_eq!(
+                rank_select.rank0(pos),
+                expected_rank0,
+                "Pattern {}: rank0 mismatch at pos {}",
+                pattern_name,
+                pos
+            );
         }
 
         // Test select operations
@@ -120,33 +138,53 @@ fn test_rank_select_interleaved256_correctness() {
         let zeros_count = rank_select.count_zeros();
 
         if ones_count > 0 {
-            let test_ks = (0..ones_count).step_by((ones_count / 20).max(1)).collect::<Vec<_>>();
+            let test_ks = (0..ones_count)
+                .step_by((ones_count / 20).max(1))
+                .collect::<Vec<_>>();
             for &k in &test_ks {
                 if k < ones_count {
                     let selected_pos = rank_select.select1(k).unwrap();
                     // Verify the selected position actually contains a 1
-                    assert!(bv.get(selected_pos).unwrap(),
-                           "Pattern {}: select1({}) returned position {} which should contain 1", pattern_name, k, selected_pos);
+                    assert!(
+                        bv.get(selected_pos).unwrap(),
+                        "Pattern {}: select1({}) returned position {} which should contain 1",
+                        pattern_name,
+                        k,
+                        selected_pos
+                    );
                     // Verify this is the k-th occurrence
                     let rank_at_selected = rank_select.rank1(selected_pos);
-                    assert_eq!(rank_at_selected, k,
-                              "Pattern {}: select1({}) returned position {} but rank1({}) = {}", pattern_name, k, selected_pos, selected_pos, rank_at_selected);
+                    assert_eq!(
+                        rank_at_selected, k,
+                        "Pattern {}: select1({}) returned position {} but rank1({}) = {}",
+                        pattern_name, k, selected_pos, selected_pos, rank_at_selected
+                    );
                 }
             }
         }
 
         if zeros_count > 0 {
-            let test_ks = (0..zeros_count).step_by((zeros_count / 20).max(1)).collect::<Vec<_>>();
+            let test_ks = (0..zeros_count)
+                .step_by((zeros_count / 20).max(1))
+                .collect::<Vec<_>>();
             for &k in &test_ks {
                 if k < zeros_count {
                     let selected_pos = rank_select.select0(k).unwrap();
                     // Verify the selected position actually contains a 0
-                    assert!(!bv.get(selected_pos).unwrap(),
-                           "Pattern {}: select0({}) returned position {} which should contain 0", pattern_name, k, selected_pos);
+                    assert!(
+                        !bv.get(selected_pos).unwrap(),
+                        "Pattern {}: select0({}) returned position {} which should contain 0",
+                        pattern_name,
+                        k,
+                        selected_pos
+                    );
                     // Verify this is the k-th occurrence
                     let rank_at_selected = rank_select.rank0(selected_pos);
-                    assert_eq!(rank_at_selected, k,
-                              "Pattern {}: select0({}) returned position {} but rank0({}) = {}", pattern_name, k, selected_pos, selected_pos, rank_at_selected);
+                    assert_eq!(
+                        rank_at_selected, k,
+                        "Pattern {}: select0({}) returned position {} but rank0({}) = {}",
+                        pattern_name, k, selected_pos, selected_pos, rank_at_selected
+                    );
                 }
             }
         }
@@ -155,8 +193,13 @@ fn test_rank_select_interleaved256_correctness() {
         for &pos in &test_positions {
             if pos < bv.len() {
                 let expected_bit = bv.get(pos).unwrap();
-                assert_eq!(rank_select.get(pos).unwrap(), expected_bit,
-                          "Pattern {}: get mismatch at pos {}", pattern_name, pos);
+                assert_eq!(
+                    rank_select.get(pos).unwrap(),
+                    expected_bit,
+                    "Pattern {}: get mismatch at pos {}",
+                    pattern_name,
+                    pos
+                );
             }
         }
     }
@@ -168,7 +211,10 @@ fn test_rank_select_performance_characteristics() {
     let patterns = TestDataGenerator::all_patterns();
 
     for (pattern_name, bv) in patterns {
-        println!("Analyzing performance characteristics for pattern: {}", pattern_name);
+        println!(
+            "Analyzing performance characteristics for pattern: {}",
+            pattern_name
+        );
 
         // Create RankSelectInterleaved256 implementation
         let rank_select = RankSelectInterleaved256::new(bv.clone()).unwrap();
@@ -178,14 +224,20 @@ fn test_rank_select_performance_characteristics() {
         let overhead = rank_select.space_overhead_percent();
 
         // Verify reasonableness of metrics
-        assert!(overhead >= 0.0,
-               "Pattern {}: space overhead should be non-negative, got {:.2}%", pattern_name, overhead);
+        assert!(
+            overhead >= 0.0,
+            "Pattern {}: space overhead should be non-negative, got {:.2}%",
+            pattern_name,
+            overhead
+        );
 
         // Test basic functionality across different access patterns
         let density = bv.count_ones() as f64 / bv.len() as f64;
 
         // Test a sample of operations to ensure they work
-        let test_positions = (0..bv.len()).step_by((bv.len() / 10).max(1)).collect::<Vec<_>>();
+        let test_positions = (0..bv.len())
+            .step_by((bv.len() / 10).max(1))
+            .collect::<Vec<_>>();
         for &pos in &test_positions {
             let _ = rank_select.rank1(pos);
             let _ = rank_select.rank0(pos);
@@ -205,7 +257,12 @@ fn test_rank_select_performance_characteristics() {
         println!("  Original: {} bytes", original_bytes);
         println!("  RankSelectInterleaved256 overhead: {:.2}%", overhead);
         println!("  Pattern density: {:.3}%", density * 100.0);
-        println!("  Total bits: {}, ones: {}, zeros: {}", bv.len(), rank_select.count_ones(), rank_select.count_zeros());
+        println!(
+            "  Total bits: {}, ones: {}, zeros: {}",
+            bv.len(),
+            rank_select.count_ones(),
+            rank_select.count_zeros()
+        );
     }
 }
 
@@ -275,10 +332,10 @@ fn test_full_integration() {
     for i in 0..size {
         // Complex pattern combining multiple characteristics
         let bit = match i % 1000 {
-            0..=50 => i % 10 == 0,           // Clustered sparse in first 5%
-            51..=100 => true,                // Dense cluster
-            101..=950 => false,              // Sparse gap
-            951..=999 => (i * 31) % 7 == 0,  // Random sparse pattern
+            0..=50 => i % 10 == 0,          // Clustered sparse in first 5%
+            51..=100 => true,               // Dense cluster
+            101..=950 => false,             // Sparse gap
+            951..=999 => (i * 31) % 7 == 0, // Random sparse pattern
             _ => unreachable!(),
         };
         complex_bv.push(bit).unwrap();
@@ -298,69 +355,133 @@ fn test_full_integration() {
 
     for &pos in &test_positions {
         // Calculate expected rank from original bit vector
-        let expected_rank1 = (0..pos).map(|i| if complex_bv.get(i).unwrap() { 1 } else { 0 }).sum::<usize>();
+        let expected_rank1 = (0..pos)
+            .map(|i| if complex_bv.get(i).unwrap() { 1 } else { 0 })
+            .sum::<usize>();
         let expected_rank0 = pos - expected_rank1;
 
-        assert_eq!(rank_select.rank1(pos), expected_rank1, "rank1 mismatch at {}", pos);
-        assert_eq!(rank_select.rank0(pos), expected_rank0, "rank0 mismatch at {}", pos);
+        assert_eq!(
+            rank_select.rank1(pos),
+            expected_rank1,
+            "rank1 mismatch at {}",
+            pos
+        );
+        assert_eq!(
+            rank_select.rank0(pos),
+            expected_rank0,
+            "rank0 mismatch at {}",
+            pos
+        );
 
         // Test get operation
         if pos < size {
             let expected_bit = complex_bv.get(pos).unwrap();
-            assert_eq!(rank_select.get(pos).unwrap(), expected_bit, "get mismatch at {}", pos);
+            assert_eq!(
+                rank_select.get(pos).unwrap(),
+                expected_bit,
+                "get mismatch at {}",
+                pos
+            );
         }
     }
 
     // Test select operations
     if ones_count > 0 {
-        let test_ks = (0..ones_count).step_by((ones_count / 50).max(1)).collect::<Vec<_>>();
+        let test_ks = (0..ones_count)
+            .step_by((ones_count / 50).max(1))
+            .collect::<Vec<_>>();
 
         for &k in &test_ks {
             if k < ones_count {
                 let selected_pos = rank_select.select1(k).unwrap();
                 // Verify the selected position contains a 1
-                assert!(complex_bv.get(selected_pos).unwrap(), "select1({}) returned position {} which should contain 1", k, selected_pos);
+                assert!(
+                    complex_bv.get(selected_pos).unwrap(),
+                    "select1({}) returned position {} which should contain 1",
+                    k,
+                    selected_pos
+                );
                 // Verify this is the k-th occurrence
-                assert_eq!(rank_select.rank1(selected_pos), k, "select1({}) returned position {} but rank at that position is {}", k, selected_pos, rank_select.rank1(selected_pos));
+                assert_eq!(
+                    rank_select.rank1(selected_pos),
+                    k,
+                    "select1({}) returned position {} but rank at that position is {}",
+                    k,
+                    selected_pos,
+                    rank_select.rank1(selected_pos)
+                );
             }
         }
     }
 
     if zeros_count > 0 {
-        let test_ks = (0..zeros_count).step_by((zeros_count / 50).max(1)).collect::<Vec<_>>();
+        let test_ks = (0..zeros_count)
+            .step_by((zeros_count / 50).max(1))
+            .collect::<Vec<_>>();
 
         for &k in &test_ks {
             if k < zeros_count {
                 let selected_pos = rank_select.select0(k).unwrap();
                 // Verify the selected position contains a 0
-                assert!(!complex_bv.get(selected_pos).unwrap(), "select0({}) returned position {} which should contain 0", k, selected_pos);
+                assert!(
+                    !complex_bv.get(selected_pos).unwrap(),
+                    "select0({}) returned position {} which should contain 0",
+                    k,
+                    selected_pos
+                );
                 // Verify this is the k-th occurrence
-                assert_eq!(rank_select.rank0(selected_pos), k, "select0({}) returned position {} but rank at that position is {}", k, selected_pos, rank_select.rank0(selected_pos));
+                assert_eq!(
+                    rank_select.rank0(selected_pos),
+                    k,
+                    "select0({}) returned position {} but rank at that position is {}",
+                    k,
+                    selected_pos,
+                    rank_select.rank0(selected_pos)
+                );
             }
         }
     }
 
     // Performance analysis
     println!("Integration test results:");
-    println!("  Pattern density: {:.3}%", (ones_count as f64 / size as f64) * 100.0);
-    println!("  RankSelectInterleaved256 overhead: {:.2}%", rank_select.space_overhead_percent());
-    println!("  Total bits: {}, ones: {}, zeros: {}", size, ones_count, zeros_count);
+    println!(
+        "  Pattern density: {:.3}%",
+        (ones_count as f64 / size as f64) * 100.0
+    );
+    println!(
+        "  RankSelectInterleaved256 overhead: {:.2}%",
+        rank_select.space_overhead_percent()
+    );
+    println!(
+        "  Total bits: {}, ones: {}, zeros: {}",
+        size, ones_count, zeros_count
+    );
 
     // Test rank-select consistency
     for _ in 0..100 {
-        let pos = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() as usize) % size;
+        let pos = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as usize)
+            % size;
         let rank1 = rank_select.rank1(pos);
         let rank0 = rank_select.rank0(pos);
         assert_eq!(rank1 + rank0, pos, "rank1 + rank0 should equal position");
 
         if rank1 > 0 {
             let select1_result = rank_select.select1(rank1 - 1);
-            assert!(select1_result.is_ok(), "select1 should succeed for valid rank");
+            assert!(
+                select1_result.is_ok(),
+                "select1 should succeed for valid rank"
+            );
         }
 
         if rank0 > 0 {
             let select0_result = rank_select.select0(rank0 - 1);
-            assert!(select0_result.is_ok(), "select0 should succeed for valid rank");
+            assert!(
+                select0_result.is_ok(),
+                "select0 should succeed for valid rank"
+            );
         }
     }
 

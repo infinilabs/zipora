@@ -1,21 +1,20 @@
-
+use zipora::hash_map::StorageStrategy;
 use zipora::hash_map::ZiporaHashMap;
 use zipora::hash_map::ZiporaHashMapConfig;
-use zipora::hash_map::StorageStrategy;
 use zipora::memory::{SecureMemoryPool, SecurePoolConfig};
 
 #[test]
 fn test_inline_storage_initialization() {
     // This triggers StorageStrategy::SmallInline initialization
     let config = ZiporaHashMapConfig {
-        storage_strategy: StorageStrategy::SmallInline { 
+        storage_strategy: StorageStrategy::SmallInline {
             inline_capacity: 16,
             fallback_threshold: 16,
         },
         initial_capacity: 16,
         ..Default::default()
     };
-    
+
     let mut map: ZiporaHashMap<u32, u32> = ZiporaHashMap::with_config(config).unwrap();
     assert_eq!(map.len(), 0);
 
@@ -67,7 +66,11 @@ fn test_secure_pool_corruption_leak_regression() {
     let stats = pool.stats();
     assert_eq!(stats.corruption_detected, 1);
     // dealloc_count should still increment even on corruption path
-    assert!(stats.dealloc_count >= 1, "dealloc_count should be >= 1, got {}", stats.dealloc_count);
+    assert!(
+        stats.dealloc_count >= 1,
+        "dealloc_count should be >= 1, got {}",
+        stats.dealloc_count
+    );
 }
 
 #[test]
@@ -75,8 +78,7 @@ fn test_local_cache_overflow_no_leak() {
     // Path C regression: when the thread-local cache is full and try_push returns
     // Err(chunk), the rejected chunk must be pushed to the global stack — not dropped.
     // Use local_cache_size=2 so the cache fills quickly.
-    let config = SecurePoolConfig::small_secure()
-        .with_local_cache_size(2);
+    let config = SecurePoolConfig::small_secure().with_local_cache_size(2);
     let pool = SecureMemoryPool::new(config).unwrap();
 
     // Allocate and free 2 chunks to fill the local cache
@@ -91,7 +93,10 @@ fn test_local_cache_overflow_no_leak() {
     drop(ptr);
 
     let stats = pool.stats();
-    assert_eq!(stats.dealloc_count, 3, "all 3 deallocations should complete");
+    assert_eq!(
+        stats.dealloc_count, 3,
+        "all 3 deallocations should complete"
+    );
 
     // Allocate again — this should succeed by reusing a cached/stacked chunk,
     // proving nothing was leaked to limbo.

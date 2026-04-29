@@ -36,7 +36,9 @@ const SIMD_MIN_SIZE: usize = 8;
 #[inline]
 pub fn sorted_intersect_adaptive(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize {
     out.clear();
-    if a.is_empty() || b.is_empty() { return 0; }
+    if a.is_empty() || b.is_empty() {
+        return 0;
+    }
 
     // Ensure a is the smaller list
     let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
@@ -59,7 +61,9 @@ pub fn sorted_intersect_adaptive(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> us
 /// Count-only intersection (no materialization). Faster when you only need the count.
 #[inline]
 pub fn sorted_intersect_count(a: &[u32], b: &[u32]) -> usize {
-    if a.is_empty() || b.is_empty() { return 0; }
+    if a.is_empty() || b.is_empty() {
+        return 0;
+    }
 
     let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
 
@@ -80,7 +84,9 @@ pub fn sorted_intersect_count(a: &[u32], b: &[u32]) -> usize {
 #[inline]
 pub fn sorted_intersect_simd(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize {
     out.clear();
-    if a.is_empty() || b.is_empty() { return 0; }
+    if a.is_empty() || b.is_empty() {
+        return 0;
+    }
 
     let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
 
@@ -97,7 +103,9 @@ pub fn sorted_intersect_simd(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize 
 #[inline]
 pub fn sorted_intersect_galloping(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize {
     out.clear();
-    if a.is_empty() || b.is_empty() { return 0; }
+    if a.is_empty() || b.is_empty() {
+        return 0;
+    }
     let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
     intersect_galloping(small, large, out)
 }
@@ -263,8 +271,12 @@ unsafe fn intersect_simd_sse41(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usiz
             let a_max = *a.get_unchecked(i + 3);
             let b_max = *b.get_unchecked(j + 3);
 
-            if a_max <= b_max { i += 4; }
-            if b_max <= a_max { j += 4; }
+            if a_max <= b_max {
+                i += 4;
+            }
+            if b_max <= a_max {
+                j += 4;
+            }
         }
     }
 
@@ -274,9 +286,16 @@ unsafe fn intersect_simd_sse41(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usiz
             let va = *a.get_unchecked(i);
             let vb = *b.get_unchecked(j);
 
-            if va == vb { out.push(va); count += 1; i += 1; j += 1; }
-            else if va < vb { i += 1; }
-            else { j += 1; }
+            if va == vb {
+                out.push(va);
+                count += 1;
+                i += 1;
+                j += 1;
+            } else if va < vb {
+                i += 1;
+            } else {
+                j += 1;
+            }
         }
     }
 
@@ -316,8 +335,12 @@ unsafe fn intersect_simd_count_sse41(a: &[u32], b: &[u32]) -> usize {
             let a_max = *a.get_unchecked(i + 3);
             let b_max = *b.get_unchecked(j + 3);
 
-            if a_max <= b_max { i += 4; }
-            if b_max <= a_max { j += 4; }
+            if a_max <= b_max {
+                i += 4;
+            }
+            if b_max <= a_max {
+                j += 4;
+            }
         }
     }
 
@@ -326,9 +349,15 @@ unsafe fn intersect_simd_count_sse41(a: &[u32], b: &[u32]) -> usize {
             let va = *a.get_unchecked(i);
             let vb = *b.get_unchecked(j);
 
-            if va == vb { count += 1; i += 1; j += 1; }
-            else if va < vb { i += 1; }
-            else { j += 1; }
+            if va == vb {
+                count += 1;
+                i += 1;
+                j += 1;
+            } else if va < vb {
+                i += 1;
+            } else {
+                j += 1;
+            }
         }
     }
 
@@ -495,7 +524,11 @@ mod tests {
         #[cfg(not(debug_assertions))]
         {
             let per_call = _elapsed / 1000;
-            eprintln!("SIMD intersect 5K×3.3K: {:?}/call, {} matches", per_call, out.len());
+            eprintln!(
+                "SIMD intersect 5K×3.3K: {:?}/call, {} matches",
+                per_call,
+                out.len()
+            );
             // Should be under 50µs per call in release
             assert!(per_call.as_micros() < 100, "Too slow: {:?}", per_call);
         }
@@ -516,7 +549,11 @@ mod tests {
         #[cfg(not(debug_assertions))]
         {
             let per_call = _elapsed / 1000;
-            eprintln!("Galloping intersect 100×100K: {:?}/call, {} matches", per_call, out.len());
+            eprintln!(
+                "Galloping intersect 100×100K: {:?}/call, {} matches",
+                per_call,
+                out.len()
+            );
             assert!(per_call.as_micros() < 50, "Too slow: {:?}", per_call);
         }
     }

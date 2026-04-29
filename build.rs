@@ -18,16 +18,16 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=Cargo.toml");
-    
+
     // Detect and configure SIMD features
     detect_and_configure_simd();
-    
+
     // Set target-specific configurations
     configure_target_specific_features();
-    
+
     // Configure optimization flags
     configure_optimization_flags();
-    
+
     // Handle optional FFI bindings
     #[cfg(feature = "ffi")]
     generate_ffi_bindings();
@@ -36,12 +36,15 @@ fn main() {
 /// Detect available SIMD features and set appropriate compilation flags
 fn detect_and_configure_simd() {
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
-    
+
     match target_arch.as_str() {
         "x86_64" => detect_x86_features(),
         "aarch64" => detect_arm_features(),
         _ => {
-            println!("cargo:warning=SIMD optimizations not available for target architecture: {}", target_arch);
+            println!(
+                "cargo:warning=SIMD optimizations not available for target architecture: {}",
+                target_arch
+            );
             configure_scalar_fallback();
         }
     }
@@ -50,11 +53,11 @@ fn detect_and_configure_simd() {
 /// Detect x86_64 SIMD features and set compilation flags
 fn detect_x86_features() {
     println!("cargo:rustc-cfg=target_arch_x86_64");
-    
+
     // Enable basic SIMD support
     if cfg!(feature = "simd") {
         println!("cargo:rustc-cfg=zipora_simd");
-        
+
         // Check for specific x86 features that are commonly available
         detect_x86_feature("sse2", true); // Almost universally available on x86_64
         detect_x86_feature("sse3", true);
@@ -67,7 +70,7 @@ fn detect_x86_features() {
         detect_x86_feature("bmi1", true);
         detect_x86_feature("bmi2", true);
         detect_x86_feature("lzcnt", true);
-        
+
         // AVX-512 features (nightly only)
         if cfg!(feature = "avx512") {
             detect_x86_feature("avx512f", false);
@@ -80,7 +83,7 @@ fn detect_x86_features() {
             detect_x86_feature("avx512ifma", false);
         }
     }
-    
+
     // Set optimization tier flags
     if is_feature_available("bmi2") && is_feature_available("avx2") {
         println!("cargo:rustc-cfg=zipora_optimization_tier_4");
@@ -96,19 +99,19 @@ fn detect_x86_features() {
 /// Detect ARM64 SIMD features and set compilation flags
 fn detect_arm_features() {
     println!("cargo:rustc-cfg=target_arch_aarch64");
-    
+
     if cfg!(feature = "simd") {
         println!("cargo:rustc-cfg=zipora_simd");
-        
+
         // NEON is standard on AArch64
         detect_arm_feature("neon", true);
-        
+
         // Additional ARM features that may be available
         detect_arm_feature("crc", false);
         detect_arm_feature("crypto", false);
         detect_arm_feature("sve", false);
         detect_arm_feature("sve2", false);
-        
+
         // ARM optimization tier
         if is_feature_available("sve2") {
             println!("cargo:rustc-cfg=zipora_optimization_tier_3");
@@ -127,9 +130,10 @@ fn detect_x86_feature(feature: &str, commonly_available: bool) {
     if commonly_available || try_compile_with_feature(feature) {
         let cfg_name = format!("zipora_has_{}", feature.replace(".", "_").replace("-", "_"));
         println!("cargo:rustc-cfg={}", cfg_name);
-        
+
         // Also set target feature for the specific feature
-        if feature != "popcnt" { // popcnt is handled specially by Rust
+        if feature != "popcnt" {
+            // popcnt is handled specially by Rust
             println!("cargo:rustc-env=RUSTFLAGS=-C target-feature=+{}", feature);
         }
     }
@@ -148,7 +152,8 @@ fn detect_arm_feature(feature: &str, commonly_available: bool) {
 /// Try to compile a simple test program with the given x86 feature
 fn try_compile_with_feature(feature: &str) -> bool {
     // Create a simple test program that uses the feature
-    let test_code = format!(r#"
+    let test_code = format!(
+        r#"
         #[cfg(target_arch = "x86_64")]
         fn test_feature() {{
             #[cfg(target_feature = "{}")]
@@ -160,8 +165,10 @@ fn try_compile_with_feature(feature: &str) -> bool {
         fn main() {{
             test_feature();
         }}
-    "#, feature);
-    
+    "#,
+        feature
+    );
+
     // Try to compile with the feature enabled
     compile_test_program(&test_code, &[&format!("target-feature=+{}", feature)])
 }
@@ -169,7 +176,8 @@ fn try_compile_with_feature(feature: &str) -> bool {
 /// Try to compile a simple test program with the given ARM feature
 fn try_compile_with_arm_feature(feature: &str) -> bool {
     // Create a simple test program that uses the feature
-    let test_code = format!(r#"
+    let test_code = format!(
+        r#"
         #[cfg(target_arch = "aarch64")]
         fn test_feature() {{
             #[cfg(target_feature = "{}")]
@@ -181,8 +189,10 @@ fn try_compile_with_arm_feature(feature: &str) -> bool {
         fn main() {{
             test_feature();
         }}
-    "#, feature);
-    
+    "#,
+        feature
+    );
+
     // Try to compile with the feature enabled
     compile_test_program(&test_code, &[&format!("target-feature=+{}", feature)])
 }
@@ -191,26 +201,28 @@ fn try_compile_with_arm_feature(feature: &str) -> bool {
 fn compile_test_program(code: &str, flags: &[&str]) -> bool {
     use std::fs;
     use std::path::Path;
-    
+
     let out_dir = env::var("OUT_DIR").unwrap_or_else(|_| ".".to_string());
     let test_file = Path::new(&out_dir).join("feature_test.rs");
-    
+
     // Write test code to file
     if fs::write(&test_file, code).is_err() {
         return false;
     }
-    
+
     // Try to compile
     let mut cmd = Command::new("rustc");
     cmd.arg(&test_file);
     cmd.arg("-o").arg(Path::new(&out_dir).join("feature_test"));
-    
+
     for flag in flags {
         cmd.arg("-C").arg(flag);
     }
-    
+
     // Suppress output and return success status
-    cmd.output().map(|output| output.status.success()).unwrap_or(false)
+    cmd.output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
 }
 
 /// Check if a feature is available based on environment or previous detection
@@ -218,7 +230,7 @@ fn is_feature_available(feature: &str) -> bool {
     // This is a simplified check - in practice, you might want to use
     // the actual CPU feature detection or check environment variables
     let _cfg_name = format!("zipora_has_{}", feature.replace(".", "_").replace("-", "_"));
-    
+
     // For now, assume common features are available
     match feature {
         "sse2" | "sse3" | "ssse3" | "sse4.1" | "sse4.2" | "popcnt" => true,
@@ -244,7 +256,7 @@ fn configure_scalar_fallback() {
 fn configure_target_specific_features() {
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    
+
     // Set target-specific configurations
     match (target_arch.as_str(), target_os.as_str()) {
         ("x86_64", "linux") => {
@@ -270,10 +282,13 @@ fn configure_target_specific_features() {
             // Enable ARM64 macOS-specific optimizations (Apple Silicon)
         }
         _ => {
-            println!("cargo:warning=Unoptimized target: {}-{}", target_arch, target_os);
+            println!(
+                "cargo:warning=Unoptimized target: {}-{}",
+                target_arch, target_os
+            );
         }
     }
-    
+
     // Set cache line size based on architecture
     match target_arch.as_str() {
         "x86_64" => println!("cargo:rustc-cfg=zipora_cache_line_64"),
@@ -285,21 +300,21 @@ fn configure_target_specific_features() {
 /// Configure optimization flags based on profile and features
 fn configure_optimization_flags() {
     let profile = env::var("PROFILE").unwrap_or_default();
-    
+
     match profile.as_str() {
         "release" => {
             println!("cargo:rustc-cfg=zipora_release_mode");
-            
+
             // Enable aggressive optimizations for release builds
             if cfg!(feature = "simd") {
                 println!("cargo:rustc-env=RUSTFLAGS=-C target-cpu=native");
             }
-            
+
             // Link-time optimization flags are set in Cargo.toml
         }
         "bench" => {
             println!("cargo:rustc-cfg=zipora_bench_mode");
-            
+
             // Enable maximum optimizations for benchmarks
             if cfg!(feature = "simd") {
                 println!("cargo:rustc-env=RUSTFLAGS=-C target-cpu=native");
@@ -317,14 +332,17 @@ fn configure_optimization_flags() {
 #[allow(dead_code)]
 fn generate_ffi_bindings() {
     use std::env;
-    
+
     let crate_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    
+
     let config = cbindgen::Config {
         language: cbindgen::Language::C,
         cpp_compat: true,
         include_guard: Some("ZIPORA_H".to_string()),
-        autogen_warning: Some("/* Warning, this file is autogenerated by cbindgen. Don't modify this manually. */".to_string()),
+        autogen_warning: Some(
+            "/* Warning, this file is autogenerated by cbindgen. Don't modify this manually. */"
+                .to_string(),
+        ),
         include_version: true,
         namespace: Some("zipora".to_string()),
         line_length: 100,
@@ -333,14 +351,14 @@ fn generate_ffi_bindings() {
         documentation_style: cbindgen::DocumentationStyle::Doxy,
         ..Default::default()
     };
-    
+
     cbindgen::Builder::new()
         .with_crate(crate_dir)
         .with_config(config)
         .generate()
         .expect("Unable to generate bindings")
         .write_to_file("include/zipora.h");
-    
+
     println!("cargo:rustc-cfg=zipora_ffi_enabled");
 }
 

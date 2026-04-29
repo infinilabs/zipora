@@ -133,14 +133,22 @@ impl<'a> LexicographicIterator for SortedVecLexIterator<'a> {
                 Ok(true)
             }
             _ => {
-                self.position = if self.strings.is_empty() { None } else { Some(0) };
+                self.position = if self.strings.is_empty() {
+                    None
+                } else {
+                    Some(0)
+                };
                 Ok(false)
             }
         }
     }
 
     fn seek_start(&mut self) -> std::result::Result<bool, Self::Error> {
-        self.position = if self.strings.is_empty() { None } else { Some(0) };
+        self.position = if self.strings.is_empty() {
+            None
+        } else {
+            Some(0)
+        };
         Ok(self.position.is_some())
     }
 
@@ -160,7 +168,11 @@ impl<'a> LexicographicIterator for SortedVecLexIterator<'a> {
                 Ok(true) // Exact match
             }
             Err(pos) => {
-                self.position = if pos < self.strings.len() { Some(pos) } else { None };
+                self.position = if pos < self.strings.len() {
+                    Some(pos)
+                } else {
+                    None
+                };
                 Ok(false) // No exact match
             }
         }
@@ -241,26 +253,39 @@ impl<R: std::io::Read> LexicographicIterator for StreamingLexIterator<R> {
     }
 
     fn next(&mut self) -> std::result::Result<bool, Self::Error> {
-        self.read_next_line()
-            .map_err(|e| ZiporaError::io_error(format!("Failed to read line {}: {}", self.line_number + 1, e)))
+        self.read_next_line().map_err(|e| {
+            ZiporaError::io_error(format!(
+                "Failed to read line {}: {}",
+                self.line_number + 1,
+                e
+            ))
+        })
     }
 
     fn prev(&mut self) -> std::result::Result<bool, Self::Error> {
         // Streaming iterators don't support backward movement
-        Err(ZiporaError::not_supported("Streaming iterator does not support backward movement"))
+        Err(ZiporaError::not_supported(
+            "Streaming iterator does not support backward movement",
+        ))
     }
 
     fn seek_start(&mut self) -> std::result::Result<bool, Self::Error> {
         // Would require re-opening the stream - not supported for general readers
-        Err(ZiporaError::not_supported("Streaming iterator does not support seeking"))
+        Err(ZiporaError::not_supported(
+            "Streaming iterator does not support seeking",
+        ))
     }
 
     fn seek_end(&mut self) -> std::result::Result<bool, Self::Error> {
-        Err(ZiporaError::not_supported("Streaming iterator does not support seeking"))
+        Err(ZiporaError::not_supported(
+            "Streaming iterator does not support seeking",
+        ))
     }
 
     fn seek_lower_bound(&mut self, _target: &str) -> std::result::Result<bool, Self::Error> {
-        Err(ZiporaError::not_supported("Streaming iterator does not support seeking"))
+        Err(ZiporaError::not_supported(
+            "Streaming iterator does not support seeking",
+        ))
     }
 
     fn is_at_end(&self) -> bool {
@@ -322,7 +347,7 @@ pub mod utils {
         I: LexicographicIterator,
     {
         let mut result = Vec::new();
-        
+
         iterator.seek_start()?;
         while let Some(s) = iterator.current() {
             result.push(s.to_string());
@@ -330,7 +355,7 @@ pub mod utils {
                 break;
             }
         }
-        
+
         Ok(result)
     }
 
@@ -340,14 +365,14 @@ pub mod utils {
         I: LexicographicIterator,
     {
         iterator.seek_start()?;
-        
+
         let first = match iterator.current() {
             Some(s) => s.to_string(),
             None => return Ok(String::new()),
         };
 
         let mut common = first;
-        
+
         while iterator.next()? {
             if let Some(current) = iterator.current() {
                 // Find common prefix between current common prefix and this string
@@ -356,28 +381,36 @@ pub mod utils {
                     .zip(current.chars())
                     .take_while(|(a, b)| a == b)
                     .count();
-                
+
                 if new_len == 0 {
                     return Ok(String::new());
                 }
-                
-                common.truncate(common.char_indices().nth(new_len).map_or(common.len(), |(i, _)| i));
+
+                common.truncate(
+                    common
+                        .char_indices()
+                        .nth(new_len)
+                        .map_or(common.len(), |(i, _)| i),
+                );
             }
         }
-        
+
         Ok(common)
     }
 
     /// Count strings with a given prefix
-    pub fn count_with_prefix<I>(mut iterator: I, prefix: &str) -> std::result::Result<usize, I::Error>
+    pub fn count_with_prefix<I>(
+        mut iterator: I,
+        prefix: &str,
+    ) -> std::result::Result<usize, I::Error>
     where
         I: LexicographicIterator,
     {
         let mut count = 0;
-        
+
         // Seek to first string with prefix
         iterator.seek_lower_bound(prefix)?;
-        
+
         while let Some(current) = iterator.current() {
             if current.starts_with(prefix) {
                 count += 1;
@@ -388,7 +421,7 @@ pub mod utils {
                 break; // No more strings with this prefix
             }
         }
-        
+
         Ok(count)
     }
 }

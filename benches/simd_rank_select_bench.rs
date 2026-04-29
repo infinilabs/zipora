@@ -8,8 +8,8 @@
 //! - SIMD bulk operations
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use zipora::{BitVector, BitwiseOp, RankSelect256, RankSelectPerformanceOps};
 use zipora::succinct::rank_select::RankSelectOps;
+use zipora::{BitVector, BitwiseOp, RankSelect256, RankSelectPerformanceOps};
 
 fn create_benchmark_data(size: usize, density: f64) -> BitVector {
     let mut bv = BitVector::new();

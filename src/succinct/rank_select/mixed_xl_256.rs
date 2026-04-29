@@ -10,8 +10,8 @@
 //! - `bit64[Arity * 4]` — interleaved bit words
 //! - `mixed[Arity]` — rank cache per dimension: `{base: u32, rlev: [u8; 4]}`
 
-use crate::error::{Result, ZiporaError};
 use super::RankSelectOps;
+use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;
 
 const LINE_BITS: usize = 256;
@@ -75,12 +75,19 @@ impl RankSelectMixedXL256 {
             let mut mixed = Vec::with_capacity(arity);
 
             for d in 0..arity {
-                let mut dr = DimRank { base: cum_rank[d], rlev: [0; 4] };
+                let mut dr = DimRank {
+                    base: cum_rank[d],
+                    rlev: [0; 4],
+                };
                 let mut r = 0u32;
                 for j in 0..WORDS_PER_LINE {
                     dr.rlev[j] = r as u8;
                     let src_idx = i * WORDS_PER_LINE + j;
-                    let mut word = if src_idx < blocks[d].len() { blocks[d][src_idx] } else { 0 };
+                    let mut word = if src_idx < blocks[d].len() {
+                        blocks[d][src_idx]
+                    } else {
+                        0
+                    };
 
                     // Mask bits beyond dimension size
                     let global_bit = i * LINE_BITS + j * 64;
@@ -102,7 +109,12 @@ impl RankSelectMixedXL256 {
 
         let max_rank1: Vec<usize> = cum_rank.iter().map(|&r| r as usize).collect();
 
-        Ok(Self { lines, arity, size: sizes, max_rank1 })
+        Ok(Self {
+            lines,
+            arity,
+            size: sizes,
+            max_rank1,
+        })
     }
 
     /// Build from exactly 2 BitVectors.
@@ -118,15 +130,22 @@ impl RankSelectMixedXL256 {
     /// Get a read-only view of dimension `d`.
     pub fn dim(&self, d: usize) -> MixedXL256DimView<'_> {
         assert!(d < self.arity);
-        MixedXL256DimView { parent: self, dim: d }
+        MixedXL256DimView {
+            parent: self,
+            dim: d,
+        }
     }
 
-    pub fn arity(&self) -> usize { self.arity }
+    pub fn arity(&self) -> usize {
+        self.arity
+    }
 
     #[inline]
     pub fn rank1_dim(&self, dim: usize, pos: usize) -> usize {
         assert!(dim < self.arity && pos <= self.size[dim]);
-        if pos == 0 { return 0; }
+        if pos == 0 {
+            return 0;
+        }
         let line_idx = pos / LINE_BITS;
         let bit_in_line = pos % LINE_BITS;
         let word_in_line = bit_in_line / 64;
@@ -144,7 +163,9 @@ impl RankSelectMixedXL256 {
     }
 
     #[inline]
-    pub fn rank0_dim(&self, dim: usize, pos: usize) -> usize { pos - self.rank1_dim(dim, pos) }
+    pub fn rank0_dim(&self, dim: usize, pos: usize) -> usize {
+        pos - self.rank1_dim(dim, pos)
+    }
 
     pub fn select1_dim(&self, dim: usize, k: usize) -> Result<usize> {
         assert!(dim < self.arity);
@@ -156,7 +177,11 @@ impl RankSelectMixedXL256 {
         let mut hi = nlines;
         while lo < hi {
             let mid = (lo + hi) / 2;
-            if (self.lines[mid].mixed[dim].base as usize) <= k { lo = mid + 1; } else { hi = mid; }
+            if (self.lines[mid].mixed[dim].base as usize) <= k {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
         }
         let block = lo - 1;
         let line = &self.lines[block];
@@ -176,7 +201,9 @@ impl RankSelectMixedXL256 {
 
     #[inline]
     pub fn get_dim(&self, dim: usize, index: usize) -> Option<bool> {
-        if index >= self.size[dim] { return None; }
+        if index >= self.size[dim] {
+            return None;
+        }
         let line_idx = index / LINE_BITS;
         let word_in_line = (index % LINE_BITS) / 64;
         let bit_idx = index % 64;
@@ -186,24 +213,42 @@ impl RankSelectMixedXL256 {
 
     #[inline]
     pub fn mem_size(&self) -> usize {
-        if self.lines.is_empty() { return 0; }
+        if self.lines.is_empty() {
+            return 0;
+        }
         self.lines.len() * (self.arity * WORDS_PER_LINE * 8 + self.arity * 8)
     }
 }
 
 impl RankSelectOps for MixedXL256DimView<'_> {
     #[inline]
-    fn rank1(&self, pos: usize) -> usize { self.parent.rank1_dim(self.dim, pos) }
-    fn rank0(&self, pos: usize) -> usize { self.parent.rank0_dim(self.dim, pos) }
-    #[inline]
-    fn select1(&self, k: usize) -> Result<usize> { self.parent.select1_dim(self.dim, k) }
-    fn select0(&self, _k: usize) -> Result<usize> {
-        Err(ZiporaError::invalid_data("select0 not implemented for mixed_xl_256"))
+    fn rank1(&self, pos: usize) -> usize {
+        self.parent.rank1_dim(self.dim, pos)
     }
-    fn len(&self) -> usize { self.parent.size[self.dim] }
-    fn count_ones(&self) -> usize { self.parent.max_rank1[self.dim] }
-    fn get(&self, index: usize) -> Option<bool> { self.parent.get_dim(self.dim, index) }
-    fn space_overhead_percent(&self) -> f64 { 0.0 }
+    fn rank0(&self, pos: usize) -> usize {
+        self.parent.rank0_dim(self.dim, pos)
+    }
+    #[inline]
+    fn select1(&self, k: usize) -> Result<usize> {
+        self.parent.select1_dim(self.dim, k)
+    }
+    fn select0(&self, _k: usize) -> Result<usize> {
+        Err(ZiporaError::invalid_data(
+            "select0 not implemented for mixed_xl_256",
+        ))
+    }
+    fn len(&self) -> usize {
+        self.parent.size[self.dim]
+    }
+    fn count_ones(&self) -> usize {
+        self.parent.max_rank1[self.dim]
+    }
+    fn get(&self, index: usize) -> Option<bool> {
+        self.parent.get_dim(self.dim, index)
+    }
+    fn space_overhead_percent(&self) -> f64 {
+        0.0
+    }
 }
 
 /// Select k-th set bit within a u64 word.
@@ -229,7 +274,9 @@ mod tests {
 
     fn make_bv(pattern: &[bool]) -> BitVector {
         let mut bv = BitVector::new();
-        for &b in pattern { bv.push(b).unwrap(); }
+        for &b in pattern {
+            bv.push(b).unwrap();
+        }
         bv
     }
 
@@ -284,7 +331,13 @@ mod tests {
         let rs = RankSelectMixedXL256::new3(make_bv(&p0), make_bv(&p1), make_bv(&p2)).unwrap();
         for i in 0..=500 {
             for d in 0..3 {
-                assert_eq!(rs.dim(d).rank0(i) + rs.dim(d).rank1(i), i, "dim{} at {}", d, i);
+                assert_eq!(
+                    rs.dim(d).rank0(i) + rs.dim(d).rank1(i),
+                    i,
+                    "dim{} at {}",
+                    d,
+                    i
+                );
             }
         }
     }
@@ -297,7 +350,14 @@ mod tests {
         for d in 0..2 {
             for k in 0..rs.dim(d).count_ones() {
                 let pos = rs.dim(d).select1(k).unwrap();
-                assert_eq!(rs.get_dim(d, pos), Some(true), "dim{} select1({})={}", d, k, pos);
+                assert_eq!(
+                    rs.get_dim(d, pos),
+                    Some(true),
+                    "dim{} select1({})={}",
+                    d,
+                    k,
+                    pos
+                );
             }
         }
     }
@@ -352,16 +412,22 @@ mod tests {
 
     #[test]
     fn test_arity4() {
-        let bvs: Vec<BitVector> = (0..4).map(|d| {
-            make_bv(&(0..100).map(|i| i % (d + 2) == 0).collect::<Vec<_>>())
-        }).collect();
+        let bvs: Vec<BitVector> = (0..4)
+            .map(|d| make_bv(&(0..100).map(|i| i % (d + 2) == 0).collect::<Vec<_>>()))
+            .collect();
         let rs = RankSelectMixedXL256::new(bvs).unwrap();
         assert_eq!(rs.arity(), 4);
         for d in 0..4 {
             let expected = (0..100).filter(|i| i % (d + 2) == 0).count();
             assert_eq!(rs.dim(d).count_ones(), expected, "dim{} ones", d);
             for i in 0..=100 {
-                assert_eq!(rs.dim(d).rank0(i) + rs.dim(d).rank1(i), i, "dim{} invariant at {}", d, i);
+                assert_eq!(
+                    rs.dim(d).rank0(i) + rs.dim(d).rank1(i),
+                    i,
+                    "dim{} invariant at {}",
+                    d,
+                    i
+                );
             }
         }
     }

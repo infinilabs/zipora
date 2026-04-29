@@ -1,8 +1,8 @@
 //! Simple tests for LRU page cache implementation
 
 use super::*;
-use tempfile::NamedTempFile;
 use std::io::Write;
+use tempfile::NamedTempFile;
 
 #[test]
 fn test_page_cache_config_basic() {
@@ -19,41 +19,41 @@ fn test_cache_creation() {
     assert!(cache.is_ok());
 }
 
-#[test]  
+#[test]
 fn test_real_file_io_basic() -> Result<()> {
     // Create a simple test file
     let mut temp_file = NamedTempFile::new()?;
     let test_data = b"Hello, LRU Cache!";
     temp_file.write_all(test_data)?;
     temp_file.flush()?;
-    
+
     // Create cache and test file operations
     let config = PageCacheConfig::balanced();
     let cache = LruPageCache::new(config)?;
     let file_id = cache.open_file(temp_file.path())?;
-    
+
     // Test basic read
     let buffer = cache.read(file_id, 0, test_data.len())?;
     assert_eq!(buffer.len(), test_data.len());
     assert_eq!(buffer.data(), test_data);
-    
+
     // Test file size
     let file_size = cache.file_size(file_id)?;
     assert_eq!(file_size, test_data.len() as u64);
-    
+
     // Close file
     cache.close_file(file_id)?;
-    
+
     Ok(())
 }
 
 #[test]
 fn test_cache_statistics() {
     let mut stats = CacheStatistics::new();
-    
+
     stats.record_hit(CacheHitType::Hit);
     stats.record_miss();
-    
+
     assert_eq!(stats.hit_ratio(), 0.5);
     assert_eq!(stats.miss_ratio(), 0.5);
 }
@@ -85,13 +85,17 @@ fn test_cache_read_same_page_twice() -> Result<()> {
     let cache = LruPageCache::new(config)?;
     let file_id = cache.open_file(temp_file.path())?;
 
-    // First read - cache miss
+    // First read - cache miss (which loads into cache, triggering an InitialFree hit)
     let buffer1 = cache.read(file_id, 0, test_data.len())?;
     assert_eq!(buffer1.data(), test_data);
+    assert_eq!(cache.stats().total_misses, 1);
+    assert_eq!(cache.stats().total_hits, 1);
 
     // Second read - should be cache hit
     let buffer2 = cache.read(file_id, 0, test_data.len())?;
     assert_eq!(buffer2.data(), test_data);
+    assert_eq!(cache.stats().total_misses, 1);
+    assert_eq!(cache.stats().total_hits, 2);
 
     cache.close_file(file_id)?;
     Ok(())
@@ -134,13 +138,17 @@ fn test_cache_miss_then_hit() -> Result<()> {
     let _buffer1 = cache.read(file_id, 0, 4)?;
     let _buffer2 = cache.read(file_id, 0, 4)?;
 
-    // Verify statistics are being tracked
-    let mut stats = CacheStatistics::new();
-    stats.record_miss();
-    stats.record_hit(CacheHitType::Hit);
+    // Verify statistics are being tracked by the cache itself
+    let stats = cache.stats();
+    // The first read triggers a Miss + InitialFree (Hit). The second read triggers a Hit.
+    assert_eq!(stats.total_hits, 2);
+    assert_eq!(stats.total_misses, 1);
 
-    assert_eq!(stats.hit_ratio(), 0.5);
-    assert_eq!(stats.miss_ratio(), 0.5);
+    // Test the ratios
+    // total operations = misses + hits = 1 + 2 = 3.
+    // Hit ratio = 2/3, Miss ratio = 1/3
+    assert!((stats.hit_ratio - 0.666).abs() < 0.01);
+    assert!((stats.miss_ratio - 0.333).abs() < 0.01);
 
     cache.close_file(file_id)?;
     Ok(())

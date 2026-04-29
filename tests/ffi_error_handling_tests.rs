@@ -25,11 +25,12 @@ mod ffi_error_tests {
                 *error.borrow_mut() = Some(cstring.clone());
 
                 if let Ok(callback_guard) = ERROR_CALLBACK.lock()
-                    && let Some(callback) = *callback_guard {
-                        unsafe {
-                            callback(cstring.as_ptr());
-                        }
+                    && let Some(callback) = *callback_guard
+                {
+                    unsafe {
+                        callback(cstring.as_ptr());
                     }
+                }
             }
         });
     }
@@ -81,9 +82,10 @@ mod ffi_error_tests {
             CALLBACK_CALLED.store(true, Ordering::SeqCst);
             let c_str = unsafe { CStr::from_ptr(msg) };
             if let Ok(str_slice) = c_str.to_str()
-                && let Ok(mut callback_msg) = CALLBACK_MESSAGE.lock() {
-                    *callback_msg = Some(str_slice.to_string());
-                }
+                && let Ok(mut callback_msg) = CALLBACK_MESSAGE.lock()
+            {
+                *callback_msg = Some(str_slice.to_string());
+            }
         }
 
         unsafe {

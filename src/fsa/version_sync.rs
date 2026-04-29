@@ -45,11 +45,11 @@ use std::sync::{Arc, Mutex};
 // Additional sync primitives (currently unused)
 // use std::sync::atomic::AtomicU8;
 // use std::sync::RwLock;
+use std::collections::VecDeque;
 use std::thread::{self, ThreadId};
 use std::time::Instant;
-use std::collections::VecDeque;
 
-use crate::error::{ZiporaError, Result};
+use crate::error::{Result, ZiporaError};
 // Memory pool integration (currently unused in this module)
 // use crate::memory::SecureMemoryPool;
 
@@ -62,7 +62,7 @@ use crate::error::{ZiporaError, Result};
 #[derive(Default)]
 pub enum ConcurrencyLevel {
     /// Level 0: Read-only access with no synchronization overhead.
-    /// 
+    ///
     /// **Use Case**: Static data structures that never change after initialization.
     /// **Performance**: Zero synchronization overhead, maximum single-threaded performance.
     /// **Thread Safety**: Multiple readers only, no writers allowed.
@@ -132,7 +132,7 @@ impl ConcurrencyLevel {
             Self::NoWriteReadOnly => None, // Unlimited readers
             Self::SingleThreadStrict => Some(1),
             Self::SingleThreadShared => Some(1),
-            Self::OneWriteMultiRead => None, // Unlimited readers
+            Self::OneWriteMultiRead => None,   // Unlimited readers
             Self::MultiWriteMultiRead => None, // Unlimited readers
         }
     }
@@ -144,11 +144,10 @@ impl ConcurrencyLevel {
             Self::SingleThreadStrict => Some(1),
             Self::SingleThreadShared => Some(1),
             Self::OneWriteMultiRead => Some(1), // Single writer only
-            Self::MultiWriteMultiRead => None, // Unlimited writers
+            Self::MultiWriteMultiRead => None,  // Unlimited writers
         }
     }
 }
-
 
 impl std::fmt::Display for ConcurrencyLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -262,7 +261,10 @@ impl LazyFreeList {
                 break; // Items are ordered by age, so we can stop here
             }
 
-            let item = self.items.pop_front().expect("items non-empty by len check");
+            let item = self
+                .items
+                .pop_front()
+                .expect("items non-empty by len check");
             free_fn(item);
             processed += 1;
 
@@ -895,7 +897,10 @@ mod tests {
         // Acquire reader token
         let reader_token = manager.acquire_reader_token()?;
         assert!(reader_token.is_valid());
-        assert_eq!(reader_token.concurrency_level(), ConcurrencyLevel::SingleThreadStrict);
+        assert_eq!(
+            reader_token.concurrency_level(),
+            ConcurrencyLevel::SingleThreadStrict
+        );
 
         // Acquire writer token
         let writer_token = manager.acquire_writer_token()?;
@@ -1010,8 +1015,14 @@ mod tests {
         assert_eq!(manager.active_writers(), 0);
 
         let stats = manager.stats()?;
-        assert_eq!(stats.reader_tokens_acquired, num_threads * tokens_per_thread);
-        assert_eq!(stats.writer_tokens_acquired, num_threads * tokens_per_thread);
+        assert_eq!(
+            stats.reader_tokens_acquired,
+            num_threads * tokens_per_thread
+        );
+        assert_eq!(
+            stats.writer_tokens_acquired,
+            num_threads * tokens_per_thread
+        );
 
         Ok(())
     }

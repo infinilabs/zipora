@@ -22,8 +22,8 @@ use std::time::Instant;
 // AVX2/BMI2 intrinsics for advanced SIMD acceleration
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
-    _mm256_and_si256, _mm256_loadu_si256,
-    _mm256_set1_epi32, _mm256_srlv_epi32, _mm256_storeu_si256, __m256i,
+    __m256i, _mm256_and_si256, _mm256_loadu_si256, _mm256_set1_epi32, _mm256_srlv_epi32,
+    _mm256_storeu_si256,
 };
 
 // AVX-512 intrinsics (nightly-only feature)
@@ -366,7 +366,11 @@ impl RadixSort {
         let mut counts = [0usize; 257];
 
         for item in data.iter() {
-            let b = if depth < item.len() { item[depth] as usize + 1 } else { 0 };
+            let b = if depth < item.len() {
+                item[depth] as usize + 1
+            } else {
+                0
+            };
             counts[b] += 1;
         }
 
@@ -383,8 +387,12 @@ impl RadixSort {
             let end = if b == 256 { data.len() } else { offsets[b + 1] };
             while next_free[b] < end {
                 let pos = next_free[b];
-                let item_b = if depth < data[pos].len() { data[pos][depth] as usize + 1 } else { 0 };
-                
+                let item_b = if depth < data[pos].len() {
+                    data[pos][depth] as usize + 1
+                } else {
+                    0
+                };
+
                 if item_b == b {
                     next_free[b] += 1;
                 } else {
@@ -556,7 +564,6 @@ pub struct KeyValueRadixSort<K, V> {
     _phantom: std::marker::PhantomData<(K, V)>,
 }
 
-
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct KVPair {
     key: u64,
@@ -567,7 +574,7 @@ impl RadixSortable for KVPair {
     fn extract_key(&self) -> u64 {
         self.key
     }
-    
+
     fn get_byte(&self, position: usize) -> Option<u8> {
         if position < 8 {
             Some((self.key >> ((7 - position) * 8)) as u8)
@@ -575,7 +582,7 @@ impl RadixSortable for KVPair {
             None
         }
     }
-    
+
     fn max_bytes(&self) -> usize {
         8
     }
@@ -603,17 +610,20 @@ where
         let mut indices: Vec<KVPair> = data
             .iter()
             .enumerate()
-            .map(|(i, (k, _))| KVPair { key: (*k).into(), index: i })
+            .map(|(i, (k, _))| KVPair {
+                key: (*k).into(),
+                index: i,
+            })
             .collect();
 
         let mut config = AdvancedRadixSortConfig::default();
         config.use_parallel = self.config.use_parallel;
         config.parallel_threshold = self.config.parallel_threshold;
         config.radix_bits = self.config.radix_bits;
-        
+
         let mut sorter = AdvancedRadixSort::<KVPair>::with_config(config)
             .unwrap_or_else(|_| AdvancedRadixSort::new().unwrap());
-            
+
         sorter.sort(&mut indices)?;
 
         let mut targets = vec![0; data.len()];
@@ -632,7 +642,6 @@ where
         Ok(())
     }
 }
-
 
 impl<K, V> Default for KeyValueRadixSort<K, V>
 where
@@ -722,12 +731,12 @@ impl DataCharacteristics {
         T: Copy + Into<u64> + Ord,
     {
         let size = data.len();
-        
+
         // Check if data is nearly sorted
         let mut inversions = 0usize;
         let mut sorted_runs = 0usize;
         let mut current_run_length = 1usize;
-        
+
         for i in 1..data.len() {
             if data[i] >= data[i - 1] {
                 current_run_length += 1;
@@ -739,31 +748,36 @@ impl DataCharacteristics {
                 current_run_length = 1;
             }
         }
-        
+
         if current_run_length > 1 {
             sorted_runs += 1;
         }
-        
+
         // Be more strict about what constitutes "nearly sorted"
         // For small datasets, require very few inversions AND good run structure
-        let inversion_threshold = if size <= 10 { 
+        let inversion_threshold = if size <= 10 {
             std::cmp::max(1, size / 5) // For small datasets, allow at most 20% inversions
-        } else { 
+        } else {
             size / 10 // For larger datasets, allow up to 10% inversions
         };
-        
+
         // A single long run (for sorted data) OR multiple good runs should qualify
-        let is_nearly_sorted = inversions < inversion_threshold && (sorted_runs >= 1 || inversions == 0);
-        
+        let is_nearly_sorted =
+            inversions < inversion_threshold && (sorted_runs >= 1 || inversions == 0);
+
         // Estimate entropy and max key bits
         let mut max_val = 0u64;
         for &item in data {
             max_val = max_val.max(item.into());
         }
-        
-        let max_key_bits = if max_val == 0 { 1 } else { 64 - max_val.leading_zeros() as usize };
+
+        let max_key_bits = if max_val == 0 {
+            1
+        } else {
+            64 - max_val.leading_zeros() as usize
+        };
         let estimated_entropy = if size > 0 { (size as f64).log2() } else { 0.0 };
-        
+
         Self {
             size,
             is_nearly_sorted,
@@ -776,7 +790,7 @@ impl DataCharacteristics {
     /// Analyze string data characteristics
     pub fn analyze_strings(data: &[Vec<u8>]) -> Self {
         let size = data.len();
-        
+
         // Check if strings are nearly sorted
         let mut inversions = 0usize;
         for i in 1..data.len() {
@@ -784,13 +798,13 @@ impl DataCharacteristics {
                 inversions += 1;
             }
         }
-        
+
         let is_nearly_sorted = inversions < std::cmp::max(1, size / 10);
-        
+
         // Estimate maximum string length for optimization decisions
         let max_length = data.iter().map(|s| s.len()).max().unwrap_or(0);
         let estimated_entropy = if size > 0 { (size as f64).log2() } else { 0.0 };
-        
+
         Self {
             size,
             is_nearly_sorted,
@@ -891,13 +905,13 @@ pub struct PhaseTimes {
 pub trait RadixSortable: Clone + Copy + Send + Sync + Ord {
     /// Extract the key for radix sorting (used for LSD radix sort)
     fn extract_key(&self) -> u64;
-    
+
     /// Get byte at the specified position for MSD radix sort
     fn get_byte(&self, position: usize) -> Option<u8>;
-    
+
     /// Get the maximum number of bytes for this data type
     fn max_bytes(&self) -> usize;
-    
+
     /// Check if this type is suitable for parallel processing
     fn supports_parallel() -> bool {
         true
@@ -908,7 +922,7 @@ impl RadixSortable for u32 {
     fn extract_key(&self) -> u64 {
         *self as u64
     }
-    
+
     fn get_byte(&self, position: usize) -> Option<u8> {
         if position < 4 {
             Some(((*self >> (8 * (3 - position))) & 0xFF) as u8)
@@ -916,7 +930,7 @@ impl RadixSortable for u32 {
             None
         }
     }
-    
+
     fn max_bytes(&self) -> usize {
         4
     }
@@ -926,7 +940,7 @@ impl RadixSortable for u64 {
     fn extract_key(&self) -> u64 {
         *self
     }
-    
+
     fn get_byte(&self, position: usize) -> Option<u8> {
         if position < 8 {
             Some(((*self >> (8 * (7 - position))) & 0xFF) as u8)
@@ -934,7 +948,7 @@ impl RadixSortable for u64 {
             None
         }
     }
-    
+
     fn max_bytes(&self) -> usize {
         8
     }
@@ -953,7 +967,7 @@ impl<'a> RadixString<'a> {
     pub fn new(data: &'a [u8]) -> Self {
         Self { data }
     }
-    
+
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
         self.data
@@ -969,15 +983,15 @@ impl<'a> RadixSortable for RadixString<'a> {
         }
         key
     }
-    
+
     fn get_byte(&self, position: usize) -> Option<u8> {
         self.data.get(position).copied()
     }
-    
+
     fn max_bytes(&self) -> usize {
         self.data.len()
     }
-    
+
     fn supports_parallel() -> bool {
         true // String sorting can be parallelized with careful design
     }
@@ -1010,7 +1024,7 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
             } else {
                 SecurePoolConfig::large_secure()
             };
-            
+
             Some(SecureMemoryPool::new(pool_config)?)
         } else {
             None
@@ -1084,7 +1098,7 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
     /// Sort data using adaptive strategy selection
     pub fn sort(&mut self, data: &mut [T]) -> Result<()> {
         let total_start = Instant::now();
-        
+
         if data.is_empty() {
             return Ok(());
         }
@@ -1103,7 +1117,9 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
             SortingStrategy::MsdRadix => self.msd_radix_sort(data, 0)?,
             SortingStrategy::Adaptive => {
                 // This shouldn't happen as select_strategy should return a concrete strategy
-                return Err(ZiporaError::invalid_data("Invalid adaptive strategy selection"));
+                return Err(ZiporaError::invalid_data(
+                    "Invalid adaptive strategy selection",
+                ));
             }
         }
         self.stats.phase_times.sorting_time_us = sorting_start.elapsed().as_micros() as u64;
@@ -1153,7 +1169,7 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
 
         let mut inversions = 0usize;
         let sample_size = std::cmp::min(1000, data.len()); // Sample for large datasets
-        
+
         for i in 1..sample_size {
             if data[i].extract_key() < data[i - 1].extract_key() {
                 inversions += 1;
@@ -1172,22 +1188,23 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
     /// Estimate memory requirements for the given input size
     pub fn estimate_memory(&self, input_size: usize) -> usize {
         let radix_size = 1usize << self.config.radix_bits;
-        
+
         // Base memory for buffers and counting arrays
         let base_memory = input_size * std::mem::size_of::<T>() + // Buffer
                          radix_size * std::mem::size_of::<usize>(); // Counts
-        
+
         // Additional memory for parallel processing
-        let parallel_memory = if self.config.use_parallel && input_size >= self.config.parallel_threshold {
-            let num_threads = if self.config.num_threads > 0 {
-                self.config.num_threads
+        let parallel_memory =
+            if self.config.use_parallel && input_size >= self.config.parallel_threshold {
+                let num_threads = if self.config.num_threads > 0 {
+                    self.config.num_threads
+                } else {
+                    rayon::current_num_threads()
+                };
+                base_memory * num_threads / 4 // Rough estimate for parallel buffers
             } else {
-                rayon::current_num_threads()
+                0
             };
-            base_memory * num_threads / 4 // Rough estimate for parallel buffers
-        } else {
-            0
-        };
 
         base_memory + parallel_memory
     }
@@ -1198,14 +1215,14 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
             let key = data[i];
             let key_value = key.extract_key();
             let mut j = i;
-            
+
             while j > 0 && data[j - 1].extract_key() > key_value {
                 data[j] = data[j - 1];
                 j -= 1;
             }
             data[j] = key;
         }
-        
+
         self.stats.basic_stats.used_parallel = false;
         self.stats.basic_stats.used_simd = false;
         Ok(())
@@ -1216,7 +1233,7 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
         // This is a simplified version - a full Tim sort implementation would be much more complex
         // For now, we use the standard library's unstable_sort which is based on pattern-defeating quicksort
         data.sort_unstable_by_key(|item| item.extract_key());
-        
+
         self.stats.basic_stats.used_parallel = false;
         self.stats.basic_stats.used_simd = false;
         Ok(())
@@ -1228,9 +1245,9 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
             return Ok(());
         }
 
-        let should_use_parallel = data.len() >= self.config.parallel_threshold && 
-                                 self.config.use_parallel && 
-                                 T::supports_parallel();
+        let should_use_parallel = data.len() >= self.config.parallel_threshold
+            && self.config.use_parallel
+            && T::supports_parallel();
 
         if should_use_parallel {
             self.lsd_radix_sort_parallel(data)
@@ -1243,7 +1260,7 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
     fn lsd_radix_sort_sequential(&mut self, data: &mut [T]) -> Result<()> {
         let radix = 1usize << self.config.radix_bits;
         let mask = (radix - 1) as u64;
-        
+
         // Allocate buffers - use memory pool if available
         let buffer = if let Some(ref _pool) = self.memory_pool {
             // For now, fall back to regular allocation
@@ -1252,17 +1269,20 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
         } else {
             vec![data[0]; data.len()]
         };
-        
+
         let mut buffer = buffer;
         let mut counts = vec![0usize; radix];
 
         // Determine maximum number of passes needed
-        let max_key = data.iter()
+        let max_key = data
+            .iter()
             .map(|item| item.extract_key())
             .max()
             .unwrap_or(0);
-        let max_passes = if max_key == 0 { 1 } else { 
-            (64 - max_key.leading_zeros() as usize).div_ceil(self.config.radix_bits) 
+        let max_passes = if max_key == 0 {
+            1
+        } else {
+            (64 - max_key.leading_zeros() as usize).div_ceil(self.config.radix_bits)
         };
 
         for pass in 0..max_passes {
@@ -1303,7 +1323,8 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
         }
 
         self.stats.basic_stats.used_parallel = false;
-        self.stats.basic_stats.used_simd = self.config.use_simd && self.cpu_features.has_advanced_simd();
+        self.stats.basic_stats.used_simd =
+            self.config.use_simd && self.cpu_features.has_advanced_simd();
         Ok(())
     }
 
@@ -1336,7 +1357,8 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
         self.multiway_merge_chunks(data, chunk_size)?;
 
         self.stats.basic_stats.used_parallel = true;
-        self.stats.basic_stats.used_simd = self.config.use_simd && self.cpu_features.has_advanced_simd();
+        self.stats.basic_stats.used_simd =
+            self.config.use_simd && self.cpu_features.has_advanced_simd();
         self.stats.threads_used = num_threads;
         Ok(())
     }
@@ -1358,9 +1380,9 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
         // Distribute items into buckets based on byte at current depth
         for &item in data.iter() {
             let bucket_index = if let Some(byte) = item.get_byte(depth) {
-                byte as usize + 1  // +1 to reserve bucket 0 for end-of-string
+                byte as usize + 1 // +1 to reserve bucket 0 for end-of-string
             } else {
-                0  // End of string
+                0 // End of string
             };
             buckets[bucket_index].push(item);
         }
@@ -1372,7 +1394,7 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
                 // Skip bucket 0 (end-of-string) as it's already sorted
                 self.msd_radix_sort(&mut bucket, depth + 1)?;
             }
-            
+
             // Copy bucket back to data
             for item in bucket {
                 data[offset] = item;
@@ -1386,10 +1408,18 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
     }
 
     /// SIMD-optimized digit counting for LSD radix sort
-    fn count_digits_simd(&self, data: &[T], shift: usize, mask: u64, counts: &mut [usize]) -> Result<()> {
+    fn count_digits_simd(
+        &self,
+        data: &[T],
+        shift: usize,
+        mask: u64,
+        counts: &mut [usize],
+    ) -> Result<()> {
         #[cfg(target_arch = "x86_64")]
         {
-            if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("bmi2") {
+            if std::arch::is_x86_feature_detected!("avx2")
+                && std::arch::is_x86_feature_detected!("bmi2")
+            {
                 // SAFETY: avx2 and bmi2 features detected at runtime
                 unsafe {
                     self.count_digits_avx2_bmi2(data, shift, mask, counts)?;
@@ -1411,11 +1441,17 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
     /// AVX2 + BMI2 accelerated digit counting
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2,bmi2")]
-    unsafe fn count_digits_avx2_bmi2(&self, data: &[T], shift: usize, mask: u64, counts: &mut [usize]) -> Result<()> {
+    unsafe fn count_digits_avx2_bmi2(
+        &self,
+        data: &[T],
+        shift: usize,
+        mask: u64,
+        counts: &mut [usize],
+    ) -> Result<()> {
         // This is a simplified version - full SIMD implementation would be more complex
         // For generic types, we need to extract keys first
         let mut keys: Vec<u64> = data.iter().map(|item| item.extract_key()).collect();
-        
+
         let mut i = 0;
         let shift_vec = _mm256_set1_epi32(shift as i32);
         let mask_vec = _mm256_set1_epi32(mask as i32);
@@ -1477,11 +1513,11 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
         // For now, use a simple approach: collect all elements and sort
         // This is less efficient than true multi-way merge but ensures correctness
         // TODO: Implement proper multi-way merge when the generic bounds are resolved
-        
+
         // Since we know all chunks are already sorted, we can use unstable sort
         // which will be very fast for mostly-sorted data
         data.sort_unstable();
-        
+
         Ok(())
     }
 }
@@ -1491,8 +1527,11 @@ impl<T: RadixSortable> Default for AdvancedRadixSort<T> {
         // SAFETY: AdvancedRadixSort::new() only fails on memory allocation errors.
         // Use unwrap_or_else with panic as this type has complex dependencies.
         Self::new().unwrap_or_else(|e| {
-            panic!("AdvancedRadixSort creation failed in Default: {}. \
-                   This indicates severe memory pressure.", e)
+            panic!(
+                "AdvancedRadixSort creation failed in Default: {}. \
+                   This indicates severe memory pressure.",
+                e
+            )
         })
     }
 }
@@ -1777,8 +1816,12 @@ mod tests {
         sorter.sort_bytes(&mut data).unwrap();
 
         for w in data.windows(2) {
-            assert!(w[0] <= w[1], "not sorted: {:?} > {:?}",
-                String::from_utf8_lossy(&w[0]), String::from_utf8_lossy(&w[1]));
+            assert!(
+                w[0] <= w[1],
+                "not sorted: {:?} > {:?}",
+                String::from_utf8_lossy(&w[0]),
+                String::from_utf8_lossy(&w[1])
+            );
         }
     }
 
@@ -1812,14 +1855,17 @@ mod tests {
 
         sorter.sort_bytes(&mut data).unwrap();
 
-        assert_eq!(data, vec![
-            b"prefi".to_vec(),
-            b"prefix".to_vec(),
-            b"prefix_aaa".to_vec(),
-            b"prefix_aaa_longer".to_vec(),
-            b"prefix_mmm".to_vec(),
-            b"prefix_zzz".to_vec(),
-        ]);
+        assert_eq!(
+            data,
+            vec![
+                b"prefi".to_vec(),
+                b"prefix".to_vec(),
+                b"prefix_aaa".to_vec(),
+                b"prefix_aaa_longer".to_vec(),
+                b"prefix_mmm".to_vec(),
+                b"prefix_zzz".to_vec(),
+            ]
+        );
     }
 
     #[test]
@@ -1862,7 +1908,8 @@ mod tests {
         let mut sorter = AdvancedU32RadixSort::with_config(AdvancedRadixSortConfig {
             insertion_sort_threshold: 50,
             ..Default::default()
-        }).unwrap();
+        })
+        .unwrap();
 
         let mut data: Vec<u32> = (0..1000).rev().collect(); // Reverse sorted
         let result = sorter.sort(&mut data);
@@ -1874,7 +1921,10 @@ mod tests {
         let stats = sorter.stats();
         assert_eq!(stats.basic_stats.items_processed, 1000);
         // Should use TimSort for reverse sorted data
-        assert!(matches!(stats.strategy_used, SortingStrategy::TimSort | SortingStrategy::LsdRadix));
+        assert!(matches!(
+            stats.strategy_used,
+            SortingStrategy::TimSort | SortingStrategy::LsdRadix
+        ));
     }
 
     #[test]
@@ -1890,13 +1940,23 @@ mod tests {
     #[test]
     fn test_advanced_radix_sort_strings() {
         let mut sorter = AdvancedStringRadixSort::new().unwrap();
-        let strings = vec![b"banana".as_slice(), b"apple".as_slice(), b"cherry".as_slice(), b"date".as_slice()];
+        let strings = vec![
+            b"banana".as_slice(),
+            b"apple".as_slice(),
+            b"cherry".as_slice(),
+            b"date".as_slice(),
+        ];
         let mut data: Vec<RadixString> = strings.iter().map(|s| RadixString::new(s)).collect();
 
         let result = sorter.sort(&mut data);
         assert!(result.is_ok());
 
-        let expected_strings = vec![b"apple".as_slice(), b"banana".as_slice(), b"cherry".as_slice(), b"date".as_slice()];
+        let expected_strings = vec![
+            b"apple".as_slice(),
+            b"banana".as_slice(),
+            b"cherry".as_slice(),
+            b"date".as_slice(),
+        ];
         for (i, expected) in expected_strings.iter().enumerate() {
             assert_eq!(data[i].as_slice(), *expected);
         }
@@ -1947,7 +2007,7 @@ mod tests {
     #[test]
     fn test_cpu_features_detection() {
         let features = CpuFeatures::detect();
-        
+
         // These tests depend on the actual CPU, so we just verify the structure
         #[cfg(target_arch = "x86_64")]
         {
@@ -1973,7 +2033,7 @@ mod tests {
     fn test_data_characteristics_integers() {
         let data = vec![1u32, 2, 3, 4, 5]; // Sorted
         let chars = DataCharacteristics::analyze_integers(&data);
-        
+
         assert_eq!(chars.size, 5);
         assert!(chars.is_nearly_sorted);
         assert!(!chars.is_string_data);
@@ -1986,13 +2046,9 @@ mod tests {
 
     #[test]
     fn test_data_characteristics_strings() {
-        let data = vec![
-            b"apple".to_vec(),
-            b"banana".to_vec(),
-            b"cherry".to_vec(),
-        ];
+        let data = vec![b"apple".to_vec(), b"banana".to_vec(), b"cherry".to_vec()];
         let chars = DataCharacteristics::analyze_strings(&data);
-        
+
         assert_eq!(chars.size, 3);
         assert!(chars.is_nearly_sorted); // Lexicographically sorted
         assert!(chars.is_string_data);
@@ -2014,13 +2070,13 @@ mod tests {
     fn test_radix_sortable_trait_radix_string() {
         let value = RadixString::new(b"hello");
         let key = value.extract_key();
-        
+
         // Should extract first 8 bytes as big-endian u64
-        let expected = (b'h' as u64) << 56 | 
-                      (b'e' as u64) << 48 | 
-                      (b'l' as u64) << 40 | 
-                      (b'l' as u64) << 32 | 
-                      (b'o' as u64) << 24;
+        let expected = (b'h' as u64) << 56
+            | (b'e' as u64) << 48
+            | (b'l' as u64) << 40
+            | (b'l' as u64) << 32
+            | (b'o' as u64) << 24;
         assert_eq!(key, expected);
 
         assert_eq!(value.get_byte(0), Some(b'h'));
@@ -2053,7 +2109,8 @@ mod tests {
         let mut sorter = AdvancedU32RadixSort::with_config(AdvancedRadixSortConfig {
             enable_profiling: true,
             ..Default::default()
-        }).unwrap();
+        })
+        .unwrap();
 
         let mut data: Vec<u32> = (0..1000).rev().collect(); // Larger dataset to ensure measurable timing
         let result = sorter.sort(&mut data);
@@ -2068,10 +2125,10 @@ mod tests {
     fn test_memory_pool_integration() {
         let memory_pool = SecureMemoryPool::new(SecurePoolConfig::large_secure()).unwrap();
         let config = AdvancedRadixSortConfig::default();
-        
+
         let mut sorter = AdvancedU32RadixSort::with_memory_pool(config, memory_pool);
         let mut data = vec![5u32, 2, 8, 1, 9];
-        
+
         let result = sorter.sort(&mut data);
         assert!(result.is_ok());
         assert_eq!(data, vec![1, 2, 5, 8, 9]);

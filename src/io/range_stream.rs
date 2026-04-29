@@ -131,16 +131,20 @@ impl<R> RangeReader<R> {
 impl<R: Read + Seek> RangeReader<R> {
     /// Create a new range reader and seek to the start position
     pub fn new_and_seek(mut inner: R, start: u64, length: u64) -> Result<Self> {
-        inner.seek(SeekFrom::Start(start))
-            .map_err(|e| ZiporaError::io_error(format!("Failed to seek to start position {}: {}", start, e)))?;
-        
+        inner.seek(SeekFrom::Start(start)).map_err(|e| {
+            ZiporaError::io_error(format!("Failed to seek to start position {}: {}", start, e))
+        })?;
+
         Ok(Self::new(inner, start, length))
     }
 
     /// Reset to the beginning of the range
     pub fn reset(&mut self) -> Result<()> {
-        self.inner.seek(SeekFrom::Start(self.start_pos))
-            .map_err(|e| ZiporaError::io_error(format!("Failed to reset to start position: {}", e)))?;
+        self.inner
+            .seek(SeekFrom::Start(self.start_pos))
+            .map_err(|e| {
+                ZiporaError::io_error(format!("Failed to reset to start position: {}", e))
+            })?;
         self.current_pos = self.start_pos;
         Ok(())
     }
@@ -149,12 +153,14 @@ impl<R: Read + Seek> RangeReader<R> {
     pub fn seek_in_range(&mut self, pos: u64) -> Result<u64> {
         let absolute_pos = self.start_pos.saturating_add(pos);
         if absolute_pos >= self.end_pos {
-            return Err(ZiporaError::invalid_data(
-                format!("Seek position {} is beyond range end {}", absolute_pos, self.end_pos)
-            ));
+            return Err(ZiporaError::invalid_data(format!(
+                "Seek position {} is beyond range end {}",
+                absolute_pos, self.end_pos
+            )));
         }
 
-        self.inner.seek(SeekFrom::Start(absolute_pos))
+        self.inner
+            .seek(SeekFrom::Start(absolute_pos))
             .map_err(|e| ZiporaError::io_error(format!("Failed to seek within range: {}", e)))?;
         self.current_pos = absolute_pos;
         Ok(pos)
@@ -169,10 +175,10 @@ impl<R: Read> Read for RangeReader<R> {
 
         let remaining = self.remaining() as usize;
         let to_read = cmp::min(buf.len(), remaining);
-        
+
         let bytes_read = self.inner.read(&mut buf[..to_read])?;
         self.current_pos += bytes_read as u64;
-        
+
         Ok(bytes_read)
     }
 }
@@ -199,10 +205,10 @@ impl<R: Read + Seek> Seek for RangeReader<R> {
 
         // Clamp to range bounds
         let clamped_pos = cmp::max(self.start_pos, cmp::min(target_pos, self.end_pos));
-        
+
         self.inner.seek(SeekFrom::Start(clamped_pos))?;
         self.current_pos = clamped_pos;
-        
+
         Ok(clamped_pos - self.start_pos)
     }
 }
@@ -293,9 +299,10 @@ impl<W> RangeWriter<W> {
 impl<W: Write + Seek> RangeWriter<W> {
     /// Create a new range writer and seek to the start position
     pub fn new_and_seek(mut inner: W, start: u64, length: u64) -> Result<Self> {
-        inner.seek(SeekFrom::Start(start))
-            .map_err(|e| ZiporaError::io_error(format!("Failed to seek to start position {}: {}", start, e)))?;
-        
+        inner.seek(SeekFrom::Start(start)).map_err(|e| {
+            ZiporaError::io_error(format!("Failed to seek to start position {}: {}", start, e))
+        })?;
+
         Ok(Self::new(inner, start, length))
     }
 }
@@ -308,11 +315,11 @@ impl<W: Write> Write for RangeWriter<W> {
 
         let remaining = self.remaining() as usize;
         let to_write = cmp::min(buf.len(), remaining);
-        
+
         let bytes_written = self.inner.write(&buf[..to_write])?;
         self.current_pos += bytes_written as u64;
         self.bytes_written += bytes_written as u64;
-        
+
         Ok(bytes_written)
     }
 
@@ -343,10 +350,10 @@ impl<W: Write + Seek> Seek for RangeWriter<W> {
 
         // Clamp to range bounds
         let clamped_pos = cmp::max(self.start_pos, cmp::min(target_pos, self.end_pos));
-        
+
         self.inner.seek(SeekFrom::Start(clamped_pos))?;
         self.current_pos = clamped_pos;
-        
+
         Ok(clamped_pos - self.start_pos)
     }
 }
@@ -357,7 +364,7 @@ impl<R: Read> DataInput for RangeReader<R> {
         if self.remaining() < 1 {
             return Err(ZiporaError::io_error("Range exhausted"));
         }
-        
+
         let mut buf = [0u8; 1];
         self.read_exact(&mut buf)
             .map_err(|e| ZiporaError::io_error(format!("Failed to read u8: {}", e)))?;
@@ -368,7 +375,7 @@ impl<R: Read> DataInput for RangeReader<R> {
         if self.remaining() < 2 {
             return Err(ZiporaError::io_error("Range exhausted"));
         }
-        
+
         let mut buf = [0u8; 2];
         self.read_exact(&mut buf)
             .map_err(|e| ZiporaError::io_error(format!("Failed to read u16: {}", e)))?;
@@ -379,7 +386,7 @@ impl<R: Read> DataInput for RangeReader<R> {
         if self.remaining() < 4 {
             return Err(ZiporaError::io_error("Range exhausted"));
         }
-        
+
         let mut buf = [0u8; 4];
         self.read_exact(&mut buf)
             .map_err(|e| ZiporaError::io_error(format!("Failed to read u32: {}", e)))?;
@@ -390,7 +397,7 @@ impl<R: Read> DataInput for RangeReader<R> {
         if self.remaining() < 8 {
             return Err(ZiporaError::io_error("Range exhausted"));
         }
-        
+
         let mut buf = [0u8; 8];
         self.read_exact(&mut buf)
             .map_err(|e| ZiporaError::io_error(format!("Failed to read u64: {}", e)))?;
@@ -405,7 +412,7 @@ impl<R: Read> DataInput for RangeReader<R> {
         if self.remaining() < buf.len() as u64 {
             return Err(ZiporaError::io_error("Range exhausted"));
         }
-        
+
         self.read_exact(buf)
             .map_err(|e| ZiporaError::io_error(format!("Failed to read bytes: {}", e)))
     }
@@ -414,17 +421,17 @@ impl<R: Read> DataInput for RangeReader<R> {
         if self.remaining() < n as u64 {
             return Err(ZiporaError::io_error("Cannot skip past range end"));
         }
-        
+
         let mut buf = vec![0u8; n.min(8192)];
         let mut remaining = n;
-        
+
         while remaining > 0 {
             let to_read = remaining.min(buf.len());
             self.read_exact(&mut buf[..to_read])
                 .map_err(|e| ZiporaError::io_error(format!("Failed to skip bytes: {}", e)))?;
             remaining -= to_read;
         }
-        
+
         Ok(())
     }
 
@@ -463,7 +470,8 @@ impl<R> MultiRangeReader<R> {
 
     /// Get the total number of bytes across all ranges
     pub fn total_length(&self) -> u64 {
-        self.ranges.iter()
+        self.ranges
+            .iter()
             .map(|(start, end)| end.saturating_sub(*start))
             .sum()
     }
@@ -493,7 +501,7 @@ impl<R: Read + Seek> Read for MultiRangeReader<R> {
 
         let (start, end) = self.ranges[self.current_range];
         let absolute_pos = start + self.current_pos;
-        
+
         if absolute_pos >= end {
             // Current range exhausted, move to next
             if !self.next_range() {
@@ -504,14 +512,14 @@ impl<R: Read + Seek> Read for MultiRangeReader<R> {
 
         // Seek to current position in range
         self.inner.seek(SeekFrom::Start(absolute_pos))?;
-        
+
         // Read limited by range end
         let remaining_in_range = (end - absolute_pos) as usize;
         let to_read = cmp::min(buf.len(), remaining_in_range);
-        
+
         let bytes_read = self.inner.read(&mut buf[..to_read])?;
         self.current_pos += bytes_read as u64;
-        
+
         Ok(bytes_read)
     }
 }
@@ -519,12 +527,12 @@ impl<R: Read + Seek> Read for MultiRangeReader<R> {
 /// Convenience functions for creating range readers and writers
 pub mod range {
     use super::*;
-    
+
     /// Create a range reader from any Read + Seek type
     pub fn reader<R: Read + Seek>(inner: R, start: u64, length: u64) -> Result<RangeReader<R>> {
         RangeReader::new_and_seek(inner, start, length)
     }
-    
+
     /// Create a range writer from any Write + Seek type
     pub fn writer<W: Write + Seek>(inner: W, start: u64, length: u64) -> Result<RangeWriter<W>> {
         RangeWriter::new_and_seek(inner, start, length)
@@ -616,7 +624,7 @@ mod tests {
 
         // Seek to position 7 (start of "World")
         reader.seek_in_range(7).unwrap();
-        
+
         let mut buf = [0u8; 5];
         reader.read(&mut buf).unwrap();
         assert_eq!(&buf, b"World");
@@ -671,7 +679,7 @@ mod tests {
     fn test_multi_range_reader() {
         let data = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         let cursor = Cursor::new(data);
-        
+
         // Read ranges: A-C (0-3), G-I (6-9), M-O (12-15)
         let ranges = vec![(0, 3), (6, 9), (12, 15)];
         let mut reader = MultiRangeReader::new(cursor, ranges);

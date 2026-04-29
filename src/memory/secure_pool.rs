@@ -29,17 +29,20 @@
 //! with a central depot for cross-thread coordination. Each allocation is
 //! validated with generation counters and cryptographic signatures.
 
-use crate::error::{Result, ZiporaError};
-use crate::memory::simd_ops::{fast_fill, fast_compare, fast_prefetch};
-use crate::memory::cache_layout::{CacheOptimizedAllocator, CacheLayoutConfig, align_to_cache_line, AccessPattern, HotColdSeparator, PrefetchHint};
-use crate::memory::{get_optimal_numa_node, numa_alloc_aligned, numa_dealloc};
-use crate::simd::adaptive::AdaptiveSimdSelector;
-use crate::simd::Operation;
 use super::CachePadded;
+use crate::error::{Result, ZiporaError};
+use crate::memory::cache_layout::{
+    AccessPattern, CacheLayoutConfig, CacheOptimizedAllocator, HotColdSeparator, PrefetchHint,
+    align_to_cache_line,
+};
+use crate::memory::simd_ops::{fast_compare, fast_fill, fast_prefetch};
+use crate::memory::{get_optimal_numa_node, numa_alloc_aligned, numa_dealloc};
+use crate::simd::Operation;
+use crate::simd::adaptive::AdaptiveSimdSelector;
 use once_cell::sync::Lazy;
-use std::collections::HashMap;
 use std::alloc::{Layout, alloc, dealloc};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
@@ -48,7 +51,6 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 /// Magic constants for corruption detection
 const CHUNK_HEADER_MAGIC: u64 = 0xDEADBEEFCAFEBABE;
 const CHUNK_FOOTER_MAGIC: u64 = 0xFEEDFACEDEADBEEF;
-
 
 /// Size classes for efficient allocation (jemalloc-inspired)
 const SIZE_CLASSES: &[usize] = &[
@@ -79,45 +81,45 @@ pub struct SecurePoolConfig {
     /// Batch size for depot transfers
     pub batch_size: usize,
     /// Enable SIMD optimizations for memory operations (default: true)
-    /// 
+    ///
     /// When enabled, uses vectorized instructions for memory operations like zeroing
     /// on systems that support SIMD (AVX-512/AVX2/SSE2). Provides significant
     /// performance improvements for large memory operations while maintaining
     /// all security guarantees.
     pub enable_simd_ops: bool,
     /// Minimum size threshold for SIMD operations (default: 64 bytes)
-    /// 
+    ///
     /// Memory operations smaller than this threshold use standard implementations.
     /// SIMD operations provide meaningful performance benefits only for larger
     /// memory regions. The default of 64 bytes aligns with cache line size.
     pub simd_threshold: usize,
     /// Enable cache-line aligned allocations for better performance
-    /// 
+    ///
     /// When enabled, all allocations are aligned to cache line boundaries
     /// to minimize false sharing and improve cache efficiency. This provides
     /// significant performance benefits for data structures accessed across threads.
     pub enable_cache_alignment: bool,
     /// Cache layout configuration for optimization
-    /// 
+    ///
     /// Specifies cache-specific optimizations like prefetch distances,
     /// hot/cold separation, and access pattern hints.
     pub cache_config: Option<CacheLayoutConfig>,
     /// Enable NUMA-aware allocation (default: true)
-    /// 
+    ///
     /// When enabled, allocations prefer the local NUMA node to minimize
     /// memory access latency and maximize bandwidth utilization.
     pub enable_numa_awareness: bool,
     /// Enable hot/cold data separation for cache optimization
-    /// 
+    ///
     /// When enabled, frequently accessed allocations are placed in
     /// cache-friendly regions while cold data is moved to separate areas.
     pub enable_hot_cold_separation: bool,
     /// Allocation frequency threshold for hot data classification
-    /// 
+    ///
     /// Allocations accessed more than this threshold are considered hot.
     pub hot_data_threshold: usize,
     /// Enable huge page allocation for large chunks (Linux only)
-    /// 
+    ///
     /// When enabled, large allocations use huge pages to reduce TLB pressure
     /// and improve memory access performance.
     pub enable_huge_pages: bool,
@@ -157,7 +159,7 @@ impl SecurePoolConfig {
             hot_data_threshold: 1000,
             enable_huge_pages: cfg!(target_os = "linux"),
             huge_page_threshold: 2 * 1024 * 1024, // 2MB
-            prefetch_distance: 8, // Default: balanced for most workloads
+            prefetch_distance: 8,                 // Default: balanced for most workloads
         }
     }
 
@@ -178,7 +180,7 @@ impl SecurePoolConfig {
             cache_config: Some(CacheLayoutConfig::random()),
             enable_numa_awareness: true,
             enable_hot_cold_separation: true,
-            hot_data_threshold: 500, // More sensitive for small objects
+            hot_data_threshold: 500,  // More sensitive for small objects
             enable_huge_pages: false, // Disable for small objects
             huge_page_threshold: 2 * 1024 * 1024,
             prefetch_distance: 8, // Default for small objects
@@ -202,7 +204,7 @@ impl SecurePoolConfig {
             cache_config: Some(CacheLayoutConfig::sequential()),
             enable_numa_awareness: true,
             enable_hot_cold_separation: true,
-            hot_data_threshold: 750, // Balanced for medium objects
+            hot_data_threshold: 750,  // Balanced for medium objects
             enable_huge_pages: false, // Usually not needed for 64KB
             huge_page_threshold: 2 * 1024 * 1024,
             prefetch_distance: 8, // Default for medium objects
@@ -227,7 +229,7 @@ impl SecurePoolConfig {
             enable_numa_awareness: true,
             enable_hot_cold_separation: true,
             hot_data_threshold: 1500, // Higher threshold for large objects
-            enable_huge_pages: true, // Enable for large objects
+            enable_huge_pages: true,  // Enable for large objects
             huge_page_threshold: 2 * 1024 * 1024,
             prefetch_distance: 12, // More aggressive for large batch allocations
         }
@@ -270,7 +272,7 @@ impl SecurePoolConfig {
     }
 
     /// Builder method to enable/disable SIMD optimizations
-    /// 
+    ///
     /// When enabled (default), uses vectorized instructions for memory operations
     /// like zeroing on systems that support SIMD. Provides significant performance
     /// improvements while maintaining all security guarantees.
@@ -280,7 +282,7 @@ impl SecurePoolConfig {
     }
 
     /// Builder method to set SIMD threshold
-    /// 
+    ///
     /// Memory operations smaller than this threshold use standard implementations.
     /// The default of 64 bytes aligns with cache line size and provides optimal
     /// performance characteristics for most workloads.
@@ -290,7 +292,7 @@ impl SecurePoolConfig {
     }
 
     /// Builder method to enable/disable cache alignment
-    /// 
+    ///
     /// When enabled (default), all allocations are aligned to cache line boundaries
     /// to minimize false sharing and improve cache efficiency. This provides
     /// significant performance benefits for data structures accessed across threads.
@@ -300,7 +302,7 @@ impl SecurePoolConfig {
     }
 
     /// Builder method to set cache configuration
-    /// 
+    ///
     /// Specifies cache-specific optimizations like prefetch distances,
     /// hot/cold separation, and access pattern hints. If None, cache optimizations
     /// are disabled.
@@ -310,7 +312,7 @@ impl SecurePoolConfig {
     }
 
     /// Builder method to set cache configuration for specific access pattern
-    /// 
+    ///
     /// Convenience method that creates an appropriate cache configuration
     /// based on the expected access pattern.
     pub fn with_access_pattern(mut self, pattern: AccessPattern) -> Self {
@@ -326,7 +328,7 @@ impl SecurePoolConfig {
     }
 
     /// Builder method to enable/disable NUMA awareness
-    /// 
+    ///
     /// When enabled, allocations prefer the local NUMA node to minimize
     /// memory access latency and maximize bandwidth utilization.
     pub fn with_numa_awareness(mut self, enable: bool) -> Self {
@@ -335,7 +337,7 @@ impl SecurePoolConfig {
     }
 
     /// Builder method to enable/disable hot/cold data separation
-    /// 
+    ///
     /// When enabled, frequently accessed allocations are placed in
     /// cache-friendly regions while cold data is moved to separate areas.
     pub fn with_hot_cold_separation(mut self, enable: bool) -> Self {
@@ -344,7 +346,7 @@ impl SecurePoolConfig {
     }
 
     /// Builder method to set hot data threshold
-    /// 
+    ///
     /// Allocations accessed more than this threshold are considered hot.
     pub fn with_hot_data_threshold(mut self, threshold: usize) -> Self {
         self.hot_data_threshold = threshold;
@@ -352,7 +354,7 @@ impl SecurePoolConfig {
     }
 
     /// Builder method to enable/disable huge pages
-    /// 
+    ///
     /// When enabled, large allocations use huge pages to reduce TLB pressure
     /// and improve memory access performance.
     pub fn with_huge_pages(mut self, enable: bool) -> Self {
@@ -716,7 +718,13 @@ impl<T> LockFreeStack<T> {
             let head = self.head.load(Ordering::Acquire, &guard);
             node.next.store(head, Ordering::Relaxed);
 
-            match self.head.compare_exchange(head, node, Ordering::Release, Ordering::Relaxed, &guard) {
+            match self.head.compare_exchange(
+                head,
+                node,
+                Ordering::Release,
+                Ordering::Relaxed,
+                &guard,
+            ) {
                 Ok(_) => break,
                 Err(e) => node = e.new,
             }
@@ -727,7 +735,7 @@ impl<T> LockFreeStack<T> {
         let guard = epoch::pin();
         loop {
             let head = self.head.load(Ordering::Acquire, &guard);
-            
+
             // Check if stack is empty
             if head.is_null() {
                 return None;
@@ -738,7 +746,11 @@ impl<T> LockFreeStack<T> {
             // until the current epoch advances, ensuring the read of `next` is safe.
             let next = unsafe { head.deref() }.next.load(Ordering::Relaxed, &guard);
 
-            if self.head.compare_exchange(head, next, Ordering::AcqRel, Ordering::Acquire, &guard).is_ok() {
+            if self
+                .head
+                .compare_exchange(head, next, Ordering::AcqRel, Ordering::Acquire, &guard)
+                .is_ok()
+            {
                 // We successfully unlinked the head node. We now have exclusive ownership
                 // of the data inside it, but we must wait for all threads to drop their
                 // guards before the memory backing the node can be reclaimed.
@@ -746,13 +758,13 @@ impl<T> LockFreeStack<T> {
                     guard.defer_destroy(head);
                     // The data itself can be moved out immediately since we logically
                     // own it. Rust's Ownership prevents use-after-free of the `data`.
-                    return Some(std::mem::ManuallyDrop::into_inner(std::ptr::read(&head.deref().data)));
+                    return Some(std::mem::ManuallyDrop::into_inner(std::ptr::read(
+                        &head.deref().data,
+                    )));
                 }
             }
         }
     }
-
-
 }
 
 impl<T> Drop for LockFreeStack<T> {
@@ -760,7 +772,6 @@ impl<T> Drop for LockFreeStack<T> {
         while self.pop().is_some() {}
     }
 }
-
 
 /// Thread-local cache for reduced contention
 #[derive(Default)]
@@ -789,8 +800,6 @@ impl LocalCache {
             Err(chunk)
         }
     }
-
-
 }
 
 /// Production-ready secure memory pool
@@ -800,7 +809,7 @@ pub struct SecureMemoryPool {
     global_stack: LockFreeStack<SecureChunk>,
     next_generation: AtomicU32,
     local_caches: thread_local::ThreadLocal<RefCell<LocalCache>>,
-    
+
     // Cache optimization infrastructure
     cache_allocator: Option<CacheOptimizedAllocator>,
 
@@ -813,7 +822,7 @@ pub struct SecureMemoryPool {
     double_free_detected: CachePadded<AtomicU64>,
     local_cache_hits: CachePadded<AtomicU64>,
     cross_thread_steals: CachePadded<AtomicU64>,
-    
+
     // Cache-specific statistics
     cache_aligned_allocs: CachePadded<AtomicU64>,
     numa_local_allocs: CachePadded<AtomicU64>,
@@ -854,12 +863,15 @@ impl SecureMemoryPool {
         // Initialize cache allocator if cache alignment is enabled
         let cache_allocator = if config.enable_cache_alignment && config.cache_config.is_some() {
             // SAFETY: is_some() check above guarantees this unwrap succeeds
-            Some(CacheOptimizedAllocator::new(config.cache_config.clone().expect("cache_config present when cache_friendly enabled")))
+            Some(CacheOptimizedAllocator::new(
+                config
+                    .cache_config
+                    .clone()
+                    .expect("cache_config present when cache_friendly enabled"),
+            ))
         } else {
             None
         };
-
-
 
         Ok(Arc::new(Self {
             config,
@@ -927,10 +939,13 @@ impl SecureMemoryPool {
             // }
 
             // Track allocation
-            self.active_allocations.write().expect("active_allocations lock").insert(
-                chunk.as_ptr() as usize,
-                (chunk.generation(), Instant::now()),
-            );
+            self.active_allocations
+                .write()
+                .expect("active_allocations lock")
+                .insert(
+                    chunk.as_ptr() as usize,
+                    (chunk.generation(), Instant::now()),
+                );
 
             return Ok(SecurePooledPtr {
                 chunk: Some(chunk),
@@ -957,10 +972,13 @@ impl SecureMemoryPool {
             }
 
             // Track allocation
-            self.active_allocations.write().expect("active_allocations lock").insert(
-                chunk.as_ptr() as usize,
-                (chunk.generation(), Instant::now()),
-            );
+            self.active_allocations
+                .write()
+                .expect("active_allocations lock")
+                .insert(
+                    chunk.as_ptr() as usize,
+                    (chunk.generation(), Instant::now()),
+                );
 
             return Ok(SecurePooledPtr {
                 chunk: Some(chunk),
@@ -981,10 +999,13 @@ impl SecureMemoryPool {
         }
 
         // Track allocation
-        self.active_allocations.write().expect("active_allocations lock").insert(
-            chunk.as_ptr() as usize,
-            (chunk.generation(), Instant::now()),
-        );
+        self.active_allocations
+            .write()
+            .expect("active_allocations lock")
+            .insert(
+                chunk.as_ptr() as usize,
+                (chunk.generation(), Instant::now()),
+            );
 
         Ok(SecurePooledPtr {
             chunk: Some(chunk),
@@ -993,7 +1014,7 @@ impl SecureMemoryPool {
     }
 
     /// Internal deallocation with security validation
-    /// 
+    ///
     /// # SIMD Performance
     /// Chunks returned to cache/stack are not immediately deallocated (and thus not SIMD-optimized).
     /// SIMD optimization occurs when chunks are finally deallocated during:
@@ -1005,19 +1026,30 @@ impl SecureMemoryPool {
         // Validate chunk before deallocation
         if let Err(e) = chunk.validate() {
             self.corruption_detected.fetch_add(1, Ordering::Relaxed);
-            chunk.deallocate(self.config.zero_on_free, self.config.enable_simd_ops, self.config.simd_threshold);
+            chunk.deallocate(
+                self.config.zero_on_free,
+                self.config.enable_simd_ops,
+                self.config.simd_threshold,
+            );
             return Err(e);
         }
 
         // Check for double-free
-        let mut allocs = self.active_allocations.write().expect("active_allocations lock");
+        let mut allocs = self
+            .active_allocations
+            .write()
+            .expect("active_allocations lock");
         let chunk_ptr = chunk.as_ptr() as usize;
-        
+
         if let Some(&allocation_info) = allocs.get(&chunk_ptr) {
             let (original_generation, _): (u32, Instant) = allocation_info;
             if original_generation != chunk.generation() {
                 self.double_free_detected.fetch_add(1, Ordering::Relaxed);
-                chunk.deallocate(self.config.zero_on_free, self.config.enable_simd_ops, self.config.simd_threshold);
+                chunk.deallocate(
+                    self.config.zero_on_free,
+                    self.config.enable_simd_ops,
+                    self.config.simd_threshold,
+                );
                 return Err(ZiporaError::invalid_data(
                     "Double-free detected: generation mismatch",
                 ));
@@ -1026,7 +1058,11 @@ impl SecureMemoryPool {
             }
         } else {
             self.double_free_detected.fetch_add(1, Ordering::Relaxed);
-            chunk.deallocate(self.config.zero_on_free, self.config.enable_simd_ops, self.config.simd_threshold);
+            chunk.deallocate(
+                self.config.zero_on_free,
+                self.config.enable_simd_ops,
+                self.config.simd_threshold,
+            );
             return Err(ZiporaError::invalid_data(
                 "Double-free detected: pointer not allocated",
             ));
@@ -1060,7 +1096,7 @@ impl SecureMemoryPool {
                 // let optimal_node = get_optimal_numa_node();
                 if optimal_node >= 0 {
                     self.numa_local_allocs.fetch_add(1, Ordering::Relaxed);
-                    
+
                     // NUMA allocation temporarily disabled for simplicity
                     // if let Ok(ptr) = numa_alloc_aligned(
                     //     self.config.chunk_size,
@@ -1074,14 +1110,23 @@ impl SecureMemoryPool {
 
             // Check for huge page allocation
             #[cfg(target_os = "linux")]
-            if self.config.enable_huge_pages && self.config.chunk_size >= self.config.huge_page_threshold {
+            if self.config.enable_huge_pages
+                && self.config.chunk_size >= self.config.huge_page_threshold
+            {
                 self.huge_page_allocs.fetch_add(1, Ordering::Relaxed);
                 // Try huge page allocation (would integrate with hugepage module)
                 // For now, fall through to regular allocation
             }
 
             // Prefetch hints for hot data
-            if is_hot && self.config.cache_config.as_ref().map(|c| c.enable_prefetch).unwrap_or(false) {
+            if is_hot
+                && self
+                    .config
+                    .cache_config
+                    .as_ref()
+                    .map(|c| c.enable_prefetch)
+                    .unwrap_or(false)
+            {
                 // Future: implement prefetch hints for hot allocations
             }
         }
@@ -1118,11 +1163,7 @@ impl SecureMemoryPool {
         fast_fill(slice, 0);
 
         // Monitor performance for adaptive adjustment
-        selector.monitor_performance(
-            Operation::MemZero,
-            start.elapsed(),
-            chunk.size() as u64
-        );
+        selector.monitor_performance(Operation::MemZero, start.elapsed(), chunk.size() as u64);
 
         Ok(())
     }
@@ -1178,16 +1219,20 @@ impl SecureMemoryPool {
     ///
     /// # Returns
     /// Vector of allocated pointers in the same order as requested sizes
-    pub fn allocate_bulk_with_prefetch(self: &Arc<Self>, sizes: &[usize]) -> Result<Vec<SecurePooledPtr>> {
+    pub fn allocate_bulk_with_prefetch(
+        self: &Arc<Self>,
+        sizes: &[usize],
+    ) -> Result<Vec<SecurePooledPtr>> {
         let prefetch_distance = self.config.prefetch_distance;
         let mut results = Vec::with_capacity(sizes.len());
 
         for (i, &size) in sizes.iter().enumerate() {
             // Validate size matches chunk size
             if size != self.config.chunk_size {
-                return Err(ZiporaError::invalid_data(
-                    format!("Size {} does not match chunk_size {}", size, self.config.chunk_size)
-                ));
+                return Err(ZiporaError::invalid_data(format!(
+                    "Size {} does not match chunk_size {}",
+                    size, self.config.chunk_size
+                )));
             }
 
             // Prefetch future allocations (lookahead)
@@ -1239,7 +1284,7 @@ impl SecureMemoryPool {
             chunk.deallocate(
                 self.config.zero_on_free,
                 self.config.enable_simd_ops,
-                self.config.simd_threshold
+                self.config.simd_threshold,
             );
         }
 
@@ -1248,7 +1293,10 @@ impl SecureMemoryPool {
         // when threads exit or when they access the cache and find it should be cleared.
 
         // Clear allocation tracking
-        self.active_allocations.write().expect("active_allocations lock").clear();
+        self.active_allocations
+            .write()
+            .expect("active_allocations lock")
+            .clear();
 
         Ok(())
     }
@@ -1261,8 +1309,12 @@ impl SecureMemoryPool {
     /// Validate pool integrity
     pub fn validate(&self) -> Result<()> {
         // Check active allocations for corruption
-        for (&ptr_addr, &(generation, _time)) in self.active_allocations.read().expect("active_allocations lock").iter() {
-
+        for (&ptr_addr, &(generation, _time)) in self
+            .active_allocations
+            .read()
+            .expect("active_allocations lock")
+            .iter()
+        {
             // Read canary from the chunk header for validation
             let data_ptr = ptr_addr as *mut u8;
             let header_size = std::mem::size_of::<ChunkHeader>();
@@ -1456,9 +1508,12 @@ static GLOBAL_SECURE_POOLS: Lazy<Vec<Arc<SecureMemoryPool>>> = Lazy::new(|| {
     // SAFETY: Static initialization - panic on pool creation failure is appropriate
     // because the program cannot continue without global memory pools
     vec![
-        SecureMemoryPool::new(SecurePoolConfig::small_secure()).expect("small secure pool creation"),
-        SecureMemoryPool::new(SecurePoolConfig::medium_secure()).expect("medium secure pool creation"),
-        SecureMemoryPool::new(SecurePoolConfig::large_secure()).expect("large secure pool creation"),
+        SecureMemoryPool::new(SecurePoolConfig::small_secure())
+            .expect("small secure pool creation"),
+        SecureMemoryPool::new(SecurePoolConfig::medium_secure())
+            .expect("medium secure pool creation"),
+        SecureMemoryPool::new(SecurePoolConfig::large_secure())
+            .expect("large secure pool creation"),
     ]
 });
 
@@ -1727,7 +1782,7 @@ mod tests {
         // Verify configuration
         assert!(pool.config().enable_simd_ops);
         assert_eq!(pool.config().simd_threshold, 64);
-        
+
         // Large chunks should be SIMD-optimized since 1MB >> 64 bytes
         // This is tested implicitly through the deallocation process
     }
@@ -1743,9 +1798,7 @@ mod tests {
         // Allocate and verify SIMD zeroing
         let ptr = pool.allocate().unwrap();
         // SAFETY: test code, pointer valid from allocation
-        let slice = unsafe {
-            std::slice::from_raw_parts(ptr.as_ptr(), ptr.size())
-        };
+        let slice = unsafe { std::slice::from_raw_parts(ptr.as_ptr(), ptr.size()) };
 
         // All bytes should be zero
         assert!(slice.iter().all(|&b| b == 0));
@@ -1756,20 +1809,23 @@ mod tests {
 
     #[test]
     fn test_simd_verification() {
-        let config = SecurePoolConfig::medium_secure()
-            .with_simd_ops(true);
+        let config = SecurePoolConfig::medium_secure().with_simd_ops(true);
         let pool = SecureMemoryPool::new(config).unwrap();
 
         let ptr = pool.allocate().unwrap();
 
         // SAFETY: test code, pointer valid from allocation
-        unsafe { std::ptr::write_bytes(ptr.as_ptr(), 0, ptr.size()); }
+        unsafe {
+            std::ptr::write_bytes(ptr.as_ptr(), 0, ptr.size());
+        }
 
         // Verify using SIMD
         assert!(pool.verify_zeroed_simd(ptr.as_slice()).unwrap());
 
         // SAFETY: test code, pointer valid from allocation
-        unsafe { *ptr.as_ptr() = 1; }
+        unsafe {
+            *ptr.as_ptr() = 1;
+        }
         assert!(!pool.verify_zeroed_simd(ptr.as_slice()).unwrap());
     }
 
@@ -1821,9 +1877,7 @@ mod tests {
             assert!(!ptr.as_ptr().is_null());
 
             // SAFETY: test code, pointer valid from allocation
-            let slice = unsafe {
-                std::slice::from_raw_parts(ptr.as_ptr(), ptr.size())
-            };
+            let slice = unsafe { std::slice::from_raw_parts(ptr.as_ptr(), ptr.size()) };
             assert!(slice.iter().all(|&b| b == 0));
         }
 
@@ -1844,9 +1898,7 @@ mod tests {
 
         // Should still be zeroed, just using scalar path
         // SAFETY: Hardware features verified or caller ensures safety invariants
-        let slice = unsafe {
-            std::slice::from_raw_parts(ptr.as_ptr(), ptr.size())
-        };
+        let slice = unsafe { std::slice::from_raw_parts(ptr.as_ptr(), ptr.size()) };
         assert!(slice.iter().all(|&b| b == 0));
     }
 

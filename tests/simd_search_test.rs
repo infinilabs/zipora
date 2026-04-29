@@ -1,7 +1,7 @@
 //! Integration tests for SSE4.2 PCMPESTRI string search
 
-use zipora::io::simd_memory::search::*;
 use std::cmp::Ordering;
+use zipora::io::simd_memory::search::*;
 
 #[test]
 fn test_find_char_basic() {
@@ -51,10 +51,7 @@ fn test_find_pattern_short() {
 
     // Short patterns (≤16 bytes)
     assert_eq!(searcher.find_pattern(b"abcdefgh", b"cde"), Some(2));
-    assert_eq!(
-        searcher.find_pattern(b"0123456789abcdef", b"789a"),
-        Some(7)
-    );
+    assert_eq!(searcher.find_pattern(b"0123456789abcdef", b"789a"), Some(7));
 }
 
 #[test]
@@ -106,10 +103,7 @@ fn test_compare_strings() {
     assert_eq!(searcher.compare_strings(b"abc", b"abd"), Ordering::Less);
 
     // Greater than
-    assert_eq!(
-        searcher.compare_strings(b"xyz", b"abc"),
-        Ordering::Greater
-    );
+    assert_eq!(searcher.compare_strings(b"xyz", b"abc"), Ordering::Greater);
 
     // Different lengths
     assert_eq!(searcher.compare_strings(b"abc", b"abcd"), Ordering::Less);

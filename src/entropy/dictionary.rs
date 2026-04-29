@@ -583,10 +583,7 @@ impl OptimizedDictionaryCompressor {
 
             // Initialize hash for first window
             let first_hash = rolling_hash.hash_slice(&data[0..min_match_length]);
-            hash_table
-                .entry(first_hash)
-                .or_default()
-                .push(0);
+            hash_table.entry(first_hash).or_default().push(0);
 
             // Roll through remaining positions
             for i in 1..=data.len().saturating_sub(min_match_length) {

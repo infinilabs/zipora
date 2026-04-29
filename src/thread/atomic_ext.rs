@@ -3,33 +3,32 @@
 //! Comprehensive lock-free programming utilities providing enhanced atomic
 //! operations, platform-specific optimizations, and safe atomic casting.
 
-use std::sync::atomic::{
-    AtomicU8, AtomicU16, AtomicU32, AtomicU64, AtomicUsize,
-    AtomicI8, AtomicI16, AtomicI32, AtomicI64, AtomicIsize,
-    AtomicBool, AtomicPtr, Ordering
-};
 use std::ptr;
+use std::sync::atomic::{
+    AtomicBool, AtomicI8, AtomicI16, AtomicI32, AtomicI64, AtomicIsize, AtomicPtr, AtomicU8,
+    AtomicU16, AtomicU32, AtomicU64, AtomicUsize, Ordering,
+};
 
 /// Extended atomic operations trait
 pub trait AtomicExt<T> {
     /// Atomic maximum operation - updates value to max(current, val)
     fn atomic_maximize(&self, val: T, order: Ordering) -> T;
-    
+
     /// Atomic minimum operation - updates value to min(current, val)
     fn atomic_minimize(&self, val: T, order: Ordering) -> T;
-    
+
     /// Weak compare-and-swap with optimized ordering
     fn cas_weak(&self, expected: T, desired: T) -> std::result::Result<T, T>;
-    
+
     /// Strong compare-and-swap with optimized ordering
     fn cas_strong(&self, expected: T, desired: T) -> std::result::Result<T, T>;
-    
+
     /// Atomic add and return old value
     fn fetch_add_acq_rel(&self, val: T) -> T;
-    
+
     /// Atomic subtract and return old value
     fn fetch_sub_acq_rel(&self, val: T) -> T;
-    
+
     /// Conditional atomic update with predicate
     fn update_if<F>(&self, condition: F, new_val: T, order: Ordering) -> bool
     where
@@ -47,14 +46,14 @@ macro_rules! impl_atomic_ext {
                     if new_val == current {
                         return current; // No change needed
                     }
-                    
+
                     match self.compare_exchange_weak(current, new_val, order, order) {
                         Ok(_) => return new_val,
                         Err(actual) => current = actual,
                     }
                 }
             }
-            
+
             #[inline]
             fn atomic_minimize(&self, val: $value_type, order: Ordering) -> $value_type {
                 let mut current = self.load(order);
@@ -63,34 +62,42 @@ macro_rules! impl_atomic_ext {
                     if new_val == current {
                         return current; // No change needed
                     }
-                    
+
                     match self.compare_exchange_weak(current, new_val, order, order) {
                         Ok(_) => return new_val,
                         Err(actual) => current = actual,
                     }
                 }
             }
-            
+
             #[inline]
-            fn cas_weak(&self, expected: $value_type, desired: $value_type) -> std::result::Result<$value_type, $value_type> {
+            fn cas_weak(
+                &self,
+                expected: $value_type,
+                desired: $value_type,
+            ) -> std::result::Result<$value_type, $value_type> {
                 self.compare_exchange_weak(expected, desired, Ordering::AcqRel, Ordering::Acquire)
             }
-            
+
             #[inline]
-            fn cas_strong(&self, expected: $value_type, desired: $value_type) -> std::result::Result<$value_type, $value_type> {
+            fn cas_strong(
+                &self,
+                expected: $value_type,
+                desired: $value_type,
+            ) -> std::result::Result<$value_type, $value_type> {
                 self.compare_exchange(expected, desired, Ordering::AcqRel, Ordering::Acquire)
             }
-            
+
             #[inline]
             fn fetch_add_acq_rel(&self, val: $value_type) -> $value_type {
                 self.fetch_add(val, Ordering::AcqRel)
             }
-            
+
             #[inline]
             fn fetch_sub_acq_rel(&self, val: $value_type) -> $value_type {
                 self.fetch_sub(val, Ordering::AcqRel)
             }
-            
+
             #[inline]
             fn update_if<F>(&self, condition: F, new_val: $value_type, order: Ordering) -> bool
             where
@@ -98,7 +105,8 @@ macro_rules! impl_atomic_ext {
             {
                 let current = self.load(order);
                 if condition(current) {
-                    self.compare_exchange_weak(current, new_val, order, order).is_ok()
+                    self.compare_exchange_weak(current, new_val, order, order)
+                        .is_ok()
                 } else {
                     false
                 }
@@ -285,10 +293,10 @@ pub mod aarch64_optimized {
 /// Safe atomic reinterpret casting
 pub trait AsAtomic<T> {
     type Atomic;
-    
+
     /// Get atomic reference to the value
     fn as_atomic(&self) -> &Self::Atomic;
-    
+
     /// Get mutable atomic reference to the value
     fn as_atomic_mut(&mut self) -> &mut Self::Atomic;
 }
@@ -297,7 +305,7 @@ macro_rules! impl_as_atomic {
     ($type:ty, $atomic:ty) => {
         impl AsAtomic<$type> for $type {
             type Atomic = $atomic;
-            
+
             #[inline]
             fn as_atomic(&self) -> &Self::Atomic {
                 // SAFETY: atomic types have identical representation to their primitive types, pointer is properly aligned and valid
@@ -342,21 +350,20 @@ impl<T> AsAtomic<*mut T> for *mut T {
     }
 }
 
-
 /// Atomic bit operations
 pub trait AtomicBitOps {
     /// Set bit atomically
     fn set_bit(&self, bit: usize) -> bool;
-    
+
     /// Clear bit atomically
     fn clear_bit(&self, bit: usize) -> bool;
-    
+
     /// Toggle bit atomically
     fn toggle_bit(&self, bit: usize) -> bool;
-    
+
     /// Test bit
     fn test_bit(&self, bit: usize) -> bool;
-    
+
     /// Find first set bit
     fn find_first_set(&self) -> Option<usize>;
 }
@@ -372,7 +379,7 @@ macro_rules! impl_atomic_bit_ops {
                 let old = self.fetch_or(mask, Ordering::AcqRel);
                 (old & mask) != 0
             }
-            
+
             fn clear_bit(&self, bit: usize) -> bool {
                 if bit >= $bits {
                     return false;
@@ -381,7 +388,7 @@ macro_rules! impl_atomic_bit_ops {
                 let old = self.fetch_and(!mask, Ordering::AcqRel);
                 (old & mask) != 0
             }
-            
+
             fn toggle_bit(&self, bit: usize) -> bool {
                 if bit >= $bits {
                     return false;
@@ -390,7 +397,7 @@ macro_rules! impl_atomic_bit_ops {
                 let old = self.fetch_xor(mask, Ordering::AcqRel);
                 (old & mask) != 0
             }
-            
+
             fn test_bit(&self, bit: usize) -> bool {
                 if bit >= $bits {
                     return false;
@@ -398,7 +405,7 @@ macro_rules! impl_atomic_bit_ops {
                 let mask = 1 << bit;
                 (self.load(Ordering::Acquire) & mask) != 0
             }
-            
+
             fn find_first_set(&self) -> Option<usize> {
                 let val = self.load(Ordering::Acquire);
                 if val == 0 {
@@ -422,10 +429,10 @@ impl_atomic_bit_ops!(AtomicUsize, usize, std::mem::size_of::<usize>() * 8);
 pub fn spin_loop_hint() {
     #[cfg(target_arch = "x86_64")]
     x86_64_optimized::pause();
-    
+
     #[cfg(target_arch = "aarch64")]
     aarch64_optimized::yield_now();
-    
+
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     std::hint::spin_loop();
 }
@@ -439,10 +446,10 @@ pub mod memory_ordering {
     pub fn full_barrier() {
         #[cfg(target_arch = "x86_64")]
         x86_64_optimized::mfence();
-        
+
         #[cfg(target_arch = "aarch64")]
         aarch64_optimized::dmb();
-        
+
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         std::sync::atomic::fence(Ordering::SeqCst);
     }
@@ -452,10 +459,10 @@ pub mod memory_ordering {
     pub fn load_barrier() {
         #[cfg(target_arch = "x86_64")]
         x86_64_optimized::lfence();
-        
+
         #[cfg(target_arch = "aarch64")]
         aarch64_optimized::dmb();
-        
+
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         std::sync::atomic::fence(Ordering::Acquire);
     }
@@ -465,10 +472,10 @@ pub mod memory_ordering {
     pub fn store_barrier() {
         #[cfg(target_arch = "x86_64")]
         x86_64_optimized::sfence();
-        
+
         #[cfg(target_arch = "aarch64")]
         aarch64_optimized::dmb();
-        
+
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         std::sync::atomic::fence(Ordering::Release);
     }
@@ -483,10 +490,10 @@ mod tests {
     #[test]
     fn test_atomic_maximize() {
         let atomic = AtomicU32::new(10);
-        
+
         assert_eq!(atomic.atomic_maximize(5, Ordering::Relaxed), 10);
         assert_eq!(atomic.load(Ordering::Relaxed), 10);
-        
+
         assert_eq!(atomic.atomic_maximize(15, Ordering::Relaxed), 15);
         assert_eq!(atomic.load(Ordering::Relaxed), 15);
     }
@@ -494,10 +501,10 @@ mod tests {
     #[test]
     fn test_atomic_minimize() {
         let atomic = AtomicU32::new(10);
-        
+
         assert_eq!(atomic.atomic_minimize(15, Ordering::Relaxed), 10);
         assert_eq!(atomic.load(Ordering::Relaxed), 10);
-        
+
         assert_eq!(atomic.atomic_minimize(5, Ordering::Relaxed), 5);
         assert_eq!(atomic.load(Ordering::Relaxed), 5);
     }
@@ -506,39 +513,38 @@ mod tests {
     fn test_as_atomic() {
         let mut value = 42u32;
         let atomic = value.as_atomic_mut();
-        
+
         assert_eq!(atomic.load(Ordering::Relaxed), 42);
         atomic.store(100, Ordering::Relaxed);
         assert_eq!(value, 100);
     }
 
-
     #[test]
     fn test_atomic_bit_ops() {
         let atomic = AtomicU32::new(0);
-        
+
         // Set bits
         assert!(!atomic.set_bit(0)); // Was 0
         assert!(atomic.test_bit(0));
         assert!(atomic.set_bit(0)); // Now 1
-        
+
         assert!(!atomic.set_bit(5));
         assert!(atomic.test_bit(5));
-        
+
         // Clear bits
         assert!(atomic.clear_bit(0)); // Was 1
         assert!(!atomic.test_bit(0));
         assert!(!atomic.clear_bit(0)); // Now 0
-        
+
         // Toggle bits
         assert!(!atomic.toggle_bit(3)); // Was 0
         assert!(atomic.test_bit(3));
         assert!(atomic.toggle_bit(3)); // Now 0
-        
+
         // Find first set
         atomic.store(0b1010, Ordering::Relaxed);
         assert_eq!(atomic.find_first_set(), Some(1));
-        
+
         atomic.store(0, Ordering::Relaxed);
         assert_eq!(atomic.find_first_set(), None);
     }
@@ -546,11 +552,11 @@ mod tests {
     #[test]
     fn test_update_if() {
         let atomic = AtomicU32::new(10);
-        
+
         // Update if even
         assert!(atomic.update_if(|x| x % 2 == 0, 20, Ordering::Relaxed));
         assert_eq!(atomic.load(Ordering::Relaxed), 20);
-        
+
         // Don't update if odd
         assert!(!atomic.update_if(|x| x % 2 == 1, 30, Ordering::Relaxed));
         assert_eq!(atomic.load(Ordering::Relaxed), 20);

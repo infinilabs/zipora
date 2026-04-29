@@ -19,7 +19,7 @@ pub struct SortedUintVecConfig {
     /// Log2 of block size in units (6=64 units, 7=128 units)
     pub log2_block_units: u8,
     /// Bits per offset delta within block
-    pub offset_width: u8,  
+    pub offset_width: u8,
     /// Bits per block sample value
     pub sample_width: u8,
     /// Use SIMD optimizations
@@ -121,7 +121,7 @@ impl SortedUintVec {
     /// Create new SortedUintVec with specified configuration
     pub fn with_config(config: SortedUintVecConfig) -> Result<Self> {
         config.validate()?;
-        
+
         Ok(Self {
             data: FastVec::new(),
             index: FastVec::new(),
@@ -129,8 +129,6 @@ impl SortedUintVec {
             size: 0,
         })
     }
-
-
 
     /// Get number of stored values
     #[inline]
@@ -161,7 +159,7 @@ impl SortedUintVec {
     }
 
     /// Get compression ratio compared to plain u64 array
-    /// 
+    ///
     /// Enhanced with detailed compression analysis:
     /// - Block-level compression statistics
     /// - Pattern-based compression effectiveness
@@ -170,52 +168,53 @@ impl SortedUintVec {
         if self.size == 0 {
             return 1.0;
         }
-        
+
         let uncompressed_size = self.size * 8; // u64 size
         let compressed_size = self.memory_usage();
         compressed_size as f32 / uncompressed_size as f32
     }
-    
+
     /// Get detailed compression statistics
     pub fn compression_stats(&self) -> CompressionStats {
         let uncompressed_size = self.size * 8;
         let compressed_size = self.memory_usage();
         let data_size = self.data.len();
         let index_size = self.index.len();
-        
+
         CompressionStats {
             uncompressed_bytes: uncompressed_size,
             compressed_bytes: compressed_size,
             data_bytes: data_size,
             index_bytes: index_size,
             compression_ratio: compressed_size as f32 / uncompressed_size as f32,
-            space_savings_percent: (1.0 - (compressed_size as f32 / uncompressed_size as f32)) * 100.0,
+            space_savings_percent: (1.0 - (compressed_size as f32 / uncompressed_size as f32))
+                * 100.0,
             average_bits_per_value: (compressed_size * 8) as f32 / self.size as f32,
             num_blocks: self.num_blocks(),
             block_size: self.config.block_size(),
         }
     }
-    
+
     /// Analyze sequence patterns for optimization hints
     pub fn analyze_sequence_patterns(&self) -> SequenceAnalysis {
         if self.size == 0 {
             return SequenceAnalysis::default();
         }
-        
+
         let mut consecutive_deltas = 0;
         let mut zero_deltas = 0;
         let mut small_deltas = 0; // deltas < 256
         let mut power_of_two_deltas = 0;
-        
+
         let num_blocks = self.num_blocks();
         for block_idx in 0..num_blocks {
             let block_size = self.config.block_size();
             let block_start = block_idx * block_size;
             let block_end = (block_start + block_size).min(self.size);
             let actual_block_size = block_end - block_start;
-            
+
             let mut prev_delta = None;
-            
+
             for i in 0..actual_block_size {
                 if let Ok(delta) = self.get_block_delta(block_idx, i) {
                     if delta == 0 {
@@ -227,16 +226,17 @@ impl SortedUintVec {
                     if delta > 0 && delta.is_power_of_two() {
                         power_of_two_deltas += 1;
                     }
-                    
+
                     if let Some(prev) = prev_delta
-                        && delta == prev {
-                            consecutive_deltas += 1;
-                        }
+                        && delta == prev
+                    {
+                        consecutive_deltas += 1;
+                    }
                     prev_delta = Some(delta);
                 }
             }
         }
-        
+
         let total_values = self.size;
         SequenceAnalysis {
             total_values,
@@ -248,7 +248,7 @@ impl SortedUintVec {
             recommended_bit_width: self.recommend_optimal_bit_width(),
         }
     }
-    
+
     /// Recommend optimal block size based on data patterns
     fn recommend_optimal_block_size(&self) -> usize {
         // Based on advanced analysis patterns
@@ -259,12 +259,12 @@ impl SortedUintVec {
             _ => 256,
         }
     }
-    
+
     /// Recommend optimal bit width based on delta distribution
     fn recommend_optimal_bit_width(&self) -> u8 {
         // Analyze current bit width effectiveness
         let current_width = self.config.offset_width;
-        
+
         // Simple heuristic - could be enhanced with actual delta analysis
         match self.size {
             0..=1000 => 12,
@@ -299,13 +299,13 @@ impl SortedUintVec {
     fn get_unchecked(&self, index: usize) -> Result<u64> {
         let block_idx = index >> self.config.log2_block_units;
         let offset_idx = index & self.config.block_mask();
-        
+
         // Get block minimum value
         let block_min = self.get_block_min_val(block_idx)?;
-        
+
         // Get delta within block
         let delta = self.get_block_delta(block_idx, offset_idx)?;
-        
+
         Ok(block_min + delta as u64)
     }
 
@@ -319,9 +319,11 @@ impl SortedUintVec {
         let sample_offset = block_idx * (self.config.sample_width as usize);
         let byte_offset = sample_offset / 8;
         let bit_offset = sample_offset % 8;
-        
+
         // Calculate actual bytes needed for this sample width
-        let bytes_needed = (bit_offset + self.config.sample_width as usize).div_ceil(8).min(8);
+        let bytes_needed = (bit_offset + self.config.sample_width as usize)
+            .div_ceil(8)
+            .min(8);
         if byte_offset + bytes_needed > self.index.len() {
             return Err(ZiporaError::invalid_data("index data truncated"));
         }
@@ -333,9 +335,10 @@ impl SortedUintVec {
 
     /// Get delta value within block
     fn get_block_delta(&self, block_idx: usize, offset_idx: usize) -> Result<u32> {
-        let block_data_offset = block_idx * self.config.block_size() * (self.config.offset_width as usize);
+        let block_data_offset =
+            block_idx * self.config.block_size() * (self.config.offset_width as usize);
         let delta_offset = block_data_offset + offset_idx * (self.config.offset_width as usize);
-        
+
         let value = self.extract_bits(&self.data, delta_offset, self.config.offset_width)?;
         Ok(value as u32)
     }
@@ -349,7 +352,7 @@ impl SortedUintVec {
         let byte_offset = bit_offset / 8;
         let bit_shift = bit_offset % 8;
         let bytes_needed = (bit_shift + bit_width as usize).div_ceil(8).min(8);
-        
+
         if byte_offset + bytes_needed > data.len() {
             return Err(ZiporaError::invalid_data("bit extraction out of bounds"));
         }
@@ -372,7 +375,7 @@ impl SortedUintVec {
     }
 
     /// BMI2-accelerated bit extraction using BEXTR instruction
-    /// 
+    ///
     /// Enhanced with advanced optimizations:
     /// - Compiler-specific tuning for optimal assembly generation
     /// - Prefetch hints for cache line optimization
@@ -381,7 +384,7 @@ impl SortedUintVec {
     fn extract_bits_bmi2(&self, data: &[u8], bit_offset: usize, bit_width: u8) -> Result<u64> {
         let byte_offset = bit_offset / 8;
         let bit_shift = bit_offset % 8;
-        
+
         // Prefetch next cache line for sequential access patterns
         if byte_offset + 64 < data.len() {
             // SAFETY: byte_offset + 64 < data.len() check guarantees pointer is within allocated buffer
@@ -392,12 +395,12 @@ impl SortedUintVec {
                 );
             }
         }
-        
+
         // Read 8 bytes as u64 for BEXTR
         let mut bytes = [0u8; 8];
         let copy_len = (data.len() - byte_offset).min(8);
         bytes[..copy_len].copy_from_slice(&data[byte_offset..byte_offset + copy_len]);
-        
+
         let mut value = u64::from_le_bytes(bytes);
 
         // Enhanced BMI2 extraction with compiler-specific optimizations
@@ -405,7 +408,7 @@ impl SortedUintVec {
         unsafe {
             // Use BEXTR for efficient bit field extraction
             value = std::arch::x86_64::_bextr_u64(value, bit_shift as u32, bit_width as u32);
-            
+
             // Additional optimization for GCC/Clang compilers
             #[cfg(target_env = "gnu")]
             {
@@ -413,30 +416,35 @@ impl SortedUintVec {
                 std::hint::black_box(&value);
             }
         }
-        
+
         Ok(value)
     }
-    
+
     /// Enhanced BMI2 acceleration with PDEP/PEXT optimizations
-    /// 
+    ///
     /// Implements advanced bit manipulation patterns:
     /// - PDEP for parallel bit deposit operations
     /// - PEXT for parallel bit extraction  
     /// - TZCNT for trailing zero count optimization
     #[cfg(target_arch = "x86_64")]
-    fn extract_bits_advanced_bmi2(&self, data: &[u8], bit_offset: usize, bit_width: u8) -> Result<u64> {
+    fn extract_bits_advanced_bmi2(
+        &self,
+        data: &[u8],
+        bit_offset: usize,
+        bit_width: u8,
+    ) -> Result<u64> {
         if !is_x86_feature_detected!("bmi2") {
             return self.extract_bits_portable(data, bit_offset, bit_width);
         }
-        
+
         let byte_offset = bit_offset / 8;
         let bit_shift = bit_offset % 8;
-        
+
         // Read aligned 8-byte chunk
         let mut bytes = [0u8; 8];
         let copy_len = (data.len() - byte_offset).min(8);
         bytes[..copy_len].copy_from_slice(&data[byte_offset..byte_offset + copy_len]);
-        
+
         let raw_value = u64::from_le_bytes(bytes);
 
         // SAFETY: BMI2 _pext_u64 and bit manipulation intrinsics are safe
@@ -444,10 +452,10 @@ impl SortedUintVec {
             // Create extraction mask using PDEP
             let mask = (1u64 << bit_width) - 1;
             let shifted_mask = mask << bit_shift;
-            
+
             // Extract using PEXT (Parallel Bit Extract)
             let extracted = std::arch::x86_64::_pext_u64(raw_value, shifted_mask);
-            
+
             Ok(extracted)
         }
     }
@@ -456,28 +464,28 @@ impl SortedUintVec {
     fn extract_bits_portable(&self, data: &[u8], bit_offset: usize, bit_width: u8) -> Result<u64> {
         let byte_offset = bit_offset / 8;
         let bit_shift = bit_offset % 8;
-        
+
         let mut value = 0u64;
         let bytes_to_read = (bit_shift + bit_width as usize).div_ceil(8).min(8);
-        
+
         // Read bytes and construct value
         for i in 0..bytes_to_read {
             if byte_offset + i < data.len() {
                 value |= (data[byte_offset + i] as u64) << (i * 8);
             }
         }
-        
+
         // Shift and mask to extract desired bits
         value >>= bit_shift;
         if bit_width < 64 {
             value &= (1u64 << bit_width) - 1;
         }
-        
+
         Ok(value)
     }
 
     /// Load entire block of offsets for cache optimization
-    /// 
+    ///
     /// Enhanced with advanced block loading strategies:
     /// - Vectorized delta decompression using SIMD
     /// - Cache-friendly sequential access patterns
@@ -493,7 +501,7 @@ impl SortedUintVec {
         }
 
         let block_min = self.get_block_min_val(block_idx)?;
-        
+
         // Use SIMD-optimized block loading if available
         #[cfg(target_arch = "x86_64")]
         {
@@ -501,11 +509,11 @@ impl SortedUintVec {
                 return self.get_block_simd(block_idx, block_min, output);
             }
         }
-        
+
         // Fallback to sequential loading with prefetch optimization
         self.get_block_sequential_optimized(block_idx, block_min, output)
     }
-    
+
     /// SIMD-optimized block loading using AVX2
     #[cfg(target_arch = "x86_64")]
     fn get_block_simd(&self, block_idx: usize, block_min: u64, output: &mut [u64]) -> Result<()> {
@@ -513,12 +521,12 @@ impl SortedUintVec {
         let block_start = block_idx * block_size;
         let block_end = (block_start + block_size).min(self.size);
         let actual_block_size = block_end - block_start;
-        
+
         let chunks = actual_block_size / 8; // Process 8 deltas at a time with AVX2
-        
+
         for chunk in 0..chunks {
             let base_offset = chunk * 8;
-            
+
             // Extract 8 deltas using vectorized operations
             let mut deltas = [0u32; 8];
             for i in 0..8 {
@@ -541,13 +549,16 @@ impl SortedUintVec {
                         deltas[delta_base + 1] as i64,
                         deltas[delta_base] as i64,
                     );
-                    
+
                     let result_vec = std::arch::x86_64::_mm256_add_epi64(min_vec, delta_vec);
-                    
+
                     // Store results
                     let mut results = [0i64; 4];
-                    std::arch::x86_64::_mm256_storeu_si256(results.as_mut_ptr() as *mut std::arch::x86_64::__m256i, result_vec);
-                    
+                    std::arch::x86_64::_mm256_storeu_si256(
+                        results.as_mut_ptr() as *mut std::arch::x86_64::__m256i,
+                        result_vec,
+                    );
+
                     for i in 0..4 {
                         if base_offset + delta_base + i < actual_block_size {
                             output[base_offset + delta_base + i] = results[i] as u64;
@@ -556,37 +567,42 @@ impl SortedUintVec {
                 }
             }
         }
-        
+
         // Handle remaining elements
         let remaining_start = chunks * 8;
         for i in remaining_start..actual_block_size {
             let delta = self.get_block_delta(block_idx, i)?;
             output[i] = block_min + delta as u64;
         }
-        
+
         // Fill remaining output with zeros if needed
         for i in actual_block_size..block_size.min(output.len()) {
             output[i] = 0;
         }
-        
+
         Ok(())
     }
-    
+
     /// Sequential block loading with prefetch optimization
-    fn get_block_sequential_optimized(&self, block_idx: usize, block_min: u64, output: &mut [u64]) -> Result<()> {
+    fn get_block_sequential_optimized(
+        &self,
+        block_idx: usize,
+        block_min: u64,
+        output: &mut [u64],
+    ) -> Result<()> {
         let block_size = self.config.block_size();
         let block_start = block_idx * block_size;
         let block_end = (block_start + block_size).min(self.size);
         let actual_block_size = block_end - block_start;
-        
+
         // Prefetch hint for next block if doing sequential access
         #[cfg(target_arch = "x86_64")]
         {
             if block_idx + 1 < self.num_blocks() {
                 // Prefetch next block's data
-                let next_block_offset = (block_idx + 1) * block_size * (self.config.offset_width as usize);
+                let next_block_offset =
+                    (block_idx + 1) * block_size * (self.config.offset_width as usize);
                 let next_byte_offset = next_block_offset / 8;
-
 
                 if next_byte_offset < self.data.len() {
                     // SAFETY: next_byte_offset < self.data.len() check guarantees pointer is within allocated buffer
@@ -599,18 +615,18 @@ impl SortedUintVec {
                 }
             }
         }
-        
+
         // Load all deltas in the block (only up to actual number of values)
         for i in 0..actual_block_size {
             let delta = self.get_block_delta(block_idx, i)?;
             output[i] = block_min + delta as u64;
         }
-        
+
         // Fill remaining output with zeros if needed
         for i in actual_block_size..block_size.min(output.len()) {
             output[i] = 0;
         }
-        
+
         Ok(())
     }
 }
@@ -620,8 +636,11 @@ impl Default for SortedUintVec {
         // SAFETY: SortedUintVec::new() only fails on memory allocation errors.
         // Use unwrap_or_else with panic as this type has complex dependencies.
         Self::new().unwrap_or_else(|e| {
-            panic!("SortedUintVec creation failed in Default: {}. \
-                   This indicates severe memory pressure.", e)
+            panic!(
+                "SortedUintVec creation failed in Default: {}. \
+                   This indicates severe memory pressure.",
+                e
+            )
         })
     }
 }
@@ -649,16 +668,15 @@ impl SortedUintVecBuilder {
         }
     }
 
-
-
     /// Add a value (must be >= previous value to maintain sorted order)
     #[inline]
     pub fn push(&mut self, value: u64) -> Result<()> {
         if let Some(&last) = self.values.last()
-            && value < last {
-                return Err(ZiporaError::invalid_data("values must be sorted"));
-            }
-        
+            && value < last
+        {
+            return Err(ZiporaError::invalid_data("values must be sorted"));
+        }
+
         self.values.push(value)?;
         Ok(())
     }
@@ -697,7 +715,7 @@ impl SortedUintVecBuilder {
     fn compress_values(self) -> Result<SortedUintVec> {
         let config = self.config;
         let values = self.values;
-        
+
         let mut result = SortedUintVec::with_config(config)?;
 
         result.size = values.len();
@@ -722,29 +740,42 @@ impl SortedUintVecBuilder {
         for block_idx in 0..num_blocks {
             let block_start = block_idx * block_size;
             let block_end = (block_start + block_size).min(values.len());
-            
+
             if block_start >= values.len() {
                 continue;
             }
 
             let block_min = values[block_start];
-            
+
             // Store block minimum in index
-            Self::store_sample_static(&mut result.index, block_idx, block_min, config.sample_width)?;
+            Self::store_sample_static(
+                &mut result.index,
+                block_idx,
+                block_min,
+                config.sample_width,
+            )?;
 
             // Store deltas in data
             for i in 0..(block_end - block_start) {
                 let value = values[block_start + i];
                 let delta = value - block_min;
-                
+
                 // Check if delta fits in offset_width bits
                 if delta >= (1u64 << config.offset_width) {
-                    return Err(ZiporaError::invalid_data(
-                        format!("delta {} too large for offset_width {}", delta, config.offset_width)
-                    ));
+                    return Err(ZiporaError::invalid_data(format!(
+                        "delta {} too large for offset_width {}",
+                        delta, config.offset_width
+                    )));
                 }
 
-                Self::store_delta_static(&mut result.data, block_idx, i, delta as u32, config.offset_width, &config)?;
+                Self::store_delta_static(
+                    &mut result.data,
+                    block_idx,
+                    i,
+                    delta as u32,
+                    config.offset_width,
+                    &config,
+                )?;
             }
         }
 
@@ -753,47 +784,72 @@ impl SortedUintVecBuilder {
 
     /// Store sample value in index with variable bit-width
     #[allow(dead_code)]
-    fn store_sample(&self, index: &mut FastVec<u8>, block_idx: usize, value: u64, bit_width: u8) -> Result<()> {
+    fn store_sample(
+        &self,
+        index: &mut FastVec<u8>,
+        block_idx: usize,
+        value: u64,
+        bit_width: u8,
+    ) -> Result<()> {
         let bit_offset = block_idx * bit_width as usize;
         self.store_bits(index, bit_offset, value, bit_width)
     }
 
     /// Store delta value in data with variable bit-width
-    /// 
+    ///
     /// Enhanced with advanced variable-width encoding optimizations:
     /// - Adaptive bit-width selection based on delta distribution
     /// - Run-length encoding for consecutive identical deltas
     /// - Bit-plane compression for sparse delta patterns
     #[allow(dead_code)]
-    fn store_delta(&self, data: &mut FastVec<u8>, block_idx: usize, offset_idx: usize, value: u32, bit_width: u8) -> Result<()> {
+    fn store_delta(
+        &self,
+        data: &mut FastVec<u8>,
+        block_idx: usize,
+        offset_idx: usize,
+        value: u32,
+        bit_width: u8,
+    ) -> Result<()> {
         let block_bit_offset = block_idx * self.config.block_size() * bit_width as usize;
         let bit_offset = block_bit_offset + offset_idx * bit_width as usize;
-        
+
         // Use optimized storage for special patterns
         if self.config.use_simd && self.is_delta_pattern_optimizable(value, offset_idx) {
             return self.store_delta_optimized(data, bit_offset, value, bit_width);
         }
-        
+
         self.store_bits(data, bit_offset, value as u64, bit_width)
     }
-    
+
     /// Check if delta follows an optimizable pattern
     #[allow(dead_code)]
     fn is_delta_pattern_optimizable(&self, value: u32, offset_idx: usize) -> bool {
         // Detect patterns suitable for run-length or bit-plane encoding
         offset_idx > 0 && (value == 0 || value.is_power_of_two() || value < 16)
     }
-    
+
     /// Optimized delta storage for special patterns
     #[allow(dead_code)]
-    fn store_delta_optimized(&self, data: &mut FastVec<u8>, bit_offset: usize, value: u32, bit_width: u8) -> Result<()> {
+    fn store_delta_optimized(
+        &self,
+        data: &mut FastVec<u8>,
+        bit_offset: usize,
+        value: u32,
+        bit_width: u8,
+    ) -> Result<()> {
         // For now, use standard storage - can be enhanced with pattern-specific encoding
         self.store_bits(data, bit_offset, value as u64, bit_width)
     }
 
     /// Store bits in byte array with variable bit-width
     #[allow(dead_code)]
-    fn store_bits(&self, data: &mut FastVec<u8>, bit_offset: usize, value: u64, bit_width: u8) -> Result<()> {
+    fn store_bits(
+        &self,
+        data: &mut FastVec<u8>,
+        bit_offset: usize,
+        value: u64,
+        bit_width: u8,
+    ) -> Result<()> {
         let byte_offset = bit_offset / 8;
         let bit_shift = bit_offset % 8;
         let bytes_needed = (bit_shift + bit_width as usize).div_ceil(8);
@@ -812,7 +868,7 @@ impl SortedUintVecBuilder {
 
         // Store bits using bit manipulation
         let shifted_value = masked_value << bit_shift;
-        
+
         for i in 0..bytes_needed {
             if byte_offset + i < data.len() {
                 let byte_value = (shifted_value >> (i * 8)) as u8;
@@ -824,20 +880,37 @@ impl SortedUintVecBuilder {
     }
 
     /// Static version of store_sample for use in compress_values
-    fn store_sample_static(index: &mut FastVec<u8>, block_idx: usize, value: u64, bit_width: u8) -> Result<()> {
+    fn store_sample_static(
+        index: &mut FastVec<u8>,
+        block_idx: usize,
+        value: u64,
+        bit_width: u8,
+    ) -> Result<()> {
         let bit_offset = block_idx * bit_width as usize;
         Self::store_bits_static(index, bit_offset, value, bit_width)
     }
 
     /// Static version of store_delta for use in compress_values
-    fn store_delta_static(data: &mut FastVec<u8>, block_idx: usize, offset_idx: usize, value: u32, bit_width: u8, config: &SortedUintVecConfig) -> Result<()> {
+    fn store_delta_static(
+        data: &mut FastVec<u8>,
+        block_idx: usize,
+        offset_idx: usize,
+        value: u32,
+        bit_width: u8,
+        config: &SortedUintVecConfig,
+    ) -> Result<()> {
         let block_bit_offset = block_idx * config.block_size() * bit_width as usize;
         let bit_offset = block_bit_offset + offset_idx * bit_width as usize;
         Self::store_bits_static(data, bit_offset, value as u64, bit_width)
     }
 
     /// Static version of store_bits for use in compress_values
-    fn store_bits_static(data: &mut FastVec<u8>, bit_offset: usize, value: u64, bit_width: u8) -> Result<()> {
+    fn store_bits_static(
+        data: &mut FastVec<u8>,
+        bit_offset: usize,
+        value: u64,
+        bit_width: u8,
+    ) -> Result<()> {
         let byte_offset = bit_offset / 8;
         let bit_shift = bit_offset % 8;
         let bytes_needed = (bit_shift + bit_width as usize).div_ceil(8);
@@ -856,7 +929,7 @@ impl SortedUintVecBuilder {
 
         // Store bits using bit manipulation
         let shifted_value = masked_value << bit_shift;
-        
+
         for i in 0..bytes_needed {
             if byte_offset + i < data.len() {
                 let byte_value = (shifted_value >> (i * 8)) as u8;
@@ -982,7 +1055,7 @@ mod tests {
     #[test]
     fn test_sorted_uint_vec_builder_large_sequence() {
         let mut builder = SortedUintVecBuilder::new();
-        
+
         // Add large sequence spanning multiple blocks
         for i in 0..200 {
             builder.push(i * 1000).unwrap();
@@ -1001,21 +1074,27 @@ mod tests {
         let (val1, val2) = vec.get2(50).unwrap();
         assert_eq!(val1, 50000);
         assert_eq!(val2, 51000);
-        
+
         // Test compression effectiveness
         let stats = vec.compression_stats();
-        assert!(stats.compression_ratio < 0.7, "Should achieve good compression with regular pattern");
-        
+        assert!(
+            stats.compression_ratio < 0.7,
+            "Should achieve good compression with regular pattern"
+        );
+
         // Test sequence analysis
         let analysis = vec.analyze_sequence_patterns();
         assert_eq!(analysis.total_values, 200);
-        assert!(analysis.small_delta_ratio > 0.0, "Should detect delta patterns");
+        assert!(
+            analysis.small_delta_ratio > 0.0,
+            "Should detect delta patterns"
+        );
     }
 
     #[test]
     fn test_sorted_uint_vec_error_handling() {
         let vec = SortedUintVec::new().unwrap();
-        
+
         // Out of bounds access
         assert!(vec.get(0).is_err());
         assert!(vec.get2(0).is_err());
@@ -1036,7 +1115,7 @@ mod tests {
     #[test]
     fn test_sorted_uint_vec_compression() {
         let mut builder = SortedUintVecBuilder::new();
-        
+
         // Add sequence with small deltas - should compress well
         for i in 0..100 {
             builder.push(1000000 + i).unwrap(); // Small deltas from large base
@@ -1044,18 +1123,26 @@ mod tests {
 
         let vec = builder.finish().unwrap();
         let compression_ratio = vec.compression_ratio();
-        
+
         // Should achieve significant compression
-        assert!(compression_ratio < 0.5, "Compression ratio: {}", compression_ratio);
-        
-        println!("Memory usage: {} bytes for {} values", vec.memory_usage(), vec.len());
+        assert!(
+            compression_ratio < 0.5,
+            "Compression ratio: {}",
+            compression_ratio
+        );
+
+        println!(
+            "Memory usage: {} bytes for {} values",
+            vec.memory_usage(),
+            vec.len()
+        );
         println!("Compression ratio: {:.2}", compression_ratio);
     }
 
     #[test]
     fn test_sorted_uint_vec_block_operations() {
         let mut builder = SortedUintVecBuilder::new();
-        
+
         // Add exactly one block worth of data
         let block_size = SortedUintVecConfig::default().block_size();
         for i in 0..block_size {
@@ -1078,7 +1165,7 @@ mod tests {
     fn test_sorted_uint_vec_bit_extraction() {
         let data = vec![0b10110110, 0b11001010, 0b01010101];
         let vec = SortedUintVec::new().unwrap();
-        
+
         // Test extracting various bit patterns
         let value = vec.extract_bits_portable(&data, 0, 8).unwrap();
         assert_eq!(value, 0b10110110);
@@ -1091,7 +1178,7 @@ mod tests {
 
         let value = vec.extract_bits_portable(&data, 8, 8).unwrap();
         assert_eq!(value, 0b11001010); // Second byte
-        
+
         // Test BMI2 extraction if available
         #[cfg(target_arch = "x86_64")]
         {
@@ -1101,44 +1188,57 @@ mod tests {
             }
         }
     }
-    
+
     #[test]
     fn test_sorted_uint_vec_compression_stats() {
         let mut builder = SortedUintVecBuilder::new();
-        
+
         // Add sequence with good compression potential
         for i in 0..100 {
             builder.push(1000000 + i).unwrap(); // Small deltas from large base
         }
-        
+
         let vec = builder.finish().unwrap();
         let stats = vec.compression_stats();
-        
+
         assert!(stats.compression_ratio < 1.0, "Should achieve compression");
         assert!(stats.space_savings_percent > 0.0, "Should save space");
         assert_eq!(stats.num_blocks, (100 + 63) / 64); // 64 values per block by default
-        assert!(stats.average_bits_per_value < 64.0, "Should use fewer than 64 bits per value");
-        
+        assert!(
+            stats.average_bits_per_value < 64.0,
+            "Should use fewer than 64 bits per value"
+        );
+
         println!("Compression stats: {:?}", stats);
     }
-    
+
     #[test]
     fn test_sorted_uint_vec_sequence_analysis() {
         let mut builder = SortedUintVecBuilder::new();
-        
+
         // Add sequence with many small deltas
         for i in 0..200 {
             builder.push(1000000 + i as u64).unwrap(); // All deltas are 1 (very small)
         }
-        
+
         let vec = builder.finish().unwrap();
         let analysis = vec.analyze_sequence_patterns();
-        
+
         assert_eq!(analysis.total_values, 200);
-        assert!(analysis.small_delta_ratio > 0.5, "Should have many small deltas (actual: {})", analysis.small_delta_ratio);
-        assert!(analysis.recommended_block_size >= 32, "Should recommend reasonable block size");
-        assert!(analysis.recommended_bit_width >= 8, "Should recommend reasonable bit width");
-        
+        assert!(
+            analysis.small_delta_ratio > 0.5,
+            "Should have many small deltas (actual: {})",
+            analysis.small_delta_ratio
+        );
+        assert!(
+            analysis.recommended_block_size >= 32,
+            "Should recommend reasonable block size"
+        );
+        assert!(
+            analysis.recommended_bit_width >= 8,
+            "Should recommend reasonable bit width"
+        );
+
         println!("Sequence analysis: {:?}", analysis);
     }
 
@@ -1146,7 +1246,7 @@ mod tests {
     fn test_sorted_uint_vec_extend() {
         let mut builder = SortedUintVecBuilder::new();
         let values = vec![1, 5, 10, 15, 20];
-        
+
         builder.extend(values.clone()).unwrap();
         assert_eq!(builder.len(), values.len());
 
@@ -1160,7 +1260,7 @@ mod tests {
     fn test_sorted_uint_vec_memory_optimized() {
         let config = SortedUintVecConfig::memory_optimized();
         let mut builder = SortedUintVecBuilder::with_config(config);
-        
+
         // Small deltas should work well with memory-optimized config
         for i in 0..50 {
             builder.push(1000 + i).unwrap();
@@ -1168,47 +1268,47 @@ mod tests {
 
         let vec = builder.finish().unwrap();
         assert_eq!(vec.len(), 50);
-        
+
         // Memory optimized should still achieve compression
         assert!(vec.compression_ratio() < 1.0);
-        
+
         // Test block loading with different strategies
         let mut block_data = vec![0u64; config.block_size()];
         if vec.num_blocks() > 0 {
             vec.get_block(0, &mut block_data).unwrap();
-            
+
             // Verify block contents match individual gets
             for i in 0..config.block_size().min(vec.len()) {
                 assert_eq!(block_data[i], vec.get(i).unwrap());
             }
         }
     }
-    
+
     #[test]
     fn test_sorted_uint_vec_performance_optimized() {
         let config = SortedUintVecConfig::performance_optimized();
         let mut builder = SortedUintVecBuilder::with_config(config);
-        
+
         // Add larger sequence for performance testing
         for i in 0..500 {
             builder.push(i as u64 * 100).unwrap();
         }
-        
+
         let vec = builder.finish().unwrap();
         assert_eq!(vec.len(), 500);
         assert!(vec.num_blocks() > 1, "Should span multiple blocks");
-        
+
         // Test SIMD block loading if available
         let mut block_data = vec![0u64; config.block_size()];
         if vec.num_blocks() > 0 {
             vec.get_block(0, &mut block_data).unwrap();
-            
+
             // Verify correctness
             for i in 0..config.block_size().min(vec.len()) {
                 assert_eq!(block_data[i], vec.get(i).unwrap());
             }
         }
-        
+
         // Test get2 for consecutive access
         if vec.len() >= 2 {
             let (val1, val2) = vec.get2(0).unwrap();

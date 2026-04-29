@@ -36,14 +36,14 @@ pub struct StreamBufferConfig {
 impl Default for StreamBufferConfig {
     fn default() -> Self {
         Self {
-            initial_capacity: 64 * 1024,      // 64KB
-            max_capacity: 2 * 1024 * 1024,    // 2MB
-            growth_factor: 1.618,              // Golden ratio for optimal memory usage
-            page_alignment: 4096,              // Standard page size
-            use_secure_pool: true,             // Use secure memory by default
-            bulk_read_threshold: 8192,         // 8KB threshold
-            enable_readahead: true,            // Enable read-ahead
-            readahead_multiplier: 2,           // 2x read-ahead
+            initial_capacity: 64 * 1024,   // 64KB
+            max_capacity: 2 * 1024 * 1024, // 2MB
+            growth_factor: 1.618,          // Golden ratio for optimal memory usage
+            page_alignment: 4096,          // Standard page size
+            use_secure_pool: true,         // Use secure memory by default
+            bulk_read_threshold: 8192,     // 8KB threshold
+            enable_readahead: true,        // Enable read-ahead
+            readahead_multiplier: 2,       // 2x read-ahead
         }
     }
 }
@@ -52,12 +52,12 @@ impl StreamBufferConfig {
     /// Create a performance-optimized configuration
     pub fn performance_optimized() -> Self {
         Self {
-            initial_capacity: 128 * 1024,     // 128KB initial
-            max_capacity: 4 * 1024 * 1024,    // 4MB max
-            growth_factor: 2.0,                // Faster growth
-            bulk_read_threshold: 4096,         // Lower threshold
+            initial_capacity: 128 * 1024,  // 128KB initial
+            max_capacity: 4 * 1024 * 1024, // 4MB max
+            growth_factor: 2.0,            // Faster growth
+            bulk_read_threshold: 4096,     // Lower threshold
             enable_readahead: true,
-            readahead_multiplier: 4,           // Aggressive read-ahead
+            readahead_multiplier: 4, // Aggressive read-ahead
             ..Default::default()
         }
     }
@@ -65,11 +65,11 @@ impl StreamBufferConfig {
     /// Create a memory-efficient configuration
     pub fn memory_efficient() -> Self {
         Self {
-            initial_capacity: 16 * 1024,      // 16KB initial
-            max_capacity: 512 * 1024,         // 512KB max
-            growth_factor: 1.414,              // Conservative growth
-            bulk_read_threshold: 16384,        // Higher threshold
-            enable_readahead: false,           // Disable read-ahead
+            initial_capacity: 16 * 1024, // 16KB initial
+            max_capacity: 512 * 1024,    // 512KB max
+            growth_factor: 1.414,        // Conservative growth
+            bulk_read_threshold: 16384,  // Higher threshold
+            enable_readahead: false,     // Disable read-ahead
             readahead_multiplier: 1,
             ..Default::default()
         }
@@ -78,11 +78,11 @@ impl StreamBufferConfig {
     /// Create a low-latency configuration
     pub fn low_latency() -> Self {
         Self {
-            initial_capacity: 8 * 1024,       // 8KB initial
-            max_capacity: 256 * 1024,         // 256KB max
+            initial_capacity: 8 * 1024, // 8KB initial
+            max_capacity: 256 * 1024,   // 256KB max
             growth_factor: 1.5,
-            bulk_read_threshold: 2048,         // Low threshold
-            enable_readahead: false,           // No read-ahead for low latency
+            bulk_read_threshold: 2048, // Low threshold
+            enable_readahead: false,   // No read-ahead for low latency
             readahead_multiplier: 1,
             ..Default::default()
         }
@@ -93,8 +93,8 @@ impl StreamBufferConfig {
 pub struct StreamBufferedReader<R> {
     inner: R,
     buffer: Box<[u8]>,
-    pos: usize,      // Current position in buffer
-    end: usize,      // End of valid data in buffer
+    pos: usize, // Current position in buffer
+    end: usize, // End of valid data in buffer
     config: StreamBufferConfig,
     total_read: u64, // Total bytes read from underlying stream
     _pool: Option<Arc<SecureMemoryPool>>,
@@ -110,7 +110,7 @@ impl<R: Read> StreamBufferedReader<R> {
     pub fn with_config(inner: R, config: StreamBufferConfig) -> Result<Self> {
         let pool = if config.use_secure_pool {
             Some(SecureMemoryPool::new(
-                crate::memory::SecurePoolConfig::small_secure()
+                crate::memory::SecurePoolConfig::small_secure(),
             )?)
         } else {
             None
@@ -149,7 +149,7 @@ impl<R: Read> StreamBufferedReader<R> {
     fn allocate_aligned_buffer(size: usize, alignment: usize) -> Result<Box<[u8]>> {
         // Round up to alignment boundary
         let aligned_size = (size + alignment - 1) & !(alignment - 1);
-        
+
         // For simplicity, use regular allocation
         // In production, could use posix_memalign or similar
         let buffer = vec![0u8; aligned_size].into_boxed_slice();
@@ -237,7 +237,9 @@ impl<R: Read> StreamBufferedReader<R> {
         }
 
         // Read data from underlying stream
-        let bytes_read = self.inner.read(&mut self.buffer[self.end..self.end + read_size])
+        let bytes_read = self
+            .inner
+            .read(&mut self.buffer[self.end..self.end + read_size])
             .map_err(|e| ZiporaError::io_error(format!("Failed to fill buffer: {}", e)))?;
 
         self.end += bytes_read;
@@ -258,14 +260,15 @@ impl<R: Read> StreamBufferedReader<R> {
         );
 
         if new_capacity <= current_capacity {
-            return Err(ZiporaError::io_error(
-                format!("Buffer at maximum capacity ({} bytes), cannot satisfy request for {} bytes",
-                        current_capacity, min_needed)
-            ));
+            return Err(ZiporaError::io_error(format!(
+                "Buffer at maximum capacity ({} bytes), cannot satisfy request for {} bytes",
+                current_capacity, min_needed
+            )));
         }
 
         // Allocate new larger buffer
-        let mut new_buffer = Self::allocate_aligned_buffer(new_capacity, self.config.page_alignment)?;
+        let mut new_buffer =
+            Self::allocate_aligned_buffer(new_capacity, self.config.page_alignment)?;
 
         // Copy existing data
         let existing_data = self.end - self.pos;
@@ -309,7 +312,7 @@ impl<R: Read> StreamBufferedReader<R> {
     pub fn read_slice(&mut self, len: usize) -> Result<Option<&[u8]>> {
         // Ensure we have enough data in buffer
         self.ensure_buffered(len)?;
-        
+
         if self.pos + len <= self.end {
             let slice = &self.buffer[self.pos..self.pos + len];
             self.pos += len;
@@ -328,19 +331,23 @@ impl<R: Read> StreamBufferedReader<R> {
                 let to_copy = cmp::min(buffered, buf.len());
                 buf[..to_copy].copy_from_slice(&self.buffer[self.pos..self.pos + to_copy]);
                 self.pos += to_copy;
-                
+
                 if to_copy == buf.len() {
                     return Ok(to_copy);
                 }
-                
+
                 // Read remaining directly from underlying stream
-                let remaining = self.inner.read(&mut buf[to_copy..])
+                let remaining = self
+                    .inner
+                    .read(&mut buf[to_copy..])
                     .map_err(|e| ZiporaError::io_error(format!("Bulk read failed: {}", e)))?;
                 self.total_read += remaining as u64;
                 Ok(to_copy + remaining)
             } else {
                 // Read directly from underlying stream
-                let bytes_read = self.inner.read(buf)
+                let bytes_read = self
+                    .inner
+                    .read(buf)
                     .map_err(|e| ZiporaError::io_error(format!("Bulk read failed: {}", e)))?;
                 self.total_read += bytes_read as u64;
                 Ok(bytes_read)
@@ -487,8 +494,7 @@ impl<R: Read> Read for StreamBufferedReader<R> {
 impl<R: Read> BufRead for StreamBufferedReader<R> {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
         if self.pos >= self.end {
-            self.fill_buffer(1)
-                .map_err(io::Error::other)?;
+            self.fill_buffer(1).map_err(io::Error::other)?;
         }
         Ok(&self.buffer[self.pos..self.end])
     }
@@ -511,7 +517,7 @@ impl<R: Read + Seek> Seek for StreamBufferedReader<R> {
 pub struct StreamBufferedWriter<W> {
     inner: W,
     buffer: Box<[u8]>,
-    pos: usize,      // Current position in buffer
+    pos: usize, // Current position in buffer
     config: StreamBufferConfig,
     total_written: u64,
     _pool: Option<Arc<SecureMemoryPool>>,
@@ -527,15 +533,15 @@ impl<W: Write> StreamBufferedWriter<W> {
     pub fn with_config(inner: W, config: StreamBufferConfig) -> Result<Self> {
         let pool = if config.use_secure_pool {
             Some(SecureMemoryPool::new(
-                crate::memory::SecurePoolConfig::small_secure()
+                crate::memory::SecurePoolConfig::small_secure(),
             )?)
         } else {
             None
         };
 
         let buffer = StreamBufferedReader::<std::io::Empty>::allocate_aligned_buffer(
-            config.initial_capacity, 
-            config.page_alignment
+            config.initial_capacity,
+            config.page_alignment,
         )?;
 
         Ok(Self {
@@ -604,7 +610,8 @@ impl<W: Write> StreamBufferedWriter<W> {
     /// Flush internal buffer to underlying writer
     fn flush_buffer(&mut self) -> Result<()> {
         if self.pos > 0 {
-            self.inner.write_all(&self.buffer[..self.pos])
+            self.inner
+                .write_all(&self.buffer[..self.pos])
                 .map_err(|e| ZiporaError::io_error(format!("Failed to flush buffer: {}", e)))?;
             self.total_written += self.pos as u64;
             self.pos = 0;
@@ -617,9 +624,8 @@ impl<W: Write> Write for StreamBufferedWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if buf.len() >= self.config.bulk_read_threshold {
             // For large writes, flush buffer and write directly
-            self.flush_buffer()
-                .map_err(io::Error::other)?;
-            
+            self.flush_buffer().map_err(io::Error::other)?;
+
             let written = self.inner.write(buf)?;
             self.total_written += written as u64;
             Ok(written)
@@ -631,8 +637,7 @@ impl<W: Write> Write for StreamBufferedWriter<W> {
             while !remaining.is_empty() {
                 let available = self.buffer.len() - self.pos;
                 if available == 0 {
-                    self.flush_buffer()
-                        .map_err(io::Error::other)?;
+                    self.flush_buffer().map_err(io::Error::other)?;
                     continue;
                 }
 
@@ -648,8 +653,7 @@ impl<W: Write> Write for StreamBufferedWriter<W> {
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.flush_buffer()
-            .map_err(io::Error::other)?;
+        self.flush_buffer().map_err(io::Error::other)?;
         self.inner.flush()
     }
 }
@@ -660,10 +664,6 @@ impl<W: Write + Seek> Seek for StreamBufferedWriter<W> {
         self.inner.seek(pos)
     }
 }
-
-
-
-
 
 #[cfg(test)]
 mod tests {
@@ -726,7 +726,7 @@ mod tests {
     #[test]
     fn test_stream_buffered_reader_configurations() {
         let data = b"Test data";
-        
+
         // Performance optimized
         let cursor = Cursor::new(data);
         let reader = StreamBufferedReader::performance_optimized(cursor).unwrap();
@@ -794,7 +794,7 @@ mod tests {
     #[test]
     fn test_stream_buffer_round_trip() {
         let original_data = b"The quick brown fox jumps over the lazy dog. ".repeat(1000);
-        
+
         // Write data using buffered writer
         let mut buffer = Vec::new();
         {
@@ -932,10 +932,10 @@ mod tests {
     #[test]
     fn test_stream_reader_utf8_validation_multibyte() {
         let test_cases = vec![
-            ("café", true),                          // 2-byte sequences
-            ("日本語", true),                          // 3-byte sequences (CJK)
-            ("🦀🌍", true),                           // 4-byte sequences (emoji)
-            ("Hello, 世界! 🦀", true),                // Mixed ASCII and multibyte
+            ("café", true),            // 2-byte sequences
+            ("日本語", true),          // 3-byte sequences (CJK)
+            ("🦀🌍", true),            // 4-byte sequences (emoji)
+            ("Hello, 世界! 🦀", true), // Mixed ASCII and multibyte
         ];
 
         for (text, expected_valid) in test_cases {
@@ -947,7 +947,11 @@ mod tests {
             let _ = reader.ensure_buffered(text.len());
 
             let is_valid = reader.validate_utf8_buffered().unwrap();
-            assert_eq!(is_valid, expected_valid, "UTF-8 validation mismatch for: {}", text);
+            assert_eq!(
+                is_valid, expected_valid,
+                "UTF-8 validation mismatch for: {}",
+                text
+            );
         }
     }
 
@@ -1022,7 +1026,7 @@ mod tests {
 
         // Read exactly one complete repetition to keep buffer at character boundary
         // Each repetition is "Hello, World! 世界 🦀 " which is 27 bytes
-        let mut buf = vec![0u8; 27];  // Read exactly one complete unit
+        let mut buf = vec![0u8; 27]; // Read exactly one complete unit
         let _ = reader.read(&mut buf).unwrap();
 
         // Now the buffer should contain complete UTF-8 sequences

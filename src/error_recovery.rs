@@ -3,7 +3,6 @@
 //! This module provides distributed verification macros and error handling patterns
 //! using fail-fast philosophy with rich contextual error reporting throughout data structures.
 
-
 //! Verification macros providing fail-fast error handling with rich contextual information
 
 /// Fatal error macro for immediate termination
@@ -63,12 +62,20 @@ macro_rules! zipora_verify_alloc {
 #[macro_export]
 macro_rules! zipora_verify_aligned {
     ($ptr:expr, $align:expr) => {
-        zipora_verify!(($ptr as usize) % $align == 0, 
-            "pointer {:p} not aligned to {} bytes", $ptr, $align);
+        zipora_verify!(
+            ($ptr as usize) % $align == 0,
+            "pointer {:p} not aligned to {} bytes",
+            $ptr,
+            $align
+        );
     };
     ($size:expr, $align:expr) => {
-        zipora_verify!($size % $align == 0,
-            "size {} not aligned to {} bytes", $size, $align);
+        zipora_verify!(
+            $size % $align == 0,
+            "size {} not aligned to {} bytes",
+            $size,
+            $align
+        );
     };
 }
 
@@ -76,87 +83,77 @@ macro_rules! zipora_verify_aligned {
 #[macro_export]
 macro_rules! zipora_verify_pow2 {
     ($val:expr) => {
-        zipora_verify!(($val & ($val - 1)) == 0,
-            "value {} (0x{:X}) is not a power of 2", $val, $val);
+        zipora_verify!(
+            ($val & ($val - 1)) == 0,
+            "value {} (0x{:X}) is not a power of 2",
+            $val,
+            $val
+        );
     };
 }
 
 /// Comparison verification macros with value display
 #[macro_export]
 macro_rules! zipora_verify_eq {
-    ($x:expr, $y:expr) => {
-        {
-            let x_val = $x;
-            let y_val = $y;
-            zipora_verify!(x_val == y_val, "{} != {}", x_val, y_val);
-        }
-    };
+    ($x:expr, $y:expr) => {{
+        let x_val = $x;
+        let y_val = $y;
+        zipora_verify!(x_val == y_val, "{} != {}", x_val, y_val);
+    }};
 }
 
 #[macro_export]
 macro_rules! zipora_verify_ne {
-    ($x:expr, $y:expr) => {
-        {
-            let x_val = $x;
-            let y_val = $y;
-            zipora_verify!(x_val != y_val, "{} == {}", x_val, y_val);
-        }
-    };
+    ($x:expr, $y:expr) => {{
+        let x_val = $x;
+        let y_val = $y;
+        zipora_verify!(x_val != y_val, "{} == {}", x_val, y_val);
+    }};
 }
 
 #[macro_export]
 macro_rules! zipora_verify_lt {
-    ($x:expr, $y:expr) => {
-        {
-            let x_val = $x;
-            let y_val = $y;
-            zipora_verify!(x_val < y_val, "{} >= {}", x_val, y_val);
-        }
-    };
+    ($x:expr, $y:expr) => {{
+        let x_val = $x;
+        let y_val = $y;
+        zipora_verify!(x_val < y_val, "{} >= {}", x_val, y_val);
+    }};
 }
 
 #[macro_export]
 macro_rules! zipora_verify_le {
-    ($x:expr, $y:expr) => {
-        {
-            let x_val = $x;
-            let y_val = $y;
-            zipora_verify!(x_val <= y_val, "{} > {}", x_val, y_val);
-        }
-    };
+    ($x:expr, $y:expr) => {{
+        let x_val = $x;
+        let y_val = $y;
+        zipora_verify!(x_val <= y_val, "{} > {}", x_val, y_val);
+    }};
 }
 
 #[macro_export]
 macro_rules! zipora_verify_gt {
-    ($x:expr, $y:expr) => {
-        {
-            let x_val = $x;
-            let y_val = $y;
-            zipora_verify!(x_val > y_val, "{} <= {}", x_val, y_val);
-        }
-    };
+    ($x:expr, $y:expr) => {{
+        let x_val = $x;
+        let y_val = $y;
+        zipora_verify!(x_val > y_val, "{} <= {}", x_val, y_val);
+    }};
 }
 
 #[macro_export]
 macro_rules! zipora_verify_ge {
-    ($x:expr, $y:expr) => {
-        {
-            let x_val = $x;
-            let y_val = $y;
-            zipora_verify!(x_val >= y_val, "{} < {}", x_val, y_val);
-        }
-    };
+    ($x:expr, $y:expr) => {{
+        let x_val = $x;
+        let y_val = $y;
+        zipora_verify!(x_val >= y_val, "{} < {}", x_val, y_val);
+    }};
 }
 
 /// Zero verification - common pattern
 #[macro_export]
 macro_rules! zipora_verify_ez {
-    ($x:expr) => {
-        {
-            let x_val = $x;
-            zipora_verify!(x_val == 0, "expected 0, got {}", x_val);
-        }
-    };
+    ($x:expr) => {{
+        let x_val = $x;
+        zipora_verify!(x_val == 0, "expected 0, got {}", x_val);
+    }};
 }
 
 /// Non-null pointer verification
@@ -170,55 +167,60 @@ macro_rules! zipora_verify_not_null {
 /// Bounds checking with context
 #[macro_export]
 macro_rules! zipora_verify_bounds {
-    ($index:expr, $size:expr) => {
-        {
-            let idx = $index;
-            let sz = $size;
-            zipora_verify!(idx < sz, "index {} out of bounds for size {}", idx, sz);
-        }
-    };
+    ($index:expr, $size:expr) => {{
+        let idx = $index;
+        let sz = $size;
+        zipora_verify!(idx < sz, "index {} out of bounds for size {}", idx, sz);
+    }};
 }
 
-/// Range verification 
+/// Range verification
 #[macro_export]
 macro_rules! zipora_verify_range {
-    ($start:expr, $end:expr, $size:expr) => {
-        {
-            let s = $start;
-            let e = $end;
-            let sz = $size;
-            zipora_verify!(s <= e, "invalid range: start {} > end {}", s, e);
-            zipora_verify!(e <= sz, "range end {} exceeds size {}", e, sz);
-        }
-    };
+    ($start:expr, $end:expr, $size:expr) => {{
+        let s = $start;
+        let e = $end;
+        let sz = $size;
+        zipora_verify!(s <= e, "invalid range: start {} > end {}", s, e);
+        zipora_verify!(e <= sz, "range end {} exceeds size {}", e, sz);
+    }};
 }
 
 /// Capacity verification for container operations
 #[macro_export]
 macro_rules! zipora_verify_capacity {
-    ($current:expr, $required:expr, $max:expr) => {
-        {
-            let curr = $current;
-            let req = $required;
-            let max_cap = $max;
-            zipora_verify!(req <= max_cap, 
-                "required capacity {} exceeds maximum {}", req, max_cap);
-            zipora_verify!(curr <= req,
-                "current size {} exceeds required capacity {}", curr, req);
-        }
-    };
+    ($current:expr, $required:expr, $max:expr) => {{
+        let curr = $current;
+        let req = $required;
+        let max_cap = $max;
+        zipora_verify!(
+            req <= max_cap,
+            "required capacity {} exceeds maximum {}",
+            req,
+            max_cap
+        );
+        zipora_verify!(
+            curr <= req,
+            "current size {} exceeds required capacity {}",
+            curr,
+            req
+        );
+    }};
 }
 
 /// System call result verification
 #[macro_export]
 macro_rules! zipora_verify_syscall {
-    ($result:expr, $syscall:expr) => {
-        {
-            let res = $result;
-            zipora_verify!(res == 0, "syscall {} failed with error {}: {}", 
-                $syscall, res, std::io::Error::last_os_error());
-        }
-    };
+    ($result:expr, $syscall:expr) => {{
+        let res = $result;
+        zipora_verify!(
+            res == 0,
+            "syscall {} failed with error {}: {}",
+            $syscall,
+            res,
+            std::io::Error::last_os_error()
+        );
+    }};
 }
 
 /// Export convenience functions for use in generic contexts

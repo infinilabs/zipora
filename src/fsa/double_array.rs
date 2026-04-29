@@ -40,7 +40,7 @@ impl DaState {
     #[inline(always)]
     const fn new_free() -> Self {
         Self {
-            child0: NIL_STATE,          // No children, no terminal
+            child0: NIL_STATE,            // No children, no terminal
             parent: NIL_STATE | FREE_BIT, // Free
         }
     }
@@ -51,21 +51,27 @@ impl DaState {
     #[inline(always)]
     const fn new_root() -> Self {
         Self {
-            child0: 0,          // Safe leaf base: 0 ^ ch always in [0, 255]
-            parent: NIL_STATE,  // Sentinel — never matches any valid curr
+            child0: 0,         // Safe leaf base: 0 ^ ch always in [0, 255]
+            parent: NIL_STATE, // Sentinel — never matches any valid curr
         }
     }
 
     /// Base value for XOR transitions. Raw read — no masking needed
     /// because the terminal flag is stored in NInfo, not here.
     #[inline(always)]
-    fn child0(&self) -> u32 { self.child0 }
+    fn child0(&self) -> u32 {
+        self.child0
+    }
 
     #[inline(always)]
-    fn parent(&self) -> u32 { self.parent & VALUE_MASK }
+    fn parent(&self) -> u32 {
+        self.parent & VALUE_MASK
+    }
 
     #[inline(always)]
-    fn is_free(&self) -> bool { (self.parent & FREE_BIT) != 0 }
+    fn is_free(&self) -> bool {
+        (self.parent & FREE_BIT) != 0
+    }
 
     /// Set child0/base (raw write — terminal flag is in NInfo).
     #[inline(always)]
@@ -82,8 +88,8 @@ impl DaState {
     /// Mark as free with next/prev pointers for doubly-linked free list.
     #[inline(always)]
     fn set_free_linked(&mut self, next: u32, prev: u32) {
-        self.child0 = next;              // next free
-        self.parent = FREE_BIT | prev;   // prev free + free marker
+        self.child0 = next; // next free
+        self.parent = FREE_BIT | prev; // prev free + free marker
     }
 
     /// Mark as free (standalone, not linked).
@@ -95,12 +101,16 @@ impl DaState {
     /// Get next free pointer (only valid when is_free()).
     #[inline(always)]
     #[allow(dead_code)]
-    fn free_next(&self) -> u32 { self.child0 }
+    fn free_next(&self) -> u32 {
+        self.child0
+    }
 
     /// Get prev free pointer (only valid when is_free()).
     #[inline(always)]
     #[allow(dead_code)]
-    fn free_prev(&self) -> u32 { self.parent & VALUE_MASK }
+    fn free_prev(&self) -> u32 {
+        self.parent & VALUE_MASK
+    }
 }
 
 /// Node info for O(k) child enumeration.
@@ -110,8 +120,8 @@ impl DaState {
 #[derive(Clone, Copy, Debug, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct NInfo {
-    sibling: u16,  // next sibling: label+1 (0 = end)
-    child: u16,    // bits 0-8: first child label+1 (0 = no children), bit 15: terminal flag
+    sibling: u16, // next sibling: label+1 (0 = end)
+    child: u16,   // bits 0-8: first child label+1 (0 = no children), bit 15: terminal flag
 }
 
 const NINFO_NONE: u16 = 0;
@@ -120,19 +130,27 @@ const NINFO_TERM: u16 = 0x8000;
 impl NInfo {
     /// Whether this state is terminal (has a complete key ending here).
     #[inline(always)]
-    fn is_term(&self) -> bool { (self.child & NINFO_TERM) != 0 }
+    fn is_term(&self) -> bool {
+        (self.child & NINFO_TERM) != 0
+    }
 
     /// Mark this state as terminal.
     #[inline(always)]
-    fn set_term(&mut self) { self.child |= NINFO_TERM; }
+    fn set_term(&mut self) {
+        self.child |= NINFO_TERM;
+    }
 
     /// Clear the terminal flag.
     #[inline(always)]
-    fn clear_term(&mut self) { self.child &= !NINFO_TERM; }
+    fn clear_term(&mut self) {
+        self.child &= !NINFO_TERM;
+    }
 
     /// Get the first child pointer (masking out the terminal flag).
     #[inline(always)]
-    fn first_child(&self) -> u16 { self.child & !NINFO_TERM }
+    fn first_child(&self) -> u16 {
+        self.child & !NINFO_TERM
+    }
 
     /// Set the first child pointer, preserving the terminal flag.
     #[inline(always)]
@@ -209,21 +227,27 @@ impl DoubleArrayTrie {
 
     /// Number of keys in the trie.
     #[inline(always)]
-    pub fn len(&self) -> usize { self.num_keys }
+    pub fn len(&self) -> usize {
+        self.num_keys
+    }
 
     /// Check if the trie is empty.
     #[inline(always)]
-    pub fn is_empty(&self) -> bool { self.num_keys == 0 }
+    pub fn is_empty(&self) -> bool {
+        self.num_keys == 0
+    }
 
     /// Total number of allocated states.
     #[inline]
-    pub fn total_states(&self) -> usize { self.states.len() }
+    pub fn total_states(&self) -> usize {
+        self.states.len()
+    }
 
     /// Memory usage in bytes.
     #[inline]
     pub fn mem_size(&self) -> usize {
-        self.states.len() * std::mem::size_of::<DaState>() +
-        self.ninfos.len() * std::mem::size_of::<NInfo>()
+        self.states.len() * std::mem::size_of::<DaState>()
+            + self.ninfos.len() * std::mem::size_of::<NInfo>()
     }
 
     /// Check if a state is terminal.
@@ -242,12 +266,13 @@ impl DoubleArrayTrie {
     /// Returns NIL_STATE if transition doesn't exist.
     #[inline(always)]
     pub fn state_move(&self, curr: u32, ch: u8) -> u32 {
-        let base = self.states[curr as usize].child0();
+        // SAFETY: `curr` is typically from a previous state_move or 0 (root).
+        let base = unsafe { self.states.get_unchecked(curr as usize) }.child0();
         let next = (base ^ ch as u32) as usize;
         // SAFETY: same invariant as contains()
         debug_assert!(next < self.states.len());
         let next_state = unsafe { self.states.get_unchecked(next) };
-        
+
         if next_state.parent == curr {
             next as u32
         } else {
@@ -274,7 +299,9 @@ impl DoubleArrayTrie {
         if key.is_empty() {
             let was_new = !self.ninfos[0].is_term();
             self.ninfos[0].set_term();
-            if was_new { self.num_keys += 1; }
+            if was_new {
+                self.num_keys += 1;
+            }
             return Ok(was_new);
         }
 
@@ -328,8 +355,11 @@ impl DoubleArrayTrie {
 
                             // Notify callback about conflict parent's moved children
                             Self::notify_relocated(
-                                &self.ninfos, conflict_parent as usize,
-                                old_base_cf, new_base_cf, &mut on_relocate,
+                                &self.ninfos,
+                                conflict_parent as usize,
+                                old_base_cf,
+                                new_base_cf,
+                                &mut on_relocate,
                             );
 
                             self.states[next as usize].child0 = 0;
@@ -345,8 +375,12 @@ impl DoubleArrayTrie {
                     let new_base = self.relocate(curr, ch)?;
 
                     Self::notify_relocated_excluding(
-                        &self.ninfos, curr as usize,
-                        old_base, new_base, ch, &mut on_relocate,
+                        &self.ninfos,
+                        curr as usize,
+                        old_base,
+                        new_base,
+                        ch,
+                        &mut on_relocate,
                     );
 
                     let next = new_base ^ ch as u32;
@@ -361,14 +395,18 @@ impl DoubleArrayTrie {
 
         let was_new = !self.ninfos[curr as usize].is_term();
         self.ninfos[curr as usize].set_term();
-        if was_new { self.num_keys += 1; }
+        if was_new {
+            self.num_keys += 1;
+        }
         Ok(was_new)
     }
 
     /// Notify callback about all moved children of a parent after relocation.
     fn notify_relocated(
-        ninfos: &[NInfo], parent_pos: usize,
-        old_base: u32, new_base: u32,
+        ninfos: &[NInfo],
+        parent_pos: usize,
+        old_base: u32,
+        new_base: u32,
         on_relocate: &mut impl FnMut(u32, u32),
     ) {
         let mut c = ninfos[parent_pos].first_child();
@@ -376,14 +414,21 @@ impl DoubleArrayTrie {
             let label = (c - 1) as u8;
             on_relocate(old_base ^ label as u32, new_base ^ label as u32);
             let child_pos = (new_base ^ label as u32) as usize;
-            c = if child_pos < ninfos.len() { ninfos[child_pos].sibling } else { NINFO_NONE };
+            c = if child_pos < ninfos.len() {
+                ninfos[child_pos].sibling
+            } else {
+                NINFO_NONE
+            };
         }
     }
 
     /// Notify callback about moved children, excluding `exclude_ch` (new child).
     fn notify_relocated_excluding(
-        ninfos: &[NInfo], parent_pos: usize,
-        old_base: u32, new_base: u32, exclude_ch: u8,
+        ninfos: &[NInfo],
+        parent_pos: usize,
+        old_base: u32,
+        new_base: u32,
+        exclude_ch: u8,
         on_relocate: &mut impl FnMut(u32, u32),
     ) {
         let mut c = ninfos[parent_pos].first_child();
@@ -393,7 +438,11 @@ impl DoubleArrayTrie {
                 on_relocate(old_base ^ label as u32, new_base ^ label as u32);
             }
             let child_pos = (new_base ^ label as u32) as usize;
-            c = if child_pos < ninfos.len() { ninfos[child_pos].sibling } else { NINFO_NONE };
+            c = if child_pos < ninfos.len() {
+                ninfos[child_pos].sibling
+            } else {
+                NINFO_NONE
+            };
         }
     }
 
@@ -414,18 +463,27 @@ impl DoubleArrayTrie {
         let ninfos = self.ninfos.as_slice();
         let mut curr = 0usize;
         for &ch in key {
-            let base = states[curr].child0;
+            // SAFETY: curr is always a valid index because we check `next_state.parent == curr`
+            // from previously validated `next` indices, and `curr=0` is valid.
+            let base = unsafe { states.get_unchecked(curr) }.child0;
             let next = (base ^ ch as u32) as usize;
             // SAFETY: set_base_padded guarantees (base | 0xFF) < len for valid bases.
             // Leaf states have child0=0, so next=ch ∈ [0,255] < 256 ≤ len.
             // Free states have parent with FREE_BIT set, never matching curr.
-            debug_assert!(next < states.len(), "OOB: next={next}, len={}", states.len());
+            debug_assert!(
+                next < states.len(),
+                "OOB: next={next}, len={}",
+                states.len()
+            );
             let next_state = unsafe { states.get_unchecked(next) };
-            if next_state.parent != curr as u32 { return false; }
+            if next_state.parent != curr as u32 {
+                return false;
+            }
             curr = next;
         }
 
-        ninfos[curr].is_term()
+        // SAFETY: curr has been verified to be < states.len() (and therefore ninfos.len() which is the same size)
+        unsafe { ninfos.get_unchecked(curr) }.is_term()
     }
 
     /// Lookup key and return its terminal state, or None.
@@ -434,7 +492,11 @@ impl DoubleArrayTrie {
         let states = self.states.as_slice();
 
         if key.is_empty() {
-            return if self.ninfos[0].is_term() { Some(0) } else { None };
+            return if self.ninfos[0].is_term() {
+                Some(0)
+            } else {
+                None
+            };
         }
 
         let ninfos = self.ninfos.as_slice();
@@ -445,11 +507,17 @@ impl DoubleArrayTrie {
             // SAFETY: same invariant as contains()
             debug_assert!(next < states.len());
             let next_state = unsafe { states.get_unchecked(next) };
-            if next_state.parent != curr as u32 { return None; }
+            if next_state.parent != curr as u32 {
+                return None;
+            }
             curr = next;
         }
 
-        if ninfos[curr].is_term() { Some(curr as u32) } else { None }
+        if ninfos[curr].is_term() {
+            Some(curr as u32)
+        } else {
+            None
+        }
     }
 
     /// Remove a key. Returns true if the key existed.
@@ -459,19 +527,24 @@ impl DoubleArrayTrie {
     /// and no terminal flag).
     pub fn remove(&mut self, key: &[u8]) -> bool {
         if let Some(state) = self.lookup_state(key)
-            && self.ninfos[state as usize].is_term() {
-                self.ninfos[state as usize].clear_term();
-                self.num_keys -= 1;
-                self.prune_dead_branch(state);
-                return true;
-            }
+            && self.ninfos[state as usize].is_term()
+        {
+            self.ninfos[state as usize].clear_term();
+            self.num_keys -= 1;
+            self.prune_dead_branch(state);
+            return true;
+        }
         false
     }
 
     /// Restore the key string from a state by walking the parent chain.
     pub fn restore_key(&self, state: u32) -> Option<Vec<u8>> {
-        if state as usize >= self.states.len() { return None; }
-        if self.states[state as usize].is_free() { return None; }
+        if state as usize >= self.states.len() {
+            return None;
+        }
+        if self.states[state as usize].is_free() {
+            return None;
+        }
 
         let mut symbols = Vec::new();
         let mut curr = state;
@@ -496,12 +569,18 @@ impl DoubleArrayTrie {
 
         while curr != 0 {
             // Stop if this state is terminal or has children
-            if self.ninfos[curr as usize].is_term() { break; }
-            if self.ninfos[curr as usize].first_child() != NINFO_NONE { break; }
+            if self.ninfos[curr as usize].is_term() {
+                break;
+            }
+            if self.ninfos[curr as usize].first_child() != NINFO_NONE {
+                break;
+            }
 
             // This state is a dead leaf — remove it
             let parent = self.states[curr as usize].parent();
-            if parent as usize >= self.states.len() { break; }
+            if parent as usize >= self.states.len() {
+                break;
+            }
 
             let parent_base = self.states[parent as usize].child0();
             let label = (curr ^ parent_base) as u8;
@@ -524,7 +603,9 @@ impl DoubleArrayTrie {
         let base = self.states[parent_pos].child0();
 
         let first = self.ninfos[parent_pos].first_child();
-        if first == NINFO_NONE { return; }
+        if first == NINFO_NONE {
+            return;
+        }
 
         if first == label_enc {
             // Removing the first child — update parent's child pointer
@@ -543,7 +624,9 @@ impl DoubleArrayTrie {
         loop {
             let prev_label = (prev_enc - 1) as u8;
             let prev_pos = (base ^ prev_label as u32) as usize;
-            if prev_pos >= self.ninfos.len() { break; }
+            if prev_pos >= self.ninfos.len() {
+                break;
+            }
             let next_enc = self.ninfos[prev_pos].sibling;
             if next_enc == label_enc {
                 // Found it — unlink by pointing prev to label's next
@@ -556,7 +639,9 @@ impl DoubleArrayTrie {
                 self.ninfos[prev_pos].sibling = after;
                 return;
             }
-            if next_enc == NINFO_NONE { break; }
+            if next_enc == NINFO_NONE {
+                break;
+            }
             prev_enc = next_enc;
         }
     }
@@ -575,7 +660,9 @@ impl DoubleArrayTrie {
         let mut curr = 0u32;
         for &ch in prefix {
             let next = self.state_move(curr, ch);
-            if next == NIL_STATE { return Vec::new(); }
+            if next == NIL_STATE {
+                return Vec::new();
+            }
             curr = next;
         }
 
@@ -589,7 +676,9 @@ impl DoubleArrayTrie {
     #[inline]
     pub fn for_each_child(&self, state: u32, mut f: impl FnMut(u8, u32)) {
         let mut c = self.ninfos[state as usize].first_child();
-        if c == NINFO_NONE { return; }
+        if c == NINFO_NONE {
+            return;
+        }
         let base = self.states[state as usize].child0();
         while c != NINFO_NONE {
             let label = (c - 1) as u8;
@@ -611,7 +700,9 @@ impl DoubleArrayTrie {
     #[allow(dead_code)]
     fn get_children(&self, state: u32) -> Vec<(u8, u32)> {
         let mut c = self.ninfos[state as usize].first_child();
-        if c == NINFO_NONE { return Vec::new(); }
+        if c == NINFO_NONE {
+            return Vec::new();
+        }
         let base = self.states[state as usize].child0();
 
         let mut children = Vec::new();
@@ -635,7 +726,9 @@ impl DoubleArrayTrie {
     #[inline]
     fn lower_bound_child(&self, state: u32, symbol: u8) -> Option<(u8, u32)> {
         let mut c = self.ninfos[state as usize].first_child();
-        if c == NINFO_NONE { return None; }
+        if c == NINFO_NONE {
+            return None;
+        }
         let base = self.states[state as usize].child0();
         while c != NINFO_NONE {
             let label = (c - 1) as u8;
@@ -665,13 +758,18 @@ impl DoubleArrayTrie {
     #[inline]
     fn prev_child(&self, state: u32, symbol: u32) -> Option<(u8, u32)> {
         let mut c = self.ninfos[state as usize].first_child();
-        if c == NINFO_NONE { return None; }
+        if c == NINFO_NONE {
+            return None;
+        }
         let base = self.states[state as usize].child0();
         let mut result = None;
         while c != NINFO_NONE {
             let label = (c - 1) as u8;
             let child_pos = (base ^ label as u32) as usize;
-            if (label as u32) < symbol && child_pos < self.states.len() && !self.states[child_pos].is_free() {
+            if (label as u32) < symbol
+                && child_pos < self.states.len()
+                && !self.states[child_pos].is_free()
+            {
                 result = Some((label, child_pos as u32));
             }
             c = if child_pos < self.ninfos.len() {
@@ -687,7 +785,9 @@ impl DoubleArrayTrie {
     #[inline]
     fn first_child(&self, state: u32) -> Option<(u8, u32)> {
         let c = self.ninfos[state as usize].first_child();
-        if c == NINFO_NONE { return None; }
+        if c == NINFO_NONE {
+            return None;
+        }
         let base = self.states[state as usize].child0();
 
         let label = (c - 1) as u8;
@@ -703,7 +803,9 @@ impl DoubleArrayTrie {
     #[inline]
     fn last_child(&self, state: u32) -> Option<(u8, u32)> {
         let mut c = self.ninfos[state as usize].first_child();
-        if c == NINFO_NONE { return None; }
+        if c == NINFO_NONE {
+            return None;
+        }
         let base = self.states[state as usize].child0();
         let mut result = None;
         while c != NINFO_NONE {
@@ -729,7 +831,9 @@ impl DoubleArrayTrie {
         let mut curr = 0u32;
         for &ch in prefix {
             let next = self.state_move(curr, ch);
-            if next == NIL_STATE { return; }
+            if next == NIL_STATE {
+                return;
+            }
             curr = next;
         }
         let mut path = prefix.to_vec();
@@ -738,14 +842,18 @@ impl DoubleArrayTrie {
 
     /// Internal DFS for callback-based key iteration.
     fn walk_keys(&self, state: u32, path: &mut Vec<u8>, f: &mut impl FnMut(&[u8])) {
-        if state as usize >= self.states.len() { return; }
+        if state as usize >= self.states.len() {
+            return;
+        }
 
         if self.ninfos[state as usize].is_term() {
             f(path);
         }
 
         let mut c = self.ninfos[state as usize].first_child();
-        if c == NINFO_NONE { return; }
+        if c == NINFO_NONE {
+            return;
+        }
         let base = self.states[state as usize].child0();
 
         while c != NINFO_NONE {
@@ -766,7 +874,9 @@ impl DoubleArrayTrie {
 
     /// Build from sorted keys (more efficient than incremental insert).
     pub fn build_from_sorted(keys: &[&[u8]]) -> Result<Self> {
-        if keys.is_empty() { return Ok(Self::new()); }
+        if keys.is_empty() {
+            return Ok(Self::new());
+        }
 
         // Estimate total states needed
         let total_bytes: usize = keys.iter().map(|k| k.len()).sum();
@@ -789,14 +899,20 @@ impl DoubleArrayTrie {
     #[inline]
     fn count_children(&self, state: u32) -> usize {
         let mut c = self.ninfos[state as usize].first_child();
-        if c == NINFO_NONE { return 0; }
+        if c == NINFO_NONE {
+            return 0;
+        }
         let base = self.states[state as usize].child0();
         let mut count = 0;
         while c != NINFO_NONE {
             count += 1;
             let label = (c - 1) as u8;
             let pos = (base ^ label as u32) as usize;
-            c = if pos < self.ninfos.len() { self.ninfos[pos].sibling } else { NINFO_NONE };
+            c = if pos < self.ninfos.len() {
+                self.ninfos[pos].sibling
+            } else {
+                NINFO_NONE
+            };
         }
         count
     }
@@ -873,7 +989,9 @@ impl DoubleArrayTrie {
             loop {
                 let prev_label = (prev_enc - 1) as u8;
                 let prev_pos = (base ^ prev_label as u32) as usize;
-                if prev_pos >= self.ninfos.len() { break; }
+                if prev_pos >= self.ninfos.len() {
+                    break;
+                }
                 let next_enc = self.ninfos[prev_pos].sibling;
                 if next_enc == NINFO_NONE || label_enc < next_enc {
                     let child_pos = (base ^ label as u32) as usize;
@@ -883,7 +1001,9 @@ impl DoubleArrayTrie {
                     }
                     break;
                 }
-                if next_enc == label_enc { break; } // Already present
+                if next_enc == label_enc {
+                    break;
+                } // Already present
                 prev_enc = next_enc;
             }
         }
@@ -894,7 +1014,9 @@ impl DoubleArrayTrie {
     /// by `is_free()`. Only explicitly freed states go on the free list.
     #[inline]
     fn ensure_capacity(&mut self, required: usize) {
-        if required <= self.states.len() { return; }
+        if required <= self.states.len() {
+            return;
+        }
         let new_len = required.max(self.states.len() * 3 / 2).max(256);
         self.states.resize(new_len, DaState::new_free());
         self.ninfos.resize(new_len, NInfo::default());
@@ -920,20 +1042,22 @@ impl DoubleArrayTrie {
         let single = children.len() == 1;
 
         // Advance search_head past any occupied region
-        while self.search_head < self.states.len()
-            && !self.states[self.search_head].is_free()
-        {
+        while self.search_head < self.states.len() && !self.states[self.search_head].is_free() {
             self.search_head += 1;
         }
 
         let mut base = (self.search_head as u32) ^ ch0;
-        if base == 0 { base = 1; }
+        if base == 0 {
+            base = 1;
+        }
 
         let mut attempts = 0u32;
 
         loop {
             if attempts > 1_000_000 || base > MAX_STATE {
-                return Err(ZiporaError::invalid_data("Double array: cannot find free base"));
+                return Err(ZiporaError::invalid_data(
+                    "Double array: cannot find free base",
+                ));
             }
             attempts += 1;
 
@@ -975,10 +1099,12 @@ impl DoubleArrayTrie {
             while c != NINFO_NONE {
                 let label = (c - 1) as u8;
                 let child_pos = (old_base ^ label as u32) as usize;
-                if child_pos < self.states.len() && !self.states[child_pos].is_free()
-                    && !children_symbols.contains(&label) {
-                        children_symbols.push(label);
-                    }
+                if child_pos < self.states.len()
+                    && !self.states[child_pos].is_free()
+                    && !children_symbols.contains(&label)
+                {
+                    children_symbols.push(label);
+                }
                 c = if child_pos < self.ninfos.len() {
                     self.ninfos[child_pos].sibling
                 } else {
@@ -999,13 +1125,21 @@ impl DoubleArrayTrie {
         // Move existing children to new positions
         {
             for &ch in &children_symbols {
-                if ch == new_ch { continue; }
+                if ch == new_ch {
+                    continue;
+                }
                 let old_pos = old_base ^ ch as u32;
                 let new_pos = new_base ^ ch as u32;
 
-                if old_pos as usize >= self.states.len() { continue; }
-                if self.states[old_pos as usize].is_free() { continue; }
-                if self.states[old_pos as usize].parent() != state { continue; }
+                if old_pos as usize >= self.states.len() {
+                    continue;
+                }
+                if self.states[old_pos as usize].is_free() {
+                    continue;
+                }
+                if self.states[old_pos as usize].parent() != state {
+                    continue;
+                }
 
                 self.ensure_capacity(new_pos as usize + 1);
 
@@ -1025,7 +1159,8 @@ impl DoubleArrayTrie {
                         while gc != NINFO_NONE {
                             let glabel = (gc - 1) as u8;
                             let gpos = (child_base ^ glabel as u32) as usize;
-                            if gpos < self.states.len() && !self.states[gpos].is_free()
+                            if gpos < self.states.len()
+                                && !self.states[gpos].is_free()
                                 && self.states[gpos].parent() == old_pos
                             {
                                 self.states[gpos].set_parent(new_pos);
@@ -1071,10 +1206,16 @@ impl DoubleArrayTrie {
             if child_pos < self.states.len() && !self.states[child_pos].is_free() {
                 children_symbols.push(label);
             }
-            c = if child_pos < self.ninfos.len() { self.ninfos[child_pos].sibling } else { NINFO_NONE };
+            c = if child_pos < self.ninfos.len() {
+                self.ninfos[child_pos].sibling
+            } else {
+                NINFO_NONE
+            };
         }
 
-        if children_symbols.is_empty() { return Ok(old_base); }
+        if children_symbols.is_empty() {
+            return Ok(old_base);
+        }
         children_symbols.sort_unstable();
 
         let new_base = self.find_free_base(&children_symbols)?;
@@ -1085,9 +1226,15 @@ impl DoubleArrayTrie {
             let old_pos = old_base ^ ch as u32;
             let new_pos = new_base ^ ch as u32;
 
-            if old_pos as usize >= self.states.len() { continue; }
-            if self.states[old_pos as usize].is_free() { continue; }
-            if self.states[old_pos as usize].parent() != state { continue; }
+            if old_pos as usize >= self.states.len() {
+                continue;
+            }
+            if self.states[old_pos as usize].is_free() {
+                continue;
+            }
+            if self.states[old_pos as usize].parent() != state {
+                continue;
+            }
 
             self.ensure_capacity(new_pos as usize + 1);
 
@@ -1106,12 +1253,17 @@ impl DoubleArrayTrie {
                     while gc != NINFO_NONE {
                         let glabel = (gc - 1) as u8;
                         let gpos = (child_base ^ glabel as u32) as usize;
-                        if gpos < self.states.len() && !self.states[gpos].is_free()
+                        if gpos < self.states.len()
+                            && !self.states[gpos].is_free()
                             && self.states[gpos].parent() == old_pos
                         {
                             self.states[gpos].set_parent(new_pos);
                         }
-                        gc = if gpos < self.ninfos.len() { self.ninfos[gpos].sibling } else { NINFO_NONE };
+                        gc = if gpos < self.ninfos.len() {
+                            self.ninfos[gpos].sibling
+                        } else {
+                            NINFO_NONE
+                        };
                     }
                 }
             }
@@ -1139,7 +1291,9 @@ impl DoubleArrayTrie {
         let mut depth = 0;
         while curr != 0 && depth < 256 {
             let parent = self.states[curr as usize].parent();
-            if parent == ancestor { return true; }
+            if parent == ancestor {
+                return true;
+            }
             curr = parent;
             depth += 1;
         }
@@ -1148,14 +1302,18 @@ impl DoubleArrayTrie {
 
     /// Recursively collect keys via DFS.
     fn collect_keys(&self, state: u32, path: &mut Vec<u8>, keys: &mut Vec<Vec<u8>>) {
-        if state as usize >= self.states.len() { return; }
+        if state as usize >= self.states.len() {
+            return;
+        }
 
         if self.ninfos[state as usize].is_term() {
             keys.push(path.clone());
         }
 
         let mut c = self.ninfos[state as usize].first_child();
-        if c == NINFO_NONE { return; }
+        if c == NINFO_NONE {
+            return;
+        }
         let base = self.states[state as usize].child0();
 
         while c != NINFO_NONE {
@@ -1176,7 +1334,9 @@ impl DoubleArrayTrie {
 }
 
 impl Default for DoubleArrayTrie {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl std::fmt::Debug for DoubleArrayTrie {
@@ -1258,7 +1418,9 @@ impl<'a> DoubleArrayTrieCursor<'a> {
         self.valid = false;
 
         // Start at root
-        if self.trie.states.is_empty() { return false; }
+        if self.trie.states.is_empty() {
+            return false;
+        }
 
         // If root is terminal (empty key), we're done
         if self.trie.ninfos[0].is_term() {
@@ -1278,7 +1440,9 @@ impl<'a> DoubleArrayTrieCursor<'a> {
         self.current_key.clear();
         self.valid = false;
 
-        if self.trie.states.is_empty() { return false; }
+        if self.trie.states.is_empty() {
+            return false;
+        }
 
         // Start at root, descend to rightmost (highest symbol) terminal
         self.stack.push((0, 256));
@@ -1292,7 +1456,9 @@ impl<'a> DoubleArrayTrieCursor<'a> {
         self.current_key.clear();
         self.valid = false;
 
-        if self.trie.states.is_empty() { return false; }
+        if self.trie.states.is_empty() {
+            return false;
+        }
 
         let mut curr = 0u32;
 
@@ -1333,7 +1499,9 @@ impl<'a> DoubleArrayTrieCursor<'a> {
 
     /// Advance to the next key in lexicographic order.
     pub fn next(&mut self) -> bool {
-        if !self.valid { return false; }
+        if !self.valid {
+            return false;
+        }
 
         // Pop current terminal state, advance from its children or backtrack
         if let Some(&(state, _)) = self.stack.last() {
@@ -1354,7 +1522,9 @@ impl<'a> DoubleArrayTrieCursor<'a> {
     /// Uses parent-chain walk: O(key_depth) per call.
     /// After prev(), the stack is rebuilt for next() compatibility.
     pub fn prev(&mut self) -> bool {
-        if !self.valid { return false; }
+        if !self.valid {
+            return false;
+        }
         self.valid = false;
 
         // Get current state from the actual trie (not stack — avoids stale state)
@@ -1421,7 +1591,9 @@ impl<'a> DoubleArrayTrieCursor<'a> {
 
         for &ch in key.iter() {
             let next = self.trie.state_move(curr, ch);
-            if next == NIL_STATE { break; }
+            if next == NIL_STATE {
+                break;
+            }
             let len = self.stack.len();
             self.stack[len - 1].1 = ch as u16 + 1;
             self.stack.push((next, 0));
@@ -1520,7 +1692,6 @@ impl<'a> DoubleArrayTrieCursor<'a> {
             }
         }
     }
-
 }
 
 impl DoubleArrayTrie {
@@ -1604,11 +1775,21 @@ pub trait MapValue: Copy + PartialEq {
     const EMPTY: Self;
 }
 
-impl MapValue for i32   { const EMPTY: Self = i32::MIN; }
-impl MapValue for u32   { const EMPTY: Self = u32::MAX; }
-impl MapValue for i64   { const EMPTY: Self = i64::MIN; }
-impl MapValue for u64   { const EMPTY: Self = u64::MAX; }
-impl MapValue for usize { const EMPTY: Self = usize::MAX; }
+impl MapValue for i32 {
+    const EMPTY: Self = i32::MIN;
+}
+impl MapValue for u32 {
+    const EMPTY: Self = u32::MAX;
+}
+impl MapValue for i64 {
+    const EMPTY: Self = i64::MIN;
+}
+impl MapValue for u64 {
+    const EMPTY: Self = u64::MAX;
+}
+impl MapValue for usize {
+    const EMPTY: Self = usize::MAX;
+}
 
 /// # Examples
 ///
@@ -1627,11 +1808,17 @@ pub struct DoubleArrayTrieMap<V: MapValue> {
 
 impl<V: MapValue> DoubleArrayTrieMap<V> {
     pub fn new() -> Self {
-        Self { trie: DoubleArrayTrie::new(), values: Vec::new() }
+        Self {
+            trie: DoubleArrayTrie::new(),
+            values: Vec::new(),
+        }
     }
 
     pub fn with_capacity(cap: usize) -> Self {
-        Self { trie: DoubleArrayTrie::with_capacity(cap), values: Vec::with_capacity(cap) }
+        Self {
+            trie: DoubleArrayTrie::with_capacity(cap),
+            values: Vec::with_capacity(cap),
+        }
     }
 
     /// Insert key-value pair. Returns previous value if key existed.
@@ -1650,7 +1837,9 @@ impl<V: MapValue> DoubleArrayTrieMap<V> {
             }
         })?;
 
-        let state = self.trie.lookup_state(key)
+        let state = self
+            .trie
+            .lookup_state(key)
             .ok_or_else(|| ZiporaError::invalid_state("insert succeeded but lookup failed"))?;
         let idx = state as usize;
         if idx >= self.values.len() {
@@ -1677,14 +1866,22 @@ impl<V: MapValue> DoubleArrayTrieMap<V> {
     }
 
     #[inline]
-    pub fn contains(&self, key: &[u8]) -> bool { self.trie.contains(key) }
+    pub fn contains(&self, key: &[u8]) -> bool {
+        self.trie.contains(key)
+    }
     #[inline]
-    pub fn len(&self) -> usize { self.trie.len() }
+    pub fn len(&self) -> usize {
+        self.trie.len()
+    }
     #[inline]
-    pub fn is_empty(&self) -> bool { self.trie.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.trie.is_empty()
+    }
 
     /// Return all keys in the map.
-    pub fn keys(&self) -> Vec<Vec<u8>> { self.trie.keys() }
+    pub fn keys(&self) -> Vec<Vec<u8>> {
+        self.trie.keys()
+    }
 
     /// Return all keys starting with the given prefix.
     pub fn keys_with_prefix(&self, prefix: &[u8]) -> Vec<Vec<u8>> {
@@ -1699,7 +1896,9 @@ impl<V: MapValue> DoubleArrayTrieMap<V> {
         let mut curr = 0u32;
         for &ch in prefix {
             let next = self.trie.state_move(curr, ch);
-            if next == NIL_STATE { return results; }
+            if next == NIL_STATE {
+                return results;
+            }
             curr = next;
         }
         let mut path = prefix.to_vec();
@@ -1709,21 +1908,29 @@ impl<V: MapValue> DoubleArrayTrieMap<V> {
 
     /// Return all values for keys starting with the given prefix.
     pub fn values_with_prefix(&self, prefix: &[u8]) -> Vec<V> {
-        self.entries_with_prefix(prefix).into_iter().map(|(_, v)| v).collect()
+        self.entries_with_prefix(prefix)
+            .into_iter()
+            .map(|(_, v)| v)
+            .collect()
     }
 
     /// Recursively collect (key, value) entries.
     fn collect_entries(&self, state: u32, path: &mut Vec<u8>, entries: &mut Vec<(Vec<u8>, V)>) {
-        if state as usize >= self.trie.states.len() { return; }
+        if state as usize >= self.trie.states.len() {
+            return;
+        }
 
         if self.trie.ninfos[state as usize].is_term()
             && let Some(&val) = self.values.get(state as usize)
-                && val != V::EMPTY {
-                    entries.push((path.clone(), val));
-                }
+            && val != V::EMPTY
+        {
+            entries.push((path.clone(), val));
+        }
 
         let mut c = self.trie.ninfos[state as usize].first_child();
-        if c == NINFO_NONE { return; }
+        if c == NINFO_NONE {
+            return;
+        }
         let base = self.trie.states[state as usize].child0();
         while c != NINFO_NONE {
             let label = (c - 1) as u8;
@@ -1749,7 +1956,9 @@ impl<V: MapValue> DoubleArrayTrieMap<V> {
         let mut curr = 0u32;
         for &ch in prefix {
             let next = self.trie.state_move(curr, ch);
-            if next == NIL_STATE { return; }
+            if next == NIL_STATE {
+                return;
+            }
             curr = next;
         }
         self.walk_values_dfs(curr, &mut f);
@@ -1757,16 +1966,21 @@ impl<V: MapValue> DoubleArrayTrieMap<V> {
 
     /// DFS walk yielding values via NInfo sibling chain. Zero allocation.
     fn walk_values_dfs(&self, state: u32, f: &mut impl FnMut(V)) {
-        if state as usize >= self.trie.states.len() { return; }
+        if state as usize >= self.trie.states.len() {
+            return;
+        }
 
         if self.trie.ninfos[state as usize].is_term()
             && let Some(&val) = self.values.get(state as usize)
-                && val != V::EMPTY {
-                    f(val);
-                }
+            && val != V::EMPTY
+        {
+            f(val);
+        }
 
         let mut c = self.trie.ninfos[state as usize].first_child();
-        if c == NINFO_NONE { return; }
+        if c == NINFO_NONE {
+            return;
+        }
         let base = self.trie.states[state as usize].child0();
         while c != NINFO_NONE {
             let label = (c - 1) as u8;
@@ -1808,7 +2022,11 @@ impl<V: MapValue> DoubleArrayTrieMap<V> {
         for &ch in prefix {
             let next = self.trie.state_move(curr, ch);
             if next == NIL_STATE {
-                return PrefixIterator { trie: self, stack: Vec::new(), path: Vec::new() };
+                return PrefixIterator {
+                    trie: self,
+                    stack: Vec::new(),
+                    path: Vec::new(),
+                };
             }
             curr = next;
         }
@@ -1827,7 +2045,11 @@ impl<V: MapValue> DoubleArrayTrieMap<V> {
             checked_terminal: false,
             depth: prefix.len(),
         };
-        PrefixIterator { trie: self, stack: vec![frame], path }
+        PrefixIterator {
+            trie: self,
+            stack: vec![frame],
+            path,
+        }
     }
 
     /// Returns a lazy iterator over all (key, value) pairs within edit distance
@@ -1982,9 +2204,9 @@ impl<'a, V: MapValue> FuzzyIterator<'a, V> {
         row[0] = prev_row[0] + 1; // deletion
         for j in 1..=query.len() {
             let cost = if query[j - 1] == c { 0 } else { 1 };
-            row[j] = (prev_row[j] + 1)          // deletion
-                .min(row[j - 1] + 1)             // insertion
-                .min(prev_row[j - 1] + cost);    // substitution
+            row[j] = (prev_row[j] + 1) // deletion
+                .min(row[j - 1] + 1) // insertion
+                .min(prev_row[j - 1] + cost); // substitution
         }
         row
     }
@@ -2091,7 +2313,9 @@ impl<V: MapValue> std::fmt::Debug for DoubleArrayTrieMap<V> {
 }
 
 impl<V: MapValue> Default for DoubleArrayTrieMap<V> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -2382,9 +2606,9 @@ mod tests {
         assert!(t.total_states() >= 256, "minimum capacity must be 256");
 
         // contains on empty trie must not crash (base=0, next=ch)
-        assert!(!t.contains(b"hello"));  // 'h' = 104, needs states[104]
-        assert!(!t.contains(b"\xff"));   // 0xFF = 255, needs states[255]
-        assert!(!t.contains(b"\x00"));   // 0x00 = 0, needs states[0]
+        assert!(!t.contains(b"hello")); // 'h' = 104, needs states[104]
+        assert!(!t.contains(b"\xff")); // 0xFF = 255, needs states[255]
+        assert!(!t.contains(b"\x00")); // 0x00 = 0, needs states[0]
 
         // insert + lookup must work
         let mut t = DoubleArrayTrie::with_capacity(1);
@@ -2423,15 +2647,16 @@ mod tests {
         }
 
         // Each key should have a unique state
-        let states: Vec<u32> = keys.iter()
-            .map(|k| t.lookup_state(k).unwrap())
-            .collect();
+        let states: Vec<u32> = keys.iter().map(|k| t.lookup_state(k).unwrap()).collect();
         for i in 0..states.len() {
             for j in (i + 1)..states.len() {
-                assert_ne!(states[i], states[j],
+                assert_ne!(
+                    states[i],
+                    states[j],
                     "states for {:?} and {:?} should differ",
                     std::str::from_utf8(keys[i]).unwrap(),
-                    std::str::from_utf8(keys[j]).unwrap());
+                    std::str::from_utf8(keys[j]).unwrap()
+                );
             }
         }
     }
@@ -2445,9 +2670,15 @@ mod tests {
         // is free (has FREE_BIT set in parent). The optimized state_move
         // must return NIL_STATE because free parent can never equal curr.
         for ch in 0u8..=255 {
-            if ch == b'a' { continue; }
-            assert_eq!(t.state_move(0, ch), NIL_STATE,
-                "state_move(0, {}) should be NIL for free state", ch);
+            if ch == b'a' {
+                continue;
+            }
+            assert_eq!(
+                t.state_move(0, ch),
+                NIL_STATE,
+                "state_move(0, {}) should be NIL for free state",
+                ch
+            );
         }
     }
 
@@ -2466,7 +2697,11 @@ mod tests {
 
         for ch in 0u8..=127 {
             let child = t.state_move(x_state, ch);
-            assert_ne!(child, NIL_STATE, "child for byte {} missing after relocations", ch);
+            assert_ne!(
+                child, NIL_STATE,
+                "child for byte {} missing after relocations",
+                ch
+            );
             assert!(t.is_term(child));
         }
         // Bytes not inserted should still return NIL
@@ -2508,7 +2743,13 @@ mod tests {
     fn test_performance_5000_terms() {
         // Generate 5000 realistic terms
         let terms: Vec<String> = (0..5000)
-            .map(|i| format!("term_{:06}_{}", i, ["alpha", "beta", "gamma", "delta"][i % 4]))
+            .map(|i| {
+                format!(
+                    "term_{:06}_{}",
+                    i,
+                    ["alpha", "beta", "gamma", "delta"][i % 4]
+                )
+            })
             .collect();
 
         // Insert
@@ -2540,16 +2781,28 @@ mod tests {
         // (Cedar does 5000 inserts in ~876µs)
         #[cfg(not(debug_assertions))]
         {
-            eprintln!("DoubleArrayTrie 5000 terms: insert={:?}, lookup_hit={:?}, lookup_miss={:?}",
-                _insert_time, _lookup_time, _miss_time);
-            eprintln!("Memory: {} bytes ({} bytes/key), {} states",
-                t.mem_size(), t.mem_size() / 5000, t.total_states());
+            eprintln!(
+                "DoubleArrayTrie 5000 terms: insert={:?}, lookup_hit={:?}, lookup_miss={:?}",
+                _insert_time, _lookup_time, _miss_time
+            );
+            eprintln!(
+                "Memory: {} bytes ({} bytes/key), {} states",
+                t.mem_size(),
+                t.mem_size() / 5000,
+                t.total_states()
+            );
             // Sanity: insert should be under 50ms in release
-            assert!(_insert_time.as_millis() < 50,
-                "Insert too slow: {:?}", _insert_time);
+            assert!(
+                _insert_time.as_millis() < 50,
+                "Insert too slow: {:?}",
+                _insert_time
+            );
             // Lookup should be under 10ms
-            assert!(_lookup_time.as_millis() < 10,
-                "Lookup too slow: {:?}", _lookup_time);
+            assert!(
+                _lookup_time.as_millis() < 10,
+                "Lookup too slow: {:?}",
+                _lookup_time
+            );
         }
     }
 
@@ -2626,7 +2879,12 @@ mod tests {
             let mut eager = trie.entries_with_prefix(prefix);
             lazy.sort_by(|a, b| a.0.cmp(&b.0));
             eager.sort_by(|a, b| a.0.cmp(&b.0));
-            assert_eq!(lazy, eager, "mismatch for prefix {:?}", std::str::from_utf8(prefix));
+            assert_eq!(
+                lazy,
+                eager,
+                "mismatch for prefix {:?}",
+                std::str::from_utf8(prefix)
+            );
         }
     }
 
@@ -2786,12 +3044,24 @@ mod tests {
         }
 
         // Compare against entries_with_prefix for several prefixes
-        for prefix in [b"key" as &[u8], b"key0", b"key00", b"key000", b"key0001", b""] {
+        for prefix in [
+            b"key" as &[u8],
+            b"key0",
+            b"key00",
+            b"key000",
+            b"key0001",
+            b"",
+        ] {
             let mut lazy: Vec<_> = trie.iter_prefix(prefix).collect();
             let mut eager = trie.entries_with_prefix(prefix);
             lazy.sort_by(|a, b| a.0.cmp(&b.0));
             eager.sort_by(|a, b| a.0.cmp(&b.0));
-            assert_eq!(lazy, eager, "mismatch for prefix {:?}", std::str::from_utf8(prefix));
+            assert_eq!(
+                lazy,
+                eager,
+                "mismatch for prefix {:?}",
+                std::str::from_utf8(prefix)
+            );
         }
     }
 
@@ -2817,21 +3087,36 @@ mod tests {
             let m = a.len();
             let n = b.len();
             let mut dp = vec![vec![0usize; n + 1]; m + 1];
-            for i in 0..=m { dp[i][0] = i; }
-            for j in 0..=n { dp[0][j] = j; }
+            for i in 0..=m {
+                dp[i][0] = i;
+            }
+            for j in 0..=n {
+                dp[0][j] = j;
+            }
             for i in 1..=m {
                 for j in 1..=n {
-                    let cost = if a[i-1] == b[j-1] { 0 } else { 1 };
-                    dp[i][j] = (dp[i-1][j] + 1)
-                        .min(dp[i][j-1] + 1)
-                        .min(dp[i-1][j-1] + cost);
+                    let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+                    dp[i][j] = (dp[i - 1][j] + 1)
+                        .min(dp[i][j - 1] + 1)
+                        .min(dp[i - 1][j - 1] + cost);
                 }
             }
             dp[m][n]
         }
 
         let mut trie = DoubleArrayTrieMap::<i32>::new();
-        let words = [b"cat" as &[u8], b"car", b"cap", b"bat", b"hat", b"cart", b"ca", b"c", b"cats", b"dog"];
+        let words = [
+            b"cat" as &[u8],
+            b"car",
+            b"cap",
+            b"bat",
+            b"hat",
+            b"cart",
+            b"ca",
+            b"c",
+            b"cats",
+            b"dog",
+        ];
         for (i, w) in words.iter().enumerate() {
             trie.insert(w, i as i32).unwrap();
         }
@@ -2841,17 +3126,26 @@ mod tests {
             let results: Vec<_> = trie.iter_fuzzy(query, max_dist).collect();
             for (key, _) in &results {
                 let dist = edit_distance(key, query);
-                assert!(dist <= max_dist,
+                assert!(
+                    dist <= max_dist,
                     "key {:?} has distance {} from {:?}, exceeds max_dist {}",
-                    std::str::from_utf8(key), dist, std::str::from_utf8(query), max_dist);
+                    std::str::from_utf8(key),
+                    dist,
+                    std::str::from_utf8(query),
+                    max_dist
+                );
             }
             // Verify completeness: check all trie keys within distance
             for w in &words {
                 let dist = edit_distance(w, query);
                 if dist <= max_dist {
-                    assert!(results.iter().any(|(k, _)| k == *w),
+                    assert!(
+                        results.iter().any(|(k, _)| k == *w),
                         "key {:?} at distance {} missing from results (max_dist={})",
-                        std::str::from_utf8(w), dist, max_dist);
+                        std::str::from_utf8(w),
+                        dist,
+                        max_dist
+                    );
                 }
             }
         }
@@ -2860,16 +3154,16 @@ mod tests {
     #[test]
     fn test_fuzzy_iterator_insertion_deletion_substitution() {
         let mut trie = DoubleArrayTrieMap::<i32>::new();
-        trie.insert(b"cat", 1).unwrap();   // exact
-        trie.insert(b"at", 2).unwrap();    // deletion of 'c'
-        trie.insert(b"ct", 3).unwrap();    // deletion of 'a'
-        trie.insert(b"ca", 4).unwrap();    // deletion of 't'
-        trie.insert(b"cats", 5).unwrap();  // insertion of 's'
-        trie.insert(b"scat", 6).unwrap();  // insertion of 's' at start
-        trie.insert(b"caat", 7).unwrap();  // insertion of 'a'
-        trie.insert(b"bat", 8).unwrap();   // substitution
-        trie.insert(b"cot", 9).unwrap();   // substitution
-        trie.insert(b"cab", 10).unwrap();  // substitution
+        trie.insert(b"cat", 1).unwrap(); // exact
+        trie.insert(b"at", 2).unwrap(); // deletion of 'c'
+        trie.insert(b"ct", 3).unwrap(); // deletion of 'a'
+        trie.insert(b"ca", 4).unwrap(); // deletion of 't'
+        trie.insert(b"cats", 5).unwrap(); // insertion of 's'
+        trie.insert(b"scat", 6).unwrap(); // insertion of 's' at start
+        trie.insert(b"caat", 7).unwrap(); // insertion of 'a'
+        trie.insert(b"bat", 8).unwrap(); // substitution
+        trie.insert(b"cot", 9).unwrap(); // substitution
+        trie.insert(b"cab", 10).unwrap(); // substitution
 
         let results: Vec<_> = trie.iter_fuzzy(b"cat", 1).collect();
         let keys: Vec<Vec<u8>> = results.iter().map(|(k, _)| k.clone()).collect();
@@ -2947,14 +3241,18 @@ mod tests {
             let m = a.len();
             let n = b.len();
             let mut dp = vec![vec![0usize; n + 1]; m + 1];
-            for i in 0..=m { dp[i][0] = i; }
-            for j in 0..=n { dp[0][j] = j; }
+            for i in 0..=m {
+                dp[i][0] = i;
+            }
+            for j in 0..=n {
+                dp[0][j] = j;
+            }
             for i in 1..=m {
                 for j in 1..=n {
-                    let cost = if a[i-1] == b[j-1] { 0 } else { 1 };
-                    dp[i][j] = (dp[i-1][j] + 1)
-                        .min(dp[i][j-1] + 1)
-                        .min(dp[i-1][j-1] + cost);
+                    let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+                    dp[i][j] = (dp[i - 1][j] + 1)
+                        .min(dp[i][j - 1] + 1)
+                        .min(dp[i - 1][j - 1] + cost);
                 }
             }
             dp[m][n]
@@ -2967,16 +3265,25 @@ mod tests {
             // Every result should be within distance
             for (key, _) in &results {
                 let d = edit_distance(key, query);
-                assert!(d <= max_dist, "spurious result {:?} at distance {}",
-                    std::str::from_utf8(key), d);
+                assert!(
+                    d <= max_dist,
+                    "spurious result {:?} at distance {}",
+                    std::str::from_utf8(key),
+                    d
+                );
             }
 
             // Every word within distance should appear
             for w in &words {
                 let d = edit_distance(w.as_bytes(), query);
                 if d <= max_dist {
-                    assert!(results.iter().any(|(k, _)| k == w.as_bytes()),
-                        "missing {:?} at distance {} (max_dist={})", w, d, max_dist);
+                    assert!(
+                        results.iter().any(|(k, _)| k == w.as_bytes()),
+                        "missing {:?} at distance {} (max_dist={})",
+                        w,
+                        d,
+                        max_dist
+                    );
                 }
             }
         }
@@ -3137,8 +3444,9 @@ mod tests {
     #[test]
     fn test_cursor_full_traversal_matches_keys() {
         let mut t = DoubleArrayTrie::new();
-        let words = ["alpha", "beta", "gamma", "delta", "epsilon",
-                      "zeta", "eta", "theta", "iota", "kappa"];
+        let words = [
+            "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa",
+        ];
         for w in &words {
             t.insert(w.as_bytes()).unwrap();
         }
@@ -3156,8 +3464,10 @@ mod tests {
         let mut trie_keys = t.keys();
         trie_keys.sort();
 
-        assert_eq!(cursor_keys, trie_keys,
-            "Cursor traversal must match sorted keys()");
+        assert_eq!(
+            cursor_keys, trie_keys,
+            "Cursor traversal must match sorted keys()"
+        );
     }
 
     #[test]
@@ -3244,12 +3554,19 @@ mod tests {
         let mut keys = Vec::new();
         if c.seek_begin() {
             keys.push(c.key().to_vec());
-            while c.next() { keys.push(c.key().to_vec()); }
+            while c.next() {
+                keys.push(c.key().to_vec());
+            }
         }
         assert_eq!(keys.len(), 200);
         for i in 1..keys.len() {
-            assert!(keys[i - 1] < keys[i], "Not sorted at {}: {:?} >= {:?}",
-                i, String::from_utf8_lossy(&keys[i-1]), String::from_utf8_lossy(&keys[i]));
+            assert!(
+                keys[i - 1] < keys[i],
+                "Not sorted at {}: {:?} >= {:?}",
+                i,
+                String::from_utf8_lossy(&keys[i - 1]),
+                String::from_utf8_lossy(&keys[i])
+            );
         }
 
         // Backward traversal should produce reverse sorted order
@@ -3257,7 +3574,9 @@ mod tests {
         let mut rkeys = Vec::new();
         if c.seek_end() {
             rkeys.push(c.key().to_vec());
-            while c.prev() { rkeys.push(c.key().to_vec()); }
+            while c.prev() {
+                rkeys.push(c.key().to_vec());
+            }
         }
         assert_eq!(rkeys.len(), 200);
         rkeys.reverse();
@@ -3307,24 +3626,36 @@ mod tests {
         assert_eq!(t.len(), 1000);
 
         let results = t.keys_with_prefix(b"term_00");
-        assert_eq!(results.len(), 100,
+        assert_eq!(
+            results.len(),
+            100,
             "keys_with_prefix('term_00') should return 100 (term_0000..term_0099), got {}",
-            results.len());
+            results.len()
+        );
 
         let results2 = t.keys_with_prefix(b"term_01");
-        assert_eq!(results2.len(), 100,
+        assert_eq!(
+            results2.len(),
+            100,
             "keys_with_prefix('term_01') should return 100, got {}",
-            results2.len());
+            results2.len()
+        );
 
         let all = t.keys_with_prefix(b"term_");
-        assert_eq!(all.len(), 1000,
+        assert_eq!(
+            all.len(),
+            1000,
             "keys_with_prefix('term_') should return 1000, got {}",
-            all.len());
+            all.len()
+        );
 
         let all_keys = t.keys();
-        assert_eq!(all_keys.len(), 1000,
+        assert_eq!(
+            all_keys.len(),
+            1000,
             "keys() should return 1000, got {}",
-            all_keys.len());
+            all_keys.len()
+        );
     }
 
     // --- Value tests (via DoubleArrayTrieMap) ---
@@ -3353,8 +3684,12 @@ mod tests {
             m.insert(format!("key_{:04}", i).as_bytes(), i).unwrap();
         }
         for i in 0..500i32 {
-            assert_eq!(m.get(format!("key_{:04}", i).as_bytes()), Some(i),
-                "value mismatch for key_{:04}", i);
+            assert_eq!(
+                m.get(format!("key_{:04}", i).as_bytes()),
+                Some(i),
+                "value mismatch for key_{:04}",
+                i
+            );
         }
         assert_eq!(m.len(), 500);
     }
@@ -3384,8 +3719,11 @@ mod tests {
         }
         assert_eq!(t.len(), 1000);
         for i in 0..1000u32 {
-            assert!(t.contains(format!("term_{:04}", i).as_bytes()),
-                "missing term_{:04}", i);
+            assert!(
+                t.contains(format!("term_{:04}", i).as_bytes()),
+                "missing term_{:04}",
+                i
+            );
         }
     }
 
@@ -3449,7 +3787,12 @@ mod tests {
         }
 
         let prefix_vals = m.values_with_prefix(b"term_001");
-        assert_eq!(prefix_vals.len(), 1000, "prefix 'term_001' should yield 1000 values, got {}", prefix_vals.len());
+        assert_eq!(
+            prefix_vals.len(),
+            1000,
+            "prefix 'term_001' should yield 1000 values, got {}",
+            prefix_vals.len()
+        );
     }
 }
 
@@ -3466,7 +3809,7 @@ mod prefix_regression_tests {
             assert!(inserted || !inserted, "insert returned for term_{:04}", i);
         }
         assert_eq!(t.len(), 1000, "expected 1000 keys, got {}", t.len());
-        
+
         // Verify all terms exist
         let mut missing = Vec::new();
         for i in 0..1000u32 {
@@ -3475,10 +3818,20 @@ mod prefix_regression_tests {
                 missing.push(i);
             }
         }
-        assert!(missing.is_empty(), "missing {} terms: {:?}", missing.len(), &missing[..missing.len().min(20)]);
+        assert!(
+            missing.is_empty(),
+            "missing {} terms: {:?}",
+            missing.len(),
+            &missing[..missing.len().min(20)]
+        );
 
         let result = t.keys_with_prefix(b"term_00");
-        assert_eq!(result.len(), 100, "prefix 'term_00' returned {} (expected 100)", result.len());
+        assert_eq!(
+            result.len(),
+            100,
+            "prefix 'term_00' returned {} (expected 100)",
+            result.len()
+        );
     }
 }
 
@@ -3504,12 +3857,22 @@ mod map_prefix_regression_tests {
         // Verify all lookups
         for i in 0..1000u32 {
             let term = format!("term_{:04}", i);
-            assert_eq!(trie.get(term.as_bytes()), Some(i), "get failed for {}", term);
+            assert_eq!(
+                trie.get(term.as_bytes()),
+                Some(i),
+                "get failed for {}",
+                term
+            );
         }
 
         // Verify prefix
         let result = trie.values_with_prefix(b"term_00");
-        assert_eq!(result.len(), 100, "values_with_prefix 'term_00' returned {} (expected 100)", result.len());
+        assert_eq!(
+            result.len(),
+            100,
+            "values_with_prefix 'term_00' returned {} (expected 100)",
+            result.len()
+        );
     }
 
     // --- Additional corner case tests ---

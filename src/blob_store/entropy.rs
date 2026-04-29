@@ -3,11 +3,11 @@
 //! This module provides blob store wrappers that use entropy coding for compression.
 
 use crate::blob_store::{BlobStore, BlobStoreStats};
+use crate::entropy::rans::{ParallelX1, Rans64Encoder};
 use crate::entropy::{
     DictionaryBuilder, DictionaryCompressor, EntropyStats, HuffmanDecoder, HuffmanEncoder,
     HuffmanTree,
 };
-use crate::entropy::rans::{Rans64Encoder, ParallelX1};
 use crate::error::{Result, ZiporaError};
 
 /// Compression algorithm type for entropy blob store

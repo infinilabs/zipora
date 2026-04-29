@@ -3,12 +3,12 @@
 //! This module provides a builder pattern for constructing ZipOffsetBlobStore
 //! with optimal compression and performance characteristics.
 
+use crate::RecordId;
 use crate::blob_store::sorted_uint_vec::SortedUintVecBuilder;
 use crate::blob_store::zip_offset::{ZipOffsetBlobStore, ZipOffsetBlobStoreConfig};
 use crate::containers::FastVec;
 use crate::error::{Result, ZiporaError};
 use crate::memory::SecureMemoryPool;
-use crate::RecordId;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -169,13 +169,13 @@ impl ZipOffsetBlobStoreBuilder {
     /// * `Err(ZiporaError)` - If processing fails
     pub fn add_record(&mut self, data: &[u8]) -> Result<RecordId> {
         let record_id = self.stats.record_count;
-        
+
         // Store current offset for this record
         self.offset_builder.push(self.current_offset)?;
-        
+
         let original_size = data.len();
         let mut processed_data = data.to_vec();
-        
+
         // Apply compression if enabled
         if self.config.compress_level > 0 {
             processed_data = self.compress_data(data)?;
@@ -224,7 +224,7 @@ impl ZipOffsetBlobStoreBuilder {
         } else {
             1024 // Default estimate
         };
-        
+
         let estimated_bytes = additional * avg_size;
         self.content.reserve(estimated_bytes)?;
         Ok(())
@@ -237,8 +237,9 @@ impl ZipOffsetBlobStoreBuilder {
             level => {
                 #[cfg(feature = "zstd")]
                 {
-                    zstd::encode_all(data, level as i32)
-                        .map_err(|e| ZiporaError::io_error(format!("ZSTD compression failed: {}", e)))
+                    zstd::encode_all(data, level as i32).map_err(|e| {
+                        ZiporaError::io_error(format!("ZSTD compression failed: {}", e))
+                    })
                 }
                 #[cfg(not(feature = "zstd"))]
                 {
@@ -261,10 +262,10 @@ impl ZipOffsetBlobStoreBuilder {
     pub fn finish(mut self) -> Result<ZipOffsetBlobStore> {
         // Add final offset to mark end of content
         self.offset_builder.push(self.current_offset)?;
-        
+
         // Build compressed offset index
         let _offsets = self.offset_builder.finish()?;
-        
+
         // Create the blob store
         let store = if let Some(pool) = self.pool {
             ZipOffsetBlobStore::with_pool(self.config, pool)?
@@ -275,7 +276,7 @@ impl ZipOffsetBlobStoreBuilder {
         // Create the final store with the built data
         // Note: This is a placeholder implementation
         // TODO: Implement actual data transfer from builder to store
-        
+
         Ok(store)
     }
 
@@ -292,7 +293,7 @@ impl ZipOffsetBlobStoreBuilder {
         if self.offset_builder.len() != self.stats.record_count {
             return Err(ZiporaError::invalid_data("offset count mismatch"));
         }
-        
+
         if self.current_offset != self.content.len() as u64 {
             return Err(ZiporaError::invalid_data("content size mismatch"));
         }
@@ -306,8 +307,11 @@ impl Default for ZipOffsetBlobStoreBuilder {
         // SAFETY: ZipOffsetBlobStoreBuilder::new() only fails on memory allocation errors.
         // Use unwrap_or_else with panic as this type has non-trivial dependencies.
         Self::new().unwrap_or_else(|e| {
-            panic!("ZipOffsetBlobStoreBuilder creation failed in Default: {}. \
-                   This indicates severe memory pressure.", e)
+            panic!(
+                "ZipOffsetBlobStoreBuilder creation failed in Default: {}. \
+                   This indicates severe memory pressure.",
+                e
+            )
         })
     }
 }
@@ -411,7 +415,7 @@ mod tests {
         let mut stats = BuilderStats::default();
         stats.uncompressed_size = 1000;
         stats.compressed_size = 600;
-        
+
         assert!((stats.compression_ratio() - 0.6).abs() < 0.001);
         assert!((stats.space_saved_percent() - 40.0).abs() < 0.001);
     }
@@ -437,7 +441,10 @@ mod tests {
 
         let stats = builder.stats();
         assert_eq!(stats.record_count, 3);
-        assert_eq!(stats.uncompressed_size, data1.len() + data2.len() + data3.len());
+        assert_eq!(
+            stats.uncompressed_size,
+            data1.len() + data2.len() + data3.len()
+        );
 
         assert!(builder.validate().is_ok());
     }
@@ -469,7 +476,7 @@ mod tests {
         let stats = builder.stats();
         assert_eq!(stats.record_count, 1);
         assert_eq!(stats.uncompressed_size, data.len());
-        
+
         // With ZSTD compression, the compressed size should be smaller
         #[cfg(feature = "zstd")]
         {
@@ -498,7 +505,7 @@ mod tests {
     #[test]
     fn test_zip_offset_blob_store_builder_add_records() {
         let mut builder = ZipOffsetBlobStoreBuilder::new().unwrap();
-        
+
         let records = vec![
             b"First record".to_vec(),
             b"Second record".to_vec(),
@@ -514,13 +521,13 @@ mod tests {
     #[test]
     fn test_zip_offset_blob_store_builder_reserve() {
         let mut builder = ZipOffsetBlobStoreBuilder::new().unwrap();
-        
+
         // Should not panic or error
         builder.reserve(100).unwrap();
-        
+
         // Add a record to establish average size
         builder.add_record(b"test").unwrap();
-        
+
         // Reserve more space
         builder.reserve(50).unwrap();
     }
@@ -528,10 +535,10 @@ mod tests {
     #[test]
     fn test_zip_offset_blob_store_builder_estimated_size() {
         let mut builder = ZipOffsetBlobStoreBuilder::new().unwrap();
-        
+
         let initial_size = builder.estimated_size();
         assert!(initial_size > 0); // Should include header/footer overhead
-        
+
         builder.add_record(b"test data").unwrap();
         let size_after_record = builder.estimated_size();
         assert!(size_after_record > initial_size);
@@ -557,13 +564,13 @@ mod tests {
     #[test]
     fn test_batch_builder_manual_flush() {
         let mut batch_builder = BatchZipOffsetBlobStoreBuilder::new(10).unwrap();
-        
+
         batch_builder.add_record(b"record1").unwrap();
         batch_builder.add_record(b"record2").unwrap();
-        
+
         // Manual flush
         batch_builder.flush_batch().unwrap();
-        
+
         batch_builder.add_record(b"record3").unwrap();
         let _store = batch_builder.finish().unwrap();
     }

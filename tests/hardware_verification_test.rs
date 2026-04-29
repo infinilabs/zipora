@@ -7,8 +7,8 @@
  * Critical for validating the fix to the hardware acceleration bug.
  */
 
-use zipora::system::cpu_features::get_cpu_features;
 use std::arch::x86_64::*;
+use zipora::system::cpu_features::get_cpu_features;
 
 /// Test that verifies POPCNT instruction is available and being used
 #[test]
@@ -108,11 +108,18 @@ fn test_hardware_acceleration_bug_fix() {
     println!("   Verifying the cfg(test) override bug is fixed...");
 
     // This should NOT return all false values unless ZIPORA_DISABLE_SIMD is set
-    let has_any_features = features.has_popcnt || features.has_bmi2 || features.has_avx2 ||
-                          features.has_avx512f || features.has_avx512bw || features.has_avx512vpopcntdq;
+    let has_any_features = features.has_popcnt
+        || features.has_bmi2
+        || features.has_avx2
+        || features.has_avx512f
+        || features.has_avx512bw
+        || features.has_avx512vpopcntdq;
 
     if std::env::var("ZIPORA_DISABLE_SIMD").is_ok() {
-        assert!(!has_any_features, "SIMD should be disabled when override is set");
+        assert!(
+            !has_any_features,
+            "SIMD should be disabled when override is set"
+        );
     } else {
         // On modern CPUs, we should detect at least POPCNT
         // If not, it might be an older CPU or virtualized environment
@@ -143,15 +150,20 @@ fn test_performance_regression_guard() {
     let elapsed = start.elapsed();
     let ops_per_sec = (iterations * test_data.len()) as f64 / elapsed.as_secs_f64();
 
-    println!("   POPCNT performance: {:.2} Mops/s", ops_per_sec / 1_000_000.0);
+    println!(
+        "   POPCNT performance: {:.2} Mops/s",
+        ops_per_sec / 1_000_000.0
+    );
 
     // Basic regression check - this should be fast with hardware POPCNT
     // If it's slower than 10 Mops/s, something might be wrong
     let min_expected_performance = 10_000_000.0; // 10 Mops/s
 
     if ops_per_sec < min_expected_performance {
-        println!("   ⚠️  WARNING: POPCNT performance below expected ({:.2} Mops/s)",
-                ops_per_sec / 1_000_000.0);
+        println!(
+            "   ⚠️  WARNING: POPCNT performance below expected ({:.2} Mops/s)",
+            ops_per_sec / 1_000_000.0
+        );
         println!("      This might indicate hardware acceleration is not working");
     } else {
         println!("   ✅ POPCNT performance meets minimum threshold");
@@ -208,7 +220,8 @@ fn test_integrated_hardware_acceleration() {
 
     // Set some bits in a pattern
     for i in 0..data_size {
-        if (i * 0x9e3779b9) & 7 == 0 { // Every ~8th bit
+        if (i * 0x9e3779b9) & 7 == 0 {
+            // Every ~8th bit
             let word_idx = i / 64;
             let bit_idx = i % 64;
             if word_idx < bit_vector.len() {
@@ -246,7 +259,10 @@ fn test_integrated_hardware_acceleration() {
     let elapsed = start.elapsed();
     let ops_per_sec = iterations as f64 / elapsed.as_secs_f64();
 
-    println!("   Integrated rank performance: {:.2} Kops/s", ops_per_sec / 1000.0);
+    println!(
+        "   Integrated rank performance: {:.2} Kops/s",
+        ops_per_sec / 1000.0
+    );
     println!("   Hardware features used:");
     println!("     POPCNT: {} (for count_ones)", features.has_popcnt);
     println!("     BMI2:   {} (for bit manipulation)", features.has_bmi2);

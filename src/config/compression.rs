@@ -1,10 +1,10 @@
 //! Compression configuration for various algorithms.
 
-use super::{Config, parse_env_var, parse_env_bool};
+use super::{Config, parse_env_bool, parse_env_var};
 use crate::error::{Result, ZiporaError};
-use std::path::Path;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 /// Compression algorithm configuration placeholder.
 #[derive(Debug, Clone, PartialEq)]
@@ -31,56 +31,90 @@ impl Default for CompressionConfig {
 impl Config for CompressionConfig {
     fn validate(&self) -> Result<()> {
         if self.level > 22 {
-            return Err(ZiporaError::configuration("level must be between 0 and 22".to_string()));
+            return Err(ZiporaError::configuration(
+                "level must be between 0 and 22".to_string(),
+            ));
         }
         Ok(())
     }
-    
+
     fn from_env_with_prefix(prefix: &str) -> Result<Self> {
         let mut config = Self::default();
         config.level = parse_env_var(&format!("{}COMPRESSION_LEVEL", prefix), config.level);
-        config.enable_dictionary = parse_env_bool(&format!("{}COMPRESSION_DICTIONARY", prefix), config.enable_dictionary);
-        config.dictionary_size = parse_env_var(&format!("{}COMPRESSION_DICT_SIZE", prefix), config.dictionary_size);
+        config.enable_dictionary = parse_env_bool(
+            &format!("{}COMPRESSION_DICTIONARY", prefix),
+            config.enable_dictionary,
+        );
+        config.dictionary_size = parse_env_var(
+            &format!("{}COMPRESSION_DICT_SIZE", prefix),
+            config.dictionary_size,
+        );
         config.validate()?;
         Ok(config)
     }
-    
+
     fn performance_preset() -> Self {
-        Self { level: 1, enable_dictionary: false, dictionary_size: 0 }
+        Self {
+            level: 1,
+            enable_dictionary: false,
+            dictionary_size: 0,
+        }
     }
-    
+
     fn memory_preset() -> Self {
-        Self { level: 15, enable_dictionary: true, dictionary_size: 512 * 1024 }
+        Self {
+            level: 15,
+            enable_dictionary: true,
+            dictionary_size: 512 * 1024,
+        }
     }
-    
+
     fn realtime_preset() -> Self {
-        Self { level: 0, enable_dictionary: false, dictionary_size: 0 }
+        Self {
+            level: 0,
+            enable_dictionary: false,
+            dictionary_size: 0,
+        }
     }
-    
+
     fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         #[cfg(feature = "serde")]
         {
-        let serialized = serde_json::to_string_pretty(self)
-            .map_err(|e| ZiporaError::configuration(format!("Failed to serialize compression config: {}", e)))?;
-        std::fs::write(path, serialized)
-            .map_err(|e| ZiporaError::configuration(format!("Failed to write compression config file: {}", e)))?;
-        Ok(())
-    }
+            let serialized = serde_json::to_string_pretty(self).map_err(|e| {
+                ZiporaError::configuration(format!("Failed to serialize compression config: {}", e))
+            })?;
+            std::fs::write(path, serialized).map_err(|e| {
+                ZiporaError::configuration(format!(
+                    "Failed to write compression config file: {}",
+                    e
+                ))
+            })?;
+            Ok(())
+        }
         #[cfg(not(feature = "serde"))]
-        Err(crate::error::ZiporaError::invalid_operation("Requires serde feature"))
+        Err(crate::error::ZiporaError::invalid_operation(
+            "Requires serde feature",
+        ))
     }
-    
+
     fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         #[cfg(feature = "serde")]
         {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| ZiporaError::configuration(format!("Failed to read compression config file: {}", e)))?;
-        let config: Self = serde_json::from_str(&content)
-            .map_err(|e| ZiporaError::configuration(format!("Failed to parse compression config file: {}", e)))?;
-        config.validate()?;
-        Ok(config)
-    }
+            let content = std::fs::read_to_string(path).map_err(|e| {
+                ZiporaError::configuration(format!("Failed to read compression config file: {}", e))
+            })?;
+            let config: Self = serde_json::from_str(&content).map_err(|e| {
+                ZiporaError::configuration(format!(
+                    "Failed to parse compression config file: {}",
+                    e
+                ))
+            })?;
+            config.validate()?;
+            Ok(config)
+        }
         #[cfg(not(feature = "serde"))]
-        Err(crate::error::ZiporaError::invalid_operation("Requires serde feature"))
+        Err(crate::error::ZiporaError::invalid_operation(
+            "Requires serde feature",
+        ))
     }
 }

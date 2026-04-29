@@ -10,9 +10,17 @@ fn test_radix_kv_duplicate_keys() {
     ];
     let sorter = KeyValueRadixSort::new();
     sorter.sort_by_key(&mut data).unwrap();
-    
+
     // Expected: [(1, "D"), (2, "B"), (5, "A"), (5, "C")]
     // If it finds the first match for 5, it'll output "A" twice instead of "A" and "C"
     let values: Vec<String> = data.into_iter().map(|(_, v)| v).collect();
-    assert_eq!(values, vec!["D".to_string(), "B".to_string(), "A".to_string(), "C".to_string()]);
+    assert_eq!(
+        values,
+        vec![
+            "D".to_string(),
+            "B".to_string(),
+            "A".to_string(),
+            "C".to_string()
+        ]
+    );
 }

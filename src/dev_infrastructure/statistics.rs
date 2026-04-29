@@ -5,36 +5,55 @@
 //! aggregation. Inspired by production statistical frameworks while leveraging Rust's
 //! performance and safety guarantees.
 
+use crate::error::{Result, ZiporaError};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use crate::error::{ZiporaError, Result};
 
 /// Trait for types that can be used as histogram indices
-pub trait StatIndex: 
-    Copy + Clone + PartialEq + Eq + PartialOrd + Ord + std::hash::Hash + std::fmt::Debug + 
-    Into<u64> + TryFrom<u64> + Send + Sync + 'static 
+pub trait StatIndex:
+    Copy
+    + Clone
+    + PartialEq
+    + Eq
+    + PartialOrd
+    + Ord
+    + std::hash::Hash
+    + std::fmt::Debug
+    + Into<u64>
+    + TryFrom<u64>
+    + Send
+    + Sync
+    + 'static
 {
     /// Zero value for this type
     fn zero() -> Self;
-    
+
     /// One value for this type  
     fn one() -> Self;
-    
+
     /// Maximum value that should use small storage
     const MAX_SMALL_VALUE: Self;
 }
 
 impl StatIndex for u32 {
-    fn zero() -> Self { 0 }
-    fn one() -> Self { 1 }
+    fn zero() -> Self {
+        0
+    }
+    fn one() -> Self {
+        1
+    }
     const MAX_SMALL_VALUE: Self = 65535;
 }
 
 impl StatIndex for u64 {
-    fn zero() -> Self { 0 }
-    fn one() -> Self { 1 }
+    fn zero() -> Self {
+        0
+    }
+    fn one() -> Self {
+        1
+    }
     const MAX_SMALL_VALUE: Self = 65535;
 }
 
@@ -46,8 +65,8 @@ pub struct Histogram<T: StatIndex> {
     large_counts: HashMap<T, T>,
     // Comprehensive statistics
     distinct_key_count: usize,
-    count_sum: u64,              // Total count (integral of f(x))
-    total_key_len: u64,          // Weighted sum (integral of x*f(x))
+    count_sum: u64,     // Total count (integral of f(x))
+    total_key_len: u64, // Weighted sum (integral of x*f(x))
     min_key: Option<T>,
     max_key: Option<T>,
     min_count: Option<T>,
@@ -65,7 +84,7 @@ impl<T: StatIndex> Histogram<T> {
     pub fn with_small_threshold(max_small_value: T) -> Self {
         let threshold: u64 = max_small_value.into();
         let size = std::cmp::min(threshold as usize, 65536); // Cap to prevent excessive memory
-        
+
         Self {
             small_counts: vec![T::zero(); size],
             large_counts: HashMap::new(),
@@ -88,7 +107,7 @@ impl<T: StatIndex> Histogram<T> {
 
         let key_u64: u64 = key.into();
         let count_u64: u64 = count.into();
-        
+
         // Update the count
         let new_count = if key_u64 < self.small_counts.len() as u64 {
             let idx = key_u64 as usize;
@@ -96,34 +115,54 @@ impl<T: StatIndex> Histogram<T> {
             let new_val = current + count_u64;
             self.small_counts[idx] = T::try_from(new_val).unwrap_or_else(|_| {
                 // If overflow, migrate to large_counts
-                self.large_counts.insert(key, T::try_from(new_val).unwrap_or_else(|_| T::try_from(u64::MAX).unwrap_or(T::zero())));
+                self.large_counts.insert(
+                    key,
+                    T::try_from(new_val)
+                        .unwrap_or_else(|_| T::try_from(u64::MAX).unwrap_or(T::zero())),
+                );
                 T::zero()
             });
             new_val
         } else {
             let current: u64 = self.large_counts.get(&key).map(|&v| v.into()).unwrap_or(0);
             let new_val = current + count_u64;
-            self.large_counts.insert(key, T::try_from(new_val).unwrap_or_else(|_| T::try_from(u64::MAX).unwrap_or(T::zero())));
+            self.large_counts.insert(
+                key,
+                T::try_from(new_val).unwrap_or_else(|_| T::try_from(u64::MAX).unwrap_or(T::zero())),
+            );
             new_val
         };
 
-        // Update statistics  
+        // Update statistics
         if new_count == count_u64 {
             // New key
             self.distinct_key_count += 1;
         }
-        
+
         self.count_sum += count_u64;
         self.total_key_len += key_u64 * count_u64;
-        
+
         // Update min/max key
-        self.min_key = Some(self.min_key.map_or(key, |min| if key < min { key } else { min }));
-        self.max_key = Some(self.max_key.map_or(key, |max| if key > max { key } else { max }));
-        
+        self.min_key = Some(
+            self.min_key
+                .map_or(key, |min| if key < min { key } else { min }),
+        );
+        self.max_key = Some(
+            self.max_key
+                .map_or(key, |max| if key > max { key } else { max }),
+        );
+
         // Update min/max count
-        let count_t = T::try_from(new_count).unwrap_or_else(|_| T::try_from(u64::MAX).unwrap_or(T::zero()));
-        self.min_count = Some(self.min_count.map_or(count_t, |min| if count_t < min { count_t } else { min }));
-        self.max_count = Some(self.max_count.map_or(count_t, |max| if count_t > max { count_t } else { max }));
+        let count_t =
+            T::try_from(new_count).unwrap_or_else(|_| T::try_from(u64::MAX).unwrap_or(T::zero()));
+        self.min_count = Some(
+            self.min_count
+                .map_or(count_t, |min| if count_t < min { count_t } else { min }),
+        );
+        self.max_count = Some(
+            self.max_count
+                .map_or(count_t, |max| if count_t > max { count_t } else { max }),
+        );
     }
 
     /// Increment count for a key by 1
@@ -135,7 +174,7 @@ impl<T: StatIndex> Histogram<T> {
     #[inline]
     pub fn get(&self, key: T) -> T {
         let key_u64: u64 = key.into();
-        
+
         if key_u64 < self.small_counts.len() as u64 {
             self.small_counts[key_u64 as usize]
         } else {
@@ -152,15 +191,15 @@ impl<T: StatIndex> Histogram<T> {
         // Recompute min/max counts for accuracy
         let mut min_count: Option<T> = None;
         let mut max_count: Option<T> = None;
-        
+
         self.for_each(|_key, count| {
             min_count = Some(min_count.map_or(count, |min| if count < min { count } else { min }));
             max_count = Some(max_count.map_or(count, |max| if count > max { count } else { max }));
         });
-        
+
         self.min_count = min_count;
         self.max_count = max_count;
-        
+
         self.finalized = true;
     }
 
@@ -177,7 +216,7 @@ impl<T: StatIndex> Histogram<T> {
                 op(key, count);
             }
         }
-        
+
         // Then iterate large counts
         for (&key, &count) in &self.large_counts {
             op(key, count);
@@ -332,19 +371,29 @@ impl StatAccumulator {
         self.count.fetch_add(1, Ordering::SeqCst);
         self.sum.fetch_add(value, Ordering::SeqCst);
         self.sum_squares.fetch_add(value * value, Ordering::SeqCst);
-        
+
         // Update min/max with compare-and-swap loops
         let mut current_min = self.min.load(Ordering::SeqCst);
         while value < current_min {
-            match self.min.compare_exchange_weak(current_min, value, Ordering::SeqCst, Ordering::Relaxed) {
+            match self.min.compare_exchange_weak(
+                current_min,
+                value,
+                Ordering::SeqCst,
+                Ordering::Relaxed,
+            ) {
                 Ok(_) => break,
                 Err(actual) => current_min = actual,
             }
         }
-        
+
         let mut current_max = self.max.load(Ordering::SeqCst);
         while value > current_max {
-            match self.max.compare_exchange_weak(current_max, value, Ordering::SeqCst, Ordering::Relaxed) {
+            match self.max.compare_exchange_weak(
+                current_max,
+                value,
+                Ordering::SeqCst,
+                Ordering::Relaxed,
+            ) {
                 Ok(_) => break,
                 Err(actual) => current_max = actual,
             }
@@ -358,18 +407,22 @@ impl StatAccumulator {
         let sum_squares = self.sum_squares.load(Ordering::SeqCst);
         let min = self.min.load(Ordering::SeqCst);
         let max = self.max.load(Ordering::SeqCst);
-        
-        let mean = if count > 0 { sum as f64 / count as f64 } else { 0.0 };
-        
+
+        let mean = if count > 0 {
+            sum as f64 / count as f64
+        } else {
+            0.0
+        };
+
         let variance = if count > 1 {
             let mean_squares = sum_squares as f64 / count as f64;
             mean_squares - (mean * mean)
         } else {
             0.0
         };
-        
+
         let std_dev = variance.sqrt();
-        
+
         AccumulatorStats {
             count,
             sum,
@@ -474,7 +527,11 @@ impl MultiDimensionalStats {
 
         // For real correlation, we'd need to store individual samples
         // This is a simplified version returning cached correlation if available
-        Ok(self.cross_correlations.get(&(dim1, dim2)).copied().unwrap_or(0.0))
+        Ok(self
+            .cross_correlations
+            .get(&(dim1, dim2))
+            .copied()
+            .unwrap_or(0.0))
     }
 
     /// Print comprehensive report
@@ -482,10 +539,17 @@ impl MultiDimensionalStats {
         println!("Multi-Dimensional Statistics Report: {}", self.name);
         println!("{:-<60}", "");
 
-        for (i, (dim_name, stats)) in self.dimensions.iter().zip(self.all_stats().iter()).enumerate() {
+        for (i, (dim_name, stats)) in self
+            .dimensions
+            .iter()
+            .zip(self.all_stats().iter())
+            .enumerate()
+        {
             println!("Dimension {}: {}", i, dim_name);
-            println!("  Count: {}, Mean: {:.2}, Std Dev: {:.2}", 
-                stats.count, stats.mean, stats.std_dev);
+            println!(
+                "  Count: {}, Mean: {:.2}, Std Dev: {:.2}",
+                stats.count, stats.mean, stats.std_dev
+            );
             println!("  Min: {}, Max: {}", stats.min, stats.max);
         }
         println!("{:-<60}", "");
@@ -518,54 +582,76 @@ impl GlobalStatsRegistry {
     }
 
     /// Register a histogram
-    pub fn register_histogram<T: StatIndex + 'static>(&self, name: &str, histogram: Histogram<T>) -> Result<()> {
-        let mut histograms = self.histograms.write()
+    pub fn register_histogram<T: StatIndex + 'static>(
+        &self,
+        name: &str,
+        histogram: Histogram<T>,
+    ) -> Result<()> {
+        let mut histograms = self
+            .histograms
+            .write()
             .map_err(|_| ZiporaError::io_error("Failed to acquire write lock"))?;
-        
+
         histograms.insert(name.to_string(), Box::new(histogram));
         Ok(())
     }
 
     /// Register an accumulator
     pub fn register_accumulator(&self, name: &str, accumulator: StatAccumulator) -> Result<()> {
-        let mut accumulators = self.accumulators.write()
+        let mut accumulators = self
+            .accumulators
+            .write()
             .map_err(|_| ZiporaError::io_error("Failed to acquire write lock"))?;
-        
+
         accumulators.insert(name.to_string(), accumulator);
         Ok(())
     }
 
     /// Register multi-dimensional statistics
-    pub fn register_multi_dimensional(&self, name: &str, stats: MultiDimensionalStats) -> Result<()> {
-        let mut multi_dimensional = self.multi_dimensional.write()
+    pub fn register_multi_dimensional(
+        &self,
+        name: &str,
+        stats: MultiDimensionalStats,
+    ) -> Result<()> {
+        let mut multi_dimensional = self
+            .multi_dimensional
+            .write()
             .map_err(|_| ZiporaError::io_error("Failed to acquire write lock"))?;
-        
+
         multi_dimensional.insert(name.to_string(), stats);
         Ok(())
     }
 
     /// Get accumulator by name
     pub fn get_accumulator(&self, name: &str) -> Result<Option<AccumulatorStats>> {
-        let accumulators = self.accumulators.read()
+        let accumulators = self
+            .accumulators
+            .read()
             .map_err(|_| ZiporaError::io_error("Failed to acquire read lock"))?;
-        
+
         Ok(accumulators.get(name).map(|acc| acc.snapshot()))
     }
 
     /// List all registered statistics
     pub fn list_statistics(&self) -> Result<Vec<String>> {
-        let histograms = self.histograms.read()
+        let histograms = self
+            .histograms
+            .read()
             .map_err(|_| ZiporaError::io_error("Failed to acquire read lock"))?;
-        let accumulators = self.accumulators.read()
+        let accumulators = self
+            .accumulators
+            .read()
             .map_err(|_| ZiporaError::io_error("Failed to acquire read lock"))?;
-        let multi_dimensional = self.multi_dimensional.read()
+        let multi_dimensional = self
+            .multi_dimensional
+            .read()
             .map_err(|_| ZiporaError::io_error("Failed to acquire read lock"))?;
-        
+
         let mut stats = Vec::new();
         stats.extend(histograms.keys().map(|k| format!("histogram:{}", k)));
         stats.extend(accumulators.keys().map(|k| format!("accumulator:{}", k)));
         stats.extend(multi_dimensional.keys().map(|k| format!("multi_dim:{}", k)));
-        
+
         Ok(stats)
     }
 }
@@ -577,7 +663,7 @@ impl Default for GlobalStatsRegistry {
 }
 
 /// Global statistics registry instance
-static GLOBAL_STATS: std::sync::LazyLock<GlobalStatsRegistry> = 
+static GLOBAL_STATS: std::sync::LazyLock<GlobalStatsRegistry> =
     std::sync::LazyLock::new(GlobalStatsRegistry::new);
 
 /// Get the global statistics registry
@@ -592,17 +678,17 @@ mod tests {
     #[test]
     fn test_histogram_basic() {
         let mut hist = U32Histogram::new();
-        
+
         hist.increment(5);
         hist.increment(5);
         hist.increment(10);
         hist.add(15, 3);
-        
+
         assert_eq!(hist.get(5), 2);
         assert_eq!(hist.get(10), 1);
         assert_eq!(hist.get(15), 3);
         assert_eq!(hist.get(20), 0);
-        
+
         let stats = hist.stats();
         assert_eq!(stats.distinct_key_count, 3);
         assert_eq!(stats.count_sum, 6);
@@ -613,16 +699,16 @@ mod tests {
     #[test]
     fn test_histogram_large_keys() {
         let mut hist = U32Histogram::new();
-        
+
         // Add values larger than small threshold
         hist.increment(2000);
         hist.increment(5000);
         hist.add(10000, 5);
-        
+
         assert_eq!(hist.get(2000), 1);
         assert_eq!(hist.get(5000), 1);
         assert_eq!(hist.get(10000), 5);
-        
+
         let stats = hist.stats();
         assert_eq!(stats.distinct_key_count, 3);
         assert_eq!(stats.count_sum, 7);
@@ -631,16 +717,16 @@ mod tests {
     #[test]
     fn test_histogram_percentiles() {
         let mut hist = U32Histogram::new();
-        
+
         // Add values: 1(x1), 2(x2), 3(x3), 4(x4)
         for i in 1..=4 {
             for _ in 0..i {
                 hist.increment(i);
             }
         }
-        
+
         hist.finalize();
-        
+
         assert_eq!(hist.median(), Some(3));
         assert_eq!(hist.percentile(0.0), Some(1));
         assert_eq!(hist.percentile(1.0), Some(4));
@@ -649,11 +735,11 @@ mod tests {
     #[test]
     fn test_stat_accumulator() {
         let acc = StatAccumulator::new();
-        
+
         acc.add(10);
         acc.add(20);
         acc.add(30);
-        
+
         let stats = acc.snapshot();
         assert_eq!(stats.count, 3);
         assert_eq!(stats.sum, 60);
@@ -666,17 +752,17 @@ mod tests {
     fn test_multi_dimensional_stats() {
         let mut stats = MultiDimensionalStats::new(
             "test_stats",
-            vec!["dimension1".to_string(), "dimension2".to_string()]
+            vec!["dimension1".to_string(), "dimension2".to_string()],
         );
-        
+
         stats.add_sample(&[10, 20]).unwrap();
         stats.add_sample(&[15, 25]).unwrap();
         stats.add_sample(&[20, 30]).unwrap();
-        
+
         let dim1_stats = stats.dimension_stats(0).unwrap();
         assert_eq!(dim1_stats.count, 3);
         assert_eq!(dim1_stats.mean, 15.0);
-        
+
         let dim2_stats = stats.dimension_stats(1).unwrap();
         assert_eq!(dim2_stats.count, 3);
         assert_eq!(dim2_stats.mean, 25.0);
@@ -685,18 +771,18 @@ mod tests {
     #[test]
     fn test_global_stats_registry() {
         let registry = global_stats();
-        
+
         let hist = U32Histogram::new();
         registry.register_histogram("test_hist", hist).unwrap();
-        
+
         let acc = StatAccumulator::new();
         acc.add(42);
         registry.register_accumulator("test_acc", acc).unwrap();
-        
+
         let stats_list = registry.list_statistics().unwrap();
         assert!(stats_list.iter().any(|s| s.contains("test_hist")));
         assert!(stats_list.iter().any(|s| s.contains("test_acc")));
-        
+
         let acc_stats = registry.get_accumulator("test_acc").unwrap();
         assert!(acc_stats.is_some());
         assert_eq!(acc_stats.unwrap().count, 1);
@@ -705,17 +791,17 @@ mod tests {
     #[test]
     fn test_histogram_iteration() {
         let mut hist = U32Histogram::new();
-        
+
         hist.increment(1);
         hist.increment(2);
         hist.increment(2);
         hist.increment(1000); // Large key
-        
+
         let mut pairs = Vec::new();
         hist.for_each(|key, count| {
             pairs.push((key, count));
         });
-        
+
         pairs.sort_by_key(|&(key, _)| key);
         assert_eq!(pairs, vec![(1, 1), (2, 2), (1000, 1)]);
     }

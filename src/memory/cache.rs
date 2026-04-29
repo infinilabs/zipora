@@ -331,8 +331,7 @@ impl NumaMemoryPool {
         if let Some(ptr_addr) = pool.pop() {
             self.hit_count.fetch_add(1, Ordering::Relaxed);
             let ptr = ptr_addr as *mut u8;
-            return NonNull::new(ptr)
-                .ok_or_else(|| ZiporaError::out_of_memory(layout.size()));
+            return NonNull::new(ptr).ok_or_else(|| ZiporaError::out_of_memory(layout.size()));
         }
 
         // Allocate new memory bound to NUMA node
@@ -439,9 +438,10 @@ fn detect_numa_nodes() -> usize {
         if let Ok(contents) = std::fs::read_to_string("/sys/devices/system/node/online") {
             // Parse format like "0-3" or "0,2,4"
             if let Some(hyphen_pos) = contents.find('-')
-                && let Ok(max_node) = contents[hyphen_pos + 1..].trim().parse::<usize>() {
-                    return max_node + 1;
-                }
+                && let Ok(max_node) = contents[hyphen_pos + 1..].trim().parse::<usize>()
+            {
+                return max_node + 1;
+            }
             // Count comma-separated nodes
             return contents.split(',').count();
         }
@@ -457,9 +457,10 @@ fn get_current_numa_node() -> Option<NumaNode> {
 
     // Check if thread already has a preferred node
     if let Ok(nodes) = NUMA_MANAGER.thread_nodes.read()
-        && let Some(&node) = nodes.get(&thread_id) {
-            return Some(node);
-        }
+        && let Some(&node) = nodes.get(&thread_id)
+    {
+        return Some(node);
+    }
 
     // Assign a node using round-robin
     let node_count = NUMA_MANAGER.node_count.load(Ordering::Relaxed);
@@ -581,10 +582,11 @@ pub fn numa_dealloc(ptr: NonNull<u8>, size: usize, align: usize, node: NumaNode)
         .map_err(|_| ZiporaError::invalid_data("Invalid layout for NUMA deallocation"))?;
 
     if let Ok(mut pools) = NUMA_MANAGER.node_pools.lock()
-        && let Some(pool) = pools.get_mut(&node) {
-            pool.deallocate(ptr, layout);
-            return Ok(());
-        }
+        && let Some(pool) = pools.get_mut(&node)
+    {
+        pool.deallocate(ptr, layout);
+        return Ok(());
+    }
 
     // SAFETY: ptr from matching alloc, layout matches allocation
     unsafe {

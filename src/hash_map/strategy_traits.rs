@@ -249,7 +249,9 @@ pub enum OptimizationHint {
     /// Bulk lookup
     BulkLookup { count: usize },
     /// Cache warming
-    CacheWarm { bucket_range: std::ops::Range<usize> },
+    CacheWarm {
+        bucket_range: std::ops::Range<usize>,
+    },
 }
 
 // Concrete strategy implementations
@@ -313,7 +315,9 @@ where
 
         loop {
             if probe_distance > config.max_probe_distance {
-                return Err(ZiporaError::invalid_state("Exceeded maximum probe distance"));
+                return Err(ZiporaError::invalid_state(
+                    "Exceeded maximum probe distance",
+                ));
             }
 
             let bucket = &mut buckets[pos];
@@ -560,7 +564,9 @@ pub struct CacheOptimizedStorageStrategy {
 
 impl CacheOptimizedStorageStrategy {
     pub fn new(allocator: CacheOptimizedAllocator) -> Self {
-        Self { _allocator: allocator }
+        Self {
+            _allocator: allocator,
+        }
     }
 }
 
@@ -762,7 +768,8 @@ mod tests {
             StandardStorageStrategy::create_storage(16, &config);
         assert_eq!(StandardStorageStrategy::capacity(&storage), 16);
 
-        let buckets: &mut [HashBucket<String, i32>] = StandardStorageStrategy::get_buckets_mut(&mut storage);
+        let buckets: &mut [HashBucket<String, i32>] =
+            StandardStorageStrategy::get_buckets_mut(&mut storage);
         assert_eq!(buckets.len(), 16);
     }
 }

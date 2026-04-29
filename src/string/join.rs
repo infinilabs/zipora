@@ -310,10 +310,7 @@ mod tests {
 
     #[test]
     fn test_join_fast_str() {
-        let parts = [
-            FastStr::from_string("hello"),
-            FastStr::from_string("world"),
-        ];
+        let parts = [FastStr::from_string("hello"), FastStr::from_string("world")];
         let result = join_fast_str(" ", &parts);
         assert_eq!(result, "hello world");
     }

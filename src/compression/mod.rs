@@ -12,11 +12,11 @@ pub mod suffix_array;
 
 pub use adaptive::{AdaptiveCompressor, AdaptiveConfig, CompressionProfile};
 pub use dict_zip::{
-    DictionaryBuilder as PaZipDictionaryBuilder, DictionaryBuilderConfig, SuffixArrayDictionary, SuffixArrayDictionaryConfig,
-    PatternMatcher, DfaCache, Match,
+    DfaCache, DictionaryBuilder as PaZipDictionaryBuilder, DictionaryBuilderConfig, Match,
+    PatternMatcher, SuffixArrayDictionary, SuffixArrayDictionaryConfig,
 };
 pub use simd_pattern_match::{
-    SimdPatternMatcher, SimdPatternConfig, SimdMatchResult, SimdPatternTier, ParallelMode,
+    ParallelMode, SimdMatchResult, SimdPatternConfig, SimdPatternMatcher, SimdPatternTier,
     get_global_simd_pattern_matcher,
 };
 pub use suffix_array::{
@@ -25,7 +25,7 @@ pub use suffix_array::{
 
 use crate::entropy::dictionary::{DictionaryBuilder, DictionaryCompressor};
 use crate::entropy::huffman::{HuffmanDecoder, HuffmanEncoder, HuffmanTree};
-use crate::entropy::rans::{Rans64Decoder, Rans64Encoder, ParallelX1};
+use crate::entropy::rans::{ParallelX1, Rans64Decoder, Rans64Encoder};
 use crate::error::{Result, ZiporaError};
 use std::time::Duration;
 
@@ -612,10 +612,11 @@ impl Compressor for HybridCompressor {
         // Try each compressor and pick the best result
         for (i, compressor) in self.compressors.iter().enumerate() {
             if let Ok(compressed) = compressor.compress(data)
-                && compressed.len() < best_result.len() {
-                    best_result = compressed;
-                    best_algorithm = i as u8;
-                }
+                && compressed.len() < best_result.len()
+            {
+                best_result = compressed;
+                best_algorithm = i as u8;
+            }
         }
 
         // Prepend algorithm identifier

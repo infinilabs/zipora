@@ -16,25 +16,24 @@
 //!   then atomically swap the parent's child pointer (lock parent → mark old node
 //!   lazy_free → CAS child → defer free → unlock).
 
+use crossbeam_epoch::{self as epoch, Guard};
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use crossbeam_epoch::{self as epoch, Guard};
 use thread_local::ThreadLocal;
 
 use super::cspp_trie::{
-    PatriciaNode, MetaInfo, BigCount,
-    ALIGN_SIZE, NIL_STATE, MAX_ZPATH, INITIAL_STATE, SKIP_SLOTS,
+    ALIGN_SIZE, BigCount, INITIAL_STATE, MAX_ZPATH, MetaInfo, NIL_STATE, PatriciaNode, SKIP_SLOTS,
 };
 
 const FREE_LIST_MAX_SLOTS: usize = 128;
 const FREE_LIST_NIL: u32 = u32::MAX;
 
 // Flag bit positions within MetaInfo.flags (byte 0 of PatriciaNode)
-const FLAG_IS_FINAL: u8 = 0x10;    // bit 4
-const FLAG_LAZY_FREE: u8 = 0x20;   // bit 5
-const FLAG_SET_FINAL: u8 = 0x40;   // bit 6
-const FLAG_LOCK: u8 = 0x80;        // bit 7
-const FLAG_CNT_MASK: u8 = 0x0F;    // bits 0-3
+const FLAG_IS_FINAL: u8 = 0x10; // bit 4
+const FLAG_LAZY_FREE: u8 = 0x20; // bit 5
+const FLAG_SET_FINAL: u8 = 0x40; // bit 6
+const FLAG_LOCK: u8 = 0x80; // bit 7
+const FLAG_CNT_MASK: u8 = 0x0F; // bits 0-3
 
 // On little-endian (x86-64, aarch64): flags is bits 0-7 of the u32.
 // These masks operate on the full u32 representation of a PatriciaNode.
@@ -53,8 +52,6 @@ fn node_to_u32(node: PatriciaNode) -> u32 {
     // We read the `child` field which is a u32.
     unsafe { node.child }
 }
-
-
 
 #[inline(always)]
 fn u32_to_meta(bits: u32) -> MetaInfo {
@@ -77,9 +74,7 @@ struct SharedPool {
 
 impl SharedPool {
     fn new(capacity: usize) -> Self {
-        let data: Vec<AtomicU32> = (0..capacity)
-            .map(|_| AtomicU32::new(NIL_STATE))
-            .collect();
+        let data: Vec<AtomicU32> = (0..capacity).map(|_| AtomicU32::new(NIL_STATE)).collect();
         Self {
             data: data.into_boxed_slice(),
             len: AtomicUsize::new(0),
@@ -129,12 +124,15 @@ impl SharedPool {
             assert!(
                 new_len <= self.data.len(),
                 "ConcurrentCsppTrie: mempool exhausted ({} + {} > {})",
-                old_len, slots, self.data.len()
+                old_len,
+                slots,
+                self.data.len()
             );
-            if self.len.compare_exchange_weak(
-                old_len, new_len,
-                Ordering::AcqRel, Ordering::Relaxed,
-            ).is_ok() {
+            if self
+                .len
+                .compare_exchange_weak(old_len, new_len, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+            {
                 for i in 0..slots {
                     self.data[old_len + i].store(NIL_STATE, Ordering::Relaxed);
                 }
@@ -261,8 +259,12 @@ impl LockFreeFreelist {
             pool.store_relaxed(slot as usize, head_slot);
             let new_gen = tagged_gen(head).wrapping_add(1);
             let new_head = tagged_pack(new_gen, slot);
-            if bin.compare_exchange_weak(head, new_head, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
-                self.frag_size.fetch_add(slots * ALIGN_SIZE, Ordering::Relaxed);
+            if bin
+                .compare_exchange_weak(head, new_head, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+            {
+                self.frag_size
+                    .fetch_add(slots * ALIGN_SIZE, Ordering::Relaxed);
                 break;
             }
         }
@@ -282,8 +284,12 @@ impl LockFreeFreelist {
             let next_slot = pool.load_relaxed(head_slot as usize);
             let new_gen = tagged_gen(head).wrapping_add(1);
             let new_head = tagged_pack(new_gen, next_slot);
-            if bin.compare_exchange_weak(head, new_head, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
-                self.frag_size.fetch_sub(slots * ALIGN_SIZE, Ordering::Relaxed);
+            if bin
+                .compare_exchange_weak(head, new_head, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+            {
+                self.frag_size
+                    .fetch_sub(slots * ALIGN_SIZE, Ordering::Relaxed);
                 return Some(head_slot);
             }
         }
@@ -314,9 +320,7 @@ impl Backoff {
         } else if self.count < 64 {
             std::thread::yield_now();
         } else {
-            std::thread::sleep(std::time::Duration::from_micros(
-                (self.count / 16) as u64
-            ));
+            std::thread::sleep(std::time::Duration::from_micros((self.count / 16) as u64));
         }
     }
 
@@ -426,38 +430,78 @@ impl<'a> ConcurrentNodeView<'a> {
             }
             2 => {
                 let meta = self.meta();
-                if ch == meta.c_label[1] { self.child(2) }
-                else if ch == meta.c_label[0] { self.child(1) }
-                else { NIL_STATE }
+                if ch == meta.c_label[1] {
+                    self.child(2)
+                } else if ch == meta.c_label[0] {
+                    self.child(1)
+                } else {
+                    NIL_STATE
+                }
             }
             3 => {
-                if ch == self.get_label(2) { return self.child(4); }
-                if ch == self.get_label(1) { return self.child(3); }
-                if ch == self.get_label(0) { return self.child(2); }
+                if ch == self.get_label(2) {
+                    return self.child(4);
+                }
+                if ch == self.get_label(1) {
+                    return self.child(3);
+                }
+                if ch == self.get_label(0) {
+                    return self.child(2);
+                }
                 NIL_STATE
             }
             4 => {
-                if ch == self.get_label(3) { return self.child(5); }
-                if ch == self.get_label(2) { return self.child(4); }
-                if ch == self.get_label(1) { return self.child(3); }
-                if ch == self.get_label(0) { return self.child(2); }
+                if ch == self.get_label(3) {
+                    return self.child(5);
+                }
+                if ch == self.get_label(2) {
+                    return self.child(4);
+                }
+                if ch == self.get_label(1) {
+                    return self.child(3);
+                }
+                if ch == self.get_label(0) {
+                    return self.child(2);
+                }
                 NIL_STATE
             }
             5 => {
-                if ch == self.get_label(4) { return self.child(6); }
-                if ch == self.get_label(3) { return self.child(5); }
-                if ch == self.get_label(2) { return self.child(4); }
-                if ch == self.get_label(1) { return self.child(3); }
-                if ch == self.get_label(0) { return self.child(2); }
+                if ch == self.get_label(4) {
+                    return self.child(6);
+                }
+                if ch == self.get_label(3) {
+                    return self.child(5);
+                }
+                if ch == self.get_label(2) {
+                    return self.child(4);
+                }
+                if ch == self.get_label(1) {
+                    return self.child(3);
+                }
+                if ch == self.get_label(0) {
+                    return self.child(2);
+                }
                 NIL_STATE
             }
             6 => {
-                if ch == self.get_label(5) { return self.child(7); }
-                if ch == self.get_label(4) { return self.child(6); }
-                if ch == self.get_label(3) { return self.child(5); }
-                if ch == self.get_label(2) { return self.child(4); }
-                if ch == self.get_label(1) { return self.child(3); }
-                if ch == self.get_label(0) { return self.child(2); }
+                if ch == self.get_label(5) {
+                    return self.child(7);
+                }
+                if ch == self.get_label(4) {
+                    return self.child(6);
+                }
+                if ch == self.get_label(3) {
+                    return self.child(5);
+                }
+                if ch == self.get_label(2) {
+                    return self.child(4);
+                }
+                if ch == self.get_label(1) {
+                    return self.child(3);
+                }
+                if ch == self.get_label(0) {
+                    return self.child(2);
+                }
                 NIL_STATE
             }
             7 => {
@@ -465,9 +509,14 @@ impl<'a> ConcurrentNodeView<'a> {
                 // SAFETY: Labels at slots 1-4 (16 bytes), immutable after init.
                 let label_slice = unsafe { self.pool.get_slice(self.curr as usize + 1, 16) };
                 let idx = crate::fsa::fast_search::fast_search_byte_max_16(
-                    &label_slice[..n_children], ch,
+                    &label_slice[..n_children],
+                    ch,
                 );
-                if idx < n_children { self.child(5 + idx) } else { NIL_STATE }
+                if idx < n_children {
+                    self.child(5 + idx)
+                } else {
+                    NIL_STATE
+                }
             }
             8 => {
                 // SAFETY: Bitmap at slots 2-9, immutable after init.
@@ -477,9 +526,8 @@ impl<'a> ConcurrentNodeView<'a> {
                 if (bitmap_slice[byte_idx] & (1 << bit_idx)) != 0 {
                     let data_ptr = unsafe { self.pool.raw_ptr(self.curr as usize + 1) };
                     let i = (ch / 64) as usize;
-                    let w = unsafe {
-                        std::ptr::read_unaligned(data_ptr.add(4 + i * 8) as *const u64)
-                    };
+                    let w =
+                        unsafe { std::ptr::read_unaligned(data_ptr.add(4 + i * 8) as *const u64) };
                     let b = unsafe { *data_ptr.add(i) } as usize;
                     let mask = (1u64 << (ch % 64)) - 1;
                     let idx = b + (w & mask).count_ones() as usize;
@@ -519,13 +567,21 @@ impl<'a> ConcurrentNodeView<'a> {
         match cnt_type {
             0 => NIL_STATE,
             1 => {
-                if ch == self.meta().c_label[0] { self.curr + 1 } else { NIL_STATE }
+                if ch == self.meta().c_label[0] {
+                    self.curr + 1
+                } else {
+                    NIL_STATE
+                }
             }
             2 => {
                 let meta = self.meta();
-                if ch == meta.c_label[0] { self.curr + 1 }
-                else if ch == meta.c_label[1] { self.curr + 2 }
-                else { NIL_STATE }
+                if ch == meta.c_label[0] {
+                    self.curr + 1
+                } else if ch == meta.c_label[1] {
+                    self.curr + 2
+                } else {
+                    NIL_STATE
+                }
             }
             3..=6 => {
                 for i in 0..cnt_type as usize {
@@ -538,10 +594,12 @@ impl<'a> ConcurrentNodeView<'a> {
             7 => {
                 let n = self.n_children();
                 let label_slice = unsafe { self.pool.get_slice(self.curr as usize + 1, 16) };
-                let idx = crate::fsa::fast_search::fast_search_byte_max_16(
-                    &label_slice[..n], ch,
-                );
-                if idx < n { self.curr + 5 + idx as u32 } else { NIL_STATE }
+                let idx = crate::fsa::fast_search::fast_search_byte_max_16(&label_slice[..n], ch);
+                if idx < n {
+                    self.curr + 5 + idx as u32
+                } else {
+                    NIL_STATE
+                }
             }
             8 => {
                 let bitmap_slice = unsafe { self.pool.get_slice(self.curr as usize + 2, 32) };
@@ -550,9 +608,8 @@ impl<'a> ConcurrentNodeView<'a> {
                 if (bitmap_slice[byte_idx] & (1 << bit_idx)) != 0 {
                     let data_ptr = unsafe { self.pool.raw_ptr(self.curr as usize + 1) };
                     let i = (ch / 64) as usize;
-                    let w = unsafe {
-                        std::ptr::read_unaligned(data_ptr.add(4 + i * 8) as *const u64)
-                    };
+                    let w =
+                        unsafe { std::ptr::read_unaligned(data_ptr.add(4 + i * 8) as *const u64) };
                     let b = unsafe { *data_ptr.add(i) } as usize;
                     let mask = (1u64 << (ch % 64)) - 1;
                     let idx = b + (w & mask).count_ones() as usize;
@@ -767,10 +824,18 @@ impl ConcurrentCsppTrie {
                     return None;
                 }
                 if pos == key.len() {
-                    return if view.is_final() { Some(view.valpos()) } else { None };
+                    return if view.is_final() {
+                        Some(view.valpos())
+                    } else {
+                        None
+                    };
                 }
             } else if pos == key.len() {
-                return if view.is_final() { Some(view.valpos()) } else { None };
+                return if view.is_final() {
+                    Some(view.valpos())
+                } else {
+                    None
+                };
             }
 
             let next = view.state_move(key[pos]);
@@ -793,13 +858,16 @@ impl ConcurrentCsppTrie {
 
     /// Read a value at a byte offset.
     pub fn get_value<T: Copy>(&self, valpos: usize) -> T {
-        assert!(valpos + std::mem::size_of::<T>() <= self.inner.pool.len() * 4, "valpos out of bounds");
-        
+        assert!(
+            valpos + std::mem::size_of::<T>() <= self.inner.pool.len() * 4,
+            "valpos out of bounds"
+        );
+
         // SAFETY: We verify valpos is within bounds. valpos is guaranteed to be 4-byte aligned.
         let mut result: std::mem::MaybeUninit<T> = std::mem::MaybeUninit::uninit();
         let result_ptr = result.as_mut_ptr() as *mut u32;
         let num_words = std::mem::size_of::<T>().div_ceil(4);
-        
+
         let word_offset = valpos / 4;
         for i in 0..num_words {
             // Read atomically to avoid data races
@@ -808,18 +876,21 @@ impl ConcurrentCsppTrie {
                 std::ptr::write(result_ptr.add(i), word);
             }
         }
-        
+
         unsafe { result.assume_init() }
     }
 
     /// Set a value at the given byte offset using atomic operations.
     pub fn set_value<T: Copy>(&self, valpos: usize, val: T) {
-        assert!(valpos + std::mem::size_of::<T>() <= self.inner.pool.len() * 4, "valpos out of bounds");
-        
+        assert!(
+            valpos + std::mem::size_of::<T>() <= self.inner.pool.len() * 4,
+            "valpos out of bounds"
+        );
+
         let val_ptr = &val as *const T as *const u32;
         let num_words = std::mem::size_of::<T>().div_ceil(4);
         let word_offset = valpos / 4;
-        
+
         for i in 0..num_words {
             let word = unsafe { std::ptr::read(val_ptr.add(i)) };
             self.inner.pool.store_release(word_offset + i, word);
@@ -885,7 +956,9 @@ impl ConcurrentCsppTrie {
         let old_remaining = tla.hot_end as usize - tla.hot_pos as usize;
         if old_remaining > 0 && old_remaining <= FREE_LIST_MAX_SLOTS {
             let old_pos = tla.hot_pos;
-            self.inner.pool.store_relaxed(old_pos as usize, tla.fast_bins[old_remaining - 1]);
+            self.inner
+                .pool
+                .store_relaxed(old_pos as usize, tla.fast_bins[old_remaining - 1]);
             tla.fast_bins[old_remaining - 1] = old_pos;
         }
 
@@ -923,7 +996,10 @@ impl ConcurrentCsppTrie {
             return Err(());
         }
         let new = old | U32_FLAG_LOCK;
-        self.inner.pool.cas_weak(pos as usize, old, new).map_err(|_| ())
+        self.inner
+            .pool
+            .cas_weak(pos as usize, old, new)
+            .map_err(|_| ())
     }
 
     /// Clear b_lock (bit 7), restoring the original value.
@@ -941,7 +1017,10 @@ impl ConcurrentCsppTrie {
             return Err(());
         }
         let new = old | U32_FLAG_LAZY_FREE;
-        self.inner.pool.cas_weak(pos as usize, old, new).map_err(|_| ())
+        self.inner
+            .pool
+            .cas_weak(pos as usize, old, new)
+            .map_err(|_| ())
     }
 
     // ========================================================================
@@ -970,19 +1049,25 @@ impl ConcurrentCsppTrie {
                 n_zpath_len: MAX_ZPATH as u8,
                 c_label: [remaining[MAX_ZPATH], 0],
             };
-            self.inner.pool.store_relaxed(node as usize, meta_to_u32(meta));
+            self.inner
+                .pool
+                .store_relaxed(node as usize, meta_to_u32(meta));
             self.inner.pool.store_relaxed(node as usize + 1, NIL_STATE);
             // SAFETY: Writing zpath to newly allocated, uncontested slots.
             unsafe {
-                let zpath_dst = (self.inner.pool.data.as_ptr() as *mut u8)
-                    .add((node as usize + 2) * 4);
+                let zpath_dst =
+                    (self.inner.pool.data.as_ptr() as *mut u8).add((node as usize + 2) * 4);
                 std::ptr::copy_nonoverlapping(remaining.as_ptr(), zpath_dst, MAX_ZPATH);
                 *zpath_dst.add(254) = 0;
                 *zpath_dst.add(255) = 0;
             }
-            if head == NIL_STATE { head = node; }
+            if head == NIL_STATE {
+                head = node;
+            }
             if prev_child_slot != NIL_STATE {
-                self.inner.pool.store_relaxed(prev_child_slot as usize, node);
+                self.inner
+                    .pool
+                    .store_relaxed(prev_child_slot as usize, node);
             }
             prev_child_slot = node + 1;
             remaining = &remaining[MAX_ZPATH + 1..];
@@ -996,10 +1081,11 @@ impl ConcurrentCsppTrie {
             n_zpath_len: remaining.len() as u8,
             c_label: [0, 0],
         };
-        self.inner.pool.store_relaxed(node as usize, meta_to_u32(meta));
+        self.inner
+            .pool
+            .store_relaxed(node as usize, meta_to_u32(meta));
         unsafe {
-            let zpath_dst = (self.inner.pool.data.as_ptr() as *mut u8)
-                .add((node as usize + 1) * 4);
+            let zpath_dst = (self.inner.pool.data.as_ptr() as *mut u8).add((node as usize + 1) * 4);
             std::ptr::copy_nonoverlapping(remaining.as_ptr(), zpath_dst, remaining.len());
             for i in remaining.len()..zpath_padded {
                 *zpath_dst.add(i) = 0;
@@ -1007,16 +1093,26 @@ impl ConcurrentCsppTrie {
         }
         let valpos = (node as usize + 1) * ALIGN_SIZE + zpath_padded;
 
-        if head == NIL_STATE { head = node; }
+        if head == NIL_STATE {
+            head = node;
+        }
         if prev_child_slot != NIL_STATE {
-            self.inner.pool.store_relaxed(prev_child_slot as usize, node);
+            self.inner
+                .pool
+                .store_relaxed(prev_child_slot as usize, node);
         }
         (head, valpos)
     }
 
     fn build_bitmap_node(
-        &self, labels: &[u8], children: &[u32], n_children: usize,
-        flags: u8, zpath_len: usize, trailing: &[u8], trailing_len: usize,
+        &self,
+        labels: &[u8],
+        children: &[u32],
+        n_children: usize,
+        flags: u8,
+        zpath_len: usize,
+        trailing: &[u8],
+        trailing_len: usize,
     ) -> u32 {
         let node_size = (10 + n_children) * ALIGN_SIZE + trailing_len;
         let node = self.alloc_node(node_size);
@@ -1050,7 +1146,9 @@ impl ConcurrentCsppTrie {
         }
         // Children at slots 10+
         for i in 0..n_children {
-            self.inner.pool.store_relaxed(node as usize + 10 + i, children[i]);
+            self.inner
+                .pool
+                .store_relaxed(node as usize + 10 + i, children[i]);
         }
         // Trailing data (zpath + value)
         if trailing_len > 0 {
@@ -1097,9 +1195,7 @@ impl ConcurrentCsppTrie {
 
         let ch_rank = {
             let q = (ch / 64) as usize;
-            let w = unsafe {
-                std::ptr::read_unaligned(bitmap.as_ptr().add(q * 8) as *const u64)
-            };
+            let w = unsafe { std::ptr::read_unaligned(bitmap.as_ptr().add(q * 8) as *const u64) };
             let mask = (1u64 << (ch % 64)) - 1;
             rank_prefix[q] as usize + (w & mask).count_ones() as usize
         };
@@ -1107,9 +1203,7 @@ impl ConcurrentCsppTrie {
         let mut cumulative = 0u32;
         for q in 0..4 {
             rank_prefix[q] = cumulative as u8;
-            let w = unsafe {
-                std::ptr::read_unaligned(bitmap.as_ptr().add(q * 8) as *const u64)
-            };
+            let w = unsafe { std::ptr::read_unaligned(bitmap.as_ptr().add(q * 8) as *const u64) };
             cumulative += w.count_ones();
         }
         for i in (ch_rank..old_n).rev() {
@@ -1120,11 +1214,15 @@ impl ConcurrentCsppTrie {
 
         let node_size = (10 + new_n) * ALIGN_SIZE + trailing_len;
         let node = self.alloc_node(node_size);
-        self.write_meta_with_n_children(node, MetaInfo {
-            flags: meta.flags,
-            n_zpath_len: zpath_len as u8,
-            c_label: [0, 0],
-        }, new_n as u16);
+        self.write_meta_with_n_children(
+            node,
+            MetaInfo {
+                flags: meta.flags,
+                n_zpath_len: zpath_len as u8,
+                c_label: [0, 0],
+            },
+            new_n as u16,
+        );
 
         unsafe {
             let base = self.inner.pool.data.as_ptr() as *mut u8;
@@ -1135,7 +1233,9 @@ impl ConcurrentCsppTrie {
             std::ptr::copy_nonoverlapping(bitmap.as_ptr(), bmp_dst, 32);
         }
         for i in 0..new_n {
-            self.inner.pool.store_relaxed(node as usize + 10 + i, old_children[i]);
+            self.inner
+                .pool
+                .store_relaxed(node as usize + 10 + i, old_children[i]);
         }
         if trailing_len > 0 {
             unsafe {
@@ -1170,21 +1270,25 @@ impl ConcurrentCsppTrie {
             0 => {}
             1 | 2 => {
                 labels[0] = meta.c_label[0];
-                if cnt_type >= 2 { labels[1] = meta.c_label[1]; }
+                if cnt_type >= 2 {
+                    labels[1] = meta.c_label[1];
+                }
             }
             3..=6 => {
                 labels[0] = meta.c_label[0];
                 labels[1] = meta.c_label[1];
                 let pad = self.inner.pool.load_bytes(curr, 1);
-                for i in 2..old_n { labels[i] = pad[i - 2]; }
-            }
-            7 => {
-                unsafe {
-                    let src = self.inner.pool.raw_ptr(curr as usize + 1);
-                    for i in 0..old_n { labels[i] = *src.add(i); }
+                for i in 2..old_n {
+                    labels[i] = pad[i - 2];
                 }
             }
-            _ => unreachable!()
+            7 => unsafe {
+                let src = self.inner.pool.raw_ptr(curr as usize + 1);
+                for i in 0..old_n {
+                    labels[i] = *src.add(i);
+                }
+            },
+            _ => unreachable!(),
         }
 
         let mut children = [0u32; 17];
@@ -1217,13 +1321,18 @@ impl ConcurrentCsppTrie {
             6 => 7,
             7 if old_n < 16 => 7,
             7 => 8,
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
         if new_cnt_type == 8 {
             return self.build_bitmap_node(
-                &labels, &children, new_n,
-                meta.flags, zpath_len, &trailing, trailing_len,
+                &labels,
+                &children,
+                new_n,
+                meta.flags,
+                zpath_len,
+                &trailing,
+                trailing_len,
             );
         }
 
@@ -1249,8 +1358,12 @@ impl ConcurrentCsppTrie {
                 };
                 self.inner.pool.store_relaxed(node as usize, meta_to_u32(m));
                 let mut pad = [0u8; 4];
-                for i in 2..new_n { pad[i - 2] = labels[i]; }
-                self.inner.pool.store_relaxed(node as usize + 1, u32::from_ne_bytes(pad));
+                for i in 2..new_n {
+                    pad[i - 2] = labels[i];
+                }
+                self.inner
+                    .pool
+                    .store_relaxed(node as usize + 1, u32::from_ne_bytes(pad));
             }
             7 => {
                 let m = MetaInfo {
@@ -1260,17 +1373,23 @@ impl ConcurrentCsppTrie {
                 };
                 self.write_meta_with_n_children(node, m, new_n as u16);
                 unsafe {
-                    let lbl_ptr = (self.inner.pool.data.as_ptr() as *mut u8)
-                        .add((node as usize + 1) * 4);
-                    for i in 0..new_n { *lbl_ptr.add(i) = labels[i]; }
-                    for i in new_n..16 { *lbl_ptr.add(i) = 0; }
+                    let lbl_ptr =
+                        (self.inner.pool.data.as_ptr() as *mut u8).add((node as usize + 1) * 4);
+                    for i in 0..new_n {
+                        *lbl_ptr.add(i) = labels[i];
+                    }
+                    for i in new_n..16 {
+                        *lbl_ptr.add(i) = 0;
+                    }
                 }
             }
-            _ => unreachable!()
+            _ => unreachable!(),
         }
 
         for i in 0..new_n {
-            self.inner.pool.store_relaxed(node as usize + new_skip + i, children[i]);
+            self.inner
+                .pool
+                .store_relaxed(node as usize + new_skip + i, children[i]);
         }
         if trailing_len > 0 {
             unsafe {
@@ -1283,15 +1402,22 @@ impl ConcurrentCsppTrie {
     }
 
     fn fork(
-        &self, curr: u32, zidx: usize,
-        old_skip: usize, old_n_children: usize, zpath_len: usize,
-        node_size: usize, zpath_buf: &[u8],
-        new_char: u8, new_suffix_node: u32,
+        &self,
+        curr: u32,
+        zidx: usize,
+        old_skip: usize,
+        old_n_children: usize,
+        zpath_len: usize,
+        node_size: usize,
+        zpath_buf: &[u8],
+        new_char: u8,
+        new_suffix_node: u32,
     ) -> (u32, u32) {
         let old_char = zpath_buf[zidx];
         let suffix_zlen = zpath_len - zidx - 1;
         let suffix_zpath_padded = (suffix_zlen + 3) & !3;
-        let val_size = node_size - ((old_skip + old_n_children) * ALIGN_SIZE + ((zpath_len + 3) & !3));
+        let val_size =
+            node_size - ((old_skip + old_n_children) * ALIGN_SIZE + ((zpath_len + 3) & !3));
         let suffix_size = (old_skip + old_n_children) * ALIGN_SIZE + suffix_zpath_padded + val_size;
 
         let suffix_node = self.alloc_node(suffix_size);
@@ -1307,7 +1433,9 @@ impl ConcurrentCsppTrie {
         // Set new zpath_len on suffix node
         let mut suffix_meta = self.inner.pool.load_meta(suffix_node);
         suffix_meta.n_zpath_len = suffix_zlen as u8;
-        self.inner.pool.store_relaxed(suffix_node as usize, meta_to_u32(suffix_meta));
+        self.inner
+            .pool
+            .store_relaxed(suffix_node as usize, meta_to_u32(suffix_meta));
 
         // SAFETY: `suffix_node` is newly allocated and uncontested.
         // We are filling the zpath and value parts. Reads from `zpath_buf` and `curr` are safe.
@@ -1346,15 +1474,17 @@ impl ConcurrentCsppTrie {
             n_zpath_len: zidx as u8,
             c_label: [label0, label1],
         };
-        self.inner.pool.store_relaxed(parent as usize, meta_to_u32(parent_meta));
+        self.inner
+            .pool
+            .store_relaxed(parent as usize, meta_to_u32(parent_meta));
         self.inner.pool.store_relaxed(parent as usize + 1, child0);
         self.inner.pool.store_relaxed(parent as usize + 2, child1);
 
         // SAFETY: `parent` is newly allocated and uncontested.
         // Writing prefix zpath.
         unsafe {
-            let zpath_dst = (self.inner.pool.data.as_ptr() as *mut u8)
-                .add((parent as usize + 3) * 4);
+            let zpath_dst =
+                (self.inner.pool.data.as_ptr() as *mut u8).add((parent as usize + 3) * 4);
             for i in 0..zidx {
                 *zpath_dst.add(i) = zpath_buf[i];
             }
@@ -1367,14 +1497,20 @@ impl ConcurrentCsppTrie {
 
     /// Returns (prefix_node, valpos, suffix_node_copy).
     fn split_zpath(
-        &self, curr: u32, split_pos: usize,
-        old_skip: usize, old_n_children: usize, zpath_len: usize,
-        node_size: usize, zpath_buf: &[u8],
+        &self,
+        curr: u32,
+        split_pos: usize,
+        old_skip: usize,
+        old_n_children: usize,
+        zpath_len: usize,
+        node_size: usize,
+        zpath_buf: &[u8],
     ) -> (u32, usize, u32) {
         let split_char = zpath_buf[split_pos];
         let suffix_zlen = zpath_len - split_pos - 1;
         let suffix_zpath_padded = (suffix_zlen + 3) & !3;
-        let val_size = node_size - ((old_skip + old_n_children) * ALIGN_SIZE + ((zpath_len + 3) & !3));
+        let val_size =
+            node_size - ((old_skip + old_n_children) * ALIGN_SIZE + ((zpath_len + 3) & !3));
         let suffix_size = (old_skip + old_n_children) * ALIGN_SIZE + suffix_zpath_padded + val_size;
 
         let suffix_node = self.alloc_node(suffix_size);
@@ -1389,7 +1525,9 @@ impl ConcurrentCsppTrie {
         }
         let mut suffix_meta = self.inner.pool.load_meta(suffix_node);
         suffix_meta.n_zpath_len = suffix_zlen as u8;
-        self.inner.pool.store_relaxed(suffix_node as usize, meta_to_u32(suffix_meta));
+        self.inner
+            .pool
+            .store_relaxed(suffix_node as usize, meta_to_u32(suffix_meta));
 
         // SAFETY: `suffix_node` is newly allocated and uncontested.
         // Copying zpath and value data from `curr` and `zpath_buf`.
@@ -1423,12 +1561,16 @@ impl ConcurrentCsppTrie {
             n_zpath_len: split_pos as u8,
             c_label: [split_char, 0],
         };
-        self.inner.pool.store_relaxed(prefix_node as usize, meta_to_u32(prefix_meta));
-        self.inner.pool.store_relaxed(prefix_node as usize + 1, suffix_node);
+        self.inner
+            .pool
+            .store_relaxed(prefix_node as usize, meta_to_u32(prefix_meta));
+        self.inner
+            .pool
+            .store_relaxed(prefix_node as usize + 1, suffix_node);
 
         unsafe {
-            let zpath_dst = (self.inner.pool.data.as_ptr() as *mut u8)
-                .add((prefix_node as usize + 2) * 4);
+            let zpath_dst =
+                (self.inner.pool.data.as_ptr() as *mut u8).add((prefix_node as usize + 2) * 4);
             for i in 0..split_pos {
                 *zpath_dst.add(i) = zpath_buf[i];
             }
@@ -1513,11 +1655,25 @@ impl ConcurrentCsppTrie {
                         // ForkBranch
                         let (new_suffix, valpos) = self.new_suffix_chain(&key[pos + zidx + 1..]);
                         let (new_parent, fork_suffix_copy) = self.fork(
-                            curr, zidx, skip, n_children, zpath_len, node_size,
-                            &zpath_buf[..zpath_len], key[pos + zidx], new_suffix,
+                            curr,
+                            zidx,
+                            skip,
+                            n_children,
+                            zpath_len,
+                            node_size,
+                            &zpath_buf[..zpath_len],
+                            key[pos + zidx],
+                            new_suffix,
                         );
 
-                        if !self.update_curr_ptr(guard, parent, curr_slot, curr, new_parent, &mut backoff) {
+                        if !self.update_curr_ptr(
+                            guard,
+                            parent,
+                            curr_slot,
+                            curr,
+                            new_parent,
+                            &mut backoff,
+                        ) {
                             self.free_suffix_chain(new_suffix);
                             self.free_single_node(fork_suffix_copy);
                             self.free_single_node(new_parent);
@@ -1533,11 +1689,23 @@ impl ConcurrentCsppTrie {
                     if remaining_key < zpath_len {
                         // SplitZpath
                         let (prefix_node, valpos, split_suffix_copy) = self.split_zpath(
-                            curr, match_len, skip, n_children, zpath_len, node_size,
+                            curr,
+                            match_len,
+                            skip,
+                            n_children,
+                            zpath_len,
+                            node_size,
                             &zpath_buf[..zpath_len],
                         );
 
-                        if !self.update_curr_ptr(guard, parent, curr_slot, curr, prefix_node, &mut backoff) {
+                        if !self.update_curr_ptr(
+                            guard,
+                            parent,
+                            curr_slot,
+                            curr,
+                            prefix_node,
+                            &mut backoff,
+                        ) {
                             self.free_single_node(split_suffix_copy);
                             self.free_single_node(prefix_node);
                             continue 'retry;
@@ -1549,7 +1717,8 @@ impl ConcurrentCsppTrie {
 
                     if pos == key.len() {
                         if is_final {
-                            let vp = (curr as usize + skip + n_children) * ALIGN_SIZE + ((zpath_len + 3) & !3);
+                            let vp = (curr as usize + skip + n_children) * ALIGN_SIZE
+                                + ((zpath_len + 3) & !3);
                             return (false, vp);
                         }
                         // MarkFinalState
@@ -1558,10 +1727,19 @@ impl ConcurrentCsppTrie {
                         // Set is_final on new node
                         let mut m = u32_to_meta(self.inner.pool.load_relaxed(new_curr as usize));
                         m.flags |= FLAG_IS_FINAL;
-                        self.inner.pool.store_relaxed(new_curr as usize, meta_to_u32(m));
+                        self.inner
+                            .pool
+                            .store_relaxed(new_curr as usize, meta_to_u32(m));
 
                         if new_curr != curr {
-                            if !self.update_curr_ptr(guard, parent, curr_slot, curr, new_curr, &mut backoff) {
+                            if !self.update_curr_ptr(
+                                guard,
+                                parent,
+                                curr_slot,
+                                curr,
+                                new_curr,
+                                &mut backoff,
+                            ) {
                                 self.free_single_node(new_curr);
                                 continue 'retry;
                             }
@@ -1569,12 +1747,18 @@ impl ConcurrentCsppTrie {
                             // In-place update (same slot) — just CAS the flags
                             let old_meta = self.inner.pool.load_acquire(curr as usize);
                             let new_meta = old_meta | U32_FLAG_IS_FINAL;
-                            if self.inner.pool.cas_weak(curr as usize, old_meta, new_meta).is_err() {
+                            if self
+                                .inner
+                                .pool
+                                .cas_weak(curr as usize, old_meta, new_meta)
+                                .is_err()
+                            {
                                 backoff.spin();
                                 continue 'retry;
                             }
                         }
-                        let vp = (new_curr as usize + skip + n_children) * ALIGN_SIZE + ((zpath_len + 3) & !3);
+                        let vp = (new_curr as usize + skip + n_children) * ALIGN_SIZE
+                            + ((zpath_len + 3) & !3);
                         self.n_words.fetch_add(1, Ordering::Relaxed);
                         self.update_max_word_len(key.len());
                         return (true, vp);
@@ -1614,17 +1798,31 @@ impl ConcurrentCsppTrie {
                         let new_curr = self.realloc_node_concurrent(curr, node_size, new_size);
                         let mut m = u32_to_meta(self.inner.pool.load_relaxed(new_curr as usize));
                         m.flags |= FLAG_IS_FINAL;
-                        self.inner.pool.store_relaxed(new_curr as usize, meta_to_u32(m));
+                        self.inner
+                            .pool
+                            .store_relaxed(new_curr as usize, meta_to_u32(m));
 
                         if new_curr != curr {
-                            if !self.update_curr_ptr(guard, parent, curr_slot, curr, new_curr, &mut backoff) {
+                            if !self.update_curr_ptr(
+                                guard,
+                                parent,
+                                curr_slot,
+                                curr,
+                                new_curr,
+                                &mut backoff,
+                            ) {
                                 self.free_single_node(new_curr);
                                 continue 'retry;
                             }
                         } else {
                             let old_meta = self.inner.pool.load_acquire(curr as usize);
                             let new_meta = old_meta | U32_FLAG_IS_FINAL;
-                            if self.inner.pool.cas_weak(curr as usize, old_meta, new_meta).is_err() {
+                            if self
+                                .inner
+                                .pool
+                                .cas_weak(curr as usize, old_meta, new_meta)
+                                .is_err()
+                            {
                                 backoff.spin();
                                 continue 'retry;
                             }
@@ -1658,7 +1856,12 @@ impl ConcurrentCsppTrie {
                                         n_children: big.n_children + 1,
                                     };
                                     let new: u32 = bytemuck::cast(new_big);
-                                    if self.inner.pool.cas_weak(curr as usize + 1, old, new).is_ok() {
+                                    if self
+                                        .inner
+                                        .pool
+                                        .cas_weak(curr as usize + 1, old, new)
+                                        .is_ok()
+                                    {
                                         break;
                                     }
                                 }
@@ -1667,7 +1870,9 @@ impl ConcurrentCsppTrie {
                                 return (true, valpos);
                             }
                             Err(_) => {
-                                self.race_stats.fast_node_cas_fail.fetch_add(1, Ordering::Relaxed);
+                                self.race_stats
+                                    .fast_node_cas_fail
+                                    .fetch_add(1, Ordering::Relaxed);
                                 self.free_suffix_chain(suffix_node);
                                 backoff.spin();
                                 continue 'retry;
@@ -1675,7 +1880,14 @@ impl ConcurrentCsppTrie {
                         }
                     } else {
                         let new_curr = self.add_state_move(curr, ch, suffix_node);
-                        if !self.update_curr_ptr(guard, parent, curr_slot, curr, new_curr, &mut backoff) {
+                        if !self.update_curr_ptr(
+                            guard,
+                            parent,
+                            curr_slot,
+                            curr,
+                            new_curr,
+                            &mut backoff,
+                        ) {
                             self.free_suffix_chain(suffix_node);
                             self.free_single_node(new_curr);
                             continue 'retry;
@@ -1724,7 +1936,9 @@ impl ConcurrentCsppTrie {
         let parent_original = match self.try_lock_node(parent) {
             Ok(orig) => orig,
             Err(()) => {
-                self.race_stats.parent_lock_fail.fetch_add(1, Ordering::Relaxed);
+                self.race_stats
+                    .parent_lock_fail
+                    .fetch_add(1, Ordering::Relaxed);
                 backoff.spin();
                 return false;
             }
@@ -1735,7 +1949,9 @@ impl ConcurrentCsppTrie {
             Ok(orig) => orig,
             Err(()) => {
                 self.unlock_node(parent, parent_original);
-                self.race_stats.lazy_free_fail.fetch_add(1, Ordering::Relaxed);
+                self.race_stats
+                    .lazy_free_fail
+                    .fetch_add(1, Ordering::Relaxed);
                 backoff.spin();
                 return false;
             }
@@ -1769,7 +1985,11 @@ impl ConcurrentCsppTrie {
                 let old_is_final = old_meta.flags & FLAG_IS_FINAL != 0;
                 let old_node_slots = (old_skip + old_n)
                     + old_zlen.div_ceil(4)
-                    + if old_is_final { self.valsize.div_ceil(4) } else { 0 };
+                    + if old_is_final {
+                        self.valsize.div_ceil(4)
+                    } else {
+                        0
+                    };
 
                 self.free_node_deferred(guard, old_slot, old_node_slots);
                 true
@@ -1778,7 +1998,9 @@ impl ConcurrentCsppTrie {
                 // CAS failed — undo lazy_free and unlock parent
                 self.inner.pool.store_release(curr as usize, curr_original);
                 self.unlock_node(parent, parent_original);
-                self.race_stats.child_cas_fail.fetch_add(1, Ordering::Relaxed);
+                self.race_stats
+                    .child_cas_fail
+                    .fetch_add(1, Ordering::Relaxed);
                 backoff.spin();
                 false
             }
@@ -1791,7 +2013,13 @@ impl ConcurrentCsppTrie {
         let skip = SKIP_SLOTS[cnt as usize] as usize;
         let zlen = meta.n_zpath_len as usize;
         let is_final = meta.flags & FLAG_IS_FINAL != 0;
-        (skip + n_children) + zlen.div_ceil(4) + if is_final { self.valsize.div_ceil(4) } else { 0 }
+        (skip + n_children)
+            + zlen.div_ceil(4)
+            + if is_final {
+                self.valsize.div_ceil(4)
+            } else {
+                0
+            }
     }
 
     /// Free a single unpublished node to thread-local freelist.
@@ -1817,7 +2045,9 @@ impl ConcurrentCsppTrie {
         while curr != NIL_STATE {
             let meta = u32_to_meta(self.inner.pool.load_relaxed(curr as usize));
             let cnt = meta.flags & FLAG_CNT_MASK;
-            let n: usize = if cnt <= 6 { cnt as usize } else {
+            let n: usize = if cnt <= 6 {
+                cnt as usize
+            } else {
                 let big: BigCount = bytemuck::cast(self.inner.pool.load_relaxed(curr as usize));
                 big.n_children as usize
             };
@@ -1840,7 +2070,9 @@ impl ConcurrentCsppTrie {
         }
         let tla_cell = self.get_tla();
         let mut tla = tla_cell.borrow_mut();
-        self.inner.pool.store_relaxed(slot as usize, tla.fast_bins[slots - 1]);
+        self.inner
+            .pool
+            .store_relaxed(slot as usize, tla.fast_bins[slots - 1]);
         tla.fast_bins[slots - 1] = slot;
     }
 
@@ -1849,7 +2081,10 @@ impl ConcurrentCsppTrie {
         let mut cur = self.max_word_len.load(Ordering::Relaxed);
         while len > cur {
             match self.max_word_len.compare_exchange_weak(
-                cur, len, Ordering::Relaxed, Ordering::Relaxed,
+                cur,
+                len,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
             ) {
                 Ok(_) => break,
                 Err(v) => cur = v,
@@ -1867,7 +2102,7 @@ mod tests {
         let trie = ConcurrentCsppTrie::with_capacity(8, 1024 * 1024);
         let key1 = b"hello";
         let key2 = b"world";
-        
+
         let (is_new, valpos) = trie.insert(key1);
         assert!(is_new);
         trie.set_value(valpos, 123u64);
@@ -1877,7 +2112,7 @@ mod tests {
         trie.set_value(valpos2, 456u64);
 
         assert_eq!(trie.num_words(), 2);
-        
+
         let res1 = trie.lookup(key1);
         assert!(res1.is_some());
         assert_eq!(trie.get_value::<u64>(res1.unwrap()), 123);
@@ -1895,7 +2130,7 @@ mod tests {
         let trie = ConcurrentCsppTrie::with_capacity(8, 1024 * 1024);
         trie.insert(b"abcde");
         trie.insert(b"ab");
-        
+
         assert!(trie.contains(b"abcde"));
         assert!(trie.contains(b"ab"));
         assert!(!trie.contains(b"abc"));
@@ -1906,7 +2141,7 @@ mod tests {
         let trie = ConcurrentCsppTrie::with_capacity(8, 1024 * 1024);
         trie.insert(b"abcd");
         trie.insert(b"abef");
-        
+
         assert!(trie.contains(b"abcd"));
         assert!(trie.contains(b"abef"));
         assert!(!trie.contains(b"ab"));
@@ -1922,7 +2157,7 @@ mod tests {
             assert!(is_new);
             trie.set_value(valpos, i as u32);
         }
-        
+
         for i in 0..n {
             let key = format!("key{:03}", i);
             let res = trie.lookup(key.as_bytes());
@@ -1997,26 +2232,26 @@ impl Drop for ConcurrentCsppTrie {
     }
 }
 
-    #[test]
-    fn test_concurrent_cspp_trie_longest_prefix() {
-        let trie = ConcurrentCsppTrie::with_capacity(8, 4 * 1024 * 1024);
-        
-        trie.insert(b"http");
-        trie.insert(b"https");
+#[test]
+fn test_concurrent_cspp_trie_longest_prefix() {
+    let trie = ConcurrentCsppTrie::with_capacity(8, 4 * 1024 * 1024);
 
-        assert!(trie.lookup(b"http").is_some());
-        assert!(trie.lookup(b"https").is_some());
-        assert!(trie.lookup(b"ftp").is_none());
-        
-        let guard = epoch::pin();
-        assert!(trie.lookup_with_guard(b"http", &guard).is_some());
-    }
+    trie.insert(b"http");
+    trie.insert(b"https");
 
-    #[test]
-    fn test_concurrent_cspp_trie_deletion_support() {
-        let trie = ConcurrentCsppTrie::with_capacity(8, 4 * 1024 * 1024);
-        trie.insert(b"test1");
-        assert_eq!(trie.num_words(), 1);
-        trie.insert(b"test2");
-        assert_eq!(trie.num_words(), 2);
-    }
+    assert!(trie.lookup(b"http").is_some());
+    assert!(trie.lookup(b"https").is_some());
+    assert!(trie.lookup(b"ftp").is_none());
+
+    let guard = epoch::pin();
+    assert!(trie.lookup_with_guard(b"http", &guard).is_some());
+}
+
+#[test]
+fn test_concurrent_cspp_trie_deletion_support() {
+    let trie = ConcurrentCsppTrie::with_capacity(8, 4 * 1024 * 1024);
+    trie.insert(b"test1");
+    assert_eq!(trie.num_words(), 1);
+    trie.insert(b"test2");
+    assert_eq!(trie.num_words(), 2);
+}

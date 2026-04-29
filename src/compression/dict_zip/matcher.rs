@@ -243,7 +243,7 @@ impl PatternMatcher {
 
         if max_extension > 0 {
             self.stats.cache_extensions += 1;
-            
+
             let extended_length = self.extend_match_at_position(
                 input,
                 input_pos + extension_start,
@@ -262,7 +262,7 @@ impl PatternMatcher {
 
         // Update rolling average
         let total_length = self.stats.avg_match_length * (self.stats.successful_matches - 1) as f64
-                          + best_match.length as f64;
+            + best_match.length as f64;
         self.stats.avg_match_length = total_length / self.stats.successful_matches as f64;
 
         Ok(Some(best_match))
@@ -318,12 +318,17 @@ impl PatternMatcher {
                 // Found matches - take the first one (arbitrary choice among equals)
                 if let Some(dict_pos) = self.suffix_array.suffix_at_rank(start_idx) {
                     let match_candidate = Match::new(pattern_len, dict_pos, input_pos, false);
-                    
-                    if best_match.as_ref().is_none_or(|m| match_candidate.is_better_than(m)) {
+
+                    if best_match
+                        .as_ref()
+                        .is_none_or(|m| match_candidate.is_better_than(m))
+                    {
                         best_match = Some(match_candidate);
 
                         // Early termination if match quality is very good
-                        if best_match.as_ref().expect("best_match set in loop").quality >= self.config.early_termination_quality {
+                        if best_match.as_ref().expect("best_match set in loop").quality
+                            >= self.config.early_termination_quality
+                        {
                             break;
                         }
                     }
@@ -342,8 +347,9 @@ impl PatternMatcher {
 
             // Update rolling average
             let match_len = best_match.as_ref().expect("best_match set in loop").length as f64;
-            let total_length = self.stats.avg_match_length * (self.stats.successful_matches - 1) as f64
-                              + match_len;
+            let total_length = self.stats.avg_match_length
+                * (self.stats.successful_matches - 1) as f64
+                + match_len;
             self.stats.avg_match_length = total_length / self.stats.successful_matches as f64;
         }
 
@@ -359,8 +365,9 @@ impl PatternMatcher {
     /// # Returns
     /// Vector of all matches found
     pub fn find_all_matches(&self, pattern: &[u8], max_matches: usize) -> Result<Vec<Match>> {
-        if pattern.len() < self.config.min_match_length ||
-           pattern.len() > self.config.max_match_length {
+        if pattern.len() < self.config.min_match_length
+            || pattern.len() > self.config.max_match_length
+        {
             return Ok(Vec::new());
         }
 
@@ -406,7 +413,7 @@ impl PatternMatcher {
 
         let input_remaining = &input[input_pos..];
         let dict_remaining = &self.dictionary_text[dict_pos..];
-        
+
         let max_compare = max_extension
             .min(input_remaining.len())
             .min(dict_remaining.len());
@@ -414,7 +421,11 @@ impl PatternMatcher {
         #[cfg(feature = "simd")]
         {
             if max_compare >= 16 && self.config.enable_simd {
-                return Ok(self.simd_compare_and_extend(input_remaining, dict_remaining, max_compare));
+                return Ok(self.simd_compare_and_extend(
+                    input_remaining,
+                    dict_remaining,
+                    max_compare,
+                ));
             }
         }
 
@@ -447,7 +458,7 @@ impl PatternMatcher {
 
                 let input_chunk = _mm_loadu_si128(input.as_ptr().add(pos) as *const __m128i);
                 let dict_chunk = _mm_loadu_si128(dict.as_ptr().add(pos) as *const __m128i);
-                
+
                 let comparison = _mm_cmpeq_epi8(input_chunk, dict_chunk);
                 let mask = _mm_movemask_epi8(comparison) as u16;
 
@@ -548,7 +559,7 @@ mod tests {
     fn test_matcher_creation() {
         let (sa, text) = create_test_setup();
         let matcher = PatternMatcher::new(sa, text, 3, 20);
-        
+
         assert_eq!(matcher.config().min_match_length, 3);
         assert_eq!(matcher.config().max_match_length, 20);
     }
@@ -557,10 +568,12 @@ mod tests {
     fn test_suffix_array_matching() {
         let (sa, text) = create_test_setup();
         let mut matcher = PatternMatcher::new(sa, text, 3, 10);
-        
+
         let input = b"the quick brown";
-        let result = matcher.find_longest_match_suffix_array(input, 0, 10).unwrap();
-        
+        let result = matcher
+            .find_longest_match_suffix_array(input, 0, 10)
+            .unwrap();
+
         assert!(result.is_some());
         let match_result = result.unwrap();
         assert!(match_result.length >= 3);
@@ -571,7 +584,7 @@ mod tests {
     fn test_cache_match_extension() {
         let (sa, text) = create_test_setup();
         let mut matcher = PatternMatcher::new(sa, text, 3, 20);
-        
+
         // Create a mock cache match
         let cache_match = CacheMatch {
             length: 3,
@@ -579,10 +592,12 @@ mod tests {
             frequency: 2,
             state_id: 1,
         };
-        
+
         let input = b"the quick";
-        let result = matcher.extend_match_from_cache(input, 0, cache_match, 10).unwrap();
-        
+        let result = matcher
+            .extend_match_from_cache(input, 0, cache_match, 10)
+            .unwrap();
+
         assert!(result.is_some());
         let extended_match = result.unwrap();
         assert!(extended_match.from_cache);
@@ -593,13 +608,13 @@ mod tests {
     fn test_find_all_matches() {
         let (sa, text) = create_test_setup();
         let matcher = PatternMatcher::new(sa, text, 2, 10);
-        
+
         let pattern = b"the";
         let matches = matcher.find_all_matches(pattern, 10).unwrap();
-        
+
         // "the" appears twice in "the quick brown fox jumps over the lazy dog"
         assert_eq!(matches.len(), 2);
-        
+
         for match_result in &matches {
             assert_eq!(match_result.length, 3);
             assert!(!match_result.from_cache);
@@ -610,10 +625,10 @@ mod tests {
     fn test_match_quality() {
         let match1 = Match::new(5, 0, 0, false);
         let match2 = Match::new(3, 10, 0, false);
-        
+
         assert!(match1.is_better_than(&match2));
         assert!(!match2.is_better_than(&match1));
-        
+
         // Test quality calculation
         assert!(match1.quality > match2.quality);
     }
@@ -622,12 +637,16 @@ mod tests {
     fn test_matcher_statistics() {
         let (sa, text) = create_test_setup();
         let mut matcher = PatternMatcher::new(sa, text, 3, 10);
-        
+
         // Perform some matches
         let input = b"the";
-        matcher.find_longest_match_suffix_array(input, 0, 5).unwrap();
-        matcher.find_longest_match_suffix_array(input, 0, 5).unwrap();
-        
+        matcher
+            .find_longest_match_suffix_array(input, 0, 5)
+            .unwrap();
+        matcher
+            .find_longest_match_suffix_array(input, 0, 5)
+            .unwrap();
+
         let stats = matcher.stats();
         assert_eq!(stats.total_matches, 2);
         assert!(stats.success_ratio() >= 0.0 && stats.success_ratio() <= 1.0);
@@ -636,7 +655,7 @@ mod tests {
     #[test]
     fn test_pattern_matcher_builder() {
         let (sa, text) = create_test_setup();
-        
+
         let matcher = PatternMatcherBuilder::new()
             .min_match_length(4)
             .max_match_length(50)
@@ -644,7 +663,7 @@ mod tests {
             .max_sa_comparisons(200)
             .early_termination_quality(0.9)
             .build(sa, text);
-        
+
         let config = matcher.config();
         assert_eq!(config.min_match_length, 4);
         assert_eq!(config.max_match_length, 50);
@@ -657,14 +676,18 @@ mod tests {
     fn test_empty_input_handling() {
         let (sa, text) = create_test_setup();
         let mut matcher = PatternMatcher::new(sa, text, 3, 10);
-        
+
         let empty_input = b"";
-        let result = matcher.find_longest_match_suffix_array(empty_input, 0, 10).unwrap();
+        let result = matcher
+            .find_longest_match_suffix_array(empty_input, 0, 10)
+            .unwrap();
         assert!(result.is_none());
-        
+
         // Test with position beyond input length
         let input = b"test";
-        let result = matcher.find_longest_match_suffix_array(input, 10, 10).unwrap();
+        let result = matcher
+            .find_longest_match_suffix_array(input, 10, 10)
+            .unwrap();
         assert!(result.is_none());
     }
 
@@ -672,7 +695,7 @@ mod tests {
     fn test_short_pattern_rejection() {
         let (sa, text) = create_test_setup();
         let matcher = PatternMatcher::new(sa, text, 5, 10); // Min length 5
-        
+
         let short_pattern = b"the"; // Length 3, below minimum
         let matches = matcher.find_all_matches(short_pattern, 10).unwrap();
         assert!(matches.is_empty());
@@ -689,10 +712,12 @@ mod tests {
                 ..Default::default()
             },
         );
-        
+
         let input = b"the quick brown fox";
-        let result = matcher.find_longest_match_suffix_array(input, 0, 20).unwrap();
-        
+        let result = matcher
+            .find_longest_match_suffix_array(input, 0, 20)
+            .unwrap();
+
         // Should find a match and potentially terminate early
         assert!(result.is_some());
     }

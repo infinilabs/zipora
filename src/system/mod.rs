@@ -16,20 +16,22 @@
 //! This implementation is inspired by production-grade system utilities while leveraging Rust's
 //! memory safety guarantees and modern language features.
 
+pub mod base64;
 pub mod cpu_features;
-pub mod profiling;
 #[cfg(feature = "async")]
 pub mod process;
-pub mod base64;
+pub mod profiling;
 pub mod vm_utils;
 
 // Re-export core functionality
+pub use base64::{
+    AdaptiveBase64, SimdBase64Decoder, SimdBase64Encoder, base64_decode_simd, base64_encode_simd,
+};
 pub use cpu_features::{CpuFeatures, RuntimeCpuFeatures, get_cpu_features, has_cpu_feature};
-pub use profiling::{PerfTimer, BenchmarkSuite, HighPrecisionTimer, ProfiledFunction};
 #[cfg(feature = "async")]
-pub use process::{ProcessManager, ProcessPool, BidirectionalPipe, ProcessExecutor};
-pub use base64::{AdaptiveBase64, SimdBase64Encoder, SimdBase64Decoder, base64_encode_simd, base64_decode_simd};
-pub use vm_utils::{VmManager, PageAlignedAlloc, KernelInfo, vm_prefetch, get_kernel_info};
+pub use process::{BidirectionalPipe, ProcessExecutor, ProcessManager, ProcessPool};
+pub use profiling::{BenchmarkSuite, HighPrecisionTimer, PerfTimer, ProfiledFunction};
+pub use vm_utils::{KernelInfo, PageAlignedAlloc, VmManager, get_kernel_info, vm_prefetch};
 
 #[cfg(test)]
 mod tests {

@@ -4,8 +4,8 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::ffi::c_api::*;
     use crate::ffi::CResult;
+    use crate::ffi::c_api::*;
 
     #[test]
     fn test_fast_vec_lifecycle() {
@@ -46,7 +46,10 @@ mod tests {
             fast_vec_free(std::ptr::null_mut());
             assert_eq!(fast_vec_len(std::ptr::null()), 0);
             assert!(fast_vec_data(std::ptr::null()).is_null());
-            assert_eq!(fast_vec_push(std::ptr::null_mut(), 0), CResult::InvalidInput);
+            assert_eq!(
+                fast_vec_push(std::ptr::null_mut(), 0),
+                CResult::InvalidInput
+            );
         }
     }
 

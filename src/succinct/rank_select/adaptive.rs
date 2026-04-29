@@ -25,7 +25,7 @@
 //! // Adaptive selection automatically chooses RankSelectFew
 //! let adaptive_rs = AdaptiveRankSelect::new(sparse_bv).unwrap();
 //! println!("Selected: {}", adaptive_rs.implementation_name());
-//! 
+//!
 //! let rank = adaptive_rs.rank1(5000);
 //! let pos = adaptive_rs.select1(25).unwrap();
 //! ```
@@ -56,23 +56,23 @@ impl AdaptiveCpuCapabilities {
         let has_bmi2 = Self::detect_bmi2();
         let has_popcnt = Self::detect_popcnt();
         let has_avx2 = Self::detect_avx2();
-        
+
         let optimization_tier = match (has_popcnt, has_bmi1, has_bmi2, has_avx2) {
             (true, true, true, true) => 4,  // Full BMI2 + AVX2
             (true, true, true, false) => 3, // BMI2 without AVX2
             (true, true, false, _) => 2,    // BMI1 only
             (true, false, false, _) => 1,   // POPCNT only
-            _ => 0,                          // No acceleration
+            _ => 0,                         // No acceleration
         };
-        
+
         let chunk_size = match optimization_tier {
-            4 => 1024,  // Large chunks for AVX2
-            3 => 512,   // Medium chunks for BMI2
-            2 => 256,   // Smaller chunks for BMI1
-            1 => 128,   // Small chunks for POPCNT
-            _ => 64,    // Minimal chunks for scalar
+            4 => 1024, // Large chunks for AVX2
+            3 => 512,  // Medium chunks for BMI2
+            2 => 256,  // Smaller chunks for BMI1
+            1 => 128,  // Small chunks for POPCNT
+            _ => 64,   // Minimal chunks for scalar
         };
-        
+
         Self {
             has_bmi1,
             has_bmi2,
@@ -82,58 +82,57 @@ impl AdaptiveCpuCapabilities {
             chunk_size,
         }
     }
-    
+
     /// Get cached capabilities (thread-safe singleton)
     #[inline]
     pub fn get() -> &'static Self {
-        static CAPABILITIES: std::sync::OnceLock<AdaptiveCpuCapabilities> = std::sync::OnceLock::new();
+        static CAPABILITIES: std::sync::OnceLock<AdaptiveCpuCapabilities> =
+            std::sync::OnceLock::new();
         CAPABILITIES.get_or_init(Self::detect)
     }
-    
+
     #[cfg(target_arch = "x86_64")]
     fn detect_bmi1() -> bool {
         std::is_x86_feature_detected!("bmi1")
     }
-    
+
     #[cfg(not(target_arch = "x86_64"))]
     fn detect_bmi1() -> bool {
         false
     }
-    
+
     #[cfg(target_arch = "x86_64")]
     fn detect_bmi2() -> bool {
         std::is_x86_feature_detected!("bmi2")
     }
-    
+
     #[cfg(not(target_arch = "x86_64"))]
     fn detect_bmi2() -> bool {
         false
     }
-    
+
     #[cfg(target_arch = "x86_64")]
     fn detect_popcnt() -> bool {
         std::is_x86_feature_detected!("popcnt")
     }
-    
+
     #[cfg(not(target_arch = "x86_64"))]
     fn detect_popcnt() -> bool {
         false
     }
-    
+
     #[cfg(target_arch = "x86_64")]
     fn detect_avx2() -> bool {
         std::is_x86_feature_detected!("avx2")
     }
-    
+
     #[cfg(not(target_arch = "x86_64"))]
     fn detect_avx2() -> bool {
         false
     }
 }
+use super::{RankSelectInterleaved256, RankSelectOps};
 use crate::succinct::BitVector;
-use super::{
-    RankSelectOps, RankSelectInterleaved256,
-};
 use std::fmt;
 
 /// Data characteristics profile for adaptive selection
@@ -290,7 +289,7 @@ impl AdaptiveRankSelect {
     pub fn with_criteria(bit_vector: BitVector, criteria: SelectionCriteria) -> Result<Self> {
         let profile = Self::analyze_data(&bit_vector, &criteria);
         let (implementation, name) = Self::select_implementation(bit_vector, &profile, &criteria)?;
-        
+
         Ok(Self {
             implementation,
             implementation_name: name,
@@ -303,7 +302,11 @@ impl AdaptiveRankSelect {
     fn analyze_data(bit_vector: &BitVector, criteria: &SelectionCriteria) -> DataProfile {
         let total_bits = bit_vector.len();
         let ones_count = bit_vector.count_ones();
-        let density = if total_bits == 0 { 0.0 } else { ones_count as f64 / total_bits as f64 };
+        let density = if total_bits == 0 {
+            0.0
+        } else {
+            ones_count as f64 / total_bits as f64
+        };
 
         let size_category = match total_bits {
             0..=9999 => SizeCategory::Small,
@@ -317,12 +320,16 @@ impl AdaptiveRankSelect {
         let pattern_complexity = Self::calculate_pattern_complexity(bit_vector, &run_length_stats);
         let clustering_coefficient = Self::calculate_clustering_coefficient(bit_vector);
         let entropy = Self::calculate_entropy(bit_vector);
-        
+
         // Detect hardware acceleration capabilities
         let hardware_tier = AdaptiveCpuCapabilities::get().optimization_tier;
-        
+
         // Use provided access pattern or infer from data characteristics
-        let access_pattern = Self::infer_access_pattern(criteria.access_pattern, &run_length_stats, pattern_complexity);
+        let access_pattern = Self::infer_access_pattern(
+            criteria.access_pattern,
+            &run_length_stats,
+            pattern_complexity,
+        );
 
         DataProfile {
             total_bits,
@@ -337,19 +344,19 @@ impl AdaptiveRankSelect {
             hardware_tier,
         }
     }
-    
+
     /// Analyze run lengths to understand bit patterns
     fn analyze_run_lengths(bit_vector: &BitVector) -> RunLengthStats {
         if bit_vector.is_empty() {
             return RunLengthStats::default();
         }
-        
+
         let mut ones_runs = Vec::new();
         let mut zeros_runs = Vec::new();
         let mut current_run = 1;
         let mut current_bit = bit_vector.get(0).unwrap_or(false);
         let mut alternations = 0;
-        
+
         for i in 1..bit_vector.len() {
             let bit = bit_vector.get(i).unwrap_or(false);
             if bit == current_bit {
@@ -366,22 +373,26 @@ impl AdaptiveRankSelect {
                 alternations += 1;
             }
         }
-        
+
         // Record final run
         if current_bit {
             ones_runs.push(current_run);
         } else {
             zeros_runs.push(current_run);
         }
-        
-        let avg_ones_run = if ones_runs.is_empty() { 0.0 } else {
+
+        let avg_ones_run = if ones_runs.is_empty() {
+            0.0
+        } else {
             ones_runs.iter().sum::<usize>() as f64 / ones_runs.len() as f64
         };
-        
-        let avg_zeros_run = if zeros_runs.is_empty() { 0.0 } else {
+
+        let avg_zeros_run = if zeros_runs.is_empty() {
+            0.0
+        } else {
             zeros_runs.iter().sum::<usize>() as f64 / zeros_runs.len() as f64
         };
-        
+
         RunLengthStats {
             avg_ones_run,
             avg_zeros_run,
@@ -390,84 +401,88 @@ impl AdaptiveRankSelect {
             alternations,
         }
     }
-    
+
     /// Calculate pattern complexity score (0.0 = very regular, 1.0 = random)
     fn calculate_pattern_complexity(bit_vector: &BitVector, run_stats: &RunLengthStats) -> f64 {
         if bit_vector.is_empty() {
             return 0.0;
         }
-        
+
         // Factors that increase complexity:
         // 1. High number of alternations relative to size
         // 2. Variance in run lengths
         // 3. Lack of clear patterns
-        
+
         let total_bits = bit_vector.len() as f64;
         let alternation_density = run_stats.alternations as f64 / total_bits;
-        
+
         // Calculate run length variance (high variance = more complex)
         let avg_run_length = (run_stats.avg_ones_run + run_stats.avg_zeros_run) / 2.0;
         let max_run_length = run_stats.max_ones_run.max(run_stats.max_zeros_run) as f64;
-        
+
         let run_variance = if avg_run_length > 0.0 {
             (max_run_length - avg_run_length) / avg_run_length
         } else {
             0.0
         };
-        
+
         // Combine factors (normalized to 0-1)
         let complexity = (alternation_density * 2.0 + run_variance.min(1.0)) / 3.0;
         complexity.min(1.0)
     }
-    
+
     /// Calculate clustering coefficient for spatial locality
     fn calculate_clustering_coefficient(bit_vector: &BitVector) -> f64 {
         if bit_vector.len() < 3 {
             return 1.0; // Perfect clustering for small data
         }
-        
+
         let mut clusters = 0;
         let window_size = 64; // Analyze in 64-bit windows
-        
+
         for start in (0..bit_vector.len()).step_by(window_size) {
             let end = (start + window_size).min(bit_vector.len());
             let mut local_transitions = 0;
-            
-            for i in start..end-1 {
+
+            for i in start..end - 1 {
                 if bit_vector.get(i) != bit_vector.get(i + 1) {
                     local_transitions += 1;
                 }
             }
-            
+
             if local_transitions < window_size / 4 {
                 clusters += 1;
             }
         }
-        
+
         let num_windows = bit_vector.len().div_ceil(window_size);
-        if num_windows == 0 { 1.0 } else { clusters as f64 / num_windows as f64 }
+        if num_windows == 0 {
+            1.0
+        } else {
+            clusters as f64 / num_windows as f64
+        }
     }
-    
+
     /// Calculate Shannon entropy of bit distribution
     fn calculate_entropy(bit_vector: &BitVector) -> f64 {
         if bit_vector.is_empty() {
             return 0.0;
         }
-        
+
         let ones = bit_vector.count_ones() as f64;
         let zeros = (bit_vector.len() - bit_vector.count_ones()) as f64;
         let total = bit_vector.len() as f64;
-        
+
         if ones == 0.0 || zeros == 0.0 {
             return 0.0; // No entropy for all-same bits
         }
-        
+
         let p1 = ones / total;
         let p0 = zeros / total;
-        
+
         -(p1 * p1.log2() + p0 * p0.log2())
     }
-    
+
     /// Infer optimal access pattern from data characteristics
     fn infer_access_pattern(
         provided: AccessPattern,
@@ -497,22 +512,22 @@ impl AdaptiveRankSelect {
         profile: &DataProfile,
         criteria: &SelectionCriteria,
     ) -> Result<(RankSelectInterleaved256, String)> {
-        let description = format!("RankSelectInterleaved256 ({})",
-            Self::get_description(profile, criteria));
+        let description = format!(
+            "RankSelectInterleaved256 ({})",
+            Self::get_description(profile, criteria)
+        );
 
-        Ok((
-            RankSelectInterleaved256::new(bit_vector)?,
-            description,
-        ))
+        Ok((RankSelectInterleaved256::new(bit_vector)?, description))
     }
 
     /// Get descriptive text for the selected configuration
     fn get_description(profile: &DataProfile, criteria: &SelectionCriteria) -> String {
-        let (adaptive_sparse_threshold, adaptive_dense_threshold) = if criteria.enable_adaptive_thresholds {
-            Self::tune_thresholds(profile, criteria)
-        } else {
-            (criteria.sparse_threshold, criteria.dense_threshold)
-        };
+        let (adaptive_sparse_threshold, adaptive_dense_threshold) =
+            if criteria.enable_adaptive_thresholds {
+                Self::tune_thresholds(profile, criteria)
+            } else {
+                (criteria.sparse_threshold, criteria.dense_threshold)
+            };
 
         if profile.ones_count == 0 {
             "all zeros"
@@ -536,9 +551,10 @@ impl AdaptiveRankSelect {
                 (SizeCategory::Large, _) => "large dataset optimized",
                 (SizeCategory::VeryLarge, _) => "very large dataset optimized",
             }
-        }.to_string()
+        }
+        .to_string()
     }
-    
+
     /// Tune thresholds based on data pattern analysis
     fn tune_thresholds(profile: &DataProfile, criteria: &SelectionCriteria) -> (f64, f64) {
         let mut sparse_threshold = criteria.sparse_threshold;
@@ -553,14 +569,14 @@ impl AdaptiveRankSelect {
                 // Q=1: Linear search optimization for small ranges (≤32)
                 // Better branch prediction, prefer implementations with linear search paths
                 sparse_threshold *= 1.5; // More aggressive sparse selection
-                dense_threshold *= 0.7;   // Earlier switch to dense for cache efficiency
-            },
+                dense_threshold *= 0.7; // Earlier switch to dense for cache efficiency
+            }
             4 => {
                 // Q=4: Binary search optimization for larger ranges
                 // Better cache locality, prefer implementations with binary search
-                sparse_threshold *= 0.8;  // Less aggressive sparse selection
-                dense_threshold *= 1.2;   // Later switch to dense to leverage binary search
-            },
+                sparse_threshold *= 0.8; // Less aggressive sparse selection
+                dense_threshold *= 1.2; // Later switch to dense to leverage binary search
+            }
             _ => {
                 // Default: balanced approach
                 sparse_threshold *= 1.0;
@@ -583,21 +599,24 @@ impl AdaptiveRankSelect {
         }
 
         // Adjust based on run length characteristics - referenced project optimized
-        if profile.run_length_stats.avg_ones_run > 32.0 || profile.run_length_stats.avg_zeros_run > 32.0 {
+        if profile.run_length_stats.avg_ones_run > 32.0
+            || profile.run_length_stats.avg_zeros_run > 32.0
+        {
             // Use referenced project's 32-element threshold for linear vs binary search
             dense_threshold *= 0.85; // More aggressive dense for longer runs
         }
 
         // Hardware acceleration can handle denser data more efficiently
-        if profile.hardware_tier >= 3 { // BMI2 available
+        if profile.hardware_tier >= 3 {
+            // BMI2 available
             sparse_threshold *= 1.3; // Can handle denser sparse data with BMI2
-            dense_threshold *= 0.8;   // More aggressive dense optimization with BMI2
+            dense_threshold *= 0.8; // More aggressive dense optimization with BMI2
         }
-        
+
         // Clamp thresholds to reasonable ranges
         sparse_threshold = sparse_threshold.clamp(0.01, 0.25);
         dense_threshold = dense_threshold.clamp(0.75, 0.98);
-        
+
         (sparse_threshold, dense_threshold)
     }
 
@@ -771,7 +790,7 @@ impl AdaptiveMultiDimensional {
     pub fn new_dual(bit_vector1: BitVector, bit_vector2: BitVector) -> Result<Self> {
         if bit_vector1.len() != bit_vector2.len() {
             return Err(ZiporaError::invalid_data(
-                "Bit vectors must have the same length".to_string()
+                "Bit vectors must have the same length".to_string(),
             ));
         }
 
@@ -868,14 +887,18 @@ mod tests {
         // Very sparse data (1% density)
         let sparse_bv = create_sparse_bitvector(10000, 100);
         let adaptive = AdaptiveRankSelect::new(sparse_bv).unwrap();
-        
-        assert!(adaptive.implementation_name().contains("RankSelectInterleaved256"));
+
+        assert!(
+            adaptive
+                .implementation_name()
+                .contains("RankSelectInterleaved256")
+        );
         assert!(adaptive.data_profile().density < 0.05);
-        
+
         // Test basic operations
         let rank = adaptive.rank1(1000);
         assert_eq!(rank, 10); // Every 100th bit, so 10 bits set in first 1000
-        
+
         let pos = adaptive.select1(5).unwrap();
         assert_eq!(pos, 500); // 5th set bit is at position 500
     }
@@ -885,16 +908,22 @@ mod tests {
         // Dense data (90% density)
         let dense_bv = create_dense_bitvector(1000);
         let adaptive = AdaptiveRankSelect::new(dense_bv).unwrap();
-        
-        println!("Dense test - Selected: {}, Density: {:.3}, Size category: {:?}", 
-                 adaptive.implementation_name(), 
-                 adaptive.data_profile().density,
-                 adaptive.data_profile().size_category);
-        
-        // Small dense dataset should select either cache-efficient or separated implementation  
-        assert!(adaptive.implementation_name().contains("RankSelectInterleaved256"));
+
+        println!(
+            "Dense test - Selected: {}, Density: {:.3}, Size category: {:?}",
+            adaptive.implementation_name(),
+            adaptive.data_profile().density,
+            adaptive.data_profile().size_category
+        );
+
+        // Small dense dataset should select either cache-efficient or separated implementation
+        assert!(
+            adaptive
+                .implementation_name()
+                .contains("RankSelectInterleaved256")
+        );
         assert!(adaptive.data_profile().density > 0.8);
-        
+
         // Test basic operations
         let rank = adaptive.rank1(100);
         assert_eq!(rank, 90); // 90% of 100 bits
@@ -905,11 +934,11 @@ mod tests {
         // Balanced data (50% density)
         let balanced_bv = create_balanced_bitvector(50000);
         let adaptive = AdaptiveRankSelect::new(balanced_bv).unwrap();
-        
+
         // Should select based on size (medium dataset)
         assert!(adaptive.implementation_name().contains("RankSelect"));
         assert!((adaptive.data_profile().density - 0.5).abs() < 0.1);
-        
+
         // Test basic operations
         let rank = adaptive.rank1(1000);
         assert_eq!(rank, 500); // 50% of 1000 bits
@@ -920,8 +949,12 @@ mod tests {
         // Small dataset should prefer cache-efficient implementation
         let small_bv = create_balanced_bitvector(5000);
         let adaptive = AdaptiveRankSelect::new(small_bv).unwrap();
-        
-        assert!(adaptive.implementation_name().contains("RankSelectInterleaved256"));
+
+        assert!(
+            adaptive
+                .implementation_name()
+                .contains("RankSelectInterleaved256")
+        );
         assert_eq!(adaptive.data_profile().size_category, SizeCategory::Small);
     }
 
@@ -930,28 +963,38 @@ mod tests {
         // Large dataset should prefer separated implementation
         let large_bv = create_balanced_bitvector(5_000_000);
         let adaptive = AdaptiveRankSelect::new(large_bv).unwrap();
-        
-        assert!(adaptive.implementation_name().contains("RankSelectInterleaved256"));
+
+        assert!(
+            adaptive
+                .implementation_name()
+                .contains("RankSelectInterleaved256")
+        );
         assert_eq!(adaptive.data_profile().size_category, SizeCategory::Large);
     }
 
     #[test]
     fn test_custom_criteria() {
         let bv = create_sparse_bitvector(1000, 50); // 2% density
-        
+
         // Custom criteria with higher sparse threshold
         let criteria = SelectionCriteria {
             sparse_threshold: 0.025, // 2.5% - should trigger sparse optimization for 2% data
             ..Default::default()
         };
-        
+
         let adaptive = AdaptiveRankSelect::with_criteria(bv.clone(), criteria).unwrap();
-        
-        println!("Custom criteria test - Selected: {}, Density: {:.3}", 
-                 adaptive.implementation_name(), 
-                 adaptive.data_profile().density);
-        
-        assert!(adaptive.implementation_name().contains("RankSelectInterleaved256"));
+
+        println!(
+            "Custom criteria test - Selected: {}, Density: {:.3}",
+            adaptive.implementation_name(),
+            adaptive.data_profile().density
+        );
+
+        assert!(
+            adaptive
+                .implementation_name()
+                .contains("RankSelectInterleaved256")
+        );
     }
 
     #[test]
@@ -959,13 +1002,21 @@ mod tests {
         // All zeros
         let all_zeros = BitVector::with_size(1000, false).unwrap();
         let adaptive = AdaptiveRankSelect::new(all_zeros).unwrap();
-        assert!(adaptive.implementation_name().contains("RankSelectInterleaved256"));
+        assert!(
+            adaptive
+                .implementation_name()
+                .contains("RankSelectInterleaved256")
+        );
         assert_eq!(adaptive.count_ones(), 0);
-        
+
         // All ones
         let all_ones = BitVector::with_size(1000, true).unwrap();
         let adaptive = AdaptiveRankSelect::new(all_ones).unwrap();
-        assert!(adaptive.implementation_name().contains("RankSelectInterleaved256"));
+        assert!(
+            adaptive
+                .implementation_name()
+                .contains("RankSelectInterleaved256")
+        );
         assert_eq!(adaptive.count_ones(), 1000);
     }
 
@@ -973,14 +1024,17 @@ mod tests {
     fn test_optimization_stats() {
         let sparse_bv = create_sparse_bitvector(10000, 100);
         let adaptive = AdaptiveRankSelect::new(sparse_bv).unwrap();
-        
+
         let stats = adaptive.optimization_stats();
         assert_eq!(stats.total_bits, 10000);
         assert_eq!(stats.ones_count, 100);
         assert!((stats.density - 0.01).abs() < 0.001);
         assert!(stats.implementation.contains("RankSelectInterleaved256"));
-        assert_eq!(stats.estimated_performance_tier, PerformanceTier::HighPerformance);
-        
+        assert_eq!(
+            stats.estimated_performance_tier,
+            PerformanceTier::HighPerformance
+        );
+
         // Test display
         let display_str = format!("{}", stats);
         assert!(display_str.contains("AdaptiveRankSelect Stats"));
@@ -991,11 +1045,15 @@ mod tests {
     fn test_multi_dimensional_adaptive() {
         let bv1 = create_balanced_bitvector(1000);
         let bv2 = create_sparse_bitvector(1000, 50);
-        
+
         let multi = AdaptiveMultiDimensional::new_dual(bv1, bv2).unwrap();
-        assert!(multi.implementation_name().contains("RankSelectInterleaved256"));
+        assert!(
+            multi
+                .implementation_name()
+                .contains("RankSelectInterleaved256")
+        );
         assert_eq!(multi.dimensions(), 2);
-        
+
         // Test basic operations
         assert_eq!(multi.len(), 1000);
         let rank = multi.rank1(100);
@@ -1006,7 +1064,7 @@ mod tests {
     fn test_multi_dimensional_length_mismatch() {
         let bv1 = create_balanced_bitvector(1000);
         let bv2 = create_balanced_bitvector(500); // Different length
-        
+
         let result = AdaptiveMultiDimensional::new_dual(bv1, bv2);
         assert!(result.is_err());
     }
@@ -1016,13 +1074,16 @@ mod tests {
         let bv = create_sparse_bitvector(50000, 200); // 0.5% density
         let criteria = SelectionCriteria::default();
         let profile = AdaptiveRankSelect::analyze_data(&bv, &criteria);
-        
+
         assert_eq!(profile.total_bits, 50000);
         assert_eq!(profile.ones_count, 250);
         assert!((profile.density - 0.005).abs() < 0.001);
         assert_eq!(profile.size_category, SizeCategory::Medium);
         // Access pattern may be inferred based on data characteristics, so check it's valid
-        assert!(matches!(profile.access_pattern, AccessPattern::Mixed | AccessPattern::Sequential | AccessPattern::Random));
+        assert!(matches!(
+            profile.access_pattern,
+            AccessPattern::Mixed | AccessPattern::Sequential | AccessPattern::Random
+        ));
     }
 
     #[test]
@@ -1031,13 +1092,13 @@ mod tests {
         let bv = create_balanced_bitvector(10000);
         let adaptive = AdaptiveRankSelect::new(bv.clone()).unwrap();
         let reference = RankSelectInterleaved256::new(bv).unwrap();
-        
+
         // Test multiple positions
         for pos in [0, 1000, 5000, 9999] {
             assert_eq!(adaptive.rank1(pos), reference.rank1(pos));
             assert_eq!(adaptive.rank0(pos), reference.rank0(pos));
         }
-        
+
         // Test select operations
         let ones_count = adaptive.count_ones();
         for k in [0, ones_count / 4, ones_count / 2, ones_count - 1] {
@@ -1046,7 +1107,7 @@ mod tests {
             }
         }
     }
-    
+
     #[test]
     fn test_pattern_analysis() {
         // Test run length analysis
@@ -1054,26 +1115,26 @@ mod tests {
         for i in 0..1000 {
             regular_bv.push(i % 8 < 4).unwrap(); // Regular pattern: 4 ones, 4 zeros
         }
-        
+
         let criteria = SelectionCriteria::default();
         let profile = AdaptiveRankSelect::analyze_data(&regular_bv, &criteria);
-        
+
         // Should detect regular pattern with low complexity
         assert!(profile.pattern_complexity < 0.5);
         assert!(profile.run_length_stats.avg_ones_run > 3.0);
         assert!(profile.run_length_stats.avg_zeros_run > 3.0);
         assert_eq!(profile.access_pattern, AccessPattern::Sequential);
-        
+
         // Test with random pattern
         let mut random_bv = BitVector::new();
         for i in 0..1000 {
             random_bv.push((i * 31 + 17) % 3 == 0).unwrap(); // Pseudo-random pattern
         }
-        
+
         let random_profile = AdaptiveRankSelect::analyze_data(&random_bv, &criteria);
         assert!(random_profile.pattern_complexity > profile.pattern_complexity);
     }
-    
+
     #[test]
     fn test_adaptive_thresholds() {
         // Test adaptive threshold tuning
@@ -1082,28 +1143,31 @@ mod tests {
             // Create clustered pattern: groups of 50 ones followed by groups of 50 zeros
             clustered_bv.push((i / 50) % 2 == 0).unwrap();
         }
-        
+
         let criteria = SelectionCriteria {
             enable_adaptive_thresholds: true,
             ..Default::default()
         };
-        
+
         let profile = AdaptiveRankSelect::analyze_data(&clustered_bv, &criteria);
-        let (adaptive_sparse, _adaptive_dense) = AdaptiveRankSelect::tune_thresholds(&profile, &criteria);
-        
+        let (adaptive_sparse, _adaptive_dense) =
+            AdaptiveRankSelect::tune_thresholds(&profile, &criteria);
+
         // Adaptive thresholds should be different from defaults for clustered data
         assert!(profile.clustering_coefficient > 0.5);
-        
+
         // Test hardware-aware threshold adjustment
         if profile.hardware_tier >= 3 {
             // With BMI2, sparse threshold should be higher (can handle denser sparse data)
             assert!(adaptive_sparse >= criteria.sparse_threshold);
         }
-        
-        println!("Clustering: {:.3}, Original sparse: {:.3}, Adaptive sparse: {:.3}", 
-                 profile.clustering_coefficient, criteria.sparse_threshold, adaptive_sparse);
+
+        println!(
+            "Clustering: {:.3}, Original sparse: {:.3}, Adaptive sparse: {:.3}",
+            profile.clustering_coefficient, criteria.sparse_threshold, adaptive_sparse
+        );
     }
-    
+
     #[test]
     fn test_entropy_calculation() {
         // Test entropy calculation
@@ -1111,42 +1175,45 @@ mod tests {
         let criteria = SelectionCriteria::default();
         let profile_ones = AdaptiveRankSelect::analyze_data(&all_ones, &criteria);
         assert_eq!(profile_ones.entropy, 0.0); // No entropy for uniform data
-        
+
         let balanced = create_balanced_bitvector(1000);
         let profile_balanced = AdaptiveRankSelect::analyze_data(&balanced, &criteria);
         assert!(profile_balanced.entropy > 0.9); // High entropy for balanced data
         assert!(profile_balanced.entropy <= 1.0); // Max entropy is 1.0 for binary
     }
-    
+
     #[test]
     fn test_hardware_aware_selection() {
         let bv = create_balanced_bitvector(50000);
-        
+
         // Test with hardware acceleration preference
         let hardware_criteria = SelectionCriteria {
             min_hardware_tier: 3, // Require BMI2
             enable_adaptive_thresholds: true,
             ..Default::default()
         };
-        
+
         let profile = AdaptiveRankSelect::analyze_data(&bv, &hardware_criteria);
-        
+
         // Should detect available hardware
         assert!(profile.hardware_tier <= 4); // Max tier is 4 (BMI2+AVX2)
-        
+
         println!("Detected hardware tier: {}", profile.hardware_tier);
-        
+
         // Hardware-aware adaptive should work
         let adaptive = AdaptiveRankSelect::with_criteria(bv, hardware_criteria);
         if adaptive.is_ok() {
             let adaptive = adaptive.unwrap();
-            println!("Hardware-aware selection: {}", adaptive.implementation_name());
-            
+            println!(
+                "Hardware-aware selection: {}",
+                adaptive.implementation_name()
+            );
+
             // Test basic operations
             assert_eq!(adaptive.rank1(1000), 500); // 50% density
         }
     }
-    
+
     #[test]
     fn test_complex_pattern_detection() {
         // Create a complex alternating pattern
@@ -1161,32 +1228,34 @@ mod tests {
             };
             complex_bv.push(bit).unwrap();
         }
-        
+
         let criteria = SelectionCriteria {
             enable_adaptive_thresholds: true,
             pattern_complexity_weight: 0.5,
             clustering_weight: 0.3,
             ..Default::default()
         };
-        
+
         let profile = AdaptiveRankSelect::analyze_data(&complex_bv, &criteria);
-        
+
         // Should detect moderate complexity
         assert!(profile.pattern_complexity > 0.2);
         assert!(profile.pattern_complexity < 0.8);
-        
+
         // Should have reasonable alternations
         assert!(profile.run_length_stats.alternations > 1000);
-        
-        println!("Complex pattern - Complexity: {:.3}, Alternations: {}, Avg run lengths: {:.1}/{:.1}",
-                 profile.pattern_complexity, 
-                 profile.run_length_stats.alternations,
-                 profile.run_length_stats.avg_ones_run,
-                 profile.run_length_stats.avg_zeros_run);
-        
+
+        println!(
+            "Complex pattern - Complexity: {:.3}, Alternations: {}, Avg run lengths: {:.1}/{:.1}",
+            profile.pattern_complexity,
+            profile.run_length_stats.alternations,
+            profile.run_length_stats.avg_ones_run,
+            profile.run_length_stats.avg_zeros_run
+        );
+
         // Adaptive selection should handle this appropriately
         let adaptive = AdaptiveRankSelect::with_criteria(complex_bv.clone(), criteria).unwrap();
-        
+
         // Test correctness
         let interleaved = RankSelectInterleaved256::new(complex_bv).unwrap();
         for pos in [0, 1000, 5000, 9999] {

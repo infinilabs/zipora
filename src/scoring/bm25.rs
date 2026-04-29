@@ -108,7 +108,13 @@ impl<'a> Bm25BatchScorer<'a> {
 
     /// Scalar batch scoring — baseline implementation.
     #[inline]
-    fn batch_score_scalar(&self, fieldnorm_bytes: &[u8], tfs: &[u16], scores: &mut [f32], n: usize) {
+    fn batch_score_scalar(
+        &self,
+        fieldnorm_bytes: &[u8],
+        tfs: &[u16],
+        scores: &mut [f32],
+        n: usize,
+    ) {
         for i in 0..n {
             let tf_f = tfs[i] as f32;
             let len_norm = self.norm_table[fieldnorm_bytes[i] as usize];
@@ -147,17 +153,12 @@ impl<'a> Bm25BatchScorer<'a> {
             let fn_slice = &fieldnorm_bytes[base..base + 8];
 
             unsafe {
-                // 8 scalar table lookups (1KB table sits in L1 — faster than gather)
-                let norms = _mm256_set_ps(
-                    table[fn_slice[7] as usize],
-                    table[fn_slice[6] as usize],
-                    table[fn_slice[5] as usize],
-                    table[fn_slice[4] as usize],
-                    table[fn_slice[3] as usize],
-                    table[fn_slice[2] as usize],
-                    table[fn_slice[1] as usize],
-                    table[fn_slice[0] as usize],
-                );
+                // Gather 8 norm values from 1KB table via AVX2 gather instruction
+                // Expand 8 u8s to 8 i32s for gather indices
+                let fn_u8 = _mm_loadl_epi64(fn_slice.as_ptr() as *const __m128i);
+                let fn_i32 = _mm256_cvtepu8_epi32(fn_u8);
+                // Gather 8 floats from table using the 8 indices
+                let norms = _mm256_i32gather_ps(table.as_ptr(), fn_i32, 4);
 
                 // Load 8 TFs (u16 → i32 → f32)
                 let tfs_u16 = _mm_loadu_si128(tfs.as_ptr().add(base) as *const __m128i);
@@ -327,7 +328,8 @@ mod tests {
         let scorer = Bm25BatchScorer::new(&norm_table, idf, k1);
 
         let doc_lengths: Vec<u32> = (1..=100).map(|i| i * 10).collect();
-        let fieldnorm_bytes: Vec<u8> = doc_lengths.iter()
+        let fieldnorm_bytes: Vec<u8> = doc_lengths
+            .iter()
             .map(|&l| FieldnormEncoder::encode(l))
             .collect();
         let tfs: Vec<u16> = (1..=100).map(|i| (i % 20 + 1) as u16).collect();
@@ -347,7 +349,8 @@ mod tests {
             assert!(
                 (batch_scores[i] - expected[i]).abs() < 1e-5,
                 "batch[{i}]={} != expected[{i}]={}",
-                batch_scores[i], expected[i]
+                batch_scores[i],
+                expected[i]
             );
         }
     }
@@ -359,7 +362,9 @@ mod tests {
         let scorer = Bm25BatchScorer::new(&norm_table, idf, k1);
 
         for size in 0..8 {
-            let fieldnorm_bytes: Vec<u8> = (0..size).map(|i| FieldnormEncoder::encode(i as u32 * 50 + 50)).collect();
+            let fieldnorm_bytes: Vec<u8> = (0..size)
+                .map(|i| FieldnormEncoder::encode(i as u32 * 50 + 50))
+                .collect();
             let tfs: Vec<u16> = (0..size).map(|i| (i + 1) as u16).collect();
             let mut scores = vec![0.0f32; size];
             scorer.batch_score(&fieldnorm_bytes, &tfs, &mut scores);
@@ -369,7 +374,8 @@ mod tests {
                 assert!(
                     (scores[i] - expected).abs() < 1e-5,
                     "size={size}, scores[{i}]={} != expected={}",
-                    scores[i], expected
+                    scores[i],
+                    expected
                 );
             }
         }
@@ -381,7 +387,9 @@ mod tests {
         let scorer = Bm25BatchScorer::new(&norm_table, idf, k1);
 
         let n = 64; // exact multiple of 8
-        let fieldnorm_bytes: Vec<u8> = (0..n).map(|i| FieldnormEncoder::encode(i as u32 * 10 + 10)).collect();
+        let fieldnorm_bytes: Vec<u8> = (0..n)
+            .map(|i| FieldnormEncoder::encode(i as u32 * 10 + 10))
+            .collect();
         let tfs: Vec<u16> = (0..n).map(|i| (i % 10 + 1) as u16).collect();
         let mut scores = vec![0.0f32; n];
         scorer.batch_score(&fieldnorm_bytes, &tfs, &mut scores);
@@ -434,7 +442,8 @@ mod tests {
             assert!(
                 (scores[i] - expected).abs() < 1e-5,
                 "prefetch_batch[{i}]={} != expected={}",
-                scores[i], expected
+                scores[i],
+                expected
             );
         }
     }
@@ -443,7 +452,7 @@ mod tests {
     fn test_prefetch_fieldnorm_bounds() {
         // Prefetch with out-of-bounds doc_id should not crash (bounds checked)
         let fieldnorm_bytes = vec![0u8; 100];
-        prefetch_fieldnorm(&fieldnorm_bytes, 99);  // in bounds
+        prefetch_fieldnorm(&fieldnorm_bytes, 99); // in bounds
         prefetch_fieldnorm(&fieldnorm_bytes, 100); // out of bounds — no-op
         prefetch_fieldnorm(&fieldnorm_bytes, u32::MAX); // way out of bounds — no-op
     }
@@ -493,7 +502,10 @@ mod tests {
 
         // The scalar path auto-vectorizes well, so explicit SIMD may only match it.
         // We just verify it's not catastrophically slower.
-        assert!(speedup >= 0.5, "batch scoring much slower than scalar: {speedup:.2}x");
+        assert!(
+            speedup >= 0.5,
+            "batch scoring much slower than scalar: {speedup:.2}x"
+        );
 
         // Sanity: scores should be positive
         assert!(scores.iter().all(|&s| s > 0.0));
@@ -526,12 +538,7 @@ mod tests {
         // Benchmark with prefetch
         let start = Instant::now();
         for _ in 0..5 {
-            scorer.batch_score_with_prefetch(
-                &fieldnorm_bytes,
-                &doc_ids_sorted,
-                &tfs,
-                &mut scores,
-            );
+            scorer.batch_score_with_prefetch(&fieldnorm_bytes, &doc_ids_sorted, &tfs, &mut scores);
         }
         let prefetch_time = start.elapsed() / 5;
 

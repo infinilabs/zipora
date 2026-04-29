@@ -223,9 +223,7 @@ impl UintVecMin0 {
 
         // SAFETY: Bounds check above ensures data[byte_idx..byte_idx+8] is valid
         // Unaligned load is safe as values may span cache lines
-        let val = unsafe {
-            std::ptr::read_unaligned(data.as_ptr().add(byte_idx) as *const usize)
-        };
+        let val = unsafe { std::ptr::read_unaligned(data.as_ptr().add(byte_idx) as *const usize) };
         Ok((val >> (bit_idx % 8)) & mask)
     }
 
@@ -237,9 +235,8 @@ impl UintVecMin0 {
 
         // SAFETY: Caller validated idx < size and bits <= 58, resize ensures sufficient data capacity
         // Unaligned load is safe as bit-packed values may span alignment boundaries
-        let val = unsafe {
-            std::ptr::read_unaligned(self.data.as_ptr().add(byte_idx) as *const usize)
-        };
+        let val =
+            unsafe { std::ptr::read_unaligned(self.data.as_ptr().add(byte_idx) as *const usize) };
         (val >> (bit_idx % 8)) & self.mask
     }
 
@@ -305,7 +302,8 @@ impl UintVecMin0 {
             while remaining_bits > 0 {
                 let bits_in_byte = (8 - curr_bit_offset).min(remaining_bits);
                 let byte_mask = ((1u8 << bits_in_byte) - 1) << curr_bit_offset;
-                let byte_val = ((remaining_val & ((1 << bits_in_byte) - 1)) as u8) << curr_bit_offset;
+                let byte_val =
+                    ((remaining_val & ((1 << bits_in_byte) - 1)) as u8) << curr_bit_offset;
 
                 self.data[curr_byte] = (self.data[curr_byte] & !byte_mask) | byte_val;
 
@@ -717,11 +715,11 @@ mod tests {
         assert_eq!(vec.uintbits(), 4);
 
         // Values stored as differences from min
-        assert_eq!(vec.get(0), 0);  // 100 - 100
-        assert_eq!(vec.get(1), 5);  // 105 - 100
-        assert_eq!(vec.get(2), 3);  // 103 - 100
-        assert_eq!(vec.get(3), 8);  // 108 - 100
-        assert_eq!(vec.get(4), 1);  // 101 - 100
+        assert_eq!(vec.get(0), 0); // 100 - 100
+        assert_eq!(vec.get(1), 5); // 105 - 100
+        assert_eq!(vec.get(2), 3); // 103 - 100
+        assert_eq!(vec.get(3), 8); // 108 - 100
+        assert_eq!(vec.get(4), 1); // 101 - 100
     }
 
     #[test]

@@ -78,7 +78,7 @@ impl SimpleDawg {
             next_state: 1,
             num_keys: 0,
         };
-        
+
         // Add root state
         dawg.states.insert(0, false);
         dawg
@@ -95,7 +95,7 @@ impl SimpleDawg {
                 // Create new state and transition
                 let new_state = self.next_state;
                 self.next_state += 1;
-                
+
                 self.states.insert(new_state, false);
                 self.transitions.insert((current_state, symbol), new_state);
                 current_state = new_state;
@@ -132,8 +132,8 @@ impl SimpleDawg {
 
     #[inline]
     pub fn memory_usage(&self) -> usize {
-        self.states.len() * std::mem::size_of::<(u32, bool)>() +
-        self.transitions.len() * std::mem::size_of::<((u32, u8), u32)>()
+        self.states.len() * std::mem::size_of::<(u32, bool)>()
+            + self.transitions.len() * std::mem::size_of::<((u32, u8), u32)>()
     }
 }
 
@@ -166,7 +166,7 @@ impl SimpleGraphWalker {
 
         while let Some(current) = queue.pop_front() {
             let neighbors = visit_fn(current)?;
-            
+
             for neighbor in neighbors {
                 if let std::collections::hash_map::Entry::Vacant(e) = self.visited.entry(neighbor) {
                     e.insert(true);
@@ -223,17 +223,17 @@ impl SimpleFastSearch {
 
     pub fn search_pattern(&self, data: &[u8], pattern: &[u8]) -> Vec<usize> {
         let mut positions = Vec::new();
-        
+
         if pattern.is_empty() || pattern.len() > data.len() {
             return positions;
         }
-        
+
         for i in 0..=(data.len() - pattern.len()) {
             if data[i..i + pattern.len()] == *pattern {
                 positions.push(i);
             }
         }
-        
+
         positions
     }
 }
@@ -245,16 +245,16 @@ mod tests {
     #[test]
     fn test_simple_fsa_cache() {
         let mut cache = SimpleFsaCache::new(3);
-        
+
         cache.insert(1, 10).unwrap();
         cache.insert(2, 20).unwrap();
         cache.insert(3, 30).unwrap();
-        
+
         assert_eq!(cache.len(), 3);
         assert_eq!(cache.get(1), Some(10));
         assert_eq!(cache.get(2), Some(20));
         assert_eq!(cache.get(3), Some(30));
-        
+
         // Test eviction
         cache.insert(4, 40).unwrap();
         assert_eq!(cache.len(), 3);
@@ -263,17 +263,17 @@ mod tests {
     #[test]
     fn test_simple_dawg() {
         let mut dawg = SimpleDawg::new();
-        
+
         dawg.insert(b"cat").unwrap();
         dawg.insert(b"car").unwrap();
         dawg.insert(b"card").unwrap();
-        
+
         assert!(dawg.contains(b"cat"));
         assert!(dawg.contains(b"car"));
         assert!(dawg.contains(b"card"));
         assert!(!dawg.contains(b"dog"));
         assert!(!dawg.contains(b"ca"));
-        
+
         assert_eq!(dawg.num_keys(), 3);
         assert!(dawg.num_states() > 0);
         assert!(dawg.memory_usage() > 0);
@@ -282,7 +282,7 @@ mod tests {
     #[test]
     fn test_simple_graph_walker() {
         let mut walker = SimpleGraphWalker::new();
-        
+
         // Simple graph: 0 -> [1, 2], 1 -> [3], 2 -> [3], 3 -> []
         let graph = |node: u32| -> Result<Vec<u32>> {
             match node {
@@ -293,10 +293,10 @@ mod tests {
                 _ => Ok(vec![]),
             }
         };
-        
+
         walker.walk_bfs(0, graph).unwrap();
         assert_eq!(walker.visited_count(), 4);
-        
+
         walker.reset();
         assert_eq!(walker.visited_count(), 0);
     }
@@ -305,24 +305,24 @@ mod tests {
     fn test_simple_fast_search() {
         let search = SimpleFastSearch::new();
         let data = b"hello world hello";
-        
+
         // Test byte search
         let positions = search.search_byte(data, b'l');
         assert_eq!(positions, vec![2, 3, 9, 14, 15]);
-        
+
         // Test find operations
         assert_eq!(search.find_first(data, b'l'), Some(2));
         assert_eq!(search.find_last(data, b'l'), Some(15));
         assert_eq!(search.find_first(data, b'z'), None);
-        
+
         // Test count
         assert_eq!(search.count(data, b'l'), 5);
         assert_eq!(search.count(data, b'o'), 3);
-        
+
         // Test pattern search
         let positions = search.search_pattern(data, b"hello");
         assert_eq!(positions, vec![0, 12]);
-        
+
         let positions = search.search_pattern(data, b"xyz");
         assert_eq!(positions, Vec::<usize>::new());
     }

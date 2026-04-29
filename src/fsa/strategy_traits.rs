@@ -14,13 +14,13 @@
 //! This enables a single unified implementation to support all use cases that
 //! previously required separate implementations.
 
-use crate::containers::specialized::UintVector;
+use crate::StateId;
 use crate::containers::FastVec;
+use crate::containers::specialized::UintVector;
 use crate::error::{Result, ZiporaError};
-use crate::fsa::traits::{TrieStats, StatisticsProvider};
+use crate::fsa::traits::{StatisticsProvider, TrieStats};
 use crate::memory::cache_layout::{CacheOptimizedAllocator, PrefetchHint};
 use crate::succinct::{BitVector, RankSelectOps};
-use crate::StateId;
 use std::collections::{HashMap, VecDeque};
 
 /// Core trie algorithm strategy
@@ -129,12 +129,7 @@ pub trait CompressionStrategy {
     ) -> Result<Vec<u8>>;
 
     /// Check if compression is beneficial for given data
-    fn should_compress(
-        &self,
-        context: &Self::Context,
-        data: &[u8],
-        config: &Self::Config,
-    ) -> bool;
+    fn should_compress(&self, context: &Self::Context, data: &[u8], config: &Self::Config) -> bool;
 
     /// Get compression ratio achieved
     fn compression_ratio(&self, context: &Self::Context) -> f64;
@@ -327,7 +322,14 @@ impl TrieAlgorithmStrategy for PatriciaAlgorithmStrategy {
                     } else if match_len < path_clone.len() {
                         // Partial path match - need to split
                         return self.split_compressed_path(
-                            context, nodes, current, key, key_pos, &path_clone, match_len, config,
+                            context,
+                            nodes,
+                            current,
+                            key,
+                            key_pos,
+                            &path_clone,
+                            match_len,
+                            config,
                         );
                     }
                 }
@@ -342,7 +344,9 @@ impl TrieAlgorithmStrategy for PatriciaAlgorithmStrategy {
                 // Check if we should compress the remaining path
                 let remaining_key = &key[key_pos + 1..];
                 if remaining_key.len() >= config.compression_threshold {
-                    context.compressed_paths.insert(new_node_id as StateId, remaining_key.to_vec());
+                    context
+                        .compressed_paths
+                        .insert(new_node_id as StateId, remaining_key.to_vec());
                     context.path_stats.paths_compressed += 1;
                     context.path_stats.total_path_length += remaining_key.len();
                     context.path_stats.compressed_path_length += 1; // Compressed to single node
@@ -453,9 +457,13 @@ impl TrieAlgorithmStrategy for PatriciaAlgorithmStrategy {
     }
 
     fn statistics(&self, context: &Self::Context, nodes: &FastVec<Self::Node>) -> AlgorithmStats {
-        let edge_count = nodes.iter().map(|n| n.children.iter().filter(|c| c.is_some()).count()).sum();
+        let edge_count = nodes
+            .iter()
+            .map(|n| n.children.iter().filter(|c| c.is_some()).count())
+            .sum();
         let compression_ratio = if context.path_stats.total_path_length > 0 {
-            context.path_stats.compressed_path_length as f64 / context.path_stats.total_path_length as f64
+            context.path_stats.compressed_path_length as f64
+                / context.path_stats.total_path_length as f64
         } else {
             1.0
         };
@@ -464,7 +472,11 @@ impl TrieAlgorithmStrategy for PatriciaAlgorithmStrategy {
             node_count: nodes.len(),
             edge_count,
             max_depth: 0, // TODO: Calculate max depth
-            avg_branching_factor: if nodes.is_empty() { 0.0 } else { edge_count as f64 / nodes.len() as f64 },
+            avg_branching_factor: if nodes.is_empty() {
+                0.0
+            } else {
+                edge_count as f64 / nodes.len() as f64
+            },
             path_compression_ratio: compression_ratio,
             cache_efficiency: 0.0, // TODO: Calculate cache efficiency
         }
@@ -472,7 +484,10 @@ impl TrieAlgorithmStrategy for PatriciaAlgorithmStrategy {
 
     fn memory_usage(&self, context: &Self::Context, nodes: &FastVec<Self::Node>) -> usize {
         let node_memory = nodes.capacity() * std::mem::size_of::<PatriciaNode>();
-        let path_memory = context.compressed_paths.values().map(|path| path.len())
+        let path_memory = context
+            .compressed_paths
+            .values()
+            .map(|path| path.len())
             .sum::<usize>();
         node_memory + path_memory
     }
@@ -563,7 +578,10 @@ impl CompressionStrategy for PathCompressionStrategy {
         compressed: &Self::CompressedData,
         _config: &Self::Config,
     ) -> Result<Vec<u8>> {
-        context.compressed_paths.get(compressed).cloned()
+        context
+            .compressed_paths
+            .get(compressed)
+            .cloned()
             .ok_or_else(|| ZiporaError::invalid_data("Compressed path not found"))
     }
 
@@ -578,7 +596,8 @@ impl CompressionStrategy for PathCompressionStrategy {
 
     fn compression_ratio(&self, context: &Self::Context) -> f64 {
         if context.compression_stats.original_size > 0 {
-            context.compression_stats.compressed_size as f64 / context.compression_stats.original_size as f64
+            context.compression_stats.compressed_size as f64
+                / context.compression_stats.original_size as f64
         } else {
             1.0
         }

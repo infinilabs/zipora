@@ -30,12 +30,13 @@ fn set_last_error(msg: &str) {
 
             // Also call the error callback if one is set
             if let Ok(callback_guard) = ERROR_CALLBACK.lock()
-                && let Some(callback) = *callback_guard {
-                    // SAFETY: callback function pointer is valid (set via zipora_set_error_callback), called with valid CString pointer
-                    unsafe {
-                        callback(cstring.as_ptr());
-                    }
+                && let Some(callback) = *callback_guard
+            {
+                // SAFETY: callback function pointer is valid (set via zipora_set_error_callback), called with valid CString pointer
+                unsafe {
+                    callback(cstring.as_ptr());
                 }
+            }
         }
     });
 }
@@ -85,7 +86,8 @@ pub unsafe extern "C" fn zipora_version() -> *const c_char {
     static VERSION_CSTRING: OnceLock<CString> = OnceLock::new();
 
     let cstring = VERSION_CSTRING.get_or_init(|| {
-        CString::new(crate::VERSION).unwrap_or_else(|_| CString::new("unknown").expect("static string has no NUL bytes"))
+        CString::new(crate::VERSION)
+            .unwrap_or_else(|_| CString::new("unknown").expect("static string has no NUL bytes"))
     });
 
     cstring.as_ptr()
@@ -346,20 +348,25 @@ pub unsafe extern "C" fn blob_store_get(
 
     match blob_store.get(record_id) {
         Ok(blob_data) => {
-            // Allocate memory for the data that can be properly freed later
             let data_len = blob_data.len();
-            // SAFETY: alignment 1 is always valid, size is non-negative usize
-            let data_ptr = unsafe {
-                std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(data_len, 1))
+            let data_ptr = if data_len == 0 {
+                std::ptr::NonNull::<u8>::dangling().as_ptr()
+            } else {
+                // SAFETY: alignment 1 is always valid, size is non-zero
+                unsafe {
+                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(data_len, 1))
+                }
             };
-            if data_ptr.is_null() {
+
+            if data_len > 0 && data_ptr.is_null() {
                 return CResult::MemoryError;
             }
 
-            // SAFETY: data_ptr is valid (null-checked at line 344), blob_data is valid slice, non-overlapping
-            // Copy the data into the allocated memory
-            unsafe {
-                std::ptr::copy_nonoverlapping(blob_data.as_ptr(), data_ptr, data_len);
+            if data_len > 0 {
+                // SAFETY: data_ptr is valid, blob_data is valid slice, non-overlapping
+                unsafe {
+                    std::ptr::copy_nonoverlapping(blob_data.as_ptr(), data_ptr, data_len);
+                }
             }
 
             // SAFETY: data and size pointers are valid (null-checked at line 329), point to valid output parameters
@@ -594,6 +601,30 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_blob_store_zero_len() {
+        unsafe {
+            let store = blob_store_new();
+            assert!(!store.is_null());
+
+            let test_data: [u8; 0] = [];
+            let mut record_id: u32 = 0;
+
+            let result = blob_store_put(store, test_data.as_ptr(), 0, &mut record_id);
+            assert_eq!(result, CResult::Success);
+
+            let mut out_data: *const u8 = std::ptr::null();
+            let mut out_size: usize = 0;
+
+            let result = blob_store_get(store, record_id, &mut out_data, &mut out_size);
+            assert_eq!(result, CResult::Success);
+            assert_eq!(out_size, 0);
+            assert!(!out_data.is_null()); // Dangling ptr but not null
+
+            zipora_free_blob_data(out_data as *mut u8, out_size);
+            blob_store_free(store);
+        }
+    }
     #[test]
     fn test_blob_store_api() {
         // SAFETY: test calls C API functions with valid parameters, slice created from valid pointer, blob data freed before store

@@ -15,15 +15,15 @@ use crate::zipora_verify;
 
 #[cfg(not(debug_assertions))]
 mod performance_tests;
-use int_vec_simd::{BitOps, SimdOps, PrefetchOps};
+use int_vec_simd::{BitOps, PrefetchOps, SimdOps};
 
 /// Unaligned memory operations for high-performance bulk processing
 mod unaligned_ops {
     use crate::memory::fast_copy;
-    
+
     /// Safe unaligned memory operations using hardware acceleration
     pub struct UnalignedOps;
-    
+
     impl UnalignedOps {
         /// Read u64 from unaligned memory address safely
         #[inline]
@@ -38,9 +38,11 @@ mod unaligned_ops {
         #[allow(dead_code)]
         pub unsafe fn write_u64_unaligned(ptr: *mut u8, value: u64) {
             // SAFETY: caller ensures ptr is valid for 8 bytes (unsafe fn contract)
-            unsafe { std::ptr::write_unaligned(ptr as *mut u64, value); }
+            unsafe {
+                std::ptr::write_unaligned(ptr as *mut u64, value);
+            }
         }
-        
+
         /// Read multiple u64 values in bulk using SIMD-optimized memory operations
         #[inline]
         #[allow(dead_code)]
@@ -81,7 +83,9 @@ mod unaligned_ops {
             // Fallback to unaligned writes for smaller transfers or on error
             for (i, &value) in values.iter().enumerate() {
                 // SAFETY: caller ensures ptr is valid for values.len() u64s, i < values.len()
-                unsafe { std::ptr::write_unaligned((ptr as *mut u64).add(i), value); }
+                unsafe {
+                    std::ptr::write_unaligned((ptr as *mut u64).add(i), value);
+                }
             }
         }
     }
@@ -93,7 +97,7 @@ use unaligned_ops::UnalignedOps;
 mod int_vec_simd {
     /// Bit manipulation operations with hardware acceleration
     pub struct BitOps;
-    
+
     impl BitOps {
         /// Compute required bit width for a value using hardware-accelerated leading zero count
         #[inline]
@@ -104,7 +108,7 @@ mod int_vec_simd {
                 64 - value.leading_zeros() as u8
             }
         }
-        
+
         /// Extract bits using BMI2 BEXTR when available, fallback to shift operations
         #[inline]
         pub fn extract_bits(value: u64, start: u8, count: u8) -> u64 {
@@ -114,15 +118,15 @@ mod int_vec_simd {
             if count >= 64 {
                 return value >> start;
             }
-            
+
             let mask = (1u64 << count) - 1;
             (value >> start) & mask
         }
     }
-    
+
     /// SIMD-accelerated operations for bulk data processing
     pub struct SimdOps;
-    
+
     impl SimdOps {
         /// Hardware-accelerated range analysis using vectorized min/max operations
         #[inline]
@@ -130,18 +134,17 @@ mod int_vec_simd {
             if values.is_empty() {
                 return (0, 0);
             }
-            
+
             let mut min_val = values[0];
             let mut max_val = values[0];
-            
+
             // Process in chunks of 8 for better vectorization
             const SIMD_CHUNK_SIZE: usize = 8;
-            
+
             // Handle aligned chunks for vectorization
-            let (aligned_chunks, remainder) = values.split_at(
-                (values.len() / SIMD_CHUNK_SIZE) * SIMD_CHUNK_SIZE
-            );
-            
+            let (aligned_chunks, remainder) =
+                values.split_at((values.len() / SIMD_CHUNK_SIZE) * SIMD_CHUNK_SIZE);
+
             // Process aligned chunks (compiler can vectorize this loop)
             for chunk in aligned_chunks.chunks_exact(SIMD_CHUNK_SIZE) {
                 for &value in chunk {
@@ -149,16 +152,16 @@ mod int_vec_simd {
                     max_val = max_val.max(value);
                 }
             }
-            
+
             // Handle remainder elements
             for &value in remainder {
                 min_val = min_val.min(value);
                 max_val = max_val.max(value);
             }
-            
+
             (min_val, max_val)
         }
-        
+
         /// Vectorized range analysis with unrolled loops for maximum performance
         #[inline]
         #[allow(dead_code)]
@@ -166,14 +169,14 @@ mod int_vec_simd {
             if values.is_empty() {
                 return (0, 0);
             }
-            
+
             if values.len() == 1 {
                 return (values[0], values[0]);
             }
-            
+
             let mut min_val = values[0];
             let mut max_val = values[0];
-            
+
             // Unroll loops of 4 for better instruction-level parallelism
             let mut i = 1;
             while i + 3 < values.len() {
@@ -181,26 +184,26 @@ mod int_vec_simd {
                 let v1 = values[i + 1];
                 let v2 = values[i + 2];
                 let v3 = values[i + 3];
-                
+
                 // Parallel min/max operations
                 min_val = min_val.min(v0).min(v1).min(v2).min(v3);
                 max_val = max_val.max(v0).max(v1).max(v2).max(v3);
-                
+
                 i += 4;
             }
-            
+
             // Handle remaining elements
             while i < values.len() {
                 min_val = min_val.min(values[i]);
                 max_val = max_val.max(values[i]);
                 i += 1;
             }
-            
+
             (min_val, max_val)
         }
 
         /// 🚀 ADVANCED OPTIMIZED: Ultra-fast range analysis for small datasets
-        /// 
+        ///
         /// Uses hardware-optimized techniques with advanced unaligned load patterns
         /// and minimal overhead processing for datasets ≤10K elements.
         ///
@@ -214,7 +217,7 @@ mod int_vec_simd {
             if values.is_empty() {
                 return (0, 0);
             }
-            
+
             if values.len() == 1 {
                 return (values[0], values[0]);
             }
@@ -223,48 +226,48 @@ mod int_vec_simd {
             if values.len() <= 128 {
                 let mut min_val = values[0];
                 let mut max_val = values[0];
-                
+
                 // Sequential processing with compiler optimizations
                 for &value in &values[1..] {
                     min_val = min_val.min(value);
                     max_val = max_val.max(value);
                 }
-                
+
                 return (min_val, max_val);
             }
-            
+
             // For slightly larger small datasets, use 16-byte aligned processing
             let mut min_val = values[0];
             let mut max_val = values[0];
-            
-            // Process in 16-element chunks for cache efficiency  
+
+            // Process in 16-element chunks for cache efficiency
             const CHUNK_SIZE: usize = 16;
             let chunk_count = values.len() / CHUNK_SIZE;
-            
+
             for chunk_idx in 0..chunk_count {
                 let start = chunk_idx * CHUNK_SIZE;
                 let chunk = &values[start..start + CHUNK_SIZE];
-                
+
                 // Unrolled processing for this chunk
                 for &value in chunk {
                     min_val = min_val.min(value);
                     max_val = max_val.max(value);
                 }
             }
-            
+
             // Handle remaining elements
             for &value in &values[chunk_count * CHUNK_SIZE..] {
                 min_val = min_val.min(value);
                 max_val = max_val.max(value);
             }
-            
+
             (min_val, max_val)
         }
     }
-    
+
     /// Prefetch operations for cache optimization
     pub struct PrefetchOps;
-    
+
     impl PrefetchOps {
         /// Prefetch memory location for reading with cache hints
         ///
@@ -278,7 +281,10 @@ mod int_vec_simd {
             {
                 // SAFETY: prefetch is always safe, addr from valid reference
                 unsafe {
-                    std::arch::x86_64::_mm_prefetch(addr as *const i8, std::arch::x86_64::_MM_HINT_T0);
+                    std::arch::x86_64::_mm_prefetch(
+                        addr as *const i8,
+                        std::arch::x86_64::_MM_HINT_T0,
+                    );
                 }
             }
             #[cfg(not(target_arch = "x86_64"))]
@@ -287,7 +293,7 @@ mod int_vec_simd {
                 let _ = addr;
             }
         }
-        
+
         /// Prefetch memory location for writing
         ///
         /// # Safety
@@ -301,7 +307,10 @@ mod int_vec_simd {
             {
                 // SAFETY: prefetch is always safe, addr from valid reference
                 unsafe {
-                    std::arch::x86_64::_mm_prefetch(addr as *const i8, std::arch::x86_64::_MM_HINT_T0);
+                    std::arch::x86_64::_mm_prefetch(
+                        addr as *const i8,
+                        std::arch::x86_64::_MM_HINT_T0,
+                    );
                 }
             }
             #[cfg(not(target_arch = "x86_64"))]
@@ -314,14 +323,7 @@ mod int_vec_simd {
 }
 
 /// Trait for integer types supported by IntVec
-pub trait PackedInt: 
-    Copy + 
-    Clone + 
-    PartialEq + 
-    PartialOrd + 
-    std::fmt::Debug + 
-    'static 
-{
+pub trait PackedInt: Copy + Clone + PartialEq + PartialOrd + std::fmt::Debug + 'static {
     /// Convert to u64 for internal processing
     fn to_u64(self) -> u64;
     /// Convert from u64 (may truncate)
@@ -342,25 +344,39 @@ macro_rules! impl_packed_int {
     ($t:ty, $bits:expr) => {
         impl PackedInt for $t {
             #[inline]
-            fn to_u64(self) -> u64 { self as u64 }
-            
-            #[inline] 
-            fn from_u64(val: u64) -> Self { val as Self }
-            
+            fn to_u64(self) -> u64 {
+                self as u64
+            }
+
             #[inline]
-            fn max_value() -> Self { <$t>::MAX }
-            
+            fn from_u64(val: u64) -> Self {
+                val as Self
+            }
+
             #[inline]
-            fn min_value() -> Self { <$t>::MIN }
-            
+            fn max_value() -> Self {
+                <$t>::MAX
+            }
+
             #[inline]
-            fn bit_width() -> u8 { $bits }
-            
+            fn min_value() -> Self {
+                <$t>::MIN
+            }
+
             #[inline]
-            fn to_i64(self) -> i64 { self as i64 }
-            
+            fn bit_width() -> u8 {
+                $bits
+            }
+
             #[inline]
-            fn from_i64(val: i64) -> Self { val as Self }
+            fn to_i64(self) -> i64 {
+                self as i64
+            }
+
+            #[inline]
+            fn from_i64(val: i64) -> Self {
+                val as Self
+            }
         }
     };
 }
@@ -388,7 +404,7 @@ impl BlockSize {
     fn units(self) -> usize {
         1 << (self as u8)
     }
-    
+
     #[inline]
     #[allow(dead_code)]
     fn log2(self) -> u8 {
@@ -404,15 +420,15 @@ pub enum CompressionStrategy {
     /// Simple min-max bit packing  
     MinMax { min_val: u64, bit_width: u8 },
     /// Advanced block-based compression
-    BlockBased { 
+    BlockBased {
         block_size: BlockSize,
         offset_width: u8,
         sample_width: u8,
         is_sorted: bool,
     },
     /// Delta compression for sequences
-    Delta { 
-        base_val: u64, 
+    Delta {
+        base_val: u64,
         delta_width: u8,
         is_uniform: bool,
         uniform_delta: Option<u64>,
@@ -443,7 +459,7 @@ pub enum CompressionStrategy {
 /// // Generic over different integer types
 /// let small_values: Vec<u8> = (0..255).collect();
 /// let compressed_u8 = IntVec::<u8>::from_slice(&small_values)?;
-/// 
+///
 /// // Support for signed integers with delta compression
 /// let deltas: Vec<i32> = vec![-10, -5, 0, 5, 10];
 /// let compressed_i32 = IntVec::<i32>::from_slice(&deltas)?;
@@ -517,36 +533,36 @@ impl<T: PackedInt> IntVec<T> {
     }
 
     /// 🚀 Create IntVec from slice with SIMD-optimized bulk construction
-    /// 
+    ///
     /// This method provides significant performance improvements over `from_slice()`:
     /// - Uses SIMD-optimized bulk conversion (3-5x faster)
     /// - Hardware-accelerated memory operations
     /// - Optimized for datasets ≥16 elements
     /// - Maintains identical compression quality
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `values` - Slice of values to compress
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Compressed IntVec with SIMD-optimized construction
-    /// 
+    ///
     /// # Performance
-    /// 
+    ///
     /// - 3-5x faster bulk conversion for large datasets
     /// - 2-3x faster memory operations for ≥64 byte transfers
     /// - Overall 5-10x faster construction targeting 248+ MB/s
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ```rust
     /// use zipora::IntVec;
-    /// 
+    ///
     /// // Large dataset - optimal for SIMD
     /// let large_data: Vec<u32> = (0..100_000).collect();
     /// let compressed = IntVec::from_slice_bulk_simd(&large_data)?;
-    /// 
+    ///
     /// // Identical compression quality as regular method
     /// let regular = IntVec::from_slice(&large_data)?;
     /// assert_eq!(compressed.len(), regular.len());
@@ -588,13 +604,20 @@ impl<T: PackedInt> IntVec<T> {
     /// ```
     pub fn from_slice(values: &[T]) -> Result<Self> {
         // Verify input parameters
-        crate::zipora_verify!(values.len() <= (isize::MAX as usize) / mem::size_of::<T>().max(1),
-            "input slice length {} too large for element size {}", values.len(), mem::size_of::<T>());
-        crate::zipora_verify!(mem::size_of::<T>() >= 1 && mem::size_of::<T>() <= 8,
-            "element size {} must be between 1 and 8 bytes", mem::size_of::<T>());
-        
+        crate::zipora_verify!(
+            values.len() <= (isize::MAX as usize) / mem::size_of::<T>().max(1),
+            "input slice length {} too large for element size {}",
+            values.len(),
+            mem::size_of::<T>()
+        );
+        crate::zipora_verify!(
+            mem::size_of::<T>() >= 1 && mem::size_of::<T>() <= 8,
+            "element size {} must be between 1 and 8 bytes",
+            mem::size_of::<T>()
+        );
+
         let start_time = std::time::Instant::now();
-        
+
         if values.is_empty() {
             return Ok(Self::new());
         }
@@ -604,7 +627,7 @@ impl<T: PackedInt> IntVec<T> {
 
         // Convert to u64 for analysis
         let u64_values: Vec<u64> = values.iter().map(|v| v.to_u64()).collect();
-        
+
         // 🚀 ADVANCED FAST PATH: For small datasets (≤10K elements), use optimized direct compression
         // This eliminates strategy analysis overhead that dominates small dataset performance
         let data_size_kb = std::mem::size_of_val(values) / 1024;
@@ -632,7 +655,7 @@ impl<T: PackedInt> IntVec<T> {
     /// Get value at specified index with hardware-accelerated decompression
     ///
     /// # Arguments
-    /// 
+    ///
     /// * `index` - Zero-based index of element to retrieve
     ///
     /// # Returns
@@ -645,11 +668,17 @@ impl<T: PackedInt> IntVec<T> {
     /// bit manipulation for maximum performance across platforms.
     pub fn get(&self, index: usize) -> Option<T> {
         // Verify data structure invariants
-        crate::zipora_verify!(self.len <= (isize::MAX as usize),
-            "vector length {} exceeds maximum", self.len);
-        crate::zipora_verify!(self.data.len() <= (isize::MAX as usize),
-            "data size {} exceeds maximum", self.data.len());
-        
+        crate::zipora_verify!(
+            self.len <= (isize::MAX as usize),
+            "vector length {} exceeds maximum",
+            self.len
+        );
+        crate::zipora_verify!(
+            self.data.len() <= (isize::MAX as usize),
+            "data size {} exceeds maximum",
+            self.data.len()
+        );
+
         if index >= self.len {
             return None;
         }
@@ -664,14 +693,19 @@ impl<T: PackedInt> IntVec<T> {
             CompressionStrategy::MinMax { min_val, bit_width } => {
                 self.get_min_max(index, min_val, bit_width)
             }
-            CompressionStrategy::BlockBased { 
-                block_size, offset_width, sample_width, is_sorted 
-            } => {
-                self.get_block_based(index, block_size, offset_width, sample_width, is_sorted)
-            }
-            CompressionStrategy::Delta { base_val, delta_width, is_uniform, uniform_delta, .. } => {
-                self.get_delta(index, base_val, delta_width, is_uniform, uniform_delta)
-            }
+            CompressionStrategy::BlockBased {
+                block_size,
+                offset_width,
+                sample_width,
+                is_sorted,
+            } => self.get_block_based(index, block_size, offset_width, sample_width, is_sorted),
+            CompressionStrategy::Delta {
+                base_val,
+                delta_width,
+                is_uniform,
+                uniform_delta,
+                ..
+            } => self.get_delta(index, base_val, delta_width, is_uniform, uniform_delta),
         };
 
         result.map(T::from_u64)
@@ -707,9 +741,7 @@ impl<T: PackedInt> IntVec<T> {
     /// Get total memory usage in bytes
     #[inline]
     pub fn memory_usage(&self) -> usize {
-        mem::size_of::<Self>() + 
-        self.data.len() + 
-        self.index.as_ref().map_or(0, |idx| idx.len())
+        mem::size_of::<Self>() + self.data.len() + self.index.as_ref().map_or(0, |idx| idx.len())
     }
 
     // Private implementation methods
@@ -737,22 +769,22 @@ impl<T: PackedInt> IntVec<T> {
         selector.monitor_performance(
             Operation::Compress,
             start_time.elapsed(),
-            values.len() as u64
+            values.len() as u64,
         );
 
         u64_values
     }
-    
+
     /// 🚀 SIMD-optimized bulk conversion to u64 for maximum performance
-    /// 
+    ///
     /// This method provides significant performance improvements for bulk operations:
     /// - Direct memory operations for compatible types
     /// - Reduced function call overhead
     /// - Cache-friendly processing patterns
     /// - Optimized for compiler vectorization
-    /// 
+    ///
     /// # Performance
-    /// 
+    ///
     /// - 2-3x faster for medium to large datasets
     /// - Minimal overhead for small datasets
     /// - Optimized memory access patterns
@@ -764,20 +796,22 @@ impl<T: PackedInt> IntVec<T> {
 
         // Convert through PackedInt::to_u64 — safe and correct for all T: PackedInt
         result.strategy = CompressionStrategy::Raw;
-        result.data = values.iter().flat_map(|v| v.to_u64().to_le_bytes()).collect();
-        
+        result.data = values
+            .iter()
+            .flat_map(|v| v.to_u64().to_le_bytes())
+            .collect();
+
         // Update statistics
         result.stats.original_size = std::mem::size_of_val(values);
         result.stats.compressed_size = result.data.len();
         result.stats.index_size = 0;
         result.stats.compression_time_ns = start_time.elapsed().as_nanos() as u64;
-        
+
         Ok(result)
     }
-    
 
     /// 🚀 ADVANCED FAST PATH: Optimized strategy analysis for small datasets (≤10K elements)
-    /// 
+    ///
     /// Bypasses expensive strategy comparison and uses direct MinMax compression with
     /// hardware-optimized parameters.
     ///
@@ -792,7 +826,7 @@ impl<T: PackedInt> IntVec<T> {
         }
 
         let len = values.len();
-        
+
         // For very small datasets, use raw storage to avoid overhead
         if len < 4 {
             return CompressionStrategy::Raw;
@@ -800,30 +834,33 @@ impl<T: PackedInt> IntVec<T> {
 
         // 🚀 ADVANCED PRIORITY: Check for sorted sequences first for optimal compression
         let is_sorted = Self::fast_sorted_check(values);
-        
+
         if is_sorted && len >= 4 {
             // 🚀 UNIFORM DELTA DETECTION: Check for identical deltas (like [0,1,2,3,...])
             if let Some(uniform_delta) = Self::detect_uniform_delta(values) {
                 // Perfect compression: 0 bits per element for uniform deltas!
-                return CompressionStrategy::Delta { 
-                    base_val: values[0], 
+                return CompressionStrategy::Delta {
+                    base_val: values[0],
                     delta_width: if uniform_delta == 0 { 1 } else { 0 }, // 0 bits when all deltas identical
                     is_uniform: true,
                     uniform_delta: Some(uniform_delta),
                 };
             }
-            
+
             // Regular delta compression for sorted sequences
             return Self::analyze_delta_bulk(values);
         }
 
         // 🚀 Single SIMD pass for min/max - eliminates multiple data traversals
         let (min_val, max_val) = SimdOps::analyze_range_bulk_optimized(values);
-        
+
         // Direct MinMax strategy selection based on advanced patterns
         if min_val == max_val {
             // All values identical - ultra-efficient representation
-            return CompressionStrategy::MinMax { min_val, bit_width: 1 };
+            return CompressionStrategy::MinMax {
+                min_val,
+                bit_width: 1,
+            };
         }
 
         let range = max_val - min_val;
@@ -837,15 +874,15 @@ impl<T: PackedInt> IntVec<T> {
         // For slightly larger small datasets, use optimized block compression
         // Use 64 blockUnits (not 128) for better small dataset performance
         CompressionStrategy::BlockBased {
-            block_size: BlockSize::Block64,  // 🚀 64 units for small data
-            offset_width: bit_width.min(8),  // Limit offset width for efficiency
-            sample_width: 4,                 // Fixed small sample width
-            is_sorted,                       // Use actual sorted detection
+            block_size: BlockSize::Block64, // 🚀 64 units for small data
+            offset_width: bit_width.min(8), // Limit offset width for efficiency
+            sample_width: 4,                // Fixed small sample width
+            is_sorted,                      // Use actual sorted detection
         }
     }
 
     /// 🚀 ADVANCED: Detect uniform delta pattern for perfect compression
-    /// 
+    ///
     /// For sequences like [0,1,2,3,...,999] where all deltas are 1,
     /// this enables 0 bits per element compression (>98% compression).
     fn detect_uniform_delta(values: &[u64]) -> Option<u64> {
@@ -860,18 +897,18 @@ impl<T: PackedInt> IntVec<T> {
             // Handle underflow - not a uniform ascending sequence
             return None;
         };
-        
+
         // Check if all deltas are identical
         for i in 2..values.len() {
-            if values[i] < values[i-1] {
+            if values[i] < values[i - 1] {
                 // Handle underflow - not a uniform ascending sequence
                 return None;
             }
-            if values[i] - values[i-1] != first_delta {
+            if values[i] - values[i - 1] != first_delta {
                 return None;
             }
         }
-        
+
         Some(first_delta)
     }
 
@@ -887,9 +924,9 @@ impl<T: PackedInt> IntVec<T> {
 
         // Sample every 16th delta for fast analysis
         let sample_step = (values.len() / 16).max(1);
-        
+
         for i in (sample_step..values.len()).step_by(sample_step) {
-            if let Some(delta) = values[i].checked_sub(values[i-sample_step]) {
+            if let Some(delta) = values[i].checked_sub(values[i - sample_step]) {
                 max_delta = max_delta.max(delta);
             } else {
                 valid_delta = false;
@@ -903,8 +940,8 @@ impl<T: PackedInt> IntVec<T> {
 
         let delta_width = BitOps::compute_bit_width(max_delta);
 
-        CompressionStrategy::Delta { 
-            base_val, 
+        CompressionStrategy::Delta {
+            base_val,
             delta_width,
             is_uniform: false,
             uniform_delta: None,
@@ -916,18 +953,18 @@ impl<T: PackedInt> IntVec<T> {
         if values.len() < 2 {
             return true;
         }
-        
+
         // Sample every 16th element for fast sorted detection
         let sample_step = (values.len() / 16).max(1);
         let mut prev = values[0];
-        
+
         for i in (sample_step..values.len()).step_by(sample_step) {
             if values[i] < prev {
                 return false;
             }
             prev = values[i];
         }
-        
+
         true
     }
 
@@ -938,7 +975,7 @@ impl<T: PackedInt> IntVec<T> {
         }
 
         let len = values.len();
-        
+
         // Don't compress very small datasets
         if len < 8 {
             return CompressionStrategy::Raw;
@@ -949,7 +986,7 @@ impl<T: PackedInt> IntVec<T> {
 
         // Check if values are sorted for advanced block compression
         let is_sorted = values.windows(2).all(|w| w[0] <= w[1]);
-        
+
         // Calculate potential compression strategies
         let strategies = [
             Self::analyze_min_max(values, min_val, max_val),
@@ -958,11 +995,14 @@ impl<T: PackedInt> IntVec<T> {
         ];
 
         // Select strategy with best compression ratio
-        strategies.into_iter()
+        strategies
+            .into_iter()
             .min_by(|a, b| {
                 let ratio_a = Self::estimate_compression_ratio(*a, len);
                 let ratio_b = Self::estimate_compression_ratio(*b, len);
-                ratio_a.partial_cmp(&ratio_b).unwrap_or(std::cmp::Ordering::Equal)
+                ratio_a
+                    .partial_cmp(&ratio_b)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             })
             .unwrap_or(CompressionStrategy::Raw)
     }
@@ -970,7 +1010,10 @@ impl<T: PackedInt> IntVec<T> {
     fn analyze_min_max(_values: &[u64], min_val: u64, max_val: u64) -> CompressionStrategy {
         if min_val == max_val {
             // All values are the same
-            return CompressionStrategy::MinMax { min_val, bit_width: 1 };
+            return CompressionStrategy::MinMax {
+                min_val,
+                bit_width: 1,
+            };
         }
 
         let range = max_val - min_val;
@@ -989,7 +1032,7 @@ impl<T: PackedInt> IntVec<T> {
         let mut valid_delta = true;
 
         for i in 1..values.len() {
-            if let Some(delta) = values[i].checked_sub(values[i-1]) {
+            if let Some(delta) = values[i].checked_sub(values[i - 1]) {
                 max_delta = max_delta.max(delta);
             } else {
                 valid_delta = false;
@@ -1003,8 +1046,8 @@ impl<T: PackedInt> IntVec<T> {
 
         let delta_width = BitOps::compute_bit_width(max_delta);
 
-        CompressionStrategy::Delta { 
-            base_val, 
+        CompressionStrategy::Delta {
+            base_val,
             delta_width,
             is_uniform: false,
             uniform_delta: None,
@@ -1013,7 +1056,7 @@ impl<T: PackedInt> IntVec<T> {
 
     fn analyze_block_based(values: &[u64], is_sorted: bool) -> CompressionStrategy {
         let len = values.len();
-        
+
         // Need sufficient data for block-based compression
         if len < 64 {
             return CompressionStrategy::Raw;
@@ -1049,7 +1092,7 @@ impl<T: PackedInt> IntVec<T> {
             let start = block_idx * block_units;
             let end = (start + block_units).min(len);
             let block_min = samples[block_idx];
-            
+
             for &val in &values[start..end] {
                 let offset = val - block_min;
                 max_offset = max_offset.max(offset);
@@ -1068,7 +1111,7 @@ impl<T: PackedInt> IntVec<T> {
 
     fn estimate_compression_ratio(strategy: CompressionStrategy, len: usize) -> f64 {
         let original_size = len * 8; // Assume u64 for estimation
-        
+
         let compressed_size = match strategy {
             CompressionStrategy::Raw => original_size,
             CompressionStrategy::MinMax { bit_width, .. } => {
@@ -1077,8 +1120,11 @@ impl<T: PackedInt> IntVec<T> {
             CompressionStrategy::Delta { delta_width, .. } => {
                 8 + (len * delta_width as usize).div_ceil(8).max(32) // base + deltas
             }
-            CompressionStrategy::BlockBased { 
-                block_size, offset_width, sample_width, .. 
+            CompressionStrategy::BlockBased {
+                block_size,
+                offset_width,
+                sample_width,
+                ..
             } => {
                 let block_units = block_size.units();
                 let num_blocks = len.div_ceil(block_units);
@@ -1091,20 +1137,31 @@ impl<T: PackedInt> IntVec<T> {
         compressed_size as f64 / original_size as f64
     }
 
-    fn compress_with_strategy(&mut self, values: &[u64], strategy: CompressionStrategy) -> Result<()> {
+    fn compress_with_strategy(
+        &mut self,
+        values: &[u64],
+        strategy: CompressionStrategy,
+    ) -> Result<()> {
         match strategy {
             CompressionStrategy::Raw => self.compress_raw(values),
             CompressionStrategy::MinMax { min_val, bit_width } => {
                 self.compress_min_max(values, min_val, bit_width)
             }
-            CompressionStrategy::BlockBased { 
-                block_size, offset_width, sample_width, is_sorted 
+            CompressionStrategy::BlockBased {
+                block_size,
+                offset_width,
+                sample_width,
+                is_sorted,
             } => {
                 self.compress_block_based(values, block_size, offset_width, sample_width, is_sorted)
             }
-            CompressionStrategy::Delta { base_val, delta_width, is_uniform, uniform_delta, .. } => {
-                self.compress_delta(values, base_val, delta_width, is_uniform, uniform_delta)
-            }
+            CompressionStrategy::Delta {
+                base_val,
+                delta_width,
+                is_uniform,
+                uniform_delta,
+                ..
+            } => self.compress_delta(values, base_val, delta_width, is_uniform, uniform_delta),
         }
     }
 
@@ -1133,7 +1190,7 @@ impl<T: PackedInt> IntVec<T> {
             if value < min_val {
                 return Err(ZiporaError::invalid_data("Value below minimum"));
             }
-            
+
             let offset_value = value - min_val;
             self.write_bits(&mut data, offset_value, bit_offset, bit_width)?;
             bit_offset += bit_width as usize;
@@ -1143,7 +1200,14 @@ impl<T: PackedInt> IntVec<T> {
         Ok(())
     }
 
-    fn compress_delta(&mut self, values: &[u64], base_val: u64, delta_width: u8, is_uniform: bool, uniform_delta: Option<u64>) -> Result<()> {
+    fn compress_delta(
+        &mut self,
+        values: &[u64],
+        base_val: u64,
+        delta_width: u8,
+        is_uniform: bool,
+        uniform_delta: Option<u64>,
+    ) -> Result<()> {
         if values.is_empty() {
             return Ok(());
         }
@@ -1154,7 +1218,11 @@ impl<T: PackedInt> IntVec<T> {
             // This achieves >98% compression ratio!
             let mut data = Vec::with_capacity(16); // base_val (8 bytes) + uniform_delta (8 bytes)
             data.extend_from_slice(&base_val.to_le_bytes());
-            data.extend_from_slice(&uniform_delta.expect("uniform_delta set for uniform blocks").to_le_bytes());
+            data.extend_from_slice(
+                &uniform_delta
+                    .expect("uniform_delta set for uniform blocks")
+                    .to_le_bytes(),
+            );
             self.data = data.into_boxed_slice();
             return Ok(());
         }
@@ -1166,12 +1234,12 @@ impl<T: PackedInt> IntVec<T> {
         let total_bits = (values.len() - 1) * delta_width as usize;
         let delta_bytes = total_bits.div_ceil(8);
         let aligned_size = (delta_bytes + 15) & !15;
-        
+
         data.resize(8 + aligned_size, 0);
-        
+
         let mut bit_offset = 0;
         for i in 1..values.len() {
-            let delta = values[i] - values[i-1];
+            let delta = values[i] - values[i - 1];
             self.write_bits(&mut data[8..], delta, bit_offset, delta_width)?;
             bit_offset += delta_width as usize;
         }
@@ -1181,12 +1249,12 @@ impl<T: PackedInt> IntVec<T> {
     }
 
     fn compress_block_based(
-        &mut self, 
-        values: &[u64], 
+        &mut self,
+        values: &[u64],
         block_size: BlockSize,
         offset_width: u8,
         sample_width: u8,
-        _is_sorted: bool
+        _is_sorted: bool,
     ) -> Result<()> {
         let block_units = block_size.units();
         let num_blocks = values.len().div_ceil(block_units);
@@ -1207,10 +1275,10 @@ impl<T: PackedInt> IntVec<T> {
         let index_bits = num_blocks * sample_width as usize;
         let index_bytes = index_bits.div_ceil(8);
         let index_aligned = (index_bytes + 15) & !15;
-        
+
         let mut index_data = vec![0u8; index_aligned];
         let mut bit_offset = 0;
-        
+
         for &sample in &samples {
             let offset_sample = sample - sample_min;
             self.write_bits(&mut index_data, offset_sample, bit_offset, sample_width)?;
@@ -1221,7 +1289,7 @@ impl<T: PackedInt> IntVec<T> {
         let data_bits = values.len() * offset_width as usize;
         let data_bytes = data_bits.div_ceil(8);
         let data_aligned = (data_bytes + 15) & !15;
-        
+
         let mut data = vec![0u8; data_aligned];
         bit_offset = 0;
 
@@ -1275,8 +1343,7 @@ impl<T: PackedInt> IntVec<T> {
 
             let result_bytes = result.to_le_bytes();
             let copy_len = (data.len() - byte_offset).min(8);
-            data[byte_offset..byte_offset + copy_len]
-                .copy_from_slice(&result_bytes[..copy_len]);
+            data[byte_offset..byte_offset + copy_len].copy_from_slice(&result_bytes[..copy_len]);
         } else {
             // Fallback bit-by-bit writing
             for i in 0..bits {
@@ -1312,7 +1379,7 @@ impl<T: PackedInt> IntVec<T> {
         buffer[..available].copy_from_slice(&data[byte_offset..byte_offset + available]);
 
         let value = u64::from_le_bytes(buffer);
-        
+
         // Use BMI2 BEXTR for optimal bit extraction when available
         Ok(BitOps::extract_bits(value, bit_in_byte as u8, bits))
     }
@@ -1343,18 +1410,24 @@ impl<T: PackedInt> IntVec<T> {
         }
     }
 
-    fn get_delta(&self, index: usize, base_val: u64, delta_width: u8, is_uniform: bool, uniform_delta: Option<u64>) -> Option<u64> {
+    fn get_delta(
+        &self,
+        index: usize,
+        base_val: u64,
+        delta_width: u8,
+        is_uniform: bool,
+        uniform_delta: Option<u64>,
+    ) -> Option<u64> {
         if index == 0 {
             return Some(base_val);
         }
 
         // 🚀 ADVANCED UNIFORM DELTA: Perfect compression (0 bits per element)
-        if is_uniform
-            && let Some(delta) = uniform_delta {
-                // For uniform delta sequences like [0,1,2,3,...], calculate directly
-                // No need to read compressed data - perfect compression!
-                return Some(base_val + (index as u64) * delta);
-            }
+        if is_uniform && let Some(delta) = uniform_delta {
+            // For uniform delta sequences like [0,1,2,3,...], calculate directly
+            // No need to read compressed data - perfect compression!
+            return Some(base_val + (index as u64) * delta);
+        }
 
         let bit_offset = (index - 1) * delta_width as usize;
         match self.read_bits(&self.data[8..], bit_offset, delta_width) {
@@ -1376,23 +1449,27 @@ impl<T: PackedInt> IntVec<T> {
     }
 
     fn get_block_based(
-        &self, 
-        index: usize, 
+        &self,
+        index: usize,
         block_size: BlockSize,
         offset_width: u8,
         sample_width: u8,
-        _is_sorted: bool
+        _is_sorted: bool,
     ) -> Option<u64> {
         let block_units = block_size.units();
         let block_idx = index / block_units;
         // Get sample (block base value)
         let index_data = self.index.as_ref()?;
         let sample_bit_offset = block_idx * sample_width as usize;
-        let sample_offset = self.read_bits(index_data, sample_bit_offset, sample_width).ok()?;
+        let sample_offset = self
+            .read_bits(index_data, sample_bit_offset, sample_width)
+            .ok()?;
 
-        // Get offset within block  
+        // Get offset within block
         let data_bit_offset = index * offset_width as usize;
-        let block_offset = self.read_bits(&self.data, data_bit_offset, offset_width).ok()?;
+        let block_offset = self
+            .read_bits(&self.data, data_bit_offset, offset_width)
+            .ok()?;
 
         Some(sample_offset + block_offset)
     }
@@ -1428,7 +1505,7 @@ mod tests {
 
         assert_eq!(vec.len(), 5);
         assert!(!vec.is_empty());
-        
+
         for (i, &expected) in values.iter().enumerate() {
             assert_eq!(vec.get(i), Some(expected));
         }
@@ -1489,7 +1566,10 @@ mod tests {
         assert_eq!(compressed.get(999), Some(999));
 
         let ratio = compressed.compression_ratio();
-        assert!(ratio < 0.5, "Should achieve good compression for sorted data");
+        assert!(
+            ratio < 0.5,
+            "Should achieve good compression for sorted data"
+        );
     }
 
     #[test]
@@ -1497,7 +1577,7 @@ mod tests {
         // Create sequence with small deltas
         let mut values = vec![1000u32];
         for i in 1..100 {
-            values.push(values[i-1] + (i as u32 % 10) + 1);
+            values.push(values[i - 1] + (i as u32 % 10) + 1);
         }
 
         let compressed = IntVec::from_slice(&values).unwrap();
@@ -1525,7 +1605,10 @@ mod tests {
         let memory_usage = compressed.memory_usage();
         let original_size = values.len() * 4;
 
-        println!("Memory usage: {} bytes vs {} bytes original", memory_usage, original_size);
+        println!(
+            "Memory usage: {} bytes vs {} bytes original",
+            memory_usage, original_size
+        );
         println!("Compression ratio: {:.3}", compressed.compression_ratio());
 
         // Should use significantly less memory
@@ -1545,64 +1628,75 @@ mod tests {
 
     // test_bulk_constructor_performance removed: from_slice_bulk delegates
     // directly to from_slice — comparing them measures noise, not performance.
-    
+
     // test_bulk_constructor_different_patterns removed: from_slice_bulk is
     // an alias for from_slice — pattern tests already covered by from_slice tests.
-    
+
     // test_simd_bulk_constructor removed: adaptive selection often picks the
     // same algorithm for both paths, making speedup comparisons measure noise.
-    
+
     #[test]
     fn test_simd_memory_operations() {
         println!("=== SIMD Memory Operations Tests ===");
-        
+
         // Test large dataset that should trigger SIMD optimizations
         let large_size = 10_000;
         let large_data: Vec<u64> = (0..large_size).map(|i| i as u64 * 17).collect();
-        
+
         let simd_vec = IntVec::from_slice_bulk_simd(&large_data).unwrap();
-        
+
         // Verify all values are correctly stored and retrieved
         for (i, &expected) in large_data.iter().enumerate() {
-            assert_eq!(simd_vec.get(i), Some(expected as u64), "SIMD mismatch at index {}", i);
+            assert_eq!(
+                simd_vec.get(i),
+                Some(expected as u64),
+                "SIMD mismatch at index {}",
+                i
+            );
         }
-        
+
         println!("SIMD memory operations: {} elements verified", large_size);
         println!("Compression ratio: {:.3}", simd_vec.compression_ratio());
     }
-    
+
     // test_simd_performance_targets removed: printed results without asserting
     // failures — correctness already covered by test_simd_edge_cases.
-    
+
     #[test]
     fn test_simd_edge_cases() {
         println!("=== SIMD Edge Cases Tests ===");
-        
+
         // Test edge cases that should still work correctly
-        
+
         // Empty dataset
         let empty: Vec<u32> = vec![];
         let empty_result = IntVec::from_slice_bulk_simd(&empty).unwrap();
         assert_eq!(empty_result.len(), 0);
         assert!(empty_result.is_empty());
-        
+
         // Single element
         let single = vec![42u32];
         let single_result = IntVec::from_slice_bulk_simd(&single).unwrap();
         assert_eq!(single_result.len(), 1);
         assert_eq!(single_result.get(0), Some(42));
-        
+
         // Small datasets (below SIMD threshold)
         for size in 1..20 {
             let small_data: Vec<u32> = (0..size).map(|i| i as u32).collect();
             let result = IntVec::from_slice_bulk_simd(&small_data).unwrap();
-            
+
             assert_eq!(result.len(), size);
             for (i, &expected) in small_data.iter().enumerate() {
-                assert_eq!(result.get(i), Some(expected), "Small dataset mismatch at index {} (size {})", i, size);
+                assert_eq!(
+                    result.get(i),
+                    Some(expected),
+                    "Small dataset mismatch at index {} (size {})",
+                    i,
+                    size
+                );
             }
         }
-        
+
         // Identical values (should compress well)
         let identical = vec![1337u32; 1000];
         let identical_result = IntVec::from_slice_bulk_simd(&identical).unwrap();
@@ -1610,8 +1704,11 @@ mod tests {
         for i in 0..1000 {
             assert_eq!(identical_result.get(i), Some(1337));
         }
-        assert!(identical_result.compression_ratio() < 0.1, "Identical values should compress very well");
-        
+        assert!(
+            identical_result.compression_ratio() < 0.1,
+            "Identical values should compress very well"
+        );
+
         println!("Edge cases tested successfully");
     }
 }

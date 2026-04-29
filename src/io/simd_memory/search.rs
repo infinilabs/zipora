@@ -325,7 +325,10 @@ unsafe fn sse42_strchr_impl(haystack: &[u8], ch: u8) -> Option<usize> {
     }
 
     // Handle remaining bytes with scalar
-    haystack[offset..].iter().position(|&b| b == ch).map(|i| offset + i)
+    haystack[offset..]
+        .iter()
+        .position(|&b| b == ch)
+        .map(|i| offset + i)
 }
 
 /// Find pattern using SSE4.2 PCMPESTRI with hybrid strategy
@@ -750,10 +753,7 @@ mod tests {
 
         // Short patterns (≤16 bytes) - single PCMPESTRI
         assert_eq!(searcher.find_pattern(b"abcdefgh", b"cde"), Some(2));
-        assert_eq!(
-            searcher.find_pattern(b"0123456789abcdef", b"789a"),
-            Some(7)
-        );
+        assert_eq!(searcher.find_pattern(b"0123456789abcdef", b"789a"), Some(7));
 
         // Exact 16-byte pattern
         let haystack = b"prefix_0123456789abcdef_suffix";
@@ -838,17 +838,11 @@ mod tests {
         assert_eq!(searcher.compare_strings(b"abc", b"abd"), Ordering::Less);
 
         // Greater than
-        assert_eq!(
-            searcher.compare_strings(b"xyz", b"abc"),
-            Ordering::Greater
-        );
+        assert_eq!(searcher.compare_strings(b"xyz", b"abc"), Ordering::Greater);
 
         // Different lengths
         assert_eq!(searcher.compare_strings(b"abc", b"abcd"), Ordering::Less);
-        assert_eq!(
-            searcher.compare_strings(b"abcd", b"abc"),
-            Ordering::Greater
-        );
+        assert_eq!(searcher.compare_strings(b"abcd", b"abc"), Ordering::Greater);
     }
 
     #[test]

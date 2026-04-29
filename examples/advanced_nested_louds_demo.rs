@@ -4,9 +4,12 @@
 //! with advanced configuration strategies.
 
 use zipora::{
-    fsa::{ZiporaTrie, ZiporaTrieConfig, TrieStrategy, CompressionStrategy, StorageStrategy, RankSelectType},
-    succinct::RankSelectInterleaved256,
     Result,
+    fsa::{
+        CompressionStrategy, RankSelectType, StorageStrategy, TrieStrategy, ZiporaTrie,
+        ZiporaTrieConfig,
+    },
+    succinct::RankSelectInterleaved256,
 };
 
 fn main() -> Result<()> {
@@ -73,7 +76,11 @@ fn main() -> Result<()> {
     println!("   - Bits per key: {:.2}", stats.bits_per_key);
 
     println!("\n🔍 Prefix Search:");
-    let prefixes = ["https://www.example.com", "https://api.github.com", "ftp://"];
+    let prefixes = [
+        "https://www.example.com",
+        "https://api.github.com",
+        "ftp://",
+    ];
 
     for prefix in &prefixes {
         let matches: Vec<_> = trie.iter_prefix(prefix.as_bytes()).collect();

@@ -29,7 +29,7 @@ pub struct LineProcessorConfig {
 impl Default for LineProcessorConfig {
     fn default() -> Self {
         Self {
-            buffer_size: 64 * 1024,        // 64KB
+            buffer_size: 64 * 1024,            // 64KB
             max_line_length: 10 * 1024 * 1024, // 10MB
             preserve_line_endings: false,
             skip_empty_lines: false,
@@ -43,7 +43,7 @@ impl LineProcessorConfig {
     /// Create a configuration optimized for performance
     pub fn performance_optimized() -> Self {
         Self {
-            buffer_size: 256 * 1024,       // 256KB for better I/O performance
+            buffer_size: 256 * 1024,            // 256KB for better I/O performance
             max_line_length: 100 * 1024 * 1024, // 100MB
             preserve_line_endings: false,
             skip_empty_lines: false,
@@ -55,11 +55,11 @@ impl LineProcessorConfig {
     /// Create a configuration optimized for memory usage
     pub fn memory_optimized() -> Self {
         Self {
-            buffer_size: 16 * 1024,        // 16KB
-            max_line_length: 1024 * 1024,  // 1MB
+            buffer_size: 16 * 1024,       // 16KB
+            max_line_length: 1024 * 1024, // 1MB
             preserve_line_endings: false,
-            skip_empty_lines: true,         // Skip empty to save memory
-            trim_whitespace: true,          // Trim to save memory
+            skip_empty_lines: true, // Skip empty to save memory
+            trim_whitespace: true,  // Trim to save memory
             use_secure_memory: false,
         }
     }
@@ -67,7 +67,7 @@ impl LineProcessorConfig {
     /// Create a configuration for secure processing
     pub fn secure() -> Self {
         Self {
-            buffer_size: 32 * 1024,        // 32KB
+            buffer_size: 32 * 1024,            // 32KB
             max_line_length: 10 * 1024 * 1024, // 10MB
             preserve_line_endings: false,
             skip_empty_lines: false,
@@ -201,10 +201,9 @@ impl<R: Read> LineProcessor<R> {
         }
 
         // Process remaining lines in the last partial batch
-        if !batch.is_empty()
-            && handler(&batch)? {
-                total_processed += batch.len();
-            }
+        if !batch.is_empty() && handler(&batch)? {
+            total_processed += batch.len();
+        }
 
         Ok(total_processed)
     }
@@ -265,13 +264,12 @@ impl<R: Read> LineProcessor<R> {
                 }
 
                 // Remove line endings if not preserving them
-                if !self.config.preserve_line_endings
-                    && self.line_buffer.ends_with('\n') {
+                if !self.config.preserve_line_endings && self.line_buffer.ends_with('\n') {
+                    self.line_buffer.pop();
+                    if self.line_buffer.ends_with('\r') {
                         self.line_buffer.pop();
-                        if self.line_buffer.ends_with('\r') {
-                            self.line_buffer.pop();
-                        }
                     }
+                }
 
                 self.line_count += 1;
                 self.byte_count += bytes_read;
@@ -326,9 +324,9 @@ pub struct LineSplitter {
 
 #[derive(Debug, Clone)]
 enum SplitStrategy {
-    Simple,      // Standard split()
-    Optimized,   // SIMD-optimized for common delimiters
-    Custom,      // Custom delimiter
+    Simple,    // Standard split()
+    Optimized, // SIMD-optimized for common delimiters
+    Custom,    // Custom delimiter
 }
 
 impl LineSplitter {
@@ -358,14 +356,16 @@ impl LineSplitter {
 
         match &self.strategy {
             SplitStrategy::Simple | SplitStrategy::Custom => {
-                self.buffer.extend(line.split(delimiter).map(|s| s.to_string()));
+                self.buffer
+                    .extend(line.split(delimiter).map(|s| s.to_string()));
             }
             SplitStrategy::Optimized => {
                 // Use optimized splitting for common delimiters
                 if delimiter == "," || delimiter == "\t" || delimiter == " " {
                     self.split_optimized(line, delimiter);
                 } else {
-                    self.buffer.extend(line.split(delimiter).map(|s| s.to_string()));
+                    self.buffer
+                        .extend(line.split(delimiter).map(|s| s.to_string()));
                 }
             }
         }
@@ -377,7 +377,8 @@ impl LineSplitter {
     fn split_optimized(&mut self, line: &str, delimiter: &str) {
         if delimiter.len() != 1 {
             // Fall back to standard split for multi-character delimiters
-            self.buffer.extend(line.split(delimiter).map(|s| s.to_string()));
+            self.buffer
+                .extend(line.split(delimiter).map(|s| s.to_string()));
             return;
         }
 
@@ -398,9 +399,10 @@ impl LineSplitter {
 
         // Add the last field
         if start < line.len()
-            && let Ok(field) = std::str::from_utf8(&line.as_bytes()[start..]) {
-                self.buffer.push(field.to_string());
-            }
+            && let Ok(field) = std::str::from_utf8(&line.as_bytes()[start..])
+        {
+            self.buffer.push(field.to_string());
+        }
     }
 }
 
@@ -432,9 +434,7 @@ pub mod utils {
     }
 
     /// Extract all unique lines from input
-    pub fn extract_unique_lines<R: Read>(
-        mut processor: LineProcessor<R>,
-    ) -> Result<Vec<String>> {
+    pub fn extract_unique_lines<R: Read>(mut processor: LineProcessor<R>) -> Result<Vec<String>> {
         let mut unique_lines = std::collections::HashSet::new();
 
         processor.process_lines(|line| {
@@ -551,10 +551,12 @@ mod tests {
         let mut processor = LineProcessor::new(input);
 
         let mut lines = Vec::new();
-        let count = processor.process_lines(|line| {
-            lines.push(line.to_string());
-            Ok(true)
-        }).unwrap();
+        let count = processor
+            .process_lines(|line| {
+                lines.push(line.to_string());
+                Ok(true)
+            })
+            .unwrap();
 
         assert_eq!(count, 5);
         assert_eq!(lines[0], "line1");
@@ -574,10 +576,12 @@ mod tests {
         let mut processor = LineProcessor::with_config(input, config);
 
         let mut lines = Vec::new();
-        let count = processor.process_lines(|line| {
-            lines.push(line.to_string());
-            Ok(true)
-        }).unwrap();
+        let count = processor
+            .process_lines(|line| {
+                lines.push(line.to_string());
+                Ok(true)
+            })
+            .unwrap();
 
         assert_eq!(count, 4); // Empty line skipped
         assert_eq!(lines.len(), 4);
@@ -593,10 +597,12 @@ mod tests {
         let mut processor = LineProcessor::with_config(input, config);
 
         let mut lines = Vec::new();
-        processor.process_lines(|line| {
-            lines.push(line.to_string());
-            Ok(true)
-        }).unwrap();
+        processor
+            .process_lines(|line| {
+                lines.push(line.to_string());
+                Ok(true)
+            })
+            .unwrap();
 
         assert_eq!(lines[0], "line1");
         assert_eq!(lines[1], "line2");
@@ -608,10 +614,12 @@ mod tests {
         let mut processor = LineProcessor::new(input);
 
         let mut fields = Vec::new();
-        let count = processor.split_lines_by(",", |field, _line_num, _field_num| {
-            fields.push(field.to_string());
-            Ok(true)
-        }).unwrap();
+        let count = processor
+            .split_lines_by(",", |field, _line_num, _field_num| {
+                fields.push(field.to_string());
+                Ok(true)
+            })
+            .unwrap();
 
         // Only the last line has commas, so we should get 3 fields from it
         // plus single fields from other lines
@@ -627,10 +635,12 @@ mod tests {
         let mut processor = LineProcessor::new(input);
 
         let mut batches = Vec::new();
-        let total = processor.process_batches(2, |batch| {
-            batches.push(batch.to_vec());
-            Ok(true)
-        }).unwrap();
+        let total = processor
+            .process_batches(2, |batch| {
+                batches.push(batch.to_vec());
+                Ok(true)
+            })
+            .unwrap();
 
         assert!(total >= 5);
         assert!(!batches.is_empty());

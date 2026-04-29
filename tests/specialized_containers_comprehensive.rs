@@ -928,7 +928,6 @@ pub mod phase3_tests {
 
     /// Comprehensive tests for hash-based containers  
     pub mod hash_container_tests {
-        
 
         #[test]
         fn test_gold_hash_idx_basic() {

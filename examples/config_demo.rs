@@ -2,11 +2,13 @@
 //!
 //! This example shows how to use the unified configuration APIs in Zipora 2.0.
 
-use zipora::fsa::{ZiporaTrieConfig, TrieStrategy, StorageStrategy, CompressionStrategy, RankSelectType};
-use zipora::hash_map::{ZiporaHashMapConfig, HashStrategy, OptimizationStrategy};
-use zipora::hash_map::StorageStrategy as HashStorageStrategy;
-use zipora::memory::{MemoryConfig, PoolConfig};
 use zipora::Result;
+use zipora::fsa::{
+    CompressionStrategy, RankSelectType, StorageStrategy, TrieStrategy, ZiporaTrieConfig,
+};
+use zipora::hash_map::StorageStrategy as HashStorageStrategy;
+use zipora::hash_map::{HashStrategy, OptimizationStrategy, ZiporaHashMapConfig};
+use zipora::memory::{MemoryConfig, PoolConfig};
 
 fn main() -> Result<()> {
     println!("Zipora 2.0 Unified Configuration API Demo");
@@ -17,8 +19,10 @@ fn main() -> Result<()> {
 
     // Default configuration
     let default_trie_config = ZiporaTrieConfig::default();
-    println!("   Default trie config: SIMD={}, concurrency={}",
-             default_trie_config.enable_simd, default_trie_config.enable_concurrency);
+    println!(
+        "   Default trie config: SIMD={}, concurrency={}",
+        default_trie_config.enable_simd, default_trie_config.enable_concurrency
+    );
 
     // Performance-optimized configuration
     let perf_trie_config = ZiporaTrieConfig {
@@ -69,7 +73,10 @@ fn main() -> Result<()> {
 
     // Default hash map configuration
     let default_map_config = ZiporaHashMapConfig::default();
-    println!("   Default map config: load_factor={:.2}", default_map_config.load_factor);
+    println!(
+        "   Default map config: load_factor={:.2}",
+        default_map_config.load_factor
+    );
 
     // High-performance configuration
     let perf_map_config = ZiporaHashMapConfig {
@@ -99,20 +106,24 @@ fn main() -> Result<()> {
     let memory_config = MemoryConfig {
         use_pools: true,
         use_hugepages: false,
-        pool_chunk_size: 64 * 1024, // 64KB
+        pool_chunk_size: 64 * 1024,         // 64KB
         max_pool_memory: 128 * 1024 * 1024, // 128MB
     };
-    println!("   Memory config: pools={}, hugepages={}",
-             memory_config.use_pools, memory_config.use_hugepages);
+    println!(
+        "   Memory config: pools={}, hugepages={}",
+        memory_config.use_pools, memory_config.use_hugepages
+    );
 
     let pool_config = PoolConfig {
         chunk_size: 1024 * 1024, // 1MB
-        max_chunks: 128, // 128MB total
+        max_chunks: 128,         // 128MB total
         alignment: 64,
     };
-    println!("   Pool config: chunk_size={}MB, max_chunks={}",
-             pool_config.chunk_size / (1024 * 1024),
-             pool_config.max_chunks);
+    println!(
+        "   Pool config: chunk_size={}MB, max_chunks={}",
+        pool_config.chunk_size / (1024 * 1024),
+        pool_config.max_chunks
+    );
 
     // 4. Configuration Pattern Examples
     println!("\n4. Configuration Patterns");

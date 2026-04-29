@@ -6,8 +6,8 @@
 pub mod bump;
 pub mod cache;
 pub mod cache_layout;
-pub mod fixed_capacity_pool;
 pub mod five_level_pool;
+pub mod fixed_capacity_pool;
 pub mod hugepage;
 pub mod lockfree_pool;
 pub mod mmap;
@@ -27,36 +27,35 @@ pub use cache::{
     set_current_numa_node,
 };
 pub use cache_layout::{
-    CacheOptimizedAllocator, CacheLayoutConfig, CacheHierarchy, AccessPattern, PrefetchHint,
-    HotColdSeparator, CacheLayoutStats, HotColdStats, align_to_cache_line, detect_cache_hierarchy,
-};
-pub use fixed_capacity_pool::{
-    FixedCapacityMemoryPool, FixedCapacityPoolConfig, FixedCapacityPoolStats, FixedCapacityAllocation,
+    AccessPattern, CacheHierarchy, CacheLayoutConfig, CacheLayoutStats, CacheOptimizedAllocator,
+    HotColdSeparator, HotColdStats, PrefetchHint, align_to_cache_line, detect_cache_hierarchy,
 };
 pub use five_level_pool::{
     AdaptiveFiveLevelPool, ConcurrencyLevel, FiveLevelPoolConfig, FiveLevelPoolHandle,
-    FixedCapacityPool, LockFreePool, MutexBasedPool, NoLockingPool, ThreadLocalPool, 
-    MemOffset, PoolStats,
+    FixedCapacityPool, LockFreePool, MemOffset, MutexBasedPool, NoLockingPool, PoolStats,
+    ThreadLocalPool,
+};
+pub use fixed_capacity_pool::{
+    FixedCapacityAllocation, FixedCapacityMemoryPool, FixedCapacityPoolConfig,
+    FixedCapacityPoolStats,
 };
 pub use lockfree_pool::{
-    LockFreeMemoryPool, LockFreePoolConfig, LockFreePoolStats, LockFreeAllocation, BackoffStrategy,
+    BackoffStrategy, LockFreeAllocation, LockFreeMemoryPool, LockFreePoolConfig, LockFreePoolStats,
 };
 pub use mmap::{MemoryMappedAllocator, MmapAllocation};
 pub use mmap_vec::{MmapVec, MmapVecConfig, MmapVecIter, MmapVecStats};
 pub use pool::{MemoryPool, PoolConfig, PooledBuffer, PooledVec};
-pub use prefetch::{
-    PrefetchStrategy, PrefetchConfig, PrefetchLocality, PrefetchMetrics,
-};
+pub use prefetch::{PrefetchConfig, PrefetchLocality, PrefetchMetrics, PrefetchStrategy};
 pub use secure_pool::{
     SecureMemoryPool, SecurePoolConfig, SecurePoolStats, SecurePooledPtr, get_global_pool_for_size,
     get_global_secure_pool_stats, size_to_class,
 };
 pub use simd_ops::{
-    SimdMemOps, SimdTier, fast_copy, fast_compare, fast_find_byte, fast_fill,
-    fast_copy_cache_optimized, fast_compare_cache_optimized, fast_prefetch, fast_prefetch_range,
+    SimdMemOps, SimdTier, fast_compare, fast_compare_cache_optimized, fast_copy,
+    fast_copy_cache_optimized, fast_fill, fast_find_byte, fast_prefetch, fast_prefetch_range,
 };
 pub use threadlocal_pool::{
-    ThreadLocalMemoryPool, ThreadLocalPoolConfig, ThreadLocalPoolStats, ThreadLocalAllocation,
+    ThreadLocalAllocation, ThreadLocalMemoryPool, ThreadLocalPoolConfig, ThreadLocalPoolStats,
 };
 pub use tiered::{
     TieredAllocation, TieredConfig, TieredMemoryAllocator, get_tiered_stats, tiered_allocate,

@@ -196,12 +196,13 @@ impl Drop for BumpAllocator {
     fn drop(&mut self) {
         // Safety check: Only deallocate if we have a valid buffer
         if self.capacity > 0
-            && let Ok(layout) = Layout::from_size_align(self.capacity, 8) {
-                // SAFETY: buffer was allocated with this exact layout in new()
-                unsafe {
-                    dealloc(self.buffer.as_ptr(), layout);
-                }
+            && let Ok(layout) = Layout::from_size_align(self.capacity, 8)
+        {
+            // SAFETY: buffer was allocated with this exact layout in new()
+            unsafe {
+                dealloc(self.buffer.as_ptr(), layout);
             }
+        }
     }
 }
 
@@ -262,7 +263,9 @@ impl Drop for BumpArena {
         unsafe {
             self.allocator.reset();
         }
-        self.allocator.current.store(self.initial_offset, Ordering::Relaxed);
+        self.allocator
+            .current
+            .store(self.initial_offset, Ordering::Relaxed);
     }
 }
 
@@ -302,7 +305,9 @@ impl<'a> BumpScope<'a> {
 impl<'a> Drop for BumpScope<'a> {
     fn drop(&mut self) {
         // Reset to initial position
-        self.allocator.current.store(self.initial_offset, Ordering::Relaxed);
+        self.allocator
+            .current
+            .store(self.initial_offset, Ordering::Relaxed);
 
         // Reset allocated bytes counter to what it was when scope was created
         self.allocator

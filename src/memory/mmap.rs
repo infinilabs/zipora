@@ -86,18 +86,19 @@ impl MemoryMappedAllocator {
         // Try to get from cache first
         if let Ok(mut cache) = self.region_cache.try_lock()
             && let Some(regions) = cache.get_mut(&actual_size)
-                && let Some(ptr) = regions.pop() {
-                    self.cache_hits.fetch_add(1, Ordering::Relaxed);
-                    self.total_allocated
-                        .fetch_add(size as u64, Ordering::Relaxed);
+            && let Some(ptr) = regions.pop()
+        {
+            self.cache_hits.fetch_add(1, Ordering::Relaxed);
+            self.total_allocated
+                .fetch_add(size as u64, Ordering::Relaxed);
 
-                    // SAFETY: cached ptr was obtained from successful mmap, guaranteed non-null
-                    return Ok(MmapAllocation {
-                        ptr: unsafe { NonNull::new_unchecked(ptr) },
-                        size,
-                        actual_size,
-                    });
-                }
+            // SAFETY: cached ptr was obtained from successful mmap, guaranteed non-null
+            return Ok(MmapAllocation {
+                ptr: unsafe { NonNull::new_unchecked(ptr) },
+                size,
+                actual_size,
+            });
+        }
 
         // Cache miss, allocate new region
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
@@ -274,7 +275,7 @@ impl MmapAllocation {
     pub fn as_ptr<T>(&self) -> *mut T {
         self.ptr.as_ptr() as *mut T
     }
-    
+
     /// Get mutable pointer to the allocation as a raw byte pointer
     pub fn as_mut_ptr(&mut self) -> *mut u8 {
         self.ptr.as_ptr()

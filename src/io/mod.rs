@@ -6,22 +6,22 @@
 pub mod data_input;
 pub mod data_output;
 pub mod mmap;
-pub mod var_int;
-pub mod stream_buffer;
 pub mod range_stream;
+pub mod stream_buffer;
+pub mod var_int;
 pub mod zero_copy;
 
 // New advanced serialization features
+pub mod complex_types;
 pub mod endian;
 pub mod smart_ptr;
-pub mod complex_types;
-pub mod versioning;
 pub mod var_int_variants;
+pub mod versioning;
 
 // SIMD-accelerated operations
-pub mod simd_validation;
-pub mod simd_memory;
 pub mod simd_encoding;
+pub mod simd_memory;
+pub mod simd_validation;
 
 // Re-export core types
 pub use data_input::{DataInput, ReaderDataInput, SliceDataInput};
@@ -29,16 +29,28 @@ pub use data_output::{DataOutput, FileDataOutput, VecDataOutput, WriterDataOutpu
 pub use var_int::{SignedVarInt, VarInt};
 
 // Re-export new advanced serialization features
-pub use endian::{Endianness, EndianConvert, EndianIO, EndianConfig};
-pub use smart_ptr::{SmartPtrSerialize, SerializableType, SerializationContext, DeserializationContext, SmartPtrConfig, SmartPtrSerializer};
-pub use complex_types::{ComplexSerialize, ComplexTypeConfig, ComplexTypeSerializer, NestedSerialize};
-pub use versioning::{Version, VersionProxy, VersionManager, VersionedSerialize, MigrationRegistry, VersionConfig, VersionedSerializer};
-pub use var_int_variants::{VarIntStrategy, VarIntEncoder, choose_optimal_strategy, choose_optimal_strategy_signed};
+pub use complex_types::{
+    ComplexSerialize, ComplexTypeConfig, ComplexTypeSerializer, NestedSerialize,
+};
+pub use endian::{EndianConfig, EndianConvert, EndianIO, Endianness};
+pub use smart_ptr::{
+    DeserializationContext, SerializableType, SerializationContext, SmartPtrConfig,
+    SmartPtrSerialize, SmartPtrSerializer,
+};
+pub use var_int_variants::{
+    VarIntEncoder, VarIntStrategy, choose_optimal_strategy, choose_optimal_strategy_signed,
+};
+pub use versioning::{
+    MigrationRegistry, Version, VersionConfig, VersionManager, VersionProxy, VersionedSerialize,
+    VersionedSerializer,
+};
 
 // Re-export new I/O & Serialization features
+pub use range_stream::{MultiRangeReader, RangeReader, RangeWriter};
 pub use stream_buffer::{StreamBufferConfig, StreamBufferedReader, StreamBufferedWriter};
-pub use range_stream::{RangeReader, RangeWriter, MultiRangeReader};
-pub use zero_copy::{ZeroCopyRead, ZeroCopyWrite, ZeroCopyBuffer, ZeroCopyReader, ZeroCopyWriter, VectoredIO};
+pub use zero_copy::{
+    VectoredIO, ZeroCopyBuffer, ZeroCopyRead, ZeroCopyReader, ZeroCopyWrite, ZeroCopyWriter,
+};
 
 #[cfg(feature = "mmap")]
 pub use data_input::MmapDataInput;
