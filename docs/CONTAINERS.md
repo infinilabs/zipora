@@ -211,7 +211,7 @@ println!("Shard distribution: {:?}", shard_sizes);
 ## Unified Tries
 
 ```rust
-use zipora::fsa::{ZiporaTrie, ZiporaTrieConfig, Trie, TrieStrategy, CompressionStrategy};
+use zipora::fsa::{ZiporaTrie, ZiporaTrieConfig, Trie, TrieStrategy, TrieCompressionStrategy};
 use zipora::memory::{SecureMemoryPool, SecurePoolConfig};
 
 // Default Patricia trie behavior

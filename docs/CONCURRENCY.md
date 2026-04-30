@@ -87,11 +87,11 @@ Zipora includes advanced token and version sequence management for safe concurre
 ### Usage Examples
 
 ```rust
-use zipora::fsa::{ZiporaTrie, ZiporaTrieConfig, CompressedSparseTrie, ConcurrencyLevel};
+use zipora::fsa::{ZiporaTrie, ZiporaTrieConfig, ConcurrencyLevel};
 
 // All trie variants use ZiporaTrie with strategy-based config.
-// CompressedSparseTrie is a compatibility wrapper for concurrent access patterns.
-let trie = CompressedSparseTrie::new(ConcurrencyLevel::OneWriteMultiRead).unwrap();
+// ZiporaTrie is a compatibility wrapper for concurrent access patterns.
+let trie = ZiporaTrie::new(ConcurrencyLevel::OneWriteMultiRead).unwrap();
 
 // Or use ZiporaTrie directly with sparse_optimized config:
 let mut trie = ZiporaTrie::with_config(ZiporaTrieConfig::sparse_optimized());

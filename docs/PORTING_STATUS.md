@@ -117,7 +117,7 @@ let any_connection = multi_rs.union_dimensions(&[0, 1])?;
 **Key Changes**:
 - ✅ **ZiporaHashMap**: Single unified hash map replacing 6+ separate implementations (GoldHashMap, StringOptimizedHashMap, SmallHashMap, GoldenRatioHashMap, AdvancedHashMap, CacheOptimizedHashMap)
 - ✅ **ZiporaTrie**: Single unified trie with strategy-based config (Patricia, CritBit, DoubleArray, Louds, CompressedSparse). Legacy type names are thin compatibility wrappers.
-- ✅ **Strategy-Based Configuration**: HashStrategy, StorageStrategy, OptimizationStrategy for hash maps; TrieStrategy, CompressionStrategy for tries
+- ✅ **Strategy-Based Configuration**: HashStrategy, HashStorageStrategy / TrieStorageStrategy, OptimizationStrategy for hash maps; TrieStrategy, TrieCompressionStrategy / Entropy Compression for tries
 - ✅ **Module Export Cleanup**: Clean module structure with legacy code removal
 - ✅ **API Compatibility**: Backward-compatible APIs with `ZiporaHashMap::new()` and `ZiporaTrie::new()` maintaining same interface
 
@@ -1485,7 +1485,7 @@ Successfully implemented comprehensive FSA & Trie ecosystem with cutting-edge op
 |-----------|-------------|-------------------|--------------|-------------|------------------|
 | **Double Array Trie** | Research-inspired | `DoubleArrayTrie` | **100%** | **O(1) XOR transitions, ~20 ns/lookup** | **8-byte state, binary key support** |
 | **Compressed Sparse Trie** | `cspptrie.cpp` | `CsppTrie` + `ConcurrentCsppTrie` | **100%** | **6.9M insert/sec, 8.0M lookup/sec, 10.7 B/key** | **Multi-writer/multi-reader, EBR, thread-local alloc** |
-| **Nested LOUDS Trie** | Research-inspired | `NestedLoudsTrie` | **100%** | **50-70% memory reduction** | **Configurable 1-8 levels with sophisticated nesting strategies** |
+| **Nested LOUDS Trie** | Research-inspired | `ZiporaTrie` with `TrieStrategy::NestedLouds` | **100%** | **50-70% memory reduction** | **Configurable 1-8 levels with sophisticated nesting strategies** |
 | **Token-based Safety** | N/A | `ReaderToken/WriterToken` | **100%** | **Lock-free CAS operations** | **Type-safe thread access** |
 | **Fragment Compression** | Research-based | 7 compression modes | **100%** | **5-30% overhead** | **Adaptive backend selection** |
 | **Multi-level Concurrency** | N/A | `ConcurrencyLevel` enum | **100%** | **NoWrite to MultiWrite** | **Advanced synchronization** |
@@ -2860,7 +2860,7 @@ This completes **ZipOffsetBlobStore implementation** with full functionality for
 - **🚀 FixedLenStrVec Optimization**: 59.6% memory reduction with arena-based storage and bit-packed indices (Aug 2025)
 - **🆕 Rank/Select Excellence**: **3.3 billion operations/second** - World-class performance exceeding C++ baselines
 - **🔥 Advanced Features**: Fragment compression (5-30% overhead), hierarchical caching (O(1) rank), BMI2 acceleration (5-10x select speedup)
-- **🚀 FSA & Trie Ecosystem**: **3 revolutionary trie variants** - DoubleArrayTrie (O(1) access), CompressedSparseTrie (90% faster sparse), NestedLoudsTrie (50-70% memory reduction)
+- **🚀 FSA & Trie Ecosystem**: **3 revolutionary trie variants** - Unified ZiporaTrie architecture with specialized strategies (DoubleArray, CompressedSparse, NestedLouds)
 - **🔥 Advanced Concurrency**: **5 concurrency levels** with token-based thread safety and lock-free optimizations
 - **🚀 Advanced Memory Pools**: **4 revolutionary pool variants** - LockFreeMemoryPool (CAS allocation), ThreadLocalMemoryPool (zero contention), FixedCapacityMemoryPool (real-time), MmapVec (persistent)
 - **🔥 Complete Memory Ecosystem**: **Lock-free, thread-local, fixed-capacity, persistent** - covering all specialized allocation patterns
