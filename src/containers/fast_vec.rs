@@ -1097,6 +1097,107 @@ impl<T> DerefMut for FastVec<T> {
     }
 }
 
+impl<T> From<Vec<T>> for FastVec<T> {
+    fn from(v: Vec<T>) -> Self {
+        let mut fv = Self::with_capacity(v.len()).expect("FastVec allocation failed");
+        for item in v {
+            fv.push(item).expect("FastVec push failed");
+        }
+        fv
+    }
+}
+
+impl<T> FromIterator<T> for FastVec<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let iter = iter.into_iter();
+        let (lower, _) = iter.size_hint();
+        let mut fv = Self::with_capacity(lower).expect("FastVec allocation failed");
+        for item in iter {
+            fv.push(item).expect("FastVec push failed");
+        }
+        fv
+    }
+}
+
+impl<T> Extend<T> for FastVec<T> {
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        let iter = iter.into_iter();
+        let (lower, _) = iter.size_hint();
+        if lower > 0 {
+            let _ = self.reserve(lower);
+        }
+        for item in iter {
+            let _ = self.push(item);
+        }
+    }
+}
+
+impl<T> IntoIterator for FastVec<T> {
+    type Item = T;
+    type IntoIter = FastVecIntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let len = self.len;
+        let cap = self.cap;
+        let ptr = self.ptr;
+        std::mem::forget(self);
+        FastVecIntoIter {
+            ptr,
+            cap,
+            len,
+            index: 0,
+        }
+    }
+}
+
+/// Iterator over the elements of a FastVec
+pub struct FastVecIntoIter<T> {
+    ptr: Option<NonNull<T>>,
+    cap: usize,
+    len: usize,
+    index: usize,
+}
+
+impl<T> Iterator for FastVecIntoIter<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index < self.len {
+            let ptr = self.ptr.expect("valid ptr for non-empty iter");
+            let item = unsafe { ptr::read(ptr.as_ptr().add(self.index)) };
+            self.index += 1;
+            Some(item)
+        } else {
+            None
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.len - self.index;
+        (remaining, Some(remaining))
+    }
+}
+
+impl<T> Drop for FastVecIntoIter<T> {
+    fn drop(&mut self) {
+        if let Some(ptr) = self.ptr {
+            // Drop remaining elements
+            for i in self.index..self.len {
+                unsafe {
+                    ptr::drop_in_place(ptr.as_ptr().add(i));
+                }
+            }
+            // Deallocate memory
+            if self.cap > 0 {
+                let layout = Layout::array::<T>(self.cap).unwrap();
+                unsafe {
+                    alloc::dealloc(ptr.as_ptr() as *mut u8, layout);
+                }
+            }
+        }
+    }
+}
+
 impl<T> Index<usize> for FastVec<T> {
     type Output = T;
 

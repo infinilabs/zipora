@@ -4,9 +4,9 @@
 
 use zipora::Result;
 use zipora::fsa::{
-    CompressionStrategy, RankSelectType, StorageStrategy, TrieStrategy, ZiporaTrieConfig,
+    TrieCompressionStrategy, RankSelectType, TrieStorageStrategy, TrieStrategy, ZiporaTrieConfig,
 };
-use zipora::hash_map::StorageStrategy as HashStorageStrategy;
+use zipora::hash_map::HashStorageStrategy as HashStorageStrategy;
 use zipora::hash_map::{HashStrategy, OptimizationStrategy, ZiporaHashMapConfig};
 use zipora::memory::{MemoryConfig, PoolConfig};
 
@@ -32,12 +32,12 @@ fn main() -> Result<()> {
             free_list_management: true,
             auto_shrink: false,
         },
-        storage_strategy: StorageStrategy::CacheOptimized {
+        storage_strategy: TrieStorageStrategy::CacheOptimized {
             cache_line_size: 64,
             numa_aware: true,
             prefetch_enabled: true,
         },
-        compression_strategy: CompressionStrategy::None,
+        compression_strategy: TrieCompressionStrategy::None,
         rank_select_type: RankSelectType::Interleaved256,
         enable_simd: true,
         enable_concurrency: true,
@@ -52,11 +52,11 @@ fn main() -> Result<()> {
             compression_level: 6,
             adaptive_sparse: true,
         },
-        storage_strategy: StorageStrategy::Standard {
+        storage_strategy: TrieStorageStrategy::Standard {
             initial_capacity: 64,
             growth_factor: 1.2,
         },
-        compression_strategy: CompressionStrategy::PathCompression {
+        compression_strategy: TrieCompressionStrategy::PathCompression {
             min_path_length: 2,
             max_path_length: 64,
             adaptive_threshold: true,
@@ -137,11 +137,11 @@ fn main() -> Result<()> {
             compression_threshold: 4,
             adaptive_compression: true,
         },
-        storage_strategy: StorageStrategy::Standard {
+        storage_strategy: TrieStorageStrategy::Standard {
             initial_capacity: 256,
             growth_factor: 1.5,
         },
-        compression_strategy: CompressionStrategy::FragmentCompression {
+        compression_strategy: TrieCompressionStrategy::FragmentCompression {
             fragment_size: 8,
             frequency_threshold: 0.3,
             dictionary_size: 256,

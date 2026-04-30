@@ -1559,7 +1559,7 @@ impl<'a, T: Copy> CsppTrieIterator<'a, T> {
                 if view.is_final() {
                     return true;
                 }
-                top = self.stack.pop().unwrap();
+                top = self.stack.pop().expect("stack empty");
             }
 
             if top.child_idx < view.n_children() {
@@ -1640,7 +1640,7 @@ impl<'a, T: Copy> CsppTrieIterator<'a, T> {
     }
 
     pub fn value(&self) -> T {
-        let top = self.stack.last().unwrap();
+        let top = self.stack.last().expect("stack empty");
         let view = self.trie.node_view(top.state);
         self.trie.get_value(view.valpos())
     }

@@ -9,8 +9,8 @@
 //!
 //! ZiporaTrie achieves high performance through configurable strategies:
 //! - **TrieStrategy**: Optimized algorithms (Patricia, CritBit, DoubleArray, LOUDS, CompressedSparse)
-//! - **StorageStrategy**: Memory layout optimization and succinct data structures
-//! - **CompressionStrategy**: Advanced compression techniques (path, fragment, hierarchical)
+//! - **TrieStorageStrategy**: Memory layout optimization and succinct data structures
+//! - **TrieCompressionStrategy**: Advanced compression techniques (path, fragment, hierarchical)
 //! - **RankSelectStrategy**: High-performance rank/select backend selection
 //!
 //! # Hardware Acceleration Features
@@ -95,7 +95,7 @@ pub enum TrieStrategy {
 /// Storage strategy for memory layout and data structures
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum StorageStrategy {
+pub enum TrieStorageStrategy {
     /// Standard vector-based storage
     Standard {
         initial_capacity: usize,
@@ -122,8 +122,8 @@ pub enum StorageStrategy {
     },
     /// Hybrid storage combining multiple strategies
     Hybrid {
-        primary: Box<StorageStrategy>,
-        secondary: Box<StorageStrategy>,
+        primary: Box<TrieStorageStrategy>,
+        secondary: Box<TrieStorageStrategy>,
         switch_threshold: usize,
     },
 }
@@ -131,7 +131,7 @@ pub enum StorageStrategy {
 /// Compression strategy for space optimization
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum CompressionStrategy {
+pub enum TrieCompressionStrategy {
     /// No compression - full node storage
     None,
     /// Path compression for single-child chains
@@ -154,7 +154,7 @@ pub enum CompressionStrategy {
     },
     /// Adaptive compression choosing best strategy
     Adaptive {
-        strategies: Vec<CompressionStrategy>,
+        strategies: Vec<TrieCompressionStrategy>,
         decision_threshold: usize,
     },
 }
@@ -196,8 +196,8 @@ pub enum BitVectorType {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ZiporaTrieConfig {
     pub trie_strategy: TrieStrategy,
-    pub storage_strategy: StorageStrategy,
-    pub compression_strategy: CompressionStrategy,
+    pub storage_strategy: TrieStorageStrategy,
+    pub compression_strategy: TrieCompressionStrategy,
     pub rank_select_type: RankSelectType,
     pub enable_simd: bool,
     pub enable_concurrency: bool,
@@ -213,11 +213,11 @@ impl Default for ZiporaTrieConfig {
                 free_list_management: false,
                 auto_shrink: false,
             },
-            storage_strategy: StorageStrategy::Standard {
+            storage_strategy: TrieStorageStrategy::Standard {
                 initial_capacity: 64,
                 growth_factor: 2.0,
             },
-            compression_strategy: CompressionStrategy::None,
+            compression_strategy: TrieCompressionStrategy::None,
             rank_select_type: RankSelectType::Adaptive,
             enable_simd: true,
             enable_concurrency: false,
@@ -247,12 +247,12 @@ impl ZiporaTrieConfig {
                 free_list_management: false,
                 auto_shrink: false,
             },
-            storage_strategy: StorageStrategy::CacheOptimized {
+            storage_strategy: TrieStorageStrategy::CacheOptimized {
                 cache_line_size: 64,
                 numa_aware: true,
                 prefetch_enabled: true,
             },
-            compression_strategy: CompressionStrategy::None,
+            compression_strategy: TrieCompressionStrategy::None,
             rank_select_type: RankSelectType::MixedIL256,
             enable_simd: true,
             enable_concurrency: false,
@@ -269,12 +269,12 @@ impl ZiporaTrieConfig {
                 adaptive_backends: true,
                 cache_aligned: false,
             },
-            storage_strategy: StorageStrategy::Succinct {
+            storage_strategy: TrieStorageStrategy::Succinct {
                 bit_vector_type: BitVectorType::Compressed,
                 rank_select_type: RankSelectType::MixedXLBitPacked,
                 interleaved_layout: true,
             },
-            compression_strategy: CompressionStrategy::Hierarchical {
+            compression_strategy: TrieCompressionStrategy::Hierarchical {
                 levels: 3,
                 compression_ratio: 0.7,
                 adaptive_levels: true,
@@ -295,12 +295,12 @@ impl ZiporaTrieConfig {
                 free_list_management: true,
                 auto_shrink: false,
             },
-            storage_strategy: StorageStrategy::PoolAllocated {
+            storage_strategy: TrieStorageStrategy::PoolAllocated {
                 pool,
                 size_class: 1024,
                 chunk_size: 4096,
             },
-            compression_strategy: CompressionStrategy::None,
+            compression_strategy: TrieCompressionStrategy::None,
             rank_select_type: RankSelectType::Adaptive,
             enable_simd: true,
             enable_concurrency: true,
@@ -316,12 +316,12 @@ impl ZiporaTrieConfig {
                 compression_level: 6,
                 adaptive_sparse: true,
             },
-            storage_strategy: StorageStrategy::Succinct {
+            storage_strategy: TrieStorageStrategy::Succinct {
                 bit_vector_type: BitVectorType::Compressed,
                 rank_select_type: RankSelectType::Simple,
                 interleaved_layout: false,
             },
-            compression_strategy: CompressionStrategy::FragmentCompression {
+            compression_strategy: TrieCompressionStrategy::FragmentCompression {
                 fragment_size: 8,
                 frequency_threshold: 0.1,
                 dictionary_size: 4096,
@@ -341,12 +341,12 @@ impl ZiporaTrieConfig {
                 optimize_for_strings: true,
                 bit_level_optimization: true,
             },
-            storage_strategy: StorageStrategy::CacheOptimized {
+            storage_strategy: TrieStorageStrategy::CacheOptimized {
                 cache_line_size: 64,
                 numa_aware: false,
                 prefetch_enabled: true,
             },
-            compression_strategy: CompressionStrategy::PathCompression {
+            compression_strategy: TrieCompressionStrategy::PathCompression {
                 min_path_length: 1,
                 max_path_length: 64,
                 adaptive_threshold: true,

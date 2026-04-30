@@ -5,7 +5,7 @@
 
 use zipora::Result;
 use zipora::fsa::{
-    CompressionStrategy, RankSelectType, StorageStrategy, Trie, TrieStrategy, ZiporaTrie,
+    TrieCompressionStrategy, RankSelectType, TrieStorageStrategy, TrieStrategy, ZiporaTrie,
     ZiporaTrieConfig,
 };
 use zipora::succinct::RankSelectInterleaved256;
@@ -70,11 +70,11 @@ fn main() -> Result<()> {
             compression_threshold: 4,
             adaptive_compression: true,
         },
-        storage_strategy: StorageStrategy::Standard {
+        storage_strategy: TrieStorageStrategy::Standard {
             initial_capacity: 256,
             growth_factor: 1.5,
         },
-        compression_strategy: CompressionStrategy::None,
+        compression_strategy: TrieCompressionStrategy::None,
         rank_select_type: RankSelectType::Interleaved256,
         enable_simd: true,
         enable_concurrency: false,

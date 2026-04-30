@@ -4,7 +4,7 @@
 //! preserve the public API for downstream compatibility. None of these types
 //! are used by the core library; they exist only as exported API surface.
 //!
-//! For actual profiling/timing, use `dev_infrastructure::debug` (ScopedTimer,
+//! For actual profiling/timing, use `dev_infrastructure::debug` (StatsScopedTimer,
 //! HighPrecisionTimer, BenchmarkSuite).
 
 use crate::error::ZiporaError;
@@ -44,9 +44,9 @@ impl TrieStat {
 /// Composite statistics
 #[derive(Debug)]
 pub struct TrieStatistics {
-    pub memory: MemoryStats,
-    pub performance: PerformanceStats,
-    pub compression: CompressionStats,
+    pub memory: StatsMemoryStats,
+    pub performance: StatsPerformanceStats,
+    pub compression: StatsCompressionStats,
     pub distribution: DistributionStats,
     pub errors: ErrorStats,
     pub timing: TimingStats,
@@ -61,9 +61,9 @@ impl Default for TrieStatistics {
 impl TrieStatistics {
     pub fn new() -> Self {
         Self {
-            memory: MemoryStats::new(),
-            performance: PerformanceStats::new(),
-            compression: CompressionStats::new(),
+            memory: StatsMemoryStats::new(),
+            performance: StatsPerformanceStats::new(),
+            compression: StatsCompressionStats::new(),
             distribution: DistributionStats::new(),
             errors: ErrorStats::new(),
             timing: TimingStats::new(),
@@ -93,11 +93,11 @@ pub enum ErrorType {
 }
 
 // ============================================================================
-// MemoryStats
+// StatsMemoryStats
 // ============================================================================
 
 #[derive(Debug)]
-pub struct MemoryStats {
+pub struct StatsMemoryStats {
     pub total_allocated: AtomicUsize,
     pub nodes_memory: AtomicUsize,
     pub cache_memory: AtomicUsize,
@@ -107,13 +107,13 @@ pub struct MemoryStats {
     pub deallocation_count: AtomicU64,
 }
 
-impl Default for MemoryStats {
+impl Default for StatsMemoryStats {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl MemoryStats {
+impl StatsMemoryStats {
     pub fn new() -> Self {
         Self {
             total_allocated: AtomicUsize::new(0),
@@ -133,7 +133,7 @@ impl MemoryStats {
         self.deallocation_count.fetch_add(1, Ordering::Relaxed);
         self.total_allocated.fetch_sub(size, Ordering::Relaxed);
     }
-    pub fn merge(&mut self, _other: &MemoryStats) {}
+    pub fn merge(&mut self, _other: &StatsMemoryStats) {}
     pub fn reset(&mut self) {}
     pub fn report(&self) -> String {
         String::new()
@@ -141,11 +141,11 @@ impl MemoryStats {
 }
 
 // ============================================================================
-// PerformanceStats
+// StatsPerformanceStats
 // ============================================================================
 
 #[derive(Debug)]
-pub struct PerformanceStats {
+pub struct StatsPerformanceStats {
     pub insert_count: AtomicU64,
     pub lookup_count: AtomicU64,
     pub delete_count: AtomicU64,
@@ -156,13 +156,13 @@ pub struct PerformanceStats {
     pub average_operation_time_ns: AtomicU64,
 }
 
-impl Default for PerformanceStats {
+impl Default for StatsPerformanceStats {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl PerformanceStats {
+impl StatsPerformanceStats {
     pub fn new() -> Self {
         Self {
             insert_count: AtomicU64::new(0),
@@ -184,7 +184,7 @@ impl PerformanceStats {
     pub fn record_delete(&self) {
         self.delete_count.fetch_add(1, Ordering::Relaxed);
     }
-    pub fn merge(&mut self, _other: &PerformanceStats) {}
+    pub fn merge(&mut self, _other: &StatsPerformanceStats) {}
     pub fn reset(&mut self) {}
     pub fn report(&self) -> String {
         String::new()
@@ -192,29 +192,29 @@ impl PerformanceStats {
 }
 
 // ============================================================================
-// CompressionStats, DistributionStats, ErrorStats, TimingStats
+// StatsCompressionStats, DistributionStats, ErrorStats, TimingStats
 // ============================================================================
 
 #[derive(Debug)]
-pub struct CompressionStats {
+pub struct StatsCompressionStats {
     pub original_size: AtomicUsize,
     pub compressed_size: AtomicUsize,
 }
 
-impl Default for CompressionStats {
+impl Default for StatsCompressionStats {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl CompressionStats {
+impl StatsCompressionStats {
     pub fn new() -> Self {
         Self {
             original_size: AtomicUsize::new(0),
             compressed_size: AtomicUsize::new(0),
         }
     }
-    pub fn merge(&mut self, _other: &CompressionStats) {}
+    pub fn merge(&mut self, _other: &StatsCompressionStats) {}
     pub fn reset(&mut self) {}
     pub fn report(&self) -> String {
         String::new()
@@ -366,16 +366,16 @@ pub struct Profiling;
 pub type QTime = Instant;
 pub type QDuration = Duration;
 
-pub struct PerfTimer {
+pub struct StatsPerfTimer {
     start: Instant,
 }
-impl Default for PerfTimer {
+impl Default for StatsPerfTimer {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl PerfTimer {
+impl StatsPerfTimer {
     pub fn new() -> Self {
         Self {
             start: Instant::now(),
@@ -399,8 +399,8 @@ impl TimerCollection {
     }
 }
 
-pub struct ScopedTimer;
-impl ScopedTimer {
+pub struct StatsScopedTimer;
+impl StatsScopedTimer {
     pub fn new(_name: &str) -> Self {
         Self
     }
@@ -576,7 +576,7 @@ pub struct ProfiledOperation;
 
 static GLOBAL_PROFILER: std::sync::OnceLock<Profiler> = std::sync::OnceLock::new();
 
-pub fn global_profiler() -> &'static Profiler {
+pub fn stats_global_profiler() -> &'static Profiler {
     GLOBAL_PROFILER.get_or_init(Profiler::default)
 }
 

@@ -1,5 +1,5 @@
 use zipora::fsa::{
-    CompressionStrategy, FiniteStateAutomaton, RankSelectType, StorageStrategy, Trie, TrieStrategy,
+    TrieCompressionStrategy, FiniteStateAutomaton, RankSelectType, TrieStorageStrategy, Trie, TrieStrategy,
     ZiporaTrie, ZiporaTrieConfig,
 };
 use zipora::succinct::RankSelectInterleaved256;
@@ -13,11 +13,11 @@ fn main() {
             free_list_management: true,
             auto_shrink: false,
         },
-        storage_strategy: StorageStrategy::Standard {
+        storage_strategy: TrieStorageStrategy::Standard {
             initial_capacity: 256,
             growth_factor: 1.5,
         },
-        compression_strategy: CompressionStrategy::None,
+        compression_strategy: TrieCompressionStrategy::None,
         rank_select_type: RankSelectType::Interleaved256,
         enable_simd: true,
         enable_concurrency: false,

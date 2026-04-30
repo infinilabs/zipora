@@ -9,7 +9,7 @@
 //!
 //! ZiporaHashMap achieves high performance through configurable strategies:
 //! - **HashStrategy**: Optimized collision resolution (Robin Hood, chaining, hopscotch)
-//! - **StorageStrategy**: Cache-aware memory layouts and allocation patterns
+//! - **HashStorageStrategy**: Cache-aware memory layouts and allocation patterns
 //! - **OptimizationStrategy**: Hardware acceleration and performance features
 //!
 //! # Hardware Acceleration Features
@@ -69,7 +69,7 @@ pub enum HashStrategy {
 
 /// Storage strategy for memory layout and allocation
 #[derive(Debug, Clone)]
-pub enum StorageStrategy {
+pub enum HashStorageStrategy {
     /// Standard heap allocation with FastVec
     Standard {
         initial_capacity: usize,
@@ -129,7 +129,7 @@ pub enum OptimizationStrategy {
 #[derive(Debug, Clone)]
 pub struct ZiporaHashMapConfig {
     pub hash_strategy: HashStrategy,
-    pub storage_strategy: StorageStrategy,
+    pub storage_strategy: HashStorageStrategy,
     pub optimization_strategy: OptimizationStrategy,
     pub initial_capacity: usize,
     pub load_factor: f64,
@@ -143,7 +143,7 @@ impl Default for ZiporaHashMapConfig {
                 variance_reduction: true,
                 backward_shift: true,
             },
-            storage_strategy: StorageStrategy::Standard {
+            storage_strategy: HashStorageStrategy::Standard {
                 initial_capacity: 16,
                 growth_factor: 2.0,
             },
@@ -168,7 +168,7 @@ impl ZiporaHashMapConfig {
                 variance_reduction: true,
                 backward_shift: true,
             },
-            storage_strategy: StorageStrategy::CacheOptimized {
+            storage_strategy: HashStorageStrategy::CacheOptimized {
                 cache_line_size: 64,
                 numa_aware: true,
                 huge_pages: false,
@@ -191,7 +191,7 @@ impl ZiporaHashMapConfig {
                 variance_reduction: true,
                 backward_shift: true,
             },
-            storage_strategy: StorageStrategy::StringOptimized {
+            storage_strategy: HashStorageStrategy::StringOptimized {
                 arena_size: 4096,
                 prefix_cache: true,
                 interning: true,
@@ -213,7 +213,7 @@ impl ZiporaHashMapConfig {
                 max_probe_distance: inline_capacity as u16,
                 cache_aligned: true,
             },
-            storage_strategy: StorageStrategy::SmallInline {
+            storage_strategy: HashStorageStrategy::SmallInline {
                 inline_capacity,
                 fallback_threshold: inline_capacity * 2,
             },
@@ -230,7 +230,7 @@ impl ZiporaHashMapConfig {
                 neighborhood_size: 32,
                 displacement_threshold: 128,
             },
-            storage_strategy: StorageStrategy::PoolAllocated {
+            storage_strategy: HashStorageStrategy::PoolAllocated {
                 pool,
                 chunk_size: 1024,
             },
@@ -261,20 +261,20 @@ impl ZiporaHashMapConfig {
 /// // Cache-optimized hash map
 /// let mut map: ZiporaHashMap<&str, &str, RandomState> = ZiporaHashMap::with_config(
 ///     ZiporaHashMapConfig::cache_optimized()
-/// ).unwrap();
-/// map.insert("key", "value").unwrap();
+/// ).expect("invariant broken");
+/// map.insert("key", "value").expect("invariant broken");
 ///
 /// // String-optimized hash map
 /// let mut str_map: ZiporaHashMap<&str, i32, RandomState> = ZiporaHashMap::with_config(
 ///     ZiporaHashMapConfig::string_optimized()
-/// ).unwrap();
-/// str_map.insert("hello", 42).unwrap();
+/// ).expect("invariant broken");
+/// str_map.insert("hello", 42).expect("invariant broken");
 ///
 /// // Small inline hash map
 /// let mut small_map: ZiporaHashMap<i32, &str, RandomState> = ZiporaHashMap::with_config(
 ///     ZiporaHashMapConfig::small_inline(4)
-/// ).unwrap();
-/// small_map.insert(1, "one").unwrap();
+/// ).expect("invariant broken");
+/// small_map.insert(1, "one").expect("invariant broken");
 /// ```
 pub struct ZiporaHashMap<K, V, S = RandomState>
 where
@@ -426,7 +426,7 @@ where
         config.initial_capacity = capacity.max(16);
 
         // Update storage strategy to use the specified capacity
-        if let StorageStrategy::Standard {
+        if let HashStorageStrategy::Standard {
             initial_capacity, ..
         } = &mut config.storage_strategy
         {
@@ -472,14 +472,14 @@ where
     /// Create storage based on strategy configuration
     fn create_storage(config: &ZiporaHashMapConfig) -> Result<HashMapStorage<K, V>> {
         match &config.storage_strategy {
-            StorageStrategy::Standard {
+            HashStorageStrategy::Standard {
                 initial_capacity, ..
             } => Ok(HashMapStorage::Standard {
                 buckets: FastVec::with_capacity(*initial_capacity)?,
                 entries: FastVec::with_capacity(*initial_capacity)?,
                 mask: initial_capacity.saturating_sub(1),
             }),
-            StorageStrategy::SmallInline {
+            HashStorageStrategy::SmallInline {
                 inline_capacity: _, ..
             } => {
                 Ok(HashMapStorage::SmallInline {
@@ -495,13 +495,13 @@ where
                     len: 0,
                 })
             }
-            StorageStrategy::CacheOptimized { .. } => Ok(HashMapStorage::CacheOptimized {
+            HashStorageStrategy::CacheOptimized { .. } => Ok(HashMapStorage::CacheOptimized {
                 buckets: FastVec::with_capacity(config.initial_capacity)?,
                 hot_data: FastVec::with_capacity(config.initial_capacity)?,
                 cold_data: FastVec::with_capacity(config.initial_capacity)?,
                 prefetcher: Prefetcher::new(),
             }),
-            StorageStrategy::StringOptimized { arena_size, .. } => {
+            HashStorageStrategy::StringOptimized { arena_size, .. } => {
                 Ok(HashMapStorage::StringOptimized {
                     arena: StringArena {
                         _data: FastVec::with_capacity(*arena_size)?,
@@ -513,7 +513,7 @@ where
                     prefix_cache: FastVec::with_capacity(config.initial_capacity)?,
                 })
             }
-            StorageStrategy::PoolAllocated { .. } => {
+            HashStorageStrategy::PoolAllocated { .. } => {
                 // For now, fallback to standard storage
                 // TODO: Implement pool-based allocation
                 Ok(HashMapStorage::Standard {
@@ -963,9 +963,9 @@ where
                 entry.value = Some(value);
                 entry.hash = hash;
                 return Ok(None);
-            } else if entry.hash == hash && entry.key.as_ref().unwrap() == &key {
+            } else if entry.hash == hash && entry.key.as_ref().expect("invariant broken") == &key {
                 // Key exists, update value
-                let old_value = entry.value.replace(value).unwrap();
+                let old_value = entry.value.replace(value).expect("invariant broken");
                 return Ok(Some(old_value));
             }
         }
@@ -1072,9 +1072,9 @@ where
             } else if entry.hash == u64::MAX {
                 // Tombstone, skip and continue searching
                 continue;
-            } else if entry.hash == hash && entry.key.as_ref().unwrap().borrow() == key {
+            } else if entry.hash == hash && entry.key.as_ref().expect("invariant broken").borrow() == key {
                 // Found the key
-                return Some(entry.value.as_ref().unwrap());
+                return Some(entry.value.as_ref().expect("invariant broken"));
             }
         }
 
@@ -1176,7 +1176,7 @@ where
             } else if entry.hash == u64::MAX {
                 // Tombstone, skip and continue searching
                 continue;
-            } else if entry.hash == hash && entry.key.as_ref().unwrap().borrow() == key {
+            } else if entry.hash == hash && entry.key.as_ref().expect("invariant broken").borrow() == key {
                 // Found the key
                 found_index = Some(probe_index);
                 break;
@@ -1185,7 +1185,7 @@ where
 
         // Return mutable reference if found
         if let Some(idx) = found_index {
-            Some(entries[idx].value.as_mut().unwrap())
+            Some(entries[idx].value.as_mut().expect("invariant broken"))
         } else {
             None
         }
@@ -1271,9 +1271,9 @@ where
             if entry.hash == 0 {
                 // Empty slot, key not found
                 return None;
-            } else if entry.hash == hash && entry.key.as_ref().unwrap().borrow() == key {
+            } else if entry.hash == hash && entry.key.as_ref().expect("invariant broken").borrow() == key {
                 // Found the key, remove it
-                let old_value = entry.value.take().unwrap();
+                let old_value = entry.value.take().expect("invariant broken");
                 entry.key.take(); // free the key
 
                 // Use tombstone approach: mark as deleted but don't create holes
@@ -1525,7 +1525,7 @@ where
                     let entry = &entries[self.index];
                     self.index += 1;
                     if entry.hash != 0 && entry.hash != u64::MAX {
-                        return Some((entry.key.as_ref().unwrap(), entry.value.as_ref().unwrap()));
+                        return Some((entry.key.as_ref().expect("invariant broken"), entry.value.as_ref().expect("invariant broken")));
                     }
                 }
                 None
@@ -1586,7 +1586,7 @@ mod tests {
 
     #[test]
     fn test_unified_hash_map_creation() {
-        let map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().unwrap();
+        let map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().expect("invariant broken");
         assert_eq!(map.len(), 0);
         assert!(map.is_empty());
     }
@@ -1594,26 +1594,26 @@ mod tests {
     #[test]
     fn test_cache_optimized_config() {
         let map: ZiporaHashMap<String, i32> =
-            ZiporaHashMap::with_config(ZiporaHashMapConfig::cache_optimized()).unwrap();
+            ZiporaHashMap::with_config(ZiporaHashMapConfig::cache_optimized()).expect("invariant broken");
         assert_eq!(map.len(), 0);
     }
 
     #[test]
     fn test_string_optimized_config() {
         let map: ZiporaHashMap<String, i32> =
-            ZiporaHashMap::with_config(ZiporaHashMapConfig::string_optimized()).unwrap();
+            ZiporaHashMap::with_config(ZiporaHashMapConfig::string_optimized()).expect("invariant broken");
         assert_eq!(map.len(), 0);
     }
 
     #[test]
     fn test_small_inline_config() {
         let mut map: ZiporaHashMap<i32, String> =
-            ZiporaHashMap::with_config(ZiporaHashMapConfig::small_inline(4)).unwrap();
+            ZiporaHashMap::with_config(ZiporaHashMapConfig::small_inline(4)).expect("invariant broken");
         assert_eq!(map.len(), 0);
 
         // Fill up to inline capacity
         for i in 0..16 {
-            map.insert(i, i.to_string()).unwrap();
+            map.insert(i, i.to_string()).expect("invariant broken");
         }
         assert_eq!(map.len(), 16);
 
@@ -1627,8 +1627,8 @@ mod tests {
 
     #[test]
     fn test_insert_and_get() {
-        let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().unwrap();
-        assert_eq!(map.insert("hello".to_string(), 42).unwrap(), None);
+        let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().expect("invariant broken");
+        assert_eq!(map.insert("hello".to_string(), 42).expect("invariant broken"), None);
         assert_eq!(map.get("hello"), Some(&42));
         assert_eq!(map.len(), 1);
         assert!(!map.is_empty());
@@ -1636,25 +1636,25 @@ mod tests {
 
     #[test]
     fn test_insert_overwrite_returns_old_value() {
-        let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().unwrap();
-        assert_eq!(map.insert("key".to_string(), 1).unwrap(), None);
-        assert_eq!(map.insert("key".to_string(), 2).unwrap(), Some(1));
+        let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().expect("invariant broken");
+        assert_eq!(map.insert("key".to_string(), 1).expect("invariant broken"), None);
+        assert_eq!(map.insert("key".to_string(), 2).expect("invariant broken"), Some(1));
         assert_eq!(map.get("key"), Some(&2));
         assert_eq!(map.len(), 1);
     }
 
     #[test]
     fn test_get_nonexistent() {
-        let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().unwrap();
-        map.insert("a".to_string(), 1).unwrap();
+        let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().expect("invariant broken");
+        map.insert("a".to_string(), 1).expect("invariant broken");
         assert_eq!(map.get("b"), None);
         assert_eq!(map.get(""), None);
     }
 
     #[test]
     fn test_remove_existing() {
-        let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().unwrap();
-        map.insert("key".to_string(), 99).unwrap();
+        let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().expect("invariant broken");
+        map.insert("key".to_string(), 99).expect("invariant broken");
         assert_eq!(map.remove("key"), Some(99));
         assert_eq!(map.get("key"), None);
         assert_eq!(map.len(), 0);
@@ -1662,16 +1662,16 @@ mod tests {
 
     #[test]
     fn test_remove_nonexistent() {
-        let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().unwrap();
-        map.insert("a".to_string(), 1).unwrap();
+        let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().expect("invariant broken");
+        map.insert("a".to_string(), 1).expect("invariant broken");
         assert_eq!(map.remove("b"), None);
         assert_eq!(map.len(), 1);
     }
 
     #[test]
     fn test_get_mut() {
-        let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().unwrap();
-        map.insert("key".to_string(), 10).unwrap();
+        let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().expect("invariant broken");
+        map.insert("key".to_string(), 10).expect("invariant broken");
         if let Some(val) = map.get_mut("key") {
             *val = 20;
         }
@@ -1680,31 +1680,31 @@ mod tests {
 
     #[test]
     fn test_get_mut_nonexistent() {
-        let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().unwrap();
+        let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().expect("invariant broken");
         assert!(map.get_mut("nope").is_none());
     }
 
     #[test]
     fn test_contains_key() {
-        let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().unwrap();
-        map.insert("yes".to_string(), 1).unwrap();
+        let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().expect("invariant broken");
+        map.insert("yes".to_string(), 1).expect("invariant broken");
         assert!(map.contains_key("yes"));
         assert!(!map.contains_key("no"));
     }
 
     #[test]
     fn test_len_tracking() {
-        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().unwrap();
+        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().expect("invariant broken");
         assert_eq!(map.len(), 0);
 
-        map.insert(1, 10).unwrap();
+        map.insert(1, 10).expect("invariant broken");
         assert_eq!(map.len(), 1);
 
-        map.insert(2, 20).unwrap();
+        map.insert(2, 20).expect("invariant broken");
         assert_eq!(map.len(), 2);
 
         // Overwrite doesn't increase len
-        map.insert(1, 11).unwrap();
+        map.insert(1, 11).expect("invariant broken");
         assert_eq!(map.len(), 2);
 
         map.remove(&1);
@@ -1717,8 +1717,8 @@ mod tests {
 
     #[test]
     fn test_single_element() {
-        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().unwrap();
-        map.insert(42, 100).unwrap();
+        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().expect("invariant broken");
+        map.insert(42, 100).expect("invariant broken");
         assert_eq!(map.get(&42), Some(&100));
         assert_eq!(map.len(), 1);
         assert_eq!(map.remove(&42), Some(100));
@@ -1729,10 +1729,10 @@ mod tests {
 
     #[test]
     fn test_resize_preserves_all_entries() {
-        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().unwrap();
+        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().expect("invariant broken");
         let n = 200;
         for i in 0..n {
-            map.insert(i, i * 10).unwrap();
+            map.insert(i, i * 10).expect("invariant broken");
         }
         assert_eq!(map.len(), n as usize);
         for i in 0..n {
@@ -1747,10 +1747,10 @@ mod tests {
 
     #[test]
     fn test_resize_compacts_tombstones() {
-        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().unwrap();
+        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().expect("invariant broken");
         // Fill to just under resize threshold
         for i in 0..15 {
-            map.insert(i, i).unwrap();
+            map.insert(i, i).expect("invariant broken");
         }
         // Remove half to create tombstones
         for i in 0..8 {
@@ -1762,7 +1762,7 @@ mod tests {
         }
         // Insert enough to force resize — tombstones should be compacted
         for i in 100..120 {
-            map.insert(i, i).unwrap();
+            map.insert(i, i).expect("invariant broken");
         }
         // All surviving entries must be present
         for i in 8..15 {
@@ -1781,19 +1781,19 @@ mod tests {
 
     #[test]
     fn test_tombstone_get_returns_none() {
-        let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().unwrap();
-        map.insert("gone".to_string(), 1).unwrap();
+        let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().expect("invariant broken");
+        map.insert("gone".to_string(), 1).expect("invariant broken");
         map.remove("gone");
         assert_eq!(map.get("gone"), None);
     }
 
     #[test]
     fn test_tombstone_slot_reuse_same_key() {
-        let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().unwrap();
-        map.insert("reuse".to_string(), 1).unwrap();
+        let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().expect("invariant broken");
+        map.insert("reuse".to_string(), 1).expect("invariant broken");
         map.remove("reuse");
         // Re-inserting same key should work (tombstone slot eligible)
-        assert_eq!(map.insert("reuse".to_string(), 2).unwrap(), None);
+        assert_eq!(map.insert("reuse".to_string(), 2).expect("invariant broken"), None);
         assert_eq!(map.get("reuse"), Some(&2));
     }
 
@@ -1803,12 +1803,12 @@ mod tests {
         // guaranteeing a linear probe chain: slot 1, 2, 3, ...
         let config = ZiporaHashMapConfig::default();
         let mut map: ZiporaHashMap<i32, i32, FixedHashBuilder> =
-            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(42)).unwrap();
+            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(42)).expect("invariant broken");
 
         // All three keys hash to 42 → same initial slot → probe chain
-        map.insert(1, 10).unwrap();
-        map.insert(2, 20).unwrap();
-        map.insert(3, 30).unwrap();
+        map.insert(1, 10).expect("invariant broken");
+        map.insert(2, 20).expect("invariant broken");
+        map.insert(3, 30).expect("invariant broken");
 
         // Remove the middle of the chain
         assert_eq!(map.remove(&2), Some(20));
@@ -1825,10 +1825,10 @@ mod tests {
     fn test_multiple_tombstones_in_chain() {
         let config = ZiporaHashMapConfig::default();
         let mut map: ZiporaHashMap<i32, i32, FixedHashBuilder> =
-            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(7)).unwrap();
+            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(7)).expect("invariant broken");
 
         for i in 0..6 {
-            map.insert(i, i * 100).unwrap();
+            map.insert(i, i * 100).expect("invariant broken");
         }
         // Remove alternating: 0, 2, 4
         map.remove(&0);
@@ -1851,10 +1851,10 @@ mod tests {
         // All keys hash to raw 0 → sanitized to 1
         let config = ZiporaHashMapConfig::default();
         let mut map: ZiporaHashMap<i32, i32, FixedHashBuilder> =
-            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(0)).unwrap();
+            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(0)).expect("invariant broken");
 
-        map.insert(10, 100).unwrap();
-        map.insert(20, 200).unwrap();
+        map.insert(10, 100).expect("invariant broken");
+        map.insert(20, 200).expect("invariant broken");
         assert_eq!(map.get(&10), Some(&100));
         assert_eq!(map.get(&20), Some(&200));
         assert_eq!(map.remove(&10), Some(100));
@@ -1868,10 +1868,10 @@ mod tests {
         // All keys hash to raw u64::MAX → sanitized to u64::MAX - 1
         let config = ZiporaHashMapConfig::default();
         let mut map: ZiporaHashMap<i32, i32, FixedHashBuilder> =
-            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(u64::MAX)).unwrap();
+            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(u64::MAX)).expect("invariant broken");
 
-        map.insert(10, 100).unwrap();
-        map.insert(20, 200).unwrap();
+        map.insert(10, 100).expect("invariant broken");
+        map.insert(20, 200).expect("invariant broken");
         assert_eq!(map.get(&10), Some(&100));
         assert_eq!(map.get(&20), Some(&200));
         assert_eq!(map.remove(&10), Some(100));
@@ -1884,9 +1884,9 @@ mod tests {
     fn test_hash_sentinel_max_with_get_mut() {
         let config = ZiporaHashMapConfig::default();
         let mut map: ZiporaHashMap<i32, i32, FixedHashBuilder> =
-            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(u64::MAX)).unwrap();
+            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(u64::MAX)).expect("invariant broken");
 
-        map.insert(1, 10).unwrap();
+        map.insert(1, 10).expect("invariant broken");
         if let Some(v) = map.get_mut(&1) {
             *v = 99;
         }
@@ -1897,10 +1897,10 @@ mod tests {
 
     #[test]
     fn test_iterator_basic() {
-        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().unwrap();
-        map.insert(1, 10).unwrap();
-        map.insert(2, 20).unwrap();
-        map.insert(3, 30).unwrap();
+        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().expect("invariant broken");
+        map.insert(1, 10).expect("invariant broken");
+        map.insert(2, 20).expect("invariant broken");
+        map.insert(3, 30).expect("invariant broken");
 
         let mut collected: Vec<(i32, i32)> = map.iter().map(|(&k, &v)| (k, v)).collect();
         collected.sort();
@@ -1909,10 +1909,10 @@ mod tests {
 
     #[test]
     fn test_iterator_skips_tombstones() {
-        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().unwrap();
-        map.insert(1, 10).unwrap();
-        map.insert(2, 20).unwrap();
-        map.insert(3, 30).unwrap();
+        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().expect("invariant broken");
+        map.insert(1, 10).expect("invariant broken");
+        map.insert(2, 20).expect("invariant broken");
+        map.insert(3, 30).expect("invariant broken");
         map.remove(&2);
 
         let mut collected: Vec<(i32, i32)> = map.iter().map(|(&k, &v)| (k, v)).collect();
@@ -1922,15 +1922,15 @@ mod tests {
 
     #[test]
     fn test_iterator_empty() {
-        let map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().unwrap();
+        let map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().expect("invariant broken");
         assert_eq!(map.iter().count(), 0);
     }
 
     #[test]
     fn test_iterator_all_removed() {
-        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().unwrap();
-        map.insert(1, 10).unwrap();
-        map.insert(2, 20).unwrap();
+        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().expect("invariant broken");
+        map.insert(1, 10).expect("invariant broken");
+        map.insert(2, 20).expect("invariant broken");
         map.remove(&1);
         map.remove(&2);
         assert_eq!(map.iter().count(), 0);
@@ -1943,13 +1943,13 @@ mod tests {
         // Directly exercise the backward_shift_delete method
         let config = ZiporaHashMapConfig::default();
         let mut map: ZiporaHashMap<i32, i32, FixedHashBuilder> =
-            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(0)).unwrap();
+            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(0)).expect("invariant broken");
 
         // Insert 4 keys — all collide, forming a probe chain
-        map.insert(1, 10).unwrap();
-        map.insert(2, 20).unwrap();
-        map.insert(3, 30).unwrap();
-        map.insert(4, 40).unwrap();
+        map.insert(1, 10).expect("invariant broken");
+        map.insert(2, 20).expect("invariant broken");
+        map.insert(3, 30).expect("invariant broken");
+        map.insert(4, 40).expect("invariant broken");
 
         // Manually invoke backward_shift_delete on the first slot
         if let HashMapStorage::Standard { entries, mask, .. } = &mut map.storage {
@@ -1977,16 +1977,16 @@ mod tests {
 
     #[test]
     fn test_clear() {
-        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().unwrap();
+        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().expect("invariant broken");
         for i in 0..10 {
-            map.insert(i, i).unwrap();
+            map.insert(i, i).expect("invariant broken");
         }
         assert_eq!(map.len(), 10);
         map.clear();
         assert_eq!(map.len(), 0);
         assert!(map.is_empty());
         // After clear, can insert again
-        map.insert(42, 99).unwrap();
+        map.insert(42, 99).expect("invariant broken");
         assert_eq!(map.get(&42), Some(&99));
     }
 
@@ -1994,10 +1994,10 @@ mod tests {
 
     #[test]
     fn test_many_inserts() {
-        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().unwrap();
+        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().expect("invariant broken");
         let n = 500;
         for i in 0..n {
-            map.insert(i, i * 3).unwrap();
+            map.insert(i, i * 3).expect("invariant broken");
         }
         assert_eq!(map.len(), n as usize);
         for i in 0..n {
@@ -2007,11 +2007,11 @@ mod tests {
 
     #[test]
     fn test_insert_remove_cycle() {
-        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().unwrap();
+        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().expect("invariant broken");
         for round in 0..5 {
             let base = round * 20;
             for i in base..base + 20 {
-                map.insert(i, i).unwrap();
+                map.insert(i, i).expect("invariant broken");
             }
             for i in base..base + 10 {
                 assert_eq!(map.remove(&i), Some(i));
@@ -2032,10 +2032,10 @@ mod tests {
 
     #[test]
     fn test_string_keys() {
-        let mut map: ZiporaHashMap<String, String> = ZiporaHashMap::new().unwrap();
+        let mut map: ZiporaHashMap<String, String> = ZiporaHashMap::new().expect("invariant broken");
         map.insert("hello".to_string(), "world".to_string())
-            .unwrap();
-        map.insert("foo".to_string(), "bar".to_string()).unwrap();
+            .expect("invariant broken");
+        map.insert("foo".to_string(), "bar".to_string()).expect("invariant broken");
         assert_eq!(map.get("hello"), Some(&"world".to_string()));
         assert_eq!(map.get("foo"), Some(&"bar".to_string()));
         map.remove("hello");
@@ -2045,19 +2045,19 @@ mod tests {
 
     #[test]
     fn test_with_capacity() {
-        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::with_capacity(64).unwrap();
+        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::with_capacity(64).expect("invariant broken");
         assert!(map.capacity() >= 64);
         for i in 0..64 {
-            map.insert(i, i).unwrap();
+            map.insert(i, i).expect("invariant broken");
         }
         assert_eq!(map.len(), 64);
     }
 
     #[test]
     fn test_overwrite_many_times() {
-        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().unwrap();
+        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().expect("invariant broken");
         for v in 0..100 {
-            let old = map.insert(0, v).unwrap();
+            let old = map.insert(0, v).expect("invariant broken");
             if v == 0 {
                 assert_eq!(old, None);
             } else {
@@ -2070,10 +2070,10 @@ mod tests {
 
     #[test]
     fn test_remove_then_reinsert_different_value() {
-        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().unwrap();
-        map.insert(1, 100).unwrap();
+        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().expect("invariant broken");
+        map.insert(1, 100).expect("invariant broken");
         map.remove(&1);
-        map.insert(1, 200).unwrap();
+        map.insert(1, 200).expect("invariant broken");
         assert_eq!(map.get(&1), Some(&200));
         assert_eq!(map.len(), 1);
     }
@@ -2083,11 +2083,11 @@ mod tests {
         // All keys hash identically — worst-case linear probing
         let config = ZiporaHashMapConfig::default();
         let mut map: ZiporaHashMap<i32, i32, FixedHashBuilder> =
-            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(99)).unwrap();
+            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(99)).expect("invariant broken");
 
         let n = 50;
         for i in 0..n {
-            map.insert(i, i * 7).unwrap();
+            map.insert(i, i * 7).expect("invariant broken");
         }
         assert_eq!(map.len(), n as usize);
         for i in 0..n {

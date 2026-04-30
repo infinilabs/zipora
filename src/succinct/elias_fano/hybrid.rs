@@ -150,6 +150,21 @@ impl HybridPostingList {
     }
 }
 
+impl super::PostingList for HybridPostingList {
+    fn len(&self) -> usize {
+        self.len()
+    }
+    fn get(&self, index: usize) -> Option<u64> {
+        self.get(index)
+    }
+    fn next_geq(&self, target: u64) -> Option<(usize, u64)> {
+        self.next_geq(target)
+    }
+    fn size_bytes(&self) -> usize {
+        self.size_bytes()
+    }
+}
+
 /// Encoding strategy for posting lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

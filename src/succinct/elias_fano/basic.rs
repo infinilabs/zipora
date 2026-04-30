@@ -948,3 +948,18 @@ impl<'a> EliasFanoBatchCursor<'a> {
         *self = Self::new(self.ef);
     }
 }
+
+impl crate::succinct::elias_fano::PostingList for EliasFano {
+    fn len(&self) -> usize {
+        self.len()
+    }
+    fn get(&self, index: usize) -> Option<u64> {
+        self.get(index)
+    }
+    fn next_geq(&self, target: u64) -> Option<(usize, u64)> {
+        self.next_geq(target)
+    }
+    fn size_bytes(&self) -> usize {
+        self.size_bytes()
+    }
+}

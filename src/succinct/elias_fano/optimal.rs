@@ -1022,3 +1022,18 @@ impl<'a> OptimalPefBatchCursor<'a> {
         *self = Self::new(self.opef);
     }
 }
+
+impl crate::succinct::elias_fano::PostingList for OptimalPartitionedEliasFano {
+    fn len(&self) -> usize {
+        self.len()
+    }
+    fn get(&self, index: usize) -> Option<u64> {
+        self.get(index)
+    }
+    fn next_geq(&self, target: u64) -> Option<(usize, u64)> {
+        self.next_geq(target)
+    }
+    fn size_bytes(&self) -> usize {
+        self.size_bytes()
+    }
+}

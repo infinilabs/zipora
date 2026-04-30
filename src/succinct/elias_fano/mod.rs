@@ -16,5 +16,25 @@ pub use partitioned::{
     PartitionedEliasFanoIter,
 };
 
+/// Common interface for all monotone integer sequence (posting list) encodings.
+pub trait PostingList {
+    /// Number of elements in the list.
+    fn len(&self) -> usize;
+    
+    /// Whether the list is empty.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    
+    /// Get the i-th element.
+    fn get(&self, index: usize) -> Option<u64>;
+    
+    /// Find the first element >= target. Returns (index, value).
+    fn next_geq(&self, target: u64) -> Option<(usize, u64)>;
+    
+    /// Estimated memory usage in bytes.
+    fn size_bytes(&self) -> usize;
+}
+
 #[cfg(test)]
 mod tests;

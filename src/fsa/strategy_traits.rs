@@ -7,7 +7,7 @@
 //!
 //! The strategy pattern allows different algorithms to be combined:
 //! - **TrieAlgorithmStrategy**: Core trie algorithm (Patricia, CritBit, DoubleArray, LOUDS)
-//! - **CompressionStrategy**: Path and fragment compression techniques
+//! - **TrieCompressionStrategy**: Path and fragment compression techniques
 //! - **SuccinctStorageStrategy**: Rank/select and bit vector implementations
 //! - **ConcurrencyStrategy**: Token-based synchronization and concurrent access
 //!
@@ -99,7 +99,7 @@ pub trait TrieAlgorithmStrategy {
 }
 
 /// Compression strategy for space optimization
-pub trait CompressionStrategy {
+pub trait TrieCompressionStrategy {
     /// Configuration for compression
     type Config: Clone;
 
@@ -542,7 +542,7 @@ pub struct PathCompressionContext {
     pub compression_stats: CompressionStats,
 }
 
-impl CompressionStrategy for PathCompressionStrategy {
+impl TrieCompressionStrategy for PathCompressionStrategy {
     type Config = PathCompressionConfig;
     type Context = PathCompressionContext;
     type CompressedData = u32; // Index into compressed_paths
