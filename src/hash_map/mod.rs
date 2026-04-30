@@ -82,7 +82,7 @@ mod simd_string_ops;
 
 // Core ZiporaHashMap implementation
 pub use zipora_hash_map::{
-    HashMapStats, HashStrategy, OptimizationStrategy, StorageStrategy, ZiporaHashMap,
+    HashMapStats, HashStrategy, OptimizationStrategy, HashStorageStrategy, ZiporaHashMap,
     ZiporaHashMapConfig,
 };
 

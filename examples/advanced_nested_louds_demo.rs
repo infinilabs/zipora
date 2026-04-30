@@ -6,7 +6,7 @@
 use zipora::{
     Result,
     fsa::{
-        CompressionStrategy, RankSelectType, StorageStrategy, TrieStrategy, ZiporaTrie,
+        TrieCompressionStrategy, RankSelectType, TrieStorageStrategy, TrieStrategy, ZiporaTrie,
         ZiporaTrieConfig,
     },
     succinct::RankSelectInterleaved256,
@@ -23,12 +23,12 @@ fn main() -> Result<()> {
             compression_level: 5,
             adaptive_sparse: true,
         },
-        compression_strategy: CompressionStrategy::FragmentCompression {
+        compression_strategy: TrieCompressionStrategy::FragmentCompression {
             fragment_size: 8,
             frequency_threshold: 0.3,
             dictionary_size: 128,
         },
-        storage_strategy: StorageStrategy::CacheOptimized {
+        storage_strategy: TrieStorageStrategy::CacheOptimized {
             cache_line_size: 64,
             numa_aware: true,
             prefetch_enabled: true,

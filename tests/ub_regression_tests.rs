@@ -1,13 +1,13 @@
-use zipora::hash_map::StorageStrategy;
+use zipora::hash_map::HashStorageStrategy;
 use zipora::hash_map::ZiporaHashMap;
 use zipora::hash_map::ZiporaHashMapConfig;
 use zipora::memory::{SecureMemoryPool, SecurePoolConfig};
 
 #[test]
 fn test_inline_storage_initialization() {
-    // This triggers StorageStrategy::SmallInline initialization
+    // This triggers HashStorageStrategy::SmallInline initialization
     let config = ZiporaHashMapConfig {
-        storage_strategy: StorageStrategy::SmallInline {
+        storage_strategy: HashStorageStrategy::SmallInline {
             inline_capacity: 16,
             fallback_threshold: 16,
         },

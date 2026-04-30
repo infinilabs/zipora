@@ -3,7 +3,6 @@ use std::time::{Duration, Instant};
 use zipora::containers::specialized::ValVec32;
 
 const WARMUP_ITERATIONS: usize = 10_000;
-const BENCHMARK_ITERATIONS: usize = 100_000;
 const RUNS_PER_BENCHMARK: usize = 100;
 
 fn benchmark_push_operations() {

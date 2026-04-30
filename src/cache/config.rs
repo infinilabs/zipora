@@ -34,7 +34,7 @@ pub struct PageCacheConfig {
     pub locking: LockingConfig,
 
     /// Memory allocation configuration
-    pub memory: MemoryConfig,
+    pub memory: CacheMemoryConfig,
 
     /// Performance tuning parameters
     pub performance: PerformanceConfig,
@@ -58,7 +58,7 @@ pub struct LockingConfig {
 
 /// Memory allocation configuration
 #[derive(Debug, Clone)]
-pub struct MemoryConfig {
+pub struct CacheMemoryConfig {
     /// Memory alignment for cache blocks
     pub alignment: usize,
 
@@ -192,7 +192,7 @@ impl PageCacheConfig {
             max_conflict_length: 8,
             enable_statistics: true,
             locking: LockingConfig::balanced(),
-            memory: MemoryConfig::balanced(),
+            memory: CacheMemoryConfig::balanced(),
             performance: PerformanceConfig::balanced(),
         }
     }
@@ -209,7 +209,7 @@ impl PageCacheConfig {
             max_conflict_length: 6,
             enable_statistics: false, // Disable for max performance
             locking: LockingConfig::performance_optimized(),
-            memory: MemoryConfig::performance_optimized(),
+            memory: CacheMemoryConfig::performance_optimized(),
             performance: PerformanceConfig::performance_optimized(),
         }
     }
@@ -226,7 +226,7 @@ impl PageCacheConfig {
             max_conflict_length: 12,
             enable_statistics: false,
             locking: LockingConfig::memory_optimized(),
-            memory: MemoryConfig::memory_optimized(),
+            memory: CacheMemoryConfig::memory_optimized(),
             performance: PerformanceConfig::memory_optimized(),
         }
     }
@@ -243,7 +243,7 @@ impl PageCacheConfig {
             max_conflict_length: 8,
             enable_statistics: true,
             locking: LockingConfig::security_optimized(),
-            memory: MemoryConfig::security_optimized(),
+            memory: CacheMemoryConfig::security_optimized(),
             performance: PerformanceConfig::security_optimized(),
         }
     }
@@ -365,7 +365,7 @@ impl LockingConfig {
     }
 }
 
-impl MemoryConfig {
+impl CacheMemoryConfig {
     pub fn balanced() -> Self {
         Self {
             alignment: PAGE_SIZE,

@@ -131,7 +131,6 @@ pub mod thread;
 pub use containers::{
     AutoGrowCircularQueue,
     BlockSize,
-    CompressionStrategy,
     EasyHashMap,
     EasyHashMapBuilder,
     EasyHashMapStats,
@@ -211,27 +210,15 @@ pub use succinct::{
 pub use blob_store::{BlobStore, MemoryBlobStore, PlainBlobStore};
 pub use fsa::{
     BitVectorType,
-    CompressedSparseTrie,
-    CompressionStrategy as TrieCompressionStrategy,
-    ConcurrencyLevel,
-    CritBitTrie,
     // Primary trie implementation — 8 bytes/state, faithful C++ reference port
     DoubleArrayTrie,
     DoubleArrayTrieMap,
     FiniteStateAutomaton,
-    FragmentStats,
     MapValue,
     // Other trie strategies (available via explicit config)
-    NestedLoudsTrie,
-    NestedTrieStats,
-    NestingConfig,
-    PatriciaTrie,
     RankSelectType,
-    ReaderToken,
-    StorageStrategy,
     Trie,
     TrieStrategy,
-    WriterToken,
     ZiporaTrie,
     ZiporaTrieConfig,
 };
@@ -253,7 +240,6 @@ pub use hash_map::{
     // SIMD and cache optimization utilities
     SimdStringOps,
     SimdTier,
-    StorageStrategy as HashStorageStrategy,
     // Core unified hash map implementation
     ZiporaHashMap,
     ZiporaHashMapConfig,
@@ -367,7 +353,6 @@ pub use dev_infrastructure::{
     AccumulatorStats,
     AutoRegister,
     BenchmarkResult,
-    BenchmarkSuite as DevBenchmarkSuite,
     FactoryBuilder,
     // Factory Pattern
     FactoryRegistry,
@@ -375,12 +360,10 @@ pub use dev_infrastructure::{
     GlobalFactory,
     GlobalStatsRegistry,
     // Debugging Framework
-    HighPrecisionTimer as DevHighPrecisionTimer,
     // Statistical Analysis
     Histogram,
     HistogramStats,
     MemoryDebugger,
-    MemoryStats as DevMemoryStats,
     MultiDimensionalStats,
     PerformanceProfiler,
     ScopedTimer,
@@ -402,7 +385,6 @@ pub use statistics::{
     BufferPoolManager,
     BufferPriority,
     CompressionEstimates,
-    CompressionStats as StatsCompressionStats,
     // Buffer management
     ContextBuffer,
     DefaultStatisticsContext,
@@ -429,10 +411,7 @@ pub use statistics::{
     // Memory tracking
     MemoryBreakdown,
     MemoryCategory,
-    MemoryStats as StatsMemoryStats,
     OperationProfile,
-    PerfTimer as StatsPerfTimer,
-    PerformanceStats as StatsPerformanceStats,
     PoolStatistics,
     ProfiledOperation,
     // Profiling
@@ -443,14 +422,12 @@ pub use statistics::{
     QDuration,
     QTime,
     ScopedBuffer,
-    ScopedTimer as StatsScopedTimer,
     StatisticsContext,
     TimerCollection,
     TimingStats,
     TrackedObject,
     // Core statistics
     TrieStatistics,
-    global_profiler as stats_global_profiler,
     init_global_profiler,
     str_date_time_now,
 };
@@ -476,7 +453,6 @@ pub use thread::{
 pub use cache::{
     BufferPool,
     BufferPoolStats,
-    CACHE_LINE_SIZE as CACHE_CACHE_LINE_SIZE,
     CacheBuffer,
     // Cache operation types
     CacheError,
@@ -495,7 +471,6 @@ pub use cache::{
     LruPageCache,
     MAX_SHARDS,
     MaintenanceConfig,
-    MemoryConfig as CacheMemoryConfig,
     NodeIndex,
     PAGE_BITS,
     // Constants

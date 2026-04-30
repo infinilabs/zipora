@@ -100,7 +100,7 @@ pub const HUGE_PAGE_SIZE: usize = 2 * 1024 * 1024;
 pub const MAX_SHARDS: usize = 64;
 
 /// Cache line size for alignment optimizations
-pub const CACHE_LINE_SIZE: usize = 64;
+pub const CACHE_CACHE_LINE_SIZE: usize = 64;
 
 /// Page cache error types
 #[derive(Debug, Clone, PartialEq)]

@@ -2083,6 +2083,108 @@ impl<V: MapValue> DoubleArrayTrieMap<V> {
             dp_columns: vec![row0],
         }
     }
+
+    /// Create a cursor for manual traversal of the map.
+    pub fn cursor(&self) -> DoubleArrayTrieMapCursor<'_, V> {
+        DoubleArrayTrieMapCursor::new(self)
+    }
+
+    /// Iterator over a lexicographic range `[from, to)` in the map.
+    pub fn range<'a>(&'a self, from: &[u8], to: &[u8]) -> MapRangeIter<'a, V> {
+        let mut cursor = self.cursor();
+        let valid = cursor.seek_lower_bound(from);
+        MapRangeIter {
+            cursor,
+            upper_bound: to.to_vec(),
+            started: valid,
+        }
+    }
+}
+
+/// Cursor for traversing a `DoubleArrayTrieMap`.
+pub struct DoubleArrayTrieMapCursor<'a, V: MapValue> {
+    map: &'a DoubleArrayTrieMap<V>,
+    inner: DoubleArrayTrieCursor<'a>,
+}
+
+impl<'a, V: MapValue> DoubleArrayTrieMapCursor<'a, V> {
+    fn new(map: &'a DoubleArrayTrieMap<V>) -> Self {
+        Self {
+            map,
+            inner: DoubleArrayTrieCursor::new(&map.trie),
+        }
+    }
+
+    /// Current key bytes.
+    #[inline]
+    pub fn key(&self) -> &[u8] {
+        self.inner.key()
+    }
+
+    /// Current value.
+    #[inline]
+    pub fn value(&self) -> Option<V> {
+        if self.inner.is_valid() {
+            // The last state in the stack is the current terminal state
+            let (state, _) = self.inner.stack.last()?;
+            self.map.values.get(*state as usize).cloned().filter(|&v| v != V::EMPTY)
+        } else {
+            None
+        }
+    }
+
+    /// Whether the cursor is positioned on a valid key.
+    #[inline]
+    pub fn is_valid(&self) -> bool {
+        self.inner.is_valid()
+    }
+
+    /// Seek to the first key in the map.
+    pub fn seek_begin(&mut self) -> bool {
+        self.inner.seek_begin()
+    }
+
+    /// Seek to the last key in the map.
+    pub fn seek_end(&mut self) -> bool {
+        self.inner.seek_end()
+    }
+
+    /// Seek to the first key >= `target`.
+    pub fn seek_lower_bound(&mut self, target: &[u8]) -> bool {
+        self.inner.seek_lower_bound(target)
+    }
+
+    /// Advance to the next key.
+    pub fn next(&mut self) -> bool {
+        self.inner.next()
+    }
+}
+
+/// Iterator over a lexicographic range in a `DoubleArrayTrieMap`.
+pub struct MapRangeIter<'a, V: MapValue> {
+    cursor: DoubleArrayTrieMapCursor<'a, V>,
+    upper_bound: Vec<u8>,
+    started: bool,
+}
+
+impl<'a, V: MapValue> Iterator for MapRangeIter<'a, V> {
+    type Item = (Vec<u8>, V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if !self.started || !self.cursor.is_valid() {
+            return None;
+        }
+
+        let key = self.cursor.key();
+        if key >= self.upper_bound.as_slice() {
+            return None;
+        }
+
+        let result_key = key.to_vec();
+        let result_val = self.cursor.value().expect("Valid cursor must have a value");
+        self.started = self.cursor.next();
+        Some((result_key, result_val))
+    }
 }
 
 /// Stack frame for prefix iteration DFS.

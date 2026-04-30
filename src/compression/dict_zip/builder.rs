@@ -1037,11 +1037,11 @@ impl DictionaryBuilder {
                             compression_level: 1,
                             adaptive_sparse: false,
                         },
-                        storage_strategy: crate::fsa::StorageStrategy::Standard {
+                        storage_strategy: crate::fsa::TrieStorageStrategy::Standard {
                             initial_capacity: 8,
                             growth_factor: 1.1,
                         },
-                        compression_strategy: crate::fsa::CompressionStrategy::None,
+                        compression_strategy: crate::fsa::TrieCompressionStrategy::None,
                         rank_select_type: crate::fsa::RankSelectType::Simple,
                         enable_simd: false,
                         enable_concurrency: false,

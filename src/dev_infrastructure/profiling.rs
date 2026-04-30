@@ -5,11 +5,11 @@
 //! ProfilerReporter, etc.).
 //!
 //! The actual timing/benchmarking utilities live in `debug.rs` (ScopedTimer,
-//! HighPrecisionTimer, BenchmarkSuite, format_duration). This file previously
+//! DevHighPrecisionTimer, DevBenchmarkSuite, format_duration). This file previously
 //! duplicated that functionality with excessive abstraction layers.
 //!
 //! For profiling, use:
 //! - `debug::ScopedTimer` for RAII-based timing
-//! - `debug::HighPrecisionTimer` for manual timing
-//! - `debug::BenchmarkSuite` for running benchmarks
+//! - `debug::DevHighPrecisionTimer` for manual timing
+//! - `debug::DevBenchmarkSuite` for running benchmarks
 //! - `debug::format_duration` for human-readable durations

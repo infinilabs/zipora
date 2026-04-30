@@ -85,11 +85,11 @@ impl DfaCacheConfig {
                     free_list_management: false,
                     auto_shrink: true,
                 },
-                storage_strategy: crate::fsa::StorageStrategy::Standard {
+                storage_strategy: crate::fsa::TrieStorageStrategy::Standard {
                     initial_capacity: dict_size.min(256),
                     growth_factor: 1.2,
                 },
-                compression_strategy: crate::fsa::CompressionStrategy::None,
+                compression_strategy: crate::fsa::TrieCompressionStrategy::None,
                 rank_select_type: crate::fsa::RankSelectType::Simple,
                 enable_simd: false,
                 enable_concurrency: false,

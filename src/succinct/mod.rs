@@ -11,7 +11,7 @@ pub mod rank_select;
 pub use bit_vector::{BitVector, BitwiseOp};
 pub use elias_fano::{
     EliasFano, HybridPostingList, OptimalPartitionedEliasFano, PartitionedEliasFano,
-    PostingEncoding,
+    PostingEncoding, PostingList,
 };
 pub use rank_select::{
     AdaptiveMultiDimensional,

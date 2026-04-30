@@ -4,7 +4,6 @@
 //! including zero-copy file operations, automatic file growth, and performance benefits.
 
 use std::fs::File;
-use std::io::Write;
 use tempfile::NamedTempFile;
 #[cfg(feature = "mmap")]
 use zipora::{DataInput, DataOutput, MemoryMappedInput, MemoryMappedOutput};

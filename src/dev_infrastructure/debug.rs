@@ -13,13 +13,13 @@ use std::time::{Duration, Instant, SystemTime};
 
 /// High-precision timer for performance measurements
 #[derive(Debug, Clone)]
-pub struct HighPrecisionTimer {
+pub struct DevHighPrecisionTimer {
     name: String,
     start_time: Instant,
     start_system_time: SystemTime,
 }
 
-impl HighPrecisionTimer {
+impl DevHighPrecisionTimer {
     /// Create a new timer with a name
     pub fn named(name: impl Into<String>) -> Self {
         Self {
@@ -85,7 +85,7 @@ impl HighPrecisionTimer {
     }
 }
 
-impl Default for HighPrecisionTimer {
+impl Default for DevHighPrecisionTimer {
     fn default() -> Self {
         Self::new()
     }
@@ -110,7 +110,7 @@ pub fn format_duration(duration: Duration) -> String {
 
 /// Scoped timer that automatically prints elapsed time when dropped
 pub struct ScopedTimer {
-    timer: HighPrecisionTimer,
+    timer: DevHighPrecisionTimer,
     message: Option<String>,
 }
 
@@ -118,7 +118,7 @@ impl ScopedTimer {
     /// Create a new scoped timer with a name
     pub fn new(name: impl Into<String>) -> Self {
         Self {
-            timer: HighPrecisionTimer::named(name),
+            timer: DevHighPrecisionTimer::named(name),
             message: None,
         }
     }
@@ -126,13 +126,13 @@ impl ScopedTimer {
     /// Create a new scoped timer with a custom completion message
     pub fn with_message(name: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
-            timer: HighPrecisionTimer::named(name),
+            timer: DevHighPrecisionTimer::named(name),
             message: Some(message.into()),
         }
     }
 
     /// Get the underlying timer
-    pub fn timer(&self) -> &HighPrecisionTimer {
+    pub fn timer(&self) -> &DevHighPrecisionTimer {
         &self.timer
     }
 }
@@ -148,12 +148,12 @@ impl Drop for ScopedTimer {
 }
 
 /// Benchmark suite for performance testing
-pub struct BenchmarkSuite {
+pub struct DevBenchmarkSuite {
     name: String,
     benchmarks: Vec<BenchmarkResult>,
 }
 
-impl BenchmarkSuite {
+impl DevBenchmarkSuite {
     /// Create a new benchmark suite
     pub fn new(name: impl Into<String>) -> Self {
         Self {
@@ -167,7 +167,7 @@ impl BenchmarkSuite {
     where
         F: FnMut(),
     {
-        let _timer = HighPrecisionTimer::named(name);
+        let _timer = DevHighPrecisionTimer::named(name);
 
         // Warmup
         for _ in 0..std::cmp::min(iterations / 10, 100) {
@@ -304,7 +304,7 @@ impl MemoryDebugger {
     }
 
     /// Get current memory usage statistics
-    pub fn get_stats(&self) -> MemoryStats {
+    pub fn get_stats(&self) -> DevMemoryStats {
         let allocated = self.total_allocated.load(Ordering::SeqCst);
         let deallocated = self.total_deallocated.load(Ordering::SeqCst);
         let current_usage = allocated.saturating_sub(deallocated);
@@ -317,7 +317,7 @@ impl MemoryDebugger {
             0
         };
 
-        MemoryStats {
+        DevMemoryStats {
             total_allocated: allocated,
             total_deallocated: deallocated,
             current_usage,
@@ -360,7 +360,7 @@ impl Default for MemoryDebugger {
 
 /// Memory usage statistics
 #[derive(Debug, Clone)]
-pub struct MemoryStats {
+pub struct DevMemoryStats {
     pub total_allocated: u64,
     pub total_deallocated: u64,
     pub current_usage: u64,
@@ -559,7 +559,7 @@ mod tests {
     #[test]
     #[cfg(not(debug_assertions))]
     fn test_high_precision_timer() {
-        let timer = HighPrecisionTimer::named("test_timer");
+        let timer = DevHighPrecisionTimer::named("test_timer");
         thread::sleep(Duration::from_millis(10));
 
         let elapsed = timer.elapsed();
@@ -581,7 +581,7 @@ mod tests {
 
     #[test]
     fn test_benchmark_suite() {
-        let mut suite = BenchmarkSuite::new("test_suite");
+        let mut suite = DevBenchmarkSuite::new("test_suite");
 
         suite.add_benchmark("simple_op", 1000, || {
             // Simulate some work

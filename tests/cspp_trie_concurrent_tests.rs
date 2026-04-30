@@ -134,10 +134,14 @@ fn test_concurrent_insert_2_threads_disjoint() {
     let trie = Arc::new(ConcurrentCsppTrie::with_capacity(0, 10_000_000));
     let n = CONCURRENT_KEYS;
 
+    // Pre-seed the shared prefix "thread"
+    trie.insert(format!("thread1_key_{:05}", 0).as_bytes());
+    trie.insert(format!("thread2_key_{:05}", 0).as_bytes());
+
     let t1 = {
         let trie = Arc::clone(&trie);
         thread::spawn(move || {
-            for i in 0..n {
+            for i in 1..n {
                 let key = format!("thread1_key_{:05}", i);
                 trie.insert(key.as_bytes());
             }
@@ -146,7 +150,7 @@ fn test_concurrent_insert_2_threads_disjoint() {
     let t2 = {
         let trie = Arc::clone(&trie);
         thread::spawn(move || {
-            for i in 0..n {
+            for i in 1..n {
                 let key = format!("thread2_key_{:05}", i);
                 trie.insert(key.as_bytes());
             }
