@@ -7,7 +7,7 @@ Zipora provides **two production-grade hash map implementations** with different
 **Unified hash map** with strategy-based configuration for advanced features including cache locality optimizations, sophisticated collision resolution algorithms, and memory-efficient string arena management.
 
 ```rust
-use zipora::hash_map::{ZiporaHashMap, ZiporaHashMapConfig, HashStrategy, StorageStrategy};
+use zipora::hash_map::{ZiporaHashMap, ZiporaHashMapConfig, HashStrategy, HashStorageStrategy};
 
 // Default high-performance hash map - same API as before!
 let mut map = ZiporaHashMap::new();
@@ -39,7 +39,7 @@ let config = ZiporaHashMapConfig {
         variance_reduction: true,
         backward_shift: true,
     },
-    storage_strategy: StorageStrategy::CacheOptimized {
+    storage_strategy: HashStorageStrategy::CacheOptimized {
         cache_line_size: 64,
         numa_aware: true,
         huge_pages: false,
