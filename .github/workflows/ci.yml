@@ -31,3 +31,14 @@ jobs:
 
     - name: Build with LZ4 and FFI features
       run: cargo build --features lz4,ffi
+
+  build-avx512:
+    name: Build with AVX-512
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: dtolnay/rust-toolchain@stable
+    - name: Build with all features including avx512
+      run: cargo build --release --all-features
+    - name: Test (avx512 code compiles, runtime detection skips if HW unavailable)
+      run: cargo test --release --all-features --lib

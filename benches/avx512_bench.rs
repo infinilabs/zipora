@@ -458,6 +458,121 @@ fn bench_overall_performance(c: &mut Criterion) {
     group.finish();
 }
 
+use zipora::scoring::{Bm25BatchScorer, FieldnormEncoder};
+
+fn bench_bm25_avx512(c: &mut Criterion) {
+    let mut group = c.benchmark_group("BM25 Batch Scoring");
+
+    let avg_dl = 150.0;
+    let k1 = 1.2;
+    let b = 0.75;
+    let idf = 3.5;
+
+    let norm_table = FieldnormEncoder::build_norm_table(avg_dl, k1, b);
+    let scorer = Bm25BatchScorer::new(&norm_table, idf, k1);
+
+    for size in [128, 1024, 8192].iter() {
+        let fieldnorm_bytes: Vec<u8> = (0..*size).map(|i| (i % 256) as u8).collect();
+        let tfs: Vec<u16> = (0..*size).map(|i| (i % 10 + 1) as u16).collect();
+        let mut scores = vec![0.0f32; *size];
+
+        group.throughput(Throughput::Elements(*size as u64));
+
+        group.bench_with_input(BenchmarkId::new("SIMD (AVX2/AVX512)", size), size, |b, _size| {
+            b.iter(|| {
+                scorer.batch_score(&fieldnorm_bytes, &tfs, &mut scores);
+                black_box(&scores[0]);
+            })
+        });
+    }
+    group.finish();
+}
+
+use zipora::algorithms::simd_search::simd_gallop_to;
+
+fn bench_gallop_avx512(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Gallop Search");
+    
+    // Create an array with gaps: [0, 3, 6, 9, ...]
+    let data: Vec<u32> = (0..20000).map(|i| i * 3).collect();
+
+    for skip in [10, 100, 1000, 5000].iter() {
+        group.throughput(Throughput::Elements(*skip as u64));
+        group.bench_with_input(BenchmarkId::new("simd_gallop_to", skip), skip, |b, &skip| {
+            b.iter(|| {
+                let mut cursor = 0;
+                let target = skip * 3;
+                simd_gallop_to(&data, &mut cursor, target);
+                black_box(cursor);
+            })
+        });
+    }
+    group.finish();
+}
+
+use zipora::algorithms::simd_search::simd_block_filter;
+
+fn bench_block_filter_avx512(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Block Filter");
+    
+    // Create an array of 64 document IDs and scores
+    let doc_ids: Vec<u32> = (0..64).collect();
+    let scores: Vec<f32> = (0..64).map(|i| (i as f32) * 1.5).collect();
+
+    for theta in [10.0, 50.0, 90.0].iter() {
+        group.throughput(Throughput::Elements(64));
+        group.bench_with_input(BenchmarkId::new("simd_block_filter", theta), theta, |b, &theta| {
+            b.iter(|| {
+                let (mask, count) = simd_block_filter(&doc_ids, &scores, theta);
+                black_box((mask, count));
+            })
+        });
+    }
+    group.finish();
+}
+
+use zipora::algorithms::simd_set_intersect::sorted_intersect_adaptive;
+
+fn bench_intersect_avx512(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Set Intersection");
+    
+    // Create two sorted arrays with ~50% overlap
+    let a: Vec<u32> = (0..10000).map(|i| i * 2).collect();
+    let b: Vec<u32> = (0..10000).map(|i| i * 3).collect();
+    let mut out = Vec::with_capacity(10000);
+
+    group.throughput(Throughput::Elements(10000));
+    group.bench_function("simd_intersect_avx512", |bench| {
+        bench.iter(|| {
+            sorted_intersect_adaptive(&a, &b, &mut out);
+            black_box(out.len());
+        })
+    });
+    
+    group.finish();
+}
+
+use zipora::algorithms::simd_set_union::sorted_union_adaptive;
+
+fn bench_union_avx512(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Set Union");
+    
+    // Create two sorted arrays with ~50% overlap
+    let a: Vec<u32> = (0..10000).map(|i| i * 2).collect();
+    let b: Vec<u32> = (0..10000).map(|i| i * 3).collect();
+    let mut out = Vec::with_capacity(20000);
+
+    group.throughput(Throughput::Elements(10000));
+    group.bench_function("simd_union_avx512", |bench| {
+        bench.iter(|| {
+            sorted_union_adaptive(&a, &b, &mut out);
+            black_box(out.len());
+        })
+    });
+    
+    group.finish();
+}
+
 criterion_group!(
     avx512_benches,
     bench_rank_select_avx512,
@@ -465,7 +580,12 @@ criterion_group!(
     bench_radix_sort_avx512,
     bench_compression_avx512,
     bench_cpu_features,
-    bench_overall_performance
+    bench_overall_performance,
+    bench_bm25_avx512,
+    bench_gallop_avx512,
+    bench_block_filter_avx512,
+    bench_intersect_avx512,
+    bench_union_avx512
 );
 
 criterion_main!(avx512_benches);

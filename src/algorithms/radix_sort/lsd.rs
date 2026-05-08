@@ -11,7 +11,7 @@ use std::arch::x86_64::{
     _mm256_storeu_si256,
 };
 
-// AVX-512 intrinsics (nightly-only feature)
+// AVX-512 intrinsics (avx512 feature)
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 use std::arch::x86_64::{
     __m512i, _mm512_and_si512, _mm512_loadu_si512, _mm512_set1_epi32, _mm512_srlv_epi32,

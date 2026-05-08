@@ -218,7 +218,7 @@ pub struct HardwareOptimizations {
     pub enable_bmi1: bool,
     /// Enable SIMD instructions (SSE/AVX)
     pub enable_simd: bool,
-    /// Enable AVX-512 (requires nightly Rust)
+    /// Enable AVX-512 (stable since 1.89)
     pub enable_avx512: bool,
     /// Enable prefetching hints
     pub enable_prefetch: bool,

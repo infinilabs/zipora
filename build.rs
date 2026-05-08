@@ -71,7 +71,7 @@ fn detect_x86_features() {
         detect_x86_feature("bmi2", true);
         detect_x86_feature("lzcnt", true);
 
-        // AVX-512 features (nightly only)
+        // AVX-512 features (stable since Rust 1.89, MSRV 1.95)
         if cfg!(feature = "avx512") {
             detect_x86_feature("avx512f", false);
             detect_x86_feature("avx512vl", false);

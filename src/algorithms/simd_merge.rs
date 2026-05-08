@@ -17,6 +17,8 @@ use std::arch::x86_64::*;
 /// Configuration for SIMD operations
 #[derive(Debug, Clone)]
 pub struct SimdConfig {
+    /// Enable AVX-512 instructions when available
+    pub use_avx512: bool,
     /// Enable AVX2 instructions when available
     pub use_avx2: bool,
     /// Enable BMI2 instructions when available
@@ -30,6 +32,10 @@ pub struct SimdConfig {
 impl Default for SimdConfig {
     fn default() -> Self {
         Self {
+            #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+            use_avx512: is_x86_feature_detected!("avx512f"),
+            #[cfg(not(all(target_arch = "x86_64", feature = "avx512")))]
+            use_avx512: false,
             use_avx2: is_x86_feature_detected!("avx2"),
             use_bmi2: is_x86_feature_detected!("bmi2"),
             min_vector_size: 8,
@@ -62,6 +68,12 @@ impl SimdComparator {
             ));
         }
 
+        #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+        if self.config.use_avx512 && left.len() >= 16 {
+            // SAFETY: AVX-512F availability verified by self.config.use_avx512 (set from runtime detection)
+            return unsafe { self.compare_i32_simd_avx512(left, right) };
+        }
+
         if self.config.use_avx2 && left.len() >= self.config.min_vector_size {
             self.compare_i32_simd(left, right)
         } else {
@@ -71,6 +83,57 @@ impl SimdComparator {
                 .map(|(a, b)| a.cmp(b))
                 .collect())
         }
+    }
+
+    /// AVX-512 optimized comparison for i32 arrays
+    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+    #[target_feature(enable = "avx512f")]
+    unsafe fn compare_i32_simd_avx512(&self, left: &[i32], right: &[i32]) -> Result<Vec<Ordering>> {
+        let mut results = Vec::with_capacity(left.len());
+        let chunk_size = 16;
+        let mut i = 0;
+
+        while i + chunk_size <= left.len() {
+            // SAFETY: AVX-512F guaranteed by #[target_feature(enable = "avx512f")].
+            // Pointer arithmetic bounded by while condition: i + chunk_size <= left.len().
+            unsafe {
+                let left_ptr = left.as_ptr().add(i);
+                let right_ptr = right.as_ptr().add(i);
+
+                if self.config.prefetch_distance > 0
+                    && i + chunk_size * self.config.prefetch_distance < left.len()
+                {
+                    _mm_prefetch(left_ptr.add(chunk_size * self.config.prefetch_distance) as *const i8, _MM_HINT_T0);
+                    _mm_prefetch(right_ptr.add(chunk_size * self.config.prefetch_distance) as *const i8, _MM_HINT_T0);
+                }
+
+                let left_vec = _mm512_loadu_si512(left_ptr as *const __m512i);
+                let right_vec = _mm512_loadu_si512(right_ptr as *const __m512i);
+
+                let eq_mask = _mm512_cmpeq_epi32_mask(left_vec, right_vec);
+                let gt_mask = _mm512_cmpgt_epi32_mask(left_vec, right_vec);
+
+                for j in 0..chunk_size {
+                    let ordering = if (eq_mask >> j) & 1 != 0 {
+                        Ordering::Equal
+                    } else if (gt_mask >> j) & 1 != 0 {
+                        Ordering::Greater
+                    } else {
+                        Ordering::Less
+                    };
+                    results.push(ordering);
+                }
+
+                i += chunk_size;
+            }
+        }
+
+        while i < left.len() {
+            results.push(left[i].cmp(&right[i]));
+            i += 1;
+        }
+
+        Ok(results)
     }
 
     /// AVX2-optimized comparison for i32 arrays
@@ -164,6 +227,12 @@ impl SimdComparator {
             return None;
         }
 
+        #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+        if self.config.use_avx512 && values.len() >= 16 {
+            // SAFETY: AVX-512F availability verified by self.config.use_avx512
+            return unsafe { self.find_min_i32_simd_avx512(values) };
+        }
+
         if self.config.use_avx2 && values.len() >= self.config.min_vector_size {
             self.find_min_i32_simd(values)
         } else {
@@ -173,6 +242,56 @@ impl SimdComparator {
                 .min_by_key(|(_, val)| *val)
                 .map(|(idx, val)| (idx, *val))
         }
+    }
+
+    /// AVX-512 optimized minimum finding for i32 arrays.
+    /// Uses _mm512_min_epi32 tree reduction + cmpeq mask to find both value and index.
+    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+    #[target_feature(enable = "avx512f")]
+    unsafe fn find_min_i32_simd_avx512(&self, values: &[i32]) -> Option<(usize, i32)> {
+        if values.is_empty() {
+            return None;
+        }
+
+        let chunk_size = 16;
+        let mut global_min = i32::MAX;
+        let mut global_min_idx = 0;
+        let mut i = 0;
+
+        // SAFETY: AVX-512F guaranteed by #[target_feature(enable = "avx512f")].
+        // Pointer arithmetic bounded by while condition: i + chunk_size <= values.len().
+        let mut min_vec = _mm512_set1_epi32(i32::MAX);
+
+        while i + chunk_size <= values.len() {
+            unsafe {
+                let vec = _mm512_loadu_si512(values.as_ptr().add(i) as *const __m512i);
+                let new_min = _mm512_min_epi32(min_vec, vec);
+
+                if _mm512_cmpeq_epi32_mask(new_min, min_vec) != 0xFFFF {
+                    // min changed — find which lane has the new minimum
+                    let chunk_min = _mm512_reduce_min_epi32(vec);
+                    if chunk_min < global_min {
+                        global_min = chunk_min;
+                        let min_broadcast = _mm512_set1_epi32(chunk_min);
+                        let mask = _mm512_cmpeq_epi32_mask(vec, min_broadcast);
+                        global_min_idx = i + mask.trailing_zeros() as usize;
+                    }
+                    min_vec = new_min;
+                }
+
+                i += chunk_size;
+            }
+        }
+
+        while i < values.len() {
+            if values[i] < global_min {
+                global_min = values[i];
+                global_min_idx = i;
+            }
+            i += 1;
+        }
+
+        Some((global_min_idx, global_min))
     }
 
     /// AVX2-optimized minimum finding for i32 arrays
@@ -239,11 +358,49 @@ impl SimdComparator {
 
     /// Merge two sorted i32 arrays using SIMD optimizations
     pub fn merge_sorted_i32(&self, left: &[i32], right: &[i32]) -> Vec<i32> {
+        #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+        if self.config.use_avx512 && (left.len() + right.len()) >= 32 {
+            // SAFETY: AVX-512F availability verified by self.config.use_avx512
+            return unsafe { self.merge_sorted_i32_simd_avx512(left, right) };
+        }
+
         if self.config.use_avx2 && (left.len() + right.len()) >= self.config.min_vector_size * 2 {
             self.merge_sorted_i32_simd(left, right)
         } else {
             self.merge_sorted_i32_scalar(left, right)
         }
+    }
+
+    /// AVX-512 merge for sorted i32 arrays.
+    /// Core merge is scalar (full SIMD merge network is complex); tail copy uses AVX-512.
+    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+    #[target_feature(enable = "avx512f")]
+    unsafe fn merge_sorted_i32_simd_avx512(&self, left: &[i32], right: &[i32]) -> Vec<i32> {
+        let mut result = Vec::with_capacity(left.len() + right.len());
+        let mut left_idx = 0;
+        let mut right_idx = 0;
+
+        while left_idx < left.len() && right_idx < right.len() {
+            if left[left_idx] <= right[right_idx] {
+                result.push(left[left_idx]);
+                left_idx += 1;
+            } else {
+                result.push(right[right_idx]);
+                right_idx += 1;
+            }
+        }
+
+        // SAFETY: AVX-512F guaranteed by #[target_feature(enable = "avx512f")]
+        unsafe {
+            if left_idx < left.len() {
+                self.simd_copy_i32_avx512(&left[left_idx..], &mut result);
+            }
+            if right_idx < right.len() {
+                self.simd_copy_i32_avx512(&right[right_idx..], &mut result);
+            }
+        }
+
+        result
     }
 
     /// SIMD-optimized merge for sorted i32 arrays
@@ -284,6 +441,40 @@ impl SimdComparator {
         }
 
         result
+    }
+
+    /// AVX-512 optimized array copying.
+    ///
+    /// Invariant: `reserve(src.len())` must be called before `as_mut_ptr()`, and
+    /// no Vec reallocation may occur between `as_mut_ptr()` and `set_len()`.
+    /// The subsequent `push` calls for remainder elements are safe because
+    /// `reserve(src.len())` guarantees capacity for all elements.
+    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+    #[target_feature(enable = "avx512f")]
+    unsafe fn simd_copy_i32_avx512(&self, src: &[i32], dest: &mut Vec<i32>) {
+        let chunk_size = 16;
+        let mut i = 0;
+
+        dest.reserve(src.len());
+
+        // SAFETY: reserve() ensures capacity for all src elements.
+        // dest_ptr is obtained AFTER reserve, so no reallocation occurs during SIMD stores.
+        unsafe {
+            let dest_ptr = dest.as_mut_ptr().add(dest.len());
+
+            while i + chunk_size <= src.len() {
+                let vec = _mm512_loadu_si512(src.as_ptr().add(i) as *const __m512i);
+                _mm512_storeu_si512(dest_ptr.add(i) as *mut __m512i, vec);
+                i += chunk_size;
+            }
+
+            dest.set_len(dest.len() + i);
+        }
+
+        while i < src.len() {
+            dest.push(src[i]);
+            i += 1;
+        }
     }
 
     /// SIMD-optimized array copying

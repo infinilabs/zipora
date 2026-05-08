@@ -179,7 +179,7 @@ unsafe fn union_avx2(bit_data: &[&[u64]]) -> Vec<u64> {
 - **Minimum Dimensions**: 1
 - **Maximum Dimensions**: 32 (practical limit)
 - **AVX2 Optimization**: ≤ 4 dimensions
-- **AVX-512 Optimization**: ≤ 8 dimensions (requires nightly Rust)
+- **AVX-512 Optimization**: ≤ 8 dimensions (avx512 feature)
 
 All dimensions must have the same bit length.
 
@@ -291,7 +291,7 @@ Test coverage:
 
 ## Future Enhancements
 
-1. **AVX-512 Support**: 8-dimensional parallel operations (requires nightly Rust)
+1. **AVX-512 Support**: 8-dimensional parallel operations (avx512 feature)
 2. **k²-Trees**: Sparse 2D/3D matrix representations
 3. **Wavelet Matrices**: Full wavelet matrix implementation
 4. **Z-Order Curves**: Morton encoding for cache-optimal 2D/3D access

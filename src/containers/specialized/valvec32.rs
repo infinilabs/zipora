@@ -97,17 +97,6 @@ fn get_usable_size(_ptr: *mut u8, size: usize) -> usize {
     size
 }
 
-// Branch prediction hint macro for performance optimization
-// Uses __builtin_expect semantics via core::intrinsics on nightly,
-// or falls back to a no-op on stable (letting LLVM optimize based on code structure)
-#[cfg(feature = "nightly")]
-macro_rules! likely {
-    ($e:expr) => {
-        $e
-    };
-}
-
-#[cfg(not(feature = "nightly"))]
 macro_rules! likely {
     ($e:expr) => {
         $e

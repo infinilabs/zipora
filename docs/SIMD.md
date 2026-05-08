@@ -6,7 +6,7 @@ Zipora implements a 6-tier SIMD framework with runtime detection and adaptive se
 
 | Tier | Instruction Set | Description |
 |------|-----------------|-------------|
-| **Tier 5** | AVX-512 | 512-bit operations (nightly only) |
+| **Tier 5** | AVX-512 | 512-bit operations (avx512 feature) |
 | **Tier 4** | AVX2 | 256-bit operations (default) |
 | **Tier 3** | BMI2 | PDEP/PEXT bit manipulation |
 | **Tier 2** | POPCNT | Hardware population count |
@@ -169,13 +169,13 @@ let intersection = multi_rs.intersect_dimensions(0, 1).unwrap();
 let union = multi_rs.union_dimensions(&[0, 1, 2]).unwrap();
 ```
 
-## AVX-512 Support (Nightly)
+## AVX-512 Support
 
 ```rust
 #[cfg(feature = "avx512")]
 use zipora::simd::avx512::{Avx512Ops, Avx512MaskOps};
 
-// AVX-512 requires nightly Rust
+// AVX-512 requires the "avx512" feature
 #[cfg(feature = "avx512")]
 {
     // 512-bit operations

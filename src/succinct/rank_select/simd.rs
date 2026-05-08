@@ -6,7 +6,7 @@
 //! # Architecture
 //!
 //! The module implements a tiered approach to SIMD optimization:
-//! - **Tier 5**: AVX-512 with vectorized popcount (8×64-bit parallel, nightly only)
+//! - **Tier 5**: AVX-512 with vectorized popcount (8×64-bit parallel, avx512 feature)
 //! - **Tier 4**: AVX2 with parallel operations (4×64-bit parallel)
 //! - **Tier 3**: BMI2 with PDEP/PEXT for fast select
 //! - **Tier 2**: POPCNT for fast bit counting

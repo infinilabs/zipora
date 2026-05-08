@@ -10,7 +10,6 @@
 #![allow(redundant_semicolons)] // Style nit
 #![allow(clippy::needless_return)] // Style nit
 #![allow(clippy::incompatible_msrv)]
-// AVX-512 intrinsics require newer toolchain than 1.88.0
 // #![allow(unused_unsafe)] // Nested unsafe blocks from SIMD dispatch macros
 #![allow(unused_parens)] // Style nit
 

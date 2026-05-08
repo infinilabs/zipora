@@ -12,17 +12,13 @@ use std::mem::{MaybeUninit, align_of, size_of};
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-// Branch prediction hints for performance (stable fallback)
-// In stable Rust, these are identity functions but help document intent
 #[inline(always)]
 fn likely(b: bool) -> bool {
-    // Future: Can use std::intrinsics::likely when stable
     b
 }
 
 #[inline(always)]
 fn unlikely(b: bool) -> bool {
-    // Future: Can use std::intrinsics::unlikely when stable
     b
 }
 

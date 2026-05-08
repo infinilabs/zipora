@@ -4,7 +4,7 @@
 
 [![Build Status](https://github.com/infinilabs/zipora/workflows/CI/badge.svg)](https://github.com/infinilabs/zipora/actions)
 [![License](https://img.shields.io/badge/license-BDL--1.0-blue.svg)](LICENSE)
-[![Rust Version](https://img.shields.io/badge/rust-1.88+-orange.svg)](https://www.rust-lang.org)
+[![Rust Version](https://img.shields.io/badge/rust-1.95+-orange.svg)](https://www.rust-lang.org)
 
 高性能 Rust 数据结构与压缩算法库，提供内存安全保证。
 
@@ -26,13 +26,13 @@
 
 ```toml
 [dependencies]
-zipora = "3.1.6"
+zipora = "3.1.7"
 
 # 启用 C FFI 绑定
-zipora = { version = "3.1.6", features = ["ffi"] }
+zipora = { version = "3.1.7", features = ["ffi"] }
 
-# AVX-512（仅 nightly）
-zipora = { version = "3.1.6", features = ["avx512"] }
+# AVX-512
+zipora = { version = "3.1.7", features = ["avx512"] }
 ```
 
 ### 基本用法
@@ -124,8 +124,7 @@ assert_eq!(joined, "hello, world");
 | `lz4` | 是 | LZ4 压缩 |
 | `async` | 是 | 异步运行时（tokio），用于并发、流水线、实时压缩 |
 | `ffi` | 否 | C FFI 绑定 |
-| `avx512` | 否 | AVX-512（仅 nightly） |
-| `nightly` | 否 | Nightly 专属优化 |
+| `avx512` | 是 | AVX-512 优化 (自 1.89 起稳定) |
 
 ## 构建与测试
 

@@ -92,7 +92,7 @@ fn popcount_scalar(words: &[u64]) -> usize {
 }
 
 // ============================================================================
-// Tier 0: AVX-512 VPOPCNTDQ (nightly + avx512 feature)
+// Tier 0: AVX-512 VPOPCNTDQ (avx512 feature)
 // ============================================================================
 
 #[cfg(all(feature = "avx512", target_arch = "x86_64"))]
