@@ -80,8 +80,8 @@ impl<'a> Bm25BatchScorer<'a> {
     /// scores[i] = idf * (k1+1) * tfs[i] / (tfs[i] + norm_table[fieldnorm_bytes[i]])
     /// ```
     ///
-    /// Automatically dispatches to AVX2 SIMD path (8 scores/iteration) when available,
-    /// falling back to scalar.
+    /// Automatically dispatches to AVX-512 (16 scores/iteration), AVX2 (8 scores/iteration),
+    /// or scalar, based on runtime CPU feature detection.
     ///
     /// # Panics
     /// Panics if `fieldnorm_bytes.len() != tfs.len()` or `scores.len() < tfs.len()`.
@@ -90,10 +90,23 @@ impl<'a> Bm25BatchScorer<'a> {
         assert_eq!(fieldnorm_bytes.len(), n);
         assert!(scores.len() >= n);
 
+        #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+        {
+            if std::is_x86_feature_detected!("avx512f") {
+                // SAFETY: AVX-512F support verified by runtime feature check.
+                // All slice lengths validated by assertions. norm_table is [f32; 256],
+                // and fieldnorm_bytes values are u8 (0-255), so gather indices are in bounds.
+                unsafe {
+                    self.batch_score_avx512(fieldnorm_bytes, tfs, scores, n);
+                }
+                return;
+            }
+        }
+
         #[cfg(target_arch = "x86_64")]
         {
             if std::is_x86_feature_detected!("avx2") {
-                // SAFETY: AVX2 support verified by runtime feature check above.
+                // SAFETY: AVX2 support verified by runtime feature check.
                 // All slice lengths validated by assertions. norm_table is [f32; 256],
                 // and fieldnorm_bytes values are u8 (0-255), so gather indices are in bounds.
                 unsafe {
@@ -119,6 +132,58 @@ impl<'a> Bm25BatchScorer<'a> {
             let tf_f = tfs[i] as f32;
             let len_norm = self.norm_table[fieldnorm_bytes[i] as usize];
             scores[i] = self.idf_k1p1 * tf_f / (tf_f + len_norm);
+        }
+    }
+
+    /// AVX-512 batch scoring — 16 postings per iteration.
+    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+    #[target_feature(enable = "avx512f")]
+    unsafe fn batch_score_avx512(
+        &self,
+        fieldnorm_bytes: &[u8],
+        tfs: &[u16],
+        scores: &mut [f32],
+        n: usize,
+    ) {
+        use std::arch::x86_64::*;
+
+        let chunks = n / 16;
+        let remainder = n % 16;
+
+        // SAFETY: AVX-512F guaranteed by #[target_feature(enable = "avx512f")].
+        // Loop bounds ensure base + 16 <= n (chunks = n / 16).
+        // Gather indices are u8 values (0-255), table is [f32; 256], so always in bounds.
+        unsafe {
+            let idf_k1p1_vec = _mm512_set1_ps(self.idf_k1p1);
+            let table = self.norm_table;
+
+            for chunk in 0..chunks {
+                let base = chunk * 16;
+                let fn_slice = &fieldnorm_bytes[base..base + 16];
+
+                let fn_u8 = _mm_loadu_si128(fn_slice.as_ptr() as *const __m128i);
+                let fn_i32 = _mm512_cvtepu8_epi32(fn_u8);
+                let norms = _mm512_i32gather_ps::<4>(fn_i32, table.as_ptr());
+
+                let tfs_u16 = _mm256_loadu_si256(tfs.as_ptr().add(base) as *const __m256i);
+                let tfs_i32 = _mm512_cvtepu16_epi32(tfs_u16);
+                let tfs_f32 = _mm512_cvtepi32_ps(tfs_i32);
+
+                let denom = _mm512_add_ps(tfs_f32, norms);
+                let numer = _mm512_mul_ps(idf_k1p1_vec, tfs_f32);
+                let result = _mm512_div_ps(numer, denom);
+
+                _mm512_storeu_ps(scores.as_mut_ptr().add(base), result);
+            }
+        }
+
+        // Handle remainder with scalar
+        let rem_base = chunks * 16;
+        for i in 0..remainder {
+            let idx = rem_base + i;
+            let tf_f = tfs[idx] as f32;
+            let len_norm = self.norm_table[fieldnorm_bytes[idx] as usize];
+            scores[idx] = self.idf_k1p1 * tf_f / (tf_f + len_norm);
         }
     }
 

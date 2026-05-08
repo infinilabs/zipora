@@ -48,7 +48,7 @@
 //! - **BMI1**: Fast bit manipulation with LZCNT/TZCNT/POPCNT
 //! - **BZHI**: Zero high bits for efficient range operations
 //! - **AVX2**: Vectorized operations for bulk processing
-//! - **AVX-512**: Ultra-wide vectorization (8x parallel, nightly Rust)
+//! - **AVX-512**: Ultra-wide vectorization (8x parallel, avx512 feature)
 //! - **ARM NEON**: Cross-platform SIMD support for ARM64
 //!
 //! # Cache Locality Optimizations
@@ -85,7 +85,7 @@
 //! # Feature Flags
 //!
 //! - `simd`: Enable SIMD optimizations (default)
-//! - `avx512`: Enable AVX-512 optimizations (requires nightly Rust)
+//! - `avx512`: Enable AVX-512 optimizations (stable since 1.89)
 //!
 //! # Examples
 //!

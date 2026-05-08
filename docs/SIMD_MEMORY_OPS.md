@@ -19,7 +19,7 @@ The module implements Zipora's mandatory 6-Tier SIMD Framework for memory operat
 
 Following CLAUDE.md requirements, the module implements all tiers:
 
-**Tier 5: AVX-512** (64-byte operations, nightly)
+**Tier 5: AVX-512** (64-byte operations, avx512 feature)
 - `_mm512_load_si512` / `_mm512_store_si512` for aligned ops
 - `_mm512_loadu_si512` / `_mm512_storeu_si512` for unaligned ops
 - `_mm512_cmpneq_epu8_mask` for fast comparison
@@ -374,7 +374,7 @@ fast_copy(&buffer1, &mut buffer2)?;
 
 ### x86_64 Platform
 
-- **AVX-512**: Full support with `feature = "avx512"` (nightly)
+- **AVX-512**: Full support with `feature = "avx512"` (stable since Rust 1.89)
 - **AVX2**: Full support (stable, default)
 - **SSE2**: Full support (stable, fallback)
 - **Prefetch**: `_mm_prefetch` with all hint levels

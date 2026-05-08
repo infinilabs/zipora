@@ -1,8 +1,8 @@
 [package]
 name = "zipora"
-version = "3.1.6"
+version = "3.1.7"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 authors = ["InfiniLabs"]
 description = "High-performance Rust implementation providing advanced data structures and compression algorithms with memory safety guarantees. Features LRU page cache, sophisticated caching layer, fiber-based concurrency, real-time compression, secure memory pools, SIMD optimizations, and complete C FFI for migration from C++."
 license-file = "LICENSE"
@@ -15,13 +15,11 @@ name = "zipora"
 crate-type = ["rlib"]
 
 [features]
-default = ["simd", "mmap", "zstd", "serde", "lz4", "async"]
+default = ["simd", "mmap", "zstd", "serde", "lz4", "async", "avx512"]
 simd = []
-# AVX-512 support requires nightly Rust due to experimental intrinsics
-# Currently disabled by default for stable Rust compatibility
+# AVX-512 code paths (runtime-detected, safe on all x86_64 CPUs)
+# Disable to reduce binary size on platforms without AVX-512 hardware
 avx512 = ["simd"]
-# Nightly features for performance optimizations
-nightly = []
 mmap = ["dep:memmap2"]
 zstd = ["dep:zstd"]
 lz4 = ["dep:lz4_flex"]
@@ -135,3 +133,7 @@ exclude = [
     "benchmarks/*",
 ]
 
+
+[[bench]]
+name = "avx512_bench"
+harness = false

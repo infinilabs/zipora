@@ -27,6 +27,22 @@ pub fn has_avx2() -> bool {
     })
 }
 
+/// Check if AVX-512F is available, cached for performance.
+#[inline]
+pub fn has_avx512f() -> bool {
+    static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHE.get_or_init(|| {
+        #[cfg(target_arch = "x86_64")]
+        {
+            std::arch::is_x86_feature_detected!("avx512f")
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
+        }
+    })
+}
+
 /// Check if SSE2 is available, cached for performance.
 #[inline]
 pub fn has_sse2() -> bool {
@@ -105,6 +121,11 @@ pub fn simd_gallop_to(arr: &[u32], cursor: &mut usize, target: u32) -> bool {
     // SIMD scan phase within [lo, hi)
     #[cfg(target_arch = "x86_64")]
     {
+        #[cfg(feature = "avx512")]
+        if has_avx512f() && (hi - lo) >= 64 {
+            // SAFETY: AVX512F support verified by runtime check
+            return unsafe { gallop_scan_avx512(arr, lo, hi, target, cursor) };
+        }
         if has_avx2() {
             // SAFETY: AVX2 support verified by runtime check
             return unsafe { gallop_scan_avx2(arr, lo, hi, target, cursor) };
@@ -153,6 +174,11 @@ pub fn simd_block_filter(doc_ids: &[u32], scores: &[f32], theta: f32) -> (u64, u
 
     #[cfg(target_arch = "x86_64")]
     {
+        #[cfg(feature = "avx512")]
+        if has_avx512f() {
+            // SAFETY: AVX512F support verified by runtime check
+            return unsafe { block_filter_avx512(scores, theta) };
+        }
         if has_avx2() {
             // SAFETY: AVX2 support verified by runtime check
             return unsafe { block_filter_avx2(scores, theta) };
@@ -160,6 +186,82 @@ pub fn simd_block_filter(doc_ids: &[u32], scores: &[f32], theta: f32) -> (u64, u
     }
 
     block_filter_scalar(scores, theta)
+}
+
+// ============================================================================
+// AVX-512 implementation (x86_64)
+// ============================================================================
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[target_feature(enable = "avx512f")]
+unsafe fn gallop_scan_avx512(
+    arr: &[u32],
+    lo: usize,
+    hi: usize,
+    target: u32,
+    cursor: &mut usize,
+) -> bool {
+    use std::arch::x86_64::*;
+
+    let mut pos = lo;
+
+    unsafe {
+        let target_vec = _mm512_set1_epi32(target as i32);
+
+        // Process 16 u32s at a time
+        while pos + 16 <= hi {
+            let arr_vec = _mm512_loadu_si512(arr.as_ptr().add(pos) as *const __m512i);
+            // Returns a 16-bit mask where bit is 1 if arr >= target (unsigned comparison)
+            let mask = _mm512_cmpge_epu32_mask(arr_vec, target_vec);
+
+            if mask != 0 {
+                // Found at least one element >= target
+                let trailing_zeros = mask.trailing_zeros() as usize;
+                *cursor = pos + trailing_zeros;
+                return true;
+            }
+            pos += 16;
+        }
+    }
+
+    gallop_scan_scalar(arr, pos, hi, target, cursor)
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[target_feature(enable = "avx512f")]
+unsafe fn block_filter_avx512(scores: &[f32], theta: f32) -> (u64, usize) {
+    use std::arch::x86_64::*;
+
+    let mut result_mask = 0u64;
+    let mut result_count = 0;
+    let mut pos = 0;
+    let n = scores.len();
+
+    unsafe {
+        let theta_vec = _mm512_set1_ps(theta);
+
+        // Process 16 floats at a time
+        while pos + 16 <= n {
+            let scores_vec = _mm512_loadu_ps(scores.as_ptr().add(pos));
+            // _CMP_GT_OQ = 14: Greater-than (ordered, non-signaling)
+            let cmp_mask = _mm512_cmp_ps_mask::<14>(scores_vec, theta_vec);
+            
+            result_mask |= (cmp_mask as u64) << pos;
+            result_count += cmp_mask.count_ones() as usize;
+            
+            pos += 16;
+        }
+    }
+
+    // Process remaining elements sequentially
+    for i in pos..n {
+        if scores[i] > theta {
+            result_mask |= 1u64 << i;
+            result_count += 1;
+        }
+    }
+
+    (result_mask, result_count)
 }
 
 // ============================================================================

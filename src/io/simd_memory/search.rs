@@ -31,7 +31,7 @@ pub enum SearchTier {
     SSE42,
     /// AVX2 optimized (x86_64)
     AVX2,
-    /// AVX-512 optimized (x86_64, nightly)
+    /// AVX-512 optimized (x86_64, avx512 feature)
     AVX512,
     /// ARM NEON (ARM64)
     NEON,

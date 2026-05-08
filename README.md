@@ -4,7 +4,7 @@
 
 [![Build Status](https://github.com/infinilabs/zipora/workflows/CI/badge.svg)](https://github.com/infinilabs/zipora/actions)
 [![License](https://img.shields.io/badge/license-BDL--1.0-blue.svg)](LICENSE)
-[![Rust Version](https://img.shields.io/badge/rust-1.88+-orange.svg)](https://www.rust-lang.org)
+[![Rust Version](https://img.shields.io/badge/rust-1.95+-orange.svg)](https://www.rust-lang.org)
 
 High-performance Rust data structures and compression algorithms with memory safety guarantees.
 
@@ -26,13 +26,13 @@ High-performance Rust data structures and compression algorithms with memory saf
 
 ```toml
 [dependencies]
-zipora = "3.1.6"
+zipora = "3.1.7"
 
 # With C FFI bindings
-zipora = { version = "3.1.6", features = ["ffi"] }
+zipora = { version = "3.1.7", features = ["ffi"] }
 
-# AVX-512 (nightly only)
-zipora = { version = "3.1.6", features = ["avx512"] }
+# AVX-512
+zipora = { version = "3.1.7", features = ["avx512"] }
 ```
 
 ### Basic Usage
@@ -124,8 +124,7 @@ assert_eq!(joined, "hello, world");
 | `lz4` | Yes | LZ4 compression |
 | `async` | Yes | Async runtime (tokio) for concurrency, pipeline, real-time compression |
 | `ffi` | No | C FFI bindings |
-| `avx512` | No | AVX-512 (nightly only) |
-| `nightly` | No | Nightly-only optimizations |
+| `avx512` | Yes | AVX-512 optimizations (stable since 1.89) |
 
 ## Build & Test
 

@@ -13,30 +13,14 @@ use std::marker::PhantomData;
 /// Cache line size for alignment optimizations
 const CACHE_LINE_SIZE: usize = 64;
 
-/// Branch prediction hints (will use compiler intrinsics when available)
 #[inline(always)]
 fn likely(b: bool) -> bool {
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    {
-        // Use intrinsic if available, otherwise just return the value
-        std::intrinsics::likely(b)
-    }
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
-    {
-        b
-    }
+    b
 }
 
 #[inline(always)]
 fn unlikely(b: bool) -> bool {
-    #[cfg(all(target_arch = "x86_64", target_feature = "sse2"))]
-    {
-        std::intrinsics::unlikely(b)
-    }
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "sse2")))]
-    {
-        b
-    }
+    b
 }
 
 /// Ultra-fast circular queue with specialized optimizations

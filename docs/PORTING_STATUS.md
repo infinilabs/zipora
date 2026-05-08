@@ -1193,7 +1193,7 @@ This optimization represents a **complete success** in achieving significant per
 | **🚀 Hardware Detection** | **Static features** | **Runtime CPU feature detection with graceful fallbacks** | **100%** | **⚡ Adaptive optimization** | **100%** |
 | **🚀 Cross-Platform SIMD** | **x86_64 only** | **x86_64 + ARM64 + portable fallbacks unified API** | **100%** | **⚡ Optimal on all platforms** | **100%** |
 | **🚀 SIMD Guidelines** | **N/A** | **Standardized implementation patterns with guidelines** | **100%** | **⚡ Consistent performance** | **100%** |
-| **AVX-512 Support** | N/A | Tier 5 - 8x parallel operations (nightly Rust) | 100% | ⚡ 2-4x speedup | 100% |
+| **AVX-512 Support** | N/A | Tier 5 - 8x parallel operations (avx512 feature) | 100% | ⚡ 2-4x speedup | 100% |
 | **AVX2 Support** | Basic | Tier 4 - 4x parallel operations (stable Rust) | 100% | ⚡ 2-4x speedup | 100% |
 | **BMI2 Acceleration** | Limited | Tier 3 - PDEP/PEXT bit manipulation | 100% | ⚡ 5-10x bit ops | 100% |
 | **POPCNT Support** | Basic | Tier 2 - Hardware population count | 100% | ⚡ 2x faster | 100% |
@@ -1207,7 +1207,7 @@ This optimization represents a **complete success** in achieving significant per
 #### **🚀 SIMD Framework Architecture Features**
 
 **Hardware Acceleration Tiers:**
-- ✅ **Tier 5 (AVX-512)**: 8x parallel operations, nightly Rust required
+- ✅ **Tier 5 (AVX-512)**: 8x parallel operations, avx512 feature
 - ✅ **Tier 4 (AVX2)**: 4x parallel operations, stable Rust, default enabled  
 - ✅ **Tier 3 (BMI2)**: PDEP/PEXT bit manipulation, runtime detection
 - ✅ **Tier 2 (POPCNT)**: Hardware population count acceleration
@@ -1390,7 +1390,7 @@ Successfully implemented comprehensive rank/select variants based on research fr
 - ✅ **Adaptive Strategy Selection**: Automatic data density analysis with intelligent implementation selection
 
 **SIMD Optimization Tiers:**
-- **Tier 5**: AVX-512 with vectorized popcount (8x parallel, nightly Rust)
+- **Tier 5**: AVX-512 with vectorized popcount (8x parallel, avx512 feature)
 - **Tier 4**: AVX2 with parallel operations (4x parallel)  
 - **Tier 3**: BMI2 with PDEP/PEXT for ultra-fast select (5x faster)
 - **Tier 2**: POPCNT for hardware bit counting (2x faster)

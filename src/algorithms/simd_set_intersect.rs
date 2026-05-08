@@ -48,6 +48,10 @@ pub fn sorted_intersect_adaptive(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> us
     } else if small.len() >= SIMD_MIN_SIZE {
         #[cfg(target_arch = "x86_64")]
         {
+            #[cfg(feature = "avx512")]
+            if crate::algorithms::simd_search::has_avx512f() {
+                return unsafe { intersect_simd_avx512(small, large, out) };
+            }
             if std::arch::is_x86_feature_detected!("sse4.1") {
                 return unsafe { intersect_simd_sse41(small, large, out) };
             }
@@ -72,6 +76,10 @@ pub fn sorted_intersect_count(a: &[u32], b: &[u32]) -> usize {
     } else {
         #[cfg(target_arch = "x86_64")]
         {
+            #[cfg(feature = "avx512")]
+            if crate::algorithms::simd_search::has_avx512f() {
+                return unsafe { intersect_simd_count_avx512(small, large) };
+            }
             if std::arch::is_x86_feature_detected!("sse4.1") {
                 return unsafe { intersect_simd_count_sse41(small, large) };
             }
@@ -92,6 +100,10 @@ pub fn sorted_intersect_simd(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize 
 
     #[cfg(target_arch = "x86_64")]
     {
+        #[cfg(feature = "avx512")]
+        if crate::algorithms::simd_search::has_avx512f() {
+            return unsafe { intersect_simd_avx512(small, large, out) };
+        }
         if std::arch::is_x86_feature_detected!("sse4.1") {
             return unsafe { intersect_simd_sse41(small, large, out) };
         }
@@ -216,6 +228,140 @@ fn intersect_galloping_count(small: &[u32], large: &[u32]) -> usize {
         if lo < large.len() && large[lo] == val {
             count += 1;
             lo += 1;
+        }
+    }
+
+    count
+}
+
+// ============================================================================
+// AVX-512 SIMD implementation — 16x16 block comparison using broadcast
+// ============================================================================
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[target_feature(enable = "avx512f")]
+unsafe fn intersect_simd_avx512(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize {
+    use std::arch::x86_64::*;
+
+    let mut count = 0;
+    let mut i = 0usize;
+    let mut j = 0usize;
+
+    let a_len = a.len();
+    let b_len = b.len();
+
+    out.reserve(a_len.min(b_len));
+
+    while i + 16 <= a_len && j + 16 <= b_len {
+        // SAFETY: AVX-512F guaranteed by #[target_feature(enable = "avx512f")].
+        // While condition ensures i + 16 <= a_len and j + 16 <= b_len,
+        // so all get_unchecked(i + k) for k in 0..16 are in bounds.
+        // cmpeq_epi32_mask compares bit patterns — signed/unsigned irrelevant for equality.
+        unsafe {
+            let vb = _mm512_loadu_si512(b.as_ptr().add(j) as *const __m512i);
+
+            for k in 0..16 {
+                // SAFETY: i + k < i + 16 <= a_len
+                let va = *a.get_unchecked(i + k);
+                let va_vec = _mm512_set1_epi32(va as i32);
+                let mask = _mm512_cmpeq_epi32_mask(va_vec, vb);
+
+                if mask != 0 {
+                    out.push(va);
+                    count += 1;
+                }
+            }
+
+            // SAFETY: i + 15 < i + 16 <= a_len, j + 15 < j + 16 <= b_len
+            let a_max = *a.get_unchecked(i + 15);
+            let b_max = *b.get_unchecked(j + 15);
+
+            if a_max <= b_max {
+                i += 16;
+            }
+            if b_max <= a_max {
+                j += 16;
+            }
+        }
+    }
+
+    while i < a_len && j < b_len {
+        // SAFETY: i < a_len and j < b_len guaranteed by while condition
+        unsafe {
+            let va = *a.get_unchecked(i);
+            let vb = *b.get_unchecked(j);
+
+            if va == vb {
+                out.push(va);
+                count += 1;
+                i += 1;
+                j += 1;
+            } else if va < vb {
+                i += 1;
+            } else {
+                j += 1;
+            }
+        }
+    }
+
+    count
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[target_feature(enable = "avx512f")]
+unsafe fn intersect_simd_count_avx512(a: &[u32], b: &[u32]) -> usize {
+    use std::arch::x86_64::*;
+
+    let mut count = 0;
+    let mut i = 0usize;
+    let mut j = 0usize;
+
+    let a_len = a.len();
+    let b_len = b.len();
+
+    while i + 16 <= a_len && j + 16 <= b_len {
+        // SAFETY: same bounds reasoning as intersect_simd_avx512 above
+        unsafe {
+            let vb = _mm512_loadu_si512(b.as_ptr().add(j) as *const __m512i);
+
+            let mut block_mask_count = 0;
+            for k in 0..16 {
+                // SAFETY: i + k < i + 16 <= a_len
+                let va = *a.get_unchecked(i + k);
+                let va_vec = _mm512_set1_epi32(va as i32);
+                let mask = _mm512_cmpeq_epi32_mask(va_vec, vb);
+                block_mask_count += mask.count_ones();
+            }
+            count += block_mask_count as usize;
+
+            // SAFETY: i + 15 < i + 16 <= a_len, j + 15 < j + 16 <= b_len
+            let a_max = *a.get_unchecked(i + 15);
+            let b_max = *b.get_unchecked(j + 15);
+
+            if a_max <= b_max {
+                i += 16;
+            }
+            if b_max <= a_max {
+                j += 16;
+            }
+        }
+    }
+
+    while i < a_len && j < b_len {
+        // SAFETY: i < a_len and j < b_len guaranteed by while condition
+        unsafe {
+            let va = *a.get_unchecked(i);
+            let vb = *b.get_unchecked(j);
+
+            if va == vb {
+                count += 1;
+                i += 1;
+                j += 1;
+            } else if va < vb {
+                i += 1;
+            } else {
+                j += 1;
+            }
         }
     }
 

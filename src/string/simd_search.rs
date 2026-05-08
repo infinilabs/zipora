@@ -44,7 +44,7 @@ pub enum SearchTier {
     Sse42,
     /// AVX2 with enhanced vectorization
     Avx2,
-    /// AVX-512 implementation (nightly only)
+    /// AVX-512 implementation (avx512 feature)
     #[cfg(feature = "avx512")]
     Avx512,
 }
