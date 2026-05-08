@@ -53,6 +53,7 @@ pub fn sorted_intersect_adaptive(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> us
                 return unsafe { intersect_simd_avx512(small, large, out) };
             }
             if std::arch::is_x86_feature_detected!("sse4.1") {
+                // SAFETY: SSE4.1 support verified by is_x86_feature_detected! runtime check
                 return unsafe { intersect_simd_sse41(small, large, out) };
             }
         }
@@ -81,6 +82,7 @@ pub fn sorted_intersect_count(a: &[u32], b: &[u32]) -> usize {
                 return unsafe { intersect_simd_count_avx512(small, large) };
             }
             if std::arch::is_x86_feature_detected!("sse4.1") {
+                // SAFETY: SSE4.1 support verified by is_x86_feature_detected! runtime check
                 return unsafe { intersect_simd_count_sse41(small, large) };
             }
         }
@@ -105,6 +107,7 @@ pub fn sorted_intersect_simd(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize 
             return unsafe { intersect_simd_avx512(small, large, out) };
         }
         if std::arch::is_x86_feature_detected!("sse4.1") {
+            // SAFETY: SSE4.1 support verified by is_x86_feature_detected! runtime check
             return unsafe { intersect_simd_sse41(small, large, out) };
         }
     }
@@ -133,6 +136,7 @@ fn intersect_scalar_merge(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize {
     let mut count = 0;
 
     while i < a.len() && j < b.len() {
+        // SAFETY: loop condition ensures i < a.len() and j < b.len()
         let va = unsafe { *a.get_unchecked(i) };
         let vb = unsafe { *b.get_unchecked(j) };
 
@@ -158,6 +162,7 @@ fn intersect_scalar_merge_count(a: &[u32], b: &[u32]) -> usize {
     let mut count = 0;
 
     while i < a.len() && j < b.len() {
+        // SAFETY: loop condition ensures i < a.len() and j < b.len()
         let va = unsafe { *a.get_unchecked(i) };
         let vb = unsafe { *b.get_unchecked(j) };
 
@@ -257,6 +262,7 @@ unsafe fn intersect_simd_avx512(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usi
         // While condition ensures i + 16 <= a_len and j + 16 <= b_len,
         // so all get_unchecked(i + k) for k in 0..16 are in bounds.
         // cmpeq_epi32_mask compares bit patterns — signed/unsigned irrelevant for equality.
+        // SAFETY: AVX-512F guaranteed by #[target_feature(enable = "avx512f")], j + 16 <= b_len by while condition
         unsafe {
             let vb = _mm512_loadu_si512(b.as_ptr().add(j) as *const __m512i);
 
@@ -320,7 +326,7 @@ unsafe fn intersect_simd_count_avx512(a: &[u32], b: &[u32]) -> usize {
     let b_len = b.len();
 
     while i + 16 <= a_len && j + 16 <= b_len {
-        // SAFETY: same bounds reasoning as intersect_simd_avx512 above
+        // SAFETY: AVX-512F guaranteed by #[target_feature(enable = "avx512f")], loop condition ensures bounds
         unsafe {
             let vb = _mm512_loadu_si512(b.as_ptr().add(j) as *const __m512i);
 
@@ -428,6 +434,7 @@ unsafe fn intersect_simd_sse41(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usiz
 
     // Scalar tail
     while i < a_len && j < b_len {
+        // SAFETY: loop condition ensures i < a_len and j < b_len
         unsafe {
             let va = *a.get_unchecked(i);
             let vb = *b.get_unchecked(j);
@@ -462,6 +469,7 @@ unsafe fn intersect_simd_count_sse41(a: &[u32], b: &[u32]) -> usize {
     let b_len = b.len();
 
     while i + 4 <= a_len && j + 4 <= b_len {
+        // SAFETY: SSE4.1 guaranteed by #[target_feature(enable = "sse4.1")], loop condition ensures bounds
         unsafe {
             let va = _mm_loadu_si128(a.as_ptr().add(i) as *const __m128i);
             let vb = _mm_loadu_si128(b.as_ptr().add(j) as *const __m128i);
@@ -491,6 +499,7 @@ unsafe fn intersect_simd_count_sse41(a: &[u32], b: &[u32]) -> usize {
     }
 
     while i < a_len && j < b_len {
+        // SAFETY: loop condition ensures i < a_len and j < b_len
         unsafe {
             let va = *a.get_unchecked(i);
             let vb = *b.get_unchecked(j);

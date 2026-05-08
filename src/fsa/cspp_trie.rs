@@ -107,21 +107,25 @@ impl<'a> NodeView<'a> {
 
     #[inline(always)]
     pub fn meta(&self) -> MetaInfo {
+        // SAFETY: curr validated by constructor debug_assert, all NodeView methods maintain mempool bounds invariant
         unsafe { self.nodes.get_unchecked(self.curr as usize).meta }
     }
 
     #[inline(always)]
     pub fn big(&self) -> BigCount {
+        // SAFETY: curr validated by constructor, mempool indices guaranteed valid by trie invariants
         unsafe { self.nodes.get_unchecked(self.curr as usize).big }
     }
 
     #[inline(always)]
     pub fn child(&self, offset: usize) -> u32 {
+        // SAFETY: offset bounded by cnt_type layout, curr+offset within mempool bounds verified by caller
         unsafe { self.nodes.get_unchecked(self.curr as usize + offset).child }
     }
 
     #[inline(always)]
     pub fn bytes(&self, offset: usize) -> [u8; 4] {
+        // SAFETY: offset bounded by cnt_type layout, curr+offset within mempool bounds verified by caller
         unsafe { self.nodes.get_unchecked(self.curr as usize + offset).bytes }
     }
 
@@ -257,9 +261,8 @@ impl<'a> NodeView<'a> {
             }
             7 => {
                 let n_children = self.n_children();
-                // SAFETY: Labels for cnt_type 7 start at slot 1 (byte 4 from node start),
-                // spanning 16 bytes across slots 1-4. C++ reference: p[1].bytes
                 let label_slice = unsafe {
+                    // SAFETY: cnt_type 7 labels at slots 1-4 (16 bytes), curr+1..curr+5 within mempool bounds
                     let ptr = self.nodes.as_ptr().add(self.curr as usize + 1) as *const u8;
                     std::slice::from_raw_parts(ptr, 16)
                 };
@@ -275,17 +278,21 @@ impl<'a> NodeView<'a> {
             }
             8 => {
                 let bitmap_slice = unsafe {
+                    // SAFETY: cnt_type 8 bitmap at slots 2-9 (32 bytes), curr+2..curr+10 within mempool bounds
                     let ptr = self.nodes.as_ptr().add(self.curr as usize + 2) as *const u8;
                     std::slice::from_raw_parts(ptr, 32)
                 };
                 let byte_idx = (ch / 8) as usize;
                 let bit_idx = ch % 8;
                 if (bitmap_slice[byte_idx] & (1 << bit_idx)) != 0 {
+                    // SAFETY: cnt_type 8 rank prefix at slot 1, curr+1 within mempool bounds
                     let data_ptr =
                         unsafe { self.nodes.as_ptr().add(self.curr as usize + 1) as *const u8 };
                     let i = (ch / 64) as usize;
+                    // SAFETY: i < 4, data_ptr+4+i*8 points within rank array (4 u64s = 32 bytes)
                     let w =
                         unsafe { std::ptr::read_unaligned(data_ptr.add(4 + i * 8) as *const u64) };
+                    // SAFETY: i < 4, data_ptr+i points to rank prefix byte
                     let b = unsafe { *data_ptr.add(i) } as usize;
                     let mask = (1u64 << (ch % 64)) - 1;
                     let idx = b + (w & mask).count_ones() as usize;
@@ -307,6 +314,7 @@ impl<'a> NodeView<'a> {
         let skip = self.skip_slots();
         let n_children = self.n_children();
         let offset = skip + n_children;
+        // SAFETY: zpath at byte offset (curr+offset)*4, length zlen, allocated during node creation
         unsafe {
             let ptr = self.nodes.as_ptr().add(self.curr as usize + offset) as *const u8;
             std::slice::from_raw_parts(ptr, zlen)
@@ -365,8 +373,8 @@ impl<'a> NodeView<'a> {
             }
             7 => {
                 let n_children = self.n_children();
-                // SAFETY: Labels at slots 1-4 (16 bytes). C++ reference: p[1].bytes
                 let label_slice = unsafe {
+                    // SAFETY: cnt_type 7 labels at slots 1-4 (16 bytes), curr+1..curr+5 within mempool bounds
                     let ptr = self.nodes.as_ptr().add(self.curr as usize + 1) as *const u8;
                     std::slice::from_raw_parts(ptr, 16)
                 };
@@ -375,6 +383,7 @@ impl<'a> NodeView<'a> {
                 }
             }
             8 => {
+                // SAFETY: cnt_type 8 bitmap at slots 2-9 (32 bytes), curr+2..curr+10 within mempool bounds
                 let bitmap_slice = unsafe {
                     let ptr = self.nodes.as_ptr().add(self.curr as usize + 2) as *const u8;
                     std::slice::from_raw_parts(ptr, 32)
@@ -458,10 +467,9 @@ impl CsppTrie {
             c_label: [0, 0],
         };
         // Setup big.n_children
+        // SAFETY: root slot 0 initialized, write u16 at bytes 2-3 (n_children field of BigCount union variant)
         unsafe {
             let meta_ptr = &mut self.mempool[0].meta as *mut MetaInfo as *mut u8;
-            // n_children occupies bytes 2 and 3 of the 4-byte node.
-            // We must write it as u16 without overwriting the MetaInfo bytes 0 and 1.
             std::ptr::write_unaligned(meta_ptr.add(2) as *mut u16, 256);
         }
         // Setup real_cnt (0 children initially)
@@ -490,6 +498,7 @@ impl CsppTrie {
     #[inline]
     pub fn get_value<T: Copy>(&self, valpos: usize) -> T {
         debug_assert!(valpos + std::mem::size_of::<T>() <= self.mempool.len() * 4);
+        // SAFETY: valpos validated by debug_assert, T is Copy, pointer derived from valid mempool
         unsafe {
             let ptr = self.mempool.as_ptr() as *const u8;
             std::ptr::read_unaligned(ptr.add(valpos) as *const T)
@@ -499,6 +508,7 @@ impl CsppTrie {
     #[inline]
     pub fn set_value<T: Copy>(&mut self, valpos: usize, val: T) {
         debug_assert!(valpos + std::mem::size_of::<T>() <= self.mempool.len() * 4);
+        // SAFETY: valpos validated by debug_assert, T is Copy, pointer derived from valid mempool
         unsafe {
             let ptr = self.mempool.as_mut_ptr() as *mut u8;
             std::ptr::write_unaligned(ptr.add(valpos) as *mut T, val);
@@ -564,7 +574,7 @@ impl CsppTrie {
             let bin_idx = slots - 1;
             let head = self.fast_bins[bin_idx];
             if head != FREE_LIST_NIL {
-                // Pop from intrusive linked list
+                // SAFETY: head from fast_bins, validated as allocated slot during free_node
                 let next = unsafe { self.mempool[head as usize].child };
                 self.fast_bins[bin_idx] = next;
                 self.frag_size -= slots * ALIGN_SIZE;
@@ -611,6 +621,7 @@ impl CsppTrie {
         if slots <= FREE_LIST_MAX_SLOTS {
             // Push to size-bucketed free list (intrusive: store next pointer in first slot)
             let bin_idx = slots - 1;
+            // SAFETY: slot validated as allocated mempool index by caller (from alloc_node or realloc_node)
             unsafe {
                 (*self.mempool.as_mut_ptr().add(slot as usize)).child = self.fast_bins[bin_idx];
             }
@@ -656,6 +667,7 @@ impl CsppTrie {
         // Allocate new, copy old data
         let new_slot = self.alloc_node(new_size);
         let copy_slots = old_slots.min(new_slots);
+        // SAFETY: old_slot and new_slot from alloc_node, copy_slots ≤ min(old_slots, new_slots), no overlap
         unsafe {
             let src = self.mempool.as_ptr().add(old_slot as usize);
             let dst = self.mempool.as_mut_ptr().add(new_slot as usize);
@@ -673,6 +685,7 @@ impl CsppTrie {
             let mut head = self.fast_bins[bin_idx];
             while head != FREE_LIST_NIL {
                 count += 1;
+                // SAFETY: head validated as free list node, populated during free_node
                 head = unsafe { self.mempool[head as usize].child };
             }
             fastbin.push(count);
@@ -717,6 +730,7 @@ impl CsppTrie {
         while remaining.len() > MAX_ZPATH {
             let link_size = ALIGN_SIZE * 2 + MAX_ZPATH; // meta(4) + child(4) + zpath(254)
             let node = self.alloc_node(link_size);
+            // SAFETY: node from alloc_node is uninitialized, writing valid cnt_type=1 layout
             unsafe {
                 let p = self.mempool.as_mut_ptr().add(node as usize);
                 (*p).meta = MetaInfo {
@@ -725,7 +739,6 @@ impl CsppTrie {
                     c_label: [remaining[MAX_ZPATH], 0],
                 };
                 (*p.add(1)).child = NIL_STATE; // placeholder, filled by next iteration
-                // SAFETY: zpath starts at slot 2 (skip=1, n_children=1 → offset = 2 slots)
                 let zpath_dst = p.add(2) as *mut u8;
                 std::ptr::copy_nonoverlapping(remaining.as_ptr(), zpath_dst, MAX_ZPATH);
                 // Pad 254 → 256 (2 bytes)
@@ -736,6 +749,7 @@ impl CsppTrie {
                 head = node;
             }
             if prev_child_slot != NIL_STATE {
+                // SAFETY: prev_child_slot is node+1 from previous iteration, validated mempool index
                 unsafe {
                     (*self.mempool.as_mut_ptr().add(prev_child_slot as usize)).child = node;
                 }
@@ -749,6 +763,7 @@ impl CsppTrie {
         let leaf_size = ALIGN_SIZE + zpath_padded + self.valsize;
         let node = self.alloc_node(leaf_size);
         let valpos;
+        // SAFETY: node from alloc_node is uninitialized, writing valid cnt_type=0 is_final layout
         unsafe {
             let p = self.mempool.as_mut_ptr().add(node as usize);
             (*p).meta = MetaInfo {
@@ -756,7 +771,6 @@ impl CsppTrie {
                 n_zpath_len: remaining.len() as u8,
                 c_label: [0, 0],
             };
-            // SAFETY: zpath at byte offset 4 (skip=1, n_children=0)
             let zpath_dst = (p as *mut u8).add(ALIGN_SIZE);
             std::ptr::copy_nonoverlapping(remaining.as_ptr(), zpath_dst, remaining.len());
             for i in remaining.len()..zpath_padded {
@@ -768,6 +782,7 @@ impl CsppTrie {
             head = node;
         }
         if prev_child_slot != NIL_STATE {
+            // SAFETY: prev_child_slot is node+1 from previous iteration, validated mempool index
             unsafe {
                 (*self.mempool.as_mut_ptr().add(prev_child_slot as usize)).child = node;
             }
@@ -788,6 +803,7 @@ impl CsppTrie {
     ) -> u32 {
         let node_size = (10 + n_children) * ALIGN_SIZE + trailing_len;
         let node = self.alloc_node(node_size);
+        // SAFETY: node from alloc_node is uninitialized, writing valid cnt_type=8 bitmap layout
         unsafe {
             let p = self.mempool.as_mut_ptr().add(node as usize);
             // Meta: cnt_type=8
@@ -830,13 +846,16 @@ impl CsppTrie {
     /// Add a child to an existing cnt_type 8 (bitmap) node.
     fn add_state_move_bitmap(&mut self, curr: u32, ch: u8, suffix_node: u32) -> u32 {
         // Phase 1: Extract all data from old node
+        // SAFETY: curr validated as existing node index by caller
         let meta = unsafe { self.mempool[curr as usize].meta };
         let zpath_len = meta.n_zpath_len as usize;
         let is_final = meta.flags & 0x10 != 0;
+        // SAFETY: cnt_type=8 stores n_children in BigCount union variant at slot 0
         let old_n = unsafe { self.mempool[curr as usize].big }.n_children as usize;
 
         let mut bitmap = [0u8; 32];
         let mut rank_prefix = [0u8; 4];
+        // SAFETY: cnt_type=8 bitmap at slots 2-9 (32 bytes), rank at slot 1 (4 bytes)
         unsafe {
             let bmp_src = self.mempool.as_ptr().add(curr as usize + 2) as *const u8;
             std::ptr::copy_nonoverlapping(bmp_src, bitmap.as_mut_ptr(), 32);
@@ -845,6 +864,7 @@ impl CsppTrie {
         }
         let mut old_children = [0u32; 257];
         for i in 0..old_n {
+            // SAFETY: cnt_type=8 children at slots 10+, i < old_n ≤ 256
             old_children[i] = unsafe { self.mempool[curr as usize + 10 + i].child };
         }
         let zpath_padded = (zpath_len + 3) & !3;
@@ -852,6 +872,7 @@ impl CsppTrie {
         let mut trailing = [0u8; 512];
         if trailing_len > 0 {
             let off = (10 + old_n) * ALIGN_SIZE;
+            // SAFETY: trailing data allocated at (10+n_children)*4 byte offset, trailing_len ≤ 512
             unsafe {
                 let src = (self.mempool.as_ptr().add(curr as usize) as *const u8).add(off);
                 std::ptr::copy_nonoverlapping(src, trailing.as_mut_ptr(), trailing_len);
@@ -861,6 +882,7 @@ impl CsppTrie {
         // Phase 2: Find ch's insertion rank, update bitmap
         let ch_rank = {
             let q = (ch / 64) as usize;
+            // SAFETY: q < 4, bitmap is [u8; 32], reading u64 at q*8 is aligned within bounds
             let w = unsafe { std::ptr::read_unaligned(bitmap.as_ptr().add(q * 8) as *const u64) };
             let mask = (1u64 << (ch % 64)) - 1;
             rank_prefix[q] as usize + (w & mask).count_ones() as usize
@@ -870,6 +892,7 @@ impl CsppTrie {
         let mut cumulative = 0u32;
         for q in 0..4 {
             rank_prefix[q] = cumulative as u8;
+            // SAFETY: q < 4, bitmap is [u8; 32], reading u64 at q*8 is aligned within bounds
             let w = unsafe { std::ptr::read_unaligned(bitmap.as_ptr().add(q * 8) as *const u64) };
             cumulative += w.count_ones();
         }
@@ -883,6 +906,7 @@ impl CsppTrie {
         // Phase 3: Build new node
         let node_size = (10 + new_n) * ALIGN_SIZE + trailing_len;
         let node = self.alloc_node(node_size);
+        // SAFETY: node from alloc_node is uninitialized, writing valid cnt_type=8 bitmap layout with new_n children
         unsafe {
             let p = self.mempool.as_mut_ptr().add(node as usize);
             (*p).meta = MetaInfo {
@@ -910,6 +934,7 @@ impl CsppTrie {
     /// Returns the slot of the new node (which replaces curr).
     fn add_state_move(&mut self, curr: u32, ch: u8, suffix_node: u32) -> u32 {
         // Phase 1: Extract ALL data from old node into locals
+        // SAFETY: curr validated as existing node index by caller
         let meta = unsafe { self.mempool[curr as usize].meta };
         let cnt_type = meta.flags & 0x0F;
 
@@ -923,6 +948,7 @@ impl CsppTrie {
         let old_n: usize = if cnt_type <= 6 {
             cnt_type as usize
         } else {
+            // SAFETY: cnt_type=7 stores n_children in BigCount union variant at slot 0
             unsafe { self.mempool[curr as usize].big }.n_children as usize
         };
 
@@ -939,23 +965,28 @@ impl CsppTrie {
             3..=6 => {
                 labels[0] = meta.c_label[0];
                 labels[1] = meta.c_label[1];
+                // SAFETY: cnt_type 3-6 extra labels at slot 1 bytes 0-3
                 let pad = unsafe { self.mempool[curr as usize + 1].bytes };
                 for i in 2..old_n {
                     labels[i] = pad[i - 2];
                 }
             }
-            7 => unsafe {
-                let src = self.mempool.as_ptr().add(curr as usize + 1) as *const u8;
-                for i in 0..old_n {
-                    labels[i] = *src.add(i);
+            7 => {
+                // SAFETY: cnt_type 7 labels at slots 1-4 (16 bytes), old_n ≤ 16
+                unsafe {
+                    let src = self.mempool.as_ptr().add(curr as usize + 1) as *const u8;
+                    for i in 0..old_n {
+                        labels[i] = *src.add(i);
+                    }
                 }
-            },
+            }
             _ => unreachable!(),
         }
 
         // Extract children
         let mut children = [0u32; 17];
         for i in 0..old_n {
+            // SAFETY: children at old_skip+i, i < old_n ≤ 16
             children[i] = unsafe { self.mempool[curr as usize + old_skip + i].child };
         }
 
@@ -965,6 +996,7 @@ impl CsppTrie {
         let mut trailing = [0u8; 512];
         if trailing_len > 0 {
             let trailing_start = (old_skip + old_n) * ALIGN_SIZE;
+            // SAFETY: trailing data allocated at (old_skip+old_n)*4 byte offset, trailing_len ≤ 512
             unsafe {
                 let src =
                     (self.mempool.as_ptr().add(curr as usize) as *const u8).add(trailing_start);
@@ -1007,6 +1039,7 @@ impl CsppTrie {
         let new_size = (new_skip + new_n) * ALIGN_SIZE + trailing_len;
         let node = self.alloc_node(new_size);
 
+        // SAFETY: node from alloc_node is uninitialized, writing valid layout for new_cnt_type
         unsafe {
             let p = self.mempool.as_mut_ptr().add(node as usize);
             let new_flags = (meta.flags & !0x0F) | new_cnt_type;
@@ -1092,6 +1125,7 @@ impl CsppTrie {
 
         // Allocate suffix node (copy of old node with shortened zpath)
         let suffix_node = self.alloc_node(suffix_size);
+        // SAFETY: suffix_node from alloc_node, copying old node structure with modified zpath
         unsafe {
             let base = self.mempool.as_mut_ptr();
             let src = base.add(curr as usize) as *const u8;
@@ -1124,6 +1158,7 @@ impl CsppTrie {
         let prefix_zpath_padded = (zidx + 3) & !3;
         let parent_size = 3 * ALIGN_SIZE + prefix_zpath_padded; // meta + child0 + child1 + zpath
         let parent = self.alloc_node(parent_size);
+        // SAFETY: parent from alloc_node is uninitialized, writing valid cnt_type=2 layout
         unsafe {
             let base = self.mempool.as_mut_ptr();
             let p = base.add(parent as usize);
@@ -1173,6 +1208,7 @@ impl CsppTrie {
 
         // Allocate suffix (same structure as old node, shortened zpath)
         let suffix_node = self.alloc_node(suffix_size);
+        // SAFETY: suffix_node from alloc_node, copying old node structure with modified zpath
         unsafe {
             let base = self.mempool.as_mut_ptr();
             let src = base.add(curr as usize) as *const u8;
@@ -1202,6 +1238,7 @@ impl CsppTrie {
         let prefix_size = 2 * ALIGN_SIZE + prefix_zpath_padded + self.valsize;
         let prefix_node = self.alloc_node(prefix_size);
         let valpos;
+        // SAFETY: prefix_node from alloc_node is uninitialized, writing valid cnt_type=1 is_final layout
         unsafe {
             let base = self.mempool.as_mut_ptr();
             let p = base.add(prefix_node as usize);
@@ -1257,6 +1294,7 @@ impl CsppTrie {
             }
             7 => {
                 let n = view.n_children();
+                // SAFETY: cnt_type 7 labels at slots 1-4 (16 bytes), curr+1..curr+5 within mempool bounds
                 let label_slice = unsafe {
                     let ptr = self.mempool.as_ptr().add(curr as usize + 1) as *const u8;
                     std::slice::from_raw_parts(ptr, 16)
@@ -1269,6 +1307,7 @@ impl CsppTrie {
                 }
             }
             8 => {
+                // SAFETY: cnt_type 8 bitmap at slots 2-9 (32 bytes), curr+2..curr+10 within mempool bounds
                 let bitmap_slice = unsafe {
                     let ptr = self.mempool.as_ptr().add(curr as usize + 2) as *const u8;
                     std::slice::from_raw_parts(ptr, 32)
@@ -1276,11 +1315,14 @@ impl CsppTrie {
                 let byte_idx = (ch / 8) as usize;
                 let bit_idx = ch % 8;
                 if (bitmap_slice[byte_idx] & (1 << bit_idx)) != 0 {
+                    // SAFETY: cnt_type 8 rank prefix at slot 1, curr+1 within mempool bounds
                     let data_ptr =
                         unsafe { self.mempool.as_ptr().add(curr as usize + 1) as *const u8 };
                     let i = (ch / 64) as usize;
+                    // SAFETY: i < 4, data_ptr+4+i*8 points within rank array (4 u64s = 32 bytes)
                     let w =
                         unsafe { std::ptr::read_unaligned(data_ptr.add(4 + i * 8) as *const u64) };
+                    // SAFETY: i < 4, data_ptr+i points to rank prefix byte
                     let b = unsafe { *data_ptr.add(i) } as usize;
                     let mask = (1u64 << (ch % 64)) - 1;
                     let idx = b + (w & mask).count_ones() as usize;
@@ -1322,6 +1364,7 @@ impl CsppTrie {
                 // Copy zpath to stack buffer before any mutation
                 let mut zpath_buf = [0u8; 256];
                 let zpath_off = (skip + n_children) * ALIGN_SIZE;
+                // SAFETY: zpath at byte offset (curr+skip+n_children)*4, length zpath_len ≤ 254
                 unsafe {
                     let src =
                         (self.mempool.as_ptr().add(curr as usize) as *const u8).add(zpath_off);
@@ -1354,6 +1397,7 @@ impl CsppTrie {
                         new_suffix,
                     );
                     if curr_slot != NIL_STATE {
+                        // SAFETY: curr_slot validated as parent's child pointer slot by find_child_slot
                         unsafe {
                             (*self.mempool.as_mut_ptr().add(curr_slot as usize)).child = new_parent;
                         }
@@ -1380,6 +1424,7 @@ impl CsppTrie {
                         &zpath_buf[..zpath_len],
                     );
                     if curr_slot != NIL_STATE {
+                        // SAFETY: curr_slot validated as parent's child pointer slot by find_child_slot
                         unsafe {
                             (*self.mempool.as_mut_ptr().add(curr_slot as usize)).child =
                                 prefix_node;
@@ -1404,12 +1449,14 @@ impl CsppTrie {
                     let old_size = node_size;
                     let new_size = old_size + self.valsize;
                     let new_curr = self.realloc_node(curr, old_size, new_size);
+                    // SAFETY: new_curr from realloc_node, setting is_final flag bit
                     unsafe {
                         (*self.mempool.as_mut_ptr().add(new_curr as usize))
                             .meta
                             .flags |= 0x10;
                     }
                     if curr_slot != NIL_STATE && new_curr != curr {
+                        // SAFETY: curr_slot validated as parent's child pointer slot by find_child_slot
                         unsafe {
                             (*self.mempool.as_mut_ptr().add(curr_slot as usize)).child = new_curr;
                         }
@@ -1431,6 +1478,7 @@ impl CsppTrie {
                     }
                     if cnt_type == 15 {
                         // MarkFinalStateOnFastNode: value space already allocated
+                        // SAFETY: curr validated as fast node (cnt_type=15), setting is_final flag bit
                         unsafe {
                             (*self.mempool.as_mut_ptr().add(curr as usize)).meta.flags |= 0x10;
                         }
@@ -1445,12 +1493,14 @@ impl CsppTrie {
                     let old_size = node_size;
                     let new_size = old_size + self.valsize;
                     let new_curr = self.realloc_node(curr, old_size, new_size);
+                    // SAFETY: new_curr from realloc_node, setting is_final flag bit
                     unsafe {
                         (*self.mempool.as_mut_ptr().add(new_curr as usize))
                             .meta
                             .flags |= 0x10;
                     }
                     if curr_slot != NIL_STATE && new_curr != curr {
+                        // SAFETY: curr_slot validated as parent's child pointer slot by find_child_slot
                         unsafe {
                             (*self.mempool.as_mut_ptr().add(curr_slot as usize)).child = new_curr;
                         }
@@ -1475,13 +1525,14 @@ impl CsppTrie {
                 if cnt_type != 15 {
                     let new_curr = self.add_state_move(curr, ch, suffix_node);
                     if curr_slot != NIL_STATE {
+                        // SAFETY: curr_slot validated as parent's child pointer slot by find_child_slot
                         unsafe {
                             (*self.mempool.as_mut_ptr().add(curr_slot as usize)).child = new_curr;
                         }
                     }
                     self.free_node(curr, node_size);
                 } else {
-                    // Fast node: direct child write
+                    // SAFETY: fast node (cnt_type=15) child at slot 2+ch, slot 1 holds real_cnt BigCount
                     unsafe {
                         (*self
                             .mempool

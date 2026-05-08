@@ -304,7 +304,7 @@ where
         // Generate unique instance ID to avoid file name collisions
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("temp file path is valid UTF-8")
+            .expect("system time is after UNIX epoch")
             .as_nanos();
         let thread_id = format!("{:?}", thread::current().id());
         let instance_id = format!(

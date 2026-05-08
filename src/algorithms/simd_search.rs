@@ -205,6 +205,7 @@ unsafe fn gallop_scan_avx512(
 
     let mut pos = lo;
 
+    // SAFETY: AVX-512F guaranteed by #[target_feature(enable = "avx512f")], arr bounds checked by while condition
     unsafe {
         let target_vec = _mm512_set1_epi32(target as i32);
 
@@ -237,6 +238,7 @@ unsafe fn block_filter_avx512(scores: &[f32], theta: f32) -> (u64, usize) {
     let mut pos = 0;
     let n = scores.len();
 
+    // SAFETY: AVX-512F guaranteed by #[target_feature(enable = "avx512f")], scores bounds checked by while condition
     unsafe {
         let theta_vec = _mm512_set1_ps(theta);
 
@@ -386,7 +388,7 @@ unsafe fn block_filter_avx2(scores: &[f32], theta: f32) -> (u64, usize) {
 
     // Scalar tail
     while pos < scores.len() {
-        // SAFETY: pos < scores.len()
+        // SAFETY: loop condition ensures pos < scores.len()
         if unsafe { *scores.get_unchecked(pos) } > theta {
             mask |= 1u64 << pos;
         }

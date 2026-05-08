@@ -829,7 +829,7 @@ impl FastDfsWalker {
     #[inline]
     pub fn next(&mut self) -> u32 {
         debug_assert!(!self.stack.is_empty());
-        self.stack.pop().expect("stack non-empty by has_next check")
+        self.stack.pop().expect("stack contains element verified by caller")
     }
 
     /// Add children in reverse order, skipping visited.
@@ -895,10 +895,10 @@ impl FastCfsWalker {
                 return self.q1[0];
             } else {
                 self.q2.reverse();
-                return self.q2.pop().expect("q2 non-empty");
+                return self.q2.pop().expect("q2 contains elements from BFS phase");
             }
         }
-        self.q2.pop().expect("q2 non-empty after swap")
+        self.q2.pop().expect("q2 contains elements in DFS phase")
     }
 
     /// Add children — forward order in BFS phase, reverse in DFS phase.

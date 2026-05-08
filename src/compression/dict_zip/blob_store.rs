@@ -1104,7 +1104,7 @@ impl DictZipBlobStore {
 
         // Get a clone of the encoder for use
         let binding = self.huffman_encoder.borrow();
-        let encoder = binding.as_ref().expect("encoder must be initialized");
+        let encoder = binding.as_ref().ok_or_else(|| ZiporaError::invalid_state("Huffman encoder not initialized"))?;
 
         // Apply encoding based on interleaving factor
         match self.config.entropy_interleaved {
@@ -1143,7 +1143,7 @@ impl DictZipBlobStore {
         self.fse_encoder
             .borrow_mut()
             .as_mut()
-            .expect("FSE encoder must be initialized")
+            .ok_or_else(|| ZiporaError::invalid_state("FSE encoder not initialized"))?
             .compress(data)
     }
 
@@ -1192,7 +1192,7 @@ impl DictZipBlobStore {
 
         // Get decoder clone for use
         let binding = self.huffman_decoder.borrow();
-        let decoder = binding.as_ref().expect("decoder must be initialized");
+        let decoder = binding.as_ref().ok_or_else(|| ZiporaError::invalid_state("Huffman decoder not initialized"))?;
 
         // The decoder's decode method already handles the encoding format
         // The interleaving is determined by how the data was encoded
@@ -1212,7 +1212,7 @@ impl DictZipBlobStore {
         self.fse_decoder
             .borrow_mut()
             .as_mut()
-            .expect("FSE decoder must be initialized")
+            .ok_or_else(|| ZiporaError::invalid_state("FSE decoder not initialized"))?
             .decompress(data)
     }
 }

@@ -49,6 +49,7 @@ pub fn sorted_union_adaptive(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize 
             && b.len() >= SIMD_MIN_SIZE
             && std::arch::is_x86_feature_detected!("sse4.1")
         {
+            // SAFETY: SSE4.1 support verified by is_x86_feature_detected! runtime check
             return unsafe { union_simd_sse41(a, b, out) };
         }
     }
@@ -74,6 +75,7 @@ pub fn sorted_union_simd(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize {
     #[cfg(target_arch = "x86_64")]
     {
         if std::arch::is_x86_feature_detected!("sse4.1") {
+            // SAFETY: SSE4.1 support verified by is_x86_feature_detected! runtime check
             return unsafe { union_simd_sse41(a, b, out) };
         }
     }
@@ -113,6 +115,7 @@ fn union_scalar_merge(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize {
     let mut j = 0usize;
 
     while i < a.len() && j < b.len() {
+        // SAFETY: loop condition ensures i < a.len() and j < b.len()
         let va = unsafe { *a.get_unchecked(i) };
         let vb = unsafe { *b.get_unchecked(j) };
 

@@ -239,8 +239,11 @@ impl<K: PartialEq + Hash + Eq + 'static + Clone, V: Clone> SmallMap<K, V> {
                 // Quad comparison - very common case for SmallMap
                 // SAFETY: len=4, so keys[0..4] are initialized
                 let k0 = unsafe { keys[0].assume_init_ref() };
+                // SAFETY: len=4, so keys[1] is initialized
                 let k1 = unsafe { keys[1].assume_init_ref() };
+                // SAFETY: len=4, so keys[2] is initialized
                 let k2 = unsafe { keys[2].assume_init_ref() };
+                // SAFETY: len=4, so keys[3] is initialized
                 let k3 = unsafe { keys[3].assume_init_ref() };
                 if k0 == key {
                     Some(0)
@@ -259,8 +262,11 @@ impl<K: PartialEq + Hash + Eq + 'static + Clone, V: Clone> SmallMap<K, V> {
                 // Check first 4 elements unrolled, then tight loop for remainder
                 // SAFETY: len>=5, so keys[0..4] are initialized
                 let k0 = unsafe { keys[0].assume_init_ref() };
+                // SAFETY: len>=5, so keys[1] is initialized
                 let k1 = unsafe { keys[1].assume_init_ref() };
+                // SAFETY: len>=5, so keys[2] is initialized
                 let k2 = unsafe { keys[2].assume_init_ref() };
+                // SAFETY: len>=5, so keys[3] is initialized
                 let k3 = unsafe { keys[3].assume_init_ref() };
 
                 if k0 == key {
@@ -989,8 +995,11 @@ where
                 4 => {
                     // SAFETY: len=4, so keys[0..4] are initialized
                     let k0 = unsafe { keys[0].assume_init_ref() };
+                    // SAFETY: len=4, so keys[1] is initialized
                     let k1 = unsafe { keys[1].assume_init_ref() };
+                    // SAFETY: len=4, so keys[2] is initialized
                     let k2 = unsafe { keys[2].assume_init_ref() };
+                    // SAFETY: len=4, so keys[3] is initialized
                     let k3 = unsafe { keys[3].assume_init_ref() };
                     if k0 == key {
                         Some(0)

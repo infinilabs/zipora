@@ -11,7 +11,7 @@ High-performance Rust data structures and compression algorithms with memory saf
 ## Key Features
 
 - **High Performance**: Zero-copy operations, SIMD optimizations (AVX2, AVX-512), cache-friendly layouts, SIMD cursor primitives for Block-Max WAND
-- **Memory Safety**: 99.8% unsafe block documentation coverage, all production unsafe blocks annotated with `// SAFETY:` comments
+- **Memory Safety**: 100% production unsafe block documentation coverage, all 1,122 production unsafe blocks annotated with `// SAFETY:` comments
 - **Secure Memory Management**: Production-ready memory pools with thread safety and RAII
 - **Blob Storage**: 8 specialized stores with trie-based indexing and compression
 - **Succinct Data Structures**: 12 rank/select variants, Rank9 (Vigna 2008), Elias-Fano / Partitioned / DP-Optimal Partitioned Elias-Fano with cursor `advance_to_index`, HybridPostingList (auto-select encoding), AMD-safe PDEP with `has_fast_bmi2`
@@ -157,10 +157,10 @@ See **[Performance Benchmarks](docs/PERFORMANCE.md)** for detailed results acros
 ## Dependencies
 
 Minimal dependency footprint by design:
-- **Core**: `bytemuck`, `thiserror`, `log`, `ahash`, `rayon`, `libc`, `once_cell`, `raw-cpuid`
+- **Core**: `bytemuck`, `thiserror`, `log`, `ahash`, `rayon`, `libc`, `raw-cpuid`
 - **Default**: `memmap2` (mmap), `zstd`, `lz4_flex`, `serde`/`serde_json`/`bincode`, `tokio` (async)
 - **Optional**: `cbindgen` (ffi)
-- **Removed**: `crossbeam-utils`, `parking_lot`, `uuid`, `num_cpus`, `async-trait`, `futures` (all replaced with std or eliminated)
+- **Removed**: `crossbeam-utils`, `parking_lot`, `uuid`, `num_cpus`, `async-trait`, `futures`, `once_cell`, `pkg-config` (all replaced with std or eliminated)
 
 ## Building a Search Engine with Zipora
 

@@ -100,7 +100,7 @@ where
                 .entry(type_id)
                 .or_insert_with(|| Box::new(TlsMatrix::<T, ROWS, COLS>::new()))
                 .downcast_mut::<TlsMatrix<T, ROWS, COLS>>()
-                .expect("TLS matrix type mismatch");
+                .expect("TLS matrix TypeId matches registered matrix type");
 
             // SAFETY: row and col are valid indices from get_indices (ID % matrix dimensions)
             unsafe { matrix.get_or_create_value(row, col) }
@@ -157,7 +157,7 @@ where
                 .entry(type_id)
                 .or_insert_with(|| Box::new(TlsMatrix::<T, ROWS, COLS>::new()))
                 .downcast_mut::<TlsMatrix<T, ROWS, COLS>>()
-                .expect("TLS matrix type mismatch");
+                .expect("TLS matrix TypeId matches registered matrix type");
 
             // SAFETY: row and col are valid indices from get_indices (ID % matrix dimensions)
             unsafe { matrix.set(row, col, value) }
@@ -312,7 +312,7 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
             self.rows[row] = Some(new_row);
         }
 
-        let row_data = self.rows[row].as_ref().expect("row is initialized");
+        let row_data = self.rows[row].as_ref().expect("row was allocated in previous if block");
         let cell = &row_data[col];
         // SAFETY: UnsafeCell interior mutability, exclusive access within thread-local context
         let value_ref = unsafe { &mut *cell.get() };
@@ -321,7 +321,7 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
             *value_ref = Some(T::default());
         }
 
-        value_ref.as_ref().expect("value is initialized").clone()
+        value_ref.as_ref().expect("value set to default in previous if block").clone()
     }
 
     /// Get value copy if it exists
@@ -347,7 +347,7 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
             self.rows[row] = Some(new_row);
         }
 
-        let row_data = self.rows[row].as_ref().expect("row is initialized");
+        let row_data = self.rows[row].as_ref().expect("row was allocated in previous if block");
         let cell = &row_data[col];
         // SAFETY: UnsafeCell interior mutability, exclusive access within thread-local context
         unsafe { *cell.get() = Some(value) };
@@ -431,7 +431,7 @@ where
         Ok(self
             .instances
             .get(&owner_ptr)
-            .expect("owner registered in instances")
+            .expect("owner pointer exists in instances map after get_or_insert")
             .get())
     }
 
@@ -476,7 +476,7 @@ where
 {
     /// Create a new TLS pool
     pub fn new() -> Result<Self> {
-        let pool = std::array::from_fn(|_| Some(InstanceTls::new().expect("TLS initialization")));
+        let pool = std::array::from_fn(|_| Some(InstanceTls::new().expect("TLS initialization succeeds with valid matrix dimensions")));
 
         Ok(Self {
             pool,
@@ -489,7 +489,7 @@ where
         let slot = self.next_slot.fetch_add(1, Ordering::Relaxed) as usize % POOL_SIZE;
         self.pool[slot]
             .as_ref()
-            .expect("pool slot is initialized")
+            .expect("pool slot initialized by from_fn in constructor")
             .get()
     }
 

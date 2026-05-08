@@ -2,7 +2,7 @@ use super::decoder::BitStreamReader;
 use super::encoder::{BitStreamWriter, HuffmanEncSymbol};
 use super::tree::{HuffmanNode, HuffmanSymbol, HuffmanTree};
 use crate::error::{Result, ZiporaError};
-use once_cell::sync::OnceCell;
+use std::sync::OnceLock;
 use std::collections::HashMap;
 
 /// Interleaving factor for parallel Huffman encoding/decoding
@@ -82,8 +82,8 @@ pub struct ContextualHuffmanEncoder {
     context_map: HashMap<u32, usize>,
     /// Cached fast symbol table for O(1) lookup (built lazily on first use)
     /// 257 contexts × 256 symbols = 65,792 entries (~263KB)
-    /// Uses OnceCell for thread-safe lazy initialization
-    fast_symbol_table: OnceCell<FastSymbolTable>,
+    /// Uses OnceLock for thread-safe lazy initialization
+    fast_symbol_table: OnceLock<FastSymbolTable>,
 }
 
 impl ContextualHuffmanEncoder {
@@ -107,7 +107,7 @@ impl ContextualHuffmanEncoder {
                 map.insert(0, 0);
                 map
             },
-            fast_symbol_table: OnceCell::new(),
+            fast_symbol_table: OnceLock::new(),
         })
     }
 
@@ -179,7 +179,7 @@ impl ContextualHuffmanEncoder {
             order: HuffmanOrder::Order1,
             trees,
             context_map,
-            fast_symbol_table: OnceCell::new(),
+            fast_symbol_table: OnceLock::new(),
         })
     }
 
@@ -258,7 +258,7 @@ impl ContextualHuffmanEncoder {
             order: HuffmanOrder::Order2,
             trees,
             context_map,
-            fast_symbol_table: OnceCell::new(),
+            fast_symbol_table: OnceLock::new(),
         })
     }
 
@@ -590,7 +590,7 @@ impl ContextualHuffmanEncoder {
             order,
             trees,
             context_map,
-            fast_symbol_table: OnceCell::new(),
+            fast_symbol_table: OnceLock::new(),
         })
     }
 

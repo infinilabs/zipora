@@ -417,12 +417,8 @@ impl<T> FastVec<T> {
                         }
                     }
                 } else {
-                    // SAFETY: Layout::array::<T>() cannot fail here because:
-                    // 1. self.cap was successfully used to allocate memory (either in with_capacity or previous realloc)
-                    // 2. If capacity caused layout overflow, allocation would have failed earlier
-                    // 3. The same layout parameters were valid during allocation, so they're valid for deallocation
                     let old_layout = Layout::array::<T>(self.cap)
-                        .expect("array layout overflow: capacity exceeds Layout limits");
+                        .map_err(|_| ZiporaError::out_of_memory(self.cap * mem::size_of::<T>()))?;
                     // SAFETY: ptr from self.ptr valid allocation, old_layout matches original allocation, new_layout.size() >= old_layout.size()
                     unsafe {
                         let raw_ptr =
@@ -710,12 +706,8 @@ impl<T> FastVec<T> {
             if let Some(ptr) = self.ptr {
                 // SAFETY: ptr from valid allocation, layout matches original allocation parameters
                 unsafe {
-                    // SAFETY: Layout::array::<T>() cannot fail here because:
-                    // 1. self.cap was successfully used to allocate memory (either in with_capacity or previous realloc)
-                    // 2. If capacity caused layout overflow, allocation would have failed earlier
-                    // 3. The same layout parameters were valid during allocation, so they're valid for deallocation
                     let layout = Layout::array::<T>(self.cap)
-                        .expect("array layout overflow: capacity exceeds Layout limits");
+                        .map_err(|_| ZiporaError::out_of_memory(self.cap * mem::size_of::<T>()))?;
                     alloc::dealloc(ptr.as_ptr() as *mut u8, layout);
                 }
             }
@@ -728,12 +720,8 @@ impl<T> FastVec<T> {
             .map_err(|_| ZiporaError::out_of_memory(self.len * mem::size_of::<T>()))?;
 
         let new_ptr = if let Some(ptr) = self.ptr {
-            // SAFETY: Layout::array::<T>() cannot fail here because:
-            // 1. self.cap was successfully used to allocate memory (either in with_capacity or previous realloc)
-            // 2. If capacity caused layout overflow, allocation would have failed earlier
-            // 3. The same layout parameters were valid during allocation, so they're valid for reallocation
             let old_layout = Layout::array::<T>(self.cap)
-                .expect("array layout overflow: capacity exceeds Layout limits");
+                .map_err(|_| ZiporaError::out_of_memory(self.cap * mem::size_of::<T>()))?;
             // SAFETY: ptr from valid allocation, old_layout matches original, new_layout.size() <= old_layout.size() (shrinking)
             unsafe {
                 let raw_ptr =
@@ -1071,12 +1059,8 @@ impl<T> Drop for FastVec<T> {
         {
             // SAFETY: ptr and cap are valid from allocation, layout matches allocation layout
             unsafe {
-                // SAFETY: Layout::array::<T>() cannot fail here because:
-                // 1. self.cap was successfully used to allocate memory (either in with_capacity or previous realloc)
-                // 2. If capacity caused layout overflow, allocation would have failed earlier
-                // 3. The same layout parameters were valid during allocation, so they're valid for deallocation
                 let layout = Layout::array::<T>(self.cap)
-                    .expect("array layout overflow: capacity exceeds Layout limits");
+                    .expect("Layout::array succeeded during allocation, must succeed during deallocation");
                 alloc::dealloc(ptr.as_ptr() as *mut u8, layout);
             }
         }
@@ -1099,9 +1083,9 @@ impl<T> DerefMut for FastVec<T> {
 
 impl<T> From<Vec<T>> for FastVec<T> {
     fn from(v: Vec<T>) -> Self {
-        let mut fv = Self::with_capacity(v.len()).expect("FastVec allocation failed");
+        let mut fv = Self::with_capacity(v.len()).expect("FastVec: allocation failed in From<Vec<T>>");
         for item in v {
-            fv.push(item).expect("FastVec push failed");
+            fv.push(item).expect("FastVec: push failed in From<Vec<T>>");
         }
         fv
     }
@@ -1111,9 +1095,9 @@ impl<T> FromIterator<T> for FastVec<T> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let iter = iter.into_iter();
         let (lower, _) = iter.size_hint();
-        let mut fv = Self::with_capacity(lower).expect("FastVec allocation failed");
+        let mut fv = Self::with_capacity(lower).expect("FastVec: allocation failed in FromIterator");
         for item in iter {
-            fv.push(item).expect("FastVec push failed");
+            fv.push(item).expect("FastVec: push failed in FromIterator");
         }
         fv
     }
@@ -1164,6 +1148,7 @@ impl<T> Iterator for FastVecIntoIter<T> {
     fn next(&mut self) -> Option<Self::Item> {
         if self.index < self.len {
             let ptr = self.ptr.expect("valid ptr for non-empty iter");
+            // SAFETY: index < len, ptr valid from FastVec allocation, add(index) within allocated range
             let item = unsafe { ptr::read(ptr.as_ptr().add(self.index)) };
             self.index += 1;
             Some(item)
@@ -1183,13 +1168,16 @@ impl<T> Drop for FastVecIntoIter<T> {
         if let Some(ptr) = self.ptr {
             // Drop remaining elements
             for i in self.index..self.len {
+                // SAFETY: i in [index, len), ptr valid from FastVec allocation, add(i) within allocated range
                 unsafe {
                     ptr::drop_in_place(ptr.as_ptr().add(i));
                 }
             }
             // Deallocate memory
             if self.cap > 0 {
-                let layout = Layout::array::<T>(self.cap).unwrap();
+                let layout = Layout::array::<T>(self.cap)
+                    .expect("Layout::array succeeded during allocation, must succeed during deallocation");
+                // SAFETY: ptr allocated with same layout during FastVec creation
                 unsafe {
                     alloc::dealloc(ptr.as_ptr() as *mut u8, layout);
                 }
@@ -1253,7 +1241,7 @@ impl<T: Eq> Eq for FastVec<T> {}
 impl<T: Clone> Clone for FastVec<T> {
     fn clone(&self) -> Self {
         let mut new_vec =
-            Self::with_capacity(self.len).expect("Memory allocation failed during FastVec::clone");
+            Self::with_capacity(self.len).expect("FastVec: allocation failed in Clone");
 
         for item in self.as_slice() {
             let _ = new_vec.push(item.clone());
