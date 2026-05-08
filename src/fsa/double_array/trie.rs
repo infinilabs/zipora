@@ -290,8 +290,7 @@ impl DoubleArrayTrie {
         let ninfos = self.ninfos.as_slice();
         let mut curr = 0usize;
         for &ch in key {
-            // SAFETY: curr is always a valid index because we check `next_state.parent == curr`
-            // from previously validated `next` indices, and `curr=0` is valid.
+            // SAFETY: curr < states.len() from parent match validation in previous iteration or curr=0 (root)
             let base = unsafe { states.get_unchecked(curr) }.child0;
             let next = (base ^ ch as u32) as usize;
             // SAFETY: set_base_padded guarantees (base | 0xFF) < len for valid bases.
@@ -302,6 +301,7 @@ impl DoubleArrayTrie {
                 "OOB: next={next}, len={}",
                 states.len()
             );
+            // SAFETY: next = base ^ ch < states.len() verified by set_base_padded invariant and debug_assert above
             let next_state = unsafe { states.get_unchecked(next) };
             if next_state.parent != curr as u32 {
                 return false;

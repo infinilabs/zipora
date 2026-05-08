@@ -11,7 +11,7 @@
 ## 核心特性
 
 - **高性能**：零拷贝操作、SIMD 优化（AVX2、AVX-512）、缓存友好的内存布局、Block-Max WAND SIMD 游标原语
-- **内存安全**：99.8% 的 unsafe 代码块文档覆盖率，所有生产环境中的 unsafe 代码块均附有 `// SAFETY:` 注释
+- **内存安全**：100% 生产环境 unsafe 代码块文档覆盖率，全部 1,122 个生产 unsafe 代码块均附有 `// SAFETY:` 注释
 - **安全内存管理**：线程安全的生产级内存池，支持 RAII
 - **Blob 存储**：8 种专用存储引擎，支持 Trie 索引和压缩
 - **简洁数据结构**：12 种 rank/select 变体、Rank9（Vigna 2008）、Elias-Fano / Partitioned / DP-Optimal Partitioned Elias-Fano（支持游标 `advance_to_index`）、HybridPostingList（自动选择编码策略）、AMD 安全 PDEP（`has_fast_bmi2` 检测）
@@ -157,10 +157,10 @@ cargo clippy --all-targets --all-features -- -D warnings
 ## 依赖
 
 精简的依赖设计：
-- **核心**：`bytemuck`、`thiserror`、`log`、`ahash`、`rayon`、`libc`、`once_cell`、`raw-cpuid`
+- **核心**：`bytemuck`、`thiserror`、`log`、`ahash`、`rayon`、`libc`、`raw-cpuid`
 - **默认**：`memmap2`（mmap）、`zstd`、`lz4_flex`、`serde`/`serde_json`/`bincode`、`tokio`（async）
 - **可选**：`cbindgen`（ffi）
-- **已移除**：`crossbeam-utils`、`parking_lot`、`uuid`、`num_cpus`、`async-trait`、`futures`（全部替换为标准库或删除）
+- **已移除**：`crossbeam-utils`、`parking_lot`、`uuid`、`num_cpus`、`async-trait`、`futures`、`once_cell`、`pkg-config`（全部替换为标准库或删除）
 
 ## 使用 Zipora 构建搜索引擎
 

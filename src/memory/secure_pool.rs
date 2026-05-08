@@ -39,7 +39,7 @@ use crate::memory::simd_ops::{fast_compare, fast_fill, fast_prefetch};
 use crate::memory::{get_optimal_numa_node, numa_alloc_aligned, numa_dealloc};
 use crate::simd::Operation;
 use crate::simd::adaptive::AdaptiveSimdSelector;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use std::alloc::{Layout, alloc, dealloc};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -754,6 +754,7 @@ impl<T> LockFreeStack<T> {
                 // We successfully unlinked the head node. We now have exclusive ownership
                 // of the data inside it, but we must wait for all threads to drop their
                 // guards before the memory backing the node can be reclaimed.
+                // SAFETY: head exclusively owned from successful CAS, defer_destroy registers deferred dealloc, ptr::read valid on head.deref().data
                 unsafe {
                     guard.defer_destroy(head);
                     // The data itself can be moved out immediately since we logically
@@ -941,7 +942,7 @@ impl SecureMemoryPool {
             // Track allocation
             self.active_allocations
                 .write()
-                .expect("active_allocations lock")
+                .unwrap_or_else(|e| e.into_inner())
                 .insert(
                     chunk.as_ptr() as usize,
                     (chunk.generation(), Instant::now()),
@@ -974,7 +975,7 @@ impl SecureMemoryPool {
             // Track allocation
             self.active_allocations
                 .write()
-                .expect("active_allocations lock")
+                .unwrap_or_else(|e| e.into_inner())
                 .insert(
                     chunk.as_ptr() as usize,
                     (chunk.generation(), Instant::now()),
@@ -1001,7 +1002,7 @@ impl SecureMemoryPool {
         // Track allocation
         self.active_allocations
             .write()
-            .expect("active_allocations lock")
+            .unwrap_or_else(|e| e.into_inner())
             .insert(
                 chunk.as_ptr() as usize,
                 (chunk.generation(), Instant::now()),
@@ -1038,7 +1039,7 @@ impl SecureMemoryPool {
         let mut allocs = self
             .active_allocations
             .write()
-            .expect("active_allocations lock");
+            .unwrap_or_else(|e| e.into_inner());
         let chunk_ptr = chunk.as_ptr() as usize;
 
         if let Some(&allocation_info) = allocs.get(&chunk_ptr) {
@@ -1295,7 +1296,7 @@ impl SecureMemoryPool {
         // Clear allocation tracking
         self.active_allocations
             .write()
-            .expect("active_allocations lock")
+            .unwrap_or_else(|e| e.into_inner())
             .clear();
 
         Ok(())
@@ -1312,7 +1313,7 @@ impl SecureMemoryPool {
         for (&ptr_addr, &(generation, _time)) in self
             .active_allocations
             .read()
-            .expect("active_allocations lock")
+            .unwrap_or_else(|e| e.into_inner())
             .iter()
         {
             // Read canary from the chunk header for validation
@@ -1349,7 +1350,9 @@ impl SecureMemoryPool {
             }
 
             // Validate footer
+            // SAFETY: data_ptr valid, chunk_size offset matches allocation size from new()
             let footer_ptr = unsafe { data_ptr.add(self.config.chunk_size) as *const ChunkFooter };
+            // SAFETY: footer_ptr valid, aligned to ChunkFooter, within allocated region
             let footer = unsafe { &*footer_ptr };
 
             if footer.magic != CHUNK_FOOTER_MAGIC {
@@ -1504,7 +1507,7 @@ pub fn size_to_class(size: usize) -> usize {
 }
 
 /// Global secure pools for different size classes
-static GLOBAL_SECURE_POOLS: Lazy<Vec<Arc<SecureMemoryPool>>> = Lazy::new(|| {
+static GLOBAL_SECURE_POOLS: LazyLock<Vec<Arc<SecureMemoryPool>>> = LazyLock::new(|| {
     // SAFETY: Static initialization - panic on pool creation failure is appropriate
     // because the program cannot continue without global memory pools
     vec![

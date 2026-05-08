@@ -127,7 +127,7 @@ where
         // SAFETY: Caller must call set_default() before using get_or_default()
         self.inner
             .get(key)
-            .unwrap_or_else(|| self.default_value.as_ref().expect("No default value set"))
+            .unwrap_or_else(|| self.default_value.as_ref().expect("default value must be set for missing keys"))
     }
 
     /// Get a mutable reference to the value, inserting with provided value if missing
@@ -141,7 +141,7 @@ where
         Ok(self
             .inner
             .get_mut(&key)
-            .expect("Key should exist after insertion"))
+            .expect("key exists in map after put call"))
     }
 
     /// Get a mutable reference to the value, inserting with closure result if missing
@@ -159,7 +159,7 @@ where
         Ok(self
             .inner
             .get_mut(&key)
-            .expect("Key should exist after insertion"))
+            .expect("key exists in map after put call"))
     }
 
     /// Remove a key-value pair

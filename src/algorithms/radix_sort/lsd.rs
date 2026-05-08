@@ -585,7 +585,7 @@ where
         config.radix_bits = self.config.radix_bits;
 
         let mut sorter = super::advanced::AdvancedRadixSort::<KVPair>::with_config(config)
-            .unwrap_or_else(|_| super::advanced::AdvancedRadixSort::new().unwrap());
+            .or_else(|_| super::advanced::AdvancedRadixSort::new())?;
 
         sorter.sort(&mut indices)?;
 

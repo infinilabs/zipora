@@ -217,6 +217,7 @@ impl<'a> Bm25BatchScorer<'a> {
             let base = chunk * 8;
             let fn_slice = &fieldnorm_bytes[base..base + 8];
 
+            // SAFETY: AVX2 guaranteed by #[target_feature(enable = "avx2")], all slice accesses bounds-checked above, table has 256 floats
             unsafe {
                 // Gather 8 norm values from 1KB table via AVX2 gather instruction
                 // Expand 8 u8s to 8 i32s for gather indices
@@ -338,7 +339,7 @@ pub fn prefetch_fieldnorm(fieldnorm_bytes: &[u8], doc_id: u32) {
 
         #[cfg(target_arch = "aarch64")]
         {
-            // SAFETY: prefetch is advisory, address derived from valid slice, bounds checked above
+            // SAFETY: inline asm performs read-only prefetch, bounds checked above, no memory modification
             unsafe {
                 std::arch::aarch64::_prefetch(
                     fieldnorm_bytes.as_ptr().add(idx) as *const i8,

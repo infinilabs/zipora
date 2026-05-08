@@ -963,9 +963,9 @@ where
                 entry.value = Some(value);
                 entry.hash = hash;
                 return Ok(None);
-            } else if entry.hash == hash && entry.key.as_ref().expect("invariant broken") == &key {
+            } else if entry.hash == hash && entry.key.as_ref().expect("occupied entry must have key") == &key {
                 // Key exists, update value
-                let old_value = entry.value.replace(value).expect("invariant broken");
+                let old_value = entry.value.replace(value).expect("occupied entry must have previous value");
                 return Ok(Some(old_value));
             }
         }
@@ -1072,9 +1072,9 @@ where
             } else if entry.hash == u64::MAX {
                 // Tombstone, skip and continue searching
                 continue;
-            } else if entry.hash == hash && entry.key.as_ref().expect("invariant broken").borrow() == key {
+            } else if entry.hash == hash && entry.key.as_ref().expect("occupied entry must have key").borrow() == key {
                 // Found the key
-                return Some(entry.value.as_ref().expect("invariant broken"));
+                return Some(entry.value.as_ref().expect("occupied entry must have value"));
             }
         }
 
@@ -1176,7 +1176,7 @@ where
             } else if entry.hash == u64::MAX {
                 // Tombstone, skip and continue searching
                 continue;
-            } else if entry.hash == hash && entry.key.as_ref().expect("invariant broken").borrow() == key {
+            } else if entry.hash == hash && entry.key.as_ref().expect("occupied entry must have key").borrow() == key {
                 // Found the key
                 found_index = Some(probe_index);
                 break;
@@ -1185,7 +1185,7 @@ where
 
         // Return mutable reference if found
         if let Some(idx) = found_index {
-            Some(entries[idx].value.as_mut().expect("invariant broken"))
+            Some(entries[idx].value.as_mut().expect("occupied entry must have value"))
         } else {
             None
         }
@@ -1271,9 +1271,9 @@ where
             if entry.hash == 0 {
                 // Empty slot, key not found
                 return None;
-            } else if entry.hash == hash && entry.key.as_ref().expect("invariant broken").borrow() == key {
+            } else if entry.hash == hash && entry.key.as_ref().expect("occupied entry must have key").borrow() == key {
                 // Found the key, remove it
-                let old_value = entry.value.take().expect("invariant broken");
+                let old_value = entry.value.take().expect("occupied entry must have value");
                 entry.key.take(); // free the key
 
                 // Use tombstone approach: mark as deleted but don't create holes
@@ -1525,7 +1525,7 @@ where
                     let entry = &entries[self.index];
                     self.index += 1;
                     if entry.hash != 0 && entry.hash != u64::MAX {
-                        return Some((entry.key.as_ref().expect("invariant broken"), entry.value.as_ref().expect("invariant broken")));
+                        return Some((entry.key.as_ref().expect("occupied entry must have key"), entry.value.as_ref().expect("occupied entry must have value")));
                     }
                 }
                 None

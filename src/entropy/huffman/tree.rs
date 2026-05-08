@@ -95,7 +95,7 @@ impl HuffmanTree {
         // Special case: only one symbol
         if symbol_count == 1 {
             // SAFETY: symbol_count == 1 means we pushed exactly 1 item to heap, so pop() succeeds
-            let node = heap.pop().expect("heap non-empty by loop invariant").0;
+            let node = heap.pop().expect("heap contains single symbol").0;
             if let HuffmanNode::Leaf { symbol, .. } = node {
                 let mut codes = HashMap::new();
                 codes.insert(symbol, vec![false]); // Use single bit
@@ -110,8 +110,8 @@ impl HuffmanTree {
         // Build Huffman tree
         while heap.len() > 1 {
             // SAFETY: while loop condition guarantees heap.len() >= 2, so both pops succeed
-            let left = heap.pop().expect("heap has >= 2 nodes").0;
-            let right = heap.pop().expect("heap has >= 2 nodes").0;
+            let left = heap.pop().expect("heap has at least 2 nodes for left child").0;
+            let right = heap.pop().expect("heap has at least 2 nodes for right child").0;
 
             let merged = HuffmanNode::Internal {
                 frequency: left.frequency() + right.frequency(),
@@ -123,7 +123,7 @@ impl HuffmanTree {
         }
 
         // SAFETY: After while loop, exactly 1 element remains (started with >=2, each iteration removes 2, adds 1)
-        let root = heap.pop().expect("heap has final root").0;
+        let root = heap.pop().expect("heap contains merged root node").0;
         let mut codes = HashMap::new();
         let mut max_code_length = 0;
 
@@ -336,7 +336,7 @@ impl HuffmanTree {
         // Special case: single symbol
         if codes.len() == 1 {
             // SAFETY: codes.len() == 1 guarantees iter().next() returns Some
-            let (&symbol, _) = codes.iter().next().expect("at least one symbol in codes");
+            let (&symbol, _) = codes.iter().next().expect("codes map contains exactly one symbol");
             return Ok(Some(HuffmanNode::Leaf {
                 symbol,
                 frequency: 1, // Dummy frequency for leaf node

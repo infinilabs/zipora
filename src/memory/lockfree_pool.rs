@@ -442,6 +442,7 @@ impl LockFreeMemoryPool {
             // because if we win the CAS on `head`, the read was valid and the CAS provides the
             // synchronization fence. If we lose the CAS, the read might be garbage, but it
             // doesn't affect correctness since we retry the loop.
+            // SAFETY: current_ptr valid from offset_to_ptr, aligned to ALIGN_SIZE=8 (≥4B for AtomicU32), type-punning to AtomicU32 valid
             let next_offset = unsafe {
                 let current_ptr = self.offset_to_ptr(current_offset)?;
                 (*(current_ptr.as_ptr() as *const std::sync::atomic::AtomicU32))

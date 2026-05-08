@@ -955,6 +955,7 @@ where
             // SAFETY: src is items.len() * sizeof(T) bytes, dst has same size reserved
             let src_slice =
                 unsafe { std::slice::from_raw_parts(items.as_ptr() as *const u8, size_bytes) };
+            // SAFETY: dst_ptr valid from reserve(), size_bytes matches src, T has valid byte representation
             let dst_slice =
                 unsafe { std::slice::from_raw_parts_mut(dst_ptr as *mut u8, size_bytes) };
 
@@ -1086,6 +1087,7 @@ where
                 let src_slice = unsafe {
                     std::slice::from_raw_parts(other.data_ptr()?.as_ptr() as *const u8, size_bytes)
                 };
+                // SAFETY: dst has capacity >= other.len(), size_bytes matches src, T has valid byte representation
                 let dst_slice = unsafe {
                     std::slice::from_raw_parts_mut(self.data_ptr()?.as_ptr() as *mut u8, size_bytes)
                 };

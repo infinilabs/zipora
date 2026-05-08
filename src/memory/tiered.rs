@@ -475,8 +475,8 @@ impl TieredAllocation {
 }
 
 /// Global tiered allocator instance
-static GLOBAL_TIERED_ALLOCATOR: once_cell::sync::Lazy<TieredMemoryAllocator> =
-    once_cell::sync::Lazy::new(|| {
+static GLOBAL_TIERED_ALLOCATOR: std::sync::LazyLock<TieredMemoryAllocator> =
+    std::sync::LazyLock::new(|| {
         TieredMemoryAllocator::default().expect("default allocator creation")
     });
 

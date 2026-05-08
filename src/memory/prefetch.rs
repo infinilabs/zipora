@@ -677,18 +677,24 @@ impl PrefetchStrategy {
                         std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) addr, options(nostack));
                     }
                 }
-                PrefetchLocality::L2Temporal => unsafe {
-                    std::arch::asm!("prfm pldl2keep, [{0}]", in(reg) addr, options(nostack));
-                },
+                PrefetchLocality::L2Temporal => {
+                    // SAFETY: inline asm performs read-only prefetch, no memory modification
+                    unsafe {
+                        std::arch::asm!("prfm pldl2keep, [{0}]", in(reg) addr, options(nostack));
+                    }
+                }
                 PrefetchLocality::L3Temporal => {
                     // SAFETY: ARM prefetch intrinsic safe with any pointer
                     unsafe {
                         std::arch::asm!("prfm pldl3keep, [{0}]", in(reg) addr, options(nostack));
                     }
                 }
-                PrefetchLocality::NonTemporal => unsafe {
-                    std::arch::asm!("prfm pldl1strm, [{0}]", in(reg) addr, options(nostack));
-                },
+                PrefetchLocality::NonTemporal => {
+                    // SAFETY: inline asm performs read-only prefetch, no memory modification
+                    unsafe {
+                        std::arch::asm!("prfm pldl1strm, [{0}]", in(reg) addr, options(nostack));
+                    }
+                }
             }
         }
 

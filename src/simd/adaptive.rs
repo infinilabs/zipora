@@ -244,7 +244,7 @@ impl AdaptiveSimdSelector {
         if let Some(&impl_type) = self
             .selection_cache
             .read()
-            .expect("selection_cache lock")
+            .unwrap_or_else(|e| e.into_inner())
             .get(&key)
         {
             return impl_type;
@@ -254,7 +254,10 @@ impl AdaptiveSimdSelector {
         let selected = self.select_impl_internal(operation, data_size, data_density);
 
         // Cache the result
-        let mut cache = self.selection_cache.write().expect("selection_cache lock");
+        let mut cache = self
+            .selection_cache
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
         if cache.len() >= self.config.max_cache_entries {
             // Simple eviction: remove an arbitrary entry
             if let Some(&first_key) = cache.keys().next() {
@@ -369,7 +372,7 @@ impl AdaptiveSimdSelector {
     fn clear_operation_cache(&self, operation: Operation) {
         self.selection_cache
             .write()
-            .expect("selection_cache lock")
+            .unwrap_or_else(|e| e.into_inner())
             .retain(|k, _| k.operation != operation);
     }
 
@@ -568,7 +571,7 @@ impl AdaptiveSimdSelector {
         // Clear cache when thresholds change
         self.selection_cache
             .write()
-            .expect("selection_cache lock")
+            .unwrap_or_else(|e| e.into_inner())
             .clear();
     }
 }

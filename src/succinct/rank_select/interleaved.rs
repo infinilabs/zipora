@@ -406,9 +406,9 @@ impl RankSelectInterleaved256 {
         // Minimize arithmetic operations and direct cache line access
         let bit_in_line = pos % LINE_BITS;
 
-        // SAFETY: line_idx bounds-checked above (line 444: if line_idx >= self.lines.len())
+        // SAFETY: line_idx bounds-checked by early return above (if line_idx >= self.lines.len())
         unsafe {
-            // SAFETY: line_idx bounds-checked above (line 444: if line_idx >= self.lines.len())
+            // SAFETY: line_idx < self.lines.len() verified by early return, get_unchecked valid
             debug_assert!(
                 line_idx < self.lines.len(),
                 "line_idx {} >= lines.len() {}",
@@ -523,6 +523,7 @@ impl RankSelectInterleaved256 {
         // remaining_ones is 1-indexed
         let target_rank0 = remaining_ones - 1; // 0-indexed for comparisons and select_in_word
 
+        // SAFETY: line_idx < lines.len() verified by caller (select1 binary search on rlev1)
         let line = unsafe { self.lines.get_unchecked(line_idx) };
         let line_start_bit = line_idx * LINE_BITS;
 

@@ -263,6 +263,7 @@ impl SimdComparator {
         let mut min_vec = _mm512_set1_epi32(i32::MAX);
 
         while i + chunk_size <= values.len() {
+            // SAFETY: AVX-512F guaranteed by #[target_feature(enable = "avx512f")], i + 16 <= values.len() by while condition
             unsafe {
                 let vec = _mm512_loadu_si512(values.as_ptr().add(i) as *const __m512i);
                 let new_min = _mm512_min_epi32(min_vec, vec);
@@ -315,7 +316,7 @@ impl SimdComparator {
 
             // Process chunks with AVX2
             while i + chunk_size <= values.len() {
-                // SAFETY: i + chunk_size <= values.len() check above guarantees ptr.add(i) is in bounds
+                // SAFETY: loop condition guarantees i + chunk_size <= values.len()
                 let ptr = values.as_ptr().add(i);
                 let vec = _mm256_loadu_si256(ptr as *const __m256i);
 
