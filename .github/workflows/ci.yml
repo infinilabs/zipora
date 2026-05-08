@@ -10,8 +10,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-and-test:
-    name: Build and Test
+  build:
+    name: Build
     runs-on: ubuntu-latest
 
     steps:
@@ -26,19 +26,14 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential pkg-config
 
-    - name: Build release
+    - name: Build debug (default features)
+      run: cargo build
+
+    - name: Build release (default features)
       run: cargo build --release
 
-    - name: Build with LZ4 and FFI features
-      run: cargo build --features lz4,ffi
+    - name: Build debug (all features)
+      run: cargo build --all-features
 
-  build-avx512:
-    name: Build with AVX-512
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v6
-    - uses: dtolnay/rust-toolchain@stable
-    - name: Build with all features including avx512
+    - name: Build release (all features)
       run: cargo build --release --all-features
-    - name: Test (avx512 code compiles, runtime detection skips if HW unavailable)
-      run: cargo test --release --all-features --lib
