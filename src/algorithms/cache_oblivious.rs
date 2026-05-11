@@ -245,9 +245,12 @@ impl CacheObliviousSort {
             for (i, &(_start, end, pos)) in segments.iter().enumerate() {
                 if pos < end {
                     let current_value = &data[pos];
-                    if min_value.is_none()
-                        || current_value < min_value.expect("min_value set by prior iteration")
-                    {
+                    let is_min = match min_value {
+                        None => true,
+                        Some(min_v) => current_value < min_v,
+                    };
+
+                    if is_min {
                         min_value = Some(current_value);
                         min_segment = i;
                     }

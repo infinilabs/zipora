@@ -366,10 +366,16 @@ impl MigrationRegistry {
         // Simple implementation - could be made more sophisticated
         for &(start, end) in self.migrations.keys() {
             if start == from && end <= to {
-                let intermediate = self
+                let migrate_fn = self
                     .migrations
                     .get(&(start, end))
-                    .expect("migration path exists")(data)?;
+                    .ok_or_else(|| {
+                        ZiporaError::invalid_data(format!(
+                            "No migration path from {} to {}",
+                            start, end
+                        ))
+                    })?;
+                let intermediate = migrate_fn(data)?;
                 if end == to {
                     return Ok(intermediate);
                 } else {

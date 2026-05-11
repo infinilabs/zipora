@@ -986,8 +986,7 @@ fn find_suffix_array_match(
         if distance > 0 && distance < (1 << 24) {
             let length = find_match_length(data, suffix_pos, pos);
             if length >= 2
-                && (best_match.is_none()
-                    || length > best_match.expect("best_match set by condition").1)
+                && best_match.is_none_or(|(_, prev_len)| length > prev_len)
             {
                 best_match = Some((distance, length));
             }
@@ -1072,10 +1071,7 @@ fn find_global_match(input_data: &[u8], pos: usize, dict_data: &[u8]) -> Option<
         }
 
         if match_len >= 6 {
-            // MIN_GLOBAL_LENGTH
-            if best_match.is_none()
-                || match_len > best_match.expect("best_match set by condition").1
-            {
+            if best_match.is_none_or(|(_, prev_len)| match_len > prev_len) {
                 best_match = Some((dict_pos, match_len));
             }
         }

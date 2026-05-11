@@ -284,15 +284,16 @@ where
         let mut min_value: Option<&T> = None;
 
         for (way_idx, way) in self.ways.iter().enumerate() {
-            if let Some(value) = way.peek()
-                && (min_value.is_none()
-                    || self.compare_optimized(
-                        value,
-                        min_value.expect("min_value set by prior iteration"),
-                    ) == Ordering::Less)
-            {
-                min_value = Some(value);
-                min_way = way_idx;
+            if let Some(value) = way.peek() {
+                let is_min = match min_value {
+                    None => true,
+                    Some(min_v) => self.compare_optimized(value, min_v) == Ordering::Less,
+                };
+
+                if is_min {
+                    min_value = Some(value);
+                    min_way = way_idx;
+                }
             }
         }
 

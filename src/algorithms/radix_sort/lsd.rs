@@ -302,6 +302,7 @@ impl RadixSort {
             return;
         }
 
+        // Find maximum value to determine count buffer size
         // SAFETY: is_empty() check above guarantees iterator has at least one element
         let max_val = *data.iter().max().expect("non-empty input") as usize;
         let mut counts = vec![0usize; max_val + 1];
