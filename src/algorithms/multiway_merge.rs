@@ -294,11 +294,12 @@ impl MultiWayMerge {
 
             for &source_id in &active_sources {
                 if let Some(item) = sources[source_id].peek() {
-                    // SAFETY: Short-circuit OR evaluation guarantees that if we reach unwrap(),
-                    // min_item.is_none() was false, meaning min_item is Some.
-                    if min_item.is_none()
-                        || item < min_item.as_ref().expect("min_item set by prior iteration")
-                    {
+                    let is_min = match min_item {
+                        None => true,
+                        Some(min_v) => item < min_v,
+                    };
+
+                    if is_min {
                         min_item = Some(item);
                         min_source = source_id;
                     }

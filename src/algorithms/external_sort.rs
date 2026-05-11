@@ -304,8 +304,12 @@ where
         // Generate unique instance ID to avoid file name collisions
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("system time is after UNIX epoch")
-            .as_nanos();
+            .map(|d| d.as_nanos())
+            .unwrap_or_else(|_| {
+                // Fallback for systems where time might go backwards (e.g. during NTP sync)
+                let start = std::time::Instant::now();
+                start.elapsed().as_nanos()
+            });
         let thread_id = format!("{:?}", thread::current().id());
         let instance_id = format!(
             "sort_{}_{}",
@@ -376,11 +380,7 @@ where
             }
         }
 
-        while !heap.is_empty() {
-            // Get minimum element
-            // SAFETY: !heap.is_empty() check above guarantees pop() succeeds
-            let min_element = heap.pop().expect("heap non-empty by loop condition");
-
+        while let Some(min_element) = heap.pop() {
             // Start new run file if needed
             if temp_writer.is_none() {
                 let temp_path = self
@@ -397,7 +397,7 @@ where
 
             // Write element to current run
             self.write_element(
-                &mut temp_writer
+                temp_writer
                     .as_mut()
                     .expect("temp_writer initialized in loop"),
                 &min_element.value,
@@ -407,7 +407,6 @@ where
             // Try to read next element
             if let Some(next_item) = input_iter.next() {
                 self.stats.items_sorted += 1;
-
                 // Check if next item can be added to current run
                 if (self.comparator)(&next_item, &min_element.value) != Ordering::Less {
                     // Can extend current run
