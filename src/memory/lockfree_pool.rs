@@ -216,6 +216,12 @@ impl LockFreePoolStats {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct FreeBlock {
+    offset: u32,
+    size: usize,
+}
+
 /// Lock-free memory pool implementation
 pub struct LockFreeMemoryPool {
     /// Configuration
@@ -226,7 +232,8 @@ pub struct LockFreeMemoryPool {
     memory_layout: Layout,
     /// Fast bins for small/medium allocations
     fast_bins: Vec<CachePadded<LockFreeHead>>,
-    /// Skip list head for large allocations (protected by mutex)
+    /// Fallback list for large allocations to prevent memory leaks
+    large_blocks: Mutex<Vec<FreeBlock>>,
 
     /// Next available offset in memory region
     next_offset: AtomicU32,
@@ -323,6 +330,7 @@ impl LockFreeMemoryPool {
             memory,
             memory_layout: layout,
             fast_bins,
+            large_blocks: Mutex::new(Vec::new()),
 
             next_offset: AtomicU32::new(ALIGN_SIZE as u32), // Start after header
             stats,
@@ -548,14 +556,44 @@ impl LockFreeMemoryPool {
 
     /// Allocate from skip list (for large blocks)
     fn allocate_from_skip_list(&self, size: usize) -> Result<NonNull<u8>> {
-        // For now, fall back to new allocation
-        // Full skip list implementation would search for suitable block
+        let aligned_size = self.align_size(size);
+
+        // Try to find and reuse an existing deallocated block (best-fit approach)
+        {
+            let mut blocks = self.large_blocks.lock().map_err(|_| ZiporaError::invalid_data("Mutex poisoned"))?;
+            let mut best_idx: Option<usize> = None;
+            let mut best_size = usize::MAX;
+
+            for (idx, block) in blocks.iter().enumerate() {
+                if block.size >= aligned_size && block.size < best_size {
+                    best_idx = Some(idx);
+                    best_size = block.size;
+                }
+            }
+
+            if let Some(idx) = best_idx {
+                let block = blocks.remove(idx);
+                if let Some(stats) = &self.stats {
+                    stats.skip_allocs.fetch_add(1, Ordering::Relaxed);
+                }
+                return self.offset_to_ptr(block.offset);
+            }
+        }
+
+        if let Some(stats) = &self.stats {
+            stats.skip_allocs.fetch_add(1, Ordering::Relaxed);
+        }
         self.allocate_new_block(size)
     }
 
     /// Deallocate to skip list (for large blocks)  
-    fn deallocate_to_skip_list(&self, _ptr: NonNull<u8>, _size: usize) -> Result<()> {
-        // For now, just track statistics
+    fn deallocate_to_skip_list(&self, ptr: NonNull<u8>, size: usize) -> Result<()> {
+        let aligned_size = self.align_size(size);
+        let offset = self.ptr_to_offset(ptr)?;
+
+        let mut blocks = self.large_blocks.lock().map_err(|_| ZiporaError::invalid_data("Mutex poisoned"))?;
+        blocks.push(FreeBlock { offset, size: aligned_size });
+
         if let Some(stats) = &self.stats {
             stats.skip_deallocs.fetch_add(1, Ordering::Relaxed);
         }
@@ -568,13 +606,26 @@ impl LockFreeMemoryPool {
 
         // Always allocate from backing memory to ensure consistent pointer validation
         // External cache allocations would cause pointer validation failures in deallocate
-        let offset = self
-            .next_offset
-            .fetch_add(aligned_size as u32, Ordering::Relaxed);
-
-        if offset as usize + aligned_size > self.config.memory_size {
-            return Err(ZiporaError::out_of_memory(aligned_size));
+        let mut current = self.next_offset.load(Ordering::Relaxed);
+        loop {
+            if current as usize + aligned_size > self.config.memory_size {
+                return Err(ZiporaError::out_of_memory(aligned_size));
+            }
+            let next = match current.checked_add(aligned_size as u32) {
+                Some(val) => val,
+                None => return Err(ZiporaError::out_of_memory(aligned_size)),
+            };
+            match self.next_offset.compare_exchange_weak(
+                current,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(actual) => current = actual,
+            }
         }
+        let offset = current;
 
         let ptr = self.offset_to_ptr(offset)?;
 
@@ -630,8 +681,11 @@ impl LockFreeMemoryPool {
         if offset == LIST_TAIL {
             return Err(ZiporaError::invalid_data("Invalid offset"));
         }
+        if offset as usize >= self.config.memory_size {
+            return Err(ZiporaError::invalid_data("Offset exceeds pool memory size"));
+        }
 
-        // SAFETY: pointer valid from alloc, offset validated by caller
+        // SAFETY: Offset is validated to be within allocated memory pool size boundaries
         let addr = unsafe { self.memory.as_ptr().add(offset as usize) };
         NonNull::new(addr).ok_or_else(|| ZiporaError::invalid_data("Invalid pointer"))
     }
@@ -1168,5 +1222,124 @@ mod tests {
 
         // Cleanup
         pool.deallocate(ptr2, 128).unwrap();
+    }
+
+    #[test]
+    fn test_exhaustion_overflow_safety() {
+        let config = LockFreePoolConfig {
+            memory_size: 1024, // 1KB small pool
+            enable_stats: false,
+            ..Default::default()
+        };
+        let pool = LockFreeMemoryPool::new(config).unwrap();
+
+        // 1. Exhaust the pool
+        let mut allocs = Vec::new();
+        while let Ok(ptr) = pool.allocate(64) {
+            allocs.push(ptr);
+        }
+
+        // 2. Call allocate 10,000 times. Each call should fail with OutOfMemory.
+        // If an overflow wraps around, it will return a valid pointer (which is a bug).
+        for _ in 0..10_000 {
+            assert!(pool.allocate(64).is_err());
+        }
+    }
+
+    #[test]
+    fn test_large_allocations_reuse() {
+        let config = LockFreePoolConfig {
+            memory_size: 65536, // 64KB
+            enable_stats: false,
+            ..Default::default()
+        };
+        let pool = Arc::new(LockFreeMemoryPool::new(config).unwrap());
+
+        // 1. Allocate a large block
+        let first_alloc = pool.allocate(10000).unwrap();
+        let first_offset = pool.ptr_to_offset(first_alloc).unwrap();
+
+        // 2. Deallocate it
+        pool.deallocate(first_alloc, 10000).unwrap();
+
+        // 3. Allocate another block of same size
+        let second_alloc = pool.allocate(10000).unwrap();
+        let second_offset = pool.ptr_to_offset(second_alloc).unwrap();
+
+        // Verify offsets are identical (memory was reused)
+        assert_eq!(first_offset, second_offset);
+    }
+
+    #[test]
+    fn test_large_block_best_fit_selection() {
+        let config = LockFreePoolConfig {
+            memory_size: 256 * 1024,
+            enable_stats: false,
+            ..Default::default()
+        };
+        let pool = LockFreeMemoryPool::new(config).unwrap();
+
+        // Allocate three large blocks of different sizes
+        let small = pool.allocate(9000).unwrap();
+        let medium = pool.allocate(16000).unwrap();
+        let large = pool.allocate(32000).unwrap();
+
+        let small_off = pool.ptr_to_offset(small).unwrap();
+        let medium_off = pool.ptr_to_offset(medium).unwrap();
+
+        // Free all three
+        pool.deallocate(small, 9000).unwrap();
+        pool.deallocate(medium, 16000).unwrap();
+        pool.deallocate(large, 32000).unwrap();
+
+        // Request a block that fits in small — best-fit should pick it
+        let reused_small = pool.allocate(9000).unwrap();
+        assert_eq!(pool.ptr_to_offset(reused_small).unwrap(), small_off);
+
+        // Request a block that fits in medium (too big for small) — best-fit should pick medium
+        let reused_medium = pool.allocate(15000).unwrap();
+        assert_eq!(pool.ptr_to_offset(reused_medium).unwrap(), medium_off);
+    }
+
+    #[test]
+    fn test_large_block_fallback_to_new_allocation() {
+        let config = LockFreePoolConfig {
+            memory_size: 128 * 1024,
+            enable_stats: false,
+            ..Default::default()
+        };
+        let pool = LockFreeMemoryPool::new(config).unwrap();
+
+        // Allocate and free a large block
+        let first = pool.allocate(10000).unwrap();
+        let first_off = pool.ptr_to_offset(first).unwrap();
+        pool.deallocate(first, 10000).unwrap();
+
+        // Request a size larger than the free block — must fall back to new allocation
+        let bigger = pool.allocate(20000).unwrap();
+        let bigger_off = pool.ptr_to_offset(bigger).unwrap();
+        assert_ne!(bigger_off, first_off);
+    }
+
+    #[test]
+    fn test_offset_to_ptr_rejects_out_of_bounds() {
+        let config = LockFreePoolConfig {
+            memory_size: 1024,
+            enable_stats: false,
+            ..Default::default()
+        };
+        let pool = LockFreeMemoryPool::new(config).unwrap();
+
+        // Valid offset should succeed
+        assert!(pool.offset_to_ptr(8).is_ok());
+
+        // Offset at boundary should fail
+        assert!(pool.offset_to_ptr(1024).is_err());
+
+        // Offset beyond boundary should fail
+        assert!(pool.offset_to_ptr(2000).is_err());
+
+        // LIST_TAIL (0) should fail
+        assert!(pool.offset_to_ptr(LIST_TAIL).is_err());
     }
 }

@@ -494,8 +494,14 @@ impl<'a> Iterator for OptimalPefIter<'a> {
             let bit_pos = self.local_idx as u64 * lbw;
             let w_idx = (bit_pos / 64) as usize;
             let b_idx = (bit_pos % 64) as u32;
-            let w0 = self.cached_low_bits[w_idx];
-            let w1 = self.cached_low_bits[w_idx + 1]; // safe: padding word
+            // SAFETY: cached_low_bits slice is constructed from flat arrays which include
+            // a padding word at the end during container build, ensuring w_idx + 1 is structurally safe.
+            let (w0, w1) = unsafe {
+                (
+                    *self.cached_low_bits.get_unchecked(w_idx),
+                    *self.cached_low_bits.get_unchecked(w_idx + 1),
+                )
+            };
             let combined = w0 as u128 | ((w1 as u128) << 64);
             (combined >> b_idx) as u64 & ((1u64 << lbw) - 1)
         };

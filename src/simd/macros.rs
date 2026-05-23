@@ -79,8 +79,7 @@ macro_rules! simd_dispatch {
         }
         #[cfg(target_arch = "aarch64")]
         {
-            // ARM64 always has NEON, use sse2 equivalent
-            return $sse2;
+            return $fallback;
         }
         $fallback
     }};
@@ -98,7 +97,7 @@ macro_rules! simd_dispatch {
         }
         #[cfg(target_arch = "aarch64")]
         {
-            return $sse2;
+            return $fallback;
         }
         $fallback
     }};

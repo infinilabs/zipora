@@ -164,6 +164,7 @@ impl SharedPool {
     /// SAFETY: The caller must ensure the data is immutable (written before parent CAS).
     #[inline(always)]
     unsafe fn raw_ptr(&self, slot: usize) -> *const u8 {
+        debug_assert!(slot < self.data.len(), "slot out of bounds: {} >= {}", slot, self.data.len());
         // SAFETY: caller guarantees slot is within allocated bounds
         unsafe { self.data.as_ptr().add(slot) as *const u8 }
     }
