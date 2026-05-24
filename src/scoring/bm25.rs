@@ -128,6 +128,10 @@ impl<'a> Bm25BatchScorer<'a> {
         scores: &mut [f32],
         n: usize,
     ) {
+        let fieldnorm_bytes = &fieldnorm_bytes[..n];
+        let tfs = &tfs[..n];
+        let scores = &mut scores[..n];
+
         for i in 0..n {
             let tf_f = tfs[i] as f32;
             let len_norm = self.norm_table[fieldnorm_bytes[i] as usize];
@@ -178,12 +182,16 @@ impl<'a> Bm25BatchScorer<'a> {
         }
 
         // Handle remainder with scalar
-        let rem_base = chunks * 16;
-        for i in 0..remainder {
-            let idx = rem_base + i;
-            let tf_f = tfs[idx] as f32;
-            let len_norm = self.norm_table[fieldnorm_bytes[idx] as usize];
-            scores[idx] = self.idf_k1p1 * tf_f / (tf_f + len_norm);
+        if remainder > 0 {
+            let rem_base = chunks * 16;
+            let rem_fn = &fieldnorm_bytes[rem_base..n];
+            let rem_tfs = &tfs[rem_base..n];
+            let rem_scores = &mut scores[rem_base..n];
+            for i in 0..remainder {
+                let tf_f = rem_tfs[i] as f32;
+                let len_norm = self.norm_table[rem_fn[i] as usize];
+                rem_scores[i] = self.idf_k1p1 * tf_f / (tf_f + len_norm);
+            }
         }
     }
 
@@ -242,12 +250,16 @@ impl<'a> Bm25BatchScorer<'a> {
         }
 
         // Handle remainder with scalar
-        let rem_base = chunks * 8;
-        for i in 0..remainder {
-            let idx = rem_base + i;
-            let tf_f = tfs[idx] as f32;
-            let len_norm = self.norm_table[fieldnorm_bytes[idx] as usize];
-            scores[idx] = self.idf_k1p1 * tf_f / (tf_f + len_norm);
+        if remainder > 0 {
+            let rem_base = chunks * 8;
+            let rem_fn = &fieldnorm_bytes[rem_base..n];
+            let rem_tfs = &tfs[rem_base..n];
+            let rem_scores = &mut scores[rem_base..n];
+            for i in 0..remainder {
+                let tf_f = rem_tfs[i] as f32;
+                let len_norm = self.norm_table[rem_fn[i] as usize];
+                rem_scores[i] = self.idf_k1p1 * tf_f / (tf_f + len_norm);
+            }
         }
     }
 
@@ -302,10 +314,13 @@ impl<'a> Bm25BatchScorer<'a> {
         assert_eq!(tfs.len(), n);
         assert!(scores.len() >= n);
 
+        let doc_ids = &doc_ids[..n];
+        let tfs = &tfs[..n];
+        let scores = &mut scores[..n];
+
         const PREFETCH_DISTANCE: usize = 4;
 
         for i in 0..n {
-            // Prefetch ahead
             if i + PREFETCH_DISTANCE < n {
                 prefetch_fieldnorm(fieldnorm_bytes, doc_ids[i + PREFETCH_DISTANCE]);
             }
@@ -512,6 +527,31 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn test_batch_score_with_prefetch_empty() {
+        let (norm_table, idf, k1) = make_test_scorer();
+        let scorer = Bm25BatchScorer::new(&norm_table, idf, k1);
+
+        let fieldnorm_bytes = vec![0u8; 100];
+        let doc_ids: Vec<u32> = vec![];
+        let tfs: Vec<u16> = vec![];
+        let mut scores = vec![0.0f32; 0];
+
+        scorer.batch_score_with_prefetch(&fieldnorm_bytes, &doc_ids, &tfs, &mut scores);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_batch_score_panics_on_short_scores() {
+        let (norm_table, idf, k1) = make_test_scorer();
+        let scorer = Bm25BatchScorer::new(&norm_table, idf, k1);
+
+        let fieldnorm_bytes = vec![100u8; 10];
+        let tfs = vec![1u16; 10];
+        let mut scores = vec![0.0f32; 5]; // too short
+        scorer.batch_score(&fieldnorm_bytes, &tfs, &mut scores);
     }
 
     #[test]

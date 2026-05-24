@@ -298,6 +298,7 @@ where
 }
 
 /// Internal storage implementations for different strategies
+#[allow(dead_code)]
 enum HashMapStorage<K, V>
 where
     K: Clone,
@@ -495,32 +496,20 @@ where
                     len: 0,
                 })
             }
-            HashStorageStrategy::CacheOptimized { .. } => Ok(HashMapStorage::CacheOptimized {
-                buckets: FastVec::with_capacity(config.initial_capacity)?,
-                hot_data: FastVec::with_capacity(config.initial_capacity)?,
-                cold_data: FastVec::with_capacity(config.initial_capacity)?,
-                prefetcher: Prefetcher::new(),
-            }),
-            HashStorageStrategy::StringOptimized { arena_size, .. } => {
-                Ok(HashMapStorage::StringOptimized {
-                    arena: StringArena {
-                        _data: FastVec::with_capacity(*arena_size)?,
-                        _offsets: FastVec::with_capacity(256)?,
-                        _interned: std::collections::HashMap::new(),
-                    },
-                    buckets: FastVec::with_capacity(config.initial_capacity)?,
-                    entries: FastVec::with_capacity(config.initial_capacity)?,
-                    prefix_cache: FastVec::with_capacity(config.initial_capacity)?,
-                })
+            HashStorageStrategy::CacheOptimized { .. } => {
+                Err(crate::error::ZiporaError::not_supported(
+                    "CacheOptimized storage strategy is not yet implemented",
+                ))
+            }
+            HashStorageStrategy::StringOptimized { .. } => {
+                Err(crate::error::ZiporaError::not_supported(
+                    "StringOptimized storage strategy is not yet implemented",
+                ))
             }
             HashStorageStrategy::PoolAllocated { .. } => {
-                // For now, fallback to standard storage
-                // TODO: Implement pool-based allocation
-                Ok(HashMapStorage::Standard {
-                    buckets: FastVec::with_capacity(config.initial_capacity)?,
-                    entries: FastVec::with_capacity(config.initial_capacity)?,
-                    mask: config.initial_capacity.saturating_sub(1),
-                })
+                Err(crate::error::ZiporaError::not_supported(
+                    "PoolAllocated storage strategy is not yet implemented",
+                ))
             }
         }
     }
@@ -584,19 +573,10 @@ where
                 inline_data,
                 fallback,
                 len,
-            } => Self::insert_small_inline(inline_data, fallback, len, key, value),
-            HashMapStorage::CacheOptimized {
-                buckets,
-                hot_data,
-                cold_data,
-                prefetcher,
-            } => Self::insert_cache_optimized(buckets, hot_data, cold_data, prefetcher, key, value),
-            HashMapStorage::StringOptimized {
-                arena,
-                buckets,
-                entries,
-                prefix_cache,
-            } => Self::insert_string_optimized(arena, buckets, entries, prefix_cache, key, value),
+            } => Self::insert_small_inline(inline_data, fallback, len, key, value, hash, &self.hash_builder),
+            HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
+                unreachable!("unimplemented strategies are rejected at construction")
+            }
         }
     }
 
@@ -619,18 +599,9 @@ where
                 fallback,
                 len,
             } => self.get_small_inline(inline_data, fallback, len, key),
-            HashMapStorage::CacheOptimized {
-                buckets,
-                hot_data,
-                cold_data,
-                prefetcher,
-            } => self.get_cache_optimized(buckets, hot_data, cold_data, prefetcher, key),
-            HashMapStorage::StringOptimized {
-                arena,
-                buckets,
-                entries,
-                prefix_cache,
-            } => self.get_string_optimized(arena, buckets, entries, prefix_cache, key),
+            HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
+                unreachable!("unimplemented strategies are rejected at construction")
+            }
         }
     }
 
@@ -646,8 +617,9 @@ where
                     .count()
             }
             HashMapStorage::SmallInline { len, .. } => *len,
-            HashMapStorage::CacheOptimized { hot_data, .. } => hot_data.len(),
-            HashMapStorage::StringOptimized { entries, .. } => entries.len(),
+            HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
+                unreachable!("unimplemented strategies are rejected at construction")
+            }
         }
     }
 
@@ -684,18 +656,9 @@ where
                 fallback,
                 len,
             } => Self::get_mut_small_inline(inline_data, fallback, len, key),
-            HashMapStorage::CacheOptimized {
-                buckets,
-                hot_data,
-                cold_data,
-                prefetcher,
-            } => Self::get_mut_cache_optimized(buckets, hot_data, cold_data, prefetcher, key),
-            HashMapStorage::StringOptimized {
-                arena,
-                buckets,
-                entries,
-                prefix_cache,
-            } => Self::get_mut_string_optimized(arena, buckets, entries, prefix_cache, key),
+            HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
+                unreachable!("unimplemented strategies are rejected at construction")
+            }
         }
     }
 
@@ -716,18 +679,9 @@ where
                 fallback,
                 len,
             } => Self::remove_small_inline(inline_data, fallback, len, key),
-            HashMapStorage::CacheOptimized {
-                buckets,
-                hot_data,
-                cold_data,
-                prefetcher,
-            } => Self::remove_cache_optimized(buckets, hot_data, cold_data, prefetcher, key),
-            HashMapStorage::StringOptimized {
-                arena,
-                buckets,
-                entries,
-                prefix_cache,
-            } => Self::remove_string_optimized(arena, buckets, entries, prefix_cache, key),
+            HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
+                unreachable!("unimplemented strategies are rejected at construction")
+            }
         }
     }
 
@@ -744,18 +698,9 @@ where
                 fallback,
                 len,
             } => Self::clear_small_inline(inline_data, fallback, len),
-            HashMapStorage::CacheOptimized {
-                buckets,
-                hot_data,
-                cold_data,
-                prefetcher,
-            } => Self::clear_cache_optimized(buckets, hot_data, cold_data, prefetcher),
-            HashMapStorage::StringOptimized {
-                arena,
-                buckets,
-                entries,
-                prefix_cache,
-            } => Self::clear_string_optimized(arena, buckets, entries, prefix_cache),
+            HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
+                unreachable!("unimplemented strategies are rejected at construction")
+            }
         }
     }
 
@@ -782,8 +727,9 @@ where
                     _ => 0,
                 })
             }
-            HashMapStorage::CacheOptimized { hot_data, .. } => hot_data.capacity(),
-            HashMapStorage::StringOptimized { entries, .. } => entries.capacity(),
+            HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
+                unreachable!("unimplemented strategies are rejected at construction")
+            }
         }
     }
 
@@ -980,14 +926,30 @@ where
         len: &mut usize,
         key: K,
         value: V,
+        hash: u64,
+        hash_builder: &S,
     ) -> Result<Option<V>> {
-        // Check if key already exists
+        // If already migrated to fallback, delegate to Standard storage
+        if let Some(fb) = _fallback.as_mut() {
+            #[allow(clippy::collapsible_if)]
+            if let HashMapStorage::Standard { buckets, entries, mask, .. } = fb.as_mut() {
+                let result = Self::insert_standard(hash_builder, buckets, entries, mask, key, value, hash)
+                    .map_err(|_| crate::error::ZiporaError::invalid_state(
+                        "Hash table full in SmallInline fallback storage",
+                    ))?;
+                if result.is_none() {
+                    *len += 1;
+                }
+                return Ok(result);
+            }
+        }
+
+        // Check if key already exists in inline storage
         for i in 0..16 {
             if (inline_data.occupied >> i) & 1 == 1 {
                 // SAFETY: Bit i is set in occupied, so slot i is initialized
                 let (k, v) = unsafe { inline_data._data[i].assume_init_ref() };
                 if k == &key {
-                    // Update existing value
                     let old_v = unsafe { std::ptr::read(v as *const V) };
                     // SAFETY: We just read the old value, now we overwrite it with the new one
                     unsafe {
@@ -1010,36 +972,50 @@ where
             return Ok(None);
         }
 
-        // Table is full, transition to fallback (Standard storage)
-        // For simplicity in this implementation, we'll just return an error or handle transition
-        // In a real implementation we would convert current data to Standard storage
-        Err(crate::error::ZiporaError::invalid_state(
-            "SmallInline storage full, fallback not yet implemented",
-        ))
-    }
+        // Inline storage full — migrate all 16 entries to Standard storage.
+        let std_cap = 32; // 16 existing + room to grow
+        let mut buckets = FastVec::with_capacity(std_cap)?;
+        let mut entries = FastVec::with_capacity(std_cap)?;
+        let mut mask = std_cap - 1;
 
-    fn insert_cache_optimized(
-        _buckets: &mut FastVec<CacheOptimizedBucket<K, V>>,
-        _hot_data: &mut FastVec<K>,
-        _cold_data: &mut FastVec<V>,
-        _prefetcher: &mut Prefetcher,
-        _key: K,
-        _value: V,
-    ) -> Result<Option<V>> {
-        // TODO: Implement cache-optimized insertion
-        Ok(None)
-    }
+        // Initialize entries
+        for _ in 0..std_cap {
+            entries.push(HashEntry {
+                key: None,
+                value: None,
+                hash: 0,
+                _next: None,
+            })?;
+        }
+        // buckets are allocated but not initialized — Standard path uses entries for probing
 
-    fn insert_string_optimized(
-        _arena: &mut StringArena,
-        _buckets: &mut FastVec<StringBucket>,
-        _entries: &mut FastVec<StringEntry<V>>,
-        _prefix_cache: &mut FastVec<PrefixCacheEntry>,
-        _key: K,
-        _value: V,
-    ) -> Result<Option<V>> {
-        // TODO: Implement string-optimized insertion
-        Ok(None)
+        // Re-insert all 16 inline entries into standard storage
+        for i in 0..16 {
+            if (inline_data.occupied >> i) & 1 == 1 {
+                // SAFETY: Bit i is set in occupied, so slot i is initialized
+                let (k, v) = unsafe { std::ptr::read(inline_data._data[i].as_ptr()) };
+                let raw_h = hash_builder.hash_one(&k);
+                let h = if raw_h == 0 { 1 } else if raw_h == u64::MAX { u64::MAX - 1 } else { raw_h };
+                let _ = Self::insert_standard(hash_builder, &mut buckets, &mut entries, &mut mask, k, v, h);
+            }
+        }
+        inline_data.occupied = 0;
+
+        // Insert the new key-value pair
+        let result = Self::insert_standard(hash_builder, &mut buckets, &mut entries, &mut mask, key, value, hash);
+        let result = result.map_err(|_| {
+            crate::error::ZiporaError::invalid_state("Hash table full after SmallInline migration")
+        })?;
+
+        // Store the migrated storage as fallback
+        *_fallback = Some(Box::new(HashMapStorage::Standard {
+            buckets,
+            entries,
+            mask,
+        }));
+        *len += 1;
+
+        Ok(result)
     }
 
     fn get_standard<'a, Q>(
@@ -1084,7 +1060,7 @@ where
     fn get_small_inline<'a, Q>(
         &self,
         inline_data: &'a InlineStorage<K, V>,
-        _fallback: &Option<Box<HashMapStorage<K, V>>>,
+        fallback: &'a Option<Box<HashMapStorage<K, V>>>,
         _len: &usize,
         key: &Q,
     ) -> Option<&'a V>
@@ -1092,6 +1068,15 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
+        // Check fallback first (migrated data)
+        #[allow(clippy::collapsible_if)]
+        if let Some(fb) = fallback {
+            if let HashMapStorage::Standard { buckets, entries, mask } = fb.as_ref() {
+                let hash = self.hash_key_borrowed(key);
+                return self.get_standard(buckets, entries, mask, key, hash);
+            }
+        }
+
         for i in 0..16 {
             if (inline_data.occupied >> i) & 1 == 1 {
                 // SAFETY: Bit i is set in occupied, so slot i is initialized
@@ -1101,38 +1086,6 @@ where
                 }
             }
         }
-        None
-    }
-
-    fn get_cache_optimized<Q>(
-        &self,
-        _buckets: &FastVec<CacheOptimizedBucket<K, V>>,
-        _hot_data: &FastVec<K>,
-        _cold_data: &FastVec<V>,
-        _prefetcher: &Prefetcher,
-        _key: &Q,
-    ) -> Option<&V>
-    where
-        K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
-        // TODO: Implement cache-optimized lookup
-        None
-    }
-
-    fn get_string_optimized<Q>(
-        &self,
-        _arena: &StringArena,
-        _buckets: &FastVec<StringBucket>,
-        _entries: &FastVec<StringEntry<V>>,
-        _prefix_cache: &FastVec<PrefixCacheEntry>,
-        _key: &Q,
-    ) -> Option<&V>
-    where
-        K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
-        // TODO: Implement string-optimized lookup
         None
     }
 
@@ -1192,46 +1145,32 @@ where
     }
 
     fn get_mut_small_inline<'a, Q>(
-        _inline_data: &'a mut InlineStorage<K, V>,
-        _fallback: &'a mut Option<Box<HashMapStorage<K, V>>>,
+        inline_data: &'a mut InlineStorage<K, V>,
+        fallback: &'a mut Option<Box<HashMapStorage<K, V>>>,
         _len: &mut usize,
-        _key: &Q,
+        key: &Q,
     ) -> Option<&'a mut V>
     where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        // TODO: Implement small inline get_mut
-        None
-    }
+        // Check fallback first (migrated data) — not yet supported for get_mut
+        // since Standard get_mut needs the hash_builder which we don't have here.
+        if fallback.is_some() {
+            return None;
+        }
 
-    fn get_mut_cache_optimized<'a, Q>(
-        _buckets: &'a mut FastVec<CacheOptimizedBucket<K, V>>,
-        _hot_data: &mut FastVec<K>,
-        _cold_data: &'a mut FastVec<V>,
-        _prefetcher: &mut Prefetcher,
-        _key: &Q,
-    ) -> Option<&'a mut V>
-    where
-        K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
-        // TODO: Implement cache-optimized get_mut
-        None
-    }
-
-    fn get_mut_string_optimized<'a, Q>(
-        _arena: &mut StringArena,
-        _buckets: &mut FastVec<StringBucket>,
-        _entries: &'a mut FastVec<StringEntry<V>>,
-        _prefix_cache: &mut FastVec<PrefixCacheEntry>,
-        _key: &Q,
-    ) -> Option<&'a mut V>
-    where
-        K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
-        // TODO: Implement string-optimized get_mut
+        for i in 0..16 {
+            if (inline_data.occupied >> i) & 1 == 1 {
+                // SAFETY: Bit i is set in occupied, so slot i is initialized
+                let (k, _) = unsafe { inline_data._data[i].assume_init_ref() };
+                if k.borrow() == key {
+                    // SAFETY: same slot, returning mutable reference to value
+                    let (_, v) = unsafe { inline_data._data[i].assume_init_mut() };
+                    return Some(v);
+                }
+            }
+        }
         None
     }
 
@@ -1360,36 +1299,6 @@ where
         None
     }
 
-    fn remove_cache_optimized<Q>(
-        _buckets: &mut FastVec<CacheOptimizedBucket<K, V>>,
-        _hot_data: &mut FastVec<K>,
-        _cold_data: &mut FastVec<V>,
-        _prefetcher: &mut Prefetcher,
-        _key: &Q,
-    ) -> Option<V>
-    where
-        K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
-        // TODO: Implement cache-optimized remove
-        None
-    }
-
-    fn remove_string_optimized<Q>(
-        _arena: &mut StringArena,
-        _buckets: &mut FastVec<StringBucket>,
-        _entries: &mut FastVec<StringEntry<V>>,
-        _prefix_cache: &mut FastVec<PrefixCacheEntry>,
-        _key: &Q,
-    ) -> Option<V>
-    where
-        K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
-        // TODO: Implement string-optimized remove
-        None
-    }
-
     // clear implementation methods
     fn clear_standard(
         buckets: &mut FastVec<StandardBucket<K, V>>,
@@ -1414,29 +1323,6 @@ where
         }
     }
 
-    fn clear_cache_optimized(
-        buckets: &mut FastVec<CacheOptimizedBucket<K, V>>,
-        hot_data: &mut FastVec<K>,
-        cold_data: &mut FastVec<V>,
-        _prefetcher: &mut Prefetcher,
-    ) {
-        // TODO: Implement cache-optimized clear
-        buckets.clear();
-        hot_data.clear();
-        cold_data.clear();
-    }
-
-    fn clear_string_optimized(
-        _arena: &mut StringArena,
-        buckets: &mut FastVec<StringBucket>,
-        entries: &mut FastVec<StringEntry<V>>,
-        prefix_cache: &mut FastVec<PrefixCacheEntry>,
-    ) {
-        // TODO: Implement string-optimized clear
-        buckets.clear();
-        entries.clear();
-        prefix_cache.clear();
-    }
 }
 
 impl<K, V, S> Default for ZiporaHashMap<K, V, S>
@@ -1534,23 +1420,8 @@ where
                 // TODO: Implement inline iteration - for now return None
                 None
             }
-            HashMapStorage::CacheOptimized {
-                hot_data,
-                cold_data,
-                ..
-            } => {
-                if self.index < hot_data.len() && self.index < cold_data.len() {
-                    let key = &hot_data[self.index];
-                    let value = &cold_data[self.index];
-                    self.index += 1;
-                    Some((key, value))
-                } else {
-                    None
-                }
-            }
-            HashMapStorage::StringOptimized { entries: _, .. } => {
-                // TODO: Implement string-optimized iteration - for now return None
-                None
+            HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
+                unreachable!("unimplemented strategies are rejected at construction")
             }
         }
     }
@@ -1593,16 +1464,14 @@ mod tests {
 
     #[test]
     fn test_cache_optimized_config() {
-        let map: ZiporaHashMap<String, i32> =
-            ZiporaHashMap::with_config(ZiporaHashMapConfig::cache_optimized()).expect("invariant broken");
-        assert_eq!(map.len(), 0);
+        let result = ZiporaHashMap::<String, i32>::with_config(ZiporaHashMapConfig::cache_optimized());
+        assert!(result.is_err(), "CacheOptimized strategy should be rejected at construction");
     }
 
     #[test]
     fn test_string_optimized_config() {
-        let map: ZiporaHashMap<String, i32> =
-            ZiporaHashMap::with_config(ZiporaHashMapConfig::string_optimized()).expect("invariant broken");
-        assert_eq!(map.len(), 0);
+        let result = ZiporaHashMap::<String, i32>::with_config(ZiporaHashMapConfig::string_optimized());
+        assert!(result.is_err(), "StringOptimized strategy should be rejected at construction");
     }
 
     #[test]
@@ -2101,5 +1970,87 @@ mod tests {
         for i in (1..n).step_by(2) {
             assert_eq!(map.get(&i), Some(&(i * 7)));
         }
+    }
+
+    // ==================== Strategy gating tests ====================
+
+    #[test]
+    fn test_cache_optimized_returns_not_supported() {
+        let config = ZiporaHashMapConfig::cache_optimized();
+        let result = ZiporaHashMap::<i32, i32>::with_config(config);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("not yet implemented"));
+    }
+
+    #[test]
+    fn test_string_optimized_returns_not_supported() {
+        let config = ZiporaHashMapConfig::string_optimized();
+        let result = ZiporaHashMap::<String, i32>::with_config(config);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("not yet implemented"));
+    }
+
+    // ==================== SmallInline fallback tests ====================
+
+    #[test]
+    fn test_small_inline_basic() {
+        let config = ZiporaHashMapConfig::small_inline(16);
+        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::with_config(config).unwrap();
+        for i in 0..16 {
+            map.insert(i, i * 10).unwrap();
+        }
+        assert_eq!(map.len(), 16);
+        for i in 0..16 {
+            assert_eq!(map.get(&i), Some(&(i * 10)));
+        }
+    }
+
+    #[test]
+    fn test_small_inline_fallback_to_standard() {
+        let config = ZiporaHashMapConfig::small_inline(16);
+        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::with_config(config).unwrap();
+
+        // Fill all 16 inline slots
+        for i in 0..16 {
+            map.insert(i, i * 10).unwrap();
+        }
+        assert_eq!(map.len(), 16);
+
+        // Insert 17th element — triggers migration to Standard
+        map.insert(16, 160).unwrap();
+        assert_eq!(map.len(), 17);
+
+        // All 17 entries must be retrievable
+        for i in 0..=16 {
+            assert_eq!(map.get(&i), Some(&(i * 10)), "key {} missing after fallback", i);
+        }
+
+        // Further inserts into fallback storage should work
+        map.insert(17, 170).unwrap();
+        assert_eq!(map.len(), 18);
+        assert_eq!(map.get(&17), Some(&170));
+    }
+
+    #[test]
+    fn test_small_inline_overwrite_before_and_after_fallback() {
+        let config = ZiporaHashMapConfig::small_inline(16);
+        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::with_config(config).unwrap();
+
+        // Insert and overwrite within inline storage
+        map.insert(1, 10).unwrap();
+        assert_eq!(map.insert(1, 20).unwrap(), Some(10));
+        assert_eq!(map.get(&1), Some(&20));
+
+        // Fill rest and trigger fallback
+        for i in 2..=16 {
+            map.insert(i, i * 10).unwrap();
+        }
+        map.insert(17, 170).unwrap();
+
+        // Overwrite within fallback storage
+        assert_eq!(map.len(), 17);
+        assert_eq!(map.get(&1), Some(&20));
     }
 }

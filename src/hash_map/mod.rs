@@ -157,18 +157,14 @@ mod tests {
 
     #[test]
     fn test_cache_optimized_config() {
-        let map: ZiporaHashMap<String, i32> =
-            ZiporaHashMap::with_config(ZiporaHashMapConfig::cache_optimized()).unwrap();
-        assert_eq!(map.len(), 0);
-        // Verify cache optimization is enabled
-        let _ = map.cache_metrics(); // Ensure cache metrics are accessible
+        let result = ZiporaHashMap::<String, i32>::with_config(ZiporaHashMapConfig::cache_optimized());
+        assert!(result.is_err(), "CacheOptimized strategy should be rejected at construction");
     }
 
     #[test]
     fn test_string_optimized_config() {
-        let map: ZiporaHashMap<String, i32> =
-            ZiporaHashMap::with_config(ZiporaHashMapConfig::string_optimized()).unwrap();
-        assert_eq!(map.len(), 0);
+        let result = ZiporaHashMap::<String, i32>::with_config(ZiporaHashMapConfig::string_optimized());
+        assert!(result.is_err(), "StringOptimized strategy should be rejected at construction");
     }
 
     #[test]
