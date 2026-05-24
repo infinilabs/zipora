@@ -83,24 +83,27 @@ impl MemoryMappedAllocator {
         let page_size = Self::get_page_size();
         let actual_size = (size + page_size - 1) & !(page_size - 1);
 
-        // Try to get from cache first
-        if let Ok(mut cache) = self.region_cache.try_lock()
-            && let Some(regions) = cache.get_mut(&actual_size)
-            && let Some(ptr) = regions.pop()
+        // Check cache first — blocking lock is vastly cheaper than an mmap syscall.
+        // Recover from poisoning: cache contents (pointer HashMap) remain valid.
         {
-            self.cache_hits.fetch_add(1, Ordering::Relaxed);
-            self.total_allocated
-                .fetch_add(size as u64, Ordering::Relaxed);
+            let mut cache = self.region_cache.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(regions) = cache.get_mut(&actual_size) {
+                if let Some(ptr) = regions.pop() {
+                    self.cache_hits.fetch_add(1, Ordering::Relaxed);
+                    self.total_allocated
+                        .fetch_add(size as u64, Ordering::Relaxed);
 
-            // SAFETY: cached ptr was obtained from successful mmap, guaranteed non-null
-            return Ok(MmapAllocation {
-                ptr: unsafe { NonNull::new_unchecked(ptr) },
-                size,
-                actual_size,
-            });
+                    // SAFETY: cached ptr was obtained from successful mmap, guaranteed non-null
+                    return Ok(MmapAllocation {
+                        ptr: unsafe { NonNull::new_unchecked(ptr) },
+                        size,
+                        actual_size,
+                    });
+                }
+            }
         }
 
-        // Cache miss, allocate new region
+        // Cache miss — no cached region for this size
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
         self.mmap_calls.fetch_add(1, Ordering::Relaxed);
 
@@ -145,11 +148,11 @@ impl MemoryMappedAllocator {
         self.total_freed
             .fetch_add(allocation.size as u64, Ordering::Relaxed);
 
-        // Try to cache the region for reuse
-        if let Ok(mut cache) = self.region_cache.try_lock() {
-            let regions = cache.entry(allocation.actual_size).or_insert_with(Vec::new);
+        // Return region to cache — blocking lock is vastly cheaper than a munmap syscall.
+        {
+            let mut cache = self.region_cache.lock().unwrap_or_else(|e| e.into_inner());
+            let regions = cache.entry(allocation.actual_size).or_default();
 
-            // Limit cache size to prevent memory bloat
             const MAX_CACHED_REGIONS_PER_SIZE: usize = 4;
             if regions.len() < MAX_CACHED_REGIONS_PER_SIZE {
                 regions.push(allocation.ptr.as_ptr());
@@ -157,7 +160,7 @@ impl MemoryMappedAllocator {
             }
         }
 
-        // Cache is full or locked, deallocate immediately
+        // Cache full for this size class — release back to OS
         self.munmap_calls.fetch_add(1, Ordering::Relaxed);
         // SAFETY: ptr from allocation was obtained via mmap with matching size
         unsafe {
@@ -412,5 +415,52 @@ mod tests {
         // Too small for mmap
         let result = allocator.allocate(8 * 1024);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_concurrent_cache_no_bypass() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let allocator = Arc::new(MemoryMappedAllocator::default());
+        let size = 64 * 1024;
+
+        // Seed the cache: allocate and deallocate 4 regions (fills one size class)
+        let mut seed = Vec::new();
+        for _ in 0..4 {
+            seed.push(allocator.allocate(size).unwrap());
+        }
+        for alloc in seed {
+            allocator.deallocate(alloc).unwrap();
+        }
+
+        let stats_before = allocator.stats();
+        assert_eq!(stats_before.cached_regions, 4);
+        let mmap_before = stats_before.mmap_calls;
+
+        // Spawn threads that each take one cached region and return it.
+        // With blocking lock, every allocate must hit the cache — no new mmap calls.
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let alloc = Arc::clone(&allocator);
+            handles.push(thread::spawn(move || {
+                let a = alloc.allocate(size).unwrap();
+                // Brief hold to create contention window on deallocate
+                thread::yield_now();
+                alloc.deallocate(a).unwrap();
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let stats_after = allocator.stats();
+        // All 4 allocations should have been served from cache — zero new mmap calls
+        assert_eq!(
+            stats_after.mmap_calls, mmap_before,
+            "cache was bypassed under contention: {} new mmap calls",
+            stats_after.mmap_calls - mmap_before
+        );
     }
 }
