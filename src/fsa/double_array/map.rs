@@ -316,6 +316,7 @@ impl<V: MapValue> DoubleArrayTrieMap<V> {
             query: query.to_vec(),
             max_dist,
             dp_columns: vec![row0],
+            spare_rows: Vec::new(),
         }
     }
 

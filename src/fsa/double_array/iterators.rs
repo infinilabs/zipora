@@ -114,20 +114,28 @@ pub struct FuzzyIterator<'a, V: MapValue> {
     pub(crate) max_dist: usize,
     /// dp_columns[d] = edit distance row for path[0..d] vs query[0..j], j in 0..=query.len()
     pub(crate) dp_columns: Vec<Vec<usize>>,
+    /// Recycled DP row buffers to avoid heap allocation per DFS transition.
+    pub(crate) spare_rows: Vec<Vec<usize>>,
 }
 
 impl<'a, V: MapValue> FuzzyIterator<'a, V> {
-    /// Compute the next DP row when appending character `c` at current depth.
-    fn compute_row(prev_row: &[usize], query: &[u8], c: u8) -> Vec<usize> {
-        let mut row = vec![0; query.len() + 1];
-        row[0] = prev_row[0] + 1; // deletion
-        for j in 1..=query.len() {
+    /// Compute DP row in-place into `row` and return the row minimum.
+    fn compute_row_inplace(prev_row: &[usize], query: &[u8], c: u8, row: &mut Vec<usize>) -> usize {
+        let len = query.len() + 1;
+        row.resize(len, 0);
+        row[0] = prev_row[0] + 1;
+        let mut min_val = row[0];
+        for j in 1..len {
             let cost = if query[j - 1] == c { 0 } else { 1 };
-            row[j] = (prev_row[j] + 1) // deletion
-                .min(row[j - 1] + 1) // insertion
-                .min(prev_row[j - 1] + cost); // substitution
+            let val = (prev_row[j] + 1)
+                .min(row[j - 1] + 1)
+                .min(prev_row[j - 1] + cost);
+            row[j] = val;
+            if val < min_val {
+                min_val = val;
+            }
         }
-        row
+        min_val
     }
 }
 
@@ -158,12 +166,15 @@ impl<'a, V: MapValue> Iterator for FuzzyIterator<'a, V> {
             // Try next child
             if frame.next_sibling == NINFO_NONE {
                 self.stack.pop();
-                // Restore dp_columns: each stack frame at depth d has dp_columns[0..=d].
-                // When popping, truncate to the parent's depth + 1.
-                if let Some(parent) = self.stack.last() {
-                    self.dp_columns.truncate(parent.depth + 1);
+                let target_len = if let Some(parent) = self.stack.last() {
+                    parent.depth + 1
                 } else {
-                    self.dp_columns.truncate(1); // keep root row only
+                    1
+                };
+                while self.dp_columns.len() > target_len {
+                    if let Some(row) = self.dp_columns.pop() {
+                        self.spare_rows.push(row);
+                    }
                 }
                 continue;
             }
@@ -187,12 +198,12 @@ impl<'a, V: MapValue> Iterator for FuzzyIterator<'a, V> {
                 continue;
             }
 
-            // Compute DP row for this child
-            let prev_row = &self.dp_columns[parent_depth];
-            let new_row = Self::compute_row(prev_row, &self.query, label);
+            // Compute DP row in-place using a recycled buffer
+            let mut row = self.spare_rows.pop().unwrap_or_default();
+            let min_val = Self::compute_row_inplace(&self.dp_columns[parent_depth], &self.query, label, &mut row);
 
-            // Prune: if min edit distance in row > max_dist, skip subtree
-            if *new_row.iter().min().unwrap_or(&usize::MAX) > self.max_dist {
+            if min_val > self.max_dist {
+                self.spare_rows.push(row);
                 continue;
             }
 
@@ -203,7 +214,7 @@ impl<'a, V: MapValue> Iterator for FuzzyIterator<'a, V> {
 
             // Set DP column for child depth
             self.dp_columns.truncate(child_depth);
-            self.dp_columns.push(new_row);
+            self.dp_columns.push(row);
 
             // Push child frame
             let first_child = if child_pos < self.trie.trie.ninfos.len() {
