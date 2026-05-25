@@ -81,18 +81,6 @@
 //! let mut map: ZiporaHashMap<&str, &str, RandomState> = ZiporaHashMap::new().unwrap();
 //! map.insert("key", "value").unwrap();
 //!
-//! // Cache-optimized hash map
-//! let mut cache_map: ZiporaHashMap<&str, &str, RandomState> = ZiporaHashMap::with_config(
-//!     ZiporaHashMapConfig::cache_optimized()
-//! ).unwrap();
-//! cache_map.insert("optimal", "growth").unwrap();
-//!
-//! // String-optimized hash map with interning (memory efficient for string keys)
-//! let mut string_map: ZiporaHashMap<&str, i32, RandomState> = ZiporaHashMap::with_config(
-//!     ZiporaHashMapConfig::string_optimized()
-//! ).unwrap();
-//! string_map.insert("interned", 42).unwrap();
-//!
 //! // Small hash map with inline storage (zero allocations for ≤N elements)
 //! let mut small_hash_map: ZiporaHashMap<&str, i32, RandomState> = ZiporaHashMap::with_config(
 //!     ZiporaHashMapConfig::small_inline(4)

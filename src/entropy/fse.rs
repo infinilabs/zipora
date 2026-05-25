@@ -666,15 +666,7 @@ impl FseTable {
             // Write BLOCK_SIZE bytes to output (like Rans64EncWrite)
             let bytes = (x as u32).to_le_bytes();
             output.extend_from_slice(&bytes);
-            let old_x = x;
             x >>= BLOCK_SIZE * 8;
-            if output.len() < 50 {
-                // Only print first few renormalizations
-                println!(
-                    "FSE renorm: x={} >= x_max={}, wrote bytes, new_x={}",
-                    old_x, x_max, x
-                );
-            }
         }
 
         x
@@ -923,40 +915,21 @@ impl FseEncoder {
         // No need to reserve space - we'll append state at the end
 
         // Encode symbols in reverse order (FSE/rANS style)
-        let mut encode_count = 0;
         for &symbol in data.iter().rev() {
             // Get symbol frequency for renormalization
             let sym_freq = table.enc_symbols[symbol as usize].freq as u32;
 
-            // Renormalize before encoding (advanced approach)
-            let old_state = current_state;
+            // Renormalize before encoding
             current_state = table.renormalize_encode(current_state, &mut output, sym_freq);
-            if old_state != current_state && encode_count < 10 {
-                println!(
-                    "FSE renorm[{}]: old_state={}, new_state={}, freq={}",
-                    encode_count, old_state, current_state, sym_freq
-                );
-            }
 
-            // Encode symbol using advanced approach
+            // Encode symbol
             if let Some((new_state, _bits_needed)) = table.encode_symbol(symbol, current_state) {
-                if encode_count < 10 {
-                    println!(
-                        "FSE encode[{}]: symbol={} ('{}'), old_state={}, new_state={}",
-                        encode_count, symbol, symbol as char, current_state, new_state
-                    );
-                }
                 current_state = new_state;
             } else {
-                println!(
-                    "FSE encode[{}]: FALLBACK symbol={} ('{}'), state={}",
-                    encode_count, symbol, symbol as char, current_state
-                );
                 // Fallback: emit symbol directly with escape marker
-                output.push(0xFF); // Escape marker
-                output.push(symbol); // Literal symbol
+                output.push(0xFF);
+                output.push(symbol);
             }
-            encode_count += 1;
         }
 
         // Write final state at the END of output (rANS style)
