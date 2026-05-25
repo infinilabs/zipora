@@ -23,9 +23,9 @@
 //! let mut map: ZiporaHashMap<&str, &str, RandomState> = ZiporaHashMap::new().unwrap();
 //! map.insert("key", "value").unwrap();
 //!
-//! // Cache-optimized for NUMA systems
-//! let mut cache_map: ZiporaHashMap<&str, &str, RandomState> = ZiporaHashMap::with_config(
-//!     ZiporaHashMapConfig::cache_optimized()
+//! // Small inline hash map (zero allocations for ≤N elements)
+//! let mut small_map: ZiporaHashMap<i32, &str, RandomState> = ZiporaHashMap::with_config(
+//!     ZiporaHashMapConfig::small_inline(4)
 //! ).unwrap();
 //! ```
 //!

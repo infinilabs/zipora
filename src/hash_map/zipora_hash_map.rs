@@ -258,23 +258,15 @@ impl ZiporaHashMapConfig {
 /// use zipora::hash_map::{ZiporaHashMap, ZiporaHashMapConfig};
 /// use std::collections::hash_map::RandomState;
 ///
-/// // Cache-optimized hash map
-/// let mut map: ZiporaHashMap<&str, &str, RandomState> = ZiporaHashMap::with_config(
-///     ZiporaHashMapConfig::cache_optimized()
-/// ).expect("invariant broken");
-/// map.insert("key", "value").expect("invariant broken");
+/// // Default high-performance hash map
+/// let mut map: ZiporaHashMap<&str, &str, RandomState> = ZiporaHashMap::new().unwrap();
+/// map.insert("key", "value").unwrap();
 ///
-/// // String-optimized hash map
-/// let mut str_map: ZiporaHashMap<&str, i32, RandomState> = ZiporaHashMap::with_config(
-///     ZiporaHashMapConfig::string_optimized()
-/// ).expect("invariant broken");
-/// str_map.insert("hello", 42).expect("invariant broken");
-///
-/// // Small inline hash map
+/// // Small inline hash map (zero allocations for ≤N elements)
 /// let mut small_map: ZiporaHashMap<i32, &str, RandomState> = ZiporaHashMap::with_config(
 ///     ZiporaHashMapConfig::small_inline(4)
-/// ).expect("invariant broken");
-/// small_map.insert(1, "one").expect("invariant broken");
+/// ).unwrap();
+/// small_map.insert(1, "one").unwrap();
 /// ```
 pub struct ZiporaHashMap<K, V, S = RandomState>
 where

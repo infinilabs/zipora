@@ -143,46 +143,13 @@ impl Rans64Symbol {
         (q, r)
     }
 
-    /// 128-bit multiplication, return high 64 bits
-    #[inline]
+    /// 128-bit multiplication, return high 64 bits.
+    ///
+    /// Compiles to a single hardware instruction on all 64-bit platforms
+    /// (`mul` on x86-64, `umulh` on aarch64) with no runtime branching.
+    #[inline(always)]
     fn mul_hi_u64(&self, a: u64, b: u64) -> u64 {
-        #[cfg(target_arch = "x86_64")]
-        {
-            // Use hardware 128-bit multiplication when available
-            if std::is_x86_feature_detected!("bmi2") {
-                // SAFETY: Pure arithmetic on u64 values cast to u128, no memory access or undefined behavior
-                {
-                    let result = (a as u128) * (b as u128);
-                    (result >> 64) as u64
-                }
-            } else {
-                self.mul_hi_u64_software(a, b)
-            }
-        }
-        #[cfg(not(target_arch = "x86_64"))]
-        {
-            self.mul_hi_u64_software(a, b)
-        }
-    }
-
-    /// Software implementation of 128-bit multiplication
-    #[inline]
-    fn mul_hi_u64_software(&self, a: u64, b: u64) -> u64 {
-        let a_lo = a & 0xFFFFFFFF;
-        let a_hi = a >> 32;
-        let b_lo = b & 0xFFFFFFFF;
-        let b_hi = b >> 32;
-
-        let p0 = a_lo * b_lo;
-        let p1 = a_lo * b_hi;
-        let p2 = a_hi * b_lo;
-        let p3 = a_hi * b_hi;
-
-        let p01 = (p0 >> 32) + (p1 & 0xFFFFFFFF) + (p2 & 0xFFFFFFFF);
-        let p01_hi = p01 >> 32;
-        let p01_carry = (p1 >> 32) + (p2 >> 32);
-
-        p3 + p01_hi + p01_carry
+        ((a as u128 * b as u128) >> 64) as u64
     }
 }
 

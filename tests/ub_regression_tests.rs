@@ -30,10 +30,10 @@ fn test_inline_storage_initialization() {
 
 #[test]
 fn test_cache_optimized_bucket_initialization() {
-    // Cache-optimized config
+    // CacheOptimized strategy is not yet implemented — construction must fail
     let config = ZiporaHashMapConfig::cache_optimized();
-    let map: ZiporaHashMap<u32, u32> = ZiporaHashMap::with_config(config).unwrap();
-    assert_eq!(map.len(), 0);
+    let result: Result<ZiporaHashMap<u32, u32>, _> = ZiporaHashMap::with_config(config);
+    assert!(result.is_err(), "CacheOptimized strategy should be rejected at construction");
 }
 
 #[test]
