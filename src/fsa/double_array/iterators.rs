@@ -120,7 +120,7 @@ pub struct FuzzyIterator<'a, V: MapValue> {
 
 impl<'a, V: MapValue> FuzzyIterator<'a, V> {
     /// Compute DP row in-place into `row` and return the row minimum.
-    fn compute_row_inplace(prev_row: &[usize], query: &[u8], c: u8, row: &mut Vec<usize>) -> usize {
+    pub(crate) fn compute_row_inplace(prev_row: &[usize], query: &[u8], c: u8, row: &mut Vec<usize>) -> usize {
         let len = query.len() + 1;
         row.resize(len, 0);
         row[0] = prev_row[0] + 1;

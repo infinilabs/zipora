@@ -1691,4 +1691,187 @@ mod map_prefix_regression_tests {
         let vals = m.values_with_prefix(b"");
         assert_eq!(vals.len(), 0);
     }
+
+    // --- FuzzyIterator structural / performance regression tests ---
+
+    #[test]
+    fn test_fuzzy_compute_row_inplace_matches_reference() {
+        fn reference_row(prev: &[usize], query: &[u8], c: u8) -> Vec<usize> {
+            let mut row = vec![0; query.len() + 1];
+            row[0] = prev[0] + 1;
+            for j in 1..=query.len() {
+                let cost = if query[j - 1] == c { 0 } else { 1 };
+                row[j] = (prev[j] + 1)
+                    .min(row[j - 1] + 1)
+                    .min(prev[j - 1] + cost);
+            }
+            row
+        }
+
+        let queries: &[&[u8]] = &[b"cat", b"", b"a", b"abcdefghij", b"\x00\xff"];
+        let labels: &[u8] = &[b'a', b'c', b'z', 0x00, 0xFF];
+
+        for query in queries {
+            let prev: Vec<usize> = (0..=query.len()).collect();
+            for &label in labels {
+                let expected = reference_row(&prev, query, label);
+                let mut reused_buf = Vec::new();
+                let min_val = FuzzyIterator::<i32>::compute_row_inplace(&prev, query, label, &mut reused_buf);
+                assert_eq!(reused_buf, expected, "mismatch for query={:?} label={}", query, label);
+                assert_eq!(min_val, *expected.iter().min().unwrap());
+            }
+        }
+
+        // Multi-depth chain: row0 → row1 → row2, verifying chained computation
+        let query = b"cat";
+        let row0: Vec<usize> = (0..=query.len()).collect();
+        let mut buf = Vec::new();
+        FuzzyIterator::<i32>::compute_row_inplace(&row0, query, b'c', &mut buf);
+        let row1 = buf.clone();
+        FuzzyIterator::<i32>::compute_row_inplace(&row1, query, b'a', &mut buf);
+        let row2 = buf.clone();
+        FuzzyIterator::<i32>::compute_row_inplace(&row2, query, b't', &mut buf);
+        // "cat" vs "cat" at depth 3 → last element should be 0
+        assert_eq!(buf[query.len()], 0);
+    }
+
+    #[test]
+    fn test_fuzzy_compute_row_inplace_reuses_buffer() {
+        let query = b"hello";
+        let row0: Vec<usize> = (0..=query.len()).collect();
+
+        let mut buf = Vec::with_capacity(query.len() + 1);
+        let ptr_before = buf.as_ptr();
+        FuzzyIterator::<i32>::compute_row_inplace(&row0, query, b'h', &mut buf);
+        let ptr_after = buf.as_ptr();
+        // Vec::resize on a buffer with sufficient capacity does not reallocate
+        assert_eq!(ptr_before, ptr_after, "buffer should reuse its allocation");
+
+        // Second call reuses same buffer
+        FuzzyIterator::<i32>::compute_row_inplace(&buf.clone(), query, b'e', &mut buf);
+        // capacity was already sufficient, no realloc
+        assert_eq!(buf.len(), query.len() + 1);
+    }
+
+    #[test]
+    fn test_fuzzy_spare_rows_recycling() {
+        // Build a trie with enough branching to force DFS pop+push cycles
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        let words = [
+            "abc", "abd", "abe", "acd", "ace", "bcd", "bce", "bde",
+            "cde", "xyz", "xyw", "xyv",
+        ];
+        for (i, w) in words.iter().enumerate() {
+            trie.insert(w.as_bytes(), i as i32).unwrap();
+        }
+
+        let mut iter = trie.iter_fuzzy(b"abc", 2);
+
+        // Exhaust the iterator
+        let results: Vec<_> = iter.by_ref().collect();
+
+        // After full traversal, spare_rows should have recycled buffers
+        // (DFS pops recycle rows instead of dropping them)
+        assert!(
+            !iter.spare_rows.is_empty(),
+            "spare_rows should contain recycled buffers after traversal, got 0"
+        );
+
+        // Every spare row should have the correct length (query.len() + 1 = 4)
+        for row in &iter.spare_rows {
+            assert_eq!(row.len(), 4, "recycled row has wrong length");
+        }
+
+        // Results should still be correct despite recycling
+        fn edit_distance(a: &[u8], b: &[u8]) -> usize {
+            let (m, n) = (a.len(), b.len());
+            let mut dp = vec![vec![0usize; n + 1]; m + 1];
+            for i in 0..=m { dp[i][0] = i; }
+            for j in 0..=n { dp[0][j] = j; }
+            for i in 1..=m {
+                for j in 1..=n {
+                    let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+                    dp[i][j] = (dp[i - 1][j] + 1).min(dp[i][j - 1] + 1).min(dp[i - 1][j - 1] + cost);
+                }
+            }
+            dp[m][n]
+        }
+        for (key, _) in &results {
+            assert!(edit_distance(key, b"abc") <= 2);
+        }
+        for w in &words {
+            if edit_distance(w.as_bytes(), b"abc") <= 2 {
+                assert!(results.iter().any(|(k, _)| k == w.as_bytes()), "missing {:?}", w);
+            }
+        }
+    }
+
+    #[test]
+    fn test_fuzzy_recycling_correctness_large_trie() {
+        // Stress test: large trie ensures heavy recycling, then verify
+        // results match brute-force reference exactly.
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        let mut words: Vec<String> = Vec::new();
+        for a in b'a'..=b'e' {
+            for b in b'a'..=b'e' {
+                for c in b'a'..=b'e' {
+                    let w = format!("{}{}{}", a as char, b as char, c as char);
+                    words.push(w);
+                }
+            }
+        }
+        // 125 three-letter words from {a..e}^3
+        for (i, w) in words.iter().enumerate() {
+            trie.insert(w.as_bytes(), i as i32).unwrap();
+        }
+
+        fn edit_distance(a: &[u8], b: &[u8]) -> usize {
+            let (m, n) = (a.len(), b.len());
+            let mut dp = vec![vec![0usize; n + 1]; m + 1];
+            for i in 0..=m { dp[i][0] = i; }
+            for j in 0..=n { dp[0][j] = j; }
+            for i in 1..=m {
+                for j in 1..=n {
+                    let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+                    dp[i][j] = (dp[i - 1][j] + 1).min(dp[i][j - 1] + 1).min(dp[i - 1][j - 1] + cost);
+                }
+            }
+            dp[m][n]
+        }
+
+        let queries: &[&[u8]] = &[b"abc", b"eee", b"cba", b"aaa"];
+        for &query in queries {
+            for max_dist in 0..=3 {
+                let mut iter = trie.iter_fuzzy(query, max_dist);
+                let results: Vec<_> = iter.by_ref().collect();
+
+                // Verify completeness and soundness against brute-force
+                let mut expected: Vec<&str> = words.iter()
+                    .filter(|w| edit_distance(w.as_bytes(), query) <= max_dist)
+                    .map(|w| w.as_str())
+                    .collect();
+                expected.sort();
+
+                let mut actual_keys: Vec<String> = results.iter()
+                    .map(|(k, _)| String::from_utf8(k.clone()).unwrap())
+                    .collect();
+                actual_keys.sort();
+
+                assert_eq!(
+                    actual_keys, expected,
+                    "mismatch for query={:?} max_dist={}",
+                    std::str::from_utf8(query).unwrap(), max_dist
+                );
+
+                // Verify recycling happened on non-trivial traversals
+                if max_dist >= 1 {
+                    assert!(
+                        !iter.spare_rows.is_empty(),
+                        "expected recycling for query={:?} max_dist={}",
+                        std::str::from_utf8(query).unwrap(), max_dist
+                    );
+                }
+            }
+        }
+    }
 }
