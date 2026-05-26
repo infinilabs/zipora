@@ -207,7 +207,7 @@ impl TrieBlobStoreConfig {
     /// Create a configuration optimized for memory usage
     pub fn memory_optimized() -> Self {
         Self {
-            trie_config: ZiporaTrieConfig::space_optimized(),
+            trie_config: ZiporaTrieConfig::default(),
             blob_config: ZipOffsetBlobStoreConfig::compression_optimized(),
             memory_config: SecurePoolConfig::small_secure(),
             enable_key_compression: true,
@@ -1474,7 +1474,7 @@ mod tests {
 
         let mem_config = TrieBlobStoreConfig::memory_optimized();
         assert_eq!(mem_config.key_cache_size, 256);
-        assert_eq!(mem_config.trie_config.max_levels(), 4); // memory_optimized uses space_optimized (Louds, nesting_levels: 4)
+        assert_eq!(mem_config.trie_config.max_levels(), 5); // memory_optimized uses default (DoubleArray)
     }
 
     #[test]

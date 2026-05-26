@@ -25,21 +25,21 @@ use std::sync::Arc;
 /// use zipora::fsa::traits::Trie;
 /// use zipora::succinct::RankSelectInterleaved256;
 ///
-/// // Cache-optimized trie (with explicit type parameter)
+/// // Cache-optimized trie (Patricia, with explicit type parameter)
 /// let mut trie: ZiporaTrie<RankSelectInterleaved256> =
 ///     ZiporaTrie::with_config(ZiporaTrieConfig::cache_optimized());
 /// trie.insert(b"hello").unwrap();
 /// trie.insert(b"world").unwrap();
 ///
-/// // Space-optimized trie
-/// let mut space_trie: ZiporaTrie<RankSelectInterleaved256> =
-///     ZiporaTrie::with_config(ZiporaTrieConfig::space_optimized());
-/// space_trie.insert(b"compress").unwrap();
+/// // Default trie (DoubleArray)
+/// let mut da_trie: ZiporaTrie = ZiporaTrie::new();
+/// da_trie.insert(b"fast").unwrap();
+/// assert!(da_trie.contains(b"fast"));
 ///
-/// // String-specialized trie
-/// let mut str_trie: ZiporaTrie<RankSelectInterleaved256> =
-///     ZiporaTrie::with_config(ZiporaTrieConfig::string_specialized());
-/// str_trie.insert(b"string").unwrap();
+/// // Space-optimized (LOUDS) and string-specialized (CriticalBit) are
+/// // not yet implemented — insert returns NotSupported.
+/// let mut space_trie: ZiporaTrie = ZiporaTrie::with_config(ZiporaTrieConfig::space_optimized());
+/// assert!(space_trie.insert(b"key").is_err());
 /// ```
 #[derive(Debug)]
 pub struct ZiporaTrie<R = crate::succinct::RankSelectInterleaved256>
@@ -552,7 +552,7 @@ where
                 edge_data,
                 compressed_paths,
             } => Self::lookup_node_id_patricia_actual(nodes, edge_data, compressed_paths, key),
-            TrieStorage::Louds { label_data, .. } => Self::find_key_position(label_data, key),
+            TrieStorage::Louds { .. } => None,
             TrieStorage::DoubleArray { base, check, .. } => {
                 Self::lookup_node_id_double_array(base, check, key)
             }
@@ -1129,7 +1129,6 @@ where
     }
 
     // Critical-bit trie implementation methods
-    /// Critical-bit trie insertion.
     //  TODO: port from C++ reference `src/terark/fsa/crit_bit_trie.hpp`
     #[allow(unused)]
     fn insert_critical_bit(
@@ -1138,12 +1137,11 @@ where
         critical_cache: &mut HashMap<usize, u8>,
         key: &[u8],
     ) -> Result<StateId> {
-        // TODO: Implement critical-bit insertion
-        Ok(0)
+        Err(ZiporaError::not_supported(
+            "CriticalBit trie strategy is not yet implemented",
+        ))
     }
 
-    /// Critical-bit trie lookup.
-    //  TODO: port from C++ reference `src/terark/fsa/crit_bit_trie.hpp`
     #[allow(unused)]
     fn contains_critical_bit(
         &self,
@@ -1152,7 +1150,6 @@ where
         critical_cache: &HashMap<usize, u8>,
         key: &[u8],
     ) -> bool {
-        // TODO: Implement critical-bit lookup
         false
     }
 
@@ -1657,7 +1654,6 @@ where
     }
 
     // LOUDS trie implementation methods
-    /// LOUDS trie insertion.
     //  TODO: port from C++ reference `src/terark/fsa/nest_louds_trie.hpp`
     #[allow(unused)]
     fn insert_louds(
@@ -1669,39 +1665,11 @@ where
         next_trie: &mut Option<Box<ZiporaTrie<R>>>,
         key: &[u8],
     ) -> Result<StateId> {
-        // Store keys in label_data with length prefix for separation
-        // Format: [len_byte][key_bytes...] where len_byte < 255
-        // First check if key already exists
-        if Self::contains_louds_internal(label_data, key) {
-            // Key already exists, find its position
-            return Ok(Self::find_key_position(label_data, key).unwrap_or(0));
-        }
-
-        // Store new key with length prefix
-        let start_pos = label_data.len();
-
-        // Store length (limited to 255 for single-byte length)
-        if key.len() > 255 {
-            return Err(ZiporaError::invalid_data(
-                "Key too long for LOUDS (max 255 bytes)",
-            ));
-        }
-        label_data.push(key.len() as u8);
-
-        // Store key bytes
-        for &byte in key {
-            label_data.push(byte);
-        }
-
-        // Store the position in core_data for later retrieval
-        // We use start_pos as the StateId
-        let state_id = start_pos as StateId;
-
-        Ok(state_id)
+        Err(ZiporaError::not_supported(
+            "LOUDS trie strategy is not yet implemented",
+        ))
     }
 
-    /// LOUDS trie lookup.
-    //  TODO: port from C++ reference `src/terark/fsa/nest_louds_trie.hpp`
     #[allow(unused)]
     fn contains_louds(
         &self,
@@ -1713,97 +1681,7 @@ where
         next_trie: &Option<Box<ZiporaTrie<R>>>,
         key: &[u8],
     ) -> bool {
-        Self::contains_louds_internal(label_data, key)
-    }
-
-    // Helper method for LOUDS contains check
-    fn contains_louds_internal(label_data: &FastVec<u8>, key: &[u8]) -> bool {
-        if label_data.is_empty() {
-            return false;
-        }
-
-        let key_len = key.len();
-        if key_len > 255 {
-            return false; // Key too long
-        }
-
-        // Format: [len_byte][key_bytes...]
-        // Scan through label_data looking for matching keys
-        let mut pos = 0;
-        while pos < label_data.len() {
-            // Read length byte
-            let stored_len = label_data[pos] as usize;
-
-            // Check if we have enough space for this key
-            if pos + 1 + stored_len > label_data.len() {
-                break; // Corrupted data or end of data
-            }
-
-            // Check if lengths match
-            if stored_len == key_len {
-                // Check if key bytes match
-                let mut matches = true;
-                for i in 0..key_len {
-                    if label_data[pos + 1 + i] != key[i] {
-                        matches = false;
-                        break;
-                    }
-                }
-                if matches {
-                    return true;
-                }
-            }
-
-            // Move to next key
-            pos += 1 + stored_len;
-        }
-
         false
-    }
-
-    // Helper method to find key position in LOUDS
-    fn find_key_position(label_data: &FastVec<u8>, key: &[u8]) -> Option<StateId> {
-        if label_data.is_empty() {
-            return None;
-        }
-
-        let key_len = key.len();
-        if key_len > 255 {
-            return None; // Key too long
-        }
-
-        // Format: [len_byte][key_bytes...]
-        // Scan through label_data looking for matching keys
-        let mut pos = 0;
-        while pos < label_data.len() {
-            // Read length byte
-            let stored_len = label_data[pos] as usize;
-
-            // Check if we have enough space for this key
-            if pos + 1 + stored_len > label_data.len() {
-                break; // Corrupted data or end of data
-            }
-
-            // Check if lengths match
-            if stored_len == key_len {
-                // Check if key bytes match
-                let mut matches = true;
-                for i in 0..key_len {
-                    if label_data[pos + 1 + i] != key[i] {
-                        matches = false;
-                        break;
-                    }
-                }
-                if matches {
-                    return Some(pos as StateId);
-                }
-            }
-
-            // Move to next key
-            pos += 1 + stored_len;
-        }
-
-        None
     }
 
     // Compressed sparse trie implementation methods

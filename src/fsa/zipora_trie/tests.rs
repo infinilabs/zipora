@@ -16,15 +16,40 @@ use crate::succinct::RankSelectInterleaved256;
     }
 
     #[test]
-    fn test_space_optimized_config() {
-        let trie: ZiporaTrie = ZiporaTrie::with_config(ZiporaTrieConfig::space_optimized());
+    fn test_space_optimized_insert_returns_not_supported() {
+        let mut trie: ZiporaTrie = ZiporaTrie::with_config(ZiporaTrieConfig::space_optimized());
         assert_eq!(trie.len(), 0);
+        let err = trie.insert(b"hello").unwrap_err();
+        assert!(
+            matches!(err, crate::error::ZiporaError::NotSupported { .. }),
+            "LOUDS insert must return NotSupported, got: {err}",
+        );
+        assert!(!trie.contains(b"hello"));
     }
 
     #[test]
-    fn test_string_specialized_config() {
-        let trie: ZiporaTrie = ZiporaTrie::with_config(ZiporaTrieConfig::string_specialized());
+    fn test_string_specialized_insert_returns_not_supported() {
+        let mut trie: ZiporaTrie = ZiporaTrie::with_config(ZiporaTrieConfig::string_specialized());
         assert_eq!(trie.len(), 0);
+        let err = trie.insert(b"hello").unwrap_err();
+        assert!(
+            matches!(err, crate::error::ZiporaError::NotSupported { .. }),
+            "CriticalBit insert must return NotSupported, got: {err}",
+        );
+        assert!(!trie.contains(b"hello"));
+    }
+
+    #[test]
+    fn test_implemented_strategies_still_work() {
+        // DoubleArray (default)
+        let mut da: ZiporaTrie = ZiporaTrie::new();
+        da.insert(b"hello").unwrap();
+        assert!(da.contains(b"hello"));
+
+        // Patricia
+        let mut pat: ZiporaTrie = ZiporaTrie::with_config(ZiporaTrieConfig::cache_optimized());
+        pat.insert(b"hello").unwrap();
+        assert!(pat.contains(b"hello"));
     }
 
     #[test]
