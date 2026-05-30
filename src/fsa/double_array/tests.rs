@@ -285,6 +285,23 @@ mod tests {
         assert!(t.contains(b"world"));
     }
 
+    /// Regression test: shrink_to_fit on an empty trie must not collapse below
+    /// 256 states. Otherwise contains() with a non-empty key does an OOB
+    /// get_unchecked(base ^ ch) where base=0 and ch can be up to 255.
+    #[test]
+    fn test_shrink_to_fit_empty() {
+        let mut t = DoubleArrayTrie::new();
+        t.shrink_to_fit();
+        assert!(
+            t.total_states() >= 256,
+            "empty trie after shrink_to_fit must retain >= 256 states, got {}",
+            t.total_states()
+        );
+        // Must not OOB / UB on a non-empty lookup.
+        assert!(!t.contains(b"a"));
+        assert!(!t.contains(b"\xff"));
+    }
+
     /// Regression test: with_capacity < 256 must not cause UB.
     /// Bug 1.1.1: base=0 + unsafe get_unchecked(ch) with ch >= cap is UB.
     #[test]
