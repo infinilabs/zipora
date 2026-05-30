@@ -8,8 +8,9 @@ fn test_clone_performance() {
     config.min_compression_size = 10;
     let mut builder = DictZipBlobStoreBuilder::with_config(config).unwrap();
 
-    // Train with 10MB of data to make the DFA huge
-    let big_data = vec![42u8; 10_000_000];
+    // Train with 256KB of data to build a sizable DFA (10MB takes >100s in
+    // builder.finish() — linear ~10s/MB — without changing what this test checks).
+    let big_data = vec![42u8; 256 * 1024];
     builder.add_training_sample(&big_data).unwrap();
     let mut store = builder.finish().unwrap();
 
