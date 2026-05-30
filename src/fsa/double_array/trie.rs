@@ -784,7 +784,9 @@ impl DoubleArrayTrie {
         }
 
         let last_used = self.states.iter().rposition(|s| !s.is_free()).unwrap_or(0);
-        let new_len = (last_used + 1).max(max_reachable).min(self.states.len());
+        // Never shrink below 256: leaf states have child0=0, so contains() does
+        // get_unchecked(0 ^ ch) with ch up to 255 (same invariant as with_capacity).
+        let new_len = (last_used + 1).max(max_reachable).max(256).min(self.states.len());
         self.states.truncate(new_len);
         self.states.shrink_to_fit();
         self.ninfos.truncate(new_len);
