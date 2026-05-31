@@ -399,433 +399,36 @@ impl SuffixArrayBuilder {
         }
     }
 
-    /// SA-IS (Suffix Array by Induced Sorting) algorithm implementation
+    /// SA-IS (Suffix Array by Induced Sorting) — linear-time O(n).
+    ///
+    /// Maps the byte string onto the integer alphabet `1..=256`, appends a
+    /// unique smallest sentinel (`0`), runs the induced-sorting core, then drops
+    /// the sentinel suffix that always sorts first.
     fn sais_construct(&self, text: &[u8]) -> Result<Vec<usize>> {
-        // Add recursion depth limit to prevent stack overflow
-        self.sais_construct_with_depth(text, 0)
-    }
-
-    fn sais_construct_with_depth(&self, text: &[u8], depth: usize) -> Result<Vec<usize>> {
-        // Prevent stack overflow with recursion depth limit
-        const MAX_RECURSION_DEPTH: usize = 100;
-        if depth > MAX_RECURSION_DEPTH {
-            // Fall back to simple sorting for deep recursion
-            return self.fallback_sort(text);
-        }
-
         let n = text.len();
-
-        // Guard against excessive memory allocation
-        const MAX_TEXT_SIZE: usize = 1 << 30; // 1GB limit
-        if n > MAX_TEXT_SIZE {
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+        if n == 1 {
+            return Ok(vec![0]);
+        }
+        if n >= u32::MAX as usize {
             return Err(crate::error::ZiporaError::invalid_data(
-                "Text too large for suffix array construction",
+                "text too large for SA-IS (must be < 4 GiB)",
             ));
         }
 
-        // Find alphabet size
-        let alphabet_size = if self.config.optimize_small_alphabet {
-            256 // Full byte alphabet
-        } else {
-            text.iter().max().unwrap_or(&0).wrapping_add(1) as usize
-        };
+        // Reserve 0 as the unique sentinel; shift every byte up by one.
+        let mut s: Vec<u32> = Vec::with_capacity(n + 1);
+        s.extend(text.iter().map(|&b| b as u32 + 1));
+        s.push(0);
 
-        // Step 1: Classify suffixes as L-type or S-type
-        let (suffix_types, is_lms) = self.classify_suffixes(text)?;
+        let sa = sais_core(&s, 257);
 
-        // Step 2: Find LMS suffixes
-        let lms_suffixes = self.find_lms_suffixes(&is_lms);
-
-        if lms_suffixes.is_empty() {
-            // All suffixes are L-type (monotonically decreasing string)
-            return Ok((0..n).rev().collect());
-        }
-
-        // Step 3: Sort LMS suffixes
-        let mut sa = vec![0; n];
-        let mut bucket = vec![0; alphabet_size];
-        let mut bucket_heads = vec![0; alphabet_size];
-        let mut bucket_tails = vec![0; alphabet_size];
-
-        // Count character frequencies
-        for &ch in text {
-            bucket[ch as usize] += 1;
-        }
-
-        // Compute bucket boundaries
-        self.compute_bucket_boundaries(&bucket, &mut bucket_heads, &mut bucket_tails);
-
-        // Initialize SA with sentinel values
-        for i in 0..n {
-            sa[i] = n; // Use n as sentinel (invalid index)
-        }
-
-        // Place LMS suffixes at the end of their buckets with bounds checking
-        for &lms_idx in lms_suffixes.iter().rev() {
-            if lms_idx >= text.len() {
-                continue; // Skip invalid indices
-            }
-            let ch = text[lms_idx] as usize;
-            if ch < bucket_tails.len() && bucket_tails[ch] > 0 {
-                bucket_tails[ch] -= 1;
-                if bucket_tails[ch] < sa.len() {
-                    sa[bucket_tails[ch]] = lms_idx;
-                }
-            }
-        }
-
-        // Induce L-type suffixes
-        self.induce_l_type(&mut sa, text, &suffix_types, &bucket_heads)?;
-
-        // Induce S-type suffixes
-        self.induce_s_type(&mut sa, text, &suffix_types, &bucket_tails)?;
-
-        // Step 4: Compact LMS suffixes and check if they're unique
-        let lms_sa = self.compact_lms_suffixes(&sa, &is_lms);
-        let lms_names = self.name_lms_substrings(text, &lms_sa, &lms_suffixes)?;
-
-        // Check if all LMS substrings are unique
-        let max_name = lms_names.iter().max().copied().unwrap_or(0);
-
-        if (max_name as usize) < lms_suffixes.len() {
-            // Not all LMS substrings are unique, recursively sort them with depth tracking
-            let reduced_sa = self.sais_construct_with_depth(&lms_names, depth + 1)?;
-
-            // Map back to original indices
-            let mut sorted_lms = Vec::new();
-            for &rank in &reduced_sa {
-                sorted_lms.push(lms_suffixes[rank]);
-            }
-
-            // Rebuild SA with sorted LMS suffixes
-            self.rebuild_sa_with_sorted_lms(text, &sorted_lms, &suffix_types, alphabet_size)
-        } else {
-            // All LMS substrings are unique, SA is complete
-            // Handle any remaining sentinel values by finding missing indices
-            if sa.iter().any(|&x| x >= n) {
-                // Find which indices are missing from the suffix array
-                let mut present = vec![false; n];
-                for &val in sa.iter() {
-                    if val < n {
-                        present[val] = true;
-                    }
-                }
-
-                let missing_indices: Vec<usize> = (0..n).filter(|&i| !present[i]).collect();
-                let mut missing_iter = missing_indices.into_iter();
-
-                // Replace sentinel values with missing indices
-                for sa_val in sa.iter_mut() {
-                    if *sa_val >= n
-                        && let Some(missing_idx) = missing_iter.next()
-                    {
-                        *sa_val = missing_idx;
-                    }
-                }
-            }
-
-            Ok(sa)
-        }
-    }
-
-    /// Classify each suffix as L-type or S-type
-    fn classify_suffixes(&self, text: &[u8]) -> Result<(Vec<bool>, Vec<bool>)> {
-        let n = text.len();
-        let mut suffix_types = vec![false; n]; // false = L-type, true = S-type
-        let mut is_lms = vec![false; n];
-
-        if n == 0 {
-            return Ok((suffix_types, is_lms));
-        }
-
-        // Last suffix is S-type by definition
-        suffix_types[n - 1] = true;
-
-        // Classify suffixes from right to left
-        for i in (0..n - 1).rev() {
-            if text[i] < text[i + 1] {
-                suffix_types[i] = true; // S-type
-            } else if text[i] > text[i + 1] {
-                suffix_types[i] = false; // L-type
-            } else {
-                // Same character, inherit from next position
-                suffix_types[i] = suffix_types[i + 1];
-            }
-        }
-
-        // Find LMS positions (Left-Most S-type)
-        for i in 1..n {
-            if suffix_types[i] && !suffix_types[i - 1] {
-                is_lms[i] = true;
-            }
-        }
-
-        Ok((suffix_types, is_lms))
-    }
-
-    /// Find all LMS suffix positions
-    fn find_lms_suffixes(&self, is_lms: &[bool]) -> Vec<usize> {
-        is_lms
-            .iter()
-            .enumerate()
-            .filter_map(|(i, &is_lms_pos)| if is_lms_pos { Some(i) } else { None })
-            .collect()
-    }
-
-    /// Compute bucket head and tail positions
-    fn compute_bucket_boundaries(
-        &self,
-        bucket: &[usize],
-        bucket_heads: &mut [usize],
-        bucket_tails: &mut [usize],
-    ) {
-        let mut sum = 0;
-        for i in 0..bucket.len() {
-            bucket_heads[i] = sum;
-            sum += bucket[i];
-            bucket_tails[i] = sum;
-        }
-    }
-
-    /// Induce L-type suffixes from left to right
-    fn induce_l_type(
-        &self,
-        sa: &mut [usize],
-        text: &[u8],
-        suffix_types: &[bool],
-        bucket_heads: &[usize],
-    ) -> Result<()> {
-        let n = text.len();
-        let mut heads = bucket_heads.to_vec();
-
-        for i in 0..n {
-            if sa[i] == n {
-                continue; // Skip sentinel values
-            }
-
-            let j = sa[i];
-            if j > 0 && j <= text.len() && !suffix_types[j - 1] {
-                // Predecessor is L-type
-                if j - 1 < text.len() {
-                    let ch = text[j - 1] as usize;
-                    if ch < heads.len() && heads[ch] < n && heads[ch] < sa.len() {
-                        sa[heads[ch]] = j - 1;
-                        heads[ch] += 1;
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Induce S-type suffixes from right to left
-    fn induce_s_type(
-        &self,
-        sa: &mut [usize],
-        text: &[u8],
-        suffix_types: &[bool],
-        bucket_tails: &[usize],
-    ) -> Result<()> {
-        let n = text.len();
-        let mut tails = bucket_tails.to_vec();
-
-        for i in (0..n).rev() {
-            if sa[i] == n {
-                continue; // Skip sentinel values
-            }
-
-            let j = sa[i];
-            if j > 0 && j <= text.len() && suffix_types[j - 1] {
-                // Predecessor is S-type
-                if j - 1 < text.len() {
-                    let ch = text[j - 1] as usize;
-                    if ch < tails.len() && tails[ch] > 0 && tails[ch] <= sa.len() {
-                        tails[ch] -= 1;
-                        if tails[ch] < sa.len() {
-                            sa[tails[ch]] = j - 1;
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Compact LMS suffixes from the suffix array
-    fn compact_lms_suffixes(&self, sa: &[usize], is_lms: &[bool]) -> Vec<usize> {
-        sa.iter()
-            .filter_map(|&pos| {
-                if pos < is_lms.len() && is_lms[pos] {
-                    Some(pos)
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    /// Assign names to LMS substrings based on their lexicographic order
-    fn name_lms_substrings(
-        &self,
-        text: &[u8],
-        lms_sa: &[usize],
-        lms_suffixes: &[usize],
-    ) -> Result<Vec<u8>> {
-        let mut names = vec![0u8; lms_suffixes.len()];
-        let mut current_name = 0u8;
-
-        if !lms_sa.is_empty() {
-            names[0] = current_name;
-
-            for i in 1..lms_sa.len() {
-                if !self.are_lms_substrings_equal(text, lms_sa[i - 1], lms_sa[i], lms_suffixes)? {
-                    current_name = current_name.wrapping_add(1);
-                }
-
-                // Find position of lms_sa[i] in lms_suffixes with bounds checking
-                if lms_sa[i] < text.len() {
-                    let pos = lms_suffixes
-                        .iter()
-                        .position(|&x| x == lms_sa[i])
-                        .ok_or_else(|| {
-                            crate::error::ZiporaError::invalid_data("LMS suffix not found")
-                        })?;
-                    if pos < names.len() {
-                        names[pos] = current_name;
-                    }
-                } else {
-                    return Err(crate::error::ZiporaError::invalid_data(
-                        "Invalid LMS suffix index",
-                    ));
-                }
-            }
-        }
-
-        Ok(names)
-    }
-
-    /// Check if two LMS substrings are equal
-    fn are_lms_substrings_equal(
-        &self,
-        text: &[u8],
-        pos1: usize,
-        pos2: usize,
-        lms_suffixes: &[usize],
-    ) -> Result<bool> {
-        if pos1 >= text.len() || pos2 >= text.len() {
-            return Ok(false);
-        }
-
-        // Additional safety check for bounds
-        if pos1 == pos2 {
-            return Ok(true);
-        }
-
-        // Find the end of each LMS substring
-        let end1 = self.find_lms_substring_end(pos1, lms_suffixes, text.len());
-        let end2 = self.find_lms_substring_end(pos2, lms_suffixes, text.len());
-
-        let len1 = end1 - pos1;
-        let len2 = end2 - pos2;
-
-        if len1 != len2 {
-            return Ok(false);
-        }
-
-        // Compare character by character with bounds checking
-        for i in 0..len1 {
-            if pos1 + i >= text.len() || pos2 + i >= text.len() {
-                return Ok(false);
-            }
-            if text[pos1 + i] != text[pos2 + i] {
-                return Ok(false);
-            }
-        }
-
-        Ok(true)
-    }
-
-    /// Find the end position of an LMS substring
-    fn find_lms_substring_end(
-        &self,
-        start: usize,
-        lms_suffixes: &[usize],
-        text_len: usize,
-    ) -> usize {
-        // Find next LMS position after start
-        lms_suffixes
-            .iter()
-            .find(|&&pos| pos > start)
-            .copied()
-            .unwrap_or(text_len)
-    }
-
-    /// Rebuild the suffix array with sorted LMS suffixes
-    fn rebuild_sa_with_sorted_lms(
-        &self,
-        text: &[u8],
-        sorted_lms: &[usize],
-        suffix_types: &[bool],
-        alphabet_size: usize,
-    ) -> Result<Vec<usize>> {
-        let n = text.len();
-        let mut sa = vec![n; n]; // Initialize with sentinel values
-        let mut bucket = vec![0; alphabet_size];
-        let mut bucket_heads = vec![0; alphabet_size];
-        let mut bucket_tails = vec![0; alphabet_size];
-
-        // Count character frequencies
-        for &ch in text {
-            bucket[ch as usize] += 1;
-        }
-
-        // Compute bucket boundaries
-        self.compute_bucket_boundaries(&bucket, &mut bucket_heads, &mut bucket_tails);
-
-        // Place sorted LMS suffixes with bounds checking
-        for &lms_pos in sorted_lms.iter().rev() {
-            if lms_pos >= text.len() {
-                continue;
-            }
-            let ch = text[lms_pos] as usize;
-            if ch < bucket_tails.len() && bucket_tails[ch] > 0 {
-                bucket_tails[ch] -= 1;
-                if bucket_tails[ch] < sa.len() {
-                    sa[bucket_tails[ch]] = lms_pos;
-                }
-            }
-        }
-
-        // Induce L-type and S-type suffixes
-        self.induce_l_type(&mut sa, text, suffix_types, &bucket_heads)?;
-        self.induce_s_type(&mut sa, text, suffix_types, &bucket_tails)?;
-
-        // Handle any remaining sentinel values by finding missing indices
-        if sa.iter().any(|&x| x >= n) {
-            // Find which indices are missing from the suffix array
-            let mut present = vec![false; n];
-            for &val in sa.iter() {
-                if val < n {
-                    present[val] = true;
-                }
-            }
-
-            let missing_indices: Vec<usize> = (0..n).filter(|&i| !present[i]).collect();
-            let mut missing_iter = missing_indices.into_iter();
-
-            // Replace sentinel values with missing indices
-            for sa_val in sa.iter_mut() {
-                if *sa_val >= n
-                    && let Some(missing_idx) = missing_iter.next()
-                {
-                    *sa_val = missing_idx;
-                }
-            }
-        }
-
-        Ok(sa)
+        // The sentinel suffix (position n) is the global minimum, so it always
+        // occupies sa[0]; the suffix array of `text` is the remainder.
+        debug_assert_eq!(sa[0] as usize, n, "sentinel suffix must sort first");
+        Ok(sa.into_iter().skip(1).map(|x| x as usize).collect())
     }
 
     /// DC3 (Divide-and-Conquer-3) algorithm implementation
@@ -910,22 +513,211 @@ impl SuffixArrayBuilder {
         self.build_sequential(text)
     }
 
-    /// Fallback sorting algorithm for when recursion depth is exceeded
-    fn fallback_sort(&self, text: &[u8]) -> Result<Vec<usize>> {
-        if text.is_empty() {
-            return Ok(Vec::new());
+}
+
+/// Marks an unfilled slot in the working suffix array during SA-IS.
+const SAIS_EMPTY: u32 = u32::MAX;
+
+/// Bucket boundaries for an integer alphabet. With `heads = true` returns the
+/// start index of each character's bucket; otherwise the (exclusive) end index.
+fn sais_buckets(counts: &[usize], heads: bool) -> Vec<usize> {
+    let mut res = vec![0usize; counts.len()];
+    let mut sum = 0usize;
+    for (i, &c) in counts.iter().enumerate() {
+        if heads {
+            res[i] = sum;
+            sum += c;
+        } else {
+            sum += c;
+            res[i] = sum;
         }
-
-        // Use simple sorting for small texts or deep recursion
-        let mut sa: Vec<usize> = (0..text.len()).collect();
-        sa.sort_by(|&a, &b| {
-            let suffix_a = &text[a..];
-            let suffix_b = &text[b..];
-            suffix_a.cmp(suffix_b)
-        });
-
-        Ok(sa)
     }
+    res
+}
+
+/// Induced sorting: with the LMS suffixes already seeded at their bucket tails
+/// in `sa`, induce the order of all L-type suffixes (left→right) then all
+/// S-type suffixes (right→left). Linear time.
+fn sais_induce(s: &[u32], sa: &mut [u32], t: &[bool], counts: &[usize]) {
+    let n = s.len();
+
+    // L-type pass at bucket heads.
+    let mut heads = sais_buckets(counts, true);
+    for i in 0..n {
+        let p = sa[i];
+        if p != SAIS_EMPTY && p > 0 {
+            let j = (p - 1) as usize;
+            if !t[j] {
+                let c = s[j] as usize;
+                sa[heads[c]] = j as u32;
+                heads[c] += 1;
+            }
+        }
+    }
+
+    // S-type pass at bucket tails.
+    let mut tails = sais_buckets(counts, false);
+    for i in (0..n).rev() {
+        let p = sa[i];
+        if p != SAIS_EMPTY && p > 0 {
+            let j = (p - 1) as usize;
+            if t[j] {
+                let c = s[j] as usize;
+                tails[c] -= 1;
+                sa[tails[c]] = j as u32;
+            }
+        }
+    }
+}
+
+/// Whether the two LMS substrings starting at `a` and `b` are identical. Walks
+/// until both substrings end (next LMS position) or a difference is found. The
+/// summed length of all LMS substrings is O(n), so total naming cost is O(n).
+fn sais_lms_substr_eq(
+    s: &[u32],
+    t: &[bool],
+    is_lms: &impl Fn(usize) -> bool,
+    a: usize,
+    b: usize,
+    n: usize,
+) -> bool {
+    if a == b {
+        return true;
+    }
+    let mut d = 0usize;
+    loop {
+        let (ia, ib) = (a + d, b + d);
+        if ia >= n || ib >= n {
+            return false;
+        }
+        if s[ia] != s[ib] || t[ia] != t[ib] {
+            return false;
+        }
+        if d > 0 {
+            let (la, lb) = (is_lms(ia), is_lms(ib));
+            if la && lb {
+                return true; // both substrings end here, equal so far
+            }
+            if la || lb {
+                return false; // one ended before the other
+            }
+        }
+        d += 1;
+    }
+}
+
+/// Core SA-IS over an integer string `s` whose last element is a unique global
+/// minimum, with alphabet size `k`. Returns the suffix array of `s`. The
+/// Nong–Zhang–Chan induced-sorting construction, linear time and space.
+fn sais_core(s: &[u32], k: usize) -> Vec<u32> {
+    let n = s.len();
+    let mut sa = vec![SAIS_EMPTY; n];
+    if n == 0 {
+        return sa;
+    }
+    if n == 1 {
+        sa[0] = 0;
+        return sa;
+    }
+
+    // Suffix types: true = S-type, false = L-type. The last suffix is S-type.
+    let mut t = vec![false; n];
+    t[n - 1] = true;
+    for i in (0..n - 1).rev() {
+        t[i] = s[i] < s[i + 1] || (s[i] == s[i + 1] && t[i + 1]);
+    }
+    let is_lms = |i: usize| i > 0 && t[i] && !t[i - 1];
+
+    // Bucket sizes.
+    let mut counts = vec![0usize; k];
+    for &c in s {
+        counts[c as usize] += 1;
+    }
+
+    // Stage 1: seed LMS suffixes at bucket tails, then induce to sort the LMS
+    // substrings into `sa`.
+    let mut tails = sais_buckets(&counts, false);
+    for (i, &ch) in s.iter().enumerate() {
+        if is_lms(i) {
+            let c = ch as usize;
+            tails[c] -= 1;
+            sa[tails[c]] = i as u32;
+        }
+    }
+    sais_induce(s, &mut sa, &t, &counts);
+
+    // Stage 2: compact the sorted LMS suffixes to the front and name their
+    // substrings. Names are written at `pos / 2` (LMS positions are never
+    // adjacent, so these slots are distinct).
+    let mut n1 = 0usize;
+    for i in 0..n {
+        let p = sa[i];
+        if p != SAIS_EMPTY && is_lms(p as usize) {
+            sa[n1] = p;
+            n1 += 1;
+        }
+    }
+    for slot in sa.iter_mut().take(n).skip(n1) {
+        *slot = SAIS_EMPTY;
+    }
+
+    let mut name = 0u32;
+    let mut prev: Option<usize> = None;
+    for i in 0..n1 {
+        let pos = sa[i] as usize;
+        let diff = match prev {
+            None => true,
+            Some(prev_pos) => !sais_lms_substr_eq(s, &t, &is_lms, prev_pos, pos, n),
+        };
+        if diff {
+            name += 1;
+            prev = Some(pos);
+        }
+        sa[n1 + pos / 2] = name - 1;
+    }
+
+    // Compact names into the tail to form the reduced string `s1`.
+    let mut j = n;
+    for i in (n1..n).rev() {
+        if sa[i] != SAIS_EMPTY {
+            j -= 1;
+            sa[j] = sa[i];
+        }
+    }
+    let s1: Vec<u32> = sa[n - n1..n].to_vec();
+
+    // Stage 3: if any name repeats, recurse; otherwise ranks are already the SA.
+    let sa1 = if (name as usize) < n1 {
+        sais_core(&s1, name as usize)
+    } else {
+        let mut tmp = vec![SAIS_EMPTY; n1];
+        for (i, &name_i) in s1.iter().enumerate() {
+            tmp[name_i as usize] = i as u32;
+        }
+        tmp
+    };
+
+    // Stage 4: map sorted reduced suffixes back to original LMS positions, then
+    // re-induce the full suffix array.
+    let mut lms_positions = Vec::with_capacity(n1);
+    for i in 0..n {
+        if is_lms(i) {
+            lms_positions.push(i as u32);
+        }
+    }
+    for slot in sa.iter_mut() {
+        *slot = SAIS_EMPTY;
+    }
+    let mut tails = sais_buckets(&counts, false);
+    for i in (0..n1).rev() {
+        let pos = lms_positions[sa1[i] as usize] as usize;
+        let c = s[pos] as usize;
+        tails[c] -= 1;
+        sa[tails[c]] = pos as u32;
+    }
+    sais_induce(s, &mut sa, &t, &counts);
+
+    sa
 }
 
 impl Algorithm for SuffixArrayBuilder {
@@ -1362,6 +1154,100 @@ mod tests {
                 "Suffix array not properly sorted at position {}",
                 i
             );
+        }
+    }
+
+    /// Reference suffix array via direct suffix comparison sort (O(n^2 log n),
+    /// trivially correct). Used as the oracle for SA-IS correctness.
+    fn reference_suffix_array(text: &[u8]) -> Vec<usize> {
+        let mut sa: Vec<usize> = (0..text.len()).collect();
+        sa.sort_by(|&a, &b| text[a..].cmp(&text[b..]));
+        sa
+    }
+
+    /// SA-IS must produce the exact suffix array for arbitrary input, including
+    /// varied data with >256 distinct LMS substrings, repetitive data, and text.
+    #[test]
+    fn test_sais_correctness_vs_reference() {
+        let cfg = SuffixArrayConfig {
+            algorithm: SuffixArrayAlgorithm::SAIS,
+            ..Default::default()
+        };
+
+        let mut cases: Vec<Vec<u8>> = vec![
+            b"a".to_vec(),
+            b"ab".to_vec(),
+            b"ba".to_vec(),
+            b"aa".to_vec(),
+            b"banana".to_vec(),
+            b"mississippi".to_vec(),
+            b"aaaaaa".to_vec(),
+            b"abababab".to_vec(),
+            b"the quick brown fox jumps over the lazy dog".to_vec(),
+        ];
+
+        // Pseudo-random varied data (LCG) across several sizes — exercises the
+        // recursion and >256 distinct LMS substrings.
+        let mut x: u32 = 0x1234_5678;
+        for &n in &[50usize, 200, 1000, 5000] {
+            let v: Vec<u8> = (0..n)
+                .map(|_| {
+                    x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+                    (x >> 24) as u8
+                })
+                .collect();
+            cases.push(v);
+        }
+        // Highly repetitive, small alphabet.
+        cases.push((0..2000).flat_map(|_| [b'a', b'b']).collect());
+        // Full-alphabet sweep (256 distinct bytes repeated).
+        cases.push((0..4000u32).map(|i| (i % 256) as u8).collect());
+
+        for text in &cases {
+            let sa = SuffixArray::with_config(text, &cfg).unwrap();
+            assert_eq!(
+                sa.as_slice().len(),
+                text.len(),
+                "SA length mismatch for input len {}",
+                text.len()
+            );
+            assert_eq!(
+                sa.as_slice(),
+                reference_suffix_array(text).as_slice(),
+                "SA-IS produced an incorrect suffix array for input len {}",
+                text.len()
+            );
+        }
+    }
+
+    /// Randomized SA-IS stress test over small alphabets and many lengths.
+    /// Small alphabets produce many equal LMS substrings, forcing deep recursion
+    /// — the most fragile part of SA-IS — so this catches edge cases the fixed
+    /// inputs above may miss. Deterministic (seeded LCG), no wall-clock/RNG.
+    #[test]
+    fn test_sais_randomized_small_alphabet() {
+        let cfg = SuffixArrayConfig {
+            algorithm: SuffixArrayAlgorithm::SAIS,
+            ..Default::default()
+        };
+        let mut x: u32 = 0x9E37_79B9;
+        let mut next = |modulo: u32| {
+            x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+            (x >> 16) % modulo
+        };
+
+        // Many trials across alphabet sizes {2,3,4} and lengths up to 300.
+        for alphabet in [2u32, 3, 4] {
+            for _ in 0..200 {
+                let len = (next(300) + 1) as usize;
+                let data: Vec<u8> = (0..len).map(|_| next(alphabet) as u8).collect();
+                let sa = SuffixArray::with_config(&data, &cfg).unwrap();
+                assert_eq!(
+                    sa.as_slice(),
+                    reference_suffix_array(&data).as_slice(),
+                    "SA-IS mismatch: alphabet={alphabet}, data={data:?}"
+                );
+            }
         }
     }
 

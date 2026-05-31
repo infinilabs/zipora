@@ -536,6 +536,11 @@ impl PaZipCompressor {
     /// Legacy compression using original implementation
     fn compress_sequential_legacy(&mut self, input: &[u8], output: &mut Vec<u8>) -> Result<()> {
         let mut pos = 0;
+        // Bytes in `input[lit_start..pos]` are pending literals not yet emitted.
+        // Consecutive literals are coalesced into a single literal run rather
+        // than one 3-byte token per byte, which is essential for any net
+        // compression.
+        let mut lit_start = 0usize;
 
         while pos < input.len() {
             // Step 1: Find local match
@@ -551,23 +556,43 @@ impl PaZipCompressor {
             // Step 4: Select optimal strategy
             let selected_strategy = self.select_optimal_strategy(strategies)?;
 
-            // Step 5: Apply compression strategy
-            let mut temp_buffer = Vec::new();
-            let advance_length =
-                self.apply_compression_strategy(input, pos, selected_strategy, &mut temp_buffer)?;
-            self.output_buffer.extend_from_slice(&temp_buffer);
+            match selected_strategy {
+                CompressionStrategy::Literal { .. } => {
+                    // Defer emission: grow the pending literal run by one byte,
+                    // flushing whenever it reaches the max run length.
+                    pos += 1;
+                    if pos - lit_start >= 255 {
+                        self.flush_literals(input, lit_start, pos);
+                        lit_start = pos;
+                    }
+                    self.current_strategy = Some(selected_strategy);
+                }
+                _ => {
+                    // Emit any pending literals before this match.
+                    if lit_start < pos {
+                        self.flush_literals(input, lit_start, pos);
+                    }
 
-            // Step 6: Update statistics and learning
-            self.update_statistics(selected_strategy, advance_length);
+                    let mut temp_buffer = Vec::new();
+                    let advance_length = self
+                        .apply_compression_strategy(input, pos, selected_strategy, &mut temp_buffer)?;
+                    self.output_buffer.extend_from_slice(&temp_buffer);
 
-            // Step 7: Update adaptive thresholds
-            if self.config.adaptive_thresholds {
-                self.update_adaptive_thresholds(selected_strategy);
+                    self.update_statistics(selected_strategy, advance_length);
+                    if self.config.adaptive_thresholds {
+                        self.update_adaptive_thresholds(selected_strategy);
+                    }
+
+                    pos += advance_length.max(1); // always make progress
+                    lit_start = pos;
+                    self.current_strategy = Some(selected_strategy);
+                }
             }
+        }
 
-            // Step 8: Advance position
-            pos += advance_length;
-            self.current_strategy = Some(selected_strategy);
+        // Flush trailing literals.
+        if lit_start < pos {
+            self.flush_literals(input, lit_start, pos);
         }
 
         // Copy compressed data to output
@@ -576,6 +601,20 @@ impl PaZipCompressor {
         self.stats.bytes_output = output.len() as u64;
 
         Ok(())
+    }
+
+    /// Emit `input[start..end]` as one or more literal runs (each [0][len:u8]
+    /// [data..], len <= 255) into the output buffer.
+    fn flush_literals(&mut self, input: &[u8], start: usize, end: usize) {
+        let mut s = start;
+        while s < end {
+            let chunk = (end - s).min(255);
+            self.output_buffer.push(0); // Literal type byte
+            self.output_buffer.push(chunk as u8);
+            self.output_buffer.extend_from_slice(&input[s..s + chunk]);
+            self.stats.literal_count += 1;
+            s += chunk;
+        }
     }
 
     /// Decompress PA-Zip compressed data
@@ -645,13 +684,19 @@ impl PaZipCompressor {
                 new_pos += length;
             }
             CompressionType::Global => {
-                // Read global dictionary offset and length
-                if new_pos + 3 >= input.len() {
+                // [offset:u32][len:u16]
+                if new_pos + 6 > input.len() {
                     return Ok(new_pos);
                 }
-                let offset = u16::from_le_bytes([input[new_pos], input[new_pos + 1]]) as usize;
-                let length = u16::from_le_bytes([input[new_pos + 2], input[new_pos + 3]]) as usize;
-                new_pos += 4;
+                let offset = u32::from_le_bytes([
+                    input[new_pos],
+                    input[new_pos + 1],
+                    input[new_pos + 2],
+                    input[new_pos + 3],
+                ]) as usize;
+                let length =
+                    u16::from_le_bytes([input[new_pos + 4], input[new_pos + 5]]) as usize;
+                new_pos += 6;
 
                 // Copy from dictionary using actual dictionary data
                 let dict_text = self.dictionary.dictionary_text();
@@ -669,8 +714,8 @@ impl PaZipCompressor {
                 }
             }
             CompressionType::RLE => {
-                // Read byte value and repetition count
-                if new_pos + 1 >= input.len() {
+                // [byte:u8][len:u8]
+                if new_pos + 2 > input.len() {
                     return Ok(new_pos);
                 }
                 let byte_value = input[new_pos];
@@ -681,9 +726,9 @@ impl PaZipCompressor {
                     output.push(byte_value);
                 }
             }
-            CompressionType::NearShort | CompressionType::Far1Short => {
-                // Read distance and length (both as single bytes)
-                if new_pos + 1 >= input.len() {
+            CompressionType::NearShort => {
+                // [dist:u8][len:u8]
+                if new_pos + 2 > input.len() {
                     return Ok(new_pos);
                 }
                 let distance = input[new_pos] as usize;
@@ -692,9 +737,9 @@ impl PaZipCompressor {
 
                 self.copy_from_distance(output, distance, length)?;
             }
-            CompressionType::Far2Short => {
-                // Read 2-byte distance and 1-byte length
-                if new_pos + 2 >= input.len() {
+            CompressionType::Far1Short => {
+                // [dist:u16][len:u8]
+                if new_pos + 3 > input.len() {
                     return Ok(new_pos);
                 }
                 let distance = u16::from_le_bytes([input[new_pos], input[new_pos + 1]]) as usize;
@@ -703,9 +748,25 @@ impl PaZipCompressor {
 
                 self.copy_from_distance(output, distance, length)?;
             }
+            CompressionType::Far2Short => {
+                // [dist:u32][len:u8]
+                if new_pos + 5 > input.len() {
+                    return Ok(new_pos);
+                }
+                let distance = u32::from_le_bytes([
+                    input[new_pos],
+                    input[new_pos + 1],
+                    input[new_pos + 2],
+                    input[new_pos + 3],
+                ]) as usize;
+                let length = input[new_pos + 4] as usize;
+                new_pos += 5;
+
+                self.copy_from_distance(output, distance, length)?;
+            }
             CompressionType::Far2Long => {
-                // Read 2-byte distance and 2-byte length
-                if new_pos + 3 >= input.len() {
+                // [dist:u16][len:u16]
+                if new_pos + 4 > input.len() {
                     return Ok(new_pos);
                 }
                 let distance = u16::from_le_bytes([input[new_pos], input[new_pos + 1]]) as usize;
@@ -715,8 +776,8 @@ impl PaZipCompressor {
                 self.copy_from_distance(output, distance, length)?;
             }
             CompressionType::Far3Long => {
-                // Read 4-byte distance and 4-byte length
-                if new_pos + 7 >= input.len() {
+                // [dist:u32][len:u32]
+                if new_pos + 8 > input.len() {
                     return Ok(new_pos);
                 }
                 let distance = u32::from_le_bytes([
@@ -1013,15 +1074,27 @@ impl PaZipCompressor {
         strategy: CompressionStrategy,
         output: &mut Vec<u8>,
     ) -> Result<usize> {
+        // Wire format (must stay in lock-step with `decompress_match`):
+        //   0 Literal   : [len:u8][data..]
+        //   1 Global    : [offset:u32][len:u16]
+        //   2 RLE       : [byte:u8][len:u8]
+        //   3 NearShort : [dist:u8][len:u8]
+        //   4 Far1Short : [dist:u16][len:u8]
+        //   5 Far2Short : [dist:u32][len:u8]
+        //   6 Far2Long  : [dist:u16][len:u16]
+        //   7 Far3Long  : [dist:u32][len:u32]
+        // Back-reference widths are chosen from the actual values (not the
+        // pre-selected match_type) so an offset/length can never be truncated.
         match strategy {
             CompressionStrategy::Literal { length } => {
-                // Encode literal: [type_byte=0] [length] [literal_data...]
-                output.push(0); // Type byte for Literal
-                output.push(length); // Length byte
-
+                // Emit only the bytes actually available; the stored length must
+                // equal the data written so decode reads back exactly.
                 let end_pos = (pos + length as usize).min(input.len());
-                output.extend_from_slice(&input[pos..end_pos]); // Actual literal data
-                Ok(end_pos - pos)
+                let emit_len = end_pos - pos;
+                output.push(0);
+                output.push(emit_len as u8);
+                output.extend_from_slice(&input[pos..end_pos]);
+                Ok(emit_len)
             }
 
             CompressionStrategy::Local {
@@ -1029,55 +1102,17 @@ impl PaZipCompressor {
                 length,
                 match_type,
             } => {
-                // Encode local match based on match type
-                let type_byte = match_type as u8;
-                output.push(type_byte);
-
-                match match_type {
-                    CompressionType::RLE => {
-                        // RLE: [type_byte=2] [byte_value] [length]
-                        if pos < input.len() {
-                            output.push(input[pos]); // The repeated byte value
-                        } else {
-                            output.push(0); // Fallback
-                        }
-                        output.push(length as u8);
-                    }
-                    CompressionType::NearShort => {
-                        // NearShort: [type_byte=3] [distance] [length]
-                        output.push(distance as u8);
-                        output.push(length as u8);
-                    }
-                    CompressionType::Far1Short => {
-                        // Far1Short: [type_byte=4] [distance_2_bytes] [length]
-                        output.extend_from_slice(&(distance as u16).to_le_bytes());
-                        output.push(length as u8);
-                    }
-                    CompressionType::Far2Short => {
-                        // Far2Short: [type_byte=5] [distance_4_bytes] [length]
-                        output.extend_from_slice(&distance.to_le_bytes());
-                        output.push(length as u8);
-                    }
-                    CompressionType::Far2Long => {
-                        // Far2Long: [type_byte=6] [distance_2_bytes] [length_2_bytes]
-                        output.extend_from_slice(&(distance as u16).to_le_bytes());
-                        output.extend_from_slice(&(length as u16).to_le_bytes());
-                    }
-                    CompressionType::Far3Long => {
-                        // Far3Long: [type_byte=7] [distance_4_bytes] [length_4_bytes]
-                        output.extend_from_slice(&distance.to_le_bytes());
-                        output.extend_from_slice(&length.to_le_bytes());
-                    }
-                    _ => {
-                        // Fallback to literal for unsupported types
-                        let type_byte_index = output.len() - 1;
-                        output[type_byte_index] = 0; // Change type byte to literal
-                        output.push(length as u8);
-                        let end_pos = (pos + length as usize).min(input.len());
-                        output.extend_from_slice(&input[pos..end_pos]);
-                    }
+                if matches!(match_type, CompressionType::RLE) {
+                    // RLE run, clamped to a single byte's worth of count.
+                    let emit_len = (length as usize).clamp(1, 255);
+                    output.push(2);
+                    output.push(if pos < input.len() { input[pos] } else { 0 });
+                    output.push(emit_len as u8);
+                    Ok(emit_len)
+                } else {
+                    self.emit_backref(output, distance, length);
+                    Ok(length as usize)
                 }
-                Ok(length as usize)
             }
 
             CompressionStrategy::Global {
@@ -1085,12 +1120,34 @@ impl PaZipCompressor {
                 length,
                 match_type: _,
             } => {
-                // Encode global match: [type_byte=1] [dict_offset_2_bytes] [length_2_bytes]
-                output.push(1); // Type byte for Global
-                output.extend_from_slice(&(dict_offset as u16).to_le_bytes()); // Dictionary offset (2 bytes)
-                output.extend_from_slice(&(length as u16).to_le_bytes()); // Match length (2 bytes)
+                output.push(1);
+                output.extend_from_slice(&(dict_offset as u32).to_le_bytes());
+                output.extend_from_slice(&(length as u16).to_le_bytes());
                 Ok(length as usize)
             }
+        }
+    }
+
+    /// Encode a back-reference (distance, length) using the narrowest wire form
+    /// that fits the actual values, guaranteeing no truncation. Mirrors the
+    /// NearShort/Far1Short/Far2Long/Far3Long cases in `decompress_match`.
+    fn emit_backref(&self, output: &mut Vec<u8>, distance: u32, length: u32) {
+        if distance <= 0xFF && length <= 0xFF {
+            output.push(3); // NearShort
+            output.push(distance as u8);
+            output.push(length as u8);
+        } else if distance <= 0xFFFF && length <= 0xFF {
+            output.push(4); // Far1Short
+            output.extend_from_slice(&(distance as u16).to_le_bytes());
+            output.push(length as u8);
+        } else if distance <= 0xFFFF && length <= 0xFFFF {
+            output.push(6); // Far2Long
+            output.extend_from_slice(&(distance as u16).to_le_bytes());
+            output.extend_from_slice(&(length as u16).to_le_bytes());
+        } else {
+            output.push(7); // Far3Long
+            output.extend_from_slice(&distance.to_le_bytes());
+            output.extend_from_slice(&length.to_le_bytes());
         }
     }
 

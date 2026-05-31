@@ -546,72 +546,77 @@ impl SuffixArrayDictionary {
         &self.dictionary_text
     }
 
-    /// Advanced two-level pattern matching using DFA cache + suffix array
+    /// Longest-prefix match of `input` against the dictionary via suffix array.
     ///
-    /// This implements the sophisticated two-level algorithm from PA-Zip research:
-    /// 1. **Fast Path**: DFA cache navigation with O(1) state transitions
-    /// 2. **Slow Path**: Suffix array fallback with binary search when DFA misses
-    /// 3. **String Compression**: Handle zstr (compressed string) patterns efficiently
-    /// 4. **Range Management**: Track suffix array ranges [lo, hi) for pattern locations
+    /// Returns a [`MatchStatus`] whose `depth` is the length of the longest
+    /// prefix of `input` that occurs in the dictionary text, and whose `[lo, hi)`
+    /// is the suffix-array range of every dictionary position at which that
+    /// prefix occurs (so `suffix_array[lo]` is a valid matching position).
     ///
-    /// # Arguments
-    /// * `input` - Input bytes to match against dictionary
+    /// This is an incremental binary search: at each depth `d`, `[lo, hi)` holds
+    /// the suffixes that share `input[..d]`; because the suffix array is sorted,
+    /// those suffixes' bytes at position `d` are non-decreasing (suffixes that
+    /// have ended sort first), so the range is narrowed with two binary searches
+    /// in O(depth · log n).
     ///
-    /// # Returns
-    /// MatchStatus with suffix array range and match depth
+    /// Note: the previous implementation drove this through the DFA cache, which
+    /// returned incorrect ranges/positions and silently corrupted compressed
+    /// data; this direct suffix-array search is the source of truth.
     pub fn da_match_max_length(&self, input: &[u8]) -> MatchStatus {
-        if input.is_empty() {
-            return MatchStatus::new(0, 0, 0);
+        let sa = self.suffix_array.as_slice();
+        let text: &[u8] = &self.dictionary_text;
+        let n = sa.len();
+
+        if input.is_empty() || n == 0 {
+            return MatchStatus::new(0, n, 0);
         }
 
-        let mut state = 0u32; // Start at root state
+        let max_depth = input.len().min(self.config.max_pattern_length);
         let mut lo = 0usize;
-        let mut hi = self.suffix_array.as_slice().len();
-        let mut pos = 0usize;
+        let mut hi = n;
+        let mut depth = 0usize;
 
-        while pos < input.len() {
-            // 1. Handle compressed string (zstr) if present
-            if let Some(zlen) = self.dfa_cache.get_zstr_length(state) {
-                let zend = (input.len()).min(pos + zlen);
-                if lo < self.suffix_array.as_slice().len() {
-                    let dict_start = self.suffix_array.as_slice()[lo];
-                    if dict_start < self.dictionary_text.len() {
-                        let zptr = &self.dictionary_text[dict_start + pos..];
-                        while pos < zend && pos < zptr.len() {
-                            if zptr[pos - (dict_start + pos - dict_start)] != input[pos] {
-                                return MatchStatus::new(lo, hi, pos);
-                            }
-                            pos += 1;
-                        }
+        while depth < max_depth {
+            let c = input[depth];
+
+            // First index in [lo, hi) whose byte at `depth` is >= c.
+            // A suffix shorter than `depth + 1` (no byte at `depth`) sorts before
+            // any real byte, so it counts as "< c".
+            let new_lo = {
+                let (mut l, mut r) = (lo, hi);
+                while l < r {
+                    let m = l + (r - l) / 2;
+                    match text.get(sa[m] + depth) {
+                        Some(&b) if b >= c => r = m,
+                        _ => l = m + 1,
                     }
                 }
-            }
+                l
+            };
 
-            if pos >= input.len() {
-                break;
-            }
-
-            // 2. Navigate to child state using double array trie
-            let child = self.dfa_cache.transition_state(state, input[pos]);
-
-            if let Some(next_state) = child {
-                if let Some(dfa_state) = self.dfa_cache.get_state(next_state) {
-                    // Valid transition - update state and range from DFA cache
-                    state = next_state;
-                    lo = dfa_state.suffix_low as usize;
-                    hi = dfa_state.suffix_hig as usize;
-                    pos += 1;
-                } else {
-                    // DFA cache miss - fall back to suffix array search
-                    return self.sa_match_continuation(lo, hi, pos, input);
+            // First index in [new_lo, hi) whose byte at `depth` is > c.
+            let new_hi = {
+                let (mut l, mut r) = (new_lo, hi);
+                while l < r {
+                    let m = l + (r - l) / 2;
+                    match text.get(sa[m] + depth) {
+                        Some(&b) if b > c => r = m,
+                        _ => l = m + 1,
+                    }
                 }
-            } else {
-                // No transition available - fall back to suffix array search
-                return self.sa_match_continuation(lo, hi, pos, input);
+                l
+            };
+
+            if new_lo >= new_hi {
+                break; // no dictionary suffix extends the match with `c`
             }
+
+            lo = new_lo;
+            hi = new_hi;
+            depth += 1;
         }
 
-        MatchStatus::new(lo, hi, pos)
+        MatchStatus::new(lo, hi, depth)
     }
 
     /// Suffix array continuation when DFA cache misses
@@ -941,6 +946,79 @@ unsafe impl Sync for SuffixArrayDictionary {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The matcher must return a *valid* longest-prefix match: the reported
+    /// length must be the true longest prefix of the query that occurs in the
+    /// dictionary, and the reported dict_position must actually contain it.
+    /// (Regression for the PA-Zip matcher returning rotated/incorrect positions.)
+    #[test]
+    fn test_find_longest_match_returns_valid_position() {
+        // Brute-force longest prefix of `query` that is a substring of `dict`.
+        fn brute_longest(dict: &[u8], query: &[u8], max_len: usize) -> usize {
+            let mut best = 0usize;
+            for l in 1..=query.len().min(max_len) {
+                if dict.windows(l).any(|w| w == &query[..l]) {
+                    best = l;
+                } else {
+                    break;
+                }
+            }
+            best
+        }
+
+        let sentence = b"the quick brown fox jumps over the lazy dog. ";
+        // Large repetitive dictionary — populates the DFA cache so the cached
+        // (non-fallback) match path is actually exercised. This reproduces the
+        // rotation bug that small dictionaries hid.
+        let big_repetitive: Vec<u8> = sentence.iter().cycle().take(sentence.len() * 200).copied().collect();
+        let query_sentence: Vec<u8> = sentence.repeat(3);
+
+        let mut cases: Vec<(&[u8], &[u8])> = vec![
+            (b"the quick brown fox. the quick brown fox. ", b"the quick brown fox. xyz"),
+            (b"abracadabra", b"cadabra-tail"),
+            (b"mississippi", b"issippi!"),
+            (b"aaaaaaaaaa", b"aaaaa-no"),
+            (b"the quick brown fox jumps over the lazy dog. ", b"jumps over the moon"),
+            (b"banana banana banana ", b"banana split"),
+            (b"hello world", b"zzz not present"),
+        ];
+        cases.push((&big_repetitive, &query_sentence));
+        cases.push((&big_repetitive, sentence));
+
+        let max_len = 32usize;
+        for &(dict, query) in &cases {
+            let config = SuffixArrayDictionaryConfig {
+                min_pattern_length: 1,
+                max_pattern_length: max_len,
+                min_frequency: 1,
+                sample_ratio: 1.0,
+                use_memory_pool: false,
+                ..Default::default()
+            };
+            let mut dictionary = SuffixArrayDictionary::new(dict, config).unwrap();
+            let expected = brute_longest(dict, query, max_len);
+            let m = dictionary.find_longest_match(query, 0, max_len).unwrap();
+
+            if expected >= 1 {
+                let m = m.unwrap_or_else(|| {
+                    panic!("expected a match of len {expected} for query {query:?} in dict {dict:?}")
+                });
+                assert_eq!(
+                    m.length, expected,
+                    "wrong match length for query {query:?} in dict {dict:?}"
+                );
+                assert!(
+                    m.dict_position + m.length <= dict.len(),
+                    "dict_position out of range"
+                );
+                assert_eq!(
+                    &dict[m.dict_position..m.dict_position + m.length],
+                    &query[..m.length],
+                    "dict_position does not actually match the query prefix (query {query:?}, dict {dict:?})"
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_dictionary_creation() {
