@@ -18,6 +18,14 @@ use std::arch::x86_64::{
     _mm512_storeu_si512,
 };
 
+/// Maximum value range for which counting sort is selected.
+///
+/// `counting_sort_u32` allocates `(max_val + 1)` buckets, so its memory cost is
+/// O(value range), not O(len). Selecting it on element count alone allows a
+/// handful of large-valued elements (e.g. a single `u32::MAX`) to request 32 GiB.
+/// Above this range LSD radix sort is used instead (bounded O(len) memory).
+const COUNTING_SORT_MAX_RANGE: usize = 1 << 16; // 65_536 buckets (512 KiB)
+
 /// High-performance radix sort implementation
 pub struct RadixSort {
     config: RadixSortConfig,
@@ -132,9 +140,15 @@ impl RadixSort {
     }
 
     fn sort_u32_sequential(&self, data: &mut [u32]) -> Result<()> {
+        // Counting sort is chosen only when the dataset is small AND its value
+        // range is bounded — its bucket array is sized by the max value, so a
+        // large range would allocate excessive memory regardless of len.
         if data.len() <= self.config.use_counting_sort_threshold {
-            self.counting_sort_u32(data);
-            return Ok(());
+            let max_val = data.iter().copied().max().unwrap_or(0) as usize;
+            if max_val <= COUNTING_SORT_MAX_RANGE {
+                self.counting_sort_u32(data);
+                return Ok(());
+            }
         }
 
         let radix = 1usize << self.config.radix_bits;
