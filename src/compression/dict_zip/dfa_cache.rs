@@ -24,6 +24,7 @@ use crate::algorithms::suffix_array::SuffixArray;
 use crate::error::{Result, ZiporaError};
 use crate::fsa::traits::{FiniteStateAutomaton, Trie};
 use crate::fsa::{ZiporaTrie, ZiporaTrieConfig};
+use std::sync::Arc;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -259,10 +260,11 @@ pub struct DfaCache {
     config: DfaCacheConfig,
     /// Performance statistics
     stats: CacheStats,
-    /// Reference to original text for BFS algorithm
-    text: Vec<u8>,
-    /// Reference to suffix array for BFS algorithm
-    suffix_array: Vec<i32>,
+    /// Reference to original text for BFS algorithm. `Arc` so cloning the cache
+    /// (e.g. per decompress) is a pointer bump rather than a multi-MB copy.
+    text: Arc<Vec<u8>>,
+    /// Reference to suffix array for BFS algorithm (shared; see `text`).
+    suffix_array: Arc<Vec<i32>>,
 }
 
 impl DfaCache {
@@ -313,8 +315,8 @@ impl DfaCache {
             pattern_map: HashMap::new(),
             config,
             stats,
-            text,
-            suffix_array,
+            text: Arc::new(text),
+            suffix_array: Arc::new(suffix_array),
         }
     }
 
@@ -537,8 +539,8 @@ impl DfaCache {
             pattern_map,
             config: serializable.config,
             stats,
-            text: Vec::new(),         // Empty for deserialized cache
-            suffix_array: Vec::new(), // Empty for deserialized cache
+            text: Arc::new(Vec::new()),         // Empty for deserialized cache
+            suffix_array: Arc::new(Vec::new()), // Empty for deserialized cache
         })
     }
 

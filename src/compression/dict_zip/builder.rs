@@ -20,7 +20,7 @@
 //! - **Coverage-based**: Ensure good coverage of the input data space
 //! - **Memory-constrained**: Build within specified memory limits
 
-use crate::algorithms::suffix_array::{SuffixArray, SuffixArrayConfig};
+use crate::algorithms::suffix_array::{LcpArray, SuffixArray, SuffixArrayConfig};
 use crate::compression::dict_zip::dfa_cache::DfaCacheConfig;
 use crate::compression::dict_zip::dictionary::{
     SuffixArrayDictionary, SuffixArrayDictionaryConfig,
@@ -960,28 +960,75 @@ impl DictionaryBuilder {
         let phase_start = Instant::now();
         let mut patterns = Vec::new();
 
-        // Extract patterns of different lengths
-        for pattern_len in self.config.min_pattern_length..=self.config.max_pattern_length {
-            let mut pattern_counts: HashMap<&[u8], u32> = HashMap::new();
+        let n = data.len();
+        let min_len = self.config.min_pattern_length;
+        let max_len = self.config.max_pattern_length;
+        let min_freq = self.config.min_frequency;
+        let max_freq = self.config.max_frequency;
 
-            // Count occurrences of all patterns of this length
-            for &start_pos in suffix_array.as_slice() {
-                if start_pos + pattern_len <= data.len() {
-                    let pattern = &data[start_pos..start_pos + pattern_len];
-                    *pattern_counts.entry(pattern).or_insert(0) += 1;
+        if n == 0 || min_len == 0 || max_len < min_len {
+            self.stats
+                .phase_times
+                .insert(BuildPhase::PatternExtraction, phase_start.elapsed());
+            return Ok(patterns);
+        }
+
+        // Enumerate every distinct substring with its exact occurrence count in
+        // O(n) using the LCP-interval (suffix-tree internal node) stack
+        // algorithm, instead of rescanning all suffixes once per length and
+        // hashing variable-length slices (which was O(n * max_len^2)).
+        //
+        // Each popped interval [lb, rb) is a suffix-tree internal node whose
+        // substrings have length in (parent_depth, depth] and occur `count`
+        // times (count = rb - lb). We emit one PatternInfo per length within
+        // [min_len, max_len]; LCP values are capped at `max_len` since longer
+        // shared prefixes are irrelevant and capping bounds the stack depth.
+        let sa = suffix_array.as_slice();
+        let lcp_array = LcpArray::new(data, suffix_array)?;
+        let lcp = lcp_array.as_slice();
+
+        // Stack of (left_bound, depth); seeded with the whole-array root.
+        let mut stack: Vec<(usize, usize)> = vec![(0, 0)];
+        // `i` indexes lcp but also runs one past the end (i == sa.len()) to flush
+        // the stack with a sentinel depth of 0, and serves as each interval's
+        // right bound — so a range loop is the natural form here.
+        #[allow(clippy::needless_range_loop)]
+        for i in 1..=sa.len() {
+            let cur_lcp = if i < sa.len() { lcp[i].min(max_len) } else { 0 };
+            // A new interval's left bound is i-1: the shared prefix lies between
+            // SA[i-1] and SA[i]. Popped intervals extend it further left.
+            let mut left = i - 1;
+            while let Some(&(lb, depth)) = stack.last() {
+                if depth <= cur_lcp {
+                    break;
                 }
+                stack.pop();
+                let count = (i - lb) as u32;
+                // The popped node's tree-parent is either the node now on top or
+                // a new node about to be created at `cur_lcp`, whichever is
+                // deeper — so lengths in (parent_depth, depth] are attributed to
+                // exactly one node (no double-emission of shorter prefixes).
+                let parent_depth = stack.last().map_or(0, |&(_, d)| d).max(cur_lcp);
+                if count >= min_freq && count <= max_freq {
+                    let first_l = (parent_depth + 1).max(min_len);
+                    let last_l = depth.min(max_len);
+                    if first_l <= last_l {
+                        let repr = sa[lb];
+                        for l in first_l..=last_l {
+                            // repr + l <= n: every suffix in [lb, rb) shares
+                            // `depth` >= l characters, so it is at least l long.
+                            patterns.push(PatternInfo {
+                                _pattern: data[repr..repr + l].to_vec(),
+                                frequency: count,
+                                length: l,
+                            });
+                        }
+                    }
+                }
+                left = lb;
             }
-
-            // Add frequent patterns
-            for (pattern, frequency) in pattern_counts {
-                if frequency >= self.config.min_frequency && frequency <= self.config.max_frequency
-                {
-                    patterns.push(PatternInfo {
-                        _pattern: pattern.to_vec(),
-                        frequency,
-                        length: pattern_len,
-                    });
-                }
+            if stack.last().map_or(0, |&(_, d)| d) < cur_lcp {
+                stack.push((left, cur_lcp));
             }
         }
 
@@ -1307,6 +1354,95 @@ mod tests {
     fn test_builder_creation() {
         let builder = DictionaryBuilder::new();
         assert_eq!(builder.config.strategy, BuildStrategy::Balanced);
+    }
+
+    /// The O(n) LCP-interval pattern enumeration must produce exactly the same
+    /// set of (pattern, frequency, length) tuples as a brute-force per-length
+    /// frequency count, for the realistic `min_frequency >= 2` range (repeated
+    /// substrings). Frequencies are exact occurrence counts.
+    #[test]
+    fn test_extract_patterns_matches_bruteforce() {
+        use std::collections::{HashMap, HashSet};
+
+        fn bruteforce(
+            data: &[u8],
+            min_len: usize,
+            max_len: usize,
+            min_freq: u32,
+            max_freq: u32,
+        ) -> HashSet<(Vec<u8>, u32, usize)> {
+            let mut set = HashSet::new();
+            for l in min_len..=max_len {
+                if l == 0 || l > data.len() {
+                    continue;
+                }
+                let mut counts: HashMap<&[u8], u32> = HashMap::new();
+                for p in 0..=data.len() - l {
+                    *counts.entry(&data[p..p + l]).or_insert(0) += 1;
+                }
+                for (pat, f) in counts {
+                    if f >= min_freq && f <= max_freq {
+                        set.insert((pat.to_vec(), f, l));
+                    }
+                }
+            }
+            set
+        }
+
+        let inputs: &[&[u8]] = &[
+            b"",
+            b"a",
+            b"aa",
+            b"banana",
+            b"mississippi",
+            b"abracadabra",
+            b"aaaaaaaa",
+            b"abababababab",
+            b"the quick brown fox jumps over the lazy dog the quick brown fox",
+        ];
+
+        // (min_len, max_len, min_freq, max_freq) — exercises the length window
+        // (incl. max_len capping), the min_frequency floor, and the
+        // max_frequency upper-bound filter.
+        let param_sets: &[(usize, usize, u32, u32)] = &[
+            (1, 6, 2, u32::MAX), // baseline
+            (1, 6, 3, u32::MAX), // higher min_freq floor
+            (2, 4, 2, u32::MAX), // min_len > 1 + smaller max_len (capping)
+            (1, 6, 2, 3),        // finite max_freq (upper-bound filter)
+            (1, 3, 2, 5),        // both freq bounds + small length window
+        ];
+
+        for &data in inputs {
+            for &(min_len, max_len, min_freq, max_freq) in param_sets {
+                let cfg = DictionaryBuilderConfig {
+                    min_pattern_length: min_len,
+                    max_pattern_length: max_len,
+                    min_frequency: min_freq,
+                    max_frequency: max_freq,
+                    // Huge budget so calculate_target_pattern_count never truncates.
+                    max_dict_size: usize::MAX / 4,
+                    target_dict_size: usize::MAX / 4,
+                    validate_result: false,
+                    ..DictionaryBuilderConfig::default()
+                };
+                let mut builder = DictionaryBuilder::with_config(cfg);
+
+                let sa = SuffixArray::new(data).unwrap();
+                let patterns = builder.extract_patterns(&sa, data).unwrap();
+
+                let got: HashSet<(Vec<u8>, u32, usize)> = patterns
+                    .into_iter()
+                    .map(|p| (p._pattern, p.frequency, p.length))
+                    .collect();
+                let want = bruteforce(data, min_len, max_len, min_freq, max_freq);
+
+                assert_eq!(
+                    got, want,
+                    "pattern mismatch for input {:?} (min_len={min_len}, max_len={max_len}, min_freq={min_freq}, max_freq={max_freq})",
+                    String::from_utf8_lossy(data),
+                );
+            }
+        }
     }
 
     #[test]
