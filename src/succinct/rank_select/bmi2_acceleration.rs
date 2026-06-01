@@ -1653,7 +1653,7 @@ impl Bmi2HashOps {
 
         // Find first free slot using BMI2
         let free_mask = !occupied_mask;
-        Bmi2SelectOps::select1_u64(free_mask, 0).map(|first_free| first_free)
+        Bmi2SelectOps::select1_u64(free_mask, 0)
     }
 
     /// Bulk hash bucket extraction

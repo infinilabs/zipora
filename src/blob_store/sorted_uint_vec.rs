@@ -1203,7 +1203,7 @@ mod tests {
 
         assert!(stats.compression_ratio < 1.0, "Should achieve compression");
         assert!(stats.space_savings_percent > 0.0, "Should save space");
-        assert_eq!(stats.num_blocks, (100 + 63) / 64); // 64 values per block by default
+        assert_eq!(stats.num_blocks, 100_usize.div_ceil(64)); // 64 values per block by default
         assert!(
             stats.average_bits_per_value < 64.0,
             "Should use fewer than 64 bits per value"

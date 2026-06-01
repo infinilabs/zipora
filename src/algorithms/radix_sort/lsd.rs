@@ -1,5 +1,5 @@
-use super::config::RadixSortConfig;
 use super::advanced::RadixSortable;
+use super::config::RadixSortConfig;
 use crate::algorithms::{Algorithm, AlgorithmStats};
 use crate::error::{Result, ZiporaError};
 use rayon::prelude::*;

@@ -364,7 +364,7 @@ fn test_advanced_radix_sort_u64() {
 #[test]
 fn test_advanced_radix_sort_strings() {
     let mut sorter = AdvancedStringRadixSort::new().unwrap();
-    let strings = vec![
+    let strings = [
         b"banana".as_slice(),
         b"apple".as_slice(),
         b"cherry".as_slice(),
@@ -375,7 +375,7 @@ fn test_advanced_radix_sort_strings() {
     let result = sorter.sort(&mut data);
     assert!(result.is_ok());
 
-    let expected_strings = vec![
+    let expected_strings = [
         b"apple".as_slice(),
         b"banana".as_slice(),
         b"cherry".as_slice(),
@@ -547,7 +547,9 @@ fn test_phase_times_tracking() {
 
 #[test]
 fn test_memory_pool_integration() {
-    let memory_pool = crate::memory::SecureMemoryPool::new(crate::memory::SecurePoolConfig::large_secure()).unwrap();
+    let memory_pool =
+        crate::memory::SecureMemoryPool::new(crate::memory::SecurePoolConfig::large_secure())
+            .unwrap();
     let config = AdvancedRadixSortConfig::default();
 
     let mut sorter = AdvancedU32RadixSort::with_memory_pool(config, memory_pool);

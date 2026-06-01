@@ -817,7 +817,7 @@ mod tests {
         assert_eq!(total_size, test_data.len());
 
         // Verify reasonable block distribution
-        assert!(blocks.len() >= 1);
+        assert!(!blocks.is_empty());
         assert!(blocks.len() <= 20); // Reasonable upper bound
 
         println!(
@@ -831,6 +831,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_load_balancing() {
         let mut config = ParallelConfig::default();
         config.load_balancing = true;

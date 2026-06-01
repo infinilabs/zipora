@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn test_all_zeros() {
-        let rs = make_rs(&vec![false; 100]);
+        let rs = make_rs(&[false; 100]);
         assert_eq!(rs.count_ones(), 0);
         assert!(rs.select1(0).is_err());
         assert_eq!(rs.select0(50).unwrap(), 50);
@@ -329,7 +329,7 @@ mod tests {
 
     #[test]
     fn test_all_ones() {
-        let rs = make_rs(&vec![true; 100]);
+        let rs = make_rs(&[true; 100]);
         assert_eq!(rs.count_ones(), 100);
         assert_eq!(rs.select1(50).unwrap(), 50);
         assert!(rs.select0(0).is_err());

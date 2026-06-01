@@ -519,7 +519,7 @@ mod circular_queue_safety {
         let consumer = thread::spawn(move || {
             let mut consumed = 0;
             while consumed < 10000 {
-                if let Some(_) = queue_consumer.lock().unwrap().pop() {
+                if queue_consumer.lock().unwrap().pop().is_some() {
                     consumed += 1;
                     *consumed_count_clone.lock().unwrap() += 1;
                 } else {

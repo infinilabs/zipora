@@ -1,4 +1,5 @@
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use zipora::entropy::*;
 
 fn generate_test_data(size: usize, entropy_level: f64) -> Vec<u8> {

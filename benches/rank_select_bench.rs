@@ -3,12 +3,13 @@
 //! This module provides performance benchmarks for all rank/select implementations,
 //! comparing them against each other and validating performance against C++ baseline.
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use std::time::Duration;
 use zipora::{
     BitVector, RankSelect256,
     succinct::rank_select::{
-        RankSelectInterleaved256, RankSelectOps, SimdCapabilities, bulk_popcount_simd,
+        RankSelectInterleaved256, RankSelectOps, bulk_popcount_simd,
         bulk_rank1_simd, bulk_select1_simd,
     },
 };
@@ -386,26 +387,6 @@ fn benchmark_construction(c: &mut Criterion) {
     }
 }
 
-/// Print SIMD capabilities and benchmark configuration
-fn print_benchmark_info() {
-    let caps = SimdCapabilities::get();
-    eprintln!("=== Rank/Select Benchmark Configuration ===");
-    eprintln!("SIMD Optimization Tier: {}", caps.optimization_tier);
-    eprintln!("Chunk Size: {} bytes", caps.chunk_size);
-    eprintln!("Prefetch Enabled: {}", caps.use_prefetch);
-    eprintln!("CPU Features:");
-    eprintln!("  POPCNT: {}", caps.cpu_features.has_popcnt);
-    eprintln!("  BMI2: {}", caps.cpu_features.has_bmi2);
-    eprintln!("  AVX2: {}", caps.cpu_features.has_avx2);
-
-    #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
-    eprintln!("  AVX-512: {}", caps.cpu_features.has_avx512vpopcntdq);
-
-    eprintln!("Test Sizes: {:?}", [SMALL_SIZE, MEDIUM_SIZE, LARGE_SIZE]);
-    eprintln!("Measurement Time: {:?}", MEASUREMENT_TIME);
-    eprintln!("Sample Size: {}", SAMPLE_SIZE);
-    eprintln!("==========================================");
-}
 
 criterion_group!(
     benches,

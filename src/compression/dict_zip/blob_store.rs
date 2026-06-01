@@ -152,7 +152,7 @@ pub struct DictZipConfig {
     /// - 2: 2-way interleaving (modest parallelism)
     /// - 4: 4-way interleaving (good with AVX2)
     /// - 8: 8-way interleaving (maximum parallelism)
-    /// Matches C++ entropyInterleaved field
+    ///   Matches C++ entropyInterleaved field
     pub entropy_interleaved: u8,
 
     /// Enable lake support (advanced feature from C++ reference)
@@ -512,6 +512,7 @@ impl DictZipBlobStoreBuilder {
     }
 
     /// Build the final DictZipBlobStore
+    #[allow(clippy::field_reassign_with_default)]
     pub fn finish(self) -> Result<DictZipBlobStore> {
         if self.training_samples.is_empty() {
             return Err(ZiporaError::invalid_data("No training samples provided"));
@@ -1104,7 +1105,9 @@ impl DictZipBlobStore {
 
         // Get a clone of the encoder for use
         let binding = self.huffman_encoder.borrow();
-        let encoder = binding.as_ref().ok_or_else(|| ZiporaError::invalid_state("Huffman encoder not initialized"))?;
+        let encoder = binding
+            .as_ref()
+            .ok_or_else(|| ZiporaError::invalid_state("Huffman encoder not initialized"))?;
 
         // Apply encoding based on interleaving factor
         match self.config.entropy_interleaved {
@@ -1192,7 +1195,9 @@ impl DictZipBlobStore {
 
         // Get decoder clone for use
         let binding = self.huffman_decoder.borrow();
-        let decoder = binding.as_ref().ok_or_else(|| ZiporaError::invalid_state("Huffman decoder not initialized"))?;
+        let decoder = binding
+            .as_ref()
+            .ok_or_else(|| ZiporaError::invalid_state("Huffman decoder not initialized"))?;
 
         // The decoder's decode method already handles the encoding format
         // The interleaving is determined by how the data was encoded
@@ -1640,8 +1645,7 @@ mod tests {
         let _id2 = store.put(b"Short")?; // This might not compress well
         let _id3 = store.put(test_data)?; // Duplicate data
 
-        let stats = store.compression_stats();
-        assert!(stats.compressed_count > 0 || stats.compressed_count == 0); // May or may not compress
+        let _stats = store.compression_stats();
 
         let detailed_stats = store.detailed_stats()?;
         assert!(detailed_stats.dictionary_size > 0);

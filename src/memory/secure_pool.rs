@@ -39,11 +39,11 @@ use crate::memory::simd_ops::{fast_compare, fast_fill, fast_prefetch};
 use crate::memory::{get_optimal_numa_node, numa_alloc_aligned, numa_dealloc};
 use crate::simd::Operation;
 use crate::simd::adaptive::AdaptiveSimdSelector;
-use std::sync::LazyLock;
 use std::alloc::{Layout, alloc, dealloc};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ptr::NonNull;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -1749,19 +1749,19 @@ mod tests {
     fn test_simd_configuration() {
         // Test SIMD defaults
         let config = SecurePoolConfig::small_secure();
-        assert_eq!(config.enable_simd_ops, true);
+        assert!(config.enable_simd_ops);
         assert_eq!(config.simd_threshold, 64);
 
         // Test SIMD builder methods
         let config_disabled = SecurePoolConfig::small_secure()
             .with_simd_ops(false)
             .with_simd_threshold(128);
-        assert_eq!(config_disabled.enable_simd_ops, false);
+        assert!(!config_disabled.enable_simd_ops);
         assert_eq!(config_disabled.simd_threshold, 128);
 
         // Test pool creation with SIMD config
         let pool = SecureMemoryPool::new(config_disabled).unwrap();
-        assert_eq!(pool.config().enable_simd_ops, false);
+        assert!(!pool.config().enable_simd_ops);
         assert_eq!(pool.config().simd_threshold, 128);
 
         // Test that allocation/deallocation works with SIMD disabled

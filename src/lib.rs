@@ -526,12 +526,12 @@ mod tests {
     #[test]
     fn test_basic_functionality() {
         init();
-        assert!(VERSION.len() > 0);
+        assert!(!VERSION.is_empty());
     }
 
     #[test]
     fn test_version_info() {
-        assert!(VERSION.len() > 0);
+        assert!(!VERSION.is_empty());
         assert!(VERSION.contains('.'));
         // Version should be semver format like "0.1.0"
         let parts: Vec<&str> = VERSION.split('.').collect();

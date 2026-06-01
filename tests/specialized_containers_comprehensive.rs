@@ -47,13 +47,11 @@ impl Default for TestConfig {
 }
 
 /// Test data generator for consistent test scenarios
-pub struct TestDataGenerator {
-    config: TestConfig,
-}
+pub struct TestDataGenerator;
 
 impl TestDataGenerator {
-    pub fn new(config: TestConfig) -> Self {
-        Self { config }
+    pub fn new(_config: TestConfig) -> Self {
+        Self
     }
 
     /// Generate test strings of various sizes and patterns
@@ -592,7 +590,7 @@ pub mod phase2_tests {
         #[test]
         fn test_uint_vector_compression() {
             let mut vec = UintVector::new();
-            let data_generator = TestDataGenerator::default();
+            let data_generator = TestDataGenerator;
             let test_data = data_generator.generate_test_integers(1000);
 
             // Add test data
@@ -778,7 +776,7 @@ pub mod phase2_tests {
             let mut memory_tracker = MemoryTracker::start();
 
             let mut vec = SortableStrVec::with_capacity(1000);
-            let data_generator = TestDataGenerator::default();
+            let data_generator = TestDataGenerator;
             let test_strings = data_generator.generate_test_strings(1000);
 
             memory_tracker.update();
@@ -879,7 +877,7 @@ pub mod phase3_tests {
         fn test_zo_sorted_str_vec_memory_efficiency() {
             let mut memory_tracker = MemoryTracker::start();
 
-            let data_generator = TestDataGenerator::default();
+            let data_generator = TestDataGenerator;
             let mut test_strings = data_generator.generate_test_strings(1000);
             test_strings.sort(); // Pre-sort for creation
             test_strings.dedup(); // Remove duplicates to match from_strings() behavior
@@ -1031,7 +1029,7 @@ pub mod safety_tests {
         let consumer = thread::spawn(move || {
             let mut consumed = 0;
             while consumed < 400 {
-                if let Some(_) = queue_clone.lock().unwrap().pop() {
+                if queue_clone.lock().unwrap().pop().is_some() {
                     consumed += 1;
                 }
                 thread::yield_now();

@@ -783,7 +783,7 @@ mod tests {
         let search_data = selector.generate_test_data(512, Operation::Search);
         assert_eq!(search_data.len(), 512);
         // Should have some needle values (0x42)
-        assert!(search_data.iter().any(|&b| b == 0x42));
+        assert!(search_data.contains(&0x42));
 
         let sort_data = selector.generate_test_data(256, Operation::Sort);
         assert_eq!(sort_data.len(), 256);

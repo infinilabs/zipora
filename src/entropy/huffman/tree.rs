@@ -110,8 +110,14 @@ impl HuffmanTree {
         // Build Huffman tree
         while heap.len() > 1 {
             // SAFETY: while loop condition guarantees heap.len() >= 2, so both pops succeed
-            let left = heap.pop().expect("heap has at least 2 nodes for left child").0;
-            let right = heap.pop().expect("heap has at least 2 nodes for right child").0;
+            let left = heap
+                .pop()
+                .expect("heap has at least 2 nodes for left child")
+                .0;
+            let right = heap
+                .pop()
+                .expect("heap has at least 2 nodes for right child")
+                .0;
 
             let merged = HuffmanNode::Internal {
                 frequency: left.frequency() + right.frequency(),
@@ -336,7 +342,10 @@ impl HuffmanTree {
         // Special case: single symbol
         if codes.len() == 1 {
             // SAFETY: codes.len() == 1 guarantees iter().next() returns Some
-            let (&symbol, _) = codes.iter().next().expect("codes map contains exactly one symbol");
+            let (&symbol, _) = codes
+                .iter()
+                .next()
+                .expect("codes map contains exactly one symbol");
             return Ok(Some(HuffmanNode::Leaf {
                 symbol,
                 frequency: 1, // Dummy frequency for leaf node

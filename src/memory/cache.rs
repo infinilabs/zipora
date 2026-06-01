@@ -205,9 +205,7 @@ impl<T> CacheAlignedVec<T> {
             // Reallocation - try to preserve NUMA locality
             let old_layout =
                 Layout::from_size_align(self.capacity * mem::size_of::<T>(), CACHE_LINE_SIZE)
-                    .map_err(|_| {
-                        ZiporaError::out_of_memory(self.capacity * mem::size_of::<T>())
-                    })?;
+                    .map_err(|_| ZiporaError::out_of_memory(self.capacity * mem::size_of::<T>()))?;
 
             let new_ptr = numa_alloc(layout, self.numa_node)?;
 

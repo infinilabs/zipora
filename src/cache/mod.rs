@@ -250,6 +250,12 @@ struct FileEntry {
     size: u64,
 }
 
+impl Default for FileManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FileManager {
     /// Create a new file manager
     pub fn new() -> Self {

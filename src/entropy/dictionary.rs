@@ -71,7 +71,7 @@ impl BloomFilter {
         Self {
             bits: vec![0; num_u64s],
             size,
-            hash_functions: hash_functions.max(1).min(8), // Limit to reasonable range
+            hash_functions: hash_functions.clamp(1, 8), // Limit to reasonable range
         }
     }
 

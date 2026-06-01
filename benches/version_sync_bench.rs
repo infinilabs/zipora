@@ -1,4 +1,5 @@
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::sync::Arc;
 use std::thread;
 
@@ -206,8 +207,7 @@ fn memory_overhead_benchmarks(c: &mut Criterion) {
     // Benchmark memory usage of different components
     group.bench_function("version_manager_creation", |b| {
         b.iter(|| {
-            let manager = black_box(VersionManager::new(ConcurrencyLevel::OneWriteMultiRead));
-            drop(manager);
+            black_box(VersionManager::new(ConcurrencyLevel::OneWriteMultiRead));
         });
     });
 

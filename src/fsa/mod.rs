@@ -35,17 +35,17 @@ pub mod version_sync;
 
 // Core ZiporaTrie implementation
 pub use zipora_trie::{
-    BitVectorType, TrieCompressionStrategy, RankSelectType, TrieStorageStrategy, TrieStrategy, ZiporaTrie,
-    ZiporaTrieConfig, ZiporaTrieMap,
+    BitVectorType, RankSelectType, TrieCompressionStrategy, TrieStorageStrategy, TrieStrategy,
+    ZiporaTrie, ZiporaTrieConfig, ZiporaTrieMap,
 };
 
 // Strategy traits for advanced configuration
 pub use strategy_traits::{
-    AlgorithmStats, CompressionStats, TrieCompressionStrategy as CompressionStrategyTrait,
-    ConcurrencyStats, ConcurrencyStrategy, NoOpToken, PathCompressionConfig,
-    PathCompressionContext, PathCompressionStrategy, PatriciaAlgorithmStrategy, PatriciaConfig,
-    PatriciaContext, PatriciaNode, SingleThreadedConcurrencyStrategy, SingleThreadedConfig,
-    SingleThreadedContext, StorageEfficiency, TrieAlgorithmStrategy,
+    AlgorithmStats, CompressionStats, ConcurrencyStats, ConcurrencyStrategy, NoOpToken,
+    PathCompressionConfig, PathCompressionContext, PathCompressionStrategy,
+    PatriciaAlgorithmStrategy, PatriciaConfig, PatriciaContext, PatriciaNode,
+    SingleThreadedConcurrencyStrategy, SingleThreadedConfig, SingleThreadedContext,
+    StorageEfficiency, TrieAlgorithmStrategy, TrieCompressionStrategy as CompressionStrategyTrait,
 };
 
 // Core infrastructure
@@ -79,6 +79,6 @@ pub use version_sync::{
 };
 
 pub use double_array::{
-    DoubleArrayTrie, DoubleArrayTrieCursor, DoubleArrayTrieMap, DoubleArrayTrieMapCursor, MapRangeIter,
-    MapValue, RangeIter,
+    DoubleArrayTrie, DoubleArrayTrieCursor, DoubleArrayTrieMap, DoubleArrayTrieMapCursor,
+    MapRangeIter, MapValue, RangeIter,
 };

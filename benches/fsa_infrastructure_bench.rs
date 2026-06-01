@@ -4,7 +4,8 @@
 //! components implemented in Phase 8A including caching, DAWG construction,
 //! graph walking, and fast search algorithms.
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::time::Duration;
 use zipora::fsa::simple_implementations::*;
 

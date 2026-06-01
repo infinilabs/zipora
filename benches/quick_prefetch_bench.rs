@@ -1,7 +1,8 @@
 //! Quick benchmark for prefetching + adaptive SIMD integration
 //! Fast benchmark to verify performance improvements
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+use criterion::{Criterion, criterion_group, criterion_main};
 use zipora::RankSelectPerformanceOps;
 use zipora::succinct::BitVector;
 use zipora::succinct::rank_select::RankSelectOps;

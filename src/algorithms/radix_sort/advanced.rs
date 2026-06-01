@@ -1,4 +1,7 @@
-use super::config::{AdvancedRadixSortConfig, AdvancedAlgorithmStats, CpuFeatures, DataCharacteristics, PhaseTimes, SortingStrategy};
+use super::config::{
+    AdvancedAlgorithmStats, AdvancedRadixSortConfig, CpuFeatures, DataCharacteristics, PhaseTimes,
+    SortingStrategy,
+};
 use crate::algorithms::{Algorithm, AlgorithmStats};
 use crate::error::{Result, ZiporaError};
 use crate::memory::{SecureMemoryPool, SecurePoolConfig};

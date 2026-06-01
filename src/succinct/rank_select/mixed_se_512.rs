@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn test_different_sizes() {
-        let rs = RankSelectMixedSE512::new(make_bv(&vec![true; 100]), make_bv(&vec![false; 50]))
+        let rs = RankSelectMixedSE512::new(make_bv(&[true; 100]), make_bv(&[false; 50]))
             .unwrap();
         assert_eq!(rs.dim0().len(), 100);
         assert_eq!(rs.dim1().len(), 50);

@@ -574,8 +574,12 @@ impl PaZipCompressor {
                     }
 
                     let mut temp_buffer = Vec::new();
-                    let advance_length = self
-                        .apply_compression_strategy(input, pos, selected_strategy, &mut temp_buffer)?;
+                    let advance_length = self.apply_compression_strategy(
+                        input,
+                        pos,
+                        selected_strategy,
+                        &mut temp_buffer,
+                    )?;
                     self.output_buffer.extend_from_slice(&temp_buffer);
 
                     self.update_statistics(selected_strategy, advance_length);
@@ -694,8 +698,7 @@ impl PaZipCompressor {
                     input[new_pos + 2],
                     input[new_pos + 3],
                 ]) as usize;
-                let length =
-                    u16::from_le_bytes([input[new_pos + 4], input[new_pos + 5]]) as usize;
+                let length = u16::from_le_bytes([input[new_pos + 4], input[new_pos + 5]]) as usize;
                 new_pos += 6;
 
                 // Copy from dictionary using actual dictionary data
@@ -1121,7 +1124,7 @@ impl PaZipCompressor {
                 match_type: _,
             } => {
                 output.push(1);
-                output.extend_from_slice(&(dict_offset as u32).to_le_bytes());
+                output.extend_from_slice(&dict_offset.to_le_bytes());
                 output.extend_from_slice(&(length as u16).to_le_bytes());
                 Ok(length as usize)
             }
@@ -1593,6 +1596,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_validation() -> Result<()> {
         let compressor = setup_test_compressor()?;
         assert!(compressor.validate().is_ok());
@@ -1731,7 +1735,7 @@ mod reference_compliance_tests {
         let mut compressor = setup_reference_compliant_compressor()?;
 
         // Test various data patterns to ensure reference compliance
-        let test_cases = vec![
+        let test_cases = [
             b"abcdefghijklmnopqrstuvwxyz".to_vec(), // alphabet
             b"aaaaaaaaaaaaaaaaaaaaaaaa".to_vec(),   // repeated pattern
             b"The quick brown fox jumps over the lazy dog".to_vec(), // dictionary data
@@ -1863,7 +1867,7 @@ mod reference_compliance_tests {
         let mut compressor = setup_reference_compliant_compressor()?;
 
         // Test edge cases that might reveal encoding issues
-        let edge_cases = vec![
+        let edge_cases = [
             vec![0u8],        // Single byte
             vec![255u8],      // Max byte value
             vec![0u8, 255u8], // Min/max pair

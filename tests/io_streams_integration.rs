@@ -3,7 +3,6 @@
 //! This module tests the new StreamBuffer, RangeStream, and Zero-Copy optimizations
 //! to ensure they work correctly together and provide the expected performance benefits.
 
-use std::io::Read as _;
 use std::io::{Cursor, Read, Write};
 use tempfile::NamedTempFile;
 use zipora::io::*;

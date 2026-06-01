@@ -153,12 +153,10 @@ impl<R: Read> LineProcessor<R> {
 
         self.process_lines(|line| {
             current_line_number += 1;
-            let mut field_num = 0;
-            for field in line.split(delimiter) {
+            for (field_num, field) in line.split(delimiter).enumerate() {
                 if !handler(field, current_line_number, field_num)? {
                     return Ok(false);
                 }
-                field_num += 1;
                 total_fields += 1;
             }
             Ok(true)
@@ -390,9 +388,7 @@ impl LineSplitter {
 
         for (i, &byte) in line.as_bytes().iter().enumerate() {
             if byte == delimiter_byte {
-                if let Ok(field) = std::str::from_utf8(&line.as_bytes()[start..i]) {
-                    self.buffer.push(field.to_string());
-                }
+                self.buffer.push(line[start..i].to_string());
                 start = i + 1;
             }
         }

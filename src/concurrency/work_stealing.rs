@@ -386,11 +386,7 @@ impl WorkStealingExecutor {
         let total_executed = self.stats.total_executed.load(Ordering::Relaxed) as u64;
         let total_time = self.stats.total_execution_time_us.load(Ordering::Relaxed) as u64;
 
-        let avg_execution_time_us = if total_executed > 0 {
-            total_time / total_executed
-        } else {
-            0
-        };
+        let avg_execution_time_us = total_time.checked_div(total_executed).unwrap_or(0);
 
         let active_workers = self.stats.active_workers.load(Ordering::Relaxed);
         let utilization = if active_workers > 0 {

@@ -606,6 +606,7 @@ impl DictionaryBuilder {
     }
 
     /// Analyze input data characteristics
+    #[allow(clippy::field_reassign_with_default)]
     fn analyze_data(&mut self, data: &[u8]) -> Result<DataAnalysis> {
         let mut analysis = DataAnalysis::default();
         analysis.data_size = data.len();
@@ -1437,7 +1438,8 @@ mod tests {
                 let want = bruteforce(data, min_len, max_len, min_freq, max_freq);
 
                 assert_eq!(
-                    got, want,
+                    got,
+                    want,
                     "pattern mismatch for input {:?} (min_len={min_len}, max_len={max_len}, min_freq={min_freq}, max_freq={max_freq})",
                     String::from_utf8_lossy(data),
                 );
@@ -1539,7 +1541,6 @@ mod tests {
         // Since build() consumes the builder, we can't access its stats afterward
         // Instead, verify the dictionary was created successfully
         assert!(dictionary.dictionary_size() > 0);
-        assert!(dictionary.cache_states() >= 0);
     }
 
     #[test]
@@ -1554,6 +1555,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_pattern_efficiency() {
         let mut stats = BuildStats::default();
         stats.patterns_extracted = 100;
@@ -1563,6 +1565,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_dictionary_overhead() {
         let mut stats = BuildStats::default();
         stats.original_data_size = 1000;

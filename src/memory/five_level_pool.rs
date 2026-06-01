@@ -1316,6 +1316,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_fixed_capacity_pool() -> Result<()> {
         let mut config = FiveLevelPoolConfig::default();
         config.fixed_capacity = Some(8192); // 8KB fixed capacity
@@ -1443,6 +1444,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_memory_alignment() -> Result<()> {
         let mut config = FiveLevelPoolConfig::default();
         config.alignment = 16;
@@ -1516,6 +1518,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_stress_test_single_thread() -> Result<()> {
         let mut config = FiveLevelPoolConfig::default();
         // Increase initial capacity for stress test

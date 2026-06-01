@@ -7,7 +7,8 @@
 //! - Adaptive implementations
 //! - SIMD bulk operations
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use zipora::succinct::rank_select::RankSelectOps;
 use zipora::{BitVector, BitwiseOp, RankSelect256, RankSelectPerformanceOps};
 

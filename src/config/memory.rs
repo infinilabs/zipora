@@ -403,6 +403,7 @@ impl Config for MemoryConfig {
         Ok(config)
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     fn performance_preset() -> Self {
         let mut config = Self::default();
 
@@ -433,6 +434,7 @@ impl Config for MemoryConfig {
         config
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     fn memory_preset() -> Self {
         let mut config = Self::default();
 
@@ -463,6 +465,7 @@ impl Config for MemoryConfig {
         config
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     fn realtime_preset() -> Self {
         let mut config = Self::default();
 
@@ -683,6 +686,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_validation() {
         let mut config = MemoryConfig::default();
 
@@ -710,7 +714,7 @@ mod tests {
 
         // Test effective cache line size
         let cache_line_size = config.effective_cache_line_size();
-        assert!(cache_line_size >= 32 && cache_line_size <= 128);
+        assert!((32..=128).contains(&cache_line_size));
 
         // Test effective num pools
         let num_pools = config.effective_num_pools();

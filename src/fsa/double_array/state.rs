@@ -104,7 +104,7 @@ impl DaState {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) struct NInfo {
     pub(crate) sibling: u16, // next sibling: label+1 (0 = end)
-    pub(crate) child: u16,   // bits 0-8: first child label+1 (0 = no children), bit 15: terminal flag
+    pub(crate) child: u16, // bits 0-8: first child label+1 (0 = no children), bit 15: terminal flag
 }
 
 pub(crate) const NINFO_NONE: u16 = 0;
@@ -152,4 +152,3 @@ fn ninfo_to_label(v: u16) -> Option<u8> {
 pub(crate) fn label_to_ninfo(label: u8) -> u16 {
     label as u16 + 1
 }
-

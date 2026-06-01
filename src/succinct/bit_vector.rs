@@ -1207,15 +1207,15 @@ mod tests {
 
         // SAFETY: Indices 0, 1, 2 are valid (len=3)
         unsafe {
-            assert_eq!(bv.get_unchecked(0), true);
-            assert_eq!(bv.get_unchecked(1), false);
-            assert_eq!(bv.get_unchecked(2), true);
+            assert!(bv.get_unchecked(0));
+            assert!(!bv.get_unchecked(1));
+            assert!(bv.get_unchecked(2));
 
             bv.set_unchecked(1, true);
-            assert_eq!(bv.get_unchecked(1), true);
+            assert!(bv.get_unchecked(1));
 
             bv.set_unchecked(0, false);
-            assert_eq!(bv.get_unchecked(0), false);
+            assert!(!bv.get_unchecked(0));
         }
     }
 
@@ -1650,8 +1650,8 @@ mod tests {
 
     #[test]
     fn test_from_blocks_zero_copy() {
-        let max_doc = 100_000;
-        let num_words = (max_doc + 63) / 64;
+        let max_doc = 100_000usize;
+        let num_words = max_doc.div_ceil(64);
         let mut blocks = vec![0u64; num_words];
 
         // Scatter some doc IDs directly into the Vec
@@ -1682,8 +1682,8 @@ mod tests {
     #[test]
     fn test_from_blocks_scatter_popcount() {
         // Simulates the engine's scatter+popcount pattern
-        let max_doc = 1_000_000;
-        let num_words = (max_doc + 63) / 64;
+        let max_doc = 1_000_000usize;
+        let num_words = max_doc.div_ceil(64);
         let blocks = vec![0u64; num_words]; // calloc path
         let mut bv = BitVector::from_blocks(blocks, max_doc);
 

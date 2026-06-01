@@ -135,6 +135,10 @@ pub mod x86_64_optimized {
     // use std::arch::x86_64::*;
 
     /// x86_64-specific optimized CAS for u64
+    ///
+    /// # Safety
+    /// `ptr` must be non-null, 8-byte aligned, and point to a valid, initialized
+    /// `u64` that is not concurrently accessed through a non-atomic reference.
     #[inline]
     pub unsafe fn cas_weak_u64_asm(ptr: *mut u64, expected: u64, desired: u64) -> bool {
         let result: u8;
@@ -154,6 +158,10 @@ pub mod x86_64_optimized {
     }
 
     /// 128-bit CAS using cmpxchg16b instruction
+    ///
+    /// # Safety
+    /// `ptr` must be non-null, 16-byte aligned, and point to a valid, initialized
+    /// `u128`. Requires the `cmpxchg16b` CPU feature to be available.
     #[target_feature(enable = "cmpxchg16b")]
     pub unsafe fn cas_weak_u128(ptr: *mut u128, expected: u128, desired: u128) -> bool {
         let result: u8;
@@ -181,6 +189,10 @@ pub mod x86_64_optimized {
     }
 
     /// Optimized atomic increment using xadd
+    ///
+    /// # Safety
+    /// `ptr` must be non-null, 8-byte aligned, and point to a valid, initialized
+    /// `u64` that is not concurrently accessed through a non-atomic reference.
     #[inline]
     pub unsafe fn atomic_increment_u64(ptr: *mut u64) -> u64 {
         let result: u64;
@@ -198,6 +210,10 @@ pub mod x86_64_optimized {
     }
 
     /// Optimized atomic exchange
+    ///
+    /// # Safety
+    /// `ptr` must be non-null, 8-byte aligned, and point to a valid, initialized
+    /// `u64` that is not concurrently accessed through a non-atomic reference.
     #[inline]
     pub unsafe fn atomic_exchange_u64(ptr: *mut u64, val: u64) -> u64 {
         let result: u64;

@@ -309,13 +309,7 @@ impl<'a> FastStr<'a> {
         }
 
         // Handle remaining bytes
-        for pos in i..data.len() {
-            if data[pos] == byte {
-                return Some(pos);
-            }
-        }
-
-        None
+        (i..data.len()).find(|&pos| data[pos] == byte)
     }
 
     /// Get the common prefix length with another string

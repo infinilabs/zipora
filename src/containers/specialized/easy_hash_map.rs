@@ -125,9 +125,11 @@ where
     /// Get a reference to the value or the default value if key doesn't exist
     pub fn get_or_default(&self, key: &K) -> &V {
         // SAFETY: Caller must call set_default() before using get_or_default()
-        self.inner
-            .get(key)
-            .unwrap_or_else(|| self.default_value.as_ref().expect("default value must be set for missing keys"))
+        self.inner.get(key).unwrap_or_else(|| {
+            self.default_value
+                .as_ref()
+                .expect("default value must be set for missing keys")
+        })
     }
 
     /// Get a mutable reference to the value, inserting with provided value if missing

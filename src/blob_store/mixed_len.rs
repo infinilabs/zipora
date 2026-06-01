@@ -132,6 +132,7 @@ impl MixedLenBlobStore {
     /// assert_eq!(store.fixed_len(), 3); // Most common length
     /// # Ok::<(), zipora::error::ZiporaError>(())
     /// ```
+    #[allow(clippy::field_reassign_with_default)]
     pub fn build_from(data: &[Vec<u8>]) -> Result<Self> {
         if data.is_empty() {
             return Ok(Self::default());
@@ -169,11 +170,10 @@ impl MixedLenBlobStore {
 
         // Calculate number of fixed-length records
         // Special case: if fixed_len is 0, count how many times we saw it in is_fixed
-        let fixed_num = if fixed_len == 0 {
-            is_fixed.iter().filter(|&&b| b).count()
-        } else {
-            fixed_values.len() / fixed_len
-        };
+        let fixed_num = fixed_values
+            .len()
+            .checked_div(fixed_len)
+            .unwrap_or_else(|| is_fixed.iter().filter(|&&b| b).count());
 
         let total_size = data.iter().map(|r| r.len()).sum();
         let mut stats = BlobStoreStats::default();
@@ -211,6 +211,7 @@ impl MixedLenBlobStore {
     /// Build with explicit fixed length (skip auto-detection)
     ///
     /// Useful when you know the dominant length in advance.
+    #[allow(clippy::field_reassign_with_default)]
     pub fn build_from_with_fixed_len(data: &[Vec<u8>], fixed_len: usize) -> Result<Self> {
         if data.is_empty() {
             return Ok(Self::default());
@@ -241,11 +242,10 @@ impl MixedLenBlobStore {
 
         // Calculate number of fixed-length records
         // Special case: if fixed_len is 0, count how many times we saw it in is_fixed
-        let fixed_num = if fixed_len == 0 {
-            is_fixed.iter().filter(|&&b| b).count()
-        } else {
-            fixed_values.len() / fixed_len
-        };
+        let fixed_num = fixed_values
+            .len()
+            .checked_div(fixed_len)
+            .unwrap_or_else(|| is_fixed.iter().filter(|&&b| b).count());
 
         let total_size = data.iter().map(|r| r.len()).sum();
         let mut stats = BlobStoreStats::default();

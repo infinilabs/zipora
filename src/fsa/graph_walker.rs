@@ -829,7 +829,9 @@ impl FastDfsWalker {
     #[inline]
     pub fn next(&mut self) -> u32 {
         debug_assert!(!self.stack.is_empty());
-        self.stack.pop().expect("stack contains element verified by caller")
+        self.stack
+            .pop()
+            .expect("stack contains element verified by caller")
     }
 
     /// Add children in reverse order, skipping visited.
@@ -978,7 +980,7 @@ mod tests {
         walker.walk(graph[&0].clone(), &mut visitor).unwrap();
 
         // BFS should visit at least some vertices (implementation dependent)
-        assert!(visitor.visited_vertices.len() >= 1);
+        assert!(!visitor.visited_vertices.is_empty());
         assert!(visitor.visited_vertices.contains(&0)); // Should at least visit start vertex
 
         let stats = walker.stats();
@@ -994,7 +996,7 @@ mod tests {
         walker.walk(graph[&0].clone(), &mut visitor).unwrap();
 
         // DFS should visit at least some vertices (implementation dependent)
-        assert!(visitor.visited_vertices.len() >= 1);
+        assert!(!visitor.visited_vertices.is_empty());
         assert!(visitor.visited_vertices.contains(&0)); // Should at least visit start vertex
 
         let stats = walker.stats();

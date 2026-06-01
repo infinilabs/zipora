@@ -119,6 +119,7 @@ pub enum PrefetchHint {
 }
 
 /// Software prefetching utilities
+#[derive(Default)]
 pub struct Prefetcher;
 
 impl Prefetcher {
@@ -128,6 +129,10 @@ impl Prefetcher {
     }
 
     /// Prefetch a memory location with specified hint
+    ///
+    /// # Safety
+    /// `ptr` is used only as a prefetch hint and is never dereferenced, so any
+    /// address (even invalid) is sound; the CPU ignores faulting hints.
     #[inline(always)]
     pub unsafe fn prefetch<T>(ptr: *const T, hint: PrefetchHint) {
         #[cfg(target_arch = "x86_64")]
@@ -144,6 +149,10 @@ impl Prefetcher {
     }
 
     /// Prefetch multiple sequential cache lines
+    ///
+    /// # Safety
+    /// The caller must ensure `start` is valid and the range
+    /// `start .. start + count * size_of::<T>()` stays within one allocation.
     #[inline(always)]
     pub unsafe fn prefetch_range<T>(start: *const T, count: usize, hint: PrefetchHint) {
         // SAFETY: Caller must ensure start is valid and start..start+count*sizeof(T) is in bounds
@@ -160,6 +169,10 @@ impl Prefetcher {
     }
 
     /// Prefetch with stride pattern (for hash table probing)
+    ///
+    /// # Safety
+    /// The caller must ensure `base` and every `base + i * stride` for
+    /// `i in 0..count` are valid addresses.
     #[inline(always)]
     pub unsafe fn prefetch_strided<T>(
         base: *const T,
@@ -248,29 +261,9 @@ impl<K, V, const N: usize> CacheOptimizedBucket<K, V, N> {
     #[cfg(test)]
     pub fn find_hash(&self, hash: u32) -> Option<usize> {
         // This can be SIMD-optimized with AVX2/AVX512
-        for i in 0..N {
-            if (self.metadata.occupancy & (1 << i)) != 0 && self.hashes[i] == hash {
-                return Some(i);
-            }
-        }
-        None
+        (0..N).find(|&i| (self.metadata.occupancy & (1 << i)) != 0 && self.hashes[i] == hash)
     }
 
-    /// Prefetch bucket data
-    #[inline(always)]
-    #[cfg(test)]
-    pub unsafe fn prefetch(&self) {
-        // SAFETY: self is a valid pointer to this bucket, prefetching self and self+CACHE_LINE_SIZE
-        // is safe even if second line is partially out of bounds (prefetch doesn't dereference)
-        unsafe {
-            Prefetcher::prefetch(self as *const _, PrefetchHint::AllLevels);
-            // Prefetch the second cache line if entries span multiple lines
-            if size_of::<(K, V)>() * N > CACHE_LINE_SIZE {
-                let second_line = (self as *const _ as *const u8).add(CACHE_LINE_SIZE);
-                Prefetcher::prefetch(second_line as *const Self, PrefetchHint::L2L3);
-            }
-        }
-    }
 }
 
 /// NUMA-aware memory allocator for hash tables
@@ -279,6 +272,12 @@ pub struct NumaAllocator {
     preferred_node: usize,
     /// Allocation statistics per node
     node_stats: Vec<AtomicU64>,
+}
+
+impl Default for NumaAllocator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl NumaAllocator {
@@ -307,6 +306,10 @@ impl NumaAllocator {
     }
 
     /// Allocate memory on preferred NUMA node
+    ///
+    /// # Safety
+    /// `layout` must have non-zero size and valid alignment; the returned
+    /// pointer must later be freed with the same layout.
     pub unsafe fn alloc_on_node(&self, layout: Layout, node: usize) -> *mut u8 {
         // SAFETY: layout must be valid (non-zero size, valid alignment)
         // Caller must deallocate with the same layout
@@ -323,6 +326,10 @@ impl NumaAllocator {
     }
 
     /// Allocate cache-line aligned memory
+    ///
+    /// # Safety
+    /// The caller must ensure `size_of::<T>() * count` does not overflow `isize`,
+    /// and must free the result via [`Self::dealloc`] with the same `count`.
     pub unsafe fn alloc_cache_aligned<T>(&self, count: usize) -> *mut T {
         // SAFETY: Layout cannot fail because CACHE_LINE_SIZE is power-of-2, caller responsible for count overflow check
         unsafe {
@@ -343,6 +350,10 @@ impl NumaAllocator {
     }
 
     /// Free previously allocated memory
+    ///
+    /// # Safety
+    /// `ptr` must originate from [`Self::alloc_cache_aligned`] with the same
+    /// `count`, and must not be used after this call.
     pub unsafe fn dealloc<T>(&self, ptr: *mut T, count: usize) {
         // SAFETY: Caller must pass same count and layout used during allocation
         unsafe {
@@ -626,6 +637,16 @@ impl AccessPatternAnalyzer {
     }
 }
 
+// SAFETY: CacheOptimizedBucket is Send when K and V are Send.
+// The NonNull pointer for overflow is only accessed through proper synchronization
+// at the hash map level, ensuring thread safety.
+unsafe impl<K: Send, V: Send, const N: usize> Send for CacheOptimizedBucket<K, V, N> {}
+
+// SAFETY: CacheOptimizedBucket is Sync when K and V are Sync.
+// The NonNull pointer for overflow is only accessed through proper synchronization
+// at the hash map level, ensuring thread safety.
+unsafe impl<K: Sync, V: Sync, const N: usize> Sync for CacheOptimizedBucket<K, V, N> {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -722,6 +743,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_cache_metrics() {
         let mut metrics = CacheMetrics::default();
         metrics.l1_hits = 1000;
@@ -738,7 +760,7 @@ mod tests {
 
     #[test]
     fn test_prefetcher() {
-        let data = vec![1u64, 2, 3, 4, 5];
+        let data = [1u64, 2, 3, 4, 5];
         // SAFETY: data.as_ptr() is valid, ranges are within allocated Vec bounds
         unsafe {
             // Test basic prefetch
@@ -782,13 +804,3 @@ mod tests {
         assert!(!complete); // Should not be complete in one step
     }
 }
-
-// SAFETY: CacheOptimizedBucket is Send when K and V are Send.
-// The NonNull pointer for overflow is only accessed through proper synchronization
-// at the hash map level, ensuring thread safety.
-unsafe impl<K: Send, V: Send, const N: usize> Send for CacheOptimizedBucket<K, V, N> {}
-
-// SAFETY: CacheOptimizedBucket is Sync when K and V are Sync.
-// The NonNull pointer for overflow is only accessed through proper synchronization
-// at the hash map level, ensuring thread safety.
-unsafe impl<K: Sync, V: Sync, const N: usize> Sync for CacheOptimizedBucket<K, V, N> {}

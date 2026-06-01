@@ -589,12 +589,11 @@ impl HybridCompressor {
     /// # Arguments
     /// * `training_data` - Sample data for training all component compressors
     pub fn new(training_data: &[u8]) -> Result<Self> {
-        let mut compressors: Vec<Box<dyn Compressor>> = Vec::new();
-
-        // Add available compressors
-        compressors.push(Box::new(HuffmanCompressor::new(training_data)?));
-        compressors.push(Box::new(RansCompressor::new(training_data)?));
-        compressors.push(Box::new(DictCompressor::new(training_data)?));
+        let compressors: Vec<Box<dyn Compressor>> = vec![
+            Box::new(HuffmanCompressor::new(training_data)?),
+            Box::new(RansCompressor::new(training_data)?),
+            Box::new(DictCompressor::new(training_data)?),
+        ];
 
         Ok(Self { compressors })
     }

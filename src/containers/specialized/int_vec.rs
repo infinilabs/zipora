@@ -526,7 +526,7 @@ impl<T: PackedInt> IntVec<T> {
     /// - 1.2x faster than regular constructor
     /// - Optimized memory access patterns with prefetching
     /// - SIMD-accelerated conversion when available
-    /// Alias for `from_slice` — kept for API compatibility.
+    ///   Alias for `from_slice` — kept for API compatibility.
     #[inline]
     pub fn from_slice_bulk(values: &[T]) -> Result<Self> {
         Self::from_slice(values)
@@ -788,7 +788,7 @@ impl<T: PackedInt> IntVec<T> {
     /// - 2-3x faster for medium to large datasets
     /// - Minimal overhead for small datasets
     /// - Optimized memory access patterns
-    /// Bulk constructor storing values as raw u64 without compression
+    ///   Bulk constructor storing values as raw u64 without compression
     #[allow(dead_code)]
     fn from_slice_bulk_zerocopy(values: &[T], start_time: std::time::Instant) -> Result<Self> {
         let mut result = Self::new();
@@ -1213,16 +1213,12 @@ impl<T: PackedInt> IntVec<T> {
         }
 
         // 🚀 ADVANCED UNIFORM DELTA: Perfect compression (0 bits per element)
-        if is_uniform && uniform_delta.is_some() {
+        if let (true, Some(ud)) = (is_uniform, uniform_delta) {
             // For uniform delta sequences like [0,1,2,3,...], store only base_val + uniform_delta
             // This achieves >98% compression ratio!
             let mut data = Vec::with_capacity(16); // base_val (8 bytes) + uniform_delta (8 bytes)
             data.extend_from_slice(&base_val.to_le_bytes());
-            data.extend_from_slice(
-                &uniform_delta
-                    .expect("uniform_delta set for uniform blocks")
-                    .to_le_bytes(),
-            );
+            data.extend_from_slice(&ud.to_le_bytes());
             self.data = data.into_boxed_slice();
             return Ok(());
         }
@@ -1649,7 +1645,7 @@ mod tests {
         for (i, &expected) in large_data.iter().enumerate() {
             assert_eq!(
                 simd_vec.get(i),
-                Some(expected as u64),
+                Some(expected),
                 "SIMD mismatch at index {}",
                 i
             );

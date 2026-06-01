@@ -87,19 +87,19 @@ impl MemoryMappedAllocator {
         // Recover from poisoning: cache contents (pointer HashMap) remain valid.
         {
             let mut cache = self.region_cache.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(regions) = cache.get_mut(&actual_size) {
-                if let Some(ptr) = regions.pop() {
-                    self.cache_hits.fetch_add(1, Ordering::Relaxed);
-                    self.total_allocated
-                        .fetch_add(size as u64, Ordering::Relaxed);
+            if let Some(regions) = cache.get_mut(&actual_size)
+                && let Some(ptr) = regions.pop()
+            {
+                self.cache_hits.fetch_add(1, Ordering::Relaxed);
+                self.total_allocated
+                    .fetch_add(size as u64, Ordering::Relaxed);
 
-                    // SAFETY: cached ptr was obtained from successful mmap, guaranteed non-null
-                    return Ok(MmapAllocation {
-                        ptr: unsafe { NonNull::new_unchecked(ptr) },
-                        size,
-                        actual_size,
-                    });
-                }
+                // SAFETY: cached ptr was obtained from successful mmap, guaranteed non-null
+                return Ok(MmapAllocation {
+                    ptr: unsafe { NonNull::new_unchecked(ptr) },
+                    size,
+                    actual_size,
+                });
             }
         }
 
@@ -458,7 +458,8 @@ mod tests {
         let stats_after = allocator.stats();
         // All 4 allocations should have been served from cache — zero new mmap calls
         assert_eq!(
-            stats_after.mmap_calls, mmap_before,
+            stats_after.mmap_calls,
+            mmap_before,
             "cache was bypassed under contention: {} new mmap calls",
             stats_after.mmap_calls - mmap_before
         );

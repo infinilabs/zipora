@@ -970,15 +970,26 @@ mod tests {
         // Large repetitive dictionary — populates the DFA cache so the cached
         // (non-fallback) match path is actually exercised. This reproduces the
         // rotation bug that small dictionaries hid.
-        let big_repetitive: Vec<u8> = sentence.iter().cycle().take(sentence.len() * 200).copied().collect();
+        let big_repetitive: Vec<u8> = sentence
+            .iter()
+            .cycle()
+            .take(sentence.len() * 200)
+            .copied()
+            .collect();
         let query_sentence: Vec<u8> = sentence.repeat(3);
 
         let mut cases: Vec<(&[u8], &[u8])> = vec![
-            (b"the quick brown fox. the quick brown fox. ", b"the quick brown fox. xyz"),
+            (
+                b"the quick brown fox. the quick brown fox. ",
+                b"the quick brown fox. xyz",
+            ),
             (b"abracadabra", b"cadabra-tail"),
             (b"mississippi", b"issippi!"),
             (b"aaaaaaaaaa", b"aaaaa-no"),
-            (b"the quick brown fox jumps over the lazy dog. ", b"jumps over the moon"),
+            (
+                b"the quick brown fox jumps over the lazy dog. ",
+                b"jumps over the moon",
+            ),
             (b"banana banana banana ", b"banana split"),
             (b"hello world", b"zzz not present"),
         ];
@@ -1001,7 +1012,9 @@ mod tests {
 
             if expected >= 1 {
                 let m = m.unwrap_or_else(|| {
-                    panic!("expected a match of len {expected} for query {query:?} in dict {dict:?}")
+                    panic!(
+                        "expected a match of len {expected} for query {query:?} in dict {dict:?}"
+                    )
                 });
                 assert_eq!(
                     m.length, expected,
@@ -1295,8 +1308,8 @@ mod tests {
         // First, let's see what's actually in this range
         println!("\nSuffix array entries in range [69, 72):");
         for i in 69..72 {
-            if let Some(&suffix_idx) = dictionary.suffix_array.as_slice().get(i) {
-                if suffix_idx < training_data.len() {
+            if let Some(&suffix_idx) = dictionary.suffix_array.as_slice().get(i)
+                && suffix_idx < training_data.len() {
                     let suffix_text = &training_data[suffix_idx..];
                     let preview = std::str::from_utf8(&suffix_text[..10.min(suffix_text.len())])
                         .unwrap_or("<invalid>");
@@ -1313,7 +1326,6 @@ mod tests {
                         i, suffix_idx, preview, char_at_2
                     );
                 }
-            }
         }
 
         // Now test both linear and binary search
@@ -1578,8 +1590,8 @@ mod tests {
             // Debug: print suffix array contents
             println!("Suffix array contents around the range:");
             for i in 0..20.min(dictionary.suffix_array.as_slice().len()) {
-                if let Some(&suffix_idx) = dictionary.suffix_array.as_slice().get(i) {
-                    if suffix_idx < dictionary.dictionary_text.len() {
+                if let Some(&suffix_idx) = dictionary.suffix_array.as_slice().get(i)
+                    && suffix_idx < dictionary.dictionary_text.len() {
                         let char_at_pos = if suffix_idx + pos < dictionary.dictionary_text.len() {
                             dictionary.dictionary_text[suffix_idx + pos] as char
                         } else {
@@ -1597,7 +1609,6 @@ mod tests {
                             i, suffix_idx, pos, char_at_pos, text_preview
                         );
                     }
-                }
             }
         }
 

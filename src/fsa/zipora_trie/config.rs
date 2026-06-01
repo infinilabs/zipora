@@ -2,6 +2,7 @@ use crate::memory::{SecureMemoryPool, SecurePoolConfig};
 use std::sync::Arc;
 
 /// Default memory pool for serde deserialization
+#[allow(clippy::field_reassign_with_default)]
 fn default_memory_pool() -> Arc<SecureMemoryPool> {
     // SAFETY: This function is only called during serde deserialization where we need
     // a default pool. We try small_secure first, then default. If both fail, we create

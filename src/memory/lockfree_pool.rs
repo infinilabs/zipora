@@ -560,7 +560,10 @@ impl LockFreeMemoryPool {
 
         // Try to find and reuse an existing deallocated block (best-fit approach)
         {
-            let mut blocks = self.large_blocks.lock().map_err(|_| ZiporaError::invalid_data("Mutex poisoned"))?;
+            let mut blocks = self
+                .large_blocks
+                .lock()
+                .map_err(|_| ZiporaError::invalid_data("Mutex poisoned"))?;
             let mut best_idx: Option<usize> = None;
             let mut best_size = usize::MAX;
 
@@ -591,8 +594,14 @@ impl LockFreeMemoryPool {
         let aligned_size = self.align_size(size);
         let offset = self.ptr_to_offset(ptr)?;
 
-        let mut blocks = self.large_blocks.lock().map_err(|_| ZiporaError::invalid_data("Mutex poisoned"))?;
-        blocks.push(FreeBlock { offset, size: aligned_size });
+        let mut blocks = self
+            .large_blocks
+            .lock()
+            .map_err(|_| ZiporaError::invalid_data("Mutex poisoned"))?;
+        blocks.push(FreeBlock {
+            offset,
+            size: aligned_size,
+        });
 
         if let Some(stats) = &self.stats {
             stats.skip_deallocs.fetch_add(1, Ordering::Relaxed);
@@ -950,7 +959,7 @@ mod tests {
         }
 
         assert!(
-            allocations.len() > 0,
+            !allocations.is_empty(),
             "Should have allocated at least one block"
         );
         assert!(
@@ -997,7 +1006,7 @@ mod tests {
 
     #[test]
     fn test_popcnt_bitmap_operations() {
-        let bitmap = vec![0xFFFFFFFFFFFFFFFF_u64, 0x0000000000000000_u64];
+        let bitmap = [0xFFFFFFFFFFFFFFFF_u64, 0x0000000000000000_u64];
         let count: usize = bitmap.iter().map(|&bits| bits.count_ones() as usize).sum();
 
         assert_eq!(count, 64); // 64 bits set in first word

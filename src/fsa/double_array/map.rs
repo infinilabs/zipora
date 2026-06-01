@@ -1,9 +1,9 @@
 use crate::error::{Result, ZiporaError};
 use std::cmp::Ordering;
 
+use super::iterators::*;
 use super::state::*;
 use super::trie::*;
-use super::iterators::*;
 
 pub trait MapValue: Copy + PartialEq {
     /// Sentinel representing "no value stored here".
@@ -363,7 +363,11 @@ impl<'a, V: MapValue> DoubleArrayTrieMapCursor<'a, V> {
         if self.inner.is_valid() {
             // The last state in the stack is the current terminal state
             let (state, _) = self.inner.stack.last()?;
-            self.map.values.get(*state as usize).cloned().filter(|&v| v != V::EMPTY)
+            self.map
+                .values
+                .get(*state as usize)
+                .cloned()
+                .filter(|&v| v != V::EMPTY)
         } else {
             None
         }
@@ -429,4 +433,3 @@ impl<V: MapValue> Default for DoubleArrayTrieMap<V> {
         Self::new()
     }
 }
-

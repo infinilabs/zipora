@@ -33,7 +33,10 @@ fn test_cache_optimized_bucket_initialization() {
     // CacheOptimized strategy is not yet implemented — construction must fail
     let config = ZiporaHashMapConfig::cache_optimized();
     let result: Result<ZiporaHashMap<u32, u32>, _> = ZiporaHashMap::with_config(config);
-    assert!(result.is_err(), "CacheOptimized strategy should be rejected at construction");
+    assert!(
+        result.is_err(),
+        "CacheOptimized strategy should be rejected at construction"
+    );
 }
 
 #[test]

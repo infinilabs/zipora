@@ -3,7 +3,8 @@
 //! These benchmarks compare the performance of zipora's LRU map implementations
 //! against standard HashMap and other cache implementations.
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;

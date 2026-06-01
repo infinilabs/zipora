@@ -1,4 +1,5 @@
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::time::Duration;
 use zipora::SortableStrVec;
 
@@ -151,14 +152,14 @@ fn bench_binary_search(c: &mut Criterion) {
     group.bench_function("SortableStrVec::binary_search", |b| {
         b.iter(|| {
             let result = sortable.binary_search("string_00005000");
-            black_box(result);
+            let _ = black_box(result);
         });
     });
 
     group.bench_function("Vec<String>::binary_search", |b| {
         b.iter(|| {
             let result = vec_string.binary_search(&"string_00005000".to_string());
-            black_box(result);
+            let _ = black_box(result);
         });
     });
 

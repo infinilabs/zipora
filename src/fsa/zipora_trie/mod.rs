@@ -22,15 +22,15 @@
 //! - **Concurrent Access**: Lock-free and token-based synchronization
 
 mod config;
-mod storage;
-mod trie;
 mod map;
+mod storage;
 #[cfg(test)]
 mod tests;
+mod trie;
 
 pub use config::{
     BitVectorType, RankSelectType, TrieCompressionStrategy, TrieStorageStrategy, TrieStrategy,
     ZiporaTrieConfig,
 };
-pub use trie::{ZiporaTrie, TrieIterator, MemoryStats};
 pub use map::ZiporaTrieMap;
+pub use trie::{MemoryStats, TrieIterator, ZiporaTrie};

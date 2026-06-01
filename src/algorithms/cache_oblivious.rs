@@ -844,7 +844,7 @@ mod tests {
     fn test_funnel_width_calculation() {
         let sorter = CacheObliviousSort::new();
         let width = sorter.calculate_funnel_width(1000);
-        assert!(width >= 2 && width <= 64);
+        assert!((2..=64).contains(&width));
     }
 
     #[test]

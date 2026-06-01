@@ -3,6 +3,7 @@ use zipora::blob_store::traits::BlobStore;
 use zipora::compression::dict_zip::blob_store::*;
 
 #[test]
+#[allow(clippy::field_reassign_with_default)]
 fn test_clone_performance() {
     let mut config = DictZipConfig::default();
     config.min_compression_size = 10;

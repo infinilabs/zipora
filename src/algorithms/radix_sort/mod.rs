@@ -12,18 +12,18 @@
 //! - **Parallel processing**: Work-stealing implementation with optimal load balancing
 //! - **Runtime feature detection**: Optimal SIMD usage based on CPU capabilities
 
+mod advanced;
 mod config;
 mod lsd;
-mod advanced;
 #[cfg(test)]
 mod tests;
 
-pub use config::{
-    AdvancedRadixSortConfig, AdvancedAlgorithmStats, CpuFeatures, DataCharacteristics,
-    PhaseTimes, RadixSortConfig, SortingStrategy,
-};
-pub use lsd::{RadixSort, KeyValueRadixSort};
 pub use advanced::{
     AdvancedRadixSort, AdvancedStringRadixSort, AdvancedU32RadixSort, AdvancedU64RadixSort,
     RadixSortable, RadixString,
 };
+pub use config::{
+    AdvancedAlgorithmStats, AdvancedRadixSortConfig, CpuFeatures, DataCharacteristics, PhaseTimes,
+    RadixSortConfig, SortingStrategy,
+};
+pub use lsd::{KeyValueRadixSort, RadixSort};

@@ -621,22 +621,22 @@ mod tests {
         let medium_str = "this is a medium sized string for testing"; // ~40 bytes  
         let large_str = "a".repeat(128); // 128 bytes
 
-        let prefix_small = ops.extract_prefix_simd(&small_str);
-        let prefix_medium = ops.extract_prefix_simd(&medium_str);
+        let prefix_small = ops.extract_prefix_simd(small_str);
+        let prefix_medium = ops.extract_prefix_simd(medium_str);
         let prefix_large = ops.extract_prefix_simd(&large_str);
 
         // All should work regardless of size
-        assert!(ops.fast_string_compare(&small_str, &small_str, prefix_small));
-        assert!(ops.fast_string_compare(&medium_str, &medium_str, prefix_medium));
+        assert!(ops.fast_string_compare(small_str, small_str, prefix_small));
+        assert!(ops.fast_string_compare(medium_str, medium_str, prefix_medium));
         assert!(ops.fast_string_compare(&large_str, &large_str, prefix_large));
 
         // Hash values should be consistent
-        let hash_small1 = ops.fast_string_hash(&small_str, 0);
-        let hash_small2 = ops.fast_string_hash(&small_str, 0);
+        let hash_small1 = ops.fast_string_hash(small_str, 0);
+        let hash_small2 = ops.fast_string_hash(small_str, 0);
         assert_eq!(hash_small1, hash_small2);
 
-        let hash_medium1 = ops.fast_string_hash(&medium_str, 0);
-        let hash_medium2 = ops.fast_string_hash(&medium_str, 0);
+        let hash_medium1 = ops.fast_string_hash(medium_str, 0);
+        let hash_medium2 = ops.fast_string_hash(medium_str, 0);
         assert_eq!(hash_medium1, hash_medium2);
 
         let hash_large1 = ops.fast_string_hash(&large_str, 0);

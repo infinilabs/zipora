@@ -2,8 +2,8 @@ use super::decoder::BitStreamReader;
 use super::encoder::{BitStreamWriter, HuffmanEncSymbol};
 use super::tree::{HuffmanNode, HuffmanSymbol, HuffmanTree};
 use crate::error::{Result, ZiporaError};
-use std::sync::OnceLock;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 /// Interleaving factor for parallel Huffman encoding/decoding
 ///
@@ -54,8 +54,8 @@ impl InterleavingFactor {
 /// Fast symbol table for O(1) lookup: syms[context][symbol]
 /// - Context 0-255: previous byte value
 /// - Context 256: initial context (no previous byte)
-/// Total: 257 contexts × 256 symbols = 65,792 entries
-/// This replaces the slow HashMap<(u16, u8), HuffmanSymbol>
+///   Total: 257 contexts × 256 symbols = 65,792 entries
+///   This replaces the slow HashMap<(u16, u8), HuffmanSymbol>
 type FastSymbolTable = Box<[[HuffmanEncSymbol; 256]; 257]>;
 
 /// Context-based Huffman encoding models for improved compression
@@ -1298,4 +1298,3 @@ impl ContextualHuffmanDecoder {
         }
     }
 }
-

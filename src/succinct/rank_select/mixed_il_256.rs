@@ -413,7 +413,7 @@ mod tests {
 
     #[test]
     fn test_all_zeros_all_ones() {
-        let rs = RankSelectMixedIL256::new(make_bv(&vec![false; 100]), make_bv(&vec![true; 100]))
+        let rs = RankSelectMixedIL256::new(make_bv(&[false; 100]), make_bv(&[true; 100]))
             .unwrap();
         assert_eq!(rs.dim0().count_ones(), 0);
         assert_eq!(rs.dim1().count_ones(), 100);

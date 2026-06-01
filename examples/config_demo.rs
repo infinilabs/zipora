@@ -4,9 +4,9 @@
 
 use zipora::Result;
 use zipora::fsa::{
-    TrieCompressionStrategy, RankSelectType, TrieStorageStrategy, TrieStrategy, ZiporaTrieConfig,
+    RankSelectType, TrieCompressionStrategy, TrieStorageStrategy, TrieStrategy, ZiporaTrieConfig,
 };
-use zipora::hash_map::HashStorageStrategy as HashStorageStrategy;
+use zipora::hash_map::HashStorageStrategy;
 use zipora::hash_map::{HashStrategy, OptimizationStrategy, ZiporaHashMapConfig};
 use zipora::memory::{MemoryConfig, PoolConfig};
 

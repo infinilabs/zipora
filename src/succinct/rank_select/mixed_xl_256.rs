@@ -376,8 +376,8 @@ mod tests {
 
     #[test]
     fn test_different_sizes() {
-        let bv0 = make_bv(&vec![true; 100]);
-        let bv1 = make_bv(&vec![false; 50]);
+        let bv0 = make_bv(&[true; 100]);
+        let bv1 = make_bv(&[false; 50]);
         let rs = RankSelectMixedXL256::new2(bv0, bv1).unwrap();
         assert_eq!(rs.dim(0).len(), 100);
         assert_eq!(rs.dim(1).len(), 50);

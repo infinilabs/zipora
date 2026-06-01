@@ -1034,9 +1034,7 @@ mod tests {
     struct NonCloneKey(i32);
 
     #[derive(Debug)]
-    struct NonCloneValue {
-        data: Vec<u8>,
-    }
+    struct NonCloneValue;
 
     #[test]
     fn test_non_clone_types_base_methods() {

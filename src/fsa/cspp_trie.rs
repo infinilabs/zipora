@@ -967,9 +967,7 @@ impl CsppTrie {
                 labels[1] = meta.c_label[1];
                 // SAFETY: cnt_type 3-6 extra labels at slot 1 bytes 0-3
                 let pad = unsafe { self.mempool[curr as usize + 1].bytes };
-                for i in 2..old_n {
-                    labels[i] = pad[i - 2];
-                }
+                labels[2..old_n].copy_from_slice(&pad[..old_n - 2]);
             }
             7 => {
                 // SAFETY: cnt_type 7 labels at slots 1-4 (16 bytes), old_n ≤ 16

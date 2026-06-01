@@ -751,6 +751,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_config_validation() {
         // Valid config should pass
         let valid_config = SeparatedStorageConfig::default();

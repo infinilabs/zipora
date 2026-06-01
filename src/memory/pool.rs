@@ -328,8 +328,7 @@ impl Drop for MemoryPool {
 }
 
 /// Global memory pool instances
-static GLOBAL_POOLS: std::sync::LazyLock<GlobalPools> =
-    std::sync::LazyLock::new(GlobalPools::new);
+static GLOBAL_POOLS: std::sync::LazyLock<GlobalPools> = std::sync::LazyLock::new(GlobalPools::new);
 
 struct GlobalPools {
     small_pool: Arc<MemoryPool>,

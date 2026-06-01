@@ -749,12 +749,11 @@ mod tests {
         // Sequential pattern with stride 8
         for i in 0..10 {
             let pattern = detector.detect(i * 8);
-            if i >= 3 {
-                if let Some(AccessPattern::Sequential { stride, confidence }) = pattern {
+            if i >= 3
+                && let Some(AccessPattern::Sequential { stride, confidence }) = pattern {
                     assert_eq!(stride, 8);
                     assert!(confidence >= 3);
                 }
-            }
         }
     }
 
@@ -776,6 +775,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_prefetch_metrics() {
         let mut metrics = PrefetchMetrics::default();
         metrics.prefetches_issued = 100;

@@ -3,7 +3,8 @@
 //! This module provides high-precision benchmarking using the Criterion framework
 //! to validate performance claims and detect regressions.
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 
