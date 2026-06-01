@@ -1,14 +1,14 @@
+use super::iterators::*;
+use super::map::*;
 use super::state::*;
 use super::trie::*;
-use super::map::*;
-use super::iterators::*;
 
 mod tests {
-    use super::*;
+    use super::super::iterators::*;
+    use super::super::map::*;
     use super::super::state::*;
     use super::super::trie::*;
-    use super::super::map::*;
-    use super::super::iterators::*;
+    use super::*;
 
     #[test]
     fn test_basic_insert_contains() {
@@ -1503,19 +1503,18 @@ mod tests {
 
 #[cfg(test)]
 mod prefix_regression_tests {
-    use super::*;
+    use super::super::iterators::*;
+    use super::super::map::*;
     use super::super::state::*;
     use super::super::trie::*;
-    use super::super::map::*;
-    use super::super::iterators::*;
+    use super::*;
 
     #[test]
     fn test_1000_terms_prefix() {
         let mut t = DoubleArrayTrie::new();
         for i in 0..1000u32 {
             let term = format!("term_{:04}", i);
-            let inserted = t.insert(term.as_bytes()).unwrap();
-            assert!(inserted || !inserted, "insert returned for term_{:04}", i);
+            t.insert(term.as_bytes()).unwrap();
         }
         assert_eq!(t.len(), 1000, "expected 1000 keys, got {}", t.len());
 
@@ -1546,11 +1545,11 @@ mod prefix_regression_tests {
 
 #[cfg(test)]
 mod map_prefix_regression_tests {
-    use super::*;
+    use super::super::iterators::*;
+    use super::super::map::*;
     use super::super::state::*;
     use super::super::trie::*;
-    use super::super::map::*;
-    use super::super::iterators::*;
+    use super::*;
 
     #[test]
     fn test_map_1000_terms_prefix_fresh_trie() {
@@ -1718,9 +1717,7 @@ mod map_prefix_regression_tests {
             row[0] = prev[0] + 1;
             for j in 1..=query.len() {
                 let cost = if query[j - 1] == c { 0 } else { 1 };
-                row[j] = (prev[j] + 1)
-                    .min(row[j - 1] + 1)
-                    .min(prev[j - 1] + cost);
+                row[j] = (prev[j] + 1).min(row[j - 1] + 1).min(prev[j - 1] + cost);
             }
             row
         }
@@ -1733,8 +1730,13 @@ mod map_prefix_regression_tests {
             for &label in labels {
                 let expected = reference_row(&prev, query, label);
                 let mut reused_buf = Vec::new();
-                let min_val = FuzzyIterator::<i32>::compute_row_inplace(&prev, query, label, &mut reused_buf);
-                assert_eq!(reused_buf, expected, "mismatch for query={:?} label={}", query, label);
+                let min_val =
+                    FuzzyIterator::<i32>::compute_row_inplace(&prev, query, label, &mut reused_buf);
+                assert_eq!(
+                    reused_buf, expected,
+                    "mismatch for query={:?} label={}",
+                    query, label
+                );
                 assert_eq!(min_val, *expected.iter().min().unwrap());
             }
         }
@@ -1775,8 +1777,7 @@ mod map_prefix_regression_tests {
         // Build a trie with enough branching to force DFS pop+push cycles
         let mut trie = DoubleArrayTrieMap::<i32>::new();
         let words = [
-            "abc", "abd", "abe", "acd", "ace", "bcd", "bce", "bde",
-            "cde", "xyz", "xyw", "xyv",
+            "abc", "abd", "abe", "acd", "ace", "bcd", "bce", "bde", "cde", "xyz", "xyw", "xyv",
         ];
         for (i, w) in words.iter().enumerate() {
             trie.insert(w.as_bytes(), i as i32).unwrap();
@@ -1803,12 +1804,18 @@ mod map_prefix_regression_tests {
         fn edit_distance(a: &[u8], b: &[u8]) -> usize {
             let (m, n) = (a.len(), b.len());
             let mut dp = vec![vec![0usize; n + 1]; m + 1];
-            for i in 0..=m { dp[i][0] = i; }
-            for j in 0..=n { dp[0][j] = j; }
+            for i in 0..=m {
+                dp[i][0] = i;
+            }
+            for j in 0..=n {
+                dp[0][j] = j;
+            }
             for i in 1..=m {
                 for j in 1..=n {
                     let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
-                    dp[i][j] = (dp[i - 1][j] + 1).min(dp[i][j - 1] + 1).min(dp[i - 1][j - 1] + cost);
+                    dp[i][j] = (dp[i - 1][j] + 1)
+                        .min(dp[i][j - 1] + 1)
+                        .min(dp[i - 1][j - 1] + cost);
                 }
             }
             dp[m][n]
@@ -1818,7 +1825,11 @@ mod map_prefix_regression_tests {
         }
         for w in &words {
             if edit_distance(w.as_bytes(), b"abc") <= 2 {
-                assert!(results.iter().any(|(k, _)| k == w.as_bytes()), "missing {:?}", w);
+                assert!(
+                    results.iter().any(|(k, _)| k == w.as_bytes()),
+                    "missing {:?}",
+                    w
+                );
             }
         }
     }
@@ -1845,12 +1856,18 @@ mod map_prefix_regression_tests {
         fn edit_distance(a: &[u8], b: &[u8]) -> usize {
             let (m, n) = (a.len(), b.len());
             let mut dp = vec![vec![0usize; n + 1]; m + 1];
-            for i in 0..=m { dp[i][0] = i; }
-            for j in 0..=n { dp[0][j] = j; }
+            for i in 0..=m {
+                dp[i][0] = i;
+            }
+            for j in 0..=n {
+                dp[0][j] = j;
+            }
             for i in 1..=m {
                 for j in 1..=n {
                     let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
-                    dp[i][j] = (dp[i - 1][j] + 1).min(dp[i][j - 1] + 1).min(dp[i - 1][j - 1] + cost);
+                    dp[i][j] = (dp[i - 1][j] + 1)
+                        .min(dp[i][j - 1] + 1)
+                        .min(dp[i - 1][j - 1] + cost);
                 }
             }
             dp[m][n]
@@ -1863,21 +1880,25 @@ mod map_prefix_regression_tests {
                 let results: Vec<_> = iter.by_ref().collect();
 
                 // Verify completeness and soundness against brute-force
-                let mut expected: Vec<&str> = words.iter()
+                let mut expected: Vec<&str> = words
+                    .iter()
                     .filter(|w| edit_distance(w.as_bytes(), query) <= max_dist)
                     .map(|w| w.as_str())
                     .collect();
                 expected.sort();
 
-                let mut actual_keys: Vec<String> = results.iter()
+                let mut actual_keys: Vec<String> = results
+                    .iter()
                     .map(|(k, _)| String::from_utf8(k.clone()).unwrap())
                     .collect();
                 actual_keys.sort();
 
                 assert_eq!(
-                    actual_keys, expected,
+                    actual_keys,
+                    expected,
                     "mismatch for query={:?} max_dist={}",
-                    std::str::from_utf8(query).unwrap(), max_dist
+                    std::str::from_utf8(query).unwrap(),
+                    max_dist
                 );
 
                 // Verify recycling happened on non-trivial traversals
@@ -1885,7 +1906,8 @@ mod map_prefix_regression_tests {
                     assert!(
                         !iter.spare_rows.is_empty(),
                         "expected recycling for query={:?} max_dist={}",
-                        std::str::from_utf8(query).unwrap(), max_dist
+                        std::str::from_utf8(query).unwrap(),
+                        max_dist
                     );
                 }
             }

@@ -12,8 +12,9 @@
 //! 6. **Memory Pool Performance** - Memory management optimization benefits
 //! 7. **CPU Feature Detection** - Performance across different CPU capabilities
 
+use std::hint::black_box;
 use criterion::{
-    AxisScale, BatchSize, BenchmarkId, Criterion, PlotConfiguration, Throughput, black_box,
+    AxisScale, BatchSize, BenchmarkId, Criterion, PlotConfiguration, Throughput,
     criterion_group, criterion_main,
 };
 use std::time::Duration;
@@ -88,27 +89,12 @@ impl DataGenerator {
         data
     }
 
-    fn generate_nearly_sorted_u64(&mut self, size: usize) -> Vec<u64> {
-        let mut data: Vec<u64> = (0..size).map(|i| i as u64).collect();
-
-        let swaps = size / 10;
-        for _ in 0..swaps {
-            let i = (self.next_u32() as usize) % size;
-            let j = (self.next_u32() as usize) % size;
-            data.swap(i, j);
-        }
-
-        data
-    }
 
     /// Generate reverse sorted data
     fn generate_reverse_sorted_u32(&mut self, size: usize) -> Vec<u32> {
         (0..size).rev().map(|i| i as u32).collect()
     }
 
-    fn generate_reverse_sorted_u64(&mut self, size: usize) -> Vec<u64> {
-        (0..size).rev().map(|i| i as u64).collect()
-    }
 
     /// Generate data with many duplicates
     fn generate_many_duplicates_u32(&mut self, size: usize) -> Vec<u32> {
@@ -116,10 +102,6 @@ impl DataGenerator {
         (0..size).map(|i| (i % unique_values) as u32).collect()
     }
 
-    fn generate_many_duplicates_u64(&mut self, size: usize) -> Vec<u64> {
-        let unique_values = (size / 100).max(1);
-        (0..size).map(|i| (i % unique_values) as u64).collect()
-    }
 
     /// Generate string data with different characteristics
     fn generate_random_strings(&mut self, count: usize, avg_length: usize) -> Vec<Vec<u8>> {

@@ -1202,8 +1202,7 @@ mod tests {
 
         // Hardware-aware adaptive should work
         let adaptive = AdaptiveRankSelect::with_criteria(bv, hardware_criteria);
-        if adaptive.is_ok() {
-            let adaptive = adaptive.unwrap();
+        if let Ok(adaptive) = adaptive {
             println!(
                 "Hardware-aware selection: {}",
                 adaptive.implementation_name()
@@ -1221,7 +1220,7 @@ mod tests {
         for i in 0..10000 {
             // Complex pattern: alternating with some regularity
             let bit = match i % 7 {
-                0 | 1 | 2 => true,
+                0..=2 => true,
                 3 | 4 => false,
                 5 => (i / 7) % 3 == 0,
                 _ => false,

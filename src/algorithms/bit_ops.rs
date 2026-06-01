@@ -290,21 +290,6 @@ unsafe fn popcount_neon(words: &[u64]) -> usize {
 // AMD-safe BMI2 detection + select_in_word
 // ============================================================================
 
-/// Check whether the current CPU has a fast BMI2 PDEP instruction.
-///
-/// AMD Zen 1/2 (EPYC 7001/7002, Ryzen 1000-3000) advertise BMI2 support via
-/// CPUID, but their PDEP is microcoded at **250-300 cycles** (vs 3 cycles on
-/// Intel Haswell+ and AMD Zen 3+). `is_x86_feature_detected!("bmi2")` returns
-/// `true` on these CPUs, making it an insufficient guard.
-///
-/// This function checks:
-/// - Intel: BMI2 is always fast if present (returns `is_x86_feature_detected!("bmi2")`)
-/// - AMD Zen 3+ (family 0x19+): fast hardware PDEP (returns true)
-/// - AMD Zen 1/2 (family 0x17): microcoded PDEP (returns **false**)
-/// - Other/ARM: returns false
-///
-/// The result is cached in a `OnceLock` — the CPUID check runs at most once.
-
 /// Check if POPCNT is available, cached for performance.
 #[inline]
 pub fn has_popcnt() -> bool {
@@ -321,6 +306,20 @@ pub fn has_popcnt() -> bool {
     })
 }
 
+/// Check whether the current CPU has a fast BMI2 PDEP instruction.
+///
+/// AMD Zen 1/2 (EPYC 7001/7002, Ryzen 1000-3000) advertise BMI2 support via
+/// CPUID, but their PDEP is microcoded at **250-300 cycles** (vs 3 cycles on
+/// Intel Haswell+ and AMD Zen 3+). `is_x86_feature_detected!("bmi2")` returns
+/// `true` on these CPUs, making it an insufficient guard.
+///
+/// This function checks:
+/// - Intel: BMI2 is always fast if present (returns `is_x86_feature_detected!("bmi2")`)
+/// - AMD Zen 3+ (family 0x19+): fast hardware PDEP (returns true)
+/// - AMD Zen 1/2 (family 0x17): microcoded PDEP (returns **false**)
+/// - Other/ARM: returns false
+///
+/// The result is cached in a `OnceLock` — the CPUID check runs at most once.
 pub fn has_fast_bmi2() -> bool {
     static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *CACHE.get_or_init(has_fast_bmi2_detect)

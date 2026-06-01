@@ -490,7 +490,7 @@ mod tests {
 
     #[test]
     fn test_endianness_detection() {
-        assert_eq!(Endianness::native().is_native(), true);
+        assert!(Endianness::native().is_native());
 
         #[cfg(target_endian = "little")]
         {
@@ -571,13 +571,13 @@ mod tests {
 
     #[test]
     fn test_floating_point_endian() {
-        let value: f32 = 3.14159;
+        let value: f32 = std::f32::consts::PI;
 
         // Test round-trip conversion
         assert_eq!(value.to_le().from_le(), value);
         assert_eq!(value.to_be().from_be(), value);
 
-        let value: f64 = 2.718281828459045;
+        let value: f64 = std::f64::consts::E;
         assert_eq!(value.to_le().from_le(), value);
         assert_eq!(value.to_be().from_be(), value);
     }

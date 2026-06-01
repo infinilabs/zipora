@@ -14,7 +14,8 @@
 //! 5. Comparison against standard library implementations
 //! 6. Different SIMD tiers when available
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::alloc::{Layout, alloc, dealloc};
 use zipora::memory::simd_ops::SimdMemOps;
 
@@ -114,7 +115,7 @@ fn bench_memory_copy(c: &mut Criterion) {
 fn bench_aligned_memory_copy(c: &mut Criterion) {
     let mut group = c.benchmark_group("SIMD Aligned Memory Copy");
 
-    let test_sizes = vec![
+    let test_sizes: Vec<(&str, usize)> = vec![
         ("aligned_64B", 64),
         ("aligned_128B", 128),
         ("aligned_256B", 256),
@@ -130,7 +131,7 @@ fn bench_aligned_memory_copy(c: &mut Criterion) {
 
     for (name, size) in test_sizes {
         // Ensure size is a multiple of cache line size for aligned operations
-        let aligned_size = (size + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE * CACHE_LINE_SIZE;
+        let aligned_size = size.div_ceil(CACHE_LINE_SIZE) * CACHE_LINE_SIZE;
         group.throughput(Throughput::Bytes(aligned_size as u64));
 
         // Benchmark aligned SIMD copy

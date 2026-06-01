@@ -416,7 +416,7 @@ mod tests {
     #[test]
     fn test_bm25_scoring_workflow() {
         // End-to-end: encode doc lengths, build norm table, score
-        let doc_lengths = vec![50u32, 100, 150, 200, 300];
+        let doc_lengths = [50u32, 100, 150, 200, 300];
         let fieldnorm_bytes: Vec<u8> = doc_lengths
             .iter()
             .map(|&l| FieldnormEncoder::encode(l))

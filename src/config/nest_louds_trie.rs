@@ -589,6 +589,7 @@ impl Config for NestLoudsTrieConfig {
         Ok(config)
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     fn performance_preset() -> Self {
         let mut config = Self::default();
 
@@ -614,6 +615,7 @@ impl Config for NestLoudsTrieConfig {
         config
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     fn memory_preset() -> Self {
         let mut config = Self::default();
 
@@ -636,6 +638,7 @@ impl Config for NestLoudsTrieConfig {
         config
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     fn realtime_preset() -> Self {
         let mut config = Self::default();
 
@@ -1003,6 +1006,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_validation() {
         let mut config = NestLoudsTrieConfig::default();
 

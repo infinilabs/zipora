@@ -1,9 +1,9 @@
 use crate::error::{Result, ZiporaError};
 use std::cmp::Ordering;
 
-use super::state::{DaState, NInfo, FREE_BIT, NIL_STATE, MAX_STATE, NINFO_NONE, label_to_ninfo};
+use super::map::{DoubleArrayTrieMap, MapValue};
+use super::state::{DaState, FREE_BIT, MAX_STATE, NIL_STATE, NINFO_NONE, NInfo, label_to_ninfo};
 use super::trie::*;
-use super::map::{MapValue, DoubleArrayTrieMap};
 
 pub(crate) struct PrefixFrame {
     pub(crate) state: u32,
@@ -120,7 +120,12 @@ pub struct FuzzyIterator<'a, V: MapValue> {
 
 impl<'a, V: MapValue> FuzzyIterator<'a, V> {
     /// Compute DP row in-place into `row` and return the row minimum.
-    pub(crate) fn compute_row_inplace(prev_row: &[usize], query: &[u8], c: u8, row: &mut Vec<usize>) -> usize {
+    pub(crate) fn compute_row_inplace(
+        prev_row: &[usize],
+        query: &[u8],
+        c: u8,
+        row: &mut Vec<usize>,
+    ) -> usize {
         let len = query.len() + 1;
         row.resize(len, 0);
         row[0] = prev_row[0] + 1;
@@ -200,7 +205,12 @@ impl<'a, V: MapValue> Iterator for FuzzyIterator<'a, V> {
 
             // Compute DP row in-place using a recycled buffer
             let mut row = self.spare_rows.pop().unwrap_or_default();
-            let min_val = Self::compute_row_inplace(&self.dp_columns[parent_depth], &self.query, label, &mut row);
+            let min_val = Self::compute_row_inplace(
+                &self.dp_columns[parent_depth],
+                &self.query,
+                label,
+                &mut row,
+            );
 
             if min_val > self.max_dist {
                 self.spare_rows.push(row);
@@ -241,4 +251,3 @@ impl<V: MapValue> std::fmt::Debug for DoubleArrayTrieMap<V> {
             .finish()
     }
 }
-

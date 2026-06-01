@@ -307,7 +307,7 @@ mod graph_walker_tests {
         walker.walk(graph[&0].clone(), &mut visitor).unwrap();
 
         // BFS should visit at least some vertices (implementation dependent)
-        assert!(visitor.visited_vertices.len() >= 1);
+        assert!(!visitor.visited_vertices.is_empty());
         assert!(visitor.visited_vertices.contains(&0)); // Should at least visit start vertex
 
         let stats = walker.stats();
@@ -323,7 +323,7 @@ mod graph_walker_tests {
         walker.walk(graph[&0].clone(), &mut visitor).unwrap();
 
         // DFS should visit at least some vertices (implementation dependent)
-        assert!(visitor.visited_vertices.len() >= 1);
+        assert!(!visitor.visited_vertices.is_empty());
         assert!(visitor.visited_vertices.contains(&0)); // Should at least visit start vertex
 
         let stats = walker.stats();
@@ -694,9 +694,7 @@ mod integration_tests {
         assert_eq!(engine.find_first(trie_data, b'a'), Some(0));
         assert_eq!(engine.find_first(trie_data, b'z'), Some(25));
 
-        let vowel_positions = engine
-            .search_multiple(trie_data, &[b'a', b'e', b'i', b'o', b'u'])
-            .unwrap();
+        let vowel_positions = engine.search_multiple(trie_data, b"aeiou").unwrap();
         assert_eq!(vowel_positions[0], vec![0]); // 'a'
         assert_eq!(vowel_positions[1], vec![4]); // 'e'
         assert_eq!(vowel_positions[2], vec![8]); // 'i'

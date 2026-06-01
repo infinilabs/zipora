@@ -312,7 +312,9 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
             self.rows[row] = Some(new_row);
         }
 
-        let row_data = self.rows[row].as_ref().expect("row was allocated in previous if block");
+        let row_data = self.rows[row]
+            .as_ref()
+            .expect("row was allocated in previous if block");
         let cell = &row_data[col];
         // SAFETY: UnsafeCell interior mutability, exclusive access within thread-local context
         let value_ref = unsafe { &mut *cell.get() };
@@ -321,7 +323,10 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
             *value_ref = Some(T::default());
         }
 
-        value_ref.as_ref().expect("value set to default in previous if block").clone()
+        value_ref
+            .as_ref()
+            .expect("value set to default in previous if block")
+            .clone()
     }
 
     /// Get value copy if it exists
@@ -347,7 +352,9 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
             self.rows[row] = Some(new_row);
         }
 
-        let row_data = self.rows[row].as_ref().expect("row was allocated in previous if block");
+        let row_data = self.rows[row]
+            .as_ref()
+            .expect("row was allocated in previous if block");
         let cell = &row_data[col];
         // SAFETY: UnsafeCell interior mutability, exclusive access within thread-local context
         unsafe { *cell.get() = Some(value) };
@@ -403,6 +410,16 @@ where
 {
     instances: HashMap<*const O, InstanceTls<T>>,
     _phantom: PhantomData<O>,
+}
+
+impl<T, O> Default for OwnerTls<T, O>
+where
+    T: Send + Sync + Default + Clone + 'static,
+    O: Send + Sync + 'static,
+{
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T, O> OwnerTls<T, O>
@@ -476,7 +493,12 @@ where
 {
     /// Create a new TLS pool
     pub fn new() -> Result<Self> {
-        let pool = std::array::from_fn(|_| Some(InstanceTls::new().expect("TLS initialization succeeds with valid matrix dimensions")));
+        let pool = std::array::from_fn(|_| {
+            Some(
+                InstanceTls::new()
+                    .expect("TLS initialization succeeds with valid matrix dimensions"),
+            )
+        });
 
         Ok(Self {
             pool,
@@ -506,6 +528,12 @@ where
     #[inline]
     pub fn len(&self) -> usize {
         POOL_SIZE
+    }
+
+    /// Returns `true` if the pool has no slots (always false for a fixed-size pool)
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -606,6 +634,7 @@ mod tests {
     #[test]
     fn test_owner_tls() {
         struct Owner {
+            #[allow(dead_code)] // distinct non-ZST identity (used by address)
             id: u32,
         }
 

@@ -303,10 +303,12 @@ impl PatternMatcher {
         }
 
         let mut best_match: Option<Match> = None;
-        let mut comparisons = 0;
 
         // Try patterns of decreasing length for best compression ratio
-        for pattern_len in (self.config.min_match_length..=max_search_len).rev() {
+        for (comparisons, pattern_len) in (self.config.min_match_length..=max_search_len)
+            .rev()
+            .enumerate()
+        {
             if comparisons >= self.config.max_sa_comparisons {
                 break;
             }
@@ -333,7 +335,6 @@ impl PatternMatcher {
                 }
             }
 
-            comparisons += 1;
             self.stats.total_comparisons += 1;
         }
 

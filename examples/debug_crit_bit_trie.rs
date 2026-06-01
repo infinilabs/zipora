@@ -5,7 +5,7 @@
 
 use zipora::Result;
 use zipora::fsa::{
-    TrieCompressionStrategy, RankSelectType, TrieStorageStrategy, TrieStrategy, ZiporaTrie,
+    RankSelectType, TrieCompressionStrategy, TrieStorageStrategy, TrieStrategy, ZiporaTrie,
     ZiporaTrieConfig,
 };
 use zipora::succinct::RankSelectInterleaved256;

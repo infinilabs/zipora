@@ -506,7 +506,7 @@ impl AdaptiveCompressor {
         let mut hasher = DefaultHasher::new();
 
         // Sample bytes from different parts of the data
-        let sample_size = (data.len() / 10).max(1).min(1000);
+        let sample_size = (data.len() / 10).clamp(1, 1000);
         for i in 0..sample_size {
             let idx = (i * data.len()) / sample_size;
             data[idx].hash(&mut hasher);

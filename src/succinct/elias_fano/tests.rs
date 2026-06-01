@@ -195,6 +195,7 @@ mod tests {
                 }
             }
         }
+        let _ = found;
         #[allow(unused_variables)]
         let elapsed = start.elapsed();
 
@@ -1069,7 +1070,7 @@ mod tests {
         // Verify against stateless next_geq
         let mut stateless_results = Vec::new();
         for &t in &targets {
-            if let Some((_, v)) = opef.next_geq(t as u64) {
+            if let Some((_, v)) = opef.next_geq(t) {
                 stateless_results.push(v);
             }
         }

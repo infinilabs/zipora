@@ -1555,12 +1555,10 @@ mod tests {
             for bucket_bits in [1, 4, 8, 16, 24, 32] {
                 let bucket = extract_hash_bucket_bmi2(hash, bucket_bits);
 
-                // Bucket should be within valid range
+                // Bucket should be within valid range. For bucket_bits >= 32
+                // every u32 value is valid, so there is nothing to check.
                 if bucket_bits < 32 {
                     assert!(bucket < (1u32 << bucket_bits));
-                } else {
-                    // For bucket_bits >= 32, all bucket values are valid
-                    assert!(bucket <= u32::MAX);
                 }
 
                 // Should be deterministic
@@ -1790,11 +1788,11 @@ mod tests {
         assert_ne!(complex_hash, 0);
 
         // Test float hashing
-        let float_hash = hash_float_bmi2(3.14159);
+        let float_hash = hash_float_bmi2(std::f64::consts::PI);
         assert_ne!(float_hash, 0);
 
         // Different floats should produce different hashes
-        let float_hash2 = hash_float_bmi2(2.71828);
+        let float_hash2 = hash_float_bmi2(std::f64::consts::E);
         assert_ne!(float_hash, float_hash2);
 
         // Test tuple hashing

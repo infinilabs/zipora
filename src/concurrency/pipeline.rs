@@ -514,11 +514,7 @@ impl Pipeline {
         let total_processed = self.stats.total_processed.load(Ordering::Relaxed);
         let total_time = self.stats.total_processing_time_us.load(Ordering::Relaxed);
 
-        let avg_processing_time_us = if total_processed > 0 {
-            total_time / total_processed
-        } else {
-            0
-        };
+        let avg_processing_time_us = total_time.checked_div(total_processed).unwrap_or(0);
 
         let elapsed_secs = self.start_time.elapsed().as_secs_f64();
         let throughput_per_sec = if elapsed_secs > 0.0 {
@@ -536,11 +532,7 @@ impl Pipeline {
             .map(|stats| {
                 let processed = stats.processed.load(Ordering::Relaxed);
                 let total_time = stats.total_time_us.load(Ordering::Relaxed);
-                let avg_time_us = if processed > 0 {
-                    total_time / processed
-                } else {
-                    0
-                };
+                let avg_time_us = total_time.checked_div(processed).unwrap_or(0);
                 let active_items = stats.active_items.load(Ordering::Relaxed);
 
                 StageStats {
@@ -697,7 +689,6 @@ where
         Self: Sized,
     {
         if let Some(batch_func) = &self.batch_func {
-            let batch_func = batch_func;
             Box::pin(async move { batch_func(inputs) })
         } else {
             // Fall back to default implementation
@@ -1606,10 +1597,7 @@ mod tests {
             |batch: Vec<Option<i32>>| {
                 Ok(batch
                     .into_iter()
-                    .map(|opt_x| match opt_x {
-                        Some(x) => Some(x / 2),
-                        None => None,
-                    })
+                    .map(|opt_x| opt_x.map(|x| x / 2))
                     .collect())
             },
         );

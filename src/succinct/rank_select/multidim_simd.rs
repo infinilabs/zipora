@@ -382,12 +382,12 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
         if self.cpu_features.has_avx2 {
             // SAFETY: AVX2 availability verified by has_avx2 check above
             let result_bits = unsafe { Self::intersect_avx2(&bits_a, &bits_b) };
-            return Ok(BitVector::from_raw_bits(result_bits, self.total_bits)?);
+            return BitVector::from_raw_bits(result_bits, self.total_bits);
         }
 
         // Scalar fallback
         let result_bits = Self::intersect_scalar(&bits_a, &bits_b);
-        Ok(BitVector::from_raw_bits(result_bits, self.total_bits)?)
+        BitVector::from_raw_bits(result_bits, self.total_bits)
     }
 
     /// Scalar intersection implementation
@@ -497,12 +497,12 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
         if self.cpu_features.has_avx2 {
             // SAFETY: AVX2 availability verified by has_avx2 check above
             let result_bits = unsafe { Self::union_avx2(&bit_data) };
-            return Ok(BitVector::from_raw_bits(result_bits, self.total_bits)?);
+            return BitVector::from_raw_bits(result_bits, self.total_bits);
         }
 
         // Scalar fallback
         let result_bits = Self::union_scalar(&bit_data);
-        Ok(BitVector::from_raw_bits(result_bits, self.total_bits)?)
+        BitVector::from_raw_bits(result_bits, self.total_bits)
     }
 
     /// Scalar union implementation
@@ -656,12 +656,10 @@ mod tests {
 
     #[test]
     fn test_intersect_dimensions() -> Result<()> {
-        let mut dims = vec![];
-
-        // Dimension 0: every 2nd bit
-        dims.push(create_test_bitvector(100, |i| i % 2 == 0)?);
-        // Dimension 1: every 3rd bit
-        dims.push(create_test_bitvector(100, |i| i % 3 == 0)?);
+        let dims = vec![
+            create_test_bitvector(100, |i| i % 2 == 0)?,
+            create_test_bitvector(100, |i| i % 3 == 0)?,
+        ];
 
         let multi_rs: MultiDimRankSelect<2> = MultiDimRankSelect::new(dims)?;
 
@@ -682,14 +680,11 @@ mod tests {
 
     #[test]
     fn test_union_dimensions() -> Result<()> {
-        let mut dims = vec![];
-
-        // Dimension 0: every 4th bit
-        dims.push(create_test_bitvector(100, |i| i % 4 == 0)?);
-        // Dimension 1: every 6th bit
-        dims.push(create_test_bitvector(100, |i| i % 6 == 0)?);
-        // Dimension 2: every 8th bit
-        dims.push(create_test_bitvector(100, |i| i % 8 == 0)?);
+        let dims = vec![
+            create_test_bitvector(100, |i| i % 4 == 0)?,
+            create_test_bitvector(100, |i| i % 6 == 0)?,
+            create_test_bitvector(100, |i| i % 8 == 0)?,
+        ];
 
         let multi_rs: MultiDimRankSelect<3> = MultiDimRankSelect::new(dims)?;
 
@@ -710,9 +705,10 @@ mod tests {
 
     #[test]
     fn test_invalid_dimension_sizes() {
-        let mut dims = vec![];
-        dims.push(create_test_bitvector(100, |i| i % 2 == 0).unwrap());
-        dims.push(create_test_bitvector(200, |i| i % 2 == 0).unwrap()); // Different size
+        let dims = vec![
+            create_test_bitvector(100, |i| i % 2 == 0).unwrap(),
+            create_test_bitvector(200, |i| i % 2 == 0).unwrap(), // Different size
+        ];
 
         let result: Result<MultiDimRankSelect<2>> = MultiDimRankSelect::new(dims);
         assert!(result.is_err());
@@ -720,8 +716,7 @@ mod tests {
 
     #[test]
     fn test_single_dimension() -> Result<()> {
-        let mut dims = vec![];
-        dims.push(create_test_bitvector(100, |i| i % 5 == 0)?);
+        let dims = vec![create_test_bitvector(100, |i| i % 5 == 0)?];
 
         let multi_rs: MultiDimRankSelect<1> = MultiDimRankSelect::new(dims)?;
         assert_eq!(multi_rs.num_dimensions(), 1);
@@ -764,9 +759,10 @@ mod tests {
         // 500 bits →  8 u64s (2 chunks, 0 remainder) — exact fit
         // 501 bits →  8 u64s (2 chunks, 0 remainder — ceil rounds up but last word partial)
         for &size in &[1, 63, 65, 192, 256, 257, 500, 501, 1024, 1025] {
-            let mut dims = vec![];
-            dims.push(create_test_bitvector(size, |i| i % 2 == 0)?);
-            dims.push(create_test_bitvector(size, |i| i % 3 == 0)?);
+            let dims = vec![
+                create_test_bitvector(size, |i| i % 2 == 0)?,
+                create_test_bitvector(size, |i| i % 3 == 0)?,
+            ];
 
             let multi_rs: MultiDimRankSelect<2> = MultiDimRankSelect::new(dims)?;
 
@@ -796,10 +792,11 @@ mod tests {
     #[test]
     fn test_union_simd_remainder_boundary() -> Result<()> {
         for &size in &[1, 63, 65, 192, 256, 257, 500, 501, 1024, 1025] {
-            let mut dims = vec![];
-            dims.push(create_test_bitvector(size, |i| i % 4 == 0)?);
-            dims.push(create_test_bitvector(size, |i| i % 6 == 0)?);
-            dims.push(create_test_bitvector(size, |i| i % 8 == 0)?);
+            let dims = vec![
+                create_test_bitvector(size, |i| i % 4 == 0)?,
+                create_test_bitvector(size, |i| i % 6 == 0)?,
+                create_test_bitvector(size, |i| i % 8 == 0)?,
+            ];
 
             let multi_rs: MultiDimRankSelect<3> = MultiDimRankSelect::new(dims)?;
 

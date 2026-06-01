@@ -570,10 +570,10 @@ mod utility_tests {
         assert_eq!(DEFAULT_BFS_DEPTH, 6);
 
         // Validate constant relationships
-        assert!(DEFAULT_MIN_PATTERN_LENGTH > 0);
-        assert!(DEFAULT_MAX_PATTERN_LENGTH >= DEFAULT_MIN_PATTERN_LENGTH);
-        assert!(DEFAULT_MIN_FREQUENCY > 0);
-        assert!(DEFAULT_BFS_DEPTH > 0);
+        const { assert!(DEFAULT_MIN_PATTERN_LENGTH > 0) };
+        const { assert!(DEFAULT_MAX_PATTERN_LENGTH >= DEFAULT_MIN_PATTERN_LENGTH) };
+        const { assert!(DEFAULT_MIN_FREQUENCY > 0) };
+        const { assert!(DEFAULT_BFS_DEPTH > 0) };
     }
 }
 
@@ -1016,7 +1016,7 @@ mod error_handling_tests {
 
     #[test]
     fn test_edge_case_data() -> Result<()> {
-        let edge_cases = vec![
+        let edge_cases = [
             vec![],                  // Empty data
             vec![0],                 // Single byte
             vec![0; 1000],           // All zeros

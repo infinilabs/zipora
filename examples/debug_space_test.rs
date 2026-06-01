@@ -34,9 +34,7 @@ fn main() {
     // Test if the issue is with iterator vs collect
     println!("Manual iteration:");
     let iter = vec.iter_sorted();
-    let mut count = 0;
-    for s in iter {
+    for (count, s) in iter.enumerate() {
         println!("    [{}]: {:?}", count, s);
-        count += 1;
     }
 }

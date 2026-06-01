@@ -539,7 +539,7 @@ impl DfaCache {
             pattern_map,
             config: serializable.config,
             stats,
-            text: Arc::new(Vec::new()),         // Empty for deserialized cache
+            text: Arc::new(Vec::new()), // Empty for deserialized cache
             suffix_array: Arc::new(Vec::new()), // Empty for deserialized cache
         })
     }
@@ -882,7 +882,7 @@ impl DfaCache {
         }
 
         // Sort by frequency (most frequent first)
-        patterns.sort_by(|a, b| b.frequency.cmp(&a.frequency));
+        patterns.sort_by_key(|b| std::cmp::Reverse(b.frequency));
 
         Ok(patterns)
     }
@@ -1004,8 +1004,7 @@ mod tests {
         let input = b"the";
         let result = cache.find_longest_prefix(input, 10).unwrap();
 
-        if result.is_some() {
-            let cache_match = result.unwrap();
+        if let Some(cache_match) = result {
             assert!(cache_match.length > 0);
             assert!(cache_match.length <= input.len());
         }
@@ -1090,8 +1089,7 @@ mod tests {
 
         // Test deserialization - for now just check it doesn't crash
         // Full state reconstruction would require more complex implementation
-        let deserialized = DfaCache::deserialize(&serialized).unwrap();
-        assert!(deserialized.state_count() >= 0); // Just verify it's created
+        let _deserialized = DfaCache::deserialize(&serialized).unwrap();
     }
 
     #[test]
@@ -1124,8 +1122,7 @@ mod tests {
 
         // Should find patterns
         let result = cache.find_longest_prefix(b"abc", 10).unwrap();
-        if result.is_some() {
-            let cache_match = result.unwrap();
+        if let Some(cache_match) = result {
             assert!(cache_match.length > 0);
             assert!(cache_match.frequency >= 2);
         }

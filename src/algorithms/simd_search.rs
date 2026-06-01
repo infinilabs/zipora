@@ -247,10 +247,10 @@ unsafe fn block_filter_avx512(scores: &[f32], theta: f32) -> (u64, usize) {
             let scores_vec = _mm512_loadu_ps(scores.as_ptr().add(pos));
             // _CMP_GT_OQ = 14: Greater-than (ordered, non-signaling)
             let cmp_mask = _mm512_cmp_ps_mask::<14>(scores_vec, theta_vec);
-            
+
             result_mask |= (cmp_mask as u64) << pos;
             result_count += cmp_mask.count_ones() as usize;
-            
+
             pos += 16;
         }
     }

@@ -512,7 +512,6 @@ impl SuffixArrayBuilder {
         // For now, fall back to sequential - full parallel SA-IS is very complex
         self.build_sequential(text)
     }
-
 }
 
 /// Marks an unfilled slot in the working suffix array during SA-IS.

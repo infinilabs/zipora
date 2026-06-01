@@ -219,11 +219,11 @@ impl ZipOffsetBlobStoreBuilder {
     /// Reserve space for approximately `additional` records
     pub fn reserve(&mut self, additional: usize) -> Result<()> {
         // Estimate space needed based on current average record size
-        let avg_size = if self.stats.record_count > 0 {
-            self.stats.compressed_size / self.stats.record_count
-        } else {
-            1024 // Default estimate
-        };
+        let avg_size = self
+            .stats
+            .compressed_size
+            .checked_div(self.stats.record_count)
+            .unwrap_or(1024); // Default estimate
 
         let estimated_bytes = additional * avg_size;
         self.content.reserve(estimated_bytes)?;
@@ -411,6 +411,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_builder_stats() {
         let mut stats = BuilderStats::default();
         stats.uncompressed_size = 1000;
@@ -555,7 +556,7 @@ mod tests {
         batch_builder.add_record(b"record3").unwrap();
 
         // Note: Current implementation has simplified batch logic
-        assert!(batch_builder.len() >= 1);
+        assert!(!batch_builder.is_empty());
 
         // Finish should flush remaining batch
         let _store = batch_builder.finish().unwrap();

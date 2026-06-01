@@ -1,7 +1,7 @@
-use crate::containers::FastVec;
-use crate::succinct::RankSelectOps;
 use crate::StateId;
+use crate::containers::FastVec;
 use crate::containers::specialized::UintVector;
+use crate::succinct::RankSelectOps;
 use std::collections::{HashMap, VecDeque};
 
 /// Internal storage implementations for different strategies

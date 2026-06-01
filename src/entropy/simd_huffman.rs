@@ -671,8 +671,8 @@ mod tests {
         let large_data = "This is a test message for large data encoding with SIMD Huffman compression. It has sufficient data volume to trigger large data processing paths in the encoder implementation.".repeat(100);
         let large_data = large_data.as_bytes();
 
-        let encoder = SimdHuffmanEncoder::new(&large_data)?;
-        let encoded = encoder.encode(&large_data)?;
+        let encoder = SimdHuffmanEncoder::new(large_data)?;
+        let encoded = encoder.encode(large_data)?;
 
         assert!(!encoded.is_empty());
         println!(

@@ -825,7 +825,7 @@ mod tests {
 
         // Read some data
         let mut buf = [0u8; 5];
-        reader.read(&mut buf).unwrap();
+        reader.read_exact(&mut buf).unwrap();
 
         assert!(reader.total_read() > 0);
         assert!(reader.has_data_in_buffer() || reader.total_read() == data.len() as u64);

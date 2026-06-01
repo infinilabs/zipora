@@ -399,7 +399,7 @@ mod tests {
         );
 
         // Result should be one of the three values
-        assert!(result >= 1 && result <= 3);
+        assert!((1..=3).contains(&result));
     }
 
     // Test simd_dispatch! with a function that uses return

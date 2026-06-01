@@ -103,8 +103,14 @@ impl SimdComparator {
                 if self.config.prefetch_distance > 0
                     && i + chunk_size * self.config.prefetch_distance < left.len()
                 {
-                    _mm_prefetch(left_ptr.add(chunk_size * self.config.prefetch_distance) as *const i8, _MM_HINT_T0);
-                    _mm_prefetch(right_ptr.add(chunk_size * self.config.prefetch_distance) as *const i8, _MM_HINT_T0);
+                    _mm_prefetch(
+                        left_ptr.add(chunk_size * self.config.prefetch_distance) as *const i8,
+                        _MM_HINT_T0,
+                    );
+                    _mm_prefetch(
+                        right_ptr.add(chunk_size * self.config.prefetch_distance) as *const i8,
+                        _MM_HINT_T0,
+                    );
                 }
 
                 let left_vec = _mm512_loadu_si512(left_ptr as *const __m512i);
@@ -743,11 +749,11 @@ mod tests {
 
     #[test]
     fn test_find_multiple_mins() {
-        let arr1 = vec![5, 2, 8, 1];
-        let arr2 = vec![9, 3, 7, 4];
-        let arr3 = vec![6];
+        let arr1 = [5, 2, 8, 1];
+        let arr2 = [9, 3, 7, 4];
+        let arr3 = [6];
 
-        let arrays = vec![&arr1[..], &arr2[..], &arr3[..]];
+        let arrays = [&arr1[..], &arr2[..], &arr3[..]];
         let result = SimdOperations::find_multiple_mins(&arrays);
 
         assert_eq!(result, vec![Some((3, 1)), Some((1, 3)), Some((0, 6)),]);
@@ -780,6 +786,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_large_array_simd_path() {
         let mut config = SimdConfig::default();
         config.min_vector_size = 4; // Lower threshold for testing

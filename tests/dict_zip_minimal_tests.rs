@@ -37,10 +37,10 @@ mod utility_tests {
         assert_eq!(DEFAULT_BFS_DEPTH, 6);
 
         // Validate constant relationships
-        assert!(DEFAULT_MIN_PATTERN_LENGTH > 0);
-        assert!(DEFAULT_MAX_PATTERN_LENGTH >= DEFAULT_MIN_PATTERN_LENGTH);
-        assert!(DEFAULT_MIN_FREQUENCY > 0);
-        assert!(DEFAULT_BFS_DEPTH > 0);
+        const { assert!(DEFAULT_MIN_PATTERN_LENGTH > 0) };
+        const { assert!(DEFAULT_MAX_PATTERN_LENGTH >= DEFAULT_MIN_PATTERN_LENGTH) };
+        const { assert!(DEFAULT_MIN_FREQUENCY > 0) };
+        const { assert!(DEFAULT_BFS_DEPTH > 0) };
     }
 
     #[test]

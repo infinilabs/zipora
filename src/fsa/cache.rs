@@ -140,6 +140,12 @@ pub struct ZeroPathData {
     pub total_length: u16,
 }
 
+impl Default for ZeroPathData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ZeroPathData {
     /// Create new zero-path data
     pub fn new() -> Self {

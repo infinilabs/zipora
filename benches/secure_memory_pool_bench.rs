@@ -4,7 +4,8 @@
 //! while providing security guarantees, comparing against the original MemoryPool
 //! and standard allocators.
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::alloc::{Layout, alloc, dealloc};
 use std::sync::Arc;
 use std::thread;

@@ -37,6 +37,12 @@ pub struct Fiber<T> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FiberId(u64);
 
+impl Default for FiberId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FiberId {
     /// Generate a new unique fiber identifier
     pub fn new() -> Self {

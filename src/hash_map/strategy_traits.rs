@@ -604,7 +604,7 @@ impl<K, V> StorageLayoutStrategy<K, V> for CacheOptimizedStorageStrategy {
         _config: &Self::Config,
     ) -> Result<()> {
         // TODO: Use cache-aligned reallocation
-        let _ = storage.resize_with(new_capacity, Default::default)?;
+        storage.resize_with(new_capacity, Default::default)?;
         Ok(())
     }
 

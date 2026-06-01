@@ -167,6 +167,7 @@ impl SimpleZipBlobStore {
     /// let store = SimpleZipBlobStore::build_from(&data, &config).unwrap();
     /// # Ok::<(), zipora::error::ZiporaError>(())
     /// ```
+    #[allow(clippy::field_reassign_with_default)]
     pub fn build_from(data: &[Vec<u8>], config: &SimpleZipConfig) -> Result<Self> {
         config.validate()?;
 

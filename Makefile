@@ -131,8 +131,10 @@ pre_commit: format clippy test_debug safety_tests
 
 release_prep: clean format clippy build_release test_release bench doc audit
 
-# Sanity check: default features (debug + release) + all features (release)
+# Sanity check: clippy gate + default features (debug + release) + all features (release)
 sanity:
+	@echo "=== Clippy (all targets, all features, deny warnings) ==="
+	$(CARGO) clippy --all-targets --all-features -- -D warnings
 	@echo "=== Default (debug) ==="
 	$(CARGO) build
 	$(CARGO) test --lib
@@ -182,7 +184,7 @@ help:
 	@echo "  all              Build and test (debug + release)"
 	@echo "  build            Build debug + release"
 	@echo "  test             Test debug + release"
-	@echo "  sanity           Quick check: 3 feature configs x debug+release"
+	@echo "  sanity           Clippy gate + 3 feature configs x debug+release"
 	@echo ""
 	@echo "  bench            Run all benchmarks"
 	@echo "  bench_all        Run all benchmarks (release)"

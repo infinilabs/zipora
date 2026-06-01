@@ -7,7 +7,8 @@
 //! - Memory-Mapped Vectors
 //! - Existing Secure Memory Pool (baseline)
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::sync::Arc;
 use zipora::memory::*;
 

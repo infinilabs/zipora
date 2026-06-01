@@ -425,9 +425,9 @@ mod tests {
     fn test_get_rela() {
         // Pack known values
         let mut rela = 0u64;
-        rela |= 5 << (0 * 9); // word 1: 5
-        rela |= 12 << (1 * 9); // word 2: 12
-        rela |= 20 << (2 * 9); // word 3: 20
+        rela |= 5; // word 1: 5 (bit offset 0)
+        rela |= 12 << 9; // word 2: 12 (bit offset 9)
+        rela |= 20 << 18; // word 3: 20 (bit offset 18)
         assert_eq!(get_rela(rela, 0), 0);
         assert_eq!(get_rela(rela, 1), 5);
         assert_eq!(get_rela(rela, 2), 12);

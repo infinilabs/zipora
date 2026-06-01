@@ -19,7 +19,7 @@ use std::time::Instant;
 #[inline]
 fn check_alignment<T>(ptr: *mut u8) {
     debug_assert!(!ptr.is_null());
-    debug_assert!((ptr as usize) % mem::align_of::<T>() == 0);
+    debug_assert!((ptr as usize).is_multiple_of(mem::align_of::<T>()));
 }
 
 /// Safely cast an aligned u8 pointer to T pointer with alignment verification
@@ -436,7 +436,9 @@ impl<T> FastVec<T> {
     pub fn push(&mut self, value: T) -> Result<()> {
         debug_assert!(self.len <= self.cap);
         if self.len >= (isize::MAX as usize) {
-            return Err(ZiporaError::invalid_state("vector length would exceed maximum"));
+            return Err(ZiporaError::invalid_state(
+                "vector length would exceed maximum",
+            ));
         }
 
         if self.len >= self.cap {
@@ -859,7 +861,7 @@ impl<T> FastVec<T> {
         T: Copy,
     {
         if src.len() > (isize::MAX as usize) / mem::size_of::<T>().max(1) {
-            return Err(ZiporaError::out_of_memory(src.len() * mem::size_of::<T>()));
+            return Err(ZiporaError::out_of_memory(std::mem::size_of_val(src)));
         }
         debug_assert!(self.len <= self.cap);
 
@@ -987,8 +989,9 @@ impl<T> Drop for FastVec<T> {
         {
             // SAFETY: ptr and cap are valid from allocation, layout matches allocation layout
             unsafe {
-                let layout = Layout::array::<T>(self.cap)
-                    .expect("Layout::array succeeded during allocation, must succeed during deallocation");
+                let layout = Layout::array::<T>(self.cap).expect(
+                    "Layout::array succeeded during allocation, must succeed during deallocation",
+                );
                 alloc::dealloc(ptr.as_ptr() as *mut u8, layout);
             }
         }
@@ -1011,7 +1014,8 @@ impl<T> DerefMut for FastVec<T> {
 
 impl<T> From<Vec<T>> for FastVec<T> {
     fn from(v: Vec<T>) -> Self {
-        let mut fv = Self::with_capacity(v.len()).expect("FastVec: allocation failed in From<Vec<T>>");
+        let mut fv =
+            Self::with_capacity(v.len()).expect("FastVec: allocation failed in From<Vec<T>>");
         for item in v {
             fv.push(item).expect("FastVec: push failed in From<Vec<T>>");
         }
@@ -1023,7 +1027,8 @@ impl<T> FromIterator<T> for FastVec<T> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let iter = iter.into_iter();
         let (lower, _) = iter.size_hint();
-        let mut fv = Self::with_capacity(lower).expect("FastVec: allocation failed in FromIterator");
+        let mut fv =
+            Self::with_capacity(lower).expect("FastVec: allocation failed in FromIterator");
         for item in iter {
             fv.push(item).expect("FastVec: push failed in FromIterator");
         }
@@ -1103,8 +1108,9 @@ impl<T> Drop for FastVecIntoIter<T> {
             }
             // Deallocate memory
             if self.cap > 0 {
-                let layout = Layout::array::<T>(self.cap)
-                    .expect("Layout::array succeeded during allocation, must succeed during deallocation");
+                let layout = Layout::array::<T>(self.cap).expect(
+                    "Layout::array succeeded during allocation, must succeed during deallocation",
+                );
                 // SAFETY: ptr allocated with same layout during FastVec creation
                 unsafe {
                     alloc::dealloc(ptr.as_ptr() as *mut u8, layout);
@@ -1995,7 +2001,7 @@ mod tests {
                 }
 
                 // Occasionally resize
-                if round % 10 == 0 && vec.len() > 0 {
+                if round % 10 == 0 && !vec.is_empty() {
                     let new_size = vec.len() + 10;
                     vec.resize(new_size, Align32([777, 777, 777, 777])).unwrap();
                     verify_alignment(vec.as_ptr());
@@ -2270,7 +2276,7 @@ mod tests {
             let data: Vec<u8> = (1..=2000).map(|i| (i % 256) as u8).collect();
 
             // Test SIMD-optimized extend
-            vec.extend(data.into_iter()).unwrap();
+            vec.extend(data).unwrap();
 
             assert_eq!(vec.len(), 2001);
             assert_eq!(vec[0], 0);

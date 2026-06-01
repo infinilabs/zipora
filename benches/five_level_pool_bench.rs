@@ -3,7 +3,8 @@
 //! This benchmark suite validates the performance characteristics of all 5 levels
 //! and measures the effectiveness of the adaptive selection mechanism.
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::sync::Arc;
 use std::thread;
 use zipora::memory::{

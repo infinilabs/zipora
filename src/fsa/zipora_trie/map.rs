@@ -1,9 +1,9 @@
 use super::config::ZiporaTrieConfig;
 use super::trie::ZiporaTrie;
-use crate::error::Result;
-use crate::fsa::traits::{Trie, FiniteStateAutomaton};
-use crate::succinct::RankSelectOps;
 use crate::StateId;
+use crate::error::Result;
+use crate::fsa::traits::{FiniteStateAutomaton, Trie};
+use crate::succinct::RankSelectOps;
 
 /// Map wrapper for ZiporaTrie that associates values with keys
 ///

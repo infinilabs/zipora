@@ -578,7 +578,7 @@ mod tests {
         assert!(!reader.is_at_end());
 
         let mut buf = [0u8; 5];
-        reader.read(&mut buf).unwrap();
+        reader.read_exact(&mut buf).unwrap();
         assert_eq!(reader.current_position(), 5);
         assert_eq!(reader.remaining(), 8);
     }
@@ -592,10 +592,10 @@ mod tests {
         assert_eq!(reader.progress(), 0.0);
 
         let mut buf = [0u8; 5];
-        reader.read(&mut buf).unwrap();
+        reader.read_exact(&mut buf).unwrap();
         assert_eq!(reader.progress(), 0.5);
 
-        reader.read(&mut buf).unwrap();
+        reader.read_exact(&mut buf).unwrap();
         assert_eq!(reader.progress(), 1.0);
     }
 
@@ -626,7 +626,7 @@ mod tests {
         reader.seek_in_range(7).unwrap();
 
         let mut buf = [0u8; 5];
-        reader.read(&mut buf).unwrap();
+        reader.read_exact(&mut buf).unwrap();
         assert_eq!(&buf, b"World");
     }
 
@@ -708,12 +708,12 @@ mod tests {
 
         // Read some data
         let mut buf = [0u8; 2];
-        reader.read(&mut buf).unwrap();
+        reader.read_exact(&mut buf).unwrap();
         assert_eq!(&buf, b"Wo");
 
         // Reset and read again
         reader.reset().unwrap();
-        reader.read(&mut buf).unwrap();
+        reader.read_exact(&mut buf).unwrap();
         assert_eq!(&buf, b"Wo");
     }
 }

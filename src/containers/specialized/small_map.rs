@@ -689,7 +689,7 @@ impl<K: Clone + PartialEq + Hash + Eq + 'static, V: Clone> Clone for SmallMap<K,
 
         for (key, value) in self.iter() {
             // Clone should not fail since we allocated with same capacity
-            if let Err(_) = new_map.insert(key.clone(), value.clone()) {
+            if new_map.insert(key.clone(), value.clone()).is_err() {
                 // If insert fails, return partial clone
                 break;
             }

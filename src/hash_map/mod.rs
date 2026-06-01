@@ -82,7 +82,7 @@ mod simd_string_ops;
 
 // Core ZiporaHashMap implementation
 pub use zipora_hash_map::{
-    HashMapStats, HashStrategy, OptimizationStrategy, HashStorageStrategy, ZiporaHashMap,
+    HashMapStats, HashStorageStrategy, HashStrategy, OptimizationStrategy, ZiporaHashMap,
     ZiporaHashMapConfig,
 };
 
@@ -157,14 +157,22 @@ mod tests {
 
     #[test]
     fn test_cache_optimized_config() {
-        let result = ZiporaHashMap::<String, i32>::with_config(ZiporaHashMapConfig::cache_optimized());
-        assert!(result.is_err(), "CacheOptimized strategy should be rejected at construction");
+        let result =
+            ZiporaHashMap::<String, i32>::with_config(ZiporaHashMapConfig::cache_optimized());
+        assert!(
+            result.is_err(),
+            "CacheOptimized strategy should be rejected at construction"
+        );
     }
 
     #[test]
     fn test_string_optimized_config() {
-        let result = ZiporaHashMap::<String, i32>::with_config(ZiporaHashMapConfig::string_optimized());
-        assert!(result.is_err(), "StringOptimized strategy should be rejected at construction");
+        let result =
+            ZiporaHashMap::<String, i32>::with_config(ZiporaHashMapConfig::string_optimized());
+        assert!(
+            result.is_err(),
+            "StringOptimized strategy should be rejected at construction"
+        );
     }
 
     #[test]

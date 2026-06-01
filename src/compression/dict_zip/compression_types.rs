@@ -1537,11 +1537,11 @@ mod tests {
 
         let rle = Match::rle(65, 5).unwrap();
         let cost = calculate_encoding_cost(&rle);
-        assert_eq!(cost, 1 * 8); // Reference: 1 byte = 8 bits
+        assert_eq!(cost, 8); // Reference: 1 byte = 8 bits
 
         let near = Match::near_short(3, 4).unwrap();
         let cost = calculate_encoding_cost(&near);
-        assert_eq!(cost, 1 * 8); // Reference: 1 byte = 8 bits
+        assert_eq!(cost, 8); // Reference: 1 byte = 8 bits
     }
 
     #[test]
@@ -2048,8 +2048,8 @@ mod tests {
             ];
 
             // Skip test cases that hit encoding issues with complex matches
-            if let Ok((buffer, _)) = encode_matches(&original_matches) {
-                if let Ok((decoded_matches, _)) = decode_matches(&buffer) {
+            if let Ok((buffer, _)) = encode_matches(&original_matches)
+                && let Ok((decoded_matches, _)) = decode_matches(&buffer) {
                     assert_eq!(original_matches.len(), decoded_matches.len());
                     for (i, (original, decoded)) in original_matches
                         .iter()
@@ -2063,7 +2063,6 @@ mod tests {
                         );
                     }
                 }
-            }
         }
     }
 }
@@ -2544,10 +2543,10 @@ mod reference_tests {
         assert_eq!(cost, 2 * 8); // 2 bytes = 16 bits
 
         let cost = calculate_encoding_cost_reference(1, 5); // RLE
-        assert_eq!(cost, 1 * 8); // 1 byte = 8 bits
+        assert_eq!(cost, 8); // 1 byte = 8 bits
 
         let cost = calculate_encoding_cost_reference(3, 4); // NearShort
-        assert_eq!(cost, 1 * 8); // 1 byte = 8 bits
+        assert_eq!(cost, 8); // 1 byte = 8 bits
 
         let cost = calculate_encoding_cost_reference(100, 20); // Far1Short
         assert_eq!(cost, 2 * 8); // 2 bytes = 16 bits
@@ -2703,9 +2702,9 @@ mod reference_tests {
         let config = FseConfig::default();
         assert_eq!(config.max_symbol, 255);
         assert_eq!(config.table_log, 12);
-        assert_eq!(config.adaptive, true);
+        assert!(config.adaptive);
         assert_eq!(config.compression_level, 3);
-        assert_eq!(config.fast_decode, false);
+        assert!(!config.fast_decode);
 
         let custom_config = FseConfig {
             max_symbol: 255,
@@ -2775,8 +2774,8 @@ mod reference_tests {
         #[cfg(feature = "zstd")]
         {
             // Should succeed for data > 2 bytes
-            if let Ok(success) = compress_result {
-                if success {
+            if let Ok(success) = compress_result
+                && success {
                     assert!(compressed_size > 0);
                     assert!(compressed_size <= test_data.len());
 
@@ -2791,7 +2790,6 @@ mod reference_tests {
                     assert_eq!(decompressed_size, test_data.len());
                     assert_eq!(&decompressed_buffer[..decompressed_size], test_data);
                 }
-            }
         }
 
         // Test with data <= 2 bytes (should return false)
@@ -2799,7 +2797,7 @@ mod reference_tests {
         let tiny_result =
             fse_zip_reference(tiny_data, &mut compressed_buffer, &mut compressed_size);
         assert!(tiny_result.is_ok());
-        assert_eq!(tiny_result.unwrap(), false);
+        assert!(!tiny_result.unwrap());
     }
 
     #[test]

@@ -3,7 +3,8 @@
 //! This benchmark suite tests the performance of the advanced tiered memory
 //! allocator against standard allocation and compares with C++ performance.
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::alloc::{Layout, alloc, dealloc};
 use zipora::memory::{
     MemoryMappedAllocator, MemoryPool, PoolConfig, TieredConfig, TieredMemoryAllocator,

@@ -3,7 +3,8 @@
 //! Comprehensive benchmarks demonstrating the performance improvements
 //! achieved through AVX-512 SIMD optimizations across all major components.
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use zipora::algorithms::{RadixSort, RadixSortConfig};
 use zipora::compression::{Compressor, DictCompressor, HuffmanCompressor};
 use zipora::*;

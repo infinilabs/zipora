@@ -66,13 +66,11 @@ impl Default for PAZipTestConfig {
 }
 
 /// Test data generator for consistent PA-Zip test scenarios
-pub struct PAZipTestDataGenerator {
-    config: PAZipTestConfig,
-}
+pub struct PAZipTestDataGenerator;
 
 impl PAZipTestDataGenerator {
-    pub fn new(config: PAZipTestConfig) -> Self {
-        Self { config }
+    pub fn new(_config: PAZipTestConfig) -> Self {
+        Self
     }
 
     /// Generate highly repetitive text data (good for compression)
@@ -549,7 +547,6 @@ mod local_matcher_tests {
         let stats = matcher.stats();
         assert!(stats.searches_performed >= 5);
         assert!(stats.bytes_added > 0);
-        assert!(stats.simd_time_us >= 0);
 
         Ok(())
     }
@@ -1290,42 +1287,8 @@ mod error_handling_tests {
 // TEST UTILITIES AND HELPERS
 // =============================================================================
 
-/// Test helper for validating compression ratios
-fn validate_compression_ratio(
-    original_size: usize,
-    compressed_size: usize,
-    expected_max_ratio: f64,
-) {
-    let ratio = compressed_size as f64 / original_size as f64;
-    assert!(
-        ratio <= expected_max_ratio,
-        "Compression ratio {:.3} exceeds expected maximum {:.3}",
-        ratio,
-        expected_max_ratio
-    );
-    assert!(ratio >= 0.0, "Compression ratio cannot be negative");
-}
 
-/// Test helper for performance validation
-fn validate_performance_metrics(throughput_bytes_per_sec: f64, min_expected: f64) {
-    assert!(
-        throughput_bytes_per_sec >= min_expected,
-        "Performance {:.0} bytes/sec below minimum expected {:.0} bytes/sec",
-        throughput_bytes_per_sec,
-        min_expected
-    );
-}
 
-/// Test helper for memory usage validation
-fn validate_memory_usage(memory_bytes: usize, max_expected: usize) {
-    assert!(
-        memory_bytes <= max_expected,
-        "Memory usage {} bytes exceeds maximum expected {} bytes",
-        memory_bytes,
-        max_expected
-    );
-    assert!(memory_bytes > 0, "Memory usage should be positive");
-}
 
 // Test runner for comprehensive validation
 #[cfg(test)]

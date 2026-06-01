@@ -94,6 +94,10 @@ pub unsafe extern "C" fn zipora_version() -> *const c_char {
 }
 
 /// Check if SIMD optimizations are available
+///
+/// # Safety
+/// C FFI entry point. Takes no arguments and only reads CPU feature flags, so
+/// it is safe to call from any thread.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zipora_has_simd() -> c_int {
     if crate::has_simd_support() { 1 } else { 0 }
@@ -714,11 +718,10 @@ mod tests {
             CALLBACK_CALLED.store(true, Ordering::SeqCst);
             // SAFETY: msg pointer is valid, passed from set_last_error via CString::as_ptr
             let c_str = unsafe { CStr::from_ptr(msg) };
-            if let Ok(str_slice) = c_str.to_str() {
-                if let Ok(mut callback_msg) = CALLBACK_MESSAGE.lock() {
+            if let Ok(str_slice) = c_str.to_str()
+                && let Ok(mut callback_msg) = CALLBACK_MESSAGE.lock() {
                     *callback_msg = Some(str_slice.to_string());
                 }
-            }
         }
 
         // SAFETY: test calls C API functions with valid callback function pointer

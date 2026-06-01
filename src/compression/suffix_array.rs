@@ -670,11 +670,10 @@ mod tests {
         // Verify suffix array is properly sorted - only validate for valid indices
         let mut valid_suffixes = Vec::new();
         for i in 0..sa.len() {
-            if let Some(pos) = sa.suffix_at_rank(i) {
-                if pos < text.len() {
+            if let Some(pos) = sa.suffix_at_rank(i)
+                && pos < text.len() {
                     valid_suffixes.push((i, pos, &text[pos..]));
                 }
-            }
         }
 
         // Check the valid suffixes are sorted

@@ -15,6 +15,12 @@ pub struct HighPrecisionTimer {
     name: String,
 }
 
+impl Default for HighPrecisionTimer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HighPrecisionTimer {
     /// Create a new timer with a descriptive name
     pub fn new() -> Self {

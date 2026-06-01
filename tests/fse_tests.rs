@@ -125,7 +125,7 @@ fn test_fse_compression_data_types() {
     let mut encoder = FseEncoder::new(FseConfig::balanced()).unwrap();
     let mut decoder = FseDecoder::new();
 
-    let test_cases = vec![
+    let test_cases = [
         // Text with patterns
         b"The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog.".to_vec(),
         
@@ -499,9 +499,7 @@ fn test_fse_data_sizes() {
             vec![b'A'; size]
         } else {
             // Create data with some patterns for better compression
-            "ABCDEF".repeat(size.div_ceil(6))[..size]
-                .as_bytes()
-                .to_vec()
+            "ABCDEF".repeat(size.div_ceil(6)).as_bytes()[..size].to_vec()
         };
 
         let compressed = encoder.compress(&test_data).unwrap();

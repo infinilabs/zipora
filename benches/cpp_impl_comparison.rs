@@ -10,7 +10,8 @@
 //! - Adaptive SIMD selection vs compile-time optimization
 //! - Memory efficiency and overhead ratios
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::time::Duration;
 use zipora::succinct::{
     BitVector,

@@ -1,12 +1,17 @@
-use super::config::{ZiporaTrieConfig, TrieStrategy, TrieStorageStrategy, TrieCompressionStrategy, RankSelectType, BitVectorType};
-use super::storage::{TrieStorage, PatriciaNode, CritBitNode, SparseNode};
+use super::config::{
+    BitVectorType, RankSelectType, TrieCompressionStrategy, TrieStorageStrategy, TrieStrategy,
+    ZiporaTrieConfig,
+};
+use super::storage::{CritBitNode, PatriciaNode, SparseNode, TrieStorage};
 use crate::StateId;
 use crate::containers::FastVec;
 use crate::containers::specialized::UintVector;
 use crate::error::{Result, ZiporaError};
-use crate::fsa::traits::{FiniteStateAutomaton, PrefixIterable, StatisticsProvider, Trie, TrieStats};
-use crate::memory::cache_layout::{CacheLayoutConfig, CacheOptimizedAllocator, PrefetchHint};
+use crate::fsa::traits::{
+    FiniteStateAutomaton, PrefixIterable, StatisticsProvider, Trie, TrieStats,
+};
 use crate::memory::SecureMemoryPool;
+use crate::memory::cache_layout::{CacheLayoutConfig, CacheOptimizedAllocator, PrefetchHint};
 use crate::succinct::{BitVector, RankSelectBuilder, RankSelectOps};
 use std::collections::{HashMap, VecDeque};
 use std::marker::PhantomData;
@@ -1204,6 +1209,7 @@ where
         // Traverse the trie for each symbol in the key
         #[cfg(debug_assertions)]
         let mut pos: usize = 0;
+        #[allow(clippy::explicit_counter_loop)] // `pos` is a debug-only diagnostic counter
         for &symbol in key.iter() {
             // Calculate next state position using base value (bits 0-30)
             let mut base_value = base[current_state as usize] & VALUE_MASK;
@@ -1589,6 +1595,7 @@ where
         // Traverse the trie for each symbol (referenced project line 100-110: state_move)
         #[cfg(debug_assertions)]
         let mut i: usize = 0;
+        #[allow(clippy::explicit_counter_loop)] // `i` is a debug-only diagnostic counter
         for &symbol in key.iter() {
             // SAFETY: We check if base_val exists, then use it
             let base_val = match base.get(current_state as usize) {
@@ -2539,4 +2546,3 @@ where
         Ok(trie)
     }
 }
-

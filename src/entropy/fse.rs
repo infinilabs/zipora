@@ -1479,10 +1479,7 @@ mod tests {
     #[test]
     fn test_hardware_capabilities() {
         let caps = HardwareCapabilities::default();
-        // Just ensure it doesn't crash
-        assert!(caps.bmi2 || !caps.bmi2);
-        assert!(caps.avx2 || !caps.avx2);
-        assert!(caps.popcnt || !caps.popcnt);
+        // Just ensure construction doesn't crash; prefetch defaults to enabled.
         assert!(caps.prefetch);
     }
 }

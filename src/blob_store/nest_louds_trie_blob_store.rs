@@ -103,6 +103,7 @@ pub struct TrieBlobStoreConfig {
 }
 
 impl Default for TrieBlobStoreConfig {
+    #[allow(clippy::field_reassign_with_default)]
     fn default() -> Self {
         // Use Patricia strategy for blob store trie — Patricia node IDs are stable
         // across insertions (no relocation), which is required for node_to_blob_map.
@@ -1825,19 +1826,19 @@ mod tests {
         let _ratio2 = store.compression_ratio(id2).unwrap();
 
         // These might be None if compression isn't tracked at blob level
-        if ratio1.is_some() {
-            assert!(ratio1.unwrap() >= 0.0);
-            assert!(ratio1.unwrap() <= 1.0);
+        if let Some(r) = ratio1 {
+            assert!(r >= 0.0);
+            assert!(r <= 1.0);
         }
 
         // Test compressed size
         let compressed_size1 = store.compressed_size(id1).unwrap();
         let compressed_size2 = store.compressed_size(id2).unwrap();
 
-        if compressed_size1.is_some() && compressed_size2.is_some() {
+        if let (Some(c1), Some(c2)) = (compressed_size1, compressed_size2) {
             // Compressed sizes should be reasonable
-            assert!(compressed_size1.unwrap() > 0);
-            assert!(compressed_size2.unwrap() > 0);
+            assert!(c1 > 0);
+            assert!(c2 > 0);
         }
 
         // Test overall compression stats
@@ -2414,10 +2415,10 @@ mod tests {
 
         // Ratios should be valid if reported
         if let Some(r) = ratio1 {
-            assert!(r >= 0.0 && r <= 1.0);
+            assert!((0.0..=1.0).contains(&r));
         }
         if let Some(r) = ratio2 {
-            assert!(r >= 0.0 && r <= 1.0);
+            assert!((0.0..=1.0).contains(&r));
         }
 
         // Test overall compression statistics

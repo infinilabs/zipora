@@ -456,6 +456,12 @@ impl CpuFeatureSet {
 /// Runtime CPU feature detection interface
 pub struct RuntimeCpuFeatures;
 
+impl Default for RuntimeCpuFeatures {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RuntimeCpuFeatures {
     /// Create a new runtime feature detector
     pub fn new() -> Self {
@@ -1017,7 +1023,7 @@ mod tests {
 
         // Test alignment recommendation
         let alignment = features.recommended_alignment();
-        assert!(alignment >= 8 && alignment <= 64);
+        assert!((8..=64).contains(&alignment));
         assert!(alignment.is_power_of_two());
     }
 

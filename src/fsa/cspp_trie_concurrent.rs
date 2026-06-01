@@ -164,7 +164,12 @@ impl SharedPool {
     /// SAFETY: The caller must ensure the data is immutable (written before parent CAS).
     #[inline(always)]
     unsafe fn raw_ptr(&self, slot: usize) -> *const u8 {
-        debug_assert!(slot < self.data.len(), "slot out of bounds: {} >= {}", slot, self.data.len());
+        debug_assert!(
+            slot < self.data.len(),
+            "slot out of bounds: {} >= {}",
+            slot,
+            self.data.len()
+        );
         // SAFETY: caller guarantees slot is within allocated bounds
         unsafe { self.data.as_ptr().add(slot) as *const u8 }
     }
@@ -1301,9 +1306,7 @@ impl ConcurrentCsppTrie {
                 labels[0] = meta.c_label[0];
                 labels[1] = meta.c_label[1];
                 let pad = self.inner.pool.load_bytes(curr, 1);
-                for i in 2..old_n {
-                    labels[i] = pad[i - 2];
-                }
+                labels[2..old_n].copy_from_slice(&pad[..old_n - 2]);
             }
             7 => {
                 // SAFETY: Reading labels from curr node, immutable after parent CAS.
@@ -1386,9 +1389,7 @@ impl ConcurrentCsppTrie {
                 };
                 self.inner.pool.store_relaxed(node as usize, meta_to_u32(m));
                 let mut pad = [0u8; 4];
-                for i in 2..new_n {
-                    pad[i - 2] = labels[i];
-                }
+                pad[..new_n - 2].copy_from_slice(&labels[2..new_n]);
                 self.inner
                     .pool
                     .store_relaxed(node as usize + 1, u32::from_ne_bytes(pad));
@@ -1455,7 +1456,7 @@ impl ConcurrentCsppTrie {
         // `curr` is a valid node. We are copying the structural part (header and children).
         unsafe {
             let base = self.inner.pool.data.as_ptr() as *mut u8;
-            let src = (self.inner.pool.raw_ptr(curr as usize)) as *const u8;
+            let src = (self.inner.pool.raw_ptr(curr as usize));
             let dst = base.add(suffix_node as usize * 4);
             let struct_size = (old_skip + old_n_children) * ALIGN_SIZE;
             std::ptr::copy_nonoverlapping(src, dst, struct_size);
@@ -1482,7 +1483,7 @@ impl ConcurrentCsppTrie {
             }
             if val_size > 0 {
                 let old_val_off = struct_size + ((zpath_len + 3) & !3);
-                let src = (self.inner.pool.raw_ptr(curr as usize)) as *const u8;
+                let src = (self.inner.pool.raw_ptr(curr as usize));
                 std::ptr::copy_nonoverlapping(
                     src.add(old_val_off),
                     zpath_dst.add(suffix_zpath_padded),
@@ -1548,7 +1549,7 @@ impl ConcurrentCsppTrie {
         // Copying structural part from `curr`.
         unsafe {
             let base = self.inner.pool.data.as_ptr() as *mut u8;
-            let src = (self.inner.pool.raw_ptr(curr as usize)) as *const u8;
+            let src = (self.inner.pool.raw_ptr(curr as usize));
             let dst = base.add(suffix_node as usize * 4);
             let struct_size = (old_skip + old_n_children) * ALIGN_SIZE;
             std::ptr::copy_nonoverlapping(src, dst, struct_size);
@@ -1574,7 +1575,7 @@ impl ConcurrentCsppTrie {
             }
             if val_size > 0 {
                 let old_val_off = struct_size + ((zpath_len + 3) & !3);
-                let src = (self.inner.pool.raw_ptr(curr as usize)) as *const u8;
+                let src = (self.inner.pool.raw_ptr(curr as usize));
                 std::ptr::copy_nonoverlapping(
                     src.add(old_val_off),
                     zpath_dst.add(suffix_zpath_padded),

@@ -411,6 +411,7 @@ where
     }
 
     /// Create a new hash map with specified initial capacity
+    #[allow(clippy::field_reassign_with_default)]
     pub fn with_capacity(capacity: usize) -> Result<Self>
     where
         S: Default,
@@ -565,7 +566,15 @@ where
                 inline_data,
                 fallback,
                 len,
-            } => Self::insert_small_inline(inline_data, fallback, len, key, value, hash, &self.hash_builder),
+            } => Self::insert_small_inline(
+                inline_data,
+                fallback,
+                len,
+                key,
+                value,
+                hash,
+                &self.hash_builder,
+            ),
             HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
                 unreachable!("unimplemented strategies are rejected at construction")
             }
@@ -901,9 +910,14 @@ where
                 entry.value = Some(value);
                 entry.hash = hash;
                 return Ok(None);
-            } else if entry.hash == hash && entry.key.as_ref().expect("occupied entry must have key") == &key {
+            } else if entry.hash == hash
+                && entry.key.as_ref().expect("occupied entry must have key") == &key
+            {
                 // Key exists, update value
-                let old_value = entry.value.replace(value).expect("occupied entry must have previous value");
+                let old_value = entry
+                    .value
+                    .replace(value)
+                    .expect("occupied entry must have previous value");
                 return Ok(Some(old_value));
             }
         }
@@ -924,11 +938,20 @@ where
         // If already migrated to fallback, delegate to Standard storage
         if let Some(fb) = _fallback.as_mut() {
             #[allow(clippy::collapsible_if)]
-            if let HashMapStorage::Standard { buckets, entries, mask, .. } = fb.as_mut() {
-                let result = Self::insert_standard(hash_builder, buckets, entries, mask, key, value, hash)
-                    .map_err(|_| crate::error::ZiporaError::invalid_state(
-                        "Hash table full in SmallInline fallback storage",
-                    ))?;
+            if let HashMapStorage::Standard {
+                buckets,
+                entries,
+                mask,
+                ..
+            } = fb.as_mut()
+            {
+                let result =
+                    Self::insert_standard(hash_builder, buckets, entries, mask, key, value, hash)
+                        .map_err(|_| {
+                        crate::error::ZiporaError::invalid_state(
+                            "Hash table full in SmallInline fallback storage",
+                        )
+                    })?;
                 if result.is_none() {
                     *len += 1;
                 }
@@ -987,14 +1010,36 @@ where
                 // SAFETY: Bit i is set in occupied, so slot i is initialized
                 let (k, v) = unsafe { std::ptr::read(inline_data._data[i].as_ptr()) };
                 let raw_h = hash_builder.hash_one(&k);
-                let h = if raw_h == 0 { 1 } else if raw_h == u64::MAX { u64::MAX - 1 } else { raw_h };
-                let _ = Self::insert_standard(hash_builder, &mut buckets, &mut entries, &mut mask, k, v, h);
+                let h = if raw_h == 0 {
+                    1
+                } else if raw_h == u64::MAX {
+                    u64::MAX - 1
+                } else {
+                    raw_h
+                };
+                let _ = Self::insert_standard(
+                    hash_builder,
+                    &mut buckets,
+                    &mut entries,
+                    &mut mask,
+                    k,
+                    v,
+                    h,
+                );
             }
         }
         inline_data.occupied = 0;
 
         // Insert the new key-value pair
-        let result = Self::insert_standard(hash_builder, &mut buckets, &mut entries, &mut mask, key, value, hash);
+        let result = Self::insert_standard(
+            hash_builder,
+            &mut buckets,
+            &mut entries,
+            &mut mask,
+            key,
+            value,
+            hash,
+        );
         let result = result.map_err(|_| {
             crate::error::ZiporaError::invalid_state("Hash table full after SmallInline migration")
         })?;
@@ -1040,9 +1085,21 @@ where
             } else if entry.hash == u64::MAX {
                 // Tombstone, skip and continue searching
                 continue;
-            } else if entry.hash == hash && entry.key.as_ref().expect("occupied entry must have key").borrow() == key {
+            } else if entry.hash == hash
+                && entry
+                    .key
+                    .as_ref()
+                    .expect("occupied entry must have key")
+                    .borrow()
+                    == key
+            {
                 // Found the key
-                return Some(entry.value.as_ref().expect("occupied entry must have value"));
+                return Some(
+                    entry
+                        .value
+                        .as_ref()
+                        .expect("occupied entry must have value"),
+                );
             }
         }
 
@@ -1063,7 +1120,12 @@ where
         // Check fallback first (migrated data)
         #[allow(clippy::collapsible_if)]
         if let Some(fb) = fallback {
-            if let HashMapStorage::Standard { buckets, entries, mask } = fb.as_ref() {
+            if let HashMapStorage::Standard {
+                buckets,
+                entries,
+                mask,
+            } = fb.as_ref()
+            {
                 let hash = self.hash_key_borrowed(key);
                 return self.get_standard(buckets, entries, mask, key, hash);
             }
@@ -1121,7 +1183,14 @@ where
             } else if entry.hash == u64::MAX {
                 // Tombstone, skip and continue searching
                 continue;
-            } else if entry.hash == hash && entry.key.as_ref().expect("occupied entry must have key").borrow() == key {
+            } else if entry.hash == hash
+                && entry
+                    .key
+                    .as_ref()
+                    .expect("occupied entry must have key")
+                    .borrow()
+                    == key
+            {
                 // Found the key
                 found_index = Some(probe_index);
                 break;
@@ -1130,7 +1199,12 @@ where
 
         // Return mutable reference if found
         if let Some(idx) = found_index {
-            Some(entries[idx].value.as_mut().expect("occupied entry must have value"))
+            Some(
+                entries[idx]
+                    .value
+                    .as_mut()
+                    .expect("occupied entry must have value"),
+            )
         } else {
             None
         }
@@ -1202,7 +1276,14 @@ where
             if entry.hash == 0 {
                 // Empty slot, key not found
                 return None;
-            } else if entry.hash == hash && entry.key.as_ref().expect("occupied entry must have key").borrow() == key {
+            } else if entry.hash == hash
+                && entry
+                    .key
+                    .as_ref()
+                    .expect("occupied entry must have key")
+                    .borrow()
+                    == key
+            {
                 // Found the key, remove it
                 let old_value = entry.value.take().expect("occupied entry must have value");
                 entry.key.take(); // free the key
@@ -1314,7 +1395,6 @@ where
             // Clear fallback if it exists
         }
     }
-
 }
 
 impl<K, V, S> Default for ZiporaHashMap<K, V, S>
@@ -1403,7 +1483,13 @@ where
                     let entry = &entries[self.index];
                     self.index += 1;
                     if entry.hash != 0 && entry.hash != u64::MAX {
-                        return Some((entry.key.as_ref().expect("occupied entry must have key"), entry.value.as_ref().expect("occupied entry must have value")));
+                        return Some((
+                            entry.key.as_ref().expect("occupied entry must have key"),
+                            entry
+                                .value
+                                .as_ref()
+                                .expect("occupied entry must have value"),
+                        ));
                     }
                 }
                 None
@@ -1456,20 +1542,29 @@ mod tests {
 
     #[test]
     fn test_cache_optimized_config() {
-        let result = ZiporaHashMap::<String, i32>::with_config(ZiporaHashMapConfig::cache_optimized());
-        assert!(result.is_err(), "CacheOptimized strategy should be rejected at construction");
+        let result =
+            ZiporaHashMap::<String, i32>::with_config(ZiporaHashMapConfig::cache_optimized());
+        assert!(
+            result.is_err(),
+            "CacheOptimized strategy should be rejected at construction"
+        );
     }
 
     #[test]
     fn test_string_optimized_config() {
-        let result = ZiporaHashMap::<String, i32>::with_config(ZiporaHashMapConfig::string_optimized());
-        assert!(result.is_err(), "StringOptimized strategy should be rejected at construction");
+        let result =
+            ZiporaHashMap::<String, i32>::with_config(ZiporaHashMapConfig::string_optimized());
+        assert!(
+            result.is_err(),
+            "StringOptimized strategy should be rejected at construction"
+        );
     }
 
     #[test]
     fn test_small_inline_config() {
         let mut map: ZiporaHashMap<i32, String> =
-            ZiporaHashMap::with_config(ZiporaHashMapConfig::small_inline(4)).expect("invariant broken");
+            ZiporaHashMap::with_config(ZiporaHashMapConfig::small_inline(4))
+                .expect("invariant broken");
         assert_eq!(map.len(), 0);
 
         // Fill up to inline capacity
@@ -1489,7 +1584,11 @@ mod tests {
     #[test]
     fn test_insert_and_get() {
         let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().expect("invariant broken");
-        assert_eq!(map.insert("hello".to_string(), 42).expect("invariant broken"), None);
+        assert_eq!(
+            map.insert("hello".to_string(), 42)
+                .expect("invariant broken"),
+            None
+        );
         assert_eq!(map.get("hello"), Some(&42));
         assert_eq!(map.len(), 1);
         assert!(!map.is_empty());
@@ -1498,8 +1597,14 @@ mod tests {
     #[test]
     fn test_insert_overwrite_returns_old_value() {
         let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().expect("invariant broken");
-        assert_eq!(map.insert("key".to_string(), 1).expect("invariant broken"), None);
-        assert_eq!(map.insert("key".to_string(), 2).expect("invariant broken"), Some(1));
+        assert_eq!(
+            map.insert("key".to_string(), 1).expect("invariant broken"),
+            None
+        );
+        assert_eq!(
+            map.insert("key".to_string(), 2).expect("invariant broken"),
+            Some(1)
+        );
         assert_eq!(map.get("key"), Some(&2));
         assert_eq!(map.len(), 1);
     }
@@ -1651,10 +1756,15 @@ mod tests {
     #[test]
     fn test_tombstone_slot_reuse_same_key() {
         let mut map: ZiporaHashMap<String, i32> = ZiporaHashMap::new().expect("invariant broken");
-        map.insert("reuse".to_string(), 1).expect("invariant broken");
+        map.insert("reuse".to_string(), 1)
+            .expect("invariant broken");
         map.remove("reuse");
         // Re-inserting same key should work (tombstone slot eligible)
-        assert_eq!(map.insert("reuse".to_string(), 2).expect("invariant broken"), None);
+        assert_eq!(
+            map.insert("reuse".to_string(), 2)
+                .expect("invariant broken"),
+            None
+        );
         assert_eq!(map.get("reuse"), Some(&2));
     }
 
@@ -1664,7 +1774,8 @@ mod tests {
         // guaranteeing a linear probe chain: slot 1, 2, 3, ...
         let config = ZiporaHashMapConfig::default();
         let mut map: ZiporaHashMap<i32, i32, FixedHashBuilder> =
-            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(42)).expect("invariant broken");
+            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(42))
+                .expect("invariant broken");
 
         // All three keys hash to 42 → same initial slot → probe chain
         map.insert(1, 10).expect("invariant broken");
@@ -1686,7 +1797,8 @@ mod tests {
     fn test_multiple_tombstones_in_chain() {
         let config = ZiporaHashMapConfig::default();
         let mut map: ZiporaHashMap<i32, i32, FixedHashBuilder> =
-            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(7)).expect("invariant broken");
+            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(7))
+                .expect("invariant broken");
 
         for i in 0..6 {
             map.insert(i, i * 100).expect("invariant broken");
@@ -1712,7 +1824,8 @@ mod tests {
         // All keys hash to raw 0 → sanitized to 1
         let config = ZiporaHashMapConfig::default();
         let mut map: ZiporaHashMap<i32, i32, FixedHashBuilder> =
-            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(0)).expect("invariant broken");
+            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(0))
+                .expect("invariant broken");
 
         map.insert(10, 100).expect("invariant broken");
         map.insert(20, 200).expect("invariant broken");
@@ -1729,7 +1842,8 @@ mod tests {
         // All keys hash to raw u64::MAX → sanitized to u64::MAX - 1
         let config = ZiporaHashMapConfig::default();
         let mut map: ZiporaHashMap<i32, i32, FixedHashBuilder> =
-            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(u64::MAX)).expect("invariant broken");
+            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(u64::MAX))
+                .expect("invariant broken");
 
         map.insert(10, 100).expect("invariant broken");
         map.insert(20, 200).expect("invariant broken");
@@ -1745,7 +1859,8 @@ mod tests {
     fn test_hash_sentinel_max_with_get_mut() {
         let config = ZiporaHashMapConfig::default();
         let mut map: ZiporaHashMap<i32, i32, FixedHashBuilder> =
-            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(u64::MAX)).expect("invariant broken");
+            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(u64::MAX))
+                .expect("invariant broken");
 
         map.insert(1, 10).expect("invariant broken");
         if let Some(v) = map.get_mut(&1) {
@@ -1804,7 +1919,8 @@ mod tests {
         // Directly exercise the backward_shift_delete method
         let config = ZiporaHashMapConfig::default();
         let mut map: ZiporaHashMap<i32, i32, FixedHashBuilder> =
-            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(0)).expect("invariant broken");
+            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(0))
+                .expect("invariant broken");
 
         // Insert 4 keys — all collide, forming a probe chain
         map.insert(1, 10).expect("invariant broken");
@@ -1893,10 +2009,12 @@ mod tests {
 
     #[test]
     fn test_string_keys() {
-        let mut map: ZiporaHashMap<String, String> = ZiporaHashMap::new().expect("invariant broken");
+        let mut map: ZiporaHashMap<String, String> =
+            ZiporaHashMap::new().expect("invariant broken");
         map.insert("hello".to_string(), "world".to_string())
             .expect("invariant broken");
-        map.insert("foo".to_string(), "bar".to_string()).expect("invariant broken");
+        map.insert("foo".to_string(), "bar".to_string())
+            .expect("invariant broken");
         assert_eq!(map.get("hello"), Some(&"world".to_string()));
         assert_eq!(map.get("foo"), Some(&"bar".to_string()));
         map.remove("hello");
@@ -1906,7 +2024,8 @@ mod tests {
 
     #[test]
     fn test_with_capacity() {
-        let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::with_capacity(64).expect("invariant broken");
+        let mut map: ZiporaHashMap<i32, i32> =
+            ZiporaHashMap::with_capacity(64).expect("invariant broken");
         assert!(map.capacity() >= 64);
         for i in 0..64 {
             map.insert(i, i).expect("invariant broken");
@@ -1944,7 +2063,8 @@ mod tests {
         // All keys hash identically — worst-case linear probing
         let config = ZiporaHashMapConfig::default();
         let mut map: ZiporaHashMap<i32, i32, FixedHashBuilder> =
-            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(99)).expect("invariant broken");
+            ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(99))
+                .expect("invariant broken");
 
         let n = 50;
         for i in 0..n {
@@ -2016,7 +2136,12 @@ mod tests {
 
         // All 17 entries must be retrievable
         for i in 0..=16 {
-            assert_eq!(map.get(&i), Some(&(i * 10)), "key {} missing after fallback", i);
+            assert_eq!(
+                map.get(&i),
+                Some(&(i * 10)),
+                "key {} missing after fallback",
+                i
+            );
         }
 
         // Further inserts into fallback storage should work

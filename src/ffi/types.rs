@@ -13,6 +13,12 @@ pub struct CFastVec {
     inner: crate::containers::FastVec<u8>,
 }
 
+impl Default for CFastVec {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CFastVec {
     /// Create a new empty FastVec for C FFI
     pub fn new() -> Self {
@@ -33,6 +39,12 @@ impl CFastVec {
         self.inner.len()
     }
 
+    /// Returns `true` if the vector contains no elements
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
     /// Get a reference to the element at the given index
     #[inline]
     pub fn get(&self, index: usize) -> Option<&u8> {
@@ -50,6 +62,12 @@ pub struct CMemoryPool {
 #[repr(C)]
 pub struct CBlobStore {
     inner: crate::blob_store::MemoryBlobStore,
+}
+
+impl Default for CBlobStore {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CBlobStore {

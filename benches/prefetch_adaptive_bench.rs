@@ -10,7 +10,8 @@
 //! - Single operations vs bulk operations (with lookahead prefetching)
 //! - Cache-optimized vs adaptive SIMD vs fully optimized
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use zipora::RankSelectPerformanceOps;
 use zipora::succinct::BitVector;
 use zipora::succinct::rank_select::RankSelectOps;

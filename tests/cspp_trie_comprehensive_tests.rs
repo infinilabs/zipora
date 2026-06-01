@@ -117,7 +117,7 @@ fn test_pathological_single_char_nesting() {
     }
 
     // Verify non-existent
-    assert!(!trie.contains(&vec![b'a'; 101]));
+    assert!(!trie.contains(&[b'a'; 101]));
     assert!(!trie.contains(b"b"));
 }
 

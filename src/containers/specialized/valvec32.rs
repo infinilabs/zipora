@@ -1374,8 +1374,10 @@ mod tests {
     #[test]
     fn test_branch_prediction_hints() {
         // Test that likely macro works correctly (just passes through on stable)
-        assert!(likely!(true));
-        assert!(!likely!(false));
+        let t = true;
+        let f = false;
+        assert!(likely!(t));
+        assert!(!likely!(f));
     }
 
     #[test]

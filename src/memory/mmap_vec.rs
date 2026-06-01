@@ -757,6 +757,9 @@ where
             .as_ref()
             .ok_or_else(|| ZiporaError::invalid_data("No memory mapping"))?;
 
+        // clippy::unnecessary_cast false positive: the cast pins the byte (*mut u8)
+        // target type; without it the element type T is ambiguous (E0282).
+        #[allow(clippy::unnecessary_cast)]
         let base_ptr = mmap.as_ptr() as *mut u8;
 
         // Header is at the beginning
@@ -857,7 +860,7 @@ where
             .map_err(|e| ZiporaError::io_error(format!("Failed to resize file: {}", e)))?;
 
         // Recreate memory mapping with new size
-        drop(self.mmap.take()); // Unmap old mapping
+        self.mmap.take(); // Unmap old mapping
         self.mmap = Some(Self::create_mmap(&self.file_path, &self.config)?);
 
         // Update pointers
@@ -1214,7 +1217,7 @@ where
 impl<T> Drop for MmapVec<T> {
     fn drop(&mut self) {
         // Drop the mmap first to ensure munmap happens before file deletion
-        drop(self.mmap.take());
+        self.mmap.take();
 
         // Clean up temporary files
         if self.is_temp_file && self.file_path.exists() {
@@ -1556,7 +1559,7 @@ mod tests {
 
         // Extend with an iterator
         let more_data = vec![100, 200, 300];
-        vec.extend(more_data.into_iter()).unwrap();
+        vec.extend(more_data).unwrap();
         assert_eq!(vec.len(), 13);
         assert_eq!(vec.get(10), Some(&100));
         assert_eq!(vec.get(12), Some(&300));
@@ -1700,7 +1703,7 @@ mod tests {
         vec.push_bulk_simd(&items).unwrap();
 
         assert_eq!(vec.len(), 1000);
-        assert_eq!(&vec.as_slice()[..], &items[..]);
+        assert_eq!(vec.as_slice(), &items[..]);
     }
 
     #[test]

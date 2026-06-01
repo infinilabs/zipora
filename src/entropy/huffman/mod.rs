@@ -13,19 +13,19 @@
 //! Huffman Order-1 encoding/decoding. Interleaving splits the input into N independent
 //! streams that can be processed in parallel, improving throughput on modern CPUs.
 
-mod tree;
-mod encoder;
 mod decoder;
+mod encoder;
 mod interleaved;
 #[cfg(test)]
 mod tests;
+mod tree;
 
-pub use tree::HuffmanTree;
-pub use encoder::{HuffmanEncSymbol, HuffmanEncoder};
 pub use decoder::HuffmanDecoder;
+pub use encoder::{HuffmanEncSymbol, HuffmanEncoder};
 pub use interleaved::{
     ContextualHuffmanDecoder, ContextualHuffmanEncoder, HuffmanOrder, InterleavingFactor,
 };
+pub use tree::HuffmanTree;
 
 // Re-export internal types for tests
 #[cfg(test)]

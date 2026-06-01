@@ -10,7 +10,8 @@
 //! - Sizes: 4KB, 128KB, 4MB, 128MB
 //! - Metrics: ns/op, Gops/s, memory overhead, checksums
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use std::hint::black_box;
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::time::Instant;
 use zipora::{
     BitVector,

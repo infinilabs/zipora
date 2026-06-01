@@ -4,7 +4,8 @@
 //! against the baseline and measures performance across different text types,
 //! sizes, and configurations.
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::time::Duration;
 use zipora::algorithms::suffix_array::SuffixArray as BaseSuffixArray;
 use zipora::compression::suffix_array::{SuffixArrayCompressor, SuffixArrayConfig};

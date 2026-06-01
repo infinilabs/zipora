@@ -115,7 +115,11 @@ pub(crate) fn chunk_skip_to_high(chunk: &ChunkView<'_>, target_high: usize) -> (
     // Pre-compute the mask for the last word (all other words use u64::MAX)
     let last_valid_bits = {
         let rem = chunk.high_len_bits % 64;
-        if rem == 0 && chunk.high_len_bits > 0 { 64 } else { rem }
+        if rem == 0 && chunk.high_len_bits > 0 {
+            64
+        } else {
+            rem
+        }
     };
     let last_word_mask = if last_valid_bits >= 64 {
         u64::MAX
@@ -125,7 +129,11 @@ pub(crate) fn chunk_skip_to_high(chunk: &ChunkView<'_>, target_high: usize) -> (
 
     for (wi, &w) in chunk.high_bits.iter().enumerate() {
         let valid_bits = if wi == last_wi { last_valid_bits } else { 64 };
-        let valid_mask = if wi == last_wi { last_word_mask } else { u64::MAX };
+        let valid_mask = if wi == last_wi {
+            last_word_mask
+        } else {
+            u64::MAX
+        };
         let masked = w & valid_mask;
 
         let ones = masked.count_ones() as usize;

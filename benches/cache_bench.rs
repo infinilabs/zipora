@@ -3,7 +3,8 @@
 //! These benchmarks compare cache-aligned data structures against standard ones
 //! to measure the performance impact of cache optimization.
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use zipora::{
     CacheAlignedVec, FastVec, get_numa_stats, get_optimal_numa_node, init_numa_pools,
     set_current_numa_node,

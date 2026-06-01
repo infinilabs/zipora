@@ -641,9 +641,8 @@ mod tests {
         let bytes = output.into_vec();
 
         let mut input = SliceDataInput::new(&bytes);
-        let deserialized = <()>::deserialize_with_version(&mut input, 1).unwrap();
-
-        assert_eq!(deserialized, tuple);
+        // Deserializing the unit type must succeed; the value itself is always ().
+        <()>::deserialize_with_version(&mut input, 1).unwrap();
     }
 
     #[test]

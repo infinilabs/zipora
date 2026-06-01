@@ -269,6 +269,7 @@ fn test_file_serialization() -> Result<()> {
 
 /// Test configuration validation edge cases
 #[test]
+#[allow(clippy::field_reassign_with_default)]
 fn test_validation_edge_cases() {
     // Test NestLoudsTrieConfig validation
     let mut nest_config = NestLoudsTrieConfig::default();
@@ -418,12 +419,13 @@ fn test_optimization_flags() {
 
 /// Test memory config effective values
 #[test]
+#[allow(clippy::field_reassign_with_default)]
 fn test_memory_config_effective_values() {
     let config = MemoryConfig::default();
 
     // Test effective cache line size
     let cache_line_size = config.effective_cache_line_size();
-    assert!(cache_line_size >= 32 && cache_line_size <= 128);
+    assert!((32..=128).contains(&cache_line_size));
 
     // Test effective num pools for different strategies
     let mut config = MemoryConfig::default();

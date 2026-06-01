@@ -218,11 +218,7 @@ impl FiberPool {
         let completed = self.stats.completed.load(Ordering::Relaxed);
         let total_time = self.stats.total_execution_time_us.load(Ordering::Relaxed);
 
-        let avg_execution_time_us = if completed > 0 {
-            total_time / completed
-        } else {
-            0
-        };
+        let avg_execution_time_us = total_time.checked_div(completed).unwrap_or(0);
 
         let active_fibers = self.stats.active_fibers.load(Ordering::Relaxed);
         let queue_utilization = active_fibers as f64 / self.config.max_fibers as f64;
