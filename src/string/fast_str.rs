@@ -781,7 +781,7 @@ impl<'a> fmt::Display for FastStr<'a> {
 
 impl<'a> PartialOrd for FastStr<'a> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.compare(*other))
+        Some(self.cmp(other))
     }
 }
 

@@ -131,27 +131,13 @@ fn bench_string_avx512(c: &mut Criterion) {
         // Benchmark AVX2 hashing
         #[cfg(target_arch = "x86_64")]
         group.bench_with_input(BenchmarkId::new("hash_avx2", size), &fs_large, |b, fs| {
-            b.iter(|| {
-                if std::arch::is_x86_feature_detected!("avx2") {
-                    black_box(fs.hash_fast()) // Use public API instead of private hash_avx2
-                } else {
-                    black_box(fs.hash_fast())
-                }
-            });
+            b.iter(|| black_box(fs.hash_fast())); // public API
         });
 
         // Benchmark AVX-512 hashing
         #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
         group.bench_with_input(BenchmarkId::new("hash_avx512", size), &fs_large, |b, fs| {
-            b.iter(|| {
-                if std::arch::is_x86_feature_detected!("avx512f")
-                    && std::arch::is_x86_feature_detected!("avx512bw")
-                {
-                    black_box(fs.hash_fast()) // Use public API instead of private hash_avx512
-                } else {
-                    black_box(fs.hash_fast())
-                }
-            });
+            b.iter(|| black_box(fs.hash_fast())); // public API
         });
 
         // Benchmark adaptive hashing
