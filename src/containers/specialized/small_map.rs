@@ -77,6 +77,9 @@ where
 }
 
 /// Internal storage representation for SmallMap
+// clippy::large_enum_variant: the inline `Small` variant IS the design (cache-friendly
+// small-map storage); boxing it would defeat SmallMap's purpose.
+#[allow(clippy::large_enum_variant)]
 enum SmallMapStorage<K, V>
 where
     K: Clone + std::hash::Hash + Eq,

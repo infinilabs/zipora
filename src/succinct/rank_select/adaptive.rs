@@ -492,9 +492,10 @@ impl AdaptiveRankSelect {
         match provided {
             AccessPattern::Mixed => {
                 // Infer pattern from data characteristics
-                if run_stats.avg_ones_run > 32.0 || run_stats.avg_zeros_run > 32.0 {
-                    AccessPattern::Sequential
-                } else if complexity < 0.3 {
+                if run_stats.avg_ones_run > 32.0
+                    || run_stats.avg_zeros_run > 32.0
+                    || complexity < 0.3
+                {
                     AccessPattern::Sequential
                 } else if complexity > 0.7 {
                     AccessPattern::Random

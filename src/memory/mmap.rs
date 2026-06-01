@@ -53,6 +53,9 @@ pub struct MmapStats {
 
 impl MemoryMappedAllocator {
     /// Create a new memory-mapped allocator
+    // clippy::arc_with_non_send_sync: intentional — `unsafe impl Send/Sync for
+    // MemoryMappedAllocator` soundly asserts cross-thread safety of the pointer cache.
+    #[allow(clippy::arc_with_non_send_sync)]
     pub fn new(min_mmap_size: usize) -> Self {
         Self {
             min_mmap_size,
