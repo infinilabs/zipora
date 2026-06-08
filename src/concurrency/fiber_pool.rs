@@ -165,6 +165,7 @@ impl FiberPool {
     }
 
     /// Create a fiber pool with default configuration
+    #[allow(clippy::should_implement_trait)] // inherent default() returns Result; cannot implement Default trait
     pub fn default() -> Result<Self> {
         Self::new(FiberPoolConfig::default())
     }

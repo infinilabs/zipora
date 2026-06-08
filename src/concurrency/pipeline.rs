@@ -772,6 +772,8 @@ mod tests {
     use super::*;
     use tokio;
 
+    type SimpleBatchFn = fn(Vec<i32>) -> Result<Vec<i32>>;
+
     #[tokio::test]
     async fn test_pipeline_creation() {
         let pipeline = Pipeline::new(PipelineConfig::default());
@@ -910,7 +912,7 @@ mod tests {
     #[tokio::test]
     async fn test_batch_map_stage_individual() {
         let pipeline = Pipeline::new(PipelineConfig::default());
-        let stage: BatchMapStage<_, fn(Vec<i32>) -> Result<Vec<i32>>> =
+        let stage: BatchMapStage<_, SimpleBatchFn> =
             BatchMapStage::new("multiply".to_string(), |x: i32| Ok(x * 3));
 
         let result = pipeline.execute_single(stage, 7).await.unwrap();
@@ -1201,7 +1203,7 @@ mod tests {
     #[tokio::test]
     async fn test_batch_map_stage_individual_only() {
         let pipeline = Pipeline::new(PipelineConfig::default());
-        let stage: BatchMapStage<_, fn(Vec<i32>) -> Result<Vec<i32>>> =
+        let stage: BatchMapStage<_, SimpleBatchFn> =
             BatchMapStage::new("square".to_string(), |x: i32| Ok(x * x));
 
         assert!(!stage.supports_batching());
@@ -1260,7 +1262,7 @@ mod tests {
         assert_eq!(results, vec![11, 21, 31]);
 
         // Test stage without batch function falls back properly
-        let simple_stage: BatchMapStage<_, fn(Vec<i32>) -> Result<Vec<i32>>> =
+        let simple_stage: BatchMapStage<_, SimpleBatchFn> =
             BatchMapStage::new("multiply_by_3".to_string(), |x: i32| Ok(x * 3));
 
         let inputs2 = vec![1, 2, 3];
@@ -1270,7 +1272,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch_map_stage_with_max_concurrency() {
-        let stage: BatchMapStage<_, fn(Vec<i32>) -> Result<Vec<i32>>> =
+        let stage: BatchMapStage<_, SimpleBatchFn> =
             BatchMapStage::new("test".to_string(), |x: i32| Ok(x)).with_max_concurrency(4);
 
         assert_eq!(stage.max_concurrency(), 4);
@@ -1369,7 +1371,7 @@ mod tests {
     async fn test_batch_map_stage_performance_comparison() {
         use std::time::Instant;
 
-        let individual_stage: BatchMapStage<_, fn(Vec<i32>) -> Result<Vec<i32>>> =
+        let individual_stage: BatchMapStage<_, SimpleBatchFn> =
             BatchMapStage::new("individual".to_string(), |x: i32| {
                 // Simulate some processing time
                 std::thread::sleep(Duration::from_nanos(100));
@@ -1758,7 +1760,7 @@ mod tests {
             .build();
 
         // Create stages with measurable work
-        let individual_stage: BatchMapStage<_, fn(Vec<i32>) -> Result<Vec<i32>>> =
+        let individual_stage: BatchMapStage<_, SimpleBatchFn> =
             BatchMapStage::new("cpu_work".to_string(), |x: i32| {
                 // Simulate CPU work
                 let mut sum = 0;

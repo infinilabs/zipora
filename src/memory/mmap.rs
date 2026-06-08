@@ -24,6 +24,12 @@ pub struct MemoryMappedAllocator {
     cache_misses: AtomicU64,
 }
 
+impl Default for MemoryMappedAllocator {
+    fn default() -> Self {
+        Self::new(16 * 1024)
+    }
+}
+
 /// Information about a memory-mapped allocation
 #[derive(Debug)]
 pub struct MmapAllocation {
@@ -69,10 +75,7 @@ impl MemoryMappedAllocator {
         }
     }
 
-    /// Create allocator with default settings (16KB minimum)
-    pub fn default() -> Self {
-        Self::new(16 * 1024)
-    }
+
 
     /// Allocate memory using mmap for optimal large allocation performance
     pub fn allocate(&self, size: usize) -> Result<MmapAllocation> {

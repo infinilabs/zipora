@@ -791,6 +791,7 @@ impl CsppTrie {
     }
 
     /// Build a cnt_type 8 (bitmap) node from sorted labels and children.
+    #[allow(clippy::too_many_arguments)] // internal recursive helper; arg bundle would add indirection on a hot path
     fn build_bitmap_node(
         &mut self,
         labels: &[u8],
@@ -1102,6 +1103,7 @@ impl CsppTrie {
     /// Split a node at a zpath mismatch position.
     /// Creates a new parent (cnt_type=2) with two children: old suffix and new suffix.
     /// Returns (new_parent_slot, old_suffix_slot).
+    #[allow(clippy::too_many_arguments)] // internal recursive helper; arg bundle would add indirection on a hot path
     fn fork(
         &mut self,
         curr: u32,
@@ -1187,6 +1189,7 @@ impl CsppTrie {
     /// Split at a position where the key is a prefix of an existing node's zpath.
     /// Creates a prefix node (cnt_type=1, is_final) and a suffix node.
     /// Returns (prefix_node_slot, valpos).
+    #[allow(clippy::too_many_arguments)] // internal recursive helper; arg bundle would add indirection on a hot path
     fn split_zpath(
         &mut self,
         curr: u32,

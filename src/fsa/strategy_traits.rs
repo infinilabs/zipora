@@ -510,6 +510,7 @@ impl PatriciaAlgorithmStrategy {
         key[start_pos..start_pos + path.len()] == *path
     }
 
+    #[allow(clippy::too_many_arguments)] // internal helper; arg bundle would add indirection
     fn split_compressed_path(
         &self,
         _context: &mut PatriciaContext,

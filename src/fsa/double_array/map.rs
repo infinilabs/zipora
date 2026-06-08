@@ -395,6 +395,7 @@ impl<'a, V: MapValue> DoubleArrayTrieMapCursor<'a, V> {
     }
 
     /// Advance to the next key.
+    #[allow(clippy::should_implement_trait)] // inherent next() mutates cursor in-place and returns success bool; not std::iter::Iterator
     pub fn next(&mut self) -> bool {
         self.inner.next()
     }

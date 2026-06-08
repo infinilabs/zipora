@@ -269,53 +269,76 @@ fn test_file_serialization() -> Result<()> {
 
 /// Test configuration validation edge cases
 #[test]
-#[allow(clippy::field_reassign_with_default)]
 fn test_validation_edge_cases() {
     // Test NestLoudsTrieConfig validation
-    let mut nest_config = NestLoudsTrieConfig::default();
 
     // Test invalid nest level
-    nest_config.nest_level = 0;
-    assert!(nest_config.validate().is_err());
+    let nest_config_invalid_level1 = NestLoudsTrieConfig {
+        nest_level: 0,
+        ..NestLoudsTrieConfig::default()
+    };
+    assert!(nest_config_invalid_level1.validate().is_err());
 
-    nest_config.nest_level = 17;
-    assert!(nest_config.validate().is_err());
+    let nest_config_invalid_level2 = NestLoudsTrieConfig {
+        nest_level: 17,
+        ..NestLoudsTrieConfig::default()
+    };
+    assert!(nest_config_invalid_level2.validate().is_err());
 
     // Test invalid compression level
-    nest_config = NestLoudsTrieConfig::default();
-    nest_config.core_str_compression_level = 23;
-    assert!(nest_config.validate().is_err());
+    let nest_config_invalid_comp = NestLoudsTrieConfig {
+        core_str_compression_level: 23,
+        ..NestLoudsTrieConfig::default()
+    };
+    assert!(nest_config_invalid_comp.validate().is_err());
 
     // Test invalid load factor
-    nest_config = NestLoudsTrieConfig::default();
-    nest_config.load_factor = 0.0;
-    assert!(nest_config.validate().is_err());
+    let nest_config_invalid_load1 = NestLoudsTrieConfig {
+        load_factor: 0.0,
+        ..NestLoudsTrieConfig::default()
+    };
+    assert!(nest_config_invalid_load1.validate().is_err());
 
-    nest_config.load_factor = 1.0;
-    assert!(nest_config.validate().is_err());
+    let nest_config_invalid_load2 = NestLoudsTrieConfig {
+        load_factor: 1.0,
+        ..NestLoudsTrieConfig::default()
+    };
+    assert!(nest_config_invalid_load2.validate().is_err());
 
     // Test MemoryConfig validation
-    let mut memory_config = MemoryConfig::default();
 
     // Test invalid initial pool size
-    memory_config.initial_pool_size = 0;
-    assert!(memory_config.validate().is_err());
+    let memory_config_invalid_size = MemoryConfig {
+        initial_pool_size: 0,
+        ..MemoryConfig::default()
+    };
+    assert!(memory_config_invalid_size.validate().is_err());
 
     // Test invalid growth factor
-    memory_config = MemoryConfig::default();
-    memory_config.growth_factor = 0.5;
-    assert!(memory_config.validate().is_err());
+    let memory_config_invalid_growth1 = MemoryConfig {
+        growth_factor: 0.5,
+        ..MemoryConfig::default()
+    };
+    assert!(memory_config_invalid_growth1.validate().is_err());
 
-    memory_config.growth_factor = 5.0;
-    assert!(memory_config.validate().is_err());
+    let memory_config_invalid_growth2 = MemoryConfig {
+        growth_factor: 5.0,
+        ..MemoryConfig::default()
+    };
+    assert!(memory_config_invalid_growth2.validate().is_err());
 
     // Test invalid alignment (not power of 2)
-    memory_config = MemoryConfig::default();
-    memory_config.alignment = 3;
-    assert!(memory_config.validate().is_err());
+    let memory_config_invalid_align1 = MemoryConfig {
+        alignment: 3,
+        ..MemoryConfig::default()
+    };
+    assert!(memory_config_invalid_align1.validate().is_err());
 
-    memory_config.alignment = 0;
-    assert!(memory_config.validate().is_err());
+    let memory_config_invalid_align2 = MemoryConfig {
+        alignment: 0,
+        ..MemoryConfig::default()
+    };
+    assert!(memory_config_invalid_align2.validate().is_err());
 }
 
 /// Test builder patterns
@@ -419,7 +442,6 @@ fn test_optimization_flags() {
 
 /// Test memory config effective values
 #[test]
-#[allow(clippy::field_reassign_with_default)]
 fn test_memory_config_effective_values() {
     let config = MemoryConfig::default();
 
@@ -428,20 +450,30 @@ fn test_memory_config_effective_values() {
     assert!((32..=128).contains(&cache_line_size));
 
     // Test effective num pools for different strategies
-    let mut config = MemoryConfig::default();
+    let config_system = MemoryConfig {
+        allocation_strategy: AllocationStrategy::System,
+        ..MemoryConfig::default()
+    };
+    assert_eq!(config_system.effective_num_pools(), 1);
 
-    config.allocation_strategy = AllocationStrategy::System;
-    assert_eq!(config.effective_num_pools(), 1);
+    let config_lockfree = MemoryConfig {
+        allocation_strategy: AllocationStrategy::LockFree,
+        num_pools: 16,
+        ..MemoryConfig::default()
+    };
+    assert_eq!(config_lockfree.effective_num_pools(), 16);
 
-    config.allocation_strategy = AllocationStrategy::LockFree;
-    config.num_pools = 16;
-    assert_eq!(config.effective_num_pools(), 16);
+    let config_tls = MemoryConfig {
+        allocation_strategy: AllocationStrategy::ThreadLocal,
+        ..MemoryConfig::default()
+    };
+    assert!(config_tls.effective_num_pools() >= 1); // Should be >= number of CPUs
 
-    config.allocation_strategy = AllocationStrategy::ThreadLocal;
-    assert!(config.effective_num_pools() >= 1); // Should be >= number of CPUs
-
-    config.allocation_strategy = AllocationStrategy::FixedCapacity;
-    assert_eq!(config.effective_num_pools(), 1);
+    let config_fixed = MemoryConfig {
+        allocation_strategy: AllocationStrategy::FixedCapacity,
+        ..MemoryConfig::default()
+    };
+    assert_eq!(config_fixed.effective_num_pools(), 1);
 }
 
 /// Test JSON serialization compatibility

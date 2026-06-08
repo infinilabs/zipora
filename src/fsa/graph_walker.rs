@@ -758,6 +758,7 @@ impl FastBfsWalker {
 
     /// Get next vertex in BFS order.
     #[inline]
+    #[allow(clippy::should_implement_trait)] // inherent next() returns u32 and requires manual is_finished check; not std::iter::Iterator
     pub fn next(&mut self) -> u32 {
         debug_assert!(self.idx <= self.q1.len());
         if self.idx == self.q1.len() {
@@ -827,6 +828,7 @@ impl FastDfsWalker {
 
     /// Get next vertex in DFS order.
     #[inline]
+    #[allow(clippy::should_implement_trait)] // inherent next() returns u32 and requires manual is_finished check; not std::iter::Iterator
     pub fn next(&mut self) -> u32 {
         debug_assert!(!self.stack.is_empty());
         self.stack
@@ -882,6 +884,7 @@ impl FastCfsWalker {
     }
 
     #[inline]
+    #[allow(clippy::should_implement_trait)] // inherent next() returns u32 and requires manual is_finished check; not std::iter::Iterator
     pub fn next(&mut self) -> u32 {
         if self.depth < Self::MAX_BFS_DEPTH {
             if self.q1_pos < self.q1.len() {

@@ -477,10 +477,11 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::field_reassign_with_default)]
     fn test_large_intersection_general_algorithm() {
-        let mut config = SetOperationsConfig::default();
-        config.bit_mask_threshold = 2; // Force general algorithm
+        let config = SetOperationsConfig {
+            bit_mask_threshold: 2, // Force general algorithm
+            ..Default::default()
+        };
 
         let mut ops = SetOperations::with_config(config);
 

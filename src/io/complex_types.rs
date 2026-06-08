@@ -451,15 +451,16 @@ pub struct ComplexTypeSerializer {
     config: ComplexTypeConfig,
 }
 
+impl Default for ComplexTypeSerializer {
+    fn default() -> Self {
+        Self::new(ComplexTypeConfig::default())
+    }
+}
+
 impl ComplexTypeSerializer {
     /// Create a new serializer with the given configuration
     pub fn new(config: ComplexTypeConfig) -> Self {
         Self { config }
-    }
-
-    /// Create a serializer with default configuration
-    pub fn default() -> Self {
-        Self::new(ComplexTypeConfig::default())
     }
 
     /// Serialize a complex type to bytes

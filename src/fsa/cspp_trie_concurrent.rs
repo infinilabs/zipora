@@ -1124,6 +1124,7 @@ impl ConcurrentCsppTrie {
         (head, valpos)
     }
 
+    #[allow(clippy::too_many_arguments)] // internal recursive helper; arg bundle would add indirection on a hot path
     fn build_bitmap_node(
         &self,
         labels: &[u8],
@@ -1432,6 +1433,7 @@ impl ConcurrentCsppTrie {
         node
     }
 
+    #[allow(clippy::too_many_arguments)] // internal recursive helper; arg bundle would add indirection on a hot path
     fn fork(
         &self,
         curr: u32,
@@ -1527,6 +1529,7 @@ impl ConcurrentCsppTrie {
     }
 
     /// Returns (prefix_node, valpos, suffix_node_copy).
+    #[allow(clippy::too_many_arguments)] // internal recursive helper; arg bundle would add indirection on a hot path
     fn split_zpath(
         &self,
         curr: u32,

@@ -17,10 +17,12 @@ struct InvalidationTracker {
     access_times: std::collections::HashMap<(FileId, PageId), std::time::Instant>,
 }
 
+type PageCacheMap = HashMap<(FileId, PageId), Vec<u8>>;
+
 /// Basic LRU page cache for blob operations with real file I/O
 pub struct LruPageCache {
     /// Cache storage: (file_id, page_id) -> page data
-    inner: Arc<Mutex<HashMap<(FileId, PageId), Vec<u8>>>>,
+    inner: Arc<Mutex<PageCacheMap>>,
     /// Cache configuration
     config: PageCacheConfig,
     /// Performance statistics

@@ -411,11 +411,12 @@ mod tests {
     use super::*;
 
     #[test]
-    #[allow(clippy::field_reassign_with_default)]
     fn test_builder_stats() {
-        let mut stats = BuilderStats::default();
-        stats.uncompressed_size = 1000;
-        stats.compressed_size = 600;
+        let stats = BuilderStats {
+            uncompressed_size: 1000,
+            compressed_size: 600,
+            ..Default::default()
+        };
 
         assert!((stats.compression_ratio() - 0.6).abs() < 0.001);
         assert!((stats.space_saved_percent() - 40.0).abs() < 0.001);

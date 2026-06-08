@@ -51,9 +51,11 @@ impl Endianness {
 /// Trait for types that support endian conversion
 pub trait EndianConvert: Sized + Copy {
     /// Convert from little endian to native endianness
+    #[allow(clippy::wrong_self_convention)] // conventional prefix `from_` is for constructors; here it is a method converting FROM LE
     fn from_le(self) -> Self;
 
     /// Convert from big endian to native endianness
+    #[allow(clippy::wrong_self_convention)] // conventional prefix `from_` is for constructors; here it is a method converting FROM BE
     fn from_be(self) -> Self;
 
     /// Convert from native endianness to little endian
@@ -64,6 +66,7 @@ pub trait EndianConvert: Sized + Copy {
 
     /// Convert from specified endianness to native
     #[inline]
+    #[allow(clippy::wrong_self_convention)] // conventional prefix `from_` is for constructors
     fn from_endian(self, endian: Endianness) -> Self {
         match endian {
             Endianness::Little => self.from_le(),

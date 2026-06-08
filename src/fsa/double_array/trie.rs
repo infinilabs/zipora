@@ -1330,6 +1330,7 @@ impl<'a> DoubleArrayTrieCursor<'a> {
     }
 
     /// Advance to the next key in lexicographic order.
+    #[allow(clippy::should_implement_trait)] // inherent next() mutates cursor in-place and returns success bool; not std::iter::Iterator
     pub fn next(&mut self) -> bool {
         if !self.valid {
             return false;

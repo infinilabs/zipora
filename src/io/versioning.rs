@@ -326,9 +326,11 @@ pub trait VersionedSerialize: Sized {
             && version.is_compatible_with(&Self::current_version())
     }
 }
+pub type MigrationFn = Box<dyn Fn(&[u8]) -> Result<Vec<u8>>>;
+
 /// Version migration registry
 pub struct MigrationRegistry {
-    migrations: HashMap<(Version, Version), Box<dyn Fn(&[u8]) -> Result<Vec<u8>>>>,
+    migrations: HashMap<(Version, Version), MigrationFn>,
 }
 
 impl MigrationRegistry {
@@ -461,6 +463,12 @@ pub struct VersionedSerializer {
     migration_registry: MigrationRegistry,
 }
 
+impl Default for VersionedSerializer {
+    fn default() -> Self {
+        Self::new(VersionConfig::default())
+    }
+}
+
 impl VersionedSerializer {
     /// Create a new versioned serializer
     pub fn new(config: VersionConfig) -> Self {
@@ -468,11 +476,6 @@ impl VersionedSerializer {
             config,
             migration_registry: MigrationRegistry::new(),
         }
-    }
-
-    /// Create a serializer with default configuration
-    pub fn default() -> Self {
-        Self::new(VersionConfig::default())
     }
 
     /// Register a migration

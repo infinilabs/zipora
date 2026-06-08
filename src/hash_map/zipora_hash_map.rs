@@ -411,21 +411,19 @@ where
     }
 
     /// Create a new hash map with specified initial capacity
-    #[allow(clippy::field_reassign_with_default)]
     pub fn with_capacity(capacity: usize) -> Result<Self>
     where
         S: Default,
     {
-        let mut config = ZiporaHashMapConfig::default();
-        config.initial_capacity = capacity.max(16);
-
-        // Update storage strategy to use the specified capacity
-        if let HashStorageStrategy::Standard {
-            initial_capacity, ..
-        } = &mut config.storage_strategy
-        {
-            *initial_capacity = capacity.max(16);
-        }
+        let cap = capacity.max(16);
+        let config = ZiporaHashMapConfig {
+            initial_capacity: cap,
+            storage_strategy: HashStorageStrategy::Standard {
+                initial_capacity: cap,
+                growth_factor: 2.0,
+            },
+            ..ZiporaHashMapConfig::default()
+        };
 
         Self::with_config(config)
     }

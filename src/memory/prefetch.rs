@@ -775,13 +775,14 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::field_reassign_with_default)]
     fn test_prefetch_metrics() {
-        let mut metrics = PrefetchMetrics::default();
-        metrics.prefetches_issued = 100;
-        metrics.useful_prefetches = 70;
-        metrics.wasted_prefetches = 20;
-        metrics.late_prefetches = 10;
+        let metrics = PrefetchMetrics {
+            prefetches_issued: 100,
+            useful_prefetches: 70,
+            wasted_prefetches: 20,
+            late_prefetches: 10,
+            ..Default::default()
+        };
 
         assert_eq!(metrics.accuracy(), 0.70);
         assert_eq!(metrics.pollution_ratio(), 0.20);

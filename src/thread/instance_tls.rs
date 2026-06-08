@@ -26,10 +26,12 @@ where
     _cleanup: Arc<CleanupHandle<T, ROWS, COLS>>,
 }
 
+type TlsRow<T, const COLS: usize> = [UnsafeCell<Option<T>>; COLS];
+
 /// Matrix storage for thread-local data
 struct TlsMatrix<T, const ROWS: usize, const COLS: usize> {
     /// 2D array of optional boxes for O(1) access
-    rows: [Option<Box<[UnsafeCell<Option<T>>; COLS]>>; ROWS],
+    rows: [Option<Box<TlsRow<T, COLS>>>; ROWS],
 }
 
 /// Global state for managing TLS instance IDs
