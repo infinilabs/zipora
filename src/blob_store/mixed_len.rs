@@ -132,7 +132,6 @@ impl MixedLenBlobStore {
     /// assert_eq!(store.fixed_len(), 3); // Most common length
     /// # Ok::<(), zipora::error::ZiporaError>(())
     /// ```
-    #[allow(clippy::field_reassign_with_default)]
     pub fn build_from(data: &[Vec<u8>]) -> Result<Self> {
         if data.is_empty() {
             return Ok(Self::default());
@@ -176,13 +175,15 @@ impl MixedLenBlobStore {
             .unwrap_or_else(|| is_fixed.iter().filter(|&&b| b).count());
 
         let total_size = data.iter().map(|r| r.len()).sum();
-        let mut stats = BlobStoreStats::default();
-        stats.blob_count = data.len();
-        stats.total_size = total_size;
-        stats.average_size = if data.is_empty() {
-            0.0
-        } else {
-            total_size as f64 / data.len() as f64
+        let stats = BlobStoreStats {
+            blob_count: data.len(),
+            total_size,
+            average_size: if data.is_empty() {
+                0.0
+            } else {
+                total_size as f64 / data.len() as f64
+            },
+            ..Default::default()
         };
 
         // Determine dispatch mode for optimal access
@@ -211,7 +212,6 @@ impl MixedLenBlobStore {
     /// Build with explicit fixed length (skip auto-detection)
     ///
     /// Useful when you know the dominant length in advance.
-    #[allow(clippy::field_reassign_with_default)]
     pub fn build_from_with_fixed_len(data: &[Vec<u8>], fixed_len: usize) -> Result<Self> {
         if data.is_empty() {
             return Ok(Self::default());
@@ -248,13 +248,15 @@ impl MixedLenBlobStore {
             .unwrap_or_else(|| is_fixed.iter().filter(|&&b| b).count());
 
         let total_size = data.iter().map(|r| r.len()).sum();
-        let mut stats = BlobStoreStats::default();
-        stats.blob_count = data.len();
-        stats.total_size = total_size;
-        stats.average_size = if data.is_empty() {
-            0.0
-        } else {
-            total_size as f64 / data.len() as f64
+        let stats = BlobStoreStats {
+            blob_count: data.len(),
+            total_size,
+            average_size: if data.is_empty() {
+                0.0
+            } else {
+                total_size as f64 / data.len() as f64
+            },
+            ..Default::default()
         };
 
         let var_num = data.len() - fixed_num;

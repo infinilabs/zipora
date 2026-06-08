@@ -2,7 +2,6 @@ use crate::memory::{SecureMemoryPool, SecurePoolConfig};
 use std::sync::Arc;
 
 /// Default memory pool for serde deserialization
-#[allow(clippy::field_reassign_with_default)]
 fn default_memory_pool() -> Arc<SecureMemoryPool> {
     // SAFETY: This function is only called during serde deserialization where we need
     // a default pool. We try small_secure first, then default. If both fail, we create
@@ -11,10 +10,12 @@ fn default_memory_pool() -> Arc<SecureMemoryPool> {
         .or_else(|_| SecureMemoryPool::new(SecurePoolConfig::default()))
         .unwrap_or_else(|_| {
             // Emergency fallback: Create minimal pool with settings that cannot fail
-            let mut emergency_config = SecurePoolConfig::default();
-            emergency_config.chunk_size = 64; // Minimal chunk size
-            emergency_config.max_chunks = 2; // Very limited pool
-            emergency_config.use_guard_pages = false; // Disable to avoid allocation failures
+            let emergency_config = SecurePoolConfig {
+                chunk_size: 64, // Minimal chunk size
+                max_chunks: 2, // Very limited pool
+                use_guard_pages: false, // Disable to avoid allocation failures
+                ..Default::default()
+            };
             // SAFETY: Minimal config (64B chunks, 2 max, no guards) designed to never fail except in catastrophic OOM
             SecureMemoryPool::new(emergency_config)
                 .expect("CRITICAL: Emergency pool creation failed - this should never happen")

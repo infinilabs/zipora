@@ -606,10 +606,11 @@ impl DictionaryBuilder {
     }
 
     /// Analyze input data characteristics
-    #[allow(clippy::field_reassign_with_default)]
     fn analyze_data(&mut self, data: &[u8]) -> Result<DataAnalysis> {
-        let mut analysis = DataAnalysis::default();
-        analysis.data_size = data.len();
+        let mut analysis = DataAnalysis {
+            data_size: data.len(),
+            ..Default::default()
+        };
 
         if data.is_empty() {
             return Ok(analysis);
@@ -1555,21 +1556,23 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::field_reassign_with_default)]
     fn test_pattern_efficiency() {
-        let mut stats = BuildStats::default();
-        stats.patterns_extracted = 100;
-        stats.patterns_included = 75;
+        let stats = BuildStats {
+            patterns_extracted: 100,
+            patterns_included: 75,
+            ..Default::default()
+        };
 
         assert_eq!(stats.pattern_efficiency(), 0.75);
     }
 
     #[test]
-    #[allow(clippy::field_reassign_with_default)]
     fn test_dictionary_overhead() {
-        let mut stats = BuildStats::default();
-        stats.original_data_size = 1000;
-        stats.final_dict_size = 200;
+        let stats = BuildStats {
+            original_data_size: 1000,
+            final_dict_size: 200,
+            ..Default::default()
+        };
 
         assert_eq!(stats.dictionary_overhead(), 0.2);
     }

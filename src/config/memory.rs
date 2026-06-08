@@ -403,101 +403,92 @@ impl Config for MemoryConfig {
         Ok(config)
     }
 
-    #[allow(clippy::field_reassign_with_default)]
     fn performance_preset() -> Self {
-        let mut config = Self::default();
-
-        // Optimize for maximum performance
-        config.allocation_strategy = AllocationStrategy::LockFree;
-        config.initial_pool_size = 256 * 1024 * 1024; // 256MB
-        config.growth_factor = 2.0; // Fast growth
-        config.cache_optimization = CacheOptimizationLevel::Maximum;
-        config.alignment = 64; // Cache line aligned
-        config.num_pools = 16; // High concurrency
-        config.enable_prefetching = true;
-        config.prefetch_distance = 4; // Aggressive prefetching
-        config.enable_hot_cold_separation = true;
-        config.hot_access_threshold = 50; // Lower threshold for hot data
-
-        // Enable huge pages for performance
-        config.huge_page_config.enable_huge_pages = true;
-        config.huge_page_config.min_allocation_size = 1024 * 1024; // 1MB
-
-        // NUMA optimization
-        config.numa_config.enable_numa_awareness = true;
-        config.numa_config.prefer_local_allocation = true;
-
-        // Reduce protection overhead for performance
-        config.enable_memory_protection = false;
-        config.enable_debug_tracking = false;
-
-        config
+        Self {
+            allocation_strategy: AllocationStrategy::LockFree,
+            initial_pool_size: 256 * 1024 * 1024, // 256MB
+            growth_factor: 2.0, // Fast growth
+            cache_optimization: CacheOptimizationLevel::Maximum,
+            alignment: 64, // Cache line aligned
+            num_pools: 16, // High concurrency
+            enable_prefetching: true,
+            prefetch_distance: 4, // Aggressive prefetching
+            enable_hot_cold_separation: true,
+            hot_access_threshold: 50, // Lower threshold for hot data
+            huge_page_config: HugePageConfig {
+                enable_huge_pages: true,
+                min_allocation_size: 1024 * 1024, // 1MB
+                ..Default::default()
+            },
+            numa_config: NumaConfig {
+                enable_numa_awareness: true,
+                prefer_local_allocation: true,
+                ..Default::default()
+            },
+            enable_memory_protection: false,
+            enable_debug_tracking: false,
+            ..Default::default()
+        }
     }
 
-    #[allow(clippy::field_reassign_with_default)]
     fn memory_preset() -> Self {
-        let mut config = Self::default();
-
-        // Optimize for minimal memory usage
-        config.allocation_strategy = AllocationStrategy::FixedCapacity;
-        config.initial_pool_size = 16 * 1024 * 1024; // 16MB
-        config.max_pool_size = 128 * 1024 * 1024; // 128MB limit
-        config.growth_factor = 1.2; // Slow growth
-        config.cache_optimization = CacheOptimizationLevel::Basic;
-        config.alignment = 16; // Smaller alignment
-        config.num_pools = 2; // Minimal pools
-        config.enable_prefetching = false; // Save memory
-        config.enable_hot_cold_separation = false;
-        config.enable_compaction = true; // Reduce fragmentation
-        config.compaction_threshold = 0.6; // Aggressive compaction
-        config.max_fragmentation_ratio = 0.2; // Low fragmentation tolerance
-
-        // Disable huge pages to save memory
-        config.huge_page_config.enable_huge_pages = false;
-
-        // Minimal NUMA features
-        config.numa_config.enable_numa_awareness = false;
-
-        // Enable protection for safety
-        config.enable_memory_protection = true;
-        config.enable_debug_tracking = false; // Save memory
-
-        config
+        Self {
+            allocation_strategy: AllocationStrategy::FixedCapacity,
+            initial_pool_size: 16 * 1024 * 1024, // 16MB
+            max_pool_size: 128 * 1024 * 1024, // 128MB limit
+            growth_factor: 1.2, // Slow growth
+            cache_optimization: CacheOptimizationLevel::Basic,
+            alignment: 16, // Smaller alignment
+            num_pools: 2, // Minimal pools
+            enable_prefetching: false, // Save memory
+            enable_hot_cold_separation: false,
+            enable_compaction: true, // Reduce fragmentation
+            compaction_threshold: 0.6, // Aggressive compaction
+            max_fragmentation_ratio: 0.2, // Low fragmentation tolerance
+            huge_page_config: HugePageConfig {
+                enable_huge_pages: false,
+                ..Default::default()
+            },
+            numa_config: NumaConfig {
+                enable_numa_awareness: false,
+                ..Default::default()
+            },
+            enable_memory_protection: true,
+            enable_debug_tracking: false, // Save memory
+            ..Default::default()
+        }
     }
 
-    #[allow(clippy::field_reassign_with_default)]
     fn realtime_preset() -> Self {
-        let mut config = Self::default();
-
-        // Optimize for predictable real-time performance
-        config.allocation_strategy = AllocationStrategy::FixedCapacity;
-        config.initial_pool_size = 128 * 1024 * 1024; // 128MB pre-allocated
-        config.max_pool_size = 128 * 1024 * 1024; // Fixed size
-        config.growth_factor = 1.0; // No growth after initial
-        config.cache_optimization = CacheOptimizationLevel::Advanced;
-        config.alignment = 64; // Cache line aligned
-        config.num_pools = 4; // Moderate concurrency
-        config.enable_prefetching = true;
-        config.prefetch_distance = 2; // Moderate prefetching
-        config.enable_hot_cold_separation = false; // Avoid dynamic behavior
-        config.enable_compaction = false; // Avoid unpredictable latency
-
-        // Pre-allocate huge pages for predictability
-        config.huge_page_config.enable_huge_pages = true;
-        config.huge_page_config.enable_transparent = false; // Explicit allocation
-
-        // NUMA awareness for consistent performance
-        config.numa_config.enable_numa_awareness = true;
-        config.numa_config.prefer_local_allocation = true;
-        config.numa_config.enable_balancing = false; // Avoid migration
-
-        // Enable protection but minimize overhead
-        config.enable_memory_protection = true;
-        config.enable_use_after_free_detection = false; // Reduce overhead
-        config.enable_double_free_detection = true; // Keep critical protection
-        config.enable_debug_tracking = false;
-
-        config
+        Self {
+            allocation_strategy: AllocationStrategy::FixedCapacity,
+            initial_pool_size: 128 * 1024 * 1024, // 128MB pre-allocated
+            max_pool_size: 128 * 1024 * 1024, // Fixed size
+            growth_factor: 1.0, // No growth after initial
+            cache_optimization: CacheOptimizationLevel::Advanced,
+            alignment: 64, // Cache line aligned
+            num_pools: 4, // Moderate concurrency
+            enable_prefetching: true,
+            prefetch_distance: 2, // Moderate prefetching
+            enable_hot_cold_separation: false, // Avoid dynamic behavior
+            enable_compaction: false, // Avoid unpredictable latency
+            huge_page_config: HugePageConfig {
+                enable_huge_pages: true,
+                enable_transparent: false, // Explicit allocation
+                ..Default::default()
+            },
+            numa_config: NumaConfig {
+                enable_numa_awareness: true,
+                prefer_local_allocation: true,
+                enable_balancing: false, // Avoid migration
+                ..Default::default()
+            },
+            enable_memory_protection: true,
+            enable_use_after_free_detection: false, // Reduce overhead
+            enable_double_free_detection: true, // Keep critical protection
+            enable_debug_tracking: false,
+            ..Default::default()
+        }
     }
 
     fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
@@ -686,26 +677,33 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::field_reassign_with_default)]
     fn test_validation() {
-        let mut config = MemoryConfig::default();
-
         // Test invalid pool size
-        config.initial_pool_size = 0;
-        assert!(config.validate().is_err());
+        let config_invalid_size = MemoryConfig {
+            initial_pool_size: 0,
+            ..MemoryConfig::default()
+        };
+        assert!(config_invalid_size.validate().is_err());
 
         // Test invalid growth factor
-        config = MemoryConfig::default();
-        config.growth_factor = 0.5;
-        assert!(config.validate().is_err());
+        let config_invalid_growth1 = MemoryConfig {
+            growth_factor: 0.5,
+            ..MemoryConfig::default()
+        };
+        assert!(config_invalid_growth1.validate().is_err());
 
-        config.growth_factor = 5.0;
-        assert!(config.validate().is_err());
+        let config_invalid_growth2 = MemoryConfig {
+            growth_factor: 5.0,
+            ..MemoryConfig::default()
+        };
+        assert!(config_invalid_growth2.validate().is_err());
 
         // Test invalid alignment
-        config = MemoryConfig::default();
-        config.alignment = 3; // Not a power of 2
-        assert!(config.validate().is_err());
+        let config_invalid_alignment = MemoryConfig {
+            alignment: 3, // Not a power of 2
+            ..MemoryConfig::default()
+        };
+        assert!(config_invalid_alignment.validate().is_err());
     }
 
     #[test]

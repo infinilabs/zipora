@@ -470,15 +470,16 @@ pub struct SmartPtrSerializer {
     config: SmartPtrConfig,
 }
 
+impl Default for SmartPtrSerializer {
+    fn default() -> Self {
+        Self::new(SmartPtrConfig::default())
+    }
+}
+
 impl SmartPtrSerializer {
     /// Create a new serializer with the given configuration
     pub fn new(config: SmartPtrConfig) -> Self {
         Self { config }
-    }
-
-    /// Create a serializer with default configuration
-    pub fn default() -> Self {
-        Self::new(SmartPtrConfig::default())
     }
 
     /// Serialize a smart pointer to bytes

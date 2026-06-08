@@ -167,7 +167,6 @@ impl SimpleZipBlobStore {
     /// let store = SimpleZipBlobStore::build_from(&data, &config).unwrap();
     /// # Ok::<(), zipora::error::ZiporaError>(())
     /// ```
-    #[allow(clippy::field_reassign_with_default)]
     pub fn build_from(data: &[Vec<u8>], config: &SimpleZipConfig) -> Result<Self> {
         config.validate()?;
 
@@ -206,13 +205,15 @@ impl SimpleZipBlobStore {
         // Step 4: Build record boundaries
         let records = UintVecMin0::build_from_usize(&record_boundaries).0;
 
-        let mut stats = BlobStoreStats::default();
-        stats.blob_count = data.len();
-        stats.total_size = unzip_size;
-        stats.average_size = if data.is_empty() {
-            0.0
-        } else {
-            unzip_size as f64 / data.len() as f64
+        let stats = BlobStoreStats {
+            blob_count: data.len(),
+            total_size: unzip_size,
+            average_size: if data.is_empty() {
+                0.0
+            } else {
+                unzip_size as f64 / data.len() as f64
+            },
+            ..Default::default()
         };
 
         Ok(Self {

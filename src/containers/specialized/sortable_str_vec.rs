@@ -234,6 +234,7 @@ impl SortableStrVec {
     }
 
     /// Optimized bulk construction from iterator
+    #[allow(clippy::should_implement_trait)] // inherent from_iter() returns Result; cannot implement FromIterator trait
     pub fn from_iter<I, S>(iter: I) -> Result<Self>
     where
         I: Iterator<Item = S>,

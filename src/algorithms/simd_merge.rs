@@ -786,10 +786,11 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::field_reassign_with_default)]
     fn test_large_array_simd_path() {
-        let mut config = SimdConfig::default();
-        config.min_vector_size = 4; // Lower threshold for testing
+        let config = SimdConfig {
+            min_vector_size: 4, // Lower threshold for testing
+            ..Default::default()
+        };
 
         let comparator = SimdComparator::with_config(config);
 

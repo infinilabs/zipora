@@ -512,7 +512,6 @@ impl DictZipBlobStoreBuilder {
     }
 
     /// Build the final DictZipBlobStore
-    #[allow(clippy::field_reassign_with_default)]
     pub fn finish(self) -> Result<DictZipBlobStore> {
         if self.training_samples.is_empty() {
             return Err(ZiporaError::invalid_data("No training samples provided"));
@@ -582,9 +581,11 @@ impl DictZipBlobStoreBuilder {
             callback(1.0); // 100% - complete
         }
 
-        let mut stats = DictZipBlobStoreStats::default();
-        stats.dictionary_size = dictionary_size;
-        stats.build_time_ms = build_time.as_millis() as u64;
+        let stats = DictZipBlobStoreStats {
+            dictionary_size,
+            build_time_ms: build_time.as_millis() as u64,
+            ..Default::default()
+        };
 
         Ok(DictZipBlobStore {
             config: self.config,

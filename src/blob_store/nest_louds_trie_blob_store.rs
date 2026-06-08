@@ -103,15 +103,16 @@ pub struct TrieBlobStoreConfig {
 }
 
 impl Default for TrieBlobStoreConfig {
-    #[allow(clippy::field_reassign_with_default)]
     fn default() -> Self {
         // Use Patricia strategy for blob store trie — Patricia node IDs are stable
         // across insertions (no relocation), which is required for node_to_blob_map.
-        let mut trie_config = ZiporaTrieConfig::default();
-        trie_config.trie_strategy = crate::fsa::TrieStrategy::Patricia {
-            max_path_length: 64,
-            compression_threshold: 4,
-            adaptive_compression: true,
+        let trie_config = ZiporaTrieConfig {
+            trie_strategy: crate::fsa::TrieStrategy::Patricia {
+                max_path_length: 64,
+                compression_threshold: 4,
+                adaptive_compression: true,
+            },
+            ..Default::default()
         };
         Self {
             trie_config,
@@ -562,6 +563,7 @@ where
     /// let store = NestLoudsTrieBlobStore::<RankSelectInterleaved256>::default()?;
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
+    #[allow(clippy::should_implement_trait)] // inherent default() returns Result; cannot implement Default trait
     pub fn default() -> Result<Self> {
         Self::new(TrieBlobStoreConfig::default())
     }
@@ -1203,6 +1205,7 @@ where
     }
 
     /// Create a new builder with default configuration
+    #[allow(clippy::should_implement_trait)] // inherent default() returns Result; cannot implement Default trait
     pub fn default() -> Result<Self> {
         Self::new(TrieBlobStoreConfig::default())
     }

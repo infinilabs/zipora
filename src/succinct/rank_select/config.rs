@@ -31,7 +31,7 @@
 //!     bit_vector.push(i % 3 == 0)?;
 //! }
 //!
-//! let config = SeparatedStorageConfig::new()
+//! let config = SeparatedStorageConfig::builder()
 //!     .block_size(512)
 //!     .enable_select_acceleration(true)
 //!     .enable_hardware_acceleration(true)
@@ -268,8 +268,8 @@ pub enum CacheLevel {
 }
 
 impl SeparatedStorageConfig {
-    /// Create a new configuration with default settings
-    pub fn new() -> SeparatedStorageConfigBuilder {
+    /// Create a new configuration builder
+    pub fn builder() -> SeparatedStorageConfigBuilder {
         SeparatedStorageConfigBuilder::new()
     }
 
@@ -714,7 +714,7 @@ mod tests {
 
     #[test]
     fn test_config_builder() {
-        let config = SeparatedStorageConfig::new()
+        let config = SeparatedStorageConfig::builder()
             .block_size(512)
             .enable_select_acceleration(false)
             .superblock_size(32)
@@ -751,22 +751,25 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::field_reassign_with_default)]
     fn test_config_validation() {
         // Valid config should pass
         let valid_config = SeparatedStorageConfig::default();
         assert!(valid_config.validate().is_ok());
 
         // Invalid block size should fail
-        let mut invalid_config = SeparatedStorageConfig::default();
-        invalid_config.block_size = 123;
-        assert!(invalid_config.validate().is_err());
+        let invalid_config1 = SeparatedStorageConfig {
+            block_size: 123,
+            ..Default::default()
+        };
+        assert!(invalid_config1.validate().is_err());
 
         // Invalid relative rank bits should fail
-        let mut invalid_config = SeparatedStorageConfig::default();
-        invalid_config.enable_bit_packed_ranks = true;
-        invalid_config.relative_rank_bits = 15;
-        assert!(invalid_config.validate().is_err());
+        let invalid_config2 = SeparatedStorageConfig {
+            enable_bit_packed_ranks: true,
+            relative_rank_bits: 15,
+            ..Default::default()
+        };
+        assert!(invalid_config2.validate().is_err());
     }
 
     #[test]
@@ -775,11 +778,11 @@ mod tests {
         let base_overhead = base_config.estimated_memory_overhead();
 
         // Larger blocks should have lower overhead
-        let large_block_config = SeparatedStorageConfig::new().block_size(1024).build();
+        let large_block_config = SeparatedStorageConfig::builder().block_size(1024).build();
         assert!(large_block_config.estimated_memory_overhead() < base_overhead);
 
         // Bit-packed ranks should reduce overhead
-        let bit_packed_config = SeparatedStorageConfig::new()
+        let bit_packed_config = SeparatedStorageConfig::builder()
             .enable_bit_packed_ranks(true)
             .build();
         assert!(bit_packed_config.estimated_memory_overhead() < base_overhead);

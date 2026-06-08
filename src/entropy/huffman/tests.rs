@@ -1,4 +1,6 @@
 use super::*;
+// test module mirrors the file's own name by convention
+#[allow(clippy::module_inception)]
 mod tests {
     use super::*;
 

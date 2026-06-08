@@ -589,76 +589,64 @@ impl Config for NestLoudsTrieConfig {
         Ok(config)
     }
 
-    #[allow(clippy::field_reassign_with_default)]
     fn performance_preset() -> Self {
-        let mut config = Self::default();
-
-        // Optimize for maximum performance
-        config.nest_level = 2; // Reduced nesting for speed
-        config.core_str_compression_level = 3; // Fast compression
-        config.optimization_flags = OptimizationFlags::SEARCH_DELIM_FORWARD
-            | OptimizationFlags::ENABLE_FAST_SEARCH
-            | OptimizationFlags::USE_MIXED_CORE_LINK
-            | OptimizationFlags::SPEEDUP_NEST_TRIE_BUILD
-            | OptimizationFlags::ENABLE_CACHE_OPTIMIZATION
-            | OptimizationFlags::ENABLE_SIMD_ACCELERATION
-            | OptimizationFlags::ENABLE_PARALLEL_CONSTRUCTION
-            | OptimizationFlags::USE_HUGEPAGES;
-
-        config.initial_pool_size = 256 * 1024 * 1024; // 256MB
-        config.load_factor = 0.6; // Lower load factor for speed
-        config.speedup_nest_trie_build = true;
-        config.use_mixed_core_link = true;
-        config.parallel_threads = 0; // Use all available cores
-        config.node_cache_size = 64 * 1024 * 1024; // 64MB cache
-
-        config
+        Self {
+            nest_level: 2, // Reduced nesting for speed
+            core_str_compression_level: 3, // Fast compression
+            optimization_flags: OptimizationFlags::SEARCH_DELIM_FORWARD
+                | OptimizationFlags::ENABLE_FAST_SEARCH
+                | OptimizationFlags::USE_MIXED_CORE_LINK
+                | OptimizationFlags::SPEEDUP_NEST_TRIE_BUILD
+                | OptimizationFlags::ENABLE_CACHE_OPTIMIZATION
+                | OptimizationFlags::ENABLE_SIMD_ACCELERATION
+                | OptimizationFlags::ENABLE_PARALLEL_CONSTRUCTION
+                | OptimizationFlags::USE_HUGEPAGES,
+            initial_pool_size: 256 * 1024 * 1024, // 256MB
+            load_factor: 0.6, // Lower load factor for speed
+            speedup_nest_trie_build: true,
+            use_mixed_core_link: true,
+            parallel_threads: 0, // Use all available cores
+            node_cache_size: 64 * 1024 * 1024, // 64MB cache
+            ..Default::default()
+        }
     }
 
-    #[allow(clippy::field_reassign_with_default)]
     fn memory_preset() -> Self {
-        let mut config = Self::default();
-
-        // Optimize for minimal memory usage
-        config.nest_level = 5; // Higher nesting for compression
-        config.core_str_compression_level = 15; // High compression
-        config.optimization_flags = OptimizationFlags::SEARCH_DELIM_FORWARD
-            | OptimizationFlags::CUT_FRAG_ON_PUNCT
-            | OptimizationFlags::USE_DAWG_STR_POOL
-            | OptimizationFlags::ENABLE_QUEUE_COMPRESSION;
-
-        config.temp_level = TempLevel::SaveNestStrPool; // Use temp files aggressively
-        config.initial_pool_size = 16 * 1024 * 1024; // 16MB
-        config.load_factor = 0.9; // High load factor for memory efficiency
-        config.enable_queue_compression = true;
-        config.compression_min_length = 8; // Compress smaller strings
-        config.node_cache_size = 4 * 1024 * 1024; // 4MB cache
-        config.parallel_threads = 1; // Single-threaded to save memory
-
-        config
+        Self {
+            nest_level: 5, // Higher nesting for compression
+            core_str_compression_level: 15, // High compression
+            optimization_flags: OptimizationFlags::SEARCH_DELIM_FORWARD
+                | OptimizationFlags::CUT_FRAG_ON_PUNCT
+                | OptimizationFlags::USE_DAWG_STR_POOL
+                | OptimizationFlags::ENABLE_QUEUE_COMPRESSION,
+            temp_level: TempLevel::SaveNestStrPool, // Use temp files aggressively
+            initial_pool_size: 16 * 1024 * 1024, // 16MB
+            load_factor: 0.9, // High load factor for memory efficiency
+            enable_queue_compression: true,
+            compression_min_length: 8, // Compress smaller strings
+            node_cache_size: 4 * 1024 * 1024, // 4MB cache
+            parallel_threads: 1, // Single-threaded to save memory
+            ..Default::default()
+        }
     }
 
-    #[allow(clippy::field_reassign_with_default)]
     fn realtime_preset() -> Self {
-        let mut config = Self::default();
-
-        // Optimize for low latency and predictable performance
-        config.nest_level = 2; // Reduced nesting for predictability
-        config.core_str_compression_level = 1; // Minimal compression
-        config.optimization_flags = OptimizationFlags::ENABLE_FAST_SEARCH
-            | OptimizationFlags::ENABLE_CACHE_OPTIMIZATION
-            | OptimizationFlags::ENABLE_SIMD_ACCELERATION;
-
-        config.temp_level = TempLevel::Smart; // Minimize temp file usage
-        config.initial_pool_size = 128 * 1024 * 1024; // 128MB pre-allocated
-        config.load_factor = 0.7; // Balanced load factor
-        config.enable_queue_compression = false; // Avoid compression overhead
-        config.speedup_nest_trie_build = true;
-        config.max_bfs_depth = 100; // Limit depth for predictability
-        config.parallel_threads = 2; // Limited parallelism for predictability
-        config.node_cache_size = 32 * 1024 * 1024; // 32MB cache
-
-        config
+        Self {
+            nest_level: 2, // Reduced nesting for predictability
+            core_str_compression_level: 1, // Minimal compression
+            optimization_flags: OptimizationFlags::ENABLE_FAST_SEARCH
+                | OptimizationFlags::ENABLE_CACHE_OPTIMIZATION
+                | OptimizationFlags::ENABLE_SIMD_ACCELERATION,
+            temp_level: TempLevel::Smart, // Minimize temp file usage
+            initial_pool_size: 128 * 1024 * 1024, // 128MB pre-allocated
+            load_factor: 0.7, // Balanced load factor
+            enable_queue_compression: false, // Avoid compression overhead
+            speedup_nest_trie_build: true,
+            max_bfs_depth: 100, // Limit depth for predictability
+            parallel_threads: 2, // Limited parallelism for predictability
+            node_cache_size: 32 * 1024 * 1024, // 32MB cache
+            ..Default::default()
+        }
     }
 
     fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
@@ -1006,24 +994,32 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::field_reassign_with_default)]
     fn test_validation() {
-        let mut config = NestLoudsTrieConfig::default();
-
         // Test invalid nest level
-        config.nest_level = 0;
-        assert!(config.validate().is_err());
+        let config_invalid_nest1 = NestLoudsTrieConfig {
+            nest_level: 0,
+            ..NestLoudsTrieConfig::default()
+        };
+        assert!(config_invalid_nest1.validate().is_err());
 
-        config.nest_level = 17;
-        assert!(config.validate().is_err());
+        let config_invalid_nest2 = NestLoudsTrieConfig {
+            nest_level: 17,
+            ..NestLoudsTrieConfig::default()
+        };
+        assert!(config_invalid_nest2.validate().is_err());
 
         // Test invalid load factor
-        config = NestLoudsTrieConfig::default();
-        config.load_factor = 0.0;
-        assert!(config.validate().is_err());
+        let config_invalid_load1 = NestLoudsTrieConfig {
+            load_factor: 0.0,
+            ..NestLoudsTrieConfig::default()
+        };
+        assert!(config_invalid_load1.validate().is_err());
 
-        config.load_factor = 1.0;
-        assert!(config.validate().is_err());
+        let config_invalid_load2 = NestLoudsTrieConfig {
+            load_factor: 1.0,
+            ..NestLoudsTrieConfig::default()
+        };
+        assert!(config_invalid_load2.validate().is_err());
     }
 
     #[test]

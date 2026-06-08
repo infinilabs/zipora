@@ -409,9 +409,9 @@ where
         match &self.storage {
             TrieStorage::Patricia {
                 nodes,
-                edge_data,
+                edge_data: _,
                 compressed_paths,
-            } => Self::keys_patricia_actual(nodes, edge_data, compressed_paths),
+            } => Self::keys_patricia_actual(nodes, compressed_paths),
             TrieStorage::Louds { label_data, .. } => Self::keys_louds_actual(label_data),
             TrieStorage::DoubleArray { base, check, .. } => {
                 Self::keys_double_array_actual(base, check)
@@ -429,9 +429,9 @@ where
         match &self.storage {
             TrieStorage::Patricia {
                 nodes,
-                edge_data,
+                edge_data: _,
                 compressed_paths,
-            } => Self::keys_with_prefix_patricia_actual(nodes, edge_data, compressed_paths, prefix),
+            } => Self::keys_with_prefix_patricia_actual(nodes, compressed_paths, prefix),
             TrieStorage::Louds { label_data, .. } => {
                 Self::keys_with_prefix_louds_actual(label_data, prefix)
             }
@@ -1207,10 +1207,9 @@ where
         );
 
         // Traverse the trie for each symbol in the key
-        #[cfg(debug_assertions)]
-        let mut pos: usize = 0;
-        #[allow(clippy::explicit_counter_loop)] // `pos` is a debug-only diagnostic counter
-        for &symbol in key.iter() {
+        for (_pos, &symbol) in key.iter().enumerate() {
+            #[cfg(debug_assertions)]
+            let pos = _pos;
             // Calculate next state position using base value (bits 0-30)
             let mut base_value = base[current_state as usize] & VALUE_MASK;
 
@@ -1343,10 +1342,7 @@ where
                     *state_count += 1;
                 }
             }
-            #[cfg(debug_assertions)]
-            {
-                pos += 1;
-            }
+
         }
 
         // Mark the final state as terminal (referenced project: set_term_bit on base at line 27)
@@ -1593,10 +1589,9 @@ where
         let mut current_state = 0u32;
 
         // Traverse the trie for each symbol (referenced project line 100-110: state_move)
-        #[cfg(debug_assertions)]
-        let mut i: usize = 0;
-        #[allow(clippy::explicit_counter_loop)] // `i` is a debug-only diagnostic counter
-        for &symbol in key.iter() {
+        for (_i, &symbol) in key.iter().enumerate() {
+            #[cfg(debug_assertions)]
+            let i = _i;
             // SAFETY: We check if base_val exists, then use it
             let base_val = match base.get(current_state as usize) {
                 Some(val) => val,
@@ -1635,10 +1630,7 @@ where
             }
 
             current_state = next_state;
-            #[cfg(debug_assertions)]
-            {
-                i += 1;
-            }
+
         }
 
         // Check if the final state is marked as terminal (check terminal bit in base)
@@ -1677,7 +1669,7 @@ where
         ))
     }
 
-    #[allow(unused)]
+    #[allow(unused, clippy::too_many_arguments)] // internal helper; arg bundle would add indirection
     fn contains_louds(
         &self,
         louds: &R,
@@ -2071,7 +2063,6 @@ where
     /// Get all keys from Patricia trie
     fn keys_patricia_actual(
         nodes: &FastVec<PatriciaNode>,
-        edge_data: &FastVec<u8>,
         compressed_paths: &HashMap<StateId, Vec<u8>>,
     ) -> Vec<Vec<u8>> {
         if nodes.is_empty() {
@@ -2082,7 +2073,6 @@ where
         let mut current_path = Vec::new();
         Self::collect_keys_patricia_recursive(
             nodes,
-            edge_data,
             compressed_paths,
             0,
             &mut current_path,
@@ -2094,7 +2084,6 @@ where
     /// Get all keys with prefix from Patricia trie
     fn keys_with_prefix_patricia_actual(
         nodes: &FastVec<PatriciaNode>,
-        edge_data: &FastVec<u8>,
         compressed_paths: &HashMap<StateId, Vec<u8>>,
         prefix: &[u8],
     ) -> Vec<Vec<u8>> {
@@ -2152,7 +2141,6 @@ where
         let mut current_path = path_to_prefix;
         Self::collect_keys_patricia_recursive(
             nodes,
-            edge_data,
             compressed_paths,
             current,
             &mut current_path,
@@ -2168,7 +2156,6 @@ where
     /// Recursively collect all keys from Patricia trie
     fn collect_keys_patricia_recursive(
         nodes: &FastVec<PatriciaNode>,
-        edge_data: &FastVec<u8>,
         compressed_paths: &HashMap<StateId, Vec<u8>>,
         node_id: usize,
         current_path: &mut Vec<u8>,
@@ -2201,7 +2188,6 @@ where
             // Recursively collect from child
             Self::collect_keys_patricia_recursive(
                 nodes,
-                edge_data,
                 compressed_paths,
                 child_id_usize,
                 current_path,

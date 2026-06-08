@@ -53,6 +53,7 @@ impl MinimalSso {
 
     /// Create from a string slice.
     #[inline]
+    #[allow(clippy::should_implement_trait)] // inherent from_str returns Self, cannot implement FromStr which returns Result
     pub fn from_str(data: &str) -> Self {
         Self::from_bytes(data.as_bytes())
     }

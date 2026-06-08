@@ -1596,15 +1596,16 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::field_reassign_with_default)]
     fn test_validation() -> Result<()> {
         let compressor = setup_test_compressor()?;
         assert!(compressor.validate().is_ok());
 
         // Test invalid configuration
-        let mut invalid_config = PaZipCompressorConfig::default();
-        invalid_config.min_net_benefit = -10;
-        invalid_config.learning_rate = 2.0;
+        let invalid_config = PaZipCompressorConfig {
+            min_net_benefit: -10,
+            learning_rate: 2.0,
+            ..Default::default()
+        };
 
         let training_data = b"test";
         let builder = DictionaryBuilder::default();

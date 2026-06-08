@@ -5,6 +5,9 @@ use crate::error::{Result, ZiporaError};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+type DecodeEntry = (u64, u8, u8);
+type DecodeTable = HashMap<u16, Vec<DecodeEntry>>;
+
 /// Interleaving factor for parallel Huffman encoding/decoding
 ///
 /// Interleaving splits input data into N independent streams that can be
@@ -936,12 +939,12 @@ impl ContextualHuffmanEncoder {
     ///
     /// IMPORTANT: Mirrors the encoding logic - uses context-specific tree where available,
     /// falls back to Order-0 tree for codes not in context-specific tree
-    fn build_decode_table(&self) -> Result<HashMap<u16, Vec<(u64, u8, u8)>>> {
+    fn build_decode_table(&self) -> Result<DecodeTable> {
         const BLOCK_BITS: usize = 12;
-        let mut table: HashMap<u16, Vec<(u64, u8, u8)>> = HashMap::new();
+        let mut table: DecodeTable = HashMap::new();
 
         // Helper function to build table for a single tree
-        let build_tree_table = |tree: &HuffmanTree| -> Vec<(u64, u8, u8)> {
+        let build_tree_table = |tree: &HuffmanTree| -> Vec<DecodeEntry> {
             let mut tree_table = vec![(0u64, 0u8, 0u8); 1 << BLOCK_BITS];
 
             if let Some(root) = tree.root() {

@@ -743,13 +743,14 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::field_reassign_with_default)]
     fn test_cache_metrics() {
-        let mut metrics = CacheMetrics::default();
-        metrics.l1_hits = 1000;
-        metrics.l1_misses = 100;
-        metrics.l2_hits = 50;
-        metrics.l2_misses = 10;
+        let metrics = CacheMetrics {
+            l1_hits: 1000,
+            l1_misses: 100,
+            l2_hits: 50,
+            l2_misses: 10,
+            ..Default::default()
+        };
 
         let hit_ratio = metrics.hit_ratio();
         assert!(hit_ratio > 0.9);

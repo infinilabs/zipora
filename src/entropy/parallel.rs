@@ -831,10 +831,11 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::field_reassign_with_default)]
     fn test_load_balancing() {
-        let mut config = ParallelConfig::default();
-        config.load_balancing = true;
+        let config = ParallelConfig {
+            load_balancing: true,
+            ..Default::default()
+        };
 
         let encoder = ParallelHuffmanEncoder::<ParallelX4Variant>::new(config).unwrap();
         let test_data = vec![1u8; 1000];

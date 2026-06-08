@@ -200,12 +200,14 @@ impl TestDataGenerator {
 // =============================================================================
 
 fn bench_suffix_array_construction(c: &mut Criterion) {
+    type TextGenerator = fn(usize) -> Vec<u8>;
+
     let mut group = c.benchmark_group("pa_zip_suffix_array");
     group.sample_size(20);
     group.measurement_time(Duration::from_secs(10));
 
     let test_sizes = vec![1_000, 5_000, 10_000, 50_000, 100_000];
-    let data_types: Vec<(&str, fn(usize) -> Vec<u8>)> = vec![
+    let data_types: Vec<(&str, TextGenerator)> = vec![
         ("repetitive", TestDataGenerator::repetitive_text),
         ("log_data", TestDataGenerator::log_data),
         ("source_code", TestDataGenerator::source_code),
