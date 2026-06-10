@@ -489,29 +489,29 @@ impl Config for MemoryConfig {
         }
     }
 
-    fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+    fn save_to_file<P: AsRef<Path>>(&self, _path: P) -> Result<()> {
         #[cfg(feature = "serde")]
         {
             let serialized = serde_json::to_string_pretty(self).map_err(|e| {
                 ZiporaError::configuration(format!("Failed to serialize memory config: {}", e))
             })?;
 
-            std::fs::write(path, serialized).map_err(|e| {
+            std::fs::write(_path, serialized).map_err(|e| {
                 ZiporaError::configuration(format!("Failed to write memory config file: {}", e))
             })?;
 
             Ok(())
         }
         #[cfg(not(feature = "serde"))]
-        Err(crate::error::ZiporaError::invalid_operation(
+        Err(ZiporaError::invalid_operation(
             "Requires serde feature",
         ))
     }
 
-    fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+    fn load_from_file<P: AsRef<Path>>(_path: P) -> Result<Self> {
         #[cfg(feature = "serde")]
         {
-            let content = std::fs::read_to_string(path).map_err(|e| {
+            let content = std::fs::read_to_string(_path).map_err(|e| {
                 ZiporaError::configuration(format!("Failed to read memory config file: {}", e))
             })?;
 
@@ -523,7 +523,7 @@ impl Config for MemoryConfig {
             Ok(config)
         }
         #[cfg(not(feature = "serde"))]
-        Err(crate::error::ZiporaError::invalid_operation(
+        Err(ZiporaError::invalid_operation(
             "Requires serde feature",
         ))
     }

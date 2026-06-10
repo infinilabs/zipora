@@ -107,6 +107,7 @@ impl EntropyAlgorithm {
 
     /// Get all available algorithms for the current build
     pub fn available_algorithms() -> Vec<Self> {
+        #[allow(unused_mut)]
         let mut algorithms = vec![Self::Huffman, Self::Rans, Self::Dictionary, Self::Auto];
 
         #[cfg(feature = "zstd")]

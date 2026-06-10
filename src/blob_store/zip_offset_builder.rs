@@ -234,10 +234,10 @@ impl ZipOffsetBlobStoreBuilder {
     fn compress_data(&self, data: &[u8]) -> Result<Vec<u8>> {
         match self.config.compress_level {
             0 => Ok(data.to_vec()),
-            level => {
+            _level => {
                 #[cfg(feature = "zstd")]
                 {
-                    zstd::encode_all(data, level as i32).map_err(|e| {
+                    zstd::encode_all(data, _level as i32).map_err(|e| {
                         ZiporaError::io_error(format!("ZSTD compression failed: {}", e))
                     })
                 }
