@@ -1,4 +1,3 @@
-use super::iterators::*;
 use super::map::*;
 use super::state::*;
 use super::trie::*;
@@ -6,10 +5,10 @@ use super::trie::*;
 // test module mirrors the file's own name by convention
 #[allow(clippy::module_inception)]
 mod tests {
-    use super::super::iterators::*;
-    use super::super::map::*;
+    
+    
     use super::super::state::*;
-    use super::super::trie::*;
+    
     use super::*;
 
     #[test]
@@ -1505,10 +1504,10 @@ mod tests {
 
 #[cfg(test)]
 mod prefix_regression_tests {
-    use super::super::iterators::*;
-    use super::super::map::*;
-    use super::super::state::*;
-    use super::super::trie::*;
+    
+    
+    
+    
     use super::*;
 
     #[test]
@@ -1548,9 +1547,9 @@ mod prefix_regression_tests {
 #[cfg(test)]
 mod map_prefix_regression_tests {
     use super::super::iterators::*;
-    use super::super::map::*;
-    use super::super::state::*;
-    use super::super::trie::*;
+    
+    
+    
     use super::*;
 
     #[test]

@@ -1,9 +1,5 @@
 use crate::algorithms::bit_ops::select_in_word;
-use crate::error::{Result, ZiporaError};
-use crate::succinct::BitVector;
-use std::cmp::Ordering;
 
-use super::basic::EliasFano;
 
 /// Lightweight metadata for a chunk in flat contiguous storage.
 ///

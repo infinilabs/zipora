@@ -927,7 +927,7 @@ mod tests {
 
     #[test]
     fn test_cache_offsets() {
-        let mut cache = CacheOffsets::new(64);
+        let cache = CacheOffsets::new(64);
         assert_eq!(cache.block_id, usize::MAX);
         assert_eq!(cache.offsets.len(), 65); // block_size + 1
     }

@@ -1,5 +1,5 @@
 use super::config::{
-    BitVectorType, RankSelectType, TrieCompressionStrategy, TrieStorageStrategy, TrieStrategy,
+    TrieStrategy,
     ZiporaTrieConfig,
 };
 use super::storage::{CritBitNode, PatriciaNode, SparseNode, TrieStorage};
@@ -8,13 +8,12 @@ use crate::containers::FastVec;
 use crate::containers::specialized::UintVector;
 use crate::error::{Result, ZiporaError};
 use crate::fsa::traits::{
-    FiniteStateAutomaton, PrefixIterable, StatisticsProvider, Trie, TrieStats,
+    FiniteStateAutomaton, PrefixIterable, Trie, TrieStats,
 };
 use crate::memory::SecureMemoryPool;
-use crate::memory::cache_layout::{CacheLayoutConfig, CacheOptimizedAllocator, PrefetchHint};
-use crate::succinct::{BitVector, RankSelectBuilder, RankSelectOps};
+use crate::memory::cache_layout::{CacheLayoutConfig, CacheOptimizedAllocator};
+use crate::succinct::{BitVector, RankSelectOps};
 use std::collections::{HashMap, VecDeque};
-use std::marker::PhantomData;
 use std::sync::Arc;
 
 /// Unified trie implementation with strategy-based configuration

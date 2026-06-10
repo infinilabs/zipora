@@ -49,7 +49,7 @@ fn test_real_file_io_basic() -> Result<()> {
 
 #[test]
 fn test_cache_statistics() {
-    let mut stats = CacheStatistics::new();
+    let stats = CacheStatistics::new();
 
     stats.record_hit(CacheHitType::Hit);
     stats.record_miss();

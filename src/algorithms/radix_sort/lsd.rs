@@ -1,15 +1,10 @@
 use super::advanced::RadixSortable;
 use super::config::RadixSortConfig;
 use crate::algorithms::{Algorithm, AlgorithmStats};
-use crate::error::{Result, ZiporaError};
+use crate::error::Result;
 use rayon::prelude::*;
 
 // AVX2/BMI2 intrinsics for advanced SIMD acceleration
-#[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::{
-    __m256i, _mm256_and_si256, _mm256_loadu_si256, _mm256_set1_epi32, _mm256_srlv_epi32,
-    _mm256_storeu_si256,
-};
 
 // AVX-512 intrinsics (avx512 feature)
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]

@@ -5,9 +5,7 @@
 //! strategies and SIMD-accelerated operations where available.
 
 use crate::error::{Result, ZiporaError};
-use crate::memory::{SecureMemoryPool, SecurePoolConfig};
 use std::io::{BufRead, BufReader, Read};
-use std::sync::Arc;
 
 /// Configuration for line processing operations
 #[derive(Debug, Clone)]

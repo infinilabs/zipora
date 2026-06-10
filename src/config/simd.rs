@@ -2,8 +2,6 @@
 
 use super::{Config, parse_env_bool};
 use crate::error::{Result, ZiporaError};
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// SIMD configuration placeholder.
@@ -79,7 +77,7 @@ impl Config for SIMDConfig {
             Ok(())
         }
         #[cfg(not(feature = "serde"))]
-        Err(crate::error::ZiporaError::invalid_operation(
+        Err(ZiporaError::invalid_operation(
             "Requires serde feature",
         ))
     }
@@ -97,7 +95,7 @@ impl Config for SIMDConfig {
             Ok(config)
         }
         #[cfg(not(feature = "serde"))]
-        Err(crate::error::ZiporaError::invalid_operation(
+        Err(ZiporaError::invalid_operation(
             "Requires serde feature",
         ))
     }

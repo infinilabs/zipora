@@ -71,13 +71,11 @@ use crate::blob_store::zip_offset_builder::ZipOffsetBlobStoreBuilder;
 //use crate::containers::specialized::UintVector;
 use crate::RecordId;
 use crate::error::{Result, ZiporaError};
-use crate::fsa::traits::Trie;
 use crate::fsa::{ZiporaTrie, ZiporaTrieConfig};
-use crate::memory::{SecureMemoryPool, SecurePoolConfig};
+use crate::memory::SecurePoolConfig;
 use crate::succinct::{RankSelectBuilder, RankSelectOps};
 use std::collections::HashMap;
 use std::marker::PhantomData;
-use std::sync::Arc;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};

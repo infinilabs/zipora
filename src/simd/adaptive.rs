@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::{BenchmarkResults, Operation, PerformanceHistory};
 use crate::system::cpu_features::{CpuFeatures, get_cpu_features};
@@ -507,7 +507,7 @@ impl AdaptiveSimdSelector {
     /// Generate test data for benchmarking with realistic patterns
     fn generate_test_data(&self, size: usize, op: Operation) -> Vec<u8> {
         use std::collections::hash_map::RandomState;
-        use std::hash::{BuildHasher, Hash, Hasher};
+        use std::hash::BuildHasher;
 
         let mut data = vec![0u8; size];
         let hasher = RandomState::new();

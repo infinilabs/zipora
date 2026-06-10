@@ -10,10 +10,8 @@
 //! - **Advanced set operations**: Intersection, union with bit mask optimizations
 
 use crate::error::{Result, ZiporaError};
-use crate::memory::SecureMemoryPool;
 use std::cmp::Ordering;
 use std::marker::PhantomData;
-use std::sync::Arc;
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};

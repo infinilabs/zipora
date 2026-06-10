@@ -745,9 +745,9 @@ impl RuntimeCpuFeatures {
     #[allow(dead_code)]
     fn get_cache_info(&self) -> (usize, usize, usize, usize) {
         let mut cache_line_size = 64; // Default assumption
-        let mut l1_size = 32 * 1024; // 32KB default
-        let mut l2_size = 256 * 1024; // 256KB default  
-        let mut l3_size = 8 * 1024 * 1024; // 8MB default
+        let l1_size = 32 * 1024; // 32KB default
+        let l2_size = 256 * 1024; // 256KB default  
+        let l3_size = 8 * 1024 * 1024; // 8MB default
 
         #[cfg(target_arch = "x86_64")]
         {

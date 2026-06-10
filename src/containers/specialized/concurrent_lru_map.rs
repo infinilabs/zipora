@@ -415,7 +415,7 @@ where
     }
 
     /// Execute a function on all shards in parallel
-    pub fn for_each_shard<F>(&self, mut f: F) -> Result<()>
+    pub fn for_each_shard<F>(&self, f: F) -> Result<()>
     where
         F: FnMut(&LruMap<K, V, E>) -> Result<()> + Send + Clone + 'static,
         K: 'static,
@@ -450,7 +450,7 @@ where
         // In practice, you might want to implement this differently
         // or provide warnings about its cost
 
-        let mut all_keys = Vec::new();
+        let all_keys = Vec::new();
 
         // Note: This is not atomic across shards, so the snapshot
         // might not be perfectly consistent

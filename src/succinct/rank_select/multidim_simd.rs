@@ -49,7 +49,6 @@
 //! ```
 
 use super::{RankSelectInterleaved256, RankSelectOps};
-use crate::FastVec;
 use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;
 use crate::system::{CpuFeatures, get_cpu_features};

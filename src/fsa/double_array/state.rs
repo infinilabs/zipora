@@ -1,5 +1,3 @@
-use crate::error::{Result, ZiporaError};
-use std::cmp::Ordering;
 
 /// 8-byte state matching C++ DA_State8B exactly.
 #[repr(C)]

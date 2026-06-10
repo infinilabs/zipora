@@ -20,19 +20,18 @@
 //! - **Concurrent Access**: Lock-free and token-based synchronization
 
 use crate::containers::FastVec;
-use crate::error::{Result, ZiporaError};
+use crate::error::Result;
 use crate::hash_map::cache_locality::{
-    AccessPattern, CacheMetrics, CacheOptimizedBucket, HotColdSeparator, Prefetcher,
+    CacheMetrics, CacheOptimizedBucket, Prefetcher,
 };
 use crate::hash_map::simd_string_ops::{SimdStringOps, get_global_simd_ops};
 use crate::memory::SecureMemoryPool;
-use crate::memory::cache_layout::{CacheLayoutConfig, CacheOptimizedAllocator, PrefetchHint};
+use crate::memory::cache_layout::{CacheLayoutConfig, CacheOptimizedAllocator};
 use ahash::RandomState;
 use std::borrow::Borrow;
 use std::fmt;
-use std::hash::{BuildHasher, Hash, Hasher};
-use std::marker::PhantomData;
-use std::mem::{self, MaybeUninit};
+use std::hash::{BuildHasher, Hash};
+use std::mem::MaybeUninit;
 use std::sync::Arc;
 
 /// Hash strategy configuration for unified hash map

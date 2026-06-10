@@ -20,10 +20,9 @@
 use super::CachePadded;
 use crate::error::{Result, ZiporaError};
 use crate::memory::cache_layout::{
-    AccessPattern, CacheLayoutConfig, CacheOptimizedAllocator, PrefetchHint, align_to_cache_line,
+    CacheLayoutConfig, CacheOptimizedAllocator, PrefetchHint,
 };
 use crate::memory::simd_ops::{fast_fill, fast_prefetch};
-use crate::memory::{get_optimal_numa_node, numa_alloc_aligned, numa_dealloc};
 use std::alloc::{Layout, alloc, dealloc};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};

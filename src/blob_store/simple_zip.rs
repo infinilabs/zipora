@@ -194,7 +194,7 @@ impl SimpleZipBlobStore {
         let len_bits = if max_len == 0 {
             0
         } else {
-            (usize::BITS - max_len.leading_zeros())
+            usize::BITS - max_len.leading_zeros()
         };
         let off_len: Vec<u64> = offsets
             .iter()

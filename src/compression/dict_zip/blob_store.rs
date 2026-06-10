@@ -200,7 +200,7 @@ impl Default for DictZipConfig {
 impl DictZipConfig {
     /// Create configuration optimized for text compression
     pub fn text_compression() -> Self {
-        let mut config = Self {
+        let config = Self {
             dict_builder_config: DictionaryBuilderConfig {
                 sample_sort_policy: crate::compression::dict_zip::SampleSortPolicy::SortBoth, // Use best sorting for text
                 target_dict_size: 32 * 1024 * 1024, // 32MB
@@ -989,7 +989,7 @@ impl DictZipBlobStore {
     pub fn optimize(&mut self) -> Result<()> {
         // Clear cache to free memory
         {
-            let mut cache = self
+            let cache = self
                 .cache
                 .write()
                 .map_err(|_| ZiporaError::resource_busy("Cache write lock"))?;
@@ -1027,7 +1027,7 @@ impl DictZipBlobStore {
 
     /// Store in cache
     fn store_in_cache(&self, id: RecordId, data: Vec<u8>) {
-        if let Ok(mut cache) = self.cache.write() {
+        if let Ok(cache) = self.cache.write() {
             let _ = cache.put(id, data);
         }
     }
@@ -1356,7 +1356,7 @@ impl BlobStore for DictZipBlobStore {
             .ok_or_else(|| ZiporaError::invalid_data(format!("Blob {} not found", id)))?;
 
         // Remove from cache
-        if let Ok(mut cache) = self.cache.write() {
+        if let Ok(cache) = self.cache.write() {
             cache.remove(&id);
         }
 
@@ -1756,7 +1756,7 @@ mod tests {
     #[test]
     fn test_error_handling() {
         // Test empty training samples
-        let mut builder = DictZipBlobStoreBuilder::new().unwrap();
+        let builder = DictZipBlobStoreBuilder::new().unwrap();
         assert!(builder.finish().is_err());
 
         // Test empty training sample

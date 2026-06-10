@@ -1,5 +1,4 @@
 use crate::error::{Result, ZiporaError};
-use std::cmp::Ordering;
 
 use super::iterators::*;
 use super::state::*;

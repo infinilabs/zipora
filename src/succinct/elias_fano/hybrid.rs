@@ -1,14 +1,10 @@
 const DENSE_THRESHOLD: usize = 64;
 const PARTITION_THRESHOLD: usize = 256;
 const OPTIMAL_THRESHOLD: usize = 4096;
-use crate::algorithms::bit_ops::select_in_word;
-use crate::error::{Result, ZiporaError};
-use crate::succinct::BitVector;
-use std::cmp::Ordering;
 
-use super::basic::{EliasFano, EliasFanoCursor};
-use super::optimal::{OptimalPartitionedEliasFano, OptimalPefCursor};
-use super::partitioned::{PartitionedEliasFano, PartitionedEliasFanoCursor};
+use super::basic::EliasFano;
+use super::optimal::OptimalPartitionedEliasFano;
+use super::partitioned::PartitionedEliasFano;
 
 /// Adaptive posting list that selects the best encoding based on list statistics.
 ///

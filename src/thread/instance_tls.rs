@@ -56,7 +56,7 @@ where
     _phantom: PhantomData<T>,
 }
 
-/// Thread-local storage for matrices
+// Thread-local storage for matrices
 thread_local! {
     static TLS_MATRICES: RefCell<HashMap<TypeId, Box<dyn Any>>> = RefCell::new(HashMap::new());
 }

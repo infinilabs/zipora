@@ -1,9 +1,6 @@
-use crate::error::{Result, ZiporaError};
-use std::cmp::Ordering;
 
 use super::map::{DoubleArrayTrieMap, MapValue};
-use super::state::{DaState, FREE_BIT, MAX_STATE, NIL_STATE, NINFO_NONE, NInfo, label_to_ninfo};
-use super::trie::*;
+use super::state::NINFO_NONE;
 
 pub(crate) struct PrefixFrame {
     pub(crate) state: u32,

@@ -429,10 +429,10 @@ impl FseTable {
         };
 
         // Initialize cache-friendly arrays
-        let mut states = vec![0u8; table_size].into_boxed_slice();
-        let mut nb_bits_table = vec![0u8; table_size].into_boxed_slice();
-        let mut new_state_base = Box::new([0u16; 256]);
-        let mut state_deltas = vec![0u16; table_size].into_boxed_slice();
+        let states = vec![0u8; table_size].into_boxed_slice();
+        let nb_bits_table = vec![0u8; table_size].into_boxed_slice();
+        let new_state_base = Box::new([0u16; 256]);
+        let state_deltas = vec![0u16; table_size].into_boxed_slice();
 
         // Build FSE tables using advanced approach
         let mut enc_symbols = [FseEncSymbol::default(); 256];

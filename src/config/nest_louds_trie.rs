@@ -799,8 +799,6 @@ impl NestLoudsTrieConfig {
 }
 
 // Add serde support for JSON serialization
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "serde")]
 impl serde::Serialize for NestLoudsTrieConfig {

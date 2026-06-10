@@ -20,9 +20,8 @@
 //! - **Database storage**: Efficient file-based storage
 
 use crate::error::{Result, ZiporaError};
-use crate::memory::cache::{get_optimal_numa_node, numa_alloc_aligned};
 use crate::memory::cache_layout::{
-    AccessPattern, CacheLayoutConfig, CacheOptimizedAllocator, PrefetchHint, align_to_cache_line,
+    AccessPattern, CacheLayoutConfig,
 };
 use crate::memory::mmap::{MemoryMappedAllocator, MmapAllocation};
 use crate::memory::simd_ops::{

@@ -3,7 +3,6 @@
 //! A high-performance, path-compressed radix trie designed for memory efficiency
 //! and concurrent read/write access. Ported from the C++ `topling-zip` reference.
 
-use crate::error::{Result, ZiporaError};
 use bytemuck::{Pod, Zeroable};
 
 pub const ALIGN_SIZE: usize = 4;
@@ -1701,7 +1700,6 @@ impl<'a, T: Copy> CsppTrieIterator<'a, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fsa::traits::Trie;
 
     #[test]
     fn test_cspp_trie_basic_insertion_and_lookup() {

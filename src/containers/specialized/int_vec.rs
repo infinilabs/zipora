@@ -5,7 +5,6 @@
 //! strategies inspired by high-performance database storage engines.
 
 use crate::error::{Result, ZiporaError};
-use crate::memory::fast_copy;
 use crate::simd::{AdaptiveSimdSelector, Operation};
 use std::marker::PhantomData;
 use std::mem;
@@ -91,7 +90,6 @@ mod unaligned_ops {
     }
 }
 
-use unaligned_ops::UnalignedOps;
 
 /// Hardware-accelerated SIMD operations for bulk processing
 mod int_vec_simd {

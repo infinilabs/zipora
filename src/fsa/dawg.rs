@@ -7,11 +7,9 @@ use crate::StateId;
 use crate::error::{Result, ZiporaError};
 use crate::fsa::cache::{FsaCache, FsaCacheConfig};
 use crate::fsa::traits::{FiniteStateAutomaton, StatisticsProvider, Trie, TrieStats};
-use crate::memory::SecureMemoryPool;
 use crate::succinct::BitVector;
 use crate::succinct::rank_select::{RankSelectInterleaved256, RankSelectOps};
 use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Configuration for DAWG construction
 #[derive(Debug, Clone)]

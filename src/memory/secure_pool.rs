@@ -32,11 +32,9 @@
 use super::CachePadded;
 use crate::error::{Result, ZiporaError};
 use crate::memory::cache_layout::{
-    AccessPattern, CacheLayoutConfig, CacheOptimizedAllocator, HotColdSeparator, PrefetchHint,
-    align_to_cache_line,
+    AccessPattern, CacheLayoutConfig, CacheOptimizedAllocator, PrefetchHint,
 };
 use crate::memory::simd_ops::{fast_compare, fast_fill, fast_prefetch};
-use crate::memory::{get_optimal_numa_node, numa_alloc_aligned, numa_dealloc};
 use crate::simd::Operation;
 use crate::simd::adaptive::AdaptiveSimdSelector;
 use std::alloc::{Layout, alloc, dealloc};
@@ -44,7 +42,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ptr::NonNull;
 use std::sync::LazyLock;
-use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -689,7 +687,7 @@ unsafe impl Send for SecureChunk {}
 unsafe impl Sync for SecureChunk {}
 
 /// Lock-free stack for high-performance chunk storage (Treiber stack)
-use crossbeam_epoch::{self as epoch, Atomic, Owned, Shared};
+use crossbeam_epoch::{self as epoch, Atomic, Owned};
 
 struct LockFreeStack<T> {
     head: Atomic<Node<T>>,

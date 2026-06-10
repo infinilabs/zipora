@@ -16,5 +16,4 @@ pub mod statistics;
 
 pub use debug::*;
 pub use factory::*;
-pub use profiling::*;
 pub use statistics::*;

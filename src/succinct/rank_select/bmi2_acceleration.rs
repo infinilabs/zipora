@@ -1971,7 +1971,7 @@ pub struct Bmi2Stats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    
 
     #[test]
     fn test_bmi2_capabilities() {

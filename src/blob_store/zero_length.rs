@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn test_zero_length_basic() {
-        let mut store = ZeroLengthBlobStore::new();
+        let store = ZeroLengthBlobStore::new();
         assert_eq!(store.len(), 0);
         assert!(store.is_empty());
         assert_eq!(store.mem_size(), 0);

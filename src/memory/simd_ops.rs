@@ -22,7 +22,7 @@
 //! - Comprehensive testing and benchmarking
 
 use crate::error::{Result, ZiporaError};
-use crate::memory::cache_layout::{CacheLayoutConfig, PrefetchHint, align_to_cache_line};
+use crate::memory::cache_layout::{CacheLayoutConfig, PrefetchHint};
 use crate::system::cpu_features::{CpuFeatures, get_cpu_features};
 use std::ptr;
 
@@ -142,7 +142,7 @@ impl SimdMemOps {
         let dst_start = dst.as_mut_ptr() as usize;
         let dst_end = dst_start + dst.len();
 
-        if (src_start < dst_end && dst_start < src_end) {
+        if src_start < dst_end && dst_start < src_end {
             return Err(ZiporaError::invalid_data(
                 "Source and destination slices must not overlap".to_string(),
             ));
@@ -1295,7 +1295,7 @@ pub fn fast_prefetch_range(data: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    
 
     #[test]
     fn test_simd_ops_creation() {

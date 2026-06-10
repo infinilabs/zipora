@@ -4,14 +4,7 @@
 // P3.7: documentation task
 // #![allow(dead_code)] // P3.3/P0.6: dead code removal is a separate task
 // #![allow(unused_variables)] // Stub implementations have unused params
-#![allow(unused_imports)] // Will be cleaned with dead code removal
-#![allow(unused_mut)] // Compiler can determine mutability needs
-#![allow(unused_doc_comments)] // Orphan doc comments from refactoring
-#![allow(redundant_semicolons)] // Style nit
-#![allow(clippy::needless_return)] // Style nit
-#![allow(clippy::incompatible_msrv)]
 // #![allow(unused_unsafe)] // Nested unsafe blocks from SIMD dispatch macros
-#![allow(unused_parens)] // Style nit
 
 //! # Zipora: High-Performance Data Structures and Compression
 //!
