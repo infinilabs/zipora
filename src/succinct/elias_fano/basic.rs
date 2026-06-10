@@ -1,8 +1,5 @@
 const BATCH_SIZE: usize = 8;
 use crate::algorithms::bit_ops::select_in_word;
-use crate::error::{Result, ZiporaError};
-use crate::succinct::BitVector;
-use std::cmp::Ordering;
 
 /// Sampling rate for rank acceleration.
 const RANK_SAMPLE_RATE: usize = 8;
@@ -876,7 +873,7 @@ impl<'a> EliasFanoBatchCursor<'a> {
 
         // --- Low-bit incremental state ---
         let low_mask = if lbw == 0 { 0u64 } else { (1u64 << lbw) - 1 };
-        let mut low_bit_pos = start_elem as u64 * lbw as u64;
+        let low_bit_pos = start_elem as u64 * lbw as u64;
         let mut low_word_idx = (low_bit_pos / 64) as usize;
         let mut low_bit_idx = (low_bit_pos % 64) as u32;
         let mut low_word = if lbw > 0 && low_word_idx < self.ef.low_bits.len() {

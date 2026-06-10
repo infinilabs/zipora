@@ -498,7 +498,7 @@ fn bulk_select1_bmi2(bit_data: &[u64], indices: &[usize]) -> Result<Vec<usize>> 
             }
         }
 
-        let mut word_idx = if left > 0 { left - 1 } else { 0 };
+        let word_idx = if left > 0 { left - 1 } else { 0 };
         if word_idx > 0 {
             cumulative_rank = bulk_rank1_simd(bit_data, &[word_idx * 64])
                 .first()
@@ -561,7 +561,7 @@ fn bulk_select1_popcnt(bit_data: &[u64], indices: &[usize]) -> Result<Vec<usize>
             )));
         }
 
-        let mut target_rank = index + 1; // Convert to 1-based
+        let target_rank = index + 1; // Convert to 1-based
         let mut current_rank = 0;
 
         // Find the word containing the target bit
@@ -831,7 +831,7 @@ fn bulk_select1_scalar(bit_data: &[u64], indices: &[usize]) -> Result<Vec<usize>
             )));
         }
 
-        let mut target_rank = index + 1; // Convert to 1-based
+        let target_rank = index + 1; // Convert to 1-based
         let mut current_rank = 0;
 
         // Find the word containing the target bit

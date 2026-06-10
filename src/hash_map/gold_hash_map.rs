@@ -19,9 +19,7 @@
 //! ```
 
 use crate::error::{Result, ZiporaError};
-use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::marker::PhantomData;
 
 /// Prime numbers used for bucket sizing
 const PRIMES: &[usize] = &[

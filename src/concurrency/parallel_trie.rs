@@ -2,8 +2,7 @@
 
 use crate::StateId;
 use crate::error::{Result, ZiporaError};
-use crate::fsa::traits::PrefixIterable;
-use crate::fsa::{Trie, ZiporaTrie};
+use crate::fsa::ZiporaTrie;
 use rayon::prelude::*;
 use std::sync::Arc;
 use tokio::sync::Mutex;

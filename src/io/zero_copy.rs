@@ -807,7 +807,7 @@ mod tests {
 
     #[test]
     fn test_zero_copy_buffer_basic() {
-        let mut buffer = ZeroCopyBuffer::new(1024).unwrap();
+        let buffer = ZeroCopyBuffer::new(1024).unwrap();
 
         assert_eq!(buffer.capacity(), 1024);
         assert_eq!(buffer.available(), 0);

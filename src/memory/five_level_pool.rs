@@ -21,10 +21,7 @@
 //! - **Composability**: Different components can use different concurrency levels
 
 use crate::error::{Result, ZiporaError};
-use crate::memory::cache_layout::{
-    AccessPattern, CacheLayoutConfig, CacheOptimizedAllocator, align_to_cache_line,
-};
-use crate::memory::{get_optimal_numa_node, numa_alloc_aligned, numa_dealloc};
+use crate::memory::cache_layout::CacheLayoutConfig;
 // Memory pool integration (currently unused in this implementation)
 // use crate::memory::SecureMemoryPool;
 use std::sync::{Arc, Mutex};
@@ -832,7 +829,7 @@ struct ThreadLocalCache {
 
 impl ThreadLocalCache {
     fn new(arena_size: usize, num_bins: usize) -> Self {
-        let mut arena = vec![0; arena_size];
+        let arena = vec![0; arena_size];
 
         Self {
             arena,

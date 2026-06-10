@@ -16,12 +16,8 @@
 
 use crate::StateId;
 use crate::containers::FastVec;
-use crate::containers::specialized::UintVector;
 use crate::error::{Result, ZiporaError};
-use crate::fsa::traits::{StatisticsProvider, TrieStats};
-use crate::memory::cache_layout::{CacheOptimizedAllocator, PrefetchHint};
-use crate::succinct::{BitVector, RankSelectOps};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 /// Core trie algorithm strategy
 pub trait TrieAlgorithmStrategy {

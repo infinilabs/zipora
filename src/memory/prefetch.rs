@@ -36,15 +36,11 @@
 //! strategy.adaptive_prefetch(&data, &[100, 200, 300]);
 //! ```
 
-use crate::error::{Result, ZiporaError};
-use crate::system::{CpuFeatures, get_cpu_features};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 // Platform-specific intrinsics
-#[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::*;
 
 /// Prefetch locality hints for different cache levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

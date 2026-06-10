@@ -5,8 +5,6 @@
 
 use super::{Config, ValidationError, parse_env_bool, parse_env_var};
 use crate::error::{Result, ZiporaError};
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Memory allocation strategy for different scenarios.

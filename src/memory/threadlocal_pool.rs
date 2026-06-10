@@ -21,11 +21,9 @@ use crate::error::{Result, ZiporaError};
 use crate::memory::{SecureMemoryPool, SecurePoolConfig};
 use std::alloc::{Layout, alloc, dealloc};
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, Weak};
-use std::thread::{self, ThreadId};
+use std::sync::{Arc, Weak};
 
 /// Default arena size for thread-local allocation (2MB)
 const DEFAULT_ARENA_SIZE: usize = 2 * 1024 * 1024;
@@ -631,7 +629,7 @@ mod tests {
     #[test]
     fn test_size_class_mapping() {
         let pool_weak = Weak::new();
-        let mut cache = ThreadLocalCache::new(pool_weak, None);
+        let cache = ThreadLocalCache::new(pool_weak, None);
 
         // Test size class mapping
         assert_eq!(cache.size_to_list_index(8), Some(0)); // -> 16

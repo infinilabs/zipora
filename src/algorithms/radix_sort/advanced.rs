@@ -1,5 +1,5 @@
 use super::config::{
-    AdvancedAlgorithmStats, AdvancedRadixSortConfig, CpuFeatures, DataCharacteristics, PhaseTimes,
+    AdvancedAlgorithmStats, AdvancedRadixSortConfig, CpuFeatures, PhaseTimes,
     SortingStrategy,
 };
 use crate::algorithms::{Algorithm, AlgorithmStats};
@@ -565,7 +565,7 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
     ) -> Result<()> {
         // This is a simplified version - full SIMD implementation would be more complex
         // For generic types, we need to extract keys first
-        let mut keys: Vec<u64> = data.iter().map(|item| item.extract_key()).collect();
+        let keys: Vec<u64> = data.iter().map(|item| item.extract_key()).collect();
 
         let mut i = 0;
         let shift_vec = _mm256_set1_epi32(shift as i32);

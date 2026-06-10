@@ -1545,7 +1545,7 @@ mod tests {
 
     #[test]
     fn test_rle_optimization() {
-        let mut matcher = SimdPatternMatcher::new();
+        let matcher = SimdPatternMatcher::new();
         let input = b"before aaaaaaaaaa middle bbbbbbbbbb after";
 
         // Test RLE pattern that should be optimized

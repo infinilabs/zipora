@@ -3,7 +3,6 @@
 //! Comprehensive lock-free programming utilities providing enhanced atomic
 //! operations, platform-specific optimizations, and safe atomic casting.
 
-use std::ptr;
 use std::sync::atomic::{
     AtomicBool, AtomicI8, AtomicI16, AtomicI32, AtomicI64, AtomicIsize, AtomicPtr, AtomicU8,
     AtomicU16, AtomicU32, AtomicU64, AtomicUsize, Ordering,
@@ -500,8 +499,8 @@ pub mod memory_ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use std::thread;
+    
+    
 
     #[test]
     fn test_atomic_maximize() {

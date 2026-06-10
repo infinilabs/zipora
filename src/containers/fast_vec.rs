@@ -6,7 +6,7 @@
 
 use crate::error::{Result, ZiporaError};
 use crate::memory::simd_ops::{fast_compare, fast_copy, fast_fill};
-use crate::simd::{AdaptiveSimdSelector, Operation, SimdImpl};
+use crate::simd::{AdaptiveSimdSelector, Operation};
 use std::alloc::{self, Layout};
 use std::fmt;
 use std::mem;

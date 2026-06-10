@@ -352,7 +352,7 @@ impl WorkStealingExecutor {
                 return Ok(());
             }
             // If this fails, the task is consumed but we have an error
-            return Err(ZiporaError::configuration("local queue push failed"));
+            Err(ZiporaError::configuration("local queue push failed"))
         } else {
             // Go straight to global queue with priority ordering
             let mut global_queue = self.global_queue.lock().unwrap_or_else(|e| e.into_inner());

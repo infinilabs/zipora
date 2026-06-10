@@ -22,7 +22,7 @@
 
 use crate::algorithms::suffix_array::SuffixArray;
 use crate::error::{Result, ZiporaError};
-use crate::fsa::traits::{FiniteStateAutomaton, Trie};
+use crate::fsa::traits::FiniteStateAutomaton;
 use crate::fsa::{ZiporaTrie, ZiporaTrieConfig};
 use std::sync::Arc;
 

@@ -55,12 +55,16 @@ use super::{BuilderOptions, RankSelectBuilder, RankSelectOps, RankSelectPerforma
 use crate::FastVec;
 use crate::error::{Result, ZiporaError};
 use crate::succinct::BitVector;
-use crate::system::{CpuFeatures, get_cpu_features};
 use std::fmt;
+
+#[cfg(all(target_arch = "x86_64", not(test)))]
+use crate::system::get_cpu_features;
 
 // Hardware acceleration imports
 #[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch, _popcnt64};
+use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
+#[cfg(all(target_arch = "x86_64", not(test)))]
+use std::arch::x86_64::_popcnt64;
 
 /// Cache-optimized interleaved line containing rank metadata and bit data
 ///

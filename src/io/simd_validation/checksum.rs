@@ -40,7 +40,7 @@
 //! assert_ne!(final_crc, 0);
 //! ```
 
-use crate::error::{Result, ZiporaError};
+use crate::error::Result;
 use crate::system::cpu_features::get_cpu_features;
 use std::sync::OnceLock;
 

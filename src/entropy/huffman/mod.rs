@@ -32,5 +32,3 @@ pub use tree::HuffmanTree;
 pub(crate) use decoder::BitStreamReader;
 #[cfg(test)]
 pub(crate) use encoder::BitStreamWriter;
-#[cfg(test)]
-pub(crate) use tree::HuffmanNode;

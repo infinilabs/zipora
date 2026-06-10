@@ -1,5 +1,4 @@
 use crate::error::{Result, ZiporaError};
-use std::cmp::Ordering;
 
 use super::state::*;
 
@@ -814,7 +813,7 @@ impl DoubleArrayTrie {
             }
             self.ninfos[parent_pos].set_first_child(label_enc);
         } else if first == label_enc {
-            return; // Already first child
+            // Already first child
         } else {
             // Walk chain to find insertion point
             let mut prev_enc = first;

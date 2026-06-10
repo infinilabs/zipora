@@ -1458,7 +1458,7 @@ impl ConcurrentCsppTrie {
         // `curr` is a valid node. We are copying the structural part (header and children).
         unsafe {
             let base = self.inner.pool.data.as_ptr() as *mut u8;
-            let src = (self.inner.pool.raw_ptr(curr as usize));
+            let src = self.inner.pool.raw_ptr(curr as usize);
             let dst = base.add(suffix_node as usize * 4);
             let struct_size = (old_skip + old_n_children) * ALIGN_SIZE;
             std::ptr::copy_nonoverlapping(src, dst, struct_size);
@@ -1485,7 +1485,7 @@ impl ConcurrentCsppTrie {
             }
             if val_size > 0 {
                 let old_val_off = struct_size + ((zpath_len + 3) & !3);
-                let src = (self.inner.pool.raw_ptr(curr as usize));
+                let src = self.inner.pool.raw_ptr(curr as usize);
                 std::ptr::copy_nonoverlapping(
                     src.add(old_val_off),
                     zpath_dst.add(suffix_zpath_padded),
@@ -1552,7 +1552,7 @@ impl ConcurrentCsppTrie {
         // Copying structural part from `curr`.
         unsafe {
             let base = self.inner.pool.data.as_ptr() as *mut u8;
-            let src = (self.inner.pool.raw_ptr(curr as usize));
+            let src = self.inner.pool.raw_ptr(curr as usize);
             let dst = base.add(suffix_node as usize * 4);
             let struct_size = (old_skip + old_n_children) * ALIGN_SIZE;
             std::ptr::copy_nonoverlapping(src, dst, struct_size);
@@ -1578,7 +1578,7 @@ impl ConcurrentCsppTrie {
             }
             if val_size > 0 {
                 let old_val_off = struct_size + ((zpath_len + 3) & !3);
-                let src = (self.inner.pool.raw_ptr(curr as usize));
+                let src = self.inner.pool.raw_ptr(curr as usize);
                 std::ptr::copy_nonoverlapping(
                     src.add(old_val_off),
                     zpath_dst.add(suffix_zpath_padded),

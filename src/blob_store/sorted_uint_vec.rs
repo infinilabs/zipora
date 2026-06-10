@@ -6,7 +6,6 @@
 
 use crate::containers::FastVec;
 use crate::error::{Result, ZiporaError};
-use crate::memory::SecureMemoryPool;
 // Note: BitVector and RankSelectInterleaved256 would be used for advanced optimizations
 
 #[cfg(feature = "serde")]

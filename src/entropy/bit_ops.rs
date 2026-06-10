@@ -829,7 +829,7 @@ impl EntropyBitOps {
 
     /// Optimized bit reversal for entropy coding
     #[inline]
-    pub fn reverse_bits32(&self, mut x: u32) -> u32 {
+    pub fn reverse_bits32(&self, x: u32) -> u32 {
         // Use BMI2 if available for faster bit manipulation
         if self.bit_ops.config.enable_bmi2 && self.bit_ops.features.has_bmi2 {
             #[cfg(target_arch = "x86_64")]

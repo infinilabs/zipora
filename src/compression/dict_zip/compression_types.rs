@@ -56,8 +56,6 @@
 //! - **Cache efficiency**: 95%+ hit rate for type prediction in sequential decoding
 
 use crate::error::{Result, ZiporaError};
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Maximum literal length (1-32 bytes)
@@ -1196,7 +1194,7 @@ pub fn encode_match(match_type: &Match, writer: &mut BitWriter) -> Result<usize>
         Match::Far2Short { distance, length } => {
             // 16 bits for distance (258-65793), stored as distance-258
             // 5 bits for length (2-33), stored as length-2
-            writer.write_bits((*distance - 258), 16)?;
+            writer.write_bits(*distance - 258, 16)?;
             writer.write_bits((*length - 2) as u32, 5)?;
         }
         Match::Far2Long { distance, length } => {
@@ -1207,7 +1205,7 @@ pub fn encode_match(match_type: &Match, writer: &mut BitWriter) -> Result<usize>
         Match::Far3Long { distance, length } => {
             // 24 bits for distance + variable length encoding
             writer.write_bits(*distance & 0xFFFFFF, 24)?;
-            encode_variable_length((*length - MIN_FAR2_LONG_LENGTH as u32), writer)?; // Store as offset
+            encode_variable_length(*length - MIN_FAR2_LONG_LENGTH as u32, writer)?; // Store as offset
         }
     }
 

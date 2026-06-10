@@ -3,16 +3,11 @@ const CHUNK_OVERHEAD_BITS: usize = 192;
 const MAX_CHUNK_SIZE: usize = 512;
 const MIN_CHUNK_SIZE: usize = 1;
 use crate::algorithms::bit_ops::select_in_word;
-use crate::error::{Result, ZiporaError};
-use crate::succinct::BitVector;
-use std::cmp::Ordering;
 
-use super::basic::EliasFano;
 use super::chunk::{
     ChunkView, PefChunkMeta, chunk_first_one_cached, chunk_get_delta, chunk_get_low,
-    chunk_scan_geq, chunk_select1, chunk_skip_to_high,
+    chunk_scan_geq, chunk_skip_to_high,
 };
-use super::partitioned::PartitionedEliasFano;
 
 /// DP-Optimal Partitioned Elias-Fano with variable-length chunks.
 ///
@@ -947,7 +942,7 @@ impl<'a> OptimalPefBatchCursor<'a> {
             bit_pos = word_idx * 64 + start_bit;
 
             // --- Low-bit incremental state ---
-            let mut low_bit_pos = self.local_idx as u64 * lbw as u64;
+            let low_bit_pos = self.local_idx as u64 * lbw as u64;
             let mut low_word_idx = (low_bit_pos / 64) as usize;
             let mut low_bit_idx = (low_bit_pos % 64) as u32;
             let mut low_word = if lbw > 0 && low_word_idx < view.low_bits.len() {

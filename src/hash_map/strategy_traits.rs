@@ -15,11 +15,10 @@
 
 use crate::containers::FastVec;
 use crate::error::{Result, ZiporaError};
-use crate::hash_map::cache_locality::{CacheMetrics, Prefetcher};
 use crate::hash_map::simd_string_ops::SimdStringOps;
-use crate::memory::cache_layout::{CacheOptimizedAllocator, PrefetchHint};
+use crate::memory::cache_layout::CacheOptimizedAllocator;
 use std::borrow::Borrow;
-use std::hash::{BuildHasher, Hash, Hasher};
+use std::hash::Hash;
 
 /// Collision resolution strategy for hash maps
 pub trait CollisionResolutionStrategy<K, V> {

@@ -26,11 +26,10 @@
 //! - **Portable**: Fallback implementations for other architectures
 
 use crate::error::{Result, ZiporaError};
-use crate::memory::simd_ops::{SimdMemOps, SimdTier};
-use crate::system::cpu_features::{CpuFeatures, get_cpu_features};
+use crate::memory::simd_ops::SimdMemOps;
 use std::alloc::{Layout, alloc, dealloc};
 use std::mem;
-use std::ptr::{self, NonNull};
+use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Cache line size detection and optimization constants
@@ -535,9 +534,9 @@ fn detect_x86_cache_hierarchy() -> CacheHierarchy {
 
                     let cache_level = (result.eax >> 5) & 0x7;
                     let line_size = ((result.ebx & 0xFFF) + 1) as usize;
-                    let cache_size = (((result.ebx >> 22) + 1) as usize
+                    let cache_size = ((result.ebx >> 22) + 1) as usize
                         * ((result.ecx + 1) as usize)
-                        * line_size);
+                        * line_size;
 
                     match cache_level {
                         1 => {
