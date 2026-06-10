@@ -933,15 +933,14 @@ where
         hash_builder: &S,
     ) -> Result<Option<V>> {
         // If already migrated to fallback, delegate to Standard storage
-        if let Some(fb) = _fallback.as_mut() {
-            #[allow(clippy::collapsible_if)]
-            if let HashMapStorage::Standard {
+        if let Some(fb) = _fallback.as_mut()
+            && let HashMapStorage::Standard {
                 buckets,
                 entries,
                 mask,
                 ..
             } = fb.as_mut()
-            {
+        {
                 let result =
                     Self::insert_standard(hash_builder, buckets, entries, mask, key, value, hash)
                         .map_err(|_| {
@@ -954,7 +953,6 @@ where
                 }
                 return Ok(result);
             }
-        }
 
         // Check if key already exists in inline storage
         for i in 0..16 {
@@ -1115,17 +1113,15 @@ where
         Q: Hash + Eq + ?Sized,
     {
         // Check fallback first (migrated data)
-        #[allow(clippy::collapsible_if)]
-        if let Some(fb) = fallback {
-            if let HashMapStorage::Standard {
+        if let Some(fb) = fallback
+            && let HashMapStorage::Standard {
                 buckets,
                 entries,
                 mask,
             } = fb.as_ref()
-            {
-                let hash = self.hash_key_borrowed(key);
-                return self.get_standard(buckets, entries, mask, key, hash);
-            }
+        {
+            let hash = self.hash_key_borrowed(key);
+            return self.get_standard(buckets, entries, mask, key, hash);
         }
 
         for i in 0..16 {
