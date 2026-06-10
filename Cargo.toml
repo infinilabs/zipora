@@ -22,21 +22,6 @@ crate-type = ["rlib"]
 # Indexed loops are deliberate in hot paths (often clearer/faster than iterator
 # adapters); clippy itself marks the iterator rewrites as MaybeIncorrect.
 needless_range_loop = "allow"
-# Inherent methods intentionally mirror std trait names (add, from_iter, next, ...)
-# as part of the public API surface.
-should_implement_trait = "allow"
-# Builder and SIMD-dispatch entry points take many parameters by design.
-too_many_arguments = "allow"
-# A few internal types are inherently complex (SIMD dispatch tables, nested generics).
-type_complexity = "allow"
-# `from_*` / `is_*` naming follows domain conventions.
-wrong_self_convention = "allow"
-# Module-as-its-own-name is an intentional structural choice in a few modules.
-module_inception = "allow"
-# A couple of `new` constructors return a Result/wrapper by design.
-new_ret_no_self = "allow"
-# Recursive helpers carry a parameter used only in the recursive call.
-only_used_in_recursion = "allow"
 
 [features]
 default = ["simd", "mmap", "zstd", "serde", "lz4", "async", "avx512"]
