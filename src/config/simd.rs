@@ -65,13 +65,13 @@ impl Config for SIMDConfig {
         }
     }
 
-    fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+    fn save_to_file<P: AsRef<Path>>(&self, _path: P) -> Result<()> {
         #[cfg(feature = "serde")]
         {
             let serialized = serde_json::to_string_pretty(self).map_err(|e| {
                 ZiporaError::configuration(format!("Failed to serialize SIMD config: {}", e))
             })?;
-            std::fs::write(path, serialized).map_err(|e| {
+            std::fs::write(_path, serialized).map_err(|e| {
                 ZiporaError::configuration(format!("Failed to write SIMD config file: {}", e))
             })?;
             Ok(())
@@ -82,10 +82,10 @@ impl Config for SIMDConfig {
         ))
     }
 
-    fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+    fn load_from_file<P: AsRef<Path>>(_path: P) -> Result<Self> {
         #[cfg(feature = "serde")]
         {
-            let content = std::fs::read_to_string(path).map_err(|e| {
+            let content = std::fs::read_to_string(_path).map_err(|e| {
                 ZiporaError::configuration(format!("Failed to read SIMD config file: {}", e))
             })?;
             let config: Self = serde_json::from_str(&content).map_err(|e| {

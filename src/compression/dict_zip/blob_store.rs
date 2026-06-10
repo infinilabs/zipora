@@ -556,10 +556,10 @@ impl DictZipBlobStoreBuilder {
 
         // Handle external dictionary storage before creating compressor
         if self.config.external_dictionary
-            && let Some(dict_path) = &self.config.dict_path
+            && let Some(_dict_path) = &self.config.dict_path
         {
             #[cfg(feature = "serde")]
-            dictionary.save_to_file(dict_path)?;
+            dictionary.save_to_file(_dict_path)?;
         }
 
         let dictionary_size = dictionary.size_in_bytes();
@@ -824,14 +824,14 @@ impl DictZipBlobStore {
 
     /// Create from existing dictionary file
     pub fn from_dictionary_file<P: AsRef<Path>>(
-        dict_path: P,
+        _dict_path: P,
         config: DictZipConfig,
     ) -> Result<Self> {
         config.validate()?;
 
         #[cfg(feature = "serde")]
         {
-            let dictionary = SuffixArrayDictionary::load_from_file(dict_path)?;
+            let dictionary = SuffixArrayDictionary::load_from_file(_dict_path)?;
 
             // Initialize memory pool if needed
             let memory_pool = if let Some(pool_config) = &config.memory_pool_config {
@@ -880,14 +880,14 @@ impl DictZipBlobStore {
     }
 
     /// Save dictionary to file
-    pub fn save_dictionary<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+    pub fn save_dictionary<P: AsRef<Path>>(&self, _path: P) -> Result<()> {
         #[cfg(feature = "serde")]
         {
             let dictionary = self
                 .dictionary
                 .read()
                 .map_err(|_| ZiporaError::resource_busy("Dictionary read lock"))?;
-            dictionary.save_to_file(path)
+            dictionary.save_to_file(_path)
         }
 
         #[cfg(not(feature = "serde"))]
@@ -897,10 +897,10 @@ impl DictZipBlobStore {
     }
 
     /// Load dictionary from file (replaces current dictionary)
-    pub fn load_dictionary<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
+    pub fn load_dictionary<P: AsRef<Path>>(&mut self, _path: P) -> Result<()> {
         #[cfg(feature = "serde")]
         {
-            let new_dictionary = SuffixArrayDictionary::load_from_file(path)?;
+            let new_dictionary = SuffixArrayDictionary::load_from_file(_path)?;
             let memory_pool = self
                 .memory_pool
                 .as_ref()
