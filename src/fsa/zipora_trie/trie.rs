@@ -1134,25 +1134,23 @@ where
 
     // Critical-bit trie implementation methods
     //  TODO: port from C++ reference `src/terark/fsa/crit_bit_trie.hpp`
-    #[allow(unused)]
     fn insert_critical_bit(
-        nodes: &mut FastVec<CritBitNode>,
-        keys: &mut FastVec<Vec<u8>>,
-        critical_cache: &mut HashMap<usize, u8>,
-        key: &[u8],
+        _nodes: &mut FastVec<CritBitNode>,
+        _keys: &mut FastVec<Vec<u8>>,
+        _critical_cache: &mut HashMap<usize, u8>,
+        _key: &[u8],
     ) -> Result<StateId> {
         Err(ZiporaError::not_supported(
             "CriticalBit trie strategy is not yet implemented",
         ))
     }
 
-    #[allow(unused)]
     fn contains_critical_bit(
         &self,
-        nodes: &FastVec<CritBitNode>,
-        keys: &FastVec<Vec<u8>>,
-        critical_cache: &HashMap<usize, u8>,
-        key: &[u8],
+        _nodes: &FastVec<CritBitNode>,
+        _keys: &FastVec<Vec<u8>>,
+        _critical_cache: &HashMap<usize, u8>,
+        _key: &[u8],
     ) -> bool {
         false
     }
@@ -1653,31 +1651,30 @@ where
 
     // LOUDS trie implementation methods
     //  TODO: port from C++ reference `src/terark/fsa/nest_louds_trie.hpp`
-    #[allow(unused)]
     fn insert_louds(
-        louds: &mut R,
-        is_link: &mut R,
-        next_link: &mut UintVector,
-        label_data: &mut FastVec<u8>,
-        core_data: &mut FastVec<u8>,
-        next_trie: &mut Option<Box<ZiporaTrie<R>>>,
-        key: &[u8],
+        _louds: &mut R,
+        _is_link: &mut R,
+        _next_link: &mut UintVector,
+        _label_data: &mut FastVec<u8>,
+        _core_data: &mut FastVec<u8>,
+        _next_trie: &mut Option<Box<ZiporaTrie<R>>>,
+        _key: &[u8],
     ) -> Result<StateId> {
         Err(ZiporaError::not_supported(
             "LOUDS trie strategy is not yet implemented",
         ))
     }
 
-    #[allow(unused, clippy::too_many_arguments)] // internal helper; arg bundle would add indirection
+    #[allow(clippy::too_many_arguments)] // internal helper; arg bundle would add indirection
     fn contains_louds(
         &self,
-        louds: &R,
-        is_link: &R,
-        next_link: &UintVector,
-        label_data: &FastVec<u8>,
-        core_data: &FastVec<u8>,
-        next_trie: &Option<Box<ZiporaTrie<R>>>,
-        key: &[u8],
+        _louds: &R,
+        _is_link: &R,
+        _next_link: &UintVector,
+        _label_data: &FastVec<u8>,
+        _core_data: &FastVec<u8>,
+        _next_trie: &Option<Box<ZiporaTrie<R>>>,
+        _key: &[u8],
     ) -> bool {
         false
     }
@@ -1685,12 +1682,12 @@ where
     // Compressed sparse trie implementation methods
     /// Compressed sparse trie insertion.
     //  TODO: port from C++ reference `src/terark/fsa/cspptrie.hpp`
-    #[allow(unused)]
+    #[allow(dead_code)]
     fn insert_compressed_sparse(
         sparse_nodes: &mut HashMap<StateId, SparseNode>,
-        compression_dict: &mut HashMap<Vec<u8>, u32>,
-        bit_vector: &mut BitVector,
-        rank_select: &mut R,
+        _compression_dict: &mut HashMap<Vec<u8>, u32>,
+        _bit_vector: &mut BitVector,
+        _rank_select: &mut R,
         key: &[u8],
     ) -> Result<StateId> {
         // Initialize root node if not present
@@ -1759,13 +1756,13 @@ where
 
     /// Compressed sparse trie lookup.
     //  TODO: port from C++ reference `src/terark/fsa/cspptrie.hpp`
-    #[allow(unused)]
+    #[allow(dead_code)]
     fn contains_compressed_sparse(
         &self,
         sparse_nodes: &HashMap<StateId, SparseNode>,
-        compression_dict: &HashMap<Vec<u8>, u32>,
-        bit_vector: &BitVector,
-        rank_select: &R,
+        _compression_dict: &HashMap<Vec<u8>, u32>,
+        _bit_vector: &BitVector,
+        _rank_select: &R,
         key: &[u8],
     ) -> bool {
         if sparse_nodes.is_empty() {
