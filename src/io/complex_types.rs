@@ -76,6 +76,7 @@ macro_rules! impl_tuple_serialize {
             }
 
             fn serialize_data<O: DataOutput>(&self, output: &mut O) -> Result<()> {
+                // Macro-generated variables use type names (which are CamelCase)
                 #[allow(non_snake_case)]
                 let ($($T,)*) = self;
                 $(
