@@ -756,10 +756,8 @@ where
             .as_ref()
             .ok_or_else(|| ZiporaError::invalid_data("No memory mapping"))?;
 
-        // clippy::unnecessary_cast false positive: the cast pins the byte (*mut u8)
-        // target type; without it the element type T is ambiguous (E0282).
-        #[allow(clippy::unnecessary_cast)]
-        let base_ptr = mmap.as_ptr() as *mut u8;
+        // Pin the pointer to *mut u8 type to avoid ambiguity
+        let base_ptr: *mut u8 = mmap.as_ptr();
 
         // Header is at the beginning
         self.header = Some(
