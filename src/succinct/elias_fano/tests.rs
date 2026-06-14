@@ -198,8 +198,9 @@ mod tests {
             }
         }
         let _ = found;
-        #[allow(unused_variables)]
         let elapsed = start.elapsed();
+        #[cfg(debug_assertions)]
+        let _ = elapsed;
 
         #[cfg(not(debug_assertions))]
         {
@@ -289,8 +290,9 @@ mod tests {
     #[test]
     fn test_cursor_performance() {
         let docs: Vec<u32> = (0..100000).map(|i| i * 10).collect();
-        #[allow(unused_variables)]
         let ef = EliasFano::from_sorted(&docs);
+        #[cfg(debug_assertions)]
+        let _ = ef;
 
         #[cfg(not(debug_assertions))]
         {
@@ -633,13 +635,15 @@ mod tests {
     #[test]
     fn test_pef_performance_next_geq() {
         let docs: Vec<u32> = (0..100000).map(|i| i * 10).collect();
-        #[allow(unused_variables)]
         let ef = EliasFano::from_sorted(&docs);
-        #[allow(unused_variables)]
         let pef = PartitionedEliasFano::from_sorted(&docs);
-
-        #[allow(unused_variables)]
         let targets: Vec<u64> = (0..10000).map(|i| (i * 100) as u64).collect();
+        #[cfg(debug_assertions)]
+        {
+            let _ = ef;
+            let _ = pef;
+            let _ = targets;
+        }
 
         #[cfg(not(debug_assertions))]
         {
@@ -692,10 +696,13 @@ mod tests {
     #[test]
     fn test_pef_performance_cursor() {
         let docs: Vec<u32> = (0..100000).map(|i| i * 10).collect();
-        #[allow(unused_variables)]
         let ef = EliasFano::from_sorted(&docs);
-        #[allow(unused_variables)]
         let pef = PartitionedEliasFano::from_sorted(&docs);
+        #[cfg(debug_assertions)]
+        {
+            let _ = ef;
+            let _ = pef;
+        }
 
         #[cfg(not(debug_assertions))]
         {
@@ -846,8 +853,9 @@ mod tests {
     #[test]
     fn test_batch_cursor_performance() {
         let docs: Vec<u32> = (0..100000).map(|i| i * 10).collect();
-        #[allow(unused_variables)]
         let ef = EliasFano::from_sorted(&docs);
+        #[cfg(debug_assertions)]
+        let _ = ef;
 
         #[cfg(not(debug_assertions))]
         {
@@ -1185,17 +1193,19 @@ mod tests {
     #[test]
     fn test_hybrid_performance_comparison() {
         let docs: Vec<u32> = (0..100000).map(|i| i * 10).collect();
-        #[allow(unused_variables)]
         let targets: Vec<u64> = (0..10000).map(|i| (i * 100) as u64).collect();
-
-        #[allow(unused_variables)]
         let dense = HybridPostingList::with_encoding(&docs, PostingEncoding::Dense);
-        #[allow(unused_variables)]
         let ef = HybridPostingList::with_encoding(&docs, PostingEncoding::EliasFano);
-        #[allow(unused_variables)]
         let pef = HybridPostingList::with_encoding(&docs, PostingEncoding::Partitioned);
-        #[allow(unused_variables)]
         let opef = HybridPostingList::with_encoding(&docs, PostingEncoding::Optimal);
+        #[cfg(debug_assertions)]
+        {
+            let _ = targets;
+            let _ = dense;
+            let _ = ef;
+            let _ = pef;
+            let _ = opef;
+        }
 
         #[cfg(not(debug_assertions))]
         {
