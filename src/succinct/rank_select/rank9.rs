@@ -602,8 +602,9 @@ mod tests {
     #[test]
     fn test_rank9_performance() {
         let pattern: Vec<bool> = (0..100000).map(|i| (i * 13 + 7) % 71 == 0).collect();
-        #[allow(unused_variables)]
         let r9 = Rank9::new(make_bv(&pattern)).unwrap();
+        #[cfg(debug_assertions)]
+        let _ = r9;
 
         #[cfg(not(debug_assertions))]
         {
