@@ -107,7 +107,9 @@ impl EntropyAlgorithm {
 
     /// Get all available algorithms for the current build
     pub fn available_algorithms() -> Vec<Self> {
-        #[allow(unused_mut)]
+        // `mut` is only used by the zstd-gated pushes below; gate the allow to the
+        // build that needs it so a stray-mut warning still fires when zstd is on.
+        #[cfg_attr(not(feature = "zstd"), allow(unused_mut))]
         let mut algorithms = vec![Self::Huffman, Self::Rans, Self::Dictionary, Self::Auto];
 
         #[cfg(feature = "zstd")]
