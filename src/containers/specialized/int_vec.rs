@@ -88,45 +88,6 @@ mod int_vec_simd {
             (min_val, max_val)
         }
 
-        /// Vectorized range analysis with unrolled loops for maximum performance
-        #[inline]
-        #[allow(dead_code)]
-        pub fn analyze_range_bulk_unrolled(values: &[u64]) -> (u64, u64) {
-            if values.is_empty() {
-                return (0, 0);
-            }
-
-            if values.len() == 1 {
-                return (values[0], values[0]);
-            }
-
-            let mut min_val = values[0];
-            let mut max_val = values[0];
-
-            // Unroll loops of 4 for better instruction-level parallelism
-            let mut i = 1;
-            while i + 3 < values.len() {
-                let v0 = values[i];
-                let v1 = values[i + 1];
-                let v2 = values[i + 2];
-                let v3 = values[i + 3];
-
-                // Parallel min/max operations
-                min_val = min_val.min(v0).min(v1).min(v2).min(v3);
-                max_val = max_val.max(v0).max(v1).max(v2).max(v3);
-
-                i += 4;
-            }
-
-            // Handle remaining elements
-            while i < values.len() {
-                min_val = min_val.min(values[i]);
-                max_val = max_val.max(values[i]);
-                i += 1;
-            }
-
-            (min_val, max_val)
-        }
 
         /// 🚀 ADVANCED OPTIMIZED: Ultra-fast range analysis for small datasets
         ///
@@ -220,31 +181,6 @@ mod int_vec_simd {
             }
         }
 
-        /// Prefetch memory location for writing
-        ///
-        /// # Safety
-        /// This function is safe because it accepts a reference, ensuring the memory address is valid.
-        /// Prefetch hints are advisory only and do not cause faults.
-        #[inline]
-        #[allow(dead_code)]
-        pub fn prefetch_write<T: ?Sized>(data: &T) {
-            let addr = data as *const T as *const u8;
-            #[cfg(target_arch = "x86_64")]
-            {
-                // SAFETY: prefetch is always safe, addr from valid reference
-                unsafe {
-                    std::arch::x86_64::_mm_prefetch(
-                        addr as *const i8,
-                        std::arch::x86_64::_MM_HINT_T0,
-                    );
-                }
-            }
-            #[cfg(not(target_arch = "x86_64"))]
-            {
-                // No-op on non-x86_64 platforms
-                let _ = addr;
-            }
-        }
     }
 }
 
@@ -331,11 +267,6 @@ impl BlockSize {
         1 << (self as u8)
     }
 
-    #[inline]
-    #[allow(dead_code)]
-    fn log2(self) -> u8 {
-        self as u8
-    }
 }
 
 /// Compression strategy for optimal space efficiency
@@ -672,69 +603,6 @@ impl<T: PackedInt> IntVec<T> {
 
     // Private implementation methods
 
-    /// Fast bulk conversion to u64 using unaligned memory operations with Adaptive SIMD
-    #[allow(dead_code)]
-    fn bulk_convert_to_u64(values: &[T]) -> Vec<u64> {
-        let mut u64_values = Vec::with_capacity(values.len());
-
-        // Adaptive SIMD selection for optimal conversion
-        let selector = AdaptiveSimdSelector::global();
-        let start_time = Instant::now();
-
-        // Process in chunks of 128 elements for cache efficiency
-        const CHUNK_SIZE: usize = 128;
-
-        for chunk in values.chunks(CHUNK_SIZE) {
-            // Use vectorized conversion for better performance
-            for &value in chunk {
-                u64_values.push(value.to_u64());
-            }
-        }
-
-        // Monitor performance for adaptive optimization
-        selector.monitor_performance(
-            Operation::Compress,
-            start_time.elapsed(),
-            values.len() as u64,
-        );
-
-        u64_values
-    }
-
-    /// 🚀 SIMD-optimized bulk conversion to u64 for maximum performance
-    ///
-    /// This method provides significant performance improvements for bulk operations:
-    /// - Direct memory operations for compatible types
-    /// - Reduced function call overhead
-    /// - Cache-friendly processing patterns
-    /// - Optimized for compiler vectorization
-    ///
-    /// # Performance
-    ///
-    /// - 2-3x faster for medium to large datasets
-    /// - Minimal overhead for small datasets
-    /// - Optimized memory access patterns
-    ///   Bulk constructor storing values as raw u64 without compression
-    #[allow(dead_code)]
-    fn from_slice_bulk_zerocopy(values: &[T], start_time: std::time::Instant) -> Result<Self> {
-        let mut result = Self::new();
-        result.len = values.len();
-
-        // Convert through PackedInt::to_u64 — safe and correct for all T: PackedInt
-        result.strategy = CompressionStrategy::Raw;
-        result.data = values
-            .iter()
-            .flat_map(|v| v.to_u64().to_le_bytes())
-            .collect();
-
-        // Update statistics
-        result.stats.original_size = std::mem::size_of_val(values);
-        result.stats.compressed_size = result.data.len();
-        result.stats.index_size = 0;
-        result.stats.compression_time_ns = start_time.elapsed().as_nanos() as u64;
-
-        Ok(result)
-    }
 
     /// 🚀 ADVANCED FAST PATH: Optimized strategy analysis for small datasets (≤10K elements)
     ///
