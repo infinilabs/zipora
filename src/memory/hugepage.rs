@@ -41,7 +41,7 @@ static HUGEPAGE_COUNT: AtomicUsize = AtomicUsize::new(0);
 static HUGEPAGE_ALLOCATIONS: Mutex<Vec<HugePageAllocation>> = Mutex::new(Vec::new());
 
 #[cfg(target_os = "linux")]
-#[allow(dead_code)]
+#[allow(dead_code)] // hugepage global tracking bookkeeping
 struct HugePageAllocation {
     ptr: *mut u8,
     size: usize,
