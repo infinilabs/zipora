@@ -188,7 +188,7 @@ impl SharedPool {
     /// Write raw bytes to pool slots (for initializing newly allocated nodes).
     /// SAFETY: Slots must be newly allocated (uncontested).
     #[inline]
-    #[allow(dead_code)]
+    #[allow(dead_code)] // future-wired
     unsafe fn write_bytes(&self, slot: usize, byte_offset: usize, src: &[u8]) {
         // SAFETY: caller guarantees slot is within allocated bounds, dst doesn't overlap src
         unsafe {
@@ -199,14 +199,14 @@ impl SharedPool {
 
     /// Write a MetaInfo to a slot.
     #[inline(always)]
-    #[allow(dead_code)]
+    #[allow(dead_code)] // future-wired
     fn store_meta(&self, pos: u32, meta: MetaInfo) {
         self.store_relaxed(pos as usize, meta_to_u32(meta));
     }
 
     /// Store a node (as u32) with release ordering (for synchronization).
     #[inline(always)]
-    #[allow(dead_code)]
+    #[allow(dead_code)] // future-wired
     fn store_node_release(&self, pos: u32, node: PatriciaNode) {
         self.store_release(pos as usize, node_to_u32(node));
     }
@@ -637,7 +637,7 @@ impl<'a> ConcurrentNodeView<'a> {
         }
     }
 
-    #[allow(dead_code)]
+    #[allow(dead_code)] // future-wired
     fn for_each_child<F>(&self, mut f: F)
     where
         F: FnMut(u8, u32),
