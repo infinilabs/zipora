@@ -1154,61 +1154,6 @@ impl PaZipCompressor {
         }
     }
 
-    /// Create appropriate Match from local match parameters
-    #[allow(dead_code)]
-    fn create_local_match(
-        &self,
-        distance: u32,
-        length: u32,
-        match_type: CompressionType,
-    ) -> Result<Match> {
-        match match_type {
-            CompressionType::RLE => {
-                // For RLE, we need the repeated byte value from the input
-                // For now, use a placeholder - this should be extracted from the actual match
-                Ok(Match::RLE {
-                    byte_value: 0, // This should be the repeated byte from input
-                    length: length
-                        .try_into()
-                        .map_err(|_| ZiporaError::invalid_data("RLE length too large"))?,
-                })
-            }
-            CompressionType::NearShort => Ok(Match::NearShort {
-                distance: distance
-                    .try_into()
-                    .map_err(|_| ZiporaError::invalid_data("NearShort distance too large"))?,
-                length: length
-                    .try_into()
-                    .map_err(|_| ZiporaError::invalid_data("NearShort length too large"))?,
-            }),
-            CompressionType::Far1Short => Ok(Match::Far1Short {
-                distance: distance
-                    .try_into()
-                    .map_err(|_| ZiporaError::invalid_data("Far1Short distance too large"))?,
-                length: length
-                    .try_into()
-                    .map_err(|_| ZiporaError::invalid_data("Far1Short length too large"))?,
-            }),
-            CompressionType::Far2Short => Ok(Match::Far2Short {
-                distance,
-                length: length
-                    .try_into()
-                    .map_err(|_| ZiporaError::invalid_data("Far2Short length too large"))?,
-            }),
-            CompressionType::Far2Long => Ok(Match::Far2Long {
-                distance: distance
-                    .try_into()
-                    .map_err(|_| ZiporaError::invalid_data("Far2Long distance too large"))?,
-                length: length
-                    .try_into()
-                    .map_err(|_| ZiporaError::invalid_data("Far2Long length too large"))?,
-            }),
-            CompressionType::Far3Long => Ok(Match::Far3Long { distance, length }),
-            _ => Err(ZiporaError::invalid_data(
-                "Invalid match type for local match",
-            )),
-        }
-    }
 
     /// Step 6: Update compression statistics
     fn update_statistics(&mut self, strategy: CompressionStrategy, _advance_length: usize) {
