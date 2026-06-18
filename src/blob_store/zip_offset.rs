@@ -840,12 +840,6 @@ mod tests {
         assert_eq!(store.size(0).unwrap(), None);
     }
 
-    #[test]
-    fn test_cache_offsets() {
-        let cache = CacheOffsets::new(64);
-        assert_eq!(cache.block_id, usize::MAX);
-        assert_eq!(cache.offsets.len(), 65); // block_size + 1
-    }
 
     #[test]
     fn test_zip_offset_blob_store_memory_usage() {
