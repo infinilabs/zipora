@@ -282,6 +282,7 @@ pub type ProgressCallback = dyn Fn(&BuildProgress) + Send + Sync;
 /// Position and length tracking for sample sorting
 /// Based on the reference PosLen structure
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(test), allow(dead_code))]
 struct PosLen {
     /// Position in the source data
     pos: usize,
@@ -290,6 +291,7 @@ struct PosLen {
 }
 
 impl PosLen {
+    #[cfg_attr(not(test), allow(dead_code))]
     fn new(pos: usize, len: usize) -> Self {
         Self { pos, len }
     }
@@ -297,15 +299,18 @@ impl PosLen {
 
 /// Left comparison for sample sorting (compare from beginning)
 /// Matches the reference PosLenCmpLeft behavior exactly
+#[cfg_attr(not(test), allow(dead_code))]
 struct PosLenCmpLeft<'a> {
     base: &'a [u8],
 }
 
 impl<'a> PosLenCmpLeft<'a> {
+    #[cfg_attr(not(test), allow(dead_code))]
     fn new(base: &'a [u8]) -> Self {
         Self { base }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn compare(&self, x: &PosLen, y: &PosLen) -> std::cmp::Ordering {
         let sx = &self.base[x.pos..x.pos + x.len];
         let sy = &self.base[y.pos..y.pos + y.len];
@@ -325,15 +330,18 @@ impl<'a> PosLenCmpLeft<'a> {
 
 /// Right comparison for sample sorting (compare from ending)
 /// Matches the reference PosLenCmpRight behavior exactly
+#[cfg_attr(not(test), allow(dead_code))]
 struct PosLenCmpRight<'a> {
     base: &'a [u8],
 }
 
 impl<'a> PosLenCmpRight<'a> {
+    #[cfg_attr(not(test), allow(dead_code))]
     fn new(base: &'a [u8]) -> Self {
         Self { base }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     fn compare(&self, x: &PosLen, y: &PosLen) -> std::cmp::Ordering {
         let sx = &self.base[x.pos..x.pos + x.len];
         let sy = &self.base[y.pos..y.pos + y.len];
@@ -717,7 +725,7 @@ impl DictionaryBuilder {
 
     /// Apply sample sorting policy based on configuration
     /// Matches reference sorting behavior exactly
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), allow(dead_code))]
     fn apply_sample_sorting(&self, data: &[u8]) -> Result<Vec<u8>> {
         match self.config.sample_sort_policy {
             SampleSortPolicy::SortNone => {
@@ -741,7 +749,7 @@ impl DictionaryBuilder {
     }
 
     /// Sort samples by left (beginning) content with deduplication
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), allow(dead_code))]
     fn sort_samples_left(&self, data: &[u8]) -> Result<Vec<u8>> {
         if data.is_empty() {
             return Ok(Vec::new());
@@ -812,7 +820,7 @@ impl DictionaryBuilder {
     }
 
     /// Sort samples by right (ending) content with deduplication
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), allow(dead_code))]
     fn sort_samples_right(&self, data: &[u8]) -> Result<Vec<u8>> {
         if data.is_empty() {
             return Ok(Vec::new());
@@ -883,7 +891,7 @@ impl DictionaryBuilder {
     }
 
     /// Check if one sample is a left prefix of another
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), allow(dead_code))]
     fn is_left_prefix(&self, data: &[u8], shorter: &PosLen, longer: &PosLen) -> bool {
         if shorter.len >= longer.len {
             return false;
@@ -896,7 +904,7 @@ impl DictionaryBuilder {
     }
 
     /// Check if one sample is a right suffix of another
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), allow(dead_code))]
     fn is_right_suffix(&self, data: &[u8], shorter: &PosLen, longer: &PosLen) -> bool {
         if shorter.len >= longer.len {
             return false;
@@ -910,7 +918,7 @@ impl DictionaryBuilder {
     }
 
     /// Build final result from deduplicated samples
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), allow(dead_code))]
     fn build_result_from_samples(&self, data: &[u8], samples: &[PosLen]) -> Result<Vec<u8>> {
         if samples.is_empty() {
             return Ok(Vec::new());
