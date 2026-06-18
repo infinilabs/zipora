@@ -295,7 +295,6 @@ struct NumaNodeManager {
 }
 
 /// NUMA-aware memory pool for each node
-#[allow(dead_code)]
 struct NumaMemoryPool {
     small_chunks: Vec<usize>, // < 1KB allocations (stored as usize for Send/Sync)
     medium_chunks: Vec<usize>, // 1KB - 64KB allocations
@@ -305,7 +304,6 @@ struct NumaMemoryPool {
     miss_count: AtomicUsize,
 }
 
-#[allow(dead_code)]
 impl NumaMemoryPool {
     fn new() -> Self {
         Self {
@@ -316,40 +314,6 @@ impl NumaMemoryPool {
             hit_count: AtomicUsize::new(0),
             miss_count: AtomicUsize::new(0),
         }
-    }
-
-    fn allocate(&mut self, layout: Layout, node: NumaNode) -> Result<NonNull<u8>> {
-        let pool = if layout.size() < 1024 {
-            &mut self.small_chunks
-        } else if layout.size() < 64 * 1024 {
-            &mut self.medium_chunks
-        } else {
-            &mut self.large_chunks
-        };
-
-        // Try to reuse from pool first
-        if let Some(ptr_addr) = pool.pop() {
-            self.hit_count.fetch_add(1, Ordering::Relaxed);
-            let ptr = ptr_addr as *mut u8;
-            return NonNull::new(ptr).ok_or_else(|| ZiporaError::out_of_memory(layout.size()));
-        }
-
-        // Allocate new memory bound to NUMA node
-        self.miss_count.fetch_add(1, Ordering::Relaxed);
-        // SAFETY: layout valid (size > 0, align power of 2)
-        let ptr = unsafe { alloc(layout) };
-
-        if ptr.is_null() {
-            return Err(ZiporaError::out_of_memory(layout.size()));
-        }
-
-        // Bind to NUMA node
-        bind_to_numa_node(ptr, layout.size(), node);
-        self.allocated_bytes
-            .fetch_add(layout.size(), Ordering::Relaxed);
-
-        // SAFETY: null check performed above
-        Ok(unsafe { NonNull::new_unchecked(ptr) })
     }
 
     fn deallocate(&mut self, ptr: NonNull<u8>, layout: Layout) {
