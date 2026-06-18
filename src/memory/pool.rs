@@ -487,7 +487,7 @@ impl<T> Drop for PooledVec<T> {
 pub struct PooledBuffer {
     ptr: NonNull<u8>,
     len: usize,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // pool chunk capacity bookkeeping
     capacity: usize,
     pool: Arc<MemoryPool>,
 }
