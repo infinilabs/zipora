@@ -523,7 +523,7 @@ impl DoubleArrayTrie {
     /// Get sorted children of a state as (symbol, child_state) pairs.
     /// Matching C++ `get_all_move()`. Used by cursor for binary search.
     #[inline]
-    #[allow(dead_code)]
+    #[allow(dead_code)] // future-wired
     fn get_children(&self, state: u32) -> Vec<(u8, u32)> {
         let mut c = self.ninfos[state as usize].first_child();
         if c == NINFO_NONE {
@@ -744,7 +744,7 @@ impl DoubleArrayTrie {
     }
 
     /// Resolve collision by relocating the smaller side.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // future-wired
     fn consult_and_relocate(&mut self, curr: u32, ch: u8) -> Result<u32> {
         let base = self.states[curr as usize].child0();
         let conflict_pos = base ^ ch as u32;
