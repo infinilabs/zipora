@@ -1,6 +1,6 @@
 use super::decoder::BitStreamReader;
 use super::encoder::{BitStreamWriter, HuffmanEncSymbol};
-use super::tree::{HuffmanNode, HuffmanSymbol, HuffmanTree};
+use super::tree::{HuffmanNode, HuffmanTree};
 use crate::error::{Result, ZiporaError};
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -821,57 +821,6 @@ impl ContextualHuffmanEncoder {
         Ok(output)
     }
 
-    /// Build fast lookup table for encoding: (context, symbol) -> HuffmanSymbol
-    #[allow(dead_code)]
-    fn build_symbol_table(&self) -> Result<HashMap<(u16, u8), HuffmanSymbol>> {
-        let mut table = HashMap::new();
-
-        // For each context, build codes for all symbols
-        for context in 0..=256u16 {
-            // Get the tree for this context
-            let tree_idx = if context == 256 {
-                0 // Initial context uses Order-0 tree
-            } else {
-                *self.context_map.get(&(context as u32)).unwrap_or(&0)
-            };
-
-            let tree = &self.trees[tree_idx];
-
-            // Build codes for all symbols in this tree
-            // NOTE: Since new_order1 now ensures all trees contain all symbols,
-            // every symbol should have a code in every tree
-            for symbol in 0..=255u8 {
-                if let Some(code) = tree.get_code(symbol) {
-                    // Convert Vec<bool> to packed bits
-                    let mut bits = 0u64;
-                    let bit_count = code.len() as u8;
-
-                    if bit_count > 64 {
-                        return Err(ZiporaError::invalid_data(format!(
-                            "Huffman code too long: {} bits",
-                            bit_count
-                        )));
-                    }
-
-                    for (i, &bit) in code.iter().enumerate() {
-                        if bit && i < 64 {
-                            bits |= 1u64 << i;
-                        }
-                    }
-
-                    table.insert((context, symbol), HuffmanSymbol::new(bits, bit_count));
-                } else {
-                    // This should not happen if new_order1 works correctly
-                    return Err(ZiporaError::invalid_data(format!(
-                        "Symbol {} not found in tree for context {}",
-                        symbol, context
-                    )));
-                }
-            }
-        }
-
-        Ok(table)
-    }
 
     /// Get or initialize the cached fast symbol table
     ///

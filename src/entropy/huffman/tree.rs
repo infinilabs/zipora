@@ -2,24 +2,6 @@ use crate::error::{Result, ZiporaError};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
-/// Huffman symbol with code information
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(test, allow(dead_code))]
-pub(crate) struct HuffmanSymbol {
-    _bits: u64, // Changed from u16 to u64 to support longer codes
-    _bit_count: u8,
-}
-
-impl HuffmanSymbol {
-    #[inline]
-    #[allow(dead_code)]
-    pub(crate) fn new(bits: u64, bit_count: u8) -> Self {
-        Self {
-            _bits: bits,
-            _bit_count: bit_count,
-        }
-    }
-}
 
 /// Node in the Huffman tree
 #[derive(Debug, Clone, PartialEq, Eq)]
