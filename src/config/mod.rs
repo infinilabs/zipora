@@ -194,7 +194,6 @@ pub trait Config: Clone + fmt::Debug {
 
 /// Configuration validation error details.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ValidationError {
     /// The field that failed validation
     pub field: String,
