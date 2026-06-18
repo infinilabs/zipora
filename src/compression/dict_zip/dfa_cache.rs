@@ -179,11 +179,6 @@ impl DfaState {
         }
     }
 
-    /// Get the frequency (range size) of this state
-    #[allow(dead_code)]
-    fn frequency(&self) -> u32 {
-        self.suffix_hig.saturating_sub(self.suffix_low)
-    }
 }
 
 /// BFS queue element for traversal
@@ -220,34 +215,6 @@ struct TemporaryTrie {
     terminals: HashMap<u32, PatternInfo>,
 }
 
-/// Temporary trie node for BFS construction
-#[derive(Debug)]
-struct TrieNode {
-    /// Child nodes indexed by byte value
-    children: HashMap<u8, Box<TrieNode>>,
-    /// Pattern information if this node represents a complete pattern
-    pattern_info: Option<PatternInfo>,
-    /// Frequency of this prefix
-    frequency: u32,
-    /// Depth in the trie
-    _depth: usize,
-}
-
-impl TrieNode {
-    fn new(depth: usize) -> Self {
-        Self {
-            children: HashMap::new(),
-            pattern_info: None,
-            frequency: 0,
-            _depth: depth,
-        }
-    }
-
-    #[allow(dead_code)]
-    fn is_terminal(&self) -> bool {
-        self.pattern_info.is_some()
-    }
-}
 
 /// High-performance DFA cache using Double Array Trie
 #[derive(Debug, Clone)]
@@ -262,6 +229,7 @@ pub struct DfaCache {
     stats: CacheStats,
     /// Reference to original text for BFS algorithm. `Arc` so cloning the cache
     /// (e.g. per decompress) is a pointer bump rather than a multi-MB copy.
+    #[cfg_attr(not(test), allow(dead_code))]
     text: Arc<Vec<u8>>,
     /// Reference to suffix array for BFS algorithm (shared; see `text`).
     suffix_array: Arc<Vec<i32>>,
@@ -750,7 +718,7 @@ impl DfaCache {
     /// Binary search for upper bound of character in suffix array range
     ///
     /// Finds the first position where suffix[pos + depth] > ch
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), allow(dead_code))]
     fn sa_upper_bound(&self, lo: usize, hi: usize, depth: usize, ch: u8) -> usize {
         let mut left = lo;
         let mut right = hi;
@@ -779,7 +747,7 @@ impl DfaCache {
     }
 
     /// Find equal range for character in suffix array
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), allow(dead_code))]
     fn sa_equal_range(&self, lo: usize, hi: usize, depth: usize, ch: u8) -> (usize, usize) {
         let lower = self.sa_lower_bound(lo, hi, depth, ch);
         let upper = self.sa_upper_bound(lo, hi, depth, ch);
@@ -787,7 +755,7 @@ impl DfaCache {
     }
 
     /// Binary search for lower bound of character in suffix array range
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), allow(dead_code))]
     fn sa_lower_bound(&self, lo: usize, hi: usize, depth: usize, ch: u8) -> usize {
         let mut left = lo;
         let mut right = hi;
@@ -841,7 +809,7 @@ impl DfaCache {
     }
 
     /// Extract frequent patterns from suffix array
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), allow(dead_code))]
     fn extract_frequent_patterns(
         suffix_array: &SuffixArray,
         text: &[u8],
@@ -887,80 +855,6 @@ impl DfaCache {
         Ok(patterns)
     }
 
-    /// Build trie using BFS (Breadth-First Search)
-    #[allow(dead_code)]
-    fn build_trie_bfs(patterns: &[PatternInfo], max_depth: usize) -> Result<Box<TrieNode>> {
-        let mut root = Box::new(TrieNode::new(0));
-
-        // Add all patterns to the trie
-        for pattern_info in patterns {
-            if pattern_info.length > max_depth {
-                continue;
-            }
-
-            let mut current = &mut root;
-
-            // Traverse/create path for this pattern
-            for (i, &byte) in pattern_info.pattern.iter().enumerate() {
-                let depth = i + 1;
-                current = current
-                    .children
-                    .entry(byte)
-                    .or_insert_with(|| Box::new(TrieNode::new(depth)));
-
-                // Update frequency (sum of all patterns passing through this node)
-                current.frequency += pattern_info.frequency;
-            }
-
-            // Mark end of pattern
-            current.pattern_info = Some(pattern_info.clone());
-        }
-
-        Ok(root)
-    }
-
-    /// Convert trie to ZiporaTrie format (simplified version)
-    #[allow(dead_code)]
-    fn convert_to_zipora_trie(
-        root: Box<TrieNode>,
-        config: &ZiporaTrieConfig,
-    ) -> Result<(ZiporaTrie, HashMap<u32, PatternInfo>)> {
-        let mut trie = ZiporaTrie::with_config(config.clone());
-        let mut pattern_map = HashMap::new();
-
-        // Collect all patterns from the trie
-        let mut patterns = Vec::new();
-        Self::collect_patterns_from_trie(&root, Vec::new(), &mut patterns);
-
-        // Insert patterns into ZiporaTrie and create pattern map
-        for (pattern, pattern_info) in patterns {
-            if let Ok(state_id) = trie.insert_and_get_node_id(&pattern) {
-                pattern_map.insert(state_id, pattern_info);
-            }
-        }
-
-        Ok((trie, pattern_map))
-    }
-
-    /// Collect all patterns from trie recursively
-    #[allow(dead_code)]
-    fn collect_patterns_from_trie(
-        node: &TrieNode,
-        current_pattern: Vec<u8>,
-        patterns: &mut Vec<(Vec<u8>, PatternInfo)>,
-    ) {
-        // If this is a terminal node, add the pattern
-        if let Some(ref pattern_info) = node.pattern_info {
-            patterns.push((current_pattern.clone(), pattern_info.clone()));
-        }
-
-        // Recursively collect from children
-        for (&byte, child) in &node.children {
-            let mut child_pattern = current_pattern.clone();
-            child_pattern.push(byte);
-            Self::collect_patterns_from_trie(child, child_pattern, patterns);
-        }
-    }
 }
 
 /// Serializable representation of DFA cache
