@@ -174,7 +174,7 @@ impl FileHeader {
     }
 
     /// Extract checksum type
-    #[allow(dead_code)]
+    #[cfg_attr(test, allow(dead_code))]
     fn checksum_type(&self) -> u8 {
         ((self.records_checksum_version >> 40) & 0xFF) as u8
     }
@@ -185,13 +185,13 @@ impl FileHeader {
     }
 
     /// Get file size (safe for packed struct)
-    #[allow(dead_code)]
+    #[cfg_attr(test, allow(dead_code))]
     fn file_size(&self) -> u64 {
         self.file_size
     }
 
     /// Get uncompressed size (safe for packed struct)
-    #[allow(dead_code)]
+    #[cfg_attr(test, allow(dead_code))]
     fn unzip_size(&self) -> u64 {
         self.unzip_size
     }
@@ -273,19 +273,11 @@ impl FileHeader {
 
 /// Cache for block-based offset access
 #[derive(Debug)]
-struct CacheOffsets {
-    /// Cached block ID
-    block_id: usize,
-    /// Cached offset values for the block
-    offsets: Vec<u64>,
-}
+struct CacheOffsets {}
 
 impl CacheOffsets {
-    fn new(block_size: usize) -> Self {
-        Self {
-            block_id: usize::MAX,             // Invalid initial value
-            offsets: vec![0; block_size + 1], // +1 for end offset
-        }
+    fn new(_block_size: usize) -> Self {
+        Self {}
     }
 }
 
@@ -607,7 +599,7 @@ impl ZipOffsetBlobStore {
     }
 
     /// SIMD-optimized memory copy with fallback
-    #[allow(dead_code)]
+    #[cfg_attr(test, allow(dead_code))]
     fn simd_copy(&self, src: &[u8], dst: &mut [u8]) -> Result<()> {
         if self.should_use_simd(src.len()) {
             fast_copy(src, dst)
@@ -654,83 +646,6 @@ impl ZipOffsetBlobStore {
         }
     }
 
-    /// Get record with cached offsets for better sequential performance
-    #[allow(dead_code)]
-    fn get_record_cached<const COMPRESS: bool, const CHECKSUM_LEN: u8>(
-        &mut self,
-        id: RecordId,
-    ) -> Result<Vec<u8>> {
-        if self.offset_cache.is_none() {
-            self.enable_offset_cache();
-        }
-
-        let cache = self
-            .offset_cache
-            .as_mut()
-            .expect("cache initialized when caching enabled");
-        let block_idx = (id as usize) >> self.config.offset_config.log2_block_units;
-        let offset_idx = (id as usize) & self.config.offset_config.block_mask();
-
-        // Check cache hit
-        if block_idx != cache.block_id {
-            // Cache miss - load entire block of offsets
-            self.offsets.get_block(
-                block_idx,
-                &mut cache.offsets[..self.config.offset_config.block_size()],
-            )?;
-
-            // Add end offset for the block
-            if block_idx + 1 < self.offsets.num_blocks() {
-                cache.offsets[self.config.offset_config.block_size()] = self
-                    .offsets
-                    .get((block_idx + 1) << self.config.offset_config.log2_block_units)?;
-            } else {
-                cache.offsets[self.config.offset_config.block_size()] = self.content.len() as u64;
-            }
-
-            cache.block_id = block_idx;
-        }
-
-        // Use cached offsets
-        let start_offset = cache.offsets[offset_idx];
-        let end_offset = cache.offsets[offset_idx + 1];
-
-        // Process record using cached offsets
-        let mut record_len = (end_offset - start_offset) as usize;
-        let record_data = &self.content.as_slice()[start_offset as usize..end_offset as usize];
-
-        // Handle checksums with SIMD optimization
-        if CHECKSUM_LEN > 0 {
-            if record_len < CHECKSUM_LEN as usize {
-                return Err(ZiporaError::invalid_data("record too small for checksum"));
-            }
-
-            record_len -= CHECKSUM_LEN as usize;
-            let data_part = &record_data[..record_len];
-            let checksum_part = &record_data[record_len..];
-
-            // Use SIMD-optimized checksum verification
-            if CHECKSUM_LEN == 4 && !self.verify_checksum(data_part, checksum_part)? {
-                return Err(ZiporaError::invalid_data("checksum verification failed"));
-            }
-        }
-
-        let final_data = &record_data[..record_len];
-
-        if COMPRESS {
-            #[cfg(feature = "zstd")]
-            {
-                zstd::decode_all(final_data)
-                    .map_err(|e| ZiporaError::io_error(format!("ZSTD decompression failed: {}", e)))
-            }
-            #[cfg(not(feature = "zstd"))]
-            {
-                Err(ZiporaError::invalid_data("ZSTD support not enabled"))
-            }
-        } else {
-            Ok(final_data.to_vec())
-        }
-    }
 }
 
 impl BlobStore for ZipOffsetBlobStore {
