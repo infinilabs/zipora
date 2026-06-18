@@ -242,7 +242,7 @@ where
     }
 
     /// Update internal statistics
-    #[allow(dead_code)]
+    #[allow(dead_code)] // future-wired
     fn update_stats(&mut self) {
         // Update memory usage
         self.stats.memory_usage = self.memory_usage();
@@ -1682,7 +1682,7 @@ where
     // Compressed sparse trie implementation methods
     /// Compressed sparse trie insertion.
     //  TODO: port from C++ reference `src/terark/fsa/cspptrie.hpp`
-    #[allow(dead_code)]
+    #[allow(dead_code)] // future-wired
     fn insert_compressed_sparse(
         sparse_nodes: &mut HashMap<StateId, SparseNode>,
         _compression_dict: &mut HashMap<Vec<u8>, u32>,
@@ -1756,7 +1756,7 @@ where
 
     /// Compressed sparse trie lookup.
     //  TODO: port from C++ reference `src/terark/fsa/cspptrie.hpp`
-    #[allow(dead_code)]
+    #[allow(dead_code)] // future-wired
     fn contains_compressed_sparse(
         &self,
         sparse_nodes: &HashMap<StateId, SparseNode>,
@@ -2242,7 +2242,7 @@ where
     }
 
     /// Check if a key exists in LOUDS trie storage
-    #[allow(dead_code)]
+    #[allow(dead_code)] // future-wired
     fn contains_louds_actual(label_data: &FastVec<u8>, key: &[u8]) -> bool {
         if label_data.is_empty() {
             return false;
@@ -2405,7 +2405,7 @@ where
     }
 
     /// Get all keys from CompressedSparse trie storage
-    #[allow(dead_code)]
+    #[allow(dead_code)] // future-wired
     fn keys_compressed_sparse_actual(sparse_nodes: &HashMap<StateId, SparseNode>) -> Vec<Vec<u8>> {
         let mut keys = Vec::new();
         let mut current_path = Vec::new();
@@ -2419,7 +2419,7 @@ where
     }
 
     /// Recursively collect all keys from CompressedSparse trie
-    #[allow(dead_code)]
+    #[allow(dead_code)] // future-wired
     fn collect_keys_compressed_sparse_recursive(
         sparse_nodes: &HashMap<StateId, SparseNode>,
         state: StateId,
@@ -2448,7 +2448,7 @@ where
     }
 
     /// Get all keys with prefix from CompressedSparse trie storage
-    #[allow(dead_code)]
+    #[allow(dead_code)] // future-wired
     fn keys_with_prefix_compressed_sparse_actual(
         sparse_nodes: &HashMap<StateId, SparseNode>,
         prefix: &[u8],
