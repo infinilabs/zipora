@@ -1029,7 +1029,7 @@ mod tests {
         use criterion::Criterion;
         use std::hint::black_box;
 
-        #[cfg_attr(not(feature = "criterion"), allow(dead_code))]
+        #[allow(dead_code)] // KEEP-C: criterion benchmark harness
         pub fn bench_strchr(c: &mut Criterion) {
             let search = SimdStringSearch::new();
             let haystack = b"a".repeat(1000);
@@ -1045,7 +1045,7 @@ mod tests {
             });
         }
 
-        #[cfg_attr(not(feature = "criterion"), allow(dead_code))]
+        #[allow(dead_code)] // KEEP-C: criterion benchmark harness
         pub fn bench_strstr(c: &mut Criterion) {
             let search = SimdStringSearch::new();
             let haystack = "hello world ".repeat(100);
@@ -1071,7 +1071,7 @@ mod tests {
             });
         }
 
-        #[cfg_attr(not(feature = "criterion"), allow(dead_code))]
+        #[allow(dead_code)] // KEEP-C: criterion benchmark harness
         pub fn bench_multi_search(c: &mut Criterion) {
             let search = SimdStringSearch::new();
             let haystack = "hello world test string".repeat(50);
@@ -1087,7 +1087,7 @@ mod tests {
             });
         }
 
-        #[cfg_attr(not(feature = "criterion"), allow(dead_code))]
+        #[allow(dead_code)] // KEEP-C: criterion benchmark harness
         pub fn bench_strcmp(c: &mut Criterion) {
             let search = SimdStringSearch::new();
             let str1 = "a".repeat(1000);

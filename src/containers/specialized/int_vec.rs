@@ -14,9 +14,6 @@ use crate::zipora_verify;
 mod performance_tests;
 use int_vec_simd::{BitOps, PrefetchOps, SimdOps};
 
-/// Unaligned memory operations for high-performance bulk processing
-
-
 /// Hardware-accelerated SIMD operations for bulk processing
 mod int_vec_simd {
     /// Bit manipulation operations with hardware acceleration

@@ -725,7 +725,7 @@ impl DictionaryBuilder {
 
     /// Apply sample sorting policy based on configuration
     /// Matches reference sorting behavior exactly
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(dead_code)] // KEEP-B: sample-sort test cluster
     fn apply_sample_sorting(&self, data: &[u8]) -> Result<Vec<u8>> {
         match self.config.sample_sort_policy {
             SampleSortPolicy::SortNone => {
@@ -749,7 +749,7 @@ impl DictionaryBuilder {
     }
 
     /// Sort samples by left (beginning) content with deduplication
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(dead_code)] // KEEP-B: sample-sort test cluster
     fn sort_samples_left(&self, data: &[u8]) -> Result<Vec<u8>> {
         if data.is_empty() {
             return Ok(Vec::new());
@@ -820,7 +820,7 @@ impl DictionaryBuilder {
     }
 
     /// Sort samples by right (ending) content with deduplication
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(dead_code)] // KEEP-B: sample-sort test cluster
     fn sort_samples_right(&self, data: &[u8]) -> Result<Vec<u8>> {
         if data.is_empty() {
             return Ok(Vec::new());
@@ -891,7 +891,7 @@ impl DictionaryBuilder {
     }
 
     /// Check if one sample is a left prefix of another
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(dead_code)] // KEEP-B: sample-sort test cluster
     fn is_left_prefix(&self, data: &[u8], shorter: &PosLen, longer: &PosLen) -> bool {
         if shorter.len >= longer.len {
             return false;
@@ -904,7 +904,7 @@ impl DictionaryBuilder {
     }
 
     /// Check if one sample is a right suffix of another
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(dead_code)] // KEEP-B: sample-sort test cluster
     fn is_right_suffix(&self, data: &[u8], shorter: &PosLen, longer: &PosLen) -> bool {
         if shorter.len >= longer.len {
             return false;
@@ -918,7 +918,7 @@ impl DictionaryBuilder {
     }
 
     /// Build final result from deduplicated samples
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[allow(dead_code)] // KEEP-B: sample-sort test cluster
     fn build_result_from_samples(&self, data: &[u8], samples: &[PosLen]) -> Result<Vec<u8>> {
         if samples.is_empty() {
             return Ok(Vec::new());
