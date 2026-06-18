@@ -344,7 +344,7 @@ pub struct BumpVec<'a, T> {
     ptr: NonNull<T>,
     len: usize,
     capacity: usize,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // lifetime anchor for arena borrow
     allocator: &'a BumpAllocator,
 }
 
