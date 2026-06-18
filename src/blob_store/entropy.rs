@@ -140,24 +140,6 @@ impl<S: BlobStore> HuffmanBlobStore<S> {
         Ok(compressed)
     }
 
-    /// Decompress data using Huffman coding
-    #[allow(dead_code)]
-    fn decompress_data(&mut self, compressed: &[u8], original_length: usize) -> Result<Vec<u8>> {
-        let start = std::time::Instant::now();
-
-        let tree = self
-            .tree
-            .as_ref()
-            .ok_or_else(|| ZiporaError::invalid_data("Huffman tree not built"))?;
-
-        let decoder = HuffmanDecoder::new(tree.clone());
-        let decompressed = decoder.decode(compressed, original_length)?;
-
-        self.stats.decompression_time_us += start.elapsed().as_micros() as u64;
-        self.stats.decompressions += 1;
-
-        Ok(decompressed)
-    }
 }
 
 impl<S: BlobStore> BlobStore for HuffmanBlobStore<S> {
