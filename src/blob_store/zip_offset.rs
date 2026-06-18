@@ -174,7 +174,7 @@ impl FileHeader {
     }
 
     /// Extract checksum type
-    #[cfg_attr(test, allow(dead_code))]
+    #[cfg_attr(not(test), allow(dead_code))]
     fn checksum_type(&self) -> u8 {
         ((self.records_checksum_version >> 40) & 0xFF) as u8
     }
@@ -185,13 +185,13 @@ impl FileHeader {
     }
 
     /// Get file size (safe for packed struct)
-    #[cfg_attr(test, allow(dead_code))]
+    #[cfg_attr(not(test), allow(dead_code))]
     fn file_size(&self) -> u64 {
         self.file_size
     }
 
     /// Get uncompressed size (safe for packed struct)
-    #[cfg_attr(test, allow(dead_code))]
+    #[cfg_attr(not(test), allow(dead_code))]
     fn unzip_size(&self) -> u64 {
         self.unzip_size
     }
@@ -599,7 +599,7 @@ impl ZipOffsetBlobStore {
     }
 
     /// SIMD-optimized memory copy with fallback
-    #[cfg_attr(test, allow(dead_code))]
+    #[cfg_attr(not(test), allow(dead_code))]
     fn simd_copy(&self, src: &[u8], dst: &mut [u8]) -> Result<()> {
         if self.should_use_simd(src.len()) {
             fast_copy(src, dst)
