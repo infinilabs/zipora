@@ -289,7 +289,7 @@ where
 }
 
 /// Internal storage implementations for different strategies
-#[allow(dead_code)]
+#[allow(dead_code)] // strategy-placeholder variants, matched exhaustively in 9 arms
 enum HashMapStorage<K, V>
 where
     K: Clone,
@@ -340,12 +340,6 @@ struct InlineStorage<K, V> {
 }
 
 impl<K, V> InlineStorage<K, V> {
-    /// Get the number of occupied slots
-    #[inline]
-    #[allow(dead_code)]
-    pub fn len(&self) -> usize {
-        self.occupied.count_ones() as usize
-    }
 }
 
 /// String arena for interned strings
