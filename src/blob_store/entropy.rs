@@ -5,7 +5,7 @@
 use crate::blob_store::{BlobStore, BlobStoreStats};
 use crate::entropy::rans::{ParallelX1, Rans64Encoder};
 use crate::entropy::{
-    DictionaryBuilder, DictionaryCompressor, EntropyStats, HuffmanDecoder, HuffmanEncoder,
+    DictionaryBuilder, DictionaryCompressor, EntropyStats, HuffmanEncoder,
     HuffmanTree,
 };
 use crate::error::{Result, ZiporaError};
