@@ -729,45 +729,6 @@ impl<T> AutoGrowCircularQueue<T> {
         Ok(())
     }
 
-    /// Reorganize elements after realloc for optimal layout
-    #[allow(dead_code)]
-    fn reorganize_after_realloc(&mut self, new_buffer: *mut T, _new_capacity: usize) -> Result<()> {
-        if self.len == 0 {
-            return Ok(());
-        }
-
-        // Create temporary buffer for reorganization
-        let temp_layout =
-            Layout::array::<T>(self.len).map_err(|_| ZiporaError::invalid_data("Layout error"))?;
-        // SAFETY: temp_layout is valid from Layout::array
-        let temp_buffer = unsafe { alloc(temp_layout) as *mut T };
-
-        if temp_buffer.is_null() {
-            return Err(ZiporaError::out_of_memory(temp_layout.size()));
-        }
-
-        // Copy elements to temporary buffer in correct order
-        // SAFETY: buffer and temp_buffer valid, pointers don't overlap, len elements valid
-        unsafe {
-            if self.head < self.tail {
-                // Single contiguous copy
-                std::ptr::copy_nonoverlapping(self.buffer.add(self.head), temp_buffer, self.len);
-            } else {
-                // Two-part copy for wrapped data
-                let first_part = self.capacity - self.head;
-                std::ptr::copy_nonoverlapping(self.buffer.add(self.head), temp_buffer, first_part);
-                std::ptr::copy_nonoverlapping(self.buffer, temp_buffer.add(first_part), self.tail);
-            }
-
-            // Copy from temp buffer to new buffer linearly
-            std::ptr::copy_nonoverlapping(temp_buffer, new_buffer, self.len);
-
-            // Clean up temp buffer
-            dealloc(temp_buffer as *mut u8, temp_layout);
-        }
-
-        Ok(())
-    }
 
     /// Copy elements from current buffer to new buffer in linear order
     #[inline(always)]
@@ -796,88 +757,6 @@ impl<T> AutoGrowCircularQueue<T> {
         Ok(())
     }
 
-    /// SIMD-optimized bulk element copying when available
-    #[cfg(feature = "simd")]
-    #[inline(always)]
-    #[allow(dead_code)]
-    unsafe fn simd_copy_elements(&self, src: *const T, dst: *mut T, count: usize) {
-        if count == 0 {
-            return;
-        }
-
-        // Only validate in debug builds to avoid performance overhead
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(!src.is_null(), "Source pointer is null");
-            debug_assert!(!dst.is_null(), "Destination pointer is null");
-            debug_assert_eq!(
-                src as usize % std::mem::align_of::<T>(),
-                0,
-                "Source pointer not aligned"
-            );
-            debug_assert_eq!(
-                dst as usize % std::mem::align_of::<T>(),
-                0,
-                "Destination pointer not aligned"
-            );
-
-            let src_start = src as usize;
-            let src_end = src_start + count * std::mem::size_of::<T>();
-            let dst_start = dst as usize;
-            let dst_end = dst_start + count * std::mem::size_of::<T>();
-            debug_assert!(
-                src_end <= dst_start || dst_end <= src_start,
-                "Memory ranges overlap"
-            );
-        }
-
-        // Direct copy - compiler will optimize for SIMD when possible
-        // SAFETY: pointers valid and non-overlapping per debug assertions, count elements valid
-        unsafe {
-            ptr::copy_nonoverlapping(src, dst, count);
-        }
-    }
-
-    /// Fallback copy for non-SIMD builds
-    #[cfg(not(feature = "simd"))]
-    #[inline(always)]
-    #[allow(dead_code)]
-    unsafe fn simd_copy_elements(&self, src: *const T, dst: *mut T, count: usize) {
-        if count == 0 {
-            return;
-        }
-
-        // Only validate in debug builds
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(!src.is_null(), "Source pointer is null");
-            debug_assert!(!dst.is_null(), "Destination pointer is null");
-            debug_assert_eq!(
-                src as usize % std::mem::align_of::<T>(),
-                0,
-                "Source pointer not aligned"
-            );
-            debug_assert_eq!(
-                dst as usize % std::mem::align_of::<T>(),
-                0,
-                "Destination pointer not aligned"
-            );
-
-            let src_start = src as usize;
-            let src_end = src_start + count * std::mem::size_of::<T>();
-            let dst_start = dst as usize;
-            let dst_end = dst_start + count * std::mem::size_of::<T>();
-            debug_assert!(
-                src_end <= dst_start || dst_end <= src_start,
-                "Memory ranges overlap"
-            );
-        }
-
-        // SAFETY: caller guarantees non-null, aligned, non-overlapping pointers.
-        unsafe {
-            ptr::copy_nonoverlapping(src, dst, count);
-        }
-    }
 
     /// Ultra-fast element addition with fast/slow path separation
     ///
