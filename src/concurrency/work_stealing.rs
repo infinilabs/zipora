@@ -264,7 +264,7 @@ struct ExecutorStatsInner {
     total_execution_time_us: AtomicUsize,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // RAII: holds Arc to keep worker's queue alive
 struct WorkerThread {
     id: usize,
     handle: Option<JoinHandle<()>>,
