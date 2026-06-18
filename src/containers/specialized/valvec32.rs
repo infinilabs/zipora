@@ -22,20 +22,6 @@ extern crate libc;
 /// Maximum capacity for ValVec32 (2^32 - 1 elements)
 pub const MAX_CAPACITY: u32 = u32::MAX;
 
-/// Cache line size for x86_64 processors
-#[cfg(target_arch = "x86_64")]
-#[allow(dead_code)]
-pub const CACHE_LINE_SIZE: usize = 64;
-
-/// Cache line size for ARM64 processors
-#[cfg(target_arch = "aarch64")]
-#[allow(dead_code)]
-pub const CACHE_LINE_SIZE: usize = 128;
-
-/// Default cache line size for other architectures
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-#[allow(dead_code)]
-pub const CACHE_LINE_SIZE: usize = 64;
 
 /// Platform-specific malloc_usable_size wrapper
 #[cfg(target_os = "linux")]
