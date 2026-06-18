@@ -49,7 +49,7 @@ impl<'a> BitStreamReader<'a> {
 
     /// Read `count` bits
     #[inline]
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn read(&mut self, count: usize) -> u64 {
         if count > self.bit_count {
             self.refill();
@@ -61,14 +61,14 @@ impl<'a> BitStreamReader<'a> {
 
     /// Check if there are more bits available
     #[inline]
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn has_bits(&self) -> bool {
         self.bit_count > 0 || self.byte_pos < self.data.len()
     }
 
     /// Get remaining bits
     #[inline]
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn remaining_bits(&self) -> usize {
         self.bit_count + (self.data.len() - self.byte_pos) * 8
     }
