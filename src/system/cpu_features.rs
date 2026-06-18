@@ -641,20 +641,6 @@ impl RuntimeCpuFeatures {
         (cache_line_size, l1_size, l2_size, l3_size)
     }
 
-    /// Parse cache size string (e.g., "32K", "1M") to bytes
-    #[allow(dead_code)]
-    fn parse_cache_size(&self, size_str: &str) -> Result<usize, std::num::ParseIntError> {
-        let trimmed = size_str.trim().to_uppercase();
-        if trimmed.ends_with('K') {
-            let num = trimmed.trim_end_matches('K').parse::<usize>()?;
-            Ok(num * 1024)
-        } else if trimmed.ends_with('M') {
-            let num = trimmed.trim_end_matches('M').parse::<usize>()?;
-            Ok(num * 1024 * 1024)
-        } else {
-            trimmed.parse::<usize>()
-        }
-    }
 
     /// Get auxiliary vector features on Linux ARM64
     #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
@@ -741,35 +727,6 @@ impl RuntimeCpuFeatures {
         (logical_cores, physical_cores)
     }
 
-    /// Get cache information (cache_line_size, l1_size, l2_size, l3_size)
-    #[allow(dead_code)]
-    fn get_cache_info(&self) -> (usize, usize, usize, usize) {
-        let mut cache_line_size = 64; // Default assumption
-        let l1_size = 32 * 1024; // 32KB default
-        let l2_size = 256 * 1024; // 256KB default  
-        let l3_size = 8 * 1024 * 1024; // 8MB default
-
-        #[cfg(target_arch = "x86_64")]
-        {
-            #[cfg(not(miri))]
-            {
-                let cpuid = raw_cpuid::CpuId::new();
-
-                // Get cache line size
-                if let Some(mut cache_params) = cpuid.get_cache_parameters()
-                    && let Some(cache) = cache_params.next()
-                {
-                    cache_line_size = cache.coherency_line_size();
-                }
-
-                // Try to get cache sizes
-                // Note: Cache size detection is complex and varies by CPU
-                // For now, we use reasonable defaults and detect cache line size
-            }
-        }
-
-        (cache_line_size, l1_size, l2_size, l3_size)
-    }
 }
 
 // Global CPU feature detection
