@@ -50,7 +50,7 @@ pub enum SearchTier {
 }
 
 /// PCMPESTRI control flags for different search operations
-#[allow(dead_code)]
+#[allow(dead_code)] // hardware polarity flags (part of SSE4.2 ABI mask)
 mod pcmpestri_flags {
     /// Unsigned byte comparison
     pub const UBYTE_OPS: i32 = 0x00;
