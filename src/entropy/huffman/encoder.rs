@@ -63,12 +63,6 @@ impl BitStreamWriter {
         self.buffer
     }
 
-    /// Get current buffer size in bits
-    #[inline]
-    #[allow(dead_code)]
-    pub(crate) fn len_bits(&self) -> usize {
-        self.buffer.len() * 8 + self.bit_count
-    }
 }
 
 /// Huffman encoder
