@@ -875,50 +875,6 @@ impl<'a> Iterator for SplitIter<'a> {
     }
 }
 
-/// Hash function optimized for FastStr
-pub struct FastStrHash;
-
-impl FastStrHash {
-    /// Hash a FastStr using the optimized hash function
-    #[inline]
-    #[allow(dead_code)]
-    pub fn hash(s: FastStr) -> u64 {
-        s.hash_fast()
-    }
-}
-
-impl std::hash::BuildHasher for FastStrHash {
-    type Hasher = FastStrHasher;
-
-    fn build_hasher(&self) -> Self::Hasher {
-        FastStrHasher::new()
-    }
-}
-
-/// Hasher implementation using the FastStr hash algorithm
-pub struct FastStrHasher {
-    hash: u64,
-}
-
-impl FastStrHasher {
-    fn new() -> Self {
-        Self { hash: 0 }
-    }
-}
-
-impl Hasher for FastStrHasher {
-    fn finish(&self) -> u64 {
-        self.hash
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        self.hash = FastStr::new(bytes).hash_fast();
-    }
-
-    fn write_u64(&mut self, i: u64) {
-        self.hash = i;
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -1233,33 +1189,6 @@ mod tests {
         assert_eq!(from_bytes.as_bytes(), b"test");
     }
 
-    #[test]
-    fn test_fast_str_hasher() {
-        use crate::string::fast_str::{FastStrHash, FastStrHasher};
-        use std::hash::{BuildHasher, Hasher};
-
-        let build_hasher = FastStrHash;
-        let mut hasher = build_hasher.build_hasher();
-
-        hasher.write(b"test");
-        let hash1 = hasher.finish();
-
-        let mut hasher2 = FastStrHasher::new();
-        hasher2.write(b"test");
-        let hash2 = hasher2.finish();
-
-        assert_eq!(hash1, hash2);
-
-        // Test write_u64
-        let mut hasher3 = FastStrHasher::new();
-        hasher3.write_u64(12345);
-        assert_eq!(hasher3.finish(), 12345);
-
-        // Test static hash function
-        let s = FastStr::from_string("test");
-        let static_hash = FastStrHash::hash(s);
-        assert_eq!(static_hash, s.hash_fast());
-    }
 
     #[test]
     fn test_simd_hash_consistency() {
