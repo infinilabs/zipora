@@ -67,14 +67,11 @@ impl CompressionProfile {
 
 /// Performance measurement for a compression operation
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 struct PerformanceMeasurement {
     algorithm: Algorithm,
     input_size: usize,
     output_size: usize,
     duration: Duration,
-    timestamp: Instant,
-    data_hash: u64, // Simple hash to identify data patterns
 }
 
 impl PerformanceMeasurement {
@@ -213,7 +210,6 @@ impl AdaptiveCompressor {
     /// Train the compressor with sample data
     pub fn train(&self, samples: &[(&[u8], &str)]) -> Result<()> {
         for (data, data_type) in samples {
-            let data_hash = self.calculate_hash(data);
 
             // Test multiple algorithms on this sample
             for algorithm in CompressorFactory::available_algorithms() {
@@ -227,8 +223,6 @@ impl AdaptiveCompressor {
                             input_size: data.len(),
                             output_size: compressed.len(),
                             duration,
-                            timestamp: Instant::now(),
-                            data_hash,
                         };
 
                         // Update profile for this data type
@@ -409,27 +403,6 @@ impl AdaptiveCompressor {
         (new_avg - current_avg) / current_avg.abs()
     }
 
-    /// Switch to a new algorithm
-    #[allow(dead_code)]
-    fn switch_algorithm(&mut self, algorithm: Algorithm) -> Result<()> {
-        let new_compressor = CompressorFactory::create(algorithm, None)?;
-
-        {
-            let mut compressor = self.current_compressor.write().map_err(|e| {
-                crate::error::ZiporaError::system_error(format!(
-                    "AdaptiveCompressor: current_compressor RwLock poisoned: {}",
-                    e
-                ))
-            })?;
-            *compressor = new_compressor;
-        }
-
-        self.current_algorithm = algorithm;
-
-        log::info!("Adaptive compressor switched to algorithm: {:?}", algorithm);
-
-        Ok(())
-    }
 
     /// Record performance measurement
     fn record_performance(&self, input: &[u8], output: &[u8], duration: Duration) {
@@ -438,8 +411,6 @@ impl AdaptiveCompressor {
             input_size: input.len(),
             output_size: output.len(),
             duration,
-            timestamp: Instant::now(),
-            data_hash: self.calculate_hash(input),
         };
 
         // Add to history
@@ -498,22 +469,6 @@ impl AdaptiveCompressor {
         }
     }
 
-    /// Calculate a simple hash of data for pattern recognition
-    fn calculate_hash(&self, data: &[u8]) -> u64 {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-
-        // Sample bytes from different parts of the data
-        let sample_size = (data.len() / 10).clamp(1, 1000);
-        for i in 0..sample_size {
-            let idx = (i * data.len()) / sample_size;
-            data[idx].hash(&mut hasher);
-        }
-
-        hasher.finish()
-    }
 }
 
 impl Compressor for AdaptiveCompressor {
@@ -557,8 +512,6 @@ mod tests {
             input_size: 1000,
             output_size: 500,
             duration: Duration::from_millis(10),
-            timestamp: Instant::now(),
-            data_hash: 12345,
         };
 
         assert_eq!(measurement.compression_ratio(), 0.5);
