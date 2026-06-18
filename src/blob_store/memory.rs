@@ -100,12 +100,6 @@ impl MemoryBlobStore {
         self.stats = BlobStoreStats::new();
     }
 
-    /// Get a reference to the internal data (for testing)
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub(crate) fn internal_data(&self) -> &HashMap<RecordId, Vec<u8>> {
-        &self.data
-    }
 
     /// Generate the next record ID
     fn next_record_id(&self) -> RecordId {
