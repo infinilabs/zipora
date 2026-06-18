@@ -5,10 +5,8 @@
 //! strategies inspired by high-performance database storage engines.
 
 use crate::error::{Result, ZiporaError};
-use crate::simd::{AdaptiveSimdSelector, Operation};
 use std::marker::PhantomData;
 use std::mem;
-use std::time::Instant;
 // Import verification macros
 use crate::zipora_verify;
 
