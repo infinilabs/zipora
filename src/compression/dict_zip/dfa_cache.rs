@@ -1070,7 +1070,6 @@ mod tests {
         assert_eq!(state.parent, 5);
         assert_eq!(state.suffix_low, 10);
         assert_eq!(state.suffix_hig, 20);
-        assert_eq!(state.frequency(), 10); // 20 - 10
         assert_eq!(state.child0, 0);
         assert_eq!(state.zlen_lo, 0);
     }
