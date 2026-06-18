@@ -58,12 +58,8 @@ mod pcmpestri_flags {
     pub const CMP_EQUAL_ORDERED: i32 = 0x08;
     /// Return least significant index
     pub const LEAST_SIGNIFICANT: i32 = 0x00;
-    /// Return most significant index
-    pub const MOST_SIGNIFICANT: i32 = 0x01;
     /// Compare any byte in set
     pub const CMP_EQUAL_ANY: i32 = 0x00;
-    /// Negative polarity (find first non-match)
-    pub const NEGATIVE_POLARITY: i32 = 0x10;
 }
 
 /// Multi-character search result containing all found positions
@@ -1033,7 +1029,7 @@ mod tests {
         use criterion::Criterion;
         use std::hint::black_box;
 
-        #[allow(dead_code)]
+        #[cfg_attr(not(feature = "criterion"), allow(dead_code))]
         pub fn bench_strchr(c: &mut Criterion) {
             let search = SimdStringSearch::new();
             let haystack = b"a".repeat(1000);
@@ -1049,7 +1045,7 @@ mod tests {
             });
         }
 
-        #[allow(dead_code)]
+        #[cfg_attr(not(feature = "criterion"), allow(dead_code))]
         pub fn bench_strstr(c: &mut Criterion) {
             let search = SimdStringSearch::new();
             let haystack = "hello world ".repeat(100);
@@ -1075,7 +1071,7 @@ mod tests {
             });
         }
 
-        #[allow(dead_code)]
+        #[cfg_attr(not(feature = "criterion"), allow(dead_code))]
         pub fn bench_multi_search(c: &mut Criterion) {
             let search = SimdStringSearch::new();
             let haystack = "hello world test string".repeat(50);
@@ -1091,7 +1087,7 @@ mod tests {
             });
         }
 
-        #[allow(dead_code)]
+        #[cfg_attr(not(feature = "criterion"), allow(dead_code))]
         pub fn bench_strcmp(c: &mut Criterion) {
             let search = SimdStringSearch::new();
             let str1 = "a".repeat(1000);
