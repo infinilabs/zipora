@@ -471,8 +471,6 @@ struct LocalMatchHashTable {
     _table_size: usize,
     /// Hash mask for fast modulo
     hash_mask: u32,
-    /// Current base position for relative offsets
-    base_position: usize,
 }
 
 impl LocalMatchHashTable {
@@ -485,7 +483,6 @@ impl LocalMatchHashTable {
             table: vec![0; table_size],
             _table_size: table_size,
             hash_mask,
-            base_position: 0,
         }
     }
 
@@ -592,12 +589,6 @@ impl LocalMatchHashTable {
         len
     }
 
-    /// Update base position for sliding window
-    #[inline]
-    #[allow(dead_code)]
-    fn update_base_position(&mut self, new_base: usize) {
-        self.base_position = new_base;
-    }
 }
 
 /// Core compression engine matching the reference zipRecord_impl2
