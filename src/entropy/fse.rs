@@ -944,37 +944,6 @@ impl FseEncoder {
         Ok(output)
     }
 
-    /// Single-threaded compression (with table parameter)
-    #[allow(dead_code)]
-    fn compress_single(&mut self, data: &[u8], table: &FseTable) -> Result<Vec<u8>> {
-        let mut output = Vec::with_capacity(data.len());
-        let mut current_state = self.states[0];
-
-        // Encode symbols in reverse order using advanced approach
-        for &symbol in data.iter().rev() {
-            let sym_freq = table.enc_symbols[symbol as usize].freq as u32;
-            current_state = table.renormalize_encode(current_state, &mut output, sym_freq);
-
-            if let Some((new_state, _bits_needed)) =
-                table.encode_symbol_accelerated(symbol, current_state)
-            {
-                current_state = new_state;
-            } else {
-                // Fallback to literal encoding
-                output.push(symbol);
-            }
-        }
-
-        // Final renormalization (use frequency 1 for final flush)
-        current_state = table.renormalize_encode(current_state, &mut output, 1);
-
-        // Update statistics
-        let entropy = EntropyStats::calculate_entropy(data);
-        self.stats = EntropyStats::new(data.len(), output.len(), entropy);
-
-        self.states[0] = current_state;
-        Ok(output)
-    }
 
     /// Parallel compression for large data (real implementation)
     fn compress_parallel(&mut self, data: &[u8], num_blocks: usize) -> Result<Vec<u8>> {
@@ -1071,17 +1040,6 @@ impl FseEncoder {
         &self.config
     }
 
-    /// Get next state for advanced encoding
-    #[allow(dead_code)]
-    fn next_state(&mut self) -> usize {
-        if self.config.advanced_states {
-            let state_idx = self.state_selector as usize % self.states.len();
-            self.state_selector = (self.state_selector + 1) % self.states.len() as u8;
-            state_idx
-        } else {
-            0
-        }
-    }
 }
 
 /// FSE decoder with ZSTD optimizations
