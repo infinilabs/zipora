@@ -184,6 +184,7 @@ impl<P: ParallelVariant> ParallelHuffmanEncoder<P> {
     }
 
     /// Split data into blocks for parallel processing
+    #[cfg_attr(not(test), allow(dead_code))]
     fn split_data_into_blocks<'a>(&self, data: &'a [u8]) -> Vec<&'a [u8]> {
         let block_size = if self.config.adaptive_blocks {
             // Adaptive block sizing based on data size and number of streams
@@ -215,36 +216,6 @@ impl<P: ParallelVariant> ParallelHuffmanEncoder<P> {
             // Simple chunking
             data.chunks(block_size).collect()
         }
-    }
-
-    /// Merge compressed blocks into final output
-    #[allow(dead_code)]
-    fn merge_blocks(&self, blocks: Vec<Vec<u8>>, original_data: &[u8]) -> Result<Vec<u8>> {
-        let mut output = Vec::new();
-
-        // Write header with block count and parallel variant info
-        output.extend_from_slice(&(blocks.len() as u32).to_le_bytes());
-        output.extend_from_slice(&(P::STREAMS as u32).to_le_bytes());
-
-        // Calculate and store original block sizes (before compression)
-        let original_blocks = self.split_data_into_blocks(original_data);
-
-        // Write original block sizes (for decoding)
-        for block in &original_blocks {
-            output.extend_from_slice(&(block.len() as u32).to_le_bytes());
-        }
-
-        // Write compressed block sizes
-        for block in &blocks {
-            output.extend_from_slice(&(block.len() as u32).to_le_bytes());
-        }
-
-        // Write compressed data
-        for block in blocks {
-            output.extend_from_slice(&block);
-        }
-
-        Ok(output)
     }
 
     /// Get compression statistics
