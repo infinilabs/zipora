@@ -49,19 +49,6 @@ fn clear_last_error() {
     });
 }
 
-/// Convert CResult to error message
-#[allow(dead_code)]
-fn cresult_to_error_msg(result: CResult) -> &'static str {
-    match result {
-        CResult::Success => "Success",
-        CResult::InvalidInput => "Invalid input parameter",
-        CResult::MemoryError => "Memory allocation error",
-        CResult::IoError => "I/O operation failed",
-        CResult::InternalError => "Internal library error",
-        CResult::UnsupportedOperation => "Unsupported operation",
-        CResult::NotFound => "Resource not found",
-    }
-}
 
 /// Initialize the zipora library
 ///
