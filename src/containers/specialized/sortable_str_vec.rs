@@ -418,6 +418,54 @@ impl SortableStrVec {
         Ok(())
     }
 
+    /// Fast chunked lexicographic comparison of two arena byte slices.
+    ///
+    /// Only invoked from the release-mode (`not(debug_assertions)`) branch of
+    /// `fast_comparison_sort`; in debug builds that branch is compiled out, so the
+    /// function has no caller and reads as dead — hence the debug-only allow.
+    ///
+    /// # Safety
+    /// `a_ptr`/`b_ptr` must each be valid for reads of `a_len`/`b_len` bytes.
+    #[cfg_attr(debug_assertions, allow(dead_code))] // release-only caller: fast_comparison_sort
+    unsafe fn fast_lexicographic_cmp(
+        a_ptr: *const u8,
+        a_len: usize,
+        b_ptr: *const u8,
+        b_len: usize,
+    ) -> Ordering {
+        let min_len = a_len.min(b_len);
+
+        // Process 8 bytes at a time using byte array comparison
+        let chunks = min_len / 8;
+        for i in 0..chunks {
+            let offset = i * 8;
+            // Load 8 bytes as a byte array for lexicographic comparison
+            // SAFETY: offset = i*8 < chunks*8 <= min_len, pointers valid for a_len/b_len bytes
+            let a_bytes = unsafe { std::ptr::read_unaligned(a_ptr.add(offset) as *const [u8; 8]) };
+            let b_bytes = unsafe { std::ptr::read_unaligned(b_ptr.add(offset) as *const [u8; 8]) };
+
+            // Direct byte array comparison (no endianness conversion needed)
+            match a_bytes.cmp(&b_bytes) {
+                Ordering::Equal => continue,
+                other => return other,
+            }
+        }
+
+        // Handle remaining bytes
+        let remaining_start = chunks * 8;
+        for i in remaining_start..min_len {
+            // SAFETY: i < min_len <= a_len and b_len, pointers valid
+            let a_byte = unsafe { *a_ptr.add(i) };
+            let b_byte = unsafe { *b_ptr.add(i) };
+            match a_byte.cmp(&b_byte) {
+                Ordering::Equal => continue,
+                other => return other,
+            }
+        }
+
+        // Compare lengths for final decision
+        a_len.cmp(&b_len)
+    }
 
     /// Sort strings in lexicographic order (convenience alias)
     #[inline]

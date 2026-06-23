@@ -2,7 +2,7 @@ use super::config::{
     TrieStrategy,
     ZiporaTrieConfig,
 };
-use super::storage::{CritBitNode, PatriciaNode, SparseNode, TrieStorage};
+use super::storage::{CritBitNode, PatriciaNode, TrieStorage};
 use crate::StateId;
 use crate::containers::FastVec;
 use crate::containers::specialized::UintVector;
@@ -12,7 +12,7 @@ use crate::fsa::traits::{
 };
 use crate::memory::SecureMemoryPool;
 use crate::memory::cache_layout::{CacheLayoutConfig, CacheOptimizedAllocator};
-use crate::succinct::{BitVector, RankSelectOps};
+use crate::succinct::RankSelectOps;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
@@ -239,43 +239,6 @@ where
         };
 
         stats
-    }
-
-    /// Update internal statistics
-    #[allow(dead_code)] // future-wired
-    fn update_stats(&mut self) {
-        // Update memory usage
-        self.stats.memory_usage = self.memory_usage();
-
-        // Update bits per key
-        if self.stats.num_keys > 0 {
-            self.stats.bits_per_key =
-                (self.stats.memory_usage as f64 * 8.0) / self.stats.num_keys as f64;
-        } else {
-            self.stats.bits_per_key = 0.0;
-        }
-
-        // Update number of states based on storage type
-        self.stats.num_states = match &self.storage {
-            TrieStorage::Patricia { nodes, .. } => nodes.len(),
-            TrieStorage::CriticalBit { nodes, .. } => nodes.len(),
-            TrieStorage::DoubleArray { state_count, .. } => *state_count,
-            TrieStorage::Louds { .. } => 1, // TODO: implement for LOUDS
-            TrieStorage::CompressedSparse(cspp) => cspp.total_states(),
-        };
-
-        // Update number of transitions
-        self.stats.num_transitions = match &self.storage {
-            TrieStorage::Patricia { nodes, .. } => nodes.iter().map(|n| n.children.len()).sum(),
-            TrieStorage::CriticalBit { .. } => 0, // TODO: implement
-            TrieStorage::DoubleArray { base: _, check, .. } => {
-                // Count non-zero check values (excluding root) as transitions
-                // Each non-zero check represents a valid transition
-                check.iter().skip(1).filter(|&&c| c != 0).count()
-            }
-            TrieStorage::Louds { .. } => 0, // TODO: implement
-            TrieStorage::CompressedSparse(_cspp) => 0, /* TODO: implement num_transitions */
-        };
     }
 
     /// Get the current configuration
@@ -1679,125 +1642,6 @@ where
         false
     }
 
-    // Compressed sparse trie implementation methods
-    /// Compressed sparse trie insertion.
-    //  TODO: port from C++ reference `src/terark/fsa/cspptrie.hpp`
-    #[allow(dead_code)] // future-wired
-    fn insert_compressed_sparse(
-        sparse_nodes: &mut HashMap<StateId, SparseNode>,
-        _compression_dict: &mut HashMap<Vec<u8>, u32>,
-        _bit_vector: &mut BitVector,
-        _rank_select: &mut R,
-        key: &[u8],
-    ) -> Result<StateId> {
-        // Initialize root node if not present
-        if sparse_nodes.is_empty() {
-            sparse_nodes.insert(
-                0,
-                SparseNode {
-                    children: HashMap::new(),
-                    _edge_label: None,
-                    is_final: false,
-                },
-            );
-        }
-
-        let mut current_state = 0;
-        let mut next_state_id = sparse_nodes.keys().max().copied().unwrap_or(0) + 1;
-
-        for &symbol in key {
-            // First check if an edge exists for this symbol
-            let existing_child = sparse_nodes
-                .get(&current_state)
-                .and_then(|node| node.children.get(&symbol).copied());
-
-            let child_state = if let Some(existing) = existing_child {
-                // Edge already exists, follow it
-                existing
-            } else {
-                // Need to create new edge
-                let new_state = next_state_id;
-                next_state_id += 1;
-
-                // Create the new child node
-                sparse_nodes.insert(
-                    new_state,
-                    SparseNode {
-                        children: HashMap::new(),
-                        _edge_label: None,
-                        is_final: false,
-                    },
-                );
-
-                // Update parent to point to child
-                if let Some(parent_node) = sparse_nodes.get_mut(&current_state) {
-                    parent_node.children.insert(symbol, new_state);
-                } else {
-                    // This shouldn't happen as we ensure current_state exists
-                    return Err(crate::error::ZiporaError::invalid_state(format!(
-                        "State {} not found during insertion",
-                        current_state
-                    )));
-                }
-
-                new_state
-            };
-
-            current_state = child_state;
-        }
-
-        // Mark the final node as terminal
-        if let Some(final_node) = sparse_nodes.get_mut(&current_state) {
-            final_node.is_final = true;
-        }
-
-        Ok(current_state)
-    }
-
-    /// Compressed sparse trie lookup.
-    //  TODO: port from C++ reference `src/terark/fsa/cspptrie.hpp`
-    #[allow(dead_code)] // future-wired
-    fn contains_compressed_sparse(
-        &self,
-        sparse_nodes: &HashMap<StateId, SparseNode>,
-        _compression_dict: &HashMap<Vec<u8>, u32>,
-        _bit_vector: &BitVector,
-        _rank_select: &R,
-        key: &[u8],
-    ) -> bool {
-        if sparse_nodes.is_empty() {
-            return false;
-        }
-
-        let mut current_state = 0;
-        let mut key_pos = 0;
-
-        while key_pos < key.len() {
-            let symbol = key[key_pos];
-
-            // Get the current node
-            if let Some(node) = sparse_nodes.get(&current_state) {
-                if let Some(&child_state) = node.children.get(&symbol) {
-                    // Follow the edge
-                    current_state = child_state;
-                    key_pos += 1;
-                } else {
-                    // No edge for this symbol
-                    return false;
-                }
-            } else {
-                // Node doesn't exist
-                return false;
-            }
-        }
-
-        // Check if we've consumed the entire key and reached a final state
-        sparse_nodes
-            .get(&current_state)
-            .map(|node| node.is_final)
-            .unwrap_or(false)
-    }
-
     // Actual implementation methods for Patricia trie
     fn insert_patricia_actual(
         nodes: &mut FastVec<PatriciaNode>,
@@ -2241,22 +2085,6 @@ where
             .collect()
     }
 
-    /// Check if a key exists in LOUDS trie storage
-    #[allow(dead_code)] // future-wired
-    fn contains_louds_actual(label_data: &FastVec<u8>, key: &[u8]) -> bool {
-        if label_data.is_empty() {
-            return false;
-        }
-
-        let key_with_separator = [key, &[0u8]].concat();
-
-        // Look for the key with separator in the label_data
-        // Since we store keys with separators, we need to find the exact match
-        label_data
-            .windows(key_with_separator.len())
-            .any(|window| window == key_with_separator)
-    }
-
     /// Get all keys from DoubleArray trie storage
     fn keys_double_array_actual(base: &FastVec<u32>, check: &FastVec<u32>) -> Vec<Vec<u8>> {
         if base.is_empty() {
@@ -2402,81 +2230,6 @@ where
                 }
             }
         }
-    }
-
-    /// Get all keys from CompressedSparse trie storage
-    #[allow(dead_code)] // future-wired
-    fn keys_compressed_sparse_actual(sparse_nodes: &HashMap<StateId, SparseNode>) -> Vec<Vec<u8>> {
-        let mut keys = Vec::new();
-        let mut current_path = Vec::new();
-        Self::collect_keys_compressed_sparse_recursive(
-            sparse_nodes,
-            0,
-            &mut current_path,
-            &mut keys,
-        );
-        keys
-    }
-
-    /// Recursively collect all keys from CompressedSparse trie
-    #[allow(dead_code)] // future-wired
-    fn collect_keys_compressed_sparse_recursive(
-        sparse_nodes: &HashMap<StateId, SparseNode>,
-        state: StateId,
-        current_path: &mut Vec<u8>,
-        keys: &mut Vec<Vec<u8>>,
-    ) {
-        // Get the node for this state
-        if let Some(node) = sparse_nodes.get(&state) {
-            // If this is a final state, add the current path
-            if node.is_final {
-                keys.push(current_path.clone());
-            }
-
-            // Traverse all children
-            for (&symbol, &child_state) in &node.children {
-                current_path.push(symbol);
-                Self::collect_keys_compressed_sparse_recursive(
-                    sparse_nodes,
-                    child_state,
-                    current_path,
-                    keys,
-                );
-                current_path.pop();
-            }
-        }
-    }
-
-    /// Get all keys with prefix from CompressedSparse trie storage
-    #[allow(dead_code)] // future-wired
-    fn keys_with_prefix_compressed_sparse_actual(
-        sparse_nodes: &HashMap<StateId, SparseNode>,
-        prefix: &[u8],
-    ) -> Vec<Vec<u8>> {
-        // Navigate to the prefix position first
-        let mut current_state = 0;
-        for &symbol in prefix {
-            if let Some(node) = sparse_nodes.get(&current_state) {
-                if let Some(&next_state) = node.children.get(&symbol) {
-                    current_state = next_state;
-                } else {
-                    return Vec::new(); // Prefix doesn't exist
-                }
-            } else {
-                return Vec::new(); // Invalid state
-            }
-        }
-
-        // Collect all keys from this point
-        let mut keys = Vec::new();
-        let mut current_path = prefix.to_vec();
-        Self::collect_keys_compressed_sparse_recursive(
-            sparse_nodes,
-            current_state,
-            &mut current_path,
-            &mut keys,
-        );
-        keys
     }
 
     /// Build a trie from sorted keys using BFS construction

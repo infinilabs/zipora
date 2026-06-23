@@ -74,14 +74,3 @@ pub(super) struct CritBitNode {
     /// Whether this is a final state
     pub(super) is_final: bool,
 }
-
-/// Sparse trie node for compressed sparse storage
-#[derive(Debug, Clone)]
-pub(super) struct SparseNode {
-    /// Sparse children map
-    pub(super) children: HashMap<u8, StateId>,
-    /// Compressed edge label
-    pub(super) _edge_label: Option<u32>,
-    /// Final state flag
-    pub(super) is_final: bool,
-}
