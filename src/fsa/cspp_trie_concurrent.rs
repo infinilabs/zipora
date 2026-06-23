@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use thread_local::ThreadLocal;
 
 use super::cspp_trie::{
-    ALIGN_SIZE, BigCount, INITIAL_STATE, MAX_ZPATH, MetaInfo, NIL_STATE, PatriciaNode, SKIP_SLOTS,
+    ALIGN_SIZE, BigCount, INITIAL_STATE, MAX_ZPATH, MetaInfo, NIL_STATE, SKIP_SLOTS,
 };
 
 const FREE_LIST_MAX_SLOTS: usize = 128;
@@ -45,13 +45,6 @@ const U32_FLAG_LOCK: u32 = FLAG_LOCK as u32;
 // ============================================================================
 // Transmute helpers (PatriciaNode <-> u32)
 // ============================================================================
-
-#[inline(always)]
-fn node_to_u32(node: PatriciaNode) -> u32 {
-    // SAFETY: PatriciaNode is a union, accessing its fields is unsafe.
-    // We read the `child` field which is a u32.
-    unsafe { node.child }
-}
 
 #[inline(always)]
 fn u32_to_meta(bits: u32) -> MetaInfo {
@@ -183,32 +176,6 @@ impl SharedPool {
             let ptr = self.raw_ptr(slot);
             std::slice::from_raw_parts(ptr, len)
         }
-    }
-
-    /// Write raw bytes to pool slots (for initializing newly allocated nodes).
-    /// SAFETY: Slots must be newly allocated (uncontested).
-    #[inline]
-    #[allow(dead_code)] // future-wired
-    unsafe fn write_bytes(&self, slot: usize, byte_offset: usize, src: &[u8]) {
-        // SAFETY: caller guarantees slot is within allocated bounds, dst doesn't overlap src
-        unsafe {
-            let dst = (self.data.as_ptr() as *mut u8).add(slot * 4 + byte_offset);
-            std::ptr::copy_nonoverlapping(src.as_ptr(), dst, src.len());
-        }
-    }
-
-    /// Write a MetaInfo to a slot.
-    #[inline(always)]
-    #[allow(dead_code)] // future-wired
-    fn store_meta(&self, pos: u32, meta: MetaInfo) {
-        self.store_relaxed(pos as usize, meta_to_u32(meta));
-    }
-
-    /// Store a node (as u32) with release ordering (for synchronization).
-    #[inline(always)]
-    #[allow(dead_code)] // future-wired
-    fn store_node_release(&self, pos: u32, node: PatriciaNode) {
-        self.store_release(pos as usize, node_to_u32(node));
     }
 }
 
@@ -634,60 +601,6 @@ impl<'a> ConcurrentNodeView<'a> {
             }
             15 => self.curr + 2 + ch as u32,
             _ => NIL_STATE,
-        }
-    }
-
-    #[allow(dead_code)] // future-wired
-    fn for_each_child<F>(&self, mut f: F)
-    where
-        F: FnMut(u8, u32),
-    {
-        let cnt_type = self.cnt_type();
-        match cnt_type {
-            0 => {}
-            1 => f(self.meta().c_label[0], self.child(1)),
-            2 => {
-                let m = self.meta();
-                f(m.c_label[0], self.child(1));
-                f(m.c_label[1], self.child(2));
-            }
-            3..=6 => {
-                for i in 0..cnt_type as usize {
-                    f(self.get_label(i), self.child(2 + i));
-                }
-            }
-            7 => {
-                let n = self.n_children();
-                // SAFETY: Labels at slots 1-4 (16 bytes), immutable after parent CAS.
-                let label_slice = unsafe { self.pool.get_slice(self.curr as usize + 1, 16) };
-                for i in 0..n {
-                    f(label_slice[i], self.child(5 + i));
-                }
-            }
-            8 => {
-                // SAFETY: Bitmap at slots 2-9, immutable after parent CAS.
-                let bitmap_slice = unsafe { self.pool.get_slice(self.curr as usize + 2, 32) };
-                let mut child_idx = 0;
-                for byte_idx in 0..32 {
-                    let mut b = bitmap_slice[byte_idx];
-                    while b != 0 {
-                        let tz = b.trailing_zeros();
-                        let ch = (byte_idx * 8) as u8 + tz as u8;
-                        f(ch, self.child(10 + child_idx));
-                        child_idx += 1;
-                        b &= b - 1;
-                    }
-                }
-            }
-            15 => {
-                for ch in 0..=255u16 {
-                    let child = self.child(2 + ch as usize);
-                    if child != NIL_STATE {
-                        f(ch as u8, child);
-                    }
-                }
-            }
-            _ => {}
         }
     }
 }

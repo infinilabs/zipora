@@ -520,33 +520,6 @@ impl DoubleArrayTrie {
         }
     }
 
-    /// Get sorted children of a state as (symbol, child_state) pairs.
-    /// Matching C++ `get_all_move()`. Used by cursor for binary search.
-    #[inline]
-    #[allow(dead_code)] // future-wired
-    fn get_children(&self, state: u32) -> Vec<(u8, u32)> {
-        let mut c = self.ninfos[state as usize].first_child();
-        if c == NINFO_NONE {
-            return Vec::new();
-        }
-        let base = self.states[state as usize].child0();
-
-        let mut children = Vec::new();
-        while c != NINFO_NONE {
-            let label = (c - 1) as u8;
-            let child_pos = (base ^ label as u32) as usize;
-            if child_pos < self.states.len() && !self.states[child_pos].is_free() {
-                children.push((label, child_pos as u32));
-            }
-            c = if child_pos < self.ninfos.len() {
-                self.ninfos[child_pos].sibling
-            } else {
-                NINFO_NONE
-            };
-        }
-        children // Already sorted by symbol (NInfo chain is sorted)
-    }
-
     /// Find the child with the given symbol, or the next higher child.
     /// Returns (index, exact_match) where index is into get_children() result.
     #[inline]
@@ -741,29 +714,6 @@ impl DoubleArrayTrie {
             };
         }
         count
-    }
-
-    /// Resolve collision by relocating the smaller side.
-    #[allow(dead_code)] // future-wired
-    fn consult_and_relocate(&mut self, curr: u32, ch: u8) -> Result<u32> {
-        let base = self.states[curr as usize].child0();
-        let conflict_pos = base ^ ch as u32;
-        let conflict_parent = self.states[conflict_pos as usize].parent();
-
-        let curr_children = self.count_children(curr);
-        let conflict_children = self.count_children(conflict_parent);
-
-        if curr_children < conflict_children {
-            // Relocate curr (fewer children)
-            self.relocate(curr, ch)
-        } else {
-            // Relocate the conflicting side
-            // We need to relocate conflict_parent's children, then retry
-            self.relocate(conflict_parent, ch)?;
-            // After relocation, the conflict position should be free now
-            // Return curr's existing base (no change needed)
-            Ok(self.states[curr as usize].child0())
-        }
     }
 
     /// Shrink internal arrays to fit actual usage.

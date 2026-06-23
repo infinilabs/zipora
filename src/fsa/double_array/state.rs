@@ -78,20 +78,6 @@ impl DaState {
     pub(crate) fn set_free(&mut self) {
         self.set_free_linked(NIL_STATE, NIL_STATE);
     }
-
-    /// Get next free pointer (only valid when is_free()).
-    #[inline(always)]
-    #[allow(dead_code)] // future-wired
-    fn free_next(&self) -> u32 {
-        self.child0
-    }
-
-    /// Get prev free pointer (only valid when is_free()).
-    #[inline(always)]
-    #[allow(dead_code)] // future-wired
-    fn free_prev(&self) -> u32 {
-        self.parent & VALUE_MASK
-    }
 }
 
 /// Node info for O(k) child enumeration.
@@ -138,12 +124,6 @@ impl NInfo {
     pub(crate) fn set_first_child(&mut self, val: u16) {
         self.child = (self.child & NINFO_TERM) | val;
     }
-}
-
-#[inline(always)]
-#[allow(dead_code)] // future-wired
-fn ninfo_to_label(v: u16) -> Option<u8> {
-    if v == 0 { None } else { Some((v - 1) as u8) }
 }
 
 #[inline(always)]
