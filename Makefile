@@ -144,6 +144,8 @@ sanity:
 	@echo "=== All features (release) ==="
 	$(CARGO) build --release --all-features
 	$(CARGO) test --release --lib --all-features
+	@echo "=== No default features (guard feature-gated cfg attrs) ==="
+	$(CARGO) clippy --no-default-features -- -D unused_variables -D unused_imports
 	@echo "=== Sanity: PASS ==="
 
 # =============================================================================

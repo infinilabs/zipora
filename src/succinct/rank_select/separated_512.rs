@@ -423,11 +423,13 @@ mod tests {
 
     #[test]
     fn test_get_rela() {
-        // Pack known values
+        // Pack known values. Each relative rank occupies BITS_PER_WORD bits, so
+        // the value for word index i is stored at bit offset i * BITS_PER_WORD.
+        const BITS_PER_WORD: u64 = 9;
         let mut rela = 0u64;
-        rela |= 5; // word 1: 5 (bit offset 0)
-        rela |= 12 << 9; // word 2: 12 (bit offset 9)
-        rela |= 20 << 18; // word 3: 20 (bit offset 18)
+        rela |= 5; // word index 0 -> bit 0
+        rela |= 12 << BITS_PER_WORD; // word index 1 -> bit 9
+        rela |= 20 << (2 * BITS_PER_WORD); // word index 2 -> bit 18
         assert_eq!(get_rela(rela, 0), 0);
         assert_eq!(get_rela(rela, 1), 5);
         assert_eq!(get_rela(rela, 2), 12);
