@@ -167,8 +167,13 @@ impl MixedLenBlobStore {
         // Step 4: Build variable-length offset array
         let var_len_offsets = UintVecMin0::build_from_usize(&var_offsets).0;
 
-        // Calculate number of fixed-length records
-        // Special case: if fixed_len is 0, count how many times we saw it in is_fixed
+        // Calculate number of fixed-length records.
+        // When fixed_len > 0: fixed_num = total fixed bytes / fixed_len.
+        // When fixed_len == 0: fixed records are zero-length, so `fixed_values`
+        // is empty and the count cannot be derived from byte length — fall back
+        // to counting the fixed bits directly. This O(n) pass runs once at build
+        // time (never on a query path); `|| 0` would be incorrect here because
+        // zero-length fixed records still count toward fixed_num.
         let fixed_num = fixed_values
             .len()
             .checked_div(fixed_len)
@@ -240,8 +245,13 @@ impl MixedLenBlobStore {
         let is_fixed_len = RankSelectInterleaved256::new(bv)?;
         let var_len_offsets = UintVecMin0::build_from_usize(&var_offsets).0;
 
-        // Calculate number of fixed-length records
-        // Special case: if fixed_len is 0, count how many times we saw it in is_fixed
+        // Calculate number of fixed-length records.
+        // When fixed_len > 0: fixed_num = total fixed bytes / fixed_len.
+        // When fixed_len == 0: fixed records are zero-length, so `fixed_values`
+        // is empty and the count cannot be derived from byte length — fall back
+        // to counting the fixed bits directly. This O(n) pass runs once at build
+        // time (never on a query path); `|| 0` would be incorrect here because
+        // zero-length fixed records still count toward fixed_num.
         let fixed_num = fixed_values
             .len()
             .checked_div(fixed_len)
@@ -800,6 +810,27 @@ mod tests {
         assert_eq!(store.get(1).unwrap(), Vec::<u8>::new());
         assert_eq!(store.get(2).unwrap(), vec![1, 2, 3]);
         assert_eq!(store.get(3).unwrap(), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn test_explicit_fixed_len_zero() {
+        // Regression guard for the `build_from_with_fixed_len` call site:
+        // with an explicit fixed_len == 0, zero-length records are the fixed
+        // class. `fixed_values` is empty, so fixed_num MUST come from the bitmap
+        // count — substituting `|| 0` for the checked_div fallback would
+        // undercount them and wrongly flip RecordMode to AllVariable.
+        let data = vec![vec![], vec![1, 2, 3], vec![], vec![4, 5]];
+
+        let store = MixedLenBlobStore::build_from_with_fixed_len(&data, 0).unwrap();
+
+        assert_eq!(store.fixed_len(), 0);
+        assert_eq!(store.fixed_count(), 2); // records 0 and 2 (zero-length)
+        assert_eq!(store.variable_count(), 2); // records 1 and 3
+
+        assert_eq!(store.get(0).unwrap(), Vec::<u8>::new());
+        assert_eq!(store.get(1).unwrap(), vec![1, 2, 3]);
+        assert_eq!(store.get(2).unwrap(), Vec::<u8>::new());
+        assert_eq!(store.get(3).unwrap(), vec![4, 5]);
     }
 
     #[test]
