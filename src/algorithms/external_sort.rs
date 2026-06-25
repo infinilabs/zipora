@@ -397,9 +397,9 @@ where
 
             // Write element to current run
             self.write_element(
-                temp_writer
-                    .as_mut()
-                    .expect("temp_writer initialized in loop"),
+                temp_writer.as_mut().ok_or_else(|| {
+                    ZiporaError::invalid_state("external sort: temp writer missing for active run")
+                })?,
                 &min_element.value,
             )?;
             run_items += 1;
@@ -419,9 +419,11 @@ where
                     if heap.is_empty() || heap.peek().map(|e| e.run_id).unwrap_or(0) > current_run {
                         self.finish_run(
                             &mut temp_writer,
-                            current_temp_path
-                                .take()
-                                .expect("temp path set at run start"),
+                            current_temp_path.take().ok_or_else(|| {
+                                ZiporaError::invalid_state(
+                                    "external sort: temp path missing at run boundary",
+                                )
+                            })?,
                             run_items,
                         )?;
                         current_run += 1;
@@ -432,9 +434,11 @@ where
                 if heap.is_empty() || heap.peek().map(|e| e.run_id).unwrap_or(0) > current_run {
                     self.finish_run(
                         &mut temp_writer,
-                        current_temp_path
-                            .take()
-                            .expect("temp path set at run start"),
+                        current_temp_path.take().ok_or_else(|| {
+                            ZiporaError::invalid_state(
+                                "external sort: temp path missing at run boundary",
+                            )
+                        })?,
                         run_items,
                     )?;
                     current_run += 1;

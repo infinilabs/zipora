@@ -337,6 +337,11 @@ struct GlobalPools {
 }
 
 impl GlobalPools {
+    // Invariant: only invoked by the `GLOBAL_POOLS` LazyLock initializer, which
+    // must return `Self` and therefore cannot propagate a `Result`. The
+    // small()/medium()/large() presets are hardcoded valid configs, so
+    // `MemoryPool::new` can only fail on out-of-memory at process startup —
+    // where a panic is the appropriate and unavoidable outcome.
     fn new() -> Self {
         Self {
             small_pool: Arc::new(
