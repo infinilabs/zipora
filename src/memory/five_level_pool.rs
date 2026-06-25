@@ -884,6 +884,8 @@ impl ThreadLocalPool {
                     *cache_ref = Some(ThreadLocalCache::new(self.config.arena_size, num_bins));
                 }
 
+                // Infallible: `cache_ref` was set to `Some(..)` immediately above
+                // when it was `None`, so it is always `Some` at this point.
                 let cache = cache_ref.as_mut().expect("cache initialized");
                 let bin_index = (aligned_size / self.config.alignment).saturating_sub(1);
 
