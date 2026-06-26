@@ -74,6 +74,7 @@
 mod gold_hash_map;
 mod strategy_traits;
 mod zipora_hash_map;
+mod config;
 
 // Utility modules (keep these as they're used by core implementation)
 mod cache_locality;
@@ -81,10 +82,10 @@ mod hash_functions;
 mod simd_string_ops;
 
 // Core ZiporaHashMap implementation
-pub use zipora_hash_map::{
-    HashMapStats, HashStorageStrategy, HashStrategy, OptimizationStrategy, ZiporaHashMap,
-    ZiporaHashMapConfig,
+pub use config::{
+    HashStorageStrategy, HashStrategy, OptimizationStrategy, ZiporaHashMapConfig,
 };
+pub use zipora_hash_map::{HashMapStats, ZiporaHashMap};
 
 // GoldHashMap - High-performance hash table with link-based collision resolution
 pub use gold_hash_map::{
