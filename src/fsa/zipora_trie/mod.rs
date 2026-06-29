@@ -27,6 +27,8 @@ mod storage;
 #[cfg(test)]
 mod tests;
 mod trie;
+mod builder;
+mod search;
 
 pub use config::{
     BitVectorType, RankSelectType, TrieCompressionStrategy, TrieStorageStrategy, TrieStrategy,
