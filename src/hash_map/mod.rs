@@ -75,6 +75,8 @@ mod gold_hash_map;
 mod strategy_traits;
 mod zipora_hash_map;
 mod config;
+mod storage;
+mod probe;
 
 // Utility modules (keep these as they're used by core implementation)
 mod cache_locality;
