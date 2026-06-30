@@ -124,6 +124,10 @@ impl FileHeaderBase {
         }
     }
 
+    // Invariant: every accessor below reads a compile-time-constant byte range
+    // from `self.data` (e.g. `[40..48]` is exactly 8 bytes), so the `try_into`
+    // into a fixed-size `[u8; N]` is structurally infallible and the `expect`
+    // can never fire. Header layout is fixed by the binary format.
     #[inline]
     pub fn file_size(&self) -> u64 {
         u64::from_le_bytes(self.data[40..48].try_into().expect("slice is 8 bytes"))
