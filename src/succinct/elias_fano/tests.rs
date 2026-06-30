@@ -1165,6 +1165,48 @@ mod tests {
     }
 
     #[test]
+    fn test_hybrid_clustered_selected_for_dense() {
+        // Dense / run-heavy (span == len) → auto-selects Clustered.
+        let docs: Vec<u32> = (0..5000).collect();
+        let h = HybridPostingList::from_sorted(&docs);
+        assert_eq!(h.encoding(), PostingEncoding::Clustered);
+        // Correctness must match plain EF on the same data.
+        let ef = EliasFano::from_sorted(&docs);
+        for i in (0..5000).step_by(50) {
+            assert_eq!(h.get(i), ef.get(i), "get({i})");
+        }
+        for t in (0..5200).step_by(37) {
+            assert_eq!(h.next_geq(t), ef.next_geq(t), "next_geq({t})");
+        }
+        // Sparse data of the same length must NOT pick Clustered.
+        let sparse: Vec<u32> = (0..5000).map(|i| i * 10).collect();
+        assert_ne!(
+            HybridPostingList::from_sorted(&sparse).encoding(),
+            PostingEncoding::Clustered
+        );
+    }
+
+    #[test]
+    fn test_hybrid_intersect_count() {
+        let a: Vec<u32> = (0..3000).collect();
+        let b: Vec<u32> = (1000..4000).collect();
+        let ha = HybridPostingList::from_sorted(&a);
+        let hb = HybridPostingList::from_sorted(&b);
+        // Both dense → Clustered → block path. Overlap 1000..3000 = 2000.
+        assert_eq!(ha.encoding(), PostingEncoding::Clustered);
+        assert_eq!(ha.intersect_count(&hb), 2000);
+        assert_eq!(hb.intersect_count(&ha), 2000); // symmetry
+
+        // Mixed encodings exercise the leapfrog fallback.
+        let sparse: Vec<u32> = (0..3000).map(|i| i * 10).collect();
+        let hs = HybridPostingList::from_sorted(&sparse);
+        assert_ne!(hs.encoding(), PostingEncoding::Clustered);
+        // sparse ∩ a (0..3000): common values are multiples of 10 in [0,2999] → 300.
+        assert_eq!(hs.intersect_count(&ha), 300);
+        assert_eq!(ha.intersect_count(&hs), 300);
+    }
+
+    #[test]
     fn test_hybrid_force_encoding() {
         let docs: Vec<u32> = (0..100).map(|i| i * 10).collect();
 

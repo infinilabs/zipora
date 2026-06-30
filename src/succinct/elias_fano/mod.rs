@@ -2,11 +2,13 @@
 
 pub mod basic;
 pub(crate) mod chunk;
+pub mod clustered;
 pub mod hybrid;
 pub mod optimal;
 pub mod partitioned;
 
 pub use basic::{EliasFano, EliasFanoBatchCursor, EliasFanoCursor, EliasFanoIter};
+pub use clustered::{ChunkKind, ClusteredEliasFano};
 pub use hybrid::{HybridPostingList, PostingEncoding};
 pub use optimal::{
     OptimalPartitionedEliasFano, OptimalPefBatchCursor, OptimalPefCursor, OptimalPefIter,
