@@ -179,6 +179,23 @@ fn mixed_distribution() {
 }
 
 #[test]
+fn extreme_u64_span_no_panic() {
+    // Regression: [0, u64::MAX] previously overflowed `local_universe` (+1 wrapped
+    // to 0), selected a 0-word Bitmap, then indexed out of bounds. The wide span
+    // must now force an EliasFano chunk and answer queries correctly — including
+    // next_geq(u64::MAX), which requires the u128 exclusive upper bound.
+    let v = [0u64, u64::MAX];
+    let cef = ClusteredEliasFano::from_sorted_u64(&v);
+    assert_eq!(cef.len(), 2);
+    assert_eq!(cef.get(0), Some(0));
+    assert_eq!(cef.get(1), Some(u64::MAX));
+    assert_eq!(cef.chunk_kinds(), vec![ChunkKind::EliasFano]);
+    assert_eq!(cef.next_geq(0), Some((0, 0)));
+    assert_eq!(cef.next_geq(1), Some((1, u64::MAX)));
+    assert_eq!(cef.next_geq(u64::MAX), Some((1, u64::MAX)));
+}
+
+#[test]
 fn u32_builder_matches() {
     let v32: Vec<u32> = (0..500u32).map(|i| i * 3).collect();
     let v64: Vec<u64> = v32.iter().map(|&x| x as u64).collect();

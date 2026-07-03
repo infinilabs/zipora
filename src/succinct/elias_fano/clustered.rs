@@ -16,7 +16,7 @@
 //! existing encoders and a clean opt-in path via
 //! [`HybridPostingList`](super::hybrid). Phase 0 benchmarks showed run/bitmap
 //! containers beat OPEF on bursty-clustered and fully-dense data, both for space
-//! and (with [`intersect_with`](ClusteredEliasFano::intersect_with)) intersection.
+//! and (with [`intersect_count`](ClusteredEliasFano::intersect_count)) intersection.
 
 use super::chunk::{ChunkView, chunk_get_delta, chunk_scan_geq, chunk_skip_to_high};
 
@@ -67,7 +67,8 @@ pub struct ClusteredEliasFano {
     /// Last value of each chunk, for binary-search chunk selection.
     chunk_upper_bounds: Vec<u64>,
     len: usize,
-    universe: u64,
+    /// Exclusive upper bound (max value + 1). u128 so a value of u64::MAX fits.
+    universe: u128,
 }
 
 impl ClusteredEliasFano {
@@ -76,7 +77,7 @@ impl ClusteredEliasFano {
         if values.is_empty() {
             return Self::empty();
         }
-        let universe = values[values.len() - 1] as u64 + 1;
+        let universe = values[values.len() - 1] as u128 + 1;
         Self::from_sorted_impl(values.len(), universe, |i| values[i] as u64)
     }
 
@@ -85,7 +86,9 @@ impl ClusteredEliasFano {
         if values.is_empty() {
             return Self::empty();
         }
-        let universe = values[values.len() - 1] + 1;
+        // u128 exclusive upper bound so a value of u64::MAX is representable
+        // (u64::MAX + 1) and next_geq(u64::MAX) still finds it.
+        let universe = values[values.len() - 1] as u128 + 1;
         Self::from_sorted_impl(values.len(), universe, |i| values[i])
     }
 
@@ -101,7 +104,7 @@ impl ClusteredEliasFano {
         }
     }
 
-    fn from_sorted_impl(n: usize, universe: u64, get_val: impl Fn(usize) -> u64) -> Self {
+    fn from_sorted_impl(n: usize, universe: u128, get_val: impl Fn(usize) -> u64) -> Self {
         let num_chunks = n.div_ceil(CEF_CHUNK_SIZE);
         let mut all_low_bits = Vec::new();
         let mut all_high_bits = Vec::new();
@@ -115,7 +118,10 @@ impl ClusteredEliasFano {
             let count = end - start;
             let min_val = get_val(start);
             let max_val = get_val(end - 1);
-            let local_universe = max_val - min_val + 1;
+            // saturating: guards the pathological case where the chunk spans up to
+            // u64::MAX (e.g. from_sorted_u64([0, u64::MAX])). Without it this wraps
+            // to 0 and later selects a 0-word Bitmap that indexes out of bounds.
+            let local_universe = (max_val - min_val).saturating_add(1);
             chunk_upper_bounds.push(max_val);
 
             // --- Container selection ---------------------------------------
@@ -146,9 +152,11 @@ impl ClusteredEliasFano {
             let ef_high_len_bits = count + max_high as usize + 1;
             let ef_total_bits = count * low_bit_width as usize + ef_high_len_bits;
 
-            // Bitmap cost: local_universe bits (rounded to words).
+            // Bitmap cost: local_universe bits (rounded to words). saturating_mul
+            // so a saturated local_universe can never make bitmap look cheaper
+            // than EF (an astronomically wide chunk stays EliasFano).
             let bitmap_words = local_universe.div_ceil(64) as usize;
-            let bitmap_total_bits = bitmap_words * 64;
+            let bitmap_total_bits = bitmap_words.saturating_mul(64);
 
             if bitmap_total_bits < ef_total_bits {
                 // --- Bitmap container ---
@@ -258,7 +266,7 @@ impl ClusteredEliasFano {
             + self.all_dense_bits.len() * 8
             + self.meta.len() * std::mem::size_of::<CefChunkMeta>()
             + self.chunk_upper_bounds.len() * 8
-            + 56
+            + std::mem::size_of::<Self>()
     }
 
     /// Bits per element.
@@ -319,7 +327,7 @@ impl ClusteredEliasFano {
     /// Find the first element >= target. Returns (global_index, value).
     #[inline]
     pub fn next_geq(&self, target: u64) -> Option<(usize, u64)> {
-        if self.len == 0 || target >= self.universe {
+        if self.len == 0 || target as u128 >= self.universe {
             return None;
         }
         let chunk_idx = match self.chunk_upper_bounds.binary_search(&target) {
@@ -334,9 +342,11 @@ impl ClusteredEliasFano {
         let global_offset = chunk_idx * CEF_CHUNK_SIZE;
         let m = &self.meta[chunk_idx];
 
-        // target <= chunk min → first element of this chunk is the answer.
+        // target <= chunk min → first element of this chunk is the answer, and
+        // the first element of every chunk kind is exactly `min_value` (Run: min+0;
+        // Bitmap: delta 0 is always set; EF: first delta is 0).
         if target <= m.min_value {
-            return Some((global_offset, self.get(global_offset).unwrap()));
+            return Some((global_offset, m.min_value));
         }
 
         match m.kind {
@@ -494,7 +504,8 @@ impl super::PostingList for ClusteredEliasFano {
 }
 
 // ---------------------------------------------------------------------------
-// Bitmap chunk helpers (scalar; SIMD fast paths added in Phase 2).
+// Bitmap chunk helpers (scalar by design; §5.2 SIMD batching deliberately skipped
+// — the intersection win is algorithmic, not vectorization).
 // ---------------------------------------------------------------------------
 
 /// Position of the `rank`-th set bit (0-indexed) in a chunk bitmap.
