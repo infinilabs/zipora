@@ -893,6 +893,14 @@ impl<'a> EliasFanoBatchCursor<'a> {
             // Find next 1-bit in high_bits
             while word == 0 {
                 word_idx += 1;
+                if word_idx >= self.ef.high_bits.len() {
+                    // Out of bounds - data corruption detected!
+                    self.high_pos = self.ef.high_bits.len() * 64;
+                    self.buf_pos = 0;
+                    self.buf_len = k;
+                    self.next_elem = self.ef.len; // Mark as exhausted
+                    return;
+                }
                 word = self.ef.high_bits[word_idx];
                 bit_pos = word_idx * 64;
             }
