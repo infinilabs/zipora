@@ -653,3 +653,41 @@ fn test_small_inline_overwrite_before_and_after_fallback() {
     assert_eq!(map.len(), 17);
     assert_eq!(map.get(&1), Some(&20));
 }
+
+#[test]
+fn test_tombstone_duplicate_key_regression() {
+    let config = ZiporaHashMapConfig::default();
+    let mut map: ZiporaHashMap<i32, i32, FixedHashBuilder> =
+        ZiporaHashMap::with_config_and_hasher(config, FixedHashBuilder(42))
+            .expect("invariant broken");
+
+    // All three keys collide and form a probe chain:
+    // Slot 1: Key 1
+    // Slot 2: Key 2
+    // Slot 3: Key 3
+    map.insert(1, 10).unwrap();
+    map.insert(2, 20).unwrap();
+    map.insert(3, 30).unwrap();
+
+    // Remove key 2, creating a tombstone at Slot 2.
+    // The probe chain now has a tombstone in the middle:
+    // Slot 1: Key 1
+    // Slot 2: Tombstone
+    // Slot 3: Key 3
+    assert_eq!(map.remove(&2), Some(20));
+
+    // Re-insert key 3 with a new value.
+    // Previously, the bug would cause the insertion to stop at Slot 2 (Tombstone)
+    // and insert key 3 there, creating a duplicate.
+    let old_value = map.insert(3, 300).unwrap();
+
+    // We expect the old value (30) to be returned since key 3 already existed in the map.
+    assert_eq!(old_value, Some(30));
+
+    // The length of the map should still be 2 (keys 1 and 3).
+    assert_eq!(map.len(), 2);
+
+    // We should be able to retrieve the updated value for key 3.
+    assert_eq!(map.get(&3), Some(&300));
+}
+
