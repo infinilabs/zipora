@@ -499,3 +499,37 @@ fn test_performance_throughput() {
         "Performance regression detected"
     );
 }
+
+/// Test that chunks in the thread-local cache are cleaned up when a thread exits.
+/// This test exercises the Drop implementation of LocalCache.
+#[test]
+fn test_thread_exit_cache_cleanup() {
+    let config = SecurePoolConfig::small_secure().with_local_cache_size(5);
+    let pool = SecureMemoryPool::new(config).unwrap();
+
+    let pool_clone = pool.clone();
+    let handle = thread::spawn(move || {
+        // Allocate and drop 3 chunks in this thread.
+        // They should end up in this thread's LocalCache.
+        let ptr1 = pool_clone.allocate().unwrap();
+        let ptr2 = pool_clone.allocate().unwrap();
+        let ptr3 = pool_clone.allocate().unwrap();
+        
+        drop(ptr1);
+        drop(ptr2);
+        drop(ptr3);
+        
+        // At this point, the thread-local cache of this thread has 3 chunks.
+    });
+
+    handle.join().unwrap();
+
+    // When the thread exits, its thread-local cache is dropped,
+    // which deallocates the 3 chunks.
+    // If the drop implementation was missing or broken, these 3 chunks would leak.
+    // Miri will catch any leaks if this test is run under Miri.
+    
+    // The pool should still be in a valid state.
+    assert!(pool.validate().is_ok());
+}
+

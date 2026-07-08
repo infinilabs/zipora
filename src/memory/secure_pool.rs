@@ -773,17 +773,27 @@ impl<T> Drop for LockFreeStack<T> {
 }
 
 /// Thread-local cache for reduced contention
-#[derive(Default)]
 struct LocalCache {
     chunks: Vec<SecureChunk>,
     max_size: usize,
+    zero_on_free: bool,
+    enable_simd_ops: bool,
+    simd_threshold: usize,
 }
 
 impl LocalCache {
-    fn new(max_size: usize) -> Self {
+    fn new(
+        max_size: usize,
+        zero_on_free: bool,
+        enable_simd_ops: bool,
+        simd_threshold: usize,
+    ) -> Self {
         Self {
             chunks: Vec::with_capacity(max_size),
             max_size,
+            zero_on_free,
+            enable_simd_ops,
+            simd_threshold,
         }
     }
 
@@ -797,6 +807,14 @@ impl LocalCache {
             Ok(())
         } else {
             Err(chunk)
+        }
+    }
+}
+
+impl Drop for LocalCache {
+    fn drop(&mut self) {
+        for chunk in self.chunks.drain(..) {
+            chunk.deallocate(self.zero_on_free, self.enable_simd_ops, self.simd_threshold);
         }
     }
 }
@@ -908,7 +926,14 @@ impl SecureMemoryPool {
         // Try thread-local cache first
         let local_cache = self
             .local_caches
-            .get_or(|| RefCell::new(LocalCache::new(self.config.local_cache_size)));
+            .get_or(|| {
+                RefCell::new(LocalCache::new(
+                    self.config.local_cache_size,
+                    self.config.zero_on_free,
+                    self.config.enable_simd_ops,
+                    self.config.simd_threshold,
+                ))
+            });
 
         if let Some(chunk) = local_cache.borrow_mut().try_pop() {
             self.local_cache_hits.fetch_add(1, Ordering::Relaxed);
@@ -1071,7 +1096,14 @@ impl SecureMemoryPool {
         // Try to return to thread-local cache
         let local_cache = self
             .local_caches
-            .get_or(|| RefCell::new(LocalCache::new(self.config.local_cache_size)));
+            .get_or(|| {
+                RefCell::new(LocalCache::new(
+                    self.config.local_cache_size,
+                    self.config.zero_on_free,
+                    self.config.enable_simd_ops,
+                    self.config.simd_threshold,
+                ))
+            });
 
         if let Err(chunk_to_push) = local_cache.borrow_mut().try_push(chunk) {
             // Local cache full, push the chunk directly to global stack
