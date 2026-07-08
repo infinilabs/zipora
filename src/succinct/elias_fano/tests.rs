@@ -1606,4 +1606,38 @@ mod tests {
         assert!(cursor.advance_to_geq(target));
         assert_eq!(cursor.index(), 200);
     }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_elias_fano_batch_cursor_corruption_oob_panic() {
+        let docs = vec![3, 5, 11, 27, 31, 42, 58, 63];
+        let ef = EliasFano::from_sorted(&docs);
+        
+        let json_str = serde_json::to_string(&ef).unwrap();
+        let mut val: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        
+        // Corrupt the len field to be larger than actual element count
+        if let Some(len) = val.get_mut("len") {
+            *len = serde_json::json!(100);
+        }
+        
+        let corrupt_json = serde_json::to_string(&val).unwrap();
+        let corrupt_ef: EliasFano = serde_json::from_str(&corrupt_json).unwrap();
+        
+        let mut cursor = corrupt_ef.batch_cursor();
+        
+        // The first element is already decoded and available.
+        assert_eq!(cursor.current(), Some(docs[0] as u64));
+        
+        // Advance to read the next 7 elements of the first batch
+        for i in 1..8 {
+            assert!(cursor.advance(), "Failed to advance at index {}", i);
+            assert_eq!(cursor.current(), Some(docs[i] as u64));
+        }
+        
+        // The next advance will trigger refill() since the buffer of 8 elements is exhausted.
+        // It should detect the corruption and safely return false instead of panicking.
+        assert!(!cursor.advance(), "Cursor should be exhausted after batch depletion on corrupt structure");
+        assert!(cursor.is_exhausted());
+    }
 }
