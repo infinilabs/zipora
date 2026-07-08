@@ -8,7 +8,7 @@
 
 use crate::error::{Result, ZiporaError};
 use crate::memory::SecureMemoryPool;
-// Note: Using libc allocator throughout for consistency
+use std::alloc::Layout;
 use std::fmt;
 use std::mem;
 use std::ops::{Index, IndexMut};
@@ -16,72 +16,23 @@ use std::ptr::{self, NonNull};
 use std::slice;
 use std::sync::Arc;
 
-// Import libc for direct malloc/realloc/free access
-extern crate libc;
+/// Check that a pointer is properly aligned for type T
+#[inline]
+fn check_alignment<T>(ptr: *mut u8) {
+    debug_assert!(!ptr.is_null());
+    debug_assert!((ptr as usize).is_multiple_of(mem::align_of::<T>()));
+}
+
+/// Safely cast an aligned u8 pointer to T pointer with alignment verification
+#[inline]
+fn cast_aligned_ptr<T>(ptr: *mut u8) -> *mut T {
+    check_alignment::<T>(ptr);
+    ptr as *mut T
+}
 
 /// Maximum capacity for ValVec32 (2^32 - 1 elements)
 pub const MAX_CAPACITY: u32 = u32::MAX;
 
-
-/// Platform-specific malloc_usable_size wrapper
-#[cfg(target_os = "linux")]
-fn get_usable_size(ptr: *mut u8, size: usize) -> usize {
-    // SAFETY: malloc_usable_size is a valid libc function, ptr is from malloc or is null
-    unsafe {
-        // Use malloc_usable_size on Linux
-        unsafe extern "C" {
-            fn malloc_usable_size(ptr: *mut std::ffi::c_void) -> usize;
-        }
-        if !ptr.is_null() {
-            malloc_usable_size(ptr as *mut std::ffi::c_void)
-        } else {
-            size
-        }
-    }
-}
-
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-fn get_usable_size(ptr: *mut u8, size: usize) -> usize {
-    // SAFETY: malloc_size is a valid libc function, ptr is from malloc or is null
-    unsafe {
-        // Use malloc_size on macOS/iOS
-        unsafe extern "C" {
-            fn malloc_size(ptr: *mut std::ffi::c_void) -> usize;
-        }
-        if !ptr.is_null() {
-            malloc_size(ptr as *mut std::ffi::c_void)
-        } else {
-            size
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn get_usable_size(ptr: *mut u8, size: usize) -> usize {
-    // SAFETY: _msize is a valid libc function, ptr is from malloc or is null
-    unsafe {
-        // Use _msize on Windows
-        unsafe extern "C" {
-            fn _msize(ptr: *mut std::ffi::c_void) -> usize;
-        }
-        if !ptr.is_null() {
-            _msize(ptr as *mut std::ffi::c_void)
-        } else {
-            size
-        }
-    }
-}
-
-#[cfg(not(any(
-    target_os = "linux",
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "windows"
-)))]
-fn get_usable_size(_ptr: *mut u8, size: usize) -> usize {
-    // Fallback for other platforms
-    size
-}
 
 macro_rules! likely {
     ($e:expr) => {
@@ -202,26 +153,22 @@ impl<T> ValVec32<T> {
         }
 
         let capacity_usize = capacity as usize;
-        let size = capacity_usize * mem::size_of::<T>();
+        let layout = Layout::array::<T>(capacity_usize)
+            .map_err(|_| ZiporaError::out_of_memory(capacity_usize * mem::size_of::<T>()))?;
 
-        // Use libc allocation for consistency with grow_to() and drop()
-        // SAFETY: malloc returns valid pointer or null, checked before NonNull::new_unchecked
+        // SAFETY: layout is valid, alloc returns valid pointer or null
         let ptr = unsafe {
-            let raw_ptr = libc::malloc(size);
+            let raw_ptr = std::alloc::alloc(layout);
             if raw_ptr.is_null() {
-                return Err(ZiporaError::out_of_memory(size));
+                return Err(ZiporaError::out_of_memory(layout.size()));
             }
-            NonNull::new_unchecked(raw_ptr as *mut T)
+            NonNull::new_unchecked(cast_aligned_ptr::<T>(raw_ptr))
         };
-
-        // Use malloc_usable_size to get actual allocated capacity
-        let actual_size = get_usable_size(ptr.as_ptr() as *mut u8, size);
-        let actual_capacity = (actual_size / mem::size_of::<T>()).min(MAX_CAPACITY as usize);
 
         Ok(Self {
             ptr,
             len: 0,
-            capacity: actual_capacity as u32,
+            capacity,
         })
     }
 
@@ -350,30 +297,32 @@ impl<T> ValVec32<T> {
         }
 
         let new_capacity_usize = new_capacity as usize;
-        let elem_size = mem::size_of::<T>();
-        let new_size = new_capacity_usize.saturating_mul(elem_size);
+        let new_layout = Layout::array::<T>(new_capacity_usize)
+            .map_err(|_| ZiporaError::out_of_memory(new_capacity_usize * mem::size_of::<T>()))?;
 
-        // Referenced project exact realloc pattern: T* q = (T*)pa_realloc(p, sizeof(T) * new_cap);
         let new_ptr = if self.capacity == 0 {
-            // Initial allocation - use malloc directly like referenced project
-            // SAFETY: malloc returns valid pointer or null, checked before NonNull::new_unchecked
+            // SAFETY: new_layout is valid, alloc returns valid pointer or null
             unsafe {
-                let raw_ptr = libc::malloc(new_size);
+                let raw_ptr = std::alloc::alloc(new_layout);
                 if raw_ptr.is_null() {
-                    return Err(ZiporaError::out_of_memory(new_size));
+                    return Err(ZiporaError::out_of_memory(new_layout.size()));
                 }
-                NonNull::new_unchecked(raw_ptr as *mut T)
+                NonNull::new_unchecked(cast_aligned_ptr::<T>(raw_ptr))
             }
         } else {
-            // Reallocation - use realloc directly like referenced project pa_realloc
-            // SAFETY: self.ptr is valid from previous malloc/realloc, realloc returns valid pointer or null
+            let old_layout = Layout::array::<T>(self.capacity as usize)
+                .map_err(|_| ZiporaError::out_of_memory(self.capacity as usize * mem::size_of::<T>()))?;
+            // SAFETY: ptr is valid from previous allocation, old_layout matches it, new_layout.size() >= old_layout.size()
             unsafe {
-                let old_ptr = self.ptr.as_ptr() as *mut libc::c_void;
-                let raw_ptr = libc::realloc(old_ptr, new_size);
+                let raw_ptr = std::alloc::realloc(
+                    self.ptr.as_ptr() as *mut u8,
+                    old_layout,
+                    new_layout.size(),
+                );
                 if raw_ptr.is_null() {
-                    return Err(ZiporaError::out_of_memory(new_size));
+                    return Err(ZiporaError::out_of_memory(new_layout.size()));
                 }
-                NonNull::new_unchecked(raw_ptr as *mut T)
+                NonNull::new_unchecked(cast_aligned_ptr::<T>(raw_ptr))
             }
         };
 
@@ -767,6 +716,18 @@ impl<T> ValVec32<T> {
         unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len as usize) }
     }
 
+    /// Returns a raw pointer to the vector's buffer
+    #[inline]
+    pub fn as_ptr(&self) -> *const T {
+        self.ptr.as_ptr()
+    }
+
+    /// Returns a raw mutable pointer to the vector's buffer
+    #[inline]
+    pub fn as_mut_ptr(&mut self) -> *mut T {
+        self.ptr.as_ptr()
+    }
+
     /// Extends the vector by appending all elements from a slice
     ///
     /// # Arguments
@@ -1002,10 +963,11 @@ impl<T> Drop for ValVec32<T> {
         self.clear();
 
         if self.capacity > 0 && mem::size_of::<T>() > 0 {
-            // Use libc::free to match referenced project pattern
-            // SAFETY: self.ptr is valid from malloc/realloc or dangling (if capacity==0)
+            let layout = Layout::array::<T>(self.capacity as usize)
+                .expect("valid layout during drop");
+            // SAFETY: self.ptr is valid from alloc/realloc, layout matches allocation
             unsafe {
-                libc::free(self.ptr.as_ptr() as *mut libc::c_void);
+                std::alloc::dealloc(self.ptr.as_ptr() as *mut u8, layout);
             }
         }
     }

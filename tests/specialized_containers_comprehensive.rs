@@ -310,6 +310,39 @@ pub mod phase1_tests {
             assert_eq!(doubled, vec![2, 4, 6, 8, 10]);
         }
 
+        #[test]
+        fn test_valvec32_alignment_correctness() {
+            #[derive(Debug, Clone, Copy, PartialEq)]
+            #[repr(align(64))]
+            struct AlignedTo64(u64);
+
+            let mut vec = ValVec32::<AlignedTo64>::with_capacity(5).unwrap();
+            let initial_ptr = vec.as_ptr();
+            assert_eq!(initial_ptr as usize % 64, 0, "Initial allocation pointer is not 64-byte aligned!");
+
+            for i in 0..5 {
+                vec.push(AlignedTo64(i as u64)).unwrap();
+            }
+
+            for i in 0..5 {
+                let elem_ptr = &vec[i as u32] as *const AlignedTo64;
+                assert_eq!(elem_ptr as usize % 64, 0, "Element {} pointer is not 64-byte aligned!", i);
+                assert_eq!(vec[i as u32].0, i as u64);
+            }
+
+            // Force grow to trigger reallocation
+            vec.push(AlignedTo64(5)).unwrap();
+            
+            let grown_ptr = vec.as_ptr();
+            assert_eq!(grown_ptr as usize % 64, 0, "Grown allocation pointer is not 64-byte aligned!");
+
+            for i in 0..6 {
+                let elem_ptr = &vec[i as u32] as *const AlignedTo64;
+                assert_eq!(elem_ptr as usize % 64, 0, "Grown Element {} pointer is not 64-byte aligned!", i);
+                assert_eq!(vec[i as u32].0, i as u64);
+            }
+        }
+
         proptest! {
             #[test]
             fn proptest_valvec32_operations(
