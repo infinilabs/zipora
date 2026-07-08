@@ -170,31 +170,49 @@ where
         let capacity = entries.len();
         let index = (hash as usize) & *mask;
 
-        // Linear probing to find slot
+        let mut first_tombstone_idx = None;
+        let mut found_existing_idx = None;
+        let mut empty_slot_idx = None;
+
+        // Linear probing to find slot status
         for i in 0..capacity {
             let probe_index = (index + i) & *mask;
-            let entry = &mut entries[probe_index];
+            let entry = &entries[probe_index];
 
-            if entry.hash == 0 || entry.hash == u64::MAX {
-                // Empty slot or tombstone, insert here
-                entry.key = Some(key);
-                entry.value = Some(value);
-                entry.hash = hash;
-                return Ok(None);
+            if entry.hash == 0 {
+                empty_slot_idx = Some(probe_index);
+                break;
+            } else if entry.hash == u64::MAX {
+                if first_tombstone_idx.is_none() {
+                    first_tombstone_idx = Some(probe_index);
+                }
             } else if entry.hash == hash
                 && entry.key.as_ref().expect("occupied entry must have key") == &key
             {
-                // Key exists, update value
-                let old_value = entry
-                    .value
-                    .replace(value)
-                    .expect("occupied entry must have previous value");
-                return Ok(Some(old_value));
+                found_existing_idx = Some(probe_index);
+                break;
             }
         }
 
-        // Table is full, need to resize
-        Err((key, value))
+        if let Some(idx) = found_existing_idx {
+            // Key exists, update value
+            let entry = &mut entries[idx];
+            let old_value = entry
+                .value
+                .replace(value)
+                .expect("occupied entry must have previous value");
+            Ok(Some(old_value))
+        } else if let Some(insert_idx) = first_tombstone_idx.or(empty_slot_idx) {
+            // Insert at first tombstone or empty slot
+            let entry = &mut entries[insert_idx];
+            entry.key = Some(key);
+            entry.value = Some(value);
+            entry.hash = hash;
+            Ok(None)
+        } else {
+            // Table is full, need to resize
+            Err((key, value))
+        }
     }
 
     pub(super) fn insert_small_inline(
