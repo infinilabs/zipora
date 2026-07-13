@@ -116,6 +116,7 @@ impl<T> Future for FiberHandle<T> {
 pub struct FiberPool {
     config: FiberPoolConfig,
     semaphore: Arc<Semaphore>,
+    queue_semaphore: Arc<Semaphore>,
     stats: Arc<FiberPoolStats>,
     _runtime: tokio::runtime::Handle,
 }
@@ -149,6 +150,7 @@ impl FiberPool {
             .map_err(|_| ZiporaError::configuration("no tokio runtime found"))?;
 
         let semaphore = Arc::new(Semaphore::new(config.max_fibers));
+        let queue_semaphore = Arc::new(Semaphore::new(config.max_fibers + config.queue_capacity));
         let stats = Arc::new(FiberPoolStats::new());
 
         // Initialize with minimum number of workers
@@ -159,6 +161,7 @@ impl FiberPool {
         Ok(Self {
             config,
             semaphore,
+            queue_semaphore,
             stats,
             _runtime: runtime,
         })
@@ -171,17 +174,26 @@ impl FiberPool {
     }
 
     /// Spawn a new fiber for execution
-    pub fn spawn<F, T>(&self, future: F) -> FiberHandle<T>
+    pub fn spawn<F, T>(&self, future: F) -> Result<FiberHandle<T>>
     where
         F: Future<Output = Result<T>> + Send + 'static,
         T: Send + 'static,
     {
         let id = self.stats.total_spawned.fetch_add(1, Ordering::Relaxed);
         let semaphore = self.semaphore.clone();
+        let queue_semaphore = self.queue_semaphore.clone();
         let stats = self.stats.clone();
 
+        // Enforce queue capacity limit before spawning
+        let permit = queue_semaphore
+            .try_acquire_owned()
+            .map_err(|_| ZiporaError::invalid_state("Fiber pool queue capacity exceeded"))?;
+
         let handle = tokio::task::spawn(async move {
-            // Acquire semaphore permit
+            // Keep queue permit until the execution finishes
+            let _queue_permit = permit;
+
+            // Acquire running semaphore permit
             let _permit = semaphore
                 .acquire()
                 .await
@@ -210,7 +222,7 @@ impl FiberPool {
             result
         });
 
-        FiberHandle::new(handle, id)
+        Ok(FiberHandle::new(handle, id))
     }
 
     /// Get current pool statistics
@@ -222,7 +234,17 @@ impl FiberPool {
         let avg_execution_time_us = total_time.checked_div(completed).unwrap_or(0);
 
         let active_fibers = self.stats.active_fibers.load(Ordering::Relaxed);
-        let queue_utilization = active_fibers as f64 / self.config.max_fibers as f64;
+        
+        let total_queue_slots = self.config.max_fibers + self.config.queue_capacity;
+        let available_permits = self.queue_semaphore.available_permits();
+        let acquired = total_queue_slots.saturating_sub(available_permits);
+        let queued = acquired.saturating_sub(active_fibers);
+
+        let queue_utilization = if self.config.queue_capacity > 0 {
+            queued as f64 / self.config.queue_capacity as f64
+        } else {
+            0.0
+        };
 
         FiberStats {
             total_spawned,
@@ -333,7 +355,7 @@ mod tests {
     async fn test_fiber_spawning() {
         let pool = FiberPool::default().unwrap();
 
-        let handle = pool.spawn(async { Ok(42i32) });
+        let handle = pool.spawn(async { Ok(42i32) }).unwrap();
         let result = handle.await.unwrap();
 
         assert_eq!(result, 42);
@@ -370,7 +392,7 @@ mod tests {
                 pool.spawn(async move {
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     Ok(i)
-                })
+                }).unwrap()
             })
             .collect();
 
@@ -382,5 +404,59 @@ mod tests {
         for handle in handles {
             handle.await.unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn test_fiber_pool_queue_capacity_limit() {
+        let config = FiberPoolConfig {
+            max_fibers: 1,
+            queue_capacity: 2,
+            initial_workers: 1,
+            max_workers: 1,
+            idle_timeout: Duration::from_secs(60),
+        };
+        let pool = FiberPool::new(config).unwrap();
+
+        // Spawn 1st task to block the only running slot
+        let _h1 = pool.spawn(async {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            Ok(())
+        }).unwrap();
+
+        // Yield to allow task to start and acquire the run permit
+        tokio::task::yield_now().await;
+
+        // Spawn 2nd and 3rd tasks to fill the queue capacity (queue_capacity = 2)
+        let _h2 = pool.spawn(async { Ok(()) }).unwrap();
+        
+        let stats_half = pool.stats();
+        assert_eq!(stats_half.active_fibers, 1);
+        // queue_utilization should be 0.5 (1 task queued out of 2)
+        assert_eq!(stats_half.queue_utilization, 0.5);
+
+        let _h3 = pool.spawn(async { Ok(()) }).unwrap();
+
+        let stats_full = pool.stats();
+        // queue_utilization should be 1.0 (2 tasks queued out of 2)
+        assert_eq!(stats_full.queue_utilization, 1.0);
+
+        // Hitting the queue capacity limit on the 4th spawn
+        let result = pool.spawn(async { Ok(()) });
+        assert!(result.is_err());
+        if let Err(e) = result {
+            assert!(e.to_string().contains("queue capacity exceeded"));
+        }
+
+        // Wait for the running task to complete so permits are released
+        let _ = _h1.await;
+        
+        // Wait for queued tasks to complete
+        let _ = _h2.await;
+        let _ = _h3.await;
+
+        // Now we should be able to spawn again
+        let result_again = pool.spawn(async { Ok(100) });
+        assert!(result_again.is_ok());
+        assert_eq!(result_again.unwrap().await.unwrap(), 100);
     }
 }
