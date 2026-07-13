@@ -382,6 +382,13 @@ fn has_fast_bmi2_detect() -> bool {
 /// AMD Zen 1/2's microcoded PDEP (250-300 cycles).
 #[inline(always)]
 pub fn select_in_word(word: u64, rank: usize) -> usize {
+    debug_assert!(
+        rank < word.count_ones() as usize,
+        "precondition violated: rank ({}) must be less than popcount ({})",
+        rank,
+        word.count_ones()
+    );
+
     type SelectFn = fn(u64, usize) -> usize;
     static DISPATCH: std::sync::OnceLock<SelectFn> = std::sync::OnceLock::new();
 
@@ -842,5 +849,12 @@ mod benchmarks {
         }
         let ns = start.elapsed().as_nanos() as f64 / (iterations as f64 * 2000.0);
         eprintln!("select_in_word: {ns:.1} ns/call [sink={sink}]");
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "precondition violated")]
+    fn test_select_in_word_invalid_input_panic() {
+        let _ = select_in_word(0b1010, 2);
     }
 }
