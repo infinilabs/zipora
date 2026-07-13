@@ -1640,4 +1640,44 @@ mod tests {
         assert!(!cursor.advance(), "Cursor should be exhausted after batch depletion on corrupt structure");
         assert!(cursor.is_exhausted());
     }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_optimal_pef_batch_cursor_corruption_oob() {
+        let vals: Vec<u32> = (0..20).map(|i| i * 5).collect();
+        let opef = OptimalPartitionedEliasFano::from_sorted(&vals);
+        
+        let json_str = serde_json::to_string(&opef).unwrap();
+        let mut val: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        
+        // Corrupt the count field in the first chunk meta to be larger
+        if let Some(count) = val.get_mut("meta")
+            .and_then(|m| m.get_mut(0))
+            .and_then(|c0| c0.get_mut("count"))
+        {
+            *count = serde_json::json!(100);
+        }
+        // Also corrupt the root len field
+        if let Some(len) = val.get_mut("len") {
+            *len = serde_json::json!(100);
+        }
+        
+        let corrupt_json = serde_json::to_string(&val).unwrap();
+        let corrupt_opef: OptimalPartitionedEliasFano = serde_json::from_str(&corrupt_json).unwrap();
+        
+        let mut cursor = corrupt_opef.batch_cursor();
+        
+        // The first element is already decoded and available.
+        assert_eq!(cursor.current(), Some(vals[0] as u64));
+        
+        // We should be able to safely read 20 elements (indices 0..19)
+        for i in 1..20 {
+            assert!(cursor.advance(), "Failed to advance at index {}", i);
+            assert_eq!(cursor.current(), Some(vals[i] as u64));
+        }
+        
+        // The next advance (to 21st element) will trigger refill() which will detect the corruption and return false.
+        assert!(!cursor.advance(), "Cursor should be exhausted after chunk depletion on corrupt structure");
+        assert!(cursor.is_exhausted());
+    }
 }

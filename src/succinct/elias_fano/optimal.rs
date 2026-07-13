@@ -896,6 +896,9 @@ impl<'a> OptimalPefBatchCursor<'a> {
             return false;
         }
         self.refill();
+        if self.buf_len == 0 {
+            self.next_elem = self.opef.len;
+        }
         self.buf_len > 0
     }
 
@@ -961,7 +964,12 @@ impl<'a> OptimalPefBatchCursor<'a> {
                 while word == 0 {
                     word_idx += 1;
                     if word_idx >= view.high_bits.len() {
-                        break;
+                        self.buf_pos = 0;
+                        self.buf_len = filled + k;
+                        self.next_elem += filled + k;
+                        self.local_idx += k;
+                        self.chunk_idx = self.opef.meta.len();
+                        return;
                     }
                     word = view.high_bits[word_idx];
                     bit_pos = word_idx * 64;

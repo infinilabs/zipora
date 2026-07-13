@@ -841,6 +841,9 @@ impl<'a> EliasFanoBatchCursor<'a> {
             return false;
         }
         self.refill();
+        if self.buf_len == 0 {
+            self.next_elem = self.ef.len;
+        }
         self.buf_len > 0
     }
 
@@ -898,7 +901,7 @@ impl<'a> EliasFanoBatchCursor<'a> {
                     self.high_pos = self.ef.high_bits.len() * 64;
                     self.buf_pos = 0;
                     self.buf_len = k;
-                    self.next_elem = self.ef.len; // Mark as exhausted
+                    self.next_elem = start_elem + k;
                     return;
                 }
                 word = self.ef.high_bits[word_idx];
