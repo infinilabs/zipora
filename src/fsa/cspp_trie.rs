@@ -1606,11 +1606,14 @@ impl<'a, T: Copy> CsppTrieIterator<'a, T> {
                 }
                 top.zpath_consumed = true;
 
-                self.stack.push(top);
+                // `top` is held locally; only push it back when we actually
+                // stop here (final node) so `value()` can read it. Otherwise
+                // fall through with `top` still owned, which avoids a redundant
+                // push-then-pop (and its unreachable `expect`).
                 if view.is_final() {
+                    self.stack.push(top);
                     return true;
                 }
-                top = self.stack.pop().expect("stack empty");
             }
 
             if top.child_idx < view.n_children() {
@@ -1690,10 +1693,12 @@ impl<'a, T: Copy> CsppTrieIterator<'a, T> {
         &self.word
     }
 
-    pub fn value(&self) -> T {
-        let top = self.stack.last().expect("stack empty");
+    /// Value at the current position, or `None` if the iterator is not
+    /// positioned on a node (e.g. before `seek_begin` or after it is exhausted).
+    pub fn value(&self) -> Option<T> {
+        let top = self.stack.last()?;
         let view = self.trie.node_view(top.state);
-        self.trie.get_value(view.valpos())
+        Some(self.trie.get_value(view.valpos()))
     }
 }
 
@@ -2132,13 +2137,33 @@ mod tests {
         let mut iter = CsppTrieIterator::<u64>::new(&trie);
         let mut found_values = Vec::new();
         if iter.seek_begin() {
-            found_values.push(iter.value());
+            found_values.push(iter.value().expect("value at valid position"));
             while iter.incr() {
-                found_values.push(iter.value());
+                found_values.push(iter.value().expect("value at valid position"));
             }
         }
 
         // Lexicographical order: "apple" (0), "banana" (100), "cherry" (200)
         assert_eq!(found_values, vec![0, 100, 200]);
+    }
+
+    #[test]
+    fn test_iterator_value_none_when_not_positioned() {
+        // Regression: value() must return None instead of panicking when the
+        // iterator is not positioned on a node.
+        let mut trie = CsppTrie::new(8);
+
+        // Fresh iterator, before any seek: nothing on the stack.
+        let iter = CsppTrieIterator::<u64>::new(&trie);
+        assert_eq!(iter.value(), None);
+
+        // After exhausting a non-empty trie, value() must also be None.
+        let (_, valpos) = trie.insert(b"apple");
+        trie.set_value::<u64>(valpos, 7u64);
+        let mut iter = CsppTrieIterator::<u64>::new(&trie);
+        assert!(iter.seek_begin());
+        assert_eq!(iter.value(), Some(7u64));
+        while iter.incr() {}
+        assert_eq!(iter.value(), None);
     }
 }
