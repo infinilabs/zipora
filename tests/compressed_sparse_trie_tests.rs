@@ -101,15 +101,15 @@ fn test_manual_trie_construction_and_lookup() {
 
     assert!(iter.seek_begin());
     assert_eq!(iter.word(), b"a");
-    assert_eq!(iter.value(), 10);
+    assert_eq!(iter.value(), Some(10));
 
     assert!(iter.incr());
     assert_eq!(iter.word(), b"b");
-    assert_eq!(iter.value(), 20);
+    assert_eq!(iter.value(), Some(20));
 
     assert!(iter.incr());
     assert_eq!(iter.word(), b"ccc");
-    assert_eq!(iter.value(), 30);
+    assert_eq!(iter.value(), Some(30));
 
     assert!(!iter.incr());
 }
@@ -320,9 +320,9 @@ fn test_insert_and_iterate_sorted() {
     let mut iter = CsppTrieIterator::<u32>::new(&trie);
     let mut collected: Vec<(Vec<u8>, u32)> = Vec::new();
     if iter.seek_begin() {
-        collected.push((iter.word().to_vec(), iter.value()));
+        collected.push((iter.word().to_vec(), iter.value().expect("value at valid position")));
         while iter.incr() {
-            collected.push((iter.word().to_vec(), iter.value()));
+            collected.push((iter.word().to_vec(), iter.value().expect("value at valid position")));
         }
     }
 

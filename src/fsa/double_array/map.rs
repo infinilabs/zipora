@@ -411,19 +411,24 @@ impl<'a, V: MapValue> Iterator for MapRangeIter<'a, V> {
     type Item = (Vec<u8>, V);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if !self.started || !self.cursor.is_valid() {
-            return None;
-        }
+        while self.started && self.cursor.is_valid() {
+            let key = self.cursor.key();
+            if key >= self.upper_bound.as_slice() {
+                return None;
+            }
 
-        let key = self.cursor.key();
-        if key >= self.upper_bound.as_slice() {
-            return None;
-        }
+            let result_key = key.to_vec();
+            let result_val = self.cursor.value();
+            self.started = self.cursor.next();
 
-        let result_key = key.to_vec();
-        let result_val = self.cursor.value().expect("Valid cursor must have a value");
-        self.started = self.cursor.next();
-        Some((result_key, result_val))
+            // A valid cursor position can still lack a stored value if the
+            // sentinel (V::EMPTY) was inserted as a real value, or the map is
+            // corrupt. Skip such entries rather than panicking.
+            if let Some(val) = result_val {
+                return Some((result_key, val));
+            }
+        }
+        None
     }
 }
 

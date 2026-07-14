@@ -1384,6 +1384,25 @@ mod tests {
     }
 
     #[test]
+    fn test_range_skips_sentinel_valued_entries() {
+        // Regression: a key stored with the sentinel value (V::EMPTY, which is
+        // u64::MAX for u64) is indistinguishable from an absent value, so the
+        // cursor reports it as None. Range iteration must skip it rather than
+        // panic on `expect("Valid cursor must have a value")`.
+        let mut m = DoubleArrayTrieMap::<u64>::new();
+        m.insert(b"apple", 1).unwrap();
+        m.insert(b"banana", u64::MAX).unwrap(); // sentinel -> value() is None
+        m.insert(b"cherry", 3).unwrap();
+
+        let got: Vec<(Vec<u8>, u64)> = m.range(b"a", b"z").collect();
+        assert_eq!(
+            got,
+            vec![(b"apple".to_vec(), 1), (b"cherry".to_vec(), 3)],
+            "sentinel-valued 'banana' must be skipped, not panic"
+        );
+    }
+
+    #[test]
     fn test_map_values_many() {
         let mut m = DoubleArrayTrieMap::<i32>::new();
         for i in 0..500i32 {
