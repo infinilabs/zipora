@@ -442,6 +442,12 @@ impl Bmi2StringProcessor {
     // BMI2 IMPLEMENTATION METHODS (UNSAFE)
     // =============================================================================
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the BMI1 and BMI2 target
+    /// features (verified at runtime via CPU feature detection) before calling.
+    /// These are enabled via `#[target_feature]`; invoking on hardware without
+    /// BMI1/BMI2 support is undefined behavior.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn validate_utf8_bmi2_impl(&self, input: &[u8]) -> bool {
@@ -454,6 +460,12 @@ impl Bmi2StringProcessor {
         std::str::from_utf8(input).is_ok()
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the BMI1 and BMI2 target
+    /// features (verified at runtime via CPU feature detection) before calling.
+    /// These are enabled via `#[target_feature]`; invoking on hardware without
+    /// BMI1/BMI2 support is undefined behavior.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn count_utf8_chars_bmi2_impl(&self, input: &[u8]) -> Result<usize> {
@@ -486,6 +498,12 @@ impl Bmi2StringProcessor {
         Ok(input.len() - continuation_bytes)
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the BMI1 and BMI2 target
+    /// features (verified at runtime via CPU feature detection) before calling.
+    /// These are enabled via `#[target_feature]`; invoking on hardware without
+    /// BMI1/BMI2 support is undefined behavior.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn extract_utf8_chars_bmi2_impl(&self, input: &[u8]) -> Result<Vec<u32>> {
@@ -519,6 +537,12 @@ impl Bmi2StringProcessor {
         Ok(chars)
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the BMI1 and BMI2 target
+    /// features (verified at runtime via CPU feature detection) before calling.
+    /// These are enabled via `#[target_feature]`; invoking on hardware without
+    /// BMI1/BMI2 support is undefined behavior.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn utf8_to_utf16_bmi2_impl(&self, input: &[u8]) -> Result<Vec<u16>> {
@@ -556,6 +580,12 @@ impl Bmi2StringProcessor {
         Ok(utf16_output)
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the BMI1 and BMI2 target
+    /// features (verified at runtime via CPU feature detection) before calling.
+    /// These are enabled via `#[target_feature]`; invoking on hardware without
+    /// BMI1/BMI2 support is undefined behavior.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn search_bmi2_impl(&self, haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -604,6 +634,12 @@ impl Bmi2StringProcessor {
         None
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the BMI1 and BMI2 target
+    /// features (verified at runtime via CPU feature detection) before calling.
+    /// These are enabled via `#[target_feature]`; invoking on hardware without
+    /// BMI1/BMI2 support is undefined behavior.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn wildcard_match_bmi2_impl(&self, text: &[u8], pattern: &[u8]) -> bool {
@@ -678,6 +714,12 @@ impl Bmi2StringProcessor {
         pattern_idx == pattern.len()
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the BMI1 and BMI2 target
+    /// features (verified at runtime via CPU feature detection) before calling.
+    /// These are enabled via `#[target_feature]`; invoking on hardware without
+    /// BMI1/BMI2 support is undefined behavior.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn char_class_match_bmi2_impl(
@@ -718,6 +760,12 @@ impl Bmi2StringProcessor {
         results
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the BMI1 and BMI2 target
+    /// features (verified at runtime via CPU feature detection) before calling.
+    /// These are enabled via `#[target_feature]`; invoking on hardware without
+    /// BMI1/BMI2 support is undefined behavior.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn extract_substring_bmi2_impl(
@@ -746,6 +794,12 @@ impl Bmi2StringProcessor {
         }
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the BMI1 and BMI2 target
+    /// features (verified at runtime via CPU feature detection) before calling.
+    /// These are enabled via `#[target_feature]`; invoking on hardware without
+    /// BMI1/BMI2 support is undefined behavior.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn to_lowercase_ascii_bmi2_impl(&self, input: &[u8]) -> String {
@@ -779,6 +833,12 @@ impl Bmi2StringProcessor {
         unsafe { String::from_utf8_unchecked(output) }
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the BMI1 and BMI2 target
+    /// features (verified at runtime via CPU feature detection) before calling.
+    /// These are enabled via `#[target_feature]`; invoking on hardware without
+    /// BMI1/BMI2 support is undefined behavior.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn to_uppercase_ascii_bmi2_impl(&self, input: &[u8]) -> String {
@@ -812,6 +872,12 @@ impl Bmi2StringProcessor {
         unsafe { String::from_utf8_unchecked(output) }
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the BMI1 and BMI2 target
+    /// features (verified at runtime via CPU feature detection) before calling.
+    /// These are enabled via `#[target_feature]`; invoking on hardware without
+    /// BMI1/BMI2 support is undefined behavior.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn filter_chars_bmi2_impl(&self, input: &[u8], filter: CharFilter) -> String {
@@ -845,6 +911,12 @@ impl Bmi2StringProcessor {
         unsafe { String::from_utf8_unchecked(output) }
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the BMI1 and BMI2 target
+    /// features (verified at runtime via CPU feature detection) before calling.
+    /// These are enabled via `#[target_feature]`; invoking on hardware without
+    /// BMI1/BMI2 support is undefined behavior.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn hash_string_bmi2_impl(&self, input: &[u8], mut hash: u64) -> u64 {
@@ -868,6 +940,12 @@ impl Bmi2StringProcessor {
         hash
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the BMI1 and BMI2 target
+    /// features (verified at runtime via CPU feature detection) before calling.
+    /// These are enabled via `#[target_feature]`; invoking on hardware without
+    /// BMI1/BMI2 support is undefined behavior.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn detect_runs_bmi2_impl(&self, input: &[u8]) -> Vec<CharRun> {
@@ -915,6 +993,12 @@ impl Bmi2StringProcessor {
         runs
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the BMI1 and BMI2 target
+    /// features (verified at runtime via CPU feature detection) before calling.
+    /// These are enabled via `#[target_feature]`; invoking on hardware without
+    /// BMI1/BMI2 support is undefined behavior.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn analyze_compression_bmi2_impl(&self, input: &[u8]) -> CompressionAnalysis {
@@ -959,6 +1043,12 @@ impl Bmi2StringProcessor {
         }
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the BMI1 and BMI2 target
+    /// features (verified at runtime via CPU feature detection) before calling.
+    /// These are enabled via `#[target_feature]`; invoking on hardware without
+    /// BMI1/BMI2 support is undefined behavior.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn dictionary_lookup_bmi2_impl(
@@ -1002,6 +1092,12 @@ impl Bmi2StringProcessor {
         matches
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the BMI1 and BMI2 target
+    /// features (verified at runtime via CPU feature detection) before calling.
+    /// These are enabled via `#[target_feature]`; invoking on hardware without
+    /// BMI1/BMI2 support is undefined behavior.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn validate_bulk_bmi2_impl(&self, strings: &[&str]) -> Vec<bool> {
@@ -1011,6 +1107,12 @@ impl Bmi2StringProcessor {
             .collect()
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the BMI1 and BMI2 target
+    /// features (verified at runtime via CPU feature detection) before calling.
+    /// These are enabled via `#[target_feature]`; invoking on hardware without
+    /// BMI1/BMI2 support is undefined behavior.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn hash_bulk_bmi2_impl(&self, strings: &[&str], seed: u64) -> Vec<u64> {
@@ -1021,6 +1123,12 @@ impl Bmi2StringProcessor {
             .collect()
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the BMI1 and BMI2 target
+    /// features (verified at runtime via CPU feature detection) before calling.
+    /// These are enabled via `#[target_feature]`; invoking on hardware without
+    /// BMI1/BMI2 support is undefined behavior.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "bmi1,bmi2")]
     unsafe fn compare_bulk_bmi2_impl(&self, pairs: &[(&str, &str)]) -> Vec<bool> {

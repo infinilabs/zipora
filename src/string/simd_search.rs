@@ -265,6 +265,11 @@ impl SimdStringSearch {
     // =============================================================================
 
     /// SSE4.2 strchr for arrays ≤16 bytes (single PCMPESTRI instruction)
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the SSE4.2 target feature
+    /// (verified at runtime) before calling. Enabled via `#[target_feature]`;
+    /// invoking on hardware without SSE4.2 support is undefined behavior.
     #[target_feature(enable = "sse4.2")]
     unsafe fn sse42_strchr_max_16(&self, haystack: &[u8], needle: u8) -> Option<usize> {
         debug_assert!(haystack.len() <= 16);
@@ -306,6 +311,11 @@ impl SimdStringSearch {
     }
 
     /// SSE4.2 strchr for arrays ≤35 bytes (cascaded PCMPESTRI operations)
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the SSE4.2 target feature
+    /// (verified at runtime) before calling. Enabled via `#[target_feature]`;
+    /// invoking on hardware without SSE4.2 support is undefined behavior.
     #[target_feature(enable = "sse4.2")]
     unsafe fn sse42_strchr_max_35(&self, haystack: &[u8], needle: u8) -> Option<usize> {
         debug_assert!(haystack.len() <= 35 && haystack.len() > 16);
@@ -366,6 +376,11 @@ impl SimdStringSearch {
     }
 
     /// SSE4.2 strstr implementation using PCMPESTRI
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the SSE4.2 target feature
+    /// (verified at runtime) before calling. Enabled via `#[target_feature]`;
+    /// invoking on hardware without SSE4.2 support is undefined behavior.
     #[target_feature(enable = "sse4.2")]
     unsafe fn sse42_strstr_impl(&self, haystack: &[u8], needle: &[u8]) -> Option<usize> {
         if needle.len() > 16 {
@@ -459,6 +474,11 @@ impl SimdStringSearch {
     }
 
     /// SSE4.2 multi-character search implementation
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the SSE4.2 target feature
+    /// (verified at runtime) before calling. Enabled via `#[target_feature]`;
+    /// invoking on hardware without SSE4.2 support is undefined behavior.
     #[target_feature(enable = "sse4.2")]
     unsafe fn sse42_multi_search_impl(&self, haystack: &[u8], needles: &[u8]) -> MultiSearchResult {
         let mut positions = Vec::new();
@@ -535,6 +555,11 @@ impl SimdStringSearch {
     }
 
     /// SSE4.2 string comparison implementation
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the SSE4.2 target feature
+    /// (verified at runtime) before calling. Enabled via `#[target_feature]`;
+    /// invoking on hardware without SSE4.2 support is undefined behavior.
     #[target_feature(enable = "sse4.2")]
     unsafe fn sse42_strcmp_impl(&self, a: &[u8], b: &[u8]) -> Ordering {
         debug_assert_eq!(a.len(), b.len());
@@ -574,6 +599,11 @@ impl SimdStringSearch {
     // AVX2 IMPLEMENTATIONS
     // =============================================================================
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the AVX2 target feature
+    /// (verified at runtime) before calling. Enabled via `#[target_feature]`;
+    /// invoking on hardware without AVX2 support is undefined behavior.
     #[target_feature(enable = "avx2")]
     unsafe fn avx2_strchr(&self, haystack: &[u8], needle: u8) -> Option<usize> {
         let needle_vec = _mm256_set1_epi8(needle as i8);
@@ -604,6 +634,11 @@ impl SimdStringSearch {
         None
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the AVX2 target feature
+    /// (verified at runtime) before calling. Enabled via `#[target_feature]`;
+    /// invoking on hardware without AVX2 support is undefined behavior.
     #[target_feature(enable = "avx2")]
     unsafe fn avx2_strstr(&self, haystack: &[u8], needle: &[u8]) -> Option<usize> {
         // For simplicity, use first character matching + verification approach
@@ -631,6 +666,11 @@ impl SimdStringSearch {
         None
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the AVX2 target feature
+    /// (verified at runtime) before calling. Enabled via `#[target_feature]`;
+    /// invoking on hardware without AVX2 support is undefined behavior.
     #[target_feature(enable = "avx2")]
     unsafe fn avx2_multi_search(&self, haystack: &[u8], needles: &[u8]) -> MultiSearchResult {
         // For AVX2, we can process multiple needles more efficiently
@@ -638,6 +678,11 @@ impl SimdStringSearch {
         self.scalar_multi_search(haystack, needles)
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the AVX2 target feature
+    /// (verified at runtime) before calling. Enabled via `#[target_feature]`;
+    /// invoking on hardware without AVX2 support is undefined behavior.
     #[target_feature(enable = "avx2")]
     unsafe fn avx2_strcmp(&self, a: &[u8], b: &[u8]) -> Ordering {
         debug_assert_eq!(a.len(), b.len());
@@ -678,6 +723,12 @@ impl SimdStringSearch {
     // =============================================================================
 
     #[cfg(feature = "avx512")]
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the AVX512F and AVX512BW target
+    /// features (verified at runtime) before calling. Enabled via
+    /// `#[target_feature]`; invoking on hardware without AVX-512 support is
+    /// undefined behavior.
     #[target_feature(enable = "avx512f,avx512bw")]
     unsafe fn avx512_strchr(&self, haystack: &[u8], needle: u8) -> Option<usize> {
         let needle_vec = _mm512_set1_epi8(needle as i8);
@@ -709,6 +760,12 @@ impl SimdStringSearch {
     }
 
     #[cfg(feature = "avx512")]
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the AVX512F and AVX512BW target
+    /// features (verified at runtime) before calling. Enabled via
+    /// `#[target_feature]`; invoking on hardware without AVX-512 support is
+    /// undefined behavior.
     #[target_feature(enable = "avx512f,avx512bw")]
     unsafe fn avx512_strstr(&self, haystack: &[u8], needle: &[u8]) -> Option<usize> {
         // Similar to AVX2 implementation but with 64-byte chunks
@@ -737,6 +794,12 @@ impl SimdStringSearch {
     }
 
     #[cfg(feature = "avx512")]
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the AVX512F and AVX512BW target
+    /// features (verified at runtime) before calling. Enabled via
+    /// `#[target_feature]`; invoking on hardware without AVX-512 support is
+    /// undefined behavior.
     #[target_feature(enable = "avx512f,avx512bw")]
     unsafe fn avx512_multi_search(&self, haystack: &[u8], needles: &[u8]) -> MultiSearchResult {
         // AVX-512 implementation for multi-character search
@@ -744,6 +807,12 @@ impl SimdStringSearch {
     }
 
     #[cfg(feature = "avx512")]
+    /// # Safety
+    ///
+    /// The caller must ensure the CPU supports the AVX512F and AVX512BW target
+    /// features (verified at runtime) before calling. Enabled via
+    /// `#[target_feature]`; invoking on hardware without AVX-512 support is
+    /// undefined behavior.
     #[target_feature(enable = "avx512f,avx512bw")]
     unsafe fn avx512_strcmp(&self, a: &[u8], b: &[u8]) -> Ordering {
         debug_assert_eq!(a.len(), b.len());
