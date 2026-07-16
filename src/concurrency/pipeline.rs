@@ -389,22 +389,38 @@ impl Pipeline {
             };
 
             let mut stage_input_rx = if i == 0 {
-                // First stage reads from pipeline input
-                // SAFETY: current_input initialized with Some(input_rx) at line 383
-                current_input
-                    .take()
-                    .expect("input available for first stage")
+                // First stage reads from pipeline input. `current_input` is Some
+                // (initialized at line 383, taken exactly once when i == 0), so
+                // this is unreachable in practice; propagate rather than panic if
+                // the invariant is ever broken.
+                current_input.take().ok_or_else(|| {
+                    ZiporaError::invalid_state("pipeline: input missing for first stage")
+                })?
             } else {
-                // SAFETY: channels[i-1] exists (i >= 1, channels has num_stages-1 elements) and is Some (initialized at line 378, taken exactly once)
-                channels[i - 1].take().expect("channel for prior stage").1
+                // channels[i-1] exists (i >= 1, channels has num_stages-1
+                // elements) and is Some (initialized at line 378, taken exactly
+                // once); propagate instead of panicking if that ever fails.
+                channels[i - 1]
+                    .take()
+                    .ok_or_else(|| {
+                        ZiporaError::invalid_state("pipeline: channel missing for prior stage")
+                    })?
+                    .1
             };
 
             let output_tx = if i == num_stages - 1 {
                 // Last stage writes to pipeline output
                 output_tx.clone()
             } else {
-                // SAFETY: channels[i] exists (i < num_stages-1, channels has num_stages-1 elements) and is Some (initialized at line 378, taken exactly once)
-                channels[i].take().expect("channel for next stage").0
+                // channels[i] exists (i < num_stages-1, channels has num_stages-1
+                // elements) and is Some (initialized at line 378, taken exactly
+                // once); propagate instead of panicking.
+                channels[i]
+                    .take()
+                    .ok_or_else(|| {
+                        ZiporaError::invalid_state("pipeline: channel missing for next stage")
+                    })?
+                    .0
             };
 
             let config = self.config.clone();
