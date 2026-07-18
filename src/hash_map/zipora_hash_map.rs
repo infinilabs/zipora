@@ -479,7 +479,7 @@ where
     fn clone(&self) -> Self {
         // SAFETY: Clone requires creating a new map with the same config.
         // If allocation fails, we panic as there's no graceful fallback for Clone.
-        let new_map = Self::with_config_and_hasher(self.config.clone(), self.hash_builder.clone())
+        let mut new_map = Self::with_config_and_hasher(self.config.clone(), self.hash_builder.clone())
             .unwrap_or_else(|e| {
                 panic!(
                     "ZiporaHashMap clone failed: {}. \
@@ -489,10 +489,40 @@ where
             });
 
         // Copy all entries from the original map
-        // TODO: Implement proper copying when iter() is available
-        // for (key, value) in self.iter() {
-        //     let _ = new_map.insert(key.clone(), value.clone());
-        // }
+        match &self.storage {
+            HashMapStorage::Standard { .. } => {
+                for (key, value) in self.iter() {
+                    new_map.insert(key.clone(), value.clone()).unwrap_or_else(|e| {
+                        panic!("ZiporaHashMap clone failed during insertion: {}", e);
+                    });
+                }
+            }
+            HashMapStorage::SmallInline { inline_data, fallback, .. } => {
+                // Copy inline entries
+                for i in 0..16 {
+                    if (inline_data.occupied >> i) & 1 == 1 {
+                        // SAFETY: Bit i is set in occupied, so slot i is initialized
+                        let (k, v) = unsafe { inline_data._data[i].assume_init_ref() };
+                        new_map.insert(k.clone(), v.clone()).unwrap_or_else(|e| {
+                            panic!("ZiporaHashMap clone failed during inline insertion: {}", e);
+                        });
+                    }
+                }
+                // Copy fallback entries if any
+                if let Some(fb) = fallback {
+                    let fb_iter = ZiporaHashMapIterator {
+                        storage: fb.as_ref(),
+                        index: 0,
+                    };
+                    for (key, value) in fb_iter {
+                        new_map.insert(key.clone(), value.clone()).unwrap_or_else(|e| {
+                            panic!("ZiporaHashMap clone failed during fallback insertion: {}", e);
+                        });
+                    }
+                }
+            }
+            _ => unreachable!("unimplemented strategies are rejected at construction"),
+        }
 
         new_map
     }

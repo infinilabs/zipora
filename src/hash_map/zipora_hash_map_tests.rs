@@ -691,3 +691,46 @@ fn test_tombstone_duplicate_key_regression() {
     assert_eq!(map.get(&3), Some(&300));
 }
 
+#[test]
+fn test_clone_preserves_all_entries() {
+    // Test Standard storage clone
+    {
+        let mut map: ZiporaHashMap<i32, String> = ZiporaHashMap::new().unwrap();
+        for i in 0..20 {
+            map.insert(i, i.to_string()).unwrap();
+        }
+        let cloned = map.clone();
+        assert_eq!(cloned.len(), map.len());
+        for i in 0..20 {
+            assert_eq!(cloned.get(&i), map.get(&i));
+        }
+    }
+
+    // Test SmallInline storage clone (without migration)
+    {
+        let config = ZiporaHashMapConfig::small_inline(16);
+        let mut map: ZiporaHashMap<i32, String> = ZiporaHashMap::with_config(config).unwrap();
+        for i in 0..10 {
+            map.insert(i, i.to_string()).unwrap();
+        }
+        let cloned = map.clone();
+        assert_eq!(cloned.len(), map.len());
+        for i in 0..10 {
+            assert_eq!(cloned.get(&i), map.get(&i));
+        }
+    }
+
+    // Test SmallInline storage clone (with migration/fallback)
+    {
+        let config = ZiporaHashMapConfig::small_inline(16);
+        let mut map: ZiporaHashMap<i32, String> = ZiporaHashMap::with_config(config).unwrap();
+        for i in 0..20 {
+            map.insert(i, i.to_string()).unwrap();
+        }
+        let cloned = map.clone();
+        assert_eq!(cloned.len(), map.len());
+        for i in 0..20 {
+            assert_eq!(cloned.get(&i), map.get(&i));
+        }
+    }
+}
