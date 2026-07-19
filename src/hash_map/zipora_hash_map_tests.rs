@@ -734,3 +734,161 @@ fn test_clone_preserves_all_entries() {
         }
     }
 }
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
+#[derive(Clone, Debug)]
+struct DropTracker(Arc<AtomicUsize>);
+
+impl Drop for DropTracker {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn test_small_inline_remove_and_clear_drops_values() {
+    let drop_counter = Arc::new(AtomicUsize::new(0));
+    let config = ZiporaHashMapConfig::small_inline(16);
+    let mut map: ZiporaHashMap<i32, DropTracker> = ZiporaHashMap::with_config(config).unwrap();
+
+    for i in 0..5 {
+        map.insert(i, DropTracker(Arc::clone(&drop_counter))).unwrap();
+    }
+    assert_eq!(map.len(), 5);
+
+    // Remove entry 2
+    let removed = map.remove(&2);
+    assert!(removed.is_some());
+    assert_eq!(map.len(), 4);
+    assert!(!map.contains_key(&2));
+    assert!(map.get(&2).is_none());
+
+    // Drop the removed value
+    drop(removed);
+    assert_eq!(drop_counter.load(Ordering::SeqCst), 1);
+
+    // Clear map
+    map.clear();
+    assert_eq!(map.len(), 0);
+    assert_eq!(map.iter().count(), 0);
+    assert_eq!(drop_counter.load(Ordering::SeqCst), 5); // 1 from remove + 4 from clear
+}
+
+#[test]
+fn test_get_mut_after_small_inline_migration() {
+    let config = ZiporaHashMapConfig::small_inline(16);
+    let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::with_config(config).unwrap();
+
+    // Insert 20 entries to force migration from SmallInline to Standard fallback
+    for i in 0..20 {
+        map.insert(i, i * 10).unwrap();
+    }
+
+    // get_mut on early key (0) should work
+    let val_mut = map.get_mut(&0);
+    assert!(val_mut.is_some());
+    *val_mut.unwrap() = 999;
+
+    assert_eq!(map.get(&0), Some(&999));
+}
+
+#[test]
+fn test_len_tracking_consistency() {
+    let mut map: ZiporaHashMap<i32, i32> = ZiporaHashMap::new().unwrap();
+    assert_eq!(map.len(), 0);
+
+    for i in 0..50 {
+        map.insert(i, i).unwrap();
+        assert_eq!(map.len(), i as usize + 1);
+        assert_eq!(map.len(), map.iter().count());
+    }
+
+    for i in 0..20 {
+        map.remove(&i);
+        assert_eq!(map.len(), 50 - (i as usize + 1));
+        assert_eq!(map.len(), map.iter().count());
+    }
+
+    map.clear();
+    assert_eq!(map.len(), 0);
+    assert_eq!(map.len(), map.iter().count());
+}
+
+#[test]
+fn test_migration_panic_safety() {
+    use std::hash::Hasher;
+
+    #[derive(Clone, Debug)]
+    struct PanicHashKey {
+        id: usize,
+        counter: Arc<AtomicUsize>,
+        panic_on_hash: Arc<AtomicUsize>,
+        hash_count: Arc<AtomicUsize>,
+    }
+
+    impl PartialEq for PanicHashKey {
+        fn eq(&self, other: &Self) -> bool {
+            self.id == other.id
+        }
+    }
+
+    impl Eq for PanicHashKey {}
+
+    impl Hash for PanicHashKey {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            let count = self.hash_count.fetch_add(1, Ordering::SeqCst) + 1;
+            if count == self.panic_on_hash.load(Ordering::SeqCst) {
+                panic!("Simulated hash panic during migration");
+            }
+            self.id.hash(state);
+        }
+    }
+
+    impl Drop for PanicHashKey {
+        fn drop(&mut self) {
+            self.counter.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let drop_counter = Arc::new(AtomicUsize::new(0));
+    let hash_counter = Arc::new(AtomicUsize::new(0));
+    let panic_on_hash = Arc::new(AtomicUsize::new(9999));
+
+    let config = ZiporaHashMapConfig::small_inline(16);
+    let mut map: ZiporaHashMap<PanicHashKey, usize> = ZiporaHashMap::with_config(config).unwrap();
+
+    // Insert 16 elements into SmallInline
+    for i in 0..16 {
+        map.insert(
+            PanicHashKey {
+                id: i,
+                counter: Arc::clone(&drop_counter),
+                panic_on_hash: Arc::clone(&panic_on_hash),
+                hash_count: Arc::clone(&hash_counter),
+            },
+            i,
+        )
+        .unwrap();
+    }
+
+    // Now set panic_on_hash to trigger during migration loop
+    panic_on_hash.store(hash_counter.load(Ordering::SeqCst) + 2, Ordering::SeqCst);
+
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        map.insert(
+            PanicHashKey {
+                id: 16,
+                counter: Arc::clone(&drop_counter),
+                panic_on_hash: Arc::clone(&panic_on_hash),
+                hash_count: Arc::clone(&hash_counter),
+            },
+            16,
+        )
+    }));
+
+    assert!(res.is_err());
+    // Dropping map after panic unwinding must not cause double-free/double-drop
+    drop(map);
+}

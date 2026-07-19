@@ -312,8 +312,18 @@ impl SimpleZipBlobStore {
             let offset = (packed >> len_bits) as usize;
             let length = (packed & len_mask) as usize;
 
-            // SAFETY: offset and length were packed from valid strpool indices during build
-            debug_assert!(offset + length <= self.strpool.len());
+            let end_pos = offset.checked_add(length).ok_or_else(|| {
+                ZiporaError::invalid_data(format!(
+                    "Offset overflow: offset {} + length {} > usize::MAX",
+                    offset, length
+                ))
+            })?;
+            if end_pos > self.strpool.len() {
+                return Err(ZiporaError::invalid_data(format!(
+                    "Fragment bounds out of range: offset {} + length {} > strpool len {}",
+                    offset, length, self.strpool.len()
+                )));
+            }
             unsafe {
                 let src = strpool.add(offset);
                 rec_data.extend_from_slice(std::slice::from_raw_parts(src, length));
@@ -799,6 +809,25 @@ mod tests {
         assert!(
             stats.strpool_size < store.unzip_size,
             "Fragment deduplication should work"
+        );
+    }
+
+    #[test]
+    fn test_corrupted_off_len_bounds_check() {
+        let data = vec![b"hello world".to_vec()];
+        let config = SimpleZipConfig::default();
+        let mut store = SimpleZipBlobStore::build_from(&data, &config).unwrap();
+
+        // Corrupt the off_len packed u64 value to point way beyond strpool len
+        let corrupted_packed = (1000u64 << store.len_bits) | 1000u64;
+        store.off_len[0] = corrupted_packed;
+
+        let res = store.get(0);
+        assert!(res.is_err());
+        let err = res.unwrap_err();
+        assert!(
+            err.to_string().contains("Fragment bounds out of range")
+                || err.to_string().contains("Offset overflow")
         );
     }
 }

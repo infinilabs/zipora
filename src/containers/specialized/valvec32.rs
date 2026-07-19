@@ -648,9 +648,9 @@ impl<T> ValVec32<T> {
             )));
         }
 
-        // SAFETY: Index is bounds checked
+        // SAFETY: Index is bounds checked. Use ptr::replace to drop the old element.
         unsafe {
-            ptr::write(self.ptr.as_ptr().add(index as usize), value);
+            let _old = ptr::replace(self.ptr.as_ptr().add(index as usize), value);
         }
         Ok(())
     }
@@ -1026,13 +1026,14 @@ impl<T: Clone> Clone for ValVec32<T> {
             Self::with_capacity(self.len).expect("Memory allocation failed during clone");
 
         if self.len > 0 {
-            // SAFETY: i < self.len, offsets within valid ranges for both vectors
+            // SAFETY: i < self.len, offsets within valid ranges for both vectors.
+            // Increment new_vec.len per element so a mid-loop clone panic drops already cloned elements.
             unsafe {
                 for i in 0..(self.len as usize) {
                     let value = (*self.ptr.as_ptr().add(i)).clone();
                     ptr::write(new_vec.ptr.as_ptr().add(i), value);
+                    new_vec.len += 1;
                 }
-                new_vec.len = self.len;
             }
         }
 
@@ -1392,5 +1393,91 @@ mod tests {
         assert_eq!(vec.len(), 9);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_set_drops_old_element() -> Result<()> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        #[derive(Debug)]
+        struct DropTracker(Arc<AtomicUsize>);
+        impl Drop for DropTracker {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut vec = ValVec32::new();
+        vec.push(DropTracker(Arc::clone(&counter)))?;
+        vec.push(DropTracker(Arc::clone(&counter)))?;
+        vec.push(DropTracker(Arc::clone(&counter)))?;
+
+        assert_eq!(counter.load(Ordering::SeqCst), 0);
+
+        // Overwrite index 1
+        vec.set(1, DropTracker(Arc::clone(&counter)))?;
+        // The old element at index 1 should have been dropped
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+
+        drop(vec);
+        // Dropping the vec should drop all 3 current elements
+        assert_eq!(counter.load(Ordering::SeqCst), 4);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_clone_panic_safety() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        #[derive(Debug)]
+        struct PanicClone {
+            counter: Arc<AtomicUsize>,
+            clone_count: Arc<AtomicUsize>,
+            panic_at: usize,
+        }
+
+        impl Clone for PanicClone {
+            fn clone(&self) -> Self {
+                let current = self.clone_count.fetch_add(1, Ordering::SeqCst) + 1;
+                if current == self.panic_at {
+                    panic!("Simulated clone panic");
+                }
+                PanicClone {
+                    counter: Arc::clone(&self.counter),
+                    clone_count: Arc::clone(&self.clone_count),
+                    panic_at: self.panic_at,
+                }
+            }
+        }
+
+        impl Drop for PanicClone {
+            fn drop(&mut self) {
+                self.counter.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let drop_counter = Arc::new(AtomicUsize::new(0));
+        let clone_counter = Arc::new(AtomicUsize::new(0));
+
+        let mut vec = ValVec32::new();
+        for _ in 0..5 {
+            vec.push(PanicClone {
+                counter: Arc::clone(&drop_counter),
+                clone_count: Arc::clone(&clone_counter),
+                panic_at: 3, // panic on 3rd clone call
+            }).unwrap();
+        }
+
+        let result = std::panic::catch_unwind(|| {
+            let _cloned = vec.clone();
+        });
+
+        assert!(result.is_err());
+        // The 2 successful clones in new_vec should have been dropped when catch_unwind unwound new_vec
+        assert_eq!(drop_counter.load(Ordering::SeqCst), 2);
     }
 }
