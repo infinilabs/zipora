@@ -187,6 +187,10 @@ struct Entry<K, V, L: LinkType> {
 /// GoldHashMap - high-performance hash table
 ///
 /// Generic over key type K, value type V, and link type L (u32 or u64)
+///
+/// # Security Note
+/// `GoldHashMap` uses fixed-seed `ahash::AHasher` for maximum internal lookup performance.
+/// It is NOT intended for untrusted or attacker-controlled keys (hash-flooding defense is not enabled).
 pub struct GoldHashMap<K, V, L = u32>
 where
     K: Hash + Eq,
@@ -484,6 +488,7 @@ where
     }
 
     // Internal: Hash a key
+    // SECURITY NOTE: Uses fixed-seed AHasher for speed; not for untrusted keys.
     fn hash_key(&self, key: &K) -> u64 {
         let mut hasher = ahash::AHasher::default();
         key.hash(&mut hasher);
