@@ -573,8 +573,10 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
             pos += 8;
         }
 
-        // Read stream data lengths
+        // Read stream data lengths (bounds guaranteed by the min_header_size check above:
+        // pos = n_streams * 8 here, and len >= n_streams * 8 + n_streams * 4)
         let mut stream_lengths = Vec::with_capacity(n_streams);
+        let mut total_stream_len: usize = 0;
         for _ in 0..n_streams {
             let length_bytes = &encoded_data[pos..pos + 4];
             let length = u32::from_le_bytes([
@@ -583,16 +585,20 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
                 length_bytes[2],
                 length_bytes[3],
             ]) as usize;
+            total_stream_len = total_stream_len.checked_add(length).ok_or_else(|| {
+                ZiporaError::invalid_data("Stream length sum overflow in rANS data")
+            })?;
             stream_lengths.push(length);
             pos += 4;
+        }
+
+        if pos.checked_add(total_stream_len).is_none_or(|end| end > encoded_data.len()) {
+            return Err(ZiporaError::invalid_data("Invalid stream data length"));
         }
 
         // Extract stream data
         let mut stream_data = Vec::with_capacity(n_streams);
         for &length in &stream_lengths {
-            if pos + length > encoded_data.len() {
-                return Err(ZiporaError::invalid_data("Invalid stream data length"));
-            }
             stream_data.push(&encoded_data[pos..pos + length]);
             pos += length;
         }
@@ -887,5 +893,44 @@ mod tests {
         let decoder_x8 = Rans64Decoder::<ParallelX8>::new(&encoder_x8);
         let decoded_x8 = decoder_x8.decode(&encoded_x8, data.len()).unwrap();
         assert_eq!(data, decoded_x8);
+    }
+
+    #[test]
+    fn test_parallel_rans_truncated_stream_data() {
+        let data = b"hello world 1234567890 parallel test data string for testing truncated stream lengths";
+        let mut frequencies = [0u32; 256];
+        for &byte in data {
+            frequencies[byte as usize] += 1;
+        }
+
+        let encoder = Rans64Encoder::<ParallelX4>::new(&frequencies).unwrap();
+        let mut encoded = encoder.encode(data).unwrap();
+
+        // Truncate encoded data by removing last 10 bytes
+        encoded.truncate(encoded.len() - 10);
+
+        let decoder = Rans64Decoder::<ParallelX4>::new(&encoder);
+        let res = decoder.decode(&encoded, data.len());
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_parallel_rans_truncated_header_lengths() {
+        let data = b"hello world 1234567890 parallel test data string for testing truncated stream lengths";
+        let mut frequencies = [0u32; 256];
+        for &byte in data {
+            frequencies[byte as usize] += 1;
+        }
+
+        let encoder = Rans64Encoder::<ParallelX4>::new(&frequencies).unwrap();
+        let encoded = encoder.encode(data).unwrap();
+
+        // Truncate inside the header (40 < min_header_size = n_streams * 8 + n_streams * 4 = 48),
+        // exercising the min_header_size guard in decode_parallel
+        let truncated = &encoded[..40];
+
+        let decoder = Rans64Decoder::<ParallelX4>::new(&encoder);
+        let res = decoder.decode(truncated, data.len());
+        assert!(res.is_err());
     }
 }
