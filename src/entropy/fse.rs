@@ -682,19 +682,25 @@ impl FseTable {
         const RANS_L: u64 = 1u64 << RANS_L_BITS; // 65536
         const BLOCK_SIZE: usize = 4; // bytes per read
 
-        // Renormalize when x < RANS_L
-        if x < RANS_L && *pos >= BLOCK_SIZE {
-            // Move backward by BLOCK_SIZE
-            *pos -= BLOCK_SIZE;
+        // Renormalize when x < RANS_L and input bytes remain
+        if x < RANS_L && *pos > 0 {
+            if *pos >= BLOCK_SIZE {
+                // Move backward by BLOCK_SIZE
+                *pos -= BLOCK_SIZE;
 
-            // Shift left by BLOCK_SIZE * 8 bits
-            x <<= BLOCK_SIZE * 8;
+                // Shift left by BLOCK_SIZE * 8 bits
+                x <<= BLOCK_SIZE * 8;
 
-            // Read backward from current position
-            if *pos + BLOCK_SIZE <= input.len() {
-                let bytes = &input[*pos..*pos + BLOCK_SIZE];
-                let new_bytes = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-                x |= new_bytes as u64;
+                // Read backward from current position
+                if *pos + BLOCK_SIZE <= input.len() {
+                    let bytes = &input[*pos..*pos + BLOCK_SIZE];
+                    let new_bytes = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                    x |= new_bytes as u64;
+                }
+            } else {
+                // Read 1 byte when fewer than BLOCK_SIZE bytes remain
+                *pos -= 1;
+                x = (x << 8) | (input[*pos] as u64);
             }
         }
 
@@ -1553,5 +1559,31 @@ mod bench_tests {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn test_fse_truncated_input_decoding() {
+        let mut decoder = FseDecoder::new();
+
+        let truncated_data = vec![0u8; 3];
+        let res = decoder.decompress(&truncated_data);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_fse_renormalize_decode_single_byte_steps() {
+        let config = FseConfig::default();
+        let frequencies = [1u32; 256];
+        let table = FseTable::new(&frequencies, &config).unwrap();
+
+        // Input with 2 bytes remaining (< BLOCK_SIZE = 4)
+        let input_bytes = vec![0x12, 0x34];
+        let mut pos = 2;
+        let state = 100u64;
+
+        // renormalize_decode will perform single-byte step
+        let res = table.renormalize_decode(state, &input_bytes, &mut pos);
+        assert!(res.is_some());
+        assert_eq!(pos, 1);
     }
 }
