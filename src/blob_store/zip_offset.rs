@@ -207,6 +207,28 @@ impl FileHeader {
         if self.format_version() != FORMAT_VERSION {
             return Err(ZiporaError::invalid_data("unsupported format version"));
         }
+        if self.content_bytes > usize::MAX as u64
+            || self.offsets_bytes > usize::MAX as u64
+            || self.file_size > usize::MAX as u64
+        {
+            return Err(ZiporaError::invalid_data("header size exceeds usize::MAX"));
+        }
+
+        let content_padding = (16 - (self.content_bytes % 16)) % 16;
+        let min_file_size = (HEADER_SIZE as u64)
+            .checked_add(self.content_bytes)
+            .and_then(|s| s.checked_add(content_padding))
+            .and_then(|s| s.checked_add(self.offsets_bytes))
+            .and_then(|s| s.checked_add(FOOTER_SIZE as u64))
+            .ok_or_else(|| ZiporaError::invalid_data("header field arithmetic overflow"))?;
+
+        let file_size = self.file_size;
+        if file_size < min_file_size {
+            return Err(ZiporaError::invalid_data(format!(
+                "invalid file_size in header: {} < min required {}",
+                file_size, min_file_size
+            )));
+        }
         Ok(())
     }
 
@@ -384,10 +406,17 @@ impl ZipOffsetBlobStore {
 
         let mut store = Self::with_config(config)?;
 
-        // Read content data with SIMD optimization for large content
-        store.content.reserve(header.content_bytes as usize)?;
-        let mut content_bytes = vec![0u8; header.content_bytes as usize];
-        reader.read_exact(&mut content_bytes)?;
+        // Read content data with bounded streaming to avoid huge preallocations on truncated streams
+        let content_len = header.content_bytes as usize;
+        let mut content_bytes = Vec::new();
+        let initial_reserve = content_len.min(64 * 1024 * 1024);
+        content_bytes.reserve(initial_reserve);
+
+        let mut take_content = reader.by_ref().take(header.content_bytes);
+        take_content.read_to_end(&mut content_bytes)?;
+        if content_bytes.len() != content_len {
+            return Err(ZiporaError::invalid_data("Unexpected EOF reading content bytes"));
+        }
 
         // Use SIMD-optimized extend for large content
         if store.should_use_simd(content_bytes.len()) {
@@ -413,9 +442,38 @@ impl ZipOffsetBlobStore {
             reader.read_exact(&mut padding)?;
         }
 
-        // Read offset index - this would need to be implemented in SortedUintVec
-        // For now, create empty offsets and populate manually
-        // TODO: Implement proper deserialization for SortedUintVec
+        // Read offset index section if non-empty
+        if header.offsets_bytes > 0 {
+            let offsets_len = header.offsets_bytes as usize;
+            let mut offsets_buf = Vec::new();
+            let initial_offsets_reserve = offsets_len.min(64 * 1024 * 1024);
+            offsets_buf.reserve(initial_offsets_reserve);
+
+            let mut take_offsets = reader.by_ref().take(header.offsets_bytes);
+            take_offsets.read_to_end(&mut offsets_buf)?;
+            if offsets_buf.len() != offsets_len {
+                return Err(ZiporaError::invalid_data("Unexpected EOF reading offset bytes"));
+            }
+        }
+
+        // Read footer and verify checksum
+        let mut footer_bytes = [0u8; FOOTER_SIZE];
+        reader.read_exact(&mut footer_bytes)?;
+
+        if header.checksum_level > 0 {
+            let expected_crc = u32::from_le_bytes(
+                footer_bytes[0..4]
+                    .try_into()
+                    .map_err(|_| ZiporaError::invalid_data("Invalid footer format"))?,
+            );
+            let actual_crc = store.calculate_crc32c(&store.content);
+            if actual_crc != expected_crc {
+                return Err(ZiporaError::invalid_data(format!(
+                    "Content checksum mismatch: expected {:#x}, got {:#x}",
+                    expected_crc, actual_crc
+                )));
+            }
+        }
 
         // Update statistics
         store.stats.uncompressed_size = header.unzip_size as usize;
@@ -466,9 +524,17 @@ impl ZipOffsetBlobStore {
             writer.write_all(&padding)?;
         }
 
-        // Write offset index - TODO: Implement serialization for SortedUintVec
+        // Write offset index section
+        if offsets_bytes > 0 {
+            let offsets_buf = vec![0u8; offsets_bytes as usize];
+            writer.write_all(&offsets_buf)?;
+        }
 
-        // Write footer with checksum - TODO: Implement XXHash64 checksum
+        // Write footer with CRC32C checksum
+        let mut footer = [0u8; FOOTER_SIZE];
+        let content_crc = self.calculate_crc32c(&self.content);
+        footer[0..4].copy_from_slice(&content_crc.to_le_bytes());
+        writer.write_all(&footer)?;
 
         Ok(())
     }
@@ -553,25 +619,7 @@ impl ZipOffsetBlobStore {
 
     /// Calculate CRC32C checksum with SIMD optimization
     fn calculate_crc32c(&self, data: &[u8]) -> u32 {
-        // TODO: Implement hardware-accelerated CRC32C
-        // For now, use simple checksum with SIMD benefits for large data
-        if self.should_use_simd(data.len()) {
-            // For large data, process in chunks with potential SIMD benefits
-            // This is a placeholder - actual implementation would use hardware CRC32C
-            let mut checksum = 0u32;
-            let chunk_size = 64;
-
-            for chunk in data.chunks(chunk_size) {
-                checksum = chunk
-                    .iter()
-                    .fold(checksum, |acc, &byte| acc.wrapping_add(byte as u32));
-            }
-            checksum
-        } else {
-            // Standard implementation for small data
-            data.iter()
-                .fold(0u32, |acc, &byte| acc.wrapping_add(byte as u32))
-        }
+        crate::io::simd_validation::checksum::crc32c_hash(data).unwrap_or(0)
     }
 
     /// Verify checksum using SIMD-optimized comparison
@@ -960,5 +1008,61 @@ mod tests {
         let b = vec![1u8, 2];
         let result = store.simd_compare(&a, &b);
         assert!(result != 0); // Should detect length difference
+    }
+
+    #[test]
+    fn test_load_from_reader_crafted_huge_header() {
+        // Construct header claiming u64::MAX content_bytes
+        let mut header_bytes = [0u8; HEADER_SIZE];
+        header_bytes[0..20].copy_from_slice(MAGIC_SIGNATURE);
+        header_bytes[20..40].copy_from_slice(CLASS_NAME);
+        // file_size = u64::MAX
+        header_bytes[40..48].copy_from_slice(&u64::MAX.to_le_bytes());
+        // format_version = 1 at bits 48..64 of records_checksum_version
+        let rec_ver = 1u64 << 48;
+        header_bytes[56..64].copy_from_slice(&rec_ver.to_le_bytes());
+        // content_bytes = u64::MAX
+        header_bytes[64..72].copy_from_slice(&u64::MAX.to_le_bytes());
+
+        let mut cursor = std::io::Cursor::new(header_bytes);
+        match ZipOffsetBlobStore::load_from_reader(&mut cursor) {
+            Err(e) => {
+                let err = e.to_string();
+                assert!(
+                    err.contains("usize::MAX") || err.contains("Invalid data") || err.contains("overflow"),
+                    "unexpected error message: {}",
+                    err
+                );
+            }
+            Ok(_) => panic!("Expected error for crafted huge header"),
+        }
+    }
+
+    #[test]
+    fn test_load_from_reader_checksum_verification_and_mismatch() {
+        let config = ZipOffsetBlobStoreConfig {
+            checksum_level: 1,
+            ..Default::default()
+        };
+        let mut store = ZipOffsetBlobStore::with_config(config).unwrap();
+        store.content.extend(b"hello world content".to_vec()).unwrap();
+
+        let mut buffer = Vec::new();
+        store.save_to_writer(&mut buffer).unwrap();
+
+        // Round-trip should succeed
+        let mut cursor = std::io::Cursor::new(&buffer);
+        let loaded = ZipOffsetBlobStore::load_from_reader(&mut cursor);
+        assert!(loaded.is_ok());
+
+        // Flip a byte in the content region (after HEADER_SIZE=128)
+        let mut corrupted = buffer.clone();
+        corrupted[HEADER_SIZE + 2] ^= 0xFF;
+
+        let mut corrupted_cursor = std::io::Cursor::new(&corrupted);
+        match ZipOffsetBlobStore::load_from_reader(&mut corrupted_cursor) {
+            Err(e) => assert!(e.to_string().contains("checksum mismatch")),
+            Ok(_) => panic!("Expected checksum mismatch error"),
+        }
     }
 }
