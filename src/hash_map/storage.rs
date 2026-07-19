@@ -58,6 +58,20 @@ pub(super) struct InlineStorage<K, V> {
 impl<K, V> InlineStorage<K, V> {
 }
 
+impl<K, V> Drop for InlineStorage<K, V> {
+    fn drop(&mut self) {
+        for i in 0..16 {
+            if (self.occupied >> i) & 1 == 1 {
+                // SAFETY: Bit i is set in occupied, so slot i is initialized
+                unsafe {
+                    std::ptr::drop_in_place(self._data[i].as_mut_ptr());
+                }
+            }
+        }
+    }
+}
+
+
 /// String arena for interned strings
 pub(super) struct StringArena {
     pub(super) _data: FastVec<u8>,

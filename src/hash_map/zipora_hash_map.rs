@@ -75,6 +75,8 @@ where
     /// Cache optimization components
     pub(super) _cache_allocator: Option<CacheOptimizedAllocator>,
     pub(super) cache_metrics: CacheMetrics,
+    /// Live element counter for O(1) len()
+    pub(super) len: usize,
 }
 
 
@@ -152,6 +154,7 @@ where
             _simd_ops: simd_ops,
             _cache_allocator: cache_allocator,
             cache_metrics: CacheMetrics::new(),
+            len: 0,
         })
     }
 
@@ -205,7 +208,7 @@ where
 
         let hash = self.hash_key(&key);
 
-        match &mut self.storage {
+        let res = match &mut self.storage {
             HashMapStorage::Standard {
                 buckets,
                 entries,
@@ -270,7 +273,12 @@ where
             HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
                 unreachable!("unimplemented strategies are rejected at construction")
             }
+        }?;
+
+        if res.is_none() {
+            self.len += 1;
         }
+        Ok(res)
     }
 
     /// Get a value by key
@@ -301,25 +309,13 @@ where
     /// Get number of elements
     #[inline]
     pub fn len(&self) -> usize {
-        match &self.storage {
-            HashMapStorage::Standard { entries, .. } => {
-                // Count non-empty, non-tombstone entries
-                entries
-                    .iter()
-                    .filter(|entry| entry.hash != 0 && entry.hash != u64::MAX)
-                    .count()
-            }
-            HashMapStorage::SmallInline { len, .. } => *len,
-            HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
-                unreachable!("unimplemented strategies are rejected at construction")
-            }
-        }
+        self.len
     }
 
     /// Check if the map is empty
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.len == 0
     }
 
     /// Get performance statistics
@@ -348,7 +344,7 @@ where
                 inline_data,
                 fallback,
                 len,
-            } => Self::get_mut_small_inline(inline_data, fallback, len, key),
+            } => Self::get_mut_small_inline(&self.hash_builder, inline_data, fallback, len, key),
             HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
                 unreachable!("unimplemented strategies are rejected at construction")
             }
@@ -361,7 +357,7 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        match &mut self.storage {
+        let res = match &mut self.storage {
             HashMapStorage::Standard {
                 buckets,
                 entries,
@@ -371,11 +367,16 @@ where
                 inline_data,
                 fallback,
                 len,
-            } => Self::remove_small_inline(inline_data, fallback, len, key),
+            } => Self::remove_small_inline(&self.hash_builder, inline_data, fallback, len, key),
             HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
                 unreachable!("unimplemented strategies are rejected at construction")
             }
+        };
+
+        if res.is_some() {
+            self.len = self.len.saturating_sub(1);
         }
+        res
     }
 
     /// Clear all entries from the map
@@ -395,6 +396,7 @@ where
                 unreachable!("unimplemented strategies are rejected at construction")
             }
         }
+        self.len = 0;
     }
 
     /// Check if the map contains a key
@@ -563,8 +565,41 @@ where
                 }
                 None
             }
-            HashMapStorage::SmallInline { len: _, .. } => {
-                // TODO: Implement inline iteration - for now return None
+            HashMapStorage::SmallInline {
+                inline_data,
+                fallback,
+                ..
+            } => {
+                while self.index < 16 {
+                    let slot = self.index;
+                    self.index += 1;
+                    if (inline_data.occupied >> slot) & 1 == 1 {
+                        // SAFETY: Bit slot is set in occupied, so slot is initialized
+                        let (k, v) = unsafe { inline_data._data[slot].assume_init_ref() };
+                        return Some((k, v));
+                    }
+                }
+                if let Some(fb) = fallback
+                    && let HashMapStorage::Standard { entries, .. } = fb.as_ref()
+                {
+                    while self.index >= 16 {
+                        let fb_idx = self.index - 16;
+                        if fb_idx >= entries.len() {
+                            return None;
+                        }
+                        let entry = &entries[fb_idx];
+                        self.index += 1;
+                        if entry.hash != 0 && entry.hash != u64::MAX {
+                            return Some((
+                                entry.key.as_ref().expect("occupied entry must have key"),
+                                entry
+                                    .value
+                                    .as_ref()
+                                    .expect("occupied entry must have value"),
+                            ));
+                        }
+                    }
+                }
                 None
             }
             HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {

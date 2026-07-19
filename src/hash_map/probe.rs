@@ -249,11 +249,14 @@ where
         // Check if key already exists in inline storage
         for i in 0..16 {
             if (inline_data.occupied >> i) & 1 == 1 {
-                // SAFETY: Bit i is set in occupied, so slot i is initialized
-                let (k, v) = unsafe { inline_data._data[i].assume_init_ref() };
-                if k == &key {
-                    let old_v = unsafe { std::ptr::read(v as *const V) };
-                    // SAFETY: We just read the old value, now we overwrite it with the new one
+                let matches = unsafe {
+                    let (k, _) = inline_data._data[i].assume_init_ref();
+                    k == &key
+                };
+                if matches {
+                    // SAFETY: Slot i is initialized and no active references exist.
+                    let (old_k, old_v) = unsafe { std::ptr::read(inline_data._data[i].as_ptr()) };
+                    drop(old_k);
                     unsafe {
                         std::ptr::write(inline_data._data[i].as_mut_ptr(), (key, value));
                     }
@@ -296,6 +299,7 @@ where
             if (inline_data.occupied >> i) & 1 == 1 {
                 // SAFETY: Bit i is set in occupied, so slot i is initialized
                 let (k, v) = unsafe { std::ptr::read(inline_data._data[i].as_ptr()) };
+                inline_data.occupied &= !(1 << i);
                 let raw_h = hash_builder.hash_one(&k);
                 let h = if raw_h == 0 {
                     1
@@ -496,6 +500,7 @@ where
     }
 
     pub(super) fn get_mut_small_inline<'a, Q>(
+        hash_builder: &S,
         inline_data: &'a mut InlineStorage<K, V>,
         fallback: &'a mut Option<Box<HashMapStorage<K, V>>>,
         _len: &mut usize,
@@ -505,18 +510,24 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        // Check fallback first (migrated data) — not yet supported for get_mut
-        // since Standard get_mut needs the hash_builder which we don't have here.
-        if fallback.is_some() {
-            return None;
+        if let Some(fb) = fallback.as_mut()
+            && let HashMapStorage::Standard {
+                buckets,
+                entries,
+                mask,
+            } = fb.as_mut()
+        {
+            return Self::get_mut_standard(hash_builder, buckets, entries, mask, key);
         }
 
         for i in 0..16 {
             if (inline_data.occupied >> i) & 1 == 1 {
-                // SAFETY: Bit i is set in occupied, so slot i is initialized
-                let (k, _) = unsafe { inline_data._data[i].assume_init_ref() };
-                if k.borrow() == key {
-                    // SAFETY: same slot, returning mutable reference to value
+                let matches = unsafe {
+                    let (k, _) = inline_data._data[i].assume_init_ref();
+                    k.borrow() == key
+                };
+                if matches {
+                    // SAFETY: Slot i is initialized and no active references exist
                     let (_, v) = unsafe { inline_data._data[i].assume_init_mut() };
                     return Some(v);
                 }
@@ -644,16 +655,46 @@ where
     }
 
     pub(super) fn remove_small_inline<Q>(
-        _inline_data: &mut InlineStorage<K, V>,
-        _fallback: &mut Option<Box<HashMapStorage<K, V>>>,
-        _len: &mut usize,
-        _key: &Q,
+        hash_builder: &S,
+        inline_data: &mut InlineStorage<K, V>,
+        fallback: &mut Option<Box<HashMapStorage<K, V>>>,
+        len: &mut usize,
+        key: &Q,
     ) -> Option<V>
     where
         K: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
     {
-        // TODO: Implement small inline remove
+        if let Some(fb) = fallback.as_mut()
+            && let HashMapStorage::Standard {
+                buckets,
+                entries,
+                mask,
+            } = fb.as_mut()
+        {
+            let result = Self::remove_standard(hash_builder, buckets, entries, mask, key);
+            if result.is_some() {
+                *len -= 1;
+            }
+            return result;
+        }
+
+        for i in 0..16 {
+            if (inline_data.occupied >> i) & 1 == 1 {
+                let matches = unsafe {
+                    let (k, _) = inline_data._data[i].assume_init_ref();
+                    k.borrow() == key
+                };
+                if matches {
+                    // SAFETY: Slot i is initialized and no active references exist. Read out key and value tuple.
+                    let (_k_val, v_val) = unsafe { std::ptr::read(inline_data._data[i].as_ptr()) };
+                    inline_data.occupied &= !(1 << i);
+                    *len -= 1;
+                    return Some(v_val);
+                }
+            }
+        }
+
         None
     }
 
@@ -663,21 +704,26 @@ where
         entries: &mut FastVec<HashEntry<K, V>>,
         mask: &mut usize,
     ) {
-        // TODO: Implement standard clear
         buckets.clear();
         entries.clear();
         *mask = 0;
     }
 
     pub(super) fn clear_small_inline(
-        _inline_data: &mut InlineStorage<K, V>,
+        inline_data: &mut InlineStorage<K, V>,
         fallback: &mut Option<Box<HashMapStorage<K, V>>>,
         len: &mut usize,
     ) {
-        // TODO: Implement small inline clear
-        *len = 0;
-        if let Some(_fallback) = fallback.take() {
-            // Clear fallback if it exists
+        for i in 0..16 {
+            if (inline_data.occupied >> i) & 1 == 1 {
+                // SAFETY: Bit i is set in occupied, so slot i is initialized
+                unsafe {
+                    std::ptr::drop_in_place(inline_data._data[i].as_mut_ptr());
+                }
+            }
         }
+        inline_data.occupied = 0;
+        *fallback = None;
+        *len = 0;
     }
 }
