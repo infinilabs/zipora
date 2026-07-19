@@ -97,6 +97,15 @@ impl HuffmanDecoder {
             None => return Err(ZiporaError::invalid_data("Empty Huffman tree")),
         };
 
+        let max_plausible = encoded_data.len().saturating_mul(64);
+        if output_length > max_plausible {
+            return Err(ZiporaError::invalid_data(format!(
+                "Implausible output length {} for input length {}",
+                output_length,
+                encoded_data.len()
+            )));
+        }
+
         let mut result = Vec::with_capacity(output_length);
         let mut current_node = root;
 
@@ -154,5 +163,24 @@ impl HuffmanDecoder {
         }
 
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::entropy::huffman::HuffmanEncoder;
+
+    #[test]
+    fn test_huffman_decoder_oversized_claim_rejection() {
+        let encoder = HuffmanEncoder::new(b"hello world").unwrap();
+        let encoded = encoder.encode(b"hello world").unwrap();
+        let tree = encoder.tree().clone();
+        let decoder = HuffmanDecoder::new(tree);
+
+        // Claiming 1_000_000 output_length for an 11-byte input should be rejected by plausibility check
+        let res = decoder.decode(&encoded, 1_000_000);
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("Implausible output length"));
     }
 }
