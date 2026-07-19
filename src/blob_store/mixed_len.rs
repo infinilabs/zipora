@@ -362,34 +362,52 @@ impl MixedLenBlobStore {
             return Err(self.out_of_bounds_error(id));
         }
 
-        // SAFETY: idx < self.num_records verified above.
-        // All internal offsets are valid by construction (build_from guarantees).
-        unsafe {
-            match self.mode {
-                RecordMode::AllFixed => {
-                    let offset = idx * self.fixed_len;
-                    Ok(self
-                        .fixed_len_values
-                        .get_unchecked(offset..offset + self.fixed_len))
+        match self.mode {
+            RecordMode::AllFixed => {
+                let offset = idx.checked_mul(self.fixed_len).ok_or_else(|| {
+                    ZiporaError::invalid_data("Offset arithmetic overflow")
+                })?;
+                let end_offset = offset.checked_add(self.fixed_len).ok_or_else(|| {
+                    ZiporaError::invalid_data("Offset arithmetic overflow")
+                })?;
+                self.fixed_len_values
+                    .get(offset..end_offset)
+                    .ok_or_else(|| ZiporaError::invalid_data("Fixed length buffer out of bounds"))
+            }
+            RecordMode::AllVariable => {
+                if idx + 1 >= self.var_len_offsets.size() {
+                    return Err(ZiporaError::invalid_data("Variable offset index out of bounds"));
                 }
-                RecordMode::AllVariable => {
-                    let beg = self.var_len_offsets.get_unchecked(idx);
-                    let end = self.var_len_offsets.get_unchecked(idx + 1);
-                    Ok(self.var_len_values.get_unchecked(beg..end))
+                let beg = self.var_len_offsets.get(idx);
+                let end = self.var_len_offsets.get(idx + 1);
+                if beg > end || end > self.var_len_values.len() {
+                    return Err(ZiporaError::invalid_data("Variable value slice out of bounds"));
                 }
-                RecordMode::Mixed => {
-                    if self.is_fixed_len.get(idx).unwrap_or(false) {
-                        let fixed_id = self.is_fixed_len.rank1(idx);
-                        let offset = fixed_id * self.fixed_len;
-                        Ok(self
-                            .fixed_len_values
-                            .get_unchecked(offset..offset + self.fixed_len))
-                    } else {
-                        let var_id = self.is_fixed_len.rank0(idx);
-                        let beg = self.var_len_offsets.get_unchecked(var_id);
-                        let end = self.var_len_offsets.get_unchecked(var_id + 1);
-                        Ok(self.var_len_values.get_unchecked(beg..end))
+                Ok(&self.var_len_values[beg..end])
+            }
+            RecordMode::Mixed => {
+                if self.is_fixed_len.get(idx).unwrap_or(false) {
+                    let fixed_id = self.is_fixed_len.rank1(idx);
+                    let offset = fixed_id.checked_mul(self.fixed_len).ok_or_else(|| {
+                        ZiporaError::invalid_data("Offset arithmetic overflow")
+                    })?;
+                    let end_offset = offset.checked_add(self.fixed_len).ok_or_else(|| {
+                        ZiporaError::invalid_data("Offset arithmetic overflow")
+                    })?;
+                    self.fixed_len_values
+                        .get(offset..end_offset)
+                        .ok_or_else(|| ZiporaError::invalid_data("Fixed length buffer out of bounds"))
+                } else {
+                    let var_id = self.is_fixed_len.rank0(idx);
+                    if var_id + 1 >= self.var_len_offsets.size() {
+                        return Err(ZiporaError::invalid_data("Variable offset index out of bounds"));
                     }
+                    let beg = self.var_len_offsets.get(var_id);
+                    let end = self.var_len_offsets.get(var_id + 1);
+                    if beg > end || end > self.var_len_values.len() {
+                        return Err(ZiporaError::invalid_data("Variable value slice out of bounds"));
+                    }
+                    Ok(&self.var_len_values[beg..end])
                 }
             }
         }
@@ -937,5 +955,19 @@ mod tests {
         println!("MixedLen overhead: {} bytes", mixed_overhead);
         println!("Naive overhead: {} bytes", naive_overhead);
         println!("Savings: {} bytes", naive_overhead - mixed_overhead);
+    }
+
+    #[test]
+    fn test_corrupted_bitmap_bounds_check() {
+        let data = vec![b"abc".to_vec(), b"fixed1".to_vec(), b"defgh".to_vec(), b"fixed2".to_vec()];
+        let mut store = MixedLenBlobStore::build_from(&data).unwrap();
+
+        // Corrupt num_records so get_ref attempts to read beyond var_len_offsets
+        store.num_records = 100;
+
+        let res = store.get_ref(99);
+        assert!(res.is_err());
+        let err = res.unwrap_err().to_string();
+        assert!(err.contains("out of bounds") || err.contains("not found"));
     }
 }
