@@ -402,31 +402,30 @@ impl FseTable {
     pub fn new(frequencies: &[u32; 256], config: &FseConfig) -> Result<Self> {
         config.validate()?;
 
-        // Find maximum used symbol
-        let max_symbol = frequencies.iter().rposition(|&freq| freq > 0).unwrap_or(0) as u8;
-
-        if max_symbol == 0 {
-            return Err(ZiporaError::invalid_data(
-                "No symbols found in frequency table",
-            ));
-        }
+        // Find maximum used symbol (may legitimately be 0 for all-zero-byte data)
+        let max_symbol = match frequencies.iter().rposition(|&freq| freq > 0) {
+            Some(symbol) => symbol as u8,
+            None => {
+                return Err(ZiporaError::invalid_data(
+                    "No symbols found in frequency table",
+                ));
+            }
+        };
 
         // Use fixed TF_SHIFT constant for optimal performance, regardless of table_log
         const TF_SHIFT: u8 = 12;
         let table_size = 1usize << TF_SHIFT; // Always use TF_SHIFT for table size
-        let total_freq: u32 = frequencies.iter().sum();
+        let total_freq: u64 = frequencies.iter().map(|&f| f as u64).sum();
 
         if total_freq == 0 {
             return Err(ZiporaError::invalid_data("Total frequency is zero"));
         }
 
-        // Use entropy-preserving normalization if enabled
-        let normalized_freqs = if config.entropy_optimization {
-            let normalizer = EntropyNormalizer::new();
-            normalizer.normalize_frequencies_entropy_preserving(frequencies, table_size as u32)?
-        } else {
-            Self::normalize_frequencies_simple(frequencies, table_size, max_symbol)?
-        };
+        // Exact normalization: every present symbol gets freq >= 1 and the sum
+        // is exactly `table_size`. This is required for the rANS state math
+        // (cmpl_freq = table_size - freq) and a fully populated alias table;
+        // it is also deterministic so encoder and decoder always agree.
+        let normalized_freqs = Self::normalize_frequencies_exact(frequencies, table_size as u32)?;
 
         // Initialize cache-friendly arrays
         let states = vec![0u8; table_size].into_boxed_slice();
@@ -441,18 +440,12 @@ impl FseTable {
 
         let mut position = 0u32;
         for symbol in 0..=max_symbol as usize {
-            let freq = if symbol < normalized_freqs.len() {
-                normalized_freqs[symbol]
-            } else {
-                0
-            };
-
+            let freq = normalized_freqs[symbol];
             if freq == 0 {
                 continue;
             }
 
             // Initialize encoding symbol (based on Rans64EncSymbolInit)
-            const TF_SHIFT: u8 = 12; // Fixed constant for optimal performance
             Self::init_enc_symbol(&mut enc_symbols[symbol], position, freq, TF_SHIFT);
 
             // Initialize decoding symbol
@@ -461,21 +454,21 @@ impl FseTable {
                 freq: freq as u16,
             };
 
-            // Fill alias table (like memset(&ari[x], j, F) in reference)
-            if position as usize + freq as usize <= table_size {
-                for i in 0..freq {
-                    let pos = (position + i) as usize;
-                    alias_table[pos] = symbol as u8;
-                }
+            // Fill alias table (like memset(&ari[x], j, F) in reference).
+            // normalize_frequencies_exact guarantees position + freq <= table_size.
+            for i in 0..freq {
+                let pos = (position + i) as usize;
+                alias_table[pos] = symbol as u8;
             }
 
             position += freq;
         }
+        debug_assert_eq!(position as usize, table_size);
 
         // Note: states and nb_bits_table are now used for compatibility but main logic uses enc/dec_symbols
 
         // Create fast division helper
-        let fast_div = FastDivision::new(total_freq);
+        let fast_div = FastDivision::new(u32::try_from(total_freq).unwrap_or(u32::MAX));
 
         Ok(Self {
             states,
@@ -488,54 +481,93 @@ impl FseTable {
             fast_div,
             table_log: TF_SHIFT,
             max_symbol,
-            frequencies: *frequencies,
+            // Store the NORMALIZED frequencies: these are what the enc/dec
+            // symbol tables are built from, and what gets serialized into the
+            // stream header, so any decoder rebuilds the exact same table
+            // regardless of its own configuration.
+            frequencies: normalized_freqs,
             hardware: config.hardware,
         })
     }
 
-    /// Simple frequency normalization (fallback)
-    fn normalize_frequencies_simple(
+    /// Exact frequency normalization for the rANS state tables.
+    ///
+    /// Guarantees (required for lossless coding):
+    /// - every symbol with a non-zero input frequency gets a normalized
+    ///   frequency of at least 1 (so it can always be encoded),
+    /// - the normalized frequencies sum to exactly `table_size`,
+    /// - the result is fully deterministic, so encoder and decoder derive
+    ///   identical tables from the same input frequencies. In particular,
+    ///   feeding an already-normalized distribution back through this
+    ///   function is the identity, which lets the decoder rebuild the table
+    ///   from the normalized frequencies stored in the stream header.
+    fn normalize_frequencies_exact(
         frequencies: &[u32; 256],
-        table_size: usize,
-        max_symbol: u8,
-    ) -> Result<Vec<u32>> {
-        let total_freq: u64 = frequencies
-            .iter()
-            .take(max_symbol as usize + 1)
-            .map(|&f| f as u64)
-            .sum();
+        table_size: u32,
+    ) -> Result<[u32; 256]> {
+        let total: u64 = frequencies.iter().map(|&f| f as u64).sum();
+        if total == 0 {
+            return Err(ZiporaError::invalid_data("No frequencies to normalize"));
+        }
 
-        let mut normalized_freqs = vec![0u32; max_symbol as usize + 1];
-        let mut remaining = table_size as u32;
+        let symbol_count = frequencies.iter().filter(|&&f| f > 0).count() as u32;
+        if symbol_count > table_size {
+            return Err(ZiporaError::invalid_data(format!(
+                "{} distinct symbols exceed table size {}",
+                symbol_count, table_size
+            )));
+        }
 
-        for i in 0..=max_symbol as usize {
-            if frequencies[i] > 0 {
-                let freq = ((frequencies[i] as u64 * table_size as u64) / total_freq) as u32;
-                normalized_freqs[i] = freq.max(1).min(remaining);
-                remaining = remaining.saturating_sub(normalized_freqs[i]);
+        // Proportional floor allocation, with a minimum of 1 per present symbol.
+        let mut normalized = [0u32; 256];
+        let mut assigned: u64 = 0;
+        for (i, &freq) in frequencies.iter().enumerate() {
+            if freq > 0 {
+                let scaled = ((freq as u64 * table_size as u64) / total) as u32;
+                normalized[i] = scaled.max(1);
+                assigned += normalized[i] as u64;
             }
         }
 
-        // Distribute remaining entries
-        while remaining > 0 {
-            let mut max_freq = 0;
+        // Fix up rounding so the total is exactly table_size.
+        if assigned > table_size as u64 {
+            // The minimum-of-1 bumps overshot: repeatedly shrink the currently
+            // largest normalized frequency (never below 1). Terminates because
+            // assigned > table_size >= symbol_count implies some freq > 1.
+            let mut excess = assigned - table_size as u64;
+            while excess > 0 {
+                let mut max_idx = 0;
+                let mut max_val = 0u32;
+                for (i, &f) in normalized.iter().enumerate() {
+                    if f > max_val {
+                        max_val = f;
+                        max_idx = i;
+                    }
+                }
+                let take = excess.min((max_val - 1) as u64) as u32;
+                debug_assert!(take > 0);
+                normalized[max_idx] -= take;
+                excess -= take as u64;
+            }
+        } else if assigned < table_size as u64 {
+            // Floors undershot: give the whole deficit to the most frequent
+            // symbol (lowest index on ties, deterministic).
             let mut max_idx = 0;
-            for (i, &freq) in frequencies.iter().enumerate().take(max_symbol as usize + 1) {
-                if freq > max_freq && normalized_freqs[i] < table_size as u32 / 4 {
-                    max_freq = freq;
+            let mut max_val = 0u32;
+            for (i, &f) in frequencies.iter().enumerate() {
+                if f > max_val {
+                    max_val = f;
                     max_idx = i;
                 }
             }
-
-            if max_freq == 0 {
-                break;
-            }
-
-            normalized_freqs[max_idx] += 1;
-            remaining -= 1;
+            normalized[max_idx] += (table_size as u64 - assigned) as u32;
         }
 
-        Ok(normalized_freqs)
+        debug_assert_eq!(
+            normalized.iter().map(|&f| f as u64).sum::<u64>(),
+            table_size as u64
+        );
+        Ok(normalized)
     }
 
     /// Initialize encoding symbol (based on advanced Rans64EncSymbolInit)
@@ -613,39 +645,25 @@ impl FseTable {
         self.encode_symbol(symbol, state)
     }
 
-    /// Decode symbol at given state (simplified FSE approach)
+    /// Decode symbol at given state (rANS decode step)
+    ///
+    /// The alias table is fully populated (normalized frequencies sum to
+    /// exactly the table size), so every masked `state_low` maps to a symbol
+    /// whose range `[start, start + freq)` contains it — the state transition
+    /// below is the exact inverse of `encode_symbol`.
     #[inline(always)]
     pub fn decode_symbol(&self, state: u64) -> (u8, u64) {
         const TF_SHIFT: u8 = 12; // Fixed constant from FSE
         const TOTFREQ: u64 = 1u64 << TF_SHIFT; // 4096
 
-        // Use basic FSE decode approach
         let state_low = (state & (TOTFREQ - 1)) as usize;
+        let symbol = self.alias_table[state_low];
+        let sym = &self.dec_symbols[symbol as usize];
 
-        // Simple lookup - find symbol for this state slot
-        let symbol = if state_low < self.alias_table.len() {
-            self.alias_table[state_low]
-        } else {
-            0 // Fallback to symbol 0
-        };
-
-        // Get symbol info for state transition
-        if (symbol as usize) < self.dec_symbols.len() {
-            let sym = &self.dec_symbols[symbol as usize];
-            if sym.freq > 0 {
-                // Basic FSE state transition: state = freq * (state / TOTFREQ) + state_low - start
-                let new_state = (sym.freq as u64) * (state >> TF_SHIFT) + state_low as u64;
-                let new_state = if new_state >= sym.start as u64 {
-                    new_state - sym.start as u64
-                } else {
-                    1 // Keep state valid
-                };
-                return (symbol, new_state.max(1));
-            }
-        }
-
-        // Fallback for invalid state
-        (0, state.max(1))
+        // rANS state transition: state = freq * (state / TOTFREQ) + state_low - start.
+        // state_low >= start by alias-table construction, so no underflow.
+        let new_state = (sym.freq as u64) * (state >> TF_SHIFT) + state_low as u64 - sym.start as u64;
+        (symbol, new_state)
     }
 
     /// Renormalize state for encoding (advanced approach)
@@ -928,13 +946,16 @@ impl FseEncoder {
             // Renormalize before encoding
             current_state = table.renormalize_encode(current_state, &mut output, sym_freq);
 
-            // Encode symbol
+            // Encode symbol. A zero-frequency symbol means the table was built
+            // from data that did not contain it (static/non-adaptive table
+            // reuse); that must fail loudly instead of corrupting the stream.
             if let Some((new_state, _bits_needed)) = table.encode_symbol(symbol, current_state) {
                 current_state = new_state;
             } else {
-                // Fallback: emit symbol directly with escape marker
-                output.push(0xFF);
-                output.push(symbol);
+                return Err(ZiporaError::invalid_data(format!(
+                    "symbol {} not present in FSE table (was the table built from different data?)",
+                    symbol
+                )));
             }
         }
 
@@ -1204,9 +1225,13 @@ impl FseDecoder {
             }
         }
 
-        // Build decompression table
+        // Build decompression table. The table shape is dictated by the
+        // stream header, not by this decoder's tuning parameters, so relax
+        // max_table_size to fit the header's table_log — any decoder must be
+        // able to decode any valid stream.
         let config = FseConfig {
             table_log,
+            max_table_size: self.config.max_table_size.max(1usize << table_log),
             ..self.config.clone()
         };
         let table = FseTable::new(&frequencies, &config)?;
@@ -1522,10 +1547,8 @@ mod bench_tests {
             // Decompress
             let decompressed = decoder.decompress(&compressed)?;
 
-            // Verify roundtrip
-            assert_eq!(original_data.len(), decompressed.len());
-            // Note: FSE is lossy in our simplified implementation, so exact match may not occur
-            // In a real implementation, this should be: assert_eq!(original_data, decompressed);
+            // Verify roundtrip: FSE is an entropy codec and must be lossless
+            assert_eq!(original_data, decompressed);
 
             encoder.reset();
             decoder.reset();
