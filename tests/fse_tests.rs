@@ -601,3 +601,219 @@ fn test_fse_cross_module_integration() {
         assert!(encoder_result.is_ok());
     }
 }
+
+// ============================================================================
+// Strict lossless round-trip tests (plan.md Phase 3, C4)
+//
+// FSE is an entropy codec: decompress(compress(x)) == x must hold exactly for
+// every input. These tests cover the failure modes of the frequency
+// normalization and header pipeline that previously made the codec lossy.
+// ============================================================================
+
+/// Helper: assert exact round-trip through fresh encoder/decoder with a config.
+fn assert_roundtrip_with_config(data: &[u8], config: FseConfig) {
+    let mut encoder = FseEncoder::new(config.clone()).unwrap();
+    let mut decoder = FseDecoder::with_config(config).unwrap();
+    let compressed = encoder.compress(data).unwrap();
+    let decompressed = decoder.decompress(&compressed).unwrap();
+    assert_eq!(
+        data,
+        &decompressed[..],
+        "FSE round-trip mismatch for input of {} bytes",
+        data.len()
+    );
+}
+
+fn assert_roundtrip(data: &[u8]) {
+    assert_roundtrip_with_config(data, FseConfig::default());
+}
+
+#[test]
+fn test_fse_strict_roundtrip_edge_sizes() {
+    // Empty and tiny inputs (uncompressed path) plus the 99/100/101-byte
+    // boundary where the codec switches from the uncompressed marker to the
+    // real entropy-coded path.
+    assert_roundtrip(b"");
+    assert_roundtrip(b"a");
+    assert_roundtrip(&[0xFFu8]); // input equal to the uncompressed marker byte
+    assert_roundtrip(&[b'x'; 99]);
+    assert_roundtrip(&[b'x'; 100]);
+    assert_roundtrip(&[b'x'; 101]);
+}
+
+#[test]
+fn test_fse_strict_roundtrip_all_same() {
+    // Single-symbol input: normalized frequency == full table size.
+    assert_roundtrip(&vec![0u8; 4096]);
+    assert_roundtrip(&vec![255u8; 500]);
+}
+
+#[test]
+fn test_fse_strict_roundtrip_three_symbol_uniform() {
+    // 3 equal symbols: 4096/3 does not divide evenly, exercising the
+    // remainder-distribution path of normalization.
+    let data: Vec<u8> = b"abc".iter().cycle().take(999).copied().collect();
+    assert_roundtrip(&data);
+}
+
+#[test]
+fn test_fse_strict_roundtrip_adversarial_skew() {
+    // Dominant symbol at a LOW byte index followed by many rare symbols at
+    // higher indices. The old sequential `.min(remaining)` normalization
+    // exhausted the frequency budget on the dominant symbol and assigned
+    // rare symbols a normalized frequency of zero, corrupting the stream
+    // with un-decodable escape markers.
+    let mut data = vec![0u8; 4000];
+    for b in 1..=150u8 {
+        data.push(b);
+    }
+    assert_roundtrip(&data);
+
+    // Same shape but dominant symbol at a HIGH index (reverse iteration order).
+    let mut data = vec![255u8; 4000];
+    for b in 1..=150u8 {
+        data.push(b);
+    }
+    assert_roundtrip(&data);
+}
+
+#[test]
+fn test_fse_strict_roundtrip_moderate_skew_entropy_path() {
+    // Balanced-but-skewed distribution (entropy > 1 bit) that used to take the
+    // entropy-weighted normalization path, which allocated by -p*log2(p)
+    // instead of p and could zero out or misallocate symbols.
+    let mut data = Vec::new();
+    data.extend(std::iter::repeat_n(b'a', 700));
+    data.extend(std::iter::repeat_n(b'b', 150));
+    data.extend(std::iter::repeat_n(b'c', 150));
+    for b in 0..=99u8 {
+        data.push(b);
+    }
+    assert_roundtrip(&data);
+}
+
+#[test]
+fn test_fse_strict_roundtrip_all_256_symbols() {
+    // Every byte value present, uniform.
+    let data: Vec<u8> = (0..=255u8).cycle().take(2048).collect();
+    assert_roundtrip(&data);
+    // Every byte value present, highly non-uniform (byte value == frequency).
+    let mut data = Vec::new();
+    for b in 0..=255u8 {
+        data.extend(std::iter::repeat_n(b, b as usize + 1));
+    }
+    assert_roundtrip(&data);
+}
+
+#[test]
+fn test_fse_strict_roundtrip_deterministic_random() {
+    // Deterministic xorshift-generated pseudo-random data at several sizes.
+    let mut state = 0x9E3779B97F4A7C15u64;
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state >> 32) as u8
+    };
+    for size in [128usize, 1000, 4096, 70_000] {
+        let data: Vec<u8> = (0..size).map(|_| next()).collect();
+        assert_roundtrip(&data);
+    }
+}
+
+#[test]
+fn test_fse_strict_roundtrip_config_presets() {
+    let data: Vec<u8> = b"The quick brown fox jumps over the lazy dog. "
+        .iter()
+        .cycle()
+        .take(5000)
+        .copied()
+        .collect();
+    assert_roundtrip_with_config(&data, FseConfig::fast_compression());
+    assert_roundtrip_with_config(&data, FseConfig::balanced());
+    assert_roundtrip_with_config(&data, FseConfig::high_compression());
+    assert_roundtrip_with_config(&data, FseConfig::realtime());
+}
+
+#[test]
+fn test_fse_strict_roundtrip_decoder_config_independent() {
+    // A compressed stream carries its own table in the header, so any decoder
+    // must reproduce it regardless of its local config. Previously the header
+    // stored RAW frequencies and the decoder re-normalized them with its own
+    // config, so an encoder/decoder config mismatch silently corrupted data.
+    let mut data: Vec<u8> = b"mismatch test data with skewed frequencies! "
+        .iter()
+        .cycle()
+        .take(3000)
+        .copied()
+        .collect();
+    data.extend(std::iter::repeat_n(b'z', 2000));
+
+    for enc_config in [
+        FseConfig::fast_compression(),
+        FseConfig::high_compression(),
+        FseConfig::realtime(),
+    ] {
+        let mut encoder = FseEncoder::new(enc_config).unwrap();
+        let compressed = encoder.compress(&data).unwrap();
+        // Decode with the DEFAULT decoder (fse_decompress convenience path).
+        let decompressed = fse_decompress(&compressed).unwrap();
+        assert_eq!(data, decompressed, "decoder must not depend on its config");
+    }
+}
+
+#[test]
+fn test_fse_unseen_symbol_with_static_table_errors() {
+    // With adaptive mode off, a reused table cannot encode a symbol that was
+    // absent from the training data. That must be a hard error, not silent
+    // stream corruption via escape bytes.
+    let config = FseConfig {
+        adaptive: false,
+        ..FseConfig::default()
+    };
+    let mut encoder = FseEncoder::new(config).unwrap();
+    let training: Vec<u8> = std::iter::repeat_n(b'a', 200).collect();
+    encoder.compress(&training).unwrap();
+
+    let unseen: Vec<u8> = std::iter::repeat_n(b'Z', 200).collect();
+    assert!(
+        encoder.compress(&unseen).is_err(),
+        "encoding a symbol missing from the static table must fail loudly"
+    );
+}
+
+mod fse_proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        /// Arbitrary bytes must round-trip exactly.
+        #[test]
+        fn proptest_fse_roundtrip_arbitrary(data in proptest::collection::vec(any::<u8>(), 0..4096)) {
+            let mut encoder = FseEncoder::new(FseConfig::default()).unwrap();
+            let mut decoder = FseDecoder::new();
+            let compressed = encoder.compress(&data).unwrap();
+            let decompressed = decoder.decompress(&compressed).unwrap();
+            prop_assert_eq!(data, decompressed);
+        }
+
+        /// Skewed two-symbol distributions with varying dominance ratios.
+        #[test]
+        fn proptest_fse_roundtrip_skewed(
+            dominant in any::<u8>(),
+            rare in any::<u8>(),
+            dominant_count in 100usize..5000,
+            rare_count in 1usize..100,
+        ) {
+            let mut data = vec![dominant; dominant_count];
+            data.extend(std::iter::repeat_n(rare, rare_count));
+            let mut encoder = FseEncoder::new(FseConfig::default()).unwrap();
+            let mut decoder = FseDecoder::new();
+            let compressed = encoder.compress(&data).unwrap();
+            let decompressed = decoder.decompress(&compressed).unwrap();
+            prop_assert_eq!(data, decompressed);
+        }
+    }
+}
