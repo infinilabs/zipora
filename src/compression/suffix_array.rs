@@ -497,7 +497,8 @@ impl SuffixArrayCompressor {
         let base_suffix_array = base_builder.build(text)?;
         let raw_suffix_array = base_suffix_array.as_slice();
 
-        // Note: Base suffix array validation skipped due to potential issues with existing implementation
+        // Suffix order is guaranteed by the base SA-IS implementation
+        // (strictly validated by test_suffix_array_sorted_pathological_inputs).
 
         // Convert to memory-efficient IntVec storage with u32 for better compression
         // Ensure indices fit in u32
@@ -667,22 +668,85 @@ mod tests {
         assert_eq!(sa.text_len(), 7);
         assert!(!sa.is_empty());
 
-        // Verify suffix array is properly sorted - only validate for valid indices
-        let mut valid_suffixes = Vec::new();
-        for i in 0..sa.len() {
-            if let Some(pos) = sa.suffix_at_rank(i)
-                && pos < text.len() {
-                    valid_suffixes.push((i, pos, &text[pos..]));
-                }
+        assert_suffix_array_sorted(text, &sa);
+    }
+
+    /// Strict SA-IS contract check: the suffix array must be a permutation of
+    /// 0..n and the suffixes must be in strictly increasing lexicographic
+    /// order (strict because all suffixes of a text are distinct).
+    fn assert_suffix_array_sorted(text: &[u8], sa: &EnhancedSuffixArray) {
+        assert_eq!(sa.len(), text.len(), "suffix array length mismatch");
+
+        let mut seen = vec![false; text.len()];
+        for rank in 0..sa.len() {
+            let pos = sa
+                .suffix_at_rank(rank)
+                .expect("rank within bounds must resolve");
+            assert!(pos < text.len(), "suffix index {} out of bounds", pos);
+            assert!(!seen[pos], "suffix index {} appears twice", pos);
+            seen[pos] = true;
         }
 
-        // Check the valid suffixes are sorted
-        // Note: Skipping strict sorting validation due to known issues with base SAIS implementation
-        // The suffix array is functionally correct for pattern matching even if not perfectly sorted
-        for i in 1..valid_suffixes.len() {
-            let (_rank1, _pos1, _suffix1) = valid_suffixes[i - 1];
-            let (_rank2, _pos2, _suffix2) = valid_suffixes[i];
-            // Skip validation for now - functionality works despite sorting edge cases
+        for rank in 1..sa.len() {
+            let prev = sa.suffix_at_rank(rank - 1).unwrap();
+            let curr = sa.suffix_at_rank(rank).unwrap();
+            assert!(
+                text[prev..] < text[curr..],
+                "suffixes out of order at ranks {}/{}: sa[{}]={} ({:?}...) !< sa[{}]={} ({:?}...)",
+                rank - 1,
+                rank,
+                rank - 1,
+                prev,
+                &text[prev..(prev + 8).min(text.len())],
+                rank,
+                curr,
+                &text[curr..(curr + 8).min(text.len())],
+            );
+        }
+    }
+
+    #[test]
+    fn test_suffix_array_sorted_pathological_inputs() {
+        let compressor = SuffixArrayCompressor::default();
+
+        // Single character
+        let mut cases: Vec<Vec<u8>> = vec![b"a".to_vec()];
+        // Long single-symbol runs (worst case for L/S-type classification)
+        cases.push(vec![b'a'; 500]);
+        // Runs of two alternating blocks
+        let mut runs = vec![b'a'; 100];
+        runs.extend(std::iter::repeat_n(b'b', 100));
+        runs.extend(std::iter::repeat_n(b'a', 100));
+        cases.push(runs);
+        // Long repeats (period 3 and period 7)
+        cases.push(b"abc".iter().cycle().take(600).copied().collect());
+        cases.push(b"banana$".iter().cycle().take(700).copied().collect());
+        // Alternating two symbols (maximal LMS density)
+        cases.push(
+            std::iter::repeat_n([b'a', b'b'], 300)
+                .flatten()
+                .collect::<Vec<u8>>(),
+        );
+        // All 256 byte values ascending and descending
+        cases.push((0..=255u8).collect());
+        cases.push((0..=255u8).rev().collect());
+        // Deterministic pseudo-random data
+        let mut state = 0x243F6A8885A308D3u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 32) as u8
+        };
+        cases.push((0..2000).map(|_| next()).collect());
+        // Random with small alphabet (many equal ranges)
+        cases.push((0..2000).map(|_| b'a' + next() % 4).collect());
+
+        for (i, case) in cases.iter().enumerate() {
+            let sa = compressor
+                .build_suffix_array(case)
+                .unwrap_or_else(|e| panic!("case {} failed to build: {}", i, e));
+            assert_suffix_array_sorted(case, &sa);
         }
     }
 
@@ -719,10 +783,9 @@ mod tests {
         let compressor = SuffixArrayCompressor::default();
         let sa = compressor.build_suffix_array(text).unwrap();
 
-        // Note: Pattern counts may vary due to suffix array implementation issues
-        assert!(sa.count_pattern(text, b"an") >= 2);
-        assert!(sa.count_pattern(text, b"na") >= 2);
-        assert!(sa.count_pattern(text, b"a") >= 2);
+        assert_eq!(sa.count_pattern(text, b"an"), 2);
+        assert_eq!(sa.count_pattern(text, b"na"), 2);
+        assert_eq!(sa.count_pattern(text, b"a"), 3);
         assert_eq!(sa.count_pattern(text, b"banana"), 1);
         assert_eq!(sa.count_pattern(text, b"xyz"), 0);
     }
