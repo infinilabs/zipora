@@ -104,6 +104,27 @@ miri_full:
 		exit 1; \
 	fi
 
+# ConcurrentCsppTrie multi-writer soundness campaign (plan.md Phase 4.3).
+# Run periodically (CI is build-only by policy): Miri catches data races/UB
+# at small scale; TSAN stresses the full contended tests. crossbeam_sanitize
+# switches crossbeam-epoch to its sanitizer-friendly paths (its fence-based
+# protocol otherwise triggers a known TSAN false positive in Local::drop).
+# Tree Borrows: crossbeam-epoch's int-to-pointer casts (atomic.rs Pointable)
+# are not Stacked-Borrows-compatible (violation in ITS internal.rs Local
+# deref); the crate is fine under the newer Tree Borrows aliasing model.
+# ignore-leaks: crossbeam-epoch's static global collector queue is never
+# torn down at process exit (known upstream; their Miri CI does the same).
+miri_cspp:
+	MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-ignore-leaks" \
+	$(CARGO_MIRI) test --lib fsa::cspp_trie_concurrent -- --test-threads=1
+
+tsan_cspp:
+	CARGO_TARGET_DIR=target-tsan \
+	RUSTFLAGS="-Zsanitizer=thread --cfg crossbeam_sanitize" \
+	TSAN_OPTIONS="suppressions=$(CURDIR)/tsan.supp" \
+	$(CARGO) +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
+		--release --lib fsa::cspp_trie_concurrent
+
 # =============================================================================
 # CODE QUALITY
 # =============================================================================
@@ -194,6 +215,8 @@ help:
 	@echo ""
 	@echo "  safety_tests     Container safety tests"
 	@echo "  miri_tests       Miri memory safety (needs nightly)"
+	@echo "  miri_cspp        Miri on ConcurrentCsppTrie (races/UB, small scale)"
+	@echo "  tsan_cspp        TSAN stress on ConcurrentCsppTrie (needs nightly + rust-src)"
 	@echo ""
 	@echo "  format           rustfmt"
 	@echo "  clippy           Clippy lints"
