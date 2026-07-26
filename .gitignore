@@ -2,6 +2,7 @@ release-artifacts
 
 # Rust/Cargo
 /target/
+/target-tsan/
 **/*.rs.bk
 *.pdb
 Cargo.lock
@@ -316,3 +317,5 @@ CLAUDE.md
 
 # https://github.com/Graphify-Labs/graphify
 graphify-out/
+
+target-tsan/

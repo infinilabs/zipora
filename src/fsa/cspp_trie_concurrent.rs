@@ -14,7 +14,29 @@
 //!   and returned to the freelist only after all readers advance past the epoch.
 //! - **Optimistic concurrency**: Writers prepare new nodes in uncontested memory,
 //!   then atomically swap the parent's child pointer (lock parent → mark old node
-//!   lazy_free → CAS child → defer free → unlock).
+//!   lazy_free → validate children snapshot → CAS child → defer free → unlock).
+//!
+//! # Multi-writer protocol invariants (C5 hardening)
+//!
+//! 1. Interior child slots of a live node are CAS'd only while holding that
+//!    node's lock bit (exception: the root fast node, whose NIL→child CAS is
+//!    ABA-free because no slot ever returns to NIL — there is no remove).
+//! 2. `lazy_free` can only be set on an unlocked node and permanently
+//!    freezes its interior (locking a lazy_free node fails), so a marked
+//!    node's children can no longer change.
+//! 3. Replacement nodes are built from a children snapshot taken before the
+//!    build; after the lazy_free mark the snapshot is re-validated and the
+//!    publish aborts on mismatch (C++ `array_eq(backup, ...)`).
+//! 4. Lock/lazy_free release clears single bits via `fetch_and` — never a
+//!    blind restore of a stale backup word (which would erase flags other
+//!    threads CAS'd in concurrently, e.g. IS_FINAL on the root).
+//! 5. `is_final` on live non-fast nodes is never mutated in place; marking a
+//!    key final always allocates a replacement and publishes it through the
+//!    protocol above. Copied headers are sanitized of transient
+//!    LOCK/LAZY_FREE bits.
+//! 6. All reads of concurrently-mutable words (word 0, child slots, value
+//!    words) go through atomic loads; child-pointer follows use acquire to
+//!    pair with the release CAS that published the child.
 
 use crossbeam_epoch::{self as epoch, Guard};
 use std::cell::RefCell;
@@ -109,6 +131,14 @@ impl SharedPool {
         self.data[pos].compare_exchange_weak(old, new, Ordering::AcqRel, Ordering::Acquire)
     }
 
+    /// Atomically clear bits (AND with mask). Used to release single flag
+    /// bits (lock / lazy_free) without erasing flags concurrently CAS'd in
+    /// by other threads — a blind store of a stale backup word would.
+    #[inline]
+    fn fetch_and(&self, pos: usize, mask: u32) -> u32 {
+        self.data[pos].fetch_and(mask, Ordering::AcqRel)
+    }
+
     /// Atomically bump-allocate `slots` contiguous positions.
     fn bump_alloc(&self, slots: usize) -> u32 {
         loop {
@@ -141,9 +171,15 @@ impl SharedPool {
     }
 
     /// Read a child pointer at pos + offset.
+    ///
+    /// Acquire ordering: child pointers are published by a release CAS after
+    /// the child node's content is written. The acquire load establishes
+    /// happens-before so the follower sees fully-initialized node content
+    /// (free on x86; required by the memory model and by Miri's weak-memory
+    /// emulation).
     #[inline(always)]
     fn load_child(&self, pos: u32, offset: usize) -> u32 {
-        self.load_relaxed(pos as usize + offset)
+        self.load_acquire(pos as usize + offset)
     }
 
     /// Read 4 bytes at pos + offset as [u8; 4].
@@ -307,12 +343,18 @@ impl Backoff {
 // ThreadLocalAlloc — Per-thread hot region + freelist (matching C++ TCMemPoolOneThread)
 // ============================================================================
 
-const CHUNK_SLOTS: usize = 512 * 1024; // 2MB / 4 bytes = 512K slots per chunk
+// 2MB / 4 bytes = 512K slots per chunk. Under Miri, tests use tiny pools
+// (interpreted AtomicU32 init dominates), so full-size per-thread hot chunks
+// would exhaust them instantly — use small chunks there.
+const CHUNK_SLOTS: usize = if cfg!(miri) { 2048 } else { 512 * 1024 };
 
 struct ThreadLocalAlloc {
     hot_pos: u32,
     hot_end: u32,
     fast_bins: [u32; FREE_LIST_MAX_SLOTS],
+    /// Deferred frees issued by this thread since its last epoch flush
+    /// (bounds per-thread unflushed garbage, see `free_node_deferred`).
+    defer_count: u32,
 }
 
 impl ThreadLocalAlloc {
@@ -321,6 +363,7 @@ impl ThreadLocalAlloc {
             hot_pos: 0,
             hot_end: 0,
             fast_bins: [FREE_LIST_NIL; FREE_LIST_MAX_SLOTS],
+            defer_count: 0,
         }
     }
 }
@@ -616,6 +659,9 @@ pub struct RaceStats {
     pub lazy_free_fail: AtomicUsize,
     pub child_cas_fail: AtomicUsize,
     pub fast_node_cas_fail: AtomicUsize,
+    /// Replacement aborted because curr's children changed between the
+    /// pre-build snapshot and the lazy_free mark (C++ `n_diff_backup`).
+    pub backup_mismatch: AtomicUsize,
 }
 
 impl RaceStats {
@@ -632,6 +678,12 @@ impl RaceStats {
 struct SharedInner {
     pool: SharedPool,
     freelist: LockFreeFreelist,
+    /// Number of deferred frees issued but not yet executed by the epoch
+    /// collector. Grows while any reader guard pins an old epoch; drains to
+    /// zero once all guards advance. Garbage is bounded: at most one deferred
+    /// free per node replacement, and all slots live in the fixed-capacity
+    /// pool (deferred closures are the only per-defer heap cost).
+    pending_reclaims: AtomicUsize,
 }
 
 pub struct ConcurrentCsppTrie {
@@ -686,6 +738,7 @@ impl ConcurrentCsppTrie {
             inner: std::sync::Arc::new(SharedInner {
                 pool,
                 freelist: LockFreeFreelist::new(),
+                pending_reclaims: AtomicUsize::new(0),
             }),
             tls: ThreadLocal::new(),
             n_words: AtomicUsize::new(0),
@@ -712,6 +765,16 @@ impl ConcurrentCsppTrie {
     #[inline]
     pub fn frag_size(&self) -> usize {
         self.inner.freelist.frag_size.load(Ordering::Relaxed)
+    }
+
+    /// Deferred frees issued but not yet reclaimed by the epoch collector.
+    ///
+    /// Grows while any thread holds an epoch guard pinned across writer
+    /// churn; drains to zero once all guards are released and the collector
+    /// runs. Bounded above by the total number of node replacements.
+    #[inline]
+    pub fn pending_reclaims(&self) -> usize {
+        self.inner.pending_reclaims.load(Ordering::Relaxed)
     }
 
     // ========================================================================
@@ -785,47 +848,108 @@ impl ConcurrentCsppTrie {
         self.lookup_with_guard(key, guard).is_some()
     }
 
-    /// Read a value at a byte offset.
+    /// Read a value at a byte offset previously returned by `insert`/`lookup`.
+    ///
+    /// # Atomicity contract
+    ///
+    /// Values live in the trie's shared `AtomicU32` pool and are accessed one
+    /// 32-bit word at a time:
+    /// - Values with `size_of::<T>() <= 4` are atomic: a reader racing
+    ///   [`set_value`](Self::set_value) observes either the old or the new
+    ///   value, never a torn mix.
+    /// - Larger values are only **per-word** atomic: a reader racing
+    ///   `set_value` may observe a torn mix of old and new words. Multi-word
+    ///   values require external synchronization or a single-writer-per-key
+    ///   discipline.
+    ///
+    /// # Staleness hazard
+    ///
+    /// A `valpos` is invalidated by concurrent *structural* modification:
+    /// another thread's insert may replace the node holding this value
+    /// (copying the value bytes as of that instant). Reading through a stale
+    /// `valpos` returns the orphaned copy. Re-`lookup` under contention.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `valpos` is not 4-byte aligned or out of bounds.
     pub fn get_value<T: Copy>(&self, valpos: usize) -> T {
+        let size = std::mem::size_of::<T>();
+        assert!(valpos.is_multiple_of(4), "valpos must be 4-byte aligned");
         assert!(
-            valpos + std::mem::size_of::<T>() <= self.inner.pool.len() * 4,
+            valpos + size <= self.inner.pool.len() * 4,
             "valpos out of bounds"
         );
 
-        // SAFETY: We verify valpos is within bounds. valpos is guaranteed to be 4-byte aligned.
         let mut result: std::mem::MaybeUninit<T> = std::mem::MaybeUninit::uninit();
-        let result_ptr = result.as_mut_ptr() as *mut u32;
-        let num_words = std::mem::size_of::<T>().div_ceil(4);
-
+        let dst = result.as_mut_ptr() as *mut u8;
         let word_offset = valpos / 4;
-        for i in 0..num_words {
-            // Read atomically to avoid data races
-            let word = self.inner.pool.load_acquire(word_offset + i);
-            // SAFETY: result_ptr valid from MaybeUninit, i < num_words ensures bounds.
-            unsafe {
-                std::ptr::write(result_ptr.add(i), word);
-            }
+
+        // Whole words, then the trailing partial word — byte-exact so types
+        // with size % 4 != 0 or align < 4 never over-read/over-write.
+        for i in 0..size / 4 {
+            let word = self.inner.pool.load_acquire(word_offset + i).to_ne_bytes();
+            // SAFETY: dst is valid for `size` bytes; this writes bytes
+            // [i*4, i*4+4) with i*4+4 <= size.
+            unsafe { std::ptr::copy_nonoverlapping(word.as_ptr(), dst.add(i * 4), 4) };
+        }
+        let tail = size % 4;
+        if tail != 0 {
+            let word = self
+                .inner
+                .pool
+                .load_acquire(word_offset + size / 4)
+                .to_ne_bytes();
+            // SAFETY: writes exactly the final `tail` bytes of `result`.
+            unsafe { std::ptr::copy_nonoverlapping(word.as_ptr(), dst.add(size - tail), tail) };
         }
 
-        // SAFETY: All bytes initialized by loop above, T is Copy.
+        // SAFETY: all `size` bytes initialized above; T is Copy.
         unsafe { result.assume_init() }
     }
 
-    /// Set a value at the given byte offset using atomic operations.
+    /// Set a value at a byte offset previously returned by `insert`/`lookup`.
+    ///
+    /// See [`get_value`](Self::get_value) for the atomicity contract (atomic
+    /// for `size_of::<T>() <= 4`, per-word atomic beyond) and the staleness
+    /// hazard: writing through a `valpos` whose node was concurrently
+    /// replaced updates an orphaned copy and the write is lost. Under
+    /// contention, set the value on the inserting thread immediately after
+    /// `insert` returns and treat lookups as the source of truth.
+    ///
+    /// For `size_of::<T>() % 4 != 0`, the final partial word is zero-padded;
+    /// the padding lands in the node's slot-alignment padding.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `valpos` is not 4-byte aligned or out of bounds.
     pub fn set_value<T: Copy>(&self, valpos: usize, val: T) {
+        let size = std::mem::size_of::<T>();
+        assert!(valpos.is_multiple_of(4), "valpos must be 4-byte aligned");
         assert!(
-            valpos + std::mem::size_of::<T>() <= self.inner.pool.len() * 4,
+            valpos + size <= self.inner.pool.len() * 4,
             "valpos out of bounds"
         );
 
-        let val_ptr = &val as *const T as *const u32;
-        let num_words = std::mem::size_of::<T>().div_ceil(4);
+        let src = &val as *const T as *const u8;
         let word_offset = valpos / 4;
 
-        for i in 0..num_words {
-            // SAFETY: val_ptr valid from &val cast, i < num_words ensures bounds.
-            let word = unsafe { std::ptr::read(val_ptr.add(i)) };
-            self.inner.pool.store_release(word_offset + i, word);
+        for i in 0..size / 4 {
+            let mut bytes = [0u8; 4];
+            // SAFETY: src is valid for `size` bytes; reads [i*4, i*4+4) with
+            // i*4+4 <= size. Byte copy — no alignment requirement on T.
+            unsafe { std::ptr::copy_nonoverlapping(src.add(i * 4), bytes.as_mut_ptr(), 4) };
+            self.inner
+                .pool
+                .store_release(word_offset + i, u32::from_ne_bytes(bytes));
+        }
+        let tail = size % 4;
+        if tail != 0 {
+            let mut bytes = [0u8; 4];
+            // SAFETY: reads exactly the final `tail` bytes of `val`.
+            unsafe { std::ptr::copy_nonoverlapping(src.add(size - tail), bytes.as_mut_ptr(), tail) };
+            self.inner
+                .pool
+                .store_release(word_offset + size / 4, u32::from_ne_bytes(bytes));
         }
     }
 
@@ -905,13 +1029,31 @@ impl ConcurrentCsppTrie {
         pos
     }
 
+    /// Max deferred frees a thread may accumulate before its local epoch bag
+    /// is flushed to the global queue, bounding per-guard unflushed garbage.
+    const DEFER_FLUSH_THRESHOLD: u32 = 64;
+
     fn free_node_deferred(&self, guard: &Guard, slot: u32, slots: usize) {
         let inner = std::sync::Arc::clone(&self.inner);
+        self.inner.pending_reclaims.fetch_add(1, Ordering::Relaxed);
         // SAFETY: Arc clone keeps pool/freelist alive until the deferred fn runs.
         unsafe {
             guard.defer_unchecked(move || {
                 inner.freelist.push(&inner.pool, slot, slots);
+                inner.pending_reclaims.fetch_sub(1, Ordering::Relaxed);
             });
+        }
+        // Bound per-thread unflushed garbage: after every
+        // DEFER_FLUSH_THRESHOLD defers, push the thread-local bag to the
+        // global queue so other threads' pin/unpin cycles can collect it even
+        // if this thread goes idle while still holding deferred closures.
+        let tla_cell = self.get_tla();
+        let mut tla = tla_cell.borrow_mut();
+        tla.defer_count += 1;
+        if tla.defer_count >= Self::DEFER_FLUSH_THRESHOLD {
+            tla.defer_count = 0;
+            drop(tla);
+            guard.flush();
         }
     }
 
@@ -934,18 +1076,33 @@ impl ConcurrentCsppTrie {
             .map_err(|_| ())
     }
 
-    /// Clear b_lock (bit 7), restoring the original value.
+    /// Clear b_lock (bit 7) only.
+    ///
+    /// Deliberately NOT a blind restore of the pre-lock word: other threads
+    /// may legitimately CAS flag bits into a locked word (e.g. IS_FINAL /
+    /// SET_FINAL on the root fast node while it is locked as a parent). A
+    /// blind store of the stale backup would erase those updates — silent
+    /// key loss. (The C++ original stores the backup; `fetch_and` is
+    /// strictly safer and equally cheap.)
     #[inline]
-    fn unlock_node(&self, pos: u32, original: u32) {
-        self.inner.pool.store_release(pos as usize, original);
+    fn unlock_node(&self, pos: u32) {
+        self.inner.pool.fetch_and(pos as usize, !U32_FLAG_LOCK);
     }
 
-    /// Try to mark b_lazy_free (bit 5). Returns old u32 on success.
+    /// Try to mark b_lazy_free (bit 5). Returns the pre-mark u32 on success.
+    ///
+    /// Fails if the node is LOCKED or already lazy_free (C++ parity: the CAS
+    /// expects `{b_lock=0, b_lazy_free=0}`). A locked node is in use as a
+    /// *parent* by another writer that may CAS child slots inside it —
+    /// dooming it while locked would let our replacement (built from a
+    /// snapshot) silently drop that writer's child update. A successful mark
+    /// therefore freezes the node's interior: no further lock can be taken,
+    /// so no further child-slot CAS can land.
     #[inline]
     fn try_mark_lazy_free(&self, pos: u32) -> Result<u32, ()> {
         let old = self.inner.pool.load_acquire(pos as usize);
         let flags = (old & 0xFF) as u8;
-        if flags & FLAG_LAZY_FREE != 0 {
+        if flags & (FLAG_LAZY_FREE | FLAG_LOCK) != 0 {
             return Err(());
         }
         let new = old | U32_FLAG_LAZY_FREE;
@@ -953,6 +1110,12 @@ impl ConcurrentCsppTrie {
             .pool
             .cas_weak(pos as usize, old, new)
             .map_err(|_| ())
+    }
+
+    /// Undo a lazy_free mark (replacement publish failed).
+    #[inline]
+    fn unmark_lazy_free(&self, pos: u32) {
+        self.inner.pool.fetch_and(pos as usize, !U32_FLAG_LAZY_FREE);
     }
 
     // ========================================================================
@@ -1050,7 +1213,8 @@ impl ConcurrentCsppTrie {
     ) -> u32 {
         let node_size = (10 + n_children) * ALIGN_SIZE + trailing_len;
         let node = self.alloc_node(node_size);
-        let new_flags = (flags & !FLAG_CNT_MASK) | 8;
+        // Sanitize transient LOCK/LAZY_FREE bits read from the live node.
+        let new_flags = (flags & !(FLAG_CNT_MASK | FLAG_LOCK | FLAG_LAZY_FREE)) | 8;
         let meta = MetaInfo {
             flags: new_flags,
             n_zpath_len: zpath_len as u8,
@@ -1117,18 +1281,22 @@ impl ConcurrentCsppTrie {
         }
         let mut old_children = [0u32; 257];
         for i in 0..old_n {
-            old_children[i] = self.inner.pool.load_relaxed(curr as usize + 10 + i);
+            // Acquire: child pointers are published by release CAS.
+            old_children[i] = self.inner.pool.load_acquire(curr as usize + 10 + i);
         }
         let zpath_padded = (zpath_len + 3) & !3;
         let trailing_len = zpath_padded + if is_final { self.valsize } else { 0 };
         let mut trailing = [0u8; 512];
-        if trailing_len > 0 {
-            let off = (10 + old_n) * ALIGN_SIZE;
-            // SAFETY: Reading trailing data from curr node, immutable after parent CAS.
-            unsafe {
-                let src = self.inner.pool.raw_ptr(curr as usize).add(off);
-                std::ptr::copy_nonoverlapping(src, trailing.as_mut_ptr(), trailing_len);
-            }
+        debug_assert!(trailing_len.div_ceil(4) * 4 <= trailing.len());
+        // Word-atomic copy: the value part of the trailing data is mutable
+        // via set_value, so a non-atomic memcpy would be a data race.
+        for i in 0..trailing_len.div_ceil(4) {
+            let w = self
+                .inner
+                .pool
+                .load_acquire(curr as usize + 10 + old_n + i)
+                .to_ne_bytes();
+            trailing[i * 4..i * 4 + 4].copy_from_slice(&w);
         }
 
         let ch_rank = {
@@ -1157,7 +1325,8 @@ impl ConcurrentCsppTrie {
         self.write_meta_with_n_children(
             node,
             MetaInfo {
-                flags: meta.flags,
+                // Sanitize transient LOCK/LAZY_FREE bits from the live node.
+                flags: meta.flags & !(FLAG_LOCK | FLAG_LAZY_FREE),
                 n_zpath_len: zpath_len as u8,
                 c_label: [0, 0],
             },
@@ -1237,19 +1406,23 @@ impl ConcurrentCsppTrie {
 
         let mut children = [0u32; 17];
         for i in 0..old_n {
-            children[i] = self.inner.pool.load_relaxed(curr as usize + old_skip + i);
+            // Acquire: child pointers are published by release CAS.
+            children[i] = self.inner.pool.load_acquire(curr as usize + old_skip + i);
         }
 
         let zpath_padded = (zpath_len + 3) & !3;
         let trailing_len = zpath_padded + if is_final { self.valsize } else { 0 };
         let mut trailing = [0u8; 512];
-        if trailing_len > 0 {
-            let trailing_start = (old_skip + old_n) * ALIGN_SIZE;
-            // SAFETY: Reading trailing data from curr node, immutable after parent CAS.
-            unsafe {
-                let src = self.inner.pool.raw_ptr(curr as usize).add(trailing_start);
-                std::ptr::copy_nonoverlapping(src, trailing.as_mut_ptr(), trailing_len);
-            }
+        debug_assert!(trailing_len.div_ceil(4) * 4 <= trailing.len());
+        // Word-atomic copy: the value part of the trailing data is mutable
+        // via set_value, so a non-atomic memcpy would be a data race.
+        for i in 0..trailing_len.div_ceil(4) {
+            let w = self
+                .inner
+                .pool
+                .load_acquire(curr as usize + old_skip + old_n + i)
+                .to_ne_bytes();
+            trailing[i * 4..i * 4 + 4].copy_from_slice(&w);
         }
 
         let idx = labels[..old_n].partition_point(|&l| l < ch);
@@ -1284,7 +1457,9 @@ impl ConcurrentCsppTrie {
         let new_skip = SKIP_SLOTS[new_cnt_type as usize] as usize;
         let new_size = (new_skip + new_n) * ALIGN_SIZE + trailing_len;
         let node = self.alloc_node(new_size);
-        let new_flags = (meta.flags & !FLAG_CNT_MASK) | new_cnt_type;
+        // Sanitize transient LOCK/LAZY_FREE bits read from the live node.
+        let new_flags =
+            (meta.flags & !(FLAG_CNT_MASK | FLAG_LOCK | FLAG_LAZY_FREE)) | new_cnt_type;
 
         match new_cnt_type {
             1 | 2 => {
@@ -1367,28 +1542,31 @@ impl ConcurrentCsppTrie {
         let suffix_size = (old_skip + old_n_children) * ALIGN_SIZE + suffix_zpath_padded + val_size;
 
         let suffix_node = self.alloc_node(suffix_size);
-        // SAFETY: `suffix_node` is newly allocated and uncontested.
-        // `curr` is a valid node. We are copying the structural part (header and children).
-        unsafe {
-            let base = self.inner.pool.data.as_ptr() as *mut u8;
-            let src = self.inner.pool.raw_ptr(curr as usize);
-            let dst = base.add(suffix_node as usize * 4);
-            let struct_size = (old_skip + old_n_children) * ALIGN_SIZE;
-            std::ptr::copy_nonoverlapping(src, dst, struct_size);
+        // Copy the structural part (header + children) word-by-word via
+        // atomic loads: word 0 (flags) and child slots may be concurrently
+        // CAS'd by other writers, so a non-atomic memcpy would be a data
+        // race. Staleness is caught by update_curr_ptr's snapshot check.
+        let struct_slots = old_skip + old_n_children;
+        for i in 0..struct_slots {
+            let v = self.inner.pool.load_acquire(curr as usize + i);
+            self.inner.pool.store_relaxed(suffix_node as usize + i, v);
         }
-        // Set new zpath_len on suffix node
+        // Set new zpath_len on suffix node; drop transient LOCK/LAZY_FREE
+        // bits copied from the live node (a published copy carrying them
+        // would look permanently locked/doomed).
         let mut suffix_meta = self.inner.pool.load_meta(suffix_node);
         suffix_meta.n_zpath_len = suffix_zlen as u8;
+        suffix_meta.flags &= !(FLAG_LOCK | FLAG_LAZY_FREE);
         self.inner
             .pool
             .store_relaxed(suffix_node as usize, meta_to_u32(suffix_meta));
 
-        // SAFETY: `suffix_node` is newly allocated and uncontested.
-        // We are filling the zpath and value parts. Reads from `zpath_buf` and `curr` are safe.
+        // SAFETY: `suffix_node` is newly allocated and uncontested; the
+        // zpath source is a local buffer.
         unsafe {
             let base = self.inner.pool.data.as_ptr() as *mut u8;
             let dst = base.add(suffix_node as usize * 4);
-            let struct_size = (old_skip + old_n_children) * ALIGN_SIZE;
+            let struct_size = struct_slots * ALIGN_SIZE;
             let zpath_dst = dst.add(struct_size);
             for i in 0..suffix_zlen {
                 *zpath_dst.add(i) = zpath_buf[zidx + 1 + i];
@@ -1396,14 +1574,14 @@ impl ConcurrentCsppTrie {
             for i in suffix_zlen..suffix_zpath_padded {
                 *zpath_dst.add(i) = 0;
             }
-            if val_size > 0 {
-                let old_val_off = struct_size + ((zpath_len + 3) & !3);
-                let src = self.inner.pool.raw_ptr(curr as usize);
-                std::ptr::copy_nonoverlapping(
-                    src.add(old_val_off),
-                    zpath_dst.add(suffix_zpath_padded),
-                    val_size,
-                );
+        }
+        if val_size > 0 {
+            // Value words are mutable via set_value → atomic word copies.
+            let src_base = curr as usize + struct_slots + ((zpath_len + 3) & !3) / 4;
+            let dst_base = suffix_node as usize + struct_slots + suffix_zpath_padded / 4;
+            for i in 0..val_size.div_ceil(4) {
+                let v = self.inner.pool.load_acquire(src_base + i);
+                self.inner.pool.store_relaxed(dst_base + i, v);
             }
         }
 
@@ -1461,27 +1639,29 @@ impl ConcurrentCsppTrie {
         let suffix_size = (old_skip + old_n_children) * ALIGN_SIZE + suffix_zpath_padded + val_size;
 
         let suffix_node = self.alloc_node(suffix_size);
-        // SAFETY: `suffix_node` is newly allocated and uncontested.
-        // Copying structural part from `curr`.
-        unsafe {
-            let base = self.inner.pool.data.as_ptr() as *mut u8;
-            let src = self.inner.pool.raw_ptr(curr as usize);
-            let dst = base.add(suffix_node as usize * 4);
-            let struct_size = (old_skip + old_n_children) * ALIGN_SIZE;
-            std::ptr::copy_nonoverlapping(src, dst, struct_size);
+        // Copy the structural part (header + children) word-by-word via
+        // atomic loads: word 0 (flags) and child slots may be concurrently
+        // CAS'd by other writers, so a non-atomic memcpy would be a data
+        // race. Staleness is caught by update_curr_ptr's snapshot check.
+        let struct_slots = old_skip + old_n_children;
+        for i in 0..struct_slots {
+            let v = self.inner.pool.load_acquire(curr as usize + i);
+            self.inner.pool.store_relaxed(suffix_node as usize + i, v);
         }
+        // Drop transient LOCK/LAZY_FREE bits copied from the live node.
         let mut suffix_meta = self.inner.pool.load_meta(suffix_node);
         suffix_meta.n_zpath_len = suffix_zlen as u8;
+        suffix_meta.flags &= !(FLAG_LOCK | FLAG_LAZY_FREE);
         self.inner
             .pool
             .store_relaxed(suffix_node as usize, meta_to_u32(suffix_meta));
 
-        // SAFETY: `suffix_node` is newly allocated and uncontested.
-        // Copying zpath and value data from `curr` and `zpath_buf`.
+        // SAFETY: `suffix_node` is newly allocated and uncontested; the
+        // zpath source is a local buffer.
         unsafe {
             let base = self.inner.pool.data.as_ptr() as *mut u8;
             let dst = base.add(suffix_node as usize * 4);
-            let struct_size = (old_skip + old_n_children) * ALIGN_SIZE;
+            let struct_size = struct_slots * ALIGN_SIZE;
             let zpath_dst = dst.add(struct_size);
             for i in 0..suffix_zlen {
                 *zpath_dst.add(i) = zpath_buf[split_pos + 1 + i];
@@ -1489,14 +1669,14 @@ impl ConcurrentCsppTrie {
             for i in suffix_zlen..suffix_zpath_padded {
                 *zpath_dst.add(i) = 0;
             }
-            if val_size > 0 {
-                let old_val_off = struct_size + ((zpath_len + 3) & !3);
-                let src = self.inner.pool.raw_ptr(curr as usize);
-                std::ptr::copy_nonoverlapping(
-                    src.add(old_val_off),
-                    zpath_dst.add(suffix_zpath_padded),
-                    val_size,
-                );
+        }
+        if val_size > 0 {
+            // Value words are mutable via set_value → atomic word copies.
+            let src_base = curr as usize + struct_slots + ((zpath_len + 3) & !3) / 4;
+            let dst_base = suffix_node as usize + struct_slots + suffix_zpath_padded / 4;
+            for i in 0..val_size.div_ceil(4) {
+                let v = self.inner.pool.load_acquire(src_base + i);
+                self.inner.pool.store_relaxed(dst_base + i, v);
             }
         }
 
@@ -1531,20 +1711,39 @@ impl ConcurrentCsppTrie {
     }
 
     /// Realloc a node (for MarkFinalState on non-fast nodes).
-    /// Allocates new, copies old, returns new slot. Old node is NOT freed here.
+    /// ALWAYS allocates a new node and copies the old content — even when
+    /// the slot counts match (valsize == 0). Mutating flags in place on a
+    /// live node races with the lock/lazy_free protocol (C++ parity:
+    /// MarkFinalState always allocates and publishes via update_curr_ptr).
+    /// Old node is NOT freed here. Transient LOCK/LAZY_FREE bits copied from
+    /// the live node are cleared on the copy.
     fn realloc_node_concurrent(&self, old_slot: u32, old_size: usize, new_size: usize) -> u32 {
         let old_slots = old_size.div_ceil(4);
         let new_slots = new_size.div_ceil(4);
-        if old_slots == new_slots {
-            return old_slot;
-        }
         let new_slot = self.alloc_node(new_size);
         let copy_slots = old_slots.min(new_slots);
         for i in 0..copy_slots {
-            let v = self.inner.pool.load_relaxed(old_slot as usize + i);
+            // Atomic word loads: word 0 and child slots may be concurrently
+            // CAS'd; staleness is caught by update_curr_ptr's snapshot check.
+            let v = self.inner.pool.load_acquire(old_slot as usize + i);
             self.inner.pool.store_relaxed(new_slot as usize + i, v);
         }
+        let w0 = self.inner.pool.load_relaxed(new_slot as usize)
+            & !(U32_FLAG_LOCK | U32_FLAG_LAZY_FREE);
+        self.inner.pool.store_relaxed(new_slot as usize, w0);
         new_slot
+    }
+
+    /// Capture curr's child-pointer words for post-lazy_free validation in
+    /// `update_curr_ptr`. Must be called BEFORE building a replacement node
+    /// from curr, so that any interior child CAS landing after the snapshot
+    /// is detected and the stale replacement discarded.
+    fn snapshot_children(&self, curr: u32, skip: usize, n_children: usize, buf: &mut Vec<u32>) {
+        buf.clear();
+        buf.reserve(n_children);
+        for i in 0..n_children {
+            buf.push(self.inner.pool.load_acquire(curr as usize + skip + i));
+        }
     }
 
     // ========================================================================
@@ -1561,6 +1760,9 @@ impl ConcurrentCsppTrie {
     /// Insert with an existing epoch guard.
     pub fn insert_with_guard(&self, key: &[u8], guard: &Guard) -> (bool, usize) {
         let mut backoff = Backoff::new();
+        // Children snapshot buffer for update_curr_ptr validation (reused
+        // across retries to avoid per-attempt allocation).
+        let mut snap_buf: Vec<u32> = Vec::new();
 
         'retry: loop {
             let mut curr_slot: u32 = NIL_STATE;
@@ -1603,6 +1805,8 @@ impl ConcurrentCsppTrie {
                     if let Some(zidx) = mismatch_at {
                         // ForkBranch
                         let (new_suffix, valpos) = self.new_suffix_chain(&key[pos + zidx + 1..]);
+                        // Snapshot BEFORE fork reads curr's children.
+                        self.snapshot_children(curr, skip, n_children, &mut snap_buf);
                         let (new_parent, fork_suffix_copy) = self.fork(
                             curr,
                             zidx,
@@ -1621,6 +1825,7 @@ impl ConcurrentCsppTrie {
                             curr_slot,
                             curr,
                             new_parent,
+                            &snap_buf,
                             &mut backoff,
                         ) {
                             self.free_suffix_chain(new_suffix);
@@ -1637,6 +1842,8 @@ impl ConcurrentCsppTrie {
 
                     if remaining_key < zpath_len {
                         // SplitZpath
+                        // Snapshot BEFORE split_zpath reads curr's children.
+                        self.snapshot_children(curr, skip, n_children, &mut snap_buf);
                         let (prefix_node, valpos, split_suffix_copy) = self.split_zpath(
                             curr,
                             match_len,
@@ -1653,6 +1860,7 @@ impl ConcurrentCsppTrie {
                             curr_slot,
                             curr,
                             prefix_node,
+                            &snap_buf,
                             &mut backoff,
                         ) {
                             self.free_single_node(split_suffix_copy);
@@ -1670,41 +1878,29 @@ impl ConcurrentCsppTrie {
                                 + ((zpath_len + 3) & !3);
                             return (false, vp);
                         }
-                        // MarkFinalState
+                        // MarkFinalState — always via replacement + publish
+                        // protocol; never mutate is_final in place on a live
+                        // node (see realloc_node_concurrent).
                         let new_size = node_size + self.valsize;
+                        self.snapshot_children(curr, skip, n_children, &mut snap_buf);
                         let new_curr = self.realloc_node_concurrent(curr, node_size, new_size);
-                        // Set is_final on new node
                         let mut m = u32_to_meta(self.inner.pool.load_relaxed(new_curr as usize));
                         m.flags |= FLAG_IS_FINAL;
                         self.inner
                             .pool
                             .store_relaxed(new_curr as usize, meta_to_u32(m));
 
-                        if new_curr != curr {
-                            if !self.update_curr_ptr(
-                                guard,
-                                parent,
-                                curr_slot,
-                                curr,
-                                new_curr,
-                                &mut backoff,
-                            ) {
-                                self.free_single_node(new_curr);
-                                continue 'retry;
-                            }
-                        } else {
-                            // In-place update (same slot) — just CAS the flags
-                            let old_meta = self.inner.pool.load_acquire(curr as usize);
-                            let new_meta = old_meta | U32_FLAG_IS_FINAL;
-                            if self
-                                .inner
-                                .pool
-                                .cas_weak(curr as usize, old_meta, new_meta)
-                                .is_err()
-                            {
-                                backoff.spin();
-                                continue 'retry;
-                            }
+                        if !self.update_curr_ptr(
+                            guard,
+                            parent,
+                            curr_slot,
+                            curr,
+                            new_curr,
+                            &snap_buf,
+                            &mut backoff,
+                        ) {
+                            self.free_single_node(new_curr);
+                            continue 'retry;
                         }
                         let vp = (new_curr as usize + skip + n_children) * ALIGN_SIZE
                             + ((zpath_len + 3) & !3);
@@ -1742,8 +1938,11 @@ impl ConcurrentCsppTrie {
                             }
                         }
 
-                        // MarkFinalState for non-fast node
+                        // MarkFinalState for non-fast node — always via
+                        // replacement + publish protocol; never mutate
+                        // is_final in place on a live node.
                         let new_size = node_size + self.valsize;
+                        self.snapshot_children(curr, skip, n_children, &mut snap_buf);
                         let new_curr = self.realloc_node_concurrent(curr, node_size, new_size);
                         let mut m = u32_to_meta(self.inner.pool.load_relaxed(new_curr as usize));
                         m.flags |= FLAG_IS_FINAL;
@@ -1751,30 +1950,17 @@ impl ConcurrentCsppTrie {
                             .pool
                             .store_relaxed(new_curr as usize, meta_to_u32(m));
 
-                        if new_curr != curr {
-                            if !self.update_curr_ptr(
-                                guard,
-                                parent,
-                                curr_slot,
-                                curr,
-                                new_curr,
-                                &mut backoff,
-                            ) {
-                                self.free_single_node(new_curr);
-                                continue 'retry;
-                            }
-                        } else {
-                            let old_meta = self.inner.pool.load_acquire(curr as usize);
-                            let new_meta = old_meta | U32_FLAG_IS_FINAL;
-                            if self
-                                .inner
-                                .pool
-                                .cas_weak(curr as usize, old_meta, new_meta)
-                                .is_err()
-                            {
-                                backoff.spin();
-                                continue 'retry;
-                            }
+                        if !self.update_curr_ptr(
+                            guard,
+                            parent,
+                            curr_slot,
+                            curr,
+                            new_curr,
+                            &snap_buf,
+                            &mut backoff,
+                        ) {
+                            self.free_single_node(new_curr);
+                            continue 'retry;
                         }
                         let vp = (new_curr as usize + skip + n_children) * ALIGN_SIZE;
                         self.n_words.fetch_add(1, Ordering::Relaxed);
@@ -1828,6 +2014,8 @@ impl ConcurrentCsppTrie {
                             }
                         }
                     } else {
+                        // Snapshot BEFORE add_state_move reads curr's children.
+                        self.snapshot_children(curr, skip, n_children, &mut snap_buf);
                         let new_curr = self.add_state_move(curr, ch, suffix_node);
                         if !self.update_curr_ptr(
                             guard,
@@ -1835,6 +2023,7 @@ impl ConcurrentCsppTrie {
                             curr_slot,
                             curr,
                             new_curr,
+                            &snap_buf,
                             &mut backoff,
                         ) {
                             self.free_suffix_chain(suffix_node);
@@ -1860,10 +2049,19 @@ impl ConcurrentCsppTrie {
     /// Optimistic locking protocol to atomically replace curr with new_node.
     ///
     /// 1. Lock parent (CAS b_lock)
-    /// 2. Mark curr as lazy_free (CAS b_lazy_free)
-    /// 3. CAS parent's child pointer from curr to new_node
-    /// 4. On success: defer free of curr
-    /// 5. On failure: undo locks and return false
+    /// 2. Mark curr as lazy_free (CAS b_lazy_free; fails if curr is locked,
+    ///    which freezes curr's interior — no further child CAS can land)
+    /// 3. Validate curr's children against the snapshot the replacement was
+    ///    built from (C++ `array_eq(backup, ...)`): a child replaced between
+    ///    snapshot and mark would otherwise be silently dropped
+    /// 4. CAS parent's child pointer from curr to new_node
+    /// 5. On success: defer free of curr
+    /// 6. On failure: undo marks (single-bit clears, never blind restores)
+    ///    and return false
+    ///
+    /// `children_snapshot` must hold curr's child words captured *before*
+    /// the replacement node was built from curr.
+    #[allow(clippy::too_many_arguments)] // internal protocol step on the insert hot path
     fn update_curr_ptr(
         &self,
         guard: &Guard,
@@ -1871,6 +2069,7 @@ impl ConcurrentCsppTrie {
         curr_slot: u32,
         curr: u32,
         new_node: u32,
+        children_snapshot: &[u32],
         backoff: &mut Backoff,
     ) -> bool {
         // For root node (parent == NIL_STATE), no parent locking needed —
@@ -1882,22 +2081,19 @@ impl ConcurrentCsppTrie {
         }
 
         // Step 1: Lock parent
-        let parent_original = match self.try_lock_node(parent) {
-            Ok(orig) => orig,
-            Err(()) => {
-                self.race_stats
-                    .parent_lock_fail
-                    .fetch_add(1, Ordering::Relaxed);
-                backoff.spin();
-                return false;
-            }
-        };
+        if self.try_lock_node(parent).is_err() {
+            self.race_stats
+                .parent_lock_fail
+                .fetch_add(1, Ordering::Relaxed);
+            backoff.spin();
+            return false;
+        }
 
-        // Step 2: Mark curr as lazy_free
+        // Step 2: Mark curr as lazy_free (freezes curr's interior)
         let curr_original = match self.try_mark_lazy_free(curr) {
             Ok(orig) => orig,
             Err(()) => {
-                self.unlock_node(parent, parent_original);
+                self.unlock_node(parent);
                 self.race_stats
                     .lazy_free_fail
                     .fetch_add(1, Ordering::Relaxed);
@@ -1906,18 +2102,36 @@ impl ConcurrentCsppTrie {
             }
         };
 
-        // Step 3: CAS the child pointer
+        // Step 3: Validate the children snapshot. Interior child slots are
+        // the only node state legally mutated in place (by writers holding
+        // curr's lock); any change since the snapshot means the replacement
+        // is stale and publishing it would lose a concurrent insert.
+        let curr_cnt = ((curr_original & 0xFF) as u8) & FLAG_CNT_MASK;
+        let curr_skip = SKIP_SLOTS[curr_cnt as usize] as usize;
+        for (i, &snap) in children_snapshot.iter().enumerate() {
+            if self.inner.pool.load_acquire(curr as usize + curr_skip + i) != snap {
+                self.unmark_lazy_free(curr);
+                self.unlock_node(parent);
+                self.race_stats
+                    .backup_mismatch
+                    .fetch_add(1, Ordering::Relaxed);
+                backoff.spin();
+                return false;
+            }
+        }
+
+        // Step 4: CAS the child pointer
         if curr_slot == NIL_STATE {
             // Should not happen in normal flow
-            self.inner.pool.store_release(curr as usize, curr_original);
-            self.unlock_node(parent, parent_original);
+            self.unmark_lazy_free(curr);
+            self.unlock_node(parent);
             return false;
         }
 
         match self.inner.pool.cas_weak(curr_slot as usize, curr, new_node) {
             Ok(_) => {
                 // Success! Unlock parent.
-                self.unlock_node(parent, parent_original);
+                self.unlock_node(parent);
 
                 // Defer free of old node
                 let old_slot = curr;
@@ -1945,8 +2159,8 @@ impl ConcurrentCsppTrie {
             }
             Err(_) => {
                 // CAS failed — undo lazy_free and unlock parent
-                self.inner.pool.store_release(curr as usize, curr_original);
-                self.unlock_node(parent, parent_original);
+                self.unmark_lazy_free(curr);
+                self.unlock_node(parent);
                 self.race_stats
                     .child_cas_fail
                     .fetch_add(1, Ordering::Relaxed);
@@ -2046,9 +2260,15 @@ impl ConcurrentCsppTrie {
 mod tests {
     use super::*;
 
+    /// Under Miri, pool initialization dominates test time (millions of
+    /// interpreted AtomicU32 constructions) — cap capacities there.
+    pub(super) fn cap(n: usize) -> usize {
+        if cfg!(miri) { n.min(32 * 1024) } else { n }
+    }
+
     #[test]
     fn test_concurrent_trie_basic() {
-        let trie = ConcurrentCsppTrie::with_capacity(8, 1024 * 1024);
+        let trie = ConcurrentCsppTrie::with_capacity(8, cap(1024 * 1024));
         let key1 = b"hello";
         let key2 = b"world";
 
@@ -2076,7 +2296,7 @@ mod tests {
 
     #[test]
     fn test_concurrent_trie_split_zpath() {
-        let trie = ConcurrentCsppTrie::with_capacity(8, 1024 * 1024);
+        let trie = ConcurrentCsppTrie::with_capacity(8, cap(1024 * 1024));
         trie.insert(b"abcde");
         trie.insert(b"ab");
 
@@ -2087,7 +2307,7 @@ mod tests {
 
     #[test]
     fn test_concurrent_trie_fork() {
-        let trie = ConcurrentCsppTrie::with_capacity(8, 1024 * 1024);
+        let trie = ConcurrentCsppTrie::with_capacity(8, cap(1024 * 1024));
         trie.insert(b"abcd");
         trie.insert(b"abef");
 
@@ -2099,7 +2319,7 @@ mod tests {
     #[test]
     fn test_concurrent_trie_many_small() {
         let n = if cfg!(miri) { 20 } else { 100 };
-        let trie = ConcurrentCsppTrie::with_capacity(4, 1024 * 1024);
+        let trie = ConcurrentCsppTrie::with_capacity(4, cap(1024 * 1024));
         for i in 0..n {
             let key = format!("key{:03}", i);
             let (is_new, valpos) = trie.insert(key.as_bytes());
@@ -2115,6 +2335,297 @@ mod tests {
         }
     }
 
+    /// Phase 4.1 regression: `get_value`/`set_value` must be sound for types
+    /// whose size is not a multiple of 4 or whose alignment is < 4.
+    /// Before the fix, `get_value::<u8>` wrote 4 bytes into a 1-byte
+    /// `MaybeUninit` (OOB write) and `set_value::<[u8; 5]>` read past the end
+    /// of the value (OOB read) — both UB, caught by Miri.
+    #[test]
+    fn test_value_odd_size_types() {
+        let trie = ConcurrentCsppTrie::with_capacity(8, cap(1024 * 1024));
+        let (_, vp) = trie.insert(b"odd");
+
+        trie.set_value(vp, 0xABu8);
+        assert_eq!(trie.get_value::<u8>(vp), 0xAB);
+
+        trie.set_value(vp, 0xBEEFu16);
+        assert_eq!(trie.get_value::<u16>(vp), 0xBEEF);
+
+        let v5 = [1u8, 2, 3, 4, 5];
+        trie.set_value(vp, v5);
+        assert_eq!(trie.get_value::<[u8; 5]>(vp), v5);
+
+        let v7 = [9u8, 8, 7, 6, 5, 4, 3];
+        trie.set_value(vp, v7);
+        assert_eq!(trie.get_value::<[u8; 7]>(vp), v7);
+
+        trie.set_value(vp, 0x1122_3344_5566_7788u64);
+        assert_eq!(trie.get_value::<u64>(vp), 0x1122_3344_5566_7788);
+    }
+
+    /// Phase 4.1 contract: single-word (≤ 4 byte) values are atomic — a
+    /// reader racing with writers must only ever observe fully-written
+    /// values, never a torn mix.
+    #[test]
+    fn test_value_single_word_atomicity_stress() {
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicBool;
+        use std::thread;
+
+        const PATTERN_A: u32 = 0xAAAA_AAAA;
+        const PATTERN_B: u32 = 0x5555_5555;
+        let iters = if cfg!(miri) { 50 } else { 100_000 };
+
+        let trie = Arc::new(ConcurrentCsppTrie::with_capacity(4, cap(1024 * 1024)));
+        let (_, vp) = trie.insert(b"atomic");
+        trie.set_value(vp, PATTERN_A);
+        let stop = Arc::new(AtomicBool::new(false));
+
+        let mut writers = Vec::new();
+        for w in 0..2 {
+            let trie = Arc::clone(&trie);
+            let stop = Arc::clone(&stop);
+            writers.push(thread::spawn(move || {
+                let mut i = 0u32;
+                while !stop.load(Ordering::Relaxed) {
+                    let val = if (i + w).is_multiple_of(2) { PATTERN_A } else { PATTERN_B };
+                    trie.set_value(vp, val);
+                    i = i.wrapping_add(1);
+                }
+            }));
+        }
+
+        let mut readers = Vec::new();
+        for _ in 0..2 {
+            let trie = Arc::clone(&trie);
+            readers.push(thread::spawn(move || {
+                for _ in 0..iters {
+                    let v = trie.get_value::<u32>(vp);
+                    assert!(
+                        v == PATTERN_A || v == PATTERN_B,
+                        "torn single-word read: {:#x}",
+                        v
+                    );
+                }
+            }));
+        }
+
+        for r in readers {
+            r.join().unwrap();
+        }
+        stop.store(true, Ordering::Relaxed);
+        for w in writers {
+            w.join().unwrap();
+        }
+    }
+
+    /// Phase 4.2 regression: deferred reclamation is observable, bounded by
+    /// the number of replacements, and drains once the stalled reader unpins.
+    #[test]
+    fn test_pending_reclaims_drains_after_reader_unpins() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let n_keys = if cfg!(miri) { 12 } else { 200 };
+        let trie = Arc::new(ConcurrentCsppTrie::with_capacity(4, cap(4 * 1024 * 1024)));
+
+        // Stalled reader: pins an epoch guard and holds it across writer churn.
+        let stalled_guard = epoch::pin();
+
+        {
+            let trie = Arc::clone(&trie);
+            let writer = thread::spawn(move || {
+                // Every insert under the shared "p" prefix replaces the branch
+                // node, producing one deferred free per insert.
+                for i in 0..n_keys {
+                    let key = format!("p{:03}", i);
+                    trie.insert(key.as_bytes());
+                }
+            });
+            writer.join().unwrap();
+        }
+
+        let pending_while_stalled = trie.pending_reclaims();
+        assert!(
+            pending_while_stalled > 0,
+            "writer churn must produce deferred garbage while a reader is pinned"
+        );
+        // Bounded: at most one deferred free per insert (plus none from reads).
+        assert!(
+            pending_while_stalled <= n_keys,
+            "deferred garbage ({}) exceeds replacement count ({})",
+            pending_while_stalled,
+            n_keys
+        );
+
+        // Release the stalled reader and drive the collector. Other tests in
+        // this process pin the global epoch concurrently, so advancing can
+        // take a while — poll with a generous bound.
+        drop(stalled_guard);
+        for _ in 0..10_000 {
+            if trie.pending_reclaims() == 0 {
+                break;
+            }
+            let g = epoch::pin();
+            g.flush();
+            drop(g);
+            if !cfg!(miri) {
+                thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }
+        assert_eq!(
+            trie.pending_reclaims(),
+            0,
+            "deferred garbage must drain after the stalled reader unpins"
+        );
+        assert!(
+            trie.frag_size() > 0,
+            "reclaimed slots must reach the shared freelist"
+        );
+    }
+
+    /// All strings over {a, b} of length 1..=max_len — maximally nested
+    /// prefixes, so concurrent inserts constantly fork/split/mark-final the
+    /// same nodes.
+    fn nested_keys(max_len: usize) -> Vec<Vec<u8>> {
+        let mut keys = Vec::new();
+        for len in 1..=max_len {
+            for i in 0..(1usize << len) {
+                let key: Vec<u8> = (0..len)
+                    .map(|b| if (i >> b) & 1 == 0 { b'a' } else { b'b' })
+                    .collect();
+                keys.push(key);
+            }
+        }
+        keys
+    }
+
+    /// Deterministic per-thread shuffle so every round uses different
+    /// interleavings without a rand dependency.
+    fn shuffle_keys(keys: &mut [Vec<u8>], seed: u64) {
+        let mut state = seed | 1;
+        for i in (1..keys.len()).rev() {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let j = (state >> 33) as usize % (i + 1);
+            keys.swap(i, j);
+        }
+    }
+
+    /// Phase 4.3 (C5) regression: all threads insert the SAME key set in
+    /// different orders. Every key must be claimed `is_new` exactly once and
+    /// every key must be found afterwards. Before the multi-writer soundness
+    /// fixes (lazy_free ignoring the lock bit, missing post-mark children
+    /// validation, in-place is_final store, stale flag bits in copied
+    /// headers), contended replacement lost concurrently-inserted children.
+    #[test]
+    fn test_contended_inserts_same_key_set() {
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicUsize;
+        use std::thread;
+
+        let (max_len, n_threads, rounds) = if cfg!(miri) { (4, 3, 1) } else { (8, 8, 10) };
+        let keys = nested_keys(max_len);
+
+        for valsize in [0usize, 4] {
+            for round in 0..rounds {
+                let trie = Arc::new(ConcurrentCsppTrie::with_capacity(
+                    valsize,
+                    cap(8 * 1024 * 1024),
+                ));
+                let new_count = Arc::new(AtomicUsize::new(0));
+
+                let mut threads = Vec::new();
+                for t in 0..n_threads {
+                    let trie = Arc::clone(&trie);
+                    let new_count = Arc::clone(&new_count);
+                    let mut my_keys = keys.clone();
+                    shuffle_keys(&mut my_keys, (round * 31 + t + 1) as u64);
+                    threads.push(thread::spawn(move || {
+                        for key in &my_keys {
+                            let (is_new, _valpos) = trie.insert(key);
+                            if is_new {
+                                new_count.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                    }));
+                }
+                for t in threads {
+                    t.join().unwrap();
+                }
+
+                assert_eq!(
+                    new_count.load(Ordering::Relaxed),
+                    keys.len(),
+                    "valsize={} round={}: each key must be claimed is_new exactly once",
+                    valsize,
+                    round
+                );
+                assert_eq!(
+                    trie.num_words(),
+                    keys.len(),
+                    "valsize={} round={}: num_words mismatch",
+                    valsize,
+                    round
+                );
+                for key in &keys {
+                    assert!(
+                        trie.lookup(key).is_some(),
+                        "valsize={} round={}: lost key {:?}",
+                        valsize,
+                        round,
+                        String::from_utf8_lossy(key)
+                    );
+                }
+            }
+        }
+    }
+
+    /// Phase 4.3: hammer the root fast-node child CAS — many threads racing
+    /// to install the same 256 first-level children plus mark the root final.
+    /// The CAS is from NIL_STATE only and no child slot ever returns to NIL
+    /// (there is no remove), so exactly one thread must win each slot.
+    #[test]
+    fn test_contended_root_fastnode_cas() {
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicUsize;
+        use std::thread;
+
+        let (n_threads, n_labels) = if cfg!(miri) { (3, 16) } else { (8, 256) };
+        let trie = Arc::new(ConcurrentCsppTrie::with_capacity(4, cap(8 * 1024 * 1024)));
+        let new_count = Arc::new(AtomicUsize::new(0));
+
+        let mut threads = Vec::new();
+        for t in 0..n_threads {
+            let trie = Arc::clone(&trie);
+            let new_count = Arc::clone(&new_count);
+            threads.push(thread::spawn(move || {
+                for i in 0..n_labels {
+                    // Vary insertion order per thread.
+                    let ch = ((i * 17 + t * 61) % n_labels) as u8;
+                    let (is_new, _) = trie.insert(&[ch]);
+                    if is_new {
+                        new_count.fetch_add(1, Ordering::Relaxed);
+                    }
+                    // Also race the empty key → MarkFinalStateOnFastNode CAS.
+                    let (is_new_root, _) = trie.insert(b"");
+                    if is_new_root {
+                        new_count.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }));
+        }
+        for t in threads {
+            t.join().unwrap();
+        }
+
+        assert_eq!(new_count.load(Ordering::Relaxed), n_labels + 1);
+        assert_eq!(trie.num_words(), n_labels + 1);
+        assert!(trie.lookup(b"").is_some());
+        for ch in 0..n_labels {
+            assert!(trie.lookup(&[ch as u8]).is_some());
+        }
+    }
+
     #[test]
     fn test_concurrent_trie_multithreaded() {
         use std::sync::Arc;
@@ -2122,7 +2633,7 @@ mod tests {
 
         let n_threads = 4;
         let n_per_thread = if cfg!(miri) { 5 } else { 100 };
-        let trie = Arc::new(ConcurrentCsppTrie::with_capacity(8, 4 * 1024 * 1024));
+        let trie = Arc::new(ConcurrentCsppTrie::with_capacity(8, cap(4 * 1024 * 1024)));
 
         // Phase 1: each thread pre-builds its key range in the trie sequentially
         // to establish the structural nodes without contention.
@@ -2183,7 +2694,7 @@ impl Drop for ConcurrentCsppTrie {
 
 #[test]
 fn test_concurrent_cspp_trie_longest_prefix() {
-    let trie = ConcurrentCsppTrie::with_capacity(8, 4 * 1024 * 1024);
+    let trie = ConcurrentCsppTrie::with_capacity(8, tests::cap(4 * 1024 * 1024));
 
     trie.insert(b"http");
     trie.insert(b"https");
@@ -2198,7 +2709,7 @@ fn test_concurrent_cspp_trie_longest_prefix() {
 
 #[test]
 fn test_concurrent_cspp_trie_deletion_support() {
-    let trie = ConcurrentCsppTrie::with_capacity(8, 4 * 1024 * 1024);
+    let trie = ConcurrentCsppTrie::with_capacity(8, tests::cap(4 * 1024 * 1024));
     trie.insert(b"test1");
     assert_eq!(trie.num_words(), 1);
     trie.insert(b"test2");

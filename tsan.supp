@@ -1,0 +1,8 @@
+# ThreadSanitizer suppressions (used by `make tsan_cspp`).
+#
+# crossbeam-epoch synchronizes its garbage queue and Local teardown with
+# SeqCst fences, which TSAN does not model — every report matched here has
+# all racing frames inside crossbeam_epoch (queue::Node<SealedBag>::drop,
+# internal::Local::drop). Known false positives; zipora frames in a report
+# would NOT be matched by these entries and still fail the run.
+race:crossbeam_epoch
