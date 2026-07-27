@@ -100,7 +100,14 @@ pub struct NodeView<'a> {
 impl<'a> NodeView<'a> {
     #[inline(always)]
     pub fn new(nodes: &'a [PatriciaNode], curr: u32) -> Self {
-        debug_assert!((curr as usize) < nodes.len());
+        // §8.5: runtime check — this constructor is safe and public, and the
+        // accessors below use get_unchecked(curr) relying on this bound.
+        assert!(
+            (curr as usize) < nodes.len(),
+            "NodeView::new: curr={} out of bounds (nodes.len()={})",
+            curr,
+            nodes.len()
+        );
         Self { nodes, curr }
     }
 
@@ -118,14 +125,23 @@ impl<'a> NodeView<'a> {
 
     #[inline(always)]
     pub fn child(&self, offset: usize) -> u32 {
-        // SAFETY: offset bounded by cnt_type layout, curr+offset within mempool bounds verified by caller
-        unsafe { self.nodes.get_unchecked(self.curr as usize + offset).child }
+        // §8.5: `offset` is caller-provided on a safe public API — use checked
+        // indexing (panics on OOB) instead of get_unchecked. In-crate callers
+        // keep offset bounded by the cnt_type layout, so the branch is
+        // perfectly predicted on the lookup hot path.
+        let node = &self.nodes[self.curr as usize + offset];
+        // SAFETY: PatriciaNode union fields are all 4-byte Copy POD views of
+        // the same word — every bit pattern is a valid u32.
+        unsafe { node.child }
     }
 
     #[inline(always)]
     pub fn bytes(&self, offset: usize) -> [u8; 4] {
-        // SAFETY: offset bounded by cnt_type layout, curr+offset within mempool bounds verified by caller
-        unsafe { self.nodes.get_unchecked(self.curr as usize + offset).bytes }
+        // §8.5: checked indexing — see child().
+        let node = &self.nodes[self.curr as usize + offset];
+        // SAFETY: PatriciaNode union fields are all 4-byte Copy POD views of
+        // the same word — every bit pattern is a valid [u8; 4].
+        unsafe { node.bytes }
     }
 
     #[inline(always)]
@@ -494,20 +510,40 @@ impl CsppTrie {
         self.n_words
     }
 
+    /// Read a value at `valpos` (byte offset into the node mempool).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `valpos + size_of::<T>()` exceeds the mempool size (§8.5:
+    /// `valpos` is caller-provided on this safe public API, so the bound is
+    /// enforced at runtime, not just in debug builds).
     #[inline]
     pub fn get_value<T: Copy>(&self, valpos: usize) -> T {
-        debug_assert!(valpos + std::mem::size_of::<T>() <= self.mempool.len() * 4);
-        // SAFETY: valpos validated by debug_assert, T is Copy, pointer derived from valid mempool
+        assert!(
+            valpos.checked_add(std::mem::size_of::<T>()).is_some_and(|end| end <= self.mempool.len() * 4),
+            "get_value: valpos out of bounds"
+        );
+        // SAFETY: valpos + size_of::<T>() <= mempool byte size validated above,
+        // T is Copy, pointer derived from valid mempool
         unsafe {
             let ptr = self.mempool.as_ptr() as *const u8;
             std::ptr::read_unaligned(ptr.add(valpos) as *const T)
         }
     }
 
+    /// Write a value at `valpos` (byte offset into the node mempool).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `valpos + size_of::<T>()` exceeds the mempool size (§8.5).
     #[inline]
     pub fn set_value<T: Copy>(&mut self, valpos: usize, val: T) {
-        debug_assert!(valpos + std::mem::size_of::<T>() <= self.mempool.len() * 4);
-        // SAFETY: valpos validated by debug_assert, T is Copy, pointer derived from valid mempool
+        assert!(
+            valpos.checked_add(std::mem::size_of::<T>()).is_some_and(|end| end <= self.mempool.len() * 4),
+            "set_value: valpos out of bounds"
+        );
+        // SAFETY: valpos + size_of::<T>() <= mempool byte size validated above,
+        // T is Copy, pointer derived from valid mempool
         unsafe {
             let ptr = self.mempool.as_mut_ptr() as *mut u8;
             std::ptr::write_unaligned(ptr.add(valpos) as *mut T, val);
@@ -1705,6 +1741,24 @@ impl<'a, T: Copy> CsppTrieIterator<'a, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// §8.5: out-of-bounds valpos must panic (runtime check), never read or
+    /// write past the mempool in release builds.
+    #[test]
+    #[should_panic(expected = "get_value: valpos out of bounds")]
+    fn test_get_value_out_of_bounds_panics() {
+        let mut trie = CsppTrie::new(16);
+        trie.insert(b"a");
+        let _: u64 = trie.get_value(usize::MAX - 4);
+    }
+
+    #[test]
+    #[should_panic(expected = "set_value: valpos out of bounds")]
+    fn test_set_value_out_of_bounds_panics() {
+        let mut trie = CsppTrie::new(16);
+        trie.insert(b"a");
+        trie.set_value(usize::MAX - 4, 42u32);
+    }
 
     #[test]
     fn test_cspp_trie_basic_insertion_and_lookup() {

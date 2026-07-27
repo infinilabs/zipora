@@ -275,6 +275,19 @@ impl MmapVecStats {
 }
 
 /// Memory-mapped vector implementation
+///
+/// # Pointer-stability invariant (H13)
+///
+/// Any growth operation (`push` → `grow`, `reserve`, `resize`,
+/// `resize_to_capacity`) may **remap the backing file to a different
+/// address**: the cached `header`/`data` pointers are re-derived from a
+/// brand-new `MmapAllocation` and the old mapping is unmapped. Consequently,
+/// raw pointers or slices derived from this vector (`as_slice`,
+/// `as_mut_slice`, `get`, iterator items) must never be held across any
+/// `&mut self` call — Rust's borrow rules enforce this for safe callers, and
+/// every internal use of `data_ptr()` re-reads the cached pointer *after*
+/// any potential remap. Unsafe code must not stash `data_ptr()` results
+/// across growth operations.
 pub struct MmapVec<T> {
     /// Path to the backing file
     file_path: PathBuf,

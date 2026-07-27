@@ -27,6 +27,52 @@ mod tests {
         assert!(!t.contains(b"worlds"));
     }
 
+    /// H16: keys deeper than 256 bytes must survive insert/relocate cycles.
+    /// The old fixed 256-step `is_ancestor` bound silently returned `false`
+    /// for deeper states, allowing consult() to relocate an ancestor of the
+    /// current traversal state and corrupt the trie.
+    #[test]
+    fn test_long_keys_relocation_consistency() {
+        let mut t = DoubleArrayTrie::new();
+        let mut keys: Vec<Vec<u8>> = Vec::new();
+
+        // 400-byte shared prefix so all divergence happens beyond depth 256.
+        let prefix = vec![b'p'; 400];
+
+        for i in 0..64u8 {
+            // Sibling fan-out at depth 400 (forces base conflicts/relocations
+            // at deep states).
+            let mut k = prefix.clone();
+            k.push(i);
+            k.extend_from_slice(b"xyz");
+            keys.push(k);
+
+            // 464-byte keys continuing past the fan-out point.
+            let mut deep = prefix.clone();
+            deep.extend(std::iter::repeat_n(i ^ 0x5A, 64));
+            keys.push(deep);
+
+            // Interleave short keys to churn slot allocation near the root.
+            keys.push(vec![i, i.wrapping_add(1), i.wrapping_add(2)]);
+        }
+        keys.sort();
+        keys.dedup();
+
+        for k in &keys {
+            assert!(t.insert(k).unwrap(), "duplicate insert for len {}", k.len());
+        }
+
+        // Full re-lookup: every inserted key must still be present.
+        for k in &keys {
+            assert!(t.contains(k), "lost key of len {}", k.len());
+        }
+        assert_eq!(t.len(), keys.len());
+
+        // Negative probes around the deep prefix stay negative.
+        assert!(!t.contains(&vec![b'p'; 400]));
+        assert!(!t.contains(&vec![b'p'; 401]));
+    }
+
     #[test]
     fn test_duplicate_insert() {
         let mut t = DoubleArrayTrie::new();
@@ -142,6 +188,16 @@ mod tests {
         assert!(t.is_term(s3));
 
         assert_eq!(t.state_move(0, b'z'), NIL_STATE);
+    }
+
+    /// §8.5: state_move with a garbage (out-of-range) state must return
+    /// NIL_STATE in release builds too, never read out of bounds.
+    #[test]
+    fn test_state_move_out_of_range_state() {
+        let mut t = DoubleArrayTrie::new();
+        t.insert(b"abc").unwrap();
+        assert_eq!(t.state_move(u32::MAX, b'a'), NIL_STATE);
+        assert_eq!(t.state_move(1 << 30, b'a'), NIL_STATE);
     }
 
     #[test]
@@ -680,6 +736,9 @@ mod tests {
     fn test_fuzzy_iterator_empty_trie() {
         let trie = DoubleArrayTrieMap::<i32>::new();
         assert_eq!(trie.iter_fuzzy(b"test", 2).count(), 0);
+        // H15 regression: empty query on an empty trie must not panic.
+        assert_eq!(trie.iter_fuzzy(b"", 0).count(), 0);
+        assert_eq!(trie.iter_fuzzy(b"", 3).count(), 0);
     }
 
     #[test]

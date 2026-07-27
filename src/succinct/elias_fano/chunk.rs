@@ -139,6 +139,15 @@ pub(crate) fn chunk_skip_to_high(chunk: &ChunkView<'_>, target_high: usize) -> (
             // The target zero is in this word. Find position of the
             // zeros_remaining-th zero bit (1-indexed → select the
             // (zeros_remaining-1)-th set bit in the inverted word).
+            //
+            // select_in_word precondition (H12): `zeros_remaining >= 1` holds
+            // because target_high == 0 returned early and the subtraction
+            // branch below keeps it positive; `zeros_remaining <= zeros ==
+            // popcount(inverted)` is this branch's guard. Together:
+            // `rank = zeros_remaining - 1 < popcount(inverted)`, which also
+            // implies `inverted != 0` (an all-ones word has zeros == 0 and
+            // never enters this branch).
+            debug_assert!(zeros_remaining >= 1 && zeros_remaining <= zeros);
             let inverted = (!w) & valid_mask;
             let zero_pos_in_word = select_in_word(inverted, zeros_remaining - 1);
             let abs_pos = wi * 64 + zero_pos_in_word;
@@ -228,4 +237,54 @@ pub(crate) fn chunk_first_one_cached(high_bits: &[u64]) -> usize {
         }
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn view<'a>(high_bits: &'a [u64], low_bits: &'a [u64], count: usize, len: usize) -> ChunkView<'a> {
+        ChunkView {
+            low_bits,
+            high_bits,
+            low_bit_width: 0,
+            count,
+            min_value: 0,
+            high_len_bits: len,
+        }
+    }
+
+    /// H12 edge: a word that is all ones within the valid mask has zero
+    /// zeros — `chunk_skip_to_high` must skip over it without ever calling
+    /// `select_in_word` on its all-zero inverted word.
+    #[test]
+    fn test_skip_to_high_all_ones_word() {
+        // word0 = all ones (64 elements, no zeros); word1 = 0b0101 with
+        // high_len_bits = 68 → valid bits {64:1, 65:0, 66:1, 67:0}.
+        let high_bits = [u64::MAX, 0b0101];
+        let low_bits = [0u64, 0];
+        let chunk = view(&high_bits, &low_bits, 66, 68);
+
+        // First zero lives at abs bit 65; 65 ones precede-or-include it.
+        assert_eq!(chunk_skip_to_high(&chunk, 1), (65, 66));
+        // Second zero at abs bit 67; 66 ones before it.
+        assert_eq!(chunk_skip_to_high(&chunk, 2), (66, 68));
+        // Past all zeros → clamps to (count, high_len_bits).
+        assert_eq!(chunk_skip_to_high(&chunk, 3), (66, 68));
+    }
+
+    /// H12 edge: an all-zeros word inverts to an all-ones word — the
+    /// `select_in_word(inverted, 63)` call at the word boundary must stay
+    /// in range (this is the "all-ones inverted word" case).
+    #[test]
+    fn test_skip_to_high_all_zeros_word() {
+        let high_bits = [0u64, u64::MAX];
+        let low_bits = [0u64, 0];
+        let chunk = view(&high_bits, &low_bits, 64, 128);
+
+        // 64th zero is bit 63 (rank 63 in the all-ones inverted word).
+        assert_eq!(chunk_skip_to_high(&chunk, 64), (0, 64));
+        // First zero is bit 0.
+        assert_eq!(chunk_skip_to_high(&chunk, 1), (0, 1));
+    }
 }

@@ -228,13 +228,34 @@ impl UintVecMin0 {
     }
 
     /// Internal fast get (bounds already checked)
+    ///
+    /// # Tail-read invariant (H4)
+    ///
+    /// This performs an 8-byte unaligned read at `byte_idx = bits*idx/8`.
+    /// For any `idx < size` with `bits <= 58`, the read end
+    /// `byte_idx + 8 <= floor(bits*(size-1)/8) + 8` never exceeds
+    /// `touch_size = ceil(bits*size/8) + 7` (integer arithmetic:
+    /// `end - touch < 1`), and every mutation path (`resize`,
+    /// `resize_with_uintbits`, `shrink_to_fit`, `push_back`, `risk_set_data`)
+    /// sizes `data` to `compute_mem_size(bits, size)` =
+    /// `align16(touch_size)`, zero-filling via `Vec::resize` — so the tail
+    /// bytes are always allocated AND initialized (no uninit padding read).
     #[inline]
     fn fast_get_internal(&self, idx: usize) -> usize {
         let bit_idx = self.bits * idx;
         let byte_idx = bit_idx / 8;
 
-        // SAFETY: Caller validated idx < size and bits <= 58, resize ensures sufficient data capacity
-        // Unaligned load is safe as bit-packed values may span alignment boundaries
+        debug_assert!(
+            byte_idx + std::mem::size_of::<usize>() <= self.data.len(),
+            "fast_get_internal tail-read invariant violated: byte_idx={} + 8 > data.len()={}",
+            byte_idx,
+            self.data.len()
+        );
+
+        // SAFETY: Caller validated idx < size and bits <= 58; the tail-read
+        // invariant above guarantees data[byte_idx..byte_idx+8] is in-bounds
+        // and zero-initialized (see doc comment). Unaligned load is required
+        // as bit-packed values may span alignment boundaries.
         let val =
             unsafe { std::ptr::read_unaligned(self.data.as_ptr().add(byte_idx) as *const usize) };
         (val >> (bit_idx % 8)) & self.mask

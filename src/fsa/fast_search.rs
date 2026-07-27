@@ -143,9 +143,15 @@ pub fn fast_search_byte(data: &[u8], key: u8) -> usize {
 
 /// Search for `key` in sorted `data`, max 16 bytes.
 /// Uses SSE4.2 intrinsics when available for optimal performance.
+///
+/// Inputs longer than 16 bytes fall back to binary search (§8.5: the SSE4.2
+/// path copies `len` bytes into a 16-byte stack buffer, so it must never be
+/// reached with an oversized slice — a debug_assert alone is not a guard).
 #[inline]
 pub fn fast_search_byte_max_16(data: &[u8], key: u8) -> usize {
-    debug_assert!(data.len() <= 16);
+    if data.len() > 16 {
+        return binary_search_byte(data, key);
+    }
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("sse4.2") {
@@ -411,6 +417,17 @@ mod tests {
         assert_eq!(binary_search_byte(&data, 2), 0);
         assert_eq!(binary_search_byte(&data, 20), 5);
         assert_eq!(binary_search_byte(&data, 12), 3);
+    }
+
+    /// §8.5: oversized input must take the safe binary-search fallback (the
+    /// SSE4.2 path copies into a 16-byte stack buffer) and still be correct.
+    #[test]
+    fn test_fast_search_byte_max_16_oversized_input_falls_back() {
+        let data: Vec<u8> = (0..32).map(|i| i * 3).collect();
+        for (i, &v) in data.iter().enumerate() {
+            assert_eq!(fast_search_byte_max_16(&data, v), i);
+        }
+        assert_eq!(fast_search_byte_max_16(&data, 200), data.len());
     }
 
     #[test]

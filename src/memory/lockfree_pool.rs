@@ -33,6 +33,14 @@ use std::time::Duration;
 /// Alignment for lock-free operations (4 or 8 bytes)
 const ALIGN_SIZE: usize = 8;
 
+// H13: the free-list next-pointers are read/written by type-punning block
+// memory to `AtomicU32` (see `offset_to_ptr` call sites). That pun is only
+// sound while every block offset is aligned to at least 4 bytes.
+const _: () = assert!(
+    ALIGN_SIZE >= 4 && ALIGN_SIZE.is_power_of_two(),
+    "AtomicU32 free-list type-pun requires ALIGN_SIZE >= 4 (power of two)"
+);
+
 /// Number of fast bins for small/medium allocations
 const FAST_BIN_COUNT: usize = 64;
 /// Threshold for fast bin vs skip list (above this uses skip list)
