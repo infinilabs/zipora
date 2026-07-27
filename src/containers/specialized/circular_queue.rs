@@ -400,11 +400,18 @@ impl<T: fmt::Debug, const N: usize> fmt::Debug for FixedCircularQueue<T, N> {
     }
 }
 
-// SAFETY: FixedCircularQueue is Send if T is Send
-unsafe impl<T: Send, const N: usize> Send for FixedCircularQueue<T, N> {}
-
-// SAFETY: FixedCircularQueue is Sync if T is Send (single-producer/single-consumer)
-unsafe impl<T: Send, const N: usize> Sync for FixedCircularQueue<T, N> {}
+// Send/Sync are derived automatically (H3): `[MaybeUninit<T>; N]` is
+// Send/Sync iff `T` is, and the atomic indices are both. In particular,
+// `Sync` correctly requires `T: Sync` — `front(&self)`/`back(&self)` hand
+// out `&T` to any thread holding `&Self`, so the previous manual
+// `unsafe impl<T: Send> Sync` (which loosened the bound to `T: Send`) was
+// unsound: two threads could obtain `&Cell<_>` concurrently.
+//
+// Note this queue is NOT a lock-free SPSC queue: every mutating operation
+// (`push_back`, `pop_front`, `push`, `pop`, `clear`) takes `&mut self`, so
+// concurrent producers/consumers need external synchronization (a lock) to
+// obtain `&mut self`. The atomic head/tail/count fields merely make
+// read-only observers (`len`, `Debug`) race-free.
 
 /// Ultra-high-performance automatically growing circular queue
 ///
@@ -1181,7 +1188,18 @@ impl<T: fmt::Debug> fmt::Debug for AutoGrowCircularQueue<T> {
 }
 
 impl<T: Clone> Clone for AutoGrowCircularQueue<T> {
+    /// All-or-nothing clone (H3): never returns a silently shorter queue.
+    ///
+    /// # Panics
+    ///
+    /// Panics if buffer allocation fails mid-clone (matching `Vec`'s
+    /// abort-on-OOM convention). If an element's `clone()` panics, the
+    /// partially built queue is dropped normally during unwinding — the
+    /// caller never observes a partial clone.
     fn clone(&self) -> Self {
+        const ALLOC_FAILED: &str =
+            "AutoGrowCircularQueue::clone: allocation failed (all-or-nothing clone)";
+
         let mut new_queue = Self::with_capacity(self.capacity);
 
         if self.len == 0 {
@@ -1193,31 +1211,19 @@ impl<T: Clone> Clone for AutoGrowCircularQueue<T> {
             for i in self.head..self.tail {
                 // SAFETY: All elements between head and tail are initialized
                 let value = unsafe { &*self.buffer.add(i) };
-                // Clone should not fail since we allocated with same capacity
-                if new_queue.push_back(value.clone()).is_err() {
-                    // If push fails, return partial clone
-                    return new_queue;
-                }
+                new_queue.push_back(value.clone()).expect(ALLOC_FAILED);
             }
         } else {
             // Two regions - clone both segments
             for i in self.head..self.capacity {
                 // SAFETY: All elements between head and capacity are initialized
                 let value = unsafe { &*self.buffer.add(i) };
-                // Clone should not fail since we allocated with same capacity
-                if new_queue.push_back(value.clone()).is_err() {
-                    // If push fails, return partial clone
-                    return new_queue;
-                }
+                new_queue.push_back(value.clone()).expect(ALLOC_FAILED);
             }
             for i in 0..self.tail {
                 // SAFETY: All elements between 0 and tail are initialized
                 let value = unsafe { &*self.buffer.add(i) };
-                // Clone should not fail since we allocated with same capacity
-                if new_queue.push_back(value.clone()).is_err() {
-                    // If push fails, return partial clone
-                    return new_queue;
-                }
+                new_queue.push_back(value.clone()).expect(ALLOC_FAILED);
             }
         }
 
@@ -1474,6 +1480,63 @@ mod tests {
         assert_eq!(queue, cloned);
 
         Ok(())
+    }
+
+    /// H3: clone is all-or-nothing. If an element's `clone()` panics, the
+    /// panic propagates (no silently shorter queue is returned) and every
+    /// already-cloned element is dropped exactly once during unwinding.
+    #[test]
+    fn test_auto_queue_clone_panic_is_all_or_nothing() -> Result<()> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static LIVE: AtomicUsize = AtomicUsize::new(0);
+        static CLONES: AtomicUsize = AtomicUsize::new(0);
+
+        struct PanicOnThirdClone;
+        impl Clone for PanicOnThirdClone {
+            fn clone(&self) -> Self {
+                if CLONES.fetch_add(1, Ordering::SeqCst) == 2 {
+                    panic!("intentional clone failure");
+                }
+                LIVE.fetch_add(1, Ordering::SeqCst);
+                PanicOnThirdClone
+            }
+        }
+        impl Drop for PanicOnThirdClone {
+            fn drop(&mut self) {
+                LIVE.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+
+        let mut queue = AutoGrowCircularQueue::new();
+        for _ in 0..4 {
+            LIVE.fetch_add(1, Ordering::SeqCst);
+            queue.push_back(PanicOnThirdClone)?;
+        }
+        assert_eq!(LIVE.load(Ordering::SeqCst), 4);
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| queue.clone()));
+        assert!(result.is_err(), "clone must propagate the element panic");
+        // The 2 successfully cloned elements were dropped during unwinding;
+        // only the 4 originals remain live.
+        assert_eq!(LIVE.load(Ordering::SeqCst), 4);
+
+        drop(queue);
+        assert_eq!(LIVE.load(Ordering::SeqCst), 0);
+        Ok(())
+    }
+
+    /// H3: FixedCircularQueue Send/Sync now follow the auto-trait rules —
+    /// Sync requires `T: Sync` (front()/back() hand out `&T` cross-thread).
+    #[test]
+    fn test_fixed_queue_auto_send_sync() {
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+        assert_send::<FixedCircularQueue<i32, 4>>();
+        assert_sync::<FixedCircularQueue<i32, 4>>();
+        assert_send::<FixedCircularQueue<std::cell::Cell<i32>, 4>>();
+        // FixedCircularQueue<Cell<i32>, 4> is intentionally NOT Sync —
+        // that would allow two threads to alias `&Cell` via front().
     }
 
     #[test]

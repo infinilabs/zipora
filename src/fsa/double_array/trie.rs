@@ -92,7 +92,14 @@ impl DoubleArrayTrie {
     /// Returns NIL_STATE if transition doesn't exist.
     #[inline(always)]
     pub fn state_move(&self, curr: u32, ch: u8) -> u32 {
-        // SAFETY: `curr` is typically from a previous state_move or 0 (root).
+        // §8.5: `curr` is caller-provided on this safe public API, so it gets
+        // a real bounds check (an out-of-range state simply has no
+        // transitions). `next` below remains structurally bounded by the
+        // set_base_padded invariant, as in contains()/lookup_state().
+        if curr as usize >= self.states.len() {
+            return NIL_STATE;
+        }
+        // SAFETY: curr bounds-checked above.
         let base = unsafe { self.states.get_unchecked(curr as usize) }.child0();
         let next = (base ^ ch as u32) as usize;
         // SAFETY: same invariant as contains()
@@ -1065,12 +1072,18 @@ impl DoubleArrayTrie {
     /// Check if `ancestor` is an ancestor of `descendant` in the trie.
     ///
     /// Required for correctness in consult (relocate-smaller-side): relocating
-    /// an ancestor of `curr` would invalidate our traversal state. The depth-256
-    /// bound prevents infinite loops on malformed parent chains.
+    /// an ancestor of `curr` would invalidate our traversal state.
+    ///
+    /// H16: the walk is bounded by `states.len()` — an acyclic parent chain
+    /// can never be longer than the number of states, so this bound is
+    /// exact for any key length (the previous fixed 256-step bound silently
+    /// returned `false` for keys deeper than 256 bytes, corrupting the trie
+    /// on relocation). A malformed *cyclic* parent chain still terminates.
     fn is_ancestor(&self, ancestor: u32, descendant: u32) -> bool {
         let mut curr = descendant;
         let mut depth = 0;
-        while curr != 0 && depth < 256 {
+        let max_depth = self.states.len();
+        while curr != 0 && depth < max_depth {
             let parent = self.states[curr as usize].parent();
             if parent == ancestor {
                 return true;

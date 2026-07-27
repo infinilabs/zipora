@@ -371,7 +371,18 @@ fn has_fast_bmi2_detect() -> bool {
 }
 
 /// Select the `rank`-th set bit in a 64-bit word (0-indexed).
-/// Returns the bit position (0..63).
+/// Returns the bit position (0..=63).
+///
+/// # Precondition / out-of-range behavior (H12)
+///
+/// The intended contract is `rank < word.count_ones()`. Debug builds assert
+/// it. Release builds are **total and memory-safe**: if
+/// `word.count_ones() <= rank < 64`, every tier returns the sentinel `64`
+/// ("no such bit") — never an arbitrary in-range position that a caller
+/// could use to index out of bounds. For `rank >= 64` the PDEP tier returns
+/// an unspecified (but still memory-safe) value; the POPCNT and scalar tiers
+/// still return `64`. All in-crate callers derive `rank` from a
+/// `count_ones()`-guarded comparison, so `rank <= 63` always holds.
 ///
 /// Three-tier dispatch (resolved once via cached function pointer):
 /// 1. **BMI2 PDEP** (3 cycles) — Intel Haswell+ and AMD Zen 3+
@@ -410,6 +421,9 @@ pub fn select_in_word(word: u64, rank: usize) -> usize {
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn select_in_word_pdep(word: u64, rank: usize) -> usize {
+    // Out-of-range rank (>= popcount, < 64): PDEP deposits a bit that does not
+    // exist in `word`, producing mask == 0 and trailing_zeros() == 64 — the
+    // documented sentinel falls out for free, with zero cost on the hot path.
     // SAFETY: BMI2 availability verified at dispatch time by has_fast_bmi2().
     unsafe {
         let mask = std::arch::x86_64::_pdep_u64(1u64 << rank, word);
@@ -424,6 +438,12 @@ fn select_in_word_pdep(word: u64, rank: usize) -> usize {
 /// on modern out-of-order CPUs.
 #[inline(always)]
 fn select_in_word_popcnt(word: u64, rank: usize) -> usize {
+    // Honor the documented total contract: out-of-range rank returns the
+    // sentinel 64 instead of an arbitrary in-range position (the binary
+    // search below would otherwise degrade to a garbage 0..=63 result).
+    if rank >= word.count_ones() as usize {
+        return 64;
+    }
     let mut r = rank;
     let mut pos = 0usize;
 
@@ -469,6 +489,11 @@ fn select_in_word_popcnt(word: u64, rank: usize) -> usize {
 /// O(rank) — worst case 63 iterations, but typically rank is small.
 #[inline(always)]
 fn select_in_word_scalar(word: u64, rank: usize) -> usize {
+    // Total contract: out-of-range rank returns the sentinel 64. This also
+    // bounds the loop below (otherwise a huge `rank` would spin `rank` times).
+    if rank >= word.count_ones() as usize {
+        return 64;
+    }
     let mut w = word;
     for _ in 0..rank {
         w &= w - 1; // Clear lowest set bit
@@ -707,6 +732,32 @@ mod tests {
                     popcnt_result, scalar_result,
                     "mismatch word=0x{word:016X} rank={rank}: popcnt={popcnt_result} scalar={scalar_result}"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn test_select_in_word_out_of_range_sentinel() {
+        // H12 total contract: rank >= popcount returns the sentinel 64
+        // (never an arbitrary in-range position). Exercised per tier since
+        // the public wrapper debug_asserts the precondition in test builds.
+        for (word, rank) in [
+            (0u64, 0usize),
+            (0b1010, 2),
+            (0b1010, 63),
+            (1, 1),
+            (u64::MAX, 64),
+            (u64::MAX, usize::MAX), // also proves the scalar loop is bounded
+        ] {
+            assert_eq!(select_in_word_scalar(word, rank), 64, "scalar {word:#x}/{rank}");
+            assert_eq!(select_in_word_popcnt(word, rank), 64, "popcnt {word:#x}/{rank}");
+        }
+        #[cfg(target_arch = "x86_64")]
+        if has_fast_bmi2() {
+            // PDEP tier: sentinel holds for rank < 64 (rank >= 64 is documented
+            // as unspecified-but-safe and unreachable from in-crate callers).
+            for (word, rank) in [(0u64, 0usize), (0b1010, 2), (0b1010, 63), (1, 1)] {
+                assert_eq!(select_in_word_pdep(word, rank), 64, "pdep {word:#x}/{rank}");
             }
         }
     }

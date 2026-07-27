@@ -343,10 +343,17 @@ pub unsafe extern "C" fn blob_store_get(
             let data_ptr = if data_len == 0 {
                 std::ptr::NonNull::<u8>::dangling().as_ptr()
             } else {
-                // SAFETY: alignment 1 is always valid, size is non-zero
-                unsafe {
-                    std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(data_len, 1))
-                }
+                // H14: validate the layout (rejects size > isize::MAX) instead
+                // of from_size_align_unchecked.
+                let layout = match std::alloc::Layout::from_size_align(data_len, 1) {
+                    Ok(layout) => layout,
+                    Err(_) => {
+                        set_last_error("blob size exceeds isize::MAX; cannot allocate");
+                        return CResult::MemoryError;
+                    }
+                };
+                // SAFETY: layout validated above, size is non-zero
+                unsafe { std::alloc::alloc(layout) }
             };
 
             if data_len > 0 && data_ptr.is_null() {
@@ -514,16 +521,26 @@ pub unsafe extern "C" fn zipora_set_error_callback(
 ///
 /// # Safety
 ///
-/// The data pointer must be a pointer returned by `blob_store_get`.
-/// The size must match the size returned by `blob_store_get`.
-/// The pointer becomes invalid after this call.
+/// - The data pointer must be a pointer returned by `blob_store_get`, and
+///   `size` must be the exact size returned alongside it.
+/// - This function must be called **exactly once** per pointer returned by
+///   `blob_store_get`. Calling it a second time is a double-free; calling it
+///   with a pointer not obtained from `blob_store_get` is undefined behavior.
+/// - The pointer becomes invalid after this call; any further read or write
+///   through it is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zipora_free_blob_data(data: *mut u8, size: usize) {
     if !data.is_null() && size > 0 {
-        // SAFETY: alignment 1 is always valid, size matches allocation from blob_store_get
-        // data pointer was allocated by blob_store_get via std::alloc::alloc with same layout
+        // H14: a size that fails Layout validation (> isize::MAX) can never
+        // correspond to a live allocation from blob_store_get — refuse to
+        // dealloc with a bogus layout rather than invoke UB.
+        let Ok(layout) = std::alloc::Layout::from_size_align(size, 1) else {
+            return;
+        };
+        // SAFETY: layout validated above; per the contract, (data, size) came
+        // from blob_store_get's std::alloc::alloc with the identical layout
+        // and has not been freed yet.
         unsafe {
-            let layout = std::alloc::Layout::from_size_align_unchecked(size, 1);
             std::alloc::dealloc(data, layout);
         }
     }
