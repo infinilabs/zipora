@@ -892,3 +892,40 @@ fn test_migration_panic_safety() {
     // Dropping map after panic unwinding must not cause double-free/double-drop
     drop(map);
 }
+
+#[test]
+fn test_non_power_of_two_capacity_rounds_up() {
+    // Regression (plan.md 7.2): with_capacity(100) used to produce mask 99,
+    // whose probe sequence `(index + i) & 99` misses slots and could fail
+    // resize with "Failed to reinsert during resize".
+    let mut map: ZiporaHashMap<u32, u32> = ZiporaHashMap::with_capacity(100).unwrap();
+    for i in 0..300u32 {
+        map.insert(i, i * 2).unwrap();
+    }
+    assert_eq!(map.len(), 300);
+    for i in 0..300u32 {
+        assert_eq!(map.get(&i), Some(&(i * 2)), "key {} lost", i);
+    }
+}
+
+#[test]
+fn test_clear_then_reuse_standard() {
+    // Verifies clear_standard semantics (plan.md 7.2): after clear() the map
+    // is empty and fully usable again (insert/get/len).
+    let mut map: ZiporaHashMap<u32, u32> = ZiporaHashMap::new().unwrap();
+    for i in 0..100u32 {
+        map.insert(i, i).unwrap();
+    }
+    map.clear();
+    assert_eq!(map.len(), 0);
+    assert!(map.is_empty());
+    assert_eq!(map.get(&5), None);
+
+    for i in 0..100u32 {
+        map.insert(i, i + 1).unwrap();
+    }
+    assert_eq!(map.len(), 100);
+    for i in 0..100u32 {
+        assert_eq!(map.get(&i), Some(&(i + 1)));
+    }
+}

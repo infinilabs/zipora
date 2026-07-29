@@ -1,0 +1,72 @@
+[package]
+name = "zipora-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.zipora]
+path = ".."
+features = ["serde", "zstd", "mmap", "simd"]
+
+[[bin]]
+name = "fuzz_zip_offset_load"
+path = "fuzz_targets/fuzz_zip_offset_load.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_simple_zip_build"
+path = "fuzz_targets/fuzz_simple_zip_build.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_mixed_len_build"
+path = "fuzz_targets/fuzz_mixed_len_build.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_huffman_decode"
+path = "fuzz_targets/fuzz_huffman_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rans_decode"
+path = "fuzz_targets/fuzz_rans_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_fse_decompress"
+path = "fuzz_targets/fuzz_fse_decompress.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_double_array_trie"
+path = "fuzz_targets/fuzz_double_array_trie.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_uint_vec"
+path = "fuzz_targets/fuzz_uint_vec.rs"
+test = false
+doc = false
+bench = false
+

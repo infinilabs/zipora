@@ -125,6 +125,45 @@ tsan_cspp:
 	$(CARGO) +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
 		--release --lib fsa::cspp_trie_concurrent
 
+# LockFreeMemoryPool TSAN stress (plan.md 6.3). Same recipe as tsan_cspp;
+# drives the module's multi-threaded alloc/free stress tests under the
+# thread sanitizer. Run periodically — CI is build-only by policy.
+tsan_pool:
+	CARGO_TARGET_DIR=target-tsan \
+	RUSTFLAGS="-Zsanitizer=thread --cfg crossbeam_sanitize" \
+	TSAN_OPTIONS="suppressions=$(CURDIR)/tsan.supp" \
+	$(CARGO) +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
+		--release --lib memory::lockfree
+
+# Periodic Miri job (plan.md 6.2). CI is build-only by policy, so this is
+# the manual/weekly equivalent: unsafe-heavy container + hash-map cores
+# under Miri (uint_vec tail reads, hash-map probe/migration, circular queue).
+miri_core:
+	$(CARGO_MIRI) test --lib containers::uint_vec_min0
+	$(CARGO_MIRI) test --lib hash_map::zipora_hash_map
+	$(CARGO_MIRI) test --lib containers::specialized::circular_queue
+
+# =============================================================================
+# FUZZING (plan.md 6.1) — requires: cargo install cargo-fuzz; nightly toolchain
+# =============================================================================
+
+FUZZ_TARGETS = fuzz_zip_offset_load fuzz_simple_zip_build fuzz_mixed_len_build \
+	fuzz_huffman_decode fuzz_rans_decode fuzz_fse_decompress \
+	fuzz_double_array_trie fuzz_uint_vec
+
+# Quick smoke: 60s per target, sequential.
+fuzz_smoke:
+	@for t in $(FUZZ_TARGETS); do \
+		echo "=== $$t (60s) ==="; \
+		cargo +nightly fuzz run $$t -- -max_total_time=60 -rss_limit_mb=4096 || exit 1; \
+	done
+
+# Soak: 1 hour per target, all in parallel (needs ~8 cores).
+fuzz_soak:
+	@for t in $(FUZZ_TARGETS); do \
+		cargo +nightly fuzz run $$t -- -max_total_time=3600 -rss_limit_mb=4096 & \
+	done; wait
+
 # =============================================================================
 # CODE QUALITY
 # =============================================================================

@@ -817,3 +817,29 @@ mod fse_proptests {
         }
     }
 }
+
+#[test]
+fn test_fse_mode_byte_rejects_unknown_stream() {
+    // plan.md 7.4: streams start with an explicit mode byte; garbage that
+    // previously could sniff as a "parallel header" must be rejected.
+    use zipora::entropy::FseDecoder;
+    let mut decoder = FseDecoder::new();
+    // 0x02 would have parsed as num_blocks=2 under the old sniffing heuristic
+    let crafted = [0x02u8, 0, 0, 0, 5, 0, 0, 0, 5, 0, 0, 0, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5];
+    assert!(decoder.decompress(&crafted).is_err());
+}
+
+#[test]
+fn test_fse_parallel_mode_roundtrip() {
+    use zipora::entropy::{FseConfig, FseDecoder, FseEncoder};
+    let config = FseConfig {
+        parallel_blocks: Some(4),
+        block_size: 1024,
+        ..Default::default()
+    };
+    let data: Vec<u8> = (0..16_384u32).map(|i| (i % 251) as u8).collect();
+    let mut encoder = FseEncoder::new(config).unwrap();
+    let compressed = encoder.compress(&data).unwrap();
+    let mut decoder = FseDecoder::new();
+    assert_eq!(decoder.decompress(&compressed).unwrap(), data);
+}

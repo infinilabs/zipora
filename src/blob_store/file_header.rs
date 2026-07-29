@@ -1,6 +1,13 @@
 //! On-disk file header structures for blob stores
 //!
 //! All structures are packed to exact byte boundaries for binary compatibility.
+//!
+//! # Endianness
+//!
+//! All multi-byte fields are stored **little-endian** (matching the C++
+//! topling-zip on-disk format). Files are byte-for-byte portable across
+//! little-endian hosts; reading them on a big-endian host would require a
+//! byte-swapping layer that does not currently exist.
 
 /// Magic string identifying blob store files.
 pub const MAGIC_STRING: &[u8; 18] = b"terark-blob-store\0";
@@ -85,7 +92,10 @@ impl FileHeaderBase {
     /// Validate the magic string.
     #[inline]
     pub fn validate_magic(&self) -> bool {
-        self.data[1..1 + MAGIC_STR_LEN] == MAGIC_STRING[..MAGIC_STR_LEN]
+        // Compare the full magic including its NUL terminator (plan.md 7.6):
+        // the writer zero-pads the magic region, so byte 18 must be 0 —
+        // "terark-blob-storeX" garbage must not validate.
+        self.data[1..1 + MAGIC_STRING.len()] == MAGIC_STRING[..]
     }
 
     // --- Field accessors ---
@@ -523,5 +533,15 @@ mod tests {
         assert_eq!(h.records(), large_count);
         assert_eq!(h.checksum_type(), ChecksumType::Crc16c);
         assert_eq!(h.format_version(), 3);
+    }
+
+    #[test]
+    fn test_validate_magic_requires_nul_terminator() {
+        // plan.md 7.6: "terark-blob-storeX" (no NUL at byte 18) must not validate
+        let h = FileHeaderBase::new();
+        let mut bytes = *h.as_bytes();
+        assert!(FileHeaderBase::from_bytes(&bytes).is_some());
+        bytes[1 + MAGIC_STR_LEN] = b'X'; // clobber the NUL terminator
+        assert!(FileHeaderBase::from_bytes(&bytes).is_none());
     }
 }

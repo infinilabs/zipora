@@ -67,7 +67,9 @@ impl EliasFano {
                 select0_samples: Vec::new(),
             };
         }
-        let universe = values[values.len() - 1] + 1;
+        // saturating: a max value of u64::MAX must not wrap universe to 0
+        // (which would force low_bit_width = 0 and a ~u64::MAX-bit high array).
+        let universe = values[values.len() - 1].saturating_add(1);
         Self::from_sorted_impl(values.len(), universe, |i| values[i])
     }
 

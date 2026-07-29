@@ -115,8 +115,9 @@ pub fn simd_gallop_to(arr: &[u32], cursor: &mut usize, target: u32) -> bool {
         hi = lo.saturating_add(step);
     }
     // Adjust hi to be exclusive upper bound, capped at arr.len()
-    // If we broke because arr[hi] >= target, we need to include hi in scan
-    hi = (hi + 1).min(arr.len());
+    // If we broke because arr[hi] >= target, we need to include hi in scan.
+    // saturating_add: hi may have saturated to usize::MAX in the gallop loop.
+    hi = hi.saturating_add(1).min(arr.len());
 
     // SIMD scan phase within [lo, hi)
     #[cfg(target_arch = "x86_64")]

@@ -134,13 +134,11 @@ impl BumpAllocator {
 
     /// Reset the allocator, making all memory available again
     ///
-    /// # Safety
-    ///
-    /// This invalidates all previously allocated pointers. The caller must ensure
-    /// that no allocated objects are accessed after calling this function.
-    /// Additionally, the caller must ensure no other threads are concurrently
-    /// allocating from this allocator during reset.
-    pub unsafe fn reset(&self) {
+    /// Takes `&mut self`, so the exclusive borrow statically rules out
+    /// concurrent allocation during the reset. All previously returned
+    /// `NonNull` pointers become dangling after this call; dereferencing
+    /// them is UB at the (already `unsafe`) dereference site.
+    pub fn reset(&mut self) {
         self.current.store(0, Ordering::Release);
         self.allocated_bytes.store(0, Ordering::Relaxed);
     }
@@ -258,11 +256,8 @@ impl BumpArena {
 
 impl Drop for BumpArena {
     fn drop(&mut self) {
-        // Reset to initial position
-        // SAFETY: No concurrent allocations during drop, reset invalidates all allocations (documented in reset())
-        unsafe {
-            self.allocator.reset();
-        }
+        // Reset to initial position (safe: &mut self guarantees exclusivity)
+        self.allocator.reset();
         self.allocator
             .current
             .store(self.initial_offset, Ordering::Relaxed);
@@ -513,7 +508,7 @@ mod tests {
 
     #[test]
     fn test_bump_reset() {
-        let allocator = BumpAllocator::new(4096).unwrap();
+        let mut allocator = BumpAllocator::new(4096).unwrap();
 
         let _ptr1 = allocator.alloc::<u64>().unwrap();
         let _ptr2 = allocator.alloc::<u64>().unwrap();
@@ -521,10 +516,7 @@ mod tests {
         assert!(allocator.allocated_bytes() > 0);
         assert!(allocator.remaining_bytes() < 4096);
 
-        // SAFETY: Test code, no concurrent allocations, all allocated pointers discarded
-        unsafe {
-            allocator.reset();
-        }
+        allocator.reset();
 
         assert_eq!(allocator.allocated_bytes(), 0);
         assert_eq!(allocator.remaining_bytes(), 4096);

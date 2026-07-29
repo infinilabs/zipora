@@ -450,11 +450,12 @@ impl Default for SecurePoolStats {
 struct ChunkHeader {
     magic: u64,
     size: usize,
-    generation: u32,
-    pool_id: u32,
+    // u64 generation: a u32 counter can wrap under sustained allocation churn,
+    // letting a stale pointer's generation collide with a live chunk's.
+    generation: u64,
     allocation_time: u64,
+    pool_id: u32,
     canary: u32,
-    padding: u32,
 }
 
 /// Footer for each memory chunk with security metadata
@@ -462,7 +463,8 @@ struct ChunkHeader {
 #[derive(Debug)]
 struct ChunkFooter {
     canary: u32,
-    generation: u32,
+    padding: u32,
+    generation: u64,
     magic: u64,
 }
 
@@ -470,14 +472,14 @@ struct ChunkFooter {
 pub struct SecureChunk {
     ptr: NonNull<u8>,
     size: usize,
-    generation: u32,
+    generation: u64,
     pool_id: u32,
     canary: u32,
 }
 
 impl SecureChunk {
     /// Create a new secure chunk with validation metadata
-    fn new(size: usize, generation: u32, pool_id: u32) -> Result<Self> {
+    fn new(size: usize, generation: u64, pool_id: u32) -> Result<Self> {
         let canary = fastrand::u32(..);
         let header_size = std::mem::size_of::<ChunkHeader>();
         let footer_size = std::mem::size_of::<ChunkFooter>();
@@ -503,7 +505,6 @@ impl SecureChunk {
                 pool_id,
                 allocation_time: current_time_nanos(),
                 canary,
-                padding: 0,
             };
         }
 
@@ -514,6 +515,7 @@ impl SecureChunk {
         unsafe {
             (*footer_ptr) = ChunkFooter {
                 canary,
+                padding: 0,
                 generation,
                 magic: CHUNK_FOOTER_MAGIC,
             };
@@ -616,7 +618,7 @@ impl SecureChunk {
     }
 
     /// Get generation for validation
-    pub fn generation(&self) -> u32 {
+    pub fn generation(&self) -> u64 {
         self.generation
     }
 
@@ -672,7 +674,7 @@ impl SecureChunk {
 //    this memory exclusively until deallocated. No thread-local state.
 // 2. `size: usize` - Immutable primitive, trivially Send.
 // 3. `canary: u32` - Immutable after construction, trivially Send.
-// 4. `generation: u32` - Immutable after construction, trivially Send.
+// 4. `generation: u64` - Immutable after construction, trivially Send.
 unsafe impl Send for SecureChunk {}
 
 // SAFETY: SecureChunk is Sync because:
@@ -824,7 +826,7 @@ pub struct SecureMemoryPool {
     config: SecurePoolConfig,
     pool_id: u32,
     global_stack: LockFreeStack<SecureChunk>,
-    next_generation: AtomicU32,
+    next_generation: AtomicU64,
     local_caches: thread_local::ThreadLocal<RefCell<LocalCache>>,
 
     // Cache optimization infrastructure
@@ -848,7 +850,7 @@ pub struct SecureMemoryPool {
     huge_page_allocs: CachePadded<AtomicU64>,
 
     // Allocation tracking for double-free detection (using usize for Send+Sync safety)
-    active_allocations: std::sync::RwLock<HashMap<usize, (u32, Instant)>>, // ptr_addr -> (generation, time)
+    active_allocations: std::sync::RwLock<HashMap<usize, (u64, Instant)>>, // ptr_addr -> (generation, time)
 }
 
 impl std::fmt::Debug for SecureMemoryPool {
@@ -894,7 +896,7 @@ impl SecureMemoryPool {
             config,
             pool_id,
             global_stack: LockFreeStack::new(),
-            next_generation: AtomicU32::new(1),
+            next_generation: AtomicU64::new(1),
             local_caches: thread_local::ThreadLocal::new(),
             cache_allocator,
             cache_aligned_allocs: CachePadded::new(AtomicU64::new(0)),
@@ -1066,7 +1068,7 @@ impl SecureMemoryPool {
         let chunk_ptr = chunk.as_ptr() as usize;
 
         if let Some(&allocation_info) = allocs.get(&chunk_ptr) {
-            let (original_generation, _): (u32, Instant) = allocation_info;
+            let (original_generation, _): (u64, Instant) = allocation_info;
             if original_generation != chunk.generation() {
                 self.double_free_detected.fetch_add(1, Ordering::Relaxed);
                 chunk.deallocate(
@@ -1114,7 +1116,7 @@ impl SecureMemoryPool {
     }
 
     /// Allocate a new chunk with cache optimizations
-    fn allocate_new_chunk_optimized(&self, generation: u32, is_hot: bool) -> Result<SecureChunk> {
+    fn allocate_new_chunk_optimized(&self, generation: u64, is_hot: bool) -> Result<SecureChunk> {
         // Use cache allocator if available and chunk size meets threshold
         if let Some(ref _cache_allocator) = self.cache_allocator {
             if self.config.enable_cache_alignment {
@@ -1448,7 +1450,7 @@ impl SecurePooledPtr {
     }
 
     /// Get generation for debugging
-    pub fn generation(&self) -> u32 {
+    pub fn generation(&self) -> u64 {
         self.chunk.as_ref().map(|c| c.generation()).unwrap_or(0)
     }
 

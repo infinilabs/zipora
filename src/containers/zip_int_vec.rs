@@ -17,7 +17,7 @@
 //! use zipora::containers::ZipIntVec;
 //!
 //! // Store values in range [1000, 1255] using only 8 bits each
-//! let mut vec = ZipIntVec::new(100, 1000, 1255);
+//! let mut vec = ZipIntVec::new(100, 1000, 1255).unwrap();
 //! for i in 0..100 {
 //!     vec.set(i, 1000 + i % 256);
 //! }
@@ -27,6 +27,7 @@
 //! ```
 
 use super::uint_vec_min0::UintVecMin0;
+use crate::error::{Result, ZiporaError};
 use std::fmt;
 
 /// Compressed integer vector with automatic range-based compression
@@ -60,17 +61,22 @@ impl ZipIntVec {
     /// use zipora::containers::ZipIntVec;
     ///
     /// // Store timestamps around epoch 1700000000 efficiently
-    /// let vec = ZipIntVec::new(1000, 1700000000, 1700001000);
+    /// let vec = ZipIntVec::new(1000, 1700000000, 1700001000).unwrap();
     /// // Uses only 10 bits per value despite large absolute values
     /// assert_eq!(vec.uintbits(), 10);
     /// ```
-    pub fn new(num: usize, min_val: usize, max_val: usize) -> Self {
-        assert!(min_val < max_val, "min_val must be less than max_val");
+    pub fn new(num: usize, min_val: usize, max_val: usize) -> Result<Self> {
+        if min_val >= max_val {
+            return Err(ZiporaError::invalid_data(format!(
+                "ZipIntVec::new: min_val ({}) must be less than max_val ({})",
+                min_val, max_val
+            )));
+        }
         let wire_max = max_val - min_val;
-        Self {
+        Ok(Self {
             inner: UintVecMin0::new(num, wire_max),
             min_val,
-        }
+        })
     }
 
     /// Create empty vector
@@ -166,14 +172,16 @@ impl ZipIntVec {
 
         if min_val == max_val {
             // All values are the same
-            let mut vec = Self::new(src.len(), min_val, min_val + 1);
+            let mut vec = Self::new(src.len(), min_val, min_val + 1)
+                .expect("min_val < min_val + 1 structurally");
             for i in 0..src.len() {
                 vec.set(i, min_val);
             }
             return vec;
         }
 
-        let mut vec = Self::new(src.len(), min_val, max_val);
+        let mut vec = Self::new(src.len(), min_val, max_val)
+            .expect("min_val < max_val checked above");
         for (i, &val) in src.iter().enumerate() {
             vec.set(i, val);
         }
@@ -193,14 +201,16 @@ impl ZipIntVec {
 
         if min_val == max_val {
             // All values are the same
-            let mut vec = Self::new(src.len(), min_val as usize, (min_val + 1) as usize);
+            let mut vec = Self::new(src.len(), min_val as usize, (min_val + 1) as usize)
+                .expect("min_val < min_val + 1 structurally");
             for i in 0..src.len() {
                 vec.set(i, min_val as usize);
             }
             return vec;
         }
 
-        let mut vec = Self::new(src.len(), min_val as usize, max_val as usize);
+        let mut vec = Self::new(src.len(), min_val as usize, max_val as usize)
+            .expect("min_val < max_val checked above");
         for (i, &val) in src.iter().enumerate() {
             vec.set(i, val as usize);
         }
@@ -241,11 +251,17 @@ impl ZipIntVec {
     }
 
     /// Resize with new value range
-    pub fn resize_with_range(&mut self, num: usize, min_val: usize, max_val: usize) {
-        assert!(min_val < max_val, "min_val must be less than max_val");
+    pub fn resize_with_range(&mut self, num: usize, min_val: usize, max_val: usize) -> Result<()> {
+        if min_val >= max_val {
+            return Err(ZiporaError::invalid_data(format!(
+                "ZipIntVec::resize_with_range: min_val ({}) must be less than max_val ({})",
+                min_val, max_val
+            )));
+        }
         let wire_max = max_val - min_val;
         self.inner.resize_with_wire_max_val(num, wire_max);
         self.min_val = min_val;
+        Ok(())
     }
 
     /// Shrink allocation to minimum needed size
@@ -353,7 +369,7 @@ mod tests {
 
     #[test]
     fn test_new_and_basic_ops() {
-        let vec = ZipIntVec::new(10, 1000, 1255);
+        let vec = ZipIntVec::new(10, 1000, 1255).unwrap();
         assert_eq!(vec.size(), 10);
         assert_eq!(vec.min_val(), 1000);
         assert_eq!(vec.max_val(), 1255);
@@ -362,7 +378,7 @@ mod tests {
 
     #[test]
     fn test_set_and_get() {
-        let mut vec = ZipIntVec::new(100, 1000, 1255);
+        let mut vec = ZipIntVec::new(100, 1000, 1255).unwrap();
 
         vec.set(0, 1042);
         vec.set(50, 1128);
@@ -377,7 +393,7 @@ mod tests {
     fn test_round_trip_large_values() {
         let min = 1_000_000;
         let max = 1_001_000;
-        let mut vec = ZipIntVec::new(1000, min, max);
+        let mut vec = ZipIntVec::new(1000, min, max).unwrap();
 
         for i in 0..1000 {
             let val = min + (i % 1001);
@@ -392,7 +408,7 @@ mod tests {
 
     #[test]
     fn test_get2() {
-        let mut vec = ZipIntVec::new(100, 1000, 1255);
+        let mut vec = ZipIntVec::new(100, 1000, 1255).unwrap();
         vec.set(10, 1042);
         vec.set(11, 1043);
 
@@ -432,7 +448,7 @@ mod tests {
 
     #[test]
     fn test_push_back() {
-        let mut vec = ZipIntVec::new(10, 1000, 1255);
+        let mut vec = ZipIntVec::new(10, 1000, 1255).unwrap();
         vec.resize(0); // Start empty
 
         for i in 0..10 {
@@ -447,14 +463,14 @@ mod tests {
 
     #[test]
     fn test_back() {
-        let mut vec = ZipIntVec::new(10, 1000, 1255);
+        let mut vec = ZipIntVec::new(10, 1000, 1255).unwrap();
         vec.set(9, 1123);
         assert_eq!(vec.back(), 1123);
     }
 
     #[test]
     fn test_clear() {
-        let mut vec = ZipIntVec::new(100, 1000, 1255);
+        let mut vec = ZipIntVec::new(100, 1000, 1255).unwrap();
         for i in 0..100 {
             vec.set(i, 1000 + i);
         }
@@ -467,7 +483,7 @@ mod tests {
 
     #[test]
     fn test_resize() {
-        let mut vec = ZipIntVec::new(10, 1000, 1255);
+        let mut vec = ZipIntVec::new(10, 1000, 1255).unwrap();
         for i in 0..10 {
             vec.set(i, 1000 + i);
         }
@@ -483,8 +499,8 @@ mod tests {
 
     #[test]
     fn test_resize_with_range() {
-        let mut vec = ZipIntVec::new(10, 1000, 1255);
-        vec.resize_with_range(20, 2000, 2511);
+        let mut vec = ZipIntVec::new(10, 1000, 1255).unwrap();
+        vec.resize_with_range(20, 2000, 2511).unwrap();
 
         assert_eq!(vec.size(), 20);
         assert_eq!(vec.min_val(), 2000);
@@ -493,10 +509,10 @@ mod tests {
 
     #[test]
     fn test_swap() {
-        let mut vec1 = ZipIntVec::new(10, 1000, 1255);
+        let mut vec1 = ZipIntVec::new(10, 1000, 1255).unwrap();
         vec1.set(0, 1042);
 
-        let mut vec2 = ZipIntVec::new(10, 2000, 2255);
+        let mut vec2 = ZipIntVec::new(10, 2000, 2255).unwrap();
         vec2.set(0, 2042);
 
         vec1.swap(&mut vec2);
@@ -509,7 +525,7 @@ mod tests {
 
     #[test]
     fn test_shrink_to_fit() {
-        let mut vec = ZipIntVec::new(1000, 1000, 1255);
+        let mut vec = ZipIntVec::new(1000, 1000, 1255).unwrap();
         vec.resize(10);
 
         let before = vec.mem_size();
@@ -523,7 +539,7 @@ mod tests {
     #[test]
     fn test_memory_efficiency() {
         // 1000 values in range [1000000, 1000255] should use ~1000 bytes
-        let vec = ZipIntVec::new(1000, 1000000, 1000255);
+        let vec = ZipIntVec::new(1000, 1000000, 1000255).unwrap();
         let mem = vec.mem_size();
 
         // Should be much less than Vec<usize> (8000 bytes on 64-bit)
@@ -535,7 +551,7 @@ mod tests {
 
     #[test]
     fn test_fast_get_static() {
-        let mut vec = ZipIntVec::new(100, 1000, 1255);
+        let mut vec = ZipIntVec::new(100, 1000, 1255).unwrap();
         for i in 0..100 {
             vec.set(i, 1000 + i);
         }
@@ -551,7 +567,7 @@ mod tests {
     #[test]
     fn test_zero_range() {
         // Edge case: min_val at zero
-        let mut vec = ZipIntVec::new(10, 0, 255);
+        let mut vec = ZipIntVec::new(10, 0, 255).unwrap();
         vec.set(0, 0);
         vec.set(5, 128);
         vec.set(9, 255);
@@ -564,7 +580,7 @@ mod tests {
     #[test]
     fn test_single_bit_range() {
         // Range [100, 101] needs 1 bit
-        let mut vec = ZipIntVec::new(64, 100, 101);
+        let mut vec = ZipIntVec::new(64, 100, 101).unwrap();
         assert_eq!(vec.uintbits(), 1);
 
         for i in 0..64 {
@@ -577,22 +593,25 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "must be less than max_val")]
     fn test_new_invalid_range() {
-        ZipIntVec::new(10, 1000, 1000);
+        // plan.md 7.6: invalid range is now a recoverable error, not a panic
+        assert!(ZipIntVec::new(10, 1000, 1000).is_err());
+        assert!(ZipIntVec::new(10, 1000, 999).is_err());
+        let mut v = ZipIntVec::new(10, 0, 10).unwrap();
+        assert!(v.resize_with_range(10, 5, 5).is_err());
     }
 
     #[test]
     #[should_panic(expected = "below minimum")]
     fn test_set_below_min() {
-        let mut vec = ZipIntVec::new(10, 1000, 1255);
+        let mut vec = ZipIntVec::new(10, 1000, 1255).unwrap();
         vec.set(0, 999);
     }
 
     #[test]
     #[should_panic(expected = "exceeds maximum")]
     fn test_set_above_max() {
-        let mut vec = ZipIntVec::new(10, 1000, 1255);
+        let mut vec = ZipIntVec::new(10, 1000, 1255).unwrap();
         vec.set(0, 1256);
     }
 
@@ -608,7 +627,7 @@ mod tests {
         // Large absolute values but small range
         let min = 1_000_000_000;
         let max = 1_000_001_023; // Range of 1024, needs 10 bits
-        let vec = ZipIntVec::new(1000, min, max);
+        let vec = ZipIntVec::new(1000, min, max).unwrap();
 
         assert_eq!(vec.uintbits(), 10);
         assert_eq!(vec.min_val(), min);

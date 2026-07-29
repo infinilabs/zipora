@@ -421,6 +421,9 @@ pub fn select_in_word(word: u64, rank: usize) -> usize {
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn select_in_word_pdep(word: u64, rank: usize) -> usize {
+    // This tier must only ever be reached through the has_fast_bmi2() dispatch
+    // (AMD Zen 1/2 have microcoded, pathologically slow PDEP).
+    debug_assert!(has_fast_bmi2());
     // Out-of-range rank (>= popcount, < 64): PDEP deposits a bit that does not
     // exist in `word`, producing mask == 0 and trailing_zeros() == 64 — the
     // documented sentinel falls out for free, with zero cost on the hot path.

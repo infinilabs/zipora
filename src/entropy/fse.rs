@@ -7,6 +7,14 @@
 use crate::entropy::{EntropyStats, bit_ops::BitOps};
 use crate::error::{Result, ZiporaError};
 use crate::system::get_cpu_features;
+
+/// Stream-mode magic byte: single-frame FSE stream (plan.md 7.4).
+/// Every top-level FSE stream starts with one of these mode bytes so the
+/// decoder never has to sniff/guess the layout (the old heuristic misrouted
+/// single streams whose size field looked like a plausible block count).
+const FSE_MODE_SINGLE: u8 = 0xF5;
+/// Stream-mode magic byte: parallel multi-block FSE stream.
+const FSE_MODE_PARALLEL: u8 = 0xF6;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -59,7 +67,11 @@ impl FastDivision {
         }
 
         let shift = (32 - divisor.leading_zeros()) as u8;
-        let multiplier = (1u64 << (32 + shift)).div_ceil(divisor as u64);
+        // u128: for divisor >= 2^31, shift == 32 and `1u64 << 64` would
+        // overflow (reachable from a crafted stream header's raw frequency
+        // sum — fuzz_fse_decompress finding). The result still fits u64:
+        // ceil(2^(32+shift) / divisor) <= 2^33 for divisor >= 2^31.
+        let multiplier = ((1u128 << (32 + shift)).div_ceil(divisor as u128)) as u64;
 
         Self {
             divisor,
@@ -882,11 +894,18 @@ impl FseEncoder {
         if let Some(num_blocks) = self.config.parallel_blocks
             && data.len() > self.config.block_size * 2
         {
+            // merge_compressed_blocks writes the FSE_MODE_PARALLEL byte
             return self.compress_parallel(data, num_blocks);
         }
 
-        // Single-threaded compression
-        self.compress_single_internal(data)
+        // Single-threaded compression, framed with the single-mode byte
+        let body = self.compress_single_internal(data)?;
+        let mut output = Vec::with_capacity(body.len() + 1);
+        output.push(FSE_MODE_SINGLE);
+        output.extend_from_slice(&body);
+        // stats were recorded for the unframed body; account for the mode byte
+        self.stats = EntropyStats::new(data.len(), output.len(), self.stats.entropy);
+        Ok(output)
     }
 
     /// Single-threaded compression (internal, ZSTD-compatible)
@@ -1032,7 +1051,8 @@ impl FseEncoder {
     fn merge_compressed_blocks(&self, chunks: Vec<Vec<u8>>) -> Result<Vec<u8>> {
         let mut output = Vec::new();
 
-        // Write header with number of blocks
+        // Stream-mode byte, then header with number of blocks
+        output.push(FSE_MODE_PARALLEL);
         output.extend_from_slice(&(chunks.len() as u32).to_le_bytes());
 
         // Write block sizes
@@ -1112,50 +1132,44 @@ impl FseDecoder {
             return Ok(Vec::new());
         }
 
-        // Check if this is parallel-compressed data
-        // Parallel data should have a specific signature: number of blocks followed by block sizes
-        // We need a more robust detection mechanism
-        if data.len() >= 8 {
-            let potential_num_blocks = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-            // Only consider it parallel if:
-            // 1. Number of blocks is reasonable (2-64)
-            // 2. There's enough data for block size headers
-            // 3. The block sizes make sense
-            if (2..=64).contains(&potential_num_blocks) {
-                let header_size = 4 + 4 * potential_num_blocks as usize; // num_blocks + block_sizes
-                if data.len() >= header_size {
-                    // Verify that the block sizes are reasonable
-                    let mut total_block_size = 0;
-                    let mut pos = 4;
-                    let mut valid_parallel = true;
-
-                    for _ in 0..potential_num_blocks {
-                        let block_size = u32::from_le_bytes([
-                            data[pos],
-                            data[pos + 1],
-                            data[pos + 2],
-                            data[pos + 3],
-                        ]);
-                        pos += 4;
-                        total_block_size += block_size as usize;
-
-                        // Block size should be reasonable
-                        if block_size == 0 || block_size > data.len() as u32 {
-                            valid_parallel = false;
-                            break;
-                        }
-                    }
-
-                    // Check if total block sizes match remaining data
-                    if valid_parallel && header_size + total_block_size == data.len() {
-                        return self.decompress_parallel(data, potential_num_blocks as usize);
-                    }
+        // Explicit stream-mode byte: no sniffing (plan.md 7.4). The old
+        // heuristic misrouted single streams whose original-size field
+        // parsed as a plausible parallel block count, and silently failed
+        // on parallel streams with more than 64 blocks.
+        let mode = data[0];
+        let body = &data[1..];
+        match mode {
+            FSE_MODE_SINGLE => self.decompress_single(body),
+            FSE_MODE_PARALLEL => {
+                if body.len() < 4 {
+                    return Err(ZiporaError::invalid_data(
+                        "FSE parallel stream truncated before block count",
+                    ));
                 }
+                let num_blocks =
+                    u32::from_le_bytes([body[0], body[1], body[2], body[3]]) as usize;
+                if num_blocks == 0 {
+                    return Err(ZiporaError::invalid_data(
+                        "FSE parallel stream with zero blocks",
+                    ));
+                }
+                // Every block needs a 4-byte size entry after the count; bound
+                // num_blocks by the physical input before any allocation
+                // (fuzz_fse_decompress OOM finding).
+                if num_blocks > body.len().saturating_sub(4) / 4 {
+                    return Err(ZiporaError::invalid_data(format!(
+                        "FSE parallel stream claims {} blocks but only {} bytes remain",
+                        num_blocks,
+                        body.len()
+                    )));
+                }
+                self.decompress_parallel(body, num_blocks)
             }
+            other => Err(ZiporaError::invalid_data(format!(
+                "unknown FSE stream mode byte: {:#04x}",
+                other
+            ))),
         }
-
-        // Single-threaded decompression
-        self.decompress_single(data)
     }
 
     /// Single-threaded decompression (ZSTD-compatible FSE algorithm)
