@@ -109,7 +109,7 @@ impl BitVector {
     /// (u128) reads must allocate its own padding (as the Elias-Fano low-bit
     /// arrays do internally); it cannot assume `blocks[word_idx + 1]` is valid
     /// for the last word of a `BitVector` built here.
-    pub fn from_raw_bits(raw_bits: Vec<u64>, total_bits: usize) -> Result<Self> {
+    pub fn from_raw_bits(mut raw_bits: Vec<u64>, total_bits: usize) -> Result<Self> {
         let required_blocks = total_bits.div_ceil(BITS_PER_BLOCK);
 
         if raw_bits.len() < required_blocks {
@@ -122,8 +122,10 @@ impl BitVector {
         }
 
         // Zero-copy: take ownership of the Vec via FastVec::from_vec.
-        // If the Vec has more blocks than needed, we keep the extra capacity
-        // but only use required_blocks via the len field.
+        // Excess blocks are truncated (len change only — no realloc, extra
+        // capacity is retained) to uphold the documented exactly-
+        // ceil(total_bits/64)-blocks invariant for blocks() consumers.
+        raw_bits.truncate(required_blocks);
         let mut blocks = FastVec::from_vec(raw_bits);
 
         // Clear trailing bits in the last block if necessary
@@ -169,12 +171,17 @@ impl BitVector {
     /// assert_eq!(bv.count_ones(), 2);
     /// ```
     #[inline]
-    pub fn from_blocks(blocks: Vec<u64>, total_bits: usize) -> Self {
+    pub fn from_blocks(mut blocks: Vec<u64>, total_bits: usize) -> Self {
         let num_blocks = blocks.len();
+        let required_blocks = total_bits.div_ceil(BITS_PER_BLOCK);
         debug_assert!(
-            num_blocks >= total_bits.div_ceil(BITS_PER_BLOCK),
+            num_blocks >= required_blocks,
             "blocks.len()={num_blocks} insufficient for {total_bits} bits"
         );
+        // Excess blocks are truncated (len change only — no realloc) so that
+        // blocks() exposes exactly ceil(total_bits/64) words. The pre-zeroed
+        // contract still covers bit content; this covers slice length.
+        blocks.truncate(required_blocks);
         Self {
             blocks: FastVec::from_vec(blocks),
             len: total_bits,
@@ -1684,6 +1691,31 @@ mod tests {
         for i in 0..64 {
             assert!(bv.get(i).unwrap(), "bit {i} should be set");
         }
+    }
+
+    #[test]
+    fn test_from_raw_bits_truncates_oversized_input() {
+        // Documented invariant: exactly ceil(total_bits/64) blocks — even when
+        // the input Vec carries extra (non-zero) trailing words. Consumers of
+        // blocks() (rank/select builders, serialization) rely on the length.
+        let raw = vec![u64::MAX; 4]; // 2 blocks needed, 2 extra all-ones words
+        let bv = BitVector::from_raw_bits(raw, 65).unwrap();
+        assert_eq!(bv.len(), 65);
+        assert_eq!(bv.blocks().len(), 2, "excess blocks must be truncated");
+        assert_eq!(bv.count_ones(), 65);
+        // Trailing bits of the last valid block are masked
+        assert_eq!(bv.blocks()[1], 1);
+    }
+
+    #[test]
+    fn test_from_blocks_truncates_oversized_input() {
+        // Same invariant for the zero-copy scatter constructor: an oversized
+        // (pre-zeroed, per contract) Vec must not leak extra words via blocks().
+        let blocks = vec![0u64; 10]; // 2 blocks needed for 100 bits
+        let bv = BitVector::from_blocks(blocks, 100);
+        assert_eq!(bv.len(), 100);
+        assert_eq!(bv.blocks().len(), 2, "excess blocks must be truncated");
+        assert_eq!(bv.count_ones(), 0);
     }
 
     #[test]
