@@ -376,13 +376,12 @@ fn has_fast_bmi2_detect() -> bool {
 /// # Precondition / out-of-range behavior (H12)
 ///
 /// The intended contract is `rank < word.count_ones()`. Debug builds assert
-/// it. Release builds are **total and memory-safe**: if
-/// `word.count_ones() <= rank < 64`, every tier returns the sentinel `64`
-/// ("no such bit") — never an arbitrary in-range position that a caller
-/// could use to index out of bounds. For `rank >= 64` the PDEP tier returns
-/// an unspecified (but still memory-safe) value; the POPCNT and scalar tiers
-/// still return `64`. All in-crate callers derive `rank` from a
-/// `count_ones()`-guarded comparison, so `rank <= 63` always holds.
+/// it. Release builds are **total and memory-safe**: for any
+/// `rank >= word.count_ones()` (including `rank >= 64`), every tier returns
+/// the sentinel `64` ("no such bit") — never an arbitrary in-range position
+/// that a caller could use to index out of bounds. All in-crate callers
+/// derive `rank` from a `count_ones()`-guarded comparison, so `rank <= 63`
+/// always holds; the totality is defense-in-depth for external callers.
 ///
 /// Three-tier dispatch (resolved once via cached function pointer):
 /// 1. **BMI2 PDEP** (3 cycles) — Intel Haswell+ and AMD Zen 3+
@@ -424,6 +423,12 @@ fn select_in_word_pdep(word: u64, rank: usize) -> usize {
     // This tier must only ever be reached through the has_fast_bmi2() dispatch
     // (AMD Zen 1/2 have microcoded, pathologically slow PDEP).
     debug_assert!(has_fast_bmi2());
+    // rank >= 64 would overflow `1u64 << rank` (debug panic; release masks the
+    // shift and could return an in-range garbage position). A compare against
+    // a constant keeps the hot path free of the popcount the other tiers pay.
+    if rank >= 64 {
+        return 64;
+    }
     // Out-of-range rank (>= popcount, < 64): PDEP deposits a bit that does not
     // exist in `word`, producing mask == 0 and trailing_zeros() == 64 — the
     // documented sentinel falls out for free, with zero cost on the hot path.
@@ -757,9 +762,18 @@ mod tests {
         }
         #[cfg(target_arch = "x86_64")]
         if has_fast_bmi2() {
-            // PDEP tier: sentinel holds for rank < 64 (rank >= 64 is documented
-            // as unspecified-but-safe and unreachable from in-crate callers).
-            for (word, rank) in [(0u64, 0usize), (0b1010, 2), (0b1010, 63), (1, 1)] {
+            // PDEP tier: sentinel holds across the full out-of-range domain,
+            // including rank >= 64 (guarded by a constant compare — without it,
+            // `1u64 << rank` is a debug shift-overflow panic and a masked shift
+            // in release that can return an arbitrary in-range position).
+            for (word, rank) in [
+                (0u64, 0usize),
+                (0b1010, 2),
+                (0b1010, 63),
+                (1, 1),
+                (u64::MAX, 64),
+                (u64::MAX, usize::MAX),
+            ] {
                 assert_eq!(select_in_word_pdep(word, rank), 64, "pdep {word:#x}/{rank}");
             }
         }
