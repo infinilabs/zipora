@@ -158,7 +158,10 @@ impl ClusteredEliasFano {
             let bitmap_words = local_universe.div_ceil(64) as usize;
             let bitmap_total_bits = bitmap_words.saturating_mul(64);
 
-            if bitmap_total_bits < ef_total_bits {
+            // bitmap_words is stored as u16 in CefChunkMeta; guard the cast
+            // (unreachable via the cost model — bitmap only wins for small,
+            // dense universes — but a silent truncation would corrupt reads).
+            if bitmap_total_bits < ef_total_bits && bitmap_words <= u16::MAX as usize {
                 // --- Bitmap container ---
                 let bitmap_offset = all_dense_bits.len();
                 all_dense_bits.resize(bitmap_offset + bitmap_words, 0);

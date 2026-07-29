@@ -567,7 +567,15 @@ impl<T> AutoGrowCircularQueue<T> {
 
         let layout = Self::layout_for_capacity(capacity);
 
-        // SAFETY: Layout is valid for non-zero capacity
+        // Zero-size layout (T is a ZST): calling `alloc` with size 0 is UB
+        // per the GlobalAlloc contract (found by `make miri_core`, plan.md
+        // 6.2). ZSTs need no storage: return a dangling, well-aligned
+        // pointer; `deallocate_buffer` skips zero-size layouts symmetrically.
+        if layout.size() == 0 {
+            return std::ptr::NonNull::<T>::dangling().as_ptr();
+        }
+
+        // SAFETY: layout has non-zero size (checked above)
         let ptr = unsafe { alloc(layout) };
 
         if ptr.is_null() {
@@ -575,6 +583,20 @@ impl<T> AutoGrowCircularQueue<T> {
         }
 
         ptr as *mut T
+    }
+
+    /// Deallocate a buffer previously returned by [`Self::allocate_buffer`].
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must have been returned by `allocate_buffer` for a capacity whose
+    /// layout equals `layout`, and must not be used afterwards.
+    unsafe fn deallocate_buffer(ptr: *mut T, layout: Layout) {
+        // Zero-size layouts were never allocated (dangling pointer) — skip.
+        if !ptr.is_null() && layout.size() != 0 {
+            // SAFETY: per this fn's contract, ptr came from alloc(layout)
+            unsafe { dealloc(ptr as *mut u8, layout) };
+        }
     }
 
     /// Creates memory layout for given capacity with cache alignment
@@ -676,11 +698,9 @@ impl<T> AutoGrowCircularQueue<T> {
 
         if self.len == 0 {
             // Empty queue - just replace buffer
-            if !self.buffer.is_null() {
-                // SAFETY: buffer allocated with current_layout(), pointer non-null checked above
-                unsafe {
-                    dealloc(self.buffer as *mut u8, self.current_layout());
-                }
+            // SAFETY: buffer allocated with current_layout(); zero-size skipped inside
+            unsafe {
+                Self::deallocate_buffer(self.buffer, self.current_layout());
             }
             self.buffer = Self::allocate_buffer(new_capacity);
             self.capacity = new_capacity;
@@ -692,8 +712,9 @@ impl<T> AutoGrowCircularQueue<T> {
         let old_layout = self.current_layout();
         let new_layout = Self::layout_for_capacity(new_capacity);
 
-        // Check if buffer is contiguous (not wrapped) for optimal realloc
-        if self.head < self.tail {
+        // Check if buffer is contiguous (not wrapped) for optimal realloc.
+        // Zero-size layouts (ZST) never touched the allocator — skip realloc.
+        if self.head < self.tail && old_layout.size() != 0 {
             // Buffer is contiguous - try in-place realloc
             // SAFETY: buffer allocated with old_layout, new_layout.size() >= old size
             unsafe {
@@ -719,11 +740,9 @@ impl<T> AutoGrowCircularQueue<T> {
         }
 
         // Deallocate old buffer
-        if !self.buffer.is_null() {
-            // SAFETY: buffer allocated with old_layout, pointer non-null checked above
-            unsafe {
-                dealloc(self.buffer as *mut u8, old_layout);
-            }
+        // SAFETY: buffer allocated with old_layout; zero-size skipped inside
+        unsafe {
+            Self::deallocate_buffer(self.buffer, old_layout);
         }
 
         // Update structure
@@ -1147,12 +1166,10 @@ impl<T> Drop for AutoGrowCircularQueue<T> {
         // Clear all elements first (calls destructors)
         self.clear();
 
-        // Deallocate raw memory buffer
-        if !self.buffer.is_null() {
-            // SAFETY: buffer allocated with current_layout(), all elements already dropped via clear()
-            unsafe {
-                dealloc(self.buffer as *mut u8, self.current_layout());
-            }
+        // Deallocate raw memory buffer (elements already dropped via clear())
+        // SAFETY: buffer allocated with current_layout(); zero-size skipped inside
+        unsafe {
+            Self::deallocate_buffer(self.buffer, self.current_layout());
         }
     }
 }

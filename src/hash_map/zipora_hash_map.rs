@@ -163,11 +163,21 @@ where
         match &config.storage_strategy {
             HashStorageStrategy::Standard {
                 initial_capacity, ..
-            } => Ok(HashMapStorage::Standard {
-                buckets: FastVec::with_capacity(*initial_capacity)?,
-                entries: FastVec::with_capacity(*initial_capacity)?,
-                mask: initial_capacity.saturating_sub(1),
-            }),
+            } => {
+                // Mask-based probing (`index & mask`) requires a power-of-two
+                // capacity; a user-supplied capacity like 100 would produce
+                // mask 99 and a probe sequence that misses slots.
+                let cap = if *initial_capacity == 0 {
+                    0
+                } else {
+                    initial_capacity.next_power_of_two()
+                };
+                Ok(HashMapStorage::Standard {
+                    buckets: FastVec::with_capacity(cap)?,
+                    entries: FastVec::with_capacity(cap)?,
+                    mask: cap.saturating_sub(1),
+                })
+            }
             HashStorageStrategy::SmallInline {
                 inline_capacity: _, ..
             } => {

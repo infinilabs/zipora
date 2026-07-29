@@ -69,7 +69,8 @@ impl OptimalPartitionedEliasFano {
                 universe: 0,
             };
         }
-        let universe = values[values.len() - 1] + 1;
+        // saturating: see EliasFano::from_sorted_u64 (u64::MAX must not wrap)
+        let universe = values[values.len() - 1].saturating_add(1);
         Self::from_sorted_impl(values.len(), universe, |i| values[i])
     }
 
@@ -138,8 +139,9 @@ impl OptimalPartitionedEliasFano {
 
                 let min_val = get_val(j);
                 let max_val = get_val(i - 1);
-                let local_u = max_val - min_val + 1;
-                let cost = dp[j] + Self::chunk_cost(chunk_n, local_u);
+                // saturating: candidate chunk spanning [0, u64::MAX] must not wrap
+                let local_u = (max_val - min_val).saturating_add(1);
+                let cost = dp[j].saturating_add(Self::chunk_cost(chunk_n, local_u));
 
                 if cost < dp[i] {
                     dp[i] = cost;
@@ -170,7 +172,8 @@ impl OptimalPartitionedEliasFano {
             let count = end - start;
             let min_val = get_val(start);
             let max_val = get_val(end - 1);
-            let local_universe = max_val - min_val + 1;
+            // saturating: chunk spanning [0, u64::MAX] must not wrap to 0
+            let local_universe = (max_val - min_val).saturating_add(1);
 
             let low_bit_width = if count as u64 >= local_universe {
                 0

@@ -933,4 +933,35 @@ mod tests {
         let res = decoder.decode(truncated, data.len());
         assert!(res.is_err());
     }
+
+    #[test]
+    fn test_normalization_edge_cases_roundtrip() {
+        // plan.md 7.4: degenerate frequency distributions must normalize to
+        // exactly TOTFREQ and round-trip losslessly.
+        // (a) single symbol: normalized freq == TOTFREQ
+        // (b) all 256 symbols present: every symbol gets >= 1 slot
+        // (c) extreme skew: dominant symbol must not starve the rare one
+        let cases: Vec<Vec<u8>> = vec![
+            vec![b'a'; 10_000],
+            (0..=255u8).cycle().take(4096).collect(),
+            {
+                let mut v = vec![0u8; 100_000];
+                v[50_000] = 255; // 99_999 : 1 skew
+                v
+            },
+        ];
+
+        for (case_idx, data) in cases.iter().enumerate() {
+            let mut frequencies = [0u32; 256];
+            for &byte in data.iter() {
+                frequencies[byte as usize] += 1;
+            }
+
+            let encoder = Rans64Encoder::<ParallelX1>::new(&frequencies).unwrap();
+            let encoded = encoder.encode(data).unwrap();
+            let decoder = Rans64Decoder::<ParallelX1>::new(&encoder);
+            let decoded = decoder.decode(&encoded, data.len()).unwrap();
+            assert_eq!(data, &decoded, "case {} failed round-trip", case_idx);
+        }
+    }
 }

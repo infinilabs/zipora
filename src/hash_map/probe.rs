@@ -51,6 +51,13 @@ where
             } => {
                 let old_capacity = entries.len();
                 let new_capacity = (old_capacity * 2).max(32); // At least double the size
+                // Mask-based probing requires a power-of-two capacity
+                // (storage is created power-of-two and doubling preserves it).
+                assert!(
+                    new_capacity.is_power_of_two(),
+                    "hash map capacity must be a power of two for mask-based probing (got {})",
+                    new_capacity
+                );
 
                 // Create new larger storage
                 let mut new_entries: FastVec<HashEntry<K, V>> =
@@ -164,6 +171,10 @@ where
                     );
                 }
             }
+            debug_assert!(
+                capacity.is_power_of_two(),
+                "hash map capacity must be a power of two for mask-based probing"
+            );
             *mask = capacity - 1;
         }
 

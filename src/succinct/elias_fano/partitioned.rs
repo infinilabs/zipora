@@ -84,7 +84,8 @@ impl PartitionedEliasFano {
                 universe: 0,
             };
         }
-        let universe = values[values.len() - 1] + 1;
+        // saturating: see EliasFano::from_sorted_u64 (u64::MAX must not wrap)
+        let universe = values[values.len() - 1].saturating_add(1);
         Self::from_sorted_impl(values.len(), universe, |i| values[i])
     }
 
@@ -102,7 +103,8 @@ impl PartitionedEliasFano {
 
             let min_val = get_val(start);
             let max_val = get_val(end - 1);
-            let local_universe = max_val - min_val + 1;
+            // saturating: chunk spanning [0, u64::MAX] must not wrap to 0
+            let local_universe = (max_val - min_val).saturating_add(1);
 
             // Compute local low_bit_width
             let low_bit_width = if count as u64 >= local_universe {

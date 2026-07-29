@@ -480,7 +480,13 @@ impl UintVecMin0 {
         assert!(bits <= 64, "Bits must be <= 64");
 
         self.bits = bits;
-        self.mask = if bits == 0 { 0 } else { (1usize << bits) - 1 };
+        // usize::MAX >> (64 - bits): correct for the full 1..=64 range —
+        // `(1 << 64) - 1` would overflow the shift (fuzz_uint_vec finding).
+        self.mask = if bits == 0 {
+            0
+        } else {
+            usize::MAX >> (64 - bits)
+        };
         self.size = num;
 
         let mem_size = Self::compute_mem_size(bits, num);
@@ -518,7 +524,13 @@ impl UintVecMin0 {
             self.data = Vec::from_raw_parts(data, mem_size, mem_size);
         }
         self.bits = bits;
-        self.mask = if bits == 0 { 0 } else { (1usize << bits) - 1 };
+        // usize::MAX >> (64 - bits): correct for the full 1..=64 range —
+        // `(1 << 64) - 1` would overflow the shift (fuzz_uint_vec finding).
+        self.mask = if bits == 0 {
+            0
+        } else {
+            usize::MAX >> (64 - bits)
+        };
         self.size = num;
     }
 

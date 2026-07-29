@@ -20,9 +20,6 @@ pub struct CacheBuffer {
     /// Buffer for multi-page data
     data_buffer: Vec<u8>,
 
-    /// Data slice (points to either cache page or buffer)
-    data_slice: Option<&'static [u8]>,
-
     /// Cache hit type for statistics
     hit_type: CacheHitType,
 }
@@ -47,7 +44,6 @@ impl CacheBuffer {
             cache: None,
             node_indices: Vec::new(),
             data_buffer: Vec::new(),
-            data_slice: None,
             hit_type: CacheHitType::Hit,
         }
     }
@@ -79,11 +75,6 @@ impl CacheBuffer {
 
         self.node_indices = node_indices;
         self.hit_type = CacheHitType::Mix;
-
-        // Set data slice to point to internal buffer
-        let data_ptr = self.data_buffer.as_ptr();
-        // SAFETY: data_ptr from as_ptr() is valid, length matches data_buffer size after resize()
-        self.data_slice = Some(unsafe { std::slice::from_raw_parts(data_ptr, length) });
     }
 
     /// Copy data to internal buffer
@@ -92,10 +83,6 @@ impl CacheBuffer {
         self.buffer_type = BufferType::Copied;
         self.data_buffer.clear();
         self.data_buffer.extend_from_slice(data);
-
-        let data_ptr = self.data_buffer.as_ptr();
-        // SAFETY: data_ptr from as_ptr() is valid, data.len() matches data_buffer size after extend_from_slice()
-        self.data_slice = Some(unsafe { std::slice::from_raw_parts(data_ptr, data.len()) });
         self.hit_type = CacheHitType::Hit;
     }
 
@@ -114,18 +101,12 @@ impl CacheBuffer {
         }
 
         self.data_buffer.extend_from_slice(data);
-
-        // Update data slice
-        let data_ptr = self.data_buffer.as_ptr();
-        // SAFETY: data_ptr from as_ptr() is valid, data_buffer.len() is correct after extend_from_slice()
-        self.data_slice =
-            Some(unsafe { std::slice::from_raw_parts(data_ptr, self.data_buffer.len()) });
     }
 
     /// Get buffered data
     pub fn data(&self) -> &[u8] {
         match self.buffer_type {
-            BufferType::MultiPage | BufferType::Copied => self.data_slice.unwrap_or(&[]),
+            BufferType::MultiPage | BufferType::Copied => &self.data_buffer,
             BufferType::Empty => &[],
         }
     }
@@ -157,7 +138,6 @@ impl CacheBuffer {
         self.cleanup();
         self.buffer_type = BufferType::Empty;
         self.data_buffer.clear();
-        self.data_slice = None;
     }
 
     /// Internal cleanup of cache references
@@ -169,15 +149,9 @@ impl CacheBuffer {
 
     /// Create buffer from raw data
     pub fn from_data(data: Vec<u8>) -> Self {
-        let len = data.len();
         let mut buffer = Self::new();
         buffer.buffer_type = BufferType::Copied;
         buffer.data_buffer = data;
-
-        let data_ptr = buffer.data_buffer.as_ptr();
-        // SAFETY: data_ptr from as_ptr() is valid, len matches data_buffer.len() (captured before move)
-        buffer.data_slice = Some(unsafe { std::slice::from_raw_parts(data_ptr, len) });
-
         buffer
     }
 
@@ -205,22 +179,14 @@ impl Drop for CacheBuffer {
     }
 }
 
-// SAFETY: CacheBuffer is Send because:
-// 1. `buffer_type: BufferType` - Simple enum, trivially Send.
-// 2. `data_slice: Option<&'static [u8]>` - Points to immutable data.
-//    The 'static lifetime is a lie (set in from_data), but the slice points
-//    to data_buffer which moves with the struct, so ownership is maintained.
-// 3. `data_buffer: Vec<u8>` - Vec is Send.
-// 4. `cache: Option<Arc<dyn Cache>>` - Arc<dyn Cache> is Send if Cache is Send+Sync.
-// 5. `node_indices: Vec<NodeIndex>` - Vec is Send.
-//
-// IMPORTANT: The `data_slice` field has a fake 'static lifetime. This is safe
-// because the slice always points into `data_buffer`, which moves with the struct.
-// The struct must never be copied/cloned in a way that separates the slice from buffer.
+// SAFETY: CacheBuffer is Send because every field is Send except
+// `cache: Option<*const SingleLruPageCache>`, which blocks the auto impl.
+// That pointer is only stored for bookkeeping (set in setup_multi_page,
+// cleared in cleanup) and is never dereferenced, so moving the struct to
+// another thread cannot create a data race through it.
+// (The former `data_slice: Option<&'static [u8]>` self-referential field was
+// removed; `data()` now borrows `data_buffer` directly.)
 unsafe impl Send for CacheBuffer {}
-
-// Note: CacheBuffer intentionally does NOT implement Sync because the data_slice
-// field uses interior pointer tricks that would be unsafe to share across threads.
 
 /// Buffer pool for reusing cache buffers
 pub struct BufferPool {

@@ -1680,4 +1680,32 @@ mod tests {
         assert!(!cursor.advance(), "Cursor should be exhausted after chunk depletion on corrupt structure");
         assert!(cursor.is_exhausted());
     }
+
+    #[test]
+    fn test_u64_max_value_universe_saturation() {
+        // Regression (plan.md 7.3): universe = last + 1 wrapped to 0 for
+        // u64::MAX values, forcing low_bit_width = 0 and a ~u64::MAX-bit
+        // high array (overflow panic / OOM). All variants must round-trip.
+        let values: Vec<u64> = vec![0, 1, 1000, u64::MAX - 1, u64::MAX];
+
+        let ef = EliasFano::from_sorted_u64(&values);
+        for (i, &v) in values.iter().enumerate() {
+            assert_eq!(ef.get(i), Some(v), "EliasFano idx {}", i);
+        }
+
+        let pef = PartitionedEliasFano::from_sorted_u64(&values);
+        for (i, &v) in values.iter().enumerate() {
+            assert_eq!(pef.get(i), Some(v), "PEF idx {}", i);
+        }
+
+        let opef = OptimalPartitionedEliasFano::from_sorted_u64(&values);
+        for (i, &v) in values.iter().enumerate() {
+            assert_eq!(opef.get(i), Some(v), "OPEF idx {}", i);
+        }
+
+        let cef = ClusteredEliasFano::from_sorted_u64(&values);
+        for (i, &v) in values.iter().enumerate() {
+            assert_eq!(cef.get(i), Some(v), "CEF idx {}", i);
+        }
+    }
 }

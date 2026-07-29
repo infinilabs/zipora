@@ -102,6 +102,13 @@ impl BitVector {
     /// assert_eq!(bv.get(64).unwrap(), false);
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
+    /// # Buffer sizing
+    ///
+    /// The resulting `BitVector` uses exactly `ceil(total_bits / 64)` blocks —
+    /// there is NO trailing padding word. Code performing branchless two-word
+    /// (u128) reads must allocate its own padding (as the Elias-Fano low-bit
+    /// arrays do internally); it cannot assume `blocks[word_idx + 1]` is valid
+    /// for the last word of a `BitVector` built here.
     pub fn from_raw_bits(raw_bits: Vec<u64>, total_bits: usize) -> Result<Self> {
         let required_blocks = total_bits.div_ceil(BITS_PER_BLOCK);
 

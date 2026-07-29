@@ -56,6 +56,15 @@
 ///     )
 /// }
 /// ```
+///
+/// # Footgun: expands to `return` (plan.md 7.6)
+///
+/// The tier arms expand to `return $expr;` — they return from the
+/// **enclosing function**, not just from the macro expression. The macro
+/// must therefore be the tail expression of a function whose return type
+/// matches the arms. Invoking it mid-function (e.g. to initialize a local)
+/// silently returns early from the caller instead of binding the value.
+/// Wrap it in a helper function if you need the result mid-computation.
 #[macro_export]
 macro_rules! simd_dispatch {
     // AVX-512 + more tiers
