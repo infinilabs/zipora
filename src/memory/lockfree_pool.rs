@@ -297,7 +297,19 @@ impl LockFreeMemoryPool {
     }
 
     /// Create a new lock-free memory pool
+    ///
+    /// # Errors
+    ///
+    /// Returns `invalid_data` if `config.memory_size` exceeds `u32::MAX`:
+    /// the pool addresses its backing region with 32-bit offsets (packed
+    /// offset/generation heads, `AtomicU32` bump pointer), so a larger
+    /// region would truncate offset arithmetic and alias live allocations.
     pub fn new(config: LockFreePoolConfig) -> Result<Self> {
+        if config.memory_size > u32::MAX as usize {
+            return Err(ZiporaError::invalid_data(
+                "LockFreeMemoryPool memory_size cannot exceed 4GB (32-bit offset limit)",
+            ));
+        }
         // Allocate backing memory region
         let layout = Layout::from_size_align(config.memory_size, ALIGN_SIZE)
             .map_err(|e| ZiporaError::invalid_data(format!("Invalid layout: {}", e)))?;
@@ -807,6 +819,36 @@ mod tests {
 
         // Verify pool was created successfully
         assert!(pool.stats.is_some());
+    }
+
+    // The pool addresses its backing region with 32-bit offsets (`AtomicU32`
+    // bump pointer, `aligned_size as u32` advance). A pool > 4GB would let a
+    // >= 4GB allocation pass the usize bounds check while the u32 advance
+    // truncates — the next allocation would alias live memory. Construction
+    // must reject such configs outright.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn test_pool_rejects_memory_size_over_4gb() {
+        let config = LockFreePoolConfig {
+            memory_size: 5 * 1024 * 1024 * 1024, // 5GB
+            ..Default::default()
+        };
+        let result = LockFreeMemoryPool::new(config);
+        assert!(result.is_err(), "memory_size > u32::MAX must be rejected");
+
+        // Exactly u32::MAX is still representable and must be accepted by the
+        // guard (allocation itself may fail on low-memory machines, but it
+        // must not fail with the 32-bit-offset validation error).
+        let config = LockFreePoolConfig {
+            memory_size: u32::MAX as usize,
+            ..Default::default()
+        };
+        if let Err(e) = LockFreeMemoryPool::new(config) {
+            assert!(
+                !e.to_string().contains("32-bit offset"),
+                "u32::MAX-sized pool must pass the offset-limit guard, got: {e}"
+            );
+        }
     }
 
     #[test]
