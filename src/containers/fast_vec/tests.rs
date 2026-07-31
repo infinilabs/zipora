@@ -1454,3 +1454,32 @@ fn test_ensure_capacity_returns_error_on_overflow() {
     let result = v.ensure_capacity(too_large);
     assert!(result.is_err());
 }
+
+#[test]
+fn test_from_vec_trait_is_zero_copy() {
+    let v = vec![1i32, 2, 3];
+    let ptr = v.as_ptr();
+    let cap = v.capacity();
+    let fv: FastVec<i32> = v.into();
+    assert_eq!(fv.as_slice(), &[1, 2, 3]);
+    // Zero-copy: FastVec must own the Vec's original buffer, not a fresh allocation.
+    assert_eq!(fv.as_ptr(), ptr);
+    assert_eq!(fv.capacity(), cap);
+}
+
+#[test]
+fn test_from_vec_trait_non_copy_type() {
+    let v = vec![String::from("a"), String::from("b")];
+    let fv: FastVec<String> = v.into();
+    assert_eq!(fv.len(), 2);
+    assert_eq!(fv[0], "a");
+    assert_eq!(fv[1], "b");
+    // fv dropped here — Drop must free the transferred buffer exactly once.
+}
+
+#[test]
+fn test_from_vec_trait_empty() {
+    let fv: FastVec<i32> = Vec::new().into();
+    assert_eq!(fv.len(), 0);
+    assert!(fv.is_empty());
+}
