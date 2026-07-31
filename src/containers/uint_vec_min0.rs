@@ -133,7 +133,10 @@ impl UintVecMin0 {
     #[inline]
     pub fn compute_mem_size(bits: usize, num: usize) -> usize {
         assert!(bits <= 64, "bits must be <= 64");
-        let using_size = (bits * num).div_ceil(8);
+        let total_bits = bits
+            .checked_mul(num)
+            .expect("UintVecMin0: bits * num overflowed usize");
+        let using_size = total_bits.div_ceil(8);
         let touch_size = using_size + std::mem::size_of::<u64>() - 1;
         (touch_size + 15) & !15 // Align to 16 bytes
     }
@@ -630,6 +633,14 @@ mod tests {
         let size_8bit = UintVecMin0::compute_mem_size(8, 100);
         assert!(size_8bit >= 100);
         assert_eq!(size_8bit % 16, 0); // 16-byte aligned
+    }
+
+    #[test]
+    #[should_panic(expected = "overflowed usize")]
+    fn test_compute_mem_size_overflow_panics() {
+        // 64 bits/elem * (usize::MAX/32) elems overflows usize::MAX total bits;
+        // unchecked this wraps and silently under-allocates.
+        UintVecMin0::compute_mem_size(64, usize::MAX / 32);
     }
 
     #[test]

@@ -50,12 +50,7 @@ impl<T> DerefMut for FastVec<T> {
 
 impl<T> From<Vec<T>> for FastVec<T> {
     fn from(v: Vec<T>) -> Self {
-        let mut fv =
-            Self::with_capacity(v.len()).expect("FastVec: allocation failed in From<Vec<T>>");
-        for item in v {
-            fv.push(item).expect("FastVec: push failed in From<Vec<T>>");
-        }
-        fv
+        Self::from_vec(v)
     }
 }
 
