@@ -49,6 +49,32 @@ fn clear_last_error() {
     });
 }
 
+/// Execute an FFI body, catching any panic so it cannot unwind into the C
+/// caller. Unwinding out of an `extern "C"` function aborts the whole process
+/// (Rust >= 1.71); this converts a panic into `fallback` plus a last-error
+/// message the caller can retrieve via `zipora_last_error`.
+///
+/// `AssertUnwindSafe` is acceptable here: every entry point re-validates its
+/// raw-pointer inputs from scratch, and objects reachable through those
+/// pointers are owned by the C caller, so no Rust-side invariant is silently
+/// carried across the catch.
+fn ffi_guard<T>(fallback: T, f: impl FnOnce() -> T) -> T {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(value) => value,
+        Err(payload) => {
+            let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+                s
+            } else if let Some(s) = payload.downcast_ref::<String>() {
+                s.as_str()
+            } else {
+                "unknown panic payload"
+            };
+            set_last_error(&format!("panic caught at FFI boundary: {}", msg));
+            fallback
+        }
+    }
+}
+
 
 /// Initialize the zipora library
 ///
@@ -57,8 +83,10 @@ fn clear_last_error() {
 /// This function is safe to call multiple times.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zipora_init() -> CResult {
-    crate::init();
-    CResult::Success
+    ffi_guard(CResult::InternalError, || {
+        crate::init();
+        CResult::Success
+    })
 }
 
 /// Get library version string
@@ -69,15 +97,18 @@ pub unsafe extern "C" fn zipora_init() -> CResult {
 /// The caller should not free the returned pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zipora_version() -> *const c_char {
-    use std::sync::OnceLock;
-    static VERSION_CSTRING: OnceLock<CString> = OnceLock::new();
+    ffi_guard(ptr::null(), || {
+        use std::sync::OnceLock;
+        static VERSION_CSTRING: OnceLock<CString> = OnceLock::new();
 
-    let cstring = VERSION_CSTRING.get_or_init(|| {
-        CString::new(crate::VERSION)
-            .unwrap_or_else(|_| CString::new("unknown").expect("static string has no NUL bytes"))
-    });
+        let cstring = VERSION_CSTRING.get_or_init(|| {
+            CString::new(crate::VERSION).unwrap_or_else(|_| {
+                CString::new("unknown").expect("static string has no NUL bytes")
+            })
+        });
 
-    cstring.as_ptr()
+        cstring.as_ptr()
+    })
 }
 
 /// Check if SIMD optimizations are available
@@ -87,7 +118,9 @@ pub unsafe extern "C" fn zipora_version() -> *const c_char {
 /// it is safe to call from any thread.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zipora_has_simd() -> c_int {
-    if crate::has_simd_support() { 1 } else { 0 }
+    ffi_guard(0, || {
+        if crate::has_simd_support() { 1 } else { 0 }
+    })
 }
 
 /// Create a new FastVec instance
@@ -97,8 +130,10 @@ pub unsafe extern "C" fn zipora_has_simd() -> c_int {
 /// The returned pointer must be freed with `fast_vec_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fast_vec_new() -> *mut CFastVec {
-    let fast_vec = Box::new(crate::FastVec::<u8>::new());
-    Box::into_raw(fast_vec) as *mut CFastVec
+    ffi_guard(ptr::null_mut(), || {
+        let fast_vec = Box::new(crate::FastVec::<u8>::new());
+        Box::into_raw(fast_vec) as *mut CFastVec
+    })
 }
 
 /// Free a FastVec instance
@@ -109,11 +144,13 @@ pub unsafe extern "C" fn fast_vec_new() -> *mut CFastVec {
 /// The pointer becomes invalid after this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fast_vec_free(vec: *mut CFastVec) {
-    if !vec.is_null() {
-        // SAFETY: pointer is valid (null-checked), created by fast_vec_new via Box::into_raw, not previously freed
-        let _vec = unsafe { Box::from_raw(vec as *mut crate::FastVec<u8>) };
-        // Automatic cleanup when Box is dropped
-    }
+    ffi_guard((), || {
+        if !vec.is_null() {
+            // SAFETY: pointer is valid (null-checked), created by fast_vec_new via Box::into_raw, not previously freed
+            let _vec = unsafe { Box::from_raw(vec as *mut crate::FastVec<u8>) };
+            // Automatic cleanup when Box is dropped
+        }
+    })
 }
 
 /// Push a byte to a FastVec
@@ -123,20 +160,22 @@ pub unsafe extern "C" fn fast_vec_free(vec: *mut CFastVec) {
 /// The vec pointer must be a valid CFastVec pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fast_vec_push(vec: *mut CFastVec, value: u8) -> CResult {
-    if vec.is_null() {
-        set_last_error("FastVec pointer is null");
-        return CResult::InvalidInput;
-    }
-
-    // SAFETY: pointer is valid (null-checked at line 132), points to initialized FastVec created by fast_vec_new
-    let fast_vec = unsafe { &mut *(vec as *mut crate::FastVec<u8>) };
-    match fast_vec.push(value) {
-        Ok(_) => CResult::Success,
-        Err(e) => {
-            set_last_error(&format!("Failed to push to FastVec: {}", e));
-            CResult::MemoryError
+    ffi_guard(CResult::InternalError, || {
+        if vec.is_null() {
+            set_last_error("FastVec pointer is null");
+            return CResult::InvalidInput;
         }
-    }
+
+        // SAFETY: pointer is valid (null-checked above), points to initialized FastVec created by fast_vec_new
+        let fast_vec = unsafe { &mut *(vec as *mut crate::FastVec<u8>) };
+        match fast_vec.push(value) {
+            Ok(_) => CResult::Success,
+            Err(e) => {
+                set_last_error(&format!("Failed to push to FastVec: {}", e));
+                CResult::MemoryError
+            }
+        }
+    })
 }
 
 /// Get the length of a FastVec
@@ -146,13 +185,15 @@ pub unsafe extern "C" fn fast_vec_push(vec: *mut CFastVec, value: u8) -> CResult
 /// The vec pointer must be a valid CFastVec pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fast_vec_len(vec: *const CFastVec) -> usize {
-    if vec.is_null() {
-        return 0;
-    }
+    ffi_guard(0, || {
+        if vec.is_null() {
+            return 0;
+        }
 
-    // SAFETY: pointer is valid (null-checked at line 154), points to initialized FastVec
-    let fast_vec = unsafe { &*(vec as *const crate::FastVec<u8>) };
-    fast_vec.len()
+        // SAFETY: pointer is valid (null-checked above), points to initialized FastVec
+        let fast_vec = unsafe { &*(vec as *const crate::FastVec<u8>) };
+        fast_vec.len()
+    })
 }
 
 /// Get a pointer to the FastVec's data
@@ -163,13 +204,15 @@ pub unsafe extern "C" fn fast_vec_len(vec: *const CFastVec) -> usize {
 /// The returned pointer is valid until the FastVec is modified or freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fast_vec_data(vec: *const CFastVec) -> *const u8 {
-    if vec.is_null() {
-        return ptr::null();
-    }
+    ffi_guard(ptr::null(), || {
+        if vec.is_null() {
+            return ptr::null();
+        }
 
-    // SAFETY: pointer is valid (null-checked at line 170), points to initialized FastVec
-    let fast_vec = unsafe { &*(vec as *const crate::FastVec<u8>) };
-    fast_vec.as_ptr()
+        // SAFETY: pointer is valid (null-checked above), points to initialized FastVec
+        let fast_vec = unsafe { &*(vec as *const crate::FastVec<u8>) };
+        fast_vec.as_ptr()
+    })
 }
 
 /// Create a memory pool
@@ -179,11 +222,13 @@ pub unsafe extern "C" fn fast_vec_data(vec: *const CFastVec) -> *const u8 {
 /// The returned pointer must be freed with `memory_pool_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn memory_pool_new(chunk_size: usize, max_chunks: usize) -> *mut CMemoryPool {
-    let config = crate::memory::PoolConfig::new(chunk_size, max_chunks, 8);
-    match crate::memory::MemoryPool::new(config) {
-        Ok(pool) => Box::into_raw(Box::new(pool)) as *mut CMemoryPool,
-        Err(_) => ptr::null_mut(),
-    }
+    ffi_guard(ptr::null_mut(), || {
+        let config = crate::memory::PoolConfig::new(chunk_size, max_chunks, 8);
+        match crate::memory::MemoryPool::new(config) {
+            Ok(pool) => Box::into_raw(Box::new(pool)) as *mut CMemoryPool,
+            Err(_) => ptr::null_mut(),
+        }
+    })
 }
 
 /// Free a memory pool
@@ -193,11 +238,13 @@ pub unsafe extern "C" fn memory_pool_new(chunk_size: usize, max_chunks: usize) -
 /// The pointer must be a valid CMemoryPool pointer returned from `memory_pool_new`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn memory_pool_free(pool: *mut CMemoryPool) {
-    if !pool.is_null() {
-        // SAFETY: pointer is valid (null-checked), created by memory_pool_new via Box::into_raw, not previously freed
-        let _pool = unsafe { Box::from_raw(pool as *mut crate::memory::MemoryPool) };
-        // Automatic cleanup when Box is dropped
-    }
+    ffi_guard((), || {
+        if !pool.is_null() {
+            // SAFETY: pointer is valid (null-checked), created by memory_pool_new via Box::into_raw, not previously freed
+            let _pool = unsafe { Box::from_raw(pool as *mut crate::memory::MemoryPool) };
+            // Automatic cleanup when Box is dropped
+        }
+    })
 }
 
 /// Allocate memory from a pool
@@ -208,16 +255,18 @@ pub unsafe extern "C" fn memory_pool_free(pool: *mut CMemoryPool) {
 /// The returned pointer must be freed with `memory_pool_deallocate`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn memory_pool_allocate(pool: *mut CMemoryPool) -> *mut c_void {
-    if pool.is_null() {
-        return ptr::null_mut();
-    }
+    ffi_guard(ptr::null_mut(), || {
+        if pool.is_null() {
+            return ptr::null_mut();
+        }
 
-    // SAFETY: pointer is valid (null-checked at line 213), points to initialized MemoryPool
-    let memory_pool = unsafe { &*(pool as *const crate::memory::MemoryPool) };
-    match memory_pool.allocate() {
-        Ok(ptr) => ptr.as_ptr() as *mut c_void,
-        Err(_) => ptr::null_mut(),
-    }
+        // SAFETY: pointer is valid (null-checked above), points to initialized MemoryPool
+        let memory_pool = unsafe { &*(pool as *const crate::memory::MemoryPool) };
+        match memory_pool.allocate() {
+            Ok(ptr) => ptr.as_ptr() as *mut c_void,
+            Err(_) => ptr::null_mut(),
+        }
+    })
 }
 
 /// Deallocate memory back to a pool
@@ -231,28 +280,30 @@ pub unsafe extern "C" fn memory_pool_deallocate(
     pool: *mut CMemoryPool,
     ptr: *mut c_void,
 ) -> CResult {
-    if pool.is_null() || ptr.is_null() {
-        set_last_error("Memory pool or pointer is null");
-        return CResult::InvalidInput;
-    }
-
-    // SAFETY: pointer is valid (null-checked at line 235), points to initialized MemoryPool
-    let memory_pool = unsafe { &*(pool as *const crate::memory::MemoryPool) };
-    let non_null_ptr = match std::ptr::NonNull::new(ptr as *mut u8) {
-        Some(p) => p,
-        None => {
-            set_last_error("Failed to create NonNull pointer from raw pointer");
+    ffi_guard(CResult::InternalError, || {
+        if pool.is_null() || ptr.is_null() {
+            set_last_error("Memory pool or pointer is null");
             return CResult::InvalidInput;
         }
-    };
 
-    match memory_pool.deallocate(non_null_ptr) {
-        Ok(_) => CResult::Success,
-        Err(e) => {
-            set_last_error(&format!("Failed to deallocate memory: {}", e));
-            CResult::InternalError
+        // SAFETY: pointer is valid (null-checked above), points to initialized MemoryPool
+        let memory_pool = unsafe { &*(pool as *const crate::memory::MemoryPool) };
+        let non_null_ptr = match std::ptr::NonNull::new(ptr as *mut u8) {
+            Some(p) => p,
+            None => {
+                set_last_error("Failed to create NonNull pointer from raw pointer");
+                return CResult::InvalidInput;
+            }
+        };
+
+        match memory_pool.deallocate(non_null_ptr) {
+            Ok(_) => CResult::Success,
+            Err(e) => {
+                set_last_error(&format!("Failed to deallocate memory: {}", e));
+                CResult::InternalError
+            }
         }
-    }
+    })
 }
 
 /// Create a new blob store
@@ -262,8 +313,10 @@ pub unsafe extern "C" fn memory_pool_deallocate(
 /// The returned pointer must be freed with `blob_store_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn blob_store_new() -> *mut CBlobStore {
-    let store = Box::new(crate::blob_store::MemoryBlobStore::new());
-    Box::into_raw(store) as *mut CBlobStore
+    ffi_guard(ptr::null_mut(), || {
+        let store = Box::new(crate::blob_store::MemoryBlobStore::new());
+        Box::into_raw(store) as *mut CBlobStore
+    })
 }
 
 /// Free a blob store
@@ -273,11 +326,14 @@ pub unsafe extern "C" fn blob_store_new() -> *mut CBlobStore {
 /// The pointer must be a valid CBlobStore pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn blob_store_free(store: *mut CBlobStore) {
-    if !store.is_null() {
-        // SAFETY: pointer is valid (null-checked), created by blob_store_new via Box::into_raw, not previously freed
-        let _store = unsafe { Box::from_raw(store as *mut crate::blob_store::MemoryBlobStore) };
-        // Automatic cleanup when Box is dropped
-    }
+    ffi_guard((), || {
+        if !store.is_null() {
+            // SAFETY: pointer is valid (null-checked), created by blob_store_new via Box::into_raw, not previously freed
+            let _store =
+                unsafe { Box::from_raw(store as *mut crate::blob_store::MemoryBlobStore) };
+            // Automatic cleanup when Box is dropped
+        }
+    })
 }
 
 /// Put data into a blob store
@@ -292,29 +348,31 @@ pub unsafe extern "C" fn blob_store_put(
     size: usize,
     record_id: *mut u32,
 ) -> CResult {
-    if store.is_null() || data.is_null() || record_id.is_null() {
-        set_last_error("Blob store, data, or record_id pointer is null");
-        return CResult::InvalidInput;
-    }
+    ffi_guard(CResult::InternalError, || {
+        if store.is_null() || data.is_null() || record_id.is_null() {
+            set_last_error("Blob store, data, or record_id pointer is null");
+            return CResult::InvalidInput;
+        }
 
-    // SAFETY: pointer is valid (null-checked at line 294), points to initialized MemoryBlobStore
-    let blob_store = unsafe { &mut *(store as *mut crate::blob_store::MemoryBlobStore) };
-    // SAFETY: data pointer is valid (null-checked at line 294), size is provided by caller
-    let data_slice = unsafe { std::slice::from_raw_parts(data, size) };
+        // SAFETY: pointer is valid (null-checked above), points to initialized MemoryBlobStore
+        let blob_store = unsafe { &mut *(store as *mut crate::blob_store::MemoryBlobStore) };
+        // SAFETY: data pointer is valid (null-checked above), size is provided by caller
+        let data_slice = unsafe { std::slice::from_raw_parts(data, size) };
 
-    match blob_store.put(data_slice) {
-        Ok(id) => {
-            // SAFETY: record_id pointer is valid (null-checked at line 294), points to valid u32
-            unsafe {
-                *record_id = id;
+        match blob_store.put(data_slice) {
+            Ok(id) => {
+                // SAFETY: record_id pointer is valid (null-checked above), points to valid u32
+                unsafe {
+                    *record_id = id;
+                }
+                CResult::Success
             }
-            CResult::Success
+            Err(e) => {
+                set_last_error(&format!("Failed to put data in blob store: {}", e));
+                CResult::InternalError
+            }
         }
-        Err(e) => {
-            set_last_error(&format!("Failed to put data in blob store: {}", e));
-            CResult::InternalError
-        }
-    }
+    })
 }
 
 /// Get data from a blob store
@@ -330,52 +388,54 @@ pub unsafe extern "C" fn blob_store_get(
     data: *mut *const u8,
     size: *mut usize,
 ) -> CResult {
-    if store.is_null() || data.is_null() || size.is_null() {
-        return CResult::InvalidInput;
-    }
-
-    // SAFETY: pointer is valid (null-checked at line 329), points to initialized MemoryBlobStore
-    let blob_store = unsafe { &*(store as *const crate::blob_store::MemoryBlobStore) };
-
-    match blob_store.get(record_id) {
-        Ok(blob_data) => {
-            let data_len = blob_data.len();
-            let data_ptr = if data_len == 0 {
-                std::ptr::NonNull::<u8>::dangling().as_ptr()
-            } else {
-                // H14: validate the layout (rejects size > isize::MAX) instead
-                // of from_size_align_unchecked.
-                let layout = match std::alloc::Layout::from_size_align(data_len, 1) {
-                    Ok(layout) => layout,
-                    Err(_) => {
-                        set_last_error("blob size exceeds isize::MAX; cannot allocate");
-                        return CResult::MemoryError;
-                    }
-                };
-                // SAFETY: layout validated above, size is non-zero
-                unsafe { std::alloc::alloc(layout) }
-            };
-
-            if data_len > 0 && data_ptr.is_null() {
-                return CResult::MemoryError;
-            }
-
-            if data_len > 0 {
-                // SAFETY: data_ptr is valid, blob_data is valid slice, non-overlapping
-                unsafe {
-                    std::ptr::copy_nonoverlapping(blob_data.as_ptr(), data_ptr, data_len);
-                }
-            }
-
-            // SAFETY: data and size pointers are valid (null-checked at line 329), point to valid output parameters
-            unsafe {
-                *data = data_ptr;
-                *size = data_len;
-            }
-            CResult::Success
+    ffi_guard(CResult::InternalError, || {
+        if store.is_null() || data.is_null() || size.is_null() {
+            return CResult::InvalidInput;
         }
-        Err(_) => CResult::InvalidInput,
-    }
+
+        // SAFETY: pointer is valid (null-checked above), points to initialized MemoryBlobStore
+        let blob_store = unsafe { &*(store as *const crate::blob_store::MemoryBlobStore) };
+
+        match blob_store.get(record_id) {
+            Ok(blob_data) => {
+                let data_len = blob_data.len();
+                let data_ptr = if data_len == 0 {
+                    std::ptr::NonNull::<u8>::dangling().as_ptr()
+                } else {
+                    // H14: validate the layout (rejects size > isize::MAX) instead
+                    // of from_size_align_unchecked.
+                    let layout = match std::alloc::Layout::from_size_align(data_len, 1) {
+                        Ok(layout) => layout,
+                        Err(_) => {
+                            set_last_error("blob size exceeds isize::MAX; cannot allocate");
+                            return CResult::MemoryError;
+                        }
+                    };
+                    // SAFETY: layout validated above, size is non-zero
+                    unsafe { std::alloc::alloc(layout) }
+                };
+
+                if data_len > 0 && data_ptr.is_null() {
+                    return CResult::MemoryError;
+                }
+
+                if data_len > 0 {
+                    // SAFETY: data_ptr is valid, blob_data is valid slice, non-overlapping
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(blob_data.as_ptr(), data_ptr, data_len);
+                    }
+                }
+
+                // SAFETY: data and size pointers are valid (null-checked above), point to valid output parameters
+                unsafe {
+                    *data = data_ptr;
+                    *size = data_len;
+                }
+                CResult::Success
+            }
+            Err(_) => CResult::InvalidInput,
+        }
+    })
 }
 
 /// Create a suffix array from text
@@ -386,16 +446,18 @@ pub unsafe extern "C" fn blob_store_get(
 /// The returned pointer must be freed with `suffix_array_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn suffix_array_new(text: *const u8, size: usize) -> *mut CSuffixArray {
-    if text.is_null() || size == 0 {
-        return ptr::null_mut();
-    }
+    ffi_guard(ptr::null_mut(), || {
+        if text.is_null() || size == 0 {
+            return ptr::null_mut();
+        }
 
-    // SAFETY: pointer is valid (null-checked at line 369), size is non-zero (checked at line 369)
-    let text_slice = unsafe { std::slice::from_raw_parts(text, size) };
-    match crate::algorithms::SuffixArray::new(text_slice) {
-        Ok(sa) => Box::into_raw(Box::new(sa)) as *mut CSuffixArray,
-        Err(_) => ptr::null_mut(),
-    }
+        // SAFETY: pointer is valid (null-checked above), size is non-zero (checked above)
+        let text_slice = unsafe { std::slice::from_raw_parts(text, size) };
+        match crate::algorithms::SuffixArray::new(text_slice) {
+            Ok(sa) => Box::into_raw(Box::new(sa)) as *mut CSuffixArray,
+            Err(_) => ptr::null_mut(),
+        }
+    })
 }
 
 /// Free a suffix array
@@ -405,11 +467,13 @@ pub unsafe extern "C" fn suffix_array_new(text: *const u8, size: usize) -> *mut 
 /// The pointer must be a valid CSuffixArray pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn suffix_array_free(sa: *mut CSuffixArray) {
-    if !sa.is_null() {
-        // SAFETY: pointer is valid (null-checked), created by suffix_array_new via Box::into_raw, not previously freed
-        let _sa = unsafe { Box::from_raw(sa as *mut crate::algorithms::SuffixArray) };
-        // Automatic cleanup when Box is dropped
-    }
+    ffi_guard((), || {
+        if !sa.is_null() {
+            // SAFETY: pointer is valid (null-checked), created by suffix_array_new via Box::into_raw, not previously freed
+            let _sa = unsafe { Box::from_raw(sa as *mut crate::algorithms::SuffixArray) };
+            // Automatic cleanup when Box is dropped
+        }
+    })
 }
 
 /// Get the length of a suffix array
@@ -419,13 +483,15 @@ pub unsafe extern "C" fn suffix_array_free(sa: *mut CSuffixArray) {
 /// The sa pointer must be a valid CSuffixArray pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn suffix_array_len(sa: *const CSuffixArray) -> usize {
-    if sa.is_null() {
-        return 0;
-    }
+    ffi_guard(0, || {
+        if sa.is_null() {
+            return 0;
+        }
 
-    // SAFETY: pointer is valid (null-checked at line 401), points to initialized SuffixArray
-    let suffix_array = unsafe { &*(sa as *const crate::algorithms::SuffixArray) };
-    suffix_array.text_len()
+        // SAFETY: pointer is valid (null-checked above), points to initialized SuffixArray
+        let suffix_array = unsafe { &*(sa as *const crate::algorithms::SuffixArray) };
+        suffix_array.text_len()
+    })
 }
 
 /// Search for a pattern in the suffix array
@@ -443,25 +509,28 @@ pub unsafe extern "C" fn suffix_array_search(
     start: *mut usize,
     count: *mut usize,
 ) -> CResult {
-    if sa.is_null() || text.is_null() || pattern.is_null() || start.is_null() || count.is_null() {
-        return CResult::InvalidInput;
-    }
+    ffi_guard(CResult::InternalError, || {
+        if sa.is_null() || text.is_null() || pattern.is_null() || start.is_null() || count.is_null()
+        {
+            return CResult::InvalidInput;
+        }
 
-    // SAFETY: pointer is valid (null-checked at line 423), points to initialized SuffixArray
-    let suffix_array = unsafe { &*(sa as *const crate::algorithms::SuffixArray) };
-    // SAFETY: text pointer is valid (null-checked at line 423), text_size is provided by caller
-    let text_slice = unsafe { std::slice::from_raw_parts(text, text_size) };
-    // SAFETY: pattern pointer is valid (null-checked at line 423), pattern_size is provided by caller
-    let pattern_slice = unsafe { std::slice::from_raw_parts(pattern, pattern_size) };
+        // SAFETY: pointer is valid (null-checked above), points to initialized SuffixArray
+        let suffix_array = unsafe { &*(sa as *const crate::algorithms::SuffixArray) };
+        // SAFETY: text pointer is valid (null-checked above), text_size is provided by caller
+        let text_slice = unsafe { std::slice::from_raw_parts(text, text_size) };
+        // SAFETY: pattern pointer is valid (null-checked above), pattern_size is provided by caller
+        let pattern_slice = unsafe { std::slice::from_raw_parts(pattern, pattern_size) };
 
-    let (search_start, search_count) = suffix_array.search(text_slice, pattern_slice);
-    // SAFETY: start and count pointers are valid (null-checked at line 423), point to valid output parameters
-    unsafe {
-        *start = search_start;
-        *count = search_count;
-    }
+        let (search_start, search_count) = suffix_array.search(text_slice, pattern_slice);
+        // SAFETY: start and count pointers are valid (null-checked above), point to valid output parameters
+        unsafe {
+            *start = search_start;
+            *count = search_count;
+        }
 
-    CResult::Success
+        CResult::Success
+    })
 }
 
 /// Sort an array of 32-bit unsigned integers using radix sort
@@ -471,18 +540,20 @@ pub unsafe extern "C" fn suffix_array_search(
 /// The data pointer must point to a valid array of the specified size.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn radix_sort_u32(data: *mut u32, size: usize) -> CResult {
-    if data.is_null() || size == 0 {
-        return CResult::InvalidInput;
-    }
+    ffi_guard(CResult::InternalError, || {
+        if data.is_null() || size == 0 {
+            return CResult::InvalidInput;
+        }
 
-    // SAFETY: pointer is valid (null-checked at line 447), size is non-zero (checked at line 447)
-    let data_slice = unsafe { std::slice::from_raw_parts_mut(data, size) };
-    let mut sorter = crate::algorithms::RadixSort::new();
+        // SAFETY: pointer is valid (null-checked above), size is non-zero (checked above)
+        let data_slice = unsafe { std::slice::from_raw_parts_mut(data, size) };
+        let mut sorter = crate::algorithms::RadixSort::new();
 
-    match sorter.sort_u32(data_slice) {
-        Ok(_) => CResult::Success,
-        Err(_) => CResult::InternalError,
-    }
+        match sorter.sort_u32(data_slice) {
+            Ok(_) => CResult::Success,
+            Err(_) => CResult::InternalError,
+        }
+    })
 }
 
 /// Get last error message (thread-local)
@@ -493,12 +564,15 @@ pub unsafe extern "C" fn radix_sort_u32(data: *mut u32, size: usize) -> CResult 
 /// The caller should not free the returned pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zipora_last_error() -> *const c_char {
-    LAST_ERROR.with(|error| match error.borrow().as_ref() {
-        Some(cstring) => cstring.as_ptr(),
-        None => {
-            static NO_ERROR_MSG: &[u8] = b"No error information available\0";
-            NO_ERROR_MSG.as_ptr() as *const c_char
-        }
+    static PANIC_MSG: &[u8] = b"panic caught at FFI boundary\0";
+    ffi_guard(PANIC_MSG.as_ptr() as *const c_char, || {
+        LAST_ERROR.with(|error| match error.borrow().as_ref() {
+            Some(cstring) => cstring.as_ptr(),
+            None => {
+                static NO_ERROR_MSG: &[u8] = b"No error information available\0";
+                NO_ERROR_MSG.as_ptr() as *const c_char
+            }
+        })
     })
 }
 
@@ -512,9 +586,11 @@ pub unsafe extern "C" fn zipora_last_error() -> *const c_char {
 pub unsafe extern "C" fn zipora_set_error_callback(
     callback: Option<unsafe extern "C" fn(*const c_char)>,
 ) {
-    if let Ok(mut callback_guard) = ERROR_CALLBACK.lock() {
-        *callback_guard = callback;
-    }
+    ffi_guard((), || {
+        if let Ok(mut callback_guard) = ERROR_CALLBACK.lock() {
+            *callback_guard = callback;
+        }
+    })
 }
 
 /// Free blob data returned by blob_store_get
@@ -530,20 +606,22 @@ pub unsafe extern "C" fn zipora_set_error_callback(
 ///   through it is undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zipora_free_blob_data(data: *mut u8, size: usize) {
-    if !data.is_null() && size > 0 {
-        // H14: a size that fails Layout validation (> isize::MAX) can never
-        // correspond to a live allocation from blob_store_get — refuse to
-        // dealloc with a bogus layout rather than invoke UB.
-        let Ok(layout) = std::alloc::Layout::from_size_align(size, 1) else {
-            return;
-        };
-        // SAFETY: layout validated above; per the contract, (data, size) came
-        // from blob_store_get's std::alloc::alloc with the identical layout
-        // and has not been freed yet.
-        unsafe {
-            std::alloc::dealloc(data, layout);
+    ffi_guard((), || {
+        if !data.is_null() && size > 0 {
+            // H14: a size that fails Layout validation (> isize::MAX) can never
+            // correspond to a live allocation from blob_store_get — refuse to
+            // dealloc with a bogus layout rather than invoke UB.
+            let Ok(layout) = std::alloc::Layout::from_size_align(size, 1) else {
+                return;
+            };
+            // SAFETY: layout validated above; per the contract, (data, size) came
+            // from blob_store_get's std::alloc::alloc with the identical layout
+            // and has not been freed yet.
+            unsafe {
+                std::alloc::dealloc(data, layout);
+            }
         }
-    }
+    })
 }
 
 #[cfg(test)]
@@ -768,6 +846,29 @@ mod tests {
             if let Ok(callback_msg) = CALLBACK_MESSAGE.lock() {
                 assert!(callback_msg.is_none());
             }
+        }
+    }
+
+    #[test]
+    fn test_ffi_guard_catches_panics() {
+        clear_last_error();
+
+        // A panic inside an FFI body must be converted into the fallback
+        // value instead of unwinding (which would abort a real C caller).
+        let result = ffi_guard(CResult::InternalError, || -> CResult {
+            panic!("boom in ffi body");
+        });
+        assert_eq!(result, CResult::InternalError);
+
+        // SAFETY: zipora_last_error returns a valid thread-local or static string
+        unsafe {
+            let error_ptr = zipora_last_error();
+            assert!(!error_ptr.is_null());
+            let msg = CStr::from_ptr(error_ptr).to_str().unwrap();
+            assert!(
+                msg.contains("boom in ffi body"),
+                "unexpected last error: {msg}"
+            );
         }
     }
 
