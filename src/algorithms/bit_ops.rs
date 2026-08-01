@@ -38,9 +38,6 @@ const SIMD_THRESHOLD: usize = 16;
 ///
 /// For slices shorter than 16 words (128 bytes), skips SIMD setup and uses
 /// scalar directly, as the overhead exceeds the benefit.
-///
-/// Handles both aligned and unaligned input. When the pointer is 32-byte
-/// aligned, uses aligned loads for better throughput on AVX2.
 #[inline]
 pub fn popcount_slice(words: &[u64]) -> usize {
     if words.len() < SIMD_THRESHOLD {
@@ -59,16 +56,12 @@ pub fn popcount_slice(words: &[u64]) -> usize {
 
     #[cfg(target_arch = "x86_64")]
     {
-        // POPCNT before AVX2: on CPUs with both (Haswell+), hardware POPCNT
-        // beats vpshufb nibble-lookup because popcnt is single-cycle per word.
-        // AVX2 vpshufb is only useful on (theoretical) CPUs with AVX2 but no POPCNT.
+        // Hardware POPCNT beats AVX2 vpshufb nibble-lookup on every CPU that
+        // has both, and no real CPU has AVX2 without POPCNT — so there is no
+        // AVX2 tier here, only POPCNT with scalar fallback.
         if has_popcnt() {
             // SAFETY: POPCNT support verified by runtime feature check.
             return unsafe { popcount_hw(words) };
-        }
-        if std::arch::is_x86_feature_detected!("avx2") {
-            // SAFETY: AVX2 support verified by runtime feature check.
-            return unsafe { popcount_avx2(words) };
         }
     }
 
@@ -122,92 +115,6 @@ unsafe fn popcount_avx512(words: &[u64]) -> usize {
         for &w in &words[chunks * 8..] {
             sum += w.count_ones() as usize;
         }
-        sum
-    }
-}
-
-// ============================================================================
-// Tier 1: AVX2 vpshufb — Mula's nibble-lookup algorithm
-// ============================================================================
-//
-// Processes 4 u64 words (32 bytes) per iteration:
-// 1. Split each byte into low/high nibbles
-// 2. vpshufb: nibble → popcount via precomputed 16-entry LUT
-// 3. Accumulate byte counts with vpaddb
-// 4. Every 31 iterations, reduce with vpsadbw to prevent u8 overflow
-//    (max accumulated value per byte lane after 31 iters: 31 × 8 = 248 ≤ 255)
-// 5. Final horizontal sum of u64 accumulators
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-unsafe fn popcount_avx2(words: &[u64]) -> usize {
-    use std::arch::x86_64::*;
-
-    let bytes = words.as_ptr() as *const u8;
-    let total_bytes = words.len() * 8;
-    let chunks = total_bytes / 32; // 32 bytes per AVX2 register
-
-    // SAFETY: All intrinsics below are safe under AVX2 guarantee from #[target_feature].
-    // Pointer arithmetic is bounded by chunks = total_bytes / 32.
-    unsafe {
-        // Nibble → popcount lookup table: LUT[nibble] = popcount(nibble)
-        let lut = _mm256_setr_epi8(
-            0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4, 0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2,
-            3, 3, 4,
-        );
-        let lo_mask = _mm256_set1_epi8(0x0F);
-        let mut total_acc = _mm256_setzero_si256(); // u64 accumulators
-        let mut local_acc = _mm256_setzero_si256(); // u8 accumulators
-        let mut since_reduce = 0u32;
-
-        for i in 0..chunks {
-            // Every 31 iterations, reduce u8 accumulators to u64 to prevent overflow
-            since_reduce += 1;
-            if since_reduce == 31 {
-                total_acc = _mm256_add_epi64(
-                    total_acc,
-                    _mm256_sad_epu8(local_acc, _mm256_setzero_si256()),
-                );
-                local_acc = _mm256_setzero_si256();
-                since_reduce = 0;
-            }
-
-            // Always use unaligned loads — on modern CPUs (Haswell+),
-            // loadu has no penalty when data is naturally aligned.
-            let v = _mm256_loadu_si256(bytes.add(i * 32) as *const __m256i);
-
-            // Split bytes into nibbles and look up popcount
-            let lo = _mm256_and_si256(v, lo_mask);
-            let hi = _mm256_and_si256(_mm256_srli_epi16(v, 4), lo_mask);
-
-            let popcnt_lo = _mm256_shuffle_epi8(lut, lo);
-            let popcnt_hi = _mm256_shuffle_epi8(lut, hi);
-
-            local_acc = _mm256_add_epi8(local_acc, _mm256_add_epi8(popcnt_lo, popcnt_hi));
-        }
-
-        // Final reduction of remaining local_acc
-        total_acc = _mm256_add_epi64(
-            total_acc,
-            _mm256_sad_epu8(local_acc, _mm256_setzero_si256()),
-        );
-
-        // Horizontal sum of 4 × u64 accumulators
-        let lo128 = _mm256_castsi256_si128(total_acc);
-        let hi128 = _mm256_extracti128_si256(total_acc, 1);
-        let sum128 = _mm_add_epi64(lo128, hi128);
-        let hi64 = _mm_unpackhi_epi64(sum128, sum128);
-        let total = _mm_add_epi64(sum128, hi64);
-        let mut sum = _mm_cvtsi128_si64(total) as usize;
-
-        // Scalar tail (0..3 remaining words from incomplete 32-byte chunk)
-        let processed_bytes = chunks * 32;
-        let remaining_words = (total_bytes - processed_bytes) / 8;
-        let tail_start = processed_bytes / 8;
-        for &w in &words[tail_start..tail_start + remaining_words] {
-            sum += w.count_ones() as usize;
-        }
-
         sum
     }
 }
@@ -621,10 +528,6 @@ mod tests {
         // Also test the internal SIMD functions directly where available
         #[cfg(target_arch = "x86_64")]
         {
-            if std::arch::is_x86_feature_detected!("avx2") {
-                let avx2 = unsafe { popcount_avx2(&words) };
-                assert_eq!(avx2, scalar, "AVX2 vs scalar mismatch");
-            }
             if has_popcnt() {
                 let hw = unsafe { popcount_hw(&words) };
                 assert_eq!(hw, scalar, "POPCNT vs scalar mismatch");
