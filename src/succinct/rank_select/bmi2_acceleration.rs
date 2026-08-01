@@ -45,7 +45,7 @@ use crate::succinct::rank_select::SimdCapabilities;
 /// BMI2 instruction set capabilities
 #[derive(Debug, Clone)]
 pub struct Bmi2Capabilities {
-    /// BMI1 instructions available (LZCNT, TZCNT, POPCNT)
+    /// BMI1 instructions available (TZCNT, BLSR, BLSI, BLSMSK, BEXTR)
     pub has_bmi1: bool,
     /// BMI2 instructions available (PDEP, PEXT, BZHI, etc.)
     pub has_bmi2: bool,
@@ -59,7 +59,7 @@ impl Bmi2Capabilities {
         let simd_caps = SimdCapabilities::detect();
 
         Self {
-            has_bmi1: simd_caps.cpu_features.has_popcnt, // BMI1 includes POPCNT
+            has_bmi1: simd_caps.cpu_features.has_bmi1,
             has_bmi2: simd_caps.cpu_features.has_bmi2,
             simd_caps,
         }
@@ -136,8 +136,8 @@ impl Bmi2RankOps {
         #[cfg(target_arch = "x86_64")]
         {
             let caps = Bmi2Capabilities::get();
-            if caps.has_bmi1 {
-                //// SAFETY: has_bmi1 guarantees popcnt availability
+            if caps.simd_caps.cpu_features.has_popcnt {
+                //// SAFETY: has_popcnt guarantees popcnt availability
                 return unsafe { Self::popcount_hardware(x) };
             }
         }
@@ -194,8 +194,8 @@ impl Bmi2RankOps {
         #[cfg(target_arch = "x86_64")]
         {
             let caps = Bmi2Capabilities::get();
-            if caps.has_bmi1 && x != 0 {
-                //// SAFETY: has_bmi1 guarantees lzcnt availability
+            if caps.simd_caps.cpu_features.has_lzcnt && x != 0 {
+                //// SAFETY: has_lzcnt guarantees lzcnt availability
                 return unsafe { std::arch::x86_64::_lzcnt_u64(x) as u32 };
             }
         }
@@ -209,8 +209,8 @@ impl Bmi2RankOps {
         #[cfg(target_arch = "x86_64")]
         {
             let caps = Bmi2Capabilities::get();
-            if caps.has_bmi1 && x != 0 {
-                //// SAFETY: has_bmi1 guarantees tzcnt availability
+            if caps.simd_caps.cpu_features.has_tzcnt && x != 0 {
+                //// SAFETY: has_tzcnt guarantees tzcnt availability
                 return unsafe { std::arch::x86_64::_tzcnt_u64(x) as u32 };
             }
         }
@@ -1431,8 +1431,12 @@ impl Bmi2BlockOps {
     pub fn process_blocks_simd(blocks: &[u64]) -> Vec<(u32, u32)> {
         let caps = Bmi2Capabilities::get();
 
-        if caps.simd_caps.cpu_features.has_avx2 && blocks.len() >= 4 {
-            //// SAFETY: AVX2 availability verified by has_avx2 check above
+        if caps.simd_caps.cpu_features.has_avx2
+            && caps.simd_caps.cpu_features.has_popcnt
+            && caps.simd_caps.cpu_features.has_lzcnt
+            && blocks.len() >= 4
+        {
+            //// SAFETY: AVX2/POPCNT/LZCNT availability verified by the checks above
             unsafe { Self::process_blocks_avx2_bmi2(blocks) }
         } else {
             // Fallback to scalar processing
@@ -1505,7 +1509,7 @@ impl Bmi2Dispatcher {
 
     /// Dispatch to optimal implementation based on hardware capabilities
     pub fn dispatch_popcount(&self, word: u64) -> u32 {
-        if self.capabilities.has_bmi1 {
+        if self.capabilities.simd_caps.cpu_features.has_popcnt {
             Bmi2RankOps::popcount_u64(word)
         } else {
             word.count_ones()
@@ -1860,7 +1864,7 @@ impl Bmi2Accelerator {
             has_bmi1: self.capabilities.has_bmi1,
             has_bmi2: self.capabilities.has_bmi2,
             has_popcnt: self.capabilities.simd_caps.cpu_features.has_popcnt,
-            has_lzcnt: self.capabilities.has_bmi1, // LZCNT is part of BMI1
+            has_lzcnt: self.capabilities.simd_caps.cpu_features.has_lzcnt,
             optimization_tier: if self.capabilities.has_bmi2 {
                 3
             } else if self.capabilities.has_bmi1 {
@@ -1984,6 +1988,50 @@ mod tests {
         let caps2 = Bmi2Capabilities::get();
         assert_eq!(caps.has_bmi1, caps2.has_bmi1);
         assert_eq!(caps.has_bmi2, caps2.has_bmi2);
+    }
+
+    #[test]
+    fn test_capabilities_mirror_real_cpu_flags() {
+        // Regression test: has_bmi1 was once aliased to has_popcnt, which made
+        // LZCNT/BLSR/BLSI/BLSMSK guards pass on POPCNT-only CPUs (Nehalem..Ivy
+        // Bridge), silently corrupting leading_zeros and faulting on BLS* ops.
+        // Each capability must mirror the dedicated CPUID flag, not a proxy.
+        let caps = Bmi2Capabilities::detect();
+        assert_eq!(caps.has_bmi1, caps.simd_caps.cpu_features.has_bmi1);
+        assert_eq!(caps.has_bmi2, caps.simd_caps.cpu_features.has_bmi2);
+    }
+
+    #[test]
+    fn test_bls_ops_match_software_semantics() {
+        let test_words = vec![
+            0x0000000000000000u64,
+            0x0000000000000001u64,
+            0x8000000000000000u64,
+            0xFFFFFFFFFFFFFFFFu64,
+            0xAAAAAAAAAAAAAAAAu64,
+            0x0000000000FF0000u64,
+        ];
+
+        for &x in &test_words {
+            assert_eq!(
+                Bmi2BitOps::reset_lowest_bit(x),
+                x & x.wrapping_sub(1),
+                "BLSR mismatch for {:#018x}",
+                x
+            );
+            assert_eq!(
+                Bmi2BitOps::isolate_lowest_bit(x),
+                x & x.wrapping_neg(),
+                "BLSI mismatch for {:#018x}",
+                x
+            );
+            assert_eq!(
+                Bmi2BitOps::mask_up_to_lowest_bit(x),
+                x ^ x.wrapping_sub(1),
+                "BLSMSK mismatch for {:#018x}",
+                x
+            );
+        }
     }
 
     #[test]
