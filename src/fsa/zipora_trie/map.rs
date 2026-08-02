@@ -57,6 +57,19 @@ where
         // Get the state ID for this key
         let state_id = <ZiporaTrie<R> as Trie>::insert(&mut self.trie, key)?;
 
+        // Double-array collision resolution may have relocated existing states;
+        // move their values to the new slots (in recorded order) before storing
+        // ours, or lookups on previously inserted keys would read stale slots.
+        for &(old, new) in &self.trie.relocations {
+            let (old, new) = (old as usize, new as usize);
+            if let Some(v) = self.values.get_mut(old).and_then(Option::take) {
+                if new >= self.values.len() {
+                    self.values.resize(new + 1, None);
+                }
+                self.values[new] = Some(v);
+            }
+        }
+
         // Ensure values vec is large enough
         let idx = state_id as usize;
         if idx >= self.values.len() {
