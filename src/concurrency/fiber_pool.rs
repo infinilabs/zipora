@@ -199,7 +199,28 @@ impl FiberPool {
                 .await
                 .map_err(|_| ZiporaError::configuration("semaphore acquire failed"))?;
 
+            // Drop guard: a panic unwinding out of `future.await` skips any
+            // straight-line bookkeeping after it, which would permanently
+            // over-count active_fibers and count the fiber in neither the
+            // completed nor the failed bucket.
+            struct ActiveFiberGuard {
+                stats: Arc<FiberPoolStats>,
+                finished: bool,
+            }
+            impl Drop for ActiveFiberGuard {
+                fn drop(&mut self) {
+                    self.stats.active_fibers.fetch_sub(1, Ordering::Relaxed);
+                    if !self.finished {
+                        self.stats.failed.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }
+
             stats.active_fibers.fetch_add(1, Ordering::Relaxed);
+            let mut guard = ActiveFiberGuard {
+                stats: stats.clone(),
+                finished: false,
+            };
             let start_time = Instant::now();
 
             let result = future.await;
@@ -208,7 +229,7 @@ impl FiberPool {
             stats
                 .total_execution_time_us
                 .fetch_add(execution_time, Ordering::Relaxed);
-            stats.active_fibers.fetch_sub(1, Ordering::Relaxed);
+            guard.finished = true;
 
             match &result {
                 Ok(_) => {
@@ -363,6 +384,32 @@ mod tests {
         let stats = pool.stats();
         assert_eq!(stats.total_spawned, 1);
         assert_eq!(stats.completed, 1);
+    }
+
+    /// A fiber that panics must still decrement active_fibers (Drop guard)
+    /// and be accounted as failed; otherwise the counter leaks permanently
+    /// and derived stats (queued, queue_utilization) skew forever after.
+    #[tokio::test]
+    async fn test_fiber_panic_does_not_leak_active_counter() {
+        async fn panicking() -> Result<i32> {
+            panic!("intentional fiber panic");
+        }
+
+        let pool = FiberPool::default().unwrap();
+
+        let handle = pool.spawn(panicking()).unwrap();
+        let result = handle.await;
+        assert!(result.is_err(), "panicked fiber must surface a join error");
+
+        let stats = pool.stats();
+        assert_eq!(stats.active_fibers, 0, "active_fibers leaked after panic");
+        assert_eq!(stats.failed, 1, "panicked fiber must count as failed");
+        assert_eq!(stats.completed, 0);
+
+        // The pool must remain fully usable afterwards
+        let handle = pool.spawn(async { Ok(7i32) }).unwrap();
+        assert_eq!(handle.await.unwrap(), 7);
+        assert_eq!(pool.stats().active_fibers, 0);
     }
 
     #[tokio::test]
