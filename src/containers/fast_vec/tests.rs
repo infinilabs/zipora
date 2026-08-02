@@ -17,6 +17,19 @@ fn test_with_capacity() {
 }
 
 #[test]
+fn test_with_capacity_zeroed() {
+    // Sound only for T: bytemuck::Zeroable — non-zeroable types (String,
+    // Box<T>, ...) are rejected at compile time by the trait bound.
+    let vec: FastVec<u64> = FastVec::with_capacity_zeroed(64).unwrap();
+    assert_eq!(vec.len(), 64);
+    assert_eq!(vec.capacity(), 64);
+    assert!(vec.iter().all(|&x| x == 0));
+
+    let empty: FastVec<u32> = FastVec::with_capacity_zeroed(0).unwrap();
+    assert_eq!(empty.len(), 0);
+}
+
+#[test]
 fn test_push_pop() {
     let mut vec = FastVec::new();
     vec.push(1).unwrap();

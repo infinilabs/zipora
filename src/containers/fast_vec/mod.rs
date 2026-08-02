@@ -209,11 +209,13 @@ impl<T> FastVec<T> {
     ///
     /// The returned vector has `len == cap` — all elements are zero-initialized.
     ///
-    /// # Safety requirement
-    /// `T` must be a type where all-zero bytes is a valid value (e.g., integer
-    /// types, `bool`, pointers-as-Option-with-niche). Do NOT use with types
-    /// that have non-zero invariants.
-    pub fn with_capacity_zeroed(cap: usize) -> Result<Self> {
+    /// `T: bytemuck::Zeroable` guarantees the all-zero byte pattern is a valid
+    /// value, so this is sound for any `T` that compiles (types with non-zero
+    /// invariants like `String` or `Box<T>` are rejected at compile time).
+    pub fn with_capacity_zeroed(cap: usize) -> Result<Self>
+    where
+        T: bytemuck::Zeroable,
+    {
         if cap == 0 {
             return Ok(Self::new());
         }
