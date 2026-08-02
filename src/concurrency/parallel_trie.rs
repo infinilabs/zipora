@@ -206,17 +206,24 @@ impl ParallelLoudsTrie {
     {
         let keys: Vec<Vec<u8>> = keys.into_iter().collect();
 
-        // Use rayon for parallel processing
-        let replicas = self.read_replicas.lock().await;
-        let results: Vec<bool> = keys
-            .par_iter()
-            .map(|key| {
-                let replica_id = self.select_replica();
-                replicas[replica_id].contains(key)
-            })
-            .collect();
-
-        results
+        // Snapshot the replicas (cheap Arc clones) so the tokio mutex is not
+        // held across the CPU-bound rayon work, and run that work on the
+        // blocking pool so it cannot stall the async runtime's workers.
+        let replicas = self.replica_snapshot().await;
+        let replica_count = self.replica_count;
+        tokio::task::spawn_blocking(move || {
+            let counter = std::sync::atomic::AtomicUsize::new(0);
+            keys.par_iter()
+                .map(|key| {
+                    let replica_id = counter
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                        % replica_count;
+                    replicas[replica_id].contains(key)
+                })
+                .collect()
+        })
+        .await
+        .expect("parallel_contains blocking task panicked")
     }
 
     /// Parallel prefix search
@@ -227,19 +234,31 @@ impl ParallelLoudsTrie {
     {
         let prefixes: Vec<Vec<u8>> = prefixes.into_iter().collect();
 
-        let replicas = self.read_replicas.lock().await;
-        let results: Vec<Vec<Vec<u8>>> = prefixes
-            .par_iter()
-            .map(|prefix| {
-                let replica_id = self.select_replica();
-                let replica = &replicas[replica_id];
+        // See parallel_contains: never run rayon on the async workers or while
+        // holding the replica lock.
+        let replicas = self.replica_snapshot().await;
+        let replica_count = self.replica_count;
+        tokio::task::spawn_blocking(move || {
+            let counter = std::sync::atomic::AtomicUsize::new(0);
+            prefixes
+                .par_iter()
+                .map(|prefix| {
+                    let replica_id = counter
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                        % replica_count;
 
-                // Collect results from iterator (simplified)
-                replica.iter_prefix(prefix).collect()
-            })
-            .collect();
+                    // Collect results from iterator (simplified)
+                    replicas[replica_id].iter_prefix(prefix).collect()
+                })
+                .collect()
+        })
+        .await
+        .expect("parallel_prefix_search blocking task panicked")
+    }
 
-        results
+    /// Clone the current replica set (Arc clones) under a short-lived lock
+    async fn replica_snapshot(&self) -> Vec<Arc<ZiporaTrie>> {
+        self.read_replicas.lock().await.clone()
     }
 
     /// Select a read replica using round-robin
@@ -304,20 +323,27 @@ impl ParallelLoudsTrie {
     /// Parallel processing of trie operations
     pub async fn parallel_process<F, T>(&self, operations: Vec<F>) -> Vec<Result<T>>
     where
-        F: Fn(&ZiporaTrie) -> Result<T> + Send + Sync,
-        T: Send,
+        F: Fn(&ZiporaTrie) -> Result<T> + Send + Sync + 'static,
+        T: Send + 'static,
     {
-        let replicas = self.read_replicas.lock().await;
-        let results: Vec<Result<T>> = operations
-            .par_iter()
-            .map(|op| {
-                let replica_id = self.select_replica();
-                let replica = &replicas[replica_id];
-                op(replica)
-            })
-            .collect();
-
-        results
+        // See parallel_contains: never run rayon on the async workers or while
+        // holding the replica lock.
+        let replicas = self.replica_snapshot().await;
+        let replica_count = self.replica_count;
+        tokio::task::spawn_blocking(move || {
+            let counter = std::sync::atomic::AtomicUsize::new(0);
+            operations
+                .par_iter()
+                .map(|op| {
+                    let replica_id = counter
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                        % replica_count;
+                    op(&replicas[replica_id])
+                })
+                .collect()
+        })
+        .await
+        .expect("parallel_process blocking task panicked")
     }
 }
 
@@ -471,6 +497,45 @@ mod tests {
         // Test contains
         assert!(trie.contains(b"test").await);
         assert!(!trie.contains(b"missing").await);
+    }
+
+    /// Parallel operations must run on the blocking pool without holding the
+    /// replica lock: while a slow parallel_process is in flight, other tasks
+    /// (here `contains`, which needs the same lock) must still make progress
+    /// instead of parking behind CPU-bound rayon work.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_parallel_process_does_not_hold_replica_lock() {
+        use std::time::{Duration, Instant};
+
+        let trie = ParallelLoudsTrie::new();
+        trie.insert(b"key").await.unwrap();
+
+        let slow = {
+            let ops = vec![|t: &ZiporaTrie| {
+                std::thread::sleep(Duration::from_millis(1000));
+                Ok(t.len())
+            }];
+            let trie = ParallelLoudsTrie {
+                inner: trie.inner.clone(),
+                read_replicas: trie.read_replicas.clone(),
+                replica_count: trie.replica_count,
+            };
+            tokio::spawn(async move { trie.parallel_process(ops).await })
+        };
+
+        // Give the slow operation time to start on the blocking pool
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let start = Instant::now();
+        assert!(trie.contains(b"key").await);
+        assert!(
+            start.elapsed() < Duration::from_millis(500),
+            "contains() blocked behind parallel_process — replica lock held across rayon work"
+        );
+
+        let results = slow.await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(*results[0].as_ref().unwrap(), 1);
     }
 
     #[tokio::test]
