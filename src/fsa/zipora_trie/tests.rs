@@ -229,6 +229,28 @@ fn test_trie_map() {
     assert_eq!(map.len(), 3); // len unchanged
 }
 
+/// TrieMap values must survive double-array state relocation: inserting enough
+/// keys forces base/check collisions that move existing terminal states, and
+/// the state-indexed value slots must be remapped along with them.
+#[test]
+fn test_trie_map_values_survive_relocation() {
+    let mut map = ZiporaTrieMap::<u32, RankSelectInterleaved256>::new();
+    const N: u32 = 300;
+    for i in 0..N {
+        map.insert(format!("key_{:04}", i).as_bytes(), i).unwrap();
+    }
+    assert_eq!(map.len(), N as usize);
+    for i in 0..N {
+        let key = format!("key_{:04}", i);
+        assert_eq!(map.get(key.as_bytes()), Some(i), "value lost for {}", key);
+    }
+
+    // Overwrites must still return the (relocated) previous value
+    let prev = map.insert(b"key_0000", 9999).unwrap();
+    assert_eq!(prev, Some(0));
+    assert_eq!(map.get(b"key_0000"), Some(9999));
+}
+
 /// Issue #9: Bulk construction
 #[test]
 fn test_build_from_sorted() {

@@ -64,6 +64,10 @@ where
     pub(super) _memory_pool: Option<Arc<SecureMemoryPool>>,
     /// Root state for traversal
     pub(super) root_state: StateId,
+    /// State moves (old_state, new_state) recorded by the most recent insert's
+    /// double-array collision relocations; consumed by ZiporaTrieMap to keep
+    /// state-indexed value slots in sync. Cleared at the start of each insert.
+    pub(super) relocations: Vec<(u32, u32)>,
 }
 
 impl<R> ZiporaTrie<R>
@@ -93,6 +97,7 @@ where
             cache_allocator,
             _memory_pool: None,
             root_state: 0,
+            relocations: Vec::new(),
         }
     }
 
@@ -457,6 +462,7 @@ where
 
     /// Insert and get node ID
     pub fn insert_and_get_node_id(&mut self, key: &[u8]) -> Result<StateId> {
+        self.relocations.clear();
         match &mut self.storage {
             TrieStorage::Patricia {
                 nodes,
@@ -500,6 +506,7 @@ where
                     state_count,
                     key,
                     &mut self.stats.num_keys,
+                    &mut self.relocations,
                 )?;
                 self.stats_dirty = true;
                 Ok(node_id)
@@ -836,6 +843,7 @@ where
     R: RankSelectOps + Default,
 {
     fn insert(&mut self, key: &[u8]) -> Result<StateId> {
+        self.relocations.clear();
         // Track if this was a new key insertion
         let result = match &mut self.storage {
             TrieStorage::Patricia {
@@ -866,6 +874,7 @@ where
                 state_count,
                 key,
                 &mut self.stats.num_keys,
+                &mut self.relocations,
             ),
             TrieStorage::Louds {
                 louds,

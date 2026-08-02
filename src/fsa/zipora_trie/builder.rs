@@ -65,6 +65,7 @@ where
         state_count: &mut usize,
         key: &[u8],
         num_keys: &mut usize,
+        relocations: &mut Vec<(u32, u32)>,
     ) -> Result<StateId> {
         // Following referenced project's double array trie implementation EXACTLY
         // Base array (m_child0): bits 0-30 = base value, bit 31 = terminal bit
@@ -158,8 +159,14 @@ where
                     );
 
                     // We must relocate ALL children of current_state to maintain consistency
-                    let new_base =
-                        Self::relocate_state(base, check, current_state, symbol, state_count)?;
+                    let new_base = Self::relocate_state(
+                        base,
+                        check,
+                        current_state,
+                        symbol,
+                        state_count,
+                        relocations,
+                    )?;
 
                     // Now the transition should be available at the new location
                     let new_next = new_base.saturating_add(symbol as u32);
@@ -206,8 +213,14 @@ where
                         pos, symbol, current_state, next_state, check[next_state as usize]
                     );
                     // We must relocate ALL children of current_state to maintain consistency
-                    let new_base =
-                        Self::relocate_state(base, check, current_state, symbol, state_count)?;
+                    let new_base = Self::relocate_state(
+                        base,
+                        check,
+                        current_state,
+                        symbol,
+                        state_count,
+                        relocations,
+                    )?;
 
                     // Now the transition should be available
                     let new_next = new_base.saturating_add(symbol as u32);
@@ -295,13 +308,16 @@ where
         Ok(candidate)
     }
 
-    // Helper: Relocate a state and all its children to use a new base value
+    // Helper: Relocate a state and all its children to use a new base value.
+    // Every moved child is recorded in `relocations` as (old_state, new_state)
+    // so side tables indexed by state ID (e.g. ZiporaTrieMap values) can follow.
     pub(super) fn relocate_state(
         base: &mut FastVec<u32>,
         check: &mut FastVec<u32>,
         state: u32,
         new_symbol: u8,
         _state_count: &mut usize,
+        relocations: &mut Vec<(u32, u32)>,
     ) -> Result<u32> {
         const VALUE_MASK: u32 = 0x7FFF_FFFF; // Bits 0-30 for values (referenced project)
         const TERMINAL_BIT: u32 = 0x8000_0000; // Bit 31 in base for terminal (referenced project)
@@ -407,6 +423,7 @@ where
             // Then, set new positions with both check and base values
             for (symbol, old_pos, child_base_val, is_terminal) in &children {
                 let new_child_pos = new_base.saturating_add(*symbol as u32);
+                relocations.push((*old_pos, new_child_pos));
                 // Allocate the new position (referenced project: set_parent clears free bit)
                 check[new_child_pos as usize] = state; // Parent state, no free bit
                 // Set base value, preserving terminal bit if needed
