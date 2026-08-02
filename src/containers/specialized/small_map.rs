@@ -629,11 +629,19 @@ impl<K: PartialEq + Hash + Eq + 'static + Clone, V: Clone> SmallMap<K, V> {
         if let SmallMapStorage::Small { keys, values, len } = &mut self.storage {
             let mut large_map = ZiporaHashMap::new()?;
 
-            // Move all elements from small storage to large map
-            for i in 0..*len {
-                // SAFETY: All elements 0..*len are initialized
+            // Move all elements from small storage to large map, draining from
+            // the back. `len` must be decremented BEFORE the fallible insert
+            // (which may return Err or panic in user Hash/Eq impls): Drop and
+            // any later access treat 0..len as initialized, so a stale len
+            // would double-drop the elements already moved out.
+            while *len > 0 {
+                let i = *len - 1;
+                // SAFETY: element i < original len is initialized and not yet
+                // moved; decrementing len below removes it from the
+                // initialized range before any code that can unwind runs.
                 let key = unsafe { keys[i].assume_init_read() };
                 let value = unsafe { values[i].assume_init_read() };
+                *len = i;
                 large_map
                     .insert(key, value)
                     .map_err(|_| ZiporaError::invalid_data("Failed to promote to large map"))?;
@@ -1162,6 +1170,94 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    /// A panic in a user Hash impl mid-promotion must not double-drop the
+    /// elements already moved into the large map: `len` is decremented before
+    /// each fallible insert so Drop only sees still-initialized slots.
+    #[test]
+    fn test_promotion_panic_no_double_drop() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+        #[derive(Clone)]
+        struct BombKey {
+            id: usize,
+            armed: Arc<AtomicBool>,
+        }
+        impl PartialEq for BombKey {
+            fn eq(&self, other: &Self) -> bool {
+                self.id == other.id
+            }
+        }
+        impl Eq for BombKey {}
+        impl std::hash::Hash for BombKey {
+            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                if self.armed.load(Ordering::SeqCst) {
+                    panic!("hash bomb");
+                }
+                self.id.hash(state);
+            }
+        }
+
+        struct Tally {
+            live: Arc<AtomicUsize>,
+        }
+        impl Tally {
+            fn new(live: &Arc<AtomicUsize>) -> Self {
+                live.fetch_add(1, Ordering::SeqCst);
+                Tally { live: live.clone() }
+            }
+        }
+        impl Clone for Tally {
+            fn clone(&self) -> Self {
+                Self::new(&self.live)
+            }
+        }
+        impl Drop for Tally {
+            fn drop(&mut self) {
+                let prev = self.live.fetch_sub(1, Ordering::SeqCst);
+                assert!(prev > 0, "double drop detected");
+            }
+        }
+
+        let armed = Arc::new(AtomicBool::new(false));
+        let live = Arc::new(AtomicUsize::new(0));
+
+        {
+            let mut map = SmallMap::new();
+            for i in 0..SMALL_MAP_THRESHOLD {
+                map.insert(
+                    BombKey {
+                        id: i,
+                        armed: armed.clone(),
+                    },
+                    Tally::new(&live),
+                )
+                .unwrap();
+            }
+
+            // The 9th distinct key triggers promote_to_large, which hashes the
+            // existing keys — the armed bomb panics on the first of them.
+            armed.store(true, Ordering::SeqCst);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = map.insert(
+                    BombKey {
+                        id: SMALL_MAP_THRESHOLD,
+                        armed: armed.clone(),
+                    },
+                    Tally::new(&live),
+                );
+            }));
+            assert!(result.is_err(), "promotion was expected to panic");
+            // map dropped here — with a stale len this would double-drop
+        }
+
+        assert_eq!(
+            live.load(Ordering::SeqCst),
+            0,
+            "every value must be dropped exactly once"
+        );
     }
 
     #[test]
