@@ -120,10 +120,17 @@ impl WorkStealingQueue {
 
     /// Push a task to the local queue
     pub fn push_local(&self, task: Box<dyn Task>) -> Result<()> {
+        self.try_push_local(task)
+            .map_err(|_| ZiporaError::configuration("local queue full"))
+    }
+
+    /// Push a task to the local queue, returning the task back to the caller
+    /// if the queue is full so it can be requeued elsewhere instead of dropped.
+    pub fn try_push_local(&self, task: Box<dyn Task>) -> std::result::Result<(), Box<dyn Task>> {
         let mut queue = self.local_queue.lock().unwrap_or_else(|e| e.into_inner());
 
         if queue.len() >= self.capacity {
-            return Err(ZiporaError::configuration("local queue full"));
+            return Err(task);
         }
 
         // Insert based on priority
@@ -337,38 +344,28 @@ impl WorkStealingExecutor {
         // Try to submit to a worker queue first
         let worker_id = self.next_worker.fetch_add(1, Ordering::Relaxed) % self.workers.len();
 
-        // Check if local queue has space and submit directly to global if not
-        let can_use_local = {
-            let queue = self.queues[worker_id]
-                .local_queue
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            queue.len() < self.queues[worker_id].capacity
+        // Capacity check and push happen under a single lock acquisition; on a
+        // full local queue the task is handed back and requeued globally, so a
+        // concurrent fill can never cause it to be dropped unexecuted.
+        let task = match self.queues[worker_id].try_push_local(task) {
+            Ok(()) => return Ok(()),
+            Err(task) => task,
         };
 
-        if can_use_local {
-            // Try local queue
-            if self.queues[worker_id].push_local(task).is_ok() {
-                return Ok(());
-            }
-            // If this fails, the task is consumed but we have an error
-            Err(ZiporaError::configuration("local queue push failed"))
+        // Go straight to global queue with priority ordering
+        let mut global_queue = self.global_queue.lock().unwrap_or_else(|e| e.into_inner());
+        if global_queue.len() < 10000 {
+            // Arbitrary limit
+            // Insert based on priority (highest first)
+            let priority = task.priority();
+            let pos = global_queue
+                .iter()
+                .position(|t| t.priority() < priority)
+                .unwrap_or(global_queue.len());
+            global_queue.insert(pos, task);
+            Ok(())
         } else {
-            // Go straight to global queue with priority ordering
-            let mut global_queue = self.global_queue.lock().unwrap_or_else(|e| e.into_inner());
-            if global_queue.len() < 10000 {
-                // Arbitrary limit
-                // Insert based on priority (highest first)
-                let priority = task.priority();
-                let pos = global_queue
-                    .iter()
-                    .position(|t| t.priority() < priority)
-                    .unwrap_or(global_queue.len());
-                global_queue.insert(pos, task);
-                Ok(())
-            } else {
-                Err(ZiporaError::configuration("all queues full"))
-            }
+            Err(ZiporaError::configuration("all queues full"))
         }
     }
 
@@ -584,6 +581,38 @@ mod tests {
         let popped = queue.pop_local();
         assert!(popped.is_some());
         assert!(queue.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_full_queue_returns_task_instead_of_dropping() {
+        let queue = WorkStealingQueue::new(0, 1);
+
+        let first = Box::new(ClosureTask::new(|| Box::pin(async { Ok(()) })));
+        queue.push_local(first).unwrap();
+
+        // A push into a full queue must hand the task back to the caller so it
+        // can be requeued (e.g. to the global queue) rather than being dropped.
+        let second =
+            Box::new(ClosureTask::new(|| Box::pin(async { Ok(()) })).with_priority(7));
+        let returned = queue
+            .try_push_local(second)
+            .expect_err("push into full queue must return the task");
+        assert_eq!(returned.priority(), 7);
+        assert_eq!(queue.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_submit_overflows_to_global_queue() {
+        // Single worker with capacity 1: rapid submissions overflow the local
+        // queue, and every overflowing task must be accepted into the global
+        // queue instead of being lost.
+        let executor = WorkStealingExecutor::new(1, 1).unwrap();
+        for _ in 0..64 {
+            executor
+                .submit_closure(|| Box::pin(async { Ok(()) }))
+                .expect("overflowing submission must fall back to global queue");
+        }
+        executor.shutdown().await.unwrap();
     }
 
     #[tokio::test]
