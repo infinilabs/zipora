@@ -7,7 +7,10 @@
  * Critical for validating the fix to the hardware acceleration bug.
  */
 
-use std::arch::x86_64::*;
+#[cfg(target_feature = "avx2")]
+use std::arch::x86_64::{_mm256_add_epi32, _mm256_extract_epi32, _mm256_set1_epi32};
+#[cfg(target_feature = "bmi2")]
+use std::arch::x86_64::_pdep_u32;
 use zipora::system::cpu_features::get_cpu_features;
 
 /// Test that verifies POPCNT instruction is available and being used
