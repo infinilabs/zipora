@@ -568,9 +568,11 @@ impl LockFreeMemoryPool {
             }
         }
 
-        Err(ZiporaError::invalid_data(
-            "Failed to deallocate after max retries",
-        ))
+        // CAS retries exhausted under contention. Fall back to the
+        // mutex-protected skip list instead of returning Err, which would
+        // permanently leak the block from the pool (it was recorded nowhere;
+        // the allocate side symmetrically falls back to allocate_new_block).
+        self.deallocate_to_skip_list(ptr, size)
     }
 
     /// Allocate from skip list (for large blocks)
@@ -956,6 +958,24 @@ mod tests {
         assert_eq!(pool.align_size(9), 16);
         assert_eq!(pool.align_size(15), 16);
         assert_eq!(pool.align_size(16), 16);
+    }
+
+    /// Regression: when CAS retries were exhausted, deallocate_to_fast_bin
+    /// returned Err without recording the block anywhere, permanently
+    /// leaking it from the pool. max_cas_retries=0 makes the CAS loop body
+    /// unreachable, deterministically forcing the exhaustion path — which
+    /// must now fall back to the skip list and succeed.
+    #[test]
+    fn test_deallocate_cas_exhaustion_falls_back_to_skip_list() {
+        let config = LockFreePoolConfig {
+            max_cas_retries: 0,
+            ..LockFreePoolConfig::default()
+        };
+        let pool = LockFreeMemoryPool::new(config).unwrap();
+
+        let ptr = pool.allocate(64).unwrap();
+        pool.deallocate(ptr, 64)
+            .expect("CAS exhaustion must fall back to the skip list, not leak the block");
     }
 
     #[test]
