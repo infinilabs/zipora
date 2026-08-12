@@ -380,11 +380,13 @@ impl UintVecMin0 {
         // SAFETY: is_empty() check above guarantees iterator has at least one element
         let &min_val = src.iter().min().expect("non-empty input");
         let &max_val = src.iter().max().expect("non-empty input");
-        let wire_max = (max_val - min_val) as usize;
+        // Widen to i64: max - min overflows i32 when the range exceeds
+        // i32::MAX (e.g. [i32::MIN, i32::MAX] -> 4294967295)
+        let wire_max = (max_val as i64 - min_val as i64) as usize;
 
         let mut vec = Self::new(src.len(), wire_max);
         for (i, &val) in src.iter().enumerate() {
-            vec.set(i, (val - min_val) as usize);
+            vec.set(i, (val as i64 - min_val as i64) as usize);
         }
 
         (vec, min_val)
@@ -606,6 +608,21 @@ impl fmt::Debug for UintVecMin0 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression: (max_val - min_val) was computed in i32, overflowing when
+    /// the value range exceeds i32::MAX — panic in debug builds, wrapped to
+    /// -1 (=> usize::MAX bit width and garbage offsets) in release builds.
+    #[test]
+    fn test_build_from_i32_extreme_range_no_overflow() {
+        let src = [i32::MIN, -1, 0, 1, i32::MAX];
+        let (vec, min_val) = UintVecMin0::build_from_i32(&src);
+        assert_eq!(min_val, i32::MIN);
+        assert_eq!(vec.size(), src.len());
+        for (i, &expected) in src.iter().enumerate() {
+            let restored = (min_val as i64 + vec.get(i) as i64) as i32;
+            assert_eq!(restored, expected, "roundtrip mismatch at index {}", i);
+        }
+    }
 
     #[test]
     fn test_compute_uintbits() {
