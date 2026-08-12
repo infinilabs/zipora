@@ -173,6 +173,17 @@ impl<T> FastVec<T> {
 
     /// Create a FastVec with the specified capacity
     pub fn with_capacity(cap: usize) -> Result<Self> {
+        // ZST: passing a zero-size Layout to alloc is UB per the GlobalAlloc
+        // contract. A dangling aligned pointer is valid for all ZST accesses,
+        // and capacity is virtually unlimited since elements occupy no memory.
+        if mem::size_of::<T>() == 0 {
+            return Ok(Self {
+                ptr: Some(NonNull::dangling()),
+                len: 0,
+                cap: usize::MAX,
+            });
+        }
+
         if cap == 0 {
             return Ok(Self::new());
         }
@@ -216,6 +227,16 @@ impl<T> FastVec<T> {
     where
         T: bytemuck::Zeroable,
     {
+        // ZST: no memory to zero; all `cap` elements trivially exist.
+        // See with_capacity for why alloc must not be called with size 0.
+        if mem::size_of::<T>() == 0 {
+            return Ok(Self {
+                ptr: Some(NonNull::dangling()),
+                len: cap,
+                cap: usize::MAX,
+            });
+        }
+
         if cap == 0 {
             return Ok(Self::new());
         }
@@ -373,6 +394,15 @@ impl<T> FastVec<T> {
     /// Reallocate to the new capacity using realloc for optimal performance
     fn realloc(&mut self, new_cap: usize) -> Result<()> {
         debug_assert!(new_cap >= self.len);
+
+        // ZST: capacity is virtual — never call alloc/realloc with a
+        // zero-size Layout (UB per the GlobalAlloc contract).
+        if mem::size_of::<T>() == 0 {
+            self.ptr = Some(NonNull::dangling());
+            self.cap = usize::MAX;
+            return Ok(());
+        }
+
         if new_cap > (isize::MAX as usize) / mem::size_of::<T>().max(1) {
             return Err(ZiporaError::out_of_memory(new_cap * mem::size_of::<T>()));
         }
@@ -641,6 +671,11 @@ impl<T> FastVec<T> {
 
     /// Shrink the capacity to fit the current length
     pub fn shrink_to_fit(&mut self) -> Result<()> {
+        // ZST: nothing was ever allocated, nothing to shrink or dealloc.
+        if mem::size_of::<T>() == 0 {
+            return Ok(());
+        }
+
         if self.len == self.cap {
             return Ok(());
         }

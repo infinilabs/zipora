@@ -20,8 +20,11 @@ impl<T> Default for FastVec<T> {
 impl<T> Drop for FastVec<T> {
     fn drop(&mut self) {
         self.clear();
+        // ZST: ptr is dangling and nothing was allocated — dealloc with a
+        // zero-size Layout would be UB per the GlobalAlloc contract.
         if let Some(ptr) = self.ptr
             && self.cap > 0
+            && std::mem::size_of::<T>() > 0
         {
             // SAFETY: ptr and cap are valid from allocation, layout matches allocation layout
             unsafe {
@@ -137,8 +140,9 @@ impl<T> Drop for FastVecIntoIter<T> {
                     ptr::drop_in_place(ptr.as_ptr().add(i));
                 }
             }
-            // Deallocate memory
-            if self.cap > 0 {
+            // Deallocate memory (ZST: nothing was allocated, dealloc with a
+            // zero-size Layout would be UB)
+            if self.cap > 0 && std::mem::size_of::<T>() > 0 {
                 let layout = Layout::array::<T>(self.cap).expect(
                     "Layout::array succeeded during allocation, must succeed during deallocation",
                 );
