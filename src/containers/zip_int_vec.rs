@@ -51,9 +51,10 @@ impl ZipIntVec {
     /// * `min_val` - Minimum value that will be stored
     /// * `max_val` - Maximum value that will be stored
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `min_val >= max_val`
+    /// Returns an error if `min_val > max_val`. Equal bounds are valid and
+    /// store a constant sequence at 0 bits per element.
     ///
     /// # Example
     ///
@@ -66,9 +67,9 @@ impl ZipIntVec {
     /// assert_eq!(vec.uintbits(), 10);
     /// ```
     pub fn new(num: usize, min_val: usize, max_val: usize) -> Result<Self> {
-        if min_val >= max_val {
+        if min_val > max_val {
             return Err(ZiporaError::invalid_data(format!(
-                "ZipIntVec::new: min_val ({}) must be less than max_val ({})",
+                "ZipIntVec::new: min_val ({}) must not exceed max_val ({})",
                 min_val, max_val
             )));
         }
@@ -252,9 +253,9 @@ impl ZipIntVec {
 
     /// Resize with new value range
     pub fn resize_with_range(&mut self, num: usize, min_val: usize, max_val: usize) -> Result<()> {
-        if min_val >= max_val {
+        if min_val > max_val {
             return Err(ZiporaError::invalid_data(format!(
-                "ZipIntVec::resize_with_range: min_val ({}) must be less than max_val ({})",
+                "ZipIntVec::resize_with_range: min_val ({}) must not exceed max_val ({})",
                 min_val, max_val
             )));
         }
@@ -595,10 +596,29 @@ mod tests {
     #[test]
     fn test_new_invalid_range() {
         // plan.md 7.6: invalid range is now a recoverable error, not a panic
-        assert!(ZipIntVec::new(10, 1000, 1000).is_err());
         assert!(ZipIntVec::new(10, 1000, 999).is_err());
         let mut v = ZipIntVec::new(10, 0, 10).unwrap();
-        assert!(v.resize_with_range(10, 5, 5).is_err());
+        assert!(v.resize_with_range(10, 6, 5).is_err());
+    }
+
+    /// Regression: min_val == max_val used to be rejected, making constant
+    /// sequences unrepresentable even though UintVecMin0 natively supports
+    /// wire_max == 0 (0 bits per element).
+    #[test]
+    fn test_constant_sequence() {
+        let mut vec = ZipIntVec::new(100, 42, 42).unwrap();
+        assert_eq!(vec.uintbits(), 0);
+        for i in 0..100 {
+            vec.set(i, 42);
+        }
+        for i in 0..100 {
+            assert_eq!(vec.get(i), 42);
+        }
+
+        let mut v = ZipIntVec::new(10, 0, 10).unwrap();
+        v.resize_with_range(10, 5, 5).unwrap();
+        v.set(0, 5);
+        assert_eq!(v.get(0), 5);
     }
 
     #[test]
