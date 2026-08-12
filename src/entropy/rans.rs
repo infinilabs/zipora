@@ -73,7 +73,8 @@ pub struct Rans64Symbol {
     pub start: u32,
     /// Frequency of the symbol
     pub freq: u32,
-    /// Pre-computed reciprocal for fast division (rcp_freq = ceil(2^64 / freq))
+    /// Pre-computed reciprocal for fast division
+    /// (rcp_freq = ceil(2^(rcp_shift+64) / freq), ryg rans64 scheme)
     pub rcp_freq: u64,
     /// Right shift amount for reciprocal
     pub rcp_shift: u32,
@@ -102,27 +103,33 @@ impl Rans64Symbol {
         }
     }
 
-    /// Compute reciprocal for fast division using Alverson's algorithm
+    /// Compute reciprocal for fast division (ryg rans64 scheme).
+    ///
+    /// For freq >= 2: `shift = ceil(log2(freq))`, `rcp_freq =
+    /// ceil(2^(shift+63) / freq)`, and the quotient is recovered as
+    /// `mul_hi(x, rcp_freq) >> (shift - 1)`, exact for all 64-bit x.
+    /// (A plain 64-bit round-up reciprocal without the shift is NOT exact
+    /// for all divisors — the extra `shift` bits of precision are required.)
     fn compute_reciprocal(freq: u32) -> (u64, u32, u64) {
         if freq == 0 {
             return (0, 0, 0);
         }
 
-        // Find the number of bits needed
-        let bits = 64 - freq.leading_zeros();
-        let shift = bits;
+        if freq == 1 {
+            // Division by 1 is handled by an early return in fast_div
+            return (u64::MAX, 0, 0);
+        }
 
-        // Compute ceil(2^64 / freq)
-        let rcp_freq = if freq == 1 {
-            u64::MAX
-        } else {
-            (u64::MAX / freq as u64) + 1
-        };
+        // shift = ceil(log2(freq))
+        let shift = 32 - (freq - 1).leading_zeros();
+
+        // rcp_freq = ceil(2^(shift+63) / freq), needs 128-bit intermediate
+        let rcp_freq = (1u128 << (shift + 63)).div_ceil(freq as u128) as u64;
 
         // Compute bias for exact division
-        let bias = if freq == 1 { 0 } else { freq as u64 - 1 };
+        let bias = freq as u64 - 1;
 
-        (rcp_freq, shift, bias)
+        (rcp_freq, shift - 1, bias)
     }
 
     /// Fast division using pre-computed reciprocal
@@ -137,7 +144,8 @@ impl Rans64Symbol {
             return (x, 0);
         }
 
-        // Use 128-bit multiplication and extract high 64 bits
+        // Exact: rcp_freq = ceil(2^(rcp_shift+64) / freq), so the high
+        // 64 multiply bits shifted down by rcp_shift yield floor(x / freq)
         let q = self.mul_hi_u64(x, self.rcp_freq) >> self.rcp_shift;
         let r = x - q * self.freq as u64;
         (q, r)
@@ -730,9 +738,42 @@ mod tests {
         assert_eq!(symbol.freq, 5);
         assert!(symbol.rcp_freq > 0);
 
-        // Test fast division
+        // Regression: the old assert `q * 5 + r == 1000` was a tautology
+        // (r was computed as 1000 - q*5), passing for ANY q. Assert the
+        // exact quotient and remainder instead.
         let (q, r) = symbol.fast_div(1000);
-        assert_eq!(q * 5 + r, 1000);
+        assert_eq!(q, 200);
+        assert_eq!(r, 0);
+    }
+
+    /// Regression: fast_div applied rcp_shift to an already-final quotient
+    /// (a 64-bit reciprocal double-shift), returning ~0 for most inputs.
+    /// Cross-check the ryg-scheme reciprocal against hardware division for
+    /// every valid freq and a spread of x values including u64::MAX.
+    #[test]
+    fn test_fast_div_matches_hardware_division() {
+        for freq in 1..=TOTFREQ {
+            let sym = Rans64Symbol::new(0, freq);
+            let f = freq as u64;
+            for x in [
+                0u64,
+                1,
+                f - 1,
+                f,
+                f + 1,
+                1000,
+                RANS64_L,
+                RANS64_L * f,
+                u32::MAX as u64,
+                u64::MAX / f,
+                u64::MAX - 1,
+                u64::MAX,
+            ] {
+                let (q, r) = sym.fast_div(x);
+                assert_eq!(q, x / f, "quotient mismatch: freq={} x={}", freq, x);
+                assert_eq!(r, x % f, "remainder mismatch: freq={} x={}", freq, x);
+            }
+        }
     }
 
     #[test]
