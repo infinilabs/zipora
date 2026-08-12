@@ -13,7 +13,7 @@
 //! - Branchless operations where possible
 
 use crate::error::{Result, ZiporaError};
-use crate::hash_map::ZiporaHashMap;
+use crate::hash_map::{ZiporaHashMap, ZiporaHashMapIterator};
 use std::fmt;
 use std::hash::Hash;
 use std::mem::MaybeUninit;
@@ -611,10 +611,10 @@ impl<K: PartialEq + Hash + Eq + 'static + Clone, V: Clone> SmallMap<K, V> {
                 index: 0,
                 len: *len,
             },
-            SmallMapStorage::Large(_map) => {
-                // TODO: Implement iterator support for ZiporaHashMap
-                panic!("Iterator not yet implemented for large maps with ZiporaHashMap")
-            }
+            SmallMapStorage::Large(map) => SmallMapIter::Large {
+                iter: map.iter(),
+                remaining: map.len(),
+            },
         }
     }
 
@@ -732,7 +732,11 @@ impl<K: PartialEq + Hash + Eq + 'static + Clone, V: PartialEq + Clone> PartialEq
 impl<K: Eq + PartialEq + Hash + 'static + Clone, V: Eq + Clone> Eq for SmallMap<K, V> {}
 
 /// Iterator over SmallMap key-value pairs
-pub enum SmallMapIter<'a, K, V> {
+pub enum SmallMapIter<'a, K, V>
+where
+    K: Clone,
+    V: Clone,
+{
     /// Iterator for small maps
     Small {
         keys: &'a [MaybeUninit<K>; SMALL_MAP_THRESHOLD],
@@ -740,11 +744,15 @@ pub enum SmallMapIter<'a, K, V> {
         index: usize,
         len: usize,
     },
-    // Iterator for large maps - temporarily disabled until ZiporaHashMap iterator is implemented
-    // Large(crate::hash_map::Iter<'a, K, V>),
+    /// Iterator for maps promoted to large (ZiporaHashMap) storage
+    Large {
+        iter: ZiporaHashMapIterator<'a, K, V>,
+        // Tracked separately so size_hint stays exact (ExactSizeIterator)
+        remaining: usize,
+    },
 }
 
-impl<'a, K, V> Iterator for SmallMapIter<'a, K, V> {
+impl<'a, K: Clone, V: Clone> Iterator for SmallMapIter<'a, K, V> {
     type Item = (&'a K, &'a V);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -764,7 +772,14 @@ impl<'a, K, V> Iterator for SmallMapIter<'a, K, V> {
                 } else {
                     None
                 }
-            } // SmallMapIter::Large(iter) => iter.next(),
+            }
+            SmallMapIter::Large { iter, remaining } => {
+                let item = iter.next();
+                if item.is_some() {
+                    *remaining -= 1;
+                }
+                item
+            }
         }
     }
 
@@ -773,12 +788,13 @@ impl<'a, K, V> Iterator for SmallMapIter<'a, K, V> {
             SmallMapIter::Small { index, len, .. } => {
                 let remaining = len - index;
                 (remaining, Some(remaining))
-            } // SmallMapIter::Large(iter) => iter.size_hint(),
+            }
+            SmallMapIter::Large { remaining, .. } => (*remaining, Some(*remaining)),
         }
     }
 }
 
-impl<'a, K, V> ExactSizeIterator for SmallMapIter<'a, K, V> {}
+impl<'a, K: Clone, V: Clone> ExactSizeIterator for SmallMapIter<'a, K, V> {}
 
 // =============================================================================
 // SIMD-OPTIMIZED SEARCH IMPLEMENTATIONS
@@ -1168,6 +1184,50 @@ mod tests {
         for i in 0..=SMALL_MAP_THRESHOLD {
             assert_eq!(map.get(&i), Some(&(i * 2)));
         }
+
+        Ok(())
+    }
+
+    /// Regression: iter() used to panic ("Iterator not yet implemented") once
+    /// the map promoted past SMALL_MAP_THRESHOLD elements.
+    #[test]
+    fn test_iter_after_promotion_to_large() -> Result<()> {
+        let mut map = SmallMap::new();
+        let n = SMALL_MAP_THRESHOLD * 2 + 4; // well past the promotion point
+        for i in 0..n {
+            map.insert(i, i * 10)?;
+        }
+
+        assert_eq!(map.iter().len(), n); // ExactSizeIterator stays exact
+
+        let mut items: Vec<(usize, usize)> = map.iter().map(|(k, v)| (*k, *v)).collect();
+        items.sort_unstable();
+        let expected: Vec<(usize, usize)> = (0..n).map(|i| (i, i * 10)).collect();
+        assert_eq!(items, expected);
+
+        Ok(())
+    }
+
+    /// Regression: Clone, PartialEq and Debug all delegate to iter(), so they
+    /// used to crash on any map with more than SMALL_MAP_THRESHOLD elements.
+    #[test]
+    fn test_clone_eq_debug_after_promotion_to_large() -> Result<()> {
+        let mut map = SmallMap::new();
+        let n = SMALL_MAP_THRESHOLD + 4;
+        for i in 0..n {
+            map.insert(i, i + 100)?;
+        }
+
+        let cloned = map.clone();
+        assert_eq!(cloned.len(), n);
+        assert_eq!(map, cloned);
+
+        let mut other = cloned;
+        other.insert(0, 999)?; // same keys, one differing value
+        assert_ne!(map, other);
+
+        let dbg = format!("{:?}", map);
+        assert!(dbg.contains(&format!("{}", n - 1 + 100)));
 
         Ok(())
     }

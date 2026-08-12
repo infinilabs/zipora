@@ -87,7 +87,7 @@ mod simd_string_ops;
 pub use config::{
     HashStorageStrategy, HashStrategy, OptimizationStrategy, ZiporaHashMapConfig,
 };
-pub use zipora_hash_map::{HashMapStats, ZiporaHashMap};
+pub use zipora_hash_map::{HashMapStats, ZiporaHashMap, ZiporaHashMapIterator};
 
 // GoldHashMap - High-performance hash table with link-based collision resolution
 pub use gold_hash_map::{
