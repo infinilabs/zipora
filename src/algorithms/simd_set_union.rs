@@ -92,6 +92,13 @@ pub fn sorted_union_simd(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize {
 /// This is faster than a branching merge at all list sizes:
 /// - Small lists (1K–5K): avoids branch misprediction from 3-way if/else
 /// - Large lists (10K+): benefits from SIMD intersection parallelism
+///
+/// # Preconditions
+///
+/// Inputs must be sorted **strictly ascending** (no duplicate elements
+/// within a slice), e.g. DocID posting lists. The inclusion-exclusion
+/// identity is only exact for sets; slices containing duplicates produce a
+/// count that may differ from `sorted_union_simd`'s materialized output.
 #[inline]
 pub fn sorted_union_count(a: &[u32], b: &[u32]) -> usize {
     if a.is_empty() {
@@ -263,6 +270,34 @@ mod tests {
     fn test_count_single_elements() {
         assert_eq!(sorted_union_count(&[1], &[1]), 1);
         assert_eq!(sorted_union_count(&[1], &[2]), 2);
+    }
+
+    /// Pins the documented set-only contract: for strictly ascending inputs
+    /// (no intra-slice duplicates), the inclusion-exclusion count always
+    /// matches the materialized union. Duplicate-bearing inputs are outside
+    /// the documented precondition.
+    #[test]
+    fn test_union_count_matches_materialized_for_strict_sets() {
+        let mut out = Vec::new();
+        let mut x = 12345u32; // deterministic LCG
+        for trial in 0..50usize {
+            let mut a = Vec::new();
+            let mut b = Vec::new();
+            let mut va = 0u32;
+            let mut vb = 0u32;
+            for _ in 0..(trial * 7 % 200) {
+                x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+                va += 1 + (x % 16); // strictly increasing
+                a.push(va);
+            }
+            for _ in 0..(trial * 11 % 300) {
+                x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+                vb += 1 + (x % 8);
+                b.push(vb);
+            }
+            let materialized = sorted_union_simd(&a, &b, &mut out);
+            assert_eq!(sorted_union_count(&a, &b), materialized, "trial {}", trial);
+        }
     }
 
     #[test]
