@@ -1496,3 +1496,67 @@ fn test_from_vec_trait_empty() {
     assert_eq!(fv.len(), 0);
     assert!(fv.is_empty());
 }
+
+// ============================================================================
+// Zero-sized type (ZST) regression tests: alloc/realloc/dealloc must never be
+// called with a zero-size Layout (UB per the GlobalAlloc contract).
+// ============================================================================
+
+#[test]
+fn test_zst_with_capacity_never_allocates() {
+    let vec: FastVec<()> = FastVec::with_capacity(10).unwrap();
+    assert_eq!(vec.len(), 0);
+    assert_eq!(vec.capacity(), usize::MAX);
+}
+
+#[test]
+fn test_zst_push_pop_shrink() {
+    let mut vec: FastVec<()> = FastVec::new();
+    for _ in 0..1000 {
+        vec.push(()).unwrap();
+    }
+    assert_eq!(vec.len(), 1000);
+    assert_eq!(vec.iter().count(), 1000);
+    assert_eq!(vec.pop(), Some(()));
+    assert_eq!(vec.len(), 999);
+    vec.reserve(10_000).unwrap();
+    vec.shrink_to_fit().unwrap();
+    assert_eq!(vec.len(), 999);
+}
+
+#[test]
+fn test_zst_with_capacity_zeroed() {
+    let vec: FastVec<()> = FastVec::with_capacity_zeroed(64).unwrap();
+    assert_eq!(vec.len(), 64);
+}
+
+#[test]
+fn test_zst_into_iter() {
+    let mut vec: FastVec<()> = FastVec::new();
+    for _ in 0..3 {
+        vec.push(()).unwrap();
+    }
+    let collected: Vec<()> = vec.into_iter().collect();
+    assert_eq!(collected.len(), 3);
+}
+
+#[test]
+fn test_zst_drop_runs_for_each_element() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
+
+    struct ZstDrop;
+    impl Drop for ZstDrop {
+        fn drop(&mut self) {
+            DROPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    assert_eq!(std::mem::size_of::<ZstDrop>(), 0);
+
+    let mut vec: FastVec<ZstDrop> = FastVec::new();
+    for _ in 0..5 {
+        vec.push(ZstDrop).unwrap();
+    }
+    drop(vec);
+    assert_eq!(DROPS.load(Ordering::SeqCst), 5);
+}
