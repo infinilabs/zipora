@@ -564,7 +564,7 @@ where
     /// Get current file size based on header
     fn file_size_from_header(&self) -> Result<usize> {
         let capacity = self.capacity();
-        Ok(HEADER_SIZE + capacity * std::mem::size_of::<T>())
+        Ok(Self::data_offset() + capacity * std::mem::size_of::<T>())
     }
 
     /// Get the file path
@@ -575,7 +575,7 @@ where
     /// Get memory usage statistics
     #[inline]
     pub fn memory_usage(&self) -> usize {
-        self.capacity() * std::mem::size_of::<T>() + HEADER_SIZE
+        self.capacity() * std::mem::size_of::<T>() + Self::data_offset()
     }
 
     /// Get detailed statistics about the vector
@@ -583,7 +583,7 @@ where
         let len = self.len();
         let capacity = self.capacity();
         let element_size = std::mem::size_of::<T>();
-        let header_size = HEADER_SIZE;
+        let header_size = Self::data_offset(); // header + alignment padding
         let data_size = capacity * element_size;
         let total_size = header_size + data_size;
         let utilization = if capacity > 0 {
@@ -759,7 +759,19 @@ where
 
     /// Calculate file size for given capacity
     fn calculate_file_size(capacity: usize) -> u64 {
-        (HEADER_SIZE + capacity * std::mem::size_of::<T>()) as u64
+        (Self::data_offset() + capacity * std::mem::size_of::<T>()) as u64
+    }
+
+    /// Byte offset of the element payload within the mapping.
+    ///
+    /// The 80-byte header is padded up to `align_of::<T>()` so the data
+    /// pointer is properly aligned for T (creating a `&[T]` from a misaligned
+    /// pointer is UB). For `align_of::<T>() <= 16` this equals HEADER_SIZE,
+    /// preserving the existing file layout; larger alignments (e.g. 32-byte
+    /// AVX types) were previously misaligned and unusable.
+    #[inline]
+    fn data_offset() -> usize {
+        HEADER_SIZE.next_multiple_of(std::mem::align_of::<T>())
     }
 
     /// Update header and data pointers
@@ -778,9 +790,17 @@ where
                 .ok_or_else(|| ZiporaError::invalid_data("Invalid header pointer"))?,
         );
 
-        // Data follows the header
-        // SAFETY: base_ptr valid from mmap, HEADER_SIZE within allocation
-        let data_ptr = unsafe { base_ptr.add(HEADER_SIZE) } as *mut T;
+        // Data follows the header, padded to T's alignment
+        // SAFETY: base_ptr valid from mmap, data_offset() within allocation
+        let data_ptr = unsafe { base_ptr.add(Self::data_offset()) } as *mut T;
+        // Runtime check, not debug_assert (§8.5): a misaligned data pointer
+        // makes every subsequent &[T] UB. mmap bases are page-aligned, so
+        // this only fires for alignments beyond the page size.
+        if !(data_ptr as usize).is_multiple_of(std::mem::align_of::<T>()) {
+            return Err(ZiporaError::invalid_data(
+                "mmap base not sufficiently aligned for element type",
+            ));
+        }
         self.data = Some(
             NonNull::new(data_ptr)
                 .ok_or_else(|| ZiporaError::invalid_data("Invalid data pointer"))?,
@@ -1369,6 +1389,58 @@ mod tests {
             assert_eq!(vec.get(0), Some(&0));
             assert_eq!(vec.get(50), Some(&100));
             assert_eq!(vec.get(99), Some(&198));
+        }
+    }
+
+    /// Regression: the payload used to start at the fixed 80-byte header
+    /// offset, misaligning the data pointer for types with align > 16
+    /// (80 % 32 == 16) — UB when creating &[T]. The offset is now padded
+    /// to align_of::<T>(), including across a persist/reopen cycle.
+    #[test]
+    fn test_alignment_over_16() {
+        #[repr(C, align(32))]
+        #[derive(Debug, Clone, Copy, PartialEq)]
+        struct Avx32 {
+            data: [u8; 32],
+        }
+        // SAFETY: 32 bytes of u8 with align(32) — size == field size, no
+        // padding, any bit pattern valid. (derive(Pod) rejects repr(align).)
+        unsafe impl bytemuck::Zeroable for Avx32 {}
+        unsafe impl bytemuck::Pod for Avx32 {}
+
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("test_align32.mmap");
+
+        {
+            let config = MmapVecConfig::persistent_cache();
+            let mut vec = MmapVec::<Avx32>::create(&file_path, config).unwrap();
+
+            for i in 0..10u8 {
+                vec.push(Avx32 { data: [i; 32] }).unwrap();
+            }
+
+            for i in 0..10u8 {
+                let elem = vec.get(i as usize).unwrap();
+                assert_eq!(elem.data, [i; 32]);
+                assert!(
+                    (elem as *const Avx32 as usize).is_multiple_of(std::mem::align_of::<Avx32>()),
+                    "element {} misaligned",
+                    i
+                );
+            }
+            vec.sync().unwrap();
+        }
+
+        // Reopen: data offset must be computed identically on load
+        {
+            let config = MmapVecConfig::default();
+            let vec = MmapVec::<Avx32>::open(&file_path, config).unwrap();
+            assert_eq!(vec.len(), 10);
+            for i in 0..10u8 {
+                let elem = vec.get(i as usize).unwrap();
+                assert_eq!(elem.data, [i; 32]);
+                assert!((elem as *const Avx32 as usize).is_multiple_of(32));
+            }
         }
     }
 
