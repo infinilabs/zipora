@@ -75,6 +75,19 @@ pub fn decimal_strcmp_with_sign(a: &str, a_neg: bool, b: &str, b_neg: bool) -> O
 /// - At most one decimal point
 /// - No scientific notation (use a different function for that)
 ///
+/// # Preconditions
+///
+/// Inputs must be in **normalized decimal form**, matching the upstream
+/// topling-zip `realnum_strcmp` contract (which assumes no leading zeros):
+/// - No leading zeros in the integer part (`"1.5"`, not `"01.5"`)
+/// - No trailing zeros in the fraction (`"1.5"`, not `"1.50"`)
+/// - Zero written without a sign (`"0"`, not `"-0.0"`)
+///
+/// For non-normalized inputs the result is still a total order (usable as a
+/// sort key), but it may not be the mathematical numeric order — e.g.
+/// `"1.5"` vs `"1.50"` compares by length, and `"-0.0"` sorts before
+/// `"0.0"` because signs are compared first.
+///
 /// # Examples
 ///
 /// ```rust
@@ -105,6 +118,9 @@ pub fn realnum_strcmp(a: &str, b: &str) -> Option<Ordering> {
 }
 
 /// Compare two real number strings with pre-parsed signs
+///
+/// See [`realnum_strcmp`] for the normalized-input preconditions; `a` and
+/// `b` must be sign-free digit strings with at most one decimal point.
 pub fn realnum_strcmp_with_sign(a: &str, a_neg: bool, b: &str, b_neg: bool) -> Ordering {
     // Different signs: negative < positive
     match (a_neg, b_neg) {
@@ -261,5 +277,26 @@ mod tests {
         assert_eq!(realnum_strcmp("", "1.0"), None);
         assert_eq!(realnum_strcmp("1.2.3", "1.0"), None); // multiple dots
         assert_eq!(realnum_strcmp("abc", "1.0"), None);
+    }
+
+    /// Pins the documented normalized-input contract (ported verbatim from
+    /// topling-zip fstring.cpp, which assumes no leading zeros): normalized
+    /// inputs compare in numeric order; non-normalized inputs get a stable
+    /// total order that is NOT numeric order. If this test fails, either the
+    /// algorithm diverged from upstream or the documented contract changed.
+    #[test]
+    fn test_realnum_strcmp_normalized_contract() {
+        // Normalized inputs: numeric order holds
+        assert_eq!(realnum_strcmp("1.5", "1.5"), Some(Ordering::Equal));
+        assert_eq!(realnum_strcmp("0", "0"), Some(Ordering::Equal));
+        assert_eq!(realnum_strcmp("0.5", "0.75"), Some(Ordering::Less));
+        assert_eq!(realnum_strcmp("100.25", "99.75"), Some(Ordering::Greater));
+        assert_eq!(realnum_strcmp("-2.5", "-2.25"), Some(Ordering::Less));
+
+        // Non-normalized inputs: stable total order, documented as NOT
+        // numeric order (upstream-compatible behavior)
+        assert_eq!(realnum_strcmp("1.5", "1.50"), Some(Ordering::Less));
+        assert_eq!(realnum_strcmp("01.5", "1.5"), Some(Ordering::Greater));
+        assert_eq!(realnum_strcmp("-0.0", "0.0"), Some(Ordering::Less));
     }
 }
