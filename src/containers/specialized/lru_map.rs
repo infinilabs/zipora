@@ -800,7 +800,7 @@ where
             .map_err(|_| ZiporaError::out_of_memory(0))?;
 
         // Check validity and get key/value for callback before mutations
-        if !(lru_node_idx as usize) < nodes.len() || !nodes[lru_node_idx as usize].is_valid {
+        if (lru_node_idx as usize) >= nodes.len() || !nodes[lru_node_idx as usize].is_valid {
             return Err(ZiporaError::out_of_memory(0));
         }
 
@@ -1010,5 +1010,19 @@ mod tests {
         // Early entries should be evicted
         assert!(cache.get(&0).is_none());
         assert!(cache.get(&1).is_none());
+    }
+
+    #[test]
+    fn test_evict_lru_out_of_range_index_returns_err() {
+        // Regression: the bounds guard in evict_lru was written as
+        // `!(idx as usize) < nodes.len()`, which applies bitwise NOT to the
+        // index (always false), so an out-of-range index panicked on
+        // `nodes[idx]` instead of returning Err.
+        let cache: LruMap<i32, i32> = LruMap::new(4).unwrap();
+        cache.put(1, 10).unwrap();
+
+        // Simulate a corrupted LRU tail pointing past the node array.
+        cache.lru_list.tail.store(9999, Ordering::Relaxed);
+        assert!(cache.evict_lru().is_err());
     }
 }
