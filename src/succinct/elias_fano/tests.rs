@@ -1231,6 +1231,34 @@ mod tests {
         assert_eq!(h.next_geq(0), None);
     }
 
+    #[test]
+    fn test_hybrid_from_sorted_u64_no_truncation() {
+        // Regression: short lists (≤ DENSE_THRESHOLD) with values > u32::MAX
+        // used to be cast to u32 by the Dense variant, silently truncating
+        // the upper 32 bits.
+        let docs: Vec<u64> = (0..10).map(|i| (1u64 << 33) + i * (1u64 << 20)).collect();
+        let h = HybridPostingList::from_sorted_u64(&docs);
+        assert_ne!(h.encoding(), PostingEncoding::Dense);
+        assert_eq!(h.len(), docs.len());
+        for (i, &v) in docs.iter().enumerate() {
+            assert_eq!(h.get(i), Some(v), "get({i})");
+        }
+        assert_eq!(h.next_geq(1u64 << 33), Some((0, 1u64 << 33)));
+        assert_eq!(h.next_geq((1u64 << 33) + 1), Some((1, (1u64 << 33) + (1u64 << 20))));
+        assert_eq!(h.next_geq(docs[9] + 1), None);
+
+        // Short lists that DO fit in u32 must still pick Dense.
+        let small: Vec<u64> = vec![1, 5, 10, u32::MAX as u64];
+        let hs = HybridPostingList::from_sorted_u64(&small);
+        assert_eq!(hs.encoding(), PostingEncoding::Dense);
+        assert_eq!(hs.get(3), Some(u32::MAX as u64));
+
+        // Empty input stays valid.
+        let he = HybridPostingList::from_sorted_u64(&[]);
+        assert_eq!(he.len(), 0);
+        assert_eq!(he.get(0), None);
+    }
+
     /// Performance comparison across encodings — release only.
     #[test]
     fn test_hybrid_performance_comparison() {
