@@ -265,6 +265,12 @@ assert_eq!(decimal_strcmp("abc", "123"), None);
 assert_eq!(realnum_strcmp("1.2.3", "1.0"), None);
 ```
 
+> **Note**: `realnum_strcmp` expects normalized inputs (no leading zeros in the
+> integer part, no trailing zeros in the fraction, no `-0`), matching the
+> topling-zip C++ contract. Non-normalized inputs like `"1.50"` or `"01.5"`
+> compare lexicographically, not numerically — see the `# Preconditions`
+> section in the API docs.
+
 ## Word Boundary Detection
 
 Utilities for text tokenization and word-level operations.
