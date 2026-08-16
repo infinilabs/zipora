@@ -352,12 +352,15 @@ fn generate_ffi_bindings() {
         ..Default::default()
     };
 
+    let out_dir = env::var("OUT_DIR").unwrap();
+    let out_path = std::path::Path::new(&out_dir).join("zipora.h");
+
     cbindgen::Builder::new()
         .with_crate(crate_dir)
         .with_config(config)
         .generate()
         .expect("Unable to generate bindings")
-        .write_to_file("include/zipora.h");
+        .write_to_file(out_path);
 
     println!("cargo:rustc-cfg=zipora_ffi_enabled");
 }
