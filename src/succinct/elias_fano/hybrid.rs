@@ -64,7 +64,12 @@ impl HybridPostingList {
     /// Build from sorted u64 values.
     pub fn from_sorted_u64(values: &[u64]) -> Self {
         let n = values.len();
-        if n <= DENSE_THRESHOLD {
+        if n == 0 {
+            return Self::Dense(Vec::new());
+        }
+        // Dense stores u32 — only usable when every value fits (values are
+        // sorted, so checking the last one suffices).
+        if n <= DENSE_THRESHOLD && values[n - 1] <= u32::MAX as u64 {
             Self::Dense(values.iter().map(|&v| v as u32).collect())
         } else if is_run_heavy(values[0], values[n - 1], n) {
             Self::Clustered(ClusteredEliasFano::from_sorted_u64(values))
