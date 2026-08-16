@@ -33,6 +33,8 @@ use crate::memory::SecureMemoryPool;
 use crate::memory::cache_layout::{CacheHierarchy, detect_cache_hierarchy};
 use crate::system::cpu_features::{CpuFeatures, get_cpu_features};
 use std::cmp;
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -180,8 +182,6 @@ impl CacheObliviousSort {
             return Ok(());
         }
 
-        // Create temporary buffer for merging with cache-line alignment
-        let mut temp = data.to_vec();
         let mut segments = Vec::new();
 
         // Prefetch initial data for all segments
@@ -201,7 +201,7 @@ impl CacheObliviousSort {
             }
         }
 
-        // Set up merge segments
+        // Set up merge segments: (current_pos, end)
         for i in 0..k {
             let start = i * chunk_size;
             let end = if i == k - 1 {
@@ -211,66 +211,27 @@ impl CacheObliviousSort {
             };
 
             if start < end {
-                segments.push((start, end, start)); // (start, end, current_pos)
+                segments.push((start, end));
             }
         }
 
-        // Perform k-way merge with cache-oblivious access pattern and SIMD prefetching
-        let mut output_pos = 0;
+        // K-way merge via a min-heap keyed on (head value, segment index):
+        // O(N log k) total, instead of scanning all k segments (and shifting
+        // the segment vector on exhaustion) for every emitted element.
+        // Ties break on the lower segment index, preserving input order for
+        // equal elements.
+        let mut temp = Vec::with_capacity(data.len());
+        let mut heap: BinaryHeap<Reverse<(T, usize)>> = BinaryHeap::with_capacity(segments.len());
+        for (i, &(pos, _end)) in segments.iter().enumerate() {
+            heap.push(Reverse((data[pos].clone(), i)));
+        }
 
-        while !segments.is_empty() {
-            // Prefetch upcoming data for active segments
-            if self.config.cpu_features.has_avx2 && output_pos % 16 == 0 {
-                #[cfg(target_arch = "x86_64")]
-                {
-                    for &(_, end, pos) in segments.iter() {
-                        if pos + 16 < end {
-                            // SAFETY: pos + 16 < end <= data.len() ensures valid pointer within slice bounds
-                            unsafe {
-                                let ptr = data.as_ptr().add(pos + 16) as *const i8;
-                                std::arch::x86_64::_mm_prefetch(
-                                    ptr,
-                                    std::arch::x86_64::_MM_HINT_T1,
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Find minimum element across all segments with cache-optimized comparison
-            let mut min_segment = 0;
-            let mut min_value = None;
-
-            for (i, &(_start, end, pos)) in segments.iter().enumerate() {
-                if pos < end {
-                    let current_value = &data[pos];
-                    let is_min = match min_value {
-                        None => true,
-                        Some(min_v) => current_value < min_v,
-                    };
-
-                    if is_min {
-                        min_value = Some(current_value);
-                        min_segment = i;
-                    }
-                }
-            }
-
-            if min_value.is_some() {
-                // Move minimum element to output
-                temp[output_pos] = data[segments[min_segment].2].clone();
-                output_pos += 1;
-
-                // Advance the segment pointer
-                segments[min_segment].2 += 1;
-
-                // Remove exhausted segments
-                if segments[min_segment].2 >= segments[min_segment].1 {
-                    segments.remove(min_segment);
-                }
-            } else {
-                break;
+        while let Some(Reverse((value, seg))) = heap.pop() {
+            temp.push(value);
+            let (pos, end) = &mut segments[seg];
+            *pos += 1;
+            if *pos < *end {
+                heap.push(Reverse((data[*pos].clone(), seg)));
             }
         }
 
@@ -795,6 +756,22 @@ mod tests {
         let expected: Vec<i32> = (0..10000).collect();
 
         assert!(sorter.sort(&mut data).is_ok());
+        assert_eq!(data, expected);
+    }
+
+    #[test]
+    fn test_funnel_merge_many_chunks_matches_std_sort() {
+        // Calls cache_oblivious_sort directly (bypassing the adaptive
+        // selector) so funnel_sort_recursive + cache_oblivious_merge run
+        // over many chunks, with duplicates and an uneven final chunk.
+        let mut sorter = CacheObliviousSort::new();
+        let mut data: Vec<u32> = (0..20_001u32)
+            .map(|i| i.wrapping_mul(2_654_435_761) % 1_000)
+            .collect();
+        let mut expected = data.clone();
+        expected.sort_unstable();
+
+        assert!(sorter.cache_oblivious_sort(&mut data).is_ok());
         assert_eq!(data, expected);
     }
 
