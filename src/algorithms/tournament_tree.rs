@@ -13,9 +13,6 @@ use crate::error::{Result, ZiporaError};
 use std::cmp::Ordering;
 use std::marker::PhantomData;
 
-#[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
-
 /// Cache line size for optimal memory layout
 const CACHE_LINE_SIZE: usize = 64;
 
@@ -248,11 +245,12 @@ where
 
         self.num_ways = self.ways.len();
 
-        // Create a complete binary tree structure
-        // For k ways, we need k-1 internal nodes + k leaf nodes = 2k-1 total
-        let tree_size = self.num_ways.saturating_sub(1);
-
-        self.tree.resize(tree_size, CacheAlignedNode::new(0, 0));
+        // Classic loser-tree layout over an implicit complete binary tree of
+        // 2k-1 nodes: internal nodes (storing losers) live at indices
+        // 1..k (index 0 is unused), leaves are implicit at k..2k-1 and map
+        // to way (index - k).
+        self.tree.clear();
+        self.tree.resize(self.num_ways, CacheAlignedNode::new(0, 0));
 
         // Build the initial tournament tree bottom-up
         self.build_enhanced_tree()?;
@@ -267,35 +265,24 @@ where
             return Ok(());
         }
 
-        // Find the initial winner among all leaf nodes (ways)
-        self.winner = self.find_initial_winner()?;
-
-        // Build the tree structure from bottom to top
-        self.build_tree_structure()?;
-
+        self.winner = self.init_subtree(1)?;
         Ok(())
     }
 
-    /// Find the initial winner with SIMD-optimized comparisons when possible
-    fn find_initial_winner(&self) -> Result<usize> {
-        let mut min_way = 0;
-        let mut min_value: Option<&T> = None;
-
-        for (way_idx, way) in self.ways.iter().enumerate() {
-            if let Some(value) = way.peek() {
-                let is_min = match min_value {
-                    None => true,
-                    Some(min_v) => self.compare_optimized(value, min_v) == Ordering::Less,
-                };
-
-                if is_min {
-                    min_value = Some(value);
-                    min_way = way_idx;
-                }
-            }
+    /// Play the initial tournament for the subtree rooted at `node`,
+    /// storing each comparison's loser in the internal node and returning
+    /// the subtree winner way.
+    fn init_subtree(&mut self, node: usize) -> Result<usize> {
+        if node >= self.num_ways {
+            // Leaf: maps to way (node - k).
+            return Ok(node - self.num_ways);
         }
 
-        Ok(min_way)
+        let left = self.init_subtree(2 * node)?;
+        let right = self.init_subtree(2 * node + 1)?;
+        let (winner, loser) = self.compare_competitors(left, right)?;
+        self.tree[node] = CacheAlignedNode::new(loser, self.ways[loser].position);
+        Ok(winner)
     }
 
     /// SIMD-optimized comparison function for supported types
@@ -308,65 +295,6 @@ where
         } else {
             (self.comparator)(a, b)
         }
-    }
-
-    /// Build the tree structure with cache-friendly access patterns
-    fn build_tree_structure(&mut self) -> Result<()> {
-        let num_ways = self.num_ways;
-
-        if num_ways <= 1 {
-            return Ok(());
-        }
-
-        // Build tournament tree from leaves up to root
-        // In a loser tree, internal nodes store the loser while winner bubbles up
-        for level in 0..self.tree.len() {
-            let left_child_idx = 2 * level + 1;
-            let right_child_idx = 2 * level + 2;
-
-            // Determine the competitors for this internal node
-            let (left_competitor, right_competitor) =
-                if left_child_idx < self.tree.len() && right_child_idx < self.tree.len() {
-                    // Both children are internal nodes
-                    (
-                        self.get_subtree_winner(left_child_idx),
-                        self.get_subtree_winner(right_child_idx),
-                    )
-                } else if left_child_idx >= self.tree.len() {
-                    // Children are leaf nodes (ways)
-                    let left_way = left_child_idx - self.tree.len();
-                    let right_way = right_child_idx - self.tree.len();
-
-                    if left_way < num_ways && right_way < num_ways {
-                        (left_way, right_way)
-                    } else {
-                        continue;
-                    }
-                } else {
-                    continue;
-                };
-
-            // Compare and store the loser in this internal node
-            let (_winner, loser) = self.compare_competitors(left_competitor, right_competitor)?;
-
-            // Prefetch next nodes if configured
-            if self.config.cache_optimized && self.config.prefetch_distance > 0 {
-                self.prefetch_next_nodes(level);
-            }
-
-            // Store the loser in the internal node
-            self.tree[level] = CacheAlignedNode::new(loser, self.ways[loser].position);
-        }
-
-        Ok(())
-    }
-
-    /// Get the winner of a subtree rooted at the given internal node
-    fn get_subtree_winner(&self, _node_idx: usize) -> usize {
-        // In a loser tree, the winner is determined by traversing up from leaves
-        // This is a simplified version - a full implementation would cache winners
-        // For now, we'll use the overall winner
-        self.winner
     }
 
     /// Compare two competitors and return (winner, loser)
@@ -408,31 +336,23 @@ where
         }
     }
 
-    /// Prefetch next cache lines for optimal memory access
-    #[cfg(target_arch = "x86_64")]
-    fn prefetch_next_nodes(&self, current_level: usize) {
-        if self.config.prefetch_distance > 0 {
-            let prefetch_level = current_level + self.config.prefetch_distance;
-            if prefetch_level < self.tree.len() {
-                let node_ptr = &self.tree[prefetch_level] as *const CacheAlignedNode;
-                // SAFETY: node_ptr is valid (within tree bounds), _mm_prefetch is safe to call with any pointer
-                unsafe {
-                    _mm_prefetch(node_ptr as *const i8, _MM_HINT_T0);
-                }
-            }
-        }
-    }
-
-    #[cfg(not(target_arch = "x86_64"))]
-    fn prefetch_next_nodes(&self, _current_level: usize) {
-        // No prefetching on non-x86_64 architectures
-    }
-
-    /// Enhanced O(log k) winner update after advancing a stream
+    /// O(log k) winner update after advancing the winning stream: replay
+    /// only the comparisons on the changed way's leaf-to-root path.
     fn update_winner(&mut self) -> Result<()> {
-        // Simplified O(log k) update - traverse from the changed leaf up to root
-        // For now, use the enhanced find_initial_winner approach
-        self.winner = self.find_initial_winner()?;
+        if self.num_ways <= 1 {
+            return Ok(());
+        }
+
+        let mut winner = self.winner;
+        let mut node = (winner + self.num_ways) / 2;
+        while node >= 1 {
+            let stored_loser = self.tree[node].node.loser_way();
+            let (new_winner, loser) = self.compare_competitors(winner, stored_loser)?;
+            self.tree[node] = CacheAlignedNode::new(loser, self.ways[loser].position);
+            winner = new_winner;
+            node /= 2;
+        }
+        self.winner = winner;
         Ok(())
     }
 
@@ -683,6 +603,29 @@ mod tests {
         assert_eq!(tree.peek(), Some(&2));
         assert_eq!(tree.pop()?, Some(2));
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_many_ways_interleaved_merge() -> Result<()> {
+        // Guards the O(log k) loser-tree implementation: 64 ways with
+        // interleaved, duplicated, unevenly-exhausted (including empty)
+        // streams must merge to the exact globally sorted multiset.
+        let config = LoserTreeConfig::default();
+        let mut tree = EnhancedLoserTree::<u64>::new(config);
+
+        let mut expected = Vec::new();
+        for way in 0..64u64 {
+            let len = (way % 7) * 20; // ways 0, 7, 14, ... are empty
+            let mut values: Vec<u64> = (0..len).map(|i| (i * 13 + way * 3) % 500).collect();
+            values.sort_unstable();
+            expected.extend_from_slice(&values);
+            tree.add_way(values.into_iter())?;
+        }
+        expected.sort_unstable();
+
+        let result = tree.merge_to_vec()?;
+        assert_eq!(result, expected);
         Ok(())
     }
 

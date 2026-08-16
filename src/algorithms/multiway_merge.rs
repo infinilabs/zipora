@@ -277,51 +277,17 @@ impl MultiWayMerge {
         Ok(result)
     }
 
-    /// Merge using tournament tree (better for many sources)
-    fn merge_tournament<T, S>(&self, mut sources: Vec<S>) -> Result<Vec<T>>
+    /// Merge for many sources.
+    ///
+    /// Delegates to the heap-based merge: the previous hand-rolled
+    /// "tournament" scanned every active source per emitted item (O(N·k)),
+    /// while the heap is a true O(N log k).
+    fn merge_tournament<T, S>(&self, sources: Vec<S>) -> Result<Vec<T>>
     where
         T: Ord + Clone,
         S: MergeSource<T>,
     {
-        // Simplified tournament tree - in practice, this would be more optimized
-        let mut active_sources: Vec<usize> = (0..sources.len()).collect();
-        let mut result = Vec::new();
-
-        while !active_sources.is_empty() {
-            // Find minimum among active sources
-            let mut min_source = 0;
-            let mut min_item: Option<&T> = None;
-
-            for &source_id in &active_sources {
-                if let Some(item) = sources[source_id].peek() {
-                    let is_min = match min_item {
-                        None => true,
-                        Some(min_v) => item < min_v,
-                    };
-
-                    if is_min {
-                        min_item = Some(item);
-                        min_source = source_id;
-                    }
-                }
-            }
-
-            if min_item.is_some() {
-                // Take the minimum item
-                if let Some(item) = sources[min_source].next() {
-                    result.push(item);
-                }
-
-                // Remove exhausted sources
-                if sources[min_source].is_empty() {
-                    active_sources.retain(|&id| id != min_source);
-                }
-            } else {
-                break;
-            }
-        }
-
-        Ok(result)
+        self.merge_heap(sources)
     }
 
     /// Hierarchical merge for very large number of sources
