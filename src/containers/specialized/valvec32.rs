@@ -769,15 +769,20 @@ impl<T> ValVec32<T> {
 
         self.reserve(additional)?;
 
-        // SAFETY: reserve ensures capacity >= new_len, dst+i is within allocated buffer for all i < slice.len()
+        // Bump len after each write so that if item.clone() panics, the
+        // elements already written are owned by the vector and dropped
+        // during unwinding instead of leaking.
+        // SAFETY: reserve ensures capacity >= new_len, so the write target
+        // is within the allocated buffer for every element of the slice.
         unsafe {
-            let dst = self.ptr.as_ptr().add(self.len as usize);
-            for (i, item) in slice.iter().enumerate() {
-                ptr::write(dst.add(i), item.clone());
+            for item in slice {
+                let dst = self.ptr.as_ptr().add(self.len as usize);
+                ptr::write(dst, item.clone());
+                self.len += 1;
             }
         }
 
-        self.len = new_len;
+        debug_assert_eq!(self.len, new_len);
         Ok(())
     }
 
@@ -1058,6 +1063,51 @@ unsafe impl<T: Sync> Sync for ValVec32<T> {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_extend_from_slice_drops_written_elements_on_panicking_clone() {
+        // Regression: extend_from_slice wrote clones with ptr::write and only
+        // updated self.len after the whole loop, so a panicking clone() leaked
+        // every element written before the panic (their drops never ran).
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static CLONES: AtomicUsize = AtomicUsize::new(0);
+        static DROPS: AtomicUsize = AtomicUsize::new(0);
+
+        struct PanicOnThirdClone;
+        impl Clone for PanicOnThirdClone {
+            fn clone(&self) -> Self {
+                if CLONES.fetch_add(1, Ordering::SeqCst) == 2 {
+                    panic!("clone bomb");
+                }
+                PanicOnThirdClone
+            }
+        }
+        impl Drop for PanicOnThirdClone {
+            fn drop(&mut self) {
+                DROPS.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let src = [
+            PanicOnThirdClone,
+            PanicOnThirdClone,
+            PanicOnThirdClone,
+            PanicOnThirdClone,
+        ];
+        let mut vec: ValVec32<PanicOnThirdClone> = ValVec32::new();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let _ = vec.extend_from_slice(&src);
+        }));
+        assert!(result.is_err());
+
+        // Two clones succeeded before the third panicked: the vector must
+        // own them (len == 2) and drop them when it goes away.
+        assert_eq!(vec.len(), 2);
+        drop(vec);
+        assert_eq!(DROPS.load(Ordering::SeqCst), 2);
+    }
 
     #[test]
     fn test_new() {
