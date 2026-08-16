@@ -141,8 +141,10 @@ impl DawgState {
 /// average fan-out is 4-8. HashMap gives O(transitions) memory.
 #[derive(Debug, Clone)]
 pub struct TransitionTable {
-    /// Sparse transition map: (from_state, symbol) -> to_state
-    pub sparse_table: HashMap<(u32, u8), u32>,
+    /// Sparse transition map grouped by source state; each entry is kept
+    /// sorted by symbol. Grouping makes get_outgoing_transitions O(out-degree)
+    /// instead of a scan over every transition in the table.
+    pub state_table: HashMap<u32, Vec<(u8, u32)>>,
     /// Number of states
     pub num_states: u32,
 }
@@ -151,45 +153,56 @@ impl TransitionTable {
     /// Create a new transition table.
     pub fn new(num_states: u32, _use_dense: bool) -> Self {
         Self {
-            sparse_table: HashMap::new(),
+            state_table: HashMap::new(),
             num_states,
         }
     }
 
-    /// Add a transition.
+    /// Add a transition, overwriting any existing (state, symbol) entry.
     #[inline]
     pub fn add_transition(&mut self, from_state: u32, symbol: u8, to_state: u32) -> Result<()> {
-        self.sparse_table.insert((from_state, symbol), to_state);
+        let entries = self.state_table.entry(from_state).or_default();
+        match entries.binary_search_by_key(&symbol, |&(s, _)| s) {
+            Ok(i) => entries[i].1 = to_state,
+            Err(i) => entries.insert(i, (symbol, to_state)),
+        }
         Ok(())
     }
 
     /// Get transition target state.
     #[inline]
     pub fn get_transition(&self, from_state: u32, symbol: u8) -> Option<u32> {
-        self.sparse_table.get(&(from_state, symbol)).copied()
+        let entries = self.state_table.get(&from_state)?;
+        entries
+            .binary_search_by_key(&symbol, |&(s, _)| s)
+            .ok()
+            .map(|i| entries[i].1)
     }
 
     /// Get all outgoing transitions from a state (sorted by symbol).
     pub fn get_outgoing_transitions(&self, from_state: u32) -> Vec<(u8, u32)> {
-        let mut transitions: Vec<(u8, u32)> = self
-            .sparse_table
-            .iter()
-            .filter_map(|(&(state, symbol), &target)| {
-                if state == from_state {
-                    Some((symbol, target))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        transitions.sort_unstable_by_key(|(symbol, _)| *symbol);
-        transitions
+        self.state_table
+            .get(&from_state)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Total number of transitions in the table.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.state_table.values().map(Vec::len).sum()
+    }
+
+    /// Whether the table has no transitions.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.state_table.is_empty()
     }
 
     /// Estimate memory usage in bytes.
     #[inline]
     pub fn memory_usage(&self) -> usize {
-        self.sparse_table.len() * (std::mem::size_of::<(u32, u8)>() + std::mem::size_of::<u32>())
+        self.len() * (std::mem::size_of::<(u32, u8)>() + std::mem::size_of::<u32>())
     }
 }
 
@@ -382,11 +395,13 @@ impl NestedTrieDawg {
             TransitionTable::new(self.states.len() as u32, false),
         );
 
-        for (&(from_state, symbol), &to_state) in &old_transitions.sparse_table {
-            if let (Some(&new_from), Some(&new_to)) =
-                (state_mapping.get(&from_state), state_mapping.get(&to_state))
-            {
-                self.transitions.add_transition(new_from, symbol, new_to)?;
+        for (&from_state, entries) in &old_transitions.state_table {
+            for &(symbol, to_state) in entries {
+                if let (Some(&new_from), Some(&new_to)) =
+                    (state_mapping.get(&from_state), state_mapping.get(&to_state))
+                {
+                    self.transitions.add_transition(new_from, symbol, new_to)?;
+                }
             }
         }
 
@@ -414,13 +429,15 @@ impl NestedTrieDawg {
             TransitionTable::new(new_states.len() as u32, false),
         );
 
-        for (&(from_state, symbol), &to_state) in &old_transitions.sparse_table {
-            if let (Some(&compact_from), Some(&compact_to)) = (
-                compaction_mapping.get(&from_state),
-                compaction_mapping.get(&to_state),
-            ) {
-                self.transitions
-                    .add_transition(compact_from, symbol, compact_to)?;
+        for (&from_state, entries) in &old_transitions.state_table {
+            for &(symbol, to_state) in entries {
+                if let (Some(&compact_from), Some(&compact_to)) = (
+                    compaction_mapping.get(&from_state),
+                    compaction_mapping.get(&to_state),
+                ) {
+                    self.transitions
+                        .add_transition(compact_from, symbol, compact_to)?;
+                }
             }
         }
 
@@ -508,7 +525,7 @@ impl NestedTrieDawg {
 
         DawgStats {
             num_states: self.states.len(),
-            num_transitions: self.transitions.sparse_table.len(),
+            num_transitions: self.transitions.len(),
             num_keys: self.num_keys,
             memory_usage: state_memory + transition_memory + terminal_memory,
             compression_ratio: if self.num_keys > 0 {
@@ -692,6 +709,30 @@ mod tests {
         assert_eq!(transitions.len(), 2);
         assert!(transitions.contains(&(b'a', 1)));
         assert!(transitions.contains(&(b'b', 2)));
+    }
+
+    #[test]
+    fn test_transition_table_per_state_isolation_and_overwrite() {
+        // Guards the per-state transition storage: get_outgoing_transitions
+        // must return only the queried state's transitions, sorted by
+        // symbol, and add_transition must overwrite an existing
+        // (state, symbol) pair like the old flat-HashMap insert did.
+        let mut table = TransitionTable::new(10, false);
+        table.add_transition(0, b'b', 1).unwrap();
+        table.add_transition(0, b'a', 2).unwrap();
+        table.add_transition(1, b'a', 3).unwrap();
+        table.add_transition(0, b'a', 4).unwrap(); // overwrite
+
+        assert_eq!(table.get_transition(0, b'a'), Some(4));
+        assert_eq!(table.get_transition(0, b'b'), Some(1));
+        assert_eq!(table.get_transition(1, b'a'), Some(3));
+        assert_eq!(table.get_transition(2, b'a'), None);
+
+        assert_eq!(table.get_outgoing_transitions(0), vec![(b'a', 4), (b'b', 1)]);
+        assert_eq!(table.get_outgoing_transitions(1), vec![(b'a', 3)]);
+        assert!(table.get_outgoing_transitions(5).is_empty());
+        assert_eq!(table.len(), 3);
+        assert!(!table.is_empty());
     }
 
     #[test]
