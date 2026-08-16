@@ -561,6 +561,9 @@ where
 
     /// Get a value by key, updating its position in the LRU list
     pub fn get(&self, key: &K) -> Option<V> {
+        // Lock order: hash_map → nodes. The hash_map guard is held across the
+        // nodes access so a concurrent eviction cannot recycle node_idx for a
+        // different key between the lookup and the read below.
         let hash_map = self.hash_map.read().ok()?;
         let node_idx = match hash_map.get(key) {
             Some(&idx) => idx,
@@ -571,7 +574,6 @@ where
                 return None;
             }
         };
-        drop(hash_map);
 
         let mut nodes = self.nodes.write().ok()?;
         if (node_idx as usize) >= nodes.len() || !nodes[node_idx as usize].is_valid {
@@ -627,22 +629,22 @@ where
         // Now allocate new entry (should have space after eviction)
         let node_idx = self.allocate_node()?;
 
-        // Initialize new node
+        // Initialize the node and publish the hash_map entry under the same
+        // locks (order: hash_map → nodes). Publishing the node in the LRU
+        // list before the mapping would let a concurrent eviction recycle
+        // the node, leaving the late-inserted mapping dangling.
         {
+            let mut hash_map = self
+                .hash_map
+                .write()
+                .map_err(|_| ZiporaError::out_of_memory(0))?;
             let mut nodes = self
                 .nodes
                 .write()
                 .map_err(|_| ZiporaError::out_of_memory(0))?;
             nodes[node_idx as usize] = LruNode::new(key.clone(), value, hash);
             self.lru_list.insert_head(&mut nodes, node_idx);
-        }
-
-        // Add to hash map
-        {
-            let mut hash_map = self
-                .hash_map
-                .write()
-                .map_err(|_| ZiporaError::out_of_memory(0))?;
+            drop(nodes);
             hash_map.insert(key, node_idx);
         }
 
@@ -658,9 +660,10 @@ where
 
     /// Remove a key-value pair
     pub fn remove(&self, key: &K) -> Option<V> {
+        // Lock order: hash_map → nodes, guard held across the nodes access
+        // (same reasoning as get()).
         let mut hash_map = self.hash_map.write().ok()?;
         let node_idx = hash_map.remove(key)?;
-        drop(hash_map);
 
         let mut nodes = self.nodes.write().ok()?;
         if (node_idx as usize) >= nodes.len() || !nodes[node_idx as usize].is_valid {
@@ -789,17 +792,24 @@ where
 
     /// Evict the least recently used entry
     fn evict_lru(&self) -> Result<()> {
-        let lru_node_idx = self.lru_list.get_lru_node();
-        if lru_node_idx == INVALID_NODE {
-            return Err(ZiporaError::out_of_memory(0));
-        }
-
+        // Lock order: hash_map → nodes → free_nodes, matching get/put/remove/
+        // clear. The previous order (nodes → hash_map) deadlocked against
+        // put()'s update path, which holds hash_map while acquiring nodes.
+        let mut hash_map = self
+            .hash_map
+            .write()
+            .map_err(|_| ZiporaError::out_of_memory(0))?;
         let mut nodes = self
             .nodes
             .write()
             .map_err(|_| ZiporaError::out_of_memory(0))?;
 
-        // Check validity and get key/value for callback before mutations
+        // Read the tail under the nodes lock: LruList is only mutated while
+        // the nodes write lock is held, so the index cannot go stale here.
+        let lru_node_idx = self.lru_list.get_lru_node();
+        if lru_node_idx == INVALID_NODE {
+            return Err(ZiporaError::out_of_memory(0));
+        }
         if (lru_node_idx as usize) >= nodes.len() || !nodes[lru_node_idx as usize].is_valid {
             return Err(ZiporaError::out_of_memory(0));
         }
@@ -807,23 +817,18 @@ where
         let key = nodes[lru_node_idx as usize].key.clone();
         let value = nodes[lru_node_idx as usize].value.clone();
 
-        // Call eviction callback
-        self.eviction_callback.on_evict(&key, &value);
-
-        // Remove from hash map
-        {
-            let mut hash_map = self
-                .hash_map
-                .write()
-                .map_err(|_| ZiporaError::out_of_memory(0))?;
+        // Only drop the mapping if it still points at this node; a racing
+        // put may have re-pointed the key at a different node.
+        if hash_map.get(&key) == Some(&lru_node_idx) {
             hash_map.remove(&key);
         }
 
-        // Remove from LRU list
+        // Remove from LRU list, reset node and return it to the free list
         self.lru_list.remove(&mut nodes, lru_node_idx);
-
-        // Reset node and return to free list
         nodes[lru_node_idx as usize].reset();
+
+        drop(nodes);
+        drop(hash_map);
 
         {
             let mut free_nodes = self
@@ -832,6 +837,10 @@ where
                 .map_err(|_| ZiporaError::out_of_memory(0))?;
             free_nodes.push(lru_node_idx);
         }
+
+        // Callback runs with no locks held so an implementation that
+        // re-enters the map cannot deadlock.
+        self.eviction_callback.on_evict(&key, &value);
 
         if self.config.enable_statistics {
             self.stats.record_eviction();
@@ -1010,6 +1019,41 @@ mod tests {
         // Early entries should be evicted
         assert!(cache.get(&0).is_none());
         assert!(cache.get(&1).is_none());
+    }
+
+    #[test]
+    fn test_concurrent_get_never_returns_another_keys_value() {
+        // Regression: get() dropped the hash_map lock before re-acquiring the
+        // nodes lock, so a concurrent eviction could recycle the node index
+        // and get(k1) returned the value stored for a different key. The same
+        // pass fixed the lock-order inversion between put()'s update path
+        // (hash_map → nodes) and evict_lru() (nodes → hash_map), which could
+        // deadlock; this test hangs if that inversion is reintroduced.
+        use std::thread;
+
+        const KEYS: u64 = 64;
+        const OPS: u64 = 20_000;
+        const MARKER: u64 = 1_000_003;
+
+        let cache: Arc<LruMap<u64, u64>> = Arc::new(LruMap::new(8).unwrap());
+        let mut handles = Vec::new();
+        for t in 0..4u64 {
+            let cache = Arc::clone(&cache);
+            handles.push(thread::spawn(move || {
+                for i in 0..OPS {
+                    let k = (i * (2 * t + 1)) % KEYS;
+                    if (i + t) % 3 == 0 {
+                        // Mix of fresh inserts (evictions) and updates.
+                        let _ = cache.put(k, k * MARKER);
+                    } else if let Some(v) = cache.get(&k) {
+                        assert_eq!(v, k * MARKER, "get({k}) returned another key's value");
+                    }
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
     }
 
     #[test]
