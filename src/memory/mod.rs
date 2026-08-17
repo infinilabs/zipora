@@ -11,6 +11,7 @@ pub mod fixed_capacity_pool;
 pub mod hugepage;
 pub mod lockfree_pool;
 pub mod mmap;
+#[cfg(feature = "mmap")]
 pub mod mmap_vec;
 pub mod pool;
 pub mod prefetch;
@@ -43,6 +44,7 @@ pub use lockfree_pool::{
     BackoffStrategy, LockFreeAllocation, LockFreeMemoryPool, LockFreePoolConfig, LockFreePoolStats,
 };
 pub use mmap::{MemoryMappedAllocator, MmapAllocation};
+#[cfg(feature = "mmap")]
 pub use mmap_vec::{MmapVec, MmapVecConfig, MmapVecIter, MmapVecStats};
 pub use pool::{MemoryPool, PoolConfig, PooledBuffer, PooledVec};
 pub use prefetch::{PrefetchConfig, PrefetchLocality, PrefetchMetrics, PrefetchStrategy};
