@@ -589,12 +589,16 @@ impl<T> FastVec<T> {
                     fast_fill(fill_slice, *((&value) as *const T as *const u8));
                 }
             } else {
-                // Standard fill for non-Copy types or small operations
+                // Standard fill for non-Copy types or small operations.
+                // Bump len after each write so that if value.clone() panics,
+                // the elements already written are owned by the vector and
+                // dropped during unwinding instead of leaking.
                 for i in self.len..new_len {
                     // SAFETY: i < new_len <= cap after ensure_capacity, ptr valid from verification
                     unsafe {
                         ptr::write(self.as_mut_ptr().add(i), value.clone());
                     }
+                    self.len = i + 1;
                 }
             }
         } else if new_len < self.len {
@@ -632,11 +636,15 @@ impl<T> FastVec<T> {
             debug_assert!(self.ptr.is_some());
 
             let mut closure = f;
+            // Bump len after each write so that if closure() panics, the
+            // elements already written are dropped during unwinding instead
+            // of leaking.
             for i in self.len..new_len {
                 // SAFETY: i < new_len <= cap after ensure_capacity, ptr valid from debug_assert above
                 unsafe {
                     ptr::write(self.as_mut_ptr().add(i), closure());
                 }
+                self.len = i + 1;
             }
         } else if new_len < self.len {
             // Drop excess elements
@@ -760,15 +768,15 @@ impl<T> FastVec<T> {
         let additional = iter.len();
         self.reserve(additional)?;
 
-        let mut current_len = self.len;
+        // Bump len after each write so that if iter.next() panics, the items
+        // already written are dropped during unwinding instead of leaking.
         for item in iter {
-            // SAFETY: current_len < self.len + additional <= cap after reserve
+            // SAFETY: self.len < original len + additional <= cap after reserve
             unsafe {
-                ptr::write(self.as_mut_ptr().add(current_len), item);
-                current_len += 1;
+                ptr::write(self.as_mut_ptr().add(self.len), item);
             }
+            self.len += 1;
         }
-        self.len = current_len;
 
         Ok(())
     }
