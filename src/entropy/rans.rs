@@ -255,10 +255,15 @@ impl<P: ParallelVariant> Rans64Encoder<P> {
             ));
         }
 
-        // Second pass: distribute remaining frequency proportionally
+        // Second pass: distribute remaining frequency proportionally.
+        // Use the budget captured *before* the loop: `remaining` shrinks as
+        // slices are handed out, so scaling by the live value would give
+        // earlier symbols a geometrically larger share than later symbols
+        // with the same input frequency.
+        let initial_remaining = remaining as u64;
         for (i, &freq) in frequencies.iter().enumerate() {
             if freq > 0 && remaining > 0 {
-                let additional = ((freq as u64 * remaining as u64) / total_freq as u64) as u32;
+                let additional = ((freq as u64 * initial_remaining) / total_freq as u64) as u32;
                 let to_add = additional.min(remaining);
                 normalized[i] += to_add;
                 remaining -= to_add;
@@ -718,6 +723,33 @@ impl Default for AdaptiveRans64Encoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression (codereview.md 2026-08 #7): the proportional pass of
+    /// normalize_frequencies used the *shrinking* `remaining` budget in
+    /// `freq * remaining / total_freq`, so earlier symbols received a
+    /// geometrically larger share than later symbols with identical input
+    /// frequency. 16 equal-frequency symbols must normalize to (near-)equal
+    /// slices of TOTFREQ.
+    #[test]
+    fn test_normalize_frequencies_uniform_input_stays_uniform() {
+        let mut frequencies = [0u32; 256];
+        for f in frequencies.iter_mut().take(16) {
+            *f = 100;
+        }
+        let normalized =
+            Rans64Encoder::<ParallelX1>::normalize_frequencies(&frequencies, 1600).unwrap();
+
+        let used: Vec<u32> = normalized[..16].to_vec();
+        let sum: u32 = normalized.iter().sum();
+        assert_eq!(sum, TOTFREQ, "normalized frequencies must sum to TOTFREQ");
+        let min = *used.iter().min().unwrap();
+        let max = *used.iter().max().unwrap();
+        assert!(
+            max - min <= 1,
+            "equal input frequencies must get equal normalized frequencies, got {:?}",
+            used
+        );
+    }
 
     #[test]
     fn test_rans64_state() {
