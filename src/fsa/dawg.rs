@@ -143,8 +143,10 @@ impl DawgState {
 pub struct TransitionTable {
     /// Sparse transition map grouped by source state; each entry is kept
     /// sorted by symbol. Grouping makes get_outgoing_transitions O(out-degree)
-    /// instead of a scan over every transition in the table.
-    pub state_table: HashMap<u32, Vec<(u8, u32)>>,
+    /// instead of a scan over every transition in the table. Private so the
+    /// storage representation stays out of the public API — use
+    /// add_transition / get_transition / get_outgoing_transitions / len.
+    state_table: HashMap<u32, Vec<(u8, u32)>>,
     /// Number of states
     pub num_states: u32,
 }
