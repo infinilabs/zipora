@@ -227,6 +227,7 @@ pub fn has_popcnt() -> bool {
 /// - Other/ARM: returns false
 ///
 /// The result is cached in a `OnceLock` — the CPUID check runs at most once.
+#[inline]
 pub fn has_fast_bmi2() -> bool {
     static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *CACHE.get_or_init(has_fast_bmi2_detect)
@@ -290,13 +291,19 @@ fn has_fast_bmi2_detect() -> bool {
 /// derive `rank` from a `count_ones()`-guarded comparison, so `rank <= 63`
 /// always holds; the totality is defense-in-depth for external callers.
 ///
-/// Three-tier dispatch (resolved once via cached function pointer):
+/// Three-tier dispatch (branches on cached feature flags):
 /// 1. **BMI2 PDEP** (3 cycles) — Intel Haswell+ and AMD Zen 3+
 /// 2. **POPCNT binary search** (O(1), ~18 instructions) — any CPU with POPCNT
 /// 3. **Scalar bit-clearing loop** (O(rank)) — universal fallback
 ///
 /// The PDEP path is gated by [`has_fast_bmi2`], which detects and avoids
 /// AMD Zen 1/2's microcoded PDEP (250-300 cycles).
+///
+/// Dispatch is a branch on [`has_fast_bmi2`]/[`has_popcnt`] (cached bools)
+/// rather than a cached function pointer: an indirect call can never be
+/// inlined into the tight succinct loops (Elias-Fano decode, Rank9 select)
+/// that this function serves, while a perfectly-predicted branch lets the
+/// selected tier inline into the call site.
 #[inline(always)]
 pub fn select_in_word(word: u64, rank: usize) -> usize {
     debug_assert!(
@@ -306,22 +313,16 @@ pub fn select_in_word(word: u64, rank: usize) -> usize {
         word.count_ones()
     );
 
-    type SelectFn = fn(u64, usize) -> usize;
-    static DISPATCH: std::sync::OnceLock<SelectFn> = std::sync::OnceLock::new();
-
-    let f = *DISPATCH.get_or_init(|| {
-        #[cfg(target_arch = "x86_64")]
-        {
-            if has_fast_bmi2() {
-                return select_in_word_pdep as SelectFn;
-            }
-            if has_popcnt() {
-                return select_in_word_popcnt as SelectFn;
-            }
+    #[cfg(target_arch = "x86_64")]
+    {
+        if has_fast_bmi2() {
+            return select_in_word_pdep(word, rank);
         }
-        select_in_word_scalar as SelectFn
-    });
-    f(word, rank)
+        if has_popcnt() {
+            return select_in_word_popcnt(word, rank);
+        }
+    }
+    select_in_word_scalar(word, rank)
 }
 
 #[cfg(target_arch = "x86_64")]
