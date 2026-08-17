@@ -57,8 +57,20 @@ const FLAG_SET_FINAL: u8 = 0x40; // bit 6
 const FLAG_LOCK: u8 = 0x80; // bit 7
 const FLAG_CNT_MASK: u8 = 0x0F; // bits 0-3
 
-// On little-endian (x86-64, aarch64): flags is bits 0-7 of the u32.
-// These masks operate on the full u32 representation of a PatriciaNode.
+// The U32_FLAG_* masks below operate on the full u32 representation of a
+// PatriciaNode obtained by byte-punning MetaInfo (bytemuck::cast). They
+// assume MetaInfo.flags — byte 0 of the #[repr(C)] struct — lands in bits
+// 0-7 of the u32, which holds only on little-endian targets. On big-endian
+// byte 0 lands in bits 24-31, so every lock/final/lazy-free flag operation
+// would silently touch the wrong bits (codereview.md 2026-08 #8). Refuse
+// to compile rather than corrupt the trie.
+#[cfg(target_endian = "big")]
+compile_error!(
+    "ConcurrentCsppTrie flag masks assume little-endian MetaInfo <-> u32 \
+     punning; port the U32_FLAG_* constants (byte 0 = bits 24-31) before \
+     enabling big-endian targets"
+);
+
 const U32_FLAG_IS_FINAL: u32 = FLAG_IS_FINAL as u32;
 const U32_FLAG_LAZY_FREE: u32 = FLAG_LAZY_FREE as u32;
 const U32_FLAG_SET_FINAL: u32 = FLAG_SET_FINAL as u32;
@@ -2264,6 +2276,46 @@ mod tests {
     /// interpreted AtomicU32 constructions) — cap capacities there.
     pub(super) fn cap(n: usize) -> usize {
         if cfg!(miri) { n.min(32 * 1024) } else { n }
+    }
+
+    /// Regression (codereview.md 2026-08 #8): the U32_FLAG_* masks assume
+    /// MetaInfo.flags (byte 0 of the repr(C) struct) occupies bits 0-7 of
+    /// the byte-punned u32 — true only on little-endian, now enforced by a
+    /// compile_error! on big-endian targets. Pin the layout invariant the
+    /// masks and that guard rely on: setting a flag bit in MetaInfo.flags
+    /// must set exactly the same bit in the u32 representation.
+    #[test]
+    fn test_u32_flag_masks_match_meta_info_flag_byte() {
+        for (flag, mask) in [
+            (FLAG_IS_FINAL, U32_FLAG_IS_FINAL),
+            (FLAG_LAZY_FREE, U32_FLAG_LAZY_FREE),
+            (FLAG_SET_FINAL, U32_FLAG_SET_FINAL),
+            (FLAG_LOCK, U32_FLAG_LOCK),
+        ] {
+            let meta = MetaInfo {
+                flags: flag,
+                n_zpath_len: 0,
+                c_label: [0, 0],
+            };
+            assert_eq!(
+                meta_to_u32(meta),
+                mask,
+                "flag 0x{flag:02x} must land on its u32 mask"
+            );
+            assert_eq!(u32_to_meta(mask).flags, flag);
+        }
+
+        // Flag ops must never bleed into the neighboring struct bytes.
+        let meta = MetaInfo {
+            flags: 0,
+            n_zpath_len: 7,
+            c_label: [3, 5],
+        };
+        let bits = meta_to_u32(meta) | U32_FLAG_LOCK;
+        let locked = u32_to_meta(bits);
+        assert_eq!(locked.flags, FLAG_LOCK);
+        assert_eq!(locked.n_zpath_len, 7);
+        assert_eq!(locked.c_label, [3, 5]);
     }
 
     #[test]
