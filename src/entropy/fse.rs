@@ -18,9 +18,6 @@ const FSE_MODE_PARALLEL: u8 = 0xF6;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-#[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::*;
-
 /// Hardware capabilities for FSE optimization
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -800,16 +797,12 @@ impl FseEncoder {
         // Reset frequency counters
         self.frequency_stats.fill(0);
 
-        // Use hardware-accelerated frequency counting if available
-        #[cfg(target_arch = "x86_64")]
-        if self.config.hardware.avx2 && data.len() >= 64 {
-            self.count_frequencies_avx2(data)?;
+        // Use the multi-lane histogram for larger inputs
+        if data.len() >= 64 {
+            self.count_frequencies_unrolled(data);
         } else {
             self.count_frequencies_scalar(data);
         }
-
-        #[cfg(not(target_arch = "x86_64"))]
-        self.count_frequencies_scalar(data);
 
         // If we have a dictionary, incorporate its frequencies
         if let Some(ref dict) = self.dictionary {
@@ -831,48 +824,30 @@ impl FseEncoder {
         }
     }
 
-    /// AVX2-accelerated frequency counting (fixed implementation)
-    #[cfg(target_arch = "x86_64")]
-    fn count_frequencies_avx2(&mut self, data: &[u8]) -> Result<()> {
-        if !self.config.hardware.avx2 {
-            self.count_frequencies_scalar(data);
-            return Ok(());
+    /// 4-lane unrolled frequency counting for larger inputs
+    ///
+    /// Four independent counter tables break the store-to-load dependency
+    /// that serializes a single-table histogram on runs of equal bytes.
+    /// (Replaces a pseudo-SIMD path that round-tripped each 32-byte chunk
+    /// through a ymm register onto the stack and then counted with a scalar
+    /// loop anyway — pure overhead, no vector arithmetic.)
+    fn count_frequencies_unrolled(&mut self, data: &[u8]) {
+        let mut lanes = [[0u32; 256]; 4];
+
+        let mut chunks = data.chunks_exact(4);
+        for chunk in &mut chunks {
+            lanes[0][chunk[0] as usize] += 1;
+            lanes[1][chunk[1] as usize] += 1;
+            lanes[2][chunk[2] as usize] += 1;
+            lanes[3][chunk[3] as usize] += 1;
         }
-
-        // Process 32-byte chunks with AVX2
-        let chunks = data.chunks_exact(32);
-        let remainder = chunks.remainder();
-
-        // SAFETY: AVX2 guaranteed by function's feature check, pointer bounds verified by chunks_exact
-        unsafe {
-            // Use histogram approach for better cache efficiency
-            let mut local_counters = [0u32; 256];
-
-            for chunk in chunks {
-                let bytes = _mm256_loadu_si256(chunk.as_ptr() as *const __m256i);
-
-                // Convert 256-bit vector to 32 individual bytes and count
-                let mut chunk_bytes = [0u8; 32];
-                _mm256_storeu_si256(chunk_bytes.as_mut_ptr() as *mut __m256i, bytes);
-
-                // Count frequencies in this chunk
-                for &byte_val in &chunk_bytes {
-                    local_counters[byte_val as usize] += 1;
-                }
-            }
-
-            // Add local counts to main frequency stats
-            for i in 0..256 {
-                self.frequency_stats[i] += local_counters[i];
-            }
-        }
-
-        // Process remaining bytes
-        for &byte in remainder {
+        for &byte in chunks.remainder() {
             self.frequency_stats[byte as usize] += 1;
         }
 
-        Ok(())
+        for i in 0..256 {
+            self.frequency_stats[i] += lanes[0][i] + lanes[1][i] + lanes[2][i] + lanes[3][i];
+        }
     }
 
     /// Compress data using FSE algorithm
@@ -1382,6 +1357,41 @@ pub fn fse_unzip(data: &[u8]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression (codereview.md 2026-08 #6): count_frequencies_avx2 was
+    /// pseudo-SIMD — it loaded 32 bytes into a ymm register, immediately
+    /// stored them back to a stack array and counted with a scalar loop
+    /// (slower than plain scalar due to the store-forward round-trip).
+    /// The fast path is now a genuine 4-lane unrolled histogram; this test
+    /// pins its results to a naive count across the dispatch threshold,
+    /// remainder lengths, runs of equal bytes and the full byte range.
+    #[test]
+    fn test_frequency_counting_matches_naive_count() {
+        let mut data = Vec::new();
+        data.extend(std::iter::repeat_n(0xABu8, 100)); // long equal-byte run
+        data.extend(0..=255u8); // every symbol once
+        data.extend((0..1000).map(|i| (i * 31 % 251) as u8)); // pseudo-random
+        for len in [0, 1, 3, 63, 64, 65, 67, data.len()] {
+            let slice = &data[..len];
+            let mut expected = [0u32; 256];
+            for &b in slice {
+                expected[b as usize] += 1;
+            }
+
+            let mut encoder = FseEncoder::new(FseConfig::default()).unwrap();
+            // Empty input has no frequencies; analyze_frequencies rejects it
+            // downstream, so only compare the counting itself for len > 0.
+            if len > 0 {
+                encoder.analyze_frequencies(slice).unwrap();
+            }
+            assert_eq!(
+                encoder.frequency_stats[..],
+                expected[..],
+                "frequency mismatch for len {}",
+                len
+            );
+        }
+    }
 
     #[test]
     fn test_fse_config_validation() {
