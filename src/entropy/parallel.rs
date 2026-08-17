@@ -850,23 +850,34 @@ mod bench_tests {
 
         let config = ParallelConfig::default();
 
-        // Benchmark x2 variant
+        // One untimed warm-up encode per variant, then best-of-3: the first
+        // encode pays one-time costs (thread-pool spin-up, page faults,
+        // frequency ramp — observed 66ms vs 2-3ms steady state), and single
+        // wall-clock windows are dominated by scheduler noise when the suite
+        // runs on every core (same de-flake as test_scatter_popcount).
+        fn bench_encode<P: ParallelVariant>(
+            encoder: &mut ParallelHuffmanEncoder<P>,
+            data: &[u8],
+        ) -> Result<(Vec<u8>, std::time::Duration)> {
+            let _ = encoder.encode(data)?;
+            let mut best = std::time::Duration::MAX;
+            let mut compressed = Vec::new();
+            for _ in 0..3 {
+                let start = Instant::now();
+                compressed = encoder.encode(data)?;
+                best = best.min(start.elapsed());
+            }
+            Ok((compressed, best))
+        }
+
         let mut encoder_x2 = ParallelHuffmanEncoder::<ParallelX2Variant>::new(config.clone())?;
-        let start = Instant::now();
-        let compressed_x2 = encoder_x2.encode(&test_data)?;
-        let time_x2 = start.elapsed();
+        let (compressed_x2, time_x2) = bench_encode(&mut encoder_x2, &test_data)?;
 
-        // Benchmark x4 variant
         let mut encoder_x4 = ParallelHuffmanEncoder::<ParallelX4Variant>::new(config.clone())?;
-        let start = Instant::now();
-        let compressed_x4 = encoder_x4.encode(&test_data)?;
-        let time_x4 = start.elapsed();
+        let (compressed_x4, time_x4) = bench_encode(&mut encoder_x4, &test_data)?;
 
-        // Benchmark x8 variant
         let mut encoder_x8 = ParallelHuffmanEncoder::<ParallelX8Variant>::new(config)?;
-        let start = Instant::now();
-        let compressed_x8 = encoder_x8.encode(&test_data)?;
-        let time_x8 = start.elapsed();
+        let (compressed_x8, time_x8) = bench_encode(&mut encoder_x8, &test_data)?;
 
         // Calculate throughput
         let size_mb = test_data.len() as f64 / (1024.0 * 1024.0);
