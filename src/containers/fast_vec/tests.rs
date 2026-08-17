@@ -1560,3 +1560,110 @@ fn test_zst_drop_runs_for_each_element() {
     drop(vec);
     assert_eq!(DROPS.load(Ordering::SeqCst), 5);
 }
+
+#[test]
+fn test_resize_drops_written_elements_on_panicking_clone() {
+    // Regression (codereview.md 2026-08 #2): resize wrote clones with
+    // ptr::write and only updated self.len after the whole loop, so a
+    // panicking clone() leaked every element written before the panic.
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CLONES: AtomicUsize = AtomicUsize::new(0);
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
+
+    struct PanicOnThirdClone;
+    impl Clone for PanicOnThirdClone {
+        fn clone(&self) -> Self {
+            if CLONES.fetch_add(1, Ordering::SeqCst) == 2 {
+                panic!("clone bomb");
+            }
+            PanicOnThirdClone
+        }
+    }
+    impl Drop for PanicOnThirdClone {
+        fn drop(&mut self) {
+            DROPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let mut vec: FastVec<PanicOnThirdClone> = FastVec::new();
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let _ = vec.resize(4, PanicOnThirdClone);
+    }));
+    assert!(result.is_err());
+
+    // Two clones succeeded before the third panicked: the vector must own
+    // them (len == 2) and drop them when it goes away. The by-value `value`
+    // argument is dropped during unwinding (+1).
+    assert_eq!(vec.len(), 2);
+    drop(vec);
+    assert_eq!(DROPS.load(Ordering::SeqCst), 3);
+}
+
+#[test]
+fn test_resize_with_drops_written_elements_on_panicking_generator() {
+    // Regression (codereview.md 2026-08 #2): resize_with only committed
+    // self.len after the generator loop, leaking elements written before a
+    // panicking closure call.
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
+
+    struct CountsDrops;
+    impl Drop for CountsDrops {
+        fn drop(&mut self) {
+            DROPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let mut vec: FastVec<CountsDrops> = FastVec::new();
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let _ = vec.resize_with(4, || {
+            if CALLS.fetch_add(1, Ordering::SeqCst) == 2 {
+                panic!("generator bomb");
+            }
+            CountsDrops
+        });
+    }));
+    assert!(result.is_err());
+
+    assert_eq!(vec.len(), 2);
+    drop(vec);
+    assert_eq!(DROPS.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn test_extend_drops_written_elements_on_panicking_iterator() {
+    // Regression (codereview.md 2026-08 #2): extend wrote items at a local
+    // cursor and only assigned self.len after the loop, leaking already
+    // written items when iter.next() panicked mid-iteration.
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
+
+    struct CountsDrops;
+    impl Drop for CountsDrops {
+        fn drop(&mut self) {
+            DROPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let mut vec: FastVec<CountsDrops> = FastVec::new();
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let _ = vec.extend((0..4).map(|i| {
+            if i == 2 {
+                panic!("iterator bomb");
+            }
+            CountsDrops
+        }));
+    }));
+    assert!(result.is_err());
+
+    assert_eq!(vec.len(), 2);
+    drop(vec);
+    assert_eq!(DROPS.load(Ordering::SeqCst), 2);
+}
