@@ -137,6 +137,11 @@ fn bench_fixed_capacity_pool(c: &mut Criterion) {
 }
 
 /// Benchmark memory-mapped vectors
+#[cfg(not(feature = "mmap"))]
+fn bench_mmap_vec(_c: &mut Criterion) {}
+
+/// Benchmark memory-mapped vectors
+#[cfg(feature = "mmap")]
 fn bench_mmap_vec(c: &mut Criterion) {
     let mut group = c.benchmark_group("mmap_vec");
 

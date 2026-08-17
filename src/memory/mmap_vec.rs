@@ -23,18 +23,32 @@ use crate::error::{Result, ZiporaError};
 use crate::memory::cache_layout::{
     AccessPattern, CacheLayoutConfig,
 };
-use crate::memory::mmap::{MemoryMappedAllocator, MmapAllocation};
 use crate::memory::simd_ops::{
     fast_compare, fast_copy_cache_optimized, fast_fill, fast_prefetch_range,
 };
 use crate::simd::{AdaptiveSimdSelector, Operation};
 use bytemuck::Pod;
-use std::fs::OpenOptions;
+use memmap2::{MmapMut, MmapOptions};
+use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 use std::slice;
+
+/// A file-backed mutable memory mapping.
+///
+/// Writes through `map` land in the OS page cache of the backing file
+/// (MAP_SHARED), so data persists across drop/reopen even without an
+/// explicit `flush()`; `flush()` only adds durability (msync to disk).
+/// For read-only vectors the mapping is copy-on-write (`map_copy`), so
+/// stray writes can never reach the file.
+struct FileMapping {
+    /// Kept open for set_len() during growth; the mapping itself holds its
+    /// own reference to the file, so ordering of drops does not matter.
+    file: File,
+    map: MmapMut,
+}
 
 /// Header for memory-mapped vector files
 #[repr(C)]
@@ -291,8 +305,8 @@ impl MmapVecStats {
 pub struct MmapVec<T> {
     /// Path to the backing file
     file_path: PathBuf,
-    /// Memory-mapped allocation
-    mmap: Option<MmapAllocation>,
+    /// File-backed memory mapping
+    mmap: Option<FileMapping>,
     /// Configuration
     config: MmapVecConfig,
     /// Cached header pointer
@@ -361,6 +375,16 @@ where
         // Initialize pointers and validate
         vec.update_pointers()?;
         vec.validate_header()?;
+
+        // The mapping is exactly the file; a header declaring more capacity
+        // than the file holds would make element access read past EOF.
+        let needed = Self::calculate_file_size(vec.capacity()) as usize;
+        let mapped = vec.mmap.as_ref().map(|m| m.map.len()).unwrap_or(0);
+        if mapped < needed {
+            return Err(ZiporaError::invalid_data(
+                "Backing file smaller than header-declared capacity",
+            ));
+        }
 
         Ok(vec)
     }
@@ -547,24 +571,17 @@ where
         Ok(())
     }
 
-    /// Sync changes to disk
+    /// Sync changes to disk (msync the shared mapping)
+    ///
+    /// Writes are already visible to other readers of the file via the OS
+    /// page cache; this only forces durability against a system crash.
     pub fn sync(&self) -> Result<()> {
-        // Sync memory content back to file (temporary implementation)
         if let Some(mmap) = &self.mmap {
-            let file_size = self.file_size_from_header()?;
-            // SAFETY: mmap.as_ptr() valid for file_size bytes, mapping valid for lifetime of self
-            let content = unsafe { std::slice::from_raw_parts(mmap.as_ptr(), file_size) };
-
-            std::fs::write(&self.file_path, content)
-                .map_err(|e| ZiporaError::io_error(format!("Failed to sync to file: {}", e)))?;
+            mmap.map
+                .flush()
+                .map_err(|e| ZiporaError::io_error(format!("Failed to sync mapping: {}", e)))?;
         }
         Ok(())
-    }
-
-    /// Get current file size based on header
-    fn file_size_from_header(&self) -> Result<usize> {
-        let capacity = self.capacity();
-        Ok(Self::data_offset() + capacity * std::mem::size_of::<T>())
     }
 
     /// Get the file path
@@ -720,41 +737,38 @@ where
         Ok(())
     }
 
-    /// Create memory mapping for file
-    fn create_mmap(path: &Path, _config: &MmapVecConfig) -> Result<MmapAllocation> {
-        let file_size = std::fs::metadata(path)
-            .map_err(|e| ZiporaError::io_error(format!("Failed to get file size: {}", e)))?
-            .len() as usize;
-
-        // Use a minimum size that's appropriate for memory mapping
-        // but not too large to waste space for small vectors
-        let min_mmap_size = 64 * 1024; // 64KB minimum instead of 1MB
-        let allocation_size = file_size.max(min_mmap_size);
-
-        let allocator = MemoryMappedAllocator::new(min_mmap_size);
-        let mut allocation = allocator
-            .allocate(allocation_size)
-            .map_err(|e| ZiporaError::io_error(format!("Failed to create mmap: {}", e)))?;
-
-        // Read file content into the memory mapping
-        // This is a temporary implementation - real mmap would map the file directly
-        if file_size > 0 {
-            let file_content = std::fs::read(path)
-                .map_err(|e| ZiporaError::io_error(format!("Failed to read file: {}", e)))?;
-
-            if file_content.len() <= allocation.size() {
-                // SAFETY: src is file_content.len() bytes, dst is allocation.size() >= file_content.len(), no overlap
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        file_content.as_ptr(),
-                        allocation.as_mut_ptr(),
-                        file_content.len(),
-                    );
-                }
-            }
+    /// Create a shared file-backed memory mapping for the whole file
+    fn create_mmap(path: &Path, config: &MmapVecConfig) -> Result<FileMapping> {
+        let mut options = MmapOptions::new();
+        #[cfg(target_os = "linux")]
+        if config.populate_pages {
+            options.populate();
         }
 
-        Ok(allocation)
+        if config.read_only {
+            let file = File::open(path)
+                .map_err(|e| ZiporaError::io_error(format!("Failed to open file: {}", e)))?;
+            // SAFETY: copy-on-write private mapping — the file is never
+            // modified through it. The Pod bound on T makes any file
+            // content a valid bit pattern, and the map lives as long as
+            // the returned FileMapping.
+            let map = unsafe { options.map_copy(&file) }
+                .map_err(|e| ZiporaError::io_error(format!("Failed to mmap file: {}", e)))?;
+            return Ok(FileMapping { file, map });
+        }
+
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .map_err(|e| ZiporaError::io_error(format!("Failed to open file: {}", e)))?;
+        // SAFETY: shared mutable mapping of a file we just opened. The Pod
+        // bound on T makes any file content a valid bit pattern. As with
+        // every memory-mapped API, callers must not let another process
+        // truncate or mutate the file concurrently.
+        let map = unsafe { options.map_mut(&file) }
+            .map_err(|e| ZiporaError::io_error(format!("Failed to mmap file: {}", e)))?;
+        Ok(FileMapping { file, map })
     }
 
     /// Calculate file size for given capacity
@@ -778,11 +792,18 @@ where
     fn update_pointers(&mut self) -> Result<()> {
         let mmap = self
             .mmap
-            .as_ref()
+            .as_mut()
             .ok_or_else(|| ZiporaError::invalid_data("No memory mapping"))?;
 
-        // Pin the pointer to *mut u8 type to avoid ambiguity
-        let base_ptr: *mut u8 = mmap.as_ptr();
+        // The mapping is exactly the file: it must at least hold the header
+        // and padding (a truncated file would make the header read OOB).
+        if mmap.map.len() < Self::data_offset() {
+            return Err(ZiporaError::invalid_data(
+                "Backing file too small for MmapVec header",
+            ));
+        }
+
+        let base_ptr: *mut u8 = mmap.map.as_mut_ptr();
 
         // Header is at the beginning
         self.header = Some(
@@ -874,33 +895,35 @@ where
     }
 
     /// Resize vector to specific capacity
+    ///
+    /// The mapping is shared with the file, so existing data needs no
+    /// copy-out/copy-in: unmap, resize the file, and remap.
     fn resize_to_capacity(&mut self, new_capacity: usize) -> Result<()> {
-        // First, sync current data to file to preserve it
-        self.sync()?;
-
         let new_file_size = Self::calculate_file_size(new_capacity);
 
-        // Extend the file
-        let file = OpenOptions::new()
-            .write(true)
-            .open(&self.file_path)
-            .map_err(|e| ZiporaError::io_error(format!("Failed to open file: {}", e)))?;
+        // Unmap before resizing so no mapping covers pages beyond EOF.
+        // Header/data pointers into the old mapping are re-derived below;
+        // on any early error they stay None-backed (mmap is None) and every
+        // accessor returns an error instead of dangling.
+        let old = self
+            .mmap
+            .take()
+            .ok_or_else(|| ZiporaError::invalid_data("No memory mapping"))?;
+        self.header = None;
+        self.data = None;
 
+        let FileMapping { file, map } = old;
+        drop(map);
         file.set_len(new_file_size)
             .map_err(|e| ZiporaError::io_error(format!("Failed to resize file: {}", e)))?;
+        drop(file);
 
-        // Recreate memory mapping with new size
-        self.mmap.take(); // Unmap old mapping
+        // Remap with the new size
         self.mmap = Some(Self::create_mmap(&self.file_path, &self.config)?);
-
-        // Update pointers
         self.update_pointers()?;
 
         // Update capacity in header
         self.set_capacity(new_capacity)?;
-
-        // Sync the updated header to file
-        self.sync()?;
 
         Ok(())
     }
@@ -1313,6 +1336,52 @@ where
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    /// Regression (codereview.md 2026-08 #5): MmapVec was not actually
+    /// file-backed — it copied the file into an anonymous mapping and only
+    /// wrote it back on an explicit sync(), so every unsynced modification
+    /// was silently lost, contradicting the documented persistence
+    /// guarantee. With a real shared file mapping, writes must survive
+    /// drop + reopen without any sync() call.
+    #[test]
+    fn test_data_persists_without_explicit_sync() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("persist_no_sync.mmap");
+
+        {
+            let mut vec = MmapVec::<u64>::create(&file_path, MmapVecConfig::default()).unwrap();
+            vec.push(11).unwrap();
+            vec.push(22).unwrap();
+            vec.push(33).unwrap();
+            // Intentionally no sync() before drop.
+        }
+
+        let vec = MmapVec::<u64>::open(&file_path, MmapVecConfig::default()).unwrap();
+        assert_eq!(vec.as_slice(), &[11, 22, 33]);
+    }
+
+    /// Same regression, growth path: capacity growth remaps the file; data
+    /// written before and after growth must persist without sync().
+    #[test]
+    fn test_growth_persists_without_explicit_sync() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("persist_growth.mmap");
+
+        {
+            let config = MmapVecConfig::builder().with_initial_capacity(4).build();
+            let mut vec = MmapVec::<u32>::create(&file_path, config).unwrap();
+            for i in 0..100u32 {
+                vec.push(i).unwrap();
+            }
+            // Intentionally no sync() before drop.
+        }
+
+        let vec = MmapVec::<u32>::open(&file_path, MmapVecConfig::default()).unwrap();
+        assert_eq!(vec.len(), 100);
+        for i in 0..100u32 {
+            assert_eq!(vec.get(i as usize), Some(&i));
+        }
+    }
 
     #[test]
     fn test_create_mmap_vec() {

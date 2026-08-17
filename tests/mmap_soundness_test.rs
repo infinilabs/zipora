@@ -1,3 +1,5 @@
+#![cfg(feature = "mmap")]
+
 use zipora::memory::{MmapVecConfig, mmap_vec::MmapVec};
 
 /// Helper: create a temp path under target/ so test artifacts don't pollute the project root.
