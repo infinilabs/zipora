@@ -1,7 +1,11 @@
-//! Stream VByte — SIMD-accelerated variable-byte integer encoding.
+//! Stream VByte — variable-byte integer encoding (scalar implementation).
 //!
 //! Encodes sorted u32 sequences using delta + variable-byte coding.
-//! Control bytes are separated from data bytes for SIMD-friendly decoding.
+//! Control bytes are separated from data bytes, following the Stream VByte
+//! layout (Lemire et al.) whose separation exists to enable shuffle-based
+//! SIMD decoding. This implementation is currently **scalar only** — the
+//! format is SIMD-ready, but no SSSE3/AVX2 shuffle-table decode path is
+//! implemented yet.
 //!
 //! # Format
 //!
