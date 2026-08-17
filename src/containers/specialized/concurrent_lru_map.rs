@@ -10,7 +10,7 @@ use crate::error::{Result, ZiporaError};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 
 /// Configuration for concurrent LRU map
 #[derive(Debug, Clone)]
@@ -76,14 +76,16 @@ impl ConcurrentLruMapConfig {
 }
 
 /// Load balancing strategies for shard selection
+///
+/// A keyed cache must route every operation on the same key to the same
+/// shard, so all strategies are key-based. The former `RoundRobin` and
+/// `ThreadAffinity` variants routed by a global counter / calling thread,
+/// which sent `put(k)` and `get(k)` to different shards (false misses,
+/// duplicated keys across shards) and were removed.
 #[derive(Debug, Clone, Copy)]
 pub enum LoadBalancingStrategy {
     /// Use hash-based sharding (default)
     Hash,
-    /// Round-robin assignment (good for sequential keys)
-    RoundRobin,
-    /// Use thread ID for affinity-based sharding
-    ThreadAffinity,
 }
 
 /// Aggregated statistics from all shards
@@ -91,18 +93,12 @@ pub enum LoadBalancingStrategy {
 pub struct ConcurrentLruMapStatistics {
     /// Statistics from individual shards
     pub shard_stats: Vec<Arc<LruMapStatistics>>,
-
-    /// Global operation counter for round-robin
-    pub global_counter: AtomicU64,
 }
 
 impl ConcurrentLruMapStatistics {
     /// Create new concurrent statistics
     pub fn new(shard_stats: Vec<Arc<LruMapStatistics>>) -> Self {
-        Self {
-            shard_stats,
-            global_counter: AtomicU64::new(0),
-        }
+        Self { shard_stats }
     }
 
     /// Get aggregated hit ratio
@@ -381,19 +377,13 @@ where
     }
 
     /// Select shard for a given key
+    ///
+    /// Routing must be a pure function of the key: any state-dependent
+    /// scheme (round-robin counters, thread affinity) makes `get` look in a
+    /// different shard than the `put` that stored the key.
     fn select_shard(&self, key: &K) -> usize {
         match self.config.load_balancing {
             LoadBalancingStrategy::Hash => self.hash_key(key) & self.shard_mask,
-            LoadBalancingStrategy::RoundRobin => {
-                let counter = self.stats.global_counter.fetch_add(1, Ordering::Relaxed);
-                (counter as usize) & self.shard_mask
-            }
-            LoadBalancingStrategy::ThreadAffinity => {
-                // Use thread ID for affinity
-                let thread_id = std::thread::current().id();
-                let hash = self.hash_thread_id(thread_id);
-                hash & self.shard_mask
-            }
         }
     }
 
@@ -405,13 +395,6 @@ where
 
         // Use upper bits for better distribution
         ((hash >> 32) ^ hash) as usize
-    }
-
-    /// Hash thread ID for affinity-based sharding
-    fn hash_thread_id(&self, thread_id: std::thread::ThreadId) -> usize {
-        let mut hasher = DefaultHasher::new();
-        thread_id.hash(&mut hasher);
-        hasher.finish() as usize
     }
 
     /// Execute a function on all shards in parallel
@@ -581,33 +564,16 @@ mod tests {
 
     #[test]
     fn test_load_balancing_strategies() {
-        // Test different load balancing strategies
-        let configs = vec![
-            ConcurrentLruMapConfig {
-                base_config: LruMapConfig {
-                    capacity: 16,
-                    ..Default::default()
-                },
-                shard_count: 4,
-                load_balancing: LoadBalancingStrategy::Hash,
+        // Every load balancing strategy must be key-based (see
+        // LoadBalancingStrategy docs); test each one end-to-end.
+        let configs = vec![ConcurrentLruMapConfig {
+            base_config: LruMapConfig {
+                capacity: 16,
+                ..Default::default()
             },
-            ConcurrentLruMapConfig {
-                base_config: LruMapConfig {
-                    capacity: 16,
-                    ..Default::default()
-                },
-                shard_count: 4,
-                load_balancing: LoadBalancingStrategy::RoundRobin,
-            },
-            ConcurrentLruMapConfig {
-                base_config: LruMapConfig {
-                    capacity: 16,
-                    ..Default::default()
-                },
-                shard_count: 4,
-                load_balancing: LoadBalancingStrategy::ThreadAffinity,
-            },
-        ];
+            shard_count: 4,
+            load_balancing: LoadBalancingStrategy::Hash,
+        }];
 
         for config in configs {
             let cache = ConcurrentLruMap::with_config(config).unwrap();
@@ -623,6 +589,65 @@ mod tests {
             for i in 0..16 {
                 assert!(cache.get(&i).is_some());
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod routing_regression_tests {
+    use super::*;
+    use crate::containers::specialized::lru_map::LruMapConfig;
+
+    /// Regression (codereview.md 2026-08 #1, CRITICAL): shard selection must
+    /// depend only on the key. The removed RoundRobin strategy routed by a
+    /// global counter (a get() after an odd number of intervening operations
+    /// looked in the wrong shard → false miss); the removed ThreadAffinity
+    /// strategy routed by calling thread (a put() on one thread was invisible
+    /// to get() on another). Every remaining strategy must keep lookups
+    /// correct under interleaved operations and across threads.
+    #[test]
+    fn test_key_lookup_survives_interleaved_operations_and_threads() {
+        let strategies = [LoadBalancingStrategy::Hash];
+        for strategy in strategies {
+            let config = ConcurrentLruMapConfig {
+                base_config: LruMapConfig {
+                    capacity: 1024,
+                    ..Default::default()
+                },
+                shard_count: 4,
+                load_balancing: strategy,
+            };
+            let cache = std::sync::Arc::new(ConcurrentLruMap::with_config(config).unwrap());
+
+            for i in 0..16 {
+                cache.put(i, i * 10).unwrap();
+            }
+            // An extra operation desynchronizes any counter-based routing.
+            let _ = cache.contains_key(&0);
+
+            for i in 0..16 {
+                assert_eq!(
+                    cache.get(&i),
+                    Some(i * 10),
+                    "key {} must be found regardless of operation history",
+                    i
+                );
+            }
+
+            // Lookups from another thread must see the same shards.
+            let cache2 = std::sync::Arc::clone(&cache);
+            std::thread::spawn(move || {
+                for i in 0..16 {
+                    assert_eq!(
+                        cache2.get(&i),
+                        Some(i * 10),
+                        "key {} must be found from any thread",
+                        i
+                    );
+                }
+            })
+            .join()
+            .unwrap();
         }
     }
 }
