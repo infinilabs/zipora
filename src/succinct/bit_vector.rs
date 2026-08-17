@@ -1801,7 +1801,7 @@ mod tests {
             let posting_lists: Vec<Vec<u32>> = (0..20)
                 .map(|i| {
                     (0..5000u32)
-                        .map(|j| ((i * 50000 + j * 200) % max_doc as u32))
+                        .map(|j| (i * 50000 + j * 200) % max_doc as u32)
                         .collect()
                 })
                 .collect();
