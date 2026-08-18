@@ -20,9 +20,7 @@
 //! - **Database storage**: Efficient file-based storage
 
 use crate::error::{Result, ZiporaError};
-use crate::memory::cache_layout::{
-    AccessPattern, CacheLayoutConfig,
-};
+use crate::memory::cache_layout::AccessPattern;
 use crate::memory::simd_ops::{
     fast_compare, fast_copy_cache_optimized, fast_fill, fast_prefetch_range,
 };
@@ -112,22 +110,13 @@ pub struct MmapVecConfig {
     pub read_only: bool,
     /// Enable population of pages on creation (MAP_POPULATE on Linux)
     pub populate_pages: bool,
-    /// Use huge pages if available
+    /// Advise the kernel to back the mapping with huge pages (MADV_HUGEPAGE on Linux)
     pub use_huge_pages: bool,
     /// Sync changes to disk immediately
     pub sync_on_write: bool,
-    /// Enable cache-line aligned allocations for better performance
-    pub enable_cache_alignment: bool,
-    /// Cache layout configuration for optimization
-    pub cache_config: Option<CacheLayoutConfig>,
-    /// Enable NUMA-aware allocation
-    pub enable_numa_awareness: bool,
-    /// Expected access pattern for cache optimization
+    /// Expected access pattern, forwarded to the kernel via madvise
+    /// (Sequential/ReadHeavy -> MADV_SEQUENTIAL, Random -> MADV_RANDOM)
     pub access_pattern: AccessPattern,
-    /// Enable prefetching for sequential access patterns
-    pub enable_prefetching: bool,
-    /// Prefetch distance in bytes
-    pub prefetch_distance: usize,
 }
 
 impl Default for MmapVecConfig {
@@ -139,12 +128,7 @@ impl Default for MmapVecConfig {
             populate_pages: false,
             use_huge_pages: false,
             sync_on_write: false,
-            enable_cache_alignment: true,
-            cache_config: Some(CacheLayoutConfig::new()),
-            enable_numa_awareness: true,
             access_pattern: AccessPattern::Mixed,
-            enable_prefetching: true,
-            prefetch_distance: 64, // Default cache line size
         }
     }
 }
@@ -737,6 +721,29 @@ where
         Ok(())
     }
 
+    /// Apply the configured kernel advice to a fresh mapping.
+    ///
+    /// madvise is purely a hint; failures are ignored (e.g. kernels
+    /// without transparent huge page support).
+    fn advise_mapping(map: &MmapMut, config: &MmapVecConfig) {
+        use memmap2::Advice;
+
+        match config.access_pattern {
+            AccessPattern::Sequential | AccessPattern::ReadHeavy => {
+                let _ = map.advise(Advice::Sequential);
+            }
+            AccessPattern::Random => {
+                let _ = map.advise(Advice::Random);
+            }
+            AccessPattern::WriteHeavy | AccessPattern::Mixed => {}
+        }
+
+        #[cfg(target_os = "linux")]
+        if config.use_huge_pages {
+            let _ = map.advise(Advice::HugePage);
+        }
+    }
+
     /// Create a shared file-backed memory mapping for the whole file
     fn create_mmap(path: &Path, config: &MmapVecConfig) -> Result<FileMapping> {
         let mut options = MmapOptions::new();
@@ -754,6 +761,7 @@ where
             // the returned FileMapping.
             let map = unsafe { options.map_copy(&file) }
                 .map_err(|e| ZiporaError::io_error(format!("Failed to mmap file: {}", e)))?;
+            Self::advise_mapping(&map, config);
             return Ok(FileMapping { file, map });
         }
 
@@ -768,6 +776,7 @@ where
         // truncate or mutate the file concurrently.
         let map = unsafe { options.map_mut(&file) }
             .map_err(|e| ZiporaError::io_error(format!("Failed to mmap file: {}", e)))?;
+        Self::advise_mapping(&map, config);
         Ok(FileMapping { file, map })
     }
 
@@ -1380,6 +1389,35 @@ mod tests {
         assert_eq!(vec.len(), 100);
         for i in 0..100u32 {
             assert_eq!(vec.get(i as usize), Some(&i));
+        }
+    }
+
+    /// The remaining config knobs must all be honored (madvise is a hint,
+    /// so this verifies the advised mappings still behave correctly; the
+    /// unused knobs — cache alignment, NUMA, prefetch distance — were
+    /// removed rather than left as silent no-ops).
+    #[test]
+    fn test_access_pattern_and_huge_page_configs_work() {
+        for pattern in [
+            AccessPattern::Sequential,
+            AccessPattern::Random,
+            AccessPattern::ReadHeavy,
+            AccessPattern::WriteHeavy,
+            AccessPattern::Mixed,
+        ] {
+            let temp_dir = tempdir().unwrap();
+            let file_path = temp_dir.path().join("advised.mmap");
+            let config = MmapVecConfig {
+                access_pattern: pattern,
+                use_huge_pages: true,
+                ..Default::default()
+            };
+            let mut vec = MmapVec::<u64>::create(&file_path, config).unwrap();
+            for i in 0..100 {
+                vec.push(i).unwrap();
+            }
+            assert_eq!(vec.len(), 100);
+            assert_eq!(vec.get(99), Some(&99));
         }
     }
 
