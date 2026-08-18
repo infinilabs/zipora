@@ -421,9 +421,9 @@ where
         // Update length in header
         self.set_length(current_len + 1)?;
 
-        // Sync if requested
+        // Sync if requested (only the written element + header)
         if self.config.sync_on_write {
-            self.sync()?;
+            self.sync_range(current_len, 1)?;
         }
 
         Ok(())
@@ -452,9 +452,9 @@ where
             return None;
         }
 
-        // Sync if requested
+        // Sync if requested (only the header changed)
         if self.config.sync_on_write {
-            let _ = self.sync();
+            let _ = self.sync_header();
         }
 
         Some(value)
@@ -530,7 +530,7 @@ where
         self.set_length(0)?;
 
         if self.config.sync_on_write {
-            self.sync()?;
+            self.sync_header()?;
         }
 
         Ok(())
@@ -566,6 +566,33 @@ where
                 .map_err(|e| ZiporaError::io_error(format!("Failed to sync mapping: {}", e)))?;
         }
         Ok(())
+    }
+
+    /// Flush only the header (length/capacity updates).
+    fn sync_header(&self) -> Result<()> {
+        if let Some(mmap) = &self.mmap {
+            mmap.map
+                .flush_range(0, HEADER_SIZE)
+                .map_err(|e| ZiporaError::io_error(format!("Failed to sync header: {}", e)))?;
+        }
+        Ok(())
+    }
+
+    /// Flush the header plus `count` elements starting at index `start`.
+    ///
+    /// sync_on_write used to msync the entire mapping on every write; only
+    /// the touched pages need durability.
+    fn sync_range(&self, start: usize, count: usize) -> Result<()> {
+        if let Some(mmap) = &self.mmap {
+            let len = count * std::mem::size_of::<T>();
+            if len > 0 {
+                let offset = Self::data_offset() + start * std::mem::size_of::<T>();
+                mmap.map
+                    .flush_range(offset, len)
+                    .map_err(|e| ZiporaError::io_error(format!("Failed to sync range: {}", e)))?;
+            }
+        }
+        self.sync_header()
     }
 
     /// Get the file path
@@ -659,7 +686,7 @@ where
             self.set_length(len)?;
 
             if self.config.sync_on_write {
-                self.sync()?;
+                self.sync_header()?;
             }
         }
 
@@ -695,7 +722,11 @@ where
         }
 
         if self.config.sync_on_write {
-            self.sync()?;
+            if len > current_len {
+                self.sync_range(current_len, len - current_len)?;
+            } else {
+                self.sync_header()?;
+            }
         }
 
         Ok(())
@@ -1040,7 +1071,7 @@ where
         Self::monitor_simd_perf(Operation::Copy, start.elapsed(), items.len());
 
         if self.config.sync_on_write {
-            self.sync()?;
+            self.sync_range(new_len - items.len(), items.len())?;
         }
 
         Ok(())
@@ -1101,7 +1132,7 @@ where
         Self::monitor_simd_perf(Operation::Copy, start.elapsed(), count);
 
         if self.config.sync_on_write {
-            self.sync()?;
+            self.sync_header()?;
         }
 
         Ok(result)
@@ -1176,7 +1207,7 @@ where
         Self::monitor_simd_perf(Operation::Copy, start.elapsed(), other.len());
 
         if self.config.sync_on_write {
-            self.sync()?;
+            self.sync_range(0, self.len())?;
         }
 
         Ok(())
@@ -1202,6 +1233,7 @@ where
             return Ok(());
         }
 
+        let range_start = range.start;
         let count = range.end - range.start;
         let size_bytes = count * std::mem::size_of::<T>();
 
@@ -1224,7 +1256,7 @@ where
         }
 
         if self.config.sync_on_write {
-            self.sync()?;
+            self.sync_range(range_start, count)?;
         }
 
         Ok(())
@@ -1419,6 +1451,40 @@ mod tests {
             assert_eq!(vec.len(), 100);
             assert_eq!(vec.get(99), Some(&99));
         }
+    }
+
+    /// sync_on_write now flushes only the touched element range + header
+    /// (was: full-mapping msync per write). Exercise every write path with
+    /// the flag on — a wrong flush_range offset/len would return an error —
+    /// and verify the result persists across reopen.
+    #[test]
+    fn test_sync_on_write_range_flushes_cover_all_write_paths() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("sync_range.mmap");
+        let config = MmapVecConfig {
+            sync_on_write: true,
+            initial_capacity: 4,
+            ..Default::default()
+        };
+
+        {
+            let mut vec = MmapVec::<u32>::create(&file_path, config).unwrap();
+            for i in 0..10 {
+                vec.push(i).unwrap(); // push + grow paths
+            }
+            vec.push_bulk_simd(&[100, 101, 102]).unwrap();
+            vec.fill_range_simd(0..2, 7).unwrap();
+            vec.resize(20, 9).unwrap();
+            assert_eq!(vec.pop(), Some(9));
+            vec.truncate(15).unwrap();
+        }
+
+        let vec = MmapVec::<u32>::open(&file_path, MmapVecConfig::default()).unwrap();
+        assert_eq!(vec.len(), 15);
+        assert_eq!(vec.get(0), Some(&7));
+        assert_eq!(vec.get(1), Some(&7));
+        assert_eq!(vec.get(10), Some(&100));
+        assert_eq!(vec.get(14), Some(&9));
     }
 
     #[test]
