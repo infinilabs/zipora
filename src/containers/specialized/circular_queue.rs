@@ -83,6 +83,10 @@ impl<T, const N: usize> FixedCircularQueue<T, N> {
     /// assert_eq!(queue.capacity(), 16);
     /// ```
     pub fn new() -> Self {
+        // A zero-capacity ring is useless and its `% N` / `N - 1` index
+        // arithmetic is only saved by the is_full/is_empty early returns;
+        // reject it at compile time.
+        const { assert!(N > 0, "FixedCircularQueue capacity N must be > 0") }
         Self {
             buffer: [const { MaybeUninit::uninit() }; N],
             head: AtomicUsize::new(0),
@@ -603,13 +607,12 @@ impl<T> AutoGrowCircularQueue<T> {
     fn layout_for_capacity(capacity: usize) -> Layout {
         let size = capacity * size_of::<T>();
         let align = align_of::<T>().max(64); // Cache-line aligned
-        // Try cache-line alignment, fall back to type alignment
+        // from_size_align only fails when size overflows isize::MAX; the
+        // old fallback chain ending in align-1 could never actually run
+        // (any size that fails here fails at align 1 too) and an
+        // under-aligned buffer would be UB, so fail loudly instead.
         Layout::from_size_align(size, align)
-            .or_else(|_| Layout::from_size_align(size, align_of::<T>()))
-            .unwrap_or_else(|_| {
-                Layout::from_size_align(size, 1)
-                    .expect("layout creation: non-zero size, power-of-two alignment")
-            })
+            .expect("AutoGrowCircularQueue capacity overflows Layout")
     }
 
     /// Gets current memory layout
