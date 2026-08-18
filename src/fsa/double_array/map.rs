@@ -319,6 +319,29 @@ impl<V: MapValue> DoubleArrayTrieMap<V> {
         }
     }
 
+    /// Zero-copy visitor over all (key, value) pairs with the given prefix.
+    ///
+    /// Like [`iter_prefix`](Self::iter_prefix), but the key is passed as a
+    /// borrowed slice — no per-result `Vec` allocation.
+    pub fn for_each_prefix<F: FnMut(&[u8], V)>(&self, prefix: &[u8], mut f: F) {
+        let mut it = self.iter_prefix(prefix);
+        while let Some((depth, val)) = it.advance() {
+            f(&it.path[..depth], val);
+        }
+    }
+
+    /// Zero-copy visitor over all (key, value) pairs within edit distance
+    /// `max_dist` of `query`.
+    ///
+    /// Like [`iter_fuzzy`](Self::iter_fuzzy), but the key is passed as a
+    /// borrowed slice — no per-result `Vec` allocation.
+    pub fn for_each_fuzzy<F: FnMut(&[u8], V)>(&self, query: &[u8], max_dist: usize, mut f: F) {
+        let mut it = self.iter_fuzzy(query, max_dist);
+        while let Some((depth, val)) = it.advance() {
+            f(&it.path[..depth], val);
+        }
+    }
+
     /// Create a cursor for manual traversal of the map.
     pub fn cursor(&self) -> DoubleArrayTrieMapCursor<'_, V> {
         DoubleArrayTrieMapCursor::new(self)

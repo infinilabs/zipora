@@ -23,10 +23,11 @@ pub struct PrefixIterator<'a, V: MapValue> {
     pub(crate) path: Vec<u8>,
 }
 
-impl<'a, V: MapValue> Iterator for PrefixIterator<'a, V> {
-    type Item = (Vec<u8>, V);
-
-    fn next(&mut self) -> Option<Self::Item> {
+impl<'a, V: MapValue> PrefixIterator<'a, V> {
+    /// Advance to the next match without allocating: the key is
+    /// `self.path[..depth]` for the returned depth, valid until the next
+    /// `advance` call. `Iterator::next` and `for_each_prefix` are wrappers.
+    pub(crate) fn advance(&mut self) -> Option<(usize, V)> {
         loop {
             let frame = self.stack.last_mut()?;
             let state = frame.state;
@@ -40,7 +41,7 @@ impl<'a, V: MapValue> Iterator for PrefixIterator<'a, V> {
                     && let Some(&val) = self.trie.values.get(state_idx)
                     && val != V::EMPTY
                 {
-                    return Some((self.path[..frame.depth].to_vec(), val));
+                    return Some((frame.depth, val));
                 }
             }
 
@@ -88,6 +89,15 @@ impl<'a, V: MapValue> Iterator for PrefixIterator<'a, V> {
                 depth: child_depth,
             });
         }
+    }
+}
+
+impl<'a, V: MapValue> Iterator for PrefixIterator<'a, V> {
+    type Item = (Vec<u8>, V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (depth, val) = self.advance()?;
+        Some((self.path[..depth].to_vec(), val))
     }
 }
 
@@ -141,10 +151,11 @@ impl<'a, V: MapValue> FuzzyIterator<'a, V> {
     }
 }
 
-impl<'a, V: MapValue> Iterator for FuzzyIterator<'a, V> {
-    type Item = (Vec<u8>, V);
-
-    fn next(&mut self) -> Option<Self::Item> {
+impl<'a, V: MapValue> FuzzyIterator<'a, V> {
+    /// Advance to the next match without allocating: the key is
+    /// `self.path[..depth]` for the returned depth, valid until the next
+    /// `advance` call. `Iterator::next` and `for_each_fuzzy` are wrappers.
+    pub(crate) fn advance(&mut self) -> Option<(usize, V)> {
         loop {
             let frame = self.stack.last_mut()?;
             let state = frame.state;
@@ -161,7 +172,7 @@ impl<'a, V: MapValue> Iterator for FuzzyIterator<'a, V> {
                     && let Some(&val) = self.trie.values.get(state_idx)
                     && val != V::EMPTY
                 {
-                    return Some((self.path[..depth].to_vec(), val));
+                    return Some((depth, val));
                 }
             }
 
@@ -236,6 +247,15 @@ impl<'a, V: MapValue> Iterator for FuzzyIterator<'a, V> {
                 depth: child_depth,
             });
         }
+    }
+}
+
+impl<'a, V: MapValue> Iterator for FuzzyIterator<'a, V> {
+    type Item = (Vec<u8>, V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (depth, val) = self.advance()?;
+        Some((self.path[..depth].to_vec(), val))
     }
 }
 

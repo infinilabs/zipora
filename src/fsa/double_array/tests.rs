@@ -626,6 +626,37 @@ mod tests {
         assert_eq!(all.len(), 3);
     }
 
+    /// for_each_prefix / for_each_fuzzy are the zero-copy counterparts of
+    /// iter_prefix / iter_fuzzy: the key is passed as a borrowed &[u8]
+    /// (no per-result Vec allocation) and must visit exactly the same
+    /// (key, value) pairs.
+    #[test]
+    fn test_for_each_prefix_and_fuzzy_match_iterators() {
+        let mut trie = DoubleArrayTrieMap::<i32>::new();
+        let words: &[&[u8]] = &[b"apple", b"app", b"application", b"banana", b"band", b"bar"];
+        for (i, w) in words.iter().enumerate() {
+            trie.insert(w, i as i32 + 1).unwrap();
+        }
+
+        for prefix in [&b"app"[..], b"b", b"apple", b"z", b""] {
+            let mut visited = Vec::new();
+            trie.for_each_prefix(prefix, |key, val| visited.push((key.to_vec(), val)));
+            let mut expected: Vec<_> = trie.iter_prefix(prefix).collect();
+            visited.sort();
+            expected.sort();
+            assert_eq!(visited, expected, "prefix {:?}", prefix);
+        }
+
+        for (query, dist) in [(&b"app"[..], 1usize), (b"bandana", 3), (b"xyz", 0)] {
+            let mut visited = Vec::new();
+            trie.for_each_fuzzy(query, dist, |key, val| visited.push((key.to_vec(), val)));
+            let mut expected: Vec<_> = trie.iter_fuzzy(query, dist).collect();
+            visited.sort();
+            expected.sort();
+            assert_eq!(visited, expected, "query {:?} dist {}", query, dist);
+        }
+    }
+
     #[test]
     fn test_prefix_iterator_matches_entries_with_prefix() {
         let mut trie = DoubleArrayTrieMap::<i32>::new();
