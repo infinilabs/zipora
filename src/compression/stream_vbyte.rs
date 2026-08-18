@@ -1,11 +1,11 @@
-//! Stream VByte — variable-byte integer encoding (scalar implementation).
+//! Stream VByte — variable-byte integer encoding with SIMD decoding.
 //!
 //! Encodes sorted u32 sequences using delta + variable-byte coding.
 //! Control bytes are separated from data bytes, following the Stream VByte
-//! layout (Lemire et al.) whose separation exists to enable shuffle-based
-//! SIMD decoding. This implementation is currently **scalar only** — the
-//! format is SIMD-ready, but no SSSE3/AVX2 shuffle-table decode path is
-//! implemented yet.
+//! layout (Lemire et al.). Decoding uses the SSSE3 shuffle-table fast path
+//! (one `pshufb` expands a full 4-value group; 256-entry precomputed mask
+//! table) with a scalar fallback for stream tails and non-x86 targets.
+//! Encoding is scalar.
 //!
 //! # Format
 //!
@@ -27,6 +27,55 @@
 
 /// Stream VByte encoder/decoder.
 pub struct StreamVByte;
+
+/// Per-control-byte pshufb masks: expand a group's 1-4 byte packed values
+/// into four 32-bit lanes. 0xFF (high bit set) zero-fills the lane's
+/// unused bytes.
+#[cfg(target_arch = "x86_64")]
+const SHUFFLE_TABLE: [[u8; 16]; 256] = build_shuffle_table();
+
+/// Per-control-byte total data bytes consumed by a full group (4..=16).
+#[cfg(target_arch = "x86_64")]
+const LENGTH_TABLE: [u8; 256] = build_length_table();
+
+#[cfg(target_arch = "x86_64")]
+const fn build_shuffle_table() -> [[u8; 16]; 256] {
+    let mut table = [[0u8; 16]; 256];
+    let mut ctrl = 0usize;
+    while ctrl < 256 {
+        let mut offset = 0u8;
+        let mut k = 0;
+        while k < 4 {
+            let len = ((ctrl >> (k * 2)) & 0x03) + 1;
+            let mut j = 0;
+            while j < 4 {
+                table[ctrl][k * 4 + j] = if j < len { offset + j as u8 } else { 0xFF };
+                j += 1;
+            }
+            offset += len as u8;
+            k += 1;
+        }
+        ctrl += 1;
+    }
+    table
+}
+
+#[cfg(target_arch = "x86_64")]
+const fn build_length_table() -> [u8; 256] {
+    let mut table = [0u8; 256];
+    let mut ctrl = 0usize;
+    while ctrl < 256 {
+        let mut total = 0u8;
+        let mut k = 0;
+        while k < 4 {
+            total += (((ctrl >> (k * 2)) & 0x03) + 1) as u8;
+            k += 1;
+        }
+        table[ctrl] = total;
+        ctrl += 1;
+    }
+    table
+}
 
 /// Encoded stream: control bytes followed by data bytes.
 #[derive(Debug, Clone)]
@@ -119,37 +168,35 @@ impl StreamVByte {
 
     /// Decode raw values from stream.
     pub fn decode_raw(stream: &EncodedStream, count: usize) -> Vec<u32> {
-        let mut values = Vec::with_capacity(count);
-        let mut data_pos = 0usize;
-        let mut remaining = count;
-
-        for &ctrl in &stream.controls {
-            let group_size = remaining.min(4);
-
-            for k in 0..group_size {
-                let len = ((ctrl >> (k * 2)) & 0x03) as usize + 1;
-                let val = Self::read_value(&stream.data, data_pos, len);
-                values.push(val);
-                data_pos += len;
-            }
-
-            remaining -= group_size;
-            if remaining == 0 {
-                break;
-            }
-        }
-
+        let mut values = vec![0u32; count];
+        let decoded = Self::decode_into(stream, count, &mut values);
+        values.truncate(decoded);
         values
     }
 
     /// Decode directly into a pre-allocated buffer.
-    pub fn decode_into(stream: &EncodedStream, count: usize, output: &mut [u32]) {
+    /// Returns the number of values decoded.
+    pub fn decode_into(stream: &EncodedStream, count: usize, output: &mut [u32]) -> usize {
         let mut data_pos = 0usize;
         let mut out_idx = 0usize;
-        let mut remaining = count;
+        let mut ctrl_idx = 0usize;
 
-        for &ctrl in &stream.controls {
-            let group_size = remaining.min(4);
+        // SSSE3 bulk path: one pshufb expands a whole 4-value group.
+        #[cfg(target_arch = "x86_64")]
+        if std::arch::is_x86_feature_detected!("ssse3") {
+            let simd_limit = count.min(output.len());
+            // SAFETY: SSSE3 verified by the runtime check above; all loads
+            // and stores are bounds-guarded inside.
+            (data_pos, out_idx, ctrl_idx) = unsafe {
+                Self::decode_groups_ssse3(&stream.controls, &stream.data, simd_limit, output)
+            };
+        }
+
+        // Scalar path: tail groups within 16 bytes of the data end, partial
+        // final group, and the full decode on non-SSSE3 targets.
+        while ctrl_idx < stream.controls.len() && out_idx < count {
+            let ctrl = stream.controls[ctrl_idx];
+            let group_size = (count - out_idx).min(4);
 
             for k in 0..group_size {
                 let len = ((ctrl >> (k * 2)) & 0x03) as usize + 1;
@@ -157,12 +204,57 @@ impl StreamVByte {
                 data_pos += len;
                 out_idx += 1;
             }
-
-            remaining -= group_size;
-            if remaining == 0 {
-                break;
-            }
+            ctrl_idx += 1;
         }
+
+        out_idx
+    }
+
+    /// Decode full groups with SSSE3 shuffle-table expansion (Lemire et al.).
+    ///
+    /// Runs while a full 16-byte load from the data stream and a full
+    /// 4-lane store to the output stay in bounds; the caller's scalar loop
+    /// finishes the rest. Returns (data_pos, out_idx, ctrl_idx).
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure SSSE3 is available and `limit <= output.len()`.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "ssse3")]
+    unsafe fn decode_groups_ssse3(
+        controls: &[u8],
+        data: &[u8],
+        limit: usize,
+        output: &mut [u32],
+    ) -> (usize, usize, usize) {
+        use std::arch::x86_64::*;
+
+        let mut data_pos = 0usize;
+        let mut out_idx = 0usize;
+        let mut ctrl_idx = 0usize;
+
+        while ctrl_idx < controls.len() && out_idx + 4 <= limit && data_pos + 16 <= data.len() {
+            let ctrl = controls[ctrl_idx] as usize;
+            // SAFETY: data_pos + 16 <= data.len() checked by the loop
+            // condition; a group consumes at most 16 bytes, so the load
+            // covers every byte the shuffle mask can reference.
+            let input = unsafe { _mm_loadu_si128(data.as_ptr().add(data_pos) as *const __m128i) };
+            let mask =
+                // SAFETY: SHUFFLE_TABLE entries are 16 bytes.
+                unsafe { _mm_loadu_si128(SHUFFLE_TABLE[ctrl].as_ptr() as *const __m128i) };
+            let expanded = _mm_shuffle_epi8(input, mask);
+            // SAFETY: out_idx + 4 <= limit <= output.len() checked by the
+            // loop condition.
+            unsafe {
+                _mm_storeu_si128(output.as_mut_ptr().add(out_idx) as *mut __m128i, expanded);
+            }
+
+            data_pos += LENGTH_TABLE[ctrl] as usize;
+            out_idx += 4;
+            ctrl_idx += 1;
+        }
+
+        (data_pos, out_idx, ctrl_idx)
     }
 
     /// Compression ratio: encoded size / raw size.
@@ -433,6 +525,66 @@ mod tests {
         let encoded = StreamVByte::encode_raw(&values);
         let decoded = StreamVByte::decode_raw(&encoded, values.len());
         assert_eq!(decoded, values);
+    }
+
+    /// Every control byte (all 256 length combinations of a 4-value group)
+    /// must round-trip — this exercises each shuffle-table entry of the
+    /// SIMD decode path and the scalar fallback identically.
+    #[test]
+    fn test_stream_vbyte_all_control_combinations() {
+        let mut values = Vec::with_capacity(256 * 4);
+        for ctrl in 0..256u32 {
+            for k in 0..4 {
+                let len = ((ctrl >> (k * 2)) & 3) + 1;
+                let base: u32 = match len {
+                    1 => 0x21,
+                    2 => 0x1234,
+                    3 => 0x123456,
+                    _ => 0x12345678,
+                };
+                values.push(base | (ctrl & 0x7F));
+            }
+        }
+        // Also cover non-multiple-of-4 tails near the end of the data.
+        for tail in 0..4 {
+            let vals = &values[..values.len() - tail];
+            let encoded = StreamVByte::encode_raw(vals);
+            let decoded = StreamVByte::decode_raw(&encoded, vals.len());
+            assert_eq!(decoded, vals, "tail={}", tail);
+        }
+    }
+
+    /// decode_into / decode_raw must match a naive per-byte reference
+    /// decoder on a large mixed-length input (covers the SIMD bulk loop,
+    /// the <16-bytes-remaining boundary, and the scalar tail).
+    #[test]
+    fn test_stream_vbyte_matches_naive_reference() {
+        let values: Vec<u32> = (0..10_001u32)
+            .map(|i| i.wrapping_mul(2654435761) >> (i % 29))
+            .collect();
+        let encoded = StreamVByte::encode_raw(&values);
+
+        // Naive reference decode
+        let mut reference = Vec::with_capacity(values.len());
+        let mut pos = 0usize;
+        'outer: for &ctrl in &encoded.controls {
+            for k in 0..4 {
+                if reference.len() == values.len() {
+                    break 'outer;
+                }
+                let len = ((ctrl >> (k * 2)) & 0x03) as usize + 1;
+                let mut bytes = [0u8; 4];
+                bytes[..len].copy_from_slice(&encoded.data[pos..pos + len]);
+                reference.push(u32::from_le_bytes(bytes));
+                pos += len;
+            }
+        }
+
+        assert_eq!(reference, values);
+        assert_eq!(StreamVByte::decode_raw(&encoded, values.len()), values);
+        let mut output = vec![0u32; values.len()];
+        StreamVByte::decode_into(&encoded, values.len(), &mut output);
+        assert_eq!(output, values);
     }
 
     // --- GroupVarint tests ---
