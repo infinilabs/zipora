@@ -142,6 +142,7 @@ miri_core:
 	$(CARGO_MIRI) test --lib containers::uint_vec_min0
 	$(CARGO_MIRI) test --lib hash_map::zipora_hash_map
 	$(CARGO_MIRI) test --lib containers::specialized::circular_queue
+	$(CARGO_MIRI) test --lib containers::fast_vec
 
 # =============================================================================
 # FUZZING (plan.md 6.1) — requires: cargo install cargo-fuzz; nightly toolchain
