@@ -559,3 +559,30 @@ fn test_memory_pool_integration() {
     assert!(result.is_ok());
     assert_eq!(data, vec![1, 2, 5, 8, 9]);
 }
+
+/// The LSD passes now ping-pong between data and the scratch buffer
+/// instead of copying back after every pass; an odd pass count leaves the
+/// result in the buffer and needs one final copy. radix_bits=11 gives
+/// ceil(32/11)=3 passes (odd) for u32 and ceil(64/11)=6 (even) for u64,
+/// covering both endings.
+#[test]
+fn test_ping_pong_odd_and_even_pass_counts() {
+    let config = RadixSortConfig {
+        radix_bits: 11,
+        ..Default::default()
+    };
+
+    let mut data: Vec<u32> = (0..5000u32).rev().map(|i| i.wrapping_mul(2654435761)).collect();
+    let mut expected = data.clone();
+    expected.sort_unstable();
+    let mut sorter = RadixSort::with_config(config.clone());
+    sorter.sort_u32(&mut data).unwrap();
+    assert_eq!(data, expected);
+
+    let mut data: Vec<u64> = (0..5000u64).rev().map(|i| i.wrapping_mul(0x9E3779B97F4A7C15)).collect();
+    let mut expected = data.clone();
+    expected.sort_unstable();
+    let mut sorter = RadixSort::with_config(config);
+    sorter.sort_u64(&mut data).unwrap();
+    assert_eq!(data, expected);
+}

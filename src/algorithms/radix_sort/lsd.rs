@@ -153,33 +153,41 @@ impl RadixSort {
 
         let max_passes = 32_usize.div_ceil(self.config.radix_bits);
 
+        // Ping-pong: each pass scatters src into dst and the roles swap,
+        // instead of copying the buffer back after every pass.
+        let mut in_data = true;
         for pass in 0..max_passes {
             let shift = pass * self.config.radix_bits;
+            let (src, dst): (&[u32], &mut [u32]) = if in_data {
+                (&*data, &mut buffer[..])
+            } else {
+                (&buffer[..], &mut *data)
+            };
 
             // Count occurrences with AVX-512 acceleration when available
             counts.fill(0);
 
             #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
             {
-                if self.config.use_simd && data.len() >= 16 && shift < 24 {
+                if self.config.use_simd && src.len() >= 16 && shift < 24 {
                     // Use AVX-512 for faster counting when available
                     if std::arch::is_x86_feature_detected!("avx512f")
                         && std::arch::is_x86_feature_detected!("avx512bw")
                     {
                         // SAFETY: avx512f and avx512bw features detected at runtime
                         unsafe {
-                            self.count_digits_avx512(data, shift, mask, &mut counts);
+                            self.count_digits_avx512(src, shift, mask, &mut counts);
                         }
                     } else {
                         // Fallback to sequential counting
-                        for &value in data.iter() {
+                        for &value in src.iter() {
                             let digit = ((value >> shift) & mask) as usize;
                             counts[digit] += 1;
                         }
                     }
                 } else {
                     // Sequential counting for small data or high shifts
-                    for &value in data.iter() {
+                    for &value in src.iter() {
                         let digit = ((value >> shift) & mask) as usize;
                         counts[digit] += 1;
                     }
@@ -189,7 +197,7 @@ impl RadixSort {
             #[cfg(not(all(target_arch = "x86_64", feature = "avx512")))]
             {
                 // Standard sequential counting
-                for &value in data.iter() {
+                for &value in src.iter() {
                     let digit = ((value >> shift) & mask) as usize;
                     counts[digit] += 1;
                 }
@@ -204,13 +212,17 @@ impl RadixSort {
             }
 
             // Distribute elements
-            for &value in data.iter() {
+            for &value in src.iter() {
                 let digit = ((value >> shift) & mask) as usize;
-                buffer[counts[digit]] = value;
+                dst[counts[digit]] = value;
                 counts[digit] += 1;
             }
 
-            // Copy back
+            in_data = !in_data;
+        }
+
+        // An odd number of passes leaves the result in the buffer.
+        if !in_data {
             data.copy_from_slice(&buffer);
         }
 
@@ -251,12 +263,20 @@ impl RadixSort {
 
         let max_passes = 64_usize.div_ceil(self.config.radix_bits);
 
+        // Ping-pong: each pass scatters src into dst and the roles swap,
+        // instead of copying the buffer back after every pass.
+        let mut in_data = true;
         for pass in 0..max_passes {
             let shift = pass * self.config.radix_bits;
+            let (src, dst): (&[u64], &mut [u64]) = if in_data {
+                (&*data, &mut buffer[..])
+            } else {
+                (&buffer[..], &mut *data)
+            };
 
             // Count occurrences
             counts.fill(0);
-            for &value in data.iter() {
+            for &value in src.iter() {
                 let digit = ((value >> shift) & mask) as usize;
                 counts[digit] += 1;
             }
@@ -270,13 +290,17 @@ impl RadixSort {
             }
 
             // Distribute elements
-            for &value in data.iter() {
+            for &value in src.iter() {
                 let digit = ((value >> shift) & mask) as usize;
-                buffer[counts[digit]] = value;
+                dst[counts[digit]] = value;
                 counts[digit] += 1;
             }
 
-            // Copy back
+            in_data = !in_data;
+        }
+
+        // An odd number of passes leaves the result in the buffer.
+        if !in_data {
             data.copy_from_slice(&buffer);
         }
 
