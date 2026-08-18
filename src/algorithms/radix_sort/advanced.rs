@@ -400,17 +400,25 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
             (64 - max_key.leading_zeros() as usize).div_ceil(self.config.radix_bits)
         };
 
+        // Ping-pong: each pass scatters src into dst and the roles swap,
+        // instead of copying the buffer back after every pass.
+        let mut in_data = true;
         for pass in 0..max_passes {
             let shift = pass * self.config.radix_bits;
+            let (src, dst): (&[T], &mut [T]) = if in_data {
+                (&*data, &mut buffer[..])
+            } else {
+                (&buffer[..], &mut *data)
+            };
 
             // Count occurrences with SIMD optimization when available
             counts.fill(0);
 
-            if self.config.use_simd && self.cpu_features.has_advanced_simd() && data.len() >= 16 {
-                self.count_digits_simd(data, shift, mask, &mut counts)?;
+            if self.config.use_simd && self.cpu_features.has_advanced_simd() && src.len() >= 16 {
+                self.count_digits_simd(src, shift, mask, &mut counts)?;
             } else {
                 // Sequential counting
-                for item in data.iter() {
+                for item in src.iter() {
                     let key = item.extract_key();
                     let digit = ((key >> shift) & mask) as usize;
                     counts[digit] += 1;
@@ -425,15 +433,19 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
                 pos += old_count;
             }
 
-            // Distribute elements to buffer
-            for item in data.iter() {
+            // Distribute elements
+            for item in src.iter() {
                 let key = item.extract_key();
                 let digit = ((key >> shift) & mask) as usize;
-                buffer[counts[digit]] = *item;
+                dst[counts[digit]] = *item;
                 counts[digit] += 1;
             }
 
-            // Copy back to original array
+            in_data = !in_data;
+        }
+
+        // An odd number of passes leaves the result in the buffer.
+        if !in_data {
             data.copy_from_slice(&buffer);
         }
 
