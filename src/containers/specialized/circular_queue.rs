@@ -82,6 +82,13 @@ impl<T, const N: usize> FixedCircularQueue<T, N> {
     /// assert_eq!(queue.len(), 0);
     /// assert_eq!(queue.capacity(), 16);
     /// ```
+    ///
+    /// Zero capacity is rejected at compile time:
+    ///
+    /// ```compile_fail
+    /// use zipora::FixedCircularQueue;
+    /// let _q: FixedCircularQueue<i32, 0> = FixedCircularQueue::new();
+    /// ```
     pub fn new() -> Self {
         // A zero-capacity ring is useless and its `% N` / `N - 1` index
         // arithmetic is only saved by the is_full/is_empty early returns;
