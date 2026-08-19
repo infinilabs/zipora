@@ -878,7 +878,7 @@ fn calculate_encoding_cost_legacy(match_type: &Match) -> usize {
             // For now, assume 32-bit position + 16-bit length
             cost += 32 + 16;
         }
-        Match::RLE { length: _, .. } => {
+        Match::RLE { .. } => {
             // 8 bits for byte value + 5 bits for length (2-33)
             cost += 8 + 5;
         }
@@ -963,7 +963,7 @@ pub fn calculate_encoding_overhead(match_type: &Match) -> usize {
             // For now, assume 32-bit position + 16-bit length
             cost += 32 + 16;
         }
-        Match::RLE { length: _, .. } => {
+        Match::RLE { .. } => {
             // 8 bits for byte value + 5 bits for length (2-33)
             cost += 8 + 5;
         }

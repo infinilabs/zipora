@@ -264,10 +264,7 @@ impl EliasFano {
         let bucket_start_pos = if target_high == 0 {
             0
         } else {
-            match self.select0(target_high as usize - 1) {
-                Some(p) => p + 1,
-                None => return None,
-            }
+            self.select0(target_high as usize - 1)? + 1
         };
 
         let elem_before = self.rank1(bucket_start_pos);

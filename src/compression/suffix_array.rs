@@ -723,7 +723,7 @@ mod tests {
         cases.push(b"banana$".iter().cycle().take(700).copied().collect());
         // Alternating two symbols (maximal LMS density)
         cases.push(
-            std::iter::repeat_n([b'a', b'b'], 300)
+            std::iter::repeat_n(*b"ab", 300)
                 .flatten()
                 .collect::<Vec<u8>>(),
         );
