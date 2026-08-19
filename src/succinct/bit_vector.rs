@@ -1743,30 +1743,45 @@ mod tests {
             let n = 1_000_000;
             let num_words = (n + 63) / 64;
 
-            // Measure vec![0u64; n] (calloc)
-            let start = std::time::Instant::now();
-            for _ in 0..100 {
-                let v = vec![0u64; num_words];
-                std::hint::black_box(&v);
+            // One untimed warm-up round per candidate, then best-of-3: a
+            // single wall-clock window is dominated by allocator/page-cache
+            // state and scheduler noise when the whole suite runs on every
+            // core (same de-flake as bench_parallel_variants_performance).
+            fn best_of_3(mut f: impl FnMut()) -> std::time::Duration {
+                f(); // warm-up
+                let mut best = std::time::Duration::MAX;
+                for _ in 0..3 {
+                    let start = std::time::Instant::now();
+                    f();
+                    best = best.min(start.elapsed());
+                }
+                best
             }
-            let vec_time = start.elapsed();
+
+            // Measure vec![0u64; n] (calloc)
+            let vec_time = best_of_3(|| {
+                for _ in 0..100 {
+                    let v = vec![0u64; num_words];
+                    std::hint::black_box(&v);
+                }
+            });
 
             // Measure BitVector::with_size (alloc_zeroed)
-            let start = std::time::Instant::now();
-            for _ in 0..100 {
-                let bv = BitVector::with_size(n, false).unwrap();
-                std::hint::black_box(&bv);
-            }
-            let bv_time = start.elapsed();
+            let bv_time = best_of_3(|| {
+                for _ in 0..100 {
+                    let bv = BitVector::with_size(n, false).unwrap();
+                    std::hint::black_box(&bv);
+                }
+            });
 
             // Measure BitVector::from_blocks (zero-copy)
-            let start = std::time::Instant::now();
-            for _ in 0..100 {
-                let blocks = vec![0u64; num_words];
-                let bv = BitVector::from_blocks(blocks, n);
-                std::hint::black_box(&bv);
-            }
-            let from_blocks_time = start.elapsed();
+            let from_blocks_time = best_of_3(|| {
+                for _ in 0..100 {
+                    let blocks = vec![0u64; num_words];
+                    let bv = BitVector::from_blocks(blocks, n);
+                    std::hint::black_box(&bv);
+                }
+            });
 
             eprintln!(
                 "1M-bit allocation ×100: Vec={:?}, with_size={:?}, from_blocks={:?}",
