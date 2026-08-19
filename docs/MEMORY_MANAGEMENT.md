@@ -166,11 +166,10 @@ let realtime_config = MmapVecConfig::realtime();                 // Predictable 
 
 // Builder pattern for custom configurations
 let config = MmapVecConfig::builder()
-    .initial_capacity(8192)
-    .growth_factor(1.618)  // Golden ratio growth
-    .populate_pages(true)  // Pre-load for performance
-    .use_huge_pages(true)  // 2MB huge pages on Linux
-    .sync_on_write(false)  // Async writes for performance
+    .with_initial_capacity(8192)
+    .with_growth_factor(1.618)  // Golden ratio growth
+    .with_populate_pages(true)  // Pre-load for performance
+    .with_sync_on_write(false)  // Async writes for performance
     .build();
 
 // Advanced operations

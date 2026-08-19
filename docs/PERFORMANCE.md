@@ -69,6 +69,15 @@ Used internally by `BitVector::count_ones()` and available as `zipora::algorithm
 | Huffman O1 (x1 stream) | 188 µs | 173 µs | 188 µs |
 | rANS64 | 405 µs | 351 µs | 426 µs |
 
+## StreamVByte SIMD Decoding (100K integers)
+
+| Implementation | Time | Per-integer | Speedup |
+|----------------|------|-------------|---------|
+| Scalar reference | 2,130 µs | 21.3 ns | 1.0x |
+| **SSSE3 Shuffle Table** | **246 µs** | **2.46 ns** | **8.7x faster** |
+
+Lemire's SSSE3 shuffle-table algorithm (`pshufb`) expanding four 1–4 byte integers per cycle via a 256-entry precomputed lookup table, with scalar remainder fallback.
+
 ## Cache (LRU vs HashMap)
 
 | Operation | LruMap | HashMap | Note |
