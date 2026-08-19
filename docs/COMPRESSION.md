@@ -198,6 +198,28 @@ for chunk in data_stream {
 | **rANS** | 2-4x | Fast | High precision entropy coding |
 | **ZSTD** | 3-10x | Moderate | General purpose, best ratio |
 | **LZ4** | 2-3x | Very Fast | Speed-critical applications |
+| **StreamVByte** | 1.5-3x | **Ultra Fast (SSSE3)** | Inverted index delta lists, integer sequences |
+
+## StreamVByte (SIMD-Accelerated Variable-Byte)
+
+StreamVByte separates control bytes (2 bits per integer indicating length 1..=4 bytes) from data bytes. Decoding uses Lemire's SSSE3 shuffle-table algorithm (`_mm_shuffle_epi8` / `pshufb`) with a 256-entry precomputed mask table, achieving **8.7x faster decoding** than scalar varint.
+
+```rust
+use zipora::compression::stream_vbyte::StreamVByte;
+
+// Encode sorted doc IDs with delta + stream vbyte
+let doc_ids = vec![1, 5, 100, 300, 1000, 70000];
+let encoded = StreamVByte::encode_deltas(&doc_ids);
+
+// Fast SIMD decoding (SSSE3 shuffle table + scalar tail fallback)
+let decoded = StreamVByte::decode_deltas(&encoded, doc_ids.len());
+assert_eq!(decoded, doc_ids);
+
+// Direct decode into pre-allocated buffer
+let mut output = vec![0u32; doc_ids.len()];
+let count = StreamVByte::decode_into(&encoded, doc_ids.len(), &mut output);
+assert_eq!(&output[..count], &doc_ids[..]);
+```
 
 ## Hardware Acceleration
 

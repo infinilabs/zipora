@@ -187,7 +187,7 @@ println!("Shard distribution: {:?}", shard_sizes);
 - **Statistics Tracking**: Hit/miss ratios, eviction counts, memory usage
 - **Eviction Callbacks**: Custom logic when entries are evicted
 - **Thread Safety**: Concurrent variant with sharding for reduced contention
-- **Load Balancing**: Multiple strategies for optimal shard distribution
+- **Shard Load Balancing**: Hash-based shard distribution for reduced lock contention and cache coherence
 - **Memory Efficient**: Intrusive linked list design minimizes overhead
 
 ## Container Performance Summary

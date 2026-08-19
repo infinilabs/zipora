@@ -84,6 +84,15 @@ for (key, term_id) in trie.iter_fuzzy(b"serch", 1) {
     // Finds "search" (1 insertion) and other terms within distance 1
     println!("fuzzy match: {:?}, id: {}", key, term_id);
 }
+
+// Zero-copy visitor counterparts — keys passed as borrowed &[u8], zero Vec allocations
+trie.for_each_prefix(b"search", |key, term_id| {
+    println!("zero-copy term: {:?}, id: {}", key, term_id);
+});
+
+trie.for_each_fuzzy(b"serch", 1, |key, term_id| {
+    println!("zero-copy fuzzy: {:?}, id: {}", key, term_id);
+});
 ```
 
 For alternative trie strategies (LOUDS, Patricia, CritBit), use `ZiporaTrie` with explicit config. For compressed term storage with prefix sharing, use `NestLoudsTrieBlobStore`.
@@ -247,14 +256,14 @@ LRU cache for frequently accessed posting lists — **26x faster** hot-set retri
 use zipora::containers::specialized::LruMap;
 
 // Cache hot posting lists
-let mut cache: LruMap<String, Vec<u32>> = LruMap::new(1024);
+let mut cache: LruMap<String, Vec<u32>> = LruMap::new(1024).unwrap();
 
 fn get_postings(term: &str, cache: &mut LruMap<String, Vec<u32>>) -> Vec<u32> {
-    if let Some(cached) = cache.get(term) {
+    if let Some(cached) = cache.get(&term.to_string()) {
         return cached.clone(); // 26x faster than HashMap for hot keys
     }
     let postings = load_from_disk(term);
-    cache.insert(term.to_string(), postings.clone());
+    cache.put(term.to_string(), postings.clone()).unwrap();
     postings
 }
 ```
@@ -396,7 +405,10 @@ assert_eq!(cursor.current(), Some(20));
 | BMW block scoring | `simd_block_filter` | SIMD threshold filter, up to 64 docs/block, AVX2 |
 | EF cursor reposition | `advance_to_index` | O(log n) random jump on EF/PEF/OPEF cursors |
 | Prefix autocomplete | `DoubleArrayTrieMap::iter_prefix` | Lazy DFS, no Vec allocation, supports early termination |
+| Zero-copy prefix visitor | `DoubleArrayTrieMap::for_each_prefix` | Borrowed `&[u8]` keys, zero per-result allocation |
 | Fuzzy term lookup | `DoubleArrayTrieMap::iter_fuzzy` | Lazy Levenshtein, subtree pruning, configurable max distance |
+| Zero-copy fuzzy visitor | `DoubleArrayTrieMap::for_each_fuzzy` | Borrowed `&[u8]` keys, zero per-result allocation |
+| Integer delta encoding | `StreamVByte` | SIMD SSSE3 shuffle decoding (8.7x faster), delta compression |
 | Bulk bitwise queries | SIMD rank/select | 10-41x faster than scalar |
 | Doc-length storage | `FieldnormEncoder` | 1-byte fieldnorms, replaces UintVecMin0, 2x smaller |
 | BM25 scoring | `Bm25BatchScorer` | AVX2 SIMD batch (13.5x faster), prefetch for phrase queries |
