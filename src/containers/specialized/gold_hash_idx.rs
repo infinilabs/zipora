@@ -194,15 +194,11 @@ where
 
         // Probe for key
         for _ in 0..self.capacity {
-            match &self.table[index] {
-                None => return None,
-                Some(bucket) => {
-                    if bucket.hash == hash && bucket.key == *key {
-                        return self.get_value(bucket.value_index).ok();
-                    }
-                    index = (index + 1) % self.capacity;
-                }
+            let bucket = self.table[index].as_ref()?;
+            if bucket.hash == hash && bucket.key == *key {
+                return self.get_value(bucket.value_index).ok();
             }
+            index = (index + 1) % self.capacity;
         }
 
         None
@@ -215,16 +211,12 @@ where
 
         // Probe for key
         for _ in 0..self.capacity {
-            match &self.table[index] {
-                None => return None,
-                Some(bucket) => {
-                    if bucket.hash == hash && bucket.key == *key {
-                        let value_index = bucket.value_index;
-                        return self.get_value_mut(value_index).ok();
-                    }
-                    index = (index + 1) % self.capacity;
-                }
+            let bucket = self.table[index].as_ref()?;
+            if bucket.hash == hash && bucket.key == *key {
+                let value_index = bucket.value_index;
+                return self.get_value_mut(value_index).ok();
             }
+            index = (index + 1) % self.capacity;
         }
 
         None
@@ -237,29 +229,25 @@ where
 
         // Probe for key
         for _ in 0..self.capacity {
-            match &self.table[index] {
-                None => return None,
-                Some(bucket) => {
-                    if bucket.hash == hash && bucket.key == *key {
-                        let value_index = bucket.value_index;
-                        let value = self.get_value(value_index).ok()?.clone();
+            let bucket = self.table[index].as_ref()?;
+            if bucket.hash == hash && bucket.key == *key {
+                let value_index = bucket.value_index;
+                let value = self.get_value(value_index).ok()?.clone();
 
-                        // Mark slot as deleted and add value index to free list
-                        self.table[index] = None;
-                        self.free_value(value_index);
-                        self.len -= 1;
-                        self.key_memory = self
-                            .key_memory
-                            .saturating_sub(mem::size_of::<K>() + mem::size_of::<Bucket<K>>());
+                // Mark slot as deleted and add value index to free list
+                self.table[index] = None;
+                self.free_value(value_index);
+                self.len -= 1;
+                self.key_memory = self
+                    .key_memory
+                    .saturating_sub(mem::size_of::<K>() + mem::size_of::<Bucket<K>>());
 
-                        // Rehash following entries to maintain probe sequence
-                        self.rehash_after_removal(index);
+                // Rehash following entries to maintain probe sequence
+                self.rehash_after_removal(index);
 
-                        return Some(value);
-                    }
-                    index = (index + 1) % self.capacity;
-                }
+                return Some(value);
             }
+            index = (index + 1) % self.capacity;
         }
 
         None

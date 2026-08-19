@@ -105,7 +105,7 @@ fn test_fse_table_creation() {
     assert_eq!(table.states.len(), 1 << config.table_log);
 
     // Test symbol encoding/decoding
-    for symbol in [b'a', b'b', b'c', b'd', b'e'] {
+    for symbol in *b"abcde" {
         if let Some((new_state, nb_bits)) = table.encode_symbol(symbol, 1024) {
             assert!(nb_bits <= 16); // Reasonable range for number of bits
             assert!(new_state > 0);

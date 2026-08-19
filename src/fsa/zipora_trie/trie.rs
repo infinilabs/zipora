@@ -978,7 +978,7 @@ where
                     .ok()
                     .map(|idx| node.children[idx].1)
             }
-            TrieStorage::CriticalBit { nodes: _, .. } => {
+            TrieStorage::CriticalBit { .. } => {
                 // TODO: Implement critical bit transition
                 None
             }

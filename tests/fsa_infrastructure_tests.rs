@@ -524,7 +524,7 @@ mod fast_search_tests {
     fn test_search_multiple() {
         let mut engine = FastSearchEngine::new();
         let data = b"hello world";
-        let targets = [b'l', b'o'];
+        let targets = *b"lo";
 
         let results = engine.search_multiple(data, &targets).unwrap();
         assert_eq!(results.len(), 2);
@@ -591,10 +591,10 @@ mod fast_search_tests {
     fn test_search_utils() {
         // Test search_any_of
         let data = b"hello world";
-        let targets = [b'l', b'w'];
+        let targets = *b"lw";
         assert_eq!(fast_search::utils::search_any_of(data, &targets), Some(2));
 
-        let no_targets = [b'x', b'z'];
+        let no_targets = *b"xz";
         assert_eq!(fast_search::utils::search_any_of(data, &no_targets), None);
 
         // Test search_pattern

@@ -454,7 +454,7 @@ mod tests {
     #[test]
     fn test_fast_search_byte_small() {
         // Typical trie child labels: sorted, ≤16 bytes
-        let labels = [b'a', b'c', b'e', b'g', b'z'];
+        let labels = *b"acegz";
         assert_eq!(fast_search_byte(&labels, b'a'), 0);
         assert_eq!(fast_search_byte(&labels, b'c'), 1);
         assert_eq!(fast_search_byte(&labels, b'e'), 2);
@@ -572,7 +572,7 @@ mod tests {
     fn test_search_multiple() {
         let mut engine = FastSearchEngine::new();
         let data = b"hello world";
-        let targets = [b'l', b'o'];
+        let targets = *b"lo";
         let results = engine.search_multiple(data, &targets).unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0], vec![2, 3, 9]);

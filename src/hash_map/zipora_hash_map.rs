@@ -179,7 +179,7 @@ where
                 })
             }
             HashStorageStrategy::SmallInline {
-                inline_capacity: _, ..
+                ..
             } => {
                 Ok(HashMapStorage::SmallInline {
                     inline_data: InlineStorage {

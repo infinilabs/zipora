@@ -338,9 +338,7 @@ impl Default for NestLoudsTrieConfig {
     fn default() -> Self {
         let mut best_delimiters = HashSet::new();
         // Common text delimiters
-        best_delimiters.extend([
-            b' ', b'\t', b'\n', b'\r', b'.', b',', b';', b':', b'!', b'?',
-        ]);
+        best_delimiters.extend(*b" \t\n\r.,;:!?");
 
         Self {
             // Build-time parameters

@@ -1198,7 +1198,7 @@ mod tests {
             cases.push(v);
         }
         // Highly repetitive, small alphabet.
-        cases.push((0..2000).flat_map(|_| [b'a', b'b']).collect());
+        cases.push((0..2000).flat_map(|_| *b"ab").collect());
         // Full-alphabet sweep (256 distinct bytes repeated).
         cases.push((0..4000u32).map(|i| (i % 256) as u8).collect());
 
