@@ -26,13 +26,13 @@ High-performance Rust data structures and compression algorithms with memory saf
 
 ```toml
 [dependencies]
-zipora = "4.0.1"
+zipora = "4.0.2"
 
 # With C FFI bindings
-zipora = { version = "4.0.1", features = ["ffi"] }
+zipora = { version = "4.0.2", features = ["ffi"] }
 
 # AVX-512
-zipora = { version = "4.0.1", features = ["avx512"] }
+zipora = { version = "4.0.2", features = ["avx512"] }
 ```
 
 ### Basic Usage
