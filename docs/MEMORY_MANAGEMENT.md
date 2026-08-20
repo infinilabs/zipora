@@ -47,12 +47,14 @@ use zipora::memory::{LockFreeMemoryPool, LockFreePoolConfig, BackoffStrategy};
 let config = LockFreePoolConfig::high_performance();
 let pool = LockFreeMemoryPool::new(config).unwrap();
 
-// Concurrent allocation from multiple threads
-let alloc = pool.allocate(1024).unwrap();
-let ptr = alloc.as_ptr();
+// Concurrent allocation from multiple threads.
+// allocate() returns a raw NonNull<u8> — NOT an RAII guard.
+let ptr = pool.allocate(1024).unwrap();
 
-// Lock-free deallocation with CAS retry loops
-drop(alloc); // Automatic deallocation
+// ... use the memory ...
+
+// Explicit deallocation is required (dropping the pointer does NOT free it)
+pool.deallocate(ptr, 1024).unwrap();
 
 // Advanced configuration options
 let config = LockFreePoolConfig {
@@ -60,6 +62,7 @@ let config = LockFreePoolConfig {
     enable_stats: true,
     max_cas_retries: 10000,
     backoff_strategy: BackoffStrategy::Exponential { max_delay_us: 100 },
+    ..Default::default()
 };
 
 // Performance statistics
@@ -107,6 +110,7 @@ use zipora::memory::{FixedCapacityMemoryPool, FixedCapacityPoolConfig};
 
 // Bounded memory pool for real-time systems
 let config = FixedCapacityPoolConfig::realtime();
+let total_blocks = config.total_blocks;
 let pool = FixedCapacityMemoryPool::new(config).unwrap();
 
 // Guaranteed allocation within capacity
@@ -131,14 +135,17 @@ let config = FixedCapacityPoolConfig {
 if let Some(stats) = pool.stats() {
     println!("Utilization: {:.1}%", stats.utilization_percent());
     println!("Success rate: {:.3}", stats.success_rate());
-    assert!(!stats.is_at_capacity(pool.total_capacity()));
+    // is_at_capacity expects a block count (not bytes)
+    assert!(!stats.is_at_capacity(total_blocks));
 }
 ```
 
 ## Memory-Mapped Vectors
 
+`MmapVec` is gated behind the `mmap` feature (enabled by default).
+
 ```rust
-use zipora::memory::{MmapVec, MmapVecConfig, MmapVecConfigBuilder, MmapVecStats};
+use zipora::memory::{MmapVec, MmapVecConfig, MmapVecStats};
 
 // Persistent vector backed by memory-mapped file
 let config = MmapVecConfig::large_dataset();
@@ -180,7 +187,7 @@ vec.shrink_to_fit().unwrap();
 
 // Memory usage statistics
 let stats = vec.stats();
-println!("Memory usage: {} bytes", stats.memory_usage);
+println!("Total size: {} bytes", stats.total_size);
 println!("Utilization: {:.1}%", stats.utilization * 100.0);
 println!("File path: {}", vec.path().display());
 
@@ -205,21 +212,29 @@ for &value in &vec {
 ```rust
 use zipora::memory::cache_layout::*;
 
-// Configure cache-optimized allocation
-let config = CacheLayoutConfig::new()
-    .with_cache_line_size(64)
-    .with_access_pattern(AccessPattern::Sequential)
-    .with_prefetch_distance(128);
+// Pick a constructor preset: new(), sequential(), random(), write_heavy(), read_heavy()
+let mut config = CacheLayoutConfig::sequential();
 
-let allocator = CacheOptimizedAllocator::new(config);
+// Fine-tune via public fields (there are no chainable with_* methods)
+config.cache_line_size = 64;
+config.prefetch_distance = 128;
 
-// Cache-aligned allocation with prefetch hints
+let allocator = CacheOptimizedAllocator::new(config.clone());
+
+// Cache-aligned allocation: (size, alignment, is_hot) -> Result<NonNull<u8>>
 let ptr = allocator.allocate_aligned(1024, 64, true)?;
 
 // Hot/cold data separation
-let mut separator = HotColdSeparator::new(cache_config);
-separator.insert(address, access_count);
-let layout = separator.get_optimal_layout();
+let mut separator: HotColdSeparator<u64> = HotColdSeparator::new(config);
+separator.insert(42, 2000); // access_count >= hot_threshold => hot
+separator.insert(7, 3);     // infrequently accessed => cold
+
+let hot = separator.hot_slice();
+let cold = separator.cold_slice();
+
+separator.reorganize(); // rebalance items based on recorded access counts
+let stats = separator.separation_stats();
+println!("hot: {}, cold: {}", stats.hot_items, stats.cold_items);
 ```
 
 ## Performance Characteristics

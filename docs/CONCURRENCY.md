@@ -87,25 +87,20 @@ Zipora includes advanced token and version sequence management for safe concurre
 ### Usage Examples
 
 ```rust
-use zipora::fsa::{ZiporaTrie, ZiporaTrieConfig, ConcurrencyLevel};
+use zipora::fsa::{TokenManager, ZiporaTrie, ZiporaTrieConfig, with_reader_token, with_writer_token};
+use zipora::fsa::version_sync::ConcurrencyLevel;
 
 // All trie variants use ZiporaTrie with strategy-based config.
-// ZiporaTrie is a compatibility wrapper for concurrent access patterns.
-let trie = ZiporaTrie::new(ConcurrencyLevel::OneWriteMultiRead).unwrap();
+let mut trie: ZiporaTrie = ZiporaTrie::new(); // default config
 
-// Or use ZiporaTrie directly with sparse_optimized config:
-let mut trie = ZiporaTrie::with_config(ZiporaTrieConfig::sparse_optimized());
+// Or use an explicit strategy config:
+let mut trie: ZiporaTrie = ZiporaTrie::with_config(ZiporaTrieConfig::sparse_optimized());
 trie.insert(b"hello").unwrap();
 assert!(trie.contains(b"hello"));
 
-// Advanced operations with explicit token control
-trie.with_writer_token(|trie, token| {
-    trie.insert_with_token(b"advanced", 168, token)?;
-    Ok(())
-}).unwrap();
-
-// Direct token management for fine-grained control
-let token_manager = TokenManager::new(ConcurrencyLevel::MultiWriteMultiRead);
+// Token-based synchronization is managed through a TokenManager;
+// the reader/writer closures are free functions over the manager.
+let token_manager = TokenManager::new(ConcurrencyLevel::OneWriteMultiRead);
 
 with_reader_token(&token_manager, |token| {
     assert!(token.is_valid());
@@ -166,43 +161,63 @@ assert!(trie.contains(b"key_000000"));
 
 ## Low-Level Synchronization Primitives
 
-### Linux Futex Integration
+Low-level primitives live in the `zipora::thread` module.
+
+### Linux Futex Integration (Linux only)
+
+`FutexMutex`, `FutexCondvar`, and `FutexRwLock` are built directly on the `futex(2)` syscall via the `LinuxFutex` backend (`PlatformSync` trait, with a portable fallback on non-Linux targets).
 
 ```rust
-use zipora::sync::{Futex, FutexWaiter};
+use zipora::thread::{FutexMutex, FutexCondvar, FutexRwLock};
 
-let futex = Futex::new(0);
-
-// Wait for condition
-futex.wait(0, None).unwrap();
-
-// Wake up waiters
-futex.wake(1).unwrap();
-```
-
-### Thread-Local Storage
-
-```rust
-use zipora::sync::ThreadLocalStorage;
-
-thread_local! {
-    static CACHE: ThreadLocalStorage<Vec<u8>> = ThreadLocalStorage::new();
+let mutex = FutexMutex::new();
+{
+    let _guard = mutex.lock().unwrap();
+    // critical section; released on drop
 }
 
-CACHE.with(|cache| {
-    cache.borrow_mut().push(42);
-});
+let condvar = FutexCondvar::new();
+let guard = mutex.lock().unwrap();
+let _guard = condvar.wait(guard).unwrap(); // returns the re-acquired guard
+condvar.notify_one().unwrap();
+
+let rwlock = FutexRwLock::new();
+let r = rwlock.read().unwrap();
+drop(r);
+let _w = rwlock.write().unwrap();
+```
+
+### Instance-Specific Thread-Local Storage
+
+- `InstanceTls<T>` — per-instance TLS: each object gets its own thread-local slot (unlike `thread_local!`, which is per-type)
+- `OwnerTls<T, O>` — TLS keyed by an owner object (`get_or_create(&owner)`)
+- `TlsPool<T, const POOL_SIZE: usize>` — pool of TLS instances with round-robin access (`get_next()`)
+
+```rust
+use zipora::thread::InstanceTls;
+
+let tls: InstanceTls<u64> = InstanceTls::new().unwrap();
+tls.set(42);
+assert_eq!(tls.get(), 42); // per-thread, per-instance value
 ```
 
 ### Atomic Operations Framework
 
+Extension traits implemented for the standard `std::sync::atomic` integer types:
+
+- `AtomicExt<T>` — `atomic_maximize`/`atomic_minimize`, `cas_weak`/`cas_strong`, `fetch_add_acq_rel`/`fetch_sub_acq_rel`, `update_if`
+- `AsAtomic<T>` — safe reinterpretation of primitive integers as their atomic counterparts
+- `AtomicBitOps` — `set_bit`/`clear_bit`/`toggle_bit`/`test_bit`/`find_first_set` (unsigned atomics)
+
 ```rust
-use zipora::sync::{AtomicCounter, AtomicFlag};
+use std::sync::atomic::{AtomicU64, Ordering};
+use zipora::thread::{AtomicExt, AtomicBitOps};
 
-let counter = AtomicCounter::new(0);
-counter.fetch_add(1);
+let counter = AtomicU64::new(0);
+counter.fetch_add_acq_rel(1);
+counter.atomic_maximize(42, Ordering::AcqRel);
 
-let flag = AtomicFlag::new();
-flag.set();
-assert!(flag.is_set());
+let bits = AtomicU64::new(0);
+bits.set_bit(7);
+assert!(bits.test_bit(7));
 ```

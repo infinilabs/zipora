@@ -9,25 +9,25 @@ Zipora provides **two production-grade hash map implementations** with different
 ```rust
 use zipora::hash_map::{ZiporaHashMap, ZiporaHashMapConfig, HashStrategy, HashStorageStrategy};
 
-// Default high-performance hash map - same API as before!
-let mut map = ZiporaHashMap::new();
+// Default high-performance hash map - constructors return Result
+let mut map = ZiporaHashMap::new().unwrap();
 map.insert("key", "value").unwrap();
 // Features: Optimized for general-purpose use, excellent lookup performance
 
 // String-optimized configuration - memory efficient for string keys
-let mut string_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::string_optimized());
+let mut string_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::string_optimized()).unwrap();
 string_map.insert("interned", 42).unwrap();
 // Features: String interning, prefix caching, SIMD acceleration, arena management
 // Best for: Applications with many duplicate string keys
 
 // Small inline configuration - zero allocations for small collections
-let mut small_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::small_inline(4));
+let mut small_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::small_inline(4)).unwrap();
 small_map.insert("inline", 1).unwrap();
 // Features: Inline storage for <=N elements, automatic heap fallback
 // Best for: Small collections, zero-allocation scenarios
 
 // Cache-optimized configuration - NUMA awareness and prefetching
-let mut cache_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::cache_optimized());
+let mut cache_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::cache_optimized()).unwrap();
 cache_map.insert("cache", "optimized").unwrap();
 // Features: Cache-line alignment, NUMA awareness, hot/cold separation
 // Best for: High-performance applications with cache-sensitive workloads
@@ -47,7 +47,7 @@ let config = ZiporaHashMapConfig {
     load_factor: 0.75,
     ..ZiporaHashMapConfig::default()
 };
-let mut advanced_map = ZiporaHashMap::with_config(config);
+let mut advanced_map = ZiporaHashMap::with_config(config).unwrap();
 advanced_map.insert("advanced", "unified configuration").unwrap();
 ```
 
@@ -59,16 +59,17 @@ advanced_map.insert("advanced", "unified configuration").unwrap();
 use zipora::hash_map::{GoldHashMap, GoldHashMapConfig, IterationStrategy};
 
 // Basic usage with default configuration (u32 links, 0.7 load factor)
+// insert/remove return Result
 let mut map = GoldHashMap::<String, i32>::new();
-map.insert("hello".to_string(), 42);
+map.insert("hello".to_string(), 42).unwrap();
 assert_eq!(map.get(&"hello".to_string()), Some(&42));
 
 // Update existing entry
-map.insert("hello".to_string(), 100);
+map.insert("hello".to_string(), 100).unwrap();
 assert_eq!(map.get(&"hello".to_string()), Some(&100));
 
 // Remove entries - efficient freelist management
-map.remove(&"hello".to_string());
+map.remove(&"hello".to_string()).unwrap();
 assert_eq!(map.len(), 0);
 
 // Small map preset - enables hash caching for better performance
@@ -76,7 +77,7 @@ let mut small_map = GoldHashMap::<i32, String>::with_config(
     GoldHashMapConfig::small()
 );
 for i in 0..100 {
-    small_map.insert(i, format!("value_{}", i));
+    small_map.insert(i, format!("value_{}", i)).unwrap();
 }
 assert!(small_map.is_hash_cached()); // Hash caching enabled
 
@@ -128,47 +129,41 @@ println!("Load factor: {:.2}", custom_map.load_factor());
 
 ## Hash Map Performance Comparison
 
-Based on comprehensive benchmarks comparing all hash map implementations:
+| Implementation / Configuration | Optimization Focus | Best Use Case |
+|--------------------------------|--------------------|---------------|
+| **ZiporaHashMap** (default) | Robin Hood probing, general purpose | Standard workloads |
+| **ZiporaHashMap** + `string_optimized()` | String interning, arena storage, SIMD string ops | String key deduplication |
+| **ZiporaHashMap** + `small_inline(n)` | Inline storage for <=n elements | Small collections, zero allocation |
+| **ZiporaHashMap** + `cache_optimized()` | Cache-line alignment, NUMA awareness, prefetching | Cache-sensitive workloads |
+| **GoldHashMap** | Link-based collision resolution, hash caching | Lookup-heavy workloads |
 
-| Hash Map Type | Insertion | Lookup | Best Use Case |
-|---------------|-----------|--------|---------------|
-| **std::HashMap** | **73-104 Melem/s** | 91-104 Melem/s | Standard Rust operations |
-| **GoldHashMap** | 71-77 Melem/s | **241-342 Melem/s** | **Lookup-heavy workloads** |
-| **GoldenRatioHashMap** | 55-70 Melem/s | 110-322 Melem/s | **Memory-efficient growth** |
-| **StringOptimizedHashMap** | 5.6-6.0 Melem/s* | Variable | **String key deduplication** |
-| **SmallHashMap<T,V,N>** | Variable | Variable | **<=N elements, zero allocation** |
-| **AdvancedHashMap** | 60-80 Melem/s | 200-280 Melem/s | **Sophisticated collision resolution** |
-| **CacheOptimizedHashMap** | 45-65 Melem/s | 180-250 Melem/s | **Cache-line aligned with NUMA** |
-
-*StringOptimizedHashMap trades speed for memory efficiency through string interning
+Measured, up-to-date benchmark numbers are maintained in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Key Performance Insights
 
-- **GoldHashMap excels at lookups** with 2-3x better performance than std::HashMap
-- **Link-based collision resolution** provides excellent cache locality and predictable performance
+- **GoldHashMap targets lookup-heavy workloads**: link-based collision resolution provides good cache locality and predictable probe behavior
 - **Configurable link types** (u32/u64) allow memory vs capacity tradeoff
 - **Hash caching** reduces recomputation overhead for small to medium maps
 - **Freelist management** enables efficient slot reuse in high-churn workloads
 - **Auto GC** prevents memory fragmentation in long-running applications
-- **GoldenRatioHashMap provides the best balance** of memory efficiency and performance
-- **StringOptimizedHashMap reduces memory usage** at the cost of insertion speed
-- **SmallHashMap eliminates allocations** for small collections
-- **AdvancedHashMap provides sophisticated collision handling** with Robin Hood hashing, chaining, and Hopscotch algorithms
-- **CacheOptimizedHashMap delivers cache-aware performance** with prefetching, NUMA awareness, and hot/cold data separation
-- **Advanced string arena management** enables efficient memory usage with offset-based addressing and deduplication
+- **`ZiporaHashMapConfig::string_optimized()` reduces memory usage** through string interning and arena management, at the cost of insertion speed
+- **`ZiporaHashMapConfig::small_inline(n)` eliminates allocations** for small collections
+- **`ZiporaHashMapConfig::cache_optimized()` delivers cache-aware performance** with prefetching, NUMA awareness, and hot/cold data separation
+- **Custom `HashStrategy`/`HashStorageStrategy` combinations** (e.g. Robin Hood with backward shift) give full control over collision handling
 
 ## String Arena and Deduplication
 
 ```rust
 // Advanced string arena with offset-based addressing (integrated into ZiporaHashMap)
-let mut string_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::string_optimized());
+let mut string_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::string_optimized()).unwrap();
 string_map.insert("shared string", "value1").unwrap();
 string_map.insert("shared string", "value2").unwrap(); // Automatic deduplication
 let stats = string_map.stats();
-println!("Deduplication ratio: {:.2}%", stats.deduplication_ratio * 100.0);
+println!("Insertions: {}, lookups: {}, collisions: {}",
+    stats.insertions, stats.lookups, stats.collisions);
 
 // Cache metrics for cache-optimized maps
-let mut cache_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::cache_optimized());
+let mut cache_map = ZiporaHashMap::with_config(ZiporaHashMapConfig::cache_optimized()).unwrap();
 cache_map.insert("cache", "optimized").unwrap();
 let metrics = cache_map.cache_metrics();
 println!("Cache hit ratio: {:.2}%", metrics.hit_ratio() * 100.0);

@@ -6,10 +6,8 @@ Zipora includes specialized containers designed for memory efficiency and perfor
 
 ```rust
 use zipora::{FastVec, FastStr, ValVec32, SmallMap, FixedCircularQueue,
-            AutoGrowCircularQueue, UintVector, IntVec, FixedLenStrVec, SortableStrVec,
-            LruMap, ConcurrentLruMap,
-            AdvancedStringVec, AdvancedStringConfig, BitPackedStringVec32, BitPackedStringVec64,
-            BitPackedConfig};
+            AutoGrowCircularQueue, UintVector, IntVec, FixedLenStrVec, SortableStrVec};
+use zipora::containers::{LruMap, ConcurrentLruMap}; // not re-exported at crate root
 
 // High-performance vector operations
 let mut vec = FastVec::new();
@@ -24,7 +22,7 @@ let mut vec32 = ValVec32::<u64>::new();
 vec32.push(42).unwrap();
 assert_eq!(vec32.get(0), Some(&42));
 
-// Small maps - 90% faster than HashMap for <=8 elements
+// Small maps - 3.8x faster than HashMap for <=8 elements
 let mut small_map = SmallMap::<i32, String>::new();
 small_map.insert(1, "one".to_string()).unwrap();
 small_map.insert(2, "two".to_string()).unwrap();
@@ -35,7 +33,7 @@ queue.push_back(1).unwrap();
 queue.push_back(2).unwrap();
 assert_eq!(queue.pop_front(), Some(1));
 
-// Auto-growing circular queue - 1.54x faster than VecDeque
+// Auto-growing circular queue - 1.17x faster than VecDeque
 let mut auto_queue = AutoGrowCircularQueue::<String>::new();
 auto_queue.push_back("hello".to_string()).unwrap();
 auto_queue.push_back("world".to_string()).unwrap();
@@ -56,7 +54,8 @@ assert!(compressed.compression_ratio() < 0.4); // >60% compression
 let u64_values: Vec<u64> = (0..1000).map(|i| i * 1000).collect();
 let u64_compressed = IntVec::<u64>::from_slice(&u64_values).unwrap();
 
-// Fixed-length strings - 59.6% memory savings vs Vec<String>
+// Fixed-length strings - arena-based, no per-string heap allocation
+// (FixedStr16Vec: 7.8x faster than Vec<String>)
 let mut fixed_str_vec = FixedLenStrVec::<32>::new();
 fixed_str_vec.push("hello").unwrap();
 fixed_str_vec.push("world").unwrap();
@@ -68,47 +67,6 @@ sortable.push_str("cherry").unwrap();
 sortable.push_str("apple").unwrap();
 sortable.push_str("banana").unwrap();
 sortable.sort_lexicographic().unwrap();
-```
-
-## Advanced String Containers
-
-```rust
-// Advanced string vector with 3-level compression strategy
-let config = AdvancedStringConfig::performance_optimized();
-let mut advanced_vec = AdvancedStringVec::with_config(config);
-advanced_vec.push("hello world").unwrap();
-advanced_vec.push("hello rust").unwrap();   // Prefix deduplication
-advanced_vec.push("hello").unwrap();        // Overlap detection
-
-// Enable aggressive compression for maximum space efficiency
-advanced_vec.enable_aggressive_compression(true);
-let stats = advanced_vec.stats();
-println!("Compression ratio: {:.1}%", stats.compression_ratio * 100.0);
-println!("Space saved: {:.1}%", (1.0 - stats.compression_ratio) * 100.0);
-
-// Bit-packed string vectors with template-based offset types
-// 32-bit offsets (4GB capacity) - optimal for most use cases
-let mut bit_packed_vec32: BitPackedStringVec32 = BitPackedStringVec::new();
-bit_packed_vec32.push("memory efficient").unwrap();
-bit_packed_vec32.push("hardware accelerated").unwrap();
-
-// 64-bit offsets (unlimited capacity) - for very large datasets
-let config = BitPackedConfig::large_dataset();
-let mut bit_packed_vec64: BitPackedStringVec64 = BitPackedStringVec::with_config(config);
-bit_packed_vec64.push("unlimited capacity").unwrap();
-
-// Template-based optimization with hardware acceleration
-let (our_bytes, vec_string_bytes, ratio) = bit_packed_vec32.memory_info();
-println!("Memory efficiency: {:.1}% savings", (1.0 - ratio) * 100.0);
-println!("Hardware acceleration: {}", bit_packed_vec32.has_hardware_acceleration());
-
-// SIMD-accelerated search operations
-#[cfg(feature = "simd")]
-{
-    if let Some(index) = bit_packed_vec32.find_simd("memory efficient") {
-        println!("Found at index: {}", index);
-    }
-}
 ```
 
 ## LRU Cache Containers
@@ -128,11 +86,12 @@ cache.put("key2", "value2".to_string()).unwrap();
 // Access updates LRU order
 assert_eq!(cache.get(&"key1"), Some("value1".to_string()));
 
-// Advanced configuration options
-let config = LruMapConfig::performance_optimized()
-    .with_capacity(1024)
-    .with_statistics(true);
-let cache = LruMap::with_config(config).unwrap();
+// Advanced configuration: start from a preset, then set public fields
+// (presets: performance_optimized(), memory_optimized(), security_optimized())
+let mut config = LruMapConfig::performance_optimized();
+config.capacity = 1024;
+config.enable_statistics = true;
+let cache: LruMap<String, String> = LruMap::with_config(config).unwrap();
 
 // Eviction callbacks for custom logic
 struct LoggingCallback;
@@ -163,10 +122,11 @@ cache.put("key1", "value1".to_string()).unwrap();
 cache.put("key2", "value2".to_string()).unwrap();
 assert_eq!(cache.get(&"key1"), Some("value1".to_string()));
 
-// Advanced configuration with load balancing strategies
-let config = ConcurrentLruMapConfig::performance_optimized()
-    .with_load_balancing(LoadBalancingStrategy::Hash);
-let cache = ConcurrentLruMap::with_config(config).unwrap();
+// Advanced configuration: start from a preset, then set public fields.
+// LoadBalancingStrategy::Hash is the only strategy (key-stable shard routing).
+let mut config = ConcurrentLruMapConfig::performance_optimized();
+config.load_balancing = LoadBalancingStrategy::Hash;
+let cache: ConcurrentLruMap<String, String> = ConcurrentLruMap::with_config(config).unwrap();
 
 // Statistics aggregated across all shards
 let stats = cache.stats();
@@ -195,18 +155,17 @@ println!("Shard distribution: {:?}", shard_sizes);
 | Container | Memory Reduction | Performance Gain | Use Case |
 |-----------|------------------|------------------|----------|
 | **ValVec32<T>** | **50%** | Golden ratio growth, near-parity | Large collections on 64-bit |
-| **SmallMap<K,V>** | No heap allocation | **90% faster** | <=8 key-value pairs |
+| **SmallMap<K,V>** | No heap allocation | **3.8x vs HashMap** | <=8 key-value pairs |
 | **FixedCircularQueue** | Zero allocation | 20-30% faster | Lock-free ring buffers |
-| **AutoGrowCircularQueue** | Cache-aligned | **54% faster** | Ultra-fast vs VecDeque |
+| **AutoGrowCircularQueue** | Cache-aligned | **1.17x vs VecDeque** | Ultra-fast vs VecDeque |
 | **UintVector** | **68.7%** | <20% speed penalty | Compressed integers |
-| **IntVec<T>** | **96.9%** | **Hardware-accelerated** | Generic bit-packed storage |
-| **FixedLenStrVec** | **59.6%** | **Zero-copy access** | Arena-based fixed strings |
+| **IntVec<T>** | Variable bit-width packing | **Hardware-accelerated** | Generic bit-packed storage |
+| **FixedLenStrVec** | Arena-based, no per-string alloc | **7.8x vs Vec<String>** (FixedStr16Vec) | Arena-based fixed strings |
 | **SortableStrVec** | Arena allocation | **Intelligent selection** | String collections |
-| **AdvancedStringVec** | **60-80%** | **3-level compression** | High-compression strings |
-| **BitPackedStringVec32** | **50-70%** | **BMI2 acceleration** | Hardware-accelerated strings |
-| **BitPackedStringVec64** | **40-60%** | **SIMD optimization** | Large-scale string datasets |
 | **LruMap<K,V>** | Intrusive linked list | **O(1) operations** | Single-threaded caching |
 | **ConcurrentLruMap<K,V>** | Sharded architecture | **Reduced contention** | Multi-threaded caching |
+
+Detailed, benchmarked numbers are maintained in [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Unified Tries
 
@@ -236,22 +195,19 @@ let mut string_trie = ZiporaTrie::with_config(ZiporaTrieConfig::string_specializ
 string_trie.insert(b"efficient").unwrap();
 string_trie.insert(b"effective").unwrap();
 
-// Automatic BMI2 hardware acceleration detection
+// Structural and memory statistics
 let stats = string_trie.stats();
-if stats.hardware_acceleration_enabled {
-    println!("BMI2 hardware acceleration active for 5-10x faster operations");
-}
-
-// Advanced compression statistics
+println!("States: {}, keys: {}, transitions: {}",
+    stats.num_states, stats.num_keys, stats.num_transitions);
+println!("Max depth: {}, avg depth: {:.2}", stats.max_depth, stats.avg_depth);
 println!("Memory usage: {} bytes, {:.2} bits per key", stats.memory_usage, stats.bits_per_key);
-println!("Compression ratio: {:.1}%", stats.compression_ratio * 100.0);
 
 // Space-optimized trie (formerly LOUDS/NestedLouds)
 let mut compact_trie = ZiporaTrie::with_config(ZiporaTrieConfig::space_optimized());
 compact_trie.insert(b"efficient").unwrap();
 
 // High-performance concurrent trie (formerly DoubleArrayTrie)
-let pool = std::sync::Arc::new(SecureMemoryPool::new(SecurePoolConfig::default()).unwrap());
+let pool = SecureMemoryPool::new(SecurePoolConfig::default()).unwrap(); // already returns Arc<SecureMemoryPool>
 let mut concurrent_trie = ZiporaTrie::with_config(
     ZiporaTrieConfig::concurrent_high_performance(pool)
 );

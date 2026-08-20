@@ -1,12 +1,13 @@
 # Blob Storage Systems
 
-Zipora provides 8 specialized blob storage implementations for different use cases.
+Zipora provides a family of specialized blob store implementations for different use cases.
 
 ## Trie-Based String Indexing (NestLoudsTrieBlobStore)
 
 ```rust
-use zipora::{NestLoudsTrieBlobStore, TrieBlobStoreConfig, TrieBlobStoreConfigBuilder,
-            RankSelectInterleaved256, BlobStore, IterableBlobStore, BatchBlobStore};
+use zipora::RankSelectInterleaved256;
+use zipora::blob_store::{NestLoudsTrieBlobStore, TrieBlobStoreConfig, BlobStore,
+                         IterableBlobStore, BatchBlobStore};
 
 // High-performance trie-based blob storage with string key indexing
 let config = TrieBlobStoreConfig::performance_optimized();
@@ -33,12 +34,12 @@ assert_eq!(data, b"John's profile data");
 let memory_config = TrieBlobStoreConfig::memory_optimized();
 let security_config = TrieBlobStoreConfig::security_optimized();
 
-// Custom configuration with builder pattern
+// Custom configuration with builder pattern (fluent methods on TrieBlobStoreConfig)
 let custom_config = TrieBlobStoreConfig::builder()
-    .key_compression(true)
-    .batch_optimization(true)
+    .enable_key_compression(true)
+    .enable_batch_optimization(true)
     .key_cache_size(2048)
-    .statistics(true)
+    .enable_statistics(true)
     .build().unwrap();
 
 // Builder pattern for efficient bulk construction
@@ -71,8 +72,8 @@ println!("Trie compression ratio: {:.2}%", trie_stats.trie_space_saved_percent()
 ## Offset-Based Compressed Storage (ZipOffsetBlobStore)
 
 ```rust
-use zipora::{ZipOffsetBlobStore, ZipOffsetBlobStoreBuilder, ZipOffsetBlobStoreConfig,
-            SortedUintVec, SortedUintVecBuilder};
+use zipora::blob_store::{ZipOffsetBlobStore, ZipOffsetBlobStoreBuilder, ZipOffsetBlobStoreConfig,
+                         SortedUintVec, SortedUintVecBuilder};
 
 // High-performance offset-based compressed blob storage
 let config = ZipOffsetBlobStoreConfig::performance_optimized();
@@ -86,7 +87,7 @@ builder.add_record(b"Third record data").unwrap();
 // Build the final store with optimized layout
 let store = builder.finish().unwrap();
 
-// Template-based record retrieval with const generics
+// Record retrieval
 let record = store.get(0).unwrap(); // O(1) access to any record
 let size = store.size(1).unwrap().unwrap(); // Compressed size information
 
@@ -112,8 +113,8 @@ println!("Space saved: {:.1}%", stats.space_saved_percent());
 ## LRU Page Cache
 
 ```rust
-use zipora::cache::{LruPageCache, PageCacheConfig, CachedBlobStore, CacheBuffer};
-use zipora::blob_store::MemoryBlobStore;
+use zipora::cache::{LruPageCache, PageCacheConfig, CacheBuffer};
+use zipora::blob_store::{CachedBlobStore, MemoryBlobStore};
 
 // High-performance page cache with optimal configuration
 let config = PageCacheConfig::performance_optimized()
@@ -121,7 +122,7 @@ let config = PageCacheConfig::performance_optimized()
     .with_shards(8)                    // 8 shards for reduced contention
     .with_huge_pages(true);            // Use 2MB huge pages
 
-let cache = LruPageCache::new(config).unwrap();
+let cache = LruPageCache::new(config.clone()).unwrap();
 
 // Register files for caching
 let file_id = cache.register_file(1).unwrap();
@@ -154,7 +155,7 @@ println!("Hit ratio: {:.2}%", stats.hit_ratio * 100.0);
 ### Zero-Length Blob Store
 
 ```rust
-use zipora::{ZeroLengthBlobStore, BlobStore};
+use zipora::blob_store::{ZeroLengthBlobStore, BlobStore};
 
 // Optimized storage for zero-length blobs (empty records)
 // O(1) memory overhead regardless of record count
@@ -176,14 +177,14 @@ assert_eq!(store.len(), 3);
 ### Simple Zip Blob Store
 
 ```rust
-use zipora::{SimpleZipBlobStore, SimpleZipConfig, SimpleZipConfigBuilder, BlobStore};
+use zipora::blob_store::{SimpleZipBlobStore, SimpleZipConfig, BlobStore};
 
 // Fragment-based compression with HashMap deduplication
+// (fluent builder methods on SimpleZipConfig itself)
 let config = SimpleZipConfig::builder()
     .delimiters(vec![b'\n', b' ', b'\t'])  // Split at whitespace
-    .min_fragment_len(3)
-    .max_fragment_len(64)
-    .enable_deduplication(true)
+    .min_frag_len(3)
+    .max_frag_len(64)
     .build().unwrap();
 
 let records = vec![
@@ -192,7 +193,7 @@ let records = vec![
     b"POST /api/users HTTP/1.1".to_vec(),
 ];
 
-let store = SimpleZipBlobStore::build_from(records, config).unwrap();
+let store = SimpleZipBlobStore::build_from(&records, &config).unwrap();
 
 // Retrieve records efficiently
 let id = 0;
@@ -208,7 +209,7 @@ println!("Deduplication saved: {:.1}% space",
 ### Mixed-Length Blob Store
 
 ```rust
-use zipora::{MixedLenBlobStore, BlobStore};
+use zipora::blob_store::{MixedLenBlobStore, BlobStore};
 
 // Hybrid storage for datasets with mixed fixed/variable-length records
 let records = vec![
@@ -219,7 +220,10 @@ let records = vec![
     b"FIXED".to_vec(),     // 5 bytes
 ];
 
-let store = MixedLenBlobStore::build_from(records, 5).unwrap();
+// Auto-detects the most common length as the fixed length
+let store = MixedLenBlobStore::build_from(&records).unwrap();
+// Or specify the fixed length explicitly:
+// let store = MixedLenBlobStore::build_from_with_fixed_len(&records, 5).unwrap();
 
 // Automatic rank/select bitmap distinguishes fixed from variable
 let id = 0;
@@ -228,14 +232,14 @@ assert_eq!(data, b"FIXED");
 
 // Best for datasets where >=50% records share same length
 let stats = store.stats();
-println!("Fixed-length ratio: {:.1}%",
-         stats.blob_count as f64 / store.len() as f64 * 100.0);
+println!("Records: {}, average size: {:.1} bytes",
+         stats.blob_count, stats.average_size);
 ```
 
 ### ZReorderMap - RLE Reordering Utility
 
 ```rust
-use zipora::{ZReorderMap, ZReorderMapBuilder};
+use zipora::blob_store::{ZReorderMap, ZReorderMapBuilder};
 use tempfile::NamedTempFile;
 
 // Build a reorder map with ascending sequences (sign = 1)

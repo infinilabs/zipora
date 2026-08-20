@@ -24,6 +24,7 @@ Cache-oblivious algorithms achieve optimal performance across different cache hi
 
 ```rust
 use zipora::algorithms::{CacheObliviousSort, CacheObliviousConfig, AdaptiveAlgorithmSelector, VanEmdeBoas};
+use zipora::memory::detect_cache_hierarchy;
 
 // Automatic cache-oblivious sorting with adaptive strategy selection
 let mut sorter = CacheObliviousSort::new();
@@ -57,14 +58,16 @@ let element = veb.get(3); // Cache-optimal access with SIMD prefetching
 Zipora provides multiple radix sort implementations with SIMD optimizations and intelligent adaptive selection.
 
 ```rust
-use zipora::{RadixSort, RadixSortConfig, AdvancedRadixSort};
+use zipora::RadixSort;
+use zipora::algorithms::{AdvancedRadixSortConfig, AdvancedU32RadixSort};
 
-// Advanced radix sort with intelligent algorithm selection
-let mut data = vec![5_000_000u32, 2_500_000u32, 8_750_000u32, 1_250_000u32];
-let config = RadixSortConfig::adaptive_optimized();
-let mut advanced_sorter = AdvancedRadixSort::with_config(config).unwrap();
-advanced_sorter.sort_adaptive(&mut data).unwrap();
-println!("Strategy: {:?}", advanced_sorter.stats().selected_strategy);
+// Advanced radix sort — `sort()` is the adaptive entry point: it analyzes
+// the data and selects Insertion/TimSort/LSD/MSD automatically.
+let mut data = vec![5_000_000u32, 2_500_000, 8_750_000, 1_250_000];
+let config = AdvancedRadixSortConfig::default(); // adaptive_strategy: true
+let mut advanced_sorter = AdvancedU32RadixSort::with_config(config).unwrap();
+advanced_sorter.sort(&mut data).unwrap();
+println!("Strategy: {:?}", advanced_sorter.stats().strategy_used);
 
 // Legacy high-performance radix sort
 let mut small_data = vec![5u32, 2, 8, 1, 9];
@@ -228,9 +231,10 @@ println!("Text length: {}, Alphabet size: {}",
 ## Rank/Select Operations
 
 ```rust
+use zipora::succinct::BitVector;
 use zipora::succinct::rank_select::{
-    RankSelectInterleaved256, AdaptiveRankSelect, BitVector,
-    RankSelectMixed, RankSelectMixed_IL_256, MultiDimRankSelect
+    RankSelectInterleaved256, AdaptiveRankSelect, MultiDimRankSelect,
+    RankSelectMixedIL256, RankSelectMixedSE512, RankSelectMixedXL256,
 };
 
 // Standard rank/select
@@ -269,45 +273,13 @@ let intersection = multi_rs.intersect_dimensions(0, 1).unwrap();
 
 ## SIMD Search Primitives
 
-SIMD-accelerated primitives for Block-Max WAND query execution — the core ranking algorithm in modern search engines.
+SIMD-accelerated primitives for Block-Max WAND query execution:
 
-### `simd_gallop_to` — SIMD Exponential Search
+- `zipora::algorithms::simd_gallop_to` — SIMD exponential search in sorted `u32` slices (AVX2 → SSE2 → scalar)
+- `zipora::algorithms::simd_block_filter` — AVX2 score-threshold filtering, returns `(bitmask, count)`
+- Elias-Fano cursor `advance_to_index(idx)` — O(log n) random repositioning on all EF cursor types
 
-Advances a cursor within a sorted `u32` slice to the first position where `arr[cursor] >= target`. Three-phase algorithm:
-
-1. **Exponential search**: Steps 1, 2, 4, 8, ... to narrow the range (uses `saturating_mul`/`saturating_add` to prevent overflow)
-2. **SIMD scan** (AVX2 → SSE2 → scalar): Loads 8/4 elements at a time, uses XOR bias trick for unsigned comparison via `_mm256_cmpgt_epi32`
-3. **Scalar tail**: Handles remaining elements < SIMD width
-
-```rust
-use zipora::algorithms::simd_gallop_to;
-
-let sorted: Vec<u32> = (0..10000).step_by(3).collect();
-let mut cursor = 0;
-simd_gallop_to(&sorted, &mut cursor, 500); // cursor now at first element >= 500
-simd_gallop_to(&sorted, &mut cursor, 1000); // resumes from cursor position
-```
-
-### `simd_block_filter` — SIMD Block Scoring Filter
-
-Compares up to 64 scores against a threshold using AVX2 `_mm256_cmp_ps` with `_CMP_GT_OQ` (NaN-safe). Returns `(bitmask, count)`.
-
-```rust
-use zipora::algorithms::simd_block_filter;
-
-let doc_ids: Vec<u32> = (0..64).collect();
-let scores: Vec<f32> = (0..64).map(|i| i as f32 * 0.1).collect();
-let (bitmask, count) = simd_block_filter(&doc_ids, &scores, 3.0);
-// Iterate set bits to find qualifying documents
-```
-
-### Elias-Fano Cursor `advance_to_index`
-
-All EF cursor types support O(log n) random repositioning via `advance_to_index(idx)`, essential for BMW's block-skipping:
-
-- `EliasFanoCursor::advance_to_index` — uses `select1(idx)` for direct positioning
-- `PartitionedEliasFanoCursor::advance_to_index` — handles 128-element uniform chunks
-- `OptimalPefCursor::advance_to_index` — handles variable-length DP-optimal chunks
+See [SEARCH_ENGINE_GUIDE.md §11 "SIMD Cursor Primitives (Block-Max WAND)"](SEARCH_ENGINE_GUIDE.md#11-simd-cursor-primitives-block-max-wand) for full details and examples.
 
 ## Performance Characteristics
 
@@ -315,4 +287,4 @@ All EF cursor types support O(log n) random repositioning via `advance_to_index(
 - **SIMD Acceleration**: 2-4x speedup with AVX2/BMI2
 - **Parallel Scaling**: Near-linear scaling up to 8-16 cores
 - **Memory Efficiency**: Minimal overhead with in-place algorithms
-- **Rank/Select**: 0.3-0.4 Gops/s with BMI2
+- **Rank/Select**: ~5.2 Gops/s single-query (bulk SIMD 10x, bitwise SIMD 41x)

@@ -15,7 +15,7 @@ use zipora::memory::{
 fn benchmark_allocation_patterns_detailed(c: &mut Criterion) {
     let mut group = c.benchmark_group("Memory Allocation Performance");
 
-    // Test the specific allocation patterns from PERF_VS_CPP.md
+    // Test the specific allocation patterns from the C++ comparison benchmarks
     let test_cases = vec![
         ("Small_100x64B", 100, 64),
         ("Medium_100x1KB", 100, 1024),

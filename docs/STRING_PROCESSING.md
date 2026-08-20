@@ -1,184 +1,111 @@
 # String Processing
 
-Zipora provides SIMD-accelerated string operations, pattern matching, and text processing utilities.
+Zipora provides SIMD-accelerated string search, zero-copy string views, and text processing utilities.
 
 ## Table of Contents
 
-- [SIMD String Operations](#simd-string-operations)
+- [SIMD String Search](#simd-string-search)
 - [FastStr - Zero-Copy Strings](#faststr---zero-copy-strings)
-- [Pattern Matching](#pattern-matching)
-- [String Arena](#string-arena)
-- [String Pool](#string-pool)
-- [Advanced String Containers](#advanced-string-containers)
+- [BMI2 String Operations](#bmi2-string-operations)
 - [String Sorting](#string-sorting)
-- [Performance Characteristics](#performance-characteristics)
 - [String Join Utilities](#string-join-utilities)
 - [Numeric String Comparison](#numeric-string-comparison)
 - [Word Boundary Detection](#word-boundary-detection)
 - [Hex Encoding/Decoding](#hex-encodingdecoding)
-- [SIMD Hardware Support](#simd-hardware-support)
 
-## SIMD String Operations
+## SIMD String Search
+
+SSE4.2 PCMPESTRI-based search with runtime feature detection and automatic
+tier selection (AVX-512 → AVX2 → SSE4.2 → scalar fallback).
 
 ```rust
 use zipora::string::{
-    SimdStringOps, StringSearch, PatternMatcher,
-    FastStr, StringArena, StringPool
+    SimdStringSearch, SearchTier, get_global_simd_search,
+    sse42_strstr, sse42_strchr, sse42_strcmp, sse42_multi_search,
 };
+use std::cmp::Ordering;
 
-// SIMD-accelerated string comparison
-let s1 = "hello world";
-let s2 = "hello earth";
-let result = SimdStringOps::compare(s1, s2);
-println!("Comparison result: {:?}", result);
+// Reusable instance with runtime feature detection
+let search = SimdStringSearch::new();
+println!("Selected tier: {:?}", search.tier());
 
-// SIMD string search
-let haystack = "the quick brown fox jumps over the lazy dog";
-let needle = "fox";
-let position = SimdStringOps::find(haystack, needle);
-assert_eq!(position, Some(16));
+let haystack = b"the quick brown fox jumps over the lazy dog";
 
-// Bulk string operations
-let strings = vec!["apple", "banana", "cherry", "date"];
-let results = SimdStringOps::bulk_compare(&strings, "banana");
+// Substring search (strstr equivalent)
+assert_eq!(search.sse42_strstr(haystack, b"fox"), Some(16));
 
-// SIMD memory comparison
-let data1 = vec![1u8; 1024];
-let data2 = vec![1u8; 1024];
-let equal = SimdStringOps::memory_equal(&data1, &data2);
-assert!(equal);
+// Single-character search (strchr equivalent)
+assert_eq!(search.sse42_strchr(haystack, b'q'), Some(4));
+
+// Comparison with early-exit mismatch detection.
+// Note: compares lengths first (shorter sorts first), then bytes.
+assert_eq!(search.sse42_strcmp(b"abc", b"abd"), Ordering::Less);
+
+// Multi-character search: all positions of any needle byte
+let result = search.sse42_multi_search(b"a,b;c", b",;");
+assert_eq!(result.positions, vec![1, 3]);
+
+// Module-level convenience functions use a cached global instance
+assert_eq!(sse42_strstr(haystack, b"lazy"), Some(35));
+let global = get_global_simd_search();
 ```
 
 ## FastStr - Zero-Copy Strings
 
+`FastStr<'a>` is a zero-copy view over a borrowed byte slice with
+SIMD-accelerated hashing and search.
+
 ```rust
 use zipora::FastStr;
 
-// Zero-copy string with SIMD hashing
+// Zero-copy views over borrowed bytes or &str
 let s = FastStr::from_string("hello world");
+let b = FastStr::new(b"hello world");
+assert_eq!(s, b);
+
+// SIMD-accelerated hashing (AVX2/SSE2 with scalar fallback)
 println!("Hash: {:x}", s.hash_fast());
 
-// Small string optimization (inline storage for short strings)
-let short = FastStr::from_str("hi");
-assert!(short.is_inline());
+// Zero-copy slicing and search
+assert!(s.starts_with(FastStr::from_string("hello")));
+assert_eq!(s.find_byte(b'w'), Some(6));
+assert_eq!(s.find(FastStr::from_string("world")), Some(6));
+assert_eq!(s.substring(6, 5).as_str(), Some("world"));
+assert_eq!(s.prefix(5).as_str(), Some("hello"));
 
-// String interning for deduplication
-let interned1 = FastStr::intern("shared string");
-let interned2 = FastStr::intern("shared string");
-assert!(interned1.ptr_eq(&interned2)); // Same memory location
-
-// Efficient concatenation
-let combined = FastStr::concat(&[s, FastStr::from_str(" - appended")]);
+// Comparison and common-prefix utilities
+assert_eq!(s.common_prefix_len(FastStr::from_string("hello rust")), 6);
 ```
 
-## Pattern Matching
+## BMI2 String Operations
+
+Hardware-accelerated string processing using BMI2 instructions (PEXT/BEXTR)
+with scalar fallbacks. Available as free functions (using a cached global
+processor) or via `Bmi2StringProcessor`.
 
 ```rust
-use zipora::string::{PatternMatcher, PatternConfig, MatchResult};
-
-// High-performance pattern matching
-let matcher = PatternMatcher::new("pattern");
-let text = "text with pattern inside";
-let matches: Vec<MatchResult> = matcher.find_all(text);
-
-// Multiple pattern matching (Aho-Corasick style)
-let patterns = vec!["cat", "car", "card"];
-let multi_matcher = PatternMatcher::multi(patterns);
-let results = multi_matcher.find_all_patterns("the cat sat on the car");
-
-// Regex-like patterns with SIMD acceleration
-let config = PatternConfig {
-    case_sensitive: false,
-    use_simd: true,
-    max_matches: 100,
+use zipora::string::{
+    Bmi2StringProcessor, get_global_bmi2_processor,
+    validate_utf8_bmi2, wildcard_match_bmi2, search_string_bmi2,
 };
-let matcher = PatternMatcher::with_config("pattern", config);
 
-// Wildcard matching
-let wildcard = PatternMatcher::wildcard("*.txt");
-assert!(wildcard.matches("document.txt"));
+// UTF-8 validation
+assert!(validate_utf8_bmi2("héllo".as_bytes()));
+
+// Substring search
+assert_eq!(search_string_bmi2("hello world", "world"), Some(6));
+
+// Glob-style wildcard matching (* and ?)
+assert!(wildcard_match_bmi2("document.txt", "*.txt"));
+
+// Reusable processor with capability inspection
+let processor = get_global_bmi2_processor();
+println!("BMI2 available: {}", processor.is_bmi2_available());
 ```
 
-## String Arena
-
-```rust
-use zipora::string::{StringArena, StringArenaConfig};
-
-// Memory-efficient string storage with deduplication
-let config = StringArenaConfig::performance_optimized();
-let mut arena = StringArena::with_config(config);
-
-// Add strings with automatic deduplication
-let id1 = arena.insert("shared string").unwrap();
-let id2 = arena.insert("shared string").unwrap();
-assert_eq!(id1, id2); // Same ID for duplicate strings
-
-// Efficient retrieval
-let s = arena.get(id1).unwrap();
-assert_eq!(s, "shared string");
-
-// Bulk insertion
-let strings = vec!["one", "two", "three"];
-let ids = arena.insert_batch(&strings).unwrap();
-
-// Statistics
-let stats = arena.stats();
-println!("Unique strings: {}", stats.unique_count);
-println!("Total bytes: {}", stats.total_bytes);
-println!("Deduplication ratio: {:.2}%", stats.dedup_ratio * 100.0);
-```
-
-## String Pool
-
-```rust
-use zipora::string::{StringPool, StringPoolConfig};
-
-// Thread-safe string pool with interning
-let config = StringPoolConfig::default();
-let pool = StringPool::with_config(config);
-
-// Intern strings across threads
-let interned = pool.intern("shared across threads");
-
-// Access from multiple threads safely
-let handle = interned.clone();
-std::thread::spawn(move || {
-    println!("String: {}", handle.as_str());
-});
-
-// Pool statistics
-let stats = pool.stats();
-println!("Interned count: {}", stats.interned_count);
-println!("Memory usage: {} bytes", stats.memory_bytes);
-```
-
-## Advanced String Containers
-
-```rust
-use zipora::{AdvancedStringVec, AdvancedStringConfig, BitPackedStringVec32};
-
-// 3-level compression strategy
-let config = AdvancedStringConfig::performance_optimized();
-let mut advanced_vec = AdvancedStringVec::with_config(config);
-advanced_vec.push("hello world").unwrap();
-advanced_vec.push("hello rust").unwrap();   // Prefix deduplication
-advanced_vec.push("hello").unwrap();        // Overlap detection
-
-let stats = advanced_vec.stats();
-println!("Compression ratio: {:.1}%", stats.compression_ratio * 100.0);
-
-// Bit-packed string vectors with BMI2 acceleration
-let mut bit_packed: BitPackedStringVec32 = BitPackedStringVec::new();
-bit_packed.push("memory efficient").unwrap();
-
-// SIMD-accelerated search
-#[cfg(feature = "simd")]
-{
-    if let Some(index) = bit_packed.find_simd("memory efficient") {
-        println!("Found at index: {}", index);
-    }
-}
-```
+Additional operations on `Bmi2StringProcessor` include
+`count_utf8_chars_bmi2`, `hash_string_bmi2`, `to_lowercase_ascii_bmi2` /
+`to_uppercase_ascii_bmi2`, and `detect_runs_bmi2`.
 
 ## String Sorting
 
@@ -193,25 +120,16 @@ sortable.push_str("banana").unwrap();
 
 // Intelligent algorithm selection (comparison vs radix)
 sortable.sort_lexicographic().unwrap();
+// `sort()` is a convenience alias for sort_lexicographic()
+
+// Sort by string length
+sortable.sort_by_length().unwrap();
 
 // Custom comparison
 sortable.sort_by(|a, b| {
     a.len().cmp(&b.len()).then_with(|| a.cmp(b))
 }).unwrap();
-
-// Stable sort preserving equal element order
-sortable.stable_sort_lexicographic().unwrap();
 ```
-
-## Performance Characteristics
-
-| Operation | SIMD Speedup | Use Case |
-|-----------|--------------|----------|
-| **String Compare** | 4-8x | Sorting, searching |
-| **String Search** | 2-4x | Pattern matching |
-| **Memory Compare** | 8-16x | Deduplication |
-| **Hash Computation** | 2-3x | Hash maps, caching |
-| **Bulk Operations** | ~1.0x | Batch processing (std already vectorizes) |
 
 ## String Join Utilities
 
@@ -353,10 +271,4 @@ assert!(!is_valid_hex("123"));     // Odd length
 assert_eq!(parse_hex_byte(b'4', b'8'), Some(0x48));
 ```
 
-## SIMD Hardware Support
-
-- **AVX2**: 256-bit operations (32 bytes per cycle)
-- **SSE4.2**: String-specific instructions (PCMPESTRI, PCMPISTRM)
-- **BMI2**: Bit manipulation for packed strings
-- **NEON**: ARM SIMD for cross-platform support
-- **Scalar fallback**: Automatic when SIMD unavailable
+For details on the SIMD tier framework and hardware feature detection, see [SIMD.md](SIMD.md).

@@ -1,230 +1,153 @@
-# C FFI Migration
+# C FFI
 
-Zipora provides a complete C API for migration from C++ codebases.
-
-## Overview
-
-The FFI layer provides C-compatible interfaces for all major Zipora components, enabling:
-
-- **Gradual migration** from C++ to Rust
-- **Interoperability** with existing C/C++ code
-- **Memory safety** through safe wrappers
-- **Zero-cost abstractions** where possible
+Zipora exposes a small, focused C API (feature-gated behind `ffi`) covering library
+initialization, error handling, blob storage, `FastVec<u8>`, memory pools, and two
+algorithms (radix sort, suffix array). All entry points live in `src/ffi/c_api.rs`.
 
 ## Enabling FFI
 
 ```toml
 [dependencies]
-zipora = { version = "2.1.1", features = ["ffi"] }
+zipora = { version = "4.0.2", features = ["ffi"] }
 ```
 
-## Building the C Library
+The `ffi` feature pulls in `cbindgen` as a build dependency (`ffi = ["dep:cbindgen"]`).
+
+## Building and Locating the Header
 
 ```bash
-# Build with FFI support
 cargo build --release --features ffi
-
-# Generate C headers
-cargo build --release --features ffi
-# Headers are generated at: target/zipora.h
 ```
 
-## C API Examples
+The build script generates the C header with cbindgen and writes it to
+**`$OUT_DIR/zipora.h`** (not `target/zipora.h`). `OUT_DIR` is a per-crate build
+directory chosen by Cargo; locate the header with:
 
-### Memory Management
+```bash
+find target/release/build -name zipora.h
+```
+
+Copy it wherever your C build expects headers, or wire the path into your build system.
+
+## Error Handling and Panic Safety
+
+Most functions return `CResult` (a `#[repr(C)]` enum):
+
+| Value | Meaning |
+|-------|---------|
+| `Success = 0` | Operation completed successfully |
+| `InvalidInput = -1` | Invalid input parameters (including NULL pointers) |
+| `MemoryError = -2` | Memory allocation or access error |
+| `IoError = -3` | Input/output operation failed |
+| `UnsupportedOperation = -4` | Operation not supported in current context |
+| `InternalError = -5` | Internal library error |
+| `NotFound = -6` | Requested item was not found |
+
+Constructor-style functions return `NULL` on failure instead. A thread-local
+last-error message is available, plus an optional global error callback:
 
 ```c
-#include "zipora.h"
-
-// Create secure memory pool
-ZiporaSecurePool* pool = zipora_secure_pool_new(ZIPORA_POOL_SMALL);
-if (!pool) {
-    fprintf(stderr, "Failed to create pool\n");
-    return -1;
-}
-
-// Allocate memory
-ZiporaAllocation* alloc = zipora_pool_allocate(pool, 1024);
-if (alloc) {
-    void* ptr = zipora_allocation_ptr(alloc);
-    size_t size = zipora_allocation_size(alloc);
-
-    // Use memory...
-    memset(ptr, 0, size);
-
-    // Free allocation (RAII-style)
-    zipora_allocation_free(alloc);
-}
-
-// Cleanup pool
-zipora_secure_pool_free(pool);
+const char *zipora_last_error(void);                         // never NULL
+void zipora_set_error_callback(void (*callback)(const char *msg)); // NULL clears
 ```
 
-### Hash Maps
+**Panic safety:** every exported function body runs inside `ffi_guard`
+(`std::panic::catch_unwind`, `src/ffi/c_api.rs`). A Rust panic never unwinds across
+the FFI boundary (which would abort the process); instead the function returns its
+error fallback (`InternalError`, `NULL`, `0`, ...) and the panic message is surfaced
+through the error callback / `zipora_last_error()`.
+
+## Init / Version
 
 ```c
-// Create hash map
-ZiporaHashMap* map = zipora_hashmap_new();
-
-// Insert key-value pairs
-zipora_hashmap_insert(map, "key1", 5, "value1", 6);
-zipora_hashmap_insert(map, "key2", 5, "value2", 6);
-
-// Lookup
-size_t value_len;
-const char* value = zipora_hashmap_get(map, "key1", 5, &value_len);
-if (value) {
-    printf("Found: %.*s\n", (int)value_len, value);
-}
-
-// Iterate
-ZiporaHashMapIter* iter = zipora_hashmap_iter(map);
-const char *key, *val;
-size_t key_len, val_len;
-while (zipora_hashmap_iter_next(iter, &key, &key_len, &val, &val_len)) {
-    printf("%.*s => %.*s\n", (int)key_len, key, (int)val_len, val);
-}
-zipora_hashmap_iter_free(iter);
-
-// Cleanup
-zipora_hashmap_free(map);
+CResult zipora_init(void);          // initialize the library (call once)
+const char *zipora_version(void);   // static version string, do not free
+int zipora_has_simd(void);          // 1 if SIMD support is available, else 0
 ```
 
-### Blob Storage
+## Blob Store (in-memory)
+
+`blob_store_new` creates an in-memory blob store (`MemoryBlobStore`).
 
 ```c
-// Create blob store
-ZiporaBlobStore* store = zipora_blobstore_new(ZIPORA_BLOB_MEMORY);
+CBlobStore *blob_store_new(void);
+void blob_store_free(CBlobStore *store);
 
-// Store data
-uint64_t id = zipora_blobstore_put(store, "blob data", 9);
+CResult blob_store_put(CBlobStore *store, const uint8_t *data, size_t size,
+                       uint32_t *record_id);
+CResult blob_store_get(const CBlobStore *store, uint32_t record_id,
+                       const uint8_t **data, size_t *size);
 
-// Retrieve data
-size_t data_len;
-const uint8_t* data = zipora_blobstore_get(store, id, &data_len);
-if (data) {
-    printf("Retrieved %zu bytes\n", data_len);
-}
-
-// Cleanup
-zipora_blobstore_free(store);
+// blob_store_get returns a copy allocated by Rust — free it with:
+void zipora_free_blob_data(uint8_t *data, size_t size);
 ```
 
-### Compression
+Example:
 
 ```c
-// Create compressor
-ZiporaCompressor* comp = zipora_compressor_new(ZIPORA_COMPRESS_ZSTD);
-zipora_compressor_set_level(comp, 10);
-
-// Compress data
-const uint8_t* input = (const uint8_t*)"data to compress";
-size_t input_len = 17;
-size_t output_capacity = zipora_compress_bound(input_len);
-uint8_t* output = malloc(output_capacity);
-
-size_t compressed_len = zipora_compress(comp, input, input_len, output, output_capacity);
-if (compressed_len > 0) {
-    printf("Compressed %zu -> %zu bytes\n", input_len, compressed_len);
+CBlobStore *store = blob_store_new();
+uint32_t id;
+if (blob_store_put(store, (const uint8_t *)"blob data", 9, &id) == Success) {
+    const uint8_t *data;
+    size_t size;
+    if (blob_store_get(store, id, &data, &size) == Success) {
+        /* use data[0..size] */
+        zipora_free_blob_data((uint8_t *)data, size);
+    }
 }
-
-// Decompress
-ZiporaDecompressor* decomp = zipora_decompressor_new(ZIPORA_COMPRESS_ZSTD);
-uint8_t* decompressed = malloc(input_len);
-size_t decompressed_len = zipora_decompress(decomp, output, compressed_len,
-                                            decompressed, input_len);
-
-// Cleanup
-free(output);
-free(decompressed);
-zipora_compressor_free(comp);
-zipora_decompressor_free(decomp);
+blob_store_free(store);
 ```
 
-### Tries
+## FastVec (byte vector)
+
+A growable `FastVec<u8>` behind an opaque handle:
 
 ```c
-// Create trie
-ZiporaTrie* trie = zipora_trie_new(ZIPORA_TRIE_PATRICIA);
-
-// Insert keys
-zipora_trie_insert(trie, "hello", 5);
-zipora_trie_insert(trie, "help", 4);
-zipora_trie_insert(trie, "world", 5);
-
-// Lookup
-if (zipora_trie_contains(trie, "hello", 5)) {
-    printf("Found 'hello'\n");
-}
-
-// Prefix iteration
-ZiporaTrieIter* iter = zipora_trie_iter_prefix(trie, "hel", 3);
-const char* key;
-size_t key_len;
-while (zipora_trie_iter_next(iter, &key, &key_len)) {
-    printf("Prefix match: %.*s\n", (int)key_len, key);
-}
-zipora_trie_iter_free(iter);
-
-// Cleanup
-zipora_trie_free(trie);
+CFastVec *fast_vec_new(void);
+void fast_vec_free(CFastVec *vec);
+CResult fast_vec_push(CFastVec *vec, uint8_t value);
+size_t fast_vec_len(const CFastVec *vec);          // 0 for NULL
+const uint8_t *fast_vec_data(const CFastVec *vec); // NULL for NULL/empty
 ```
 
-## Error Handling
+The pointer returned by `fast_vec_data` is invalidated by the next `fast_vec_push`
+(reallocation) and by `fast_vec_free`.
+
+## Memory Pool
+
+Fixed-chunk memory pool (`zipora::memory::MemoryPool`):
 
 ```c
-// All functions return error codes or NULL on failure
-ZiporaResult result = zipora_operation(...);
-if (result.error != ZIPORA_OK) {
-    const char* msg = zipora_error_message(result.error);
-    fprintf(stderr, "Error: %s\n", msg);
-}
-
-// Get last error for functions returning NULL
-if (!ptr) {
-    ZiporaError err = zipora_last_error();
-    fprintf(stderr, "Error %d: %s\n", err, zipora_error_message(err));
-}
+CMemoryPool *memory_pool_new(size_t chunk_size, size_t max_chunks);
+void memory_pool_free(CMemoryPool *pool);
+void *memory_pool_allocate(CMemoryPool *pool);                  // one chunk, NULL on failure
+CResult memory_pool_deallocate(CMemoryPool *pool, void *ptr);   // return chunk to pool
 ```
 
-## Thread Safety
+## Algorithms
 
 ```c
-// Most Zipora types are thread-safe for reads
-// Write operations require external synchronization or use concurrent variants
+// In-place radix sort of a u32 array
+CResult radix_sort_u32(uint32_t *data, size_t size);
 
-// Thread-safe concurrent map
-ZiporaConcurrentMap* cmap = zipora_concurrent_map_new(8); // 8 shards
-zipora_concurrent_map_insert(cmap, "key", 3, "value", 5);
-
-// Safe from multiple threads
-pthread_t threads[4];
-for (int i = 0; i < 4; i++) {
-    pthread_create(&threads[i], NULL, worker, cmap);
-}
+// Suffix array construction + pattern search
+CSuffixArray *suffix_array_new(const uint8_t *text, size_t size);
+void suffix_array_free(CSuffixArray *sa);
+size_t suffix_array_len(const CSuffixArray *sa);
+CResult suffix_array_search(const CSuffixArray *sa,
+                            const uint8_t *text, size_t text_size,
+                            const uint8_t *pattern, size_t pattern_size,
+                            size_t *start, size_t *count);
 ```
 
-## Memory Safety Guarantees
+`suffix_array_search` writes the range of matching suffixes into `start`/`count`
+(`count == 0` means no match); pass the same `text` the suffix array was built from.
 
-- **No use-after-free**: All pointers are validated
-- **No double-free**: Reference counting where needed
-- **No buffer overflows**: Bounds checking on all operations
-- **Thread safety**: Documented thread safety for each type
+## General Rules
 
-## Migration Guide from C++ Reference
-
-| C++ Reference | Zipora C FFI |
-|------------|--------------|
-| `NestLoudsTrieDAWG` | `zipora_trie_new(ZIPORA_TRIE_NESTED_LOUDS)` |
-| `Patricia` | `zipora_trie_new(ZIPORA_TRIE_PATRICIA)` |
-| `gold_hash_map` | `zipora_hashmap_new()` or `zipora_gold_hashmap_new()` |
-| `SecureMemoryPool` | `zipora_secure_pool_new()` |
-| `BlobStore` | `zipora_blobstore_new()` |
-| `rank_select_il_256` | `zipora_rankselect_new(ZIPORA_RS_IL256)` |
-
-## Performance Considerations
-
-- FFI calls have minimal overhead (~1-2ns per call)
-- Batch operations reduce FFI overhead
-- Zero-copy where possible (data remains in Rust memory)
-- Use streaming APIs for large data transfers
+- All handle types (`CBlobStore`, `CFastVec`, `CMemoryPool`, `CSuffixArray`) are
+  opaque; only use the functions above.
+- Every `*_free` function accepts `NULL` (no-op). Do not free a handle twice.
+- NULL/invalid arguments are rejected with `InvalidInput` (or `NULL`/`0` returns) —
+  they never crash.
+- Handles are not internally synchronized; guard concurrent mutation with your own lock.

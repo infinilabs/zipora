@@ -50,11 +50,11 @@ let mem_config = NestLoudsTrieConfig::memory_preset();        // Minimize memory
 let rt_config = NestLoudsTrieConfig::realtime_preset();       // Predictable latency
 let balanced_config = NestLoudsTrieConfig::balanced_preset(); // Balanced trade-offs
 
-// Memory configuration presets
+// Memory configuration presets (customize via the fluent methods)
 let secure_memory = MemoryConfig::performance_preset()
-    .with_numa_awareness(true)
-    .with_huge_pages(true)
-    .with_cache_optimization(CacheOptimizationLevel::Maximum);
+    .enable_numa(true)
+    .enable_huge_pages(true)
+    .cache_optimization(CacheOptimizationLevel::Maximum);
 ```
 
 ### Builder Pattern Configuration
@@ -91,27 +91,21 @@ custom_config.validate()?;
 ```rust
 use zipora::config::memory::*;
 
-let memory_config = MemoryConfig::builder()
-    .allocation_strategy(AllocationStrategy::SecurePool)     // Secure memory management
+let mut memory_config = MemoryConfig::builder()
+    .allocation_strategy(AllocationStrategy::SecurePool)    // Secure memory management
     .initial_pool_size(256 * 1024 * 1024)                   // 256MB initial size
     .max_pool_size(2 * 1024 * 1024 * 1024)                  // 2GB maximum
-    .growth_factor(1.5)                                      // 50% growth when needed
-    .cache_optimization(CacheOptimizationLevel::Maximum)     // Full cache optimization
-    .numa_config(NumaConfig {
-        enable_numa_awareness: true,
-        preferred_node: None,                                // Auto-select optimal node
-        cross_node_threshold: 85,                           // 85% utilization threshold
-    })
-    .huge_page_config(HugePageConfig {
-        enable_huge_pages: true,
-        fallback_to_regular: true,                          // Graceful degradation
-        size_threshold: 2 * 1024 * 1024,                    // Use huge pages for >=2MB
-    })
+    .cache_optimization(CacheOptimizationLevel::Maximum)    // Full cache optimization
+    .enable_numa(true)                                      // NUMA-aware allocation
+    .enable_huge_pages(true)                                // Huge page support
     .alignment(64)                                          // 64-byte cache line alignment
     .num_pools(16)                                          // 16 separate pools
     .enable_protection(true)                                // Memory protection features
-    .enable_compaction(false)                               // Disable for real-time
     .build()?;
+
+// NUMA and huge-page details are plain public fields — set them after build
+memory_config.numa_config.preferred_node = -1;                          // Auto-select node
+memory_config.huge_page_config.min_allocation_size = 2 * 1024 * 1024;  // Huge pages for >=2MB
 ```
 
 ### Environment Variable Integration
@@ -156,6 +150,8 @@ let invalid_config_result = NestLoudsTrieConfig::load_from_file("invalid_config.
 assert!(invalid_config_result.is_err()); // Validation catches issues
 ```
 
+> Note: JSON persistence (`save_to_file`/`load_from_file`) requires the `serde` feature (enabled by default).
+
 ### Configuration Validation
 
 The configuration system provides comprehensive validation with detailed error messages:
@@ -180,46 +176,7 @@ match config.validate() {
 
 ## Cache Optimization Infrastructure
 
-Zipora includes a comprehensive cache optimization framework that dramatically improves performance through intelligent memory layout and access patterns.
-
-### Core Features
-
-- **Cache-Line Alignment**: 64-byte alignment for x86_64, 128-byte for ARM64 to prevent false sharing
-- **Hot/Cold Data Separation**: Intelligent placement of frequently vs. infrequently accessed data
-- **Software Prefetching**: Cross-platform prefetch intrinsics (x86_64 and ARM64) with access pattern hints
-- **NUMA-Aware Allocation**: Automatic NUMA node detection and memory allocation preferences
-- **Access Pattern Analysis**: Tracking and optimization for Sequential, Random, Read-Heavy, Write-Heavy patterns
-
-### Usage Examples
-
-```rust
-use zipora::memory::cache_layout::*;
-
-// Configure cache-optimized allocation
-let mut config = CacheLayoutConfig::new()
-    .with_cache_line_size(64)
-    .with_access_pattern(AccessPattern::Sequential)
-    .with_prefetch_distance(128);
-
-let allocator = CacheOptimizedAllocator::new(config);
-
-// Cache-aligned allocation with prefetch hints
-let ptr = allocator.allocate_aligned(1024, 64, true)?;
-
-// Hot/cold data separation
-let mut separator = HotColdSeparator::new(cache_config);
-separator.insert(address, access_count);
-let layout = separator.get_optimal_layout();
-```
-
-### Performance Impact
-
-- **Memory Access**: 2-3x faster through reduced cache misses
-- **Cache Optimization**: >95% hit rate for hot data, automatic cache hierarchy adaptation
-- **SIMD Memory Operations**: 2-3x faster small copies (<=64 bytes), 1.5-2x faster medium copies
-- **Sequential Processing**: 4-5x improvements with prefetch optimization
-- **Multi-threaded**: Significant reduction in false sharing overhead
-- **NUMA Systems**: 20-40% improvements through local allocation
+Cache-layout configuration (`CacheLayoutConfig`, `CacheOptimizedAllocator`, `HotColdSeparator`) is documented in [MEMORY_MANAGEMENT.md](MEMORY_MANAGEMENT.md#cache-layout-optimization); for measured performance numbers see [PERFORMANCE.md](PERFORMANCE.md).
 
 ## Best Practices
 

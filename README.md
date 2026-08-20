@@ -64,10 +64,12 @@ assert!(trie.contains(b"hello"));
 // Unified Hash Map - Strategy-based configuration
 use zipora::hash_map::{ZiporaHashMap, ZiporaHashMapConfig};
 
-let mut map = ZiporaHashMap::new();
+let mut map = ZiporaHashMap::new().unwrap();
 map.insert("key", "value").unwrap();
 
 // Blob storage with compression
+use zipora::blob_store::{ZipOffsetBlobStoreBuilder, ZipOffsetBlobStoreConfig};
+
 let config = ZipOffsetBlobStoreConfig::performance_optimized();
 let mut builder = ZipOffsetBlobStoreBuilder::with_config(config).unwrap();
 builder.add_record(b"Compressed data").unwrap();
@@ -88,17 +90,17 @@ assert_eq!(joined, "hello, world");
 ### Core Components
 - **[Containers](docs/CONTAINERS.md)** - Specialized containers (FastVec, ValVec32, IntVec, LruMap, etc.)
 - **[Hash Maps](docs/HASH_MAPS.md)** - ZiporaHashMap, GoldHashMap with strategy-based configuration
-- **[Blob Storage](docs/BLOB_STORAGE.md)** - 8 blob store variants with trie indexing and compression
+- **[Blob Storage](docs/BLOB_STORAGE.md)** - Specialized blob store variants with trie indexing and compression
 - **[Memory Management](docs/MEMORY_MANAGEMENT.md)** - SecureMemoryPool, MmapVec, five-level pools
 
 ### Algorithms & Processing
 - **[Algorithms](docs/ALGORITHMS.md)** - Radix sort, suffix arrays, set operations, cache-oblivious algorithms, SIMD popcount, SIMD galloping search, SIMD block filter
-- **[Compression](docs/COMPRESSION.md)** - PA-Zip, Huffman, FSE, rANS, real-time compression
-- **[String Processing](docs/STRING_PROCESSING.md)** - SIMD string operations, pattern matching
+- **[Compression](docs/COMPRESSION.md)** - Huffman, FSE, rANS, dictionary compression (PA-Zip), StreamVByte, adaptive selection
+- **[String Processing](docs/STRING_PROCESSING.md)** - SIMD string search, join, numeric compare, word boundaries, hex
 
 ### System Architecture
 - **[Concurrency](docs/CONCURRENCY.md)** - Pipeline processing, work-stealing, parallel trie building
-- **[Error Handling](docs/ERROR_HANDLING.md)** - Error classification, automatic recovery strategies
+- **[Error Handling](docs/ERROR_HANDLING.md)** - ZiporaError/Result patterns, verification macros
 - **[Configuration](docs/CONFIGURATION.md)** - Rich configuration APIs, presets, validation
 - **[SIMD Framework](docs/SIMD.md)** - 6-tier SIMD with AVX2/BMI2/POPCNT support
 
@@ -157,7 +159,7 @@ See **[Performance Benchmarks](docs/PERFORMANCE.md)** for detailed results acros
 ## Dependencies
 
 Minimal dependency footprint by design:
-- **Core**: `bytemuck`, `thiserror`, `log`, `ahash`, `rayon`, `libc`, `raw-cpuid`
+- **Core**: `bytemuck`, `thiserror`, `log`, `ahash`, `rayon`, `libc`, `raw-cpuid`, `crossbeam-epoch`, `thread_local`, `fastrand`, `bitflags`, `base64`
 - **Default**: `memmap2` (mmap), `zstd`, `lz4_flex`, `serde`/`serde_json`/`bincode`, `tokio` (async)
 - **Optional**: `cbindgen` (ffi)
 - **Removed**: `crossbeam-utils`, `parking_lot`, `uuid`, `num_cpus`, `async-trait`, `futures`, `once_cell`, `pkg-config` (all replaced with std or eliminated)
@@ -168,4 +170,4 @@ See **[Search Engine Guide](docs/SEARCH_ENGINE_GUIDE.md)** for the complete guid
 
 ## License
 
-Business Source License 1.0 - See [LICENSE](LICENSE) for details.
+The Bindiego License (BDL), Version 1.0 - See [LICENSE](LICENSE) for details.

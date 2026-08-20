@@ -29,12 +29,11 @@ const SIMD_THRESHOLD: usize = 16;
 /// |------|----------|--------|------------|
 /// | 0 | AVX-512 (x86_64, avx512 feature) | `_mm512_popcnt_epi64` | ~64 words/cycle |
 /// | 1 | POPCNT (x86_64) | Unrolled `_popcnt64` 4× | ~4 words/cycle |
-/// | 2 | AVX2 (x86_64) | vpshufb nibble lookup (Mula) | >20 words/cycle |
-/// | 3 | NEON (aarch64) | `vcntq_u8` + horizontal sum | ~8 words/cycle |
-/// | 4 | Scalar | `u64::count_ones()` | ~1 word/cycle |
+/// | 2 | NEON (aarch64) | `vcntq_u8` + horizontal sum | ~8 words/cycle |
+/// | 3 | Scalar | `u64::count_ones()` | ~1 word/cycle |
 ///
-/// Note: POPCNT is checked before AVX2 because all CPUs with AVX2 also have
-/// POPCNT, and hardware `popcnt` is faster than vpshufb nibble-lookup.
+/// Note: there is no AVX2 tier — all CPUs with AVX2 also have POPCNT, and
+/// hardware `popcnt` is faster than a vpshufb nibble-lookup.
 ///
 /// For slices shorter than 16 words (128 bytes), skips SIMD setup and uses
 /// scalar directly, as the overhead exceeds the benefit.
