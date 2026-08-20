@@ -106,7 +106,7 @@ use zipora::containers::{UintVecMin0, ZipIntVec};
 use zipora::blob_store::SortedUintVec;
 use zipora::BitVector;
 
-// Option A: UintVecMin0 — variable-width packed integers (2-58 bits per value)
+// Option A: UintVecMin0 — variable-width packed integers (0-58 bits per value)
 // Best for: medium-length posting lists with bounded doc IDs
 let mut postings = UintVecMin0::new();
 for doc_id in matching_docs {
@@ -127,7 +127,7 @@ for i in 0..num_docs {
 
 ## 3. Boolean Query Processing (Set Operations)
 
-SIMD-accelerated set operations on posting lists — **up to 41x faster** than element-by-element processing for bitwise operations.
+Scalar merge-based multiset operations on sorted posting lists, with a caller-supplied comparator. (SIMD acceleration lives elsewhere: bulk bitwise operations on rank/select bitvectors, below, and the dedicated SIMD set kernels in `simd_set_intersect`/`simd_set_union`.)
 
 ```rust
 use zipora::algorithms::set_ops::{
@@ -138,11 +138,11 @@ use zipora::algorithms::set_ops::{
 };
 
 // AND query: "rust" AND "search"
-let result = multiset_intersection(&postings_rust, &postings_search);
+let result = multiset_intersection(&postings_rust, &postings_search, |a, b| a.cmp(b));
 
-// For skewed sizes (one term rare, one common), use adaptive intersection
-// Automatically picks linear merge vs binary search based on |A|/|B| ratio
-let result = multiset_fast_intersection(&rare_term, &common_term);
+// For skewed sizes (one term rare, one common), use adaptive intersection.
+// Switches from linear merge to binary search when |A| * threshold < |B|
+let result = multiset_fast_intersection(&rare_term, &common_term, |a, b| a.cmp(b), 32);
 
 // Bulk bitwise on rank/select bitvectors (41x faster with SIMD)
 use zipora::AdaptiveRankSelect;
@@ -156,16 +156,21 @@ let pos = rs.select1(rank);    // find N-th matching doc — O(log n)
 Store and retrieve documents with dictionary compression (PA-Zip):
 
 ```rust
-use zipora::DictZipBlobStore;
+use zipora::compression::dict_zip::DictZipBlobStoreBuilder;
 use zipora::blob_store::{MixedLenBlobStore, PlainBlobStore, BlobStore};
 
 // DictZipBlobStore: best compression for similar documents (web pages, logs)
-// Learns a shared dictionary from training data, then compresses each record
-let store = DictZipBlobStore::builder()
-    .build_from_records(&documents)
-    .unwrap();
+// Learns a shared dictionary from training samples, then compresses each record
+let mut builder = DictZipBlobStoreBuilder::new().unwrap(); // or with_config(DictZipConfig { .. })
+for doc in &documents {
+    builder.add_training_sample(doc).unwrap();
+}
+let mut store = builder.finish().unwrap();
 
-// Retrieve: zero-copy access via mmap
+// Store: each record is compressed against the trained dictionary
+let doc_id = store.put(&documents[0]).unwrap();
+
+// Retrieve
 let doc = store.get(doc_id).unwrap();
 
 // MixedLenBlobStore: optimal for mixed fixed/variable-length records
@@ -182,15 +187,22 @@ Compress posting list deltas with Huffman or rANS:
 use zipora::HuffmanEncoder;
 use zipora::Rans64Encoder;
 
-// Huffman O0: simple, fast encoding (1.1 µs per 65KB)
+// Huffman O0: simple, fast encoding
 let encoder = HuffmanEncoder::new(&training_data).unwrap();
 let compressed = encoder.encode(&delta_encoded_postings).unwrap();
 
 // Huffman O1: context-aware, better compression for structured data
 // Particularly effective for posting list deltas with skewed distributions
+// (verified: 173-188 µs per 65KB block)
 
-// rANS: highest compression ratio, slightly slower
-let rans = Rans64Encoder::new(&training_data).unwrap();
+// rANS: highest compression ratio, slightly slower (351-426 µs per 65KB)
+// Rans64Encoder is built from a 256-entry byte-frequency table
+use zipora::entropy::ParallelX1;
+let mut frequencies = [0u32; 256];
+for &byte in training_data.iter() {
+    frequencies[byte as usize] += 1;
+}
+let rans = Rans64Encoder::<ParallelX1>::new(&frequencies).unwrap();
 let compressed = rans.encode(&data).unwrap();
 ```
 
@@ -236,13 +248,16 @@ use zipora::Pipeline;
 Serve large indices directly from disk without loading into RAM:
 
 ```rust
-use zipora::memory::MmapVec;
+use zipora::memory::{MmapVec, MmapVecConfig};
 
 // Memory-map an index file — OS manages paging
-let index: MmapVec<u32> = MmapVec::open("postings.idx").unwrap();
+let index: MmapVec<u32> = MmapVec::open("postings.idx", MmapVecConfig::read_only()).unwrap();
 
 // Random access is backed by the page cache
-let doc_id = index[position];
+let doc_id = *index.get(position).unwrap();
+
+// Bulk access via slice
+let postings: &[u32] = index.as_slice();
 
 // For blob stores, use mmap-backed storage
 // DictZipBlobStore and NestLoudsTrieBlobStore support mmap natively
@@ -277,9 +292,9 @@ use zipora::string::{decimal_strcmp, words};
 // Arena-based string storage: 7.8x faster than Vec<String> for push (100K strings)
 let mut terms = SortableStrVec::new();
 for token in document.split_whitespace() {
-    terms.push(token);
+    terms.push_str(token).unwrap(); // &str variant; push(String) also available
 }
-terms.sort(); // In-place sort, 1.15x faster than Vec<String>::sort
+terms.sort().unwrap(); // In-place sort, 1.15x faster than Vec<String>::sort
 
 // For small lookup tables (field names, stop words), SmallMap is 3.8x faster
 use zipora::SmallMap;
@@ -290,7 +305,7 @@ stop_words.insert("and", true);
 
 ## 10. BM25 Scoring (Document Length Normalization)
 
-Compact doc-length storage with pre-computed BM25 scoring — **13.5x faster** than UintVecMin0 + float math, **2x smaller** memory footprint.
+Compact doc-length storage with pre-computed BM25 scoring — **2x smaller** memory footprint than UintVecMin0, and **2.4x faster** per-doc scoring (table lookup instead of float math). The full BM25 pre-compute pipeline over 1M docs is **13.5x faster** (UintVecMin0 + scalar float: 5.13 ms → FieldnormEncoder + AVX2 batch: 381 µs — a combined encoding + SIMD gain, see the benchmark table below and docs/PERFORMANCE.md). Note the AVX2 batch kernel by itself scores ≈1.0x vs the scalar auto-vectorized loop; the batch API's value is pipeline structure plus the fieldnorm encoding.
 
 `FieldnormEncoder` uses Lucene-compatible SmallFloat encoding to compress document lengths into a single byte (3-bit mantissa + 5-bit exponent, same as Lucene/Tantivy). A 256-entry `[f32; 256]` norm table eliminates per-posting float division entirely. `Bm25BatchScorer` processes 8 postings per iteration with AVX2 SIMD.
 
@@ -328,7 +343,8 @@ let precomputed = score_table[3][fieldnorm_bytes[0] as usize]; // score(tf=3, do
 |--------|-------------------|------------------------|-------------|
 | Memory (1M docs) | 1.13 MB | **1.00 MB** | **2.0x smaller** |
 | Random access (1M) | 190 µs | **92 µs** | **2.06x faster** |
-| BM25 pre-compute (1M) | 5.13 ms | **381 µs** (SIMD) | **13.5x faster** |
+| BM25 pre-compute (scalar, 1M) | 5.13 ms | **2.78 ms** | **1.85x faster** |
+| BM25 pre-compute (AVX2 SIMD, 1M) | 5.13 ms | **381 µs** | **13.5x faster** |
 | Phrase query scoring (1K random) | 3.63 µs | **1.22 µs** | **2.98x faster** |
 
 ## 11. SIMD Cursor Primitives (Block-Max WAND)
@@ -397,7 +413,8 @@ assert_eq!(cursor.current(), Some(20));
 | Term dictionary (alternatives) | `ZiporaTrie` | LOUDS/Patricia/CritBit via config |
 | Short posting lists | `UintVecMin0` | Variable-width, <1M doc IDs |
 | Long posting lists | `SortedUintVec` | Delta-compressed sorted IDs |
-| Compressed posting lists | `HybridPostingList` | Auto-selects: Dense/EF/Partitioned/Optimal by list size |
+| Compressed posting lists | `HybridPostingList` | Auto-selects: Dense/EF/Partitioned/Optimal/Clustered by size and density |
+| Dense/run-heavy posting lists | `ClusteredEliasFano` | Per-chunk Run/Bitmap/EF containers; auto-selected by `HybridPostingList` when value-span ≤ 2×len; O(1) block `intersect_count` (~2370x vs OPEF on dense data) |
 | Rank/Select (large bitvecs) | `Rank9` | O(1) rank, O(log n) select, 25% overhead, hardware-independent |
 | Boolean posting lists | `BitVector` + `AdaptiveRankSelect` | High-frequency terms, bitwise ops |
 | AND/OR/NOT queries | `set_ops::multiset_*` | Sorted posting list intersection |
@@ -411,7 +428,7 @@ assert_eq!(cursor.current(), Some(20));
 | Integer delta encoding | `StreamVByte` | SIMD SSSE3 shuffle decoding (8.7x faster), delta compression |
 | Bulk bitwise queries | SIMD rank/select | 10-41x faster than scalar |
 | Doc-length storage | `FieldnormEncoder` | 1-byte fieldnorms, replaces UintVecMin0, 2x smaller |
-| BM25 scoring | `Bm25BatchScorer` | AVX2 SIMD batch (13.5x faster), prefetch for phrase queries |
+| BM25 scoring | `Bm25BatchScorer` | AVX2 batch API + prefetch; 13.5x is the end-to-end pre-compute gain vs UintVecMin0+float (encoding+SIMD combined) |
 | BM25 score table | `FieldnormEncoder::build_score_table` | Full 2D precomputed scores, zero query-time math |
 | Document storage | `DictZipBlobStore` | Best compression for similar docs |
 | Document storage (fast) | `PlainBlobStore` | Uncompressed, fastest retrieval |

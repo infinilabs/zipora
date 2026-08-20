@@ -1,13 +1,16 @@
 # I/O & Serialization
 
-Zipora provides 8 comprehensive serialization components with cutting-edge optimizations and cross-platform compatibility.
+Zipora provides comprehensive serialization components with cutting-edge optimizations and cross-platform compatibility.
 
 ## Advanced Serialization System
 
 ```rust
+use std::collections::HashMap;
+use std::rc::Rc;
+
 use zipora::io::{
     // Smart Pointer Serialization
-    SmartPtrSerializer, SerializationContext, Box, Rc, Arc, Weak,
+    SmartPtrSerializer, SerializationContext, SmartPtrConfig, SmartPtrSerialize,
 
     // Complex Type Serialization
     ComplexTypeSerializer, ComplexSerialize, VersionProxy,
@@ -32,6 +35,8 @@ let bytes = serializer.serialize_to_bytes(&clone1).unwrap();
 let deserialized: Rc<String> = serializer.deserialize_from_bytes(&bytes).unwrap();
 
 // Cycle detection and shared object optimization
+use zipora::io::VecDataOutput;
+let mut output = VecDataOutput::new();
 let mut context = SerializationContext::new();
 clone1.serialize_with_context(&mut output, &mut context).unwrap();
 clone2.serialize_with_context(&mut output, &mut context).unwrap(); // References first object
@@ -122,89 +127,144 @@ let byte = reader.read_byte_fast().unwrap();
 let mut large_buffer = vec![0u8; 1024 * 1024];
 let bytes_read = reader.read_bulk(&mut large_buffer).unwrap();
 
-// Prefetch optimization for sequential access
-reader.prefetch_ahead(64 * 1024).unwrap();
-
-// Stream buffered writer with configurable flush strategies
+// Stream buffered writer (implements std::io::Write)
 let mut writer = StreamBufferedWriter::with_config(file, config).unwrap();
 writer.write_all(b"High-performance writing").unwrap();
-writer.flush_with_strategy(FlushStrategy::Async).unwrap();
+writer.flush().unwrap();
 ```
 
 ## Range-Based I/O
 
 ```rust
-// Range-based reading for random access patterns
-let mut range_reader = RangeReader::new(file).unwrap();
-let data = range_reader.read_range(1000, 2000).unwrap();
+use std::io::{Read, Write};
 
-// Multi-range reading for scattered access
+// Range-based reading for random access patterns:
+// construct with (inner, start, length), then use std::io::Read.
+// `new_and_seek` also seeks the underlying reader to `start`.
+let mut range_reader = RangeReader::new_and_seek(file, 1000, 2000).unwrap();
+let mut data = Vec::new();
+range_reader.read_to_end(&mut data).unwrap(); // reads bytes 1000..3000
+
+// Multi-range reading for scattered access: (start, end) byte ranges
 let ranges = vec![(0, 100), (500, 600), (1000, 1100)];
-let mut multi_reader = MultiRangeReader::new(file, ranges).unwrap();
-let chunks = multi_reader.read_all().unwrap();
+let mut multi_reader = MultiRangeReader::new(file, ranges);
+let mut chunks = Vec::new();
+multi_reader.read_to_end(&mut chunks).unwrap(); // concatenates all ranges
 
-// Range-based writing
-let mut range_writer = RangeWriter::new(file).unwrap();
-range_writer.write_at(1000, b"positioned data").unwrap();
+// Range-based writing: construct with (inner, start, length), then use std::io::Write
+let mut range_writer = RangeWriter::new_and_seek(file, 1000, 15).unwrap();
+range_writer.write_all(b"positioned data").unwrap();
+range_writer.flush().unwrap();
 ```
 
 ## Zero-Copy I/O
 
 ```rust
+use std::io::IoSlice;
+use zipora::io::{ZeroCopyBuffer, ZeroCopyReader, ZeroCopyWriter,
+                 ZeroCopyRead, ZeroCopyWrite, VectoredIO};
+
 // Zero-copy buffer management
-let buffer = ZeroCopyBuffer::new(4096).unwrap();
-let slice = buffer.as_slice();
+let mut buffer = ZeroCopyBuffer::new(4096).unwrap();
+let readable = buffer.readable_slice();   // direct view of buffered data, no copy
 
-// Zero-copy reader with memory mapping
-let mut reader = ZeroCopyReader::open(file_path).unwrap();
-let mapped_slice = reader.map_range(0, 1024).unwrap();
+// Zero-copy reader: wraps any std::io::Read, borrows bytes from its internal buffer
+let mut reader = ZeroCopyReader::new(file).unwrap(); // or with_capacity(file, 256 * 1024)
+let consumed = match reader.zc_read(1024).unwrap() {
+    Some(bytes) => {
+        // process `bytes` without copying
+        bytes.len()
+    }
+    None => 0, // not enough buffered data for zero-copy access
+};
+reader.zc_advance(consumed).unwrap();
 
-// Zero-copy writer
-let mut writer = ZeroCopyWriter::create(file_path).unwrap();
-writer.write_zero_copy(&data).unwrap();
+// Zero-copy writer: wraps any std::io::Write, exposes its buffer for direct writes
+let mut writer = ZeroCopyWriter::new(file).unwrap();
+if let Some(buf) = writer.zc_write(5).unwrap() {
+    buf.copy_from_slice(b"hello");
+}
+writer.zc_commit(5).unwrap();
+
+// Memory-mapped zero-copy reading (requires the `mmap` feature)
+#[cfg(feature = "mmap")]
+{
+    use zipora::io::MmapZeroCopyReader;
+    let file = std::fs::File::open("data.bin").unwrap();
+    let mmap_reader = MmapZeroCopyReader::new(file).unwrap();
+    let all_bytes = mmap_reader.as_slice(); // entire file as one zero-copy slice
+}
 
 // Vectored I/O for scatter-gather operations
-let buffers = vec![
+// (VectoredIO is a unit struct with associated functions — no constructor)
+let buffers = [
     IoSlice::new(b"header"),
     IoSlice::new(b"body"),
     IoSlice::new(b"footer"),
 ];
-let vectored = VectoredIO::new(file).unwrap();
-vectored.write_vectored(&buffers).unwrap();
+let mut output: Vec<u8> = Vec::new();
+let written = VectoredIO::write_vectored(&mut output, &buffers).unwrap();
 ```
 
 ## Version Management
 
 ```rust
-use zipora::io::{VersionManager, VersionedSerialize, Version, MigrationRegistry};
+use zipora::error::Result;
+use zipora::io::{
+    DataInput, DataOutput, MigrationRegistry, Version, VersionManager,
+    VersionedSerialize, VecDataOutput,
+};
 
-// Version management for backward compatibility
-let version_manager = VersionManager::new();
-let current_version = Version::new(2, 1, 1);
+// Implement VersionedSerialize for your type; serialize_versioned /
+// deserialize_versioned are provided trait methods over DataOutput / DataInput.
+struct MyData {
+    field: u32,
+}
 
-// Register migration functions
+impl VersionedSerialize for MyData {
+    fn current_version() -> Version {
+        Version::new(2, 1, 1)
+    }
+
+    fn serialize_with_manager<O: DataOutput>(
+        &self,
+        _manager: &mut VersionManager,
+        output: &mut O,
+    ) -> Result<()> {
+        output.write_u32(self.field)
+    }
+
+    fn deserialize_with_manager<I: DataInput>(
+        _manager: &mut VersionManager,
+        input: &mut I,
+    ) -> Result<Self> {
+        Ok(MyData { field: input.read_u32()? })
+    }
+}
+
+// Serialize with version information
+let data = MyData { field: 42 };
+let mut output = VecDataOutput::new();
+data.serialize_versioned(&mut output).unwrap();
+
+// A VersionManager tracks the version being read/written
+// (constructed from the current version)
+let mut manager = VersionManager::new(MyData::current_version());
+manager.set_reading_version(Version::new(1, 0, 0));
+
+// Register migration functions between on-disk formats (byte-level transforms)
 let mut registry = MigrationRegistry::new();
 registry.register_migration(
     Version::new(1, 0, 0),
     Version::new(2, 0, 0),
-    |old_data| migrate_v1_to_v2(old_data)
+    |old_bytes| Ok(old_bytes.to_vec()), // transform old layout into new layout
 );
-
-// Serialize with version information
-let data = MyData { field: 42 };
-let versioned_bytes = version_manager.serialize_versioned(&data, current_version).unwrap();
-
-// Deserialize with automatic migration
-let deserialized: MyData = version_manager.deserialize_versioned(&versioned_bytes).unwrap();
 ```
 
 ## Performance Characteristics
 
-| Component | Throughput | Latency | Use Case |
-|-----------|------------|---------|----------|
-| **SmartPtrSerializer** | Moderate | Low | Reference-counted objects |
-| **EndianIO** | High (SIMD) | Minimal | Cross-platform binary I/O |
-| **VarIntEncoder** | Very High | Minimal | Compact integer encoding |
-| **StreamBufferedReader** | Very High | Low | Sequential file access |
-| **ZeroCopyReader** | Maximum | Minimal | Memory-mapped access |
-| **VectoredIO** | High | Low | Scatter-gather operations |
+For measured performance numbers, see [PERFORMANCE.md](PERFORMANCE.md).
+
+## Related
+
+For SIMD-decoded posting lists and sorted integer sequences, see StreamVByte in [COMPRESSION.md](COMPRESSION.md).

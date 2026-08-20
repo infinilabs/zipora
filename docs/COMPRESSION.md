@@ -1,203 +1,169 @@
 # Compression Framework
 
-Zipora provides a comprehensive compression framework with multiple algorithms and real-time capabilities.
+Zipora provides dictionary compression (`zipora::compression`), entropy coders (`zipora::entropy`), and compressed blob stores (`zipora::blob_store`).
 
-## PA-Zip Dictionary Compression
+## PA-Zip Dictionary Compression (DictZip)
 
-PA-Zip is a high-performance dictionary compression system optimized for structured data.
+Dictionary compression is exposed as a blob store: train a dictionary from samples with `DictZipBlobStoreBuilder`, then store/retrieve records through the standard `BlobStore` trait.
 
 ```rust
-use zipora::compression::{
-    PaZipEncoder, PaZipDecoder, PaZipConfig,
-    DictionaryBuilder, DictionaryConfig
-};
+use zipora::blob_store::BlobStore;
+use zipora::compression::dict_zip::{DictZipBlobStoreBuilder, DictZipConfig};
 
-// Build dictionary from sample data
-let samples = vec![
-    b"GET /api/users HTTP/1.1".to_vec(),
-    b"GET /api/posts HTTP/1.1".to_vec(),
-    b"POST /api/users HTTP/1.1".to_vec(),
-];
+// Train a dictionary from sample data
+let mut builder = DictZipBlobStoreBuilder::with_config(DictZipConfig::text_compression()).unwrap();
+builder.add_training_sample(b"GET /api/users HTTP/1.1").unwrap();
+builder.add_training_sample(b"GET /api/posts HTTP/1.1").unwrap();
+builder.add_training_sample(b"POST /api/users HTTP/1.1").unwrap();
 
-let dict_config = DictionaryConfig::performance_optimized();
-let dictionary = DictionaryBuilder::build_from_samples(&samples, dict_config).unwrap();
+// Build the compressed blob store
+let mut store = builder.finish().unwrap();
 
-// Create encoder with dictionary
-let config = PaZipConfig::balanced();
-let mut encoder = PaZipEncoder::with_dictionary(config, dictionary.clone()).unwrap();
-
-// Compress data
-let data = b"GET /api/users HTTP/1.1";
-let compressed = encoder.encode(data).unwrap();
-println!("Compression ratio: {:.2}x", data.len() as f64 / compressed.len() as f64);
-
-// Decompress
-let mut decoder = PaZipDecoder::with_dictionary(dictionary).unwrap();
-let decompressed = decoder.decode(&compressed).unwrap();
-assert_eq!(decompressed, data);
-
-// Streaming compression
-let mut stream_encoder = PaZipEncoder::streaming(config).unwrap();
-stream_encoder.write_chunk(b"first chunk").unwrap();
-stream_encoder.write_chunk(b"second chunk").unwrap();
-let final_compressed = stream_encoder.finish().unwrap();
+// Records are compressed against the trained dictionary
+let id = store.put(b"GET /api/users HTTP/1.1").unwrap();
+let data = store.get(id).unwrap();
+assert_eq!(data, b"GET /api/users HTTP/1.1");
 ```
+
+Configuration presets: `DictZipConfig::text_compression()`, `binary_compression()`, `log_compression()`, `realtime_compression()`. `DictZipBlobStoreBuilder::new()` uses the default config.
+
+Lower-level building blocks are also exported from `zipora::compression`: `PaZipDictionaryBuilder` (dictionary training with `DictionaryBuilderConfig`), `SuffixArrayDictionary`, and `PatternMatcher`.
 
 ## Huffman Coding
 
+Huffman coding lives in `zipora::entropy`. Order-0 uses `HuffmanEncoder`/`HuffmanDecoder`; Order-1/Order-2 context models use `ContextualHuffmanEncoder` with a `HuffmanOrder`.
+
 ```rust
-use zipora::compression::{
-    HuffmanEncoder, HuffmanDecoder,
-    HuffmanO1Encoder, HuffmanO2Encoder, // Contextual variants
-    ContextualHuffmanEncoder
+use zipora::entropy::{
+    ContextualHuffmanDecoder, ContextualHuffmanEncoder, HuffmanDecoder, HuffmanEncoder,
+    HuffmanOrder,
 };
 
-// Basic Huffman encoding (Order-0)
-let encoder = HuffmanEncoder::new(b"sample data").unwrap();
-let compressed = encoder.encode(b"sample data").unwrap();
+let data = b"sample data with repeated symbols";
 
-let decoder = HuffmanDecoder::from_encoder(&encoder).unwrap();
-let decompressed = decoder.decode(&compressed).unwrap();
+// Order-0 Huffman (symbols are independent)
+let encoder = HuffmanEncoder::new(data).unwrap();
+let compressed = encoder.encode(data).unwrap();
 
-// Order-1 Huffman (context-aware, uses previous byte)
-let o1_encoder = HuffmanO1Encoder::new(b"training data").unwrap();
-let o1_compressed = o1_encoder.encode(b"similar data").unwrap();
+let decoder = HuffmanDecoder::new(encoder.tree().clone());
+let decompressed = decoder.decode(&compressed, data.len()).unwrap();
+assert_eq!(decompressed, data);
 
-// Order-2 Huffman (uses two previous bytes)
-let o2_encoder = HuffmanO2Encoder::new(b"training data").unwrap();
-let o2_compressed = o2_encoder.encode(b"similar data").unwrap();
+// Order-1 Huffman (frequencies conditioned on the previous byte)
+let o1 = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order1).unwrap();
+let o1_compressed = o1.encode(data).unwrap();
 
-// Contextual Huffman with fast symbol table
-let config = ContextualHuffmanConfig {
-    order: 1,
-    use_fast_table: true,
-    table_size: 256,
-};
-let contextual = ContextualHuffmanEncoder::with_config(b"training", config).unwrap();
-let result = contextual.encode(b"test data").unwrap();
-println!("Fast table: 256-entry context-aware symbol lookup");
+let o1_decoder = ContextualHuffmanDecoder::new(o1); // consumes the encoder
+let o1_decoded = o1_decoder.decode(&o1_compressed, data.len()).unwrap();
+assert_eq!(o1_decoded, data);
+
+// Order-2 uses the previous two bytes
+let o2 = ContextualHuffmanEncoder::new(data, HuffmanOrder::Order2).unwrap();
+let o2_compressed = o2.encode(data).unwrap();
 ```
 
 ## FSE (Finite State Entropy)
 
 ```rust
-use zipora::compression::{FseEncoder, FseDecoder, FseConfig};
-
-// FSE encoding with ZSTD optimizations
-let config = FseConfig::zstd_compatible();
-let mut encoder = FseEncoder::with_config(config).unwrap();
+use zipora::entropy::{FseConfig, FseDecoder, FseEncoder};
 
 let data = b"data with varying symbol frequencies";
-let compressed = encoder.encode(data).unwrap();
 
-let mut decoder = FseDecoder::from_encoder(&encoder).unwrap();
-let decompressed = decoder.decode(&compressed).unwrap();
+// Presets: fast_compression(), high_compression(), realtime(), balanced()
+let mut encoder = FseEncoder::new(FseConfig::balanced()).unwrap();
+let compressed = encoder.compress(data).unwrap();
 
-// Statistics
-let stats = encoder.stats();
-println!("Entropy: {:.3} bits/symbol", stats.entropy);
-println!("Compression ratio: {:.2}x", stats.compression_ratio);
+let mut decoder = FseDecoder::new(); // or FseDecoder::with_config(config)
+let decompressed = decoder.decompress(&compressed).unwrap();
+assert_eq!(decompressed, data);
 ```
+
+Notes:
+
+- **Stream format**: every FSE stream starts with a mode byte — `0xF5` (single stream) or `0xF6` (parallel multi-block) — so the decoder never sniffs the layout. This format is **not compatible with pre-7.4 streams**.
+- Histogram construction uses a 4-lane unrolled scalar loop (not AVX2).
 
 ## rANS (Range Asymmetric Numeral Systems)
 
-```rust
-use zipora::compression::{
-    Rans64Encoder, Rans64Decoder,
-    RansConfig, ParallelRansEncoder
-};
+`Rans64Encoder` is parameterized by a parallelism variant: `ParallelX1` (single stream), `ParallelX2`, `ParallelX4`, or `ParallelX8` (interleaved streams).
 
-// 64-bit rANS encoding
-let config = RansConfig::high_precision();
-let mut encoder = Rans64Encoder::with_config(config).unwrap();
+```rust
+use zipora::entropy::rans::{ParallelX1, ParallelX4, Rans64Decoder, Rans64Encoder};
 
 let data = b"data for rANS compression";
+
+// Build a frequency table (one count per byte value)
+let mut frequencies = [0u32; 256];
+for &byte in data.iter() {
+    frequencies[byte as usize] += 1;
+}
+
+let encoder = Rans64Encoder::<ParallelX1>::new(&frequencies).unwrap();
 let compressed = encoder.encode(data).unwrap();
 
-let mut decoder = Rans64Decoder::from_encoder(&encoder).unwrap();
-let decompressed = decoder.decode(&compressed).unwrap();
+let decoder = Rans64Decoder::new(&encoder);
+let decompressed = decoder.decode(&compressed, data.len()).unwrap();
+assert_eq!(decompressed, data);
 
-// Parallel rANS for large data
-let parallel_config = RansConfig::parallel(8); // 8 streams
-let mut parallel_encoder = ParallelRansEncoder::with_config(parallel_config).unwrap();
-let large_data = vec![0u8; 10_000_000];
-let parallel_compressed = parallel_encoder.encode(&large_data).unwrap();
+// Interleaved 4-stream variant for larger inputs
+let parallel = Rans64Encoder::<ParallelX4>::new(&frequencies).unwrap();
+let parallel_compressed = parallel.encode(data).unwrap();
 ```
 
 ## ZSTD Integration
 
-```rust
-use zipora::compression::{ZstdEncoder, ZstdDecoder, ZstdConfig};
+ZSTD is exposed as a compressed blob store wrapper (requires the default `zstd` feature) and as `Algorithm::Zstd(i32)` in the compression framework.
 
-// ZSTD compression with configurable level
-let config = ZstdConfig {
-    level: 10,
-    window_log: 22,
-    enable_checksums: true,
-};
-let mut encoder = ZstdEncoder::with_config(config).unwrap();
+```rust
+use zipora::blob_store::{BlobStore, MemoryBlobStore, ZstdBlobStore};
+
+// Wrap any BlobStore with transparent ZSTD compression (level 1-22)
+let mut store = ZstdBlobStore::new(MemoryBlobStore::new(), 3);
 
 let data = b"data for ZSTD compression";
-let compressed = encoder.encode(data).unwrap();
-
-let mut decoder = ZstdDecoder::new().unwrap();
-let decompressed = decoder.decode(&compressed).unwrap();
-
-// Streaming ZSTD
-let mut stream = ZstdEncoder::streaming(config).unwrap();
-stream.write_chunk(b"chunk 1").unwrap();
-stream.write_chunk(b"chunk 2").unwrap();
-let final_data = stream.finish().unwrap();
-
-// Dictionary-based ZSTD
-let dict = ZstdDictionary::train(&samples, 64 * 1024).unwrap();
-let dict_encoder = ZstdEncoder::with_dictionary(config, dict).unwrap();
+let id = store.put(data).unwrap();
+let retrieved = store.get(id).unwrap();
+assert_eq!(retrieved, data);
 ```
 
-## Real-Time Compression
+## Adaptive Compression
+
+`AdaptiveCompressor` selects an algorithm (`Algorithm::None`/`Lz4`/`Zstd`/`Huffman`/`Rans`/...) based on data characteristics and performance requirements.
 
 ```rust
-use zipora::compression::{
-    RealTimeCompressor, RealTimeConfig, LatencyBudget
+use std::time::Duration;
+use zipora::compression::{AdaptiveCompressor, AdaptiveConfig, PerformanceRequirements};
+
+let requirements = PerformanceRequirements {
+    max_latency: Duration::from_millis(100),
+    min_throughput: 100_000_000, // 100 MB/s
+    max_memory: 64 * 1024 * 1024,
+    target_ratio: 0.5,
+    speed_vs_quality: 0.5, // 0.0 = speed, 1.0 = quality
 };
 
-// Real-time compression with strict latency guarantees
-let config = RealTimeConfig {
-    max_latency_us: 100,          // 100 microsecond max latency
-    target_ratio: 2.0,             // Target 2x compression
-    adaptive_level: true,          // Adjust level based on latency
-    budget: LatencyBudget::Strict,
-};
+let compressor = AdaptiveCompressor::new(AdaptiveConfig::default(), requirements).unwrap();
 
-let mut compressor = RealTimeCompressor::with_config(config).unwrap();
+let data = b"adaptive compression input";
+let compressed = compressor.compress(data).unwrap();
+let decompressed = compressor.decompress(&compressed).unwrap();
+assert_eq!(decompressed, data);
 
-// Compress with latency monitoring
-let data = b"real-time data stream";
-let result = compressor.compress_with_deadline(data).unwrap();
-
-println!("Achieved latency: {}us", result.latency_us);
-println!("Compression ratio: {:.2}x", result.ratio);
-
-// Adaptive compression for varying workloads
-let mut adaptive = RealTimeCompressor::adaptive(config).unwrap();
-for chunk in data_stream {
-    let compressed = adaptive.compress_adaptive(chunk).unwrap();
-    // Automatically adjusts compression level to meet latency budget
-}
+println!("Selected algorithm: {:?}", compressor.current_algorithm());
 ```
+
+`CompressionProfile` records per-data-type performance; `compressor.train(&samples)` builds profiles from labeled samples.
 
 ## Compression Algorithm Selection
 
 | Algorithm | Ratio | Speed | Best Use Case |
 |-----------|-------|-------|---------------|
-| **PA-Zip** | 3-10x | Fast | Structured data, logs |
-| **Huffman O0** | 1.5-3x | Very Fast | General purpose |
-| **Huffman O1** | 2-4x | Fast | Text, structured data |
-| **Huffman O2** | 2.5-5x | Moderate | Highly structured data |
-| **FSE** | 2-4x | Fast | Variable symbol frequencies |
-| **rANS** | 2-4x | Fast | High precision entropy coding |
-| **ZSTD** | 3-10x | Moderate | General purpose, best ratio |
-| **LZ4** | 2-3x | Very Fast | Speed-critical applications |
+| **DictZip (PA-Zip)** | Data-dependent | Fast | Structured data, logs, repeated patterns |
+| **Huffman O0/O1/O2** | Data-dependent | Fast | Text, structured data |
+| **FSE** | Data-dependent | Fast | Variable symbol frequencies |
+| **rANS** | Data-dependent | Fast | High precision entropy coding |
+| **ZSTD** | Data-dependent | Moderate | General purpose, best ratio |
+| **LZ4** | Data-dependent | Very Fast | Speed-critical applications |
 | **StreamVByte** | 1.5-3x | **Ultra Fast (SSSE3)** | Inverted index delta lists, integer sequences |
 
 ## StreamVByte (SIMD-Accelerated Variable-Byte)
@@ -215,30 +181,21 @@ let encoded = StreamVByte::encode_deltas(&doc_ids);
 let decoded = StreamVByte::decode_deltas(&encoded, doc_ids.len());
 assert_eq!(decoded, doc_ids);
 
-// Direct decode into pre-allocated buffer
+// Direct decode into pre-allocated buffer (raw values, no delta coding)
+let raw = StreamVByte::encode_raw(&doc_ids);
 let mut output = vec![0u32; doc_ids.len()];
-let count = StreamVByte::decode_into(&encoded, doc_ids.len(), &mut output);
+let count = StreamVByte::decode_into(&raw, doc_ids.len(), &mut output);
 assert_eq!(&output[..count], &doc_ids[..]);
 ```
 
 ## Hardware Acceleration
 
-```rust
-use zipora::compression::HardwareAcceleration;
+SIMD acceleration (histogram computation, bit manipulation, shuffle-table decoding) is dispatched automatically at runtime. See [docs/SIMD.md](SIMD.md) for the tier list and dispatch framework.
 
-// Check available hardware features
-let hw = HardwareAcceleration::detect();
-println!("BMI2: {}", hw.has_bmi2);
-println!("AVX2: {}", hw.has_avx2);
-println!("POPCNT: {}", hw.has_popcnt);
+## Verified Performance
 
-// Automatically uses hardware acceleration when available
-// - BMI2: Bit manipulation for entropy coding
-// - AVX2: Parallel histogram computation
-// - POPCNT: Fast bit counting for symbol statistics
-```
+Measured numbers (see [docs/PERFORMANCE.md](PERFORMANCE.md) for methodology):
 
-## Performance Notes
-
-- **Huffman O1**: Context-aware encoding with fast 256-entry symbol table
-- **Parallel rANS**: Near-linear scaling to 8+ threads
+- **Huffman O1**: 173-188 µs for 65 KB
+- **rANS**: 351-426 µs for 65 KB
+- **StreamVByte decode**: 8.7x vs scalar varint

@@ -64,10 +64,12 @@ assert!(trie.contains(b"hello"));
 // 统一哈希表 —— 基于策略模式的配置
 use zipora::hash_map::{ZiporaHashMap, ZiporaHashMapConfig};
 
-let mut map = ZiporaHashMap::new();
+let mut map = ZiporaHashMap::new().unwrap();
 map.insert("key", "value").unwrap();
 
 // 带压缩的 Blob 存储
+use zipora::blob_store::{ZipOffsetBlobStoreBuilder, ZipOffsetBlobStoreConfig};
+
 let config = ZipOffsetBlobStoreConfig::performance_optimized();
 let mut builder = ZipOffsetBlobStoreBuilder::with_config(config).unwrap();
 builder.add_record(b"Compressed data").unwrap();
@@ -88,17 +90,17 @@ assert_eq!(joined, "hello, world");
 ### 核心组件
 - **[容器](docs/CONTAINERS.md)** - 专用容器（FastVec、ValVec32、IntVec、LruMap 等）
 - **[哈希表](docs/HASH_MAPS.md)** - ZiporaHashMap、GoldHashMap，基于策略模式配置
-- **[Blob 存储](docs/BLOB_STORAGE.md)** - 8 种 Blob 存储变体，支持 Trie 索引和压缩
+- **[Blob 存储](docs/BLOB_STORAGE.md)** - 专用 Blob 存储变体，支持 Trie 索引和压缩
 - **[内存管理](docs/MEMORY_MANAGEMENT.md)** - SecureMemoryPool、MmapVec、五级内存池
 
 ### 算法与处理
 - **[算法](docs/ALGORITHMS.md)** - 基数排序、后缀数组、集合运算、Cache-oblivious 算法、SIMD 位计数、SIMD 跳跃搜索、SIMD 块过滤
-- **[压缩](docs/COMPRESSION.md)** - PA-Zip、Huffman、FSE、rANS、实时压缩
-- **[字符串处理](docs/STRING_PROCESSING.md)** - SIMD 字符串操作、模式匹配
+- **[压缩](docs/COMPRESSION.md)** - Huffman、FSE、rANS、字典压缩（PA-Zip）、StreamVByte、自适应选择
+- **[字符串处理](docs/STRING_PROCESSING.md)** - SIMD 字符串搜索、拼接、数值比较、词边界、十六进制
 
 ### 系统架构
 - **[并发](docs/CONCURRENCY.md)** - 流水线处理、工作窃取、并行 Trie 构建
-- **[错误处理](docs/ERROR_HANDLING.md)** - 错误分类、自动恢复策略
+- **[错误处理](docs/ERROR_HANDLING.md)** - ZiporaError/Result 模式、校验宏
 - **[配置](docs/CONFIGURATION.md)** - 丰富的配置 API、预设、校验
 - **[SIMD 框架](docs/SIMD.md)** - 6 级 SIMD，支持 AVX2/BMI2/POPCNT
 
@@ -157,7 +159,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 ## 依赖
 
 精简的依赖设计：
-- **核心**：`bytemuck`、`thiserror`、`log`、`ahash`、`rayon`、`libc`、`raw-cpuid`
+- **核心**：`bytemuck`、`thiserror`、`log`、`ahash`、`rayon`、`libc`、`raw-cpuid`、`crossbeam-epoch`、`thread_local`、`fastrand`、`bitflags`、`base64`
 - **默认**：`memmap2`（mmap）、`zstd`、`lz4_flex`、`serde`/`serde_json`/`bincode`、`tokio`（async）
 - **可选**：`cbindgen`（ffi）
 - **已移除**：`crossbeam-utils`、`parking_lot`、`uuid`、`num_cpus`、`async-trait`、`futures`、`once_cell`、`pkg-config`（全部替换为标准库或删除）
@@ -168,4 +170,4 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ## 许可证
 
-Business Source License 1.0 - 详见 [LICENSE](LICENSE)。
+The Bindiego License (BDL), Version 1.0 - 详见 [LICENSE](LICENSE)。

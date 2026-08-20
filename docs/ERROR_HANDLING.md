@@ -1,157 +1,137 @@
-# Error Handling & Recovery System
+# Error Handling
 
-Zipora implements a sophisticated error handling and recovery system providing production-ready error classification, automatic recovery strategies, and contextual error reporting.
+Zipora provides two complementary error handling mechanisms:
 
-## Core Error Management Features
+- **`ZiporaError` / `Result<T>`** (`src/error.rs`): the crate-wide error type returned by all fallible APIs
+- **Verification macros** (`src/error_recovery.rs`): fail-fast runtime assertions for invariants that must never be violated
 
-- **Error Severity Classification**: Four-level severity system (WARNING, RECOVERABLE, CRITICAL, FATAL)
-- **Automatic Recovery Strategies**: Memory reclamation, structure rebuilding, fallback algorithm switching
-- **Contextual Error Reporting**: Rich error context with metadata, thread IDs, timestamps
-- **Recovery Statistics**: Comprehensive tracking of recovery attempts, success rates, and performance metrics
-- **Verification Macros**: Production-ready assertion and verification system with fail-fast behavior
-- **Thread-Safe Operations**: All error handling operations are thread-safe and lock-free
+## ZiporaError and Result
 
-## Error Severity Levels
+`ZiporaError` is the main error type, re-exported at the crate root along with
+the `Result<T>` alias (`std::result::Result<T, ZiporaError>`).
+
+### Error Variants and Constructors
+
+| Variant | Constructor | Recoverable |
+|---------|-------------|-------------|
+| `Io` | `io_error(msg)`, `not_found(msg)`, or `From<std::io::Error>` | yes |
+| `InvalidData` | `invalid_data(msg)` | no |
+| `OutOfBounds` | `out_of_bounds(index, size)` | no |
+| `OutOfMemory` | `out_of_memory(size)` | yes |
+| `Compression` | `compression(msg)` | no |
+| `BlobStore` | `blob_store(msg)` | no |
+| `Trie` | `trie(msg)` | no |
+| `ChecksumMismatch` | `checksum_mismatch(expected, actual)` | no |
+| `NotSupported` | `not_supported(feature)` | no |
+| `Configuration` | `configuration(msg)` | no |
+| `ResourceBusy` | `resource_busy(resource)` | yes |
+| `Timeout` | `timeout(msg)` | yes |
+| `SystemError` | `system_error(msg)` | no |
+| `ResourceExhausted` | `resource_exhausted(msg)` | yes |
+| `InvalidParameter` | `invalid_parameter(msg)` | no |
+| `InvalidOperation` | `invalid_operation(msg)` | no |
+| `InvalidState` | `invalid_state(msg)` | no |
+| `Serialization` | `From<serde_json::Error>` (`serde` feature) | no |
+
+### Idiomatic Usage
 
 ```rust
-use zipora::error_recovery::{ErrorSeverity, ErrorRecoveryManager, ErrorContext, RecoveryStrategy};
+use zipora::{Result, ZiporaError, FastVec};
 
-// Four-level error classification system
-pub enum ErrorSeverity {
-    Warning,     // Minor issues that don't affect core functionality
-    Recoverable, // Errors that can be automatically recovered from
-    Critical,    // Serious errors requiring immediate attention but not fatal
-    Fatal,       // Unrecoverable errors requiring immediate termination
+fn build_vec(data: &[u8]) -> Result<FastVec<u8>> {
+    if data.is_empty() {
+        return Err(ZiporaError::invalid_data("input must not be empty"));
+    }
+
+    let mut vec = FastVec::new();
+    for &byte in data {
+        vec.push(byte)?; // ZiporaError propagates with `?`
+    }
+    Ok(vec)
+}
+
+// std::io::Error converts automatically
+fn read_input(path: &str) -> Result<Vec<u8>> {
+    Ok(std::fs::read(path)?)
 }
 ```
 
-## Recovery Strategies
-
-The system provides sophisticated recovery mechanisms:
+### Error Classification
 
 ```rust
-// Available recovery strategies
-pub enum RecoveryStrategy {
-    MemoryRecovery,      // Reclaim and reorganize memory
-    StructureRebuild,    // Rebuild data structures from available data
-    FallbackAlgorithm,   // Switch to fallback algorithms (e.g., AVX2 -> SSE2 -> scalar)
-    RetryWithBackoff,    // Retry operation with exponential backoff
-    CacheReset,          // Clear caches and reset state
-    GracefulDegradation, // Reduce functionality gracefully
-    NoRecovery,          // No recovery possible - propagate error
-}
+use zipora::ZiporaError;
+
+let err = ZiporaError::out_of_memory(1024);
+assert!(err.is_recoverable());        // retry may succeed
+assert_eq!(err.category(), "memory"); // static str for logging/metrics
 ```
 
-## Usage Examples
+### Bounds Checking Helpers
 
-### Basic Error Handling
+`src/error.rs` also provides `Result`-returning bounds checks:
 
 ```rust
-use zipora::error_recovery::{ErrorRecoveryManager, ErrorSeverity, ErrorContext, RecoveryConfig};
+use zipora::error::{check_bounds, check_range};
 
-// Create error recovery manager with custom configuration
-let config = RecoveryConfig {
-    max_recovery_attempts: 3,
-    recovery_timeout: Duration::from_secs(10),
-    enable_memory_recovery: true,
-    enable_structure_rebuild: true,
-    enable_fallback_algorithms: true,
-    min_recovery_severity: ErrorSeverity::Recoverable,
-    max_recovery_memory_mb: 256,
-    ..Default::default()
-};
-
-let manager = ErrorRecoveryManager::with_config(config).unwrap();
-
-// Handle error with automatic recovery
-let context = ErrorContext::new("rank_select", "query")
-    .with_metadata("index", "500")
-    .with_metadata("operation_type", "rank1");
-
-let error = ZiporaError::out_of_memory(1024);
-let result = manager.handle_error(ErrorSeverity::Recoverable, context, &error);
-
-match result {
-    Ok(RecoveryResult::Success) => println!("Recovery successful"),
-    Ok(RecoveryResult::PartialSuccess) => println!("Partial recovery, retry recommended"),
-    Ok(RecoveryResult::Failed) => println!("Recovery failed"),
-    Err(e) => println!("Recovery error: {}", e),
-}
+check_bounds(index, size)?;       // Err(OutOfBounds) if index >= size
+check_range(start, end, size)?;   // validates start <= end && end <= size
 ```
 
-### Memory Recovery Operations
+## Verification Macros
+
+`src/error_recovery.rs` provides fail-fast verification macros with rich
+contextual messages (file, line, expression). On failure they print the
+context and **abort the process** (`std::process::abort()`); under
+`cfg(test)` they panic instead so tests can recover. Use them for internal
+invariants where continuing would risk memory corruption — use
+`ZiporaError` for recoverable, caller-facing failures.
 
 ```rust
-// Attempt memory recovery and defragmentation
-let result = manager.attempt_memory_recovery(&context);
+use zipora::{zipora_verify, zipora_verify_eq, zipora_verify_lt, zipora_die};
 
-// Structure rebuilding for corrupted data structures
-let result = manager.attempt_structure_rebuild(&context);
+// Basic verification, with optional formatted context
+zipora_verify!(index < size);
+zipora_verify!(index < size, "index {} out of bounds for size {}", index, size);
 
-// Algorithm fallback (e.g., SIMD -> scalar implementations)
-let result = manager.attempt_fallback_algorithm(&context);
-```
-
-### Verification Macros
-
-Production-ready verification system:
-
-```rust
-use zipora::{zipora_verify, zipora_verify_eq, zipora_verify_lt};
-
-// Basic runtime verification with fail-fast behavior
-zipora_verify!(index < size, "Index {} out of bounds for size {}", index, size);
-
-// Comparison macros
-zipora_verify_eq!(actual, expected);
-zipora_verify_lt!(value, limit);
+// Comparison macros (display both values on failure)
+zipora_verify_eq!(actual, expected);  // also: zipora_verify_ne!
+zipora_verify_lt!(value, limit);      // also: _le!, _gt!, _ge!
+zipora_verify_ez!(status_code);       // verifies value == 0
 
 // Fatal error macro for immediate termination
 if critical_condition {
-    zipora_die!("Critical system failure: {}", error_message);
+    zipora_die!("critical failure: {}", detail);
 }
 ```
 
-### Recovery Statistics and Monitoring
+### Specialized Macros
+
+| Macro | Checks |
+|-------|--------|
+| `zipora_verify_alloc!(ptr, size)` | allocation pointer is non-null |
+| `zipora_verify_aligned!(ptr, align)` | pointer (or size) is aligned |
+| `zipora_verify_pow2!(val)` | value is a power of 2 |
+| `zipora_verify_not_null!(ptr)` | pointer is non-null |
+| `zipora_verify_bounds!(index, size)` | `index < size` |
+| `zipora_verify_range!(start, end, size)` | `start <= end && end <= size` |
+| `zipora_verify_capacity!(current, required, max)` | capacity invariants |
+| `zipora_verify_syscall!(result, name)` | syscall returned 0 (reports `last_os_error`) |
+
+### Verification Helper Functions
+
+For use in generic contexts, five function wrappers are re-exported at the
+crate root:
 
 ```rust
-// Get comprehensive recovery statistics
-let stats = manager.get_stats();
-println!("Recovery success rate: {:.1}%", stats.success_rate());
-println!("Total recovery attempts: {}", stats.total_attempts.load(Ordering::Relaxed));
-println!("Average recovery time: {}us", stats.avg_recovery_time_us.load(Ordering::Relaxed));
+use zipora::{
+    verify_alignment,          // (ptr: *const u8, align: usize)
+    verify_power_of_2,         // (val: usize)
+    verify_allocation_success, // (ptr: *const u8, size: usize)
+    verify_bounds_check,       // (index: usize, size: usize)
+    verify_range_check,        // (start: usize, end: usize, size: usize)
+};
 
-// Get error history for analysis
-let history = manager.get_error_history().unwrap();
-for (severity, context, timestamp) in history {
-    println!("Error: {:?} in {} at {:?}", severity, context.component, timestamp);
-}
+verify_bounds_check(5, 10);      // ok
+verify_power_of_2(1024);         // ok
+verify_range_check(2, 8, 10);    // ok — aborts on violation
 ```
-
-## Performance Characteristics
-
-| Recovery Strategy | Time Complexity | Success Rate | Use Case |
-|------------------|----------------|--------------|----------|
-| **Memory Recovery** | O(n) memory scan | **95-98%** | Memory pool corruption, fragmentation |
-| **Structure Rebuild** | O(n log n) | **90-95%** | Trie/hash map corruption, index rebuild |
-| **Fallback Algorithm** | O(1) switch | **99%** | SIMD failure, hardware incompatibility |
-| **Cache Reset** | O(1) | **100%** | Cache corruption, consistency issues |
-| **Retry with Backoff** | Variable | **80-90%** | Transient failures, resource contention |
-
-## Integration with Zipora Components
-
-The error recovery system integrates seamlessly with all Zipora components:
-
-- **Memory Pools**: Automatic defragmentation and leak detection
-- **Tries and Hash Maps**: Structure rebuilding from underlying data
-- **SIMD Operations**: Graceful fallback from AVX2 -> SSE2 -> scalar
-- **Compression**: Algorithm switching and state recovery
-- **Concurrency**: Thread-safe recovery across all concurrency levels
-
-## Production Benefits
-
-- **Automatic Recovery**: Reduces manual intervention and downtime
-- **Comprehensive Monitoring**: Detailed statistics for operational insights
-- **Fail-Safe Design**: Multiple recovery strategies prevent total system failure
-- **High Performance**: Lock-free operations with minimal overhead
-- **Thread Safety**: Safe concurrent access across all recovery operations

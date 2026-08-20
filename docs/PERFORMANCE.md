@@ -16,6 +16,15 @@
 XOR transitions, terminal bit in NInfo, unsafe `get_unchecked` — 3 ops, 1 branch per transition.
 Supports arbitrary binary keys including `\x00` bytes.
 
+## Trie (CSPP)
+
+| Metric | Value |
+|--------|-------|
+| CsppTrie insert | 6.9M ops/s |
+| CsppTrie lookup | 8.0M ops/s |
+| Memory | 10.7 bytes/key |
+| ConcurrentCsppTrie (16 threads) | 10+ M keys/s |
+
 ## BitVector (scatter + popcount)
 
 | Operation (1M bits) | Zipora | Scalar Vec\<u64\> | Ratio |
@@ -24,7 +33,7 @@ Supports arbitrary binary keys including `\x00` bytes.
 | Allocation (`with_size(1M, false)`) | **155 µs** | 247 µs | **0.63x (faster)** |
 | Popcount only (50% density) | 9.25 µs | 9.26 µs | Tied |
 
-`alloc_zeroed` (calloc), zero-copy `from_blocks`, SIMD `popcount_slice` (AVX-512 / POPCNT / AVX2 / NEON).
+`alloc_zeroed` (calloc), zero-copy `from_blocks`, SIMD `popcount_slice` (AVX-512 / POPCNT / NEON).
 
 ## popcount_slice (SIMD population count)
 
@@ -34,7 +43,7 @@ Supports arbitrary binary keys including `\x00` bytes.
 | 781 words (6KB, engine union buffer) | 150 ns | 5.2 Gwords/s |
 | 10K words (80KB) | 1.9 µs | 5.4 Gwords/s |
 
-Multi-tier dispatch: AVX-512 VPOPCNTDQ → hardware POPCNT → AVX2 vpshufb → NEON → scalar.
+Multi-tier dispatch: AVX-512 VPOPCNTDQ → hardware POPCNT → NEON → scalar.
 Used internally by `BitVector::count_ones()` and available as `zipora::algorithms::popcount_slice`.
 
 ## Succinct Data Structures
