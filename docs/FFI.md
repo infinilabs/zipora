@@ -8,7 +8,7 @@ algorithms (radix sort, suffix array). All entry points live in `src/ffi/c_api.r
 
 ```toml
 [dependencies]
-zipora = { version = "4.0.2", features = ["ffi"] }
+zipora = { version = "4.0.3", features = ["ffi"] }
 ```
 
 The `ffi` feature pulls in `cbindgen` as a build dependency (`ffi = ["dep:cbindgen"]`).

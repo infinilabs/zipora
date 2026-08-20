@@ -21,7 +21,7 @@ BM25 scoring, fuzzing/Miri/TSan validation infrastructure).
 | Scoring | FieldnormEncoder (Lucene SmallFloat), Bm25BatchScorer (AVX2) | [SEARCH_ENGINE_GUIDE.md](SEARCH_ENGINE_GUIDE.md) |
 | FFI | Optional C API behind the `ffi` feature, panic-safe entry points | [FFI.md](FFI.md) |
 
-## Current state (v4.0.2)
+## Current state (v4.0.3)
 
 - 2,734 debug / 2,749 release tests, 100% pass; build and clippy clean
   (`-D warnings`).
