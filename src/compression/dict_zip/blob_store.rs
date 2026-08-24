@@ -635,7 +635,8 @@ pub struct DictZipBlobStore {
     cache: Arc<RwLock<LruMap<RecordId, Vec<u8>>>>,
     /// Statistics
     stats: Arc<RwLock<DictZipBlobStoreStats>>,
-    /// Memory pool
+    /// Memory pool (only read by serde-gated `load_dictionary`)
+    #[cfg_attr(not(feature = "serde"), allow(dead_code))]
     memory_pool: Option<Arc<SecureMemoryPool>>,
     /// Next record ID
     next_id: u64,
