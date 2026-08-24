@@ -19,7 +19,6 @@ pub mod var_int_variants;
 pub mod versioning;
 
 // SIMD-accelerated operations
-pub mod simd_encoding;
 pub mod simd_memory;
 pub mod simd_validation;
 
