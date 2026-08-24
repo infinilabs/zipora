@@ -801,6 +801,7 @@ impl<'a, K: Clone, V: Clone> ExactSizeIterator for SmallMapIter<'a, K, V> {}
 // =============================================================================
 
 /// Helper trait for SIMD-optimized key search
+#[cfg(all(target_arch = "x86_64", feature = "simd"))]
 trait OptimizedSearch {
     /// Find key index with optimized search
     fn find_optimized(

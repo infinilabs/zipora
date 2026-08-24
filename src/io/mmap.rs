@@ -21,8 +21,11 @@ use memmap2::{Mmap, MmapMut, MmapOptions};
 use crate::memory::hugepage::{HUGEPAGE_SIZE_1GB, HUGEPAGE_SIZE_2MB, HugePage};
 
 /// Thresholds for adaptive memory mapping strategy
+#[cfg(feature = "mmap")]
 const SMALL_FILE_THRESHOLD: u64 = 4 * 1024; // 4KB - use buffered I/O to avoid mmap overhead
+#[cfg(feature = "mmap")]
 const HUGEPAGE_2MB_THRESHOLD: u64 = 1024 * 1024; // 1MB - use 2MB hugepages
+#[cfg(feature = "mmap")]
 const HUGEPAGE_1GB_THRESHOLD: u64 = 100 * 1024 * 1024; // 100MB - use 1GB hugepages
 
 /// Access pattern hints for optimization

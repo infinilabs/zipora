@@ -200,7 +200,8 @@ struct PatternInfo {
     position: usize,
     /// Frequency count
     frequency: u32,
-    /// Length of pattern
+    /// Length of pattern (only read by the serde-derived Serialize impl and tests)
+    #[cfg_attr(not(feature = "serde"), allow(dead_code))]
     length: usize,
 }
 
