@@ -173,42 +173,20 @@ pub fn simd_block_filter(doc_ids: &[u32], scores: &[f32], theta: f32) -> (u64, u
         return (0, 0);
     }
 
-    BLOCK_FILTER_IMPL(scores, theta)
-}
-
-crate::ifunc_dispatch!(
-    static BLOCK_FILTER_IMPL: fn(&[f32], f32) -> (u64, usize) = resolve_block_filter;
-);
-
-/// Picks the best block-filter tier for this machine. Runs once; the chosen
-/// safe entry wrapper is cached in `BLOCK_FILTER_IMPL`.
-fn resolve_block_filter() -> fn(&[f32], f32) -> (u64, usize) {
     #[cfg(target_arch = "x86_64")]
     {
         #[cfg(feature = "avx512")]
         if has_avx512f() {
-            return block_filter_avx512_entry;
+            // SAFETY: AVX512F support verified by runtime check
+            return unsafe { block_filter_avx512(scores, theta) };
         }
         if has_avx2() {
-            return block_filter_avx2_entry;
+            // SAFETY: AVX2 support verified by runtime check
+            return unsafe { block_filter_avx2(scores, theta) };
         }
     }
 
-    block_filter_scalar
-}
-
-#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
-fn block_filter_avx512_entry(scores: &[f32], theta: f32) -> (u64, usize) {
-    // SAFETY: AVX512F support verified by resolve_block_filter before this
-    // pointer is ever published.
-    unsafe { block_filter_avx512(scores, theta) }
-}
-
-#[cfg(target_arch = "x86_64")]
-fn block_filter_avx2_entry(scores: &[f32], theta: f32) -> (u64, usize) {
-    // SAFETY: AVX2 support verified by resolve_block_filter before this
-    // pointer is ever published.
-    unsafe { block_filter_avx2(scores, theta) }
+    block_filter_scalar(scores, theta)
 }
 
 // ============================================================================
