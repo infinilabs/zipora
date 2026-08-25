@@ -1032,4 +1032,36 @@ mod tests {
             assert_eq!(count, expected_count, "count mismatch for theta={}", theta);
         }
     }
+
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn bench_block_filter() {
+        use std::time::Instant;
+
+        let doc_ids: Vec<u32> = (0..64).collect();
+        let scores: Vec<f32> = (0..64).map(|i| (i as f32 * 0.37) % 10.0).collect();
+        let iters = 1_000_000u32;
+
+        // Best-of-3: the suite runs tests on every core in parallel, so a
+        // single wall-clock window is dominated by contention noise.
+        let mut best = std::time::Duration::MAX;
+        let mut sink = 0u64;
+        for _ in 0..3 {
+            let start = Instant::now();
+            let mut acc = 0u64;
+            for i in 0..iters {
+                let theta = (i % 10) as f32;
+                let (mask, count) = simd_block_filter(&doc_ids, &scores, theta);
+                acc = acc.wrapping_add(mask).wrapping_add(count as u64);
+            }
+            let elapsed = start.elapsed();
+            if elapsed < best {
+                best = elapsed;
+            }
+            sink = acc;
+        }
+
+        let ns_per_call = best.as_nanos() as f64 / iters as f64;
+        println!("simd_block_filter(64 lanes): {:.1} ns/call [sink={}]", ns_per_call, sink);
+    }
 }
