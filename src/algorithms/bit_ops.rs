@@ -43,21 +43,13 @@ pub fn popcount_slice(words: &[u64]) -> usize {
         return popcount_scalar(words);
     }
 
-    POPCOUNT_IMPL(words)
-}
-
-crate::ifunc_dispatch!(static POPCOUNT_IMPL: fn(&[u64]) -> usize = resolve_popcount;);
-
-/// Picks the best popcount tier for this machine. Runs once; the chosen safe
-/// entry wrapper is cached in `POPCOUNT_IMPL`.
-#[allow(unreachable_code)]
-fn resolve_popcount() -> fn(&[u64]) -> usize {
     #[cfg(all(feature = "avx512", target_arch = "x86_64"))]
     {
         if std::arch::is_x86_feature_detected!("avx512vpopcntdq")
             && std::arch::is_x86_feature_detected!("avx512f")
         {
-            return popcount_avx512_entry;
+            // SAFETY: AVX-512 VPOPCNTDQ support verified by runtime feature check.
+            return unsafe { popcount_avx512(words) };
         }
     }
 
@@ -67,36 +59,18 @@ fn resolve_popcount() -> fn(&[u64]) -> usize {
         // has both, and no real CPU has AVX2 without POPCNT — so there is no
         // AVX2 tier here, only POPCNT with scalar fallback.
         if has_popcnt() {
-            return popcount_hw_entry;
+            // SAFETY: POPCNT support verified by runtime feature check.
+            return unsafe { popcount_hw(words) };
         }
     }
 
     #[cfg(target_arch = "aarch64")]
     {
-        return popcount_neon_entry;
+        // SAFETY: NEON is always available on aarch64.
+        return unsafe { popcount_neon(words) };
     }
 
-    popcount_scalar
-}
-
-#[cfg(all(feature = "avx512", target_arch = "x86_64"))]
-fn popcount_avx512_entry(words: &[u64]) -> usize {
-    // SAFETY: AVX-512F + VPOPCNTDQ support verified by resolve_popcount
-    // before this pointer is ever published.
-    unsafe { popcount_avx512(words) }
-}
-
-#[cfg(target_arch = "x86_64")]
-fn popcount_hw_entry(words: &[u64]) -> usize {
-    // SAFETY: POPCNT support verified by resolve_popcount before this
-    // pointer is ever published.
-    unsafe { popcount_hw(words) }
-}
-
-#[cfg(target_arch = "aarch64")]
-fn popcount_neon_entry(words: &[u64]) -> usize {
-    // SAFETY: NEON is always available on aarch64.
-    unsafe { popcount_neon(words) }
+    popcount_scalar(words)
 }
 
 // ============================================================================
@@ -550,15 +524,6 @@ mod tests {
         let scalar = popcount_scalar(&words);
         let dispatch = popcount_slice(&words);
         assert_eq!(dispatch, scalar, "dispatch vs scalar mismatch");
-
-        // The cached ifunc pointer must agree with the resolver's fresh pick
-        // and with scalar.
-        assert_eq!(POPCOUNT_IMPL(&words), scalar, "cached impl vs scalar mismatch");
-        assert_eq!(
-            *POPCOUNT_IMPL as usize,
-            resolve_popcount() as usize,
-            "cached pointer differs from a fresh resolution"
-        );
 
         // Also test the internal SIMD functions directly where available
         #[cfg(target_arch = "x86_64")]
