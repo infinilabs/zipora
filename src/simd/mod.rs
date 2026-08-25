@@ -24,6 +24,7 @@
 
 pub mod adaptive;
 pub mod benchmarks;
+pub mod dispatch_cache;
 pub mod macros;
 pub mod performance;
 
