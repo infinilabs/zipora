@@ -320,6 +320,9 @@ crate::ifunc_dispatch!(
 /// Picks the decode variant for this machine. Runs once; the chosen safe
 /// entry is cached in `DECODE_INTO_IMPL`.
 fn resolve_decode_into() -> fn(&EncodedStream, usize, &mut [u32]) -> usize {
+    if cfg!(miri) {
+        return StreamVByte::decode_into_scalar; // Miri cannot execute SSSE3 intrinsics
+    }
     #[cfg(target_arch = "x86_64")]
     {
         if std::arch::is_x86_feature_detected!("ssse3") {
@@ -661,6 +664,123 @@ mod tests {
                 "StreamVByte 100K values: encode={:?}, decode={:?}/call, ratio={:.2}",
                 _encode_time, decode_per_call, ratio
             );
+        }
+    }
+
+    // --- Const-LUT reference-model tests ---
+    //
+    // The shuffle/length tables are built by const fns; these tests check
+    // them against an independent first-principles model of the format
+    // (2-bit lane lengths, little-endian packing) rather than reusing the
+    // table-construction logic.
+
+    /// Independent re-derivation of a group's lane lengths from a ctrl byte.
+    fn ref_lane_lens(ctrl: u8) -> [usize; 4] {
+        let mut lens = [0usize; 4];
+        for (k, len) in lens.iter_mut().enumerate() {
+            *len = ((ctrl as usize >> (k * 2)) & 0x03) + 1;
+        }
+        lens
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn test_tables_match_reference_model_exhaustive() {
+        // Synthetic packed data: byte i has value i, so lane extraction is
+        // recognizable byte-for-byte.
+        let data: Vec<u8> = (0u8..16).collect();
+
+        for ctrl in 0u16..256 {
+            let ctrl = ctrl as u8;
+            let lens = ref_lane_lens(ctrl);
+
+            // LENGTH_TABLE == sum of lane lengths.
+            let expected_total: usize = lens.iter().sum();
+            assert_eq!(
+                LENGTH_TABLE[ctrl as usize] as usize, expected_total,
+                "LENGTH_TABLE mismatch for ctrl={ctrl:#04x}"
+            );
+
+            // Scalar emulation of the pshufb mask must reproduce exactly the
+            // lanes a scalar little-endian decode of the same bytes yields.
+            let mask = &SHUFFLE_TABLE[ctrl as usize];
+            let mut offset = 0usize;
+            for (k, &len) in lens.iter().enumerate() {
+                let mut lane_bytes = [0u8; 4];
+                for (j, out) in lane_bytes.iter_mut().enumerate() {
+                    let m = mask[k * 4 + j];
+                    // pshufb semantics: high bit set => lane byte is zero.
+                    *out = if m & 0x80 != 0 { 0 } else { data[m as usize] };
+                }
+                let via_table = u32::from_le_bytes(lane_bytes);
+                let via_scalar = StreamVByte::read_value(&data, offset, len);
+                assert_eq!(
+                    via_table, via_scalar,
+                    "lane {k} mismatch for ctrl={ctrl:#04x}"
+                );
+                offset += len;
+            }
+        }
+    }
+
+    #[test]
+    fn test_decode_simd_matches_scalar_all_ctrl_bytes() {
+        // 5 groups per ctrl value: enough for the SSSE3 bulk loop to run and
+        // for the scalar tail (last group is within 16 bytes of data end).
+        const GROUPS: usize = 5;
+
+        for ctrl in 0u16..256 {
+            let ctrl = ctrl as u8;
+            let lens = ref_lane_lens(ctrl);
+            let group_bytes: usize = lens.iter().sum();
+
+            for payload in 0u32..3 {
+                // Deterministic xorshift payload, distinct per (ctrl, payload).
+                let mut state = (u32::from(ctrl) << 8) ^ (payload + 0x9E37_79B9);
+                let mut data = Vec::with_capacity(GROUPS * group_bytes);
+                for _ in 0..GROUPS * group_bytes {
+                    state ^= state << 13;
+                    state ^= state >> 17;
+                    state ^= state << 5;
+                    data.push(state as u8);
+                }
+
+                let count = GROUPS * 4;
+                let stream = EncodedStream {
+                    controls: vec![ctrl; GROUPS],
+                    data,
+                    count,
+                };
+
+                let mut out_scalar = vec![0u32; count];
+                let n_scalar = StreamVByte::decode_into_scalar(&stream, count, &mut out_scalar);
+
+                let mut out_dispatch = vec![0u32; count];
+                let n_dispatch = StreamVByte::decode_into(&stream, count, &mut out_dispatch);
+
+                assert_eq!(n_scalar, n_dispatch, "count mismatch for ctrl={ctrl:#04x}");
+                assert_eq!(
+                    out_scalar, out_dispatch,
+                    "dispatch mismatch for ctrl={ctrl:#04x} payload={payload}"
+                );
+
+                // On x86_64 hardware with SSSE3, force the SIMD variant so
+                // this test provably exercises it (never under Miri: dispatch
+                // is scalar-only there and the intrinsics can't execute).
+                #[cfg(all(target_arch = "x86_64", not(miri)))]
+                {
+                    if std::arch::is_x86_feature_detected!("ssse3") {
+                        let mut out_simd = vec![0u32; count];
+                        let n_simd =
+                            StreamVByte::decode_into_ssse3(&stream, count, &mut out_simd);
+                        assert_eq!(n_scalar, n_simd, "SIMD count mismatch ctrl={ctrl:#04x}");
+                        assert_eq!(
+                            out_scalar, out_simd,
+                            "SIMD mismatch for ctrl={ctrl:#04x} payload={payload}"
+                        );
+                    }
+                }
+            }
         }
     }
 }

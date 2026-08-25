@@ -14,6 +14,9 @@
 /// Check if AVX2 is available, cached for performance.
 #[inline]
 pub fn has_avx2() -> bool {
+    if cfg!(miri) {
+        return false; // Miri cannot execute vendor intrinsics — force scalar tiers
+    }
     static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *CACHE.get_or_init(|| {
         #[cfg(target_arch = "x86_64")]
@@ -30,6 +33,9 @@ pub fn has_avx2() -> bool {
 /// Check if AVX-512F is available, cached for performance.
 #[inline]
 pub fn has_avx512f() -> bool {
+    if cfg!(miri) {
+        return false;
+    }
     static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *CACHE.get_or_init(|| {
         #[cfg(target_arch = "x86_64")]
@@ -46,6 +52,9 @@ pub fn has_avx512f() -> bool {
 /// Check if SSE2 is available, cached for performance.
 #[inline]
 pub fn has_sse2() -> bool {
+    if cfg!(miri) {
+        return false;
+    }
     static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *CACHE.get_or_init(|| {
         #[cfg(target_arch = "x86_64")]

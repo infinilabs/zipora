@@ -43,6 +43,10 @@ pub fn popcount_slice(words: &[u64]) -> usize {
         return popcount_scalar(words);
     }
 
+    if cfg!(miri) {
+        return popcount_scalar(words); // Miri cannot execute vendor intrinsics
+    }
+
     #[cfg(all(feature = "avx512", target_arch = "x86_64"))]
     {
         if std::arch::is_x86_feature_detected!("avx512vpopcntdq")
@@ -199,6 +203,9 @@ unsafe fn popcount_neon(words: &[u64]) -> usize {
 /// Check if POPCNT is available, cached for performance.
 #[inline]
 pub fn has_popcnt() -> bool {
+    if cfg!(miri) {
+        return false; // Miri cannot execute POPCNT intrinsics — force scalar tiers
+    }
     static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *CACHE.get_or_init(|| {
         #[cfg(target_arch = "x86_64")]

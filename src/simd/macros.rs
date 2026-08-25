@@ -3,6 +3,10 @@
 //! Provides compile-time and runtime SIMD feature detection macros
 //! to reduce code duplication across the codebase.
 //!
+//! All x86_64 detection blocks carry `not(miri)`: Miri cannot execute vendor
+//! intrinsics, so under Miri every macro unconditionally takes its scalar
+//! fallback, keeping SIMD-adjacent code Miri-testable (`make miri_simd`).
+//!
 //! ## Available Macros
 //!
 //! - [`simd_dispatch!`] - Multi-tier SIMD dispatch with automatic fallback
@@ -69,7 +73,7 @@
 macro_rules! simd_dispatch {
     // AVX-512 + more tiers
     (avx512 => $avx512:expr, avx2 => $avx2:expr, sse2 => $sse2:expr, _ => $fallback:expr) => {{
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
             #[cfg(feature = "avx512")]
             {
@@ -95,7 +99,7 @@ macro_rules! simd_dispatch {
 
     // AVX2 + SSE2 + fallback (common pattern)
     (avx2 => $avx2:expr, sse2 => $sse2:expr, _ => $fallback:expr) => {{
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
             if ::std::is_x86_feature_detected!("avx2") {
                 return $avx2;
@@ -113,7 +117,7 @@ macro_rules! simd_dispatch {
 
     // AVX2 + BMI2 combined check
     (avx2_bmi2 => $avx2_bmi2:expr, avx2 => $avx2:expr, _ => $fallback:expr) => {{
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
             if ::std::is_x86_feature_detected!("avx2") && ::std::is_x86_feature_detected!("bmi2") {
                 return $avx2_bmi2;
@@ -127,7 +131,7 @@ macro_rules! simd_dispatch {
 
     // AVX2 only + fallback
     (avx2 => $avx2:expr, _ => $fallback:expr) => {{
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
             if ::std::is_x86_feature_detected!("avx2") {
                 return $avx2;
@@ -138,7 +142,7 @@ macro_rules! simd_dispatch {
 
     // SSE4.2 only + fallback
     (sse42 => $sse42:expr, _ => $fallback:expr) => {{
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
             if ::std::is_x86_feature_detected!("sse4.2") {
                 return $sse42;
@@ -149,7 +153,7 @@ macro_rules! simd_dispatch {
 
     // BMI2 only + fallback
     (bmi2 => $bmi2:expr, _ => $fallback:expr) => {{
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
             if ::std::is_x86_feature_detected!("bmi2") {
                 return $bmi2;
@@ -160,7 +164,7 @@ macro_rules! simd_dispatch {
 
     // POPCNT only + fallback
     (popcnt => $popcnt:expr, _ => $fallback:expr) => {{
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
             if ::std::is_x86_feature_detected!("popcnt") {
                 return $popcnt;
@@ -179,7 +183,7 @@ macro_rules! simd_dispatch {
         bmi2 => $bmi2:expr,
         _ => $fallback:expr
     ) => {{
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
             #[cfg(feature = "avx512")]
             {
@@ -229,7 +233,7 @@ macro_rules! simd_dispatch {
 macro_rules! simd_feature_check {
     // Single feature check
     ($feature:tt, $simd_expr:expr, $fallback:expr) => {{
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
             if ::std::is_x86_feature_detected!($feature) {
                 return $simd_expr;
@@ -240,7 +244,7 @@ macro_rules! simd_feature_check {
 
     // Dual feature check (e.g., avx2 + bmi2)
     ($feat1:tt, $feat2:tt, $simd_expr:expr, $fallback:expr) => {{
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
             if ::std::is_x86_feature_detected!($feat1) && ::std::is_x86_feature_detected!($feat2) {
                 return $simd_expr;
@@ -267,7 +271,7 @@ macro_rules! simd_feature_check {
 macro_rules! simd_select {
     // AVX2 + fallback (expression, no return)
     (avx2 => $avx2:expr, _ => $fallback:expr) => {{
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
             if ::std::is_x86_feature_detected!("avx2") {
                 $avx2
@@ -275,7 +279,7 @@ macro_rules! simd_select {
                 $fallback
             }
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(any(not(target_arch = "x86_64"), miri))]
         {
             $fallback
         }
@@ -283,7 +287,7 @@ macro_rules! simd_select {
 
     // AVX2 + SSE2 + fallback (expression, no return)
     (avx2 => $avx2:expr, sse2 => $sse2:expr, _ => $fallback:expr) => {{
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
             if ::std::is_x86_feature_detected!("avx2") {
                 $avx2
@@ -293,7 +297,7 @@ macro_rules! simd_select {
                 $fallback
             }
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(any(not(target_arch = "x86_64"), miri))]
         {
             $fallback
         }
@@ -301,7 +305,7 @@ macro_rules! simd_select {
 
     // Single feature check (expression, no return)
     ($feature:ident => $simd:expr, _ => $fallback:expr) => {{
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
             if ::std::is_x86_feature_detected!(stringify!($feature)) {
                 $simd
@@ -309,7 +313,7 @@ macro_rules! simd_select {
                 $fallback
             }
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(any(not(target_arch = "x86_64"), miri))]
         {
             $fallback
         }
@@ -331,11 +335,11 @@ macro_rules! simd_select {
 #[macro_export]
 macro_rules! simd_available {
     ($feature:tt) => {{
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
             ::std::is_x86_feature_detected!($feature)
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(any(not(target_arch = "x86_64"), miri))]
         {
             false
         }
@@ -343,11 +347,11 @@ macro_rules! simd_available {
 
     // Dual feature check
     ($feat1:tt, $feat2:tt) => {{
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         {
             ::std::is_x86_feature_detected!($feat1) && ::std::is_x86_feature_detected!($feat2)
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(any(not(target_arch = "x86_64"), miri))]
         {
             false
         }
