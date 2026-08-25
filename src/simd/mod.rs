@@ -25,6 +25,7 @@
 pub mod adaptive;
 pub mod benchmarks;
 pub mod dispatch_cache;
+pub(crate) mod isa;
 pub mod macros;
 pub mod performance;
 
