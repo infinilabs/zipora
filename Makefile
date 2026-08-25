@@ -144,6 +144,14 @@ miri_core:
 	$(CARGO_MIRI) test --lib containers::specialized::circular_queue
 	$(CARGO_MIRI) test --lib containers::fast_vec
 
+# SIMD-adjacent modules under Miri: all dispatch (macros, cached has_* bools,
+# ifunc resolvers) routes to scalar under cfg(miri), so the surrounding index
+# arithmetic, table lookups, and buffer handling get real Miri coverage.
+miri_simd:
+	$(CARGO_MIRI) test --lib algorithms::bit_ops
+	$(CARGO_MIRI) test --lib compression::stream_vbyte
+	$(CARGO_MIRI) test --lib algorithms::simd_search
+
 # =============================================================================
 # FUZZING (plan.md 6.1) — requires: cargo install cargo-fuzz; nightly toolchain
 # =============================================================================
