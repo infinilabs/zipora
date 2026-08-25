@@ -177,23 +177,20 @@ impl StreamVByte {
     /// Decode directly into a pre-allocated buffer.
     /// Returns the number of values decoded.
     pub fn decode_into(stream: &EncodedStream, count: usize, output: &mut [u32]) -> usize {
-        let mut data_pos = 0usize;
-        let mut out_idx = 0usize;
-        let mut ctrl_idx = 0usize;
+        DECODE_INTO_IMPL(stream, count, output)
+    }
 
-        // SSSE3 bulk path: one pshufb expands a whole 4-value group.
-        #[cfg(target_arch = "x86_64")]
-        if std::arch::is_x86_feature_detected!("ssse3") {
-            let simd_limit = count.min(output.len());
-            // SAFETY: SSSE3 verified by the runtime check above; all loads
-            // and stores are bounds-guarded inside.
-            (data_pos, out_idx, ctrl_idx) = unsafe {
-                Self::decode_groups_ssse3(&stream.controls, &stream.data, simd_limit, output)
-            };
-        }
-
-        // Scalar path: tail groups within 16 bytes of the data end, partial
-        // final group, and the full decode on non-SSSE3 targets.
+    /// Scalar decode continuing from a mid-stream position: tail groups
+    /// within 16 bytes of the data end, partial final group, and the full
+    /// decode on non-SSSE3 targets (start position 0/0/0).
+    fn decode_scalar_from(
+        stream: &EncodedStream,
+        count: usize,
+        output: &mut [u32],
+        mut data_pos: usize,
+        mut out_idx: usize,
+        mut ctrl_idx: usize,
+    ) -> usize {
         while ctrl_idx < stream.controls.len() && out_idx < count {
             let ctrl = stream.controls[ctrl_idx];
             let group_size = (count - out_idx).min(4);
@@ -208,6 +205,23 @@ impl StreamVByte {
         }
 
         out_idx
+    }
+
+    fn decode_into_scalar(stream: &EncodedStream, count: usize, output: &mut [u32]) -> usize {
+        Self::decode_scalar_from(stream, count, output, 0, 0, 0)
+    }
+
+    /// SSSE3 bulk path: one pshufb expands a whole 4-value group, then the
+    /// shared scalar loop finishes the tail.
+    #[cfg(target_arch = "x86_64")]
+    fn decode_into_ssse3(stream: &EncodedStream, count: usize, output: &mut [u32]) -> usize {
+        let simd_limit = count.min(output.len());
+        // SAFETY: SSSE3 verified by resolve_decode_into before this pointer
+        // is ever published; all loads and stores are bounds-guarded inside.
+        let (data_pos, out_idx, ctrl_idx) = unsafe {
+            Self::decode_groups_ssse3(&stream.controls, &stream.data, simd_limit, output)
+        };
+        Self::decode_scalar_from(stream, count, output, data_pos, out_idx, ctrl_idx)
     }
 
     /// Decode full groups with SSSE3 shuffle-table expansion (Lemire et al.).
@@ -297,6 +311,22 @@ impl StreamVByte {
         bytes[..len].copy_from_slice(&data[pos..pos + len]);
         u32::from_le_bytes(bytes)
     }
+}
+
+crate::ifunc_dispatch!(
+    static DECODE_INTO_IMPL: fn(&EncodedStream, usize, &mut [u32]) -> usize = resolve_decode_into;
+);
+
+/// Picks the decode variant for this machine. Runs once; the chosen safe
+/// entry is cached in `DECODE_INTO_IMPL`.
+fn resolve_decode_into() -> fn(&EncodedStream, usize, &mut [u32]) -> usize {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::arch::is_x86_feature_detected!("ssse3") {
+            return StreamVByte::decode_into_ssse3;
+        }
+    }
+    StreamVByte::decode_into_scalar
 }
 
 /// Group Varint encoder/decoder — encodes 4 integers with shared length byte.
