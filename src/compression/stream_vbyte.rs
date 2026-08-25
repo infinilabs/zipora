@@ -641,6 +641,7 @@ mod tests {
     // --- Performance tests ---
 
     #[test]
+    #[cfg_attr(miri, ignore)] // 100 × 100K-value decodes — hours under Miri
     fn test_stream_vbyte_performance() {
         let values: Vec<u32> = (0..100000).map(|i| i * 10).collect();
 
