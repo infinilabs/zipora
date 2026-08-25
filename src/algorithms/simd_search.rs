@@ -184,18 +184,45 @@ pub fn simd_block_filter(doc_ids: &[u32], scores: &[f32], theta: f32) -> (u64, u
 
     #[cfg(target_arch = "x86_64")]
     {
+        use crate::simd::isa::{Avx2 as Avx2Tok, detect};
+
         #[cfg(feature = "avx512")]
-        if has_avx512f() {
-            // SAFETY: AVX512F support verified by runtime check
-            return unsafe { block_filter_avx512(scores, theta) };
+        if let Some(proof) = detect::<crate::simd::isa::Avx512F>() {
+            return block_filter_avx512_entry(proof, scores, theta);
         }
-        if has_avx2() {
-            // SAFETY: AVX2 support verified by runtime check
-            return unsafe { block_filter_avx2(scores, theta) };
+        if let Some(proof) = detect::<Avx2Tok>() {
+            return block_filter_avx2_entry(proof, scores, theta);
         }
     }
 
     block_filter_scalar(scores, theta)
+}
+
+// Token-taking safe entries: the ISA token proves detection ran (see
+// simd::isa), so the SAFETY argument lives here once per kernel instead of
+// at every call site.
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[inline]
+fn block_filter_avx512_entry(
+    _proof: crate::simd::isa::Avx512F,
+    scores: &[f32],
+    theta: f32,
+) -> (u64, usize) {
+    // SAFETY: the Avx512F token proves AVX512F was detected (kernel uses
+    // only avx512f instructions).
+    unsafe { block_filter_avx512(scores, theta) }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn block_filter_avx2_entry(
+    _proof: crate::simd::isa::Avx2,
+    scores: &[f32],
+    theta: f32,
+) -> (u64, usize) {
+    // SAFETY: the Avx2 token proves AVX2 was detected.
+    unsafe { block_filter_avx2(scores, theta) }
 }
 
 // ============================================================================
