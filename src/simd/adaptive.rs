@@ -222,8 +222,8 @@ impl AdaptiveSimdSelector {
         GLOBAL_SELECTOR.get_or_init(|| {
             let mut selector = AdaptiveSimdSelector::new();
 
-            // Run initial benchmarks if enabled
-            if selector.config.enable_startup_benchmarks {
+            // Run initial benchmarks if enabled (skip under Miri where timing is simulated and slow)
+            if !cfg!(miri) && selector.config.enable_startup_benchmarks {
                 selector.run_initial_benchmarks();
             }
 
