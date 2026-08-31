@@ -197,6 +197,9 @@ impl StreamVByte {
 
             for k in 0..group_size {
                 let len = ((ctrl >> (k * 2)) & 0x03) as usize + 1;
+                if data_pos + len > stream.data.len() {
+                    return out_idx;
+                }
                 output[out_idx] = Self::read_value(&stream.data, data_pos, len);
                 data_pos += len;
                 out_idx += 1;
@@ -783,5 +786,30 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_stream_vbyte_truncated_stream_safety() {
+        // Construct a stream where control bytes say there are 4 values of 4 bytes each (16 bytes data),
+        // but stream.data only has 5 bytes (truncated).
+        let stream = EncodedStream {
+            controls: vec![0xFF], // four 4-byte integers
+            data: vec![1, 2, 3, 4, 5], // only 5 bytes instead of 16
+            count: 4,
+        };
+
+        // decode_raw should safely return without panicking, decoding only the first 1-2 integers that fit
+        let decoded = StreamVByte::decode_raw(&stream, stream.count);
+        assert_eq!(decoded.len(), 1); // Only 1st 4-byte integer fits in 5 bytes
+        assert_eq!(decoded[0], u32::from_le_bytes([1, 2, 3, 4]));
+
+        // Completely empty data with non-empty controls
+        let empty_data_stream = EncodedStream {
+            controls: vec![0x00],
+            data: vec![],
+            count: 4,
+        };
+        let decoded_empty = StreamVByte::decode_raw(&empty_data_stream, empty_data_stream.count);
+        assert_eq!(decoded_empty.len(), 0);
     }
 }
