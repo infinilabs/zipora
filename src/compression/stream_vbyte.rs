@@ -152,6 +152,11 @@ impl StreamVByte {
     }
 
     /// Decode delta-encoded stream back to sorted u32 values.
+    ///
+    /// Returns the decoded values. If the input stream is truncated or malformed,
+    /// only the successfully decoded prefix is returned (partial decode), and the
+    /// returned `Vec` will contain fewer than `count` values without panicking.
+    /// Callers requiring complete stream integrity should verify `result.len() == count`.
     pub fn decode_deltas(stream: &EncodedStream, count: usize) -> Vec<u32> {
         let deltas = Self::decode_raw(stream, count);
 
@@ -167,15 +172,24 @@ impl StreamVByte {
     }
 
     /// Decode raw values from stream.
+    ///
+    /// Returns the decoded values. If the input stream is truncated, corrupted, or
+    /// specifies fewer elements than `count`, decoding terminates safely at the corruption
+    /// boundary and returns only the successfully decoded prefix (`result.len() < count`).
+    /// Allocations are bounded by `count.min(stream.controls.len() * 4)` to prevent
+    /// memory exhaustion on hostile or untrusted stream headers with arbitrarily large `count`.
     pub fn decode_raw(stream: &EncodedStream, count: usize) -> Vec<u32> {
-        let mut values = vec![0u32; count];
-        let decoded = Self::decode_into(stream, count, &mut values);
+        let max_possible = stream.controls.len().saturating_mul(4);
+        let alloc_count = count.min(max_possible);
+        let mut values = vec![0u32; alloc_count];
+        let decoded = Self::decode_into(stream, alloc_count, &mut values);
         values.truncate(decoded);
         values
     }
 
     /// Decode directly into a pre-allocated buffer.
-    /// Returns the number of values decoded.
+    /// Returns the number of values successfully decoded. If the stream is truncated
+    /// or malformed, fewer than `count` values may be returned without panicking.
     pub fn decode_into(stream: &EncodedStream, count: usize, output: &mut [u32]) -> usize {
         DECODE_INTO_IMPL(stream, count, output)
     }
@@ -798,7 +812,7 @@ mod tests {
             count: 4,
         };
 
-        // decode_raw should safely return without panicking, decoding only the first 1-2 integers that fit
+        // decode_raw should safely return without panicking, decoding only the 1st 4-byte integer that fits
         let decoded = StreamVByte::decode_raw(&stream, stream.count);
         assert_eq!(decoded.len(), 1); // Only 1st 4-byte integer fits in 5 bytes
         assert_eq!(decoded[0], u32::from_le_bytes([1, 2, 3, 4]));
@@ -811,5 +825,63 @@ mod tests {
         };
         let decoded_empty = StreamVByte::decode_raw(&empty_data_stream, empty_data_stream.count);
         assert_eq!(decoded_empty.len(), 0);
+    }
+
+    #[test]
+    fn test_stream_vbyte_unbounded_count_dos_protection() {
+        // Untrusted stream with arbitrarily large count (e.g. 1 << 40 or usize::MAX)
+        // should NOT attempt a huge allocation and must bound allocation to controls.len() * 4.
+        let stream = EncodedStream {
+            controls: vec![0x00], // 1 control byte -> max 4 values
+            data: vec![10, 20, 30, 40],
+            count: usize::MAX,
+        };
+
+        let decoded = StreamVByte::decode_raw(&stream, stream.count);
+        assert_eq!(decoded, vec![10, 20, 30, 40]);
+    }
+
+    #[test]
+    fn test_stream_vbyte_simd_to_scalar_handoff_truncated_stream_safety() {
+        // 10 groups of 1-byte values = 40 values, requiring 40 data bytes.
+        // SSSE3 bulk loop runs while data_pos + 16 <= data.len().
+        // If data has only 26 bytes:
+        // - Group 0 (pos 0..4, +16=20 <= 26): decoded by SSSE3 (4 values)
+        // - Group 1 (pos 4..8, +16=24 <= 26): decoded by SSSE3 (4 values)
+        // - Group 2 (pos 8..12, +16=28 > 26): SSSE3 loop stops and hands off to scalar loop
+        // - Scalar loop decodes Group 2 (pos 8..12), Group 3 (pos 12..16), Group 4 (pos 16..20),
+        //   Group 5 (pos 20..24), and 2 values of Group 6 (pos 24..25, 25..26), then stops cleanly.
+        let mut full_data = Vec::with_capacity(40);
+        for i in 0..40u8 {
+            full_data.push(i + 1);
+        }
+
+        let truncated_data = full_data[..26].to_vec();
+        let stream = EncodedStream {
+            controls: vec![0x00; 10], // 10 groups of 1-byte integers
+            data: truncated_data,
+            count: 40,
+        };
+
+        let mut out_scalar = vec![0u32; 40];
+        let n_scalar = StreamVByte::decode_into_scalar(&stream, 40, &mut out_scalar);
+        assert_eq!(n_scalar, 26);
+        for (i, &val) in out_scalar[..26].iter().enumerate() {
+            assert_eq!(val, (i + 1) as u32);
+        }
+
+        let decoded = StreamVByte::decode_raw(&stream, 40);
+        assert_eq!(decoded.len(), 26);
+        assert_eq!(decoded, out_scalar[..26]);
+
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
+        {
+            if std::arch::is_x86_feature_detected!("ssse3") {
+                let mut out_simd = vec![0u32; 40];
+                let n_simd = StreamVByte::decode_into_ssse3(&stream, 40, &mut out_simd);
+                assert_eq!(n_simd, 26, "SIMD handoff count mismatch");
+                assert_eq!(out_simd[..26], out_scalar[..26], "SIMD handoff output mismatch");
+            }
+        }
     }
 }
