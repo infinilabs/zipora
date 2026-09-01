@@ -378,6 +378,11 @@ impl AdaptiveSimdSelector {
 
     /// Run initial benchmarks for common operations
     fn run_initial_benchmarks(&mut self) {
+        // Skip under Miri where timing is simulated and micro-benchmarks cause multi-hour hangs
+        if cfg!(miri) {
+            return;
+        }
+
         use crate::simd::benchmarks::MicroBenchmark;
         use std::hint::black_box;
 
@@ -712,6 +717,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_micro_benchmarking_framework() {
         // Create selector with benchmarking enabled
         let config = AdaptiveSelectorConfig {
@@ -794,6 +800,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_benchmark_results_persistence() {
         let mut selector = AdaptiveSimdSelector::new();
         selector.run_initial_benchmarks();
