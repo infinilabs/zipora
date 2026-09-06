@@ -848,9 +848,10 @@ mod tests {
         // If data has only 26 bytes:
         // - Group 0 (pos 0..4, +16=20 <= 26): decoded by SSSE3 (4 values)
         // - Group 1 (pos 4..8, +16=24 <= 26): decoded by SSSE3 (4 values)
-        // - Group 2 (pos 8..12, +16=28 > 26): SSSE3 loop stops and hands off to scalar loop
-        // - Scalar loop decodes Group 2 (pos 8..12), Group 3 (pos 12..16), Group 4 (pos 16..20),
-        //   Group 5 (pos 20..24), and 2 values of Group 6 (pos 24..25, 25..26), then stops cleanly.
+        // - Group 2 (pos 8..12, +16=24 <= 26): decoded by SSSE3 (4 values)
+        // - Group 3 (pos 12..16, +16=28 > 26): SSSE3 loop stops and hands off to scalar loop
+        // - Scalar loop decodes Group 3 (pos 12..16), Group 4 (pos 16..20), Group 5 (pos 20..24),
+        //   and 2 values of Group 6 (pos 24..25, 25..26), then stops cleanly.
         let mut full_data = Vec::with_capacity(40);
         for i in 0..40u8 {
             full_data.push(i + 1);
