@@ -158,16 +158,14 @@ impl StreamVByte {
     /// returned `Vec` will contain fewer than `count` values without panicking.
     /// Callers requiring complete stream integrity should verify `result.len() == count`.
     pub fn decode_deltas(stream: &EncodedStream, count: usize) -> Vec<u32> {
-        let deltas = Self::decode_raw(stream, count);
-
-        // Prefix sum to recover original values
-        let mut values = Vec::with_capacity(deltas.len());
+        // Prefix sum in place on the buffer decode_raw already allocated;
+        // a second Vec would be an extra allocation plus an O(n) copy.
+        let mut values = Self::decode_raw(stream, count);
         let mut acc = 0u32;
-        for d in deltas {
-            acc += d;
-            values.push(acc);
+        for v in &mut values {
+            acc += *v;
+            *v = acc;
         }
-
         values
     }
 
@@ -415,12 +413,11 @@ impl GroupVarint {
 
     /// Decode group varint with delta reconstruction.
     pub fn decode_deltas(data: &[u8], count: usize) -> Vec<u32> {
-        let raw = Self::decode_raw(data, count);
-        let mut values = Vec::with_capacity(raw.len());
+        let mut values = Self::decode_raw(data, count);
         let mut acc = 0u32;
-        for d in raw {
-            acc += d;
-            values.push(acc);
+        for v in &mut values {
+            acc += *v;
+            *v = acc;
         }
         values
     }
