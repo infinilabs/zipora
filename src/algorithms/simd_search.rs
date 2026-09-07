@@ -823,6 +823,38 @@ mod tests {
 
     #[test]
     #[cfg(not(debug_assertions))]
+    fn test_gallop_large_skip_is_logarithmic() {
+        use std::time::Instant;
+
+        // Guards the binary-search bridge. Targets sit just below a gallop
+        // probe point (cursor + 2^20 - 1), the worst case for a linear scan
+        // of the bracket: ~100 us/query without the bridge vs ~0.1 us with it.
+        // The bound leaves ~10x against the linear regression and ~100x of
+        // headroom for a loaded machine.
+        let n = 1usize << 21;
+        let arr: Vec<u32> = (0..n as u32).map(|i| i * 3).collect();
+        let skip = (1usize << 20) - 2;
+        let queries = 2_000usize;
+
+        let mut elapsed = std::time::Duration::MAX;
+        for _ in 0..3 {
+            let start = Instant::now();
+            for q in 0..queries {
+                let from = (q * 7919) % (n - skip - 8);
+                let mut cursor = from;
+                assert!(simd_gallop_to(&arr, &mut cursor, arr[from + skip] + 1));
+                assert_eq!(cursor, from + skip + 1);
+            }
+            elapsed = elapsed.min(start.elapsed());
+        }
+        assert!(
+            elapsed.as_millis() < 20,
+            "large-skip gallop degraded to linear scan: {queries} queries took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    #[cfg(not(debug_assertions))]
     fn test_gallop_performance() {
         use std::time::Instant;
 
