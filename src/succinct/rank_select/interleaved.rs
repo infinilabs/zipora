@@ -28,7 +28,9 @@
 //!
 //! - **Rank Time**: O(1) with single cache line access
 //! - **Select Time**: O(log n) with binary search + cache-friendly lookup
-//! - **Memory Overhead**: ~25% with 5-10% improvement vs separated storage
+//! - **Memory Overhead**: ~100% — each `InterleavedLine` is 64 bytes for 256
+//!   bits of data (8 bytes rank metadata + 24 bytes alignment padding from
+//!   `align(32)`). Use `Rank9` when a ~25% index is required.
 //! - **Cache Performance**: 20-30% faster rank operations due to locality
 //!
 //! # Examples
@@ -963,14 +965,17 @@ impl RankSelectOps for RankSelectInterleaved256 {
         }
 
         let bit_data_bytes = self.total_bits.div_ceil(8);
-        let cache_bytes = self.lines.len() * std::mem::size_of::<InterleavedLine>();
+        // The lines hold the bit data itself; only the bytes beyond it
+        // (rank metadata + alignment padding) are overhead.
+        let line_bytes = self.lines.len() * std::mem::size_of::<InterleavedLine>();
+        let line_overhead = line_bytes.saturating_sub(bit_data_bytes);
         let select_cache_bytes = self
             .select_cache
             .as_ref()
             .map(|cache| cache.len() * 4)
             .unwrap_or(0);
 
-        let total_overhead = cache_bytes + select_cache_bytes;
+        let total_overhead = line_overhead + select_cache_bytes;
 
         (total_overhead as f64 / bit_data_bytes as f64) * 100.0
     }
@@ -1113,6 +1118,25 @@ impl fmt::Debug for RankSelectInterleaved256 {
 mod tests {
     use super::*;
     use crate::succinct::BitVector;
+
+    #[test]
+    fn test_space_overhead_reports_metadata_and_padding_only() -> Result<()> {
+        // Each InterleavedLine is 64 bytes for 32 bytes of bit data (8 bytes
+        // rank metadata + 24 bytes alignment padding), i.e. 100% overhead.
+        // The metric must not count the bit data itself as overhead.
+        let mut bv = BitVector::new();
+        for i in 0..(256 * 1024) {
+            bv.push(i % 3 == 0)?;
+        }
+        let rs = RankSelectInterleaved256::with_options(bv, false, 512)?;
+        assert_eq!(std::mem::size_of::<InterleavedLine>(), 64);
+        let overhead = rs.space_overhead_percent();
+        assert!(
+            (overhead - 100.0).abs() < 0.5,
+            "expected ~100% overhead without select cache, got {overhead}"
+        );
+        Ok(())
+    }
 
     #[test]
     fn debug_rank_select_semantics() -> Result<()> {
