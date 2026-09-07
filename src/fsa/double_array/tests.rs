@@ -314,6 +314,28 @@ mod tests {
     }
 
     #[test]
+    fn test_insert_returning_state_matches_lookup_state() {
+        // DoubleArrayTrieMap indexes its value array by the state id that
+        // insert_returning_state hands back, so it must be exactly the
+        // terminal state a fresh lookup finds, immediately after the insert
+        // (later inserts may relocate it, which the callback tracks).
+        let mut trie = DoubleArrayTrie::new();
+        for i in 0..4000u32 {
+            let key = format!("{:04}{}", (i * 7919) % 10007, "k".repeat((i % 5) as usize));
+            let (state, was_new) = trie.insert_returning_state(key.as_bytes(), |_, _| {}).unwrap();
+            assert!(was_new, "{key}");
+            assert_eq!(trie.lookup_state(key.as_bytes()), Some(state), "{key}");
+        }
+        // Re-insert: same state, not new. Empty key maps to the root.
+        let (state, was_new) = trie.insert_returning_state(b"0000", |_, _| {}).unwrap();
+        assert!(!was_new);
+        assert_eq!(trie.lookup_state(b"0000"), Some(state));
+        let (root, _) = trie.insert_returning_state(b"", |_, _| {}).unwrap();
+        assert_eq!(root, 0);
+        assert_eq!(trie.lookup_state(b""), Some(0));
+    }
+
+    #[test]
     fn test_relocation_stress() {
         let mut t = DoubleArrayTrie::new();
         // Insert keys that force many relocations

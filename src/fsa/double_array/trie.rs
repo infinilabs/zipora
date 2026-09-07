@@ -127,15 +127,27 @@ impl DoubleArrayTrie {
     pub fn insert_with_relocate_cb(
         &mut self,
         key: &[u8],
-        mut on_relocate: impl FnMut(u32, u32),
+        on_relocate: impl FnMut(u32, u32),
     ) -> Result<bool> {
+        self.insert_returning_state(key, on_relocate)
+            .map(|(_, was_new)| was_new)
+    }
+
+    /// Like [`insert_with_relocate_cb`](Self::insert_with_relocate_cb) but
+    /// also returns the terminal state id of `key`, so callers that index a
+    /// side array by state (DoubleArrayTrieMap) need not walk the key again.
+    pub(crate) fn insert_returning_state(
+        &mut self,
+        key: &[u8],
+        mut on_relocate: impl FnMut(u32, u32),
+    ) -> Result<(u32, bool)> {
         if key.is_empty() {
             let was_new = !self.ninfos[0].is_term();
             self.ninfos[0].set_term();
             if was_new {
                 self.num_keys += 1;
             }
-            return Ok(was_new);
+            return Ok((0, was_new));
         }
 
         let mut curr = 0u32;
@@ -231,7 +243,7 @@ impl DoubleArrayTrie {
         if was_new {
             self.num_keys += 1;
         }
-        Ok(was_new)
+        Ok((curr, was_new))
     }
 
     /// Notify callback about all moved children of a parent after relocation.
