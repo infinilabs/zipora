@@ -83,7 +83,11 @@ impl FastDivision {
         if self.divisor <= 1 {
             return dividend;
         }
-        ((dividend as u64 * self.multiplier) >> (32 + self.shift)) as u32
+        // u128: multiplier is in (2^32, 2^33] for every divisor >= 2, so the
+        // u64 product overflows once dividend >= ~2^31 (wrong quotient in
+        // release, panic in debug). Both operands fit in u64, so this is a
+        // single 64x64->128 multiply on x86-64.
+        ((dividend as u128 * self.multiplier as u128) >> (32 + self.shift)) as u32
     }
 
     /// Fast modulo operation
@@ -1470,6 +1474,28 @@ mod tests {
 
             assert_eq!(fast_div.divide(i), expected_div);
             assert_eq!(fast_div.modulo(i), expected_mod);
+        }
+    }
+
+    #[test]
+    fn test_fast_division_large_dividends_do_not_overflow() {
+        // The reciprocal multiplier exceeds 2^32 for every divisor >= 2, so
+        // `dividend * multiplier` overflows u64 once dividend >= ~2^31.
+        // A u32 division helper must be exact over the whole u32 range.
+        for divisor in [2u32, 3, 7, 1000, 65537, 1 << 31, u32::MAX] {
+            let fast_div = FastDivision::new(divisor);
+            for dividend in [1u32 << 31, 3_000_000_000, u32::MAX - 1, u32::MAX] {
+                assert_eq!(
+                    fast_div.divide(dividend),
+                    dividend / divisor,
+                    "divide({dividend}) with divisor {divisor}"
+                );
+                assert_eq!(
+                    fast_div.modulo(dividend),
+                    dividend % divisor,
+                    "modulo({dividend}) with divisor {divisor}"
+                );
+            }
         }
     }
 
