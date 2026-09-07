@@ -92,7 +92,7 @@ impl<'a> Bm25BatchScorer<'a> {
 
         #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
         {
-            if std::is_x86_feature_detected!("avx512f") {
+            if crate::algorithms::simd_search::has_avx512f() {
                 // SAFETY: AVX-512F support verified by runtime feature check.
                 // All slice lengths validated by assertions. norm_table is [f32; 256],
                 // and fieldnorm_bytes values are u8 (0-255), so gather indices are in bounds.
@@ -105,7 +105,7 @@ impl<'a> Bm25BatchScorer<'a> {
 
         #[cfg(target_arch = "x86_64")]
         {
-            if std::is_x86_feature_detected!("avx2") {
+            if crate::algorithms::simd_search::has_avx2() {
                 // SAFETY: AVX2 support verified by runtime feature check.
                 // All slice lengths validated by assertions. norm_table is [f32; 256],
                 // and fieldnorm_bytes values are u8 (0-255), so gather indices are in bounds.
@@ -197,9 +197,8 @@ impl<'a> Bm25BatchScorer<'a> {
 
     /// AVX2 batch scoring — 8 postings per iteration.
     ///
-    /// Loads 8 norm factors via scalar table lookups (L1-hot 1KB table is faster
-    /// than `_mm256_i32gather_ps` on pre-Ice Lake CPUs), then computes 8 BM25
-    /// scores using SIMD arithmetic.
+    /// Gathers 8 norm factors from the L1-hot 1KB table with
+    /// `_mm256_i32gather_ps`, then computes 8 BM25 scores using SIMD arithmetic.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
     unsafe fn batch_score_avx2(
