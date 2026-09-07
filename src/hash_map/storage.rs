@@ -13,7 +13,6 @@ where
 {
     /// Standard FastVec-based storage
     Standard {
-        buckets: FastVec<StandardBucket<K, V>>,
         entries: FastVec<HashEntry<K, V>>,
         mask: usize,
     },
@@ -37,16 +36,6 @@ where
         entries: FastVec<StringEntry<V>>,
         prefix_cache: FastVec<PrefixCacheEntry>,
     },
-}
-
-/// Standard hash table bucket
-#[repr(align(64))]
-pub(super) struct StandardBucket<K, V> {
-    pub(super) _hash: u64,
-    pub(super) _key: K,
-    pub(super) _value: V,
-    pub(super) _probe_distance: u16,
-    pub(super) _is_occupied: bool,
 }
 
 /// Inline storage for small hash maps

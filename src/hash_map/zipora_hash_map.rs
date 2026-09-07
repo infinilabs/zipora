@@ -173,7 +173,6 @@ where
                     initial_capacity.next_power_of_two()
                 };
                 Ok(HashMapStorage::Standard {
-                    buckets: FastVec::with_capacity(cap)?,
                     entries: FastVec::with_capacity(cap)?,
                     mask: cap.saturating_sub(1),
                 })
@@ -220,14 +219,12 @@ where
 
         let res = match &mut self.storage {
             HashMapStorage::Standard {
-                buckets,
                 entries,
                 mask,
             } => {
                 // Try insertion first
                 match Self::insert_standard(
                     &self.hash_builder,
-                    buckets,
                     entries,
                     mask,
                     key,
@@ -240,14 +237,12 @@ where
                         self.resize_storage()?;
                         // Retry insertion after resize
                         if let HashMapStorage::Standard {
-                            buckets,
                             entries,
                             mask,
                         } = &mut self.storage
                         {
                             Self::insert_standard(
                                 &self.hash_builder,
-                                buckets,
                                 entries,
                                 mask,
                                 key,
@@ -301,10 +296,9 @@ where
 
         match &self.storage {
             HashMapStorage::Standard {
-                buckets,
                 entries,
                 mask,
-            } => self.get_standard(buckets, entries, mask, key, hash),
+            } => self.get_standard(entries, mask, key, hash),
             HashMapStorage::SmallInline {
                 inline_data,
                 fallback,
@@ -346,10 +340,9 @@ where
     {
         match &mut self.storage {
             HashMapStorage::Standard {
-                buckets,
                 entries,
                 mask,
-            } => Self::get_mut_standard(&self.hash_builder, buckets, entries, mask, key),
+            } => Self::get_mut_standard(&self.hash_builder, entries, mask, key),
             HashMapStorage::SmallInline {
                 inline_data,
                 fallback,
@@ -369,10 +362,9 @@ where
     {
         let res = match &mut self.storage {
             HashMapStorage::Standard {
-                buckets,
                 entries,
                 mask,
-            } => Self::remove_standard(&self.hash_builder, buckets, entries, mask, key),
+            } => Self::remove_standard(&self.hash_builder, entries, mask, key),
             HashMapStorage::SmallInline {
                 inline_data,
                 fallback,
@@ -393,10 +385,9 @@ where
     pub fn clear(&mut self) {
         match &mut self.storage {
             HashMapStorage::Standard {
-                buckets,
                 entries,
                 mask,
-            } => Self::clear_standard(buckets, entries, mask),
+            } => Self::clear_standard(entries, mask),
             HashMapStorage::SmallInline {
                 inline_data,
                 fallback,
