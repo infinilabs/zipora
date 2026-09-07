@@ -94,6 +94,10 @@ pub fn has_sse2() -> bool {
 /// assert!(!simd_gallop_to(&arr, &mut cursor, 100));
 /// assert_eq!(cursor, arr.len()); // no element >= 100
 /// ```
+/// Bracket width below which `simd_gallop_to` switches from binary search to
+/// the vectorized linear scan (8 AVX2 iterations).
+const GALLOP_LEAF_WINDOW: usize = 64;
+
 #[inline]
 pub fn simd_gallop_to(arr: &[u32], cursor: &mut usize, target: u32) -> bool {
     // Quick checks
@@ -127,6 +131,21 @@ pub fn simd_gallop_to(arr: &[u32], cursor: &mut usize, target: u32) -> bool {
     // If we broke because arr[hi] >= target, we need to include hi in scan.
     // saturating_add: hi may have saturated to usize::MAX in the gallop loop.
     hi = hi.saturating_add(1).min(arr.len());
+
+    // Binary-search bridge: the gallop leaves a bracket of width ~skip/2, so
+    // scanning it linearly makes large skips O(skip) instead of O(log skip)
+    // (measured 6.4 µs at a 65K skip, 101 µs at 1M). Narrow to a leaf window
+    // the SIMD scan clears in a handful of iterations.
+    // Invariant: arr[hi - 1] >= target or hi == arr.len(); arr[lo] < target.
+    while hi - lo > GALLOP_LEAF_WINDOW {
+        let mid = lo + (hi - lo) / 2;
+        // SAFETY: lo < mid < hi <= arr.len()
+        if unsafe { *arr.get_unchecked(mid) } < target {
+            lo = mid;
+        } else {
+            hi = mid + 1;
+        }
+    }
 
     // SIMD scan phase within [lo, hi)
     #[cfg(target_arch = "x86_64")]
@@ -603,6 +622,36 @@ mod tests {
 
         assert!(simd_gallop_to(&arr, &mut cursor, 9000));
         assert_eq!(cursor, 900);
+    }
+
+    #[test]
+    fn test_gallop_large_skip_matches_partition_point() {
+        // Large skips exercise the binary-search bridge between the
+        // exponential probe phase and the SIMD leaf scan. The gallop probes
+        // land at cursor + 2^k - 1, so targets at, just before and just after
+        // those positions cover every bracket boundary, for both exact hits
+        // and between-element targets.
+        let n = 1usize << 20;
+        let arr: Vec<u32> = (0..n as u32).map(|i| i * 2).collect();
+        for start in [0usize, 1, 5, 1000] {
+            for k in 0..20u32 {
+                let probe = start + (1usize << k) - 1;
+                for pos in [probe.saturating_sub(1), probe, probe + 1, probe + 2] {
+                    if pos >= n {
+                        continue;
+                    }
+                    for target in [arr[pos], arr[pos] + 1] {
+                        let mut cursor = start;
+                        let found = simd_gallop_to(&arr, &mut cursor, target);
+                        // The cursor never moves backward: a target already
+                        // satisfied at `start` leaves it in place.
+                        let expected = arr.partition_point(|&v| v < target).max(start);
+                        assert_eq!(cursor, expected, "start={start} target={target}");
+                        assert_eq!(found, expected < n);
+                    }
+                }
+            }
+        }
     }
 
     #[test]
