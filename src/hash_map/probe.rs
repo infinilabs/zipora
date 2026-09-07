@@ -45,7 +45,6 @@ where
     pub(super) fn resize_storage(&mut self) -> Result<()> {
         match &mut self.storage {
             HashMapStorage::Standard {
-                buckets: _,
                 entries,
                 mask,
             } => {
@@ -138,7 +137,6 @@ where
     // Implementation methods for different storage strategies
     pub(super) fn insert_standard(
         _hash_builder: &S,
-        _buckets: &mut FastVec<StandardBucket<K, V>>,
         entries: &mut FastVec<HashEntry<K, V>>,
         mask: &mut usize,
         key: K,
@@ -238,14 +236,13 @@ where
         // If already migrated to fallback, delegate to Standard storage
         if let Some(fb) = _fallback.as_mut()
             && let HashMapStorage::Standard {
-                buckets,
                 entries,
                 mask,
                 ..
             } = fb.as_mut()
         {
                 let result =
-                    Self::insert_standard(hash_builder, buckets, entries, mask, key, value, hash)
+                    Self::insert_standard(hash_builder, entries, mask, key, value, hash)
                         .map_err(|_| {
                         crate::error::ZiporaError::invalid_state(
                             "Hash table full in SmallInline fallback storage",
@@ -290,7 +287,6 @@ where
 
         // Inline storage full — migrate all 16 entries to Standard storage.
         let std_cap = 32; // 16 existing + room to grow
-        let mut buckets = FastVec::with_capacity(std_cap)?;
         let mut entries = FastVec::with_capacity(std_cap)?;
         let mut mask = std_cap - 1;
 
@@ -303,7 +299,6 @@ where
                 _next: None,
             })?;
         }
-        // buckets are allocated but not initialized — Standard path uses entries for probing
 
         // Re-insert all 16 inline entries into standard storage
         for i in 0..16 {
@@ -321,7 +316,6 @@ where
                 };
                 let _ = Self::insert_standard(
                     hash_builder,
-                    &mut buckets,
                     &mut entries,
                     &mut mask,
                     k,
@@ -335,7 +329,6 @@ where
         // Insert the new key-value pair
         let result = Self::insert_standard(
             hash_builder,
-            &mut buckets,
             &mut entries,
             &mut mask,
             key,
@@ -348,7 +341,6 @@ where
 
         // Store the migrated storage as fallback
         *_fallback = Some(Box::new(HashMapStorage::Standard {
-            buckets,
             entries,
             mask,
         }));
@@ -359,7 +351,6 @@ where
 
     pub(super) fn get_standard<'a, Q>(
         &self,
-        _buckets: &FastVec<StandardBucket<K, V>>,
         entries: &'a FastVec<HashEntry<K, V>>,
         mask: &usize,
         key: &Q,
@@ -422,13 +413,12 @@ where
         // Check fallback first (migrated data)
         if let Some(fb) = fallback
             && let HashMapStorage::Standard {
-                buckets,
                 entries,
                 mask,
             } = fb.as_ref()
         {
             let hash = self.hash_key_borrowed(key);
-            return self.get_standard(buckets, entries, mask, key, hash);
+            return self.get_standard(entries, mask, key, hash);
         }
 
         for i in 0..16 {
@@ -446,7 +436,6 @@ where
     // get_mut implementation methods
     pub(super) fn get_mut_standard<'a, Q>(
         hash_builder: &S,
-        _buckets: &'a mut FastVec<StandardBucket<K, V>>,
         entries: &'a mut FastVec<HashEntry<K, V>>,
         mask: &mut usize,
         key: &Q,
@@ -523,12 +512,11 @@ where
     {
         if let Some(fb) = fallback.as_mut()
             && let HashMapStorage::Standard {
-                buckets,
                 entries,
                 mask,
             } = fb.as_mut()
         {
-            return Self::get_mut_standard(hash_builder, buckets, entries, mask, key);
+            return Self::get_mut_standard(hash_builder, entries, mask, key);
         }
 
         for i in 0..16 {
@@ -550,7 +538,6 @@ where
     // remove implementation methods
     pub(super) fn remove_standard<Q>(
         hash_builder: &S,
-        _buckets: &mut FastVec<StandardBucket<K, V>>,
         entries: &mut FastVec<HashEntry<K, V>>,
         mask: &mut usize,
         key: &Q,
@@ -678,12 +665,11 @@ where
     {
         if let Some(fb) = fallback.as_mut()
             && let HashMapStorage::Standard {
-                buckets,
                 entries,
                 mask,
             } = fb.as_mut()
         {
-            let result = Self::remove_standard(hash_builder, buckets, entries, mask, key);
+            let result = Self::remove_standard(hash_builder, entries, mask, key);
             if result.is_some() {
                 *len -= 1;
             }
@@ -711,11 +697,9 @@ where
 
     // clear implementation methods
     pub(super) fn clear_standard(
-        buckets: &mut FastVec<StandardBucket<K, V>>,
         entries: &mut FastVec<HashEntry<K, V>>,
         mask: &mut usize,
     ) {
-        buckets.clear();
         entries.clear();
         *mask = 0;
     }
