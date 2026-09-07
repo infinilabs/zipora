@@ -1,4 +1,4 @@
-use crate::error::{Result, ZiporaError};
+use crate::error::Result;
 
 use super::iterators::*;
 use super::state::*;
@@ -59,7 +59,7 @@ impl<V: MapValue> DoubleArrayTrieMap<V> {
     pub fn insert(&mut self, key: &[u8], value: V) -> Result<Option<V>> {
         // Use the relocate callback to keep values in sync with state IDs.
         let values = &mut self.values;
-        self.trie.insert_with_relocate_cb(key, |old_pos, new_pos| {
+        let (state, _) = self.trie.insert_returning_state(key, |old_pos, new_pos| {
             let old = old_pos as usize;
             let new = new_pos as usize;
             if new >= values.len() {
@@ -71,10 +71,6 @@ impl<V: MapValue> DoubleArrayTrieMap<V> {
             }
         })?;
 
-        let state = self
-            .trie
-            .lookup_state(key)
-            .ok_or_else(|| ZiporaError::invalid_state("insert succeeded but lookup failed"))?;
         let idx = state as usize;
         if idx >= self.values.len() {
             let new_len = (idx + 1).max(self.values.len() * 2).max(256);
