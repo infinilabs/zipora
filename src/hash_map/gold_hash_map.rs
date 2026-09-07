@@ -28,6 +28,17 @@ const PRIMES: &[usize] = &[
     573292817, 1164186217,
 ];
 
+/// Map a 64-bit hash onto `[0, num_buckets)` without a hardware divide.
+///
+/// Lemire's fastrange: `(hash * n) >> 64` is one `mul` (3 cycles) versus
+/// 25-40+ cycles for a 64-bit `div` against a non-constant prime length.
+/// Uses the *high* bits of the hash, which is fine for ahash (well mixed);
+/// do not reuse with an identity-style hasher.
+#[inline(always)]
+fn bucket_index(hash: u64, num_buckets: usize) -> usize {
+    ((hash as u128 * num_buckets as u128) >> 64) as usize
+}
+
 /// Get next prime number greater than or equal to n
 fn next_prime(n: usize) -> usize {
     for &prime in PRIMES {
@@ -261,7 +272,7 @@ where
     #[inline]
     pub fn get(&self, key: &K) -> Option<&V> {
         let hash = self.hash_key(key);
-        let bucket_idx = (hash as usize) % self.buckets.len();
+        let bucket_idx = bucket_index(hash, self.buckets.len());
 
         let mut link = self.buckets[bucket_idx];
         while link != L::TAIL {
@@ -278,7 +289,7 @@ where
     #[inline]
     pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
         let hash = self.hash_key(key);
-        let bucket_idx = (hash as usize) % self.buckets.len();
+        let bucket_idx = bucket_index(hash, self.buckets.len());
 
         let mut link = self.buckets[bucket_idx];
         while link != L::TAIL {
@@ -466,7 +477,7 @@ where
                     self.hash_key(&self.entries[i].key)
                 };
 
-                let bucket_idx = (hash as usize) % self.buckets.len();
+                let bucket_idx = bucket_index(hash, self.buckets.len());
                 self.entries[i].link = self.buckets[bucket_idx];
 
                 // SAFETY FIX: Check capacity before converting to link type
@@ -516,7 +527,7 @@ where
         }
 
         let hash = self.hash_key(&key);
-        let bucket_idx = (hash as usize) % self.buckets.len();
+        let bucket_idx = bucket_index(hash, self.buckets.len());
 
         // Check if key exists in collision chain
         let mut link = self.buckets[bucket_idx];
@@ -579,7 +590,7 @@ where
     /// Note: Requires V: Clone to return the removed value.
     pub fn remove(&mut self, key: &K) -> Result<Option<V>> {
         let hash = self.hash_key(key);
-        let bucket_idx = (hash as usize) % self.buckets.len();
+        let bucket_idx = bucket_index(hash, self.buckets.len());
 
         let mut prev: Option<usize> = None;
         let mut link = self.buckets[bucket_idx];
@@ -827,6 +838,42 @@ mod tests {
         assert_eq!(map.len(), 1000);
         for i in 0..1000 {
             assert_eq!(map.get(&i), Some(&format!("value{}", i)));
+        }
+    }
+
+    #[test]
+    fn test_bucket_index_covers_full_range_without_division() {
+        // Lemire range reduction maps the high bits of the hash onto
+        // [0, num_buckets). Verify both ends of the hash space land in range
+        // and hit the first/last bucket, which a `>> 63` or `>> 32` slip or a
+        // truncation to u32 before the multiply would break.
+        for n in [5usize, 7, 1009, 65_537, 1 << 20] {
+            assert_eq!(bucket_index(0, n), 0);
+            assert_eq!(bucket_index(u64::MAX, n), n - 1);
+            assert!(bucket_index(1u64 << 63, n) < n);
+            assert_eq!(bucket_index(1u64 << 63, n), n / 2);
+        }
+    }
+
+    #[test]
+    fn test_lookup_consistent_across_rehash_and_removal() {
+        // Every site that maps a hash to a bucket (get, get_mut, insert,
+        // remove, rehash) must use the same function; a mismatch makes keys
+        // inserted before a rehash vanish or removals miss their chain.
+        let mut map = GoldHashMap::<u64, u64>::new();
+        for i in 0..20_000u64 {
+            map.insert(i, i * 3).unwrap();
+        }
+        for i in (0..20_000u64).step_by(2) {
+            assert_eq!(map.remove(&i).unwrap(), Some(i * 3), "remove {i}");
+        }
+        for i in 0..20_000u64 {
+            let expected = if i % 2 == 0 { None } else { Some(&(i * 3)) };
+            assert_eq!(map.get(&i), expected, "get {i}");
+        }
+        for i in (1..20_000u64).step_by(2) {
+            *map.get_mut(&i).unwrap() += 1;
+            assert_eq!(map.get(&i), Some(&(i * 3 + 1)));
         }
     }
 
