@@ -663,12 +663,22 @@ impl VectoredIO {
         // Fallback implementation for readers that don't support vectored I/O
         let mut total = 0;
         for buf in bufs {
-            if buf.is_empty() {
+            let capacity = buf.len();
+            if capacity == 0 {
                 continue;
             }
             match reader.read(buf) {
                 Ok(0) => break,
-                Ok(n) => total += n,
+                Ok(n) => {
+                    total += n;
+                    // A short read has to end the operation. `total` describes a
+                    // contiguous prefix of the buffer list, so filling the next
+                    // slice after a partial one would leave an uninitialised hole
+                    // in the middle of the range the caller believes it received.
+                    if n < capacity {
+                        break;
+                    }
+                }
                 Err(e) => return if total > 0 { Ok(total) } else { Err(e) },
             }
         }
@@ -684,7 +694,19 @@ impl VectoredIO {
                 continue;
             }
             match writer.write(buf) {
-                Ok(n) => total += n,
+                // A writer that accepted nothing will not accept the next slice
+                // either; reporting progress here would make the caller resume
+                // past bytes that were never sent.
+                Ok(0) => break,
+                Ok(n) => {
+                    total += n;
+                    // Same reasoning as `read_vectored`: moving on after a short
+                    // write would drop this slice's tail from the stream while
+                    // still counting the later slices as written.
+                    if n < buf.len() {
+                        break;
+                    }
+                }
                 Err(e) => return if total > 0 { Ok(total) } else { Err(e) },
             }
         }
@@ -968,6 +990,87 @@ mod tests {
         assert_eq!(&buf1, b"Hello");
         assert_eq!(&buf2, b", ");
         assert_eq!(&buf3, b"World!");
+    }
+
+    /// A reader that hands out at most `chunk` bytes per `read` call, the way
+    /// a pipe or socket does.
+    struct ChunkedReader {
+        data: Vec<u8>,
+        pos: usize,
+        chunk: usize,
+    }
+
+    impl Read for ChunkedReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let n = buf.len().min(self.chunk).min(self.data.len() - self.pos);
+            buf[..n].copy_from_slice(&self.data[self.pos..self.pos + n]);
+            self.pos += n;
+            Ok(n)
+        }
+    }
+
+    /// A writer that accepts at most `chunk` bytes per `write` call.
+    struct ChunkedWriter {
+        written: Vec<u8>,
+        chunk: usize,
+    }
+
+    impl Write for ChunkedWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            let n = buf.len().min(self.chunk);
+            self.written.extend_from_slice(&buf[..n]);
+            Ok(n)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_read_vectored_stops_at_a_short_read() {
+        // Regression: a partial read used to fall through to the next slice,
+        // so the caller was told it had `total` contiguous bytes while the
+        // tail of the short slice was never filled.
+        let mut reader = ChunkedReader {
+            data: b"ABCDEFGH".to_vec(),
+            pos: 0,
+            chunk: 2,
+        };
+
+        let mut buf1 = [0u8; 4];
+        let mut buf2 = [0u8; 4];
+        let mut bufs = [IoSliceMut::new(&mut buf1), IoSliceMut::new(&mut buf2)];
+
+        let n = VectoredIO::read_vectored(&mut reader, &mut bufs).unwrap();
+
+        // Only the first two bytes are real; everything the call reports must
+        // be a contiguous prefix of the buffer list.
+        assert_eq!(n, 2);
+        assert_eq!(&buf1, b"AB\0\0");
+        assert_eq!(&buf2, b"\0\0\0\0", "second slice must not be filled past a hole");
+    }
+
+    #[test]
+    fn test_write_vectored_stops_at_a_short_write() {
+        // Regression: a partial write used to drop the rest of that slice and
+        // carry on with the next one, silently reordering the stream.
+        let mut writer = ChunkedWriter {
+            written: Vec::new(),
+            chunk: 2,
+        };
+
+        let n = VectoredIO::write_vectored(
+            &mut writer,
+            &[IoSlice::new(b"ABCD"), IoSlice::new(b"EFGH")],
+        )
+        .unwrap();
+
+        assert_eq!(n, 2);
+        assert_eq!(
+            writer.written, b"AB",
+            "the stream must stay in order after a short write"
+        );
     }
 
     #[test]
