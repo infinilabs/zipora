@@ -2,7 +2,6 @@ use crate::error::{Result, ZiporaError};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
-
 /// Node in the Huffman tree
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum HuffmanNode {
@@ -34,8 +33,12 @@ impl PartialOrd for HuffmanNode {
 
 impl Ord for HuffmanNode {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Reverse ordering for min-heap behavior
-        other.frequency().cmp(&self.frequency())
+        // Natural ordering by frequency. Huffman needs a *min*-heap, and
+        // `from_frequencies` gets that by pushing `Reverse(node)` into the
+        // max-heap `BinaryHeap`. Reversing here as well would cancel that out
+        // and pop the two most frequent nodes first, which builds a degenerate
+        // chain that gives the most frequent symbol the *longest* code.
+        self.frequency().cmp(&other.frequency())
     }
 }
 

@@ -52,6 +52,67 @@ mod tests {
         assert!(ratio < 1.0);
     }
 
+    /// Regression: the tree must be built from a *min*-heap.
+    ///
+    /// `HuffmanNode::cmp` used to reverse the frequency comparison while
+    /// `from_frequencies` also wrapped every node in `Reverse`. The two
+    /// cancelled out, so the heap popped the two *most* frequent nodes first
+    /// and produced a degenerate chain in which the most frequent symbol got
+    /// the longest code. With freqs 1000/100/10/1 that gave a=3, b=3, c=2,
+    /// d=1 bits instead of the correct a=1, b=2, c=3, d=3.
+    #[test]
+    fn test_huffman_more_frequent_symbols_get_shorter_codes() {
+        let mut frequencies = [0u32; 256];
+        frequencies[b'a' as usize] = 1000;
+        frequencies[b'b' as usize] = 100;
+        frequencies[b'c' as usize] = 10;
+        frequencies[b'd' as usize] = 1;
+
+        let tree = HuffmanTree::from_frequencies(&frequencies).unwrap();
+        let len = |s: u8| tree.get_code(s).expect("symbol present").len();
+
+        assert_eq!(
+            len(b'a'),
+            1,
+            "most frequent symbol must get the shortest code"
+        );
+        assert_eq!(len(b'b'), 2);
+        assert_eq!(len(b'c'), 3);
+        assert_eq!(len(b'd'), 3);
+
+        // Code length must be monotonically non-increasing in frequency.
+        assert!(len(b'a') <= len(b'b'));
+        assert!(len(b'b') <= len(b'c'));
+        assert!(len(b'c') <= len(b'd'));
+    }
+
+    /// Regression: a skewed input must compress to near its entropy bound.
+    ///
+    /// The inverted heap emitted 416 bytes for this 1111-byte input (weighted
+    /// length 3321 bits); correct Huffman emits 1233 bits = 155 bytes.
+    #[test]
+    fn test_huffman_skewed_input_compresses_near_entropy_bound() {
+        let mut data = Vec::new();
+        data.extend(std::iter::repeat_n(b'a', 1000));
+        data.extend(std::iter::repeat_n(b'b', 100));
+        data.extend(std::iter::repeat_n(b'c', 10));
+        data.push(b'd');
+
+        let encoder = HuffmanEncoder::new(&data).unwrap();
+        let encoded = encoder.encode(&data).unwrap();
+
+        // Optimal is ceil(1233 / 8) = 155 bytes; allow a little slack for the
+        // packing tail but stay far below the 416 the inverted tree produced.
+        assert!(
+            encoded.len() <= 160,
+            "expected ~155 bytes for a skewed 1111-byte input, got {}",
+            encoded.len()
+        );
+
+        let decoder = HuffmanDecoder::new(encoder.tree().clone());
+        assert_eq!(decoder.decode(&encoded, data.len()).unwrap(), data);
+    }
+
     #[test]
     fn test_huffman_tree_serialization() {
         let data = b"hello world";
