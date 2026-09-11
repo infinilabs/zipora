@@ -477,13 +477,28 @@ pub struct SecureChunk {
     canary: u32,
 }
 
+/// Payload size rounded up so the footer lands on its natural alignment.
+///
+/// The payload size is the caller's `chunk_size`, which is only validated as
+/// non-zero, while `ChunkFooter` holds two `u64`s and needs 8-byte alignment.
+/// Placing the footer at `header + size` therefore produces a misaligned
+/// reference for any size that is not a multiple of 8 — undefined behaviour,
+/// and an immediate abort under `-Cdebug-assertions` or on targets that fault
+/// on unaligned access. Every site that locates the footer must apply the
+/// same padding.
+#[inline]
+fn padded_payload_size(size: usize) -> usize {
+    size.next_multiple_of(std::mem::align_of::<ChunkFooter>())
+}
+
 impl SecureChunk {
     /// Create a new secure chunk with validation metadata
     fn new(size: usize, generation: u64, pool_id: u32) -> Result<Self> {
         let canary = fastrand::u32(..);
         let header_size = std::mem::size_of::<ChunkHeader>();
         let footer_size = std::mem::size_of::<ChunkFooter>();
-        let total_size = header_size + size + footer_size;
+        let padded_size = padded_payload_size(size);
+        let total_size = header_size + padded_size + footer_size;
 
         let layout = Layout::from_size_align(total_size, 8)
             .map_err(|_| ZiporaError::invalid_data("Invalid layout for chunk allocation"))?;
@@ -510,7 +525,7 @@ impl SecureChunk {
 
         // Initialize footer
         // SAFETY: pointer valid from alloc, offset < total_size
-        let footer_ptr = unsafe { raw_ptr.add(header_size + size) as *mut ChunkFooter };
+        let footer_ptr = unsafe { raw_ptr.add(header_size + padded_size) as *mut ChunkFooter };
         // SAFETY: footer_ptr valid, aligned, within allocated region
         unsafe {
             (*footer_ptr) = ChunkFooter {
@@ -576,8 +591,9 @@ impl SecureChunk {
         }
 
         // Validate footer
-        // SAFETY: ptr valid from allocation, self.size offset valid from new()
-        let footer_ptr = unsafe { self.ptr.as_ptr().add(self.size) as *const ChunkFooter };
+        // SAFETY: ptr valid from allocation, padded offset matches new()
+        let footer_ptr =
+            unsafe { self.ptr.as_ptr().add(padded_payload_size(self.size)) as *const ChunkFooter };
         // SAFETY: footer_ptr valid, aligned to ChunkFooter, from allocation
         let footer = unsafe { &*footer_ptr };
 
@@ -647,7 +663,7 @@ impl SecureChunk {
 
         let header_size = std::mem::size_of::<ChunkHeader>();
         let footer_size = std::mem::size_of::<ChunkFooter>();
-        let total_size = header_size + self.size + footer_size;
+        let total_size = header_size + padded_payload_size(self.size) + footer_size;
 
         // SAFETY: ptr constructed in new() with header_size offset, sub reverses it
         let raw_ptr = unsafe { self.ptr.as_ptr().sub(header_size) };
@@ -1382,8 +1398,10 @@ impl SecureMemoryPool {
             }
 
             // Validate footer
-            // SAFETY: data_ptr valid, chunk_size offset matches allocation size from new()
-            let footer_ptr = unsafe { data_ptr.add(self.config.chunk_size) as *const ChunkFooter };
+            // SAFETY: data_ptr valid, padded chunk_size offset matches new()
+            let footer_ptr = unsafe {
+                data_ptr.add(padded_payload_size(self.config.chunk_size)) as *const ChunkFooter
+            };
             // SAFETY: footer_ptr valid, aligned to ChunkFooter, within allocated region
             let footer = unsafe { &*footer_ptr };
 
@@ -1622,6 +1640,49 @@ mod tests {
         let stats = pool.stats();
         assert_eq!(stats.alloc_count, 2);
         assert_eq!(stats.dealloc_count, 2);
+    }
+
+    #[test]
+    fn test_footer_stays_aligned_for_unaligned_chunk_sizes() {
+        // Regression: the footer was written at `header + chunk_size`.
+        // ChunkFooter holds two u64s and needs 8-byte alignment, but
+        // chunk_size is only validated as non-zero, so any size that is not a
+        // multiple of 8 produced a misaligned reference — UB, and an abort
+        // under debug assertions. Every shipped preset happens to be a
+        // multiple of 8, so only user-chosen sizes hit it.
+        let header_size = std::mem::size_of::<ChunkHeader>();
+        let footer_align = std::mem::align_of::<ChunkFooter>();
+        for size in [1usize, 7, 8, 9, 100, 1023, 1024] {
+            let padded = padded_payload_size(size);
+            assert!(padded >= size, "padding shrank the payload for {size}");
+            assert!(
+                padded < size + footer_align,
+                "padding overshot for {size}: {padded}"
+            );
+            assert_eq!(
+                (header_size + padded) % footer_align,
+                0,
+                "footer misaligned for chunk_size {size}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_pool_with_unaligned_chunk_size() {
+        // The same defect end to end: allocating from a pool whose chunk_size
+        // is not a multiple of 8 wrote and read the footer through a
+        // misaligned pointer.
+        let config = SecurePoolConfig::new(100, 16, 8);
+        let pool = SecureMemoryPool::new(config).unwrap();
+
+        let mut ptr = pool.allocate().unwrap();
+        assert_eq!(ptr.size(), 100);
+        ptr.as_mut_slice().fill(0xAB);
+        assert!(ptr.validate().is_ok());
+        drop(ptr);
+
+        let ptr = pool.allocate().unwrap();
+        assert!(ptr.validate().is_ok());
     }
 
     #[test]
