@@ -113,6 +113,87 @@ mod tests {
         assert_eq!(decoder.decode(&encoded, data.len()).unwrap(), data);
     }
 
+    /// Training corpus whose Order-1 context tree is maximally unbalanced.
+    ///
+    /// Fibonacci frequencies are the classic worst case for Huffman: every
+    /// merge produces a node that is just smaller than the next leaf, so the
+    /// tree degenerates into a chain and code lengths grow with the number of
+    /// distinct symbols. Each symbol is preceded by `CTX` so all of the depth
+    /// lands in a single Order-1 context.
+    fn fibonacci_ladder_corpus(num_symbols: usize) -> Vec<u8> {
+        const CTX: u8 = b'Z';
+
+        let mut fibs = vec![1u32, 1];
+        while fibs.len() < num_symbols {
+            let next = fibs[fibs.len() - 1] + fibs[fibs.len() - 2];
+            fibs.push(next);
+        }
+
+        let mut data = Vec::new();
+        for (i, &count) in fibs.iter().enumerate() {
+            // skip CTX itself so it keeps its role as the context byte
+            let symbol = if (i as u8) >= CTX {
+                i as u8 + 1
+            } else {
+                i as u8
+            };
+            for _ in 0..count {
+                data.push(CTX);
+                data.push(symbol);
+            }
+        }
+        data
+    }
+
+    /// Regression: interleaved encoding must not truncate wide codes.
+    ///
+    /// `build_fast_symbol_table_inner` used to clamp every code to the low 16
+    /// bits while the decoder kept walking the full tree, so any symbol whose
+    /// code was wider than 16 bits was written as a *prefix* of its real code.
+    /// That prefix is not prefix-free against the decoder's tree, so the whole
+    /// remainder of the stream decoded to garbage - silently, with no error.
+    ///
+    /// The bug was masked until the tree was built from a real min-heap: the
+    /// inverted heap made every Order-1 tree deeper than 64 levels, which
+    /// tripped the fixed-length 8-bit fallback in `HuffmanTree`.
+    #[test]
+    fn test_interleaved_round_trip_with_codes_wider_than_16_bits() {
+        const CTX: u8 = b'Z';
+
+        let training = fibonacci_ladder_corpus(20);
+        let encoder = ContextualHuffmanEncoder::new(&training, HuffmanOrder::Order1).unwrap();
+
+        // Guard the premise: without a wide code this test proves nothing.
+        let max_len = encoder.max_code_length_all_trees();
+        assert!(
+            max_len > 16,
+            "training corpus should produce codes wider than 16 bits, got {max_len}"
+        );
+
+        // Exercise every (CTX, symbol) pair, including the deep, rare symbols
+        // that carry the wide codes. A single stream is enough: one truncated
+        // code desynchronises everything after it.
+        let mut message = Vec::with_capacity(512);
+        for symbol in 0..=255u8 {
+            message.push(CTX);
+            message.push(symbol);
+        }
+
+        let round_trips: [(usize, Vec<u8>); 3] = [
+            (1, encoder.encode_x1(&message).unwrap()),
+            (2, encoder.encode_x2(&message).unwrap()),
+            (4, encoder.encode_x4(&message).unwrap()),
+        ];
+        for (factor, bytes) in round_trips {
+            let decoded = match factor {
+                1 => encoder.decode_x1(&bytes, message.len()).unwrap(),
+                2 => encoder.decode_x2(&bytes, message.len()).unwrap(),
+                _ => encoder.decode_x4(&bytes, message.len()).unwrap(),
+            };
+            assert_eq!(decoded, message, "x{factor} round trip corrupted the data");
+        }
+    }
+
     #[test]
     fn test_huffman_tree_serialization() {
         let data = b"hello world";

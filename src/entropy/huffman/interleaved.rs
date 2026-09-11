@@ -186,6 +186,19 @@ impl ContextualHuffmanEncoder {
         })
     }
 
+    /// Longest code length over every context tree.
+    ///
+    /// Test-only: lets the regression tests assert that a corpus really does
+    /// produce codes wider than the packed encode word.
+    #[cfg(test)]
+    pub(crate) fn max_code_length_all_trees(&self) -> usize {
+        self.trees
+            .iter()
+            .map(|t| t.max_code_length())
+            .max()
+            .unwrap_or(0)
+    }
+
     /// Create Order-2 encoder (depends on previous two symbols)
     fn new_order2(data: &[u8]) -> Result<Self> {
         if data.len() < 3 {
@@ -747,6 +760,17 @@ impl ContextualHuffmanEncoder {
                 // O(1) array lookup instead of HashMap
                 let code = syms[context][symbol];
 
+                // bit_count == 0 marks a code too wide for the packed word
+                // (see build_fast_symbol_table_inner). Emitting it would
+                // truncate and silently corrupt the stream.
+                if code.bit_count == 0 {
+                    return Err(ZiporaError::invalid_data(format!(
+                        "Huffman code for symbol {symbol} in context {context} exceeds \
+                         {} bits and cannot be interleaved",
+                        HuffmanEncSymbol::MAX_BITS
+                    )));
+                }
+
                 // Write bits using same format as original encoder
                 writer.write(code.bits as u64, code.bit_count as usize);
 
@@ -824,7 +848,7 @@ impl ContextualHuffmanEncoder {
     /// Get or initialize the cached fast symbol table
     ///
     /// The table is built lazily on first access and cached for subsequent calls.
-    /// This amortizes the ~263KB allocation cost across multiple encode calls.
+    /// This amortizes the ~526KB allocation cost across multiple encode calls.
     fn get_or_init_fast_symbol_table(&self) -> &FastSymbolTable {
         self.fast_symbol_table
             .get_or_init(|| self.build_fast_symbol_table_inner())
@@ -839,7 +863,7 @@ impl ContextualHuffmanEncoder {
     /// This replaces the slow HashMap<(u16, u8), HuffmanSymbol> lookup with
     /// direct array indexing, enabling better ILP when batching operations.
     fn build_fast_symbol_table_inner(&self) -> FastSymbolTable {
-        // Allocate 257 * 256 * 4 = ~263KB table
+        // Allocate 257 * 256 * 8 = ~526KB table
         let mut table: FastSymbolTable = Box::new([[HuffmanEncSymbol::default(); 256]; 257]);
 
         // For each context, build codes for all symbols
@@ -856,25 +880,34 @@ impl ContextualHuffmanEncoder {
             // Build codes for all symbols in this tree
             for symbol in 0..=255u8 {
                 if let Some(code) = tree.get_code(symbol) {
-                    // Convert Vec<bool> to packed bits
-                    let mut bits = 0u16;
-                    let bit_count = code.len() as u16;
+                    let bit_count = code.len();
 
-                    // Safety: Huffman codes should not exceed 16 bits for byte alphabets
-                    // If they do, we truncate (very rare edge case)
-                    let safe_bit_count = bit_count.min(16);
+                    // A code wider than the packed word cannot be written
+                    // here. Truncating it would emit a prefix of the real
+                    // code, which is no longer prefix-free against the
+                    // decoder's (untruncated) tree and silently corrupts the
+                    // stream. Mark it instead; `encode_xn` reports an error if
+                    // such a symbol is actually encountered.
+                    if bit_count == 0 || bit_count > HuffmanEncSymbol::MAX_BITS {
+                        table[context][symbol as usize] = HuffmanEncSymbol::new(0, 0);
+                        continue;
+                    }
 
-                    for (i, &bit) in code.iter().take(16).enumerate() {
+                    // Convert Vec<bool> to packed bits (LSB-first)
+                    let mut bits = 0u32;
+                    for (i, &bit) in code.iter().enumerate() {
                         if bit {
-                            bits |= 1u16 << i;
+                            bits |= 1u32 << i;
                         }
                     }
 
-                    table[context][symbol as usize] = HuffmanEncSymbol::new(bits, safe_bit_count);
+                    table[context][symbol as usize] = HuffmanEncSymbol::new(bits, bit_count as u16);
                 } else {
-                    // Symbol not in tree - use a default placeholder
-                    // This should not happen with properly built trees
-                    table[context][symbol as usize] = HuffmanEncSymbol::new(0, 1);
+                    // Symbol not in this tree: there is no code to emit. The
+                    // old placeholder wrote a bogus 1-bit code, which the
+                    // decoder would read as some other symbol. Use the same
+                    // "unrepresentable" sentinel so `encode_xn` fails loudly.
+                    table[context][symbol as usize] = HuffmanEncSymbol::new(0, 0);
                 }
             }
         }
