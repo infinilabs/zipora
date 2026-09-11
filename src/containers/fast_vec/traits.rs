@@ -4,8 +4,7 @@
 //! `Extend`, `IntoIterator` + `FastVecIntoIter`), indexing, comparison,
 //! `Clone`, `Debug`, and the `Send`/`Sync` markers.
 
-use super::{FastVec, is_simd_beneficial, is_simd_safe, slice_as_bytes};
-use crate::memory::simd_ops::fast_compare;
+use super::FastVec;
 use std::alloc::{self, Layout};
 use std::fmt;
 use std::ops::{Deref, DerefMut, Index, IndexMut};
@@ -186,18 +185,15 @@ impl<T: PartialEq> PartialEq for FastVec<T> {
             return true;
         }
 
-        // Use SIMD optimization for Copy types with large vectors
-        if is_simd_safe::<T>() && is_simd_beneficial::<T>(self.len) {
-            // SAFETY: slices valid from as_slice(), same length verified above
-            unsafe {
-                let self_bytes = slice_as_bytes(self.as_slice());
-                let other_bytes = slice_as_bytes(other.as_slice());
-                fast_compare(self_bytes, other_bytes) == 0
-            }
-        } else {
-            // Standard comparison for small vectors or non-Copy types
-            self.as_slice() == other.as_slice()
-        }
+        // Byte equality is not value equality: `T::eq` is the only thing that
+        // may decide this. Padding bytes, `-0.0 == 0.0`, `NaN != NaN` and any
+        // hand-written `PartialEq` all disagree with memcmp, and the previous
+        // SIMD path silently took over past 64 bytes, so the same two vectors
+        // compared differently depending on their length.
+        //
+        // Nothing is lost by deferring: the standard slice comparison already
+        // specialises to memcmp for the types where that is sound.
+        self.as_slice() == other.as_slice()
     }
 }
 
