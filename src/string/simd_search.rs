@@ -54,8 +54,12 @@ pub enum SearchTier {
 mod pcmpestri_flags {
     /// Unsigned byte comparison
     pub const UBYTE_OPS: i32 = 0x00;
-    /// Compare for equality
-    pub const CMP_EQUAL_ORDERED: i32 = 0x08;
+    /// Compare for an ordered substring match (`_SIDD_CMP_EQUAL_ORDERED`).
+    ///
+    /// The aggregation mode lives in imm8 bits [3:2]: `0b11 << 2 == 0x0C`.
+    /// `0x08` is `_SIDD_CMP_EQUAL_EACH`, a position-by-position comparison of
+    /// the two operands, which is not a search at all.
+    pub const CMP_EQUAL_ORDERED: i32 = 0x0C;
     /// Return least significant index
     pub const LEAST_SIGNIFICANT: i32 = 0x00;
     /// Compare any byte in set
@@ -987,6 +991,39 @@ mod tests {
         assert_eq!(search.sse42_strstr(haystack, b"world"), Some(6));
         assert_eq!(search.sse42_strstr(haystack, b"test"), Some(12));
         assert_eq!(search.sse42_strstr(haystack, b"xyz"), None);
+    }
+
+    /// `SimdStringSearch::new()` picks AVX2 on every CPU that has it, so the
+    /// SSE4.2 tier is never exercised by the other tests on modern hardware.
+    /// Pin it explicitly: with `CMP_EQUAL_ORDERED` mis-encoded as
+    /// `_SIDD_CMP_EQUAL_EACH`, PCMPESTRI compares the operands position by
+    /// position instead of searching, so `strchr` only ever saw offset 0 and
+    /// `strstr` reported a hit whenever the first byte alone matched.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_sse42_tier_searches_instead_of_comparing_positions() {
+        if !is_x86_feature_detected!("sse4.2") {
+            return;
+        }
+        let search = SimdStringSearch {
+            impl_tier: SearchTier::Sse42,
+        };
+
+        // strchr has to see past offset 0.
+        assert_eq!(search.sse42_strchr(b"hello world", b'o'), Some(4));
+        assert_eq!(search.sse42_strchr(b"hello world", b'd'), Some(10));
+        assert_eq!(search.sse42_strchr(b"hello world", b'x'), None);
+
+        // Long enough to go through the chunked path as well.
+        let mut large = vec![b'a'; 64];
+        large[37] = b'x';
+        assert_eq!(search.sse42_strchr(&large, b'x'), Some(37));
+
+        // strstr must not accept a needle on the strength of its first byte.
+        assert_eq!(search.sse42_strstr(b"cbcbca", b"ca"), Some(4));
+        assert_eq!(search.sse42_strstr(b"hello world", b"wor"), Some(6));
+        assert_eq!(search.sse42_strstr(b"hello world", b"wox"), None);
+        assert_eq!(search.sse42_strstr(b"hello world", b"hello"), Some(0));
     }
 
     #[test]
