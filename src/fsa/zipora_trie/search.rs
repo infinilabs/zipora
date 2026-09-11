@@ -313,12 +313,6 @@ where
         let mut keys = Vec::new();
         let mut current_path = Vec::new();
 
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "DEBUG keys_double_array: Starting from root state 0, base[0]={:?}",
-            base.first()
-        );
-
         Self::collect_keys_double_array_recursive(base, check, 0, &mut current_path, &mut keys);
         keys
     }
@@ -381,19 +375,8 @@ where
         const TERMINAL_BIT: u32 = 0x8000_0000; // Bit 31 in base for terminal (referenced project)
         const VALUE_MASK: u32 = 0x7FFF_FFFF; // Bits 0-30 for values (referenced project)
 
-        #[cfg(debug_assertions)]
-        if state == 0 && current_path.is_empty() {
-            eprintln!("DEBUG collect_keys: At root, checking for children...");
-        }
-
         // If this is a terminal state, add the current path as a key (check base array)
         if (state as usize) < base.len() && (base[state as usize] & TERMINAL_BIT) != 0 {
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "DEBUG collect_keys: Found terminal state {} with path {:?}",
-                state,
-                std::str::from_utf8(current_path).unwrap_or("<non-utf8>")
-            );
             keys.push(current_path.clone());
         }
 
@@ -401,20 +384,7 @@ where
         if let Some(&base_raw) = base.get(state as usize) {
             let base_val = base_raw & VALUE_MASK;
             if base_val == 0 || base_val == 0x7FFF_FFFF {
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "DEBUG collect_keys: State {} has base={}, no children",
-                    state, base_val
-                );
                 return; // No children
-            }
-
-            #[cfg(debug_assertions)]
-            if state == 0 {
-                eprintln!(
-                    "DEBUG collect_keys: Root state 0 has base={}, checking all 256 symbols...",
-                    base_val
-                );
             }
 
             // Try all possible symbols
@@ -429,13 +399,6 @@ where
 
                     if is_valid_child {
                         // Valid transition found
-                        #[cfg(debug_assertions)]
-                        if state == 0 {
-                            eprintln!(
-                                "DEBUG collect_keys: Found valid transition from root: symbol={:02x} ('{}'), next_state={}",
-                                symbol, symbol as char, next_state
-                            );
-                        }
                         current_path.push(symbol);
                         Self::collect_keys_double_array_recursive(
                             base,
