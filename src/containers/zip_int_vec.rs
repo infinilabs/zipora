@@ -171,18 +171,13 @@ impl ZipIntVec {
         let &min_val = src.iter().min().expect("non-empty input");
         let &max_val = src.iter().max().expect("non-empty input");
 
-        if min_val == max_val {
-            // All values are the same
-            let mut vec = Self::new(src.len(), min_val, min_val + 1)
-                .expect("min_val < min_val + 1 structurally");
-            for i in 0..src.len() {
-                vec.set(i, min_val);
-            }
-            return vec;
-        }
-
+        // `min_val == max_val` needs no special case: UintVecMin0 encodes a
+        // zero-width range in 0 bits. Widening it to `min_val + 1` used to
+        // waste a bit per element and overflowed outright on `[usize::MAX; N]`
+        // (debug: add overflow, release: wrap to a max below the min, so
+        // `new` errored and the `expect` panicked).
         let mut vec = Self::new(src.len(), min_val, max_val)
-            .expect("min_val < max_val checked above");
+            .expect("min_val <= max_val by construction");
         for (i, &val) in src.iter().enumerate() {
             vec.set(i, val);
         }
@@ -200,18 +195,10 @@ impl ZipIntVec {
         let &min_val = src.iter().min().expect("non-empty input");
         let &max_val = src.iter().max().expect("non-empty input");
 
-        if min_val == max_val {
-            // All values are the same
-            let mut vec = Self::new(src.len(), min_val as usize, (min_val + 1) as usize)
-                .expect("min_val < min_val + 1 structurally");
-            for i in 0..src.len() {
-                vec.set(i, min_val as usize);
-            }
-            return vec;
-        }
-
+        // Same as `build_from_usize`: no special case for a single distinct
+        // value, and no `+ 1` to overflow on `[u32::MAX; N]`.
         let mut vec = Self::new(src.len(), min_val as usize, max_val as usize)
-            .expect("min_val < max_val checked above");
+            .expect("min_val <= max_val by construction");
         for (i, &val) in src.iter().enumerate() {
             vec.set(i, val as usize);
         }
@@ -694,5 +681,36 @@ mod tests {
         let compression_ratio =
             (1000 * std::mem::size_of::<usize>()) as f64 / vec.mem_size() as f64;
         assert!(compression_ratio > 3.0); // At least 3x compression
+    }
+
+    #[test]
+    fn test_build_from_constant_sequence_at_the_type_maximum() {
+        // Regression: the all-equal branch built the vector with a max of
+        // `min_val + 1`, which overflows at the top of the range — debug
+        // panicked on the add, release wrapped to 0 and then panicked on the
+        // `expect` because `new` rejects `min > max`.
+        let vec = ZipIntVec::build_from_usize(&[usize::MAX; 3]);
+        assert_eq!(vec.size(), 3);
+        for i in 0..3 {
+            assert_eq!(vec.get(i), usize::MAX);
+        }
+
+        let vec = ZipIntVec::build_from_u32(&[u32::MAX; 3]);
+        assert_eq!(vec.size(), 3);
+        for i in 0..3 {
+            assert_eq!(vec.get(i), u32::MAX as usize);
+        }
+    }
+
+    #[test]
+    fn test_constant_sequence_costs_no_bits_per_element() {
+        // The `+ 1` also widened the range for no reason: a sequence with a
+        // single distinct value is a zero-width range and needs 0 bits.
+        let vec = ZipIntVec::build_from_usize(&[5, 5, 5]);
+        assert_eq!(vec.uintbits(), 0);
+        assert_eq!(vec.min_val(), 5);
+        for i in 0..3 {
+            assert_eq!(vec.get(i), 5);
+        }
     }
 }
