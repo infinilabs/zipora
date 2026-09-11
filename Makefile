@@ -160,17 +160,25 @@ FUZZ_TARGETS = fuzz_zip_offset_load fuzz_simple_zip_build fuzz_mixed_len_build \
 	fuzz_huffman_decode fuzz_rans_decode fuzz_fse_decompress \
 	fuzz_double_array_trie fuzz_uint_vec
 
+# 1 GiB, not the libFuzzer default of 2 GiB and not the 4 GiB this used to
+# pass: a decoder that turns a few bytes of input into a multi-gigabyte
+# allocation is the bug we want reported, and a limit at or above the output
+# ceiling of the format hides exactly that class. The FSE decoder could be
+# driven to a 4 GiB allocation from 26 bytes of input and fuzzing never
+# flagged it.
+FUZZ_RSS_LIMIT_MB = 1024
+
 # Quick smoke: 60s per target, sequential.
 fuzz_smoke:
 	@for t in $(FUZZ_TARGETS); do \
 		echo "=== $$t (60s) ==="; \
-		cargo +nightly fuzz run $$t -- -max_total_time=60 -rss_limit_mb=4096 || exit 1; \
+		cargo +nightly fuzz run $$t -- -max_total_time=60 -rss_limit_mb=$(FUZZ_RSS_LIMIT_MB) || exit 1; \
 	done
 
 # Soak: 1 hour per target, all in parallel (needs ~8 cores).
 fuzz_soak:
 	@for t in $(FUZZ_TARGETS); do \
-		cargo +nightly fuzz run $$t -- -max_total_time=3600 -rss_limit_mb=4096 & \
+		cargo +nightly fuzz run $$t -- -max_total_time=3600 -rss_limit_mb=$(FUZZ_RSS_LIMIT_MB) & \
 	done; wait
 
 # =============================================================================
