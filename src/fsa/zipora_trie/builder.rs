@@ -106,16 +106,8 @@ where
 
         let mut current_state = 0u32;
 
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "DEBUG insert: Starting insertion of key: {:?}",
-            std::str::from_utf8(key).unwrap_or("<non-utf8>")
-        );
-
         // Traverse the trie for each symbol in the key
-        for (_pos, &symbol) in key.iter().enumerate() {
-            #[cfg(debug_assertions)]
-            let pos = _pos;
+        for &symbol in key.iter() {
             // Calculate next state position using base value (bits 0-30)
             let mut base_value = base[current_state as usize] & VALUE_MASK;
 
@@ -147,22 +139,12 @@ where
 
             if transition_exists {
                 // Transition exists, follow it
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "  [{}] '{:02x}' state {} -> {} (existing)",
-                    pos, symbol, current_state, next_state
-                );
                 current_state = next_state;
             } else {
                 // Need to create new transition
                 // CRITICAL: Never allow transitions to state 0 (reserved for root)
                 if next_state == 0 {
                     // State 0 is reserved, need to relocate
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "  [{}] '{:02x}' conflict: next_state would be 0 (reserved for root)",
-                        pos, symbol
-                    );
 
                     // We must relocate ALL children of current_state to maintain consistency
                     let new_base = Self::relocate_state(
@@ -195,11 +177,6 @@ where
                     *state_count += 1;
                 } else if is_free {
                     // Position is free and not state 0, use it directly
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "  [{}] '{:02x}' state {} -> {} (new, free)",
-                        pos, symbol, current_state, next_state
-                    );
 
                     // Ensure the parent state fits within VALUE_MASK
                     if current_state > MAX_STATE {
@@ -214,11 +191,6 @@ where
                     *state_count += 1;
                 } else {
                     // Position is occupied - need to relocate
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "  [{}] '{:02x}' conflict at state {}, next_state {} already has check={:08x}",
-                        pos, symbol, current_state, next_state, check[next_state as usize]
-                    );
                     // We must relocate ALL children of current_state to maintain consistency
                     let new_base = Self::relocate_state(
                         base,
@@ -232,12 +204,6 @@ where
 
                     // Now the transition should be available
                     let new_next = new_base.saturating_add(symbol as u32);
-
-                    #[cfg(debug_assertions)]
-                    eprintln!(
-                        "  Relocated state {} to new_base {}, new transition {} -> {}",
-                        current_state, new_base, current_state, new_next
-                    );
 
                     // Expand if needed - use amortized growth
                     let required = new_next as usize + 1;
@@ -276,18 +242,6 @@ where
         }
 
         // Debug: Verify what we just inserted
-        #[cfg(debug_assertions)]
-        {
-            eprintln!(
-                "DEBUG insert_double_array: Inserted key, final state={}, base[{}]={:08x}, check[{}]={:08x}, was_new={}",
-                current_state,
-                current_state,
-                base[current_state as usize],
-                current_state,
-                check[current_state as usize],
-                was_new
-            );
-        }
 
         Ok(current_state)
     }
@@ -352,8 +306,6 @@ where
         if state == 0 {
             // For root, try to find a different base that works
             // This is critical because relocating root affects the entire trie
-            #[cfg(debug_assertions)]
-            eprintln!("  WARNING: Attempting to relocate root state - this may cause issues");
         }
 
         let old_base = base[state as usize] & VALUE_MASK;
@@ -553,15 +505,11 @@ where
         let mut current_state = 0u32;
 
         // Traverse the trie for each symbol (referenced project line 100-110: state_move)
-        for (_i, &symbol) in key.iter().enumerate() {
-            #[cfg(debug_assertions)]
-            let i = _i;
+        for &symbol in key.iter() {
             // SAFETY: We check if base_val exists, then use it
             let base_val = match base.get(current_state as usize) {
                 Some(val) => val,
                 None => {
-                    #[cfg(debug_assertions)]
-                    eprintln!("DEBUG contains: No base for state {}", current_state);
                     return false;
                 }
             };
@@ -571,12 +519,6 @@ where
 
             // Check if the transition is valid (referenced project line 106: states[next].parent() == curr)
             if next_state as usize >= check.len() {
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "DEBUG contains: next_state {} >= check.len() {}",
-                    next_state,
-                    check.len()
-                );
                 return false;
             }
 
@@ -585,11 +527,6 @@ where
             // Free states have FREE_BIT set, so won't match
             if check_val != current_state {
                 // Invalid transition
-                #[cfg(debug_assertions)]
-                eprintln!(
-                    "DEBUG contains: Invalid transition at pos {}, symbol {:02x}, state {}->{}, check[{}]={:08x}, expected parent {}",
-                    i, symbol, current_state, next_state, next_state, check_val, current_state
-                );
                 return false;
             }
 
@@ -598,22 +535,9 @@ where
         }
 
         // Check if the final state is marked as terminal (check terminal bit in base)
-        let is_terminal = base
-            .get(current_state as usize)
+        base.get(current_state as usize)
             .map(|b| (b & TERMINAL_BIT) != 0)
-            .unwrap_or(false);
-
-        #[cfg(debug_assertions)]
-        {
-            let base_val = base.get(current_state as usize).unwrap_or(&0);
-            let check_val = check.get(current_state as usize).unwrap_or(&0);
-            eprintln!(
-                "DEBUG contains: Final state={}, base[{}]={:08x}, check[{}]={:08x}, is_terminal={}",
-                current_state, current_state, base_val, current_state, check_val, is_terminal
-            );
-        }
-
-        is_terminal
+            .unwrap_or(false)
     }
 
     // LOUDS trie implementation methods
