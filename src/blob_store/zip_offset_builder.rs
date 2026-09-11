@@ -5,6 +5,7 @@
 
 use crate::RecordId;
 use crate::blob_store::sorted_uint_vec::SortedUintVecBuilder;
+use crate::blob_store::traits::CompressionStats;
 use crate::blob_store::zip_offset::{ZipOffsetBlobStore, ZipOffsetBlobStoreConfig};
 use crate::containers::FastVec;
 use crate::error::{Result, ZiporaError};
@@ -267,20 +268,17 @@ impl ZipOffsetBlobStoreBuilder {
         self.offset_builder.push(self.current_offset)?;
 
         // Build compressed offset index
-        let _offsets = self.offset_builder.finish()?;
+        let offsets = self.offset_builder.finish()?;
 
-        // Create the blob store
-        let store = if let Some(pool) = self.pool {
-            ZipOffsetBlobStore::with_pool(self.config, pool)?
-        } else {
-            ZipOffsetBlobStore::with_config(self.config)?
+        let mut stats = CompressionStats {
+            uncompressed_size: self.stats.uncompressed_size,
+            compressed_size: self.stats.compressed_size,
+            compressed_count: self.stats.record_count,
+            compression_ratio: 1.0,
         };
+        stats.compression_ratio = stats.ratio();
 
-        // Create the final store with the built data
-        // Note: This is a placeholder implementation
-        // TODO: Implement actual data transfer from builder to store
-
-        Ok(store)
+        ZipOffsetBlobStore::from_parts(self.config, self.content, offsets, stats, self.pool)
     }
 
     /// Get estimated final size of the blob store
@@ -547,6 +545,58 @@ mod tests {
         builder.add_record(b"test data").unwrap();
         let size_after_record = builder.estimated_size();
         assert!(size_after_record > initial_size);
+    }
+
+    #[test]
+    fn test_finish_hands_the_content_and_offsets_to_the_store() {
+        use crate::blob_store::BlobStore;
+
+        // `finish()` used to drop everything the builder had accumulated and
+        // return a freshly constructed, empty store.
+        let levels: &[u8] = if cfg!(feature = "zstd") { &[0, 3] } else { &[0] };
+
+        for &compress_level in levels {
+            let config = ZipOffsetBlobStoreConfig {
+                compress_level,
+                checksum_level: 0,
+                ..Default::default()
+            };
+
+            let mut builder = ZipOffsetBlobStoreBuilder::with_config(config).unwrap();
+            let records: Vec<Vec<u8>> = (0..200u32)
+                .map(|i| format!("record {i} {}", "x".repeat((i % 37) as usize)).into_bytes())
+                .collect();
+            for record in &records {
+                builder.add_record(record).unwrap();
+            }
+
+            let store = builder.finish().unwrap();
+
+            assert_eq!(store.len(), records.len());
+            for (i, record) in records.iter().enumerate() {
+                let id = i as RecordId;
+                assert!(store.contains(id));
+                assert_eq!(
+                    &store.get(id).unwrap(),
+                    record,
+                    "record {i} at compress_level {compress_level}"
+                );
+            }
+
+            // The terminating offset is a content boundary, not a record.
+            let past_end = records.len() as RecordId;
+            assert!(!store.contains(past_end));
+            assert!(store.get(past_end).is_err());
+        }
+    }
+
+    #[test]
+    fn test_finish_on_an_empty_builder_yields_an_empty_store() {
+        use crate::blob_store::BlobStore;
+
+        let store = ZipOffsetBlobStoreBuilder::new().unwrap().finish().unwrap();
+        assert_eq!(store.len(), 0);
+        assert!(!store.contains(0));
     }
 
     #[test]

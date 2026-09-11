@@ -378,6 +378,38 @@ impl ZipOffsetBlobStore {
         })
     }
 
+    /// Assemble a store from content and offset index produced by a builder
+    ///
+    /// `offsets` carries one entry per record plus a terminating entry marking
+    /// the end of the content, so `offsets.len() == records + 1`.
+    pub(crate) fn from_parts(
+        config: ZipOffsetBlobStoreConfig,
+        content: FastVec<u8>,
+        offsets: SortedUintVec,
+        stats: CompressionStats,
+        pool: Option<SecureMemoryPool>,
+    ) -> Result<Self> {
+        config.validate()?;
+
+        Ok(Self {
+            content,
+            offsets,
+            config,
+            stats,
+            _pool: pool,
+            offset_cache: None,
+        })
+    }
+
+    /// Number of records held by the store
+    ///
+    /// The offset index stores one boundary per record plus a terminating
+    /// boundary, so it always holds one entry more than there are records.
+    #[inline]
+    fn record_count(&self) -> usize {
+        self.offsets.len().saturating_sub(1)
+    }
+
     /// Load ZipOffsetBlobStore from file
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let mut file = std::fs::File::open(path)?;
@@ -555,7 +587,7 @@ impl ZipOffsetBlobStore {
         &self,
         id: RecordId,
     ) -> Result<Vec<u8>> {
-        if id as usize >= self.offsets.len() {
+        if id as usize >= self.record_count() {
             return Err(ZiporaError::invalid_data("record ID out of bounds"));
         }
 
@@ -726,7 +758,7 @@ impl BlobStore for ZipOffsetBlobStore {
     }
 
     fn contains(&self, id: RecordId) -> bool {
-        (id as usize) < self.offsets.len()
+        (id as usize) < self.record_count()
     }
 
     fn size(&self, id: RecordId) -> Result<Option<usize>> {
@@ -747,7 +779,7 @@ impl BlobStore for ZipOffsetBlobStore {
     }
 
     fn len(&self) -> usize {
-        self.offsets.len()
+        self.record_count()
     }
 
     fn flush(&mut self) -> Result<()> {
