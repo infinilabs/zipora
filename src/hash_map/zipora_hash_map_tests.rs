@@ -735,8 +735,8 @@ fn test_clone_preserves_all_entries() {
     }
 }
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Clone, Debug)]
 struct DropTracker(Arc<AtomicUsize>);
@@ -754,7 +754,8 @@ fn test_small_inline_remove_and_clear_drops_values() {
     let mut map: ZiporaHashMap<i32, DropTracker> = ZiporaHashMap::with_config(config).unwrap();
 
     for i in 0..5 {
-        map.insert(i, DropTracker(Arc::clone(&drop_counter))).unwrap();
+        map.insert(i, DropTracker(Arc::clone(&drop_counter)))
+            .unwrap();
     }
     assert_eq!(map.len(), 5);
 
@@ -928,4 +929,54 @@ fn test_clear_then_reuse_standard() {
     for i in 0..100u32 {
         assert_eq!(map.get(&i), Some(&(i + 1)));
     }
+}
+
+// ==================== Load factor / growth regression tests ====================
+
+#[test]
+fn test_table_grows_at_the_configured_load_factor() {
+    // Regression: resize was driven only by insertion failure, so the table
+    // ran to 100% occupancy before growing. config.load_factor (0.75 by
+    // default) was never read on the insert path. At full occupancy linear
+    // probing costs O(capacity) per operation and a miss scans the entire
+    // table, because get_standard only stops on an empty slot.
+    let mut map: ZiporaHashMap<u32, u32> = ZiporaHashMap::with_capacity(32).expect("create");
+    let initial = map.capacity();
+    assert_eq!(initial, 32);
+
+    for i in 0..1000u32 {
+        map.insert(i, i).expect("insert");
+        let capacity = map.capacity();
+        assert!(
+            map.len() as f64 <= capacity as f64 * 0.75 + 1.0,
+            "load {}/{} exceeds the configured load factor",
+            map.len(),
+            capacity
+        );
+    }
+
+    assert!(map.capacity() > initial);
+    for i in 0..1000u32 {
+        assert_eq!(map.get(&i), Some(&i), "entry lost across rehashes");
+    }
+}
+
+#[test]
+fn test_insert_remove_churn_does_not_grow_the_table_forever() {
+    // The load check counts tombstones (remove leaves one behind and they
+    // still lengthen probes), so churn does trigger rehashes. Those must
+    // rehash in place while the live set stays small, or a bounded working
+    // set would double the table indefinitely.
+    let mut map: ZiporaHashMap<u32, u32> = ZiporaHashMap::with_capacity(64).expect("create");
+    for i in 0..100_000u32 {
+        map.insert(i, i).expect("insert");
+        map.remove(&i);
+    }
+
+    assert_eq!(map.len(), 0);
+    assert!(
+        map.capacity() <= 128,
+        "churn grew the table to {}",
+        map.capacity()
+    );
 }

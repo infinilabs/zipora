@@ -77,6 +77,14 @@ where
     pub(super) cache_metrics: CacheMetrics,
     /// Live element counter for O(1) len()
     pub(super) len: usize,
+    /// Slots claimed in the Standard table, counting tombstones.
+    ///
+    /// Only ever incremented on a fresh-key insert and reset to `len` by a
+    /// rehash, so it is an upper bound on the true occupancy: reusing a
+    /// tombstone over-counts, which grows the table slightly early rather
+    /// than too late. `remove` deliberately does not decrement it, because
+    /// the slot it leaves behind still lengthens every probe through it.
+    pub(super) occupied: usize,
 }
 
 
@@ -155,6 +163,7 @@ where
             _cache_allocator: cache_allocator,
             cache_metrics: CacheMetrics::new(),
             len: 0,
+            occupied: 0,
         })
     }
 
@@ -216,6 +225,24 @@ where
         self.stats.insertions += 1;
 
         let hash = self.hash_key(&key);
+
+        // Grow before the table gets dense. insert_standard only reports
+        // failure when there is neither an empty slot nor a reusable
+        // tombstone left, i.e. at 100% occupancy, and linear probing has
+        // degraded to O(capacity) long before that — get_standard stops only
+        // on an empty slot, so once the table is full every miss scans all of
+        // it. config.load_factor was previously never read on this path.
+        if let HashMapStorage::Standard { entries, .. } = &self.storage {
+            let capacity = if entries.is_empty() {
+                entries.capacity()
+            } else {
+                entries.len()
+            };
+            let limit = (capacity as f64 * self.config.load_factor) as usize;
+            if capacity > 0 && self.occupied >= limit {
+                self.resize_storage()?;
+            }
+        }
 
         let res = match &mut self.storage {
             HashMapStorage::Standard {
@@ -282,6 +309,7 @@ where
 
         if res.is_none() {
             self.len += 1;
+            self.occupied += 1;
         }
         Ok(res)
     }
@@ -398,6 +426,7 @@ where
             }
         }
         self.len = 0;
+        self.occupied = 0;
     }
 
     /// Check if the map contains a key

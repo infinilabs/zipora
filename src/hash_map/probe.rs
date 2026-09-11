@@ -43,13 +43,27 @@ where
 
     /// Resize the storage to accommodate more elements
     pub(super) fn resize_storage(&mut self) -> Result<()> {
+        let live = self.len;
+        let load_factor = self.config.load_factor;
         match &mut self.storage {
             HashMapStorage::Standard {
                 entries,
                 mask,
             } => {
                 let old_capacity = entries.len();
-                let new_capacity = (old_capacity * 2).max(32); // At least double the size
+                // A resize is also how tombstones get purged, and the caller
+                // now triggers one on occupancy rather than on a failed
+                // insert. Growing unconditionally would make an
+                // insert/remove churn workload with a bounded live set grow
+                // the table forever, so only grow when the live entries
+                // themselves are approaching the load limit; otherwise
+                // rehash in place.
+                let load_limit = (old_capacity as f64 * load_factor) as usize;
+                let new_capacity = if old_capacity >= 32 && live < load_limit / 2 {
+                    old_capacity
+                } else {
+                    (old_capacity * 2).max(32) // At least double the size
+                };
                 // Mask-based probing requires a power-of-two capacity
                 // (storage is created power-of-two and doubling preserves it).
                 assert!(
@@ -121,6 +135,9 @@ where
                 // old_entries is dropped here, which will drop the None keys/values harmlessly.
 
                 *mask = new_mask;
+                // The rehash dropped every tombstone, so the claimed slots
+                // are exactly the live entries again.
+                self.occupied = self.len;
                 self.stats.rehashes += 1;
 
                 Ok(())
