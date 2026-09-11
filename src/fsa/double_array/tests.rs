@@ -5,10 +5,9 @@ use super::trie::*;
 // test module mirrors the file's own name by convention
 #[allow(clippy::module_inception)]
 mod tests {
-    
-    
+
     use super::super::state::*;
-    
+
     use super::*;
 
     #[test]
@@ -322,7 +321,9 @@ mod tests {
         let mut trie = DoubleArrayTrie::new();
         for i in 0..4000u32 {
             let key = format!("{:04}{}", (i * 7919) % 10007, "k".repeat((i % 5) as usize));
-            let (state, was_new) = trie.insert_returning_state(key.as_bytes(), |_, _| {}).unwrap();
+            let (state, was_new) = trie
+                .insert_returning_state(key.as_bytes(), |_, _| {})
+                .unwrap();
             assert!(was_new, "{key}");
             assert_eq!(trie.lookup_state(key.as_bytes()), Some(state), "{key}");
         }
@@ -467,8 +468,39 @@ mod tests {
     }
 
     #[test]
+    fn test_state_move_from_free_state() {
+        // The existing test above covers a free *target*. This one covers a
+        // free *source*, which used to be an out-of-bounds read rather than a
+        // wrong answer: a free slot stores a free-list link in child0
+        // (NIL_STATE == 0x7FFF_FFFF when unlinked), so `base ^ ch` indexed far
+        // past the end of `states`. `DoubleArrayTrie::new()` leaves 255 such
+        // slots, so a caller walking `0..total_states()` hit it immediately.
+        let mut t = DoubleArrayTrie::new();
+        t.insert(b"hello").unwrap();
+        t.insert(b"help").unwrap();
+        t.remove(b"help");
+
+        let mut saw_free = false;
+        for state in 0..t.total_states() as u32 {
+            if !t.is_free(state) {
+                continue;
+            }
+            saw_free = true;
+            for ch in [0u8, 1, b'a', b'h', 200, 255] {
+                assert_eq!(
+                    t.state_move(state, ch),
+                    NIL_STATE,
+                    "free state {state} must have no transition on byte {ch}"
+                );
+            }
+        }
+        assert!(saw_free, "expected the trie to still hold free slots");
+    }
+
+    #[test]
     fn test_state_move_after_relocations() {
         let mut t = DoubleArrayTrie::new();
+
         // Insert many keys sharing prefix to force child array relocations.
         // After relocations, state_move must still return correct results.
         let keys: Vec<Vec<u8>> = (0u8..=127).map(|ch| vec![b'x', ch]).collect();
@@ -1635,10 +1667,7 @@ mod tests {
 
 #[cfg(test)]
 mod prefix_regression_tests {
-    
-    
-    
-    
+
     use super::*;
 
     #[test]
@@ -1678,9 +1707,7 @@ mod prefix_regression_tests {
 #[cfg(test)]
 mod map_prefix_regression_tests {
     use super::super::iterators::*;
-    
-    
-    
+
     use super::*;
 
     #[test]

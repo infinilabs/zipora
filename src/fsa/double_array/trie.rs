@@ -96,12 +96,20 @@ impl DoubleArrayTrie {
         // a real bounds check (an out-of-range state simply has no
         // transitions). `next` below remains structurally bounded by the
         // set_base_padded invariant, as in contains()/lookup_state().
-        if curr as usize >= self.states.len() {
+        //
+        // The invariant only covers *allocated* states. A free slot stores a
+        // free-list link in child0 (NIL_STATE for an unlinked one), so
+        // `base ^ ch` would be an arbitrary index far past the end of the
+        // array - `DoubleArrayTrie::new()` alone leaves 255 such slots, and
+        // reading one of them is an out-of-bounds access, not a wrong answer.
+        // A free state has no transitions by definition.
+        if curr as usize >= self.states.len() || self.is_free(curr) {
             return NIL_STATE;
         }
         // SAFETY: curr bounds-checked above.
         let base = unsafe { self.states.get_unchecked(curr as usize) }.child0();
         let next = (base ^ ch as u32) as usize;
+
         // SAFETY: same invariant as contains()
         debug_assert!(next < self.states.len());
         let next_state = unsafe { self.states.get_unchecked(next) };
