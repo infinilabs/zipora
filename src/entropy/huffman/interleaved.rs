@@ -821,7 +821,6 @@ impl ContextualHuffmanEncoder {
         Ok(output)
     }
 
-
     /// Get or initialize the cached fast symbol table
     ///
     /// The table is built lazily on first access and cached for subsequent calls.
@@ -1070,6 +1069,23 @@ impl ContextualHuffmanDecoder {
         }
 
         Ok(result)
+    }
+
+    /// Decode data produced by `encode_with_interleaving`.
+    ///
+    /// [`Self::decode`] walks the tree bit by bit over one continuous stream.
+    /// It cannot read a stream that was split into N interleaved substreams,
+    /// and even at x1 it is a different code path from the block decode table
+    /// used by `decode_xn`. Anything encoded with an interleaving factor must
+    /// be decoded with the same factor.
+    pub fn decode_with_interleaving(
+        &self,
+        data: &[u8],
+        output_size: usize,
+        factor: InterleavingFactor,
+    ) -> Result<Vec<u8>> {
+        self.encoder
+            .decode_with_interleaving(data, output_size, factor)
     }
 
     /// Decode Order-0 (classic Huffman)
