@@ -1667,3 +1667,34 @@ fn test_extend_drops_written_elements_on_panicking_iterator() {
     drop(vec);
     assert_eq!(DROPS.load(Ordering::SeqCst), 2);
 }
+
+#[test]
+fn test_eq_uses_partial_eq_not_memcmp() {
+    // Regression: PartialEq switched to a byte-wise memcmp once the payload
+    // reached 64 bytes, so equality depended on the vector's length.
+    // `-0.0 == 0.0` holds for f64 but the two have different bit patterns,
+    // and `NaN != NaN` holds while a NaN is byte-identical to itself.
+    //
+    // 7 f64s stay under the 64-byte threshold, 8 cross it: both must agree.
+    for len in [7usize, 8] {
+        let mut zeros: FastVec<f64> = FastVec::new();
+        let mut neg_zeros: FastVec<f64> = FastVec::new();
+        for _ in 0..len {
+            zeros.push(0.0f64).unwrap();
+            neg_zeros.push(-0.0f64).unwrap();
+        }
+        assert_eq!(
+            zeros, neg_zeros,
+            "-0.0 must compare equal to 0.0 at len {len}"
+        );
+
+        let mut nans: FastVec<f64> = FastVec::new();
+        let mut nans_again: FastVec<f64> = FastVec::new();
+        for _ in 0..len {
+            nans.push(f64::NAN).unwrap();
+            nans_again.push(f64::NAN).unwrap();
+        }
+        assert_ne!(nans, nans_again, "NaN must never compare equal at len {len}");
+    }
+}
+
