@@ -244,6 +244,29 @@ pub struct FseConfig {
 
     /// Enable advanced state management
     pub advanced_states: bool,
+
+    /// Upper bound on the size of a single uncompressed payload, in bytes.
+    ///
+    /// This is a safety limit, not a tuning parameter. The stream header
+    /// stores the original size as an untrusted `u32`, and the decoder has no
+    /// way to derive an upper bound for it from the payload: a symbol whose
+    /// normalized frequency rounds to the whole table costs zero bytes, so a
+    /// 26-byte stream can legitimately describe gigabytes of output. Without
+    /// a cap, a hostile header claiming `u32::MAX` makes the decoder allocate
+    /// 4 GiB and spin for tens of seconds before returning garbage.
+    ///
+    /// The same limit is enforced on the compression side so that anything
+    /// this encoder produces can be decoded by a decoder using the same
+    /// configuration, and so that the `u32` size field can never silently
+    /// truncate.
+    #[cfg_attr(feature = "serde", serde(default = "default_max_uncompressed_size"))]
+    pub max_uncompressed_size: usize,
+}
+
+/// Default value of [`FseConfig::max_uncompressed_size`]: 1 GiB.
+#[inline]
+fn default_max_uncompressed_size() -> usize {
+    1024 * 1024 * 1024
 }
 
 impl Default for FseConfig {
@@ -262,6 +285,7 @@ impl Default for FseConfig {
             entropy_optimization: true,
             block_size: 64 * 1024, // 64KB blocks
             advanced_states: false,
+            max_uncompressed_size: default_max_uncompressed_size(),
         }
     }
 }
@@ -345,6 +369,16 @@ impl FseConfig {
             return Err(ZiporaError::invalid_parameter(format!(
                 "Table size {} exceeds max {}",
                 table_size, self.max_table_size
+            )));
+        }
+
+        // The stream header stores the original size in a u32, so a limit
+        // beyond that range could never be honoured on the decode side.
+        if self.max_uncompressed_size == 0 || self.max_uncompressed_size > u32::MAX as usize {
+            return Err(ZiporaError::invalid_parameter(format!(
+                "Max uncompressed size must be 1..={}, got {}",
+                u32::MAX,
+                self.max_uncompressed_size
             )));
         }
 
@@ -860,6 +894,17 @@ impl FseEncoder {
             return Ok(Vec::new());
         }
 
+        // The header stores the original size in a u32; refuse anything the
+        // configured limit (and therefore the header) cannot represent
+        // instead of silently truncating the length field.
+        if data.len() > self.config.max_uncompressed_size {
+            return Err(ZiporaError::invalid_parameter(format!(
+                "input of {} bytes exceeds max_uncompressed_size {}",
+                data.len(),
+                self.config.max_uncompressed_size
+            )));
+        }
+
         // Analyze frequencies if in adaptive mode or no table exists
         if self.config.adaptive || self.table.is_none() {
             self.analyze_frequencies(data)?;
@@ -1167,6 +1212,18 @@ impl FseDecoder {
             u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         pos += 4;
 
+        // The size field is attacker-controlled and cannot be cross-checked
+        // against the payload: a symbol whose normalized frequency fills the
+        // whole table costs zero bytes to code, so no ratio bound holds for
+        // well-formed streams either. Reject implausible claims up front
+        // rather than allocating and decoding gigabytes of garbage.
+        if original_size > self.config.max_uncompressed_size {
+            return Err(ZiporaError::invalid_data(format!(
+                "FSE stream claims {} bytes, above max_uncompressed_size {}",
+                original_size, self.config.max_uncompressed_size
+            )));
+        }
+
         if original_size == 0 {
             return Ok(Vec::new());
         }
@@ -1256,8 +1313,12 @@ impl FseDecoder {
         let compressed_data = &data[pos..state_start];
         let mut byte_pos = compressed_data.len(); // Start from the end for rANS
 
-        // Decode symbols using advanced approach
-        let mut output = Vec::with_capacity(original_size);
+        // Decode symbols using advanced approach. Reserve incrementally: the
+        // declared size is still only a claim at this point, so let the
+        // buffer grow with the output actually produced instead of
+        // committing the full amount for a stream that may fail early.
+        const MAX_EAGER_RESERVE: usize = 1 << 20;
+        let mut output = Vec::with_capacity(original_size.min(MAX_EAGER_RESERVE));
 
         for _i in 0..original_size {
             // Decode symbol first (optimal order for performance)
@@ -1308,6 +1369,15 @@ impl FseDecoder {
 
             let block_data = &data[pos..pos + block_size];
             let decompressed = self.decompress_single(block_data)?;
+            // The per-block check in decompress_single bounds one block; the
+            // blocks are concatenated, so the total needs its own check or a
+            // stream of many small blocks multiplies the limit.
+            if output.len() + decompressed.len() > self.config.max_uncompressed_size {
+                return Err(ZiporaError::invalid_data(format!(
+                    "FSE parallel stream decodes to more than max_uncompressed_size {}",
+                    self.config.max_uncompressed_size
+                )));
+            }
             output.extend_from_slice(&decompressed);
             pos += block_size;
         }

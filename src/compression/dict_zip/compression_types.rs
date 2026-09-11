@@ -2119,6 +2119,9 @@ impl FseConfig {
             min_frequency: 1,
             max_table_size: 64 * 1024,
             dict_size: 0,
+            // Safety limit, not a tuning knob: inherit the entropy module's
+            // default bound on the header-declared uncompressed size.
+            ..EntropFseConfig::default()
         }
     }
 
