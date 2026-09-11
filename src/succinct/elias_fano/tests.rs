@@ -1244,7 +1244,10 @@ mod tests {
             assert_eq!(h.get(i), Some(v), "get({i})");
         }
         assert_eq!(h.next_geq(1u64 << 33), Some((0, 1u64 << 33)));
-        assert_eq!(h.next_geq((1u64 << 33) + 1), Some((1, (1u64 << 33) + (1u64 << 20))));
+        assert_eq!(
+            h.next_geq((1u64 << 33) + 1),
+            Some((1, (1u64 << 33) + (1u64 << 20)))
+        );
         assert_eq!(h.next_geq(docs[9] + 1), None);
 
         // Short lists that DO fit in u32 must still pick Dense.
@@ -1640,32 +1643,35 @@ mod tests {
     fn test_elias_fano_batch_cursor_corruption_oob_panic() {
         let docs = vec![3, 5, 11, 27, 31, 42, 58, 63];
         let ef = EliasFano::from_sorted(&docs);
-        
+
         let json_str = serde_json::to_string(&ef).unwrap();
         let mut val: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-        
+
         // Corrupt the len field to be larger than actual element count
         if let Some(len) = val.get_mut("len") {
             *len = serde_json::json!(100);
         }
-        
+
         let corrupt_json = serde_json::to_string(&val).unwrap();
         let corrupt_ef: EliasFano = serde_json::from_str(&corrupt_json).unwrap();
-        
+
         let mut cursor = corrupt_ef.batch_cursor();
-        
+
         // The first element is already decoded and available.
         assert_eq!(cursor.current(), Some(docs[0] as u64));
-        
+
         // Advance to read the next 7 elements of the first batch
         for i in 1..8 {
             assert!(cursor.advance(), "Failed to advance at index {}", i);
             assert_eq!(cursor.current(), Some(docs[i] as u64));
         }
-        
+
         // The next advance will trigger refill() since the buffer of 8 elements is exhausted.
         // It should detect the corruption and safely return false instead of panicking.
-        assert!(!cursor.advance(), "Cursor should be exhausted after batch depletion on corrupt structure");
+        assert!(
+            !cursor.advance(),
+            "Cursor should be exhausted after batch depletion on corrupt structure"
+        );
         assert!(cursor.is_exhausted());
     }
 
@@ -1674,12 +1680,13 @@ mod tests {
     fn test_optimal_pef_batch_cursor_corruption_oob() {
         let vals: Vec<u32> = (0..20).map(|i| i * 5).collect();
         let opef = OptimalPartitionedEliasFano::from_sorted(&vals);
-        
+
         let json_str = serde_json::to_string(&opef).unwrap();
         let mut val: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-        
+
         // Corrupt the count field in the first chunk meta to be larger
-        if let Some(count) = val.get_mut("meta")
+        if let Some(count) = val
+            .get_mut("meta")
             .and_then(|m| m.get_mut(0))
             .and_then(|c0| c0.get_mut("count"))
         {
@@ -1689,23 +1696,27 @@ mod tests {
         if let Some(len) = val.get_mut("len") {
             *len = serde_json::json!(100);
         }
-        
+
         let corrupt_json = serde_json::to_string(&val).unwrap();
-        let corrupt_opef: OptimalPartitionedEliasFano = serde_json::from_str(&corrupt_json).unwrap();
-        
+        let corrupt_opef: OptimalPartitionedEliasFano =
+            serde_json::from_str(&corrupt_json).unwrap();
+
         let mut cursor = corrupt_opef.batch_cursor();
-        
+
         // The first element is already decoded and available.
         assert_eq!(cursor.current(), Some(vals[0] as u64));
-        
+
         // We should be able to safely read 20 elements (indices 0..19)
         for i in 1..20 {
             assert!(cursor.advance(), "Failed to advance at index {}", i);
             assert_eq!(cursor.current(), Some(vals[i] as u64));
         }
-        
+
         // The next advance (to 21st element) will trigger refill() which will detect the corruption and return false.
-        assert!(!cursor.advance(), "Cursor should be exhausted after chunk depletion on corrupt structure");
+        assert!(
+            !cursor.advance(),
+            "Cursor should be exhausted after chunk depletion on corrupt structure"
+        );
         assert!(cursor.is_exhausted());
     }
 
@@ -1735,5 +1746,73 @@ mod tests {
         for (i, &v) in values.iter().enumerate() {
             assert_eq!(cef.get(i), Some(v), "CEF idx {}", i);
         }
+    }
+
+    #[test]
+    fn test_next_geq_reaches_u64_max_element() {
+        // `universe` is `last + 1` computed with `saturating_add`, so a list
+        // containing u64::MAX gets `universe == u64::MAX` and the half-open
+        // `target >= universe` guard used to reject the largest element -
+        // `get` returned it but `next_geq` claimed it did not exist.
+        let values: Vec<u64> = vec![0, 1, 1000, u64::MAX - 1, u64::MAX];
+        let last = values.len() - 1;
+
+        let ef = EliasFano::from_sorted_u64(&values);
+        assert_eq!(ef.next_geq(u64::MAX), Some((last, u64::MAX)));
+        assert_eq!(ef.next_geq(u64::MAX - 1), Some((last - 1, u64::MAX - 1)));
+
+        let pef = PartitionedEliasFano::from_sorted_u64(&values);
+        assert_eq!(pef.next_geq(u64::MAX), Some((last, u64::MAX)));
+
+        let opef = OptimalPartitionedEliasFano::from_sorted_u64(&values);
+        assert_eq!(opef.next_geq(u64::MAX), Some((last, u64::MAX)));
+
+        // A list that stops just short of u64::MAX must still report None.
+        let short = EliasFano::from_sorted_u64(&[0, 1, u64::MAX - 1]);
+        assert_eq!(short.next_geq(u64::MAX), None);
+    }
+
+    #[test]
+    fn test_hybrid_dense_rejects_targets_above_u32_max() {
+        // Dense stores u32; `target as u32` wrapped, so a target beyond
+        // u32::MAX was answered with an element *below* it.
+        let dense = HybridPostingList::from_sorted(&[5u32, 10, 20]);
+        assert_eq!(dense.encoding(), PostingEncoding::Dense);
+        assert_eq!(dense.next_geq((1u64 << 32) + 3), None);
+        assert_eq!(dense.next_geq(u64::MAX), None);
+        // Still correct below the boundary.
+        assert_eq!(dense.next_geq(6), Some((1, 10)));
+    }
+
+    #[test]
+    fn test_hybrid_intersect_count_at_u64_max() {
+        // Two defects met here: `probe = va + 1` wrapped to 0 at u64::MAX and
+        // restarted the leapfrog forever, and the `next_geq` universe guard
+        // dropped the u64::MAX element so the count came out short.
+        let values: Vec<u64> = vec![10, 1000, u64::MAX];
+        let a = HybridPostingList::from_sorted_u64(&values);
+        let b = HybridPostingList::from_sorted_u64(&values);
+        assert_eq!(a.intersect_count(&b), 3);
+
+        let partial = HybridPostingList::from_sorted_u64(&[1000, u64::MAX]);
+        assert_eq!(a.intersect_count(&partial), 2);
+    }
+
+    #[test]
+    fn test_hybrid_run_heavy_does_not_overflow_on_full_range() {
+        // `last - first + 1` overflowed for a list spanning the whole u64
+        // range: a panic in debug, and in release a span of 0, which made the
+        // sparsest possible list look maximally run-heavy.
+        let h = HybridPostingList::from_sorted_u64(&[0, u64::MAX]);
+        assert_ne!(h.encoding(), PostingEncoding::Clustered);
+        assert_eq!(h.get(0), Some(0));
+        assert_eq!(h.get(1), Some(u64::MAX));
+
+        // A genuinely run-heavy list must still pick Clustered.
+        let runs: Vec<u64> = (0..200u64).collect();
+        assert_eq!(
+            HybridPostingList::from_sorted_u64(&runs).encoding(),
+            PostingEncoding::Clustered
+        );
     }
 }

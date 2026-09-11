@@ -16,8 +16,11 @@ const RUN_HEAVY_SPAN_FACTOR: u64 = 2;
 /// Whether a sorted list of `n` elements spanning `[first, last]` is run-heavy.
 #[inline]
 fn is_run_heavy(first: u64, last: u64, n: usize) -> bool {
-    let span = last - first + 1;
-    span <= RUN_HEAVY_SPAN_FACTOR * n as u64
+    // The span is `last - first + 1`, but that overflows for a list spanning
+    // the whole u64 range ([0, u64::MAX] panics in debug and wraps to a span
+    // of 0 - "maximally run-heavy" - in release). `last - first` cannot
+    // overflow, and `span <= 2n` is equivalent to `last - first < 2n`.
+    (last - first) < RUN_HEAVY_SPAN_FACTOR.saturating_mul(n as u64)
 }
 
 /// Adaptive posting list that selects the best encoding based on list statistics.
@@ -93,9 +96,7 @@ impl HybridPostingList {
             PostingEncoding::Optimal => {
                 Self::Optimal(OptimalPartitionedEliasFano::from_sorted(values))
             }
-            PostingEncoding::Clustered => {
-                Self::Clustered(ClusteredEliasFano::from_sorted(values))
-            }
+            PostingEncoding::Clustered => Self::Clustered(ClusteredEliasFano::from_sorted(values)),
         }
     }
 
@@ -149,6 +150,14 @@ impl HybridPostingList {
     pub fn next_geq(&self, target: u64) -> Option<(usize, u64)> {
         match self {
             Self::Dense(v) => {
+                // Dense stores u32. `target as u32` wraps for anything above
+                // u32::MAX and the binary search then answers about the
+                // truncated value, returning an element *below* the target -
+                // which makes the `intersect_count` leapfrog below spin
+                // forever against a list that holds larger values.
+                if target > u32::MAX as u64 {
+                    return None;
+                }
                 // Binary search on sorted array
                 match v.binary_search(&(target as u32)) {
                     Ok(i) => Some((i, v[i] as u64)),
@@ -161,6 +170,7 @@ impl HybridPostingList {
                     }
                 }
             }
+
             Self::EliasFano(ef) => ef.next_geq(target),
             Self::Partitioned(pef) => pef.next_geq(target),
             Self::Optimal(opef) => opef.next_geq(target),
@@ -183,7 +193,13 @@ impl HybridPostingList {
             match other.next_geq(va) {
                 Some((_, vb)) if vb == va => {
                     count += 1;
-                    probe = va + 1;
+                    // `va + 1` wraps to 0 when `va == u64::MAX`, restarting the
+                    // leapfrog from the beginning and looping forever. There is
+                    // nothing past u64::MAX to visit, so stop instead.
+                    match va.checked_add(1) {
+                        Some(next) => probe = next,
+                        None => break,
+                    }
                 }
                 Some((_, vb)) => probe = vb,
                 None => break,

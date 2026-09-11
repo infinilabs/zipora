@@ -73,6 +73,19 @@ impl EliasFano {
         Self::from_sorted_impl(values.len(), universe, |i| values[i])
     }
 
+    /// Whether `target` is past every stored value.
+    ///
+    /// `universe` is an exclusive bound, but it is built with
+    /// `saturating_add(1)`, so a list whose largest element is `u64::MAX`
+    /// ends up with `universe == u64::MAX`. A plain `target >= universe`
+    /// test would then reject `u64::MAX` itself - the one value that is
+    /// certainly present. When the bound is saturated, fall through and let
+    /// the bucket search decide.
+    #[inline(always)]
+    pub(crate) fn beyond_universe(&self, target: u64) -> bool {
+        target >= self.universe && self.universe != u64::MAX
+    }
+
     /// Shared construction logic. `get_val(i)` returns the i-th value as u64.
     fn from_sorted_impl(n: usize, universe: u64, get_val: impl Fn(usize) -> u64) -> Self {
         // L = floor(log2(universe / n)), at least 0
@@ -254,7 +267,7 @@ impl EliasFano {
     /// `get_low` (1-2 word reads) + bit scan (~1 cycle).
     #[inline]
     pub fn next_geq(&self, target: u64) -> Option<(usize, u64)> {
-        if self.len == 0 || target >= self.universe {
+        if self.len == 0 || self.beyond_universe(target) {
             return None;
         }
 
@@ -668,7 +681,7 @@ impl<'a> EliasFanoCursor<'a> {
             return false;
         }
 
-        if target >= self.ef.universe {
+        if self.ef.beyond_universe(target) {
             self.index = self.ef.len;
             return false;
         }
