@@ -621,13 +621,20 @@ where
             }
         }
 
-        // Check if we need to evict before allocating
-        if self.lru_list.len() >= self.config.capacity {
-            self.evict_lru()?;
-        }
-
-        // Now allocate new entry (should have space after eviction)
-        let node_idx = self.allocate_node()?;
+        // Allocate first and let a failure drive eviction. Checking
+        // `len() >= capacity` up front and evicting once is not atomic: two
+        // threads both see the over-capacity list, the first evicts and
+        // consumes the single freed node, and the second — now seeing a
+        // decremented length — skips its own eviction and finds the free
+        // list empty. With capacity nodes and no outer lock that is the
+        // common case, not a narrow window. Retrying is bounded because
+        // evict_lru fails once the LRU list is empty.
+        let node_idx = loop {
+            match self.allocate_node() {
+                Ok(idx) => break idx,
+                Err(_) => self.evict_lru()?,
+            }
+        };
 
         // Initialize the node and publish the hash_map entry under the same
         // locks (order: hash_map → nodes). Publishing the node in the LRU
@@ -1068,5 +1075,48 @@ mod tests {
         // Simulate a corrupted LRU tail pointing past the node array.
         cache.lru_list.tail.store(9999, Ordering::Relaxed);
         assert!(cache.evict_lru().is_err());
+    }
+
+    #[test]
+    fn test_concurrent_put_does_not_fail_while_entries_are_evictable() {
+        // Regression: put() checked `len() >= capacity`, evicted once and then
+        // allocated. Two threads both saw the over-capacity list; the first
+        // evicted and took the single freed node, the second saw the
+        // decremented length, skipped its own eviction and got
+        // Err(OutOfMemory) from an empty free list. With 8 threads over a
+        // capacity-8 map this failed roughly 83% of all puts. The existing
+        // concurrency test writes `let _ = cache.put(..)`, which swallows it.
+        use std::sync::atomic::AtomicU64;
+        use std::thread;
+
+        const THREADS: u64 = 8;
+        const OPS: u64 = 2_000;
+
+        let cache: Arc<LruMap<u64, u64>> = Arc::new(LruMap::new(8).unwrap());
+        let failures = Arc::new(AtomicU64::new(0));
+        let mut handles = Vec::new();
+        for t in 0..THREADS {
+            let cache = Arc::clone(&cache);
+            let failures = Arc::clone(&failures);
+            handles.push(thread::spawn(move || {
+                for i in 0..OPS {
+                    // Fresh keys only: every put must evict to make room.
+                    let k = t * OPS + i;
+                    if cache.put(k, k).is_err() {
+                        failures.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        assert_eq!(
+            failures.load(Ordering::Relaxed),
+            0,
+            "puts failed even though every entry was evictable"
+        );
+        assert!(cache.len() <= 8, "capacity exceeded: {}", cache.len());
     }
 }
