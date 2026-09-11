@@ -6,6 +6,7 @@
 
 use crate::containers::FastVec;
 use crate::error::{Result, ZiporaError};
+use std::io::{Read, Write};
 // Note: BitVector and RankSelectInterleaved256 would be used for advanced optimizations
 
 #[cfg(feature = "serde")]
@@ -271,6 +272,111 @@ impl SortedUintVec {
             10001..=100000 => 20,
             _ => current_width.max(16),
         }
+    }
+
+    /// Magic signature for the serialized form
+    const SERIAL_MAGIC: [u8; 4] = *b"ZSUV";
+
+    /// Version of the serialized form
+    const SERIAL_VERSION: u8 = 1;
+
+    /// Size of the fixed part of the serialized form
+    const SERIAL_HEADER_SIZE: usize = 32;
+
+    /// Number of bytes `write_to` will produce
+    pub fn serialized_size(&self) -> usize {
+        Self::SERIAL_HEADER_SIZE + self.index.len() + self.data.len()
+    }
+
+    /// Write the compressed representation to `writer`
+    ///
+    /// The bit widths are chosen when the vector is built, so they travel with
+    /// the payload; without them the packed blocks cannot be decoded. `use_simd`
+    /// is a runtime hint rather than part of the layout and is not persisted.
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
+        let mut header = [0u8; Self::SERIAL_HEADER_SIZE];
+        header[0..4].copy_from_slice(&Self::SERIAL_MAGIC);
+        header[4] = Self::SERIAL_VERSION;
+        header[5] = self.config.log2_block_units;
+        header[6] = self.config.offset_width;
+        header[7] = self.config.sample_width;
+        header[8..16].copy_from_slice(&(self.size as u64).to_le_bytes());
+        header[16..24].copy_from_slice(&(self.index.len() as u64).to_le_bytes());
+        header[24..32].copy_from_slice(&(self.data.len() as u64).to_le_bytes());
+
+        writer.write_all(&header)?;
+        writer.write_all(self.index.as_slice())?;
+        writer.write_all(self.data.as_slice())?;
+        Ok(())
+    }
+
+    /// Read a compressed representation written by [`Self::write_to`]
+    pub fn read_from<R: Read>(reader: &mut R) -> Result<Self> {
+        let mut header = [0u8; Self::SERIAL_HEADER_SIZE];
+        reader.read_exact(&mut header)?;
+
+        if header[0..4] != Self::SERIAL_MAGIC {
+            return Err(ZiporaError::invalid_data(
+                "invalid SortedUintVec magic signature",
+            ));
+        }
+        if header[4] != Self::SERIAL_VERSION {
+            return Err(ZiporaError::invalid_data(
+                "unsupported SortedUintVec format version",
+            ));
+        }
+
+        let config = SortedUintVecConfig {
+            log2_block_units: header[5],
+            offset_width: header[6],
+            sample_width: header[7],
+            use_simd: true,
+        };
+        config.validate()?;
+
+        let read_u64 = |at: usize| -> u64 {
+            u64::from_le_bytes(header[at..at + 8].try_into().expect("8 bytes"))
+        };
+        let size = read_u64(8);
+        let index_len = read_u64(16);
+        let data_len = read_u64(24);
+
+        if size > usize::MAX as u64 || index_len > usize::MAX as u64 || data_len > usize::MAX as u64
+        {
+            return Err(ZiporaError::invalid_data(
+                "SortedUintVec section exceeds usize::MAX",
+            ));
+        }
+        let (size, index_len, data_len) = (size as usize, index_len as usize, data_len as usize);
+
+        // Reject declared payload sizes that cannot describe `size` elements, so
+        // a crafted section cannot make us allocate more than it can fill. The
+        // packer may leave one trailing partial byte in either buffer.
+        let num_blocks = size.div_ceil(1usize << config.log2_block_units);
+        let min_index_len = (num_blocks * config.sample_width as usize).div_ceil(8);
+        let min_data_len = (size * config.offset_width as usize).div_ceil(8);
+        if index_len < min_index_len
+            || index_len > min_index_len + 8
+            || data_len < min_data_len
+            || data_len > min_data_len + 8
+        {
+            return Err(ZiporaError::invalid_data(
+                "SortedUintVec section size does not match its element count",
+            ));
+        }
+
+        let mut result = Self::with_config(config)?;
+        result.size = size;
+
+        let mut buf = vec![0u8; index_len];
+        reader.read_exact(&mut buf)?;
+        result.index.extend(buf.iter().copied())?;
+
+        let mut buf = vec![0u8; data_len];
+        reader.read_exact(&mut buf)?;
+        result.data.extend(buf.iter().copied())?;
+
+        Ok(result)
     }
 
     /// Get value at index with bounds checking
