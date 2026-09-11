@@ -825,7 +825,9 @@ fn test_fse_mode_byte_rejects_unknown_stream() {
     use zipora::entropy::FseDecoder;
     let mut decoder = FseDecoder::new();
     // 0x02 would have parsed as num_blocks=2 under the old sniffing heuristic
-    let crafted = [0x02u8, 0, 0, 0, 5, 0, 0, 0, 5, 0, 0, 0, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5];
+    let crafted = [
+        0x02u8, 0, 0, 0, 5, 0, 0, 0, 5, 0, 0, 0, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5,
+    ];
     assert!(decoder.decompress(&crafted).is_err());
 }
 
@@ -842,4 +844,123 @@ fn test_fse_parallel_mode_roundtrip() {
     let compressed = encoder.compress(&data).unwrap();
     let mut decoder = FseDecoder::new();
     assert_eq!(decoder.decompress(&compressed).unwrap(), data);
+}
+
+/// Build a syntactically valid single-mode FSE header that declares
+/// `original_size` bytes of output but carries no payload at all.
+fn crafted_fse_header(original_size: u32) -> Vec<u8> {
+    let mut v = vec![0xF5u8]; // FSE_MODE_SINGLE
+    v.extend_from_slice(&original_size.to_le_bytes());
+    v.push(12u8); // table_log
+    v.extend_from_slice(&2u16.to_le_bytes()); // symbol count
+    v.push(b'A');
+    v.extend_from_slice(&2048u32.to_le_bytes());
+    v.push(b'B');
+    v.extend_from_slice(&2048u32.to_le_bytes());
+    v.extend_from_slice(&[0u8; 8]); // trailing rANS state
+    v
+}
+
+#[test]
+fn test_fse_rejects_oversized_declared_size() {
+    // codereview.md: the u32 size field was used unchecked to size a Vec and
+    // to bound the decode loop. 26 crafted bytes claiming u32::MAX made the
+    // decoder allocate 4 GiB and spin for ~33s, then return Ok with garbage.
+    // The frequency table and trailing state below are well-formed, so the
+    // only thing standing between the caller and that blow-up is the size
+    // check.
+    use zipora::entropy::FseDecoder;
+
+    let mut decoder = FseDecoder::new();
+    let err = decoder
+        .decompress(&crafted_fse_header(u32::MAX))
+        .expect_err("a 26-byte stream cannot describe 4 GiB of output");
+    assert!(
+        err.to_string().contains("max_uncompressed_size"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn test_fse_size_limit_is_configurable_and_symmetric() {
+    use zipora::entropy::{FseConfig, FseDecoder, FseEncoder};
+
+    let config = FseConfig {
+        max_uncompressed_size: 4096,
+        ..Default::default()
+    };
+
+    // Under the limit: the round trip is unaffected.
+    let data: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+    let mut encoder = FseEncoder::new(config.clone()).unwrap();
+    let compressed = encoder.compress(&data).unwrap();
+    let mut decoder = FseDecoder::with_config(config.clone()).unwrap();
+    assert_eq!(decoder.decompress(&compressed).unwrap(), data);
+
+    // Over the limit: the encoder refuses instead of writing a header the
+    // matching decoder would reject (and, at 4 GiB, instead of silently
+    // truncating the u32 size field).
+    let mut encoder = FseEncoder::new(config.clone()).unwrap();
+    assert!(encoder.compress(&vec![7u8; 4097]).is_err());
+
+    // A stream produced under a laxer limit is rejected by a stricter one
+    // before any output is allocated.
+    let mut decoder = FseDecoder::with_config(config).unwrap();
+    let err = decoder
+        .decompress(&crafted_fse_header(8192))
+        .expect_err("8192 bytes exceeds the 4096-byte limit");
+    assert!(
+        err.to_string().contains("max_uncompressed_size"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn test_fse_config_rejects_unrepresentable_size_limit() {
+    use zipora::entropy::{FseConfig, FseEncoder};
+
+    // The header stores the size in a u32; a larger limit would let the
+    // encoder accept input whose length cannot be recorded.
+    let config = FseConfig {
+        max_uncompressed_size: u32::MAX as usize + 1,
+        ..Default::default()
+    };
+    assert!(FseEncoder::new(config).is_err());
+
+    let config = FseConfig {
+        max_uncompressed_size: 0,
+        ..Default::default()
+    };
+    assert!(FseEncoder::new(config).is_err());
+}
+
+#[test]
+fn test_fse_parallel_size_limit_applies_to_total() {
+    // Each block is individually under the limit; only the concatenation
+    // exceeds it, so a per-block check alone would let a small parallel
+    // stream multiply the limit by its block count.
+    use zipora::entropy::{FseConfig, FseDecoder};
+
+    let block = crafted_fse_header(3000)[1..].to_vec(); // drop the mode byte
+    let mut stream = vec![0xF6u8]; // FSE_MODE_PARALLEL
+    stream.extend_from_slice(&3u32.to_le_bytes());
+    for _ in 0..3 {
+        stream.extend_from_slice(&(block.len() as u32).to_le_bytes());
+    }
+    for _ in 0..3 {
+        stream.extend_from_slice(&block);
+    }
+
+    let config = FseConfig {
+        max_uncompressed_size: 4096,
+        ..Default::default()
+    };
+    let mut decoder = FseDecoder::with_config(config).unwrap();
+    let err = decoder
+        .decompress(&stream)
+        .expect_err("3 x 3000 bytes exceeds the 4096-byte limit");
+    assert!(
+        err.to_string().contains("max_uncompressed_size"),
+        "unexpected error: {err}"
+    );
 }
