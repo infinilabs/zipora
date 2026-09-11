@@ -10,7 +10,7 @@ use std::cell::{RefCell, UnsafeCell};
 use std::collections::{HashMap, VecDeque};
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
 
 /// Default matrix dimensions for TLS storage
 const DEFAULT_ROWS: usize = 256;
@@ -22,11 +22,20 @@ where
     T: Send + Sync + 'static,
 {
     id: u32,
+    /// Which incarnation of `id` this is; see [`TlsRow`].
+    generation: u32,
     _phantom: PhantomData<T>,
     _cleanup: Arc<CleanupHandle<T, ROWS, COLS>>,
 }
 
-type TlsRow<T, const COLS: usize> = [UnsafeCell<Option<T>>; COLS];
+/// A row of the per-thread matrix.
+///
+/// Each cell carries the generation of the instance that wrote it. Ids are
+/// recycled when an instance is dropped, but the dropping thread can only
+/// reach its own matrix, so every other thread still holds the dead
+/// instance's value in the cell the recycled id now maps to. Tagging the
+/// value makes those leftovers invisible without sweeping anything.
+type TlsRow<T, const COLS: usize> = [UnsafeCell<Option<(u32, T)>>; COLS];
 
 /// Matrix storage for thread-local data
 struct TlsMatrix<T, const ROWS: usize, const COLS: usize> {
@@ -39,8 +48,8 @@ struct GlobalTlsState<T, const ROWS: usize, const COLS: usize>
 where
     T: Send + Sync + 'static,
 {
-    /// Free list of recycled IDs
-    free_ids: VecDeque<u32>,
+    /// Free list of recycled IDs, each with the generation to hand out next
+    free_ids: VecDeque<(u32, u32)>,
     /// Next available ID
     next_id: u32,
     /// Cleanup handles for automatic deallocation
@@ -53,7 +62,23 @@ where
     T: Send + Sync + 'static,
 {
     id: u32,
+    generation: u32,
     _phantom: PhantomData<T>,
+}
+
+/// Per-`(T, ROWS, COLS)` id allocators, keyed by type.
+///
+/// One module-level static. `allocate_id` and `CleanupHandle::drop` used to
+/// declare a function-local `static GLOBAL_REGISTRY` each, which are two
+/// distinct statics: drop pushed freed ids into a map nobody allocated from,
+/// so ids were never recycled and the allocator ran off the end of the
+/// matrix after ROWS * COLS instances over the process lifetime.
+type InstanceRegistry = RwLock<HashMap<TypeId, Box<dyn Any + Send + Sync>>>;
+
+static GLOBAL_REGISTRY: OnceLock<InstanceRegistry> = OnceLock::new();
+
+fn global_registry() -> &'static InstanceRegistry {
+    GLOBAL_REGISTRY.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
 // Thread-local storage for matrices
@@ -73,14 +98,16 @@ where
             ));
         }
 
-        let id = Self::allocate_id()?;
+        let (id, generation) = Self::allocate_id()?;
         let cleanup = Arc::new(CleanupHandle {
             id,
+            generation,
             _phantom: PhantomData,
         });
 
         Ok(Self {
             id,
+            generation,
             _phantom: PhantomData,
             _cleanup: cleanup,
         })
@@ -105,7 +132,7 @@ where
                 .expect("TLS matrix TypeId matches registered matrix type");
 
             // SAFETY: row and col are valid indices from get_indices (ID % matrix dimensions)
-            unsafe { matrix.get_or_create_value(row, col) }
+            unsafe { matrix.get_or_create_value(row, col, self.generation) }
         })
     }
 
@@ -123,7 +150,7 @@ where
 
             let matrix = matrices.get(&type_id)?;
             let matrix = matrix.downcast_ref::<TlsMatrix<T, ROWS, COLS>>()?;
-            matrix.get_value(row, col)
+            matrix.get_value(row, col, self.generation)
         })
     }
 
@@ -143,7 +170,7 @@ where
                 .get(&type_id)?
                 .downcast_ref::<TlsMatrix<T, ROWS, COLS>>()?;
 
-            matrix.get_value(row, col)
+            matrix.get_value(row, col, self.generation)
         })
     }
 
@@ -162,7 +189,7 @@ where
                 .expect("TLS matrix TypeId matches registered matrix type");
 
             // SAFETY: row and col are valid indices from get_indices (ID % matrix dimensions)
-            unsafe { matrix.set(row, col, value) }
+            unsafe { matrix.set(row, col, self.generation, value) }
         });
     }
 
@@ -177,7 +204,7 @@ where
             matrices
                 .get_mut(&type_id)?
                 .downcast_mut::<TlsMatrix<T, ROWS, COLS>>()?
-                .remove(row, col)
+                .remove(row, col, self.generation)
         })
     }
 
@@ -193,16 +220,9 @@ where
         (id / COLS, id % COLS)
     }
 
-    /// Allocate a unique instance ID
-    fn allocate_id() -> Result<u32> {
-        use std::any::Any;
-        use std::collections::HashMap;
-        use std::sync::RwLock;
-
-        static GLOBAL_REGISTRY: OnceLock<RwLock<HashMap<TypeId, Box<dyn Any + Send + Sync>>>> =
-            OnceLock::new();
-
-        let registry = GLOBAL_REGISTRY.get_or_init(|| RwLock::new(HashMap::new()));
+    /// Allocate a unique instance ID and the generation that goes with it
+    fn allocate_id() -> Result<(u32, u32)> {
+        let registry = global_registry();
 
         // Try read lock first to see if we already have this type
         let type_id = TypeId::of::<(T, [(); ROWS], [(); COLS])>(); // Use a unique type ID with const generics
@@ -226,8 +246,8 @@ where
                     .retain(|handle| handle.strong_count() > 0);
 
                 // Try to reuse a free ID
-                if let Some(id) = state.free_ids.pop_front() {
-                    return Ok(id);
+                if let Some((id, generation)) = state.free_ids.pop_front() {
+                    return Ok((id, generation));
                 } else {
                     let id = state.next_id;
                     if id as usize >= ROWS * COLS {
@@ -237,7 +257,7 @@ where
                         )));
                     }
                     state.next_id += 1;
-                    return Ok(id);
+                    return Ok((id, 0));
                 }
             }
         }
@@ -264,8 +284,8 @@ where
             .map_err(|_| ZiporaError::system_error("Failed to acquire TLS state lock"))?;
 
         // Try to reuse a free ID
-        if let Some(id) = state.free_ids.pop_front() {
-            Ok(id)
+        if let Some((id, generation)) = state.free_ids.pop_front() {
+            Ok((id, generation))
         } else {
             let id = state.next_id;
             if id as usize >= ROWS * COLS {
@@ -275,7 +295,7 @@ where
                 )));
             }
             state.next_id += 1;
-            Ok(id)
+            Ok((id, 0))
         }
     }
 }
@@ -287,6 +307,7 @@ where
     fn clone(&self) -> Self {
         Self {
             id: self.id,
+            generation: self.generation,
             _phantom: PhantomData,
             _cleanup: Arc::clone(&self._cleanup),
         }
@@ -302,14 +323,14 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
     }
 
     /// Get or create value at specified position
-    unsafe fn get_or_create_value(&mut self, row: usize, col: usize) -> T
+    unsafe fn get_or_create_value(&mut self, row: usize, col: usize, generation: u32) -> T
     where
         T: Default + Clone,
     {
         // Ensure row exists
         if self.rows[row].is_none() {
-            // Create array of UnsafeCell<Option<T>>
-            let new_row: Box<[UnsafeCell<Option<T>>; COLS]> =
+            // Create array of UnsafeCell<Option<(u32, T)>>
+            let new_row: Box<TlsRow<T, COLS>> =
                 Box::new(std::array::from_fn(|_| UnsafeCell::new(None)));
             self.rows[row] = Some(new_row);
         }
@@ -321,18 +342,24 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
         // SAFETY: UnsafeCell interior mutability, exclusive access within thread-local context
         let value_ref = unsafe { &mut *cell.get() };
 
-        if value_ref.is_none() {
-            *value_ref = Some(T::default());
+        // A value left by an earlier holder of this id belongs to a dead
+        // instance and must read as absent.
+        if value_ref
+            .as_ref()
+            .is_none_or(|(stored, _)| *stored != generation)
+        {
+            *value_ref = Some((generation, T::default()));
         }
 
         value_ref
             .as_ref()
             .expect("value set to default in previous if block")
+            .1
             .clone()
     }
 
     /// Get value copy if it exists
-    fn get_value(&self, row: usize, col: usize) -> Option<T>
+    fn get_value(&self, row: usize, col: usize, generation: u32) -> Option<T>
     where
         T: Clone,
     {
@@ -341,15 +368,19 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
         // SAFETY: UnsafeCell provides interior mutability, accessing immutably
         unsafe {
             let value_ref = &*cell.get();
-            value_ref.as_ref().cloned()
+            match value_ref {
+                Some((stored, value)) if *stored == generation => Some(value.clone()),
+                // Left behind by a previous holder of this recycled id.
+                _ => None,
+            }
         }
     }
 
     /// Set value at specified position
-    unsafe fn set(&mut self, row: usize, col: usize, value: T) {
+    unsafe fn set(&mut self, row: usize, col: usize, generation: u32, value: T) {
         // Ensure row exists
         if self.rows[row].is_none() {
-            let new_row: Box<[UnsafeCell<Option<T>>; COLS]> =
+            let new_row: Box<TlsRow<T, COLS>> =
                 Box::new(std::array::from_fn(|_| UnsafeCell::new(None)));
             self.rows[row] = Some(new_row);
         }
@@ -359,17 +390,23 @@ impl<T, const ROWS: usize, const COLS: usize> TlsMatrix<T, ROWS, COLS> {
             .expect("row was allocated in previous if block");
         let cell = &row_data[col];
         // SAFETY: UnsafeCell interior mutability, exclusive access within thread-local context
-        unsafe { *cell.get() = Some(value) };
+        unsafe { *cell.get() = Some((generation, value)) };
     }
 
     /// Remove value at specified position
-    fn remove(&mut self, row: usize, col: usize) -> Option<T> {
+    fn remove(&mut self, row: usize, col: usize, generation: u32) -> Option<T> {
         let row_data = self.rows[row].as_ref()?;
         let cell = &row_data[col];
         // SAFETY: UnsafeCell interior mutability, exclusive mutable access via &mut self
         unsafe {
             let value_ref = &mut *cell.get();
-            value_ref.take()
+            match value_ref {
+                Some((stored, _)) if *stored == generation => {
+                    value_ref.take().map(|(_, value)| value)
+                }
+                // Left behind by a previous holder of this recycled id.
+                _ => None,
+            }
         }
     }
 }
@@ -381,14 +418,7 @@ impl<T: Send + Sync + 'static, const ROWS: usize, const COLS: usize> Drop
 {
     fn drop(&mut self) {
         // Return ID to free list - use the same registry as allocation
-        use std::any::Any;
-        use std::collections::HashMap;
-        use std::sync::RwLock;
-
-        static GLOBAL_REGISTRY: OnceLock<RwLock<HashMap<TypeId, Box<dyn Any + Send + Sync>>>> =
-            OnceLock::new();
-
-        let registry = GLOBAL_REGISTRY.get_or_init(|| RwLock::new(HashMap::new()));
+        let registry = global_registry();
 
         // Use read lock to find the state
         if let Ok(read_guard) = registry.read() {
@@ -398,7 +428,11 @@ impl<T: Send + Sync + 'static, const ROWS: usize, const COLS: usize> Drop
                     state_box.downcast_ref::<Mutex<GlobalTlsState<T, ROWS, COLS>>>()
                 && let Ok(mut state) = state_mutex.lock()
             {
-                state.free_ids.push_back(self.id);
+                // Bump the generation so values this instance left in other
+                // threads' matrices are invisible to the next holder.
+                state
+                    .free_ids
+                    .push_back((self.id, self.generation.wrapping_add(1)));
             }
         }
     }
@@ -717,6 +751,55 @@ mod tests {
         let _id3 = tls3.id();
 
         // This tests the ID recycling mechanism
+    }
+
+    #[derive(Debug, Default, Clone, PartialEq)]
+    struct RecycleProbe(u32);
+
+    #[derive(Debug, Default, Clone, PartialEq)]
+    struct StaleProbe(u32);
+
+    #[test]
+    fn test_instance_ids_are_recycled_after_drop() {
+        // Regression: allocate_id and CleanupHandle::drop each declared their
+        // own function-local `static GLOBAL_REGISTRY`. Those are two distinct
+        // statics, so drop pushed freed ids into a map nobody allocated from
+        // and no id was ever reused. A 2x2 matrix ran out after the fourth
+        // instance ever created; with the default 256x256 matrix any process
+        // that creates more than 65,536 instances over its lifetime fails
+        // permanently.
+        for i in 0..16 {
+            let tls = InstanceTls::<RecycleProbe, 2, 2>::new()
+                .unwrap_or_else(|e| panic!("instance {i} could not allocate an id: {e}"));
+            drop(tls);
+        }
+    }
+
+    #[test]
+    fn test_recycled_id_does_not_expose_the_previous_instances_value() {
+        // Recycling ids means a new instance lands on the matrix cell its
+        // predecessor used. Drop can only reach the dropping thread's matrix,
+        // so the value has to be tagged with a generation instead.
+        let first = InstanceTls::<StaleProbe, 2, 2>::new().unwrap();
+        let id = first.id();
+        first.set(StaleProbe(42));
+        assert_eq!(first.get_value(), Some(StaleProbe(42)));
+        drop(first);
+
+        let second = InstanceTls::<StaleProbe, 2, 2>::new().unwrap();
+        assert_eq!(
+            second.id(),
+            id,
+            "this test is vacuous unless the id is recycled"
+        );
+        assert_eq!(
+            second.get_value(),
+            None,
+            "the dead instance's value leaked into its successor"
+        );
+        assert_eq!(second.try_get(), None);
+        assert_eq!(second.remove(), None);
+        assert_eq!(second.get(), StaleProbe::default());
     }
 
     #[test]
