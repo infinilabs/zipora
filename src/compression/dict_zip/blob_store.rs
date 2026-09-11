@@ -87,7 +87,9 @@ use crate::compression::dict_zip::{
 };
 use crate::containers::LruMap;
 use crate::entropy::fse::{FseConfig, FseDecoder, FseEncoder};
-use crate::entropy::huffman::{ContextualHuffmanDecoder, ContextualHuffmanEncoder};
+use crate::entropy::huffman::{
+    ContextualHuffmanDecoder, ContextualHuffmanEncoder, InterleavingFactor,
+};
 use crate::error::{Result, ZiporaError};
 use crate::memory::{SecureMemoryPool, SecurePoolConfig};
 
@@ -613,6 +615,12 @@ struct CompressedBlob {
     compressed_data: Vec<u8>,
     /// Original size
     original_size: usize,
+    /// Length of the byte stream the entropy coder was given.
+    ///
+    /// Entropy encoding is applied on top of the dictionary-compressed bytes,
+    /// so decoding has to ask for *that* many bytes back, not `original_size`.
+    /// Equal to `compressed_data.len()` when no entropy coding was used.
+    entropy_plain_size: usize,
     /// Is compressed (false for small blobs stored uncompressed)
     is_compressed: bool,
     /// Compression ratio
@@ -1111,19 +1119,9 @@ impl DictZipBlobStore {
             .as_ref()
             .ok_or_else(|| ZiporaError::invalid_state("Huffman encoder not initialized"))?;
 
-        // Apply encoding based on interleaving factor
-        match self.config.entropy_interleaved {
-            0 | 1 => encoder.encode_x1(data),
-            2 => encoder.encode_x2(data),
-            4 => encoder.encode_x4(data),
-            8 => encoder.encode_x8(data),
-            _ => Err(ZiporaError::Configuration {
-                message: format!(
-                    "Invalid interleaving factor: {}",
-                    self.config.entropy_interleaved
-                ),
-            }),
-        }
+        // Apply encoding based on interleaving factor. `decode_huffman_o1`
+        // reads the same config value back, so the two stay in step.
+        encoder.encode_with_interleaving(data, self.interleaving_factor()?)
     }
 
     /// Apply FSE encoding with configured interleaving
@@ -1166,18 +1164,18 @@ impl DictZipBlobStore {
     fn decode_entropy(
         &self,
         data: &[u8],
-        original_size: usize,
+        plain_size: usize,
         entropy_algo: EntropyAlgorithm,
     ) -> Result<Vec<u8>> {
         match entropy_algo {
             EntropyAlgorithm::None => Ok(data.to_vec()),
-            EntropyAlgorithm::HuffmanO1 => self.decode_huffman_o1(data, original_size),
-            EntropyAlgorithm::Fse => self.decode_fse(data, original_size),
+            EntropyAlgorithm::HuffmanO1 => self.decode_huffman_o1(data, plain_size),
+            EntropyAlgorithm::Fse => self.decode_fse(data, plain_size),
         }
     }
 
     /// Decode Huffman O1 encoded data with configured interleaving
-    fn decode_huffman_o1(&self, data: &[u8], original_size: usize) -> Result<Vec<u8>> {
+    fn decode_huffman_o1(&self, data: &[u8], plain_size: usize) -> Result<Vec<u8>> {
         // Get or build decoder (lazy initialization)
         if self.huffman_decoder.borrow().is_none() {
             // Build decoder from encoder - first build encoder
@@ -1201,13 +1199,27 @@ impl DictZipBlobStore {
             .as_ref()
             .ok_or_else(|| ZiporaError::invalid_state("Huffman decoder not initialized"))?;
 
-        // The decoder's decode method already handles the encoding format
-        // The interleaving is determined by how the data was encoded
-        decoder.decode(data, original_size)
+        // The stream was produced by `encode_xN`, so it has to be read back
+        // with the matching factor: `decode` walks a single continuous stream
+        // and cannot reassemble N interleaved substreams.
+        decoder.decode_with_interleaving(data, plain_size, self.interleaving_factor()?)
+    }
+
+    /// Map the configured interleaving factor onto the encoder's enum.
+    fn interleaving_factor(&self) -> Result<InterleavingFactor> {
+        match self.config.entropy_interleaved {
+            0 | 1 => Ok(InterleavingFactor::X1),
+            2 => Ok(InterleavingFactor::X2),
+            4 => Ok(InterleavingFactor::X4),
+            8 => Ok(InterleavingFactor::X8),
+            other => Err(ZiporaError::Configuration {
+                message: format!("Invalid interleaving factor: {other}"),
+            }),
+        }
     }
 
     /// Decode FSE encoded data
-    fn decode_fse(&self, data: &[u8], _original_size: usize) -> Result<Vec<u8>> {
+    fn decode_fse(&self, data: &[u8], _plain_size: usize) -> Result<Vec<u8>> {
         // Get or build decoder (lazy initialization)
         if self.fse_decoder.borrow().is_none() {
             // Create FSE decoder
@@ -1238,10 +1250,12 @@ impl BlobStore for DictZipBlobStore {
             .get(&id)
             .ok_or_else(|| ZiporaError::invalid_data(format!("Blob {} not found", id)))?;
 
-        // Step 1: Decode entropy encoding (if any)
+        // Step 1: Decode entropy encoding (if any). The entropy layer sits on
+        // top of the dictionary-compressed bytes, so it decodes back to
+        // `entropy_plain_size`, not to the original record length.
         let dict_compressed = self.decode_entropy(
             &blob.compressed_data,
-            blob.original_size,
+            blob.entropy_plain_size,
             blob.entropy_algorithm,
         )?;
 
@@ -1290,6 +1304,7 @@ impl BlobStore for DictZipBlobStore {
                 .map_err(|e| ZiporaError::invalid_data(format!("Compression failed: {}", e)))?;
 
             // Step 2: Apply entropy encoding (if configured)
+            let entropy_plain_size = dict_compressed.len();
             let (final_compressed, entropy_algorithm) =
                 if self.config.entropy_algorithm != EntropyAlgorithm::None {
                     let entropy_encoded = self.apply_entropy_encoding(&dict_compressed)?;
@@ -1316,6 +1331,7 @@ impl BlobStore for DictZipBlobStore {
                 CompressedBlob {
                     compressed_data: final_compressed,
                     original_size,
+                    entropy_plain_size,
                     is_compressed: true,
                     compression_ratio,
                     entropy_algorithm,
@@ -1325,6 +1341,7 @@ impl BlobStore for DictZipBlobStore {
                 CompressedBlob {
                     compressed_data: data.to_vec(),
                     original_size,
+                    entropy_plain_size: original_size,
                     is_compressed: false,
                     compression_ratio: 1.0,
                     entropy_algorithm: EntropyAlgorithm::None,
@@ -1335,6 +1352,7 @@ impl BlobStore for DictZipBlobStore {
             CompressedBlob {
                 compressed_data: data.to_vec(),
                 original_size,
+                entropy_plain_size: original_size,
                 is_compressed: false,
                 compression_ratio: 1.0,
                 entropy_algorithm: EntropyAlgorithm::None,
