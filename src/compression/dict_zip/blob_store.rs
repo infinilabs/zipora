@@ -1848,6 +1848,16 @@ mod tests {
         let test_data =
             b"The quick brown fox jumps over the lazy dog and then the quick brown fox runs away";
         let id = store.put(test_data)?;
+
+        // Guard the premise: before the tree was built from a real min-heap
+        // Order-1 never beat `entropy_zip_ratio_require`, so the store fell
+        // back to dictionary-only and this test never touched Huffman at all.
+        assert_eq!(
+            store.storage.get(&id).unwrap().entropy_algorithm,
+            EntropyAlgorithm::HuffmanO1,
+            "entropy layer was not applied, test would be vacuous"
+        );
+
         let retrieved = store.get(id)?;
 
         assert_eq!(test_data, retrieved.as_slice());
