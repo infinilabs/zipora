@@ -254,12 +254,11 @@ impl ZipOffsetBlobStoreBuilder {
     }
 
     /// Calculate checksum for data
+    ///
+    /// Must stay in step with `ZipOffsetBlobStore::calculate_crc32c`, which is
+    /// what verifies these bytes on the read path.
     fn calculate_checksum(&self, data: &[u8]) -> u32 {
-        // TODO: Implement hardware-accelerated CRC32C
-        // For now, use simple checksum
-        data.iter().fold(0u32, |acc, &byte| {
-            acc.wrapping_mul(31).wrapping_add(byte as u32)
-        })
+        crate::io::simd_validation::checksum::crc32c_hash(data).unwrap_or(0)
     }
 
     /// Finish building and return the completed ZipOffsetBlobStore
@@ -587,6 +586,30 @@ mod tests {
             let past_end = records.len() as RecordId;
             assert!(!store.contains(past_end));
             assert!(store.get(past_end).is_err());
+        }
+    }
+
+    #[test]
+    fn test_record_checksums_verify_on_the_read_path() {
+        use crate::blob_store::BlobStore;
+
+        // checksum_level 2 is the default, so this is the ordinary path.
+        let config = ZipOffsetBlobStoreConfig {
+            compress_level: 0,
+            checksum_level: 2,
+            ..Default::default()
+        };
+
+        let mut builder = ZipOffsetBlobStoreBuilder::with_config(config).unwrap();
+        let records: [&[u8]; 3] = [b"first", b"second record", b""];
+        for record in records {
+            builder.add_record(record).unwrap();
+        }
+
+        let store = builder.finish().unwrap();
+        for (i, record) in records.iter().enumerate() {
+            assert_eq!(&store.get(i as RecordId).unwrap(), record);
+            assert_eq!(store.size(i as RecordId).unwrap(), Some(record.len()));
         }
     }
 
