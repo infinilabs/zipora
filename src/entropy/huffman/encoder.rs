@@ -2,19 +2,27 @@ use super::tree::HuffmanTree;
 use crate::error::{Result, ZiporaError};
 
 /// Huffman encoding symbol - compact representation for fast lookup
+///
+/// `bits` is 32 bits wide so that every code a `HuffmanTree` can emit in
+/// practice fits without truncation. A `bit_count` of 0 is the sentinel for
+/// "this code is too long to represent here"; the encoder rejects such a
+/// symbol rather than silently writing a truncated, non-prefix-free code.
 #[derive(Debug, Clone, Copy, Default)]
 #[repr(C)]
 pub struct HuffmanEncSymbol {
-    /// Packed bit pattern for this symbol
-    pub bits: u16,
-    /// Number of bits in the code
+    /// Packed bit pattern for this symbol (LSB-first)
+    pub bits: u32,
+    /// Number of bits in the code, or 0 if the code is unrepresentable
     pub bit_count: u16,
 }
 
 impl HuffmanEncSymbol {
+    /// Widest code `bits` can hold.
+    pub const MAX_BITS: usize = 32;
+
     /// Create a new encoding symbol
     #[inline(always)]
-    pub const fn new(bits: u16, bit_count: u16) -> Self {
+    pub const fn new(bits: u32, bit_count: u16) -> Self {
         Self { bits, bit_count }
     }
 }
@@ -42,7 +50,14 @@ impl BitStreamWriter {
     /// Write bits to the stream
     #[inline]
     pub(crate) fn write(&mut self, bits: u64, count: usize) {
-        debug_assert!(count <= 64);
+        // `bit_count` is always in 0..=7 here (the flush loop below drains
+        // whole bytes), so `bits << bit_count` silently drops high bits once
+        // `count` passes 57. Callers must stay within that budget.
+        debug_assert!(
+            count + self.bit_count <= 64,
+            "code of {count} bits does not fit above {} buffered bits",
+            self.bit_count
+        );
 
         self.current |= bits << self.bit_count;
         self.bit_count += count;
@@ -62,7 +77,6 @@ impl BitStreamWriter {
         }
         self.buffer
     }
-
 }
 
 /// Huffman encoder
