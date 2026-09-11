@@ -236,14 +236,34 @@ impl<R: Read> StreamBufferedReader<R> {
             return self.grow_buffer_and_retry(min_needed);
         }
 
-        // Read data from underlying stream
-        let bytes_read = self
-            .inner
-            .read(&mut self.buffer[self.end..self.end + read_size])
-            .map_err(|e| ZiporaError::io_error(format!("Failed to fill buffer: {}", e)))?;
+        // Read data from the underlying stream. One `read` is not enough: a
+        // pipe, a socket or any hand-written reader may return fewer bytes
+        // than it has, and the caller asked for `min_needed`, not for
+        // "whatever arrives first". A short read used to look exactly like
+        // EOF to `read_slice`, which then reported `Ok(None)` with the data
+        // still in flight. Keep reading until the request is met or the
+        // source really is at EOF.
+        let limit = self.end + read_size;
+        while self.end < limit {
+            let bytes_read = self
+                .inner
+                .read(&mut self.buffer[self.end..limit])
+                .map_err(|e| ZiporaError::io_error(format!("Failed to fill buffer: {}", e)))?;
 
-        self.end += bytes_read;
-        self.total_read += bytes_read as u64;
+            if bytes_read == 0 {
+                // Genuine EOF; report what we managed to buffer.
+                break;
+            }
+
+            self.end += bytes_read;
+            self.total_read += bytes_read as u64;
+
+            // Read-ahead is opportunistic: never block for more than the
+            // caller actually needs.
+            if self.end - self.pos >= min_needed {
+                break;
+            }
+        }
 
         Ok(self.end - self.pos)
     }
@@ -1033,6 +1053,51 @@ mod tests {
         // Validate remaining buffered data
         let is_valid = reader.validate_utf8_buffered().unwrap();
         assert!(is_valid, "Large valid UTF-8 buffer should pass validation");
+    }
+
+    /// Hands out at most one byte per `read` call, the way a pipe does.
+    struct DribblingReader {
+        data: Vec<u8>,
+        pos: usize,
+    }
+
+    impl Read for DribblingReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.pos >= self.data.len() || buf.is_empty() {
+                return Ok(0);
+            }
+            buf[0] = self.data[self.pos];
+            self.pos += 1;
+            Ok(1)
+        }
+    }
+
+    #[test]
+    fn test_read_slice_survives_short_reads() {
+        // Regression: the refill issued a single `inner.read`, so a source
+        // that returns fewer bytes than asked for was indistinguishable from
+        // EOF and read_slice reported Ok(None) with the data still available.
+        let mut reader = StreamBufferedReader::new(DribblingReader {
+            data: b"Hello, World!".to_vec(),
+            pos: 0,
+        })
+        .unwrap();
+
+        assert_eq!(reader.read_slice(5).unwrap(), Some(&b"Hello"[..]));
+        assert_eq!(reader.read_slice(2).unwrap(), Some(&b", "[..]));
+        assert_eq!(reader.read_slice(6).unwrap(), Some(&b"World!"[..]));
+    }
+
+    #[test]
+    fn test_read_slice_still_reports_none_at_eof() {
+        // The refill loop must not spin forever on a genuinely short stream.
+        let mut reader = StreamBufferedReader::new(DribblingReader {
+            data: b"abc".to_vec(),
+            pos: 0,
+        })
+        .unwrap();
+
+        assert_eq!(reader.read_slice(8).unwrap(), None);
     }
 
     #[test]
