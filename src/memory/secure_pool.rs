@@ -621,6 +621,26 @@ impl SecureChunk {
         Ok(())
     }
 
+    /// Zero the data area, with SIMD acceleration for large regions
+    ///
+    /// Used both when the chunk is really freed and when it is recycled into
+    /// a cache: the caller's bytes must not survive either path.
+    fn zero_payload(&self, enable_simd_ops: bool, simd_threshold: usize) {
+        // SAFETY: pointer valid from allocation, size matches allocation
+        unsafe {
+            // SIMD-optimized memory zeroing for large regions
+            if enable_simd_ops && self.size >= simd_threshold {
+                // Use SIMD fast_fill for large memory regions (≥64 bytes by default)
+                // Provides 2-3x faster zeroing with vectorized instructions
+                let slice = std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.size);
+                fast_fill(slice, 0);
+            } else {
+                // Standard zeroing for small regions where SIMD overhead isn't beneficial
+                std::ptr::write_bytes(self.ptr.as_ptr(), 0, self.size);
+            }
+        }
+    }
+
     /// Get pointer to data area
     #[inline]
     pub fn as_ptr(&self) -> *mut u8 {
@@ -646,19 +666,7 @@ impl SecureChunk {
     /// all security guarantees. Falls back to standard zeroing for smaller regions.
     fn deallocate(self, zero_on_free: bool, enable_simd_ops: bool, simd_threshold: usize) {
         if zero_on_free {
-            // SAFETY: pointer valid from allocation, size matches allocation
-            unsafe {
-                // SIMD-optimized memory zeroing for large regions
-                if enable_simd_ops && self.size >= simd_threshold {
-                    // Use SIMD fast_fill for large memory regions (≥64 bytes by default)
-                    // Provides 2-3x faster zeroing with vectorized instructions
-                    let slice = std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.size);
-                    fast_fill(slice, 0);
-                } else {
-                    // Standard zeroing for small regions where SIMD overhead isn't beneficial
-                    std::ptr::write_bytes(self.ptr.as_ptr(), 0, self.size);
-                }
-            }
+            self.zero_payload(enable_simd_ops, simd_threshold);
         }
 
         let header_size = std::mem::size_of::<ChunkHeader>();
@@ -953,7 +961,7 @@ impl SecureMemoryPool {
                 ))
             });
 
-        if let Some(chunk) = local_cache.borrow_mut().try_pop() {
+        if let Some(mut chunk) = local_cache.borrow_mut().try_pop() {
             self.local_cache_hits.fetch_add(1, Ordering::Relaxed);
             self.pool_hits.fetch_add(1, Ordering::Relaxed);
 
@@ -961,6 +969,12 @@ impl SecureMemoryPool {
             if let Err(e) = chunk.validate() {
                 self.corruption_detected.fetch_add(1, Ordering::Relaxed);
                 return Err(e);
+            }
+
+            // Only allocate_new_chunk_optimized used to honour this flag, so a
+            // cache hit skipped it entirely.
+            if self.config.zero_on_alloc {
+                self.zero_chunk_simd(&mut chunk)?;
             }
 
             // Track hot/cold allocation statistics
@@ -996,7 +1010,7 @@ impl SecureMemoryPool {
         }
 
         // Try global stack
-        if let Some(chunk) = self.global_stack.pop() {
+        if let Some(mut chunk) = self.global_stack.pop() {
             self.cross_thread_steals.fetch_add(1, Ordering::Relaxed);
             self.pool_hits.fetch_add(1, Ordering::Relaxed);
 
@@ -1004,6 +1018,11 @@ impl SecureMemoryPool {
             if let Err(e) = chunk.validate() {
                 self.corruption_detected.fetch_add(1, Ordering::Relaxed);
                 return Err(e);
+            }
+
+            // Same gap as the local-cache hit above.
+            if self.config.zero_on_alloc {
+                self.zero_chunk_simd(&mut chunk)?;
             }
 
             // Track hot/cold allocation statistics
@@ -1110,6 +1129,14 @@ impl SecureMemoryPool {
             ));
         }
         drop(allocs);
+
+        // Zeroing used to live only in SecureChunk::deallocate, which this
+        // path never reaches: a freed chunk goes straight to the thread-local
+        // cache or the global stack and is handed back out as-is, so the next
+        // tenant saw the previous one's bytes even with zero_on_free set.
+        if self.config.zero_on_free {
+            chunk.zero_payload(self.config.enable_simd_ops, self.config.simd_threshold);
+        }
 
         // Try to return to thread-local cache
         let local_cache = self
@@ -1683,6 +1710,60 @@ mod tests {
 
         let ptr = pool.allocate().unwrap();
         assert!(ptr.validate().is_ok());
+    }
+
+    #[test]
+    fn test_zero_on_free_clears_recycled_chunks() {
+        // Regression: zeroing lived only in SecureChunk::deallocate, which the
+        // success path never calls — a freed chunk goes straight to the
+        // thread-local cache. Every preset sets zero_on_free, yet the next
+        // allocation handed back the previous tenant's bytes.
+        let mut config = SecurePoolConfig::new(1024, 16, 8);
+        config.zero_on_free = true;
+        config.zero_on_alloc = false;
+        let pool = SecureMemoryPool::new(config).unwrap();
+
+        let mut ptr = pool.allocate().unwrap();
+        let raw = ptr.as_ptr();
+        ptr.as_mut_slice().fill(0xAB);
+        drop(ptr);
+
+        let ptr = pool.allocate().unwrap();
+        assert_eq!(
+            ptr.as_ptr(),
+            raw,
+            "this test is vacuous unless the chunk is recycled"
+        );
+        assert!(
+            ptr.as_slice().iter().all(|&b| b == 0),
+            "recycled chunk still carries the previous tenant's bytes"
+        );
+    }
+
+    #[test]
+    fn test_zero_on_alloc_clears_recycled_chunks() {
+        // The mirror image: only allocate_new_chunk_optimized honoured
+        // zero_on_alloc, so a cache hit skipped it.
+        let mut config = SecurePoolConfig::new(1024, 16, 8);
+        config.zero_on_free = false;
+        config.zero_on_alloc = true;
+        let pool = SecureMemoryPool::new(config).unwrap();
+
+        let mut ptr = pool.allocate().unwrap();
+        let raw = ptr.as_ptr();
+        ptr.as_mut_slice().fill(0xCD);
+        drop(ptr);
+
+        let ptr = pool.allocate().unwrap();
+        assert_eq!(
+            ptr.as_ptr(),
+            raw,
+            "this test is vacuous unless the chunk is recycled"
+        );
+        assert!(
+            ptr.as_slice().iter().all(|&b| b == 0),
+            "recycled chunk was handed out without being zeroed"
+        );
     }
 
     #[test]
