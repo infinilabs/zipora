@@ -519,11 +519,15 @@ where
 /// ```
 pub fn set_intersection<T, F>(first1: &[T], first2: &[T], pred: F) -> Vec<T>
 where
-    T: Clone + PartialEq,
+    T: Clone,
     F: Fn(&T, &T) -> Ordering,
 {
-    let mut result = multiset_intersection(first1, first2, pred);
-    let new_len = set_unique_default(&mut result);
+    let mut result = multiset_intersection(first1, first2, &pred);
+    // Deduplicate under `pred`, not under `PartialEq`: the merge already
+    // treated `pred`-equal elements as the same key, so using `==` here left
+    // "duplicates" in a result that is supposed to be a set under the
+    // caller's own ordering.
+    let new_len = set_unique(&mut result, |a, b| pred(a, b) == Ordering::Equal);
     result.truncate(new_len);
     result
 }
@@ -544,11 +548,15 @@ where
 /// ```
 pub fn set_union<T, F>(first1: &[T], first2: &[T], pred: F) -> Vec<T>
 where
-    T: Clone + PartialEq,
+    T: Clone,
     F: Fn(&T, &T) -> Ordering,
 {
-    let mut result = multiset_union(first1, first2, pred);
-    let new_len = set_unique_default(&mut result);
+    let mut result = multiset_union(first1, first2, &pred);
+    // Deduplicate under `pred`, not under `PartialEq`: the merge already
+    // treated `pred`-equal elements as the same key, so using `==` here left
+    // "duplicates" in a result that is supposed to be a set under the
+    // caller's own ordering.
+    let new_len = set_unique(&mut result, |a, b| pred(a, b) == Ordering::Equal);
     result.truncate(new_len);
     result
 }
@@ -571,11 +579,15 @@ where
 /// ```
 pub fn set_difference<T, F>(first1: &[T], first2: &[T], pred: F) -> Vec<T>
 where
-    T: Clone + PartialEq,
+    T: Clone,
     F: Fn(&T, &T) -> Ordering,
 {
-    let mut result = multiset_difference(first1, first2, pred);
-    let new_len = set_unique_default(&mut result);
+    let mut result = multiset_difference(first1, first2, &pred);
+    // Deduplicate under `pred`, not under `PartialEq`: the merge already
+    // treated `pred`-equal elements as the same key, so using `==` here left
+    // "duplicates" in a result that is supposed to be a set under the
+    // caller's own ordering.
+    let new_len = set_unique(&mut result, |a, b| pred(a, b) == Ordering::Equal);
     result.truncate(new_len);
     result
 }
@@ -1010,6 +1022,32 @@ mod tests {
         assert_eq!(multiset_intersection(&a, &b, cmp_i32), Vec::<i32>::new());
         assert_eq!(multiset_union(&a, &b, cmp_i32), vec![3, 5]);
         assert_eq!(multiset_difference(&a, &b, cmp_i32), vec![3]);
+    }
+
+    #[test]
+    fn test_set_ops_deduplicate_under_the_callers_comparator() {
+        // Regression: the merge honoured `pred` but the trailing dedupe used
+        // `PartialEq`, so elements the comparator calls equal survived and the
+        // "set" result contained duplicates under its own ordering.
+        let case_insensitive = |a: &&str, b: &&str| {
+            a.to_lowercase().cmp(&b.to_lowercase())
+        };
+
+        let a = vec!["a", "b"];
+        let b = vec!["A", "c"];
+        assert_eq!(
+            set_union(&a, &b, case_insensitive),
+            vec!["a", "b", "c"],
+            "\"a\" and \"A\" are the same key under this comparator"
+        );
+
+        let a = vec!["a", "A", "b"];
+        let b = vec!["a", "A", "c"];
+        assert_eq!(set_intersection(&a, &b, case_insensitive), vec!["a"]);
+
+        let a = vec!["a", "A", "b", "B"];
+        let b = vec!["c"];
+        assert_eq!(set_difference(&a, &b, case_insensitive), vec!["a", "b"]);
     }
 
     #[test]
