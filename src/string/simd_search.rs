@@ -425,14 +425,22 @@ impl SimdStringSearch {
             unsafe { _mm_loadu_si128(data.as_ptr() as *const __m128i) }
         };
 
-        // Search through haystack in overlapping 16-byte windows
+        // Search through haystack in overlapping 16-byte windows.
+        //
+        // PCMPESTRI reports *where* inside the window the needle starts, so the
+        // window can advance by more than a single byte: a "no match" answer
+        // rules out every offset whose needle still fits entirely inside the
+        // window, and a hit lands the next window one byte past the reported
+        // offset. Discarding the index and stepping one byte at a time cost one
+        // PCMPESTRI per haystack byte.
         let max_start = if haystack.len() >= needle.len() {
             haystack.len() - needle.len() + 1
         } else {
             0
         };
 
-        for start in 0..max_start {
+        let mut start = 0;
+        while start < max_start {
             let search_len = std::cmp::min(16, haystack.len() - start);
             if search_len < needle.len() {
                 break;
@@ -465,13 +473,22 @@ impl SimdStringSearch {
                     | pcmpestri_flags::LEAST_SIGNIFICANT,
             );
 
-            if result == 0 {
-                // Found potential match at the beginning of this window
-                return Some(start);
+            if (result as usize) < search_len {
+                // Hardware-reported match offset inside the window. Verify it
+                // against the haystack so the loop stays correct even if the
+                // window's trailing bytes are involved.
+                let candidate = start + result as usize;
+                if candidate + needle.len() <= haystack.len()
+                    && &haystack[candidate..candidate + needle.len()] == needle
+                {
+                    return Some(candidate);
+                }
+                start = candidate + 1;
+            } else {
+                // No match inside the window, which rules out every offset in
+                // [start, start + search_len - needle.len()] at once.
+                start += search_len - needle.len() + 1;
             }
-
-            // For efficiency, we can skip ahead more than 1 byte if we know
-            // the needle doesn't contain repeated characters at the start
         }
 
         None
@@ -1024,6 +1041,69 @@ mod tests {
         assert_eq!(search.sse42_strstr(b"hello world", b"wor"), Some(6));
         assert_eq!(search.sse42_strstr(b"hello world", b"wox"), None);
         assert_eq!(search.sse42_strstr(b"hello world", b"hello"), Some(0));
+    }
+
+    /// `sse42_strstr_impl` advances whole windows using the offset PCMPESTRI
+    /// returns; a wrong skip silently misses matches rather than failing, so
+    /// check the pinned SSE4.2 tier against a naive reference over dense,
+    /// near-miss-heavy data.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_sse42_strstr_window_skip_matches_a_reference_search() {
+        if !is_x86_feature_detected!("sse4.2") {
+            return;
+        }
+        let search = SimdStringSearch {
+            impl_tier: SearchTier::Sse42,
+        };
+
+        fn reference(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+            if needle.is_empty() || needle.len() > haystack.len() {
+                return None;
+            }
+            haystack.windows(needle.len()).position(|w| w == needle)
+        }
+
+        // Deterministic xorshift over a three-letter alphabet, so short needles
+        // occur many times and near-misses are dense.
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let haystack: Vec<u8> = (0..4096).map(|_| b'a' + (next() % 3) as u8).collect();
+
+        for needle_len in 2..=24usize {
+            for _ in 0..64 {
+                let at = (next() as usize) % (haystack.len() - needle_len);
+                let needle = &haystack[at..at + needle_len];
+                assert_eq!(
+                    search.sse42_strstr(&haystack, needle),
+                    reference(&haystack, needle),
+                    "needle of length {needle_len} sampled at {at}"
+                );
+            }
+
+            // A needle drawn from outside the alphabet can never occur.
+            let absent = vec![b'z'; needle_len];
+            assert_eq!(search.sse42_strstr(&haystack, &absent), None);
+        }
+
+        // Matches that begin in the trailing bytes of the haystack, where the
+        // window holds fewer than 16 valid bytes.
+        for tail in 2..=32usize {
+            let start = haystack.len() - tail;
+            for needle_len in 2..=tail {
+                let needle = &haystack[start..start + needle_len];
+                assert_eq!(
+                    search.sse42_strstr(&haystack, needle),
+                    reference(&haystack, needle),
+                    "tail needle of length {needle_len} at {start}"
+                );
+            }
+        }
     }
 
     #[test]
