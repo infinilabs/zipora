@@ -197,6 +197,46 @@ fn test_find_free_base_many_inserts() {
     assert!(!trie.contains(b"key_0500"));
 }
 
+/// The relocation probe is anchored on the lowest symbol being placed and
+/// walks free slots, rather than incrementing the base one at a time.
+///
+/// A four-letter alphabet makes almost every interior node branch, so states
+/// keep outgrowing their base and have to be relocated — which is what
+/// exercises that arithmetic. The sequential `key_%04d` set above barely
+/// relocates at all.
+#[test]
+fn test_double_array_relocation_with_branching_keys() {
+    let mut x: u64 = 0x2545_F491_4F6C_DD1D;
+    let mut keys: Vec<Vec<u8>> = (0..3000)
+        .map(|_| {
+            (0..12)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    b'a' + (x % 4) as u8
+                })
+                .collect()
+        })
+        .collect();
+    keys.sort();
+    keys.dedup();
+
+    let mut trie: ZiporaTrie = ZiporaTrie::new();
+    for key in &keys {
+        trie.insert(key).unwrap();
+    }
+
+    for key in &keys {
+        assert!(
+            trie.contains(key),
+            "key {:?} lost during relocation",
+            String::from_utf8_lossy(key)
+        );
+    }
+    assert!(!trie.contains(b"ZZZZZZZZ"));
+}
+
 /// Issue #6: Amortized growth — large insert doesn't OOM or take forever
 #[test]
 fn test_amortized_growth() {
