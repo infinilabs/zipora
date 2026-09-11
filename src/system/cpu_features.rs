@@ -507,6 +507,19 @@ impl RuntimeCpuFeatures {
     }
 
     /// Enhanced x86_64 feature detection for CpuFeatures
+    ///
+    /// Every flag here gates a real `#[target_feature]` kernel, so detection
+    /// has to answer "may this process execute the instruction?", not "does
+    /// the silicon know the opcode?". Reading the CPUID leaves directly — what
+    /// `raw_cpuid`'s `has_avx()`/`has_avx2()`/`has_avx512f()` do — only answers
+    /// the second question: touching YMM/ZMM registers additionally requires
+    /// the OS to have enabled extended state saving (CR4.OSXSAVE plus the XCR0
+    /// SSE/AVX/opmask/ZMM bits). Where it has not, the first AVX instruction
+    /// raises #UD and the process dies with SIGILL.
+    ///
+    /// `is_x86_feature_detected!` performs that XCR0 handshake, caches the
+    /// answer, and is already what the other 31 detection sites in this crate
+    /// use, so delegate rather than keeping a second, laxer implementation.
     #[cfg(target_arch = "x86_64")]
     fn detect_x86_features(&self, features: &mut CpuFeatures) {
         #[cfg(miri)]
@@ -514,40 +527,31 @@ impl RuntimeCpuFeatures {
 
         #[cfg(not(miri))]
         {
-            let cpuid = raw_cpuid::CpuId::new();
-
             // Basic features
-            if let Some(feature_info) = cpuid.get_feature_info() {
-                features.has_sse41 = feature_info.has_sse41();
-                features.has_sse42 = feature_info.has_sse42();
-                features.has_avx = feature_info.has_avx();
-                features.has_popcnt = feature_info.has_popcnt();
-            }
+            features.has_sse41 = is_x86_feature_detected!("sse4.1");
+            features.has_sse42 = is_x86_feature_detected!("sse4.2");
+            features.has_avx = is_x86_feature_detected!("avx");
+            features.has_popcnt = is_x86_feature_detected!("popcnt");
 
             // Extended features
-            if let Some(extended_features) = cpuid.get_extended_feature_info() {
-                features.has_avx2 = extended_features.has_avx2();
-                features.has_bmi1 = extended_features.has_bmi1();
-                features.has_bmi2 = extended_features.has_bmi2();
-                // Note: prefetchw detection varies by CPU architecture
-                features.has_prefetchw = false; // Default to false for compatibility
+            features.has_avx2 = is_x86_feature_detected!("avx2");
+            features.has_bmi1 = is_x86_feature_detected!("bmi1");
+            features.has_bmi2 = is_x86_feature_detected!("bmi2");
+            // Note: prefetchw detection varies by CPU architecture
+            features.has_prefetchw = false; // Default to false for compatibility
 
-                // AVX-512 features
-                features.has_avx512f = extended_features.has_avx512f();
-                features.has_avx512vl = extended_features.has_avx512vl();
-                features.has_avx512bw = extended_features.has_avx512bw();
+            // AVX-512 features
+            features.has_avx512f = is_x86_feature_detected!("avx512f");
+            features.has_avx512vl = is_x86_feature_detected!("avx512vl");
+            features.has_avx512bw = is_x86_feature_detected!("avx512bw");
 
-                // Check for AVX-512 VPOPCNTDQ through extended features
-                // This is a more advanced feature that might not be in basic detection
-                features.has_avx512vpopcntdq = false; // Default to false for compatibility
-            }
+            // Check for AVX-512 VPOPCNTDQ through extended features
+            // This is a more advanced feature that might not be in basic detection
+            features.has_avx512vpopcntdq = false; // Default to false for compatibility
 
-            // Extended processor info
-            if let Some(extended_info) = cpuid.get_extended_processor_and_feature_identifiers() {
-                features.has_lzcnt = extended_info.has_lzcnt();
-                // TZCNT is typically available with BMI1
-                features.has_tzcnt = features.has_bmi1;
-            }
+            features.has_lzcnt = is_x86_feature_detected!("lzcnt");
+            // TZCNT is typically available with BMI1
+            features.has_tzcnt = features.has_bmi1;
         }
     }
 
@@ -993,5 +997,39 @@ mod tests {
 
         // Cache line size should be reasonable (typically 64 bytes)
         assert!(features.cache_line_size >= 32 && features.cache_line_size <= 128);
+    }
+
+    #[test]
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    fn test_reported_features_are_actually_usable() {
+        // Regression: detection read the CPUID leaves directly, which reports
+        // what the silicon implements, not what the OS has enabled. Where
+        // extended state saving is off (some hypervisors, kernels booted with
+        // `noxsave`), executing the reported AVX kernels traps with #UD.
+        //
+        // On a machine whose OS does enable AVX this assertion cannot fail
+        // whichever way detection is implemented; it exists to pin the
+        // delegation to `is_x86_feature_detected!`, which is the only
+        // implementation of the XCR0 handshake this crate should have.
+        let features = get_cpu_features();
+
+        for (name, reported, usable) in [
+            ("sse4.1", features.has_sse41, is_x86_feature_detected!("sse4.1")),
+            ("sse4.2", features.has_sse42, is_x86_feature_detected!("sse4.2")),
+            ("avx", features.has_avx, is_x86_feature_detected!("avx")),
+            ("avx2", features.has_avx2, is_x86_feature_detected!("avx2")),
+            ("bmi1", features.has_bmi1, is_x86_feature_detected!("bmi1")),
+            ("bmi2", features.has_bmi2, is_x86_feature_detected!("bmi2")),
+            ("popcnt", features.has_popcnt, is_x86_feature_detected!("popcnt")),
+            ("lzcnt", features.has_lzcnt, is_x86_feature_detected!("lzcnt")),
+            ("avx512f", features.has_avx512f, is_x86_feature_detected!("avx512f")),
+            ("avx512vl", features.has_avx512vl, is_x86_feature_detected!("avx512vl")),
+            ("avx512bw", features.has_avx512bw, is_x86_feature_detected!("avx512bw")),
+        ] {
+            assert_eq!(
+                reported, usable,
+                "{name}: CpuFeatures disagrees with the OS-aware detection"
+            );
+        }
     }
 }
