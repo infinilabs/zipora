@@ -151,6 +151,7 @@ where
                     check,
                     free_list: VecDeque::new(),
                     state_count: 1, // Start with root state
+                    search_head: 1, // Index 0 is the root and never free
                 }
             }
             TrieStrategy::Louds { .. } => TrieStorage::Louds {
@@ -497,6 +498,7 @@ where
                 check,
                 free_list,
                 state_count,
+                search_head,
             } => {
                 // insert_double_array handles num_keys internally (checks was_new)
                 let node_id = Self::insert_double_array(
@@ -504,6 +506,7 @@ where
                     check,
                     free_list,
                     state_count,
+                    search_head,
                     key,
                     &mut self.stats.num_keys,
                     &mut self.relocations,
@@ -867,11 +870,13 @@ where
                 check,
                 free_list,
                 state_count,
+                search_head,
             } => Self::insert_double_array(
                 base,
                 check,
                 free_list,
                 state_count,
+                search_head,
                 key,
                 &mut self.stats.num_keys,
                 &mut self.relocations,

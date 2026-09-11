@@ -58,11 +58,17 @@ where
     }
 
     // Double array trie implementation methods
+    //
+    // The arguments are the destructured fields of `TrieStorage::DoubleArray`
+    // plus the two counters the caller owns; grouping them behind a struct
+    // would only move the same borrow split somewhere else.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn insert_double_array(
         base: &mut FastVec<u32>,
         check: &mut FastVec<u32>,
         _free_list: &mut VecDeque<StateId>,
         state_count: &mut usize,
+        search_head: &mut u32,
         key: &[u8],
         num_keys: &mut usize,
         relocations: &mut Vec<(u32, u32)>,
@@ -84,7 +90,7 @@ where
             let _ = base.resize(1, NIL_STATE); // Just root state
             let _ = check.resize(1, 0); // Root check is 0 (itself), no free bit
             // Use compact base allocation like referenced project
-            base[0] = Self::find_free_base(base, check, 0)?;
+            base[0] = Self::find_free_base(base, check, 0, search_head)?;
             *state_count = 1;
         }
 
@@ -116,7 +122,7 @@ where
             // If base is NIL_STATE, we need to find a good base for this state's children
             // Referenced project does this during build (lines 309-327)
             if base_value == NIL_STATE {
-                base_value = Self::find_free_base(base, check, current_state)?;
+                base_value = Self::find_free_base(base, check, current_state, search_head)?;
                 // CRITICAL: Preserve terminal bit when setting new base
                 let old_val = base[current_state as usize];
                 base[current_state as usize] = base_value | (old_val & TERMINAL_BIT);
@@ -165,6 +171,7 @@ where
                         current_state,
                         symbol,
                         state_count,
+                        search_head,
                         relocations,
                     )?;
 
@@ -219,6 +226,7 @@ where
                         current_state,
                         symbol,
                         state_count,
+                        search_head,
                         relocations,
                     )?;
 
@@ -286,12 +294,25 @@ where
 
     // Helper: Find a free base value for a state that doesn't conflict
     // For incremental insert, use a proper heuristic matching referenced project's approach
-    pub(super) fn find_free_base(_base: &FastVec<u32>, check: &FastVec<u32>, _state: u32) -> Result<u32> {
+    pub(super) fn find_free_base(
+        _base: &FastVec<u32>,
+        check: &FastVec<u32>,
+        _state: u32,
+        search_head: &mut u32,
+    ) -> Result<u32> {
         const FREE_BIT: u32 = 0x8000_0000;
         const NIL_STATE: u32 = 0x7FFF_FFFF;
 
-        // Start search from position 1 (0 is root)
-        let mut candidate = 1u32;
+        // Resume the probe where the last one stopped instead of restarting at
+        // 1. `search_head` maintains the invariant that every index below it is
+        // occupied, so the prefix it skips can never contain an answer; without
+        // it every allocation rescanned the whole densely packed prefix and
+        // construction was quadratic (40k keys took over four minutes).
+        // `relocate_state` lowers the cursor whenever it frees a slot beneath
+        // it, which is the only way an index below the head can become free.
+        //
+        // Index 0 is the root and is never free.
+        let mut candidate = (*search_head).max(1);
         let len = check.len();
 
         // Linear probe for a free position (matching C++ reference heuristic)
@@ -299,12 +320,14 @@ where
             let check_val = check[candidate as usize];
             let is_free = check_val == (NIL_STATE | FREE_BIT) || (check_val & FREE_BIT) != 0;
             if is_free {
+                *search_head = candidate;
                 return Ok(candidate);
             }
             candidate += 1;
         }
 
         // Past the end of array — return the next position (will trigger array growth)
+        *search_head = candidate;
         Ok(candidate)
     }
 
@@ -317,6 +340,7 @@ where
         state: u32,
         new_symbol: u8,
         _state_count: &mut usize,
+        search_head: &mut u32,
         relocations: &mut Vec<(u32, u32)>,
     ) -> Result<u32> {
         const VALUE_MASK: u32 = 0x7FFF_FFFF; // Bits 0-30 for values (referenced project)
@@ -354,20 +378,41 @@ where
             }
         }
 
-        // Find a new base where we can place all children plus the new symbol
-        // Use find_free_base to get a better starting point that spreads states out
-        let initial_base = Self::find_free_base(base, check, state)?;
-        let mut new_base = initial_base;
+        // Find a new base where every child plus the new symbol fits.
+        //
+        // The probe is anchored on the *lowest* symbol we have to place: the
+        // candidate base is always `anchor - min_symbol`, where `anchor` walks
+        // free slots only. Incrementing the base one at a time instead — as
+        // this loop used to — re-tests every base whose lowest child lands in
+        // the densely occupied prefix, which is the bulk of the array and made
+        // construction quadratic. Occupied runs are now skipped in one pass.
+        let min_symbol = children
+            .iter()
+            .map(|(sym, _, _, _)| *sym as u32)
+            .chain(std::iter::once(new_symbol as u32))
+            .min()
+            .unwrap_or(new_symbol as u32);
+
+        let initial_base = Self::find_free_base(base, check, state, search_head)?;
+        // `new_base >= 1` keeps position 0 (the root) out of reach.
+        let mut anchor = initial_base.max(min_symbol + 1);
         let mut attempts = 0;
         const MAX_BASE: u32 = u32::MAX - 256; // Leave room for 256 symbols
 
         'search: loop {
-            if attempts > 1_000_000 || new_base > MAX_BASE {
+            if attempts > 1_000_000 || anchor > MAX_BASE {
                 return Err(ZiporaError::invalid_data(
                     "Cannot relocate state in double array",
                 ));
             }
             attempts += 1;
+
+            // Skip to the next slot that could hold the lowest-symbol child.
+            while (anchor as usize) < check.len() && (check[anchor as usize] & FREE_BIT) == 0 {
+                anchor += 1;
+            }
+
+            let new_base = anchor - min_symbol;
 
             // Check if new_base works for the new symbol
             let new_pos = new_base.saturating_add(new_symbol as u32);
@@ -394,8 +439,7 @@ where
             let new_pos_is_free = (new_pos_check & FREE_BIT) != 0;
             if new_pos == 0 || !new_pos_is_free {
                 // State 0 is reserved or position is occupied
-                // Use smaller increment for denser packing
-                new_base = new_base.saturating_add(1);
+                anchor += 1;
                 continue 'search;
             }
 
@@ -407,7 +451,7 @@ where
                 // CRITICAL: Reject if any child would be relocated to state 0
                 if test_pos == 0 || !test_is_free {
                     // State 0 is reserved or position is occupied
-                    new_base = new_base.saturating_add(1);
+                    anchor += 1;
                     continue 'search;
                 }
             }
@@ -418,6 +462,10 @@ where
                 check[*old_pos as usize] = NIL_STATE | FREE_BIT;
                 // Mark base as NIL to indicate it's free
                 base[*old_pos as usize] = NIL_STATE;
+                // This is the only place a slot below the probe cursor can
+                // become free again, so the cursor has to follow it back down
+                // or `find_free_base` would skip the hole forever.
+                *search_head = (*search_head).min(*old_pos);
             }
 
             // Then, set new positions with both check and base values

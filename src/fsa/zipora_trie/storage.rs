@@ -28,6 +28,11 @@ where
         check: FastVec<u32>,
         free_list: VecDeque<StateId>,
         state_count: usize,
+        /// Monotone cursor into `check`: every index below it is occupied, so
+        /// `find_free_base` can start its probe here instead of rescanning the
+        /// densely packed prefix from 1 on every allocation. Lowered again
+        /// whenever `relocate_state` frees a slot beneath it.
+        search_head: u32,
     },
     /// LOUDS trie storage with succinct structures
     Louds {
