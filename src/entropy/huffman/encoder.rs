@@ -83,19 +83,44 @@ impl BitStreamWriter {
 #[derive(Debug)]
 pub struct HuffmanEncoder {
     tree: HuffmanTree,
+    /// Flat per-symbol code table, built once from the tree: `(bits, length)`
+    /// with the code packed LSB-first and `length == 0` meaning the symbol is
+    /// not in the tree. The tree's own `codes` map is a `HashMap<u8, Vec<bool>>`,
+    /// so consulting it per symbol costs a hash plus a pointer chase into a
+    /// separate heap allocation — on the encoding hot path, per byte.
+    code_table: Box<[(u64, u8); 256]>,
 }
 
 impl HuffmanEncoder {
     /// Create encoder from data
     pub fn new(data: &[u8]) -> Result<Self> {
         let tree = HuffmanTree::from_data(data)?;
-        Ok(Self { tree })
+        Ok(Self::from_tree(tree))
     }
 
     /// Create encoder from frequencies
     pub fn from_frequencies(frequencies: &[u32; 256]) -> Result<Self> {
         let tree = HuffmanTree::from_frequencies(frequencies)?;
-        Ok(Self { tree })
+        Ok(Self::from_tree(tree))
+    }
+
+    fn from_tree(tree: HuffmanTree) -> Self {
+        let mut code_table = Box::new([(0u64, 0u8); 256]);
+        for symbol in 0..=255u8 {
+            if let Some(code) = tree.get_code(symbol) {
+                // `HuffmanTree` never emits a code longer than 64 bits: it
+                // falls back to fixed-length codes past that.
+                debug_assert!(!code.is_empty() && code.len() <= 64);
+                let mut bits = 0u64;
+                for (i, &bit) in code.iter().enumerate() {
+                    if bit {
+                        bits |= 1u64 << i;
+                    }
+                }
+                code_table[symbol as usize] = (bits, code.len() as u8);
+            }
+        }
+        Self { tree, code_table }
     }
 
     /// Encode data using Huffman coding
@@ -104,41 +129,39 @@ impl HuffmanEncoder {
             return Ok(Vec::new());
         }
 
-        let mut bits = Vec::new();
+        // Shift each code straight into a bit accumulator and drain whole
+        // bytes as they form. The previous version materialised one `bool` —
+        // one byte — per output bit into a scratch `Vec`, roughly 8x the input
+        // size, then walked it again to pack.
+        //
+        // The accumulator is 128 bits so that a 64-bit code always fits
+        // alongside the up-to-7 bits left over from the previous symbol.
+        let mut result = Vec::with_capacity(data.len());
+        let mut acc: u128 = 0;
+        let mut bit_count: u32 = 0;
 
-        // Encode each symbol
         for &symbol in data {
-            if let Some(code) = self.tree.get_code(symbol) {
-                bits.extend_from_slice(code);
-            } else {
+            let (bits, len) = self.code_table[symbol as usize];
+            if len == 0 {
                 return Err(ZiporaError::invalid_data(format!(
                     "Symbol {} not in Huffman tree",
                     symbol
                 )));
             }
-        }
 
-        // Pack bits into bytes
-        let mut result = Vec::new();
-        let mut current_byte = 0u8;
-        let mut bit_count = 0;
+            acc |= (bits as u128) << bit_count;
+            bit_count += len as u32;
 
-        for bit in bits {
-            if bit {
-                current_byte |= 1 << bit_count;
-            }
-            bit_count += 1;
-
-            if bit_count == 8 {
-                result.push(current_byte);
-                current_byte = 0;
-                bit_count = 0;
+            while bit_count >= 8 {
+                result.push(acc as u8);
+                acc >>= 8;
+                bit_count -= 8;
             }
         }
 
         // Add remaining bits if any
         if bit_count > 0 {
-            result.push(current_byte);
+            result.push(acc as u8);
         }
 
         Ok(result)

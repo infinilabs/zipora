@@ -844,4 +844,66 @@ mod tests {
         assert_eq!(reader.read(1), 0b1);
         assert_eq!(reader.read(6), 0b111111);
     }
+
+    #[test]
+    fn test_encode_matches_the_bit_by_bit_reference() {
+        // `HuffmanEncoder::encode` now shifts whole codes into a 128-bit
+        // accumulator using a flat `(bits, len)` table instead of appending one
+        // `bool` per bit and packing in a second pass. Pin the result against
+        // the bit-at-a-time reference so neither the LSB-first bit order nor
+        // the table build can drift.
+        fn reference(tree: &HuffmanTree, data: &[u8]) -> Vec<u8> {
+            let mut out = Vec::new();
+            let mut current = 0u8;
+            let mut bit_count = 0;
+            for &symbol in data {
+                for &bit in tree.get_code(symbol).unwrap() {
+                    if bit {
+                        current |= 1 << bit_count;
+                    }
+                    bit_count += 1;
+                    if bit_count == 8 {
+                        out.push(current);
+                        current = 0;
+                        bit_count = 0;
+                    }
+                }
+            }
+            if bit_count > 0 {
+                out.push(current);
+            }
+            out
+        }
+
+        // A skewed alphabet gives codes of several different lengths; the
+        // lengths below straddle byte boundaries in every phase.
+        let alphabet: Vec<u8> = b"eeeeeeeeeettttttaaaaoooiiuuxyz".to_vec();
+        for len in [1usize, 2, 7, 8, 9, 15, 16, 17, 63, 64, 65, 1000] {
+            let data: Vec<u8> = (0..len).map(|i| alphabet[i % alphabet.len()]).collect();
+
+            let encoder = HuffmanEncoder::new(&data).unwrap();
+            let encoded = encoder.encode(&data).unwrap();
+            assert_eq!(
+                encoded,
+                reference(encoder.tree(), &data),
+                "encoded bytes diverge from the reference packing at len {len}"
+            );
+
+            let decoder = HuffmanDecoder::new(encoder.tree().clone());
+            assert_eq!(decoder.decode(&encoded, data.len()).unwrap(), data);
+        }
+    }
+
+    #[test]
+    fn test_encode_rejects_a_symbol_outside_the_tree() {
+        // The flat table uses a length of 0 for absent symbols; make sure that
+        // is still an error and not a zero-length code silently written out.
+        let mut frequencies = [0u32; 256];
+        frequencies[b'a' as usize] = 10;
+        frequencies[b'b' as usize] = 5;
+
+        let encoder = HuffmanEncoder::from_frequencies(&frequencies).unwrap();
+        assert!(encoder.encode(b"ab").is_ok());
+        assert!(encoder.encode(b"abc").is_err());
+    }
 }
