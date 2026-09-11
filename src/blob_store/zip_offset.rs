@@ -476,16 +476,23 @@ impl ZipOffsetBlobStore {
 
         // Read offset index section if non-empty
         if header.offsets_bytes > 0 {
-            let offsets_len = header.offsets_bytes as usize;
-            let mut offsets_buf = Vec::new();
-            let initial_offsets_reserve = offsets_len.min(64 * 1024 * 1024);
-            offsets_buf.reserve(initial_offsets_reserve);
-
             let mut take_offsets = reader.by_ref().take(header.offsets_bytes);
-            take_offsets.read_to_end(&mut offsets_buf)?;
-            if offsets_buf.len() != offsets_len {
-                return Err(ZiporaError::invalid_data("Unexpected EOF reading offset bytes"));
+            let offsets = SortedUintVec::read_from(&mut take_offsets)?;
+            if take_offsets.limit() != 0 {
+                return Err(ZiporaError::invalid_data(
+                    "trailing bytes in offset index section",
+                ));
             }
+            if offsets.len() as u64 != header.records() {
+                return Err(ZiporaError::invalid_data(
+                    "offset index length disagrees with the record count in the header",
+                ));
+            }
+
+            // The bit widths are chosen when the index is built, so take the
+            // decoded configuration rather than the defaults filled in above.
+            store.config.offset_config = *offsets.config();
+            store.offsets = offsets;
         }
 
         // Read footer and verify checksum
@@ -526,7 +533,11 @@ impl ZipOffsetBlobStore {
     pub fn save_to_writer<W: Write>(&self, writer: &mut W) -> Result<()> {
         // Calculate sizes
         let content_bytes = self.content.len() as u64;
-        let offsets_bytes = self.offsets.memory_usage() as u64;
+        let offsets_bytes = if self.offsets.is_empty() {
+            0
+        } else {
+            self.offsets.serialized_size() as u64
+        };
         let content_padding = (16 - (content_bytes % 16)) % 16;
         let file_size = HEADER_SIZE as u64
             + content_bytes
@@ -558,8 +569,7 @@ impl ZipOffsetBlobStore {
 
         // Write offset index section
         if offsets_bytes > 0 {
-            let offsets_buf = vec![0u8; offsets_bytes as usize];
-            writer.write_all(&offsets_buf)?;
+            self.offsets.write_to(writer)?;
         }
 
         // Write footer with CRC32C checksum
@@ -920,6 +930,56 @@ mod tests {
         assert_eq!(store.size(0).unwrap(), None);
     }
 
+
+    #[test]
+    fn test_save_and_load_round_trip_preserves_records() {
+        use crate::blob_store::zip_offset_builder::ZipOffsetBlobStoreBuilder;
+
+        // `save_to_writer` used to emit `offsets_bytes` zero bytes in place of
+        // the offset index and `load_from_reader` read them back into a buffer
+        // it dropped, so a saved store always came back with no records.
+        let config = ZipOffsetBlobStoreConfig {
+            compress_level: 0,
+            checksum_level: 2,
+            ..Default::default()
+        };
+
+        let mut builder = ZipOffsetBlobStoreBuilder::with_config(config).unwrap();
+        let records: Vec<Vec<u8>> = (0..150u32)
+            .map(|i| format!("payload {i}: {}", "ab".repeat((i % 23) as usize)).into_bytes())
+            .collect();
+        for record in &records {
+            builder.add_record(record).unwrap();
+        }
+        let store = builder.finish().unwrap();
+
+        let mut buf = Vec::new();
+        store.save_to_writer(&mut buf).unwrap();
+
+        let loaded = ZipOffsetBlobStore::load_from_reader(&mut buf.as_slice()).unwrap();
+        assert_eq!(loaded.len(), records.len());
+        for (i, record) in records.iter().enumerate() {
+            assert_eq!(&loaded.get(i as RecordId).unwrap(), record, "record {i}");
+        }
+        assert!(loaded.get(records.len() as RecordId).is_err());
+    }
+
+    #[test]
+    fn test_load_rejects_a_truncated_offset_section() {
+        use crate::blob_store::zip_offset_builder::ZipOffsetBlobStoreBuilder;
+
+        let mut builder = ZipOffsetBlobStoreBuilder::new().unwrap();
+        builder.add_record(b"only record").unwrap();
+        let store = builder.finish().unwrap();
+
+        let mut buf = Vec::new();
+        store.save_to_writer(&mut buf).unwrap();
+
+        // Chop the last byte of the offset section (the footer still follows).
+        let cut = buf.len() - FOOTER_SIZE - 1;
+        buf.remove(cut);
+        assert!(ZipOffsetBlobStore::load_from_reader(&mut buf.as_slice()).is_err());
+    }
 
     #[test]
     fn test_zip_offset_blob_store_memory_usage() {
