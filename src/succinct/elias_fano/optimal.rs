@@ -305,7 +305,12 @@ impl OptimalPartitionedEliasFano {
     /// the chunk to jump directly to the target's high-value bucket.
     #[inline]
     pub fn next_geq(&self, target: u64) -> Option<(usize, u64)> {
-        if self.len == 0 || target >= self.universe {
+        // `universe` is built with `saturating_add(1)`, so a list whose
+        // largest element is `u64::MAX` gets `universe == u64::MAX` and a
+        // plain `target >= universe` test would reject that element - the
+        // one value that is certainly present. Fall through when the bound
+        // is saturated and let the chunk search decide.
+        if self.len == 0 || (target >= self.universe && self.universe != u64::MAX) {
             return None;
         }
 
