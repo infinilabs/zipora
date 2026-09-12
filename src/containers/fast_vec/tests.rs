@@ -1698,3 +1698,26 @@ fn test_eq_uses_partial_eq_not_memcmp() {
     }
 }
 
+
+/// `FastVecIntoIter` already reports an exact `size_hint`; without
+/// `ExactSizeIterator` the iterator has no `.len()` and `FastVec::extend`,
+/// which requires an exact-size source, refuses another `FastVec` by value.
+#[test]
+fn test_into_iter_is_exact_size_and_extendable() {
+    let mut source = FastVec::new();
+    for i in 0..10u32 {
+        source.push(i).unwrap();
+    }
+    let mut iter = source.into_iter();
+    assert_eq!(iter.len(), 10);
+    iter.next();
+    assert_eq!(iter.len(), 9);
+
+    let mut a: FastVec<u32> = FastVec::new();
+    a.push(1).unwrap();
+    let mut b: FastVec<u32> = FastVec::new();
+    b.push(2).unwrap();
+    b.push(3).unwrap();
+    a.extend(b).unwrap();
+    assert_eq!(a.as_slice(), &[1, 2, 3]);
+}
