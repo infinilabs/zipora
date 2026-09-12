@@ -738,6 +738,12 @@ impl FseTable {
     }
 
     /// Renormalize state for decoding (simplified approach)
+    ///
+    /// Returns `None` when the stream cannot be well-formed: a partial
+    /// trailing block (the encoder emits only whole 4-byte blocks) or a zero
+    /// state (the encoder starts at 1 and its state only grows between
+    /// emissions). `x < RANS_L` with the input exhausted is *not* an error:
+    /// it is the encoder's warm-up from state 1, seen in reverse.
     #[inline(always)]
     pub fn renormalize_decode(&self, state: u64, input: &[u8], pos: &mut usize) -> Option<u64> {
         let mut x = state;
@@ -749,27 +755,33 @@ impl FseTable {
 
         // Renormalize when x < RANS_L and input bytes remain
         if x < RANS_L && *pos > 0 {
-            if *pos >= BLOCK_SIZE {
-                // Move backward by BLOCK_SIZE
-                *pos -= BLOCK_SIZE;
+            if *pos < BLOCK_SIZE {
+                // Fewer than BLOCK_SIZE bytes remain. `renormalize_encode`
+                // never writes a partial block, so the payload was truncated
+                // or corrupted; reading it byte-wise would just hand the
+                // caller an unnormalized state and `original_size` bytes of
+                // garbage. Fail instead.
+                return None;
+            }
 
-                // Shift left by BLOCK_SIZE * 8 bits
-                x <<= BLOCK_SIZE * 8;
+            // Move backward by BLOCK_SIZE
+            *pos -= BLOCK_SIZE;
 
-                // Read backward from current position
-                if *pos + BLOCK_SIZE <= input.len() {
-                    let bytes = &input[*pos..*pos + BLOCK_SIZE];
-                    let new_bytes = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-                    x |= new_bytes as u64;
-                }
-            } else {
-                // Read 1 byte when fewer than BLOCK_SIZE bytes remain
-                *pos -= 1;
-                x = (x << 8) | (input[*pos] as u64);
+            // Shift left by BLOCK_SIZE * 8 bits
+            x <<= BLOCK_SIZE * 8;
+
+            // Read backward from current position
+            if *pos + BLOCK_SIZE <= input.len() {
+                let bytes = &input[*pos..*pos + BLOCK_SIZE];
+                let new_bytes = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                x |= new_bytes as u64;
             }
         }
 
-        Some(x.max(1)) // Ensure state stays valid
+        if x == 0 {
+            return None;
+        }
+        Some(x)
     }
 
     /// Get table size
@@ -1714,19 +1726,28 @@ mod bench_tests {
     }
 
     #[test]
-    fn test_fse_renormalize_decode_single_byte_steps() {
+    fn test_fse_renormalize_decode_rejects_partial_trailing_block() {
         let config = FseConfig::default();
         let frequencies = [1u32; 256];
         let table = FseTable::new(&frequencies, &config).unwrap();
 
-        // Input with 2 bytes remaining (< BLOCK_SIZE = 4)
+        // 2 bytes remain (< BLOCK_SIZE = 4). The encoder only writes whole
+        // 4-byte blocks, so this payload is corrupt. The old byte-wise read
+        // produced (100 << 8) | 0x34 = 25652 < RANS_L and returned it as
+        // Some, so the decoder kept going on an unnormalized state.
         let input_bytes = vec![0x12, 0x34];
         let mut pos = 2;
-        let state = 100u64;
+        let res = table.renormalize_decode(100, &input_bytes, &mut pos);
+        assert!(res.is_none(), "partial trailing block must be rejected");
 
-        // renormalize_decode will perform single-byte step
-        let res = table.renormalize_decode(state, &input_bytes, &mut pos);
-        assert!(res.is_some());
-        assert_eq!(pos, 1);
+        // Input exhausted with x < RANS_L is the encoder's warm-up from
+        // state 1 seen in reverse; it must still pass through untouched.
+        let mut pos = 0;
+        assert_eq!(table.renormalize_decode(100, &input_bytes, &mut pos), Some(100));
+        assert_eq!(pos, 0);
+
+        // A zero state is never produced by the encoder; no `.max(1)` clamp.
+        let mut pos = 0;
+        assert_eq!(table.renormalize_decode(0, &input_bytes, &mut pos), None);
     }
 }
