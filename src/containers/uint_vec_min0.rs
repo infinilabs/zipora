@@ -480,7 +480,12 @@ impl UintVecMin0 {
         self.size = new_size;
     }
 
-    /// Resize with specific bit width
+    /// Resize with specific bit width.
+    ///
+    /// Existing contents are discarded: the buffer is cleared before it is
+    /// re-laid at the new stride, so every slot reads back as zero. (Matches
+    /// topling-zip `UintVecMin0::resize_with_uintbits`, which clears first;
+    /// keeping the old bytes would reinterpret them at the new width.)
     pub fn resize_with_uintbits(&mut self, num: usize, bits: usize) {
         assert!(bits <= 64, "Bits must be <= 64");
 
@@ -495,6 +500,7 @@ impl UintVecMin0 {
         self.size = num;
 
         let mem_size = Self::compute_mem_size(bits, num);
+        self.data.clear();
         self.data.resize(mem_size, 0);
     }
 
@@ -931,6 +937,25 @@ mod tests {
             let val = UintVecMin0::fast_get(vec.data(), vec.uintbits(), vec.uintmask(), i)
                 .expect("fast_get should succeed for valid index");
             assert_eq!(val, i);
+        }
+    }
+
+
+    /// `resize_with_uintbits` re-lays the buffer at a new stride. The reference
+    /// implementation clears first, so every slot reads back as zero; without
+    /// that, the old 8-bit packing is reinterpreted at the new width as garbage.
+    #[test]
+    fn test_resize_with_uintbits_clears_old_packed_data() {
+        let mut v = UintVecMin0::new(64, 255);
+        for i in 0..64 {
+            v.set(i, 0xA5 ^ (i & 0xFF));
+        }
+
+        v.resize_with_uintbits(64, 13);
+
+        assert_eq!(v.uintbits(), 13);
+        for i in 0..64 {
+            assert_eq!(v.get(i), 0, "slot {i} kept stale bits after width change");
         }
     }
 }
