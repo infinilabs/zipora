@@ -352,3 +352,48 @@ fn test_double_array_node_id_roundtrip() {
 
     assert!(trie.lookup_node_id(b"missing").is_none());
 }
+
+/// Regression: Patricia `remove` unlinked nodes but never recycled their ids,
+/// so insert/remove churn of a single key grew `state_count()` without bound
+/// while `len()` stayed constant (1000 rounds of one 13-byte key: 5 -> 13,005).
+/// Removed node ids must go on a free list and be reused by later inserts.
+#[test]
+fn test_patricia_remove_recycles_nodes() {
+    let config = ZiporaTrieConfig {
+        trie_strategy: crate::fsa::TrieStrategy::Patricia {
+            max_path_length: 64,
+            compression_threshold: 4,
+            adaptive_compression: true,
+        },
+        ..ZiporaTrieConfig::default()
+    };
+    let mut trie: ZiporaTrie = ZiporaTrie::with_config(config);
+
+    let key = b"churn-key-abc"; // 13 bytes
+    trie.insert(key).unwrap();
+    let after_first_insert = trie.state_count();
+
+    for _ in 0..1000 {
+        assert!(trie.remove(key).unwrap());
+        assert!(!trie.contains(key));
+        trie.insert(key).unwrap();
+        assert!(trie.contains(key));
+    }
+
+    assert_eq!(trie.len(), 1);
+    assert!(
+        trie.state_count() <= after_first_insert + 1,
+        "state_count leaked: {} after churn vs {} after first insert",
+        trie.state_count(),
+        after_first_insert
+    );
+
+    // Recycled nodes must not carry stale children/finality into new keys.
+    assert!(trie.remove(key).unwrap());
+    trie.insert(b"other").unwrap();
+    assert!(trie.contains(b"other"));
+    assert!(!trie.contains(key));
+    assert!(!trie.contains(b"churn"));
+    assert!(!trie.contains(b"oth"));
+    assert_eq!(trie.len(), 1);
+}
