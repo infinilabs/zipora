@@ -129,6 +129,13 @@ impl<T> Iterator for FastVecIntoIter<T> {
     }
 }
 
+// `size_hint` is exact (remaining = len - index), so the iterator can honour
+// the stronger contracts: `.len()` for callers and `FastVec::extend`, which
+// requires an exact-size source, accepts another `FastVec` by value.
+impl<T> ExactSizeIterator for FastVecIntoIter<T> {}
+
+impl<T> std::iter::FusedIterator for FastVecIntoIter<T> {}
+
 impl<T> Drop for FastVecIntoIter<T> {
     fn drop(&mut self) {
         if let Some(ptr) = self.ptr {
