@@ -964,3 +964,50 @@ fn test_fse_parallel_size_limit_applies_to_total() {
         "unexpected error: {err}"
     );
 }
+
+#[test]
+fn test_fse_partial_trailing_block_is_rejected() {
+    // The single-stream encoder emits the rANS payload only in whole 4-byte
+    // blocks, so a payload whose length is not a multiple of 4 can only come
+    // from a truncated or corrupted stream. The decoder used to drain such a
+    // tail one byte at a time and clamp the still-unnormalized state with
+    // `.max(1)`, returning `original_size` bytes of garbage as `Ok`.
+    // Layout: [0xF5][u32 size][u8 table_log][u16 n][(u8 sym, u32 freq) * n]
+    //         [payload: 4k bytes][u64 final state]
+    let config = FseConfig {
+        parallel_blocks: None, // force the single-stream layout
+        ..FseConfig::default()
+    };
+    let data: Vec<u8> = (0..2000u32).map(|i| (i * 7 % 13) as u8).collect();
+    let mut encoder = FseEncoder::new(config).unwrap();
+    let stream = encoder.compress(&data).unwrap();
+
+    assert_eq!(stream[0], 0xF5, "expected FSE_MODE_SINGLE framing");
+    let table_log = stream[5];
+    assert_ne!(table_log, 0xFF, "test needs an entropy-coded stream");
+    let n = u16::from_le_bytes([stream[6], stream[7]]) as usize;
+    let payload_start = 8 + 5 * n;
+    let payload_end = stream.len() - 8;
+    let payload_len = payload_end - payload_start;
+    assert!(payload_len >= 8, "payload too small to exercise the tail path");
+    assert_eq!(
+        payload_len % 4,
+        0,
+        "encoder framing changed: payload is no longer whole 4-byte blocks"
+    );
+
+    // Control: the untouched stream round-trips.
+    assert_eq!(FseDecoder::new().decompress(&stream).unwrap(), data);
+
+    // Drop one payload byte. The decoder reads 4-byte blocks backward from
+    // the end, so it ends with a 3-byte partial block instead of a clean
+    // exhaustion; that must surface as an error, not as decoded garbage.
+    let mut corrupted = stream.clone();
+    corrupted.remove(payload_start + payload_len / 2);
+    let result = FseDecoder::new().decompress(&corrupted);
+    assert!(
+        result.is_err(),
+        "payload with a partial trailing block decoded as Ok({} bytes)",
+        result.map(|v| v.len()).unwrap_or(0)
+    );
+}
