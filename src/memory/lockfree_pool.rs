@@ -463,13 +463,20 @@ impl LockFreeMemoryPool {
                 return self.allocate_new_block(size);
             }
 
-            // SAFETY: current_offset validated by offset_to_ptr, pointer aligned to u32.
-            // The `AtomicU32` type-pun is valid due to provenance and alignment (ALIGN_SIZE=8).
-            // Explicit atomic load is the data-race fix. `Relaxed` ordering is sufficient here
-            // because if we win the CAS on `head`, the read was valid and the CAS provides the
-            // synchronization fence. If we lose the CAS, the read might be garbage, but it
-            // doesn't affect correctness since we retry the loop.
-            // SAFETY: current_ptr valid from offset_to_ptr, aligned to ALIGN_SIZE=8 (≥4B for AtomicU32), type-punning to AtomicU32 valid
+            // SAFETY: current_ptr valid from offset_to_ptr, aligned to ALIGN_SIZE=8 (≥4B for
+            // AtomicU32), type-punning to AtomicU32 valid.
+            //
+            // KNOWN BENIGN RACE (classic Treiber free-list read): between loading `head` and
+            // this load, another thread may pop `current_offset`, hand the block to user code,
+            // and that code may write these bytes non-atomically. The atomic load only makes
+            // the race atomic-vs-atomic against the *pusher's* store; against a user's plain
+            // write it is still a data race in the abstract machine. It is tolerated because
+            // the value read is used solely as the `new` operand of the tagged CAS below, and
+            // the generation counter guarantees that CAS fails whenever the read could have
+            // been stale, so a torn/garbage value is never published. The arena is never
+            // unmapped while the pool lives, so the load cannot fault. Eliminating the race
+            // formally needs EBR/hazard pointers or `next` links outside user-visible memory;
+            // a side table indexed by offset does not fit the variable-size block layout.
             let next_offset = unsafe {
                 let current_ptr = self.offset_to_ptr(current_offset)?;
                 (*(current_ptr.as_ptr() as *const std::sync::atomic::AtomicU32))
