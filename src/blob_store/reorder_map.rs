@@ -294,6 +294,13 @@ impl ZReorderMap {
 
         // Sequence: read var_uint for length
         self.seq_length = self.read_var_uint()?;
+        // `next()` counts this down to zero to know when to read the next entry;
+        // a zero-length run would wrap and swallow every remaining entry.
+        if self.seq_length == 0 {
+            return Err(ZiporaError::invalid_data(
+                "ZReorderMap: zero-length sequence entry",
+            ));
+        }
 
         // Validate position after var_uint read
         if self.pos > self.mmap.len() {
@@ -1050,6 +1057,37 @@ mod tests {
         let values: Vec<usize> = map.collect();
         assert_eq!(values, vec![max_val]);
 
+        Ok(())
+    }
+
+
+    /// A sequence entry whose run length is zero is malformed: `next()` would
+    /// decrement the counter past zero and treat the run as infinite, silently
+    /// swallowing every later entry in the file. The reader must reject it.
+    #[test]
+    fn test_zero_length_sequence_is_rejected() -> Result<()> {
+        use std::io::Write;
+
+        let temp_file = NamedTempFile::new()?;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&4u64.to_le_bytes()); // size
+        bytes.extend_from_slice(&1i64.to_le_bytes()); // sign
+        // Sequence entry (LSB 0) with value 100, then var_uint run length 0.
+        let encoded: u64 = 100 << 1;
+        bytes.extend_from_slice(&encoded.to_le_bytes()[..5]);
+        bytes.push(0);
+        // A second, well-formed run the zero-length run would otherwise swallow.
+        let encoded2: u64 = 500 << 1;
+        bytes.extend_from_slice(&encoded2.to_le_bytes()[..5]);
+        bytes.push(4);
+        std::fs::File::create(temp_file.path())?.write_all(&bytes)?;
+
+        // The constructor reads the first entry, so a zero-length run must be
+        // rejected here rather than iterated as an endless run of 100, 101, ...
+        assert!(
+            ZReorderMap::open(temp_file.path()).is_err(),
+            "zero-length run was accepted"
+        );
         Ok(())
     }
 }
