@@ -112,6 +112,11 @@ impl VarInt {
             if shift >= 64 {
                 return Err(ZiporaError::invalid_data("Varint too long"));
             }
+            // The 10th byte holds bits 63..69; only bit 63 fits. Anything else
+            // encodes a value >= 2^64, which `<< 63` would silently discard.
+            if shift == 63 && byte > 1 {
+                return Err(ZiporaError::invalid_data("Varint overflows u64"));
+            }
 
             result |= ((byte & 0x7F) as u64) << shift;
 
@@ -146,6 +151,10 @@ impl VarInt {
             // Check for overflow
             if shift >= 64 {
                 return Err(ZiporaError::invalid_data("Varint too long"));
+            }
+            // See `read_from`: bits above 63 on the 10th byte cannot be represented.
+            if shift == 63 && byte > 1 {
+                return Err(ZiporaError::invalid_data("Varint overflows u64"));
             }
 
             result |= ((byte & 0x7F) as u64) << shift;
@@ -506,5 +515,27 @@ mod tests {
                 VarInt::MAX_ENCODED_LEN
             );
         }
+    }
+
+
+    /// The 10th byte of a varint carries bits 63..69 of the value; only bit 63
+    /// fits in a u64. An encoding that sets any higher bit represents a value
+    /// of at least 2^64 and must be rejected, not silently truncated to
+    /// whatever bit 0 of that byte happens to be.
+    #[test]
+    fn test_varint_rejects_tenth_byte_overflow() {
+        // Nine continuation bytes carrying zero, then a final byte with bit 1
+        // set: this encodes 2^64, which is not representable.
+        let mut overflow = vec![0x80u8; 9];
+        overflow.push(0x02);
+        assert!(VarInt::decode(&overflow).is_err());
+
+        let mut reader = crate::io::SliceDataInput::new(&overflow);
+        assert!(VarInt::read_from(&mut reader).is_err());
+
+        // Control: the largest legal 10-byte encoding (bit 63 only) still decodes.
+        let mut max = vec![0x80u8; 9];
+        max.push(0x01);
+        assert_eq!(VarInt::decode(&max).unwrap(), (1u64 << 63, 10));
     }
 }
