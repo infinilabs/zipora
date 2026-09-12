@@ -108,6 +108,7 @@ where
                 nodes: FastVec::new(),
                 edge_data: FastVec::new(),
                 compressed_paths: HashMap::new(),
+                free_list: Vec::new(),
             },
             TrieStrategy::CriticalBit { .. } => TrieStorage::CriticalBit {
                 nodes: FastVec::new(),
@@ -281,6 +282,7 @@ where
                 nodes,
                 edge_data,
                 compressed_paths,
+                ..
             } => {
                 nodes.capacity() * std::mem::size_of::<PatriciaNode>()
                     + edge_data.capacity()
@@ -334,9 +336,15 @@ where
                 nodes,
                 edge_data,
                 compressed_paths,
+                free_list,
             } => {
-                let removed =
-                    Self::remove_patricia_actual(nodes, edge_data, compressed_paths, key)?;
+                let removed = Self::remove_patricia_actual(
+                    nodes,
+                    edge_data,
+                    compressed_paths,
+                    free_list,
+                    key,
+                )?;
                 if removed {
                     self.stats.num_keys = self.stats.num_keys.saturating_sub(1);
                     self.stats_dirty = true;
@@ -379,6 +387,7 @@ where
                 nodes,
                 edge_data: _,
                 compressed_paths,
+                ..
             } => Self::keys_patricia_actual(nodes, compressed_paths),
             TrieStorage::Louds { label_data, .. } => Self::keys_louds_actual(label_data),
             TrieStorage::DoubleArray { base, check, .. } => {
@@ -399,6 +408,7 @@ where
                 nodes,
                 edge_data: _,
                 compressed_paths,
+                ..
             } => Self::keys_with_prefix_patricia_actual(nodes, compressed_paths, prefix),
             TrieStorage::Louds { label_data, .. } => {
                 Self::keys_with_prefix_louds_actual(label_data, prefix)
@@ -469,11 +479,13 @@ where
                 nodes,
                 edge_data,
                 compressed_paths,
+                free_list,
             } => {
                 let node_id = Self::insert_patricia_actual(
                     nodes,
                     edge_data,
                     compressed_paths,
+                    free_list,
                     key,
                     &mut self.stats.num_keys,
                 )?;
@@ -528,6 +540,7 @@ where
                 nodes,
                 edge_data,
                 compressed_paths,
+                ..
             } => Self::lookup_node_id_patricia_actual(nodes, edge_data, compressed_paths, key),
             TrieStorage::Louds { .. } => None,
             TrieStorage::DoubleArray { base, check, .. } => {
@@ -595,6 +608,7 @@ where
                 nodes,
                 edge_data,
                 compressed_paths,
+                ..
             } => Self::restore_string_patricia_actual(nodes, edge_data, compressed_paths, state_id),
             TrieStorage::Louds { label_data, .. } => {
                 Self::restore_string_louds(label_data, state_id)
@@ -853,10 +867,12 @@ where
                 nodes,
                 edge_data,
                 compressed_paths,
+                free_list,
             } => Self::insert_patricia(
                 nodes,
                 edge_data,
                 compressed_paths,
+                free_list,
                 key,
                 &mut self.stats.num_keys,
             ),
@@ -909,6 +925,7 @@ where
                 nodes,
                 edge_data,
                 compressed_paths,
+                ..
             } => self.contains_patricia(nodes, edge_data, compressed_paths, key),
             TrieStorage::CriticalBit {
                 nodes,

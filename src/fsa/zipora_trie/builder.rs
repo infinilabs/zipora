@@ -18,10 +18,11 @@ where
         nodes: &mut FastVec<PatriciaNode>,
         edge_data: &mut FastVec<u8>,
         compressed_paths: &mut HashMap<StateId, Vec<u8>>,
+        free_list: &mut Vec<StateId>,
         key: &[u8],
         num_keys: &mut usize,
     ) -> Result<StateId> {
-        Self::insert_patricia_actual(nodes, edge_data, compressed_paths, key, num_keys)
+        Self::insert_patricia_actual(nodes, edge_data, compressed_paths, free_list, key, num_keys)
     }
 
     pub(super) fn contains_patricia(
@@ -575,6 +576,7 @@ where
         nodes: &mut FastVec<PatriciaNode>,
         _edge_data: &mut FastVec<u8>,
         _compressed_paths: &mut HashMap<StateId, Vec<u8>>,
+        free_list: &mut Vec<StateId>,
         key: &[u8],
         num_keys: &mut usize,
     ) -> Result<StateId> {
@@ -597,9 +599,15 @@ where
                 current = child_id as usize;
                 key_pos += 1;
             } else {
-                // Create new child node
-                let new_node_id = nodes.len();
-                let _ = nodes.push(PatriciaNode::default());
+                // Create new child node, reusing a recycled id when available.
+                // Recycled nodes were reset on removal, so no stale state leaks.
+                let new_node_id = match free_list.pop() {
+                    Some(id) => id as usize,
+                    None => {
+                        let _ = nodes.push(PatriciaNode::default());
+                        nodes.len() - 1
+                    }
+                };
 
                 // Insert into sorted children Vec
                 let insert_pos = nodes[current]
@@ -659,6 +667,7 @@ where
         nodes: &mut FastVec<PatriciaNode>,
         _edge_data: &mut FastVec<u8>,
         _compressed_paths: &mut HashMap<StateId, Vec<u8>>,
+        free_list: &mut Vec<StateId>,
         key: &[u8],
     ) -> Result<bool> {
         if nodes.is_empty() {
@@ -701,12 +710,16 @@ where
         if !has_children {
             // Walk back up the path and remove unnecessary nodes
             for &(parent_idx, symbol) in path.iter().rev() {
-                // Remove the child pointer from parent
+                // Remove the child pointer from parent and recycle the node.
+                // The unlinked node is always a leaf here (childless and
+                // non-final), so no subtree is orphaned.
                 if let Ok(idx) = nodes[parent_idx]
                     .children
                     .binary_search_by_key(&symbol, |(s, _)| *s)
                 {
-                    nodes[parent_idx].children.remove(idx);
+                    let (_, child_id) = nodes[parent_idx].children.remove(idx);
+                    nodes[child_id as usize] = PatriciaNode::default();
+                    free_list.push(child_id);
                 }
 
                 // Check if parent node should also be cleaned up

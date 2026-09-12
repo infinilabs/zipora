@@ -15,6 +15,9 @@ where
         nodes: FastVec<PatriciaNode>,
         edge_data: FastVec<u8>,
         compressed_paths: HashMap<StateId, Vec<u8>>,
+        /// Node ids unlinked by `remove`, reused by the next `insert` so
+        /// insert/remove churn does not grow `nodes` without bound.
+        free_list: Vec<StateId>,
     },
     /// Critical-bit trie storage
     CriticalBit {
