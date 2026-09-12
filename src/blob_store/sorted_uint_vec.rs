@@ -426,9 +426,7 @@ impl SortedUintVec {
         let bit_offset = sample_offset % 8;
 
         // Calculate actual bytes needed for this sample width
-        let bytes_needed = (bit_offset + self.config.sample_width as usize)
-            .div_ceil(8)
-            .min(8);
+        let bytes_needed = (bit_offset + self.config.sample_width as usize).div_ceil(8);
         if byte_offset + bytes_needed > self.index.len() {
             return Err(ZiporaError::invalid_data("index data truncated"));
         }
@@ -456,10 +454,17 @@ impl SortedUintVec {
 
         let byte_offset = bit_offset / 8;
         let bit_shift = bit_offset % 8;
-        let bytes_needed = (bit_shift + bit_width as usize).div_ceil(8).min(8);
+        let bytes_needed = (bit_shift + bit_width as usize).div_ceil(8);
 
         if byte_offset + bytes_needed > data.len() {
             return Err(ZiporaError::invalid_data("bit extraction out of bounds"));
+        }
+
+        // A field spanning more than 64 bits (bit_shift + bit_width > 64)
+        // does not fit the single u64 the BMI2 paths load; the portable
+        // path widens to u128.
+        if bytes_needed > 8 {
+            return self.extract_bits_portable(data, bit_offset, bit_width);
         }
 
         // Use enhanced BMI2 instructions if available for efficient bit extraction
@@ -570,18 +575,20 @@ impl SortedUintVec {
         let byte_offset = bit_offset / 8;
         let bit_shift = bit_offset % 8;
 
-        let mut value = 0u64;
-        let bytes_to_read = (bit_shift + bit_width as usize).div_ceil(8).min(8);
+        // Accumulate in u128: a field of up to 64 bits at a non-zero
+        // bit_shift spans up to 9 bytes (mirrors store_bits_static).
+        let mut value = 0u128;
+        let bytes_to_read = (bit_shift + bit_width as usize).div_ceil(8);
 
         // Read bytes and construct value
         for i in 0..bytes_to_read {
             if byte_offset + i < data.len() {
-                value |= (data[byte_offset + i] as u64) << (i * 8);
+                value |= (data[byte_offset + i] as u128) << (i * 8);
             }
         }
 
         // Shift and mask to extract desired bits
-        value >>= bit_shift;
+        let mut value = (value >> bit_shift) as u64;
         if bit_width < 64 {
             value &= (1u64 << bit_width) - 1;
         }
@@ -935,8 +942,10 @@ impl SortedUintVecBuilder {
             value
         };
 
-        // Store bits using bit manipulation
-        let shifted_value = masked_value << bit_shift;
+        // Store bits using bit manipulation. Widen to u128: a field of up to
+        // 64 bits at a non-zero bit_shift spans up to 9 bytes, which a u64
+        // shift would truncate.
+        let shifted_value = (masked_value as u128) << bit_shift;
 
         for i in 0..bytes_needed {
             if byte_offset + i < data.len() {
@@ -1194,6 +1203,62 @@ mod tests {
                 let bmi2_value = vec.extract_bits_advanced_bmi2(&data, 4, 4).unwrap();
                 assert_eq!(bmi2_value, 0b1011);
             }
+        }
+    }
+
+    /// A field wider than 56 bits at a non-byte-aligned offset spans 9 bytes.
+    /// Shifting the value inside a u64 silently drops the top bits on the
+    /// write side, and reading only 8 bytes drops them on the read side.
+    #[test]
+    fn test_store_bits_static_wide_field_unaligned_round_trips() {
+        let vec = SortedUintVec::new().unwrap();
+
+        for (bit_offset, bit_width, value) in [
+            (3usize, 64u8, u64::MAX),
+            (7, 63, u64::MAX >> 1),
+            (5, 61, 1u64 << 60),
+        ] {
+            let mut data = FastVec::new();
+            SortedUintVecBuilder::store_bits_static(&mut data, bit_offset, value, bit_width)
+                .unwrap();
+
+            let portable = vec.extract_bits_portable(&data, bit_offset, bit_width).unwrap();
+            assert_eq!(
+                portable, value,
+                "portable: offset={bit_offset} width={bit_width}"
+            );
+
+            let dispatched = vec.extract_bits(&data, bit_offset, bit_width).unwrap();
+            assert_eq!(
+                dispatched, value,
+                "dispatched: offset={bit_offset} width={bit_width}"
+            );
+        }
+    }
+
+    /// `sample_width = 63` places block 1's sample at bit 63 (shift 7), so
+    /// a 63-bit block minimum with its high bit set must survive the
+    /// builder -> get round-trip exactly.
+    #[test]
+    fn test_sorted_uint_vec_wide_sample_high_bits_round_trip() {
+        let config = SortedUintVecConfig {
+            log2_block_units: 4, // 16 values per block -> 3 blocks below
+            offset_width: 16,
+            sample_width: 63,
+            use_simd: true,
+        };
+        assert!(config.validate().is_ok());
+
+        let base = (u64::MAX >> 1) - 1000;
+        let mut builder = SortedUintVecBuilder::with_config(config);
+        for i in 0..48u64 {
+            builder.push(base + i).unwrap();
+        }
+
+        let vec = builder.finish().unwrap();
+        assert_eq!(vec.num_blocks(), 3);
+        for i in 0..48usize {
+            assert_eq!(vec.get(i).unwrap(), base + i as u64, "index {i}");
         }
     }
 
