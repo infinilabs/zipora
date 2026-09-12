@@ -424,7 +424,10 @@ impl GroupVarint {
 
     /// Decode raw values.
     pub fn decode_raw(data: &[u8], count: usize) -> Vec<u32> {
-        let mut values = Vec::with_capacity(count);
+        // `count` is caller/header-supplied. Every value occupies at least one
+        // data byte on top of its group's control byte, so the input length is
+        // a hard upper bound on how many values can be present.
+        let mut values = Vec::with_capacity(count.min(data.len()));
         let mut pos = 0;
         let mut remaining = count;
 
@@ -881,5 +884,29 @@ mod tests {
                 assert_eq!(out_simd[..26], out_scalar[..26], "SIMD handoff output mismatch");
             }
         }
+    }
+
+
+    /// `count` comes from an untrusted header. Each decoded value needs at least
+    /// one data byte, so the reservation must be bounded by the input length,
+    /// not by whatever the caller claims.
+    #[test]
+    fn test_group_varint_decode_raw_bounds_reservation_by_input() {
+        let empty = GroupVarint::decode_raw(&[], 1 << 26);
+        assert!(empty.is_empty());
+        assert!(
+            empty.capacity() <= 4,
+            "reserved {} slots for an empty input",
+            empty.capacity()
+        );
+
+        let data = [0u8; 9]; // one control byte + 8 single-byte values at most
+        let v = GroupVarint::decode_raw(&data, 1 << 26);
+        assert!(
+            v.capacity() <= data.len() * 4,
+            "reserved {} slots for {} input bytes",
+            v.capacity(),
+            data.len()
+        );
     }
 }
