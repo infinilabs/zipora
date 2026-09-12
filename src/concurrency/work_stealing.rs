@@ -452,8 +452,16 @@ impl WorkStealingExecutor {
                     stats
                         .total_execution_time_us
                         .fetch_add(execution_time, Ordering::Relaxed);
-                    stats.total_executed.fetch_add(1, Ordering::Relaxed);
+                    let executed = stats.total_executed.fetch_add(1, Ordering::Relaxed) + 1;
                     stats.active_tasks.fetch_sub(1, Ordering::Relaxed);
+
+                    // Periodically balance the queue. Keyed to this worker's
+                    // own completions: checking the shared counter on every
+                    // loop iteration made an idle worker take both queue locks
+                    // on every spin while the pool sat on a multiple of 100.
+                    if executed.is_multiple_of(100) {
+                        my_queue.balance();
+                    }
                 }
                 None => {
                     idle_count += 1;
@@ -465,15 +473,6 @@ impl WorkStealingExecutor {
                         tokio::time::sleep(Duration::from_millis(1)).await;
                     }
                 }
-            }
-
-            // Periodically balance the queue
-            if stats
-                .total_executed
-                .load(Ordering::Relaxed)
-                .is_multiple_of(100)
-            {
-                my_queue.balance();
             }
         }
     }
