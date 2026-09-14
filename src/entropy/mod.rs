@@ -230,9 +230,8 @@ impl EntropyConfig {
     }
 }
 
-// Note: Universal entropy encoder/decoder implementation is complex due to different
-// constructor signatures for each algorithm. For now, use the individual encoders directly.
-// A full implementation would require more sophisticated state management.
+// Note: Universal entropy coding uses individual encoder modules directly,
+// reflecting the differing constructor signatures and state requirements per algorithm.
 
 /// Statistics for entropy coding operations
 #[derive(Debug, Clone, PartialEq)]

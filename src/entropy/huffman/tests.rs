@@ -906,4 +906,29 @@ mod tests {
         assert!(encoder.encode(b"ab").is_ok());
         assert!(encoder.encode(b"abc").is_err());
     }
+
+    #[test]
+    fn test_contextual_huffman_order1_text_compression() {
+        let text = b"The quick brown fox jumps over the lazy dog. \
+                     Pack my box with five dozen liquor jugs. \
+                     How vexingly quick daft zebras jump! \
+                     Sphinx of black quartz, judge my vow.";
+        let data = text.repeat(10);
+
+        let encoder0 = ContextualHuffmanEncoder::new(&data, HuffmanOrder::Order0).unwrap();
+        let encoder1 = ContextualHuffmanEncoder::new(&data, HuffmanOrder::Order1).unwrap();
+
+        let ratio0 = encoder0.estimate_compression_ratio(&data);
+        let ratio1 = encoder1.estimate_compression_ratio(&data);
+
+        // Both Order-0 and Order-1 should compress text (< 1.0)
+        assert!(ratio0 < 1.0, "Order-0 ratio should compress: {}", ratio0);
+        assert!(ratio1 < 1.0, "Order-1 ratio should compress: {}", ratio1);
+
+        // Roundtrip with Order-1
+        let encoded1 = encoder1.encode(&data).unwrap();
+        let decoder1 = ContextualHuffmanDecoder::new(encoder1);
+        let decoded1 = decoder1.decode(&encoded1, data.len()).unwrap();
+        assert_eq!(decoded1, data);
+    }
 }

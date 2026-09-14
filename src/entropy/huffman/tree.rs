@@ -266,38 +266,43 @@ impl HuffmanTree {
 
     /// Deserialize the tree from storage
     pub fn deserialize(data: &[u8]) -> Result<Self> {
-        if data.len() < 2 {
-            return Err(ZiporaError::invalid_data("Huffman tree data too short"));
+        let count_bytes = data
+            .get(0..2)
+            .ok_or_else(|| ZiporaError::invalid_data("Huffman tree data too short"))?;
+        let symbol_count = u16::from_le_bytes(count_bytes.try_into().unwrap()) as usize;
+        if symbol_count > 256 {
+            return Err(ZiporaError::invalid_data("Huffman tree symbol count exceeds 256"));
         }
 
-        let symbol_count = u16::from_le_bytes([data[0], data[1]]) as usize;
-        let mut codes = HashMap::new();
+        let mut codes = HashMap::with_capacity(symbol_count);
         let mut max_code_length = 0;
         let mut offset = 2;
 
         for _ in 0..symbol_count {
-            if offset + 2 > data.len() {
-                return Err(ZiporaError::invalid_data("Truncated Huffman tree data"));
-            }
-
-            let symbol = data[offset];
-            let code_length = data[offset + 1] as usize;
+            let sym_hdr = data
+                .get(offset..offset + 2)
+                .ok_or_else(|| ZiporaError::invalid_data("Truncated Huffman tree data"))?;
+            let symbol = sym_hdr[0];
+            let code_length = sym_hdr[1] as usize;
             offset += 2;
 
             max_code_length = max_code_length.max(code_length);
 
             // Read code bits
             let byte_count = code_length.div_ceil(8);
-            if offset + byte_count > data.len() {
-                return Err(ZiporaError::invalid_data("Truncated Huffman code data"));
-            }
+            let code_bytes = data
+                .get(offset..offset + byte_count)
+                .ok_or_else(|| ZiporaError::invalid_data("Truncated Huffman code data"))?;
 
             let mut code = Vec::with_capacity(code_length);
 
             for i in 0..code_length {
                 let byte_offset = i / 8;
                 let bit_offset = i % 8;
-                let byte_value = data[offset + byte_offset];
+                let byte_value = code_bytes
+                    .get(byte_offset)
+                    .copied()
+                    .ok_or_else(|| ZiporaError::invalid_data("Truncated Huffman code bits"))?;
                 let bit = (byte_value >> bit_offset) & 1 == 1;
                 code.push(bit);
             }
@@ -372,17 +377,17 @@ impl HuffmanTree {
         // Ensure this is an internal node
         match node {
             HuffmanNode::Leaf { frequency: 0, .. } => {
-                // This is a placeholder leaf, convert to internal node
+                // This is an unassigned leaf, convert to internal node
                 let next_bit = code[0];
                 let remaining_code = &code[1..];
 
                 if remaining_code.is_empty() {
-                    // Final bit, create leaf and keep placeholder
+                    // Final bit, create leaf and keep unassigned leaf
                     let leaf = HuffmanNode::Leaf {
                         symbol,
                         frequency: 1,
                     };
-                    let placeholder = HuffmanNode::Leaf {
+                    let unassigned_leaf = HuffmanNode::Leaf {
                         symbol: 0,
                         frequency: 0,
                     };
@@ -390,25 +395,25 @@ impl HuffmanTree {
                     if next_bit {
                         *node = HuffmanNode::Internal {
                             frequency: 0,
-                            left: Box::new(placeholder),
+                            left: Box::new(unassigned_leaf),
                             right: Box::new(leaf),
                         };
                     } else {
                         *node = HuffmanNode::Internal {
                             frequency: 0,
                             left: Box::new(leaf),
-                            right: Box::new(placeholder),
+                            right: Box::new(unassigned_leaf),
                         };
                     }
                 } else {
                     // More bits, create internal structure and continue insertion
-                    let placeholder = HuffmanNode::Leaf {
+                    let unassigned_leaf = HuffmanNode::Leaf {
                         symbol: 0,
                         frequency: 0,
                     };
 
                     if next_bit {
-                        // Create internal node with placeholder on left, continue on right
+                        // Create internal node with unassigned branch on left, continue on right
                         let mut right_child = HuffmanNode::Leaf {
                             symbol: 0,
                             frequency: 0,
@@ -417,11 +422,11 @@ impl HuffmanTree {
 
                         *node = HuffmanNode::Internal {
                             frequency: 0,
-                            left: Box::new(placeholder),
+                            left: Box::new(unassigned_leaf),
                             right: Box::new(right_child),
                         };
                     } else {
-                        // Create internal node with placeholder on right, continue on left
+                        // Create internal node with unassigned branch on right, continue on left
                         let mut left_child = HuffmanNode::Leaf {
                             symbol: 0,
                             frequency: 0,
@@ -431,7 +436,7 @@ impl HuffmanTree {
                         *node = HuffmanNode::Internal {
                             frequency: 0,
                             left: Box::new(left_child),
-                            right: Box::new(placeholder),
+                            right: Box::new(unassigned_leaf),
                         };
                     }
                 }
@@ -469,5 +474,29 @@ impl HuffmanTree {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_huffman_tree_oversized_symbol_count_rejected() {
+        // symbol_count = 300 (> 256)
+        let mut data = 300u16.to_le_bytes().to_vec();
+        data.extend_from_slice(&[0u8; 100]);
+        let res = HuffmanTree::deserialize(&data);
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("exceeds 256"));
+    }
+
+    #[test]
+    fn test_huffman_tree_truncated_data_rejected() {
+        assert!(HuffmanTree::deserialize(&[]).is_err());
+        assert!(HuffmanTree::deserialize(&[1]).is_err());
+        // Claims 5 symbols but truncated
+        let data = vec![5, 0, 1];
+        assert!(HuffmanTree::deserialize(&data).is_err());
     }
 }

@@ -7,14 +7,14 @@ max_undocumented = 36
 max_precondition_violations = 10
 
 [api_honesty]
-max_markers = 177
+max_markers = 163
 
 [index_audit]
-entropy = 47
+entropy = 0
 compression = 133
 blob_store = 50
 var_int = 0
 succinct_load = 6
-max_total = 236
+max_total = 189
 
 

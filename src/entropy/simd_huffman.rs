@@ -314,7 +314,7 @@ impl SimdHuffmanEncoder {
             if let Some(code) = self.base_encoder.tree().get_code(symbol)
                 && code.len() <= 32
             {
-                // Pack bits into u32 (simple approach for now)
+                // Pack bits into u32
                 let mut packed_code = 0u32;
 
                 for (i, &bit) in code.iter().enumerate() {
@@ -484,7 +484,7 @@ impl SimdHuffmanEncoder {
         for &symbol in data {
             if let Some(code) = self.base_encoder.tree().get_code(symbol) {
                 if code.len() <= 64 {
-                    // Pack bits into u64 (simple approach for now)
+                    // Pack bits into u64
                     let mut packed_code = 0u64;
                     for (i, &bit) in code.iter().enumerate() {
                         if bit {

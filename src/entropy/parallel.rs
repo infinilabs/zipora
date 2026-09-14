@@ -206,8 +206,8 @@ impl<P: ParallelVariant> ParallelHuffmanEncoder<P> {
 
             for i in 0..P::STREAMS {
                 let size = chunk_size + if i < remainder { 1 } else { 0 };
-                if offset + size <= data.len() {
-                    blocks.push(&data[offset..offset + size]);
+                if let Some(chunk) = data.get(offset..offset + size) {
+                    blocks.push(chunk);
                     offset += size;
                 }
             }

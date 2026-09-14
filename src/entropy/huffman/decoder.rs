@@ -25,10 +25,14 @@ impl<'a> BitStreamReader<'a> {
     /// Refill the bit buffer
     #[inline]
     pub(crate) fn refill(&mut self) {
-        while self.bit_count <= 56 && self.byte_pos < self.data.len() {
-            self.current |= (self.data[self.byte_pos] as u64) << self.bit_count;
-            self.bit_count += 8;
-            self.byte_pos += 1;
+        while self.bit_count <= 56 {
+            if let Some(&byte) = self.data.get(self.byte_pos) {
+                self.current |= (byte as u64) << self.bit_count;
+                self.bit_count += 8;
+                self.byte_pos += 1;
+            } else {
+                break;
+            }
         }
     }
 
