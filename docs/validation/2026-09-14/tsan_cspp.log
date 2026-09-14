@@ -1,0 +1,35 @@
+CARGO_TARGET_DIR=target-tsan \
+RUSTFLAGS="-Zsanitizer=thread --cfg crossbeam_sanitize" \
+TSAN_OPTIONS="suppressions=/usr/local/google/home/binwu/go/src/infini.sh/zipora/tsan.supp" \
+cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
+	--release --lib fsa::cspp_trie_concurrent
+warning: unused import: `super::super::state::*`
+ --> src/fsa/double_array/tests.rs:9:9
+  |
+9 |     use super::super::state::*;
+  |         ^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `zipora` (lib test) generated 1 warning (run `cargo fix --lib -p zipora --tests` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 0.17s
+     Running unittests src/lib.rs (target-tsan/x86_64-unknown-linux-gnu/release/build/zipora/ee963fecc6f8e5d0/out/zipora-ee963fecc6f8e5d0)
+
+running 13 tests
+test fsa::cspp_trie_concurrent::tests::test_u32_flag_masks_match_meta_info_flag_byte ... ok
+test fsa::cspp_trie_concurrent::tests::test_concurrent_trie_fork ... ok
+test fsa::cspp_trie_concurrent::tests::test_concurrent_trie_split_zpath ... ok
+test fsa::cspp_trie_concurrent::tests::test_concurrent_trie_basic ... ok
+test fsa::cspp_trie_concurrent::tests::test_concurrent_trie_many_small ... ok
+test fsa::cspp_trie_concurrent::tests::test_value_odd_size_types ... ok
+test fsa::cspp_trie_concurrent::tests::test_value_single_word_atomicity_stress ... ok
+test fsa::cspp_trie_concurrent::test_concurrent_cspp_trie_deletion_support ... ok
+test fsa::cspp_trie_concurrent::test_concurrent_cspp_trie_longest_prefix ... ok
+test fsa::cspp_trie_concurrent::tests::test_pending_reclaims_drains_after_reader_unpins ... ok
+test fsa::cspp_trie_concurrent::tests::test_concurrent_trie_multithreaded ... ok
+/usr/bin/addr2line: DWARF error: mangled line number section (bad file number)
+test fsa::cspp_trie_concurrent::tests::test_contended_root_fastnode_cas ... ok
+test fsa::cspp_trie_concurrent::tests::test_contended_inserts_same_key_set ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 2811 filtered out; finished in 3.96s
+

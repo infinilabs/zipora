@@ -631,10 +631,17 @@ mod tests {
         // land at cursor + 2^k - 1, so targets at, just before and just after
         // those positions cover every bracket boundary, for both exact hits
         // and between-element targets.
-        let n = 1usize << 20;
+        let (n, max_k) = if cfg!(miri) {
+            (1usize << 12, 12u32)
+        } else {
+            (1usize << 20, 20u32)
+        };
         let arr: Vec<u32> = (0..n as u32).map(|i| i * 2).collect();
         for start in [0usize, 1, 5, 1000] {
-            for k in 0..20u32 {
+            if start >= n {
+                continue;
+            }
+            for k in 0..max_k {
                 let probe = start + (1usize << k) - 1;
                 for pos in [probe.saturating_sub(1), probe, probe + 1, probe + 2] {
                     if pos >= n {

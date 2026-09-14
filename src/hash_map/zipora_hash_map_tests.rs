@@ -968,7 +968,8 @@ fn test_insert_remove_churn_does_not_grow_the_table_forever() {
     // rehash in place while the live set stays small, or a bounded working
     // set would double the table indefinitely.
     let mut map: ZiporaHashMap<u32, u32> = ZiporaHashMap::with_capacity(64).expect("create");
-    for i in 0..100_000u32 {
+    let iters = if cfg!(miri) { 500 } else { 100_000 };
+    for i in 0..iters {
         map.insert(i, i).expect("insert");
         map.remove(&i);
     }

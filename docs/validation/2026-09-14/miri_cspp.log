@@ -1,0 +1,204 @@
+MIRIFLAGS="-Zmiri-tree-borrows -Zmiri-ignore-leaks" \
+cargo +nightly miri test --lib fsa::cspp_trie_concurrent -- --test-threads=1
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.12s
+     Running unittests src/lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/build/zipora/d90d3c6aadfed4a5/out/zipora-d90d3c6aadfed4a5)
+warning: unused import: `super::super::state::*`
+ --> src/fsa/double_array/tests.rs:9:9
+  |
+9 |     use super::super::state::*;
+  |         ^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `features`
+   --> src/system/cpu_features.rs:524:35
+    |
+524 |     fn detect_x86_features(&self, features: &mut CpuFeatures) {
+    |                                   ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_features`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src/system/cpu_features.rs:587:13
+    |
+587 |         let mut cache_line_size = 64; // Default assumption
+    |             ----^^^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `avx2_impl` is never used
+   --> src/simd/macros.rs:383:12
+    |
+383 |         fn avx2_impl() -> i32 {
+    |            ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `sse2_impl` is never used
+   --> src/simd/macros.rs:401:12
+    |
+401 |         fn sse2_impl() -> i32 {
+    |            ^^^^^^^^^
+
+warning: function `avx2_impl` is never used
+   --> src/simd/macros.rs:404:12
+    |
+404 |         fn avx2_impl() -> i32 {
+    |            ^^^^^^^^^
+
+warning: Miri does not support optimizations: the opt-level is ignored. The only effect of selecting a Cargo profile that enables optimizations (such as --release) is to apply its remaining settings, such as whether debug assertions and overflow checks are enabled.
+
+
+running 13 tests
+test fsa::cspp_trie_concurrent::test_concurrent_cspp_trie_deletion_support ... warning: integer-to-pointer cast
+   --> /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/atomic.rs:204:11
+    |
+204 |         &*(ptr as *const T)
+    |           ^^^^^^^^^^^^^^^^^ integer-to-pointer cast
+    |
+    = help: this program is using integer-to-pointer casts or (equivalently) `ptr::with_exposed_provenance`, which means that Miri might miss pointer bugs in this program
+    = help: see https://doc.rust-lang.org/nightly/std/ptr/fn.with_exposed_provenance.html for more details on that operation
+    = help: to ensure that Miri does not miss bugs in your program, use Strict Provenance APIs (https://doc.rust-lang.org/nightly/std/ptr/index.html#strict-provenance, https://crates.io/crates/sptr) instead
+    = help: you can then set `MIRIFLAGS=-Zmiri-strict-provenance` to ensure you are not relying on `with_exposed_provenance` semantics
+    = help: Tree Borrows does not support integer-to-pointer casts, so the program is likely to go wrong when this pointer gets used
+    = note: this is on thread `fsa::cspp_trie_`
+    = note: stack backtrace:
+            0: <crossbeam_epoch::internal::Local as crossbeam_epoch::Pointable>::deref::<'_>
+                at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/atomic.rs:204:11: 204:28
+            1: crossbeam_epoch::Shared::<'_, crossbeam_epoch::internal::Local>::deref
+                at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/atomic.rs:1421:9: 1421:22
+            2: crossbeam_epoch::sync::list::List::<crossbeam_epoch::internal::Local>::insert
+                at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/sync/list.rs:176:41: 176:58
+            3: crossbeam_epoch::internal::Local::register
+                at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/internal.rs:330:13: 330:65
+            4: crossbeam_epoch::Collector::register
+                at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/collector.rs:45:9: 45:30
+            5: crossbeam_epoch::default::HANDLE::__rust_std_internal_init_fn
+                at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/default.rs:34:34: 34:56
+            6: <fn() -> crossbeam_epoch::LocalHandle {crossbeam_epoch::default::HANDLE::__rust_std_internal_init_fn} as std::ops::FnOnce<()>>::call_once - shim(fn() -> crossbeam_epoch::LocalHandle {crossbeam_epoch::default::HANDLE::__rust_std_internal_init_fn})
+                at /usr/local/google/home/binwu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ops/function.rs:250:5: 250:71
+            7: std::thread::local_impl::LazyStorage::<crossbeam_epoch::LocalHandle, ()>::get_or_init_slow::<fn() -> crossbeam_epoch::LocalHandle {crossbeam_epoch::default::HANDLE::__rust_std_internal_init_fn}>
+                at /usr/local/google/home/binwu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/native/lazy.rs:80:17: 80:59
+            8: std::thread::local_impl::LazyStorage::<crossbeam_epoch::LocalHandle, ()>::get_or_init::<fn() -> crossbeam_epoch::LocalHandle {crossbeam_epoch::default::HANDLE::__rust_std_internal_init_fn}>
+                at /usr/local/google/home/binwu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/native/lazy.rs:62:22: 62:49
+            9: crossbeam_epoch::default::HANDLE::{constant#0}::{closure#0}
+                at /usr/local/google/home/binwu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/native/mod.rs:97:25: 97:115
+            10: <{closure@crossbeam_epoch::default::HANDLE::{constant#0}::{closure#0}} as std::ops::FnOnce<(std::option::Option<&mut std::option::Option<crossbeam_epoch::LocalHandle>>,)>>::call_once - shim
+                at /usr/local/google/home/binwu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ops/function.rs:250:5: 250:71
+            11: std::thread::LocalKey::<crossbeam_epoch::LocalHandle>::try_with::<{closure@crossbeam_epoch::default::with_handle<{closure@crossbeam_epoch::pin::{closure#0}}, crossbeam_epoch::Guard>::{closure#0}}, crossbeam_epoch::Guard>
+                at /usr/local/google/home/binwu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/thread/local.rs:463:37: 463:55
+            12: crossbeam_epoch::default::with_handle::<{closure@crossbeam_epoch::pin::{closure#0}}, crossbeam_epoch::Guard>
+                at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/default.rs:59:5: 60:28
+            13: crossbeam_epoch::pin
+                at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/default.rs:40:5: 40:39
+            14: fsa::cspp_trie_concurrent::ConcurrentCsppTrie::insert
+                at src/fsa/cspp_trie_concurrent.rs:1768:21: 1768:33
+            15: fsa::cspp_trie_concurrent::test_concurrent_cspp_trie_deletion_support
+                at src/fsa/cspp_trie_concurrent.rs:2765:5: 2765:26
+            16: fsa::cspp_trie_concurrent::test_concurrent_cspp_trie_deletion_support::{closure#0}
+                at src/fsa/cspp_trie_concurrent.rs:2763:48: 2763:48
+
+warning: integer-to-pointer cast
+   --> /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/atomic.rs:212:28
+    |
+212 |         drop(Box::from_raw(ptr as *mut T));
+    |                            ^^^^^^^^^^^^^ integer-to-pointer cast
+    |
+    = note: this is on thread `fsa::cspp_trie_`
+    = note: stack backtrace:
+            0: <crossbeam_epoch::sync::queue::Node<crossbeam_epoch::internal::SealedBag> as crossbeam_epoch::Pointable>::drop
+                at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/atomic.rs:212:28: 212:41
+            1: <crossbeam_epoch::Owned<crossbeam_epoch::sync::queue::Node<crossbeam_epoch::internal::SealedBag>> as std::ops::Drop>::drop
+                at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/atomic.rs:1204:13: 1204:25
+            2: std::ptr::drop_glue::<crossbeam_epoch::Owned<crossbeam_epoch::sync::queue::Node<crossbeam_epoch::internal::SealedBag>>> - shim(Some(crossbeam_epoch::Owned<crossbeam_epoch::sync::queue::Node<crossbeam_epoch::internal::SealedBag>>))
+                at /usr/local/google/home/binwu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:847:1: 849:25
+            3: std::mem::drop::<crossbeam_epoch::Owned<crossbeam_epoch::sync::queue::Node<crossbeam_epoch::internal::SealedBag>>>
+                at /usr/local/google/home/binwu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/mod.rs:1049:1: 1049:2
+            4: crossbeam_epoch::Guard::defer_unchecked::<{closure@crossbeam_epoch::Guard::defer_destroy<crossbeam_epoch::sync::queue::Node<crossbeam_epoch::internal::SealedBag>>::{closure#0}}, crossbeam_epoch::Owned<crossbeam_epoch::sync::queue::Node<crossbeam_epoch::internal::SealedBag>>>::{closure#0}
+                at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/guard.rs:193:47: 193:56
+            5: crossbeam_epoch::deferred::Deferred::new::call::<{closure@crossbeam_epoch::Guard::defer_unchecked<{closure@crossbeam_epoch::Guard::defer_destroy<crossbeam_epoch::sync::queue::Node<crossbeam_epoch::internal::SealedBag>>::{closure#0}}, crossbeam_epoch::Owned<crossbeam_epoch::sync::queue::Node<crossbeam_epoch::internal::SealedBag>>>::{closure#0}}>
+                at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/deferred.rs:53:21: 53:24
+            6: crossbeam_epoch::deferred::Deferred::call
+                at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/deferred.rs:86:18: 86:59
+            7: <crossbeam_epoch::internal::Bag as std::ops::Drop>::drop
+                at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/internal.rs:122:13: 122:34
+            8: std::ptr::drop_glue::<crossbeam_epoch::internal::Bag> - shim(Some(crossbeam_epoch::internal::Bag))
+                at /usr/local/google/home/binwu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:847:1: 849:25
+            9: std::ptr::drop_glue::<crossbeam_epoch::internal::SealedBag> - shim(Some(crossbeam_epoch::internal::SealedBag))
+                at /usr/local/google/home/binwu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:847:1: 849:25
+            10: std::mem::drop::<crossbeam_epoch::internal::SealedBag>
+                at /usr/local/google/home/binwu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/mem/mod.rs:1049:1: 1049:2
+            11: crossbeam_epoch::internal::Global::collect
+                at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/internal.rs:214:37: 214:53
+            12: crossbeam_epoch::internal::Local::flush
+                at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/internal.rs:376:9: 376:37
+            13: crossbeam_epoch::Guard::flush
+                at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/guard.rs:294:13: 294:30
+            14: <fsa::cspp_trie_concurrent::ConcurrentCsppTrie as std::ops::Drop>::drop
+                at src/fsa/cspp_trie_concurrent.rs:2739:13: 2739:26
+            15: std::ptr::drop_glue::<fsa::cspp_trie_concurrent::ConcurrentCsppTrie> - shim(Some(fsa::cspp_trie_concurrent::ConcurrentCsppTrie))
+                at /usr/local/google/home/binwu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:847:1: 849:25
+            16: fsa::cspp_trie_concurrent::test_concurrent_cspp_trie_deletion_support
+                at src/fsa/cspp_trie_concurrent.rs:2769:1: 2769:2
+            17: fsa::cspp_trie_concurrent::test_concurrent_cspp_trie_deletion_support::{closure#0}
+                at src/fsa/cspp_trie_concurrent.rs:2763:48: 2763:48
+
+ok
+test fsa::cspp_trie_concurrent::test_concurrent_cspp_trie_longest_prefix ... ok
+test fsa::cspp_trie_concurrent::tests::test_concurrent_trie_basic ... ok
+test fsa::cspp_trie_concurrent::tests::test_concurrent_trie_fork ... ok
+test fsa::cspp_trie_concurrent::tests::test_concurrent_trie_many_small ... ok
+test fsa::cspp_trie_concurrent::tests::test_concurrent_trie_multithreaded ... ok
+test fsa::cspp_trie_concurrent::tests::test_concurrent_trie_split_zpath ... ok
+test fsa::cspp_trie_concurrent::tests::test_contended_inserts_same_key_set ... warning: integer-to-pointer cast
+    --> /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/atomic.rs:1345:9
+     |
+1345 |         raw as *const _
+     |         ^^^^^^^^^^^^^^^ integer-to-pointer cast
+     |
+     = note: this is on thread `fsa::cspp_trie_`
+     = note: stack backtrace:
+             0: crossbeam_epoch::Shared::<'_, crossbeam_epoch::internal::Local>::as_raw
+                 at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/atomic.rs:1345:9: 1345:24
+             1: crossbeam_epoch::internal::Local::register
+                 at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/internal.rs:332:24: 332:38
+             2: crossbeam_epoch::Collector::register
+                 at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/collector.rs:45:9: 45:30
+             3: crossbeam_epoch::default::HANDLE::__rust_std_internal_init_fn
+                 at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/default.rs:34:34: 34:56
+             4: <fn() -> crossbeam_epoch::LocalHandle {crossbeam_epoch::default::HANDLE::__rust_std_internal_init_fn} as std::ops::FnOnce<()>>::call_once - shim(fn() -> crossbeam_epoch::LocalHandle {crossbeam_epoch::default::HANDLE::__rust_std_internal_init_fn})
+                 at /usr/local/google/home/binwu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ops/function.rs:250:5: 250:71
+             5: std::thread::local_impl::LazyStorage::<crossbeam_epoch::LocalHandle, ()>::get_or_init_slow::<fn() -> crossbeam_epoch::LocalHandle {crossbeam_epoch::default::HANDLE::__rust_std_internal_init_fn}>
+                 at /usr/local/google/home/binwu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/native/lazy.rs:80:17: 80:59
+             6: std::thread::local_impl::LazyStorage::<crossbeam_epoch::LocalHandle, ()>::get_or_init::<fn() -> crossbeam_epoch::LocalHandle {crossbeam_epoch::default::HANDLE::__rust_std_internal_init_fn}>
+                 at /usr/local/google/home/binwu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/native/lazy.rs:62:22: 62:49
+             7: crossbeam_epoch::default::HANDLE::{constant#0}::{closure#0}
+                 at /usr/local/google/home/binwu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/sys/thread_local/native/mod.rs:97:25: 97:115
+             8: <{closure@crossbeam_epoch::default::HANDLE::{constant#0}::{closure#0}} as std::ops::FnOnce<(std::option::Option<&mut std::option::Option<crossbeam_epoch::LocalHandle>>,)>>::call_once - shim
+                 at /usr/local/google/home/binwu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ops/function.rs:250:5: 250:71
+             9: std::thread::LocalKey::<crossbeam_epoch::LocalHandle>::try_with::<{closure@crossbeam_epoch::default::with_handle<{closure@crossbeam_epoch::pin::{closure#0}}, crossbeam_epoch::Guard>::{closure#0}}, crossbeam_epoch::Guard>
+                 at /usr/local/google/home/binwu/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/thread/local.rs:463:37: 463:55
+             10: crossbeam_epoch::default::with_handle::<{closure@crossbeam_epoch::pin::{closure#0}}, crossbeam_epoch::Guard>
+                 at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/default.rs:59:5: 60:28
+             11: crossbeam_epoch::pin
+                 at /usr/local/google/home/binwu/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/default.rs:40:5: 40:39
+             12: fsa::cspp_trie_concurrent::ConcurrentCsppTrie::lookup
+                 at src/fsa/cspp_trie_concurrent.rs:803:22: 803:34
+             13: fsa::cspp_trie_concurrent::tests::test_contended_inserts_same_key_set
+                 at src/fsa/cspp_trie_concurrent.rs:2624:25: 2624:41
+             14: fsa::cspp_trie_concurrent::tests::test_contended_inserts_same_key_set::{closure#0}
+                 at src/fsa/cspp_trie_concurrent.rs:2573:45: 2573:45
+
+ok
+test fsa::cspp_trie_concurrent::tests::test_contended_root_fastnode_cas ... ok
+test fsa::cspp_trie_concurrent::tests::test_pending_reclaims_drains_after_reader_unpins ... ok
+test fsa::cspp_trie_concurrent::tests::test_u32_flag_masks_match_meta_info_flag_byte ... ok
+test fsa::cspp_trie_concurrent::tests::test_value_odd_size_types ... ok
+test fsa::cspp_trie_concurrent::tests::test_value_single_word_atomicity_stress ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 2788 filtered out; finished in 394.89s
+
+warning: 10 warnings emitted
+
