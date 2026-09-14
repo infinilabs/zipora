@@ -741,14 +741,13 @@ impl ZipOffsetBlobStore {
 impl BlobStore for ZipOffsetBlobStore {
     fn get(&self, id: RecordId) -> Result<Vec<u8>> {
         // Dispatch to template-optimized implementation based on configuration
+        // The builder appends a per-record CRC only for checksum levels 2 and 3;
+        // every other level (including 1) stores bare records.
         match (self.config.compress_level > 0, self.config.checksum_level) {
-            (true, 0) => self.get_record_impl::<true, 0, false>(id),
-            (true, 2) => self.get_record_impl::<true, 4, false>(id),
-            (true, 3) => self.get_record_impl::<true, 4, false>(id),
-            (false, 0) => self.get_record_impl::<false, 0, false>(id),
-            (false, 2) => self.get_record_impl::<false, 4, false>(id),
-            (false, 3) => self.get_record_impl::<false, 4, false>(id),
-            _ => self.get_record_impl::<false, 0, false>(id),
+            (true, 2 | 3) => self.get_record_impl::<true, 4, false>(id),
+            (true, _) => self.get_record_impl::<true, 0, false>(id),
+            (false, 2 | 3) => self.get_record_impl::<false, 4, false>(id),
+            (false, _) => self.get_record_impl::<false, 0, false>(id),
         }
     }
 
@@ -776,16 +775,29 @@ impl BlobStore for ZipOffsetBlobStore {
             return Ok(None);
         }
 
-        // Get record size from offset difference
+        // Stored length of the record, minus the trailing CRC if present
         let (start_offset, end_offset) = self.offsets.get2(id as usize)?;
-        let mut size = (end_offset - start_offset) as usize;
-
-        // Subtract checksum size if present
+        let mut stored = (end_offset - start_offset) as usize;
         if self.config.checksum_level == 2 || self.config.checksum_level == 3 {
-            size = size.saturating_sub(4); // CRC32 size
+            stored = stored.saturating_sub(4); // CRC32 size
+        }
+        if self.config.compress_level == 0 {
+            return Ok(Some(stored));
         }
 
-        Ok(Some(size))
+        // Compressed record: the builder pledges the record length, so the zstd
+        // frame header carries the content size. Frames without one (streaming
+        // encoders, older builders) are decoded to measure them.
+        #[cfg(feature = "zstd")]
+        if let Some(frame) = self
+            .content
+            .as_slice()
+            .get(start_offset as usize..start_offset as usize + stored)
+            && let Ok(Some(len)) = zstd::zstd_safe::get_frame_content_size(frame)
+        {
+            return Ok(Some(len as usize));
+        }
+        self.get(id).map(|data| Some(data.len()))
     }
 
     fn len(&self) -> usize {
@@ -962,6 +974,90 @@ mod tests {
             assert_eq!(&loaded.get(i as RecordId).unwrap(), record, "record {i}");
         }
         assert!(loaded.get(records.len() as RecordId).is_err());
+    }
+
+    /// `performance_optimized()` compresses (level 1) with checksum_level 1.
+    /// The read dispatch had no arm for that pair and fell through to the
+    /// uncompressed path, so `get` handed back raw zstd frames.
+    #[test]
+    fn test_get_decompresses_records_with_checksum_level_1() {
+        use crate::blob_store::zip_offset_builder::ZipOffsetBlobStoreBuilder;
+
+        let config = ZipOffsetBlobStoreConfig::performance_optimized();
+        assert_eq!((config.compress_level > 0, config.checksum_level), (true, 1));
+        let mut builder = ZipOffsetBlobStoreBuilder::with_config(config).unwrap();
+        builder.add_record(b"data1").unwrap();
+        let store = builder.finish().unwrap();
+
+        assert_eq!(store.get(0).unwrap(), b"data1");
+    }
+
+    /// `size` is the blob's length, not the length of its compressed frame.
+    #[test]
+    fn test_size_reports_uncompressed_length_for_compressed_records() {
+        use crate::blob_store::zip_offset_builder::ZipOffsetBlobStoreBuilder;
+
+        let mut builder = ZipOffsetBlobStoreBuilder::with_config(ZipOffsetBlobStoreConfig::default()).unwrap();
+        builder.add_record(&[b'x'; 4096]).unwrap();
+        let store = builder.finish().unwrap();
+
+        assert!(store.compressed_size(0).unwrap().unwrap() < 4096);
+        assert_eq!(store.size(0).unwrap(), Some(4096));
+    }
+
+    /// The builder pledges the record length so every frame header carries
+    /// the content size; that is what lets `size` answer without decoding.
+    #[test]
+    fn test_builder_frames_carry_content_size() {
+        use crate::blob_store::zip_offset_builder::ZipOffsetBlobStoreBuilder;
+
+        let config = ZipOffsetBlobStoreConfig {
+            compress_level: 3,
+            checksum_level: 0,
+            ..Default::default()
+        };
+        let mut builder = ZipOffsetBlobStoreBuilder::with_config(config).unwrap();
+        builder.add_record(&[b'x'; 4096]).unwrap();
+        let store = builder.finish().unwrap();
+
+        let (start, end) = store.offsets.get2(0).unwrap();
+        let frame = &store.content.as_slice()[start as usize..end as usize];
+        assert_eq!(zstd::zstd_safe::get_frame_content_size(frame).ok(), Some(Some(4096)));
+    }
+
+    /// Frames written by the streaming encoder (pre-fix builders, or any
+    /// external producer) omit the content size; `size` must still be right.
+    #[test]
+    fn test_size_falls_back_to_decoding_when_frame_has_no_content_size() {
+        use crate::blob_store::sorted_uint_vec::SortedUintVecBuilder;
+
+        let frame = zstd::encode_all(&[b'x'; 4096][..], 3).unwrap();
+        assert_eq!(zstd::zstd_safe::get_frame_content_size(&frame).ok(), Some(None));
+
+        let mut offsets = SortedUintVecBuilder::with_config(SortedUintVecConfig::default());
+        offsets.push(0).unwrap();
+        offsets.push(frame.len() as u64).unwrap();
+        let config = ZipOffsetBlobStoreConfig {
+            compress_level: 3,
+            checksum_level: 0,
+            ..Default::default()
+        };
+        let stats = CompressionStats {
+            uncompressed_size: 4096,
+            compressed_size: frame.len(),
+            compressed_count: 1,
+            compression_ratio: 1.0,
+        };
+        let store = ZipOffsetBlobStore::from_parts(
+            config,
+            FastVec::from(frame),
+            offsets.finish().unwrap(),
+            stats,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(store.size(0).unwrap(), Some(4096));
     }
 
     #[test]

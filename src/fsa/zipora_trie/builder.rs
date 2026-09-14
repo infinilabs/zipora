@@ -1,13 +1,16 @@
 //! Insertion, construction, and double-array mutation internals for [`ZiporaTrie`](super::ZiporaTrie).
 
 use super::ZiporaTrie;
-use super::storage::{CritBitNode, PatriciaNode};
+use super::storage::{
+    CritBitNode, DA_FREE_BIT, DA_MAX_STATE, DA_NIL_STATE, DA_TERMINAL_BIT, DA_VALUE_MASK,
+    DaFreeList, PatriciaNode,
+};
 use crate::StateId;
 use crate::containers::FastVec;
 use crate::containers::specialized::UintVector;
 use crate::error::{Result, ZiporaError};
 use crate::succinct::RankSelectOps;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 impl<R> ZiporaTrie<R>
 where
@@ -67,38 +70,23 @@ where
     pub(super) fn insert_double_array(
         base: &mut FastVec<u32>,
         check: &mut FastVec<u32>,
-        _free_list: &mut VecDeque<StateId>,
+        free_list: &mut DaFreeList,
         state_count: &mut usize,
-        search_head: &mut u32,
         key: &[u8],
         num_keys: &mut usize,
         relocations: &mut Vec<(u32, u32)>,
     ) -> Result<StateId> {
-        // Following referenced project's double array trie implementation EXACTLY
-        // Base array (m_child0): bits 0-30 = base value, bit 31 = terminal bit
-        // Check array (m_parent): bits 0-30 = parent state, bit 31 = free bit
-
-        const TERMINAL_BIT: u32 = 0x8000_0000; // Bit 31 in base for terminal states (referenced project)
-        const FREE_BIT: u32 = 0x8000_0000; // Bit 31 in check for free states (referenced project)
-        const VALUE_MASK: u32 = 0x7FFF_FFFF; // Bits 0-30 for actual values (referenced project)
-        const MAX_STATE: u32 = 0x7FFF_FFFE; // Maximum valid state value (referenced project)
-        const NIL_STATE: u32 = 0x7FFF_FFFF; // Nil state marker (referenced project)
-
-        // Ensure we have at least the root state
-        // Referenced project starts with 1 state (line 70: states.resize(1))
-        // We initialize in storage creation, but check here for safety
+        // Storage construction seeds the root; keep the arrays usable if it did not.
         if base.is_empty() {
-            let _ = base.resize(1, NIL_STATE); // Just root state
-            let _ = check.resize(1, 0); // Root check is 0 (itself), no free bit
-            // Use compact base allocation like referenced project
-            base[0] = Self::find_free_base(base, check, 0, search_head)?;
+            base.push(DA_NIL_STATE)?;
+            check.push(0)?;
             *state_count = 1;
         }
 
-        // Special case for empty key - mark root as terminal
+        // Empty key: the root itself is the terminal state.
         if key.is_empty() {
-            let was_new = (base[0] & TERMINAL_BIT) == 0;
-            base[0] |= TERMINAL_BIT;
+            let was_new = (base[0] & DA_TERMINAL_BIT) == 0;
+            base[0] |= DA_TERMINAL_BIT;
             if was_new {
                 *num_keys += 1;
             }
@@ -106,353 +94,170 @@ where
         }
 
         let mut current_state = 0u32;
-
-        // Traverse the trie for each symbol in the key
-        for &symbol in key.iter() {
-            // Calculate next state position using base value (bits 0-30)
-            let mut base_value = base[current_state as usize] & VALUE_MASK;
-
-            // If base is NIL_STATE, we need to find a good base for this state's children
-            // Referenced project does this during build (lines 309-327)
-            if base_value == NIL_STATE {
-                base_value = Self::find_free_base(base, check, current_state, search_head)?;
-                // CRITICAL: Preserve terminal bit when setting new base
-                let old_val = base[current_state as usize];
-                base[current_state as usize] = base_value | (old_val & TERMINAL_BIT);
+        for &symbol in key {
+            let mut base_value = base[current_state as usize] & DA_VALUE_MASK;
+            if base_value == DA_NIL_STATE {
+                // First child of this state: pick a base whose slot for `symbol` is free.
+                base_value = Self::find_free_base(check, free_list, &[symbol]);
+                base[current_state as usize] =
+                    base_value | (base[current_state as usize] & DA_TERMINAL_BIT);
             }
 
-            let next_state = base_value.saturating_add(symbol as u32);
+            let next_state = base_value + symbol as u32;
+            Self::ensure_da_capacity(base, check, free_list, next_state as usize + 1)?;
 
-            // Expand arrays if needed - use amortized growth
-            let required = next_state as usize + 1;
-            if required > base.len() {
-                let new_size = required.max(base.len() * 3 / 2).max(256);
-                let _ = base.resize(new_size, NIL_STATE);
-                let _ = check.resize(new_size, NIL_STATE | FREE_BIT);
-            }
-
-            // Check if this transition already exists (referenced project style at line 106)
-            // A transition exists if check[next] == current_state (without free bit)
-            // Free states have FREE_BIT set, so won't match
+            // A transition exists iff check[next] == parent; free cells carry
+            // DA_FREE_BIT and can never compare equal to a state id.
             let check_val = check[next_state as usize];
-            let is_free = (check_val & FREE_BIT) != 0;
-            let transition_exists = !is_free && check_val == current_state;
-
-            if transition_exists {
-                // Transition exists, follow it
+            if check_val == current_state {
+                current_state = next_state;
+            } else if (check_val & DA_FREE_BIT) != 0 {
+                free_list.claim(base, check, next_state, current_state);
+                *state_count += 1;
                 current_state = next_state;
             } else {
-                // Need to create new transition
-                // CRITICAL: Never allow transitions to state 0 (reserved for root)
-                if next_state == 0 {
-                    // State 0 is reserved, need to relocate
-
-                    // We must relocate ALL children of current_state to maintain consistency
-                    let new_base = Self::relocate_state(
-                        base,
-                        check,
-                        current_state,
-                        symbol,
-                        state_count,
-                        search_head,
-                        relocations,
-                    )?;
-
-                    // Now the transition should be available at the new location
-                    let new_next = new_base.saturating_add(symbol as u32);
-
-                    // Expand if needed - use amortized growth
-                    let required = new_next as usize + 1;
-                    if required > base.len() {
-                        let new_size = required.max(base.len() * 3 / 2).max(256);
-                        let _ = base.resize(new_size, NIL_STATE);
-                        let _ = check.resize(new_size, NIL_STATE | FREE_BIT);
-                    }
-
-                    // Allocate the state (referenced project: set_parent clears free bit)
-                    check[new_next as usize] = current_state; // No free bit
-                    // Initialize base to NIL_STATE - will be set when children are added
-                    // (referenced project line 354-355: set to 1 for unused states)
-                    base[new_next as usize] = NIL_STATE;
-                    current_state = new_next;
-                    *state_count += 1;
-                } else if is_free {
-                    // Position is free and not state 0, use it directly
-
-                    // Ensure the parent state fits within VALUE_MASK
-                    if current_state > MAX_STATE {
-                        return Err(ZiporaError::invalid_data("State value exceeds maximum"));
-                    }
-                    // Allocate the state (referenced project: set_parent clears free bit)
-                    check[next_state as usize] = current_state; // Clear free bit by assignment
-                    // Initialize base to NIL_STATE - will be set when children are added
-                    // (referenced project line 354-355: set to 1 for unused states)
-                    base[next_state as usize] = NIL_STATE;
-                    current_state = next_state;
-                    *state_count += 1;
-                } else {
-                    // Position is occupied - need to relocate
-                    // We must relocate ALL children of current_state to maintain consistency
-                    let new_base = Self::relocate_state(
-                        base,
-                        check,
-                        current_state,
-                        symbol,
-                        state_count,
-                        search_head,
-                        relocations,
-                    )?;
-
-                    // Now the transition should be available
-                    let new_next = new_base.saturating_add(symbol as u32);
-
-                    // Expand if needed - use amortized growth
-                    let required = new_next as usize + 1;
-                    if required > base.len() {
-                        let new_size = required.max(base.len() * 3 / 2).max(256);
-                        let _ = base.resize(new_size, NIL_STATE);
-                        let _ = check.resize(new_size, NIL_STATE | FREE_BIT);
-                    }
-
-                    // Ensure the parent state fits within VALUE_MASK
-                    if current_state > MAX_STATE {
-                        return Err(ZiporaError::invalid_data(
-                            "State value exceeds maximum during relocation",
-                        ));
-                    }
-                    // Allocate the state (referenced project: set_parent clears free bit)
-                    check[new_next as usize] = current_state; // No free bit
-                    // Initialize base to NIL_STATE - will be set when children are added
-                    // (referenced project line 354-355: set to 1 for unused states)
-                    base[new_next as usize] = NIL_STATE;
-                    current_state = new_next;
-                    *state_count += 1;
-                }
+                // Slot belongs to another state's child: move all of
+                // current_state's children to a base with room for `symbol`.
+                let new_base = Self::relocate_state(
+                    base,
+                    check,
+                    free_list,
+                    current_state,
+                    symbol,
+                    relocations,
+                )?;
+                let new_next = new_base + symbol as u32;
+                free_list.claim(base, check, new_next, current_state);
+                *state_count += 1;
+                current_state = new_next;
             }
-
         }
 
-        // Mark the final state as terminal (referenced project: set_term_bit on base at line 27)
-        // Check if this is a new key or duplicate
-        let was_new = (base[current_state as usize] & TERMINAL_BIT) == 0;
-        base[current_state as usize] |= TERMINAL_BIT;
-
-        // Only increment key count if this was a new key
+        // Mark the final state as terminal (referenced project: set_term_bit on base).
+        let was_new = (base[current_state as usize] & DA_TERMINAL_BIT) == 0;
+        base[current_state as usize] |= DA_TERMINAL_BIT;
         if was_new {
             *num_keys += 1;
         }
 
-        // Debug: Verify what we just inserted
-
         Ok(current_state)
     }
 
-    // Helper: Find a free base value for a state that doesn't conflict
-    // For incremental insert, use a proper heuristic matching referenced project's approach
-    pub(super) fn find_free_base(
-        _base: &FastVec<u32>,
-        check: &FastVec<u32>,
-        _state: u32,
-        search_head: &mut u32,
-    ) -> Result<u32> {
-        const FREE_BIT: u32 = 0x8000_0000;
-        const NIL_STATE: u32 = 0x7FFF_FFFF;
+    /// Find a base such that the slot `base + s` is free for every `s` in
+    /// `symbols`.
+    ///
+    /// Walks the free-cell list only — never the occupied prefix — trying each
+    /// free cell as the home of the lowest symbol (`base = cell - min`). Bases
+    /// are `>= 1`, so no child can land on the root slot. For a single symbol
+    /// the first eligible cell always fits. After `MAX_TRIALS` failed
+    /// multi-symbol candidates the block is placed at the high-water mark,
+    /// above which every slot is free by construction (growing the array if
+    /// it does not reach that far). Without that cap a wide node in a
+    /// fragmented array would walk every hole, which is O(n) again.
+    pub(super) fn find_free_base(check: &FastVec<u32>, free_list: &DaFreeList, symbols: &[u8]) -> u32 {
+        const MAX_TRIALS: u32 = 256;
 
-        // Resume the probe where the last one stopped instead of restarting at
-        // 1. `search_head` maintains the invariant that every index below it is
-        // occupied, so the prefix it skips can never contain an answer; without
-        // it every allocation rescanned the whole densely packed prefix and
-        // construction was quadratic (40k keys took over four minutes).
-        // `relocate_state` lowers the cursor whenever it frees a slot beneath
-        // it, which is the only way an index below the head can become free.
-        //
-        // Index 0 is the root and is never free.
-        let mut candidate = (*search_head).max(1);
-        let len = check.len();
-
-        // Linear probe for a free position (matching C++ reference heuristic)
-        while (candidate as usize) < len {
-            let check_val = check[candidate as usize];
-            let is_free = check_val == (NIL_STATE | FREE_BIT) || (check_val & FREE_BIT) != 0;
-            if is_free {
-                *search_head = candidate;
-                return Ok(candidate);
+        let min_symbol = symbols.iter().copied().min().map_or(0, u32::from);
+        let len = check.len() as u32;
+        let mut trials = 0;
+        let mut cell = free_list.head;
+        while cell != DA_NIL_STATE {
+            if cell > min_symbol {
+                let candidate = cell - min_symbol;
+                let fits = symbols.iter().all(|&s| {
+                    let pos = candidate + s as u32;
+                    pos >= len || (check[pos as usize] & DA_FREE_BIT) != 0
+                });
+                if fits {
+                    return candidate;
+                }
+                trials += 1;
+                if trials == MAX_TRIALS {
+                    break;
+                }
             }
-            candidate += 1;
+            cell = check[cell as usize] & DA_VALUE_MASK;
         }
-
-        // Past the end of array — return the next position (will trigger array growth)
-        *search_head = candidate;
-        Ok(candidate)
+        free_list.high_water.max(min_symbol + 1) - min_symbol
     }
 
-    // Helper: Relocate a state and all its children to use a new base value.
-    // Every moved child is recorded in `relocations` as (old_state, new_state)
-    // so side tables indexed by state ID (e.g. ZiporaTrieMap values) can follow.
+    /// Grow `base`/`check` so that index `required - 1` exists, threading every
+    /// new cell onto the free list in ascending order. All growth must go
+    /// through here: a free cell that is not linked is invisible to
+    /// `find_free_base`.
+    pub(super) fn ensure_da_capacity(
+        base: &mut FastVec<u32>,
+        check: &mut FastVec<u32>,
+        free_list: &mut DaFreeList,
+        required: usize,
+    ) -> Result<()> {
+        let old_len = base.len();
+        if required <= old_len {
+            return Ok(());
+        }
+        let new_len = required.max(old_len * 3 / 2).max(256);
+        if new_len > DA_MAX_STATE as usize + 1 {
+            return Err(ZiporaError::invalid_data(
+                "double array exceeds the maximum state count",
+            ));
+        }
+        base.resize(new_len, DA_NIL_STATE)?;
+        check.resize(new_len, DA_NIL_STATE | DA_FREE_BIT)?;
+        for cell in old_len..new_len {
+            free_list.push_back(base, check, cell as u32);
+        }
+        Ok(())
+    }
+
+    // Helper: Relocate a state and all its children to a new base that also
+    // has room for `new_symbol`. Every moved child is recorded in
+    // `relocations` as (old_state, new_state) so side tables indexed by state
+    // ID (e.g. ZiporaTrieMap values) can follow.
     pub(super) fn relocate_state(
         base: &mut FastVec<u32>,
         check: &mut FastVec<u32>,
+        free_list: &mut DaFreeList,
         state: u32,
         new_symbol: u8,
-        _state_count: &mut usize,
-        search_head: &mut u32,
         relocations: &mut Vec<(u32, u32)>,
     ) -> Result<u32> {
-        const VALUE_MASK: u32 = 0x7FFF_FFFF; // Bits 0-30 for values (referenced project)
-        const TERMINAL_BIT: u32 = 0x8000_0000; // Bit 31 in base for terminal (referenced project)
-        const FREE_BIT: u32 = 0x8000_0000; // Bit 31 in check for free (referenced project)
-        const NIL_STATE: u32 = 0x7FFF_FFFF; // Match referenced project's nil_state
+        let old_base = base[state as usize] & DA_VALUE_MASK;
 
-        // Special handling for root state - try to avoid relocating it
-        if state == 0 {
-            // For root, try to find a different base that works
-            // This is critical because relocating root affects the entire trie
-        }
-
-        let old_base = base[state as usize] & VALUE_MASK;
-
-        // Collect all existing children of this state with their base and terminal info
-        let mut children = Vec::new();
+        // (symbol, old position, raw base including the terminal bit)
+        let mut children: Vec<(u8, u32, u32)> = Vec::new();
         for symbol in 0u8..=255u8 {
-            let child_pos = old_base.saturating_add(symbol as u32);
-            if (child_pos as usize) < check.len() {
-                let check_val = check[child_pos as usize];
-                // Check if this is an allocated child (not free, parent matches)
-                if (check_val & FREE_BIT) == 0 && check_val == state {
-                    // This is a child of our state - save its info
-                    let child_base = if (child_pos as usize) < base.len() {
-                        base[child_pos as usize]
-                    } else {
-                        NIL_STATE
-                    };
-                    let is_terminal = (child_base & TERMINAL_BIT) != 0;
-                    children.push((symbol, child_pos, child_base, is_terminal));
-                }
+            let pos = old_base + symbol as u32;
+            if (pos as usize) < check.len() && check[pos as usize] == state {
+                children.push((symbol, pos, base[pos as usize]));
             }
         }
 
-        // Find a new base where every child plus the new symbol fits.
-        //
-        // The probe is anchored on the *lowest* symbol we have to place: the
-        // candidate base is always `anchor - min_symbol`, where `anchor` walks
-        // free slots only. Incrementing the base one at a time instead — as
-        // this loop used to — re-tests every base whose lowest child lands in
-        // the densely occupied prefix, which is the bulk of the array and made
-        // construction quadratic. Occupied runs are now skipped in one pass.
-        let min_symbol = children
-            .iter()
-            .map(|(sym, _, _, _)| *sym as u32)
-            .chain(std::iter::once(new_symbol as u32))
-            .min()
-            .unwrap_or(new_symbol as u32);
+        let mut symbols: Vec<u8> = children.iter().map(|c| c.0).collect();
+        symbols.push(new_symbol);
+        let new_base = Self::find_free_base(check, free_list, &symbols);
+        let max_symbol = symbols.iter().copied().max().unwrap_or(new_symbol);
+        Self::ensure_da_capacity(base, check, free_list, (new_base + max_symbol as u32) as usize + 1)?;
 
-        let initial_base = Self::find_free_base(base, check, state, search_head)?;
-        // `new_base >= 1` keeps position 0 (the root) out of reach.
-        let mut anchor = initial_base.max(min_symbol + 1);
-        let mut attempts = 0;
-        const MAX_BASE: u32 = u32::MAX - 256; // Leave room for 256 symbols
+        // The new slots were all free when chosen and the old slots are still
+        // occupied, so the two sets are disjoint: claim first, release after.
+        for &(symbol, old_pos, raw_base) in &children {
+            let new_pos = new_base + symbol as u32;
+            free_list.claim(base, check, new_pos, state);
+            base[new_pos as usize] = raw_base;
+            relocations.push((old_pos, new_pos));
 
-        'search: loop {
-            if attempts > 1_000_000 || anchor > MAX_BASE {
-                return Err(ZiporaError::invalid_data(
-                    "Cannot relocate state in double array",
-                ));
+            // Grandchildren still name the old position as their parent.
+            let child_base = raw_base & DA_VALUE_MASK;
+            if child_base != 0 && child_base != DA_NIL_STATE {
+                Self::update_grandchildren_check_values(base, check, old_pos, new_pos);
             }
-            attempts += 1;
-
-            // Skip to the next slot that could hold the lowest-symbol child.
-            while (anchor as usize) < check.len() && (check[anchor as usize] & FREE_BIT) == 0 {
-                anchor += 1;
-            }
-
-            let new_base = anchor - min_symbol;
-
-            // Check if new_base works for the new symbol
-            let new_pos = new_base.saturating_add(new_symbol as u32);
-
-            // Ensure arrays are large enough
-            let max_pos = children
-                .iter()
-                .map(|(sym, _, _, _)| new_base.saturating_add(*sym as u32))
-                .chain(std::iter::once(new_pos))
-                .max()
-                .unwrap_or(new_pos);
-
-            // Expand arrays if needed - use amortized growth
-            let required = max_pos as usize + 1;
-            if required > base.len() {
-                let new_size = required.max(base.len() * 3 / 2).max(256);
-                let _ = base.resize(new_size, NIL_STATE);
-                let _ = check.resize(new_size, NIL_STATE | FREE_BIT);
-            }
-
-            // CRITICAL: Never allow any child to be relocated to state 0
-            // Check if new position for new_symbol is free and not state 0
-            let new_pos_check = check[new_pos as usize];
-            let new_pos_is_free = (new_pos_check & FREE_BIT) != 0;
-            if new_pos == 0 || !new_pos_is_free {
-                // State 0 is reserved or position is occupied
-                anchor += 1;
-                continue 'search;
-            }
-
-            // Check if all children can be relocated (and none would go to state 0)
-            for (symbol, _, _, _) in &children {
-                let test_pos = new_base.saturating_add(*symbol as u32);
-                let test_check = check[test_pos as usize];
-                let test_is_free = (test_check & FREE_BIT) != 0;
-                // CRITICAL: Reject if any child would be relocated to state 0
-                if test_pos == 0 || !test_is_free {
-                    // State 0 is reserved or position is occupied
-                    anchor += 1;
-                    continue 'search;
-                }
-            }
-
-            // Found a suitable new base - relocate all children
-            // First, mark old positions as free
-            for (_, old_pos, _, _) in &children {
-                check[*old_pos as usize] = NIL_STATE | FREE_BIT;
-                // Mark base as NIL to indicate it's free
-                base[*old_pos as usize] = NIL_STATE;
-                // This is the only place a slot below the probe cursor can
-                // become free again, so the cursor has to follow it back down
-                // or `find_free_base` would skip the hole forever.
-                *search_head = (*search_head).min(*old_pos);
-            }
-
-            // Then, set new positions with both check and base values
-            for (symbol, old_pos, child_base_val, is_terminal) in &children {
-                let new_child_pos = new_base.saturating_add(*symbol as u32);
-                relocations.push((*old_pos, new_child_pos));
-                // Allocate the new position (referenced project: set_parent clears free bit)
-                check[new_child_pos as usize] = state; // Parent state, no free bit
-                // Set base value, preserving terminal bit if needed
-                let base_value = child_base_val & VALUE_MASK;
-                base[new_child_pos as usize] = if *is_terminal {
-                    base_value | TERMINAL_BIT
-                } else {
-                    base_value
-                };
-
-                // CRITICAL: Update any grandchildren that point to the old child position
-                // to point to the new child position
-                if base_value != 0 && base_value != NIL_STATE {
-                    Self::update_grandchildren_check_values(base, check, *old_pos, new_child_pos);
-                }
-            }
-
-            // Update the base for this state (preserve terminal bit if state is terminal)
-            let state_base = base[state as usize];
-            let state_is_terminal = (state_base & TERMINAL_BIT) != 0;
-            base[state as usize] = if state_is_terminal {
-                new_base | TERMINAL_BIT
-            } else {
-                new_base
-            };
-
-            return Ok(new_base);
         }
+        for &(_, old_pos, _) in &children {
+            free_list.push_front(base, check, old_pos);
+        }
+
+        base[state as usize] = new_base | (base[state as usize] & DA_TERMINAL_BIT);
+        Ok(new_base)
     }
 
     // Helper function to update grandchildren when a child state is relocated

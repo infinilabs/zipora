@@ -397,3 +397,107 @@ fn test_patricia_remove_recycles_nodes() {
     assert!(!trie.contains(b"oth"));
     assert_eq!(trie.len(), 1);
 }
+
+/// Keys with no shared structure, so nearly every insert allocates a fresh
+/// state and the free-slot search is exercised on every step.
+fn pseudo_random_keys(n: usize) -> Vec<Vec<u8>> {
+    (0..n)
+        .map(|i| {
+            let mut x = (i as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let len = 8 + (x % 9) as usize;
+            (0..len)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    b'a' + (x % 26) as u8
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Construction must scale (near-)linearly in the number of keys. The old
+/// free-slot probe walked the densely occupied prefix on every relocation, so
+/// random keys cost ~4x per doubling (20k keys took 5.9 s in release). A
+/// linear build finishes this well inside the bound even in debug.
+#[test]
+fn test_double_array_random_key_build_is_not_quadratic() {
+    let keys = pseudo_random_keys(20_000);
+    let unique: std::collections::BTreeSet<&Vec<u8>> = keys.iter().collect();
+
+    let start = std::time::Instant::now();
+    let mut trie: ZiporaTrie = ZiporaTrie::new();
+    for k in &keys {
+        trie.insert(k).unwrap();
+    }
+    let elapsed = start.elapsed();
+
+    assert_eq!(trie.len(), unique.len());
+    for k in &keys {
+        assert!(trie.contains(k));
+    }
+    assert!(
+        elapsed.as_secs_f64() < 2.0,
+        "double-array build degraded to quadratic probing: 20k keys took {elapsed:?}"
+    );
+}
+
+/// The free-list allocator relocates far more states than a handful of
+/// hand-picked keys exercise; every value must still follow its state.
+#[test]
+fn test_trie_map_values_survive_random_key_relocations() {
+    let keys = pseudo_random_keys(5_000);
+    let mut map = ZiporaTrieMap::<u32, RankSelectInterleaved256>::new();
+    for (i, k) in keys.iter().enumerate() {
+        map.insert(k, i as u32).unwrap();
+    }
+    for (i, k) in keys.iter().enumerate() {
+        assert_eq!(map.get(k), Some(i as u32), "value lost for key #{i}");
+    }
+}
+
+/// A double array has exactly one state per claimed cell and one incoming
+/// transition per non-root state. Free cells carry non-zero link words and
+/// must not be counted as either.
+#[test]
+fn test_double_array_stats_count_states_not_free_cells() {
+    let mut trie: ZiporaTrie = ZiporaTrie::new();
+    for k in [b"a".as_slice(), b"b", b"c"] {
+        trie.insert(k).unwrap();
+    }
+    let stats = trie.stats();
+    assert_eq!(stats.num_states, 4, "root + 3 children");
+    assert_eq!(stats.num_transitions, 3);
+}
+
+/// `shrink_to_fit` must drop the free tail the 1.5x growth policy leaves
+/// behind, and the trie must stay insertable afterwards: the dropped cells
+/// have to come off the free list, not just off the array.
+#[test]
+fn test_double_array_shrink_to_fit_truncates_free_tail_and_stays_insertable() {
+    fn cells(t: &ZiporaTrie) -> usize {
+        match &t.storage {
+            super::storage::TrieStorage::DoubleArray { base, .. } => base.len(),
+            _ => unreachable!(),
+        }
+    }
+    let keys = pseudo_random_keys(2_000);
+    let mut trie: ZiporaTrie = ZiporaTrie::new();
+    for k in &keys[..1_000] {
+        trie.insert(k).unwrap();
+    }
+
+    let before = cells(&trie);
+    trie.shrink_to_fit();
+    let after = cells(&trie);
+    assert!(after < before, "free tail not dropped: {before} -> {after}");
+    assert!(!trie.is_free_double_array((after - 1) as u32), "last cell must be occupied");
+
+    for k in &keys[1_000..] {
+        trie.insert(k).unwrap();
+    }
+    for k in &keys {
+        assert!(trie.contains(k));
+    }
+}

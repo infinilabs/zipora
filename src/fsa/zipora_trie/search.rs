@@ -441,17 +441,16 @@ where
 
         // Estimate size and pre-allocate for DoubleArray strategy
         if let TrieStrategy::DoubleArray { .. } = &trie.config.trie_strategy
-            && let TrieStorage::DoubleArray { base, check, .. } = &mut trie.storage
+            && let TrieStorage::DoubleArray {
+                base,
+                check,
+                free_list,
+                ..
+            } = &mut trie.storage
         {
             // Estimate: each key adds ~key_length states on average
             let estimated_states = keys.iter().map(|k| k.len()).sum::<usize>() / 2;
-            let initial_size = estimated_states.max(256);
-
-            const NIL_STATE: u32 = 0x7FFF_FFFF;
-            const FREE_BIT: u32 = 0x8000_0000;
-
-            let _ = base.resize(initial_size, NIL_STATE);
-            let _ = check.resize(initial_size, NIL_STATE | FREE_BIT);
+            Self::ensure_da_capacity(base, check, free_list, estimated_states.max(256))?;
         }
 
         // Insert keys in sorted order

@@ -140,10 +140,124 @@ exclude = [
 ]
 
 
+# Every bench is a criterion binary; without `harness = false` cargo wraps it in
+# libtest and `cargo bench` runs zero benchmarks.
+[[bench]]
+name = "adaptive_mmap_bench"
+harness = false
+
+[[bench]]
+name = "advanced_radix_sort_bench"
+harness = false
+
 [[bench]]
 name = "avx512_bench"
 harness = false
 
 [[bench]]
+name = "benchmark"
+harness = false
+
+[[bench]]
+name = "benchmark_rank_select"
+harness = false
+
+[[bench]]
+name = "cache_bench"
+harness = false
+
+[[bench]]
+name = "cpp_impl_comparison"
+harness = false
+
+[[bench]]
+name = "dict_zip_bench"
+harness = false
+
+[[bench]]
+name = "dictionary_optimization_bench"
+harness = false
+
+[[bench]]
 name = "elias_fano_bench"
+harness = false
+
+[[bench]]
+name = "entropy_bench"
+harness = false
+
+[[bench]]
+name = "five_level_pool_bench"
+harness = false
+
+[[bench]]
+name = "fsa_infrastructure_bench"
+harness = false
+
+[[bench]]
+name = "int_vec_benchmark"
+harness = false
+
+[[bench]]
+name = "lru_map_bench"
+harness = false
+
+[[bench]]
+name = "memory_performance"
+harness = false
+
+[[bench]]
+name = "memory_pools_bench"
+harness = false
+
+[[bench]]
+name = "prefetch_adaptive_bench"
+harness = false
+
+[[bench]]
+name = "quick_prefetch_bench"
+harness = false
+
+[[bench]]
+name = "rank_select_bench"
+harness = false
+
+[[bench]]
+name = "secure_memory_pool_bench"
+harness = false
+
+[[bench]]
+name = "simd_memory_bench"
+harness = false
+
+[[bench]]
+name = "simd_rank_select_bench"
+harness = false
+
+[[bench]]
+name = "simple_benchmark"
+harness = false
+
+[[bench]]
+name = "sortable_str_vec_bench"
+harness = false
+
+[[bench]]
+name = "sortable_str_vec_optimized"
+harness = false
+
+[[bench]]
+name = "specialized_containers_bench"
+harness = false
+
+[[bench]]
+name = "suffix_array_bench"
+harness = false
+
+[[bench]]
+name = "valvec32_performance_bench"
+harness = false
+
+[[bench]]
+name = "version_sync_bench"
 harness = false

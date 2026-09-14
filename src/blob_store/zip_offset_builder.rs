@@ -241,7 +241,10 @@ impl ZipOffsetBlobStoreBuilder {
             level => {
                 #[cfg(feature = "zstd")]
                 {
-                    zstd::encode_all(data, level as i32).map_err(|e| {
+                    // Single-shot compression pledges `data.len()`, so the frame
+                    // header carries the content size and `size()` on the
+                    // finished store needs no decode.
+                    zstd::bulk::compress(data, level as i32).map_err(|e| {
                         ZiporaError::io_error(format!("ZSTD compression failed: {}", e))
                     })
                 }

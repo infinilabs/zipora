@@ -319,8 +319,10 @@ where
     blob_builder: Option<ZipOffsetBlobStoreBuilder>,
     /// Final compressed blob storage for the actual data (used after finalization)
     blob_store: Option<ZipOffsetBlobStore>,
-    /// Temporary in-memory storage for blob data until ZipOffsetBlobStore is fixed
-    temp_blob_storage: HashMap<usize, Vec<u8>>,
+    /// Blob bytes written so far, keyed by blob id. Reads are served from here
+    /// until `finalize` seals the compressed store, which then becomes the only
+    /// copy and this map is released.
+    pending_blobs: HashMap<usize, Vec<u8>>,
     /// Mapping from trie node IDs to latest blob record ID (for key-based retrieval)
     node_to_blob_map: HashMap<usize, usize>,
     /// Mapping from external record IDs to blob record IDs (for ID-based retrieval)
@@ -535,7 +537,7 @@ where
             trie,
             blob_builder,
             blob_store: None,
-            temp_blob_storage: HashMap::new(),
+            pending_blobs: HashMap::new(),
             node_to_blob_map: HashMap::new(),
             record_to_blob_map,
             record_to_node_map,
@@ -602,13 +604,19 @@ where
 
         // Always create a new blob record for each put operation (even for duplicate keys)
         let blob_id = self.next_record_id;
-        self.temp_blob_storage
+        self.pending_blobs
             .insert(blob_id as usize, data.to_vec());
 
-        // Also store in blob builder for completeness (though it doesn't work yet)
+        // Feed the builder too. Its sequential record ids track `blob_id`
+        // exactly (see `sealed_id`), which is what lets `finalize` drop the
+        // pending copy and serve reads from the compressed store.
         if let Some(ref mut builder) = self.blob_builder {
-            let _builder_id = builder.add_record(data)?;
-            // Note: builder_id might not match our blob_id, but we use our own
+            let builder_id = builder.add_record(data)?;
+            if builder_id as usize != blob_id as usize {
+                return Err(ZiporaError::invalid_data(
+                    "blob id diverged from the compressed store's record id",
+                ));
+            }
         }
 
         // Create record ID and maintain mappings
@@ -701,12 +709,7 @@ where
             .get(&(node_id as usize))
             .ok_or_else(|| ZiporaError::not_found("node mapping not found"))?;
 
-        // Retrieve data from temporary storage (until ZipOffsetBlobStore is fixed)
-        let data = self
-            .temp_blob_storage
-            .get(&blob_id)
-            .ok_or_else(|| ZiporaError::not_found("blob data not found"))?
-            .clone();
+        let data = self.blob_bytes(blob_id)?;
 
         if self.config.enable_statistics {
             self.stats.record_key_cache_access(false);
@@ -758,12 +761,13 @@ where
 
         for key in keys_with_prefix {
             // Look up key in trie to get node ID (don't call get_by_key to avoid auto-finalization)
-            if let Some(node_id) = self.trie.lookup_node_id(&key)
-                && let Some(&blob_id) = self.node_to_blob_map.get(&(node_id as usize))
-                && let Some(data) = self.temp_blob_storage.get(&blob_id)
-            {
-                results.push((key, data.clone()));
-            }
+            let Some(node_id) = self.trie.lookup_node_id(&key) else {
+                continue;
+            };
+            let Some(&blob_id) = self.node_to_blob_map.get(&(node_id as usize)) else {
+                continue;
+            };
+            results.push((key, self.blob_bytes(blob_id)?));
         }
 
         if self.config.enable_statistics {
@@ -819,6 +823,8 @@ where
 
         if let Some(builder) = self.blob_builder.take() {
             self.blob_store = Some(builder.finish()?);
+            // The sealed store is now the only copy the read paths use.
+            self.pending_blobs = HashMap::new();
             self.finalized = true;
             Ok(())
         } else {
@@ -831,6 +837,38 @@ where
     /// Check if the store has been finalized
     pub fn is_finalized(&self) -> bool {
         self.finalized
+    }
+
+    /// Record id of `blob_id` inside the sealed ZipOffsetBlobStore. The builder
+    /// numbers records sequentially from 0 and `put_with_key` is its only
+    /// writer, so the two id spaces coincide.
+    fn sealed_id(blob_id: usize) -> Result<RecordId> {
+        RecordId::try_from(blob_id).map_err(|_| ZiporaError::not_found("blob id out of range"))
+    }
+
+    /// Bytes of `blob_id`: from the sealed compressed store once finalized,
+    /// otherwise from the pending write buffer.
+    fn blob_bytes(&self, blob_id: usize) -> Result<Vec<u8>> {
+        match &self.blob_store {
+            Some(store) => store.get(Self::sealed_id(blob_id)?),
+            None => self
+                .pending_blobs
+                .get(&blob_id)
+                .cloned()
+                .ok_or_else(|| ZiporaError::not_found("blob data not found")),
+        }
+    }
+
+    /// Uncompressed length of `blob_id`, resolved like [`Self::blob_bytes`].
+    fn blob_len(&self, blob_id: usize) -> Result<Option<usize>> {
+        match &self.blob_store {
+            Some(store) => store.size(Self::sealed_id(blob_id)?),
+            None => self
+                .pending_blobs
+                .get(&blob_id)
+                .map(|data| Some(data.len()))
+                .ok_or_else(|| ZiporaError::not_found("blob data not found")),
+        }
     }
 }
 
@@ -855,11 +893,7 @@ where
             return Err(ZiporaError::not_found("invalid record ID"));
         }
 
-        // Retrieve data from temporary storage (until ZipOffsetBlobStore is fixed)
-        self.temp_blob_storage
-            .get(&blob_id)
-            .ok_or_else(|| ZiporaError::not_found("blob data not found"))
-            .cloned()
+        self.blob_bytes(blob_id)
     }
 
     /// Store a blob and return its unique ID
@@ -957,11 +991,7 @@ where
             return Ok(None);
         }
 
-        // Get size from temporary storage (until ZipOffsetBlobStore is fixed)
-        self.temp_blob_storage
-            .get(&blob_id)
-            .map(|data| Some(data.len()))
-            .ok_or_else(|| ZiporaError::not_found("blob data not found"))
+        self.blob_len(blob_id)
     }
 
     /// Get the total number of blobs stored
@@ -1084,11 +1114,10 @@ where
             .get(&{ node_id })
             .ok_or_else(|| ZiporaError::not_found("node mapping not found"))?;
 
-        // For temporary storage, return 1.0 (no compression)
-        if self.temp_blob_storage.contains_key(&blob_id) {
-            Ok(Some(1.0)) // No compression in temporary storage
-        } else {
-            Ok(None)
+        // Before finalize the bytes still sit uncompressed in the pending buffer.
+        match &self.blob_store {
+            Some(store) => store.compression_ratio(Self::sealed_id(blob_id)?),
+            None => Ok(self.pending_blobs.contains_key(&blob_id).then_some(1.0)),
         }
     }
 
@@ -1111,11 +1140,10 @@ where
             .get(&{ node_id })
             .ok_or_else(|| ZiporaError::not_found("node mapping not found"))?;
 
-        // For temporary storage, compressed size equals uncompressed size
-        self.temp_blob_storage
-            .get(&blob_id)
-            .map(|data| Some(data.len()))
-            .ok_or_else(|| ZiporaError::not_found("blob data not found"))
+        match &self.blob_store {
+            Some(store) => store.compressed_size(Self::sealed_id(blob_id)?),
+            None => self.blob_len(blob_id),
+        }
     }
 
     /// Get overall compression statistics
@@ -1638,12 +1666,46 @@ mod tests {
         assert!(ids.contains(&id2));
         assert!(ids.contains(&id3));
 
-        // Test blob iteration
-        // TODO: Fix ZipOffsetBlobStoreBuilder::finish() to properly transfer data
-        // For now, skip iter_blobs test since ZipOffsetBlobStore.finish() is incomplete
-        // let blobs: Result<Vec<(RecordId, Vec<u8>)>> = store.iter_blobs().collect();
-        // let blobs = blobs.unwrap();
-        // assert_eq!(blobs.len(), 3);
+        // Blob iteration reads through the sealed ZipOffsetBlobStore
+        store.finalize().unwrap();
+        let blobs: Result<Vec<(RecordId, Vec<u8>)>> = store.iter_blobs().collect();
+        let mut blobs = blobs.unwrap();
+        blobs.sort();
+        assert_eq!(
+            blobs,
+            vec![
+                (id1, b"data1".to_vec()),
+                (id2, b"data2".to_vec()),
+                (id3, b"data3".to_vec())
+            ]
+        );
+    }
+
+    /// After `finalize` the compressed ZipOffsetBlobStore is the only copy of
+    /// the data: every read path goes through it and the pending write buffer
+    /// is released, so a sealed store no longer holds each blob twice.
+    #[test]
+    fn test_finalize_serves_reads_from_compressed_store_and_drops_pending_copy() {
+        let mut store = TestStore::new(TrieBlobStoreConfig::memory_optimized()).unwrap();
+        let data = vec![b'x'; 4096];
+        let id = store.put_with_key(b"k", &data).unwrap();
+        assert_eq!(store.get(id).unwrap(), data);
+
+        store.finalize().unwrap();
+
+        assert!(
+            store.pending_blobs.is_empty(),
+            "pending copy must be released once the compressed store is sealed"
+        );
+        assert_eq!(store.get(id).unwrap(), data);
+        assert_eq!(store.get_by_key(b"k").unwrap(), data);
+        assert_eq!(store.get_by_prefix(b"k").unwrap(), vec![(b"k".to_vec(), data.clone())]);
+        assert_eq!(store.size(id).unwrap(), Some(data.len()));
+        let compressed = store.compressed_size(id).unwrap().unwrap();
+        assert!(
+            compressed < data.len(),
+            "compressed_size {compressed} must come from the zstd store, not the raw copy"
+        );
     }
 
     #[test]
