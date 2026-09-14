@@ -10,8 +10,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    name: Build
+  test:
+    name: Test & Lint
     runs-on: ubuntu-latest
 
     steps:
@@ -20,20 +20,36 @@ jobs:
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
 
     - name: Install system dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential pkg-config
 
-    - name: Build debug (default features)
-      run: cargo build
+    - name: Cache cargo & target
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
 
-    - name: Build release (default features)
-      run: cargo build --release
+    - name: Clippy (all targets, all features, deny warnings)
+      run: cargo clippy --all-targets --all-features -- -D warnings
 
-    - name: Build debug (all features)
-      run: cargo build --all-features
+    - name: Test (debug, all features)
+      run: cargo test --all-features
 
-    - name: Build release (all features)
-      run: cargo build --release --all-features
+    - name: Test (release, all features, lib)
+      run: cargo test --release --all-features --lib
+
+    - name: Test (doctests)
+      run: cargo test --doc
+
