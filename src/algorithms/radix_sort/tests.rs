@@ -586,3 +586,24 @@ fn test_ping_pong_odd_and_even_pass_counts() {
     sorter.sort_u64(&mut data).unwrap();
     assert_eq!(data, expected);
 }
+
+#[test]
+fn test_advanced_radix_sort_u64_random_simd() {
+    let config = AdvancedRadixSortConfig {
+        use_simd: true,
+        use_parallel: false,
+        adaptive_strategy: false,
+        force_strategy: Some(SortingStrategy::LsdRadix),
+        ..Default::default()
+    };
+    let mut sorter = AdvancedU64RadixSort::with_config(config).unwrap();
+    let mut data: Vec<u64> = (0..1000u64)
+        .map(|i| i.wrapping_mul(0x517cc1b727220a95))
+        .collect();
+    let mut expected = data.clone();
+    expected.sort_unstable();
+
+    sorter.sort(&mut data).unwrap();
+    assert_eq!(data, expected);
+}
+

@@ -12,9 +12,10 @@ use std::time::Instant;
 // AVX2/BMI2 intrinsics for advanced SIMD acceleration
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
-    __m256i, _mm256_and_si256, _mm256_loadu_si256, _mm256_set1_epi32, _mm256_srlv_epi32,
-    _mm256_storeu_si256,
+    __m256i, _mm_cvtsi32_si128, _mm256_and_si256, _mm256_loadu_si256, _mm256_set1_epi64x,
+    _mm256_srl_epi64, _mm256_storeu_si256,
 };
+
 
 /// Trait for sortable data types with radix sort optimizations
 pub trait RadixSortable: Clone + Copy + Send + Sync + Ord {
@@ -575,44 +576,31 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
         mask: u64,
         counts: &mut [usize],
     ) -> Result<()> {
-        // This is a simplified version - full SIMD implementation would be more complex
-        // For generic types, we need to extract keys first
-        let keys: Vec<u64> = data.iter().map(|item| item.extract_key()).collect();
-
         let mut i = 0;
-        let shift_vec = _mm256_set1_epi32(shift as i32);
-        let mask_vec = _mm256_set1_epi32(mask as i32);
+        let shift_vec = _mm_cvtsi32_si128(shift as i32);
+        let mask_vec = _mm256_set1_epi64x(mask as i64);
 
-        // Process 8 u64 values at a time using AVX2 (requires casting to u32)
-        while i + 8 <= keys.len() {
-            // Load 8 u64 values as u32 (lower 32 bits)
-            // Use stack-allocated array instead of Vec to avoid heap allocation in hot loop
-            let keys_u32: [u32; 8] = [
-                keys[i] as u32,
-                keys[i + 1] as u32,
-                keys[i + 2] as u32,
-                keys[i + 3] as u32,
-                keys[i + 4] as u32,
-                keys[i + 5] as u32,
-                keys[i + 6] as u32,
-                keys[i + 7] as u32,
+        // Process 4 u64 values at a time using AVX2 64-bit vector operations.
+        // Reading keys directly on the stack avoids an auxiliary heap allocation per pass,
+        // and using native 64-bit shifts preserves upper key bits for shifts >= 32.
+        while i + 4 <= data.len() {
+            let keys_u64: [u64; 4] = [
+                data[i].extract_key(),
+                data[i + 1].extract_key(),
+                data[i + 2].extract_key(),
+                data[i + 3].extract_key(),
             ];
-            // SAFETY: #[target_feature] ensures avx2, keys_u32 is 8 u32s = 32 bytes
-            let values = unsafe { _mm256_loadu_si256(keys_u32.as_ptr() as *const __m256i) };
+            // SAFETY: #[target_feature] ensures avx2, keys_u64 is 4 u64s = 32 bytes
+            let values = unsafe { _mm256_loadu_si256(keys_u64.as_ptr() as *const __m256i) };
 
-            // Shift and mask to extract digits
-            let shifted = if shift > 0 {
-                // SAFETY: #[target_feature] ensures avx2/bmi2, values is valid __m256i
-                _mm256_srlv_epi32(values, shift_vec)
-            } else {
-                values
-            };
-            // SAFETY: #[target_feature] ensures avx2, shifted is valid __m256i
+            // Shift and mask to extract digits in 64-bit lanes
+            // SAFETY: #[target_feature] ensures avx2, values is valid __m256i
+            let shifted = _mm256_srl_epi64(values, shift_vec);
             let digits = _mm256_and_si256(shifted, mask_vec);
 
             // Extract digits and count them
-            let mut digit_array = [0u32; 8];
-            // SAFETY: digit_array is 8 u32s = 32 bytes, matches __m256i size
+            let mut digit_array = [0u64; 4];
+            // SAFETY: digit_array is 4 u64s = 32 bytes, matches __m256i size
             unsafe { _mm256_storeu_si256(digit_array.as_mut_ptr() as *mut __m256i, digits) };
 
             for &digit in &digit_array {
@@ -621,12 +609,12 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
                 }
             }
 
-            i += 8;
+            i += 4;
         }
 
         // Handle remaining elements
-        for &key in &keys[i..] {
-            let digit = ((key >> shift) & mask) as usize;
+        for item in &data[i..] {
+            let digit = ((item.extract_key() >> shift) & mask) as usize;
             if digit < counts.len() {
                 counts[digit] += 1;
             }
