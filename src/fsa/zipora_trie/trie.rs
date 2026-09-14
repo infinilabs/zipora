@@ -2,7 +2,7 @@ use super::config::{
     TrieStrategy,
     ZiporaTrieConfig,
 };
-use super::storage::{CritBitNode, PatriciaNode, TrieStorage};
+use super::storage::{CritBitNode, DaFreeList, PatriciaNode, TrieStorage};
 use crate::StateId;
 use crate::containers::FastVec;
 use crate::containers::specialized::UintVector;
@@ -13,7 +13,7 @@ use crate::fsa::traits::{
 use crate::memory::SecureMemoryPool;
 use crate::memory::cache_layout::{CacheLayoutConfig, CacheOptimizedAllocator};
 use crate::succinct::RankSelectOps;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Unified trie implementation with strategy-based configuration
@@ -150,9 +150,8 @@ where
                 TrieStorage::DoubleArray {
                     base,
                     check,
-                    free_list: VecDeque::new(),
+                    free_list: DaFreeList::new(),
                     state_count: 1, // Start with root state
-                    search_head: 1, // Index 0 is the root and never free
                 }
             }
             TrieStrategy::Louds { .. } => TrieStorage::Louds {
@@ -198,11 +197,9 @@ where
             match &self.storage {
                 TrieStorage::Patricia { nodes, .. } => nodes.len(),
                 TrieStorage::CriticalBit { nodes, .. } => nodes.len(),
-                TrieStorage::DoubleArray { check, .. } => {
-                    // Count non-zero check values as active states
-                    // But also count state 0 (root) which has check[0] = 0
-                    1 + check.iter().skip(1).filter(|&&c| c != 0).count()
-                }
+                // Free cells hold non-zero link words, so counting cells by
+                // value would count the whole array; the allocator's count is exact.
+                TrieStorage::DoubleArray { state_count, .. } => *state_count,
                 TrieStorage::Louds { .. } => 1, // TODO: implement for LOUDS
                 TrieStorage::CompressedSparse(cspp) => cspp.total_states(),
             }
@@ -212,35 +209,8 @@ where
         stats.num_transitions = match &self.storage {
             TrieStorage::Patricia { nodes, .. } => nodes.iter().map(|n| n.children.len()).sum(),
             TrieStorage::CriticalBit { .. } => 0, // TODO: implement
-            TrieStorage::DoubleArray { base, check, .. } => {
-                const STATE_MASK: u32 = 0x3FFF_FFFF;
-                const TERMINAL_FLAG: u32 = 0x4000_0000;
-
-                // Count transitions more efficiently:
-                // Each non-zero check value represents a transition TO that state
-                // (except for root which has check[0] = 0)
-                let mut transition_count = 0;
-
-                for i in 1..check.len() {
-                    let check_val = check[i];
-                    // If check is non-zero, this state has a parent (there's a transition to it)
-                    if check_val != 0 {
-                        // Special handling for root's children
-                        if (check_val & STATE_MASK) == 0 {
-                            // This is a child of root - only count if it's properly initialized
-                            if (check_val & TERMINAL_FLAG) != 0 || (i < base.len() && base[i] != 0)
-                            {
-                                transition_count += 1;
-                            }
-                        } else {
-                            // Regular transition
-                            transition_count += 1;
-                        }
-                    }
-                }
-
-                transition_count
-            }
+            // Every state except the root has exactly one incoming transition.
+            TrieStorage::DoubleArray { state_count, .. } => state_count.saturating_sub(1),
             TrieStorage::Louds { .. } => 0, // TODO: implement
             TrieStorage::CompressedSparse(_cspp) => 0, /* TODO: implement num_transitions */
         };
@@ -510,7 +480,6 @@ where
                 check,
                 free_list,
                 state_count,
-                search_head,
             } => {
                 // insert_double_array handles num_keys internally (checks was_new)
                 let node_id = Self::insert_double_array(
@@ -518,7 +487,6 @@ where
                     check,
                     free_list,
                     state_count,
-                    search_head,
                     key,
                     &mut self.stats.num_keys,
                     &mut self.relocations,
@@ -728,26 +696,36 @@ where
 
     /// Shrink arrays to fit (for DoubleArray)
     pub fn shrink_to_fit(&mut self) {
-        if let TrieStorage::DoubleArray { base, check, .. } = &mut self.storage {
-            // Find the actual used length by scanning from the end
-            // Skip trailing unused entries (check == 0 and base == 0)
-            let mut actual_len = base.len();
+        if let TrieStorage::DoubleArray {
+            base,
+            check,
+            free_list,
+            ..
+        } = &mut self.storage
+        {
+            const FREE_BIT: u32 = 0x8000_0000;
 
-            // Find the last used position
-            while actual_len > 1 {
-                let idx = actual_len - 1;
-                // A state is used if either check is non-zero or base is non-zero
-                // (state 0 is always used as root)
-                if check[idx] != 0 || base[idx] != 0 {
-                    break;
-                }
+            // Keep everything up to the last occupied cell (root is always occupied).
+            let mut actual_len = base.len();
+            while actual_len > 1 && (check[actual_len - 1] & FREE_BIT) != 0 {
                 actual_len -= 1;
             }
 
-            // Set unused bases to 1 (referenced project line 354-355)
+            // The dropped cells are all free; take them off the free list first
+            // or the next allocation would follow a link past the end.
+            for cell in actual_len..base.len() {
+                free_list.unlink(base, check, cell as u32);
+            }
+            free_list.high_water = free_list.high_water.min(actual_len as u32);
+
+            // Set unused bases to 1 (referenced project line 354-355).
+            // Free cells are skipped: their `base` holds a free-list link.
             const NIL_STATE: u32 = 0x7FFF_FFFF;
             const VALUE_MASK: u32 = 0x7FFF_FFFF;
             for i in 0..actual_len {
+                if (check[i] & FREE_BIT) != 0 {
+                    continue;
+                }
                 let base_val = base[i] & VALUE_MASK;
                 if base_val == NIL_STATE {
                     base[i] = (base[i] & !VALUE_MASK) | 1; // Keep terminal bit, set base to 1
@@ -886,13 +864,11 @@ where
                 check,
                 free_list,
                 state_count,
-                search_head,
             } => Self::insert_double_array(
                 base,
                 check,
                 free_list,
                 state_count,
-                search_head,
                 key,
                 &mut self.stats.num_keys,
                 &mut self.relocations,

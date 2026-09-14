@@ -47,6 +47,15 @@ const FAST_BIN_COUNT: usize = 64;
 const FAST_BIN_THRESHOLD: usize = 8192;
 /// Sentinel value for empty lists
 const LIST_TAIL: u32 = 0;
+/// Bytes reserved in front of every block's user memory. The fast-bin free-list
+/// link lives here, never in bytes a caller may own: a Treiber pop must read the
+/// head block's link while a competing thread may already have handed that block
+/// to user code, and a link stored inline would make that read race the user's
+/// writes (a data race in the memory model, and a ThreadSanitizer report from
+/// `test_concurrent_alloc_write_free_same_class`). The header is only ever
+/// accessed as an `AtomicU32`, so the remaining reader/pusher overlap is
+/// atomic-vs-atomic and well defined. Costs 8 bytes per block.
+const BLOCK_HEADER: usize = ALIGN_SIZE;
 
 /// Size classes for fast bins (similar to jemalloc)
 const FAST_BIN_SIZES: &[usize] = &[
@@ -459,29 +468,19 @@ impl LockFreeMemoryPool {
             let (current_offset, current_gen) = Self::unpack_head(packed);
 
             if current_offset == LIST_TAIL {
-                // Empty bin, need to allocate new memory
-                return self.allocate_new_block(size);
+                // Empty bin: carve a fresh block at the class width, not the
+                // request size. Blocks are recycled by bin, so a block carved
+                // any smaller would later be handed to a larger request in the
+                // same class and overrun its neighbour.
+                return self.allocate_new_block(FAST_BIN_SIZES[bin_index]);
             }
 
-            // SAFETY: current_ptr valid from offset_to_ptr, aligned to ALIGN_SIZE=8 (≥4B for
-            // AtomicU32), type-punning to AtomicU32 valid.
-            //
-            // KNOWN BENIGN RACE (classic Treiber free-list read): between loading `head` and
-            // this load, another thread may pop `current_offset`, hand the block to user code,
-            // and that code may write these bytes non-atomically. The atomic load only makes
-            // the race atomic-vs-atomic against the *pusher's* store; against a user's plain
-            // write it is still a data race in the abstract machine. It is tolerated because
-            // the value read is used solely as the `new` operand of the tagged CAS below, and
-            // the generation counter guarantees that CAS fails whenever the read could have
-            // been stale, so a torn/garbage value is never published. The arena is never
-            // unmapped while the pool lives, so the load cannot fault. Eliminating the race
-            // formally needs EBR/hazard pointers or `next` links outside user-visible memory;
-            // a side table indexed by offset does not fit the variable-size block layout.
-            let next_offset = unsafe {
-                let current_ptr = self.offset_to_ptr(current_offset)?;
-                (*(current_ptr.as_ptr() as *const std::sync::atomic::AtomicU32))
-                    .load(std::sync::atomic::Ordering::Relaxed)
-            };
+            // Between loading `head` and this load another thread may pop
+            // `current_offset` and hand the block to user code. The link is in
+            // the block header, which user code can never reach, so this load
+            // only ever overlaps a pusher's atomic store. If it was stale the
+            // generation tag makes the CAS below fail and the value is dropped.
+            let next_offset = self.link_slot(current_offset)?.load(Ordering::Relaxed);
 
             // ABA-SAFE: Pack next offset with INCREMENTED generation counter
             // This prevents ABA: even if offset A→B→A, generation won't match
@@ -519,8 +518,8 @@ impl LockFreeMemoryPool {
             }
         }
 
-        // Max retries exceeded, fall back to new allocation
-        self.allocate_new_block(size)
+        // Max retries exceeded, fall back to new allocation (class width, see above)
+        self.allocate_new_block(FAST_BIN_SIZES[bin_index])
     }
 
     /// Deallocate to fast bin using lock-free stack
@@ -535,13 +534,9 @@ impl LockFreeMemoryPool {
             let packed = bin.head.load(Ordering::Acquire);
             let (current_offset, current_gen) = Self::unpack_head(packed);
 
-            // Store current OFFSET (not packed value) as next pointer in the block
-            // The next pointer only needs the offset, not the generation counter
-            // SAFETY: ptr validated by ptr_to_offset above, aligned to u32
-            unsafe {
-                (*(ptr.as_ptr() as *const std::sync::atomic::AtomicU32))
-                    .store(current_offset, std::sync::atomic::Ordering::Relaxed);
-            }
+            // Link to the current head through the block header (offset only;
+            // the generation lives in the bin head).
+            self.link_slot(offset)?.store(current_offset, Ordering::Relaxed);
 
             // ABA-SAFE: Pack new offset with INCREMENTED generation counter
             let new_packed = Self::pack_head(offset, current_gen.wrapping_add(1));
@@ -640,15 +635,18 @@ impl LockFreeMemoryPool {
     /// Allocate a new block from the backing memory with cache optimizations
     fn allocate_new_block(&self, size: usize) -> Result<NonNull<u8>> {
         let aligned_size = self.align_size(size);
+        // Header first, user memory behind it; the offset handed out (and stored
+        // in every free list) is the user memory's.
+        let carve = BLOCK_HEADER + aligned_size;
 
         // Always allocate from backing memory to ensure consistent pointer validation
         // External cache allocations would cause pointer validation failures in deallocate
         let mut current = self.next_offset.load(Ordering::Relaxed);
         loop {
-            if current as usize + aligned_size > self.config.memory_size {
+            if current as usize + carve > self.config.memory_size {
                 return Err(ZiporaError::out_of_memory(aligned_size));
             }
-            let next = match current.checked_add(aligned_size as u32) {
+            let next = match current.checked_add(carve as u32) {
                 Some(val) => val,
                 None => return Err(ZiporaError::out_of_memory(aligned_size)),
             };
@@ -662,7 +660,7 @@ impl LockFreeMemoryPool {
                 Err(actual) => current = actual,
             }
         }
-        let offset = current;
+        let offset = current + BLOCK_HEADER as u32;
 
         let ptr = self.offset_to_ptr(offset)?;
 
@@ -690,12 +688,22 @@ impl LockFreeMemoryPool {
         }
 
         if let Some(stats) = &self.stats {
-            stats
-                .memory_usage
-                .fetch_add(aligned_size as u64, Ordering::Relaxed);
+            stats.memory_usage.fetch_add(carve as u64, Ordering::Relaxed);
         }
 
         Ok(ptr)
+    }
+
+    /// Free-list link of the block whose user memory starts at `offset`.
+    fn link_slot(&self, offset: u32) -> Result<&AtomicU32> {
+        let user = self.offset_to_ptr(offset)?;
+        // SAFETY: `offset` was validated to lie inside the arena, every block is
+        // carved by `allocate_new_block` with `BLOCK_HEADER` bytes in front of
+        // its user memory, and user offsets are at least ALIGN_SIZE + BLOCK_HEADER
+        // (the bump cursor starts at ALIGN_SIZE), so `user - BLOCK_HEADER` is an
+        // ALIGN_SIZE-aligned (>= 4) address inside the arena that lives as long
+        // as `self`. The header is only ever accessed through this `AtomicU32`.
+        Ok(unsafe { &*(user.as_ptr().sub(BLOCK_HEADER) as *const AtomicU32) })
     }
 
     /// Convert size to fast bin index
@@ -870,6 +878,72 @@ mod tests {
 
         // Test deallocation
         pool.deallocate(ptr, 64).unwrap();
+    }
+
+    /// Fast bins recycle blocks by size class, so every block in a bin must be
+    /// carved at the class size. Carving at the request size let a freed
+    /// 136-byte block satisfy a 144-byte request from the same bin and overrun
+    /// the live block carved right behind it.
+    #[test]
+    fn test_fast_bin_reuse_never_hands_out_a_block_smaller_than_the_request() {
+        let pool = LockFreeMemoryPool::new(LockFreePoolConfig::default()).unwrap();
+        let small = pool.allocate(136).unwrap(); // size class 144
+        let neighbour = pool.allocate(8).unwrap(); // bump-carved directly behind `small`
+        pool.deallocate(small, 136).unwrap();
+        let reused = pool.allocate(144).unwrap(); // same size class: recycles `small`
+
+        let reused_start = reused.as_ptr() as usize;
+        let neighbour_start = neighbour.as_ptr() as usize;
+        assert!(
+            reused_start + 144 <= neighbour_start || reused_start >= neighbour_start + 8,
+            "144-byte block at {reused_start:#x} overlaps the live 8-byte block at {neighbour_start:#x}"
+        );
+    }
+
+    /// The pool must never interpret bytes that belong to a user. With the
+    /// free-list link stored inline, a user write racing a concurrent pop
+    /// (simulated here by writing through the freed pointer) corrupted the
+    /// bin: the next allocation followed the garbage link and failed.
+    #[test]
+    fn test_free_list_link_lives_outside_user_memory() {
+        let pool = LockFreeMemoryPool::new(LockFreePoolConfig::default()).unwrap();
+        let a = pool.allocate(16).unwrap();
+        pool.deallocate(a, 16).unwrap();
+        // SAFETY (test only): the arena outlives this write; this deliberately
+        // violates the ownership protocol to model the racing user write.
+        unsafe { std::ptr::write_bytes(a.as_ptr(), 0xFF, 16) };
+
+        let b = pool.allocate(16).unwrap();
+        assert_eq!(b, a, "recycled block expected");
+        let c = pool.allocate(16).unwrap();
+        assert_ne!(c, a, "bin was empty; a fresh block was expected");
+        pool.deallocate(b, 16).unwrap();
+        pool.deallocate(c, 16).unwrap();
+    }
+
+    /// Threads allocate, write every byte of, and free blocks of one size
+    /// class. Under ThreadSanitizer (`make tsan_pool`) this is the oracle for
+    /// the Treiber free-list read: a link stored in user memory races the
+    /// writes below; a link in the block header does not.
+    #[test]
+    fn test_concurrent_alloc_write_free_same_class() {
+        let pool = Arc::new(LockFreeMemoryPool::new(LockFreePoolConfig::default()).unwrap());
+        let handles: Vec<_> = (0..4u8)
+            .map(|t| {
+                let pool = Arc::clone(&pool);
+                thread::spawn(move || {
+                    for _ in 0..2_000 {
+                        let p = pool.allocate(64).unwrap();
+                        // SAFETY: `p` is a live 64-byte block owned by this thread.
+                        unsafe { std::ptr::write_bytes(p.as_ptr(), t, 64) };
+                        pool.deallocate(p, 64).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
     }
 
     #[test]
