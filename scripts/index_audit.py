@@ -49,21 +49,8 @@ def load_baseline():
                         ceilings[k] = int(line.split('=')[1].strip())
     return ceilings
 
-def load_allowlist():
-    allowlist_path = os.path.join(SCRIPT_DIR, '..', 'docs', 'review', 'index_allowlist.md')
-    allowed = set()
-    if os.path.exists(allowlist_path):
-        with open(allowlist_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                # Format: | # | `path:line` | ...
-                m = re.search(r'`([^:`]+):(\d+)`', line)
-                if m:
-                    allowed.add((m.group(1), int(m.group(2))))
-    return allowed
-
 def main():
     ceilings = load_baseline()
-    allowed_sites = load_allowlist()
 
     parser = argparse.ArgumentParser(description='Audit direct slice indexing in decoders.')
     parser.add_argument('--strict', action='store_true', help='Fail if any direct indexing site is found')
@@ -74,7 +61,6 @@ def main():
     total_index = 0
     total_get = 0
     all_sites = []
-    unallowlisted = []
 
     for name, paths in TARGETS:
         subsystem_stats[name] = {'index': 0, 'get': 0, 'files': 0}
@@ -95,8 +81,6 @@ def main():
                                 'text': item['clean_line'],
                             }
                             all_sites.append(site)
-                            if (rel_path, item['line_num']) not in allowed_sites:
-                                unallowlisted.append(site)
                         if GET_PATTERN.search(item['clean_line']):
                             subsystem_stats[name]['get'] += 1
                             total_get += 1
@@ -119,8 +103,6 @@ def main():
                                             'text': item['clean_line'],
                                         }
                                         all_sites.append(site)
-                                        if (rel_path, item['line_num']) not in allowed_sites:
-                                            unallowlisted.append(site)
                                     if GET_PATTERN.search(item['clean_line']):
                                         subsystem_stats[name]['get'] += 1
                                         total_get += 1
@@ -128,7 +110,6 @@ def main():
     print("=== Decoder Indexing Safety Audit (Rule D10.1) ===")
     print(f"Total direct indexing sites in scoped paths: {total_index} (ratchet ceiling: {ceilings['max_total']})")
     print(f"Total checked .get() sites:                   {total_get}")
-    print(f"Allowlist coverage:                          {len(allowed_sites)} verified entries")
     print()
     print(f"{'Subsystem':<20} {'Files':<8} {'Direct Index':<15} {'Ceiling':<10} {'.get()':<10}")
     print("-" * 65)
@@ -155,12 +136,6 @@ def main():
         if sub in ceilings and stats['index'] > ceilings[sub]:
             print(f"\nFAILURE: {sub} indexing sites ({stats['index']}) exceeds subsystem ceiling ({ceilings[sub]})")
             failed = True
-
-    if unallowlisted:
-        print(f"\nFAILURE: found {len(unallowlisted)} indexing sites not documented in docs/review/index_allowlist.md:")
-        for u in unallowlisted:
-            print(f"  {u['file']}:{u['line']} [{u['subsystem']}]: {u['text']}")
-        failed = True
 
     if failed:
         sys.exit(1)

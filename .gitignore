@@ -67,7 +67,6 @@ Thumbs.db
 *.tmp
 *.temp
 *.log
-!docs/validation/**/*.log
 
 # Environment variables
 .env
