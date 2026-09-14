@@ -389,7 +389,10 @@ impl<P: ParallelVariant> Rans64Encoder<P> {
         // 10.46 ms 1 MiB X4 encode — more than the codec itself.
         for stream_idx in 0..n_streams {
             for pos in (stream_idx..data_len).step_by(n_streams).rev() {
-                self.encode_symbol(&mut states[stream_idx], data[pos], &mut outputs[stream_idx])?;
+                let sym = *data
+                    .get(pos)
+                    .ok_or_else(|| ZiporaError::out_of_bounds(pos, data_len))?;
+                self.encode_symbol(&mut states[stream_idx], sym, &mut outputs[stream_idx])?;
             }
         }
 
@@ -476,7 +479,10 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
                 return Err(ZiporaError::invalid_data("Insufficient data for decoding"));
             }
             *pos -= 1;
-            state.state = (state.state << 8) | (input[*pos] as u64);
+            let byte = *input
+                .get(*pos)
+                .ok_or_else(|| ZiporaError::invalid_data("Insufficient data for decoding"))?;
+            state.state = (state.state << 8) | (byte as u64);
         }
 
         // Fast symbol lookup using direct table
@@ -516,23 +522,20 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
 
     /// Single-stream decoding
     fn decode_single(&self, encoded_data: &[u8], output_length: usize) -> Result<Vec<u8>> {
-        if encoded_data.len() < 8 {
+        let data_len = encoded_data.len();
+        if data_len < 8 {
             return Err(ZiporaError::invalid_data("rANS data too short"));
         }
 
         // Read initial state from last 8 bytes
-        let data_len = encoded_data.len();
-        let state_bytes = &encoded_data[data_len - 8..];
-        let initial_state = u64::from_le_bytes([
-            state_bytes[0],
-            state_bytes[1],
-            state_bytes[2],
-            state_bytes[3],
-            state_bytes[4],
-            state_bytes[5],
-            state_bytes[6],
-            state_bytes[7],
-        ]);
+        let state_bytes = encoded_data
+            .get(data_len - 8..data_len)
+            .ok_or_else(|| ZiporaError::invalid_data("rANS data too short"))?;
+        let initial_state = u64::from_le_bytes(
+            state_bytes
+                .try_into()
+                .map_err(|_| ZiporaError::invalid_data("rANS state bytes malformed"))?,
+        );
 
         let mut state = Rans64State::from_state(initial_state);
         let mut pos = data_len - 8;
@@ -566,17 +569,14 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
         let mut states = Vec::with_capacity(n_streams);
         let mut pos = 0;
         for _ in 0..n_streams {
-            let state_bytes = &encoded_data[pos..pos + 8];
-            let state_value = u64::from_le_bytes([
-                state_bytes[0],
-                state_bytes[1],
-                state_bytes[2],
-                state_bytes[3],
-                state_bytes[4],
-                state_bytes[5],
-                state_bytes[6],
-                state_bytes[7],
-            ]);
+            let state_bytes = encoded_data
+                .get(pos..pos + 8)
+                .ok_or_else(|| ZiporaError::invalid_data("Insufficient data for parallel rANS header"))?;
+            let state_value = u64::from_le_bytes(
+                state_bytes
+                    .try_into()
+                    .map_err(|_| ZiporaError::invalid_data("Invalid rANS state bytes"))?,
+            );
             states.push(Rans64State::from_state(state_value));
             pos += 8;
         }
@@ -586,13 +586,14 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
         let mut stream_lengths = Vec::with_capacity(n_streams);
         let mut total_stream_len: usize = 0;
         for _ in 0..n_streams {
-            let length_bytes = &encoded_data[pos..pos + 4];
-            let length = u32::from_le_bytes([
-                length_bytes[0],
-                length_bytes[1],
-                length_bytes[2],
-                length_bytes[3],
-            ]) as usize;
+            let length_bytes = encoded_data
+                .get(pos..pos + 4)
+                .ok_or_else(|| ZiporaError::invalid_data("Insufficient data for parallel rANS header"))?;
+            let length = u32::from_le_bytes(
+                length_bytes
+                    .try_into()
+                    .map_err(|_| ZiporaError::invalid_data("Invalid rANS length bytes"))?,
+            ) as usize;
             total_stream_len = total_stream_len.checked_add(length).ok_or_else(|| {
                 ZiporaError::invalid_data("Stream length sum overflow in rANS data")
             })?;
@@ -607,7 +608,10 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
         // Extract stream data
         let mut stream_data = Vec::with_capacity(n_streams);
         for &length in &stream_lengths {
-            stream_data.push(&encoded_data[pos..pos + length]);
+            let chunk = encoded_data
+                .get(pos..pos + length)
+                .ok_or_else(|| ZiporaError::invalid_data("Invalid stream data length"))?;
+            stream_data.push(chunk);
             pos += length;
         }
 
@@ -1063,5 +1067,21 @@ mod tests {
             round_trip::<ParallelX4>(&data);
             round_trip::<ParallelX8>(&data);
         }
+    }
+
+    #[test]
+    fn test_rans_decode_truncated_data() {
+        let mut frequencies = [0u32; 256];
+        frequencies[b'a' as usize] = 100;
+
+        let encoder1 = Rans64Encoder::<ParallelX1>::new(&frequencies).unwrap();
+        let decoder1 = Rans64Decoder::<ParallelX1>::new(&encoder1);
+        assert!(decoder1.decode(&[], 10).is_err());
+        assert!(decoder1.decode(&[0u8; 7], 10).is_err());
+
+        let encoder4 = Rans64Encoder::<ParallelX4>::new(&frequencies).unwrap();
+        let decoder4 = Rans64Decoder::<ParallelX4>::new(&encoder4);
+        assert!(decoder4.decode(&[], 10).is_err());
+        assert!(decoder4.decode(&[0u8; 12], 10).is_err());
     }
 }
