@@ -97,6 +97,12 @@ def audit_file(filepath):
                 if prev_line.startswith('fn ') or prev_line.startswith('pub fn ') or prev_line.startswith('struct ') or prev_line.startswith('enum '):
                     has_safety = False
 
+            # Also check the immediate line after 'unsafe' (e.g. first line inside block or fn)
+            if not has_safety and idx + 1 < len(raw_lines):
+                next_line = raw_lines[idx + 1].strip()
+                if SAFETY_PATTERN.search(next_line):
+                    has_safety = True
+
             unsafe_sites.append({
                 'file': filepath,
                 'line': line_num,

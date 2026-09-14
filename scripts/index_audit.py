@@ -7,7 +7,6 @@ Rule D10.1 / Agreement 12:
   direct data[i] / &data[a..b] on caller-supplied bytes is audited against .get(..)
   or explicit bounds guards.
 - Exact per-subsystem ceilings are stored in scripts/audit_baseline.toml and ratchet down.
-- All remaining sites must have documented justifications in docs/review/index_allowlist.md.
 """
 
 import argparse
