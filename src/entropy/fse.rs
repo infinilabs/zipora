@@ -737,7 +737,7 @@ impl FseTable {
         x
     }
 
-    /// Renormalize state for decoding (simplified approach)
+    /// Renormalize state for decoding
     ///
     /// Returns `None` when the stream cannot be well-formed: a partial
     /// trailing block (the encoder emits only whole 4-byte blocks) or a zero
@@ -771,9 +771,8 @@ impl FseTable {
             x <<= BLOCK_SIZE * 8;
 
             // Read backward from current position
-            if *pos + BLOCK_SIZE <= input.len() {
-                let bytes = &input[*pos..*pos + BLOCK_SIZE];
-                let new_bytes = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+            if let Some(bytes) = input.get(*pos..*pos + BLOCK_SIZE) {
+                let new_bytes = u32::from_le_bytes(bytes.try_into().unwrap());
                 x |= new_bytes as u64;
             }
         }
@@ -783,6 +782,7 @@ impl FseTable {
         }
         Some(x)
     }
+
 
     /// Get table size
     #[inline(always)]
@@ -1172,18 +1172,16 @@ impl FseDecoder {
         // heuristic misrouted single streams whose original-size field
         // parsed as a plausible parallel block count, and silently failed
         // on parallel streams with more than 64 blocks.
-        let mode = data[0];
-        let body = &data[1..];
+        let (&mode, body) = data
+            .split_first()
+            .ok_or_else(|| ZiporaError::invalid_data("Empty FSE stream"))?;
         match mode {
             FSE_MODE_SINGLE => self.decompress_single(body),
             FSE_MODE_PARALLEL => {
-                if body.len() < 4 {
-                    return Err(ZiporaError::invalid_data(
-                        "FSE parallel stream truncated before block count",
-                    ));
-                }
-                let num_blocks =
-                    u32::from_le_bytes([body[0], body[1], body[2], body[3]]) as usize;
+                let count_bytes = body.get(0..4).ok_or_else(|| {
+                    ZiporaError::invalid_data("FSE parallel stream truncated before block count")
+                })?;
+                let num_blocks = u32::from_le_bytes(count_bytes.try_into().unwrap()) as usize;
                 if num_blocks == 0 {
                     return Err(ZiporaError::invalid_data(
                         "FSE parallel stream with zero blocks",
@@ -1214,14 +1212,12 @@ impl FseDecoder {
             return Ok(Vec::new());
         }
 
-        if data.len() < 5 {
-            return Err(ZiporaError::invalid_data("Data too short for FSE header"));
-        }
-
         // Read header to get original size and table info
         let mut pos = 0;
-        let original_size =
-            u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+        let size_bytes = data
+            .get(pos..pos + 4)
+            .ok_or_else(|| ZiporaError::invalid_data("Data too short for FSE header"))?;
+        let original_size = u32::from_le_bytes(size_bytes.try_into().unwrap()) as usize;
         pos += 4;
 
         // The size field is attacker-controlled and cannot be cross-checked
@@ -1241,18 +1237,17 @@ impl FseDecoder {
         }
 
         // Read table log (or uncompressed marker)
-        if pos >= data.len() {
-            return Err(ZiporaError::invalid_data("Missing table log"));
-        }
-        let table_log = data[pos];
+        let &table_log = data
+            .get(pos)
+            .ok_or_else(|| ZiporaError::invalid_data("Missing table log"))?;
         pos += 1;
 
         // Check for uncompressed data marker
         if table_log == 0xFF {
-            if pos + original_size > data.len() {
-                return Err(ZiporaError::invalid_data("Incomplete uncompressed data"));
-            }
-            return Ok(data[pos..pos + original_size].to_vec());
+            let uncompressed_slice = data
+                .get(pos..pos + original_size)
+                .ok_or_else(|| ZiporaError::invalid_data("Incomplete uncompressed data"))?;
+            return Ok(uncompressed_slice.to_vec());
         }
 
         if !(5..=15).contains(&table_log) {
@@ -1263,23 +1258,24 @@ impl FseDecoder {
         }
 
         // Read compact frequency table
-        if pos + 2 > data.len() {
-            return Err(ZiporaError::invalid_data("Missing frequency table size"));
-        }
-        let num_symbols = u16::from_le_bytes([data[pos], data[pos + 1]]) as usize;
+        let count_bytes = data
+            .get(pos..pos + 2)
+            .ok_or_else(|| ZiporaError::invalid_data("Missing frequency table size"))?;
+        let num_symbols = u16::from_le_bytes(count_bytes.try_into().unwrap()) as usize;
         pos += 2;
 
         let mut frequencies = [0u32; 256];
         for _ in 0..num_symbols {
-            if pos + 5 > data.len() {
-                return Err(ZiporaError::invalid_data("Incomplete frequency table"));
-            }
-
-            let symbol = data[pos] as usize;
+            let &symbol_byte = data
+                .get(pos)
+                .ok_or_else(|| ZiporaError::invalid_data("Incomplete frequency table"))?;
+            let symbol = symbol_byte as usize;
             pos += 1;
 
-            let freq_bytes = [data[pos], data[pos + 1], data[pos + 2], data[pos + 3]];
-            let freq = u32::from_le_bytes(freq_bytes);
+            let freq_bytes = data
+                .get(pos..pos + 4)
+                .ok_or_else(|| ZiporaError::invalid_data("Incomplete frequency table"))?;
+            let freq = u32::from_le_bytes(freq_bytes.try_into().unwrap());
             pos += 4;
 
             if symbol < 256 {
@@ -1304,17 +1300,10 @@ impl FseDecoder {
 
         // State is stored at the end of the compressed data
         let state_start = data.len() - 8;
-        let state_bytes = [
-            data[state_start],
-            data[state_start + 1],
-            data[state_start + 2],
-            data[state_start + 3],
-            data[state_start + 4],
-            data[state_start + 5],
-            data[state_start + 6],
-            data[state_start + 7],
-        ];
-        let mut state = u64::from_le_bytes(state_bytes);
+        let state_bytes = data
+            .get(state_start..state_start + 8)
+            .ok_or_else(|| ZiporaError::invalid_data("Missing final state"))?;
+        let mut state = u64::from_le_bytes(state_bytes.try_into().unwrap());
 
         // Validate state is reasonable
         if state == 0 {
@@ -1322,7 +1311,9 @@ impl FseDecoder {
         }
 
         // Initialize for decoding - compressed data excludes the state
-        let compressed_data = &data[pos..state_start];
+        let compressed_data = data
+            .get(pos..state_start)
+            .ok_or_else(|| ZiporaError::invalid_data("Invalid compressed data range"))?;
         let mut byte_pos = compressed_data.len(); // Start from the end for rANS
 
         // Decode symbols using advanced approach. Reserve incrementally: the
@@ -1364,10 +1355,10 @@ impl FseDecoder {
         // Read block sizes
         let mut block_sizes = Vec::with_capacity(num_blocks);
         for _ in 0..num_blocks {
-            if pos + 4 > data.len() {
-                return Err(ZiporaError::invalid_data("Invalid block size data"));
-            }
-            let size = u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
+            let size_bytes = data
+                .get(pos..pos + 4)
+                .ok_or_else(|| ZiporaError::invalid_data("Invalid block size data"))?;
+            let size = u32::from_le_bytes(size_bytes.try_into().unwrap());
             block_sizes.push(size as usize);
             pos += 4;
         }
@@ -1375,11 +1366,9 @@ impl FseDecoder {
         // Decompress each block
         let mut output = Vec::new();
         for block_size in block_sizes {
-            if pos + block_size > data.len() {
-                return Err(ZiporaError::invalid_data("Invalid block data"));
-            }
-
-            let block_data = &data[pos..pos + block_size];
+            let block_data = data
+                .get(pos..pos + block_size)
+                .ok_or_else(|| ZiporaError::invalid_data("Invalid block data"))?;
             let decompressed = self.decompress_single(block_data)?;
             // The per-block check in decompress_single bounds one block; the
             // blocks are concatenated, so the total needs its own check or a
@@ -1396,6 +1385,7 @@ impl FseDecoder {
 
         Ok(output)
     }
+
 
     /// Reset decoder state
     pub fn reset(&mut self) {
@@ -1749,5 +1739,24 @@ mod bench_tests {
         // A zero state is never produced by the encoder; no `.max(1)` clamp.
         let mut pos = 0;
         assert_eq!(table.renormalize_decode(0, &input_bytes, &mut pos), None);
+    }
+
+    #[test]
+    fn test_fse_decompress_malformed_headers() {
+        let mut decoder = FseDecoder::new();
+        // Empty data returns empty vec
+        assert_eq!(decoder.decompress(&[]).unwrap(), Vec::<u8>::new());
+        // Single mode with truncated size (< 4 bytes body)
+        assert!(decoder.decompress(&[FSE_MODE_SINGLE, 10, 0, 0]).is_err());
+        // Single mode with invalid table log
+        assert!(decoder.decompress(&[FSE_MODE_SINGLE, 10, 0, 0, 0, 0x02]).is_err());
+        // Parallel mode truncated before block count
+        assert!(decoder.decompress(&[FSE_MODE_PARALLEL, 1, 0]).is_err());
+        // Parallel mode with 0 blocks
+        assert!(decoder.decompress(&[FSE_MODE_PARALLEL, 0, 0, 0, 0]).is_err());
+        // Parallel mode with truncated block sizes
+        assert!(decoder.decompress(&[FSE_MODE_PARALLEL, 2, 0, 0, 0, 10, 0]).is_err());
+        // Unknown mode
+        assert!(decoder.decompress(&[0xEE, 1, 2, 3]).is_err());
     }
 }
