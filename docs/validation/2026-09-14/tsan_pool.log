@@ -1,0 +1,50 @@
+CARGO_TARGET_DIR=target-tsan \
+RUSTFLAGS="-Zsanitizer=thread --cfg crossbeam_sanitize" \
+TSAN_OPTIONS="suppressions=/usr/local/google/home/binwu/go/src/infini.sh/zipora/tsan.supp" \
+cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
+	--release --lib memory::lockfree
+   Compiling zipora v4.2.0 (/usr/local/google/home/binwu/go/src/infini.sh/zipora)
+warning: unused import: `super::super::state::*`
+ --> src/fsa/double_array/tests.rs:9:9
+  |
+9 |     use super::super::state::*;
+  |         ^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `zipora` (lib test) generated 1 warning (run `cargo fix --lib -p zipora --tests` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 38.70s
+     Running unittests src/lib.rs (target-tsan/x86_64-unknown-linux-gnu/release/build/zipora/ee963fecc6f8e5d0/out/zipora-ee963fecc6f8e5d0)
+
+running 28 tests
+test memory::lockfree_pool::tests::test_bitmap_counting_accuracy ... ok
+test memory::lockfree_pool::tests::test_concurrent_allocation ... ignored
+test memory::lockfree_pool::tests::test_exhaustion_overflow_safety ... ok
+test memory::lockfree_pool::tests::test_large_allocations_reuse ... ok
+test memory::lockfree_pool::tests::test_large_block_fallback_to_new_allocation ... ok
+test memory::lockfree_pool::tests::test_pool_exhaustion ... ignored
+test memory::lockfree_pool::tests::test_large_block_best_fit_selection ... ok
+test memory::lockfree_pool::tests::test_offset_to_ptr_rejects_out_of_bounds ... ok
+test memory::lockfree_pool::tests::test_popcnt_bitmap_operations ... ok
+test memory::lockfree_pool::tests::test_basic_allocation_deallocation ... ok
+test memory::lockfree_pool::tests::test_bulk_allocation_simd ... ok
+test memory::lockfree_pool::tests::test_bulk_allocation_with_prefetch ... ok
+test memory::lockfree_pool::tests::test_deallocate_cas_exhaustion_falls_back_to_skip_list ... ok
+test memory::lockfree_pool::tests::test_fast_bin_allocation ... ok
+test memory::lockfree_pool::tests::test_concurrent_bulk_allocations ... ok
+test memory::lockfree_pool::tests::test_fast_bin_reuse_never_hands_out_a_block_smaller_than_the_request ... ok
+test memory::lockfree_pool::tests::test_free_list_link_lives_outside_user_memory ... ok
+test memory::lockfree_pool::tests::test_concurrent_simd_operations ... ok
+test memory::lockfree_pool::tests::test_lockfree_pool_creation ... ok
+test memory::lockfree_pool::tests::test_raii_allocation ... ok
+test memory::lockfree_pool::tests::test_simd_free_block_scanning ... ok
+test memory::lockfree_pool::tests::test_concurrent_alloc_write_free_same_class ... ok
+test memory::lockfree_pool::tests::test_simd_optimization_disabled ... ok
+test memory::lockfree_pool::tests::test_simd_zeroing_on_free ... ok
+test memory::lockfree_pool::tests::test_zero_on_free_with_reuse ... ok
+test memory::lockfree_pool::tests::test_size_alignment ... ok
+test memory::lockfree_pool::tests::test_simd_zeroing_performance ... ok
+test memory::lockfree_pool::tests::test_pool_rejects_memory_size_over_4gb ... ok
+
+test result: ok. 26 passed; 0 failed; 2 ignored; 0 measured; 2796 filtered out; finished in 0.74s
+

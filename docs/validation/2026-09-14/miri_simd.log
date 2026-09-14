@@ -1,0 +1,254 @@
+cargo +nightly miri test --lib algorithms::bit_ops
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.10s
+     Running unittests src/lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/build/zipora/d90d3c6aadfed4a5/out/zipora-d90d3c6aadfed4a5)
+warning: unused import: `super::super::state::*`
+ --> src/fsa/double_array/tests.rs:9:9
+  |
+9 |     use super::super::state::*;
+  |         ^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `features`
+   --> src/system/cpu_features.rs:524:35
+    |
+524 |     fn detect_x86_features(&self, features: &mut CpuFeatures) {
+    |                                   ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_features`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src/system/cpu_features.rs:587:13
+    |
+587 |         let mut cache_line_size = 64; // Default assumption
+    |             ----^^^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `avx2_impl` is never used
+   --> src/simd/macros.rs:383:12
+    |
+383 |         fn avx2_impl() -> i32 {
+    |            ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `sse2_impl` is never used
+   --> src/simd/macros.rs:401:12
+    |
+401 |         fn sse2_impl() -> i32 {
+    |            ^^^^^^^^^
+
+warning: function `avx2_impl` is never used
+   --> src/simd/macros.rs:404:12
+    |
+404 |         fn avx2_impl() -> i32 {
+    |            ^^^^^^^^^
+
+warning: Miri does not support optimizations: the opt-level is ignored. The only effect of selecting a Cargo profile that enables optimizations (such as --release) is to apply its remaining settings, such as whether debug assertions and overflow checks are enabled.
+
+
+running 27 tests
+test algorithms::bit_ops::benchmarks::bench_popcount_simd_vs_scalar ... ok
+test algorithms::bit_ops::benchmarks::bench_popcount_slice_throughput ... ok
+test algorithms::bit_ops::benchmarks::bench_select_in_word ... ok
+test algorithms::bit_ops::benchmarks::test_select_in_word_invalid_input_panic - should panic ... ok
+test algorithms::bit_ops::tests::test_all_ones ... ok
+test algorithms::bit_ops::tests::test_all_zeros ... ok
+test algorithms::bit_ops::tests::test_alternating_bits ... ok
+test algorithms::bit_ops::tests::test_avx2_reduction_overflow_boundary ... ok
+test algorithms::bit_ops::tests::test_boundary_at_31_iterations ... ok
+test algorithms::bit_ops::tests::test_empty_slice ... ok
+test algorithms::bit_ops::tests::test_has_fast_bmi2_no_panic ... ok
+test algorithms::bit_ops::tests::test_large_slice ... ok
+test algorithms::bit_ops::tests::test_matches_scalar_simd_range ... ok
+test algorithms::bit_ops::tests::test_matches_scalar_small ... ok
+test algorithms::bit_ops::tests::test_select_in_word_basic ... ok
+test algorithms::bit_ops::tests::test_select_in_word_consecutive ... ok
+test algorithms::bit_ops::tests::test_select_in_word_high_rank ... ok
+test algorithms::bit_ops::tests::test_select_in_word_out_of_range_sentinel ... ok
+test algorithms::bit_ops::tests::test_select_in_word_popcnt_matches_scalar ... ok
+test algorithms::bit_ops::tests::test_select_in_word_random_patterns ... ok
+test algorithms::bit_ops::tests::test_select_in_word_rank_zero ... ok
+test algorithms::bit_ops::tests::test_select_in_word_single_bit ... ok
+test algorithms::bit_ops::tests::test_select_in_word_sparse ... ok
+test algorithms::bit_ops::tests::test_single_bit_per_word ... ok
+test algorithms::bit_ops::tests::test_single_word ... ok
+test algorithms::bit_ops::tests::test_tier_consistency ... ok
+test algorithms::bit_ops::tests::test_union_counting_workload ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 2774 filtered out; finished in 36.43s
+
+warning: 7 warnings emitted
+
+cargo +nightly miri test --lib compression::stream_vbyte
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.10s
+     Running unittests src/lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/build/zipora/d90d3c6aadfed4a5/out/zipora-d90d3c6aadfed4a5)
+warning: unused import: `super::super::state::*`
+ --> src/fsa/double_array/tests.rs:9:9
+  |
+9 |     use super::super::state::*;
+  |         ^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `features`
+   --> src/system/cpu_features.rs:524:35
+    |
+524 |     fn detect_x86_features(&self, features: &mut CpuFeatures) {
+    |                                   ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_features`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src/system/cpu_features.rs:587:13
+    |
+587 |         let mut cache_line_size = 64; // Default assumption
+    |             ----^^^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `avx2_impl` is never used
+   --> src/simd/macros.rs:383:12
+    |
+383 |         fn avx2_impl() -> i32 {
+    |            ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `sse2_impl` is never used
+   --> src/simd/macros.rs:401:12
+    |
+401 |         fn sse2_impl() -> i32 {
+    |            ^^^^^^^^^
+
+warning: function `avx2_impl` is never used
+   --> src/simd/macros.rs:404:12
+    |
+404 |         fn avx2_impl() -> i32 {
+    |            ^^^^^^^^^
+
+warning: Miri does not support optimizations: the opt-level is ignored. The only effect of selecting a Cargo profile that enables optimizations (such as --release) is to apply its remaining settings, such as whether debug assertions and overflow checks are enabled.
+
+
+running 19 tests
+test compression::stream_vbyte::tests::test_decode_simd_matches_scalar_all_ctrl_bytes ... ok
+test compression::stream_vbyte::tests::test_group_varint_basic ... ok
+test compression::stream_vbyte::tests::test_group_varint_decode_raw_bounds_reservation_by_input ... ok
+test compression::stream_vbyte::tests::test_group_varint_small ... ok
+test compression::stream_vbyte::tests::test_stream_vbyte_all_control_combinations ... ok
+test compression::stream_vbyte::tests::test_stream_vbyte_decode_into ... ok
+test compression::stream_vbyte::tests::test_stream_vbyte_empty ... ok
+test compression::stream_vbyte::tests::test_stream_vbyte_large_values ... ok
+test compression::stream_vbyte::tests::test_stream_vbyte_matches_naive_reference ... ok
+test compression::stream_vbyte::tests::test_stream_vbyte_not_multiple_of_4 ... ok
+test compression::stream_vbyte::tests::test_stream_vbyte_performance ... ignored
+test compression::stream_vbyte::tests::test_stream_vbyte_posting_list ... ok
+test compression::stream_vbyte::tests::test_stream_vbyte_raw_roundtrip ... ok
+test compression::stream_vbyte::tests::test_stream_vbyte_simd_to_scalar_handoff_truncated_stream_safety ... ok
+test compression::stream_vbyte::tests::test_stream_vbyte_single ... ok
+test compression::stream_vbyte::tests::test_stream_vbyte_small_values ... ok
+test compression::stream_vbyte::tests::test_stream_vbyte_truncated_stream_safety ... ok
+test compression::stream_vbyte::tests::test_stream_vbyte_unbounded_count_dos_protection ... ok
+test compression::stream_vbyte::tests::test_tables_match_reference_model_exhaustive ... ok
+
+test result: ok. 18 passed; 0 failed; 1 ignored; 0 measured; 2782 filtered out; finished in 102.86s
+
+warning: 7 warnings emitted
+
+cargo +nightly miri test --lib algorithms::simd_search
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.13s
+     Running unittests src/lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/build/zipora/d90d3c6aadfed4a5/out/zipora-d90d3c6aadfed4a5)
+warning: unused import: `super::super::state::*`
+ --> src/fsa/double_array/tests.rs:9:9
+  |
+9 |     use super::super::state::*;
+  |         ^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `features`
+   --> src/system/cpu_features.rs:524:35
+    |
+524 |     fn detect_x86_features(&self, features: &mut CpuFeatures) {
+    |                                   ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_features`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src/system/cpu_features.rs:587:13
+    |
+587 |         let mut cache_line_size = 64; // Default assumption
+    |             ----^^^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `avx2_impl` is never used
+   --> src/simd/macros.rs:383:12
+    |
+383 |         fn avx2_impl() -> i32 {
+    |            ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `sse2_impl` is never used
+   --> src/simd/macros.rs:401:12
+    |
+401 |         fn sse2_impl() -> i32 {
+    |            ^^^^^^^^^
+
+warning: function `avx2_impl` is never used
+   --> src/simd/macros.rs:404:12
+    |
+404 |         fn avx2_impl() -> i32 {
+    |            ^^^^^^^^^
+
+warning: Miri does not support optimizations: the opt-level is ignored. The only effect of selecting a Cargo profile that enables optimizations (such as --release) is to apply its remaining settings, such as whether debug assertions and overflow checks are enabled.
+
+
+running 34 tests
+test algorithms::simd_search::tests::test_filter_63_elements ... ok
+test algorithms::simd_search::tests::test_filter_7_elements ... ok
+test algorithms::simd_search::tests::test_filter_8_elements ... ok
+test algorithms::simd_search::tests::test_filter_9_elements ... ok
+test algorithms::simd_search::tests::test_filter_all_above ... ok
+test algorithms::simd_search::tests::test_filter_all_below ... ok
+test algorithms::simd_search::tests::test_filter_consistency_simd_vs_scalar ... ok
+test algorithms::simd_search::tests::test_filter_empty ... ok
+test algorithms::simd_search::tests::test_filter_exact_boundary ... ok
+test algorithms::simd_search::tests::test_filter_full_64 ... ok
+test algorithms::simd_search::tests::test_filter_infinity ... ok
+test algorithms::simd_search::tests::test_filter_mismatched_lengths - should panic ... ok
+test algorithms::simd_search::tests::test_filter_mixed ... ok
+test algorithms::simd_search::tests::test_filter_nan_scores ... ok
+test algorithms::simd_search::tests::test_filter_negative_scores ... ok
+test algorithms::simd_search::tests::test_filter_single_element ... ok
+test algorithms::simd_search::tests::test_filter_too_large - should panic ... ok
+test algorithms::simd_search::tests::test_gallop_already_satisfied ... ok
+test algorithms::simd_search::tests::test_gallop_between_elements ... ok
+test algorithms::simd_search::tests::test_gallop_consistency_simd_vs_scalar ... ok
+test algorithms::simd_search::tests::test_gallop_cursor_past_end ... ok
+test algorithms::simd_search::tests::test_gallop_duplicates ... ok
+test algorithms::simd_search::tests::test_gallop_empty_array ... ok
+test algorithms::simd_search::tests::test_gallop_exact_match ... ok
+test algorithms::simd_search::tests::test_gallop_large_array ... ok
+test algorithms::simd_search::tests::test_gallop_large_skip_matches_partition_point ... ok
+test algorithms::simd_search::tests::test_gallop_mid_array_advance ... ok
+test algorithms::simd_search::tests::test_gallop_sequential ... ok
+test algorithms::simd_search::tests::test_gallop_simd_boundary_sizes ... ok
+test algorithms::simd_search::tests::test_gallop_single_element ... ok
+test algorithms::simd_search::tests::test_gallop_small_array ... ok
+test algorithms::simd_search::tests::test_gallop_target_past_end ... ok
+test algorithms::simd_search::tests::test_gallop_target_zero ... ok
+test algorithms::simd_search::tests::test_gallop_u32_max_boundary ... ok
+
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 2767 filtered out; finished in 36.82s
+
+warning: 7 warnings emitted
+

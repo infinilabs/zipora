@@ -1,0 +1,448 @@
+cargo +nightly miri test --lib containers::uint_vec_min0
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.12s
+     Running unittests src/lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/build/zipora/d90d3c6aadfed4a5/out/zipora-d90d3c6aadfed4a5)
+warning: unused import: `super::super::state::*`
+ --> src/fsa/double_array/tests.rs:9:9
+  |
+9 |     use super::super::state::*;
+  |         ^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `features`
+   --> src/system/cpu_features.rs:524:35
+    |
+524 |     fn detect_x86_features(&self, features: &mut CpuFeatures) {
+    |                                   ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_features`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src/system/cpu_features.rs:587:13
+    |
+587 |         let mut cache_line_size = 64; // Default assumption
+    |             ----^^^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `avx2_impl` is never used
+   --> src/simd/macros.rs:383:12
+    |
+383 |         fn avx2_impl() -> i32 {
+    |            ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `sse2_impl` is never used
+   --> src/simd/macros.rs:401:12
+    |
+401 |         fn sse2_impl() -> i32 {
+    |            ^^^^^^^^^
+
+warning: function `avx2_impl` is never used
+   --> src/simd/macros.rs:404:12
+    |
+404 |         fn avx2_impl() -> i32 {
+    |            ^^^^^^^^^
+
+warning: Miri does not support optimizations: the opt-level is ignored. The only effect of selecting a Cargo profile that enables optimizations (such as --release) is to apply its remaining settings, such as whether debug assertions and overflow checks are enabled.
+
+
+running 25 tests
+test containers::uint_vec_min0::tests::test_58_bits_max_fast_path ... ok
+test containers::uint_vec_min0::tests::test_back ... ok
+test containers::uint_vec_min0::tests::test_back_empty - should panic ... ok
+test containers::uint_vec_min0::tests::test_build_from_i32_extreme_range_no_overflow ... ok
+test containers::uint_vec_min0::tests::test_build_from_usize ... ok
+test containers::uint_vec_min0::tests::test_clear ... ok
+test containers::uint_vec_min0::tests::test_compute_mem_size ... ok
+test containers::uint_vec_min0::tests::test_compute_mem_size_overflow_panics - should panic ... ok
+test containers::uint_vec_min0::tests::test_compute_uintbits ... ok
+test containers::uint_vec_min0::tests::test_edge_case_one_bit ... ok
+test containers::uint_vec_min0::tests::test_edge_case_zero_bits ... ok
+test containers::uint_vec_min0::tests::test_fast_get_static ... ok
+test containers::uint_vec_min0::tests::test_get2 ... ok
+test containers::uint_vec_min0::tests::test_get_out_of_bounds - should panic ... ok
+test containers::uint_vec_min0::tests::test_memory_efficiency ... ok
+test containers::uint_vec_min0::tests::test_new_and_basic_ops ... ok
+test containers::uint_vec_min0::tests::test_push_back_fast_path ... ok
+test containers::uint_vec_min0::tests::test_push_back_slow_path_bit_expansion ... ok
+test containers::uint_vec_min0::tests::test_push_back_slow_path_capacity ... ok
+test containers::uint_vec_min0::tests::test_resize ... ok
+test containers::uint_vec_min0::tests::test_resize_with_uintbits_clears_old_packed_data ... ok
+test containers::uint_vec_min0::tests::test_round_trip_various_bit_widths ... ok
+test containers::uint_vec_min0::tests::test_set_and_get ... ok
+test containers::uint_vec_min0::tests::test_set_value_too_large - should panic ... ok
+test containers::uint_vec_min0::tests::test_shrink_to_fit ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 2776 filtered out; finished in 14.90s
+
+warning: 7 warnings emitted
+
+cargo +nightly miri test --lib hash_map::zipora_hash_map
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.12s
+     Running unittests src/lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/build/zipora/d90d3c6aadfed4a5/out/zipora-d90d3c6aadfed4a5)
+warning: unused import: `super::super::state::*`
+ --> src/fsa/double_array/tests.rs:9:9
+  |
+9 |     use super::super::state::*;
+  |         ^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `features`
+   --> src/system/cpu_features.rs:524:35
+    |
+524 |     fn detect_x86_features(&self, features: &mut CpuFeatures) {
+    |                                   ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_features`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src/system/cpu_features.rs:587:13
+    |
+587 |         let mut cache_line_size = 64; // Default assumption
+    |             ----^^^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `avx2_impl` is never used
+   --> src/simd/macros.rs:383:12
+    |
+383 |         fn avx2_impl() -> i32 {
+    |            ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `sse2_impl` is never used
+   --> src/simd/macros.rs:401:12
+    |
+401 |         fn sse2_impl() -> i32 {
+    |            ^^^^^^^^^
+
+warning: function `avx2_impl` is never used
+   --> src/simd/macros.rs:404:12
+    |
+404 |         fn avx2_impl() -> i32 {
+    |            ^^^^^^^^^
+
+warning: Miri does not support optimizations: the opt-level is ignored. The only effect of selecting a Cargo profile that enables optimizations (such as --release) is to apply its remaining settings, such as whether debug assertions and overflow checks are enabled.
+
+
+running 51 tests
+test hash_map::zipora_hash_map::tests::test_all_collisions_stress ... warning: variable does not need to be mutable
+   --> src/system/cpu_features.rs:587:13
+    |
+587 |         let mut cache_line_size = 64; // Default assumption
+    |             ----^^^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`
+
+warning: unused variable: `features`
+   --> src/system/cpu_features.rs:524:35
+    |
+524 |     fn detect_x86_features(&self, features: &mut CpuFeatures) {
+    |                                   ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_features`
+    |
+    = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`
+
+ok
+test hash_map::zipora_hash_map::tests::test_backward_shift_delete ... ok
+test hash_map::zipora_hash_map::tests::test_cache_optimized_config ... ok
+test hash_map::zipora_hash_map::tests::test_cache_optimized_returns_not_supported ... ok
+test hash_map::zipora_hash_map::tests::test_clear ... ok
+test hash_map::zipora_hash_map::tests::test_clear_then_reuse_standard ... ok
+test hash_map::zipora_hash_map::tests::test_clone_preserves_all_entries ... ok
+test hash_map::zipora_hash_map::tests::test_contains_key ... ok
+test hash_map::zipora_hash_map::tests::test_get_mut ... ok
+test hash_map::zipora_hash_map::tests::test_get_mut_after_small_inline_migration ... ok
+test hash_map::zipora_hash_map::tests::test_get_mut_nonexistent ... ok
+test hash_map::zipora_hash_map::tests::test_get_nonexistent ... ok
+test hash_map::zipora_hash_map::tests::test_hash_sentinel_max ... ok
+test hash_map::zipora_hash_map::tests::test_hash_sentinel_max_with_get_mut ... ok
+test hash_map::zipora_hash_map::tests::test_hash_sentinel_zero ... ok
+test hash_map::zipora_hash_map::tests::test_insert_and_get ... ok
+test hash_map::zipora_hash_map::tests::test_insert_overwrite_returns_old_value ... ok
+test hash_map::zipora_hash_map::tests::test_insert_remove_churn_does_not_grow_the_table_forever ... ok
+test hash_map::zipora_hash_map::tests::test_insert_remove_cycle ... ok
+test hash_map::zipora_hash_map::tests::test_iterator_all_removed ... ok
+test hash_map::zipora_hash_map::tests::test_iterator_basic ... ok
+test hash_map::zipora_hash_map::tests::test_iterator_empty ... ok
+test hash_map::zipora_hash_map::tests::test_iterator_skips_tombstones ... ok
+test hash_map::zipora_hash_map::tests::test_len_tracking ... ok
+test hash_map::zipora_hash_map::tests::test_len_tracking_consistency ... ok
+test hash_map::zipora_hash_map::tests::test_many_inserts ... ok
+test hash_map::zipora_hash_map::tests::test_migration_panic_safety ... ok
+test hash_map::zipora_hash_map::tests::test_multiple_tombstones_in_chain ... ok
+test hash_map::zipora_hash_map::tests::test_non_power_of_two_capacity_rounds_up ... ok
+test hash_map::zipora_hash_map::tests::test_overwrite_many_times ... ok
+test hash_map::zipora_hash_map::tests::test_remove_existing ... ok
+test hash_map::zipora_hash_map::tests::test_remove_nonexistent ... ok
+test hash_map::zipora_hash_map::tests::test_remove_then_reinsert_different_value ... ok
+test hash_map::zipora_hash_map::tests::test_resize_compacts_tombstones ... ok
+test hash_map::zipora_hash_map::tests::test_resize_preserves_all_entries ... ok
+test hash_map::zipora_hash_map::tests::test_single_element ... ok
+test hash_map::zipora_hash_map::tests::test_small_inline_basic ... ok
+test hash_map::zipora_hash_map::tests::test_small_inline_config ... ok
+test hash_map::zipora_hash_map::tests::test_small_inline_fallback_to_standard ... ok
+test hash_map::zipora_hash_map::tests::test_small_inline_overwrite_before_and_after_fallback ... ok
+test hash_map::zipora_hash_map::tests::test_small_inline_remove_and_clear_drops_values ... ok
+test hash_map::zipora_hash_map::tests::test_string_keys ... ok
+test hash_map::zipora_hash_map::tests::test_string_optimized_config ... ok
+test hash_map::zipora_hash_map::tests::test_string_optimized_returns_not_supported ... ok
+test hash_map::zipora_hash_map::tests::test_table_grows_at_the_configured_load_factor ... ok
+test hash_map::zipora_hash_map::tests::test_tombstone_does_not_break_probe_chain ... ok
+test hash_map::zipora_hash_map::tests::test_tombstone_duplicate_key_regression ... ok
+test hash_map::zipora_hash_map::tests::test_tombstone_get_returns_none ... ok
+test hash_map::zipora_hash_map::tests::test_tombstone_slot_reuse_same_key ... ok
+test hash_map::zipora_hash_map::tests::test_unified_hash_map_creation ... ok
+test hash_map::zipora_hash_map::tests::test_with_capacity ... ok
+
+test result: ok. 51 passed; 0 failed; 0 ignored; 0 measured; 2750 filtered out; finished in 33.99s
+
+warning: 9 warnings emitted
+
+cargo +nightly miri test --lib containers::specialized::circular_queue
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.11s
+     Running unittests src/lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/build/zipora/d90d3c6aadfed4a5/out/zipora-d90d3c6aadfed4a5)
+warning: unused import: `super::super::state::*`
+ --> src/fsa/double_array/tests.rs:9:9
+  |
+9 |     use super::super::state::*;
+  |         ^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `features`
+   --> src/system/cpu_features.rs:524:35
+    |
+524 |     fn detect_x86_features(&self, features: &mut CpuFeatures) {
+    |                                   ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_features`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src/system/cpu_features.rs:587:13
+    |
+587 |         let mut cache_line_size = 64; // Default assumption
+    |             ----^^^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `avx2_impl` is never used
+   --> src/simd/macros.rs:383:12
+    |
+383 |         fn avx2_impl() -> i32 {
+    |            ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `sse2_impl` is never used
+   --> src/simd/macros.rs:401:12
+    |
+401 |         fn sse2_impl() -> i32 {
+    |            ^^^^^^^^^
+
+warning: function `avx2_impl` is never used
+   --> src/simd/macros.rs:404:12
+    |
+404 |         fn avx2_impl() -> i32 {
+    |            ^^^^^^^^^
+
+warning: Miri does not support optimizations: the opt-level is ignored. The only effect of selecting a Cargo profile that enables optimizations (such as --release) is to apply its remaining settings, such as whether debug assertions and overflow checks are enabled.
+
+
+running 16 tests
+test containers::specialized::circular_queue::tests::test_auto_queue_clone ... ok
+test containers::specialized::circular_queue::tests::test_auto_queue_clone_panic_is_all_or_nothing ... ok
+test containers::specialized::circular_queue::tests::test_auto_queue_equality ... ok
+test containers::specialized::circular_queue::tests::test_auto_queue_front_back ... ok
+test containers::specialized::circular_queue::tests::test_auto_queue_growth ... ok
+test containers::specialized::circular_queue::tests::test_auto_queue_new ... ok
+test containers::specialized::circular_queue::tests::test_auto_queue_push_pop ... ok
+test containers::specialized::circular_queue::tests::test_auto_queue_reserve ... ok
+test containers::specialized::circular_queue::tests::test_auto_queue_with_capacity ... ok
+test containers::specialized::circular_queue::tests::test_clear ... ok
+test containers::specialized::circular_queue::tests::test_fixed_queue_auto_send_sync ... ok
+test containers::specialized::circular_queue::tests::test_fixed_queue_front_back ... ok
+test containers::specialized::circular_queue::tests::test_fixed_queue_full ... ok
+test containers::specialized::circular_queue::tests::test_fixed_queue_new ... ok
+test containers::specialized::circular_queue::tests::test_fixed_queue_push_pop ... ok
+test containers::specialized::circular_queue::tests::test_memory_efficiency ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 2785 filtered out; finished in 51.92s
+
+warning: 7 warnings emitted
+
+cargo +nightly miri test --lib containers::fast_vec
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.11s
+     Running unittests src/lib.rs (target/miri/x86_64-unknown-linux-gnu/debug/build/zipora/d90d3c6aadfed4a5/out/zipora-d90d3c6aadfed4a5)
+warning: unused import: `super::super::state::*`
+ --> src/fsa/double_array/tests.rs:9:9
+  |
+9 |     use super::super::state::*;
+  |         ^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `features`
+   --> src/system/cpu_features.rs:524:35
+    |
+524 |     fn detect_x86_features(&self, features: &mut CpuFeatures) {
+    |                                   ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_features`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src/system/cpu_features.rs:587:13
+    |
+587 |         let mut cache_line_size = 64; // Default assumption
+    |             ----^^^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `avx2_impl` is never used
+   --> src/simd/macros.rs:383:12
+    |
+383 |         fn avx2_impl() -> i32 {
+    |            ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `sse2_impl` is never used
+   --> src/simd/macros.rs:401:12
+    |
+401 |         fn sse2_impl() -> i32 {
+    |            ^^^^^^^^^
+
+warning: function `avx2_impl` is never used
+   --> src/simd/macros.rs:404:12
+    |
+404 |         fn avx2_impl() -> i32 {
+    |            ^^^^^^^^^
+
+warning: Miri does not support optimizations: the opt-level is ignored. The only effect of selecting a Cargo profile that enables optimizations (such as --release) is to apply its remaining settings, such as whether debug assertions and overflow checks are enabled.
+
+
+running 88 tests
+test containers::fast_vec::tests::alignment_tests::test_alignment_16_byte ... ok
+test containers::fast_vec::tests::alignment_tests::test_alignment_1_byte ... ok
+test containers::fast_vec::tests::alignment_tests::test_alignment_2_byte ... ok
+test containers::fast_vec::tests::alignment_tests::test_alignment_32_byte ... ok
+test containers::fast_vec::tests::alignment_tests::test_alignment_4_byte ... ok
+test containers::fast_vec::tests::alignment_tests::test_alignment_8_byte ... ok
+test containers::fast_vec::tests::alignment_tests::test_debug_assertions_in_debug_mode ... ok
+test containers::fast_vec::tests::alignment_tests::test_edge_case_alignment_boundary ... ok
+test containers::fast_vec::tests::alignment_tests::test_insert_remove_preserves_alignment ... ok
+test containers::fast_vec::tests::alignment_tests::test_large_allocations_with_realloc ... ok
+test containers::fast_vec::tests::alignment_tests::test_mixed_alignment_stress ... ok
+test containers::fast_vec::tests::alignment_tests::test_pointer_cast_safety ... ok
+test containers::fast_vec::tests::alignment_tests::test_reserve_preserves_alignment ... ok
+test containers::fast_vec::tests::alignment_tests::test_resize_preserves_alignment ... ok
+test containers::fast_vec::tests::alignment_tests::test_shrink_to_fit_preserves_alignment ... ok
+test containers::fast_vec::tests::alignment_tests::test_stress_allocation_cycles ... ok
+test containers::fast_vec::tests::alignment_tests::test_zero_to_nonzero_capacity_transitions ... ok
+test containers::fast_vec::tests::simd_tests::test_adaptive_simd_integration ... warning: variable does not need to be mutable
+   --> src/system/cpu_features.rs:587:13
+    |
+587 |         let mut cache_line_size = 64; // Default assumption
+    |             ----^^^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`
+
+warning: unused variable: `features`
+   --> src/system/cpu_features.rs:524:35
+    |
+524 |     fn detect_x86_features(&self, features: &mut CpuFeatures) {
+    |                                   ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_features`
+    |
+    = note: duplicate diagnostic emitted due to `-Z deduplicate-diagnostics=no`
+
+ok
+test containers::fast_vec::tests::simd_tests::test_advanced_prefetching_patterns ... ok
+test containers::fast_vec::tests::simd_tests::test_copy_from_slice_fast_empty ... ok
+test containers::fast_vec::tests::simd_tests::test_copy_from_slice_fast_large ... ok
+test containers::fast_vec::tests::simd_tests::test_copy_from_slice_fast_small ... ok
+test containers::fast_vec::tests::simd_tests::test_cross_platform_prefetch ... ok
+test containers::fast_vec::tests::simd_tests::test_extend_from_slice_fast_large ... ok
+test containers::fast_vec::tests::simd_tests::test_extend_from_slice_fast_small ... ok
+test containers::fast_vec::tests::simd_tests::test_fill_range_fast_bounds ... ok
+test containers::fast_vec::tests::simd_tests::test_fill_range_fast_small ... ok
+test containers::fast_vec::tests::simd_tests::test_fill_range_fast_u8 ... ok
+test containers::fast_vec::tests::simd_tests::test_performance_monitoring ... ok
+test containers::fast_vec::tests::simd_tests::test_prefetch_distance_threshold ... ok
+test containers::fast_vec::tests::simd_tests::test_set_len_basic ... ok
+test containers::fast_vec::tests::simd_tests::test_set_len_beyond_capacity_panics - should panic ... ok
+test containers::fast_vec::tests::simd_tests::test_set_len_exact_capacity ... ok
+test containers::fast_vec::tests::simd_tests::test_set_len_zero ... ok
+test containers::fast_vec::tests::simd_tests::test_simd_memory_safety ... ok
+test containers::fast_vec::tests::simd_tests::test_simd_optimized_extend_large ... ok
+test containers::fast_vec::tests::simd_tests::test_simd_optimized_insert_large ... ok
+test containers::fast_vec::tests::simd_tests::test_simd_optimized_partial_eq ... ok
+test containers::fast_vec::tests::simd_tests::test_simd_optimized_remove_large ... ok
+test containers::fast_vec::tests::simd_tests::test_simd_optimized_resize_large ... ok
+test containers::fast_vec::tests::simd_tests::test_simd_performance_characteristics ... ok
+test containers::fast_vec::tests::simd_tests::test_simd_safety_with_drop_types ... ok
+test containers::fast_vec::tests::simd_tests::test_simd_thresholds ... ok
+test containers::fast_vec::tests::simd_tests::test_simd_with_different_types ... ok
+test containers::fast_vec::tests::test_clear ... ok
+test containers::fast_vec::tests::test_clone ... ok
+test containers::fast_vec::tests::test_deref ... ok
+test containers::fast_vec::tests::test_drop_elements ... ok
+test containers::fast_vec::tests::test_edge_cases ... ok
+test containers::fast_vec::tests::test_ensure_capacity ... ok
+test containers::fast_vec::tests::test_ensure_capacity_returns_error_on_overflow ... ok
+test containers::fast_vec::tests::test_eq_uses_partial_eq_not_memcmp ... ok
+test containers::fast_vec::tests::test_equality_and_debug ... ok
+test containers::fast_vec::tests::test_extend ... ok
+test containers::fast_vec::tests::test_extend_drops_written_elements_on_panicking_iterator ... ok
+test containers::fast_vec::tests::test_from_vec_trait_empty ... ok
+test containers::fast_vec::tests::test_from_vec_trait_is_zero_copy ... ok
+test containers::fast_vec::tests::test_from_vec_trait_non_copy_type ... ok
+test containers::fast_vec::tests::test_index ... ok
+test containers::fast_vec::tests::test_index_bounds - should panic ... ok
+test containers::fast_vec::tests::test_insert_remove ... ok
+test containers::fast_vec::tests::test_into_iter_is_exact_size_and_extendable ... ok
+test containers::fast_vec::tests::test_large_allocation ... ok
+test containers::fast_vec::tests::test_memory_management ... ok
+test containers::fast_vec::tests::test_new ... ok
+test containers::fast_vec::tests::test_out_of_bounds_errors ... ok
+test containers::fast_vec::tests::test_pointers ... ok
+test containers::fast_vec::tests::test_push_pop ... ok
+test containers::fast_vec::tests::test_reserve ... ok
+test containers::fast_vec::tests::test_reserve_returns_error_on_overflow ... ok
+test containers::fast_vec::tests::test_resize ... ok
+test containers::fast_vec::tests::test_resize_drops_written_elements_on_panicking_clone ... ok
+test containers::fast_vec::tests::test_resize_returns_error_on_overflow ... ok
+test containers::fast_vec::tests::test_resize_with_drops_written_elements_on_panicking_generator ... ok
+test containers::fast_vec::tests::test_send_sync ... ok
+test containers::fast_vec::tests::test_shrink_to_fit ... ok
+test containers::fast_vec::tests::test_slices ... ok
+test containers::fast_vec::tests::test_unsafe_access ... ok
+test containers::fast_vec::tests::test_with_capacity ... ok
+test containers::fast_vec::tests::test_with_capacity_returns_error_on_overflow ... ok
+test containers::fast_vec::tests::test_with_capacity_zeroed ... ok
+test containers::fast_vec::tests::test_with_size ... ok
+test containers::fast_vec::tests::test_zero_capacity ... ok
+test containers::fast_vec::tests::test_zst_drop_runs_for_each_element ... ok
+test containers::fast_vec::tests::test_zst_into_iter ... ok
+test containers::fast_vec::tests::test_zst_push_pop_shrink ... ok
+test containers::fast_vec::tests::test_zst_with_capacity_never_allocates ... ok
+test containers::fast_vec::tests::test_zst_with_capacity_zeroed ... ok
+
+test result: ok. 88 passed; 0 failed; 0 ignored; 0 measured; 2713 filtered out; finished in 85.39s
+
+warning: 9 warnings emitted
+
