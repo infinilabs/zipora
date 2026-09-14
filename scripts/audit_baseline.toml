@@ -10,10 +10,11 @@ max_precondition_violations = 10
 max_markers = 178
 
 [index_audit]
-entropy = 94
+entropy = 70
 compression = 133
 blob_store = 50
 var_int = 0
 succinct_load = 6
-max_total = 283
+max_total = 259
+
 

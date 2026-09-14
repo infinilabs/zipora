@@ -7,6 +7,10 @@ use crate::algorithms::SuffixArray;
 use crate::error::{Result, ZiporaError};
 use std::collections::HashMap;
 
+/// Maximum decompressed size for dictionary-compressed data to prevent decompression bombs (128 MB)
+const MAX_DICTIONARY_DECOMPRESSED_SIZE: usize = 128 * 1024 * 1024;
+
+
 /// Rolling hash implementation for fast string matching
 #[derive(Debug, Clone)]
 struct RollingHash {
@@ -174,7 +178,10 @@ impl DictionaryBuilder {
 
         for i in 0..data.len().saturating_sub(self.min_match_length - 1) {
             // Create hash for current position
-            let hash = self.hash_bytes(&data[i..i + self.min_match_length]);
+            let hash = match data.get(i..i + self.min_match_length) {
+                Some(slice) => self.hash_bytes(slice),
+                None => break,
+            };
 
             // Look for matches in the hash table
             if let Some(positions) = hash_table.get(&hash) {
@@ -189,8 +196,9 @@ impl DictionaryBuilder {
                         let entry = DictionaryEntry::new(offset, match_len as u32);
 
                         // Use the substring as key
-                        let key = data[i..i + match_len].to_vec();
-                        entries.insert(key, entry);
+                        if let Some(seq_slice) = data.get(i..i + match_len) {
+                            entries.insert(seq_slice.to_vec(), entry);
+                        }
 
                         if entries.len() >= self.max_entries {
                             break;
@@ -224,12 +232,16 @@ impl DictionaryBuilder {
         let max_len = (data.len() - pos2).min(self.max_match_length);
         let mut len = 0;
 
-        while len < max_len && data[pos1 + len] == data[pos2 + len] {
+        while len < max_len
+            && data.get(pos1 + len).is_some()
+            && data.get(pos1 + len) == data.get(pos2 + len)
+        {
             len += 1;
         }
 
         len
     }
+
 }
 
 impl Default for DictionaryBuilder {
@@ -297,46 +309,47 @@ impl Dictionary {
 
     /// Deserialize dictionary
     pub fn deserialize(data: &[u8]) -> Result<Self> {
-        if data.len() < 4 {
-            return Err(ZiporaError::invalid_data("Dictionary data too short"));
+        let header_slice = data
+            .get(0..4)
+            .ok_or_else(|| ZiporaError::invalid_data("Dictionary data too short"))?;
+        let num_entries = u32::from_le_bytes(header_slice.try_into().unwrap()) as usize;
+
+        let remaining_bytes = data.len().saturating_sub(4);
+        // Each entry requires at least 2 (seq_len) + 4 (offset) + 4 (length) = 10 bytes
+        if num_entries > remaining_bytes / 10 {
+            return Err(ZiporaError::invalid_data(format!(
+                "Dictionary entry count {} exceeds maximum possible entries for data length {}",
+                num_entries,
+                data.len()
+            )));
         }
 
-        let num_entries = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
-        let mut entries = HashMap::new();
+        let mut entries = HashMap::with_capacity(num_entries);
         let mut offset = 4;
 
         for _ in 0..num_entries {
-            if offset + 2 > data.len() {
-                return Err(ZiporaError::invalid_data("Truncated dictionary data"));
-            }
-
-            // Read sequence length
-            let seq_len = u16::from_le_bytes([data[offset], data[offset + 1]]) as usize;
+            let seq_len_bytes = data
+                .get(offset..offset + 2)
+                .ok_or_else(|| ZiporaError::invalid_data("Truncated dictionary data"))?;
+            let seq_len = u16::from_le_bytes(seq_len_bytes.try_into().unwrap()) as usize;
             offset += 2;
 
-            if offset + seq_len + 8 > data.len() {
-                return Err(ZiporaError::invalid_data("Truncated dictionary sequence"));
-            }
-
-            // Read sequence
-            let sequence = data[offset..offset + seq_len].to_vec();
+            let seq_slice = data
+                .get(offset..offset + seq_len)
+                .ok_or_else(|| ZiporaError::invalid_data("Truncated dictionary sequence"))?;
+            let sequence = seq_slice.to_vec();
             offset += seq_len;
 
-            // Read entry data
-            let entry_offset = u32::from_le_bytes([
-                data[offset],
-                data[offset + 1],
-                data[offset + 2],
-                data[offset + 3],
-            ]);
+            let entry_offset_bytes = data
+                .get(offset..offset + 4)
+                .ok_or_else(|| ZiporaError::invalid_data("Truncated dictionary entry offset"))?;
+            let entry_offset = u32::from_le_bytes(entry_offset_bytes.try_into().unwrap());
             offset += 4;
 
-            let entry_length = u32::from_le_bytes([
-                data[offset],
-                data[offset + 1],
-                data[offset + 2],
-                data[offset + 3],
-            ]);
+            let entry_length_bytes = data
+                .get(offset..offset + 4)
+                .ok_or_else(|| ZiporaError::invalid_data("Truncated dictionary entry length"))?;
+            let entry_length = u32::from_le_bytes(entry_length_bytes.try_into().unwrap());
             offset += 4;
 
             entries.insert(sequence, DictionaryEntry::new(entry_offset, entry_length));
@@ -344,6 +357,7 @@ impl Dictionary {
 
         Ok(Self { entries })
     }
+
 }
 
 impl Default for Dictionary {
@@ -409,7 +423,8 @@ impl DictionaryCompressor {
 
                 // Find match length
                 while match_len < max_match_len
-                    && data[search_pos + match_len] == data[pos + match_len]
+                    && data.get(search_pos + match_len).is_some()
+                    && data.get(search_pos + match_len) == data.get(pos + match_len)
                 {
                     match_len += 1;
                 }
@@ -431,7 +446,9 @@ impl DictionaryCompressor {
             } else {
                 // Encode as literal: flag(0) + byte
                 result.push(0); // Literal flag
-                result.push(data[pos]);
+                if let Some(&byte) = data.get(pos) {
+                    result.push(byte);
+                }
                 pos += 1;
             }
         }
@@ -445,72 +462,64 @@ impl DictionaryCompressor {
         let mut pos = 0;
 
         while pos < compressed_data.len() {
-            if pos >= compressed_data.len() {
-                break;
-            }
-
-            let flag = compressed_data[pos];
+            let flag = *compressed_data
+                .get(pos)
+                .ok_or_else(|| ZiporaError::invalid_data("Unexpected end of compressed data"))?;
             pos += 1;
 
             if flag == 0 {
                 // Literal byte
-                if pos >= compressed_data.len() {
+                let byte = *compressed_data
+                    .get(pos)
+                    .ok_or_else(|| ZiporaError::invalid_data("Unexpected end of compressed data"))?;
+                pos += 1;
+
+                if result.len() >= MAX_DICTIONARY_DECOMPRESSED_SIZE {
                     return Err(ZiporaError::invalid_data(
-                        "Unexpected end of compressed data",
+                        "Decompressed size exceeds maximum limit",
                     ));
                 }
-                result.push(compressed_data[pos]);
-                pos += 1;
+                result.push(byte);
             } else if flag == 1 {
                 // Dictionary match
-                if pos + 8 > compressed_data.len() {
-                    return Err(ZiporaError::invalid_data("Truncated match data"));
-                }
-
-                let offset = u32::from_le_bytes([
-                    compressed_data[pos],
-                    compressed_data[pos + 1],
-                    compressed_data[pos + 2],
-                    compressed_data[pos + 3],
-                ]);
+                let offset_bytes = compressed_data
+                    .get(pos..pos + 4)
+                    .ok_or_else(|| ZiporaError::invalid_data("Truncated match offset"))?;
                 pos += 4;
+                let offset = u32::from_le_bytes(offset_bytes.try_into().unwrap());
 
-                let length = u32::from_le_bytes([
-                    compressed_data[pos],
-                    compressed_data[pos + 1],
-                    compressed_data[pos + 2],
-                    compressed_data[pos + 3],
-                ]) as usize;
+                let length_bytes = compressed_data
+                    .get(pos..pos + 4)
+                    .ok_or_else(|| ZiporaError::invalid_data("Truncated match length"))?;
                 pos += 4;
+                let length = u32::from_le_bytes(length_bytes.try_into().unwrap()) as usize;
 
-                // This is LZ77-style back-reference compression
-                // offset = distance back from current position
-                // length = number of bytes to copy
                 if offset == 0 || result.len() < offset as usize {
                     return Err(ZiporaError::invalid_data("Invalid back-reference offset"));
+                }
+
+                if result.len().saturating_add(length) > MAX_DICTIONARY_DECOMPRESSED_SIZE {
+                    return Err(ZiporaError::invalid_data(
+                        "Decompressed size exceeds maximum limit",
+                    ));
                 }
 
                 let start_pos = result.len() - offset as usize;
 
                 // Handle potential overlapping copies by copying byte by byte
-                // This is necessary when the copy length > offset (pattern repeats)
                 for i in 0..length {
                     let copy_pos = start_pos + i;
                     if copy_pos < result.len() {
-                        let byte = result[copy_pos];
+                        let &byte = result.get(copy_pos).ok_or_else(|| {
+                            ZiporaError::invalid_data("Back-reference calculation error")
+                        })?;
                         result.push(byte);
                     } else {
-                        // This case happens when length > offset (repeating pattern)
-                        // Copy from the already copied portion
                         let wrapped_pos = start_pos + (i % offset as usize);
-                        if wrapped_pos < result.len() {
-                            let byte = result[wrapped_pos];
-                            result.push(byte);
-                        } else {
-                            return Err(ZiporaError::invalid_data(
-                                "Back-reference calculation error",
-                            ));
-                        }
+                        let &byte = result.get(wrapped_pos).ok_or_else(|| {
+                            ZiporaError::invalid_data("Back-reference calculation error")
+                        })?;
+                        result.push(byte);
                     }
                 }
             } else {
@@ -523,6 +532,7 @@ impl DictionaryCompressor {
 
         Ok(result)
     }
+
 
     /// Get the dictionary
     pub fn dictionary(&self) -> &Dictionary {
@@ -582,20 +592,27 @@ impl OptimizedDictionaryCompressor {
             let mut rolling_hash = RollingHash::new(min_match_length);
 
             // Initialize hash for first window
-            let first_hash = rolling_hash.hash_slice(&data[0..min_match_length]);
-            hash_table.entry(first_hash).or_default().push(0);
+            if let Some(first_slice) = data.get(0..min_match_length) {
+                let first_hash = rolling_hash.hash_slice(first_slice);
+                hash_table.entry(first_hash).or_default().push(0);
 
-            // Roll through remaining positions
-            for i in 1..=data.len().saturating_sub(min_match_length) {
-                let hash = rolling_hash.roll(data[i - 1], data[i + min_match_length - 1]);
-                hash_table.entry(hash).or_default().push(i);
+                // Roll through remaining positions
+                for i in 1..=data.len().saturating_sub(min_match_length) {
+                    if let (Some(&prev_b), Some(&next_b)) =
+                        (data.get(i - 1), data.get(i + min_match_length - 1))
+                    {
+                        let hash = rolling_hash.roll(prev_b, next_b);
+                        hash_table.entry(hash).or_default().push(i);
+                    }
+                }
             }
         }
 
         // Populate bloom filter with potential patterns
         for i in 0..data.len().saturating_sub(min_match_length - 1) {
-            let pattern = &data[i..i + min_match_length];
-            bloom_filter.insert(pattern);
+            if let Some(pattern) = data.get(i..i + min_match_length) {
+                bloom_filter.insert(pattern);
+            }
         }
 
         Ok(Self {
@@ -626,78 +643,28 @@ impl OptimizedDictionaryCompressor {
             let mut best_match_length = 0;
 
             // Only search if we have enough data for minimum match
-            if pos + self.min_match_length <= data.len() {
-                let pattern = &data[pos..pos + self.min_match_length];
-
+            if let Some(pattern) = data.get(pos..pos + self.min_match_length) {
                 // Quick rejection using bloom filter
-                if self.bloom_filter.contains(pattern) {
-                    // Use rolling hash for fast candidate lookup
-                    let hash = if let Some(ref mut rh) = rolling_hash {
-                        if pos == 0 {
-                            rh.hash_slice(pattern)
-                        } else {
-                            rh.roll(data[pos - 1], data[pos + self.min_match_length - 1])
-                        }
-                    } else {
-                        0 // Fallback for very small data
-                    };
-
-                    // Try rolling hash optimization first
-                    if let Some(candidate_positions) = self.hash_table.get(&hash) {
-                        // Check each candidate position for the best match within the sliding window
-                        for &suffix_pos in candidate_positions {
-                            // Only consider positions that came before current position (look backwards)
-                            if suffix_pos >= pos {
-                                continue; // Can't reference future positions
-                            }
-
-                            let distance = pos - suffix_pos;
-                            if distance > self.window_size || distance == 0 {
-                                continue;
-                            }
-
-                            // Verify the pattern matches (hash collision check)
-                            if suffix_pos + self.min_match_length <= self.text.len() {
-                                let training_pattern =
-                                    &self.text[suffix_pos..suffix_pos + self.min_match_length];
-                                if training_pattern != pattern {
-                                    continue; // Hash collision, skip
-                                }
+                    if self.bloom_filter.contains(pattern) {
+                        // Use rolling hash for fast candidate lookup
+                        let hash = if let Some(ref mut rh) = rolling_hash {
+                            if pos == 0 {
+                                rh.hash_slice(pattern)
+                            } else if let (Some(&prev_b), Some(&next_b)) =
+                                (data.get(pos - 1), data.get(pos + self.min_match_length - 1))
+                            {
+                                rh.roll(prev_b, next_b)
                             } else {
-                                continue;
+                                0
                             }
+                        } else {
+                            0 // Fallback for very small data
+                        };
 
-                            // Extend the match as far as possible
-                            let max_possible = (data.len() - pos).min(self.max_match_length);
-                            let mut match_length = self.min_match_length;
-
-                            while match_length < max_possible
-                                && suffix_pos + match_length < self.text.len()
-                                && self.text[suffix_pos + match_length] == data[pos + match_length]
-                            {
-                                match_length += 1;
-                            }
-
-                            // Update best match if this is better and meets minimum length requirement
-                            // Apply the same minimum length threshold as original algorithm
-                            if match_length >= self.min_match_length.max(10)
-                                && match_length > best_match_length
-                            {
-                                best_match_offset = distance;
-                                best_match_length = match_length;
-                            }
-                        }
-                    }
-
-                    // Fallback to suffix array search if rolling hash didn't find good matches
-                    // This ensures we don't miss any matches due to hash table limitations
-                    if best_match_length == 0 {
-                        // Use suffix array to find all occurrences of the pattern
-                        let (start, count) = self.suffix_array.search(&self.text, pattern);
-
-                        // Check each occurrence for the best match within the sliding window
-                        for i in start..start + count {
-                            if let Some(suffix_pos) = self.suffix_array.suffix_at_rank(i) {
+                        // Try rolling hash optimization first
+                        if let Some(candidate_positions) = self.hash_table.get(&hash) {
+                            // Check each candidate position for the best match within the sliding window
+                            for &suffix_pos in candidate_positions {
                                 // Only consider positions that came before current position (look backwards)
                                 if suffix_pos >= pos {
                                     continue; // Can't reference future positions
@@ -708,14 +675,30 @@ impl OptimizedDictionaryCompressor {
                                     continue;
                                 }
 
+                                // Verify the pattern matches (hash collision check)
+                                if suffix_pos + self.min_match_length <= self.text.len() {
+                                    if let Some(training_pattern) =
+                                        self.text.get(suffix_pos..suffix_pos + self.min_match_length)
+                                    {
+                                        if training_pattern != pattern {
+                                            continue; // Hash collision, skip
+                                        }
+                                    } else {
+                                        continue;
+                                    }
+                                } else {
+                                    continue;
+                                }
+
                                 // Extend the match as far as possible
                                 let max_possible = (data.len() - pos).min(self.max_match_length);
                                 let mut match_length = self.min_match_length;
 
                                 while match_length < max_possible
                                     && suffix_pos + match_length < self.text.len()
-                                    && self.text[suffix_pos + match_length]
-                                        == data[pos + match_length]
+                                    && data.get(pos + match_length).is_some()
+                                    && self.text.get(suffix_pos + match_length)
+                                        == data.get(pos + match_length)
                                 {
                                     match_length += 1;
                                 }
@@ -729,9 +712,45 @@ impl OptimizedDictionaryCompressor {
                                 }
                             }
                         }
+
+                        // Fallback to suffix array search if rolling hash didn't find good matches
+                        if best_match_length == 0 {
+                            let (start, count) = self.suffix_array.search(&self.text, pattern);
+
+                            for i in start..start + count {
+                                if let Some(suffix_pos) = self.suffix_array.suffix_at_rank(i) {
+                                    if suffix_pos >= pos {
+                                        continue;
+                                    }
+
+                                    let distance = pos - suffix_pos;
+                                    if distance > self.window_size || distance == 0 {
+                                        continue;
+                                    }
+
+                                    let max_possible = (data.len() - pos).min(self.max_match_length);
+                                    let mut match_length = self.min_match_length;
+
+                                    while match_length < max_possible
+                                        && suffix_pos + match_length < self.text.len()
+                                        && data.get(pos + match_length).is_some()
+                                        && self.text.get(suffix_pos + match_length)
+                                            == data.get(pos + match_length)
+                                    {
+                                        match_length += 1;
+                                    }
+
+                                    if match_length >= self.min_match_length.max(10)
+                                        && match_length > best_match_length
+                                    {
+                                        best_match_offset = distance;
+                                        best_match_length = match_length;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
-            }
 
             // Encode the best match or literal
             if best_match_length >= self.min_match_length.max(10) {
@@ -743,7 +762,9 @@ impl OptimizedDictionaryCompressor {
             } else {
                 // Encode as literal: flag(0) + byte
                 result.push(0);
-                result.push(data[pos]);
+                if let Some(&byte) = data.get(pos) {
+                    result.push(byte);
+                }
                 pos += 1;
             }
         }
@@ -757,46 +778,46 @@ impl OptimizedDictionaryCompressor {
         let mut pos = 0;
 
         while pos < compressed_data.len() {
-            if pos >= compressed_data.len() {
-                break;
-            }
-
-            let flag = compressed_data[pos];
+            let flag = *compressed_data
+                .get(pos)
+                .ok_or_else(|| ZiporaError::invalid_data("Unexpected end of compressed data"))?;
             pos += 1;
 
             if flag == 0 {
                 // Literal byte
-                if pos >= compressed_data.len() {
+                let byte = *compressed_data
+                    .get(pos)
+                    .ok_or_else(|| ZiporaError::invalid_data("Unexpected end of compressed data"))?;
+                pos += 1;
+
+                if result.len() >= MAX_DICTIONARY_DECOMPRESSED_SIZE {
                     return Err(ZiporaError::invalid_data(
-                        "Unexpected end of compressed data",
+                        "Decompressed size exceeds maximum limit",
                     ));
                 }
-                result.push(compressed_data[pos]);
-                pos += 1;
+                result.push(byte);
             } else if flag == 1 {
                 // Dictionary match
-                if pos + 8 > compressed_data.len() {
-                    return Err(ZiporaError::invalid_data("Truncated match data"));
-                }
-
-                let offset = u32::from_le_bytes([
-                    compressed_data[pos],
-                    compressed_data[pos + 1],
-                    compressed_data[pos + 2],
-                    compressed_data[pos + 3],
-                ]);
+                let offset_bytes = compressed_data
+                    .get(pos..pos + 4)
+                    .ok_or_else(|| ZiporaError::invalid_data("Truncated match offset"))?;
                 pos += 4;
+                let offset = u32::from_le_bytes(offset_bytes.try_into().unwrap());
 
-                let length = u32::from_le_bytes([
-                    compressed_data[pos],
-                    compressed_data[pos + 1],
-                    compressed_data[pos + 2],
-                    compressed_data[pos + 3],
-                ]) as usize;
+                let length_bytes = compressed_data
+                    .get(pos..pos + 4)
+                    .ok_or_else(|| ZiporaError::invalid_data("Truncated match length"))?;
                 pos += 4;
+                let length = u32::from_le_bytes(length_bytes.try_into().unwrap()) as usize;
 
                 if offset == 0 || result.len() < offset as usize {
                     return Err(ZiporaError::invalid_data("Invalid back-reference offset"));
+                }
+
+                if result.len().saturating_add(length) > MAX_DICTIONARY_DECOMPRESSED_SIZE {
+                    return Err(ZiporaError::invalid_data(
+                        "Decompressed size exceeds maximum limit",
+                    ));
                 }
 
                 let start_pos = result.len() - offset as usize;
@@ -805,18 +826,16 @@ impl OptimizedDictionaryCompressor {
                 for i in 0..length {
                     let copy_pos = start_pos + i;
                     if copy_pos < result.len() {
-                        let byte = result[copy_pos];
+                        let &byte = result.get(copy_pos).ok_or_else(|| {
+                            ZiporaError::invalid_data("Back-reference calculation error")
+                        })?;
                         result.push(byte);
                     } else {
                         let wrapped_pos = start_pos + (i % offset as usize);
-                        if wrapped_pos < result.len() {
-                            let byte = result[wrapped_pos];
-                            result.push(byte);
-                        } else {
-                            return Err(ZiporaError::invalid_data(
-                                "Back-reference calculation error",
-                            ));
-                        }
+                        let &byte = result.get(wrapped_pos).ok_or_else(|| {
+                            ZiporaError::invalid_data("Back-reference calculation error")
+                        })?;
+                        result.push(byte);
                     }
                 }
             } else {
@@ -829,6 +848,7 @@ impl OptimizedDictionaryCompressor {
 
         Ok(result)
     }
+
 
     /// Estimate compression ratio
     pub fn estimate_compression_ratio(&self, data: &[u8]) -> f64 {
@@ -1214,4 +1234,31 @@ mod tests {
         let ratio = compressed.len() as f64 / data.len() as f64;
         assert!(ratio >= 0.9); // Little to no compression expected
     }
+
+    #[test]
+    fn test_dictionary_deserialize_oversized_count() {
+        // 4 bytes indicating u32::MAX entries, but no entries follow
+        let mut malformed = vec![0xff, 0xff, 0xff, 0xff];
+        assert!(Dictionary::deserialize(&malformed).is_err());
+
+        // 4 bytes indicating 100 entries, but only 5 bytes follow
+        malformed = vec![100, 0, 0, 0, 1, 2, 3, 4, 5];
+        assert!(Dictionary::deserialize(&malformed).is_err());
+    }
+
+    #[test]
+    fn test_dictionary_decompress_oversized_length() {
+        let compressor = DictionaryCompressor::new(Dictionary::new());
+        // Construct a compressed stream with flag=0 (literal 'A'), followed by flag=1 (match: offset=1, length=u32::MAX)
+        let mut crafted = vec![0, b'A', 1];
+        crafted.extend_from_slice(&1u32.to_le_bytes()); // offset = 1
+        crafted.extend_from_slice(&u32::MAX.to_le_bytes()); // length = u32::MAX
+
+        assert!(compressor.decompress(&crafted).is_err());
+
+        let opt_compressor = OptimizedDictionaryCompressor::new(b"hello world").unwrap();
+        assert!(opt_compressor.decompress(&crafted).is_err());
+    }
 }
+
+
