@@ -14,6 +14,7 @@
 .PHONY: safety_tests miri_tests miri_full
 .PHONY: format clippy doc
 .PHONY: dev validate ci pre_commit release_prep sanity
+.PHONY: unsafe_audit api_honesty index_audit
 .PHONY: clean update outdated audit help
 
 CARGO := cargo
@@ -208,10 +209,25 @@ pre_commit: format clippy test_debug safety_tests
 
 release_prep: clean format clippy build_release test_release bench doc audit
 
-# Sanity check: clippy gate + default features (debug + release) + all features (release)
+unsafe_audit:
+	python3 scripts/unsafe_audit.py
+
+api_honesty:
+	python3 scripts/api_honesty.py
+
+index_audit:
+	python3 scripts/index_audit.py
+
+# Sanity check: clippy gate + audits + default features (debug + release) + all features (release)
 sanity:
 	@echo "=== Clippy (all targets, all features, deny warnings) ==="
 	$(CARGO) clippy --all-targets --all-features -- -D warnings
+	@echo "=== Unsafe Code Audit (B7) ==="
+	python3 scripts/unsafe_audit.py
+	@echo "=== API Honesty Audit (D1) ==="
+	python3 scripts/api_honesty.py
+	@echo "=== Decoder Indexing Safety Audit (D10.1) ==="
+	python3 scripts/index_audit.py
 	@echo "=== Default (debug) ==="
 	$(CARGO) build
 	$(CARGO) test --lib
@@ -223,7 +239,12 @@ sanity:
 	$(CARGO) test --release --lib --all-features
 	@echo "=== No default features (guard feature-gated cfg attrs) ==="
 	$(CARGO) clippy --no-default-features -- -D unused_variables -D unused_imports
+	@echo "=== Test counts (B8) ==="
+	@echo -n "Lib tests (debug): " && $(CARGO) test --lib 2>&1 | grep -o '[0-9]\+ passed' | head -1
+	@echo -n "Lib tests (release): " && $(CARGO) test --release --lib --all-features 2>&1 | grep -o '[0-9]\+ passed' | head -1
+	@echo -n "Doc tests: " && $(CARGO) test --doc 2>&1 | grep -o '[0-9]\+ passed' | head -1
 	@echo "=== Sanity: PASS ==="
+
 
 # =============================================================================
 # MAINTENANCE
