@@ -337,14 +337,28 @@ impl VarIntEncoder {
         let mut offset = 0;
 
         // Read count
-        let (count, count_bytes) = self.decode_leb128_u64(&data[offset..])?;
+        let slice = data
+            .get(offset..)
+            .ok_or_else(|| ZiporaError::invalid_data("offset out of bounds"))?;
+        let (count, count_bytes) = self.decode_leb128_u64(slice)?;
         offset += count_bytes;
+
+        let remaining = data.len().saturating_sub(offset);
+        if count > remaining as u64 {
+            return Err(ZiporaError::invalid_data(format!(
+                "leb128 sequence count {} exceeds remaining bytes {}",
+                count, remaining
+            )));
+        }
 
         let mut result = Vec::with_capacity(count as usize);
 
         // Read values
         for _ in 0..count {
-            let (value, value_bytes) = self.decode_leb128_u64(&data[offset..])?;
+            let slice = data
+                .get(offset..)
+                .ok_or_else(|| ZiporaError::invalid_data("offset out of bounds"))?;
+            let (value, value_bytes) = self.decode_leb128_u64(slice)?;
             result.push(value);
             offset += value_bytes;
         }
@@ -356,20 +370,35 @@ impl VarIntEncoder {
         let mut offset = 0;
 
         // Read count
-        let (count, count_bytes) = self.decode_leb128_u64(&data[offset..])?;
+        let slice = data
+            .get(offset..)
+            .ok_or_else(|| ZiporaError::invalid_data("offset out of bounds"))?;
+        let (count, count_bytes) = self.decode_leb128_u64(slice)?;
         offset += count_bytes;
+
+        let remaining = data.len().saturating_sub(offset);
+        if count > remaining as u64 {
+            return Err(ZiporaError::invalid_data(format!(
+                "leb128 sequence count {} exceeds remaining bytes {}",
+                count, remaining
+            )));
+        }
 
         let mut result = Vec::with_capacity(count as usize);
 
         // Read values
         for _ in 0..count {
-            let (value, value_bytes) = self.decode_leb128_i64(&data[offset..])?;
+            let slice = data
+                .get(offset..)
+                .ok_or_else(|| ZiporaError::invalid_data("offset out of bounds"))?;
+            let (value, value_bytes) = self.decode_leb128_i64(slice)?;
             result.push(value);
             offset += value_bytes;
         }
 
         Ok(result)
     }
+
 }
 
 // Zigzag implementations
@@ -463,31 +492,48 @@ impl VarIntEncoder {
         let mut offset = 0;
 
         // Read count
-        let (count, count_bytes) = self.decode_leb128_u64(&data[offset..])?;
+        let slice = data
+            .get(offset..)
+            .ok_or_else(|| ZiporaError::invalid_data("offset out of bounds"))?;
+        let (count, count_bytes) = self.decode_leb128_u64(slice)?;
         offset += count_bytes;
 
         if count == 0 {
             return Ok(Vec::new());
         }
 
+        let remaining = data.len().saturating_sub(offset);
+        if count > remaining as u64 {
+            return Err(ZiporaError::invalid_data(format!(
+                "delta sequence count {} exceeds remaining bytes {}",
+                count, remaining
+            )));
+        }
+
         let mut result = Vec::with_capacity(count as usize);
 
         // Read first value
-        let (first_value, first_bytes) = self.decode_leb128_u64(&data[offset..])?;
+        let slice = data
+            .get(offset..)
+            .ok_or_else(|| ZiporaError::invalid_data("offset out of bounds"))?;
+        let (first_value, first_bytes) = self.decode_leb128_u64(slice)?;
         result.push(first_value);
         offset += first_bytes;
 
         // Read deltas
         for _ in 1..count {
-            let (encoded_delta, delta_bytes) = self.decode_leb128_u64(&data[offset..])?;
+            let slice = data
+                .get(offset..)
+                .ok_or_else(|| ZiporaError::invalid_data("offset out of bounds"))?;
+            let (encoded_delta, delta_bytes) = self.decode_leb128_u64(slice)?;
 
-            let prev_value = result[result.len() - 1];
+            let prev_value = *result.last().unwrap();
             let next_value = if (encoded_delta & 1) == 0 {
                 // Positive delta
-                prev_value + (encoded_delta >> 1)
+                prev_value.wrapping_add(encoded_delta >> 1)
             } else {
                 // Negative delta
-                prev_value - (encoded_delta >> 1)
+                prev_value.wrapping_sub(encoded_delta >> 1)
             };
 
             result.push(next_value);
@@ -501,30 +547,49 @@ impl VarIntEncoder {
         let mut offset = 0;
 
         // Read count
-        let (count, count_bytes) = self.decode_leb128_u64(&data[offset..])?;
+        let slice = data
+            .get(offset..)
+            .ok_or_else(|| ZiporaError::invalid_data("offset out of bounds"))?;
+        let (count, count_bytes) = self.decode_leb128_u64(slice)?;
         offset += count_bytes;
 
         if count == 0 {
             return Ok(Vec::new());
         }
 
+        let remaining = data.len().saturating_sub(offset);
+        if count > remaining as u64 {
+            return Err(ZiporaError::invalid_data(format!(
+                "delta sequence count {} exceeds remaining bytes {}",
+                count, remaining
+            )));
+        }
+
         let mut result = Vec::with_capacity(count as usize);
 
         // Read first value
-        let (first_value, first_bytes) = self.decode_leb128_i64(&data[offset..])?;
+        let slice = data
+            .get(offset..)
+            .ok_or_else(|| ZiporaError::invalid_data("offset out of bounds"))?;
+        let (first_value, first_bytes) = self.decode_leb128_i64(slice)?;
         result.push(first_value);
         offset += first_bytes;
 
         // Read deltas
         for _ in 1..count {
-            let (delta, delta_bytes) = self.decode_zigzag_i64(&data[offset..])?;
-            let next_value = result[result.len() - 1] + delta;
+            let slice = data
+                .get(offset..)
+                .ok_or_else(|| ZiporaError::invalid_data("offset out of bounds"))?;
+            let (delta, delta_bytes) = self.decode_zigzag_i64(slice)?;
+            let prev_value = *result.last().unwrap();
+            let next_value = prev_value.wrapping_add(delta);
             result.push(next_value);
             offset += delta_bytes;
         }
 
         Ok(result)
     }
+
 }
 
 // Group varint implementations
@@ -577,18 +642,24 @@ impl VarIntEncoder {
         let mut offset = 0;
 
         // Read count
-        let (count, count_bytes) = self.decode_leb128_u64(&data[offset..])?;
+        let slice = data
+            .get(offset..)
+            .ok_or_else(|| ZiporaError::invalid_data("Empty group varint data"))?;
+        let (count, count_bytes) = self.decode_leb128_u64(slice)?;
         offset += count_bytes;
+
+        let remaining_bytes = data.len().saturating_sub(offset);
+        if count > remaining_bytes as u64 {
+            return Err(ZiporaError::invalid_data("Group varint count exceeds remaining bytes"));
+        }
 
         let mut result = Vec::with_capacity(count as usize);
         let mut remaining = count;
 
         while remaining > 0 {
-            if offset >= data.len() {
-                return Err(ZiporaError::invalid_data("Incomplete group varint"));
-            }
-
-            let selector = data[offset];
+            let &selector = data
+                .get(offset)
+                .ok_or_else(|| ZiporaError::invalid_data("Incomplete group varint"))?;
             offset += 1;
 
             let chunk_size = cmp::min(remaining, 4);
@@ -596,14 +667,16 @@ impl VarIntEncoder {
             for i in 0..chunk_size {
                 let bytes_needed = ((selector >> (i * 2)) & 0x3) as usize + 1;
 
-                if offset + bytes_needed > data.len() {
-                    return Err(ZiporaError::invalid_data("Incomplete group varint value"));
+                let val_slice = data
+                    .get(offset..offset + bytes_needed)
+                    .ok_or_else(|| ZiporaError::invalid_data("Incomplete group varint value"))?;
+
+                let mut raw = [0u8; 8];
+                if let Some(dest) = raw.get_mut(..bytes_needed) {
+                    dest.copy_from_slice(val_slice);
                 }
 
-                let mut value_bytes = [0u8; 8];
-                value_bytes[..bytes_needed].copy_from_slice(&data[offset..offset + bytes_needed]);
-
-                let value = u64::from_le_bytes(value_bytes);
+                let value = u64::from_le_bytes(raw);
                 result.push(value);
                 offset += bytes_needed;
             }
@@ -615,7 +688,7 @@ impl VarIntEncoder {
     }
 }
 
-// Prefix-free implementations (simplified)
+// Prefix-free implementations
 impl VarIntEncoder {
     fn encode_prefix_free_u64(&self, value: u64) -> Result<Vec<u8>> {
         // Use length prefix followed by value
@@ -641,23 +714,24 @@ impl VarIntEncoder {
     }
 
     fn decode_prefix_free_u64(&self, data: &[u8]) -> Result<(u64, usize)> {
-        if data.is_empty() {
-            return Err(ZiporaError::invalid_data("Empty prefix-free data"));
-        }
-
-        let length = data[0] as usize;
+        let length_byte = *data
+            .first()
+            .ok_or_else(|| ZiporaError::invalid_data("Empty prefix-free data"))?;
+        let length = length_byte as usize;
         if length == 0 || length > 8 {
             return Err(ZiporaError::invalid_data("Invalid prefix-free length"));
         }
 
-        if data.len() < 1 + length {
-            return Err(ZiporaError::invalid_data("Incomplete prefix-free data"));
+        let chunk = data
+            .get(1..1 + length)
+            .ok_or_else(|| ZiporaError::invalid_data("Incomplete prefix-free data"))?;
+
+        let mut raw = [0u8; 8];
+        if let Some(dest) = raw.get_mut(..length) {
+            dest.copy_from_slice(chunk);
         }
 
-        let mut value_bytes = [0u8; 8];
-        value_bytes[..length].copy_from_slice(&data[1..1 + length]);
-
-        let value = u64::from_le_bytes(value_bytes);
+        let value = u64::from_le_bytes(raw);
         Ok((value, 1 + length))
     }
 
@@ -703,14 +777,28 @@ impl VarIntEncoder {
         let mut offset = 0;
 
         // Read count
-        let (count, count_bytes) = self.decode_leb128_u64(&data[offset..])?;
+        let slice = data
+            .get(offset..)
+            .ok_or_else(|| ZiporaError::invalid_data("offset out of bounds"))?;
+        let (count, count_bytes) = self.decode_leb128_u64(slice)?;
         offset += count_bytes;
+
+        let remaining = data.len().saturating_sub(offset);
+        if count > remaining as u64 {
+            return Err(ZiporaError::invalid_data(format!(
+                "prefix-free sequence count {} exceeds remaining bytes {}",
+                count, remaining
+            )));
+        }
 
         let mut result = Vec::with_capacity(count as usize);
 
         // Read values
         for _ in 0..count {
-            let (value, value_bytes) = self.decode_prefix_free_u64(&data[offset..])?;
+            let slice = data
+                .get(offset..)
+                .ok_or_else(|| ZiporaError::invalid_data("offset out of bounds"))?;
+            let (value, value_bytes) = self.decode_prefix_free_u64(slice)?;
             result.push(value);
             offset += value_bytes;
         }
@@ -722,14 +810,28 @@ impl VarIntEncoder {
         let mut offset = 0;
 
         // Read count
-        let (count, count_bytes) = self.decode_leb128_u64(&data[offset..])?;
+        let slice = data
+            .get(offset..)
+            .ok_or_else(|| ZiporaError::invalid_data("offset out of bounds"))?;
+        let (count, count_bytes) = self.decode_leb128_u64(slice)?;
         offset += count_bytes;
+
+        let remaining = data.len().saturating_sub(offset);
+        if count > remaining as u64 {
+            return Err(ZiporaError::invalid_data(format!(
+                "prefix-free sequence count {} exceeds remaining bytes {}",
+                count, remaining
+            )));
+        }
 
         let mut result = Vec::with_capacity(count as usize);
 
         // Read values
         for _ in 0..count {
-            let (value, value_bytes) = self.decode_prefix_free_i64(&data[offset..])?;
+            let slice = data
+                .get(offset..)
+                .ok_or_else(|| ZiporaError::invalid_data("offset out of bounds"))?;
+            let (value, value_bytes) = self.decode_prefix_free_i64(slice)?;
             result.push(value);
             offset += value_bytes;
         }
@@ -738,7 +840,7 @@ impl VarIntEncoder {
     }
 }
 
-// Compact and SIMD implementations (simplified)
+// Compact and SIMD implementations
 impl VarIntEncoder {
     fn encode_compact_u64(&self, value: u64) -> Result<Vec<u8>> {
         // For simplicity, use LEB128 for compact encoding
@@ -774,14 +876,15 @@ impl VarIntEncoder {
     }
 
     fn encode_simd_sequence_u64(&self, values: &[u64]) -> Result<Vec<u8>> {
-        // For now, use LEB128 with potential for SIMD optimization
+        // LEB128 encoding for bulk sequences
         self.encode_leb128_sequence_u64(values)
     }
 
     fn encode_simd_sequence_i64(&self, values: &[i64]) -> Result<Vec<u8>> {
-        // For now, use zigzag with potential for SIMD optimization
+        // Zigzag encoding for bulk sequences
         self.encode_zigzag_sequence_i64(values)
     }
+
 
     fn decode_simd_sequence_u64(&self, data: &[u8]) -> Result<Vec<u64>> {
         self.decode_leb128_sequence_u64(data)
@@ -1004,4 +1107,33 @@ mod tests {
         let decoded = encoder.decode_i64_sequence(&encoded).unwrap();
         assert_eq!(decoded, edge_values);
     }
+
+    #[test]
+    fn test_sequence_count_exceeds_buffer_rejected() {
+        let encoder_leb = VarIntEncoder::leb128();
+        let encoder_delta = VarIntEncoder::delta();
+        let encoder_group = VarIntEncoder::group_varint();
+        let encoder_prefix = VarIntEncoder::prefix_free();
+
+        // Count = 1_000_000_000 encoded in LEB128: 0x80, 0x94, 0xeb, 0xdc, 0x03 followed by no data or just 1 byte
+        let malformed = vec![0x80, 0x94, 0xeb, 0xdc, 0x03, 0x01];
+        assert!(encoder_leb.decode_u64_sequence(&malformed).is_err());
+        assert!(encoder_leb.decode_i64_sequence(&malformed).is_err());
+        assert!(encoder_delta.decode_u64_sequence(&malformed).is_err());
+        assert!(encoder_delta.decode_i64_sequence(&malformed).is_err());
+        assert!(encoder_group.decode_u64_sequence(&malformed).is_err());
+        assert!(encoder_prefix.decode_u64_sequence(&malformed).is_err());
+        assert!(encoder_prefix.decode_i64_sequence(&malformed).is_err());
+
+        // Count = u64::MAX
+        let max_count_leb = vec![0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01];
+        assert!(encoder_leb.decode_u64_sequence(&max_count_leb).is_err());
+        assert!(encoder_leb.decode_i64_sequence(&max_count_leb).is_err());
+        assert!(encoder_delta.decode_u64_sequence(&max_count_leb).is_err());
+        assert!(encoder_delta.decode_i64_sequence(&max_count_leb).is_err());
+        assert!(encoder_group.decode_u64_sequence(&max_count_leb).is_err());
+        assert!(encoder_prefix.decode_u64_sequence(&max_count_leb).is_err());
+        assert!(encoder_prefix.decode_i64_sequence(&max_count_leb).is_err());
+    }
 }
+

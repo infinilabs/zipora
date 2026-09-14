@@ -244,7 +244,9 @@ impl VarInt {
         while !data.is_empty() {
             let (value, consumed) = Self::decode(data)?;
             values.push(value);
-            data = &data[consumed..];
+            data = data.get(consumed..).ok_or_else(|| {
+                ZiporaError::invalid_data("varint decode consumed more bytes than available")
+            })?;
         }
 
         Ok(values)
