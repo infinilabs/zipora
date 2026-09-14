@@ -218,7 +218,7 @@ api_honesty:
 index_audit:
 	python3 scripts/index_audit.py
 
-# Sanity check: clippy gate + audits + default features (debug + release) + all features (release)
+# Sanity check: clippy gate + audits + tests + drift guard (Rule B8)
 sanity:
 	@echo "=== Clippy (all targets, all features, deny warnings) ==="
 	$(CARGO) clippy --all-targets --all-features -- -D warnings
@@ -228,21 +228,17 @@ sanity:
 	python3 scripts/api_honesty.py
 	@echo "=== Decoder Indexing Safety Audit (D10.1) ==="
 	python3 scripts/index_audit.py
-	@echo "=== Default (debug) ==="
-	$(CARGO) build
-	$(CARGO) test --lib
-	@echo "=== Default (release) ==="
-	$(CARGO) build --release
-	$(CARGO) test --release --lib
-	@echo "=== All features (release) ==="
-	$(CARGO) build --release --all-features
-	$(CARGO) test --release --lib --all-features
 	@echo "=== No default features (guard feature-gated cfg attrs) ==="
 	$(CARGO) clippy --no-default-features -- -D unused_variables -D unused_imports
-	@echo "=== Test counts (B8) ==="
-	@echo -n "Lib tests (debug): " && $(CARGO) test --lib 2>&1 | grep -o '[0-9]\+ passed' | head -1
-	@echo -n "Lib tests (release): " && $(CARGO) test --release --lib --all-features 2>&1 | grep -o '[0-9]\+ passed' | head -1
-	@echo -n "Doc tests: " && $(CARGO) test --doc 2>&1 | grep -o '[0-9]\+ passed' | head -1
+	@mkdir -p target/sanity
+	@echo "=== Tests: debug (--all-features --tests) ==="
+	$(CARGO) test --all-features --tests 2>&1 | tee target/sanity/debug_tests.log
+	@echo "=== Tests: release lib (--all-features --release) ==="
+	$(CARGO) test --release --lib --all-features 2>&1 | tee target/sanity/release_lib.log
+	@echo "=== Tests: doctests (--doc) ==="
+	$(CARGO) test --doc 2>&1 | tee target/sanity/doctests.log
+	@echo "=== Test counts and drift guard (B8) ==="
+	python3 scripts/check_gate_drift.py target/sanity
 	@echo "=== Sanity: PASS ==="
 
 
