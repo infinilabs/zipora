@@ -1,0 +1,18 @@
+# Audit Baseline for Zipora CI Gates
+# Ratchet policy: ceilings represent exact current counts in non-test code.
+# Any increase causes the audit to fail. Reductions must update this file.
+
+[unsafe_audit]
+max_undocumented = 39
+max_precondition_violations = 10
+
+[api_honesty]
+max_markers = 182
+
+[index_audit]
+entropy = 94
+compression = 133
+blob_store = 50
+var_int = 20
+succinct_load = 6
+max_total = 303
