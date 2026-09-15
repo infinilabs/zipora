@@ -266,10 +266,11 @@ impl HuffmanTree {
 
     /// Deserialize the tree from storage
     pub fn deserialize(data: &[u8]) -> Result<Self> {
-        let count_bytes = data
-            .get(0..2)
+        let count_chunk = data
+            .get(..2)
+            .and_then(|s| s.first_chunk::<2>())
             .ok_or_else(|| ZiporaError::invalid_data("Huffman tree data too short"))?;
-        let symbol_count = u16::from_le_bytes(count_bytes.try_into().unwrap()) as usize;
+        let symbol_count = u16::from_le_bytes(*count_chunk) as usize;
         if symbol_count > 256 {
             return Err(ZiporaError::invalid_data("Huffman tree symbol count exceeds 256"));
         }

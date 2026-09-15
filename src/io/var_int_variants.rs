@@ -521,22 +521,22 @@ impl VarIntEncoder {
         offset += first_bytes;
 
         // Read deltas
+        let mut current_value = first_value;
         for _ in 1..count {
             let slice = data
                 .get(offset..)
                 .ok_or_else(|| ZiporaError::invalid_data("offset out of bounds"))?;
             let (encoded_delta, delta_bytes) = self.decode_leb128_u64(slice)?;
 
-            let prev_value = *result.last().unwrap();
-            let next_value = if (encoded_delta & 1) == 0 {
+            current_value = if (encoded_delta & 1) == 0 {
                 // Positive delta
-                prev_value.wrapping_add(encoded_delta >> 1)
+                current_value.wrapping_add(encoded_delta >> 1)
             } else {
                 // Negative delta
-                prev_value.wrapping_sub(encoded_delta >> 1)
+                current_value.wrapping_sub(encoded_delta >> 1)
             };
 
-            result.push(next_value);
+            result.push(current_value);
             offset += delta_bytes;
         }
 
@@ -576,14 +576,14 @@ impl VarIntEncoder {
         offset += first_bytes;
 
         // Read deltas
+        let mut current_value = first_value;
         for _ in 1..count {
             let slice = data
                 .get(offset..)
                 .ok_or_else(|| ZiporaError::invalid_data("offset out of bounds"))?;
             let (delta, delta_bytes) = self.decode_zigzag_i64(slice)?;
-            let prev_value = *result.last().unwrap();
-            let next_value = prev_value.wrapping_add(delta);
-            result.push(next_value);
+            current_value = current_value.wrapping_add(delta);
+            result.push(current_value);
             offset += delta_bytes;
         }
 
@@ -1134,6 +1134,22 @@ mod tests {
         assert!(encoder_group.decode_u64_sequence(&max_count_leb).is_err());
         assert!(encoder_prefix.decode_u64_sequence(&max_count_leb).is_err());
         assert!(encoder_prefix.decode_i64_sequence(&max_count_leb).is_err());
+    }
+
+    #[test]
+    fn test_delta_sequence_wrapping_overflow() {
+        let encoder_delta = VarIntEncoder::delta();
+        // Input [2, 0, 3]: count = 2, first = 0, delta = negative 1.
+        // In debug build with checked arithmetic this panicked with attempt to subtract with overflow.
+        // With wrapping arithmetic, it decodes cleanly to [0, u64::MAX].
+        let input = [2, 0, 3];
+        let decoded = encoder_delta.decode_u64_sequence(&input).expect("wrapping subtraction does not panic");
+        assert_eq!(decoded, vec![0, u64::MAX]);
+
+        // Same for i64 delta sequence
+        let input_i64 = [2, 0, 1];
+        let decoded_i64 = encoder_delta.decode_i64_sequence(&input_i64).expect("wrapping delta does not panic");
+        assert_eq!(decoded_i64, vec![0, -1]);
     }
 }
 

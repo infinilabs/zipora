@@ -7,9 +7,6 @@ use crate::algorithms::SuffixArray;
 use crate::error::{Result, ZiporaError};
 use std::collections::HashMap;
 
-/// Maximum decompressed size for dictionary-compressed data to prevent decompression bombs (128 MB)
-const MAX_DICTIONARY_DECOMPRESSED_SIZE: usize = 128 * 1024 * 1024;
-
 
 /// Rolling hash implementation for fast string matching
 #[derive(Debug, Clone)]
@@ -309,14 +306,16 @@ impl Dictionary {
 
     /// Deserialize dictionary
     pub fn deserialize(data: &[u8]) -> Result<Self> {
-        let header_slice = data
-            .get(0..4)
+        let header_chunk = data
+            .get(..4)
+            .and_then(|s| s.first_chunk::<4>())
             .ok_or_else(|| ZiporaError::invalid_data("Dictionary data too short"))?;
-        let num_entries = u32::from_le_bytes(header_slice.try_into().unwrap()) as usize;
+        let num_entries = u32::from_le_bytes(*header_chunk) as usize;
 
+        const MAX_ENTRIES: usize = 1_000_000;
         let remaining_bytes = data.len().saturating_sub(4);
         // Each entry requires at least 2 (seq_len) + 4 (offset) + 4 (length) = 10 bytes
-        if num_entries > remaining_bytes / 10 {
+        if num_entries > MAX_ENTRIES || num_entries > remaining_bytes / 10 {
             return Err(ZiporaError::invalid_data(format!(
                 "Dictionary entry count {} exceeds maximum possible entries for data length {}",
                 num_entries,
@@ -328,10 +327,11 @@ impl Dictionary {
         let mut offset = 4;
 
         for _ in 0..num_entries {
-            let seq_len_bytes = data
-                .get(offset..offset + 2)
+            let seq_len_chunk = data
+                .get(offset..)
+                .and_then(|s| s.first_chunk::<2>())
                 .ok_or_else(|| ZiporaError::invalid_data("Truncated dictionary data"))?;
-            let seq_len = u16::from_le_bytes(seq_len_bytes.try_into().unwrap()) as usize;
+            let seq_len = u16::from_le_bytes(*seq_len_chunk) as usize;
             offset += 2;
 
             let seq_slice = data
@@ -340,16 +340,18 @@ impl Dictionary {
             let sequence = seq_slice.to_vec();
             offset += seq_len;
 
-            let entry_offset_bytes = data
-                .get(offset..offset + 4)
+            let entry_offset_chunk = data
+                .get(offset..)
+                .and_then(|s| s.first_chunk::<4>())
                 .ok_or_else(|| ZiporaError::invalid_data("Truncated dictionary entry offset"))?;
-            let entry_offset = u32::from_le_bytes(entry_offset_bytes.try_into().unwrap());
+            let entry_offset = u32::from_le_bytes(*entry_offset_chunk);
             offset += 4;
 
-            let entry_length_bytes = data
-                .get(offset..offset + 4)
+            let entry_length_chunk = data
+                .get(offset..)
+                .and_then(|s| s.first_chunk::<4>())
                 .ok_or_else(|| ZiporaError::invalid_data("Truncated dictionary entry length"))?;
-            let entry_length = u32::from_le_bytes(entry_length_bytes.try_into().unwrap());
+            let entry_length = u32::from_le_bytes(*entry_length_chunk);
             offset += 4;
 
             entries.insert(sequence, DictionaryEntry::new(entry_offset, entry_length));
@@ -473,35 +475,32 @@ impl DictionaryCompressor {
                     .get(pos)
                     .ok_or_else(|| ZiporaError::invalid_data("Unexpected end of compressed data"))?;
                 pos += 1;
-
-                if result.len() >= MAX_DICTIONARY_DECOMPRESSED_SIZE {
-                    return Err(ZiporaError::invalid_data(
-                        "Decompressed size exceeds maximum limit",
-                    ));
-                }
                 result.push(byte);
             } else if flag == 1 {
                 // Dictionary match
-                let offset_bytes = compressed_data
-                    .get(pos..pos + 4)
+                let offset_chunk = compressed_data
+                    .get(pos..)
+                    .and_then(|s| s.first_chunk::<4>())
                     .ok_or_else(|| ZiporaError::invalid_data("Truncated match offset"))?;
                 pos += 4;
-                let offset = u32::from_le_bytes(offset_bytes.try_into().unwrap());
+                let offset = u32::from_le_bytes(*offset_chunk);
 
-                let length_bytes = compressed_data
-                    .get(pos..pos + 4)
+                let length_chunk = compressed_data
+                    .get(pos..)
+                    .and_then(|s| s.first_chunk::<4>())
                     .ok_or_else(|| ZiporaError::invalid_data("Truncated match length"))?;
                 pos += 4;
-                let length = u32::from_le_bytes(length_bytes.try_into().unwrap()) as usize;
+                let length = u32::from_le_bytes(*length_chunk) as usize;
 
                 if offset == 0 || result.len() < offset as usize {
                     return Err(ZiporaError::invalid_data("Invalid back-reference offset"));
                 }
 
-                if result.len().saturating_add(length) > MAX_DICTIONARY_DECOMPRESSED_SIZE {
-                    return Err(ZiporaError::invalid_data(
-                        "Decompressed size exceeds maximum limit",
-                    ));
+                if length > self.max_match_length || length < self.min_match_length {
+                    return Err(ZiporaError::invalid_data(format!(
+                        "Match length {} out of bounds (min: {}, max: {})",
+                        length, self.min_match_length, self.max_match_length
+                    )));
                 }
 
                 let start_pos = result.len() - offset as usize;
@@ -789,35 +788,32 @@ impl OptimizedDictionaryCompressor {
                     .get(pos)
                     .ok_or_else(|| ZiporaError::invalid_data("Unexpected end of compressed data"))?;
                 pos += 1;
-
-                if result.len() >= MAX_DICTIONARY_DECOMPRESSED_SIZE {
-                    return Err(ZiporaError::invalid_data(
-                        "Decompressed size exceeds maximum limit",
-                    ));
-                }
                 result.push(byte);
             } else if flag == 1 {
                 // Dictionary match
-                let offset_bytes = compressed_data
-                    .get(pos..pos + 4)
+                let offset_chunk = compressed_data
+                    .get(pos..)
+                    .and_then(|s| s.first_chunk::<4>())
                     .ok_or_else(|| ZiporaError::invalid_data("Truncated match offset"))?;
                 pos += 4;
-                let offset = u32::from_le_bytes(offset_bytes.try_into().unwrap());
+                let offset = u32::from_le_bytes(*offset_chunk);
 
-                let length_bytes = compressed_data
-                    .get(pos..pos + 4)
+                let length_chunk = compressed_data
+                    .get(pos..)
+                    .and_then(|s| s.first_chunk::<4>())
                     .ok_or_else(|| ZiporaError::invalid_data("Truncated match length"))?;
                 pos += 4;
-                let length = u32::from_le_bytes(length_bytes.try_into().unwrap()) as usize;
+                let length = u32::from_le_bytes(*length_chunk) as usize;
 
                 if offset == 0 || result.len() < offset as usize {
                     return Err(ZiporaError::invalid_data("Invalid back-reference offset"));
                 }
 
-                if result.len().saturating_add(length) > MAX_DICTIONARY_DECOMPRESSED_SIZE {
-                    return Err(ZiporaError::invalid_data(
-                        "Decompressed size exceeds maximum limit",
-                    ));
+                if length > self.max_match_length || length < self.min_match_length {
+                    return Err(ZiporaError::invalid_data(format!(
+                        "Match length {} out of bounds (min: {}, max: {})",
+                        length, self.min_match_length, self.max_match_length
+                    )));
                 }
 
                 let start_pos = result.len() - offset as usize;
@@ -1256,8 +1252,15 @@ mod tests {
 
         assert!(compressor.decompress(&crafted).is_err());
 
+        // Also test match length > max_match_length (e.g. length = 300 when max_match_length = 258)
+        let mut match_exceeds = vec![0, b'A', 1];
+        match_exceeds.extend_from_slice(&1u32.to_le_bytes()); // offset = 1
+        match_exceeds.extend_from_slice(&300u32.to_le_bytes()); // length = 300 > 258
+        assert!(compressor.decompress(&match_exceeds).is_err());
+
         let opt_compressor = OptimizedDictionaryCompressor::new(b"hello world").unwrap();
         assert!(opt_compressor.decompress(&crafted).is_err());
+        assert!(opt_compressor.decompress(&match_exceeds).is_err());
     }
 }
 

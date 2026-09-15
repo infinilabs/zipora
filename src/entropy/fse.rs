@@ -771,8 +771,8 @@ impl FseTable {
             x <<= BLOCK_SIZE * 8;
 
             // Read backward from current position
-            if let Some(bytes) = input.get(*pos..*pos + BLOCK_SIZE) {
-                let new_bytes = u32::from_le_bytes(bytes.try_into().unwrap());
+            if let Some(bytes) = input.get(*pos..).and_then(|s| s.first_chunk::<BLOCK_SIZE>()) {
+                let new_bytes = u32::from_le_bytes(*bytes);
                 x |= new_bytes as u64;
             }
         }
@@ -1178,10 +1178,10 @@ impl FseDecoder {
         match mode {
             FSE_MODE_SINGLE => self.decompress_single(body),
             FSE_MODE_PARALLEL => {
-                let count_bytes = body.get(0..4).ok_or_else(|| {
+                let count_chunk = body.first_chunk::<4>().ok_or_else(|| {
                     ZiporaError::invalid_data("FSE parallel stream truncated before block count")
                 })?;
-                let num_blocks = u32::from_le_bytes(count_bytes.try_into().unwrap()) as usize;
+                let num_blocks = u32::from_le_bytes(*count_chunk) as usize;
                 if num_blocks == 0 {
                     return Err(ZiporaError::invalid_data(
                         "FSE parallel stream with zero blocks",
@@ -1214,10 +1214,11 @@ impl FseDecoder {
 
         // Read header to get original size and table info
         let mut pos = 0;
-        let size_bytes = data
-            .get(pos..pos + 4)
+        let size_chunk = data
+            .get(pos..)
+            .and_then(|s| s.first_chunk::<4>())
             .ok_or_else(|| ZiporaError::invalid_data("Data too short for FSE header"))?;
-        let original_size = u32::from_le_bytes(size_bytes.try_into().unwrap()) as usize;
+        let original_size = u32::from_le_bytes(*size_chunk) as usize;
         pos += 4;
 
         // The size field is attacker-controlled and cannot be cross-checked
@@ -1258,10 +1259,11 @@ impl FseDecoder {
         }
 
         // Read compact frequency table
-        let count_bytes = data
-            .get(pos..pos + 2)
+        let count_chunk = data
+            .get(pos..)
+            .and_then(|s| s.first_chunk::<2>())
             .ok_or_else(|| ZiporaError::invalid_data("Missing frequency table size"))?;
-        let num_symbols = u16::from_le_bytes(count_bytes.try_into().unwrap()) as usize;
+        let num_symbols = u16::from_le_bytes(*count_chunk) as usize;
         pos += 2;
 
         let mut frequencies = [0u32; 256];
@@ -1272,10 +1274,11 @@ impl FseDecoder {
             let symbol = symbol_byte as usize;
             pos += 1;
 
-            let freq_bytes = data
-                .get(pos..pos + 4)
+            let freq_chunk = data
+                .get(pos..)
+                .and_then(|s| s.first_chunk::<4>())
                 .ok_or_else(|| ZiporaError::invalid_data("Incomplete frequency table"))?;
-            let freq = u32::from_le_bytes(freq_bytes.try_into().unwrap());
+            let freq = u32::from_le_bytes(*freq_chunk);
             pos += 4;
 
             if symbol < 256 {
@@ -1300,10 +1303,11 @@ impl FseDecoder {
 
         // State is stored at the end of the compressed data
         let state_start = data.len() - 8;
-        let state_bytes = data
-            .get(state_start..state_start + 8)
+        let state_chunk = data
+            .get(state_start..)
+            .and_then(|s| s.first_chunk::<8>())
             .ok_or_else(|| ZiporaError::invalid_data("Missing final state"))?;
-        let mut state = u64::from_le_bytes(state_bytes.try_into().unwrap());
+        let mut state = u64::from_le_bytes(*state_chunk);
 
         // Validate state is reasonable
         if state == 0 {
@@ -1355,10 +1359,11 @@ impl FseDecoder {
         // Read block sizes
         let mut block_sizes = Vec::with_capacity(num_blocks);
         for _ in 0..num_blocks {
-            let size_bytes = data
-                .get(pos..pos + 4)
+            let size_chunk = data
+                .get(pos..)
+                .and_then(|s| s.first_chunk::<4>())
                 .ok_or_else(|| ZiporaError::invalid_data("Invalid block size data"))?;
-            let size = u32::from_le_bytes(size_bytes.try_into().unwrap());
+            let size = u32::from_le_bytes(*size_chunk);
             block_sizes.push(size as usize);
             pos += 4;
         }

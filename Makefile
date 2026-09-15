@@ -14,7 +14,7 @@
 .PHONY: safety_tests miri_tests miri_full
 .PHONY: format clippy doc
 .PHONY: dev validate ci pre_commit release_prep sanity
-.PHONY: unsafe_audit api_honesty index_audit
+.PHONY: unsafe_audit api_honesty index_audit unwrap_audit
 .PHONY: clean update outdated audit help
 
 CARGO := cargo
@@ -218,6 +218,9 @@ api_honesty:
 index_audit:
 	python3 scripts/index_audit.py
 
+unwrap_audit:
+	python3 scripts/unwrap_audit.py
+
 # Sanity check: clippy gate + audits + tests + drift guard (Rule B8)
 sanity:
 	@echo "=== Clippy (all targets, all features, deny warnings) ==="
@@ -228,6 +231,8 @@ sanity:
 	python3 scripts/api_honesty.py
 	@echo "=== Decoder Indexing Safety Audit (D10.1) ==="
 	python3 scripts/index_audit.py
+	@echo "=== Production Unwrap Audit (Rule D10 / S2-R1) ==="
+	python3 scripts/unwrap_audit.py
 	@echo "=== No default features (guard feature-gated cfg attrs) ==="
 	$(CARGO) clippy --no-default-features -- -D unused_variables -D unused_imports
 	@mkdir -p target/sanity
