@@ -923,7 +923,11 @@ mod tests {
 
         // Both Order-0 and Order-1 should compress text (< 1.0)
         assert!(ratio0 < 1.0, "Order-0 ratio should compress: {}", ratio0);
-        assert!(ratio1 < 1.0, "Order-1 ratio should compress: {}", ratio1);
+        assert!(
+            ratio1 < 0.65 && ratio1 < ratio0,
+            "Order-1 ratio {} should be < 0.65 and < Order-0 ratio {}",
+            ratio1, ratio0
+        );
 
         // Roundtrip with Order-1
         let encoded1 = encoder1.encode(&data).unwrap();

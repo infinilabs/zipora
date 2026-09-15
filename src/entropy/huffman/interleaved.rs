@@ -143,12 +143,13 @@ impl ContextualHuffmanEncoder {
         // Collect context-dependent frequencies
         let mut context_frequencies: HashMap<u8, [u32; 256]> = HashMap::new();
 
-        for w in data.windows(2) {
-            let context = w[0];
-            let symbol = w[1];
-
-            let freqs = context_frequencies.entry(context).or_insert([0u32; 256]);
-            freqs[symbol as usize] += 1;
+        if let Some((first, rest)) = data.split_first() {
+            let mut prev = *first;
+            for &curr in rest {
+                let freqs = context_frequencies.entry(prev).or_insert([0u32; 256]);
+                freqs[curr as usize] += 1;
+                prev = curr;
+            }
         }
 
         // Build one tree per context that has data
@@ -227,12 +228,16 @@ impl ContextualHuffmanEncoder {
         // Collect context-dependent frequencies
         let mut context_frequencies: HashMap<u16, [u32; 256]> = HashMap::new();
 
-        for w in data.windows(3) {
-            let context = ((w[0] as u16) << 8) | (w[1] as u16);
-            let symbol = w[2];
-
-            let freqs = context_frequencies.entry(context).or_insert([0u32; 256]);
-            freqs[symbol as usize] += 1;
+        if let Some(([c0, c1], rest)) = data.split_first_chunk::<2>() {
+            let mut prev2 = *c0 as u16;
+            let mut prev1 = *c1 as u16;
+            for &symbol in rest {
+                let context = (prev2 << 8) | prev1;
+                let freqs = context_frequencies.entry(context).or_insert([0u32; 256]);
+                freqs[symbol as usize] += 1;
+                prev2 = prev1;
+                prev1 = symbol as u16;
+            }
         }
 
         // Build one tree per context that has data
@@ -303,10 +308,10 @@ impl ContextualHuffmanEncoder {
             HuffmanOrder::Order1 => {
                 // First symbol uses Order-0 tree (trees[0])
                 let order0_tree = &self.trees[0];
-                let first_symbol = *data
-                    .first()
-                    .ok_or_else(|| ZiporaError::invalid_data("Data empty"))?;
-                if let Some(code) = order0_tree.get_code(first_symbol) {
+                let Some((first_symbol, rest)) = data.split_first() else {
+                    return Err(ZiporaError::invalid_data("Data empty"));
+                };
+                if let Some(code) = order0_tree.get_code(*first_symbol) {
                     bits.extend_from_slice(code);
                 } else {
                     return Err(ZiporaError::invalid_data(format!(
@@ -316,15 +321,14 @@ impl ContextualHuffmanEncoder {
                 }
 
                 // Subsequent symbols use context-dependent trees
-                for w in data.windows(2) {
-                    let context = w[0] as u32;
-                    let symbol = w[1];
-
+                let mut context = *first_symbol as u32;
+                for &symbol in rest {
                     // Try context-specific tree first
                     if let Some(&tree_idx) = self.context_map.get(&context) {
                         let tree = &self.trees[tree_idx];
                         if let Some(code) = tree.get_code(symbol) {
                             bits.extend_from_slice(code);
+                            context = symbol as u32;
                             continue;
                         }
                     }
@@ -338,32 +342,73 @@ impl ContextualHuffmanEncoder {
                             symbol
                         )));
                     }
+                    context = symbol as u32;
                 }
             }
             HuffmanOrder::Order2 => {
-                // First two symbols use Order-0 tree (trees[0])
                 let order0_tree = &self.trees[0];
-                for &sym in data.iter().take(2) {
-                    if let Some(code) = order0_tree.get_code(sym) {
-                        bits.extend_from_slice(code);
-                    } else {
-                        return Err(ZiporaError::invalid_data(format!(
-                            "Symbol {} not in Order-0 tree",
-                            sym
-                        )));
+                let Some(([c0, c1], rest)) = data.split_first_chunk::<2>() else {
+                    for &sym in data {
+                        if let Some(code) = order0_tree.get_code(sym) {
+                            bits.extend_from_slice(code);
+                        } else {
+                            return Err(ZiporaError::invalid_data(format!(
+                                "Symbol {} not in Order-0 tree",
+                                sym
+                            )));
+                        }
                     }
+                    let mut result = Vec::new();
+                    let mut current_byte = 0u8;
+                    let mut bit_count = 0;
+                    for bit in bits {
+                        if bit {
+                            current_byte |= 1 << bit_count;
+                        }
+                        bit_count += 1;
+                        if bit_count == 8 {
+                            result.push(current_byte);
+                            current_byte = 0;
+                            bit_count = 0;
+                        }
+                    }
+                    if bit_count > 0 {
+                        result.push(current_byte);
+                    }
+                    return Ok(result);
+                };
+
+                if let Some(code) = order0_tree.get_code(*c0) {
+                    bits.extend_from_slice(code);
+                } else {
+                    return Err(ZiporaError::invalid_data(format!(
+                        "Symbol {} not in Order-0 tree",
+                        c0
+                    )));
+                }
+
+                if let Some(code) = order0_tree.get_code(*c1) {
+                    bits.extend_from_slice(code);
+                } else {
+                    return Err(ZiporaError::invalid_data(format!(
+                        "Symbol {} not in Order-0 tree",
+                        c1
+                    )));
                 }
 
                 // Subsequent symbols use 2-symbol context
-                for w in data.windows(3) {
-                    let context = ((w[0] as u32) << 8) | (w[1] as u32);
-                    let symbol = w[2];
+                let mut prev2 = *c0 as u32;
+                let mut prev1 = *c1 as u32;
+                for &symbol in rest {
+                    let context = (prev2 << 8) | prev1;
 
                     // Try context-specific tree first
                     if let Some(&tree_idx) = self.context_map.get(&context) {
                         let tree = &self.trees[tree_idx];
                         if let Some(code) = tree.get_code(symbol) {
                             bits.extend_from_slice(code);
+                            prev2 = prev1;
+                            prev1 = symbol as u32;
                             continue;
                         }
                     }
@@ -377,6 +422,8 @@ impl ContextualHuffmanEncoder {
                             symbol
                         )));
                     }
+                    prev2 = prev1;
+                    prev1 = symbol as u32;
                 }
             }
         }
@@ -437,49 +484,60 @@ impl ContextualHuffmanEncoder {
             HuffmanOrder::Order1 => {
                 // First symbol
                 if let Some(tree) = self.trees.first()
-                    && let Some(&first) = data.first()
-                    && let Some(code) = tree.get_code(first)
+                    && let Some((first, rest)) = data.split_first()
                 {
-                    total_bits += code.len();
-                }
-
-                // Context-dependent symbols
-                for w in data.windows(2) {
-                    let context = w[0] as u32;
-                    let symbol = w[1];
-
-                    let tree_idx = self.context_map.get(&context).copied().unwrap_or(0);
-                    let tree = &self.trees[tree_idx];
-
-                    if let Some(code) = tree.get_code(symbol) {
+                    if let Some(code) = tree.get_code(*first) {
                         total_bits += code.len();
-                    } else if let Some(code) = self.trees[0].get_code(symbol) {
-                        total_bits += code.len();
+                    }
+
+                    // Context-dependent symbols
+                    let mut context = *first as u32;
+                    for &symbol in rest {
+                        let tree_idx = self.context_map.get(&context).copied().unwrap_or(0);
+                        let tree = &self.trees[tree_idx];
+
+                        if let Some(code) = tree.get_code(symbol) {
+                            total_bits += code.len();
+                        } else if let Some(code) = self.trees[0].get_code(symbol) {
+                            total_bits += code.len();
+                        }
+                        context = symbol as u32;
                     }
                 }
             }
             HuffmanOrder::Order2 => {
-                // First two symbols
-                for &sym in data.iter().take(2) {
-                    if let Some(tree) = self.trees.first()
-                        && let Some(code) = tree.get_code(sym)
-                    {
+                if let Some(tree) = self.trees.first()
+                    && let Some(([c0, c1], rest)) = data.split_first_chunk::<2>()
+                {
+                    if let Some(code) = tree.get_code(*c0) {
                         total_bits += code.len();
                     }
-                }
-
-                // Context-dependent symbols
-                for w in data.windows(3) {
-                    let context = ((w[0] as u32) << 8) | (w[1] as u32);
-                    let symbol = w[2];
-
-                    let tree_idx = self.context_map.get(&context).copied().unwrap_or(0);
-                    let tree = &self.trees[tree_idx];
-
-                    if let Some(code) = tree.get_code(symbol) {
+                    if let Some(code) = tree.get_code(*c1) {
                         total_bits += code.len();
-                    } else if let Some(code) = self.trees[0].get_code(symbol) {
-                        total_bits += code.len();
+                    }
+
+                    // Context-dependent symbols
+                    let mut prev2 = *c0 as u32;
+                    let mut prev1 = *c1 as u32;
+                    for &symbol in rest {
+                        let context = (prev2 << 8) | prev1;
+
+                        let tree_idx = self.context_map.get(&context).copied().unwrap_or(0);
+                        let tree = &self.trees[tree_idx];
+
+                        if let Some(code) = tree.get_code(symbol) {
+                            total_bits += code.len();
+                        } else if let Some(code) = self.trees[0].get_code(symbol) {
+                            total_bits += code.len();
+                        }
+                        prev2 = prev1;
+                        prev1 = symbol as u32;
+                    }
+                } else if let Some(tree) = self.trees.first() {
+                    for &sym in data {
+                        if let Some(code) = tree.get_code(sym) {
+                            total_bits += code.len();
+                        }
                     }
                 }
             }
@@ -537,10 +595,11 @@ impl ContextualHuffmanEncoder {
         let mut offset = 1;
 
         // Read tree count
-        let count_bytes = data
-            .get(offset..offset + 4)
+        let count_chunk = data
+            .get(offset..)
+            .and_then(|s| s.first_chunk::<4>())
             .ok_or_else(|| ZiporaError::invalid_data("Truncated tree count"))?;
-        let tree_count = u32::from_le_bytes(count_bytes.try_into().unwrap()) as usize;
+        let tree_count = u32::from_le_bytes(*count_chunk) as usize;
         offset += 4;
 
         if tree_count > data.len() {
@@ -548,10 +607,11 @@ impl ContextualHuffmanEncoder {
         }
 
         // Read context map
-        let context_count_bytes = data
-            .get(offset..offset + 4)
+        let context_count_chunk = data
+            .get(offset..)
+            .and_then(|s| s.first_chunk::<4>())
             .ok_or_else(|| ZiporaError::invalid_data("Truncated context count"))?;
-        let context_count = u32::from_le_bytes(context_count_bytes.try_into().unwrap()) as usize;
+        let context_count = u32::from_le_bytes(*context_count_chunk) as usize;
         offset += 4;
 
         if context_count > (data.len() - offset) / 8 {
@@ -560,11 +620,17 @@ impl ContextualHuffmanEncoder {
 
         let mut context_map = HashMap::with_capacity(context_count);
         for _ in 0..context_count {
-            let entry_bytes = data
-                .get(offset..offset + 8)
+            let ctx_chunk = data
+                .get(offset..)
+                .and_then(|s| s.first_chunk::<4>())
                 .ok_or_else(|| ZiporaError::invalid_data("Truncated context map"))?;
-            let context = u32::from_le_bytes(entry_bytes[0..4].try_into().unwrap());
-            let tree_idx = u32::from_le_bytes(entry_bytes[4..8].try_into().unwrap()) as usize;
+            let context = u32::from_le_bytes(*ctx_chunk);
+
+            let tree_chunk = data
+                .get(offset + 4..)
+                .and_then(|s| s.first_chunk::<4>())
+                .ok_or_else(|| ZiporaError::invalid_data("Truncated context map"))?;
+            let tree_idx = u32::from_le_bytes(*tree_chunk) as usize;
             offset += 8;
             if tree_idx >= tree_count {
                 return Err(ZiporaError::invalid_data(
@@ -577,10 +643,11 @@ impl ContextualHuffmanEncoder {
         // Read trees
         let mut trees = Vec::with_capacity(tree_count);
         for _ in 0..tree_count {
-            let size_bytes = data
-                .get(offset..offset + 4)
+            let size_chunk = data
+                .get(offset..)
+                .and_then(|s| s.first_chunk::<4>())
                 .ok_or_else(|| ZiporaError::invalid_data("Truncated tree size"))?;
-            let tree_size = u32::from_le_bytes(size_bytes.try_into().unwrap()) as usize;
+            let tree_size = u32::from_le_bytes(*size_chunk) as usize;
             offset += 4;
 
             let tree_data = data
