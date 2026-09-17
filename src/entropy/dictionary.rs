@@ -151,12 +151,18 @@ impl DictionaryBuilder {
     }
 
     /// Set minimum match length
+    ///
+    /// Note: `min_match_length` and `max_match_length` are stream format parameters
+    /// and must match between compression and decompression.
     pub fn min_match_length(mut self, min_length: usize) -> Self {
         self.min_match_length = min_length;
         self
     }
 
     /// Set maximum match length
+    ///
+    /// Note: `min_match_length` and `max_match_length` are stream format parameters
+    /// and must match between compression and decompression.
     pub fn max_match_length(mut self, max_length: usize) -> Self {
         self.max_match_length = max_length;
         self
@@ -312,10 +318,9 @@ impl Dictionary {
             .ok_or_else(|| ZiporaError::invalid_data("Dictionary data too short"))?;
         let num_entries = u32::from_le_bytes(*header_chunk) as usize;
 
-        const MAX_ENTRIES: usize = 1_000_000;
         let remaining_bytes = data.len().saturating_sub(4);
         // Each entry requires at least 2 (seq_len) + 4 (offset) + 4 (length) = 10 bytes
-        if num_entries > MAX_ENTRIES || num_entries > remaining_bytes / 10 {
+        if num_entries > remaining_bytes / 10 {
             return Err(ZiporaError::invalid_data(format!(
                 "Dictionary entry count {} exceeds maximum possible entries for data length {}",
                 num_entries,
@@ -387,12 +392,18 @@ impl DictionaryCompressor {
     }
 
     /// Set minimum match length
+    ///
+    /// Note: `min_match_length` and `max_match_length` are stream format parameters
+    /// and must match between compression and decompression.
     pub fn min_match_length(mut self, min_length: usize) -> Self {
         self.min_match_length = min_length;
         self
     }
 
     /// Set maximum match length
+    ///
+    /// Note: `min_match_length` and `max_match_length` are stream format parameters
+    /// and must match between compression and decompression.
     pub fn max_match_length(mut self, max_length: usize) -> Self {
         self.max_match_length = max_length;
         self
@@ -572,6 +583,9 @@ impl OptimizedDictionaryCompressor {
     }
 
     /// Create optimized compressor with custom configuration
+    ///
+    /// Note: `min_match_length` and `max_match_length` are stream format parameters
+    /// and must match between compression and decompression.
     pub fn with_config(
         data: &[u8],
         min_match_length: usize,

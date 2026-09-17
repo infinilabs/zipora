@@ -143,13 +143,13 @@ impl ContextualHuffmanEncoder {
         // Collect context-dependent frequencies
         let mut context_frequencies: HashMap<u8, [u32; 256]> = HashMap::new();
 
-        if let Some((first, rest)) = data.split_first() {
-            let mut prev = *first;
-            for &curr in rest {
-                let freqs = context_frequencies.entry(prev).or_insert([0u32; 256]);
-                freqs[curr as usize] += 1;
-                prev = curr;
-            }
+        // D10.1: in-bounds: 1 <= i < data.len(), bounds proven by loop range
+        for i in 1..data.len() {
+            let context = data[i - 1]; // D10.1: in-bounds
+            let symbol = data[i];     // D10.1: in-bounds
+
+            let freqs = context_frequencies.entry(context).or_insert([0u32; 256]);
+            freqs[symbol as usize] += 1;
         }
 
         // Build one tree per context that has data
@@ -228,16 +228,13 @@ impl ContextualHuffmanEncoder {
         // Collect context-dependent frequencies
         let mut context_frequencies: HashMap<u16, [u32; 256]> = HashMap::new();
 
-        if let Some(([c0, c1], rest)) = data.split_first_chunk::<2>() {
-            let mut prev2 = *c0 as u16;
-            let mut prev1 = *c1 as u16;
-            for &symbol in rest {
-                let context = (prev2 << 8) | prev1;
-                let freqs = context_frequencies.entry(context).or_insert([0u32; 256]);
-                freqs[symbol as usize] += 1;
-                prev2 = prev1;
-                prev1 = symbol as u16;
-            }
+        // D10.1: in-bounds: 2 <= i < data.len(), bounds proven by loop range
+        for i in 2..data.len() {
+            let context = ((data[i - 2] as u16) << 8) | (data[i - 1] as u16); // D10.1: in-bounds
+            let symbol = data[i];                                              // D10.1: in-bounds
+
+            let freqs = context_frequencies.entry(context).or_insert([0u32; 256]);
+            freqs[symbol as usize] += 1;
         }
 
         // Build one tree per context that has data
@@ -308,27 +305,29 @@ impl ContextualHuffmanEncoder {
             HuffmanOrder::Order1 => {
                 // First symbol uses Order-0 tree (trees[0])
                 let order0_tree = &self.trees[0];
-                let Some((first_symbol, rest)) = data.split_first() else {
+                if data.is_empty() {
                     return Err(ZiporaError::invalid_data("Data empty"));
-                };
-                if let Some(code) = order0_tree.get_code(*first_symbol) {
+                }
+                if let Some(code) = order0_tree.get_code(data[0]) { // D10.1: in-bounds
                     bits.extend_from_slice(code);
                 } else {
                     return Err(ZiporaError::invalid_data(format!(
                         "First symbol {} not in Order-0 tree",
-                        first_symbol
+                        data[0] // D10.1: in-bounds
                     )));
                 }
 
                 // Subsequent symbols use context-dependent trees
-                let mut context = *first_symbol as u32;
-                for &symbol in rest {
+                // D10.1: in-bounds: 1 <= i < data.len(), bounds proven by loop range
+                for i in 1..data.len() {
+                    let context = data[i - 1] as u32; // D10.1: in-bounds
+                    let symbol = data[i];             // D10.1: in-bounds
+
                     // Try context-specific tree first
                     if let Some(&tree_idx) = self.context_map.get(&context) {
                         let tree = &self.trees[tree_idx];
                         if let Some(code) = tree.get_code(symbol) {
                             bits.extend_from_slice(code);
-                            context = symbol as u32;
                             continue;
                         }
                     }
@@ -342,12 +341,11 @@ impl ContextualHuffmanEncoder {
                             symbol
                         )));
                     }
-                    context = symbol as u32;
                 }
             }
             HuffmanOrder::Order2 => {
                 let order0_tree = &self.trees[0];
-                let Some(([c0, c1], rest)) = data.split_first_chunk::<2>() else {
+                if data.len() < 2 {
                     for &sym in data {
                         if let Some(code) = order0_tree.get_code(sym) {
                             bits.extend_from_slice(code);
@@ -358,72 +356,43 @@ impl ContextualHuffmanEncoder {
                             )));
                         }
                     }
-                    let mut result = Vec::new();
-                    let mut current_byte = 0u8;
-                    let mut bit_count = 0;
-                    for bit in bits {
-                        if bit {
-                            current_byte |= 1 << bit_count;
-                        }
-                        bit_count += 1;
-                        if bit_count == 8 {
-                            result.push(current_byte);
-                            current_byte = 0;
-                            bit_count = 0;
-                        }
-                    }
-                    if bit_count > 0 {
-                        result.push(current_byte);
-                    }
-                    return Ok(result);
-                };
-
-                if let Some(code) = order0_tree.get_code(*c0) {
-                    bits.extend_from_slice(code);
                 } else {
-                    return Err(ZiporaError::invalid_data(format!(
-                        "Symbol {} not in Order-0 tree",
-                        c0
-                    )));
-                }
-
-                if let Some(code) = order0_tree.get_code(*c1) {
-                    bits.extend_from_slice(code);
-                } else {
-                    return Err(ZiporaError::invalid_data(format!(
-                        "Symbol {} not in Order-0 tree",
-                        c1
-                    )));
-                }
-
-                // Subsequent symbols use 2-symbol context
-                let mut prev2 = *c0 as u32;
-                let mut prev1 = *c1 as u32;
-                for &symbol in rest {
-                    let context = (prev2 << 8) | prev1;
-
-                    // Try context-specific tree first
-                    if let Some(&tree_idx) = self.context_map.get(&context) {
-                        let tree = &self.trees[tree_idx];
-                        if let Some(code) = tree.get_code(symbol) {
+                    for i in 0..2 {
+                        if let Some(code) = order0_tree.get_code(data[i]) { // D10.1: in-bounds
                             bits.extend_from_slice(code);
-                            prev2 = prev1;
-                            prev1 = symbol as u32;
-                            continue;
+                        } else {
+                            return Err(ZiporaError::invalid_data(format!(
+                                "Symbol {} not in Order-0 tree",
+                                data[i] // D10.1: in-bounds
+                            )));
                         }
                     }
 
-                    // Fallback to Order-0 tree for unknown contexts/symbols
-                    if let Some(code) = self.trees[0].get_code(symbol) {
-                        bits.extend_from_slice(code);
-                    } else {
-                        return Err(ZiporaError::invalid_data(format!(
-                            "Symbol {} not found in any tree",
-                            symbol
-                        )));
+                    // Subsequent symbols use 2-symbol context
+                    // D10.1: in-bounds: 2 <= i < data.len(), bounds proven by loop range
+                    for i in 2..data.len() {
+                        let context = ((data[i - 2] as u32) << 8) | (data[i - 1] as u32); // D10.1: in-bounds
+                        let symbol = data[i];                                              // D10.1: in-bounds
+
+                        // Try context-specific tree first
+                        if let Some(&tree_idx) = self.context_map.get(&context) {
+                            let tree = &self.trees[tree_idx];
+                            if let Some(code) = tree.get_code(symbol) {
+                                bits.extend_from_slice(code);
+                                continue;
+                            }
+                        }
+
+                        // Fallback to Order-0 tree for unknown contexts/symbols
+                        if let Some(code) = self.trees[0].get_code(symbol) {
+                            bits.extend_from_slice(code);
+                        } else {
+                            return Err(ZiporaError::invalid_data(format!(
+                                "Symbol {} not found in any tree",
+                                symbol
+                            )));
+                        }
                     }
-                    prev2 = prev1;
-                    prev1 = symbol as u32;
                 }
             }
         }
