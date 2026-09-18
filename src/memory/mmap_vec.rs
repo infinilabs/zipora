@@ -48,51 +48,120 @@ struct FileMapping {
     map: MmapMut,
 }
 
-/// Header for memory-mapped vector files
-#[repr(C)]
+/// Header for memory-mapped vector files (80 bytes, little-endian on disk)
+///
+/// Binary layout (C2.1):
+/// - `0..8`: `magic: u64` (`0x4D4D41505F564543` LE)
+/// - `8..10`: `version: u16` (`2` LE)
+/// - `10..12`: `flags: u16` (`0x0011` LE: bit 0 = 1 little-endian, bits 1..4 = 8-byte word size)
+/// - `12..16`: `element_size: u32` (LE)
+/// - `16..24`: `length: u64` (LE)
+/// - `24..32`: `capacity: u64` (LE)
+/// - `32..80`: `reserved: [u8; 48]` (zero)
+#[repr(transparent)]
 #[derive(Debug, Clone, Copy)]
 struct MmapVecHeader {
-    /// Magic number for file format validation
-    magic: u64,
-    /// Version of the file format
-    version: u32,
-    /// Size of each element in bytes
-    element_size: u32,
-    /// Number of elements in the vector
-    length: u64,
-    /// Capacity of the vector (in elements)
-    capacity: u64,
-    /// Reserved for future use
-    reserved: [u64; 6],
+    data: [u8; 80],
 }
 
 const MMAP_VEC_MAGIC: u64 = 0x4D4D41505F564543; // "MMAP_VEC"
-const MMAP_VEC_VERSION: u32 = 1;
+const MMAP_VEC_VERSION: u16 = 2;
+const MMAP_VEC_FLAGS: u16 = 0x0001 | ((std::mem::size_of::<usize>() as u16) << 1);
 const HEADER_SIZE: usize = std::mem::size_of::<MmapVecHeader>();
 
 impl MmapVecHeader {
     fn new<T>() -> Self {
-        Self {
-            magic: MMAP_VEC_MAGIC,
-            version: MMAP_VEC_VERSION,
-            element_size: std::mem::size_of::<T>() as u32,
-            length: 0,
-            capacity: 0,
-            reserved: [0; 6],
-        }
+        let mut data = [0u8; 80];
+        data[0..8].copy_from_slice(&MMAP_VEC_MAGIC.to_le_bytes());
+        data[8..10].copy_from_slice(&MMAP_VEC_VERSION.to_le_bytes());
+        data[10..12].copy_from_slice(&MMAP_VEC_FLAGS.to_le_bytes());
+        data[12..16].copy_from_slice(&(std::mem::size_of::<T>() as u32).to_le_bytes());
+        Self { data }
+    }
+
+    #[inline]
+    fn magic(&self) -> u64 {
+        u64::from_le_bytes([
+            self.data[0],
+            self.data[1],
+            self.data[2],
+            self.data[3],
+            self.data[4],
+            self.data[5],
+            self.data[6],
+            self.data[7],
+        ])
+    }
+
+    #[inline]
+    fn version(&self) -> u16 {
+        u16::from_le_bytes([self.data[8], self.data[9]])
+    }
+
+    #[inline]
+    fn flags(&self) -> u16 {
+        u16::from_le_bytes([self.data[10], self.data[11]])
+    }
+
+    #[inline]
+    fn element_size(&self) -> u32 {
+        u32::from_le_bytes([self.data[12], self.data[13], self.data[14], self.data[15]])
+    }
+
+    #[inline]
+    fn length(&self) -> u64 {
+        u64::from_le_bytes([
+            self.data[16],
+            self.data[17],
+            self.data[18],
+            self.data[19],
+            self.data[20],
+            self.data[21],
+            self.data[22],
+            self.data[23],
+        ])
+    }
+
+    #[inline]
+    fn set_length(&mut self, len: u64) {
+        self.data[16..24].copy_from_slice(&len.to_le_bytes());
+    }
+
+    #[inline]
+    fn capacity(&self) -> u64 {
+        u64::from_le_bytes([
+            self.data[24],
+            self.data[25],
+            self.data[26],
+            self.data[27],
+            self.data[28],
+            self.data[29],
+            self.data[30],
+            self.data[31],
+        ])
+    }
+
+    #[inline]
+    fn set_capacity(&mut self, cap: u64) {
+        self.data[24..32].copy_from_slice(&cap.to_le_bytes());
     }
 
     fn validate<T>(&self) -> Result<()> {
-        if self.magic != MMAP_VEC_MAGIC {
+        if self.magic() != MMAP_VEC_MAGIC {
             return Err(ZiporaError::invalid_data("Invalid magic number"));
         }
-        if self.version != MMAP_VEC_VERSION {
+        if self.version() != MMAP_VEC_VERSION {
             return Err(ZiporaError::invalid_data("Unsupported version"));
         }
-        if self.element_size != std::mem::size_of::<T>() as u32 {
+        if self.flags() != MMAP_VEC_FLAGS {
+            return Err(ZiporaError::invalid_data(
+                "Incompatible endianness or word-size flags in MmapVecHeader",
+            ));
+        }
+        if self.element_size() != std::mem::size_of::<T>() as u32 {
             return Err(ZiporaError::invalid_data("Element size mismatch"));
         }
-        if self.length > self.capacity {
+        if self.length() > self.capacity() {
             return Err(ZiporaError::invalid_data("Length exceeds capacity"));
         }
         Ok(())
@@ -312,7 +381,7 @@ where
         let file_path = path.as_ref().to_path_buf();
 
         // Create the backing file
-        let initial_file_size = Self::calculate_file_size(config.initial_capacity);
+        let initial_file_size = Self::calculate_file_size(config.initial_capacity)?;
         Self::create_backing_file(&file_path, initial_file_size)?;
 
         // Create memory mapping
@@ -362,7 +431,9 @@ where
 
         // The mapping is exactly the file; a header declaring more capacity
         // than the file holds would make element access read past EOF.
-        let needed = Self::calculate_file_size(vec.capacity()) as usize;
+        let needed_u64 = Self::calculate_file_size(vec.capacity())?;
+        let needed = usize::try_from(needed_u64)
+            .map_err(|_| ZiporaError::invalid_data("Required file size overflows usize"))?;
         let mapped = vec.mmap.as_ref().map(|m| m.map.len()).unwrap_or(0);
         if mapped < needed {
             return Err(ZiporaError::invalid_data(
@@ -378,7 +449,7 @@ where
     pub fn len(&self) -> usize {
         self.header()
             // SAFETY: header pointer is valid, initialized by update_pointers, aligned to MmapVecHeader
-            .map(|h| unsafe { h.as_ref().length as usize })
+            .map(|h| unsafe { h.as_ref().length() as usize })
             .unwrap_or(0)
     }
 
@@ -393,7 +464,7 @@ where
     pub fn capacity(&self) -> usize {
         self.header()
             // SAFETY: header pointer is valid, initialized by update_pointers, aligned to MmapVecHeader
-            .map(|h| unsafe { h.as_ref().capacity as usize })
+            .map(|h| unsafe { h.as_ref().capacity() as usize })
             .unwrap_or(0)
     }
 
@@ -812,8 +883,14 @@ where
     }
 
     /// Calculate file size for given capacity
-    fn calculate_file_size(capacity: usize) -> u64 {
-        (Self::data_offset() + capacity * std::mem::size_of::<T>()) as u64
+    fn calculate_file_size(capacity: usize) -> Result<u64> {
+        let payload_bytes = capacity
+            .checked_mul(std::mem::size_of::<T>())
+            .ok_or_else(|| ZiporaError::invalid_data("MmapVec capacity byte size overflow"))?;
+        let total_bytes = Self::data_offset()
+            .checked_add(payload_bytes)
+            .ok_or_else(|| ZiporaError::invalid_data("MmapVec total file size overflow"))?;
+        Ok(total_bytes as u64)
     }
 
     /// Byte offset of the element payload within the mapping.
@@ -909,7 +986,7 @@ where
         let header_ptr = self.header()?;
         // SAFETY: header_ptr valid from update_pointers, exclusive access via &mut self
         unsafe {
-            (*header_ptr.as_ptr()).length = length as u64;
+            (*header_ptr.as_ptr()).set_length(length as u64);
         }
         Ok(())
     }
@@ -919,7 +996,7 @@ where
         let header_ptr = self.header()?;
         // SAFETY: header_ptr valid from update_pointers, exclusive access via &mut self
         unsafe {
-            (*header_ptr.as_ptr()).capacity = capacity as u64;
+            (*header_ptr.as_ptr()).set_capacity(capacity as u64);
         }
         Ok(())
     }
@@ -939,7 +1016,7 @@ where
     /// The mapping is shared with the file, so existing data needs no
     /// copy-out/copy-in: unmap, resize the file, and remap.
     fn resize_to_capacity(&mut self, new_capacity: usize) -> Result<()> {
-        let new_file_size = Self::calculate_file_size(new_capacity);
+        let new_file_size = Self::calculate_file_size(new_capacity)?;
 
         // Unmap before resizing so no mapping covers pages beyond EOF.
         // Header/data pointers into the old mapping are re-derived below;
