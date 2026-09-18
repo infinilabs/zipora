@@ -74,3 +74,36 @@ fn test_mmap_vec_rejects_non_pod_types_documented() {
     // because these types don't implement Pod. The compile_fail doctest above
     // is the real guard — if someone removes the Pod bound, `cargo test --doc` fails.
 }
+
+#[test]
+fn test_mmap_vec_open_rejects_overflowing_header_capacity() {
+    // RED test (C2.1 / C9.1): A crafted header with capacity = usize::MAX / 4 + 1
+    // previously overflowed `capacity * size_of::<T>()` in calculate_file_size
+    // (panicking in debug, wrapping to 4 bytes in release and bypassing the
+    // backing-file size check).
+    let path = test_path("mmap_overflow_cap.bin");
+    let _ = std::fs::remove_file(&path);
+
+    {
+        let mut vec: MmapVec<u32> = MmapVec::create(&path, MmapVecConfig::default()).unwrap();
+        vec.push(123).unwrap();
+        vec.sync().unwrap();
+    }
+
+    // Overwrite capacity field at offset 24..32 with (usize::MAX / 4 + 1)
+    {
+        use std::io::{Seek, SeekFrom, Write};
+        let mut file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        let huge_cap = ((usize::MAX / 4) as u64).wrapping_add(1);
+        file.seek(SeekFrom::Start(24)).unwrap();
+        file.write_all(&huge_cap.to_le_bytes()).unwrap();
+    }
+
+    let res: Result<MmapVec<u32>, _> = MmapVec::open(&path, MmapVecConfig::default());
+    assert!(
+        res.is_err(),
+        "MmapVec::open must reject header capacity whose byte size overflows usize"
+    );
+
+    let _ = std::fs::remove_file(&path);
+}
