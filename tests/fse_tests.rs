@@ -939,9 +939,10 @@ fn test_fse_parallel_size_limit_applies_to_total() {
     // Each block is individually under the limit; only the concatenation
     // exceeds it, so a per-block check alone would let a small parallel
     // stream multiply the limit by its block count.
-    use zipora::entropy::{FseConfig, FseDecoder};
+    use zipora::entropy::{FseConfig, FseDecoder, FseEncoder};
 
-    let block = crafted_fse_header(3000)[1..].to_vec(); // drop the mode byte
+    let mut enc = FseEncoder::new(FseConfig::default()).unwrap();
+    let block = enc.compress(&vec![b'A'; 3000]).unwrap()[1..].to_vec(); // drop the mode byte
     let mut stream = vec![0xF6u8]; // FSE_MODE_PARALLEL
     stream.extend_from_slice(&3u32.to_le_bytes());
     for _ in 0..3 {

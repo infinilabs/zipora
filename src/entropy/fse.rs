@@ -979,38 +979,55 @@ impl FseEncoder {
             }
         }
 
+        const INITIAL_STATE: u64 = 1u64 << 12; // 4096 (TOTFREQ)
+
         // Write number of non-zero symbols (use u16 to handle up to 256 symbols)
         output.extend_from_slice(&(non_zero_symbols.len() as u16).to_le_bytes());
 
         // Write symbol-frequency pairs
-        for (symbol, freq) in non_zero_symbols {
+        for &(symbol, freq) in &non_zero_symbols {
             output.push(symbol);
-            output.extend_from_slice(&freq.to_le_bytes());
+            let header_freq = if non_zero_symbols.len() == 1 {
+                data.len() as u32
+            } else {
+                freq
+            };
+            output.extend_from_slice(&header_freq.to_le_bytes());
         }
 
-        // Initialize FSE encoder state (advanced style)
-        let mut current_state = 1u64; // Start with state = 1
+        // Initialize FSE encoder state at TOTFREQ so every symbol in a multi-symbol
+        // table strictly increases state (eliminating zero-bit fixed points).
+        let mut current_state = INITIAL_STATE;
 
-        // No need to reserve space - we'll append state at the end
-
-        // Encode symbols in reverse order (FSE/rANS style)
-        for &symbol in data.iter().rev() {
-            // Get symbol frequency for renormalization
-            let sym_freq = table.enc_symbols[symbol as usize].freq as u32;
-
-            // Renormalize before encoding
-            current_state = table.renormalize_encode(current_state, &mut output, sym_freq);
-
-            // Encode symbol. A zero-frequency symbol means the table was built
-            // from data that did not contain it (static/non-adaptive table
-            // reuse); that must fail loudly instead of corrupting the stream.
-            if let Some((new_state, _bits_needed)) = table.encode_symbol(symbol, current_state) {
-                current_state = new_state;
-            } else {
+        if non_zero_symbols.len() == 1 {
+            let only_symbol = non_zero_symbols[0].0;
+            if let Some(&bad_sym) = data.iter().find(|&&s| s != only_symbol) {
                 return Err(ZiporaError::invalid_data(format!(
                     "symbol {} not present in FSE table (was the table built from different data?)",
-                    symbol
+                    bad_sym
                 )));
+            }
+        } else {
+            // Encode symbols in reverse order (FSE/rANS style)
+            for &symbol in data.iter().rev() {
+                // Get symbol frequency for renormalization
+                let sym_freq = table.enc_symbols[symbol as usize].freq as u32;
+
+                // Renormalize before encoding
+                current_state = table.renormalize_encode(current_state, &mut output, sym_freq);
+
+                // Encode symbol. A zero-frequency symbol means the table was built
+                // from data that did not contain it (static/non-adaptive table
+                // reuse); that must fail loudly instead of corrupting the stream.
+                if let Some((new_state, _bits_needed)) = table.encode_symbol(symbol, current_state)
+                {
+                    current_state = new_state;
+                } else {
+                    return Err(ZiporaError::invalid_data(format!(
+                        "symbol {} not present in FSE table (was the table built from different data?)",
+                        symbol
+                    )));
+                }
             }
         }
 
@@ -1258,6 +1275,8 @@ impl FseDecoder {
             )));
         }
 
+        const INITIAL_STATE: u64 = 1u64 << 12; // 4096 (TOTFREQ)
+
         // Read compact frequency table
         let count_chunk = data
             .get(pos..)
@@ -1266,7 +1285,15 @@ impl FseDecoder {
         let num_symbols = u16::from_le_bytes(*count_chunk) as usize;
         pos += 2;
 
+        if num_symbols == 0 || num_symbols > 256 {
+            return Err(ZiporaError::invalid_data(format!(
+                "Invalid FSE symbol count: {}",
+                num_symbols
+            )));
+        }
+
         let mut frequencies = [0u32; 256];
+        let mut single_symbol_entry: Option<(u8, u32)> = None;
         for _ in 0..num_symbols {
             let &symbol_byte = data
                 .get(pos)
@@ -1281,21 +1308,17 @@ impl FseDecoder {
             let freq = u32::from_le_bytes(*freq_chunk);
             pos += 4;
 
-            if symbol < 256 {
-                frequencies[symbol] = freq;
+            if freq == 0 || frequencies[symbol] != 0 {
+                return Err(ZiporaError::invalid_data(
+                    "Invalid or duplicate frequency entry in FSE header",
+                ));
+            }
+            frequencies[symbol] = freq;
+            if num_symbols == 1 {
+                single_symbol_entry = Some((symbol_byte, freq));
             }
         }
 
-        // Build decompression table. The table shape is dictated by the
-        // stream header, not by this decoder's tuning parameters, so relax
-        // max_table_size to fit the header's table_log — any decoder must be
-        // able to decode any valid stream.
-        let config = FseConfig {
-            table_log,
-            max_table_size: self.config.max_table_size.max(1usize << table_log),
-            ..self.config.clone()
-        };
-        let table = FseTable::new(&frequencies, &config)?;
         // Read initial state from the END of the data (rANS reads backward)
         if data.len() < pos + 8 {
             return Err(ZiporaError::invalid_data("Missing final state"));
@@ -1309,15 +1332,61 @@ impl FseDecoder {
             .ok_or_else(|| ZiporaError::invalid_data("Missing final state"))?;
         let mut state = u64::from_le_bytes(*state_chunk);
 
-        // Validate state is reasonable
-        if state == 0 {
-            state = 1; // Default to 1 if invalid
-        }
-
         // Initialize for decoding - compressed data excludes the state
         let compressed_data = data
             .get(pos..state_start)
             .ok_or_else(|| ZiporaError::invalid_data("Invalid compressed data range"))?;
+
+        // Encoder only writes whole 4-byte blocks during renormalization
+        if compressed_data.len() % 4 != 0 {
+            return Err(ZiporaError::invalid_data(
+                "FSE compressed payload length must be a multiple of 4 bytes",
+            ));
+        }
+
+        // Single-symbol fast path & validation (S2-F1):
+        // A 1-symbol table consumes 0 bits per symbol in rANS. Validate header
+        // consistency in O(1) time and avoid running the per-symbol rANS loop.
+        if let Some((only_symbol, header_freq)) = single_symbol_entry {
+            if !compressed_data.is_empty()
+                || state != INITIAL_STATE
+                || header_freq as usize != original_size
+            {
+                return Err(ZiporaError::invalid_data(
+                    "Malformed single-symbol FSE stream header or payload",
+                ));
+            }
+            return Ok(vec![only_symbol; original_size]);
+        }
+
+        // Multi-symbol stream validation (num_symbols >= 2):
+        // In a multi-symbol table, every symbol has normalized frequency <= 4095,
+        // so each symbol consumes at least log2(4096/4095) bits (~1/2839 bits).
+        // Total state bits available is 8 * compressed_data.len() + 64.
+        let max_possible_symbols = (compressed_data.len().saturating_mul(8).saturating_add(64))
+            .saturating_mul(2840);
+        if original_size > max_possible_symbols {
+            return Err(ZiporaError::invalid_data(
+                "FSE declared original_size exceeds maximum possible symbols for payload length",
+            ));
+        }
+
+        if state <= INITIAL_STATE {
+            return Err(ZiporaError::invalid_data(
+                "Invalid initial FSE decoder state for multi-symbol stream",
+            ));
+        }
+
+        // Build decompression table. The table shape is dictated by the
+        // stream header, not by this decoder's tuning parameters, so relax
+        // max_table_size to fit the header's table_log — any decoder must be
+        // able to decode any valid stream.
+        let config = FseConfig {
+            table_log,
+            max_table_size: self.config.max_table_size.max(1usize << table_log),
+            ..self.config.clone()
+        };
+        let table = FseTable::new(&frequencies, &config)?;
         let mut byte_pos = compressed_data.len(); // Start from the end for rANS
 
         // Decode symbols using advanced approach. Reserve incrementally: the
@@ -1328,6 +1397,12 @@ impl FseDecoder {
         let mut output = Vec::with_capacity(original_size.min(MAX_EAGER_RESERVE));
 
         for _i in 0..original_size {
+            if state <= INITIAL_STATE && byte_pos == 0 {
+                return Err(ZiporaError::invalid_data(
+                    "FSE decoder state exhausted before reaching declared original_size",
+                ));
+            }
+
             // Decode symbol first (optimal order for performance)
             let (symbol, new_state) = table.decode_symbol(state);
 
@@ -1347,6 +1422,12 @@ impl FseDecoder {
                     "Failed to renormalize during decoding",
                 ));
             }
+        }
+
+        if state != INITIAL_STATE || byte_pos != 0 {
+            return Err(ZiporaError::invalid_data(
+                "FSE stream did not terminate at initial state with empty buffer",
+            ));
         }
 
         Ok(output)
@@ -1763,5 +1844,59 @@ mod bench_tests {
         assert!(decoder.decompress(&[FSE_MODE_PARALLEL, 2, 0, 0, 0, 10, 0]).is_err());
         // Unknown mode
         assert!(decoder.decompress(&[0xEE, 1, 2, 3]).is_err());
+    }
+
+    #[test]
+    fn test_fse_malformed_zero_payload_and_fixed_point_streams_rejected_fast() {
+        // S2-F1 RED test:
+        // 1. 22-byte and 21-byte malformed inputs from fuzz_fse_decompress corpus
+        //    that previously spent ~1s spinning in a zero-bit fixed point (412M and 278M iterations)
+        //    and returned Ok(...) instead of Err.
+        let corpus_22 = [
+            245u8, 46, 144, 144, 24, 10, 1, 0, 0, 0, 0, 1, 35, 0, 0, 115, 0, 0, 0, 35, 0, 0,
+        ];
+        let corpus_21 = [
+            245u8, 148, 144, 144, 16, 10, 1, 0, 0, 0, 0, 35, 0, 0, 115, 0, 0, 0, 35, 0, 0,
+        ];
+
+        let mut decoder = FseDecoder::new();
+        let start = std::time::Instant::now();
+        assert!(
+            decoder.decompress(&corpus_22).is_err(),
+            "malformed 22-byte 1-symbol stream claiming 412 MB must be rejected"
+        );
+        assert!(
+            decoder.decompress(&corpus_21).is_err(),
+            "malformed 21-byte 1-symbol stream claiming 278 MB must be rejected"
+        );
+        assert!(
+            start.elapsed().as_millis() < 50,
+            "rejection must be O(1), took {:?}",
+            start.elapsed()
+        );
+
+        // 2. Multi-symbol table (num_symbols = 2) with 0 compressed payload bytes
+        //    claiming 10,000,000 bytes of output. Previously hit state=1 fixed point
+        //    for symbol_0 and spun 10M times returning Ok.
+        let mut crafted_multi = vec![0xF5u8]; // FSE_MODE_SINGLE
+        crafted_multi.extend_from_slice(&10_000_000u32.to_le_bytes());
+        crafted_multi.push(12u8); // table_log
+        crafted_multi.extend_from_slice(&2u16.to_le_bytes()); // 2 symbols
+        crafted_multi.push(b'A');
+        crafted_multi.extend_from_slice(&2048u32.to_le_bytes());
+        crafted_multi.push(b'B');
+        crafted_multi.extend_from_slice(&2048u32.to_le_bytes());
+        crafted_multi.extend_from_slice(&1u64.to_le_bytes()); // state = 1, 0 payload bytes
+
+        let start2 = std::time::Instant::now();
+        assert!(
+            decoder.decompress(&crafted_multi).is_err(),
+            "multi-symbol stream claiming 10 MB with 0 payload bytes must be rejected"
+        );
+        assert!(
+            start2.elapsed().as_millis() < 50,
+            "rejection must be fast, took {:?}",
+            start2.elapsed()
+        );
     }
 }
