@@ -6,7 +6,7 @@
 //!
 //! # Use Cases
 //!
-//! - Placeholder records where only existence matters
+//! - Sentinel records where only existence matters
 //! - Sparse indexes where only presence/absence is tracked
 //! - Test data generation with minimal overhead
 //! - Record counting without data storage

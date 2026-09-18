@@ -688,13 +688,12 @@ where
 
         // Check cache first - but we need to verify the key still exists in trie
         if self.config.key_cache_size > 0
-            && let Some(&_cached_record_id) = self.key_cache.get(key)
+            && let Some(&cached_record_id) = self.key_cache.get(key)
         {
-            // Cache hit - still need to verify through trie since we changed the design
             if self.config.enable_statistics {
                 self.stats.record_key_cache_access(true);
             }
-            // Fall through to trie lookup for now - cache will be optimized later
+            return self.blob_bytes(cached_record_id as usize);
         }
 
         // Look up key in trie
@@ -1351,10 +1350,9 @@ where
             store.put_with_key(&key, &data)?;
         }
 
-        // Optimize trie structure if enabled
+        // Compact trie structure if key compression is enabled
         if store.config.enable_key_compression {
-            // This could trigger trie optimization, but for now we'll leave it as-is
-            // In a production implementation, you might call store.trie.optimize() here
+            store.trie.shrink_to_fit();
         }
 
         // Finalize the store for optimal read performance

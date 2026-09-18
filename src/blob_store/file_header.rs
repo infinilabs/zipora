@@ -73,7 +73,9 @@ impl FileHeaderBase {
     pub fn new() -> Self {
         let mut h = Self { data: [0u8; 80] };
         h.set_magic_len(MAGIC_STR_LEN as u8);
-        h.data[1..1 + MAGIC_STR_LEN].copy_from_slice(&MAGIC_STRING[..MAGIC_STR_LEN]);
+        if let Some(slice) = h.data.get_mut(1..1 + MAGIC_STR_LEN) {
+            slice.copy_from_slice(&MAGIC_STRING[..MAGIC_STR_LEN]);
+        }
         h
     }
 
@@ -95,78 +97,99 @@ impl FileHeaderBase {
         // Compare the full magic including its NUL terminator (plan.md 7.6):
         // the writer zero-pads the magic region, so byte 18 must be 0 —
         // "terark-blob-storeX" garbage must not validate.
-        self.data[1..1 + MAGIC_STRING.len()] == MAGIC_STRING[..]
+        self.data
+            .get(1..1 + MAGIC_STRING.len())
+            .is_some_and(|s| s == &MAGIC_STRING[..])
     }
 
     // --- Field accessors ---
 
     #[inline]
     pub fn magic_len(&self) -> u8 {
-        self.data[0]
+        self.data.first().copied().unwrap_or(0)
     }
 
     #[inline]
     pub fn set_magic_len(&mut self, v: u8) {
-        self.data[0] = v;
+        if let Some(first) = self.data.first_mut() {
+            *first = v;
+        }
     }
 
     /// Get magic string as bytes (19 bytes starting at offset 1).
     #[inline]
     pub fn magic(&self) -> &[u8] {
-        &self.data[1..20]
+        self.data.get(1..20).unwrap_or(&[])
     }
 
     /// Get class name as a trimmed string.
     pub fn class_name(&self) -> &str {
-        let bytes = &self.data[20..40];
-        let end = bytes.iter().position(|&b| b == 0).unwrap_or(20);
-        std::str::from_utf8(&bytes[..end]).unwrap_or("")
+        let raw_name = self.data.get(20..40).unwrap_or(&[]);
+        let end = raw_name.iter().position(|&b| b == 0).unwrap_or(raw_name.len());
+        raw_name
+            .get(..end)
+            .and_then(|s| std::str::from_utf8(s).ok())
+            .unwrap_or("")
     }
 
     /// Set class name (max 19 chars + null).
     pub fn set_class_name(&mut self, name: &str) {
-        let bytes = name.as_bytes();
-        let len = bytes.len().min(19);
-        self.data[20..20 + len].copy_from_slice(&bytes[..len]);
+        let name_bytes = name.as_bytes();
+        let len = name_bytes.len().min(19);
+        if let (Some(dst), Some(src)) = (self.data.get_mut(20..20 + len), name_bytes.get(..len)) {
+            dst.copy_from_slice(src);
+        }
         // Zero-fill remaining
-        for b in &mut self.data[20 + len..40] {
-            *b = 0;
+        if let Some(tail) = self.data.get_mut(20 + len..40) {
+            tail.fill(0);
         }
     }
 
-    // Invariant: every accessor below reads a compile-time-constant byte range
-    // from `self.data` (e.g. `[40..48]` is exactly 8 bytes), so the `try_into`
-    // into a fixed-size `[u8; N]` is structurally infallible and the `expect`
-    // can never fire. Header layout is fixed by the binary format.
+    #[inline]
+    fn read_u64(&self, offset: usize) -> u64 {
+        self.data
+            .get(offset..)
+            .and_then(|s| s.first_chunk::<8>())
+            .map(|c| u64::from_le_bytes(*c))
+            .unwrap_or(0)
+    }
+
+    #[inline]
+    fn write_u64(&mut self, offset: usize, v: u64) {
+        if let Some(dst) = self.data.get_mut(offset..offset + 8) {
+            dst.copy_from_slice(&v.to_le_bytes());
+        }
+    }
+
     #[inline]
     pub fn file_size(&self) -> u64 {
-        u64::from_le_bytes(self.data[40..48].try_into().expect("slice is 8 bytes"))
+        self.read_u64(40)
     }
 
     #[inline]
     pub fn set_file_size(&mut self, v: u64) {
-        self.data[40..48].copy_from_slice(&v.to_le_bytes());
+        self.write_u64(40, v);
     }
 
     #[inline]
     pub fn unzip_size(&self) -> u64 {
-        u64::from_le_bytes(self.data[48..56].try_into().expect("slice is 8 bytes"))
+        self.read_u64(48)
     }
 
     #[inline]
     pub fn set_unzip_size(&mut self, v: u64) {
-        self.data[48..56].copy_from_slice(&v.to_le_bytes());
+        self.write_u64(48, v);
     }
 
     /// Packed field at offset 56: records(40) | checksum_type(8) | format_version(16).
     #[inline]
     fn packed_records_field(&self) -> u64 {
-        u64::from_le_bytes(self.data[56..64].try_into().expect("slice is 8 bytes"))
+        self.read_u64(56)
     }
 
     #[inline]
     fn set_packed_records_field(&mut self, v: u64) {
-        self.data[56..64].copy_from_slice(&v.to_le_bytes());
+        self.write_u64(56, v);
     }
 
     /// Number of records (40-bit field, max ~1 trillion).
@@ -215,16 +238,15 @@ impl FileHeaderBase {
     /// Global dictionary size (40-bit field at offset 64).
     #[inline]
     pub fn global_dict_size(&self) -> u64 {
-        let packed = u64::from_le_bytes(self.data[64..72].try_into().expect("slice is 8 bytes"));
-        packed & 0xFF_FFFF_FFFF
+        self.read_u64(64) & 0xFF_FFFF_FFFF
     }
 
     /// Set global dictionary size.
     #[inline]
     pub fn set_global_dict_size(&mut self, v: u64) {
-        let old = u64::from_le_bytes(self.data[64..72].try_into().expect("slice is 8 bytes"));
+        let old = self.read_u64(64);
         let new = (old & !0xFF_FFFF_FFFF) | (v & 0xFF_FFFF_FFFF);
-        self.data[64..72].copy_from_slice(&new.to_le_bytes());
+        self.write_u64(64, new);
     }
 }
 
@@ -290,34 +312,51 @@ impl BlobStoreFileFooter {
     /// XXHash64 of compressed/zipped data blocks.
     #[inline]
     pub fn zip_data_xxhash(&self) -> u64 {
-        u64::from_le_bytes(self.data[0..8].try_into().expect("slice is 8 bytes"))
+        self.data
+            .first_chunk::<8>()
+            .map(|c| u64::from_le_bytes(*c))
+            .unwrap_or(0)
     }
 
     #[inline]
     pub fn set_zip_data_xxhash(&mut self, v: u64) {
-        self.data[0..8].copy_from_slice(&v.to_le_bytes());
+        if let Some(dst) = self.data.get_mut(0..8) {
+            dst.copy_from_slice(&v.to_le_bytes());
+        }
     }
 
     /// XXHash64 of the entire file (header + data, excluding footer).
     #[inline]
     pub fn file_xxhash(&self) -> u64 {
-        u64::from_le_bytes(self.data[8..16].try_into().expect("slice is 8 bytes"))
+        self.data
+            .get(8..)
+            .and_then(|s| s.first_chunk::<8>())
+            .map(|c| u64::from_le_bytes(*c))
+            .unwrap_or(0)
     }
 
     #[inline]
     pub fn set_file_xxhash(&mut self, v: u64) {
-        self.data[8..16].copy_from_slice(&v.to_le_bytes());
+        if let Some(dst) = self.data.get_mut(8..16) {
+            dst.copy_from_slice(&v.to_le_bytes());
+        }
     }
 
     /// Footer length field (always 64).
     #[inline]
     pub fn footer_length(&self) -> u32 {
-        u32::from_le_bytes(self.data[60..64].try_into().expect("slice is 4 bytes"))
+        self.data
+            .get(60..)
+            .and_then(|s| s.first_chunk::<4>())
+            .map(|c| u32::from_le_bytes(*c))
+            .unwrap_or(0)
     }
 
     #[inline]
     fn set_footer_length(&mut self, v: u32) {
-        self.data[60..64].copy_from_slice(&v.to_le_bytes());
+        if let Some(dst) = self.data.get_mut(60..64) {
+            dst.copy_from_slice(&v.to_le_bytes());
+        }
     }
 }
 

@@ -4,10 +4,7 @@ use super::{Config, parse_env_bool, parse_env_var};
 use crate::error::{Result, ZiporaError};
 use std::path::Path;
 
-/// Blob store configuration placeholder.
-///
-/// This is a minimal implementation showing the configuration pattern.
-/// Future implementations will expand this with comprehensive blob store settings.
+/// Blob store configuration for default storage settings.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BlobStoreConfig {

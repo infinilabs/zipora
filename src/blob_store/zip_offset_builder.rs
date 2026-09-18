@@ -326,8 +326,8 @@ impl Default for ZipOffsetBlobStoreBuilder {
 pub struct BatchZipOffsetBlobStoreBuilder {
     inner: ZipOffsetBlobStoreBuilder,
     batch_buffer: FastVec<u8>,
+    batch_lengths: Vec<usize>,
     batch_size: usize,
-    records_in_batch: usize,
 }
 
 impl BatchZipOffsetBlobStoreBuilder {
@@ -336,8 +336,8 @@ impl BatchZipOffsetBlobStoreBuilder {
         Ok(Self {
             inner: ZipOffsetBlobStoreBuilder::new()?,
             batch_buffer: FastVec::new(),
+            batch_lengths: Vec::with_capacity(batch_size),
             batch_size,
-            records_in_batch: 0,
         })
     }
 
@@ -346,41 +346,46 @@ impl BatchZipOffsetBlobStoreBuilder {
         Ok(Self {
             inner: ZipOffsetBlobStoreBuilder::with_config(config)?,
             batch_buffer: FastVec::new(),
+            batch_lengths: Vec::with_capacity(batch_size),
             batch_size,
-            records_in_batch: 0,
         })
     }
 
     /// Add record to batch
     pub fn add_record(&mut self, data: &[u8]) -> Result<RecordId> {
-        // Add to batch buffer
-        self.batch_buffer.extend(data.iter().cloned())?;
-        self.batch_buffer.push(0)?; // Record separator
-        self.records_in_batch += 1;
+        let id = (self.inner.len() + self.batch_lengths.len()) as RecordId;
+
+        // Add to batch buffer and record exact byte length
+        self.batch_buffer.extend(data.iter().copied())?;
+        self.batch_lengths.push(data.len());
 
         // Flush batch if it's full
-        if self.records_in_batch >= self.batch_size {
+        if self.batch_lengths.len() >= self.batch_size {
             self.flush_batch()?;
         }
 
-        Ok(self.inner.len() as u32) // Return next record ID
+        Ok(id)
     }
 
     /// Flush current batch to inner builder
     pub fn flush_batch(&mut self) -> Result<()> {
-        if self.records_in_batch == 0 {
+        if self.batch_lengths.is_empty() {
             return Ok(());
         }
 
-        // For now, just process the entire buffer as one record
-        // TODO: Implement proper record separation
-        if !self.batch_buffer.is_empty() {
-            self.inner.add_record(self.batch_buffer.as_slice())?;
+        let buf = self.batch_buffer.as_slice();
+        let mut offset = 0;
+        for &len in &self.batch_lengths {
+            let record_slice = buf
+                .get(offset..offset + len)
+                .ok_or_else(|| ZiporaError::invalid_data("Batch buffer slice out of bounds"))?;
+            self.inner.add_record(record_slice)?;
+            offset += len;
         }
 
         // Clear batch
         self.batch_buffer.clear();
-        self.records_in_batch = 0;
+        self.batch_lengths.clear();
 
         Ok(())
     }
@@ -388,13 +393,13 @@ impl BatchZipOffsetBlobStoreBuilder {
     /// Get number of records added
     #[inline]
     pub fn len(&self) -> usize {
-        self.inner.len() + self.records_in_batch
+        self.inner.len() + self.batch_lengths.len()
     }
 
     /// Check if empty
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.inner.is_empty() && self.records_in_batch == 0
+        self.inner.is_empty() && self.batch_lengths.is_empty()
     }
 
     /// Get statistics
@@ -627,19 +632,26 @@ mod tests {
 
     #[test]
     fn test_batch_zip_offset_blob_store_builder() {
+        use crate::blob_store::BlobStore;
+
         let mut batch_builder = BatchZipOffsetBlobStoreBuilder::new(2).unwrap();
         assert!(batch_builder.is_empty());
 
-        // Add records - should batch them
-        batch_builder.add_record(b"record1").unwrap();
-        batch_builder.add_record(b"record2").unwrap(); // Should trigger flush
-        batch_builder.add_record(b"record3").unwrap();
+        // Add records (including embedded NUL bytes) - should batch them and preserve separation
+        let id0 = batch_builder.add_record(b"record1").unwrap();
+        let id1 = batch_builder.add_record(b"rec\0ord2").unwrap(); // Should trigger flush
+        let id2 = batch_builder.add_record(b"record3").unwrap();
 
-        // Note: Current implementation has simplified batch logic
+        assert_eq!((id0, id1, id2), (0, 1, 2));
+        assert_eq!(batch_builder.len(), 3);
         assert!(!batch_builder.is_empty());
 
-        // Finish should flush remaining batch
-        let _store = batch_builder.finish().unwrap();
+        // Finish should flush remaining batch and preserve every individual record
+        let store = batch_builder.finish().unwrap();
+        assert_eq!(store.len(), 3);
+        assert_eq!(store.get(0).unwrap(), b"record1");
+        assert_eq!(store.get(1).unwrap(), b"rec\0ord2");
+        assert_eq!(store.get(2).unwrap(), b"record3");
     }
 
     #[test]

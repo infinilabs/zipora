@@ -237,45 +237,63 @@ impl FileHeader {
         let mut bytes = [0u8; HEADER_SIZE];
 
         // Manually serialize the header fields
-        bytes[0..20].copy_from_slice(&self.magic);
-        bytes[20..40].copy_from_slice(&self.class_name);
-        bytes[40..48].copy_from_slice(&self.file_size.to_le_bytes());
-        bytes[48..56].copy_from_slice(&self.unzip_size.to_le_bytes());
-        bytes[56..64].copy_from_slice(&self.records_checksum_version.to_le_bytes());
-        bytes[64..72].copy_from_slice(&self.content_bytes.to_le_bytes());
-        bytes[72..80].copy_from_slice(&self.offsets_bytes.to_le_bytes());
-        bytes[80] = self.offsets_log2_block_units;
-        bytes[81] = self.checksum_level;
-        bytes[82] = self.compress_level;
-        // bytes[83..112] remain zero (padding)
+        if let Some(s) = bytes.get_mut(0..20) {
+            s.copy_from_slice(&self.magic);
+        }
+        if let Some(s) = bytes.get_mut(20..40) {
+            s.copy_from_slice(&self.class_name);
+        }
+        if let Some(s) = bytes.get_mut(40..48) {
+            s.copy_from_slice(&self.file_size.to_le_bytes());
+        }
+        if let Some(s) = bytes.get_mut(48..56) {
+            s.copy_from_slice(&self.unzip_size.to_le_bytes());
+        }
+        if let Some(s) = bytes.get_mut(56..64) {
+            s.copy_from_slice(&self.records_checksum_version.to_le_bytes());
+        }
+        if let Some(s) = bytes.get_mut(64..72) {
+            s.copy_from_slice(&self.content_bytes.to_le_bytes());
+        }
+        if let Some(s) = bytes.get_mut(72..80) {
+            s.copy_from_slice(&self.offsets_bytes.to_le_bytes());
+        }
+        if let Some(b) = bytes.get_mut(80) {
+            *b = self.offsets_log2_block_units;
+        }
+        if let Some(b) = bytes.get_mut(81) {
+            *b = self.checksum_level;
+        }
+        if let Some(b) = bytes.get_mut(82) {
+            *b = self.compress_level;
+        }
 
         bytes
     }
 
     /// Convert from bytes for reading
     fn from_bytes(bytes: &[u8; HEADER_SIZE]) -> Self {
-        let mut magic = [0u8; 20];
-        let mut class_name = [0u8; 20];
+        let magic = bytes.first_chunk::<20>().copied().unwrap_or([0u8; 20]);
+        let class_name = bytes
+            .get(20..)
+            .and_then(|s| s.first_chunk::<20>())
+            .copied()
+            .unwrap_or([0u8; 20]);
         let padding = [0u8; 29];
 
-        magic.copy_from_slice(&bytes[0..20]);
-        class_name.copy_from_slice(&bytes[20..40]);
+        let read_u64 = |offset: usize| -> u64 {
+            bytes
+                .get(offset..)
+                .and_then(|s| s.first_chunk::<8>())
+                .map(|c| u64::from_le_bytes(*c))
+                .unwrap_or(0)
+        };
 
-        let file_size = u64::from_le_bytes([
-            bytes[40], bytes[41], bytes[42], bytes[43], bytes[44], bytes[45], bytes[46], bytes[47],
-        ]);
-        let unzip_size = u64::from_le_bytes([
-            bytes[48], bytes[49], bytes[50], bytes[51], bytes[52], bytes[53], bytes[54], bytes[55],
-        ]);
-        let records_checksum_version = u64::from_le_bytes([
-            bytes[56], bytes[57], bytes[58], bytes[59], bytes[60], bytes[61], bytes[62], bytes[63],
-        ]);
-        let content_bytes = u64::from_le_bytes([
-            bytes[64], bytes[65], bytes[66], bytes[67], bytes[68], bytes[69], bytes[70], bytes[71],
-        ]);
-        let offsets_bytes = u64::from_le_bytes([
-            bytes[72], bytes[73], bytes[74], bytes[75], bytes[76], bytes[77], bytes[78], bytes[79],
-        ]);
+        let file_size = read_u64(40);
+        let unzip_size = read_u64(48);
+        let records_checksum_version = read_u64(56);
+        let content_bytes = read_u64(64);
+        let offsets_bytes = read_u64(72);
 
         Self {
             magic,
@@ -285,9 +303,9 @@ impl FileHeader {
             records_checksum_version,
             content_bytes,
             offsets_bytes,
-            offsets_log2_block_units: bytes[80],
-            checksum_level: bytes[81],
-            compress_level: bytes[82],
+            offsets_log2_block_units: bytes.get(80).copied().unwrap_or(0),
+            checksum_level: bytes.get(81).copied().unwrap_or(0),
+            compress_level: bytes.get(82).copied().unwrap_or(0),
             _padding: padding,
         }
     }
