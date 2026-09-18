@@ -6,8 +6,8 @@ Rule D10.1 / Agreement 12:
 - In entropy/, compression/, blob_store/, io/var_int*.rs, succinct/*/ load paths,
   direct data[i] / &data[a..b] on caller-supplied bytes is audited against .get(..)
   or explicit bounds guards.
-- Provably in-bounds index loops on encoder hot paths may be exempted with
-  `// D10.1: in-bounds` and are audited/ratcheted separately.
+- Provably in-bounds indexing sites on encoder hot paths may be exempted with an
+  inline `// D10.1: in-bounds` comment on the indexing line and are audited/ratcheted separately.
 - Exact per-subsystem ceilings are stored in scripts/audit_baseline.toml and ratchet down.
 """
 

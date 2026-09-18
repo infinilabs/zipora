@@ -935,4 +935,32 @@ mod tests {
         let decoded1 = decoder1.decode(&encoded1, data.len()).unwrap();
         assert_eq!(decoded1, data);
     }
+
+    #[test]
+    fn test_contextual_huffman_order2_short_inputs_roundtrip() {
+        // S3-R1: Verify Order-2 encoder (built from >= 2 bytes) encoding 0- and 1-byte
+        // inputs (exercising the deduplicated short-input branch in S2-R8) and round-tripping
+        // through ContextualHuffmanDecoder.
+        let training_data = b"The quick brown fox jumps over the lazy dog.";
+        let encoder2 = ContextualHuffmanEncoder::new(training_data, HuffmanOrder::Order2).unwrap();
+
+        let encoded_empty = encoder2.encode(b"").unwrap();
+        let encoded_single = encoder2.encode(b"q").unwrap();
+        let encoded_pair = encoder2.encode(b"qu").unwrap();
+
+        let decoder2 = ContextualHuffmanDecoder::new(encoder2);
+
+        // 0-byte input
+        assert!(encoded_empty.is_empty());
+        let decoded_empty = decoder2.decode(&encoded_empty, 0).unwrap();
+        assert_eq!(decoded_empty, b"");
+
+        // 1-byte input
+        let decoded_single = decoder2.decode(&encoded_single, 1).unwrap();
+        assert_eq!(decoded_single, b"q");
+
+        // 2-byte input
+        let decoded_pair = decoder2.decode(&encoded_pair, 2).unwrap();
+        assert_eq!(decoded_pair, b"qu");
+    }
 }
