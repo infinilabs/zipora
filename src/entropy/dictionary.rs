@@ -650,6 +650,7 @@ impl OptimizedDictionaryCompressor {
         } else {
             None
         };
+        let mut last_hashed_pos: Option<usize> = None;
 
         while pos < data.len() {
             let mut best_match_offset = 0;
@@ -659,17 +660,21 @@ impl OptimizedDictionaryCompressor {
             if let Some(pattern) = data.get(pos..pos + self.min_match_length) {
                 // Quick rejection using bloom filter
                     if self.bloom_filter.contains(pattern) {
-                        // Use rolling hash for fast candidate lookup
+                        // Use rolling hash for fast candidate lookup; re-seed whenever
+                        // pos did not advance by exactly 1 byte from the last hashed position
+                        // (e.g. after a bloom-filter miss or after a match skip).
                         let hash = if let Some(ref mut rh) = rolling_hash {
-                            if pos == 0 {
-                                rh.hash_slice(pattern)
-                            } else if let (Some(&prev_b), Some(&next_b)) =
-                                (data.get(pos - 1), data.get(pos + self.min_match_length - 1))
+                            let h = if last_hashed_pos == Some(pos.wrapping_sub(1))
+                                && pos > 0
+                                && let (Some(&prev_b), Some(&next_b)) =
+                                    (data.get(pos - 1), data.get(pos + self.min_match_length - 1))
                             {
                                 rh.roll(prev_b, next_b)
                             } else {
-                                0
-                            }
+                                rh.hash_slice(pattern)
+                            };
+                            last_hashed_pos = Some(pos);
+                            h
                         } else {
                             0 // Fallback for very small data
                         };
@@ -1275,6 +1280,33 @@ mod tests {
         let opt_compressor = OptimizedDictionaryCompressor::new(b"hello world").unwrap();
         assert!(opt_compressor.decompress(&crafted).is_err());
         assert!(opt_compressor.decompress(&match_exceeds).is_err());
+    }
+
+    #[test]
+    fn test_optimized_dictionary_rolling_hash_resync_after_skip() {
+        // S2-F2: Verify that rolling hash re-seeds properly after match skips
+        // (pos += best_match_length), finding subsequent hash_table matches
+        // rather than desynchronizing.
+        let phrase1 = b"ABCDEFGHIJKLMNOPQRST0123456789"; // 30 bytes
+        let phrase2 = b"ZYXWVUTSRQPONMLKJIHGFEDCBA9876"; // 30 bytes
+        let mut input = Vec::new();
+        for _ in 0..5 {
+            input.extend_from_slice(phrase1);
+            input.extend_from_slice(b"___");
+            input.extend_from_slice(phrase2);
+            input.extend_from_slice(b"!!!");
+        }
+
+        let compressor = OptimizedDictionaryCompressor::new(&input).unwrap();
+        let compressed = compressor.compress(&input).unwrap();
+        let decompressed = compressor.decompress(&compressed).unwrap();
+        assert_eq!(decompressed, input);
+        assert!(
+            compressed.len() < input.len(),
+            "compressed len {} should be < input len {}",
+            compressed.len(),
+            input.len()
+        );
     }
 }
 
