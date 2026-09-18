@@ -302,6 +302,21 @@ impl ZReorderMap {
             ));
         }
 
+        // A sequence entry cannot claim more elements than remain in the map
+        let remaining = self.size.saturating_sub(self.index);
+        if self.seq_length > remaining {
+            return Err(ZiporaError::invalid_data(
+                "ZReorderMap: sequence length exceeds remaining map size",
+            ));
+        }
+
+        // A decreasing sequence cannot underflow zero
+        if self.sign < 0 && self.seq_length.saturating_sub(1) > self.current_value {
+            return Err(ZiporaError::invalid_data(
+                "ZReorderMap: decreasing sequence underflows zero",
+            ));
+        }
+
         // Validate position after var_uint read
         if self.pos > self.mmap.len() {
             return Err(ZiporaError::invalid_data(
@@ -320,13 +335,9 @@ impl ZReorderMap {
         let mut shift = 0;
 
         loop {
-            if self.pos >= self.mmap.len() {
-                return Err(ZiporaError::invalid_data(
-                    "ZReorderMap: var_uint extends beyond file",
-                ));
-            }
-
-            let byte = self.mmap[self.pos];
+            let &byte = self.mmap.get(self.pos).ok_or_else(|| {
+                ZiporaError::invalid_data("ZReorderMap: var_uint extends beyond file")
+            })?;
             self.pos += 1;
 
             // Check for overflow before shifting
@@ -365,12 +376,11 @@ impl Iterator for ZReorderMap {
         // Advance to next value
         self.index += 1;
 
-        // Update current value based on sign
+        // Update current value based on sign without signed-overflow hazards
         if self.sign > 0 {
-            self.current_value = self.current_value.wrapping_add(self.sign as usize);
+            self.current_value = self.current_value.wrapping_add(1);
         } else {
-            // For negative sign, we need signed arithmetic
-            self.current_value = (self.current_value as i64 + self.sign) as usize;
+            self.current_value = self.current_value.wrapping_sub(1);
         }
 
         // Decrement sequence counter
@@ -632,12 +642,16 @@ impl ZReorderMapBuilder {
             // Single value: encode with LSB = 1
             let encoded = (self.base_value << 1) | 1;
             let bytes = encoded.to_le_bytes();
-            self.buffer.extend_from_slice(&bytes[..5]);
+            if let Some(prefix) = bytes.first_chunk::<5>() {
+                self.buffer.extend_from_slice(prefix);
+            }
         } else {
             // Sequence: encode with LSB = 0, then var_uint length
             let encoded = self.base_value << 1;
             let bytes = encoded.to_le_bytes();
-            self.buffer.extend_from_slice(&bytes[..5]);
+            if let Some(prefix) = bytes.first_chunk::<5>() {
+                self.buffer.extend_from_slice(prefix);
+            }
 
             // Write var_uint
             self.write_var_uint(self.seq_length)?;
@@ -1088,6 +1102,41 @@ mod tests {
             ZReorderMap::open(temp_file.path()).is_err(),
             "zero-length run was accepted"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_sequence_exceeding_remaining_size_or_underflowing_zero_is_rejected() -> Result<()> {
+        use std::io::Write;
+
+        // 1. Sequence run claiming seq_length = 100 when map size = 4
+        let temp1 = NamedTempFile::new()?;
+        let mut bytes1 = Vec::new();
+        bytes1.extend_from_slice(&4u64.to_le_bytes()); // size = 4
+        bytes1.extend_from_slice(&1i64.to_le_bytes()); // sign = 1
+        let encoded1: u64 = 10 << 1; // base = 10, LSB = 0 (sequence)
+        bytes1.extend_from_slice(&encoded1.to_le_bytes()[..5]);
+        bytes1.push(100); // seq_length = 100 > size (4)
+        std::fs::File::create(temp1.path())?.write_all(&bytes1)?;
+        assert!(
+            ZReorderMap::open(temp1.path()).is_err(),
+            "sequence run exceeding remaining map size must be rejected"
+        );
+
+        // 2. Decreasing sequence (sign = -1) starting at 1 with seq_length = 4 (underflows 0)
+        let temp2 = NamedTempFile::new()?;
+        let mut bytes2 = Vec::new();
+        bytes2.extend_from_slice(&4u64.to_le_bytes()); // size = 4
+        bytes2.extend_from_slice(&(-1i64).to_le_bytes()); // sign = -1
+        let encoded2: u64 = 1 << 1; // base = 1, LSB = 0 (sequence)
+        bytes2.extend_from_slice(&encoded2.to_le_bytes()[..5]);
+        bytes2.push(4); // seq_length = 4 -> steps 1, 0, -1, -2 (underflows 0)
+        std::fs::File::create(temp2.path())?.write_all(&bytes2)?;
+        assert!(
+            ZReorderMap::open(temp2.path()).is_err(),
+            "decreasing sequence underflowing zero must be rejected"
+        );
+
         Ok(())
     }
 }

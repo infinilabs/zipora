@@ -53,13 +53,16 @@ pub trait BlobStore {
     /// * `true` if the blob exists, `false` otherwise
     fn contains(&self, id: RecordId) -> bool;
 
-    /// Get the size of a blob without retrieving its data
+    /// Get the logical (uncompressed) size of a blob in bytes without retrieving its full data.
+    ///
+    /// For compressed blob stores, this returns the original uncompressed length (`get(id)?.len()`),
+    /// whereas [`CompressedBlobStore::compressed_size`] returns the physical compressed size.
     ///
     /// # Arguments
     /// * `id` - The unique identifier of the blob
     ///
     /// # Returns
-    /// * `Ok(Some(size))` - The size of the blob if it exists
+    /// * `Ok(Some(size))` - The uncompressed size of the blob in bytes if it exists
     /// * `Ok(None)` - If the blob doesn't exist
     /// * `Err(ZiporaError)` - If size query fails
     fn size(&self, id: RecordId) -> Result<Option<usize>>;

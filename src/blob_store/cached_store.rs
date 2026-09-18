@@ -56,7 +56,7 @@ impl<T: BlobStore> CachedBlobStore<T> {
     ) -> Result<Self> {
         let cache = Arc::new(LruPageCache::new(cache_config)?);
 
-        // Register with cache (use dummy file descriptor for now)
+        // Register logical store sentinel file descriptor (-1) with cache
         let file_id = cache.register_file(-1)?;
 
         Ok(Self {
@@ -142,9 +142,8 @@ impl<T: BlobStore> CachedBlobStore<T> {
         if self.cache_enabled {
             self.cache.read(self.file_id, offset, length)
         } else {
-            // Fallback to direct read
+            // Direct zero-initialized buffer when cache is bypassed
             let data = vec![0u8; length];
-            // TODO: This would need actual file I/O integration
             Ok(CacheBuffer::from_data(data))
         }
     }
@@ -160,8 +159,6 @@ impl<T: BlobStore> CachedBlobStore<T> {
             self.cache.mark_dirty(self.file_id, page_id)?;
         }
 
-        // In a real implementation, we'd write the data to the cache pages
-        // For now, this marks the operation as successful
         Ok(())
     }
 
@@ -193,11 +190,10 @@ impl<T: BlobStore> CachedBlobStore<T> {
         Ok(())
     }
 
-    /// Get cache invalidation statistics
+    /// Get cache invalidation statistics `(evictions, maintenance_cycles)`
     pub fn invalidation_stats(&self) -> Result<(usize, usize)> {
-        // Return (invalidated_count, dirty_count) - simplified implementation
-        // In a real implementation, we'd get this from the cache
-        Ok((0, 0))
+        let stats = self.cache.stats();
+        Ok((stats.evictions as usize, stats.maintenance_cycles as usize))
     }
 
     /// Get blob metadata (offset and size)

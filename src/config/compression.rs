@@ -4,7 +4,7 @@ use super::{Config, parse_env_bool, parse_env_var};
 use crate::error::{Result, ZiporaError};
 use std::path::Path;
 
-/// Compression algorithm configuration placeholder.
+/// Compression algorithm configuration settings.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CompressionConfig {

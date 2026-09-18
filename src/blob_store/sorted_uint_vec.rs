@@ -335,7 +335,11 @@ impl SortedUintVec {
         config.validate()?;
 
         let read_u64 = |at: usize| -> u64 {
-            u64::from_le_bytes(header[at..at + 8].try_into().expect("8 bytes"))
+            header
+                .get(at..)
+                .and_then(|s| s.first_chunk::<8>())
+                .map(|c| u64::from_le_bytes(*c))
+                .unwrap_or(0)
         };
         let size = read_u64(8);
         let index_len = read_u64(16);
@@ -508,8 +512,12 @@ impl SortedUintVec {
 
         // Read 8 bytes as u64 for BEXTR
         let mut bytes = [0u8; 8];
-        let copy_len = (data.len() - byte_offset).min(8);
-        bytes[..copy_len].copy_from_slice(&data[byte_offset..byte_offset + copy_len]);
+        if let Some(src) = data.get(byte_offset..) {
+            let copy_len = src.len().min(8);
+            if let (Some(d), Some(s)) = (bytes.get_mut(..copy_len), src.get(..copy_len)) {
+                d.copy_from_slice(s);
+            }
+        }
 
         let mut value = u64::from_le_bytes(bytes);
 
@@ -552,8 +560,12 @@ impl SortedUintVec {
 
         // Read aligned 8-byte chunk
         let mut bytes = [0u8; 8];
-        let copy_len = (data.len() - byte_offset).min(8);
-        bytes[..copy_len].copy_from_slice(&data[byte_offset..byte_offset + copy_len]);
+        if let Some(src) = data.get(byte_offset..) {
+            let copy_len = src.len().min(8);
+            if let (Some(d), Some(s)) = (bytes.get_mut(..copy_len), src.get(..copy_len)) {
+                d.copy_from_slice(s);
+            }
+        }
 
         let raw_value = u64::from_le_bytes(bytes);
 
@@ -582,8 +594,8 @@ impl SortedUintVec {
 
         // Read bytes and construct value
         for i in 0..bytes_to_read {
-            if byte_offset + i < data.len() {
-                value |= (data[byte_offset + i] as u128) << (i * 8);
+            if let Some(&b) = data.get(byte_offset + i) {
+                value |= (b as u128) << (i * 8);
             }
         }
 
@@ -948,9 +960,9 @@ impl SortedUintVecBuilder {
         let shifted_value = (masked_value as u128) << bit_shift;
 
         for i in 0..bytes_needed {
-            if byte_offset + i < data.len() {
+            if let Some(dst) = data.get_mut(byte_offset + i) {
                 let byte_value = (shifted_value >> (i * 8)) as u8;
-                data[byte_offset + i] |= byte_value;
+                *dst |= byte_value;
             }
         }
 
