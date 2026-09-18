@@ -290,14 +290,17 @@ impl Dictionary {
         self.entries.is_empty()
     }
 
-    /// Serialize dictionary
+    /// Serialize dictionary deterministically in little-endian wire order
     pub fn serialize(&self) -> Vec<u8> {
         let mut result = Vec::new();
 
         // Write number of entries
         result.extend_from_slice(&(self.entries.len() as u32).to_le_bytes());
 
-        for (sequence, entry) in &self.entries {
+        let mut sorted_entries: Vec<_> = self.entries.iter().collect();
+        sorted_entries.sort_by(|a, b| a.0.cmp(b.0));
+
+        for (sequence, entry) in sorted_entries {
             // Write sequence length and data
             result.extend_from_slice(&(sequence.len() as u16).to_le_bytes());
             result.extend_from_slice(sequence);
