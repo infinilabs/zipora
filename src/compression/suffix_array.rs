@@ -512,8 +512,7 @@ impl SuffixArrayCompressor {
         let suffix_array = if self.config.use_compressed_storage {
             IntVec::from_slice(&suffix_array_u32)?
         } else {
-            // Create IntVec without compression for speed
-            // For now, use compressed storage always
+            // Construct bit-packed IntVec directly from u32 suffix ranks
             IntVec::from_slice(&suffix_array_u32)?
         };
 

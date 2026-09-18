@@ -287,12 +287,15 @@ impl PatternMatcher {
         self.stats.total_matches += 1;
         self.stats.full_sa_searches += 1;
 
-        if input_pos >= input.len() {
+        let Some(search_slice) = input.get(input_pos..) else {
+            self.stats.total_match_time_us += start_time.elapsed().as_micros() as u64;
+            return Ok(None);
+        };
+        if search_slice.is_empty() {
             self.stats.total_match_time_us += start_time.elapsed().as_micros() as u64;
             return Ok(None);
         }
 
-        let search_slice = &input[input_pos..];
         let max_search_len = max_length
             .min(search_slice.len())
             .min(self.config.max_match_length);
@@ -313,7 +316,9 @@ impl PatternMatcher {
                 break;
             }
 
-            let pattern = &search_slice[..pattern_len];
+            let Some(pattern) = search_slice.get(..pattern_len) else {
+                continue;
+            };
             let (start_idx, count) = self.suffix_array.search(&self.dictionary_text, pattern);
 
             if count > 0 {
@@ -408,12 +413,15 @@ impl PatternMatcher {
         dict_pos: usize,
         max_extension: usize,
     ) -> Result<usize> {
-        if input_pos >= input.len() || dict_pos >= self.dictionary_text.len() {
+        let Some(input_remaining) = input.get(input_pos..) else {
+            return Ok(0);
+        };
+        let Some(dict_remaining) = self.dictionary_text.get(dict_pos..) else {
+            return Ok(0);
+        };
+        if input_remaining.is_empty() || dict_remaining.is_empty() {
             return Ok(0);
         }
-
-        let input_remaining = &input[input_pos..];
-        let dict_remaining = &self.dictionary_text[dict_pos..];
 
         let max_compare = max_extension
             .min(input_remaining.len())
@@ -431,16 +439,12 @@ impl PatternMatcher {
         }
 
         // Fallback to scalar comparison
-        let mut extension = 0;
-        for i in 0..max_compare {
-            if input_remaining[i] == dict_remaining[i] {
-                extension += 1;
-            } else {
-                break;
-            }
-        }
-
-        Ok(extension)
+        Ok(input_remaining
+            .iter()
+            .zip(dict_remaining.iter())
+            .take(max_compare)
+            .take_while(|&(a, b)| a == b)
+            .count())
     }
 
     /// SIMD-accelerated string comparison and extension
@@ -474,7 +478,7 @@ impl PatternMatcher {
 
             // Handle remaining bytes with scalar comparison
             while pos < max_len && pos < input.len() && pos < dict.len() {
-                if input[pos] != dict[pos] {
+                if input.get(pos) != dict.get(pos) {
                     break;
                 }
                 pos += 1;

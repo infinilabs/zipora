@@ -316,14 +316,18 @@ impl StreamVByte {
     #[inline]
     fn write_value(data: &mut Vec<u8>, v: u32, len: usize) {
         let bytes = v.to_le_bytes();
-        data.extend_from_slice(&bytes[..len]);
+        if let Some(slice) = bytes.get(..len) {
+            data.extend_from_slice(slice);
+        }
     }
 
     /// Read a value of `len` bytes from data at position (little-endian).
     #[inline]
     fn read_value(data: &[u8], pos: usize, len: usize) -> u32 {
         let mut bytes = [0u8; 4];
-        bytes[..len].copy_from_slice(&data[pos..pos + len]);
+        if let (Some(dst), Some(src)) = (bytes.get_mut(..len), data.get(pos..pos + len)) {
+            dst.copy_from_slice(src);
+        }
         u32::from_le_bytes(bytes)
     }
 }
@@ -353,14 +357,14 @@ pub struct GroupVarint;
 impl GroupVarint {
     /// Encode sorted values with delta + group varint.
     pub fn encode_deltas(values: &[u32]) -> Vec<u8> {
-        if values.is_empty() {
+        let Some(&first) = values.first() else {
             return Vec::new();
-        }
+        };
 
         let mut deltas = Vec::with_capacity(values.len());
-        deltas.push(values[0]);
-        for i in 1..values.len() {
-            deltas.push(values[i] - values[i - 1]);
+        deltas.push(first);
+        for w in values.windows(2) {
+            deltas.push(w[1] - w[0]);
         }
 
         Self::encode_raw(&deltas)
@@ -372,33 +376,35 @@ impl GroupVarint {
         let n = values.len();
         let mut i = 0;
 
-        while i + 4 <= n {
-            let lengths = [
-                StreamVByte::byte_length(values[i]),
-                StreamVByte::byte_length(values[i + 1]),
-                StreamVByte::byte_length(values[i + 2]),
-                StreamVByte::byte_length(values[i + 3]),
-            ];
+        while let Some(&[v0, v1, v2, v3]) = values.get(i..).and_then(|s| s.first_chunk::<4>()) {
+            let l0 = StreamVByte::byte_length(v0);
+            let l1 = StreamVByte::byte_length(v1);
+            let l2 = StreamVByte::byte_length(v2);
+            let l3 = StreamVByte::byte_length(v3);
 
             // Control byte
-            let ctrl = ((lengths[0] - 1)
-                | ((lengths[1] - 1) << 2)
-                | ((lengths[2] - 1) << 4)
-                | ((lengths[3] - 1) << 6)) as u8;
+            let ctrl = ((l0 - 1)
+                | ((l1 - 1) << 2)
+                | ((l2 - 1) << 4)
+                | ((l3 - 1) << 6)) as u8;
             output.push(ctrl);
 
             // Data
-            for k in 0..4 {
-                let bytes = values[i + k].to_le_bytes();
-                output.extend_from_slice(&bytes[..lengths[k]]);
+            for (val, len) in [(v0, l0), (v1, l1), (v2, l2), (v3, l3)] {
+                let bytes = val.to_le_bytes();
+                if let Some(slice) = bytes.get(..len) {
+                    output.extend_from_slice(slice);
+                }
             }
 
             i += 4;
         }
 
         // Remaining values (stored as raw u32)
-        for j in i..n {
-            output.extend_from_slice(&values[j].to_le_bytes());
+        if let Some(tail) = values.get(i..) {
+            for &val in tail {
+                output.extend_from_slice(&val.to_le_bytes());
+            }
         }
 
         // Store count of remaining values in last byte if not multiple of 4
@@ -431,17 +437,21 @@ impl GroupVarint {
         let mut pos = 0;
         let mut remaining = count;
 
-        while remaining >= 4 && pos < data.len() {
-            let ctrl = data[pos];
+        while remaining >= 4 {
+            let Some(&ctrl) = data.get(pos) else {
+                break;
+            };
             pos += 1;
 
             for k in 0..4 {
                 let len = ((ctrl >> (k * 2)) & 0x03) as usize + 1;
-                if pos + len > data.len() {
+                let Some(src) = data.get(pos..pos + len) else {
                     break;
-                }
+                };
                 let mut bytes = [0u8; 4];
-                bytes[..len].copy_from_slice(&data[pos..pos + len]);
+                if let Some(dst) = bytes.get_mut(..len) {
+                    dst.copy_from_slice(src);
+                }
                 values.push(u32::from_le_bytes(bytes));
                 pos += len;
             }
@@ -450,9 +460,10 @@ impl GroupVarint {
         }
 
         // Decode remaining raw u32s
-        while remaining > 0 && pos + 4 <= data.len() {
-            let mut bytes = [0u8; 4];
-            bytes.copy_from_slice(&data[pos..pos + 4]);
+        while remaining > 0 {
+            let Some(&bytes) = data.get(pos..).and_then(|s| s.first_chunk::<4>()) else {
+                break;
+            };
             values.push(u32::from_le_bytes(bytes));
             pos += 4;
             remaining -= 1;

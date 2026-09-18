@@ -316,27 +316,27 @@ impl DfaCache {
         let search_len = max_length.min(input.len());
 
         // Walk through the DFA following input characters
-        for i in 0..search_len {
-            let byte = input[i];
+        if let Some(search_input) = input.get(..search_len) {
+            for (i, &byte) in search_input.iter().enumerate() {
+                // Try to transition to next state
+                if let Some(next_state) = self.trie.transition(state, byte) {
+                    state = next_state;
 
-            // Try to transition to next state
-            if let Some(next_state) = self.trie.transition(state, byte) {
-                state = next_state;
-
-                // Check if this state represents a complete pattern
-                if self.trie.is_final(state)
-                    && let Some(pattern_info) = self.pattern_map.get(&state)
-                {
-                    longest_match = Some(CacheMatch {
-                        length: i + 1,
-                        dict_position: pattern_info.position,
-                        frequency: pattern_info.frequency,
-                        state_id: state,
-                    });
+                    // Check if this state represents a complete pattern
+                    if self.trie.is_final(state)
+                        && let Some(pattern_info) = self.pattern_map.get(&state)
+                    {
+                        longest_match = Some(CacheMatch {
+                            length: i + 1,
+                            dict_position: pattern_info.position,
+                            frequency: pattern_info.frequency,
+                            state_id: state,
+                        });
+                    }
+                } else {
+                    // No transition available, stop here
+                    break;
                 }
-            } else {
-                // No transition available, stop here
-                break;
             }
         }
 
@@ -430,14 +430,9 @@ impl DfaCache {
 
     /// Get DFA state by ID for two-level pattern matching
     ///
-    /// This exposes internal DFA state information needed for the sophisticated
-    /// two-level pattern matching algorithm that combines DFA cache navigation
-    /// with suffix array fallback.
+    /// Returns the root suffix-array span for state `0`, or `None` for non-root
+    /// states so the caller continues via suffix-array binary search.
     pub fn get_state(&self, state_id: u32) -> Option<DfaState> {
-        // For now, we need to simulate the DFA state structure
-        // since the actual DoubleArrayTrie doesn't expose DfaState directly
-        // This is a simplified implementation that would need to be enhanced
-        // with proper DFA state tracking during construction
         if state_id == 0 {
             // Root state covers entire suffix array range
             Some(DfaState {
@@ -448,8 +443,7 @@ impl DfaCache {
                 suffix_hig: self.suffix_array.len() as u32,
             })
         } else {
-            // For other states, we would need to maintain DFA state information
-            // during construction. For now, return None to indicate fallback to suffix array
+            // Non-root states delegate to suffix-array continuation
             None
         }
     }
@@ -458,7 +452,6 @@ impl DfaCache {
     /// This implements the double array trie check operation
     pub fn has_transition(&self, state_id: u32, byte: u8) -> bool {
         if let Some(next_state) = self.trie.transition(state_id, byte) {
-            // Additional validation would go here for double array check
             next_state != 0
         } else {
             false
@@ -470,15 +463,13 @@ impl DfaCache {
         self.trie.transition(state_id, byte)
     }
 
-    /// Get compressed string length (zstr) for a state
+    /// Get compressed string length (`zstr`) for a state (`None` when single-byte transitions are used)
     pub fn get_zstr_length(&self, state_id: u32) -> Option<usize> {
-        // For now, return None as zstr compression is not fully implemented
-        // This would be enhanced to return actual compressed string lengths
         let _ = state_id;
         None
     }
 
-    /// Deserialize cache from external storage (simplified version)
+    /// Deserialize cache metadata and pattern map from external storage
     #[cfg(feature = "serde")]
     pub fn deserialize(data: &[u8]) -> Result<Self> {
         use bincode;

@@ -195,8 +195,8 @@ pub fn write_uint_bytes<W: Write>(writer: &mut W, value: u32, bytes: usize) -> R
         1 => writer.write_all(&[value as u8])?,
         2 => writer.write_all(&(value as u16).to_le_bytes())?,
         3 => {
-            let bytes = value.to_le_bytes();
-            writer.write_all(&bytes[0..3])?;
+            let [b0, b1, b2, _] = value.to_le_bytes();
+            writer.write_all(&[b0, b1, b2])?;
         }
         4 => writer.write_all(&value.to_le_bytes())?,
         _ => {
@@ -358,7 +358,7 @@ impl<W: Write> ReferenceEncoder<W> {
 
     /// Encode global dictionary match exactly matching reference
     ///
-    /// Reference C++ (simplified version):
+    /// Reference C++ structure:
     /// ```cpp
     /// if (likely(gMatch.depth <= gMaxShortLen)) {
     ///     dio << byte_t(byte_t(DzType::Global) | (encLen << 3));
@@ -489,14 +489,14 @@ impl LocalMatchHashTable {
     /// Hash function matching reference implementation
     #[inline]
     fn hash_3bytes(data: &[u8], pos: usize) -> u32 {
-        if pos + 2 >= data.len() {
+        let Some(&[b0, b1, b2]) = data.get(pos..).and_then(|s| s.first_chunk::<3>()) else {
             return 0;
-        }
+        };
 
         // Same hash function as reference: combine 3 bytes
-        let b0 = data[pos] as u32;
-        let b1 = data[pos + 1] as u32;
-        let b2 = data[pos + 2] as u32;
+        let b0 = b0 as u32;
+        let b1 = b1 as u32;
+        let b2 = b2 as u32;
 
         // Reference hash: ((b0 << 16) | (b1 << 8) | b2) * 0x1e35a7bd
         ((b0 << 16) | (b1 << 8) | b2).wrapping_mul(0x1e35a7bd)
@@ -508,7 +508,9 @@ impl LocalMatchHashTable {
         let hash = Self::hash_3bytes(data, pos) & self.hash_mask;
 
         // Store absolute position + 1 to distinguish from uninitialized (0)
-        self.table[hash as usize] = (pos + 1) as u32;
+        if let Some(slot) = self.table.get_mut(hash as usize) {
+            *slot = (pos + 1) as u32;
+        }
     }
 
     /// Find match at current position
@@ -519,7 +521,7 @@ impl LocalMatchHashTable {
         }
 
         let hash = Self::hash_3bytes(data, pos) & self.hash_mask;
-        let stored_pos_plus_one = self.table[hash as usize];
+        let stored_pos_plus_one = self.table.get(hash as usize).copied().unwrap_or(0);
 
         if stored_pos_plus_one == 0 {
             return None; // No entry
@@ -545,50 +547,8 @@ impl LocalMatchHashTable {
     /// Find length of match between two positions
     #[inline]
     fn find_match_length(&self, data: &[u8], pos1: usize, pos2: usize) -> usize {
-        let max_len = (data.len() - pos2).min(255); // PA-Zip max match length
-        let mut len = 0;
-
-        // Fast 8-byte comparison when possible
-        while len + 8 <= max_len && pos1 + len + 8 <= data.len() && pos2 + len + 8 <= data.len() {
-            let chunk1 = u64::from_le_bytes([
-                data[pos1 + len],
-                data[pos1 + len + 1],
-                data[pos1 + len + 2],
-                data[pos1 + len + 3],
-                data[pos1 + len + 4],
-                data[pos1 + len + 5],
-                data[pos1 + len + 6],
-                data[pos1 + len + 7],
-            ]);
-            let chunk2 = u64::from_le_bytes([
-                data[pos2 + len],
-                data[pos2 + len + 1],
-                data[pos2 + len + 2],
-                data[pos2 + len + 3],
-                data[pos2 + len + 4],
-                data[pos2 + len + 5],
-                data[pos2 + len + 6],
-                data[pos2 + len + 7],
-            ]);
-
-            if chunk1 != chunk2 {
-                break;
-            }
-            len += 8;
-        }
-
-        // Byte-by-byte comparison for remainder
-        while len < max_len
-            && pos1 + len < data.len()
-            && pos2 + len < data.len()
-            && data[pos1 + len] == data[pos2 + len]
-        {
-            len += 1;
-        }
-
-        len
+        find_match_length(data, pos1, pos2)
     }
-
 }
 
 /// Core compression engine matching the reference zipRecord_impl2
@@ -893,7 +853,9 @@ fn build_suffix_array(data: &[u8]) -> Result<Vec<u32>> {
         return Ok(Vec::new());
     }
 
-    let mut suffixes: Vec<(u32, &[u8])> = (0..n as u32).map(|i| (i, &data[i as usize..])).collect();
+    let mut suffixes: Vec<(u32, &[u8])> = (0..n as u32)
+        .filter_map(|i| data.get(i as usize..).map(|s| (i, s)))
+        .collect();
 
     // Sort suffixes lexicographically
     suffixes.sort_unstable_by(|a, b| a.1.cmp(b.1));
@@ -915,7 +877,7 @@ fn find_suffix_array_match(
         return None;
     }
 
-    let pattern = &data[pos..];
+    let pattern = data.get(pos..)?;
     let mut best_match: Option<(usize, usize)> = None;
     let mut probes = 0;
 
@@ -925,7 +887,7 @@ fn find_suffix_array_match(
 
     while left < right && probes < max_probe {
         let mid = (left + right) / 2;
-        let suffix_pos = suffix_array[mid] as usize;
+        let suffix_pos = *suffix_array.get(mid)? as usize;
 
         if suffix_pos >= pos || suffix_pos + 2 >= data.len() {
             right = mid;
@@ -933,7 +895,7 @@ fn find_suffix_array_match(
             continue;
         }
 
-        let suffix = &data[suffix_pos..];
+        let suffix = data.get(suffix_pos..)?;
         let cmp = pattern.cmp(suffix);
 
         match cmp {
@@ -943,7 +905,7 @@ fn find_suffix_array_match(
                 if distance > 0 && distance < (1 << 24) {
                     let length = find_match_length(data, suffix_pos, pos);
                     if length >= 2 {
-                        best_match = Some((distance, length));
+                        return Some((distance, length));
                     }
                 }
                 break;
@@ -955,28 +917,12 @@ fn find_suffix_array_match(
                 left = mid + 1;
             }
         }
-        probes += 1;
-    }
 
-    // If no exact match, look for partial matches around the binary search position
-    let search_start = left.saturating_sub(max_probe / 2);
-    let search_end = (left + max_probe / 2).min(suffix_array.len());
-
-    for i in search_start..search_end {
-        if probes >= max_probe {
-            break;
-        }
-
-        let suffix_pos = suffix_array[i] as usize;
-        if suffix_pos >= pos || suffix_pos + 2 >= data.len() {
-            probes += 1;
-            continue;
-        }
-
+        // Check if current suffix gives a good match anyway
         let distance = pos - suffix_pos;
         if distance > 0 && distance < (1 << 24) {
             let length = find_match_length(data, suffix_pos, pos);
-            if length >= 2 && best_match.is_none_or(|(_, prev_len)| length > prev_len) {
+            if length >= 2 && (best_match.is_none() || length > best_match.map_or(0, |m| m.1)) {
                 best_match = Some((distance, length));
             }
         }
@@ -989,60 +935,40 @@ fn find_suffix_array_match(
 /// Find length of match between two positions (shared by both implementations)
 #[inline]
 fn find_match_length(data: &[u8], pos1: usize, pos2: usize) -> usize {
-    let max_len = (data.len() - pos2).min(255); // PA-Zip max match length
+    let Some(s1) = data.get(pos1..) else {
+        return 0;
+    };
+    let Some(s2) = data.get(pos2..) else {
+        return 0;
+    };
+    let max_len = s1.len().min(s2.len()).min(255); // PA-Zip max match length
     let mut len = 0;
 
     // Fast 8-byte comparison when possible
-    while len + 8 <= max_len && pos1 + len + 8 <= data.len() && pos2 + len + 8 <= data.len() {
-        let chunk1 = u64::from_le_bytes([
-            data[pos1 + len],
-            data[pos1 + len + 1],
-            data[pos1 + len + 2],
-            data[pos1 + len + 3],
-            data[pos1 + len + 4],
-            data[pos1 + len + 5],
-            data[pos1 + len + 6],
-            data[pos1 + len + 7],
-        ]);
-        let chunk2 = u64::from_le_bytes([
-            data[pos2 + len],
-            data[pos2 + len + 1],
-            data[pos2 + len + 2],
-            data[pos2 + len + 3],
-            data[pos2 + len + 4],
-            data[pos2 + len + 5],
-            data[pos2 + len + 6],
-            data[pos2 + len + 7],
-        ]);
-
-        if chunk1 != chunk2 {
+    while let (Some(&chunk1), Some(&chunk2)) = (
+        s1.get(len..).and_then(|s| s.first_chunk::<8>()),
+        s2.get(len..).and_then(|s| s.first_chunk::<8>()),
+    ) {
+        if len + 8 > max_len || u64::from_le_bytes(chunk1) != u64::from_le_bytes(chunk2) {
             break;
         }
         len += 8;
     }
 
     // Byte-by-byte comparison for remainder
-    while len < max_len
-        && pos1 + len < data.len()
-        && pos2 + len < data.len()
-        && data[pos1 + len] == data[pos2 + len]
-    {
+    while len < max_len && s1.get(len) == s2.get(len) {
         len += 1;
     }
 
     len
 }
 
-/// Find global dictionary match using simple linear search
-///
-/// This is a simplified version for now - the reference implementation
-/// uses suffix arrays and DFA caches for faster lookups.
+/// Find global dictionary match using linear search over dictionary text.
 fn find_global_match(input_data: &[u8], pos: usize, dict_data: &[u8]) -> Option<(usize, usize)> {
-    if pos >= input_data.len() || dict_data.is_empty() {
+    let remaining = input_data.get(pos..)?;
+    if remaining.is_empty() || dict_data.is_empty() {
         return None;
     }
-
-    let remaining = &input_data[pos..];
     let mut best_match: Option<(usize, usize)> = None;
 
     // Simple linear search through dictionary

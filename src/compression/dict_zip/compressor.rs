@@ -613,10 +613,12 @@ impl PaZipCompressor {
         let mut s = start;
         while s < end {
             let chunk = (end - s).min(255);
-            self.output_buffer.push(0); // Literal type byte
-            self.output_buffer.push(chunk as u8);
-            self.output_buffer.extend_from_slice(&input[s..s + chunk]);
-            self.stats.literal_count += 1;
+            if let Some(slice) = input.get(s..s + chunk) {
+                self.output_buffer.push(0); // Literal type byte
+                self.output_buffer.push(chunk as u8);
+                self.output_buffer.extend_from_slice(slice);
+                self.stats.literal_count += 1;
+            }
             s += chunk;
         }
     }
@@ -628,16 +630,10 @@ impl PaZipCompressor {
         }
 
         output.clear();
-        output.reserve(input.len() * 2); // Conservative estimate for decompressed size
+        output.reserve(input.len().saturating_mul(2).min(64 * 1024));
 
         let mut pos = 0;
-        while pos < input.len() {
-            if pos >= input.len() {
-                break;
-            }
-
-            // Read match type/compression type from the input
-            let compression_type_byte = input[pos];
+        while let Some(&compression_type_byte) = input.get(pos) {
             pos += 1;
 
             let compression_type = match compression_type_byte {
@@ -649,7 +645,11 @@ impl PaZipCompressor {
                 5 => CompressionType::Far2Short,
                 6 => CompressionType::Far2Long,
                 7 => CompressionType::Far3Long,
-                _ => CompressionType::Literal, // Default to literal
+                _ => {
+                    return Err(ZiporaError::invalid_data(
+                        "Invalid PA-Zip compression instruction type",
+                    ));
+                }
             };
 
             // Decompress based on compression type
@@ -668,133 +668,135 @@ impl PaZipCompressor {
         output: &mut Vec<u8>,
     ) -> Result<usize> {
         let mut new_pos = pos;
+        let max_match_len = self.config.local_config.max_match_length.max(256);
 
         match compression_type {
             CompressionType::Literal => {
-                // Read literal length and data
-                if new_pos >= input.len() {
-                    return Ok(new_pos);
-                }
-                let length = input[new_pos] as usize;
+                let length = *input
+                    .get(new_pos)
+                    .ok_or_else(|| ZiporaError::invalid_data("Truncated PA-Zip literal header"))?
+                    as usize;
                 new_pos += 1;
 
-                if new_pos + length > input.len() {
-                    return Err(ZiporaError::invalid_data(
-                        "Literal data exceeds input bounds",
-                    ));
-                }
+                let end_pos = new_pos.checked_add(length).ok_or_else(|| {
+                    ZiporaError::invalid_data("Literal length overflow in PA-Zip stream")
+                })?;
+                let literal_slice = input.get(new_pos..end_pos).ok_or_else(|| {
+                    ZiporaError::invalid_data("Literal data exceeds input bounds")
+                })?;
 
-                output.extend_from_slice(&input[new_pos..new_pos + length]);
-                new_pos += length;
+                output.extend_from_slice(literal_slice);
+                new_pos = end_pos;
             }
             CompressionType::Global => {
                 // [offset:u32][len:u16]
-                if new_pos + 6 > input.len() {
-                    return Ok(new_pos);
-                }
-                let offset = u32::from_le_bytes([
-                    input[new_pos],
-                    input[new_pos + 1],
-                    input[new_pos + 2],
-                    input[new_pos + 3],
-                ]) as usize;
-                let length = u16::from_le_bytes([input[new_pos + 4], input[new_pos + 5]]) as usize;
+                let hdr = input
+                    .get(new_pos..)
+                    .and_then(|s| s.first_chunk::<6>())
+                    .ok_or_else(|| {
+                        ZiporaError::invalid_data("Truncated PA-Zip global match instruction")
+                    })?;
+                let offset = u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]) as usize;
+                let length = u16::from_le_bytes([hdr[4], hdr[5]]) as usize;
                 new_pos += 6;
+
+                if length == 0 || length > max_match_len {
+                    return Err(ZiporaError::invalid_data(
+                        "Global match length outside valid bounds",
+                    ));
+                }
 
                 // Copy from dictionary using actual dictionary data
                 let dict_text = self.dictionary.dictionary_text();
-                if offset + length <= dict_text.len() {
-                    output.extend_from_slice(&dict_text[offset..offset + length]);
-                } else {
-                    // Handle bounds error gracefully - copy what we can
-                    let available_length = dict_text.len().saturating_sub(offset);
-                    if available_length > 0 {
-                        output.extend_from_slice(&dict_text[offset..offset + available_length]);
-                    }
-                    return Err(ZiporaError::invalid_data(
-                        "Global match exceeds dictionary bounds",
-                    ));
-                }
+                let dict_slice = offset
+                    .checked_add(length)
+                    .and_then(|end| dict_text.get(offset..end))
+                    .ok_or_else(|| {
+                        ZiporaError::invalid_data("Global match exceeds dictionary bounds")
+                    })?;
+                output.extend_from_slice(dict_slice);
             }
             CompressionType::RLE => {
                 // [byte:u8][len:u8]
-                if new_pos + 2 > input.len() {
-                    return Ok(new_pos);
-                }
-                let byte_value = input[new_pos];
-                let length = input[new_pos + 1] as usize;
+                let hdr = input
+                    .get(new_pos..)
+                    .and_then(|s| s.first_chunk::<2>())
+                    .ok_or_else(|| ZiporaError::invalid_data("Truncated PA-Zip RLE instruction"))?;
+                let byte_value = hdr[0];
+                let length = hdr[1] as usize;
                 new_pos += 2;
 
-                for _ in 0..length {
-                    output.push(byte_value);
+                if length == 0 {
+                    return Err(ZiporaError::invalid_data("Zero-length RLE instruction"));
                 }
+                output.extend(std::iter::repeat_n(byte_value, length));
             }
             CompressionType::NearShort => {
                 // [dist:u8][len:u8]
-                if new_pos + 2 > input.len() {
-                    return Ok(new_pos);
-                }
-                let distance = input[new_pos] as usize;
-                let length = input[new_pos + 1] as usize;
+                let hdr = input
+                    .get(new_pos..)
+                    .and_then(|s| s.first_chunk::<2>())
+                    .ok_or_else(|| {
+                        ZiporaError::invalid_data("Truncated PA-Zip NearShort instruction")
+                    })?;
+                let distance = hdr[0] as usize;
+                let length = hdr[1] as usize;
                 new_pos += 2;
 
                 self.copy_from_distance(output, distance, length)?;
             }
             CompressionType::Far1Short => {
                 // [dist:u16][len:u8]
-                if new_pos + 3 > input.len() {
-                    return Ok(new_pos);
-                }
-                let distance = u16::from_le_bytes([input[new_pos], input[new_pos + 1]]) as usize;
-                let length = input[new_pos + 2] as usize;
+                let hdr = input
+                    .get(new_pos..)
+                    .and_then(|s| s.first_chunk::<3>())
+                    .ok_or_else(|| {
+                        ZiporaError::invalid_data("Truncated PA-Zip Far1Short instruction")
+                    })?;
+                let distance = u16::from_le_bytes([hdr[0], hdr[1]]) as usize;
+                let length = hdr[2] as usize;
                 new_pos += 3;
 
                 self.copy_from_distance(output, distance, length)?;
             }
             CompressionType::Far2Short => {
                 // [dist:u32][len:u8]
-                if new_pos + 5 > input.len() {
-                    return Ok(new_pos);
-                }
-                let distance = u32::from_le_bytes([
-                    input[new_pos],
-                    input[new_pos + 1],
-                    input[new_pos + 2],
-                    input[new_pos + 3],
-                ]) as usize;
-                let length = input[new_pos + 4] as usize;
+                let hdr = input
+                    .get(new_pos..)
+                    .and_then(|s| s.first_chunk::<5>())
+                    .ok_or_else(|| {
+                        ZiporaError::invalid_data("Truncated PA-Zip Far2Short instruction")
+                    })?;
+                let distance = u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]) as usize;
+                let length = hdr[4] as usize;
                 new_pos += 5;
 
                 self.copy_from_distance(output, distance, length)?;
             }
             CompressionType::Far2Long => {
                 // [dist:u16][len:u16]
-                if new_pos + 4 > input.len() {
-                    return Ok(new_pos);
-                }
-                let distance = u16::from_le_bytes([input[new_pos], input[new_pos + 1]]) as usize;
-                let length = u16::from_le_bytes([input[new_pos + 2], input[new_pos + 3]]) as usize;
+                let hdr = input
+                    .get(new_pos..)
+                    .and_then(|s| s.first_chunk::<4>())
+                    .ok_or_else(|| {
+                        ZiporaError::invalid_data("Truncated PA-Zip Far2Long instruction")
+                    })?;
+                let distance = u16::from_le_bytes([hdr[0], hdr[1]]) as usize;
+                let length = u16::from_le_bytes([hdr[2], hdr[3]]) as usize;
                 new_pos += 4;
 
                 self.copy_from_distance(output, distance, length)?;
             }
             CompressionType::Far3Long => {
                 // [dist:u32][len:u32]
-                if new_pos + 8 > input.len() {
-                    return Ok(new_pos);
-                }
-                let distance = u32::from_le_bytes([
-                    input[new_pos],
-                    input[new_pos + 1],
-                    input[new_pos + 2],
-                    input[new_pos + 3],
-                ]) as usize;
-                let length = u32::from_le_bytes([
-                    input[new_pos + 4],
-                    input[new_pos + 5],
-                    input[new_pos + 6],
-                    input[new_pos + 7],
-                ]) as usize;
+                let hdr = input
+                    .get(new_pos..)
+                    .and_then(|s| s.first_chunk::<8>())
+                    .ok_or_else(|| {
+                        ZiporaError::invalid_data("Truncated PA-Zip Far3Long instruction")
+                    })?;
+                let distance = u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]) as usize;
+                let length = u32::from_le_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]) as usize;
                 new_pos += 8;
 
                 self.copy_from_distance(output, distance, length)?;
@@ -811,18 +813,24 @@ impl PaZipCompressor {
         distance: usize,
         length: usize,
     ) -> Result<()> {
+        let max_match_len = self.config.local_config.max_match_length.max(256);
         if distance == 0 || distance > output.len() {
             return Err(ZiporaError::invalid_data("Invalid backreference distance"));
+        }
+        if length == 0 || length > max_match_len {
+            return Err(ZiporaError::invalid_data(
+                "Backreference match length outside valid bounds",
+            ));
         }
 
         let start_pos = output.len() - distance;
 
         // Handle overlapping copies (pattern repetition)
         for i in 0..length {
-            if start_pos + (i % distance) >= output.len() {
+            let src_idx = start_pos + (i % distance);
+            let Some(&byte) = output.get(src_idx) else {
                 break;
-            }
-            let byte = output[start_pos + (i % distance)];
+            };
             output.push(byte);
         }
 
@@ -840,16 +848,12 @@ impl PaZipCompressor {
             return self.compress_sequential(input, output);
         }
 
-        // Block-based parallel compression
+        // Block-based chunked compression
         let num_blocks = input.len().div_ceil(BLOCK_SIZE);
         let mut compressed_blocks = Vec::with_capacity(num_blocks);
 
-        // Process blocks sequentially for now (true parallelism would require thread safety)
-        for i in 0..num_blocks {
-            let start = i * BLOCK_SIZE;
-            let end = (start + BLOCK_SIZE).min(input.len());
-            let block = &input[start..end];
-
+        // Process 64KB blocks sequentially to preserve deterministic state transitions
+        for block in input.chunks(BLOCK_SIZE) {
             let mut block_output = Vec::new();
             self.compress_sequential(block, &mut block_output)?;
             compressed_blocks.push(block_output);
@@ -866,11 +870,12 @@ impl PaZipCompressor {
 
     /// Step 1: Find local match using sliding window
     fn find_local_match(&mut self, input: &[u8], pos: usize) -> Result<Option<LocalMatch>> {
-        if pos >= input.len() {
+        let Some(remaining) = input.get(pos..) else {
+            return Ok(None);
+        };
+        if remaining.is_empty() {
             return Ok(None);
         }
-
-        let remaining = &input[pos..];
         let max_length = remaining
             .len()
             .min(self.config.local_config.max_match_length);
@@ -888,11 +893,12 @@ impl PaZipCompressor {
         input: &[u8],
         pos: usize,
     ) -> Result<Option<crate::compression::dict_zip::matcher::Match>> {
-        if pos >= input.len() {
+        let Some(remaining) = input.get(pos..) else {
+            return Ok(None);
+        };
+        if remaining.is_empty() {
             return Ok(None);
         }
-
-        let remaining = &input[pos..];
         let max_length = remaining.len().min(256); // PA-Zip max pattern length
 
         self.dictionary.find_longest_match(remaining, 0, max_length)
@@ -1096,7 +1102,9 @@ impl PaZipCompressor {
                 let emit_len = end_pos - pos;
                 output.push(0);
                 output.push(emit_len as u8);
-                output.extend_from_slice(&input[pos..end_pos]);
+                if let Some(slice) = input.get(pos..end_pos) {
+                    output.extend_from_slice(slice);
+                }
                 Ok(emit_len)
             }
 
@@ -1109,7 +1117,7 @@ impl PaZipCompressor {
                     // RLE run, clamped to a single byte's worth of count.
                     let emit_len = (length as usize).clamp(1, 255);
                     output.push(2);
-                    output.push(if pos < input.len() { input[pos] } else { 0 });
+                    output.push(input.get(pos).copied().unwrap_or(0));
                     output.push(emit_len as u8);
                     Ok(emit_len)
                 } else {
@@ -1559,6 +1567,32 @@ mod tests {
 
         let invalid_compressor = PaZipCompressor::new(dictionary, invalid_config, pool)?;
         assert!(invalid_compressor.validate().is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_pa_zip_decompress_rejects_truncated_and_oversized_instructions() -> Result<()> {
+        let mut compressor = setup_test_compressor()?;
+        let mut output = Vec::new();
+
+        // 1. Truncated Global instruction [1] followed by bytes [0, 1, b'X'] that previously
+        // got re-interpreted as a valid Literal instruction when Global returned Ok(new_pos).
+        let truncated_global = [1u8, 0, 1, b'X'];
+        assert!(compressor.decompress(&truncated_global, &mut output).is_err());
+
+        // 2. Truncated Literal header [0] with no length byte.
+        assert!(compressor.decompress(&[0u8], &mut output).is_err());
+
+        // 3. Unknown instruction opcode (99).
+        assert!(compressor.decompress(&[99u8, 1, b'A'], &mut output).is_err());
+
+        // 4. Far3Long backreference claiming u32::MAX length (previously 4 GiB allocation loop).
+        let oversized_far3 = [
+            0u8, 1, b'A', // 1-byte literal seed
+            7u8, 1, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, // Far3Long: dist=1, len=u32::MAX
+        ];
+        assert!(compressor.decompress(&oversized_far3, &mut output).is_err());
 
         Ok(())
     }
