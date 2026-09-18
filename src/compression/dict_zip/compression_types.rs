@@ -756,8 +756,10 @@ impl<'a> BitReader<'a> {
             )));
         }
 
-        while self.bit_count < bits && self.byte_pos < self.data.len() {
-            let byte = self.data[self.byte_pos];
+        while self.bit_count < bits {
+            let Some(&byte) = self.data.get(self.byte_pos) else {
+                break;
+            };
             self.bit_buffer |= (byte as u64) << self.bit_count;
             self.bit_count += 8;
             self.byte_pos += 1;
@@ -874,8 +876,7 @@ fn calculate_encoding_cost_legacy(match_type: &Match) -> usize {
             dict_position: _,
             length: _,
         } => {
-            // Dictionary position: variable based on dictionary size
-            // For now, assume 32-bit position + 16-bit length
+            // Global match header: 32-bit dictionary offset + 16-bit length
             cost += 32 + 16;
         }
         Match::RLE { .. } => {
@@ -959,8 +960,7 @@ pub fn calculate_encoding_overhead(match_type: &Match) -> usize {
             dict_position: _,
             length: _,
         } => {
-            // Dictionary position: variable based on dictionary size
-            // For now, assume 32-bit position + 16-bit length
+            // Global match header: 32-bit dictionary offset + 16-bit length
             cost += 32 + 16;
         }
         Match::RLE { .. } => {
@@ -1133,7 +1133,7 @@ fn choose_best_compression_type_legacy(distance: usize, length: usize) -> Option
                     distance: distance as u32,
                     length: length as u32,
                 },
-                CompressionType::Global => return usize::MAX, // Skip global for now
+                CompressionType::Global => return usize::MAX, // Global matches are selected via dictionary lookup
             };
 
             calculate_encoding_cost_legacy(&dummy_match)

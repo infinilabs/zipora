@@ -557,26 +557,27 @@ impl LocalMatcher {
         input_pos: usize,
         max_length: usize,
     ) -> Result<Option<LocalMatch>> {
-        if input_pos == 0 || input_pos >= input.len() {
+        if input_pos == 0 {
             return Ok(None);
         }
 
-        let current_byte = input[input_pos];
-        let prev_byte = input[input_pos - 1];
+        let Some(&current_byte) = input.get(input_pos) else {
+            return Ok(None);
+        };
+        let Some(&prev_byte) = input.get(input_pos - 1) else {
+            return Ok(None);
+        };
 
         if current_byte != prev_byte {
             return Ok(None);
         }
 
         // Count consecutive identical bytes
-        let mut rle_length = 1; // Count current byte
-        for i in (input_pos + 1)..min(input_pos + max_length, input.len()) {
-            if input[i] == current_byte {
-                rle_length += 1;
-            } else {
-                break;
-            }
-        }
+        let end_pos = min(input_pos + max_length, input.len());
+        let rle_length = 1 + input
+            .get(input_pos + 1..end_pos)
+            .map(|s| s.iter().take_while(|&&b| b == current_byte).count())
+            .unwrap_or(0);
 
         if rle_length >= self.config.min_rle_length {
             Ok(Some(LocalMatch::new(
@@ -597,11 +598,9 @@ impl LocalMatcher {
         input_pos: usize,
         max_length: usize,
     ) -> Result<Vec<LocalMatch>> {
-        if input_pos + HASH_PATTERN_LENGTH > input.len() {
+        let Some(pattern_bytes) = input.get(input_pos..input_pos + HASH_PATTERN_LENGTH) else {
             return Ok(Vec::new());
-        }
-
-        let pattern_bytes = &input[input_pos..input_pos + HASH_PATTERN_LENGTH];
+        };
         let pattern_hash = self.hash_pattern(pattern_bytes);
 
         let mut matches = Vec::new();
@@ -659,8 +658,8 @@ impl LocalMatcher {
 
     /// Hash a pattern using FaboHashCombine
     fn hash_pattern(&self, pattern: &[u8]) -> u32 {
-        if pattern.len() >= 4 {
-            let word = u32::from_le_bytes([pattern[0], pattern[1], pattern[2], pattern[3]]);
+        if let Some(&word_bytes) = pattern.first_chunk::<4>() {
+            let word = u32::from_le_bytes(word_bytes);
             fabo_hash_combine_u32(word, 0x9e3779b9) // Golden ratio constant
         } else {
             // Handle short patterns
@@ -680,7 +679,10 @@ impl LocalMatcher {
         history_pos: usize,
         max_length: usize,
     ) -> Result<usize> {
-        let input_slice = &input[input_pos..min(input_pos + max_length, input.len())];
+        let Some(input_slice) = input.get(input_pos..min(input_pos + max_length, input.len()))
+        else {
+            return Ok(0);
+        };
 
         // Get history slice from sliding window
         let window_idx = match self.get_window_position(history_pos) {
@@ -743,8 +745,8 @@ impl LocalMatcher {
             let input_chunk = &input_slice[input_pos..input_pos + first_chunk_len];
 
             // Compare chunk efficiently using memcmp-style comparison
-            for i in 0..first_chunk_len {
-                if input_chunk[i] == first_chunk[i] {
+            for (&a, &b) in input_chunk.iter().zip(first_chunk.iter()) {
+                if a == b {
                     match_length += 1;
                 } else {
                     return Ok(match_length);
@@ -767,8 +769,8 @@ impl LocalMatcher {
                 let input_chunk = &input_slice[input_pos..input_pos + second_chunk_len];
 
                 // Compare second chunk efficiently
-                for i in 0..second_chunk_len {
-                    if input_chunk[i] == second_chunk[i] {
+                for (&a, &b) in input_chunk.iter().zip(second_chunk.iter()) {
+                    if a == b {
                         match_length += 1;
                     } else {
                         return Ok(match_length);
@@ -820,7 +822,7 @@ impl LocalMatcher {
 
         // Handle remaining bytes with scalar comparison
         while pos < max_len {
-            if input[pos] != history[pos] {
+            if input.get(pos) != history.get(pos) {
                 break;
             }
             pos += 1;
@@ -831,15 +833,11 @@ impl LocalMatcher {
 
     /// Scalar string comparison (fallback)
     fn scalar_compare_and_find_length(&self, input: &[u8], history: &[u8]) -> usize {
-        let max_len = min(input.len(), history.len());
-
-        for i in 0..max_len {
-            if input[i] != history[i] {
-                return i;
-            }
-        }
-
-        max_len
+        input
+            .iter()
+            .zip(history.iter())
+            .take_while(|&(a, b)| a == b)
+            .count()
     }
 
     /// Add hash table entries for patterns starting at the current position
@@ -894,8 +892,7 @@ impl LocalMatcher {
 
     /// Clean up hash table entries that have been evicted from the sliding window
     fn cleanup_hash_table_entry(&mut self, evicted_position: usize) -> Result<()> {
-        // This is a simplified cleanup - in practice, we might want more sophisticated
-        // garbage collection to avoid iterating through all chains
+        // Prune chains whose entries all precede the evicted window position
         let mut _empty_keys: Vec<u32> = Vec::new();
 
         let keys_to_remove: Vec<u32> = self

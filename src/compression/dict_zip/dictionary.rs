@@ -299,11 +299,12 @@ impl SuffixArrayDictionary {
     ) -> Result<Option<Match>> {
         let start_time = std::time::Instant::now();
 
-        if position >= input.len() {
+        let Some(search_slice) = input.get(position..) else {
+            return Ok(None);
+        };
+        if search_slice.is_empty() {
             return Ok(None);
         }
-
-        let search_slice = &input[position..];
         let _max_search_len = max_length
             .min(search_slice.len())
             .min(self.config.max_pattern_length);
@@ -482,8 +483,8 @@ impl SuffixArrayDictionary {
         let step = data.len() / sample_size;
 
         let mut sampled = Vec::with_capacity(sample_size);
-        for i in (0..data.len()).step_by(step.max(1)) {
-            sampled.push(data[i]);
+        for &byte in data.iter().step_by(step.max(1)) {
+            sampled.push(byte);
             if sampled.len() >= sample_size {
                 break;
             }
@@ -576,8 +577,10 @@ impl SuffixArrayDictionary {
         let mut hi = n;
         let mut depth = 0usize;
 
-        while depth < max_depth {
-            let c = input[depth];
+        while let Some(&c) = input.get(depth) {
+            if depth >= max_depth {
+                break;
+            }
 
             // First index in [lo, hi) whose byte at `depth` is >= c.
             // A suffix shorter than `depth + 1` (no byte at `depth`) sorts before
@@ -644,8 +647,10 @@ impl SuffixArrayDictionary {
         let mut current_hi = hi;
         let mut current_pos = pos;
 
-        while current_pos < input.len() && current_lo < current_hi {
-            let ch = input[current_pos];
+        while let Some(&ch) = input.get(current_pos) {
+            if current_lo >= current_hi {
+                break;
+            }
             let (new_lo, new_hi) = self.sa_equal_range(current_lo, current_hi, current_pos, ch);
 
             if new_lo >= new_hi {

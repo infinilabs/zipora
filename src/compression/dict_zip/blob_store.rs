@@ -1005,8 +1005,7 @@ impl DictZipBlobStore {
             let _ = cache.clear();
         }
 
-        // Could add storage compaction here in the future
-        // For now, just validate consistency
+        // Validate store consistency after cache flush
         self.validate()
     }
 

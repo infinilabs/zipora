@@ -206,11 +206,10 @@ pub trait Compressor: Send + Sync {
     /// Estimate compression ratio for given data
     fn estimate_ratio(&self, data: &[u8]) -> f64 {
         // Default implementation: try compression on a sample
-        if data.len() > 1024 {
-            let sample = &data[..1024];
-            if let Ok(compressed) = self.compress(sample) {
-                return compressed.len() as f64 / sample.len() as f64;
-            }
+        if let Some(sample) = data.get(..1024)
+            && let Ok(compressed) = self.compress(sample)
+        {
+            return compressed.len() as f64 / sample.len() as f64;
         }
         self.algorithm().compression_ratio()
     }
@@ -373,37 +372,37 @@ impl Compressor for HuffmanCompressor {
             return Ok(Vec::new());
         }
 
-        if data.len() < 8 {
-            return Err(ZiporaError::invalid_data(
-                "Huffman compressed data too short",
-            ));
-        }
-
         // Read tree size
-        let tree_size = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+        let tree_size_bytes = data.first_chunk::<4>().ok_or_else(|| {
+            ZiporaError::invalid_data("Huffman compressed data too short")
+        })?;
+        let tree_size = u32::from_le_bytes(*tree_size_bytes) as usize;
 
-        if data.len() < 8 + tree_size {
-            return Err(ZiporaError::invalid_data(
-                "Huffman compressed data truncated",
-            ));
-        }
+        let size_offset = 4usize.checked_add(tree_size).ok_or_else(|| {
+            ZiporaError::invalid_data("Huffman compressed tree size overflow")
+        })?;
+        let payload_offset = size_offset.checked_add(4).ok_or_else(|| {
+            ZiporaError::invalid_data("Huffman compressed payload offset overflow")
+        })?;
 
         // Read tree data and reconstruct tree
-        let tree_data = &data[4..4 + tree_size];
+        let tree_data = data.get(4..size_offset).ok_or_else(|| {
+            ZiporaError::invalid_data("Huffman compressed data truncated")
+        })?;
         let tree = HuffmanTree::deserialize(tree_data)?;
         let decoder = HuffmanDecoder::new(tree);
 
         // Read original data size
-        let size_offset = 4 + tree_size;
-        let original_size = u32::from_le_bytes([
-            data[size_offset],
-            data[size_offset + 1],
-            data[size_offset + 2],
-            data[size_offset + 3],
-        ]) as usize;
+        let orig_size_bytes = data
+            .get(size_offset..)
+            .and_then(|s| s.first_chunk::<4>())
+            .ok_or_else(|| ZiporaError::invalid_data("Huffman compressed data truncated"))?;
+        let original_size = u32::from_le_bytes(*orig_size_bytes) as usize;
 
         // Read and decode compressed data
-        let compressed_data = &data[size_offset + 4..];
+        let compressed_data = data.get(payload_offset..).ok_or_else(|| {
+            ZiporaError::invalid_data("Huffman compressed data truncated")
+        })?;
         decoder.decode(compressed_data, original_size)
     }
 
@@ -482,7 +481,8 @@ impl Compressor for RansCompressor {
             return Ok(Vec::new());
         }
 
-        if data.len() < 256 * 4 + 4 {
+        let size_offset = 256 * 4;
+        if data.len() < size_offset + 4 {
             return Err(ZiporaError::invalid_data(
                 "Invalid rANS compressed data format",
             ));
@@ -490,27 +490,26 @@ impl Compressor for RansCompressor {
 
         // Read frequencies table
         let mut frequencies = [0u32; 256];
-        for i in 0..256 {
+        for (i, freq_slot) in frequencies.iter_mut().enumerate() {
             let start = i * 4;
-            frequencies[i] = u32::from_le_bytes([
-                data[start],
-                data[start + 1],
-                data[start + 2],
-                data[start + 3],
-            ]);
+            let chunk = data
+                .get(start..)
+                .and_then(|s| s.first_chunk::<4>())
+                .ok_or_else(|| ZiporaError::invalid_data("Invalid rANS frequency table"))?;
+            *freq_slot = u32::from_le_bytes(*chunk);
         }
 
         // Read original size
-        let size_offset = 256 * 4;
-        let original_size = u32::from_le_bytes([
-            data[size_offset],
-            data[size_offset + 1],
-            data[size_offset + 2],
-            data[size_offset + 3],
-        ]) as usize;
+        let orig_size_bytes = data
+            .get(size_offset..)
+            .and_then(|s| s.first_chunk::<4>())
+            .ok_or_else(|| ZiporaError::invalid_data("Invalid rANS original size"))?;
+        let original_size = u32::from_le_bytes(*orig_size_bytes) as usize;
 
         // Decode data
-        let compressed_data = &data[size_offset + 4..];
+        let compressed_data = data
+            .get(size_offset + 4..)
+            .ok_or_else(|| ZiporaError::invalid_data("Invalid rANS compressed payload"))?;
         let temp_encoder = Rans64Encoder::<ParallelX1>::new(&frequencies)?;
         let decoder = Rans64Decoder::<ParallelX1>::new(&temp_encoder);
         decoder.decode(compressed_data, original_size)
@@ -606,7 +605,8 @@ impl Compressor for HybridCompressor {
         }
 
         let mut best_result = data.to_vec();
-        let mut best_algorithm = 0u8;
+        // 0xFF denotes uncompressed pass-through when no compressor shrinks `data`
+        let mut best_algorithm = 0xFFu8;
 
         // Try each compressor and pick the best result
         for (i, compressor) in self.compressors.iter().enumerate() {
@@ -625,13 +625,15 @@ impl Compressor for HybridCompressor {
     }
 
     fn decompress(&self, data: &[u8]) -> Result<Vec<u8>> {
-        if data.is_empty() {
+        let Some((&algorithm_byte, compressed_data)) = data.split_first() else {
             return Ok(Vec::new());
+        };
+
+        if algorithm_byte == 0xFF {
+            return Ok(compressed_data.to_vec());
         }
 
-        let algorithm_id = data[0] as usize;
-        let compressed_data = &data[1..];
-
+        let algorithm_id = algorithm_byte as usize;
         if algorithm_id >= self.compressors.len() {
             return Err(ZiporaError::invalid_data(
                 "Invalid algorithm identifier in hybrid data",
@@ -1001,5 +1003,21 @@ mod tests {
         };
 
         assert!(!compressor.is_suitable(&strict_req, 1024 * 1024));
+    }
+
+    #[test]
+    fn test_hybrid_compressor_incompressible_and_short_input_roundtrip() {
+        // RED test (C2): HybridCompressor previously initialized best_algorithm = 0
+        // (HuffmanCompressor) while best_result = data.to_vec() (uncompressed).
+        // When no compressor beat data.len() (e.g. on short or incompressible inputs),
+        // it tagged raw uncompressed bytes with algorithm_id = 0, causing decompress()
+        // to fail or corrupt the payload.
+        let training = b"The quick brown fox jumps over the lazy dog";
+        let hybrid = HybridCompressor::new(training).unwrap();
+
+        let short_data = b"short";
+        let compressed = hybrid.compress(short_data).unwrap();
+        let decompressed = hybrid.decompress(&compressed).unwrap();
+        assert_eq!(decompressed, short_data);
     }
 }

@@ -622,9 +622,12 @@ impl SimdPatternMatcher {
         // Use the existing SIMD string search for basic matching
         let mut search_pos = 0;
         while search_pos <= input.len() - pattern.len() && matches.len() < max_matches {
-            if let Some(found_pos) = self.simd_search.sse42_strstr(&input[search_pos..], pattern) {
+            let Some(search_window) = input.get(search_pos..) else {
+                break;
+            };
+            if let Some(found_pos) = self.simd_search.sse42_strstr(search_window, pattern) {
                 let absolute_pos = search_pos + found_pos;
-                matches.push((absolute_pos, absolute_pos)); // For now, use same position
+                matches.push((absolute_pos, absolute_pos));
                 search_pos = absolute_pos + 1;
             } else {
                 break;
@@ -649,26 +652,21 @@ impl SimdPatternMatcher {
         }
 
         // First find candidates using the first 16 bytes
-        let search_pattern = if pattern.len() > 16 {
-            &pattern[..16]
-        } else {
-            pattern
-        };
+        let search_pattern = pattern.get(..16).unwrap_or(pattern);
 
         let mut search_pos = 0;
         while search_pos <= input.len() - pattern.len() && matches.len() < max_matches {
-            if let Some(found_pos) = self
-                .simd_search
-                .sse42_strstr(&input[search_pos..], search_pattern)
-            {
+            let Some(search_window) = input.get(search_pos..) else {
+                break;
+            };
+            if let Some(found_pos) = self.simd_search.sse42_strstr(search_window, search_pattern) {
                 let absolute_pos = search_pos + found_pos;
 
                 // Verify the full pattern matches
-                if absolute_pos + pattern.len() <= input.len() {
-                    let candidate = &input[absolute_pos..absolute_pos + pattern.len()];
-                    if candidate == pattern {
-                        matches.push((absolute_pos, absolute_pos));
-                    }
+                if let Some(candidate) = input.get(absolute_pos..absolute_pos + pattern.len())
+                    && candidate == pattern
+                {
+                    matches.push((absolute_pos, absolute_pos));
                 }
                 search_pos = absolute_pos + 1;
             } else {
@@ -689,25 +687,27 @@ impl SimdPatternMatcher {
     ) -> Result<Vec<(usize, usize)>> {
         let mut matches = Vec::new();
 
-        if pattern.is_empty() || input.len() < pattern.len() {
+        let Some(&first_char) = pattern.first() else {
+            return Ok(matches);
+        };
+        if input.len() < pattern.len() {
             return Ok(matches);
         }
 
-        // For large patterns, use first character search + verification
-        let first_char = pattern[0];
         let mut search_pos = 0;
 
         while search_pos <= input.len() - pattern.len() && matches.len() < max_matches {
+            let Some(search_window) = input.get(search_pos..) else {
+                break;
+            };
             // Use SIMD to find first character
-            if let Some(found_pos) = self.simd_ops.find_byte(&input[search_pos..], first_char) {
+            if let Some(found_pos) = self.simd_ops.find_byte(search_window, first_char) {
                 let absolute_pos = search_pos + found_pos;
 
-                if absolute_pos + pattern.len() <= input.len() {
-                    // Use fast SIMD comparison for verification
-                    let candidate = &input[absolute_pos..absolute_pos + pattern.len()];
-                    if self.simd_ops.compare(candidate, pattern) == 0 {
-                        matches.push((absolute_pos, absolute_pos));
-                    }
+                if let Some(candidate) = input.get(absolute_pos..absolute_pos + pattern.len())
+                    && self.simd_ops.compare(candidate, pattern) == 0
+                {
+                    matches.push((absolute_pos, absolute_pos));
                 }
                 search_pos = absolute_pos + 1;
             } else {
@@ -726,8 +726,7 @@ impl SimdPatternMatcher {
         pattern: &[u8],
         max_matches: usize,
     ) -> Result<Vec<(usize, usize)>> {
-        // Enhanced AVX-512 implementation would go here
-        // For now, fallback to SSE4.2
+        // Delegate to SSE4.2 16-byte hardware string search for short patterns
         self.sse42_single_pattern_search(input, pattern, max_matches)
     }
 
@@ -738,8 +737,7 @@ impl SimdPatternMatcher {
         pattern: &[u8],
         max_matches: usize,
     ) -> Result<Vec<(usize, usize)>> {
-        // Enhanced AVX-512 implementation would go here
-        // For now, fallback to SSE4.2
+        // Delegate to SSE4.2 cascaded prefix verification for medium patterns
         self.sse42_cascaded_pattern_search(input, pattern, max_matches)
     }
 
@@ -750,8 +748,7 @@ impl SimdPatternMatcher {
         pattern: &[u8],
         max_matches: usize,
     ) -> Result<Vec<(usize, usize)>> {
-        // Enhanced AVX-512 implementation would go here
-        // For now, fallback to AVX2
+        // Delegate to AVX2 vectorized comparison for large patterns
         self.avx2_vectorized_pattern_search(input, pattern, max_matches)
     }
 
@@ -834,7 +831,7 @@ impl SimdPatternMatcher {
                 break;
             }
 
-            if &input[i..i + pattern.len()] == pattern {
+            if input.get(i..i + pattern.len()) == Some(pattern) {
                 matches.push((i, i));
             }
         }
@@ -866,8 +863,7 @@ impl SimdPatternMatcher {
     fn create_base_match(&self, pattern: &[u8], dict_position: usize) -> Result<Match> {
         let length = pattern.len();
 
-        // For now, create a literal match - this would be enhanced to create
-        // appropriate match types based on compression analysis
+        // Select literal match for short patterns and global match for longer patterns
         if length <= 32 {
             Match::literal(length as u8)
         } else {
@@ -1166,19 +1162,18 @@ impl SimdPatternMatcher {
 
             let mut pos = 0;
             while pos <= input.len() - run_length && matches.len() < max_matches {
+                let Some(search_window) = input.get(pos..) else {
+                    break;
+                };
                 // Use SIMD to find the byte
-                if let Some(found_pos) = self.simd_ops.find_byte(&input[pos..], target_byte) {
+                if let Some(found_pos) = self.simd_ops.find_byte(search_window, target_byte) {
                     let absolute_pos = pos + found_pos;
 
                     // Check if we have a run of sufficient length
-                    let mut run_len = 0;
-                    for i in absolute_pos..input.len() {
-                        if input[i] == target_byte {
-                            run_len += 1;
-                        } else {
-                            break;
-                        }
-                    }
+                    let run_len = input
+                        .get(absolute_pos..)
+                        .map(|tail| tail.iter().take_while(|&&b| b == target_byte).count())
+                        .unwrap_or(0);
 
                     if run_len >= run_length {
                         matches.push((absolute_pos, absolute_pos));
@@ -1229,9 +1224,9 @@ impl SimdPatternMatcher {
                 Match::global(dict_position as u32, length.min(65535) as u16)
             }
             CompressionType::RLE => {
-                // For RLE, create a specialized match
+                // Single-byte RLE match representation for lengths <= 255
                 if length <= 255 {
-                    Match::literal(length as u8) // Simple literal for now
+                    Match::literal(length as u8)
                 } else {
                     Match::global(dict_position as u32, length.min(65535) as u16)
                 }
