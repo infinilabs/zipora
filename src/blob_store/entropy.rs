@@ -3,12 +3,36 @@
 //! This module provides blob store wrappers that use entropy coding for compression.
 
 use crate::blob_store::{BlobStore, BlobStoreStats};
-use crate::entropy::rans::{ParallelX1, Rans64Encoder};
+use crate::entropy::rans::{ParallelX1, Rans64Decoder, Rans64Encoder};
 use crate::entropy::{
-    DictionaryBuilder, DictionaryCompressor, EntropyStats, HuffmanEncoder,
+    DictionaryBuilder, DictionaryCompressor, EntropyStats, HuffmanDecoder, HuffmanEncoder,
     HuffmanTree,
 };
 use crate::error::{Result, ZiporaError};
+
+/// Helper to frame a payload with `[flag: u8][uncompressed_len: u32 LE][payload]`
+fn frame_entropy_blob(flag: u8, uncompressed_len: usize, payload: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(5 + payload.len());
+    out.push(flag);
+    out.extend_from_slice(&(uncompressed_len as u32).to_le_bytes());
+    out.extend_from_slice(payload);
+    out
+}
+
+/// Helper to parse the 5-byte frame header `(flag, uncompressed_len, payload)`
+fn parse_entropy_frame(raw: &[u8]) -> Result<(u8, usize, &[u8])> {
+    let (&flag, rest) = raw
+        .split_first()
+        .ok_or_else(|| ZiporaError::invalid_data("Truncated entropy blob header"))?;
+    let len_bytes = rest
+        .first_chunk::<4>()
+        .ok_or_else(|| ZiporaError::invalid_data("Truncated entropy blob length"))?;
+    let uncompressed_len = u32::from_le_bytes(*len_bytes) as usize;
+    let payload = rest
+        .get(4..)
+        .ok_or_else(|| ZiporaError::invalid_data("Truncated entropy blob payload"))?;
+    Ok((flag, uncompressed_len, payload))
+}
 
 /// Compression algorithm type for entropy blob store
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,30 +163,45 @@ impl<S: BlobStore> HuffmanBlobStore<S> {
 
         Ok(compressed)
     }
-
 }
 
 impl<S: BlobStore> BlobStore for HuffmanBlobStore<S> {
     fn get(&self, id: crate::RecordId) -> Result<Vec<u8>> {
-        // For now, delegate to inner store (would need metadata for decompression)
-        self.inner.get(id)
+        let raw = self.inner.get(id)?;
+        let (flag, uncompressed_len, payload) = parse_entropy_frame(&raw)?;
+        if flag == 0 {
+            if payload.len() != uncompressed_len {
+                return Err(ZiporaError::invalid_data(
+                    "Uncompressed Huffman blob length mismatch",
+                ));
+            }
+            return Ok(payload.to_vec());
+        }
+        let tree = self
+            .tree
+            .as_ref()
+            .ok_or_else(|| ZiporaError::invalid_data("Huffman tree not initialized"))?;
+        let decoder = HuffmanDecoder::new(tree.clone());
+        decoder.decode(payload, uncompressed_len)
     }
 
     fn put(&mut self, data: &[u8]) -> Result<crate::RecordId> {
         if self.encoder.is_some() && !data.is_empty() {
             match self.compress_data(data) {
                 Ok(compressed) => {
-                    let id = self.inner.put(&compressed)?;
+                    let framed = frame_entropy_blob(1, data.len(), &compressed);
+                    let id = self.inner.put(&framed)?;
                     self.stats.blob_stats.put_count += 1;
                     Ok(id)
                 }
                 Err(_) => {
-                    // Fall back to uncompressed
-                    self.inner.put(data)
+                    let framed = frame_entropy_blob(0, data.len(), data);
+                    self.inner.put(&framed)
                 }
             }
         } else {
-            self.inner.put(data)
+            let framed = frame_entropy_blob(0, data.len(), data);
+            self.inner.put(&framed)
         }
     }
 
@@ -175,7 +214,13 @@ impl<S: BlobStore> BlobStore for HuffmanBlobStore<S> {
     }
 
     fn size(&self, id: crate::RecordId) -> Result<Option<usize>> {
-        self.inner.size(id)
+        match self.inner.get(id) {
+            Ok(raw) => {
+                let (_, uncompressed_len, _) = parse_entropy_frame(&raw)?;
+                Ok(Some(uncompressed_len))
+            }
+            Err(_) => Ok(None),
+        }
     }
 
     fn len(&self) -> usize {
@@ -196,6 +241,7 @@ pub struct RansBlobStore<S: BlobStore> {
     inner: S,
     stats: EntropyCompressionStats,
     encoder: Option<Rans64Encoder<ParallelX1>>,
+    decoder: Option<Rans64Decoder<ParallelX1>>,
 }
 
 impl<S: BlobStore> RansBlobStore<S> {
@@ -205,6 +251,7 @@ impl<S: BlobStore> RansBlobStore<S> {
             inner,
             stats: EntropyCompressionStats::new(EntropyAlgorithm::Rans),
             encoder: None,
+            decoder: None,
         }
     }
 
@@ -216,7 +263,9 @@ impl<S: BlobStore> RansBlobStore<S> {
         }
 
         let encoder = Rans64Encoder::<ParallelX1>::new(&frequencies)?;
+        let decoder = Rans64Decoder::<ParallelX1>::new(&encoder);
         self.encoder = Some(encoder);
+        self.decoder = Some(decoder);
 
         Ok(())
     }
@@ -229,12 +278,40 @@ impl<S: BlobStore> RansBlobStore<S> {
 
 impl<S: BlobStore> BlobStore for RansBlobStore<S> {
     fn get(&self, id: crate::RecordId) -> Result<Vec<u8>> {
-        self.inner.get(id)
+        let raw = self.inner.get(id)?;
+        let (flag, uncompressed_len, payload) = parse_entropy_frame(&raw)?;
+        if flag == 0 {
+            if payload.len() != uncompressed_len {
+                return Err(ZiporaError::invalid_data(
+                    "Uncompressed rANS blob length mismatch",
+                ));
+            }
+            return Ok(payload.to_vec());
+        }
+        let decoder = self
+            .decoder
+            .as_ref()
+            .ok_or_else(|| ZiporaError::invalid_data("rANS decoder not initialized"))?;
+        decoder.decode(payload, uncompressed_len)
     }
 
     fn put(&mut self, data: &[u8]) -> Result<crate::RecordId> {
-        // For now, delegate to inner store (would need full implementation)
-        self.inner.put(data)
+        if let Some(ref encoder) = self.encoder
+            && !data.is_empty()
+        {
+            let start = std::time::Instant::now();
+            if let Ok(compressed) = encoder.encode(data) {
+                self.stats.compression_time_us += start.elapsed().as_micros() as u64;
+                self.stats.compressions += 1;
+                let entropy = EntropyStats::calculate_entropy(data);
+                self.stats.entropy_stats =
+                    EntropyStats::new(data.len(), compressed.len(), entropy);
+                let framed = frame_entropy_blob(1, data.len(), &compressed);
+                return self.inner.put(&framed);
+            }
+        }
+        let framed = frame_entropy_blob(0, data.len(), data);
+        self.inner.put(&framed)
     }
 
     fn remove(&mut self, id: crate::RecordId) -> Result<()> {
@@ -246,7 +323,13 @@ impl<S: BlobStore> BlobStore for RansBlobStore<S> {
     }
 
     fn size(&self, id: crate::RecordId) -> Result<Option<usize>> {
-        self.inner.size(id)
+        match self.inner.get(id) {
+            Ok(raw) => {
+                let (_, uncompressed_len, _) = parse_entropy_frame(&raw)?;
+                Ok(Some(uncompressed_len))
+            }
+            Err(_) => Ok(None),
+        }
     }
 
     fn len(&self) -> usize {
@@ -298,12 +381,46 @@ impl<S: BlobStore> DictionaryBlobStore<S> {
 
 impl<S: BlobStore> BlobStore for DictionaryBlobStore<S> {
     fn get(&self, id: crate::RecordId) -> Result<Vec<u8>> {
-        self.inner.get(id)
+        let raw = self.inner.get(id)?;
+        let (flag, uncompressed_len, payload) = parse_entropy_frame(&raw)?;
+        if flag == 0 {
+            if payload.len() != uncompressed_len {
+                return Err(ZiporaError::invalid_data(
+                    "Uncompressed dictionary blob length mismatch",
+                ));
+            }
+            return Ok(payload.to_vec());
+        }
+        let compressor = self
+            .compressor
+            .as_ref()
+            .ok_or_else(|| ZiporaError::invalid_data("Dictionary compressor not initialized"))?;
+        let decompressed = compressor.decompress(payload)?;
+        if decompressed.len() != uncompressed_len {
+            return Err(ZiporaError::invalid_data(
+                "Dictionary blob decompressed length mismatch",
+            ));
+        }
+        Ok(decompressed)
     }
 
     fn put(&mut self, data: &[u8]) -> Result<crate::RecordId> {
-        // For now, delegate to inner store (would need full implementation)
-        self.inner.put(data)
+        if let Some(ref compressor) = self.compressor
+            && !data.is_empty()
+        {
+            let start = std::time::Instant::now();
+            if let Ok(compressed) = compressor.compress(data) {
+                self.stats.compression_time_us += start.elapsed().as_micros() as u64;
+                self.stats.compressions += 1;
+                let entropy = EntropyStats::calculate_entropy(data);
+                self.stats.entropy_stats =
+                    EntropyStats::new(data.len(), compressed.len(), entropy);
+                let framed = frame_entropy_blob(1, data.len(), &compressed);
+                return self.inner.put(&framed);
+            }
+        }
+        let framed = frame_entropy_blob(0, data.len(), data);
+        self.inner.put(&framed)
     }
 
     fn remove(&mut self, id: crate::RecordId) -> Result<()> {
@@ -315,7 +432,13 @@ impl<S: BlobStore> BlobStore for DictionaryBlobStore<S> {
     }
 
     fn size(&self, id: crate::RecordId) -> Result<Option<usize>> {
-        self.inner.size(id)
+        match self.inner.get(id) {
+            Ok(raw) => {
+                let (_, uncompressed_len, _) = parse_entropy_frame(&raw)?;
+                Ok(Some(uncompressed_len))
+            }
+            Err(_) => Ok(None),
+        }
     }
 
     fn len(&self) -> usize {
@@ -429,5 +552,34 @@ mod tests {
         let training_data = b"hello world hello world hello";
         let result = dict_store.train(training_data);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_trained_entropy_blob_stores_roundtrip_and_size() {
+        // RED test (C2 / D1): Trained HuffmanBlobStore, RansBlobStore, and DictionaryBlobStore
+        // must round-trip put() -> get() losslessly and report uncompressed size via size().
+        let sample = b"hello world hello world hello world";
+
+        // 1. Trained HuffmanBlobStore
+        let mut huff = HuffmanBlobStore::new(MemoryBlobStore::new());
+        huff.add_training_data(sample);
+        huff.build_tree().unwrap();
+        let id = huff.put(sample).unwrap();
+        assert_eq!(huff.size(id).unwrap(), Some(sample.len()));
+        assert_eq!(huff.get(id).unwrap(), sample);
+
+        // 2. Trained RansBlobStore
+        let mut rans = RansBlobStore::new(MemoryBlobStore::new());
+        rans.train(sample).unwrap();
+        let id_r = rans.put(sample).unwrap();
+        assert_eq!(rans.size(id_r).unwrap(), Some(sample.len()));
+        assert_eq!(rans.get(id_r).unwrap(), sample);
+
+        // 3. Trained DictionaryBlobStore
+        let mut dict = DictionaryBlobStore::new(MemoryBlobStore::new());
+        dict.train(sample).unwrap();
+        let id_d = dict.put(sample).unwrap();
+        assert_eq!(dict.size(id_d).unwrap(), Some(sample.len()));
+        assert_eq!(dict.get(id_d).unwrap(), sample);
     }
 }
