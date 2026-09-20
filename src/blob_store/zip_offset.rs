@@ -502,7 +502,7 @@ impl ZipOffsetBlobStore {
 
         if header.checksum_level > 0 {
             let expected_crc = u32::from_le_bytes(
-                footer_bytes[0..4]
+                footer_bytes[0..4] // D10.1: in-bounds
                     .try_into()
                     .map_err(|_| ZiporaError::invalid_data("Invalid footer format"))?,
             );
@@ -576,7 +576,7 @@ impl ZipOffsetBlobStore {
         // Write footer with CRC32C checksum
         let mut footer = [0u8; FOOTER_SIZE];
         let content_crc = self.calculate_crc32c(&self.content);
-        footer[0..4].copy_from_slice(&content_crc.to_le_bytes());
+        footer[0..4].copy_from_slice(&content_crc.to_le_bytes()); // D10.1: in-bounds
         writer.write_all(&footer)?;
 
         Ok(())

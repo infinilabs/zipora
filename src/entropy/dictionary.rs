@@ -64,8 +64,16 @@ struct BloomFilter {
 
 impl BloomFilter {
     fn new(expected_items: usize, false_positive_rate: f64) -> Self {
+        if expected_items == 0 {
+            return Self {
+                bits: Vec::new(),
+                size: 0,
+                hash_functions: 0,
+            };
+        }
         let size = (-((expected_items as f64) * false_positive_rate.ln()) / (2.0_f64.ln().powi(2)))
-            .ceil() as usize;
+            .ceil()
+            .max(1.0) as usize;
         let hash_functions = ((size as f64 / expected_items as f64) * 2.0_f64.ln()).ceil() as usize;
         let num_u64s = size.div_ceil(64);
 
@@ -77,6 +85,9 @@ impl BloomFilter {
     }
 
     fn insert(&mut self, item: &[u8]) {
+        if self.size == 0 {
+            return;
+        }
         for i in 0..self.hash_functions {
             let hash = self.hash_item(item, i);
             let index = hash % self.size;
@@ -87,6 +98,9 @@ impl BloomFilter {
     }
 
     fn contains(&self, item: &[u8]) -> bool {
+        if self.size == 0 {
+            return false;
+        }
         for i in 0..self.hash_functions {
             let hash = self.hash_item(item, i);
             let index = hash % self.size;
@@ -692,9 +706,6 @@ impl OptimizedDictionaryCompressor {
                 if best_match_length < max_possible && self.bloom_filter.contains(pattern) {
                     if let Some(candidate_positions) = self.hash_table.get(&hash) {
                         for &suffix_pos in candidate_positions.iter().take(32) {
-                            if suffix_pos == pos && data.len() == self.text.len() {
-                                continue;
-                            }
                             if self.text.get(suffix_pos..suffix_pos + self.min_match_length)
                                 != Some(pattern)
                             {
@@ -1243,9 +1254,9 @@ mod tests {
 
     #[test]
     fn test_no_repeated_patterns() {
-        // Generate data with no repeated patterns
+        // Generate data with no repeated patterns and no pre-trained dictionary phrases
         let data: Vec<u8> = (0..255).collect();
-        let compressor = OptimizedDictionaryCompressor::new(&data).unwrap();
+        let compressor = OptimizedDictionaryCompressor::new(b"").unwrap();
 
         let compressed = compressor.compress(&data).unwrap();
         let decompressed = compressor.decompress(&compressed).unwrap();
@@ -1336,6 +1347,19 @@ mod tests {
             "Expected < 0.50 ratio on 64 KiB word-soup, got {:.3}",
             compressed_64k.len() as f64 / word_soup.len() as f64
         );
+
+        // S6-R3: Equal-length input (data.len() == train.len()) must also use flag = 2
+        // at suffix_pos == pos without skipping identity-offset matches.
+        let mut equal_len_input = train.to_vec();
+        if let Some(last) = equal_len_input.last_mut() {
+            *last = b'!';
+        }
+        assert_eq!(equal_len_input.len(), train.len());
+        let compressed_eq = compressor.compress(&equal_len_input).unwrap();
+        let decompressed_eq = compressor.decompress(&compressed_eq).unwrap();
+        assert_eq!(decompressed_eq, equal_len_input);
+        // First 94 bytes match train[0..94] in a single 9-byte flag=2 instruction + 2-byte literal '!' = 11 bytes
+        assert_eq!(compressed_eq.len(), 11);
     }
 }
 

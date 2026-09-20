@@ -324,7 +324,7 @@ impl SimdHuffmanEncoder {
                 }
 
                 symbol_codes[symbol as usize] = packed_code;
-                symbol_lengths[symbol as usize] = code.len() as u8;
+                symbol_lengths[symbol as usize] = code.len() as u8; // D10.1: in-bounds
             }
         }
 
@@ -362,7 +362,7 @@ impl SimdHuffmanEncoder {
                 // Encode symbols using BMI2-accelerated lookup
                 for &symbol in &symbols_8 {
                     let code = symbol_codes[symbol as usize];
-                    let length = symbol_lengths[symbol as usize];
+                    let length = symbol_lengths[symbol as usize]; // D10.1: in-bounds
 
                     if length > 0 {
                         // Use BMI2 BZHI to extract only the needed bits
@@ -382,7 +382,7 @@ impl SimdHuffmanEncoder {
         // Process remaining bytes
         for &symbol in remainder {
             let code = symbol_codes[symbol as usize];
-            let length = symbol_lengths[symbol as usize];
+            let length = symbol_lengths[symbol as usize]; // D10.1: in-bounds
 
             if length > 0 {
                 // SAFETY: bmi2 guaranteed by #[target_feature(enable = "avx2,bmi2")], operates on u32 with valid index
@@ -437,7 +437,7 @@ impl SimdHuffmanEncoder {
         for chunk in data.chunks(self.config.batch_size) {
             for &symbol in chunk {
                 let code = symbol_codes[symbol as usize];
-                let length = symbol_lengths[symbol as usize];
+                let length = symbol_lengths[symbol as usize]; // D10.1: in-bounds
 
                 if length > 0 {
                     bit_buffer.append_bits(code as u64, length)?;

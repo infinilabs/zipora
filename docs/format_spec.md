@@ -115,8 +115,8 @@ Every persisted binary format in `zipora` obeys two mandatory invariants:
 | `0..4` | 4 B | `[u8; 4]` | `magic` | `*b"ZOSV"` (`0x5653_4F5A`) |
 | `4..6` | 2 B | `u16` LE | `version` | `1u16.to_le_bytes()` |
 | `6..8` | 2 B | `u16` LE | `flags` | `0x0011u16.to_le_bytes()` (bit 0 = LE, bit 4 = 64-bit header field width) |
-| `8..12` | 4 B | `u32` LE | `count` | `(self.len as u32).to_le_bytes()` (validated via `u32::try_from` in `save_to_file`) |
-| `12..16` | 4 B | `u32` LE | `payload_len` | `(payload.len() as u32).to_le_bytes()` (validated via `u32::try_from` in `save_to_file`) |
+| `8..12` | 4 B | `u32` LE | `count` | `u32::try_from(self.len)?.to_le_bytes()` |
+| `12..16` | 4 B | `u32` LE | `payload_len` | `u32::try_from(payload.len())?.to_le_bytes()` |
 | `16..16+payload_len` | `payload_len` B | `[u32 LE, utf8]*` | `entries` | `count` entries of `[str_len: u32 LE][utf8_bytes: str_len B]` |
 
 ---

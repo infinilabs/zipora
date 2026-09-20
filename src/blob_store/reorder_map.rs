@@ -276,7 +276,7 @@ impl ZReorderMap {
 
         // Read 5 bytes into a u64 (little-endian)
         let mut encoded = [0u8; 8];
-        encoded[..5].copy_from_slice(&self.mmap[self.pos..self.pos + 5]);
+        encoded[..5].copy_from_slice(&self.mmap[self.pos..self.pos + 5]); // D10.1: in-bounds
         let encoded_value = u64::from_le_bytes(encoded) as usize;
         self.pos += 5;
 
