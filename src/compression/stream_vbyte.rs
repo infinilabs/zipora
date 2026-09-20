@@ -316,18 +316,14 @@ impl StreamVByte {
     #[inline]
     fn write_value(data: &mut Vec<u8>, v: u32, len: usize) {
         let bytes = v.to_le_bytes();
-        if let Some(slice) = bytes.get(..len) {
-            data.extend_from_slice(slice);
-        }
+        data.extend_from_slice(&bytes[..len]); // D10.1: in-bounds (len in 1..=4 from byte_length)
     }
 
     /// Read a value of `len` bytes from data at position (little-endian).
     #[inline]
     fn read_value(data: &[u8], pos: usize, len: usize) -> u32 {
         let mut bytes = [0u8; 4];
-        if let (Some(dst), Some(src)) = (bytes.get_mut(..len), data.get(pos..pos + len)) {
-            dst.copy_from_slice(src);
-        }
+        bytes[..len].copy_from_slice(&data[pos..pos + len]); // D10.1: in-bounds (caller checks pos + len <= data.len() and len in 1..=4)
         u32::from_le_bytes(bytes)
     }
 }
@@ -392,9 +388,7 @@ impl GroupVarint {
             // Data
             for (val, len) in [(v0, l0), (v1, l1), (v2, l2), (v3, l3)] {
                 let bytes = val.to_le_bytes();
-                if let Some(slice) = bytes.get(..len) {
-                    output.extend_from_slice(slice);
-                }
+                output.extend_from_slice(&bytes[..len]); // D10.1: in-bounds (len in 1..=4 from byte_length)
             }
 
             i += 4;

@@ -385,22 +385,31 @@ impl ZoSortedStrVec {
     /// - `[8..12]`  string count `u32` (LE)
     /// - `[12..16]` payload byte length `u32` (LE)
     /// - `[16..]`   `count` entries of `[str_len: u32 LE][utf8_bytes...]`
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        let count_u32 = u32::try_from(self.len).map_err(|_| {
+            ZiporaError::invalid_data("ZoSortedStrVec string count exceeds u32::MAX")
+        })?;
         let mut payload = Vec::with_capacity(self.data.len() + self.len * 4);
         for s in self.iter() {
             let bytes = s.as_bytes();
-            payload.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            let str_len_u32 = u32::try_from(bytes.len()).map_err(|_| {
+                ZiporaError::invalid_data("ZoSortedStrVec string length exceeds u32::MAX")
+            })?;
+            payload.extend_from_slice(&str_len_u32.to_le_bytes());
             payload.extend_from_slice(bytes);
         }
+        let payload_len_u32 = u32::try_from(payload.len()).map_err(|_| {
+            ZiporaError::invalid_data("ZoSortedStrVec payload byte length exceeds u32::MAX")
+        })?;
 
         let mut out = Vec::with_capacity(Self::HEADER_SIZE + payload.len());
         out.extend_from_slice(&Self::FORMAT_MAGIC);
         out.extend_from_slice(&Self::FORMAT_VERSION.to_le_bytes());
         out.extend_from_slice(&Self::FORMAT_FLAGS.to_le_bytes());
-        out.extend_from_slice(&(self.len as u32).to_le_bytes());
-        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        out.extend_from_slice(&count_u32.to_le_bytes());
+        out.extend_from_slice(&payload_len_u32.to_le_bytes());
         out.extend_from_slice(&payload);
-        out
+        Ok(out)
     }
 
     /// Deserialize a `ZoSortedStrVec` from a `ZOSV` v1 little-endian byte slice.
@@ -485,7 +494,7 @@ impl ZoSortedStrVec {
     /// Save the ZoSortedStrVec to a file in portable `ZOSV` v1 format
     pub fn save_to_file(&self, path: &std::path::Path) -> Result<()> {
         use std::io::Write;
-        let bytes = self.to_bytes();
+        let bytes = self.to_bytes()?;
         let mut file = File::create(path).map_err(|e| {
             ZiporaError::io_error(format!("Failed to create ZoSortedStrVec file: {}", e))
         })?;
