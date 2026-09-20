@@ -244,7 +244,7 @@ fn test_golden_5_zo_sorted_str_vec_zosv_every_field() -> Result<()> {
         "omega".to_string(),
     ];
     let zosv = ZoSortedStrVec::from_sorted_strings(strings.clone())?;
-    let bytes = zosv.to_bytes();
+    let bytes = zosv.to_bytes()?;
 
     // Every field of the 16-byte ZOSV header + payload:
     // 0..4: magic = b"ZOSV"

@@ -452,7 +452,7 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
             let sym = &encoder.symbols[symbol];
             for i in 0..sym.freq {
                 if (sym.start + i) < TOTFREQ {
-                    decode_table[(sym.start + i) as usize] = symbol as u8;
+                    decode_table[(sym.start + i) as usize] = symbol as u8; // D10.1: in-bounds
                 }
             }
         }
@@ -492,7 +492,7 @@ impl<P: ParallelVariant> Rans64Decoder<P> {
                 "Invalid slot value for decode table",
             ));
         }
-        let symbol = self.decode_table[slot as usize];
+        let symbol = self.decode_table[slot as usize]; // D10.1: in-bounds
         let sym_info = &self.symbols[symbol as usize];
 
         // Standard rANS decoding (inverse of encoding)

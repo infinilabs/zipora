@@ -49,7 +49,7 @@ const fn build_shuffle_table() -> [[u8; 16]; 256] {
             let len = ((ctrl >> (k * 2)) & 0x03) + 1;
             let mut j = 0;
             while j < 4 {
-                table[ctrl][k * 4 + j] = if j < len { offset + j as u8 } else { 0xFF };
+                table[ctrl][k * 4 + j] = if j < len { offset + j as u8 } else { 0xFF }; // D10.1: in-bounds
                 j += 1;
             }
             offset += len as u8;
@@ -71,7 +71,7 @@ const fn build_length_table() -> [u8; 256] {
             total += (((ctrl >> (k * 2)) & 0x03) + 1) as u8;
             k += 1;
         }
-        table[ctrl] = total;
+        table[ctrl] = total; // D10.1: in-bounds
         ctrl += 1;
     }
     table

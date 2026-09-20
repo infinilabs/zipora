@@ -283,8 +283,8 @@ impl HuffmanTree {
             let sym_hdr = data
                 .get(offset..offset + 2)
                 .ok_or_else(|| ZiporaError::invalid_data("Truncated Huffman tree data"))?;
-            let symbol = sym_hdr[0];
-            let code_length = sym_hdr[1] as usize;
+            let symbol = sym_hdr[0]; // D10.1: in-bounds
+            let code_length = sym_hdr[1] as usize; // D10.1: in-bounds
             offset += 2;
 
             max_code_length = max_code_length.max(code_length);

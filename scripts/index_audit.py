@@ -20,7 +20,14 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 from audit_common import scan_rust_file, is_test_file
 
-INDEX_PATTERN = re.compile(r'\b(?:data|buffer|bytes|input|slice|src|buf|in_buf|out_buf|hdr|header|raw_name|name_bytes)\[[^\]]+\]')
+BASE_IDENTIFIERS = {
+    'data', 'buffer', 'bytes', 'input', 'slice', 'src', 'buf',
+    'in_buf', 'out_buf', 'hdr', 'header', 'raw_name', 'name_bytes',
+}
+BUF_DECL_PATTERN = re.compile(
+    r'\b(?:let\s+(?:mut\s+)?([a-z_][a-z0-9_]*)\s*(?::\s*&?\[u8\s*;[^\]]+\])?\s*=\s*(?:\[0u8\s*;|\*b"|&?(?:self\.)?(?:data|buffer|bytes|input|slice|src|buf|in_buf|out_buf|hdr|header)\b)|([a-z_][a-z0-9_]*)\s*:\s*&(?:mut\s+)?\[u8\s*;[^\]]+\])'
+)
+ANY_BRACKET_PATTERN = re.compile(r'(?<![#!:\w])\b[a-z_][a-z0-9_]*\[[^\];]+\]')
 GET_PATTERN = re.compile(r'\.get(?:_mut)?\(')
 IN_BOUNDS_PATTERN = re.compile(r'//\s*D10\.1:\s*in-bounds')
 
@@ -57,12 +64,28 @@ def check_file(full_p, rel_path, name, subsystem_stats, all_sites, in_bounds_sit
     total_idx = 0
     total_ib = 0
     total_g = 0
-    for item in scan_rust_file(full_p):
+    items = list(scan_rust_file(full_p))
+    file_idents = set(BASE_IDENTIFIERS)
+    for item in items:
         if not item['in_test']:
-            if INDEX_PATTERN.search(item['clean_line']):
-                is_in_bounds = bool(IN_BOUNDS_PATTERN.search(item['raw_line'])) or any(
-                    bool(IN_BOUNDS_PATTERN.search(c[1])) for c in item['comments_above'][-2:]
-                )
+            for m in BUF_DECL_PATTERN.finditer(item['clean_line']):
+                ident = m.group(1) or m.group(2)
+                if ident:
+                    file_idents.add(ident)
+    ident_alt = '|'.join(sorted(re.escape(i) for i in file_idents))
+    file_index_pattern = re.compile(rf'\b(?:{ident_alt})\[[^\]]+\]')
+
+    for item in items:
+        if not item['in_test']:
+            has_inline_ib = bool(IN_BOUNDS_PATTERN.search(item['raw_line'])) and bool(item['clean_line'].strip())
+            has_above_ib = any(
+                bool(IN_BOUNDS_PATTERN.search(c[1])) for c in item['comments_above'][-2:]
+            )
+            is_in_bounds = has_inline_ib or has_above_ib
+            has_idx = bool(file_index_pattern.search(item['clean_line'])) or (
+                is_in_bounds and bool(ANY_BRACKET_PATTERN.search(item['clean_line']))
+            )
+            if has_idx:
                 site = {
                     'file': rel_path,
                     'line': item['line_num'],
@@ -87,7 +110,7 @@ def main():
 
     parser = argparse.ArgumentParser(description='Audit direct slice indexing in decoders.')
     parser.add_argument('--strict', action='store_true', help='Fail if any direct indexing site is found')
-    parser.add_argument('--max-in-bounds', type=int, default=ceilings.get('max_in_bounds', 0), help='Maximum allowed in-bounds exemptions')
+    parser.add_argument('--max-in-bounds', type=int, default=ceilings.get('max_in_bounds', 0), help='Exact expected in-bounds exemptions')
     args = parser.parse_args()
 
     root_dir = os.path.abspath(os.path.join(SCRIPT_DIR, '..'))
@@ -121,7 +144,7 @@ def main():
 
     print("=== Decoder Indexing Safety Audit (Rule D10.1) ===")
     print(f"Total direct indexing sites in scoped paths: {total_index} (ratchet ceiling: {ceilings['max_total']})")
-    print(f"Total in-bounds exemptions (D10.1: in-bounds): {total_in_bounds} (ratchet ceiling: {args.max_in_bounds})")
+    print(f"Total in-bounds exemptions (D10.1: in-bounds): {total_in_bounds} (exact baseline: {args.max_in_bounds})")
     print(f"Total checked .get() sites:                   {total_get}")
     print()
     print(f"{'Subsystem':<20} {'Files':<8} {'Direct Index':<15} {'Ceiling':<10} {'In-Bounds':<12} {'.get()':<10}")
@@ -150,8 +173,8 @@ def main():
         print(f"\nFAILURE: direct indexing sites ({total_index}) exceeds total ceiling ({ceilings['max_total']})")
         failed = True
 
-    if total_in_bounds > args.max_in_bounds:
-        print(f"\nFAILURE: in-bounds exemptions ({total_in_bounds}) exceeds ceiling ({args.max_in_bounds})")
+    if total_in_bounds != args.max_in_bounds:
+        print(f"\nFAILURE: in-bounds exemptions ({total_in_bounds}) does not match exact baseline ({args.max_in_bounds})")
         failed = True
 
     for sub, stats in subsystem_stats.items():
