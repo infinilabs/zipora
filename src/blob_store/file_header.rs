@@ -73,9 +73,7 @@ impl FileHeaderBase {
     pub fn new() -> Self {
         let mut h = Self { data: [0u8; 80] };
         h.set_magic_len(MAGIC_STR_LEN as u8);
-        if let Some(slice) = h.data.get_mut(1..1 + MAGIC_STR_LEN) {
-            slice.copy_from_slice(&MAGIC_STRING[..MAGIC_STR_LEN]);
-        }
+        h.data[1..1 + MAGIC_STR_LEN].copy_from_slice(&MAGIC_STRING[..MAGIC_STR_LEN]); // D10.1: in-bounds (18 <= 80)
         h
     }
 
@@ -97,68 +95,60 @@ impl FileHeaderBase {
         // Compare the full magic including its NUL terminator (plan.md 7.6):
         // the writer zero-pads the magic region, so byte 18 must be 0 —
         // "terark-blob-storeX" garbage must not validate.
-        self.data
-            .get(1..1 + MAGIC_STRING.len())
-            .is_some_and(|s| s == &MAGIC_STRING[..])
+        self.data[1..1 + MAGIC_STRING.len()] == MAGIC_STRING[..] // D10.1: in-bounds (19 <= 80)
     }
 
     // --- Field accessors ---
 
     #[inline]
     pub fn magic_len(&self) -> u8 {
-        self.data.first().copied().unwrap_or(0)
+        self.data[0] // D10.1: in-bounds (fixed [u8; 80])
     }
 
     #[inline]
     pub fn set_magic_len(&mut self, v: u8) {
-        if let Some(first) = self.data.first_mut() {
-            *first = v;
-        }
+        self.data[0] = v; // D10.1: in-bounds (fixed [u8; 80])
     }
 
     /// Get magic string as bytes (19 bytes starting at offset 1).
     #[inline]
     pub fn magic(&self) -> &[u8] {
-        self.data.get(1..20).unwrap_or(&[])
+        &self.data[1..20] // D10.1: in-bounds (fixed [u8; 80])
     }
 
     /// Get class name as a trimmed string.
     pub fn class_name(&self) -> &str {
-        let raw_name = self.data.get(20..40).unwrap_or(&[]);
+        let raw_name = &self.data[20..40]; // D10.1: in-bounds (fixed [u8; 80])
         let end = raw_name.iter().position(|&b| b == 0).unwrap_or(raw_name.len());
-        raw_name
-            .get(..end)
-            .and_then(|s| std::str::from_utf8(s).ok())
-            .unwrap_or("")
+        std::str::from_utf8(&raw_name[..end]).unwrap_or("")
     }
 
     /// Set class name (max 19 chars + null).
     pub fn set_class_name(&mut self, name: &str) {
         let name_bytes = name.as_bytes();
         let len = name_bytes.len().min(19);
-        if let (Some(dst), Some(src)) = (self.data.get_mut(20..20 + len), name_bytes.get(..len)) {
-            dst.copy_from_slice(src);
-        }
+        self.data[20..20 + len].copy_from_slice(&name_bytes[..len]); // D10.1: in-bounds (len <= 19 < 20)
         // Zero-fill remaining
-        if let Some(tail) = self.data.get_mut(20 + len..40) {
-            tail.fill(0);
-        }
+        self.data[20 + len..40].fill(0); // D10.1: in-bounds (20 + len <= 39 < 40)
     }
 
     #[inline]
     fn read_u64(&self, offset: usize) -> u64 {
-        self.data
-            .get(offset..)
-            .and_then(|s| s.first_chunk::<8>())
-            .map(|c| u64::from_le_bytes(*c))
-            .unwrap_or(0)
+        u64::from_le_bytes([
+            self.data[offset],     // D10.1: in-bounds (internal caller offset <= 72)
+            self.data[offset + 1], // D10.1: in-bounds
+            self.data[offset + 2], // D10.1: in-bounds
+            self.data[offset + 3], // D10.1: in-bounds
+            self.data[offset + 4], // D10.1: in-bounds
+            self.data[offset + 5], // D10.1: in-bounds
+            self.data[offset + 6], // D10.1: in-bounds
+            self.data[offset + 7], // D10.1: in-bounds
+        ])
     }
 
     #[inline]
     fn write_u64(&mut self, offset: usize, v: u64) {
-        if let Some(dst) = self.data.get_mut(offset..offset + 8) {
-            dst.copy_from_slice(&v.to_le_bytes());
-        }
+        self.data[offset..offset + 8].copy_from_slice(&v.to_le_bytes()); // D10.1: in-bounds (internal caller offset <= 72)
     }
 
     #[inline]
@@ -312,51 +302,57 @@ impl BlobStoreFileFooter {
     /// XXHash64 of compressed/zipped data blocks.
     #[inline]
     pub fn zip_data_xxhash(&self) -> u64 {
-        self.data
-            .first_chunk::<8>()
-            .map(|c| u64::from_le_bytes(*c))
-            .unwrap_or(0)
+        u64::from_le_bytes([
+            self.data[0], // D10.1: in-bounds (fixed [u8; 64])
+            self.data[1], // D10.1: in-bounds
+            self.data[2], // D10.1: in-bounds
+            self.data[3], // D10.1: in-bounds
+            self.data[4], // D10.1: in-bounds
+            self.data[5], // D10.1: in-bounds
+            self.data[6], // D10.1: in-bounds
+            self.data[7], // D10.1: in-bounds
+        ])
     }
 
     #[inline]
     pub fn set_zip_data_xxhash(&mut self, v: u64) {
-        if let Some(dst) = self.data.get_mut(0..8) {
-            dst.copy_from_slice(&v.to_le_bytes());
-        }
+        self.data[0..8].copy_from_slice(&v.to_le_bytes()); // D10.1: in-bounds (fixed [u8; 64])
     }
 
     /// XXHash64 of the entire file (header + data, excluding footer).
     #[inline]
     pub fn file_xxhash(&self) -> u64 {
-        self.data
-            .get(8..)
-            .and_then(|s| s.first_chunk::<8>())
-            .map(|c| u64::from_le_bytes(*c))
-            .unwrap_or(0)
+        u64::from_le_bytes([
+            self.data[8],  // D10.1: in-bounds (fixed [u8; 64])
+            self.data[9],  // D10.1: in-bounds
+            self.data[10], // D10.1: in-bounds
+            self.data[11], // D10.1: in-bounds
+            self.data[12], // D10.1: in-bounds
+            self.data[13], // D10.1: in-bounds
+            self.data[14], // D10.1: in-bounds
+            self.data[15], // D10.1: in-bounds
+        ])
     }
 
     #[inline]
     pub fn set_file_xxhash(&mut self, v: u64) {
-        if let Some(dst) = self.data.get_mut(8..16) {
-            dst.copy_from_slice(&v.to_le_bytes());
-        }
+        self.data[8..16].copy_from_slice(&v.to_le_bytes()); // D10.1: in-bounds (fixed [u8; 64])
     }
 
     /// Footer length field (always 64).
     #[inline]
     pub fn footer_length(&self) -> u32 {
-        self.data
-            .get(60..)
-            .and_then(|s| s.first_chunk::<4>())
-            .map(|c| u32::from_le_bytes(*c))
-            .unwrap_or(0)
+        u32::from_le_bytes([
+            self.data[60], // D10.1: in-bounds (fixed [u8; 64])
+            self.data[61], // D10.1: in-bounds
+            self.data[62], // D10.1: in-bounds
+            self.data[63], // D10.1: in-bounds
+        ])
     }
 
     #[inline]
     fn set_footer_length(&mut self, v: u32) {
-        if let Some(dst) = self.data.get_mut(60..64) {
-            dst.copy_from_slice(&v.to_le_bytes());
-        }
+        self.data[60..64].copy_from_slice(&v.to_le_bytes()); // D10.1: in-bounds (fixed [u8; 64])
     }
 }
 

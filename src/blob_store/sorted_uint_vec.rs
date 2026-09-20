@@ -335,11 +335,16 @@ impl SortedUintVec {
         config.validate()?;
 
         let read_u64 = |at: usize| -> u64 {
-            header
-                .get(at..)
-                .and_then(|s| s.first_chunk::<8>())
-                .map(|c| u64::from_le_bytes(*c))
-                .unwrap_or(0)
+            u64::from_le_bytes([
+                header[at],
+                header[at + 1],
+                header[at + 2],
+                header[at + 3],
+                header[at + 4],
+                header[at + 5],
+                header[at + 6],
+                header[at + 7],
+            ])
         };
         let size = read_u64(8);
         let index_len = read_u64(16);
@@ -512,12 +517,11 @@ impl SortedUintVec {
 
         // Read 8 bytes as u64 for BEXTR
         let mut bytes = [0u8; 8];
-        if let Some(src) = data.get(byte_offset..) {
-            let copy_len = src.len().min(8);
-            if let (Some(d), Some(s)) = (bytes.get_mut(..copy_len), src.get(..copy_len)) {
-                d.copy_from_slice(s);
-            }
-        }
+        let src = data
+            .get(byte_offset..)
+            .ok_or_else(|| ZiporaError::invalid_data("bit extraction out of bounds"))?;
+        let copy_len = src.len().min(8);
+        bytes[..copy_len].copy_from_slice(&src[..copy_len]); // D10.1: in-bounds (copy_len <= 8 and copy_len <= src.len())
 
         let mut value = u64::from_le_bytes(bytes);
 
@@ -560,12 +564,11 @@ impl SortedUintVec {
 
         // Read aligned 8-byte chunk
         let mut bytes = [0u8; 8];
-        if let Some(src) = data.get(byte_offset..) {
-            let copy_len = src.len().min(8);
-            if let (Some(d), Some(s)) = (bytes.get_mut(..copy_len), src.get(..copy_len)) {
-                d.copy_from_slice(s);
-            }
-        }
+        let src = data
+            .get(byte_offset..)
+            .ok_or_else(|| ZiporaError::invalid_data("bit extraction out of bounds"))?;
+        let copy_len = src.len().min(8);
+        bytes[..copy_len].copy_from_slice(&src[..copy_len]); // D10.1: in-bounds (copy_len <= 8 and copy_len <= src.len())
 
         let raw_value = u64::from_le_bytes(bytes);
 

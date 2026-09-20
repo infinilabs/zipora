@@ -53,7 +53,7 @@ struct FileMapping {
 /// Binary layout (C2.1):
 /// - `0..8`: `magic: u64` (`0x4D4D41505F564543` LE)
 /// - `8..10`: `version: u16` (`2` LE)
-/// - `10..12`: `flags: u16` (`0x0011` LE: bit 0 = 1 little-endian, bits 1..4 = 8-byte word size)
+/// - `10..12`: `flags: u16` (`0x0011` LE: bit 0 = little-endian, bit 4 = 64-bit header field width)
 /// - `12..16`: `element_size: u32` (LE)
 /// - `16..24`: `length: u64` (LE)
 /// - `24..32`: `capacity: u64` (LE)
@@ -66,7 +66,7 @@ struct MmapVecHeader {
 
 const MMAP_VEC_MAGIC: u64 = 0x4D4D41505F564543; // "MMAP_VEC"
 const MMAP_VEC_VERSION: u16 = 2;
-const MMAP_VEC_FLAGS: u16 = 0x0001 | ((std::mem::size_of::<usize>() as u16) << 1);
+const MMAP_VEC_FLAGS: u16 = 0x0011; // bit 0 = little-endian, bit 4 = 64-bit header field width
 const HEADER_SIZE: usize = std::mem::size_of::<MmapVecHeader>();
 
 impl MmapVecHeader {

@@ -81,10 +81,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Configuration for PA-Zip compressor
+///
+/// Note: `local_config.max_match_length` is a stream format parameter enforced
+/// during `decompress` (`length <= local_config.max_match_length.max(256)`), so
+/// the compressor and decompressor must be configured with matching `max_match_length`.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct PaZipCompressorConfig {
-    /// Local matcher configuration
+    /// Local matcher configuration (`max_match_length` is a stream format parameter)
     pub local_config: LocalMatcherConfig,
 
     /// Maximum probe distance for local matching
@@ -611,14 +615,13 @@ impl PaZipCompressor {
     /// [data..], len <= 255) into the output buffer.
     fn flush_literals(&mut self, input: &[u8], start: usize, end: usize) {
         let mut s = start;
-        while s < end {
-            let chunk = (end - s).min(255);
-            if let Some(slice) = input.get(s..s + chunk) {
-                self.output_buffer.push(0); // Literal type byte
-                self.output_buffer.push(chunk as u8);
-                self.output_buffer.extend_from_slice(slice);
-                self.stats.literal_count += 1;
-            }
+        let clamped_end = end.min(input.len());
+        while s < clamped_end {
+            let chunk = (clamped_end - s).min(255);
+            self.output_buffer.push(0); // Literal type byte
+            self.output_buffer.push(chunk as u8);
+            self.output_buffer.extend_from_slice(&input[s..s + chunk]); // D10.1: in-bounds (s + chunk <= clamped_end <= input.len())
+            self.stats.literal_count += 1;
             s += chunk;
         }
     }
@@ -1102,9 +1105,7 @@ impl PaZipCompressor {
                 let emit_len = end_pos - pos;
                 output.push(0);
                 output.push(emit_len as u8);
-                if let Some(slice) = input.get(pos..end_pos) {
-                    output.extend_from_slice(slice);
-                }
+                output.extend_from_slice(&input[pos..end_pos]); // D10.1: in-bounds (pos <= end_pos <= input.len())
                 Ok(emit_len)
             }
 
@@ -1117,7 +1118,7 @@ impl PaZipCompressor {
                     // RLE run, clamped to a single byte's worth of count.
                     let emit_len = (length as usize).clamp(1, 255);
                     output.push(2);
-                    output.push(input.get(pos).copied().unwrap_or(0));
+                    output.push(input[pos]); // D10.1: in-bounds (apply_compression_strategy called with pos < input.len())
                     output.push(emit_len as u8);
                     Ok(emit_len)
                 } else {
