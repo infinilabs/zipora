@@ -295,14 +295,14 @@ impl SortedUintVec {
     /// is a runtime hint rather than part of the layout and is not persisted.
     pub fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
         let mut header = [0u8; Self::SERIAL_HEADER_SIZE];
-        header[0..4].copy_from_slice(&Self::SERIAL_MAGIC);
-        header[4] = Self::SERIAL_VERSION;
-        header[5] = self.config.log2_block_units;
-        header[6] = self.config.offset_width;
-        header[7] = self.config.sample_width;
-        header[8..16].copy_from_slice(&(self.size as u64).to_le_bytes());
-        header[16..24].copy_from_slice(&(self.index.len() as u64).to_le_bytes());
-        header[24..32].copy_from_slice(&(self.data.len() as u64).to_le_bytes());
+        header[0..4].copy_from_slice(&Self::SERIAL_MAGIC); // D10.1: in-bounds (fixed [u8; 32])
+        header[4] = Self::SERIAL_VERSION; // D10.1: in-bounds
+        header[5] = self.config.log2_block_units; // D10.1: in-bounds
+        header[6] = self.config.offset_width; // D10.1: in-bounds
+        header[7] = self.config.sample_width; // D10.1: in-bounds
+        header[8..16].copy_from_slice(&(self.size as u64).to_le_bytes()); // D10.1: in-bounds
+        header[16..24].copy_from_slice(&(self.index.len() as u64).to_le_bytes()); // D10.1: in-bounds
+        header[24..32].copy_from_slice(&(self.data.len() as u64).to_le_bytes()); // D10.1: in-bounds
 
         writer.write_all(&header)?;
         writer.write_all(self.index.as_slice())?;
@@ -315,35 +315,35 @@ impl SortedUintVec {
         let mut header = [0u8; Self::SERIAL_HEADER_SIZE];
         reader.read_exact(&mut header)?;
 
-        if header[0..4] != Self::SERIAL_MAGIC {
+        if header[0..4] != Self::SERIAL_MAGIC { // D10.1: in-bounds (fixed [u8; 32])
             return Err(ZiporaError::invalid_data(
                 "invalid SortedUintVec magic signature",
             ));
         }
-        if header[4] != Self::SERIAL_VERSION {
+        if header[4] != Self::SERIAL_VERSION { // D10.1: in-bounds
             return Err(ZiporaError::invalid_data(
                 "unsupported SortedUintVec format version",
             ));
         }
 
         let config = SortedUintVecConfig {
-            log2_block_units: header[5],
-            offset_width: header[6],
-            sample_width: header[7],
+            log2_block_units: header[5], // D10.1: in-bounds
+            offset_width: header[6],     // D10.1: in-bounds
+            sample_width: header[7],     // D10.1: in-bounds
             use_simd: true,
         };
         config.validate()?;
 
         let read_u64 = |at: usize| -> u64 {
             u64::from_le_bytes([
-                header[at],
-                header[at + 1],
-                header[at + 2],
-                header[at + 3],
-                header[at + 4],
-                header[at + 5],
-                header[at + 6],
-                header[at + 7],
+                header[at],     // D10.1: in-bounds (const offset <= 24 on [u8; 32])
+                header[at + 1], // D10.1: in-bounds
+                header[at + 2], // D10.1: in-bounds
+                header[at + 3], // D10.1: in-bounds
+                header[at + 4], // D10.1: in-bounds
+                header[at + 5], // D10.1: in-bounds
+                header[at + 6], // D10.1: in-bounds
+                header[at + 7], // D10.1: in-bounds
             ])
         };
         let size = read_u64(8);

@@ -120,7 +120,7 @@ impl FileHeaderBase {
     pub fn class_name(&self) -> &str {
         let raw_name = &self.data[20..40]; // D10.1: in-bounds (fixed [u8; 80])
         let end = raw_name.iter().position(|&b| b == 0).unwrap_or(raw_name.len());
-        std::str::from_utf8(&raw_name[..end]).unwrap_or("")
+        std::str::from_utf8(&raw_name[..end]).unwrap_or("") // D10.1: in-bounds (end <= raw_name.len())
     }
 
     /// Set class name (max 19 chars + null).

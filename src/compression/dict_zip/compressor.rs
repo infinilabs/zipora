@@ -699,8 +699,8 @@ impl PaZipCompressor {
                     .ok_or_else(|| {
                         ZiporaError::invalid_data("Truncated PA-Zip global match instruction")
                     })?;
-                let offset = u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]) as usize;
-                let length = u16::from_le_bytes([hdr[4], hdr[5]]) as usize;
+                let offset = u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]) as usize; // D10.1: in-bounds
+                let length = u16::from_le_bytes([hdr[4], hdr[5]]) as usize; // D10.1: in-bounds
                 new_pos += 6;
 
                 if length == 0 || length > max_match_len {
@@ -725,8 +725,8 @@ impl PaZipCompressor {
                     .get(new_pos..)
                     .and_then(|s| s.first_chunk::<2>())
                     .ok_or_else(|| ZiporaError::invalid_data("Truncated PA-Zip RLE instruction"))?;
-                let byte_value = hdr[0];
-                let length = hdr[1] as usize;
+                let byte_value = hdr[0]; // D10.1: in-bounds
+                let length = hdr[1] as usize; // D10.1: in-bounds
                 new_pos += 2;
 
                 if length == 0 {
@@ -742,8 +742,8 @@ impl PaZipCompressor {
                     .ok_or_else(|| {
                         ZiporaError::invalid_data("Truncated PA-Zip NearShort instruction")
                     })?;
-                let distance = hdr[0] as usize;
-                let length = hdr[1] as usize;
+                let distance = hdr[0] as usize; // D10.1: in-bounds
+                let length = hdr[1] as usize; // D10.1: in-bounds
                 new_pos += 2;
 
                 self.copy_from_distance(output, distance, length)?;
@@ -756,8 +756,8 @@ impl PaZipCompressor {
                     .ok_or_else(|| {
                         ZiporaError::invalid_data("Truncated PA-Zip Far1Short instruction")
                     })?;
-                let distance = u16::from_le_bytes([hdr[0], hdr[1]]) as usize;
-                let length = hdr[2] as usize;
+                let distance = u16::from_le_bytes([hdr[0], hdr[1]]) as usize; // D10.1: in-bounds
+                let length = hdr[2] as usize; // D10.1: in-bounds
                 new_pos += 3;
 
                 self.copy_from_distance(output, distance, length)?;
@@ -770,8 +770,8 @@ impl PaZipCompressor {
                     .ok_or_else(|| {
                         ZiporaError::invalid_data("Truncated PA-Zip Far2Short instruction")
                     })?;
-                let distance = u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]) as usize;
-                let length = hdr[4] as usize;
+                let distance = u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]) as usize; // D10.1: in-bounds
+                let length = hdr[4] as usize; // D10.1: in-bounds
                 new_pos += 5;
 
                 self.copy_from_distance(output, distance, length)?;
@@ -784,8 +784,8 @@ impl PaZipCompressor {
                     .ok_or_else(|| {
                         ZiporaError::invalid_data("Truncated PA-Zip Far2Long instruction")
                     })?;
-                let distance = u16::from_le_bytes([hdr[0], hdr[1]]) as usize;
-                let length = u16::from_le_bytes([hdr[2], hdr[3]]) as usize;
+                let distance = u16::from_le_bytes([hdr[0], hdr[1]]) as usize; // D10.1: in-bounds
+                let length = u16::from_le_bytes([hdr[2], hdr[3]]) as usize; // D10.1: in-bounds
                 new_pos += 4;
 
                 self.copy_from_distance(output, distance, length)?;
@@ -798,8 +798,8 @@ impl PaZipCompressor {
                     .ok_or_else(|| {
                         ZiporaError::invalid_data("Truncated PA-Zip Far3Long instruction")
                     })?;
-                let distance = u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]) as usize;
-                let length = u32::from_le_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]) as usize;
+                let distance = u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]) as usize; // D10.1: in-bounds
+                let length = u32::from_le_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]) as usize; // D10.1: in-bounds
                 new_pos += 8;
 
                 self.copy_from_distance(output, distance, length)?;

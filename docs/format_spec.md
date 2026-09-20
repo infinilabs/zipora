@@ -18,7 +18,7 @@ Every persisted binary format in `zipora` obeys two mandatory invariants:
 | 5 | `ZoSortedStrVec` (`ZOSV`) | `src/containers/specialized/zo_sorted_str_vec.rs` | `"ZOSV"` (`@0..4`, `0x5653_4F5A`) | `1` (`u16` LE `@4..6`) | `0x0011` (`u16` LE `@6..8`: bit 0 = LE, bit 4 = 64-bit width) | `16 B` |
 | 6 | `VarInt` (`LEB128` / `ZigZag`) | `src/io/var_int.rs`, `src/io/var_int_variants.rs` | Self-delimiting (`0x80` MSB continuation bit) | `1` | Little-endian 7-bit groups (`u32`/`u64`), ZigZag `(n << 1) ^ (n >> 63)` for signed | `1–5 B` (`u32`) / `1–10 B` (`u64`) |
 | 7 | `MmapVecHeader` (`MMAP_VEC`) | `src/memory/mmap_vec.rs` | `0x4D4D_4150_5F56_4543` (`u64` LE `@0..8`, bytes `b"CEV_PAMM"`) | `2` (`u16` LE `@8..10`) | `0x0011` (`u16` LE `@10..12`: bit 0 = LE, bit 4 = 64-bit header field width) | `80 B` (padded to `align_of::<T>()`) |
-| 8 | `ZReorderMap` | `src/blob_store/reorder_map.rs` | `sign` validated in `{-1i64, 1i64}` (`@8..16`) | `1` | `[size: u64 LE @0..8][sign: i64 LE @8..16]` + `VarInt` signed-run stream | `16 B` |
+| 8 | `ZReorderMap` | `src/blob_store/reorder_map.rs` | `sign` validated in `{-1i64, 1i64}` (`@8..16`) | `1` | `[size: u64 LE @0..8][sign: i64 LE @8..16]` + 5-byte 40-bit `(base << 1) \| is_single` + optional unsigned `var_uint` run-length stream | `16 B` |
 
 ---
 
@@ -115,8 +115,8 @@ Every persisted binary format in `zipora` obeys two mandatory invariants:
 | `0..4` | 4 B | `[u8; 4]` | `magic` | `*b"ZOSV"` (`0x5653_4F5A`) |
 | `4..6` | 2 B | `u16` LE | `version` | `1u16.to_le_bytes()` |
 | `6..8` | 2 B | `u16` LE | `flags` | `0x0011u16.to_le_bytes()` (bit 0 = LE, bit 4 = 64-bit header field width) |
-| `8..12` | 4 B | `u32` LE | `count` | `u32::try_from(self.len)?.to_le_bytes()` |
-| `12..16` | 4 B | `u32` LE | `payload_len` | `u32::try_from(payload.len())?.to_le_bytes()` |
+| `8..12` | 4 B | `u32` LE | `count` | `(self.len as u32).to_le_bytes()` (validated via `u32::try_from` in `save_to_file`) |
+| `12..16` | 4 B | `u32` LE | `payload_len` | `(payload.len() as u32).to_le_bytes()` (validated via `u32::try_from` in `save_to_file`) |
 | `16..16+payload_len` | `payload_len` B | `[u32 LE, utf8]*` | `entries` | `count` entries of `[str_len: u32 LE][utf8_bytes: str_len B]` |
 
 ---
@@ -150,14 +150,15 @@ Element payload starts at `data_offset::<T>() = 80.div_ceil(align_of::<T>().max(
 
 ---
 
-### 2.8 `ZReorderMap` (16 B Header + Signed-Run `VarInt` Stream)
-**Source**: [`src/blob_store/reorder_map.rs`](../src/blob_store/reorder_map.rs) (`ZReorderMapBuilder::new`, `ZReorderMap::open`)
+### 2.8 `ZReorderMap` (16 B Header + 40-Bit Tagged-Word & Unsigned `var_uint` Run Stream)
+**Source**: [`src/blob_store/reorder_map.rs`](../src/blob_store/reorder_map.rs) (`ZReorderMapBuilder::write_sequence`, `ZReorderMap::read_entry`)
 
 | Offset | Size | Type | Field | Exact Encoding |
 |--------|------|------|-------|----------------|
-| `0..8` | 8 B | `u64` LE | `size` | `(size as u64).to_le_bytes()` (`size <= 0x7FFF_FFFF_FFFF`) |
+| `0..8` | 8 B | `u64` LE | `size` | `(size as u64).to_le_bytes()` (`size <= usize::MAX / 100`, `MAX_REASONABLE_SIZE`) |
 | `8..16` | 8 B | `i64` LE | `sign` | `sign.to_le_bytes()` (`1i64` for ascending runs or `-1i64` for descending runs) |
-| `16..` | variable | `VarInt` runs | `entries` | Pairs of `[first_value: VarInt u64][signed_len: ZigZag VarInt i64]` terminated by `signed_len == 0` (`EOF`), with `\|signed_len\| <= remaining_elements` |
+| `16..` (per entry) | 5 B | `[u8; 5]` (`u40` LE) | `encoded` | Low 5 bytes of `((base_value as u64) << 1) \| (is_single as u64)` in little-endian (`base_value <= 0x7F_FFFF_FFFF`); bit 0 (`is_single`) = `1` for `seq_length == 1`, `0` for `seq_length > 1` |
+| Immediately after `encoded` when `is_single == 0` | `1..=10 B` | `var_uint` (`LEB128` `u64`) | `seq_length` | Unsigned `LEB128` (`read_var_uint` / `write_var_uint`) encoding `seq_length` (`1 <= seq_length <= remaining_elements`), yielding `seq_length` values stepping by `sign`. Stream terminates without an EOF sentinel once `size` total elements have been decoded |
 
 ---
 

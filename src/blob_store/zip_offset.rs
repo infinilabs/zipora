@@ -234,41 +234,41 @@ impl FileHeader {
 
     /// Convert to bytes for writing
     fn to_bytes(&self) -> [u8; HEADER_SIZE] {
-        let mut hdr = [0u8; HEADER_SIZE];
+        let mut bytes = [0u8; HEADER_SIZE];
 
         // Manually serialize the header fields into fixed 128-byte array
-        hdr[0..20].copy_from_slice(&self.magic);
-        hdr[20..40].copy_from_slice(&self.class_name);
-        hdr[40..48].copy_from_slice(&self.file_size.to_le_bytes());
-        hdr[48..56].copy_from_slice(&self.unzip_size.to_le_bytes());
-        hdr[56..64].copy_from_slice(&self.records_checksum_version.to_le_bytes());
-        hdr[64..72].copy_from_slice(&self.content_bytes.to_le_bytes());
-        hdr[72..80].copy_from_slice(&self.offsets_bytes.to_le_bytes());
-        hdr[80] = self.offsets_log2_block_units;
-        hdr[81] = self.checksum_level;
-        hdr[82] = self.compress_level;
+        bytes[0..20].copy_from_slice(&self.magic); // D10.1: in-bounds (fixed [u8; 128])
+        bytes[20..40].copy_from_slice(&self.class_name); // D10.1: in-bounds (fixed [u8; 128])
+        bytes[40..48].copy_from_slice(&self.file_size.to_le_bytes()); // D10.1: in-bounds (fixed [u8; 128])
+        bytes[48..56].copy_from_slice(&self.unzip_size.to_le_bytes()); // D10.1: in-bounds (fixed [u8; 128])
+        bytes[56..64].copy_from_slice(&self.records_checksum_version.to_le_bytes()); // D10.1: in-bounds (fixed [u8; 128])
+        bytes[64..72].copy_from_slice(&self.content_bytes.to_le_bytes()); // D10.1: in-bounds (fixed [u8; 128])
+        bytes[72..80].copy_from_slice(&self.offsets_bytes.to_le_bytes()); // D10.1: in-bounds (fixed [u8; 128])
+        bytes[80] = self.offsets_log2_block_units; // D10.1: in-bounds (fixed [u8; 128])
+        bytes[81] = self.checksum_level; // D10.1: in-bounds (fixed [u8; 128])
+        bytes[82] = self.compress_level; // D10.1: in-bounds (fixed [u8; 128])
 
-        hdr
+        bytes
     }
 
     /// Convert from bytes for reading
-    fn from_bytes(hdr: &[u8; HEADER_SIZE]) -> Self {
+    fn from_bytes(bytes: &[u8; HEADER_SIZE]) -> Self {
         let mut magic = [0u8; 20];
-        magic.copy_from_slice(&hdr[0..20]);
+        magic.copy_from_slice(&bytes[0..20]); // D10.1: in-bounds (fixed [u8; 128])
         let mut class_name = [0u8; 20];
-        class_name.copy_from_slice(&hdr[20..40]);
+        class_name.copy_from_slice(&bytes[20..40]); // D10.1: in-bounds (fixed [u8; 128])
         let padding = [0u8; 29];
 
         let read_u64 = |offset: usize| -> u64 {
             u64::from_le_bytes([
-                hdr[offset],
-                hdr[offset + 1],
-                hdr[offset + 2],
-                hdr[offset + 3],
-                hdr[offset + 4],
-                hdr[offset + 5],
-                hdr[offset + 6],
-                hdr[offset + 7],
+                bytes[offset],     // D10.1: in-bounds (const offset <= 72 on [u8; 128])
+                bytes[offset + 1], // D10.1: in-bounds
+                bytes[offset + 2], // D10.1: in-bounds
+                bytes[offset + 3], // D10.1: in-bounds
+                bytes[offset + 4], // D10.1: in-bounds
+                bytes[offset + 5], // D10.1: in-bounds
+                bytes[offset + 6], // D10.1: in-bounds
+                bytes[offset + 7], // D10.1: in-bounds
             ])
         };
 
@@ -286,9 +286,9 @@ impl FileHeader {
             records_checksum_version,
             content_bytes,
             offsets_bytes,
-            offsets_log2_block_units: hdr[80],
-            checksum_level: hdr[81],
-            compress_level: hdr[82],
+            offsets_log2_block_units: bytes[80], // D10.1: in-bounds (fixed [u8; 128])
+            checksum_level: bytes[81],           // D10.1: in-bounds (fixed [u8; 128])
+            compress_level: bytes[82],           // D10.1: in-bounds (fixed [u8; 128])
             _padding: padding,
         }
     }

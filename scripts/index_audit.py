@@ -20,7 +20,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 from audit_common import scan_rust_file, is_test_file
 
-INDEX_PATTERN = re.compile(r'\b(?:data|buffer|bytes|input|slice|src|buf|in_buf|out_buf)\[[^\]]+\]')
+INDEX_PATTERN = re.compile(r'\b(?:data|buffer|bytes|input|slice|src|buf|in_buf|out_buf|hdr|header|raw_name|name_bytes)\[[^\]]+\]')
 GET_PATTERN = re.compile(r'\.get(?:_mut)?\(')
 IN_BOUNDS_PATTERN = re.compile(r'//\s*D10\.1:\s*in-bounds')
 
