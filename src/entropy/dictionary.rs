@@ -647,7 +647,6 @@ impl OptimizedDictionaryCompressor {
     pub fn compress(&self, data: &[u8]) -> Result<Vec<u8>> {
         let mut result = Vec::new();
         let mut pos = 0;
-        let is_same_as_training = data == self.text.as_slice();
         let min_profitable_len = self.min_match_length.max(10);
 
         // Lightweight local hash table mapping rolling hash -> most recent position in `data`
@@ -689,66 +688,33 @@ impl OptimizedDictionaryCompressor {
                     }
                 }
 
-                // 2. Check pre-trained dictionary (`self.text`) if needed
+                // 2. Check pre-trained dictionary (`self.text`) if needed (`flag = 2`)
                 if best_match_length < max_possible && self.bloom_filter.contains(pattern) {
                     if let Some(candidate_positions) = self.hash_table.get(&hash) {
                         for &suffix_pos in candidate_positions.iter().take(32) {
-                            if is_same_as_training {
-                                // When compressing the training text itself, treat self.text
-                                // as the sliding window (flag = 1) so pos = 0 does not trivially
-                                // self-match the entire input.
-                                if suffix_pos >= pos {
-                                    continue;
-                                }
-                                let distance = pos - suffix_pos;
-                                if distance > self.window_size || distance == 0 {
-                                    continue;
-                                }
-                                if self.text.get(suffix_pos..suffix_pos + self.min_match_length)
-                                    != Some(pattern)
-                                {
-                                    continue;
-                                }
-                                let mut match_length = self.min_match_length;
-                                while match_length < max_possible
-                                    && self.text.get(suffix_pos + match_length)
-                                        == data.get(pos + match_length)
-                                {
-                                    match_length += 1;
-                                }
-                                if match_length >= min_profitable_len
-                                    && match_length > best_match_length
-                                {
-                                    best_match_flag = 1;
-                                    best_match_offset = distance;
-                                    best_match_length = match_length;
-                                    if best_match_length == max_possible {
-                                        break;
-                                    }
-                                }
-                            } else {
-                                // Non-training input: suffix_pos is an offset in `self.text` (flag = 2).
-                                if self.text.get(suffix_pos..suffix_pos + self.min_match_length)
-                                    != Some(pattern)
-                                {
-                                    continue;
-                                }
-                                let mut match_length = self.min_match_length;
-                                while match_length < max_possible
-                                    && self.text.get(suffix_pos + match_length)
-                                        == data.get(pos + match_length)
-                                {
-                                    match_length += 1;
-                                }
-                                if match_length >= min_profitable_len
-                                    && match_length > best_match_length
-                                {
-                                    best_match_flag = 2;
-                                    best_match_offset = suffix_pos;
-                                    best_match_length = match_length;
-                                    if best_match_length == max_possible {
-                                        break;
-                                    }
+                            if suffix_pos == pos && data.len() == self.text.len() {
+                                continue;
+                            }
+                            if self.text.get(suffix_pos..suffix_pos + self.min_match_length)
+                                != Some(pattern)
+                            {
+                                continue;
+                            }
+                            let mut match_length = self.min_match_length;
+                            while match_length < max_possible
+                                && self.text.get(suffix_pos + match_length)
+                                    == data.get(pos + match_length)
+                            {
+                                match_length += 1;
+                            }
+                            if match_length >= min_profitable_len
+                                && match_length > best_match_length
+                            {
+                                best_match_flag = 2;
+                                best_match_offset = suffix_pos;
+                                best_match_length = match_length;
+                                if best_match_length == max_possible {
+                                    break;
                                 }
                             }
                         }

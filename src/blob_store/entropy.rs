@@ -107,7 +107,6 @@ pub struct HuffmanBlobStore<S: BlobStore> {
     training_data: Vec<u8>,
     encoder: Option<HuffmanEncoder>,
     decoder: Option<HuffmanDecoder>,
-    record_sizes: std::collections::HashMap<crate::RecordId, usize>,
 }
 
 impl<S: BlobStore> HuffmanBlobStore<S> {
@@ -119,7 +118,6 @@ impl<S: BlobStore> HuffmanBlobStore<S> {
             training_data: Vec::new(),
             encoder: None,
             decoder: None,
-            record_sizes: std::collections::HashMap::new(),
         }
     }
 
@@ -208,12 +206,10 @@ impl<S: BlobStore> BlobStore for HuffmanBlobStore<S> {
             let framed = frame_entropy_blob(0, data.len(), data)?;
             self.inner.put(&framed)?
         };
-        self.record_sizes.insert(id, data.len());
         Ok(id)
     }
 
     fn remove(&mut self, id: crate::RecordId) -> Result<()> {
-        self.record_sizes.remove(&id);
         self.inner.remove(id)
     }
 
@@ -224,9 +220,6 @@ impl<S: BlobStore> BlobStore for HuffmanBlobStore<S> {
     fn size(&self, id: crate::RecordId) -> Result<Option<usize>> {
         if !self.inner.contains(id) {
             return Ok(None);
-        }
-        if let Some(&sz) = self.record_sizes.get(&id) {
-            return Ok(Some(sz));
         }
         let raw = self.inner.get(id)?;
         let (_, uncompressed_len, _) = parse_entropy_frame(&raw)?;
@@ -252,7 +245,6 @@ pub struct RansBlobStore<S: BlobStore> {
     stats: EntropyCompressionStats,
     encoder: Option<Rans64Encoder<ParallelX1>>,
     decoder: Option<Rans64Decoder<ParallelX1>>,
-    record_sizes: std::collections::HashMap<crate::RecordId, usize>,
 }
 
 impl<S: BlobStore> RansBlobStore<S> {
@@ -263,7 +255,6 @@ impl<S: BlobStore> RansBlobStore<S> {
             stats: EntropyCompressionStats::new(EntropyAlgorithm::Rans),
             encoder: None,
             decoder: None,
-            record_sizes: std::collections::HashMap::new(),
         }
     }
 
@@ -320,18 +311,15 @@ impl<S: BlobStore> BlobStore for RansBlobStore<S> {
                     EntropyStats::new(data.len(), compressed.len(), entropy);
                 let framed = frame_entropy_blob(1, data.len(), &compressed)?;
                 let id = self.inner.put(&framed)?;
-                self.record_sizes.insert(id, data.len());
                 return Ok(id);
             }
         }
         let framed = frame_entropy_blob(0, data.len(), data)?;
         let id = self.inner.put(&framed)?;
-        self.record_sizes.insert(id, data.len());
         Ok(id)
     }
 
     fn remove(&mut self, id: crate::RecordId) -> Result<()> {
-        self.record_sizes.remove(&id);
         self.inner.remove(id)
     }
 
@@ -342,9 +330,6 @@ impl<S: BlobStore> BlobStore for RansBlobStore<S> {
     fn size(&self, id: crate::RecordId) -> Result<Option<usize>> {
         if !self.inner.contains(id) {
             return Ok(None);
-        }
-        if let Some(&sz) = self.record_sizes.get(&id) {
-            return Ok(Some(sz));
         }
         let raw = self.inner.get(id)?;
         let (_, uncompressed_len, _) = parse_entropy_frame(&raw)?;
@@ -369,7 +354,6 @@ pub struct DictionaryBlobStore<S: BlobStore> {
     inner: S,
     stats: EntropyCompressionStats,
     compressor: Option<DictionaryCompressor>,
-    record_sizes: std::collections::HashMap<crate::RecordId, usize>,
 }
 
 impl<S: BlobStore> DictionaryBlobStore<S> {
@@ -379,7 +363,6 @@ impl<S: BlobStore> DictionaryBlobStore<S> {
             inner,
             stats: EntropyCompressionStats::new(EntropyAlgorithm::Dictionary),
             compressor: None,
-            record_sizes: std::collections::HashMap::new(),
         }
     }
 
@@ -438,18 +421,15 @@ impl<S: BlobStore> BlobStore for DictionaryBlobStore<S> {
                     EntropyStats::new(data.len(), compressed.len(), entropy);
                 let framed = frame_entropy_blob(1, data.len(), &compressed)?;
                 let id = self.inner.put(&framed)?;
-                self.record_sizes.insert(id, data.len());
                 return Ok(id);
             }
         }
         let framed = frame_entropy_blob(0, data.len(), data)?;
         let id = self.inner.put(&framed)?;
-        self.record_sizes.insert(id, data.len());
         Ok(id)
     }
 
     fn remove(&mut self, id: crate::RecordId) -> Result<()> {
-        self.record_sizes.remove(&id);
         self.inner.remove(id)
     }
 
@@ -460,9 +440,6 @@ impl<S: BlobStore> BlobStore for DictionaryBlobStore<S> {
     fn size(&self, id: crate::RecordId) -> Result<Option<usize>> {
         if !self.inner.contains(id) {
             return Ok(None);
-        }
-        if let Some(&sz) = self.record_sizes.get(&id) {
-            return Ok(Some(sz));
         }
         let raw = self.inner.get(id)?;
         let (_, uncompressed_len, _) = parse_entropy_frame(&raw)?;
@@ -609,5 +586,18 @@ mod tests {
         let id_d = dict.put(sample).unwrap();
         assert_eq!(dict.size(id_d).unwrap(), Some(sample.len()));
         assert_eq!(dict.get(id_d).unwrap(), sample);
+    }
+
+    #[test]
+    fn test_entropy_blob_store_size_missing_and_corrupt_header() {
+        let mut inner = MemoryBlobStore::new();
+        // Insert a corrupt 2-byte record directly into the inner store (shorter than 5-byte frame header)
+        let corrupt_id = inner.put(&[0x01, 0x02]).unwrap();
+        let huff = HuffmanBlobStore::new(inner);
+
+        // Missing record returns Ok(None)
+        assert_eq!(huff.size(999_999).unwrap(), None);
+        // Corrupt record frame header propagates Err from parse_entropy_frame
+        assert!(huff.size(corrupt_id).is_err());
     }
 }

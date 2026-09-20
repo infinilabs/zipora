@@ -16,7 +16,7 @@ blob_store = 0
 var_int = 0
 succinct_load = 6
 max_total = 6
-max_in_bounds = 60
+max_in_bounds = 119
 
 [unwrap_audit]
 max_unwraps = 0

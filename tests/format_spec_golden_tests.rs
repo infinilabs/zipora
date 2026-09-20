@@ -244,7 +244,7 @@ fn test_golden_5_zo_sorted_str_vec_zosv_every_field() -> Result<()> {
         "omega".to_string(),
     ];
     let zosv = ZoSortedStrVec::from_sorted_strings(strings.clone())?;
-    let bytes = zosv.to_bytes()?;
+    let bytes = zosv.to_bytes();
 
     // Every field of the 16-byte ZOSV header + payload:
     // 0..4: magic = b"ZOSV"
@@ -342,13 +342,23 @@ fn test_golden_8_zreorder_map_every_field() -> Result<()> {
 
     let raw =
         std::fs::read(&path).map_err(|e| zipora::error::ZiporaError::io_error(e.to_string()))?;
-    // Every field of the 16-byte ZReorderMap header:
+    // Total wire size: 16 B header + 6 B descending run [3,2,1,0] + 4 * 5 B singles [4],[5],[6],[7] = 42 B
+    assert_eq!(raw.len(), 42);
     // 0..8: size = 8 (u64 LE)
     assert_eq!(&raw[0..8], &8u64.to_le_bytes());
     // 8..16: sign = -1i64 (i64 LE, [0xFF; 8])
     assert_eq!(&raw[8..16], &(-1i64).to_le_bytes());
-    // Final byte: 0x00 EOF marker (`signed_len == 0`)
-    assert_eq!(raw.last().copied(), Some(0));
+    // 16..22: Entry 0 (descending run 3, 2, 1, 0: base=3, is_single=0 -> encoded = (3 << 1) | 0 = 6 in 5-byte LE, followed by unsigned var_uint seq_length = 4)
+    assert_eq!(&raw[16..21], &[6, 0, 0, 0, 0]);
+    assert_eq!(raw[21], 4);
+    // 22..27: Entry 1 (single 4: base=4, is_single=1 -> encoded = (4 << 1) | 1 = 9 in 5-byte LE)
+    assert_eq!(&raw[22..27], &[9, 0, 0, 0, 0]);
+    // 27..32: Entry 2 (single 5: base=5, is_single=1 -> encoded = (5 << 1) | 1 = 11 in 5-byte LE)
+    assert_eq!(&raw[27..32], &[11, 0, 0, 0, 0]);
+    // 32..37: Entry 3 (single 6: base=6, is_single=1 -> encoded = (6 << 1) | 1 = 13 in 5-byte LE)
+    assert_eq!(&raw[32..37], &[13, 0, 0, 0, 0]);
+    // 37..42: Entry 4 (single 7: base=7, is_single=1 -> encoded = (7 << 1) | 1 = 15 in 5-byte LE)
+    assert_eq!(&raw[37..42], &[15, 0, 0, 0, 0]);
 
     let loaded = ZReorderMap::open(&path)?;
     assert_eq!(loaded.size(), 8);
