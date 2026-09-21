@@ -905,7 +905,15 @@ impl LockFreeMemoryPool {
                 thread::sleep(Duration::from_micros(retry_count as u64));
             }
             BackoffStrategy::Exponential { max_delay_us } => {
-                let delay = std::cmp::min(1u64 << retry_count, max_delay_us);
+                // `checked_shl`, not `<<`: `max_cas_retries` defaults to 1000,
+                // so `retry_count` reaches 64 and the shift overflows -- a
+                // panic in debug, and in release a wrapped shift that resets
+                // the delay to 1 microsecond exactly when contention is
+                // highest.
+                let delay = 1u64
+                    .checked_shl(retry_count)
+                    .unwrap_or(u64::MAX)
+                    .min(max_delay_us);
                 thread::sleep(Duration::from_micros(delay));
             }
         }
@@ -976,6 +984,40 @@ impl Drop for LockFreeAllocation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// C3.11. `backoff` computed `1u64 << retry_count`. `max_cas_retries`
+    /// defaults to 1000 and the default strategy is `Exponential`, so a bin
+    /// under sustained contention reaches a retry count of 64 and the shift
+    /// overflows: a panic in a debug build, and in release a wrapped shift
+    /// (`1 << (n % 64)`) that makes the delay collapse back to 1 µs exactly
+    /// when the pool is most contended.
+    ///
+    /// The retry loop is not reachable deterministically from outside, so the
+    /// test calls the private method directly with the retry count the loop is
+    /// allowed to reach.
+    #[test]
+    fn test_backoff_does_not_overflow_at_high_retry_counts() {
+        let config = LockFreePoolConfig::default();
+        assert!(
+            matches!(config.backoff_strategy, BackoffStrategy::Exponential { .. }),
+            "this test is about the default strategy"
+        );
+        let retries = config.max_cas_retries;
+        assert!(retries > 64, "the loop must be able to reach a 64th retry");
+
+        let pool = LockFreeMemoryPool::new(LockFreePoolConfig {
+            memory_size: 64 * 1024,
+            // Keep the sleep bounded: the point is the shift, not the wait.
+            backoff_strategy: BackoffStrategy::Exponential { max_delay_us: 1 },
+            ..LockFreePoolConfig::default()
+        })
+        .unwrap();
+
+        for retry in [63, 64, 65, retries - 1] {
+            pool.backoff(retry);
+        }
+    }
+
 
     /// C3.10. `allocate_from_skip_list` takes a best-fit free block of
     /// `best_size >= aligned_size` and hands it over *whole*, while
