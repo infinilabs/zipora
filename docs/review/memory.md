@@ -899,4 +899,53 @@ negative tests". They never did; that is corrected to the reasoning above.
 **Audit deltas.** `api_honesty.max_markers` and `unsafe_audit.max_undocumented` both
 drop; re-ratcheted in the `build(gates):` commit that closes this range.
 
+**Commit.** `4932d7d`
+---
+
+## C3.13 — the global-stack arm of `zero_on_alloc` had no test
+
+**Scope.** `src/memory/secure_pool.rs` (tests only).
+
+**Finding.** `2707e30` fixed both zeroing gaps in `SecureMemoryPool` and added
+`test_zero_on_free_clears_recycled_chunks` and
+`test_zero_on_alloc_clears_recycled_chunks`. Both allocate one chunk, free it, and
+allocate again on the same thread, so both only ever take the **thread-local cache**
+hit. `allocate_with_hint` has a second, textually separate copy of the same check for
+the **global stack** arm (`secure_pool.rs:1024`), and nothing asserted it. The
+default `local_cache_size` is 64, so a test has to lower it before the global stack is
+even reachable.
+
+This is the shape of gap that C3.7 and C3.10 both turned out to be: a second copy of a
+rule, on a path the tests never take.
+
+**Mutation check (in place of a RED).** No production change here, so there is no
+commit on which these fail. Instead, with the branch at `secure_pool.rs:1023-1026`
+deleted and everything else at `4932d7d`:
+
+```
+thread 'memory::secure_pool::tests::test_zero_on_alloc_clears_chunks_taken_off_the_global_stack'
+panicked at src/memory/secure_pool.rs:1787:13:
+a recycled chunk still carries the previous tenant's bytes
+
+test result: FAILED. 4 passed; 1 failed
+```
+
+The other four zeroing tests pass with that branch gone, which is the point: they do
+not reach it. The mutation was reverted immediately; the committed tree is unchanged
+apart from the tests.
+
+**Tests.** A shared `recycle_through_global_stack` helper sets `local_cache_size` to 2
+and drives `local_cache_size + 4` chunks through the pool, so four of them are recycled
+via the global stack; it asserts every byte of every chunk in the second round is zero,
+and returns the addresses and the `cross_thread_steals` delta so each test can assert
+`steals > 0` — otherwise the test would silently degrade into another local-cache test.
+Each test also asserts the second round hands out distinct addresses.
+
+* `test_zero_on_free_clears_chunks_routed_through_the_global_stack`
+* `test_zero_on_alloc_clears_chunks_taken_off_the_global_stack`
+
+**Fix.** None: the production code is correct. This closes the "`zero_on_free` and
+`zero_on_alloc` honoured on cache, stack, and list paths" item of the C3 scope by
+covering the one path that was not covered.
+
 **Commit.** _pending_
