@@ -1244,7 +1244,7 @@ lost; they belong to whichever phase covers `src/thread/`:
   return `Ok(None)` for an unlocked mutex. (`lock`'s fast path at `:149` is fine: a spurious
   failure only sends it down `lock_slow`, which is correct either way.)
 
-**Commit.** _pending_
+**Commit.** `a215001`
 ---
 
 # Open findings — read, judged, not fixed

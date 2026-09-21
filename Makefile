@@ -159,6 +159,11 @@ miri_core:
 #
 # `memory::cache` needs -Zmiri-disable-isolation: detect_numa_nodes() reads
 # /sys/devices/system/node, and Miri's isolation blocks `open`.
+#
+# The five lines are five separate Miri runs and the whole target takes the
+# better part of an hour. make stops at the first failing line, so a failure in
+# an early suite means the later ones did not run at all -- read the output for
+# five `test result:` lines before calling the target green.
 miri_pool:
 	$(CARGO_MIRI) test --lib memory::fixed_capacity_pool
 	$(CARGO_MIRI) test --lib memory::five_level_pool
