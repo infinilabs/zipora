@@ -366,22 +366,36 @@ mod tests {
         // public method, but used to have no Drop: every disposal other than
         // handing it back to `MemoryMappedAllocator::deallocate` leaked the
         // whole mapping.
+        //
+        // Retried: `cargo test` runs the suite in parallel threads, and the
+        // kernel is free to hand the hole we just freed straight to another
+        // thread's mmap, which would leave the address mapped by someone else.
+        // A leak fails every attempt; a reuse has to happen three times in a
+        // row to be mistaken for one.
         let allocator = MemoryMappedAllocator::new(16 * 1024);
         const SIZE: usize = 4 * 1024 * 1024;
+        const ATTEMPTS: usize = 3;
 
-        let mut allocation = allocator.allocate(SIZE).unwrap();
-        allocation.as_mut_slice()[0] = 1;
-        let addr = allocation.as_ptr::<u8>() as usize;
-        assert!(
-            address_is_mapped(addr),
-            "vacuous unless the allocation is mapped to begin with"
-        );
+        let mut still_mapped = Vec::with_capacity(ATTEMPTS);
+        for _ in 0..ATTEMPTS {
+            let mut allocation = allocator.allocate(SIZE).unwrap();
+            allocation.as_mut_slice()[0] = 1;
+            let addr = allocation.as_ptr::<u8>() as usize;
+            assert!(
+                address_is_mapped(addr),
+                "vacuous unless the allocation is mapped to begin with"
+            );
 
-        drop(allocation);
+            drop(allocation);
 
-        assert!(
-            !address_is_mapped(addr),
-            "{addr:#x} is still mapped after the allocation was dropped: \
+            if !address_is_mapped(addr) {
+                return;
+            }
+            still_mapped.push(addr);
+        }
+
+        panic!(
+            "{still_mapped:#x?} were all still mapped after being dropped: \
              the mapping leaked"
         );
     }
