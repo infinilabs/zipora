@@ -220,6 +220,34 @@ impl CacheOptimizedAllocator {
         Self::new(CacheLayoutConfig::new())
     }
 
+    /// Compute the `(aligned_size, effective_alignment)` pair for `size` and
+    /// `alignment`, rejecting zero sizes, non-power-of-two cache lines, and
+    /// rounding overflows before they can reach `Layout::from_size_align` or
+    /// `std::alloc::alloc`.
+    fn checked_layout(&self, size: usize, alignment: usize) -> Result<Layout> {
+        if size == 0 {
+            return Err(ZiporaError::invalid_data(
+                "Cache-aligned allocation size must be non-zero",
+            ));
+        }
+        let line = self.config.cache_line_size;
+        if line == 0 || !line.is_power_of_two() {
+            return Err(ZiporaError::invalid_data(
+                "Cache line size must be a non-zero power of two",
+            ));
+        }
+        let effective_alignment = alignment.max(line);
+        let aligned_size = size
+            .checked_add(line - 1)
+            .map(|n| n & !(line - 1))
+            .ok_or_else(|| {
+                ZiporaError::invalid_data("Cache-aligned allocation size overflows usize")
+            })?;
+
+        Layout::from_size_align(aligned_size, effective_alignment)
+            .map_err(|_| ZiporaError::invalid_data("Invalid layout for cache-aligned allocation"))
+    }
+
     /// Allocate cache-aligned memory with specified layout hints
     pub fn allocate_aligned(
         &self,
@@ -227,14 +255,10 @@ impl CacheOptimizedAllocator {
         alignment: usize,
         is_hot: bool,
     ) -> Result<NonNull<u8>> {
-        let effective_alignment = alignment.max(self.config.cache_line_size);
-        let aligned_size = align_to_cache_line(size, self.config.cache_line_size);
+        let layout = self.checked_layout(size, alignment)?;
 
-        let layout = Layout::from_size_align(aligned_size, effective_alignment).map_err(|_| {
-            ZiporaError::invalid_data("Invalid layout for cache-aligned allocation")
-        })?;
-
-        // SAFETY: Allocating with valid layout
+        // SAFETY: `checked_layout` guarantees `layout.size() > 0` and a valid
+        // power-of-two alignment.
         let ptr = unsafe { alloc(layout) };
         if ptr.is_null() {
             return Err(ZiporaError::out_of_memory(size));
@@ -247,25 +271,48 @@ impl CacheOptimizedAllocator {
             self.cold_allocations.fetch_add(1, Ordering::Relaxed);
         }
 
-        // SAFETY: Null check performed at lines 228-230 above
+        // SAFETY: Null check performed above.
         Ok(unsafe { NonNull::new_unchecked(ptr) })
     }
 
-    /// Deallocate cache-aligned memory
-    pub fn deallocate_aligned(
+    /// Deallocate a block previously obtained from [`Self::allocate_aligned`].
+    ///
+    /// # Safety
+    ///
+    /// * `ptr` must have been returned by [`Self::allocate_aligned`] on an
+    ///   allocator with the same `cache_line_size`, and must not yet have been
+    ///   deallocated.
+    /// * `size` and `alignment` must be the exact arguments that were passed to
+    ///   [`Self::allocate_aligned`] when `ptr` was allocated. This allocator
+    ///   does not record live allocations, so a wrong pointer, a mismatched
+    ///   `(size, alignment)` pair, or a double free is passed straight to
+    ///   [`std::alloc::dealloc`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ZiporaError::InvalidData`] if `(size, alignment)` cannot form a
+    /// valid non-zero [`Layout`], in which case `ptr` is not touched.
+    ///
+    /// ```compile_fail
+    /// use std::ptr::NonNull;
+    /// use zipora::memory::CacheOptimizedAllocator;
+    ///
+    /// let alloc = CacheOptimizedAllocator::optimal();
+    /// let ptr = alloc.allocate_aligned(64, 64, true).unwrap();
+    /// // `deallocate_aligned` is `unsafe fn`: calling it outside `unsafe` must not compile.
+    /// alloc.deallocate_aligned(ptr, 64, 64).unwrap();
+    /// ```
+    pub unsafe fn deallocate_aligned(
         &self,
         ptr: NonNull<u8>,
         size: usize,
         alignment: usize,
     ) -> Result<()> {
-        let effective_alignment = alignment.max(self.config.cache_line_size);
-        let aligned_size = align_to_cache_line(size, self.config.cache_line_size);
+        let layout = self.checked_layout(size, alignment)?;
 
-        let layout = Layout::from_size_align(aligned_size, effective_alignment).map_err(|_| {
-            ZiporaError::invalid_data("Invalid layout for cache-aligned deallocation")
-        })?;
-
-        // SAFETY: ptr was allocated with this layout in allocate_aligned
+        // SAFETY: By caller contract `ptr` was allocated by `allocate_aligned`
+        // with the same `(size, alignment)` and `cache_line_size`, which
+        // `checked_layout` maps to the identical `Layout`.
         unsafe {
             dealloc(ptr.as_ptr(), layout);
         }
@@ -789,7 +836,8 @@ mod tests {
         assert_eq!(ptr.as_ptr() as usize % 64, 0); // Should be cache-line aligned
 
         // Test deallocation
-        assert!(allocator.deallocate_aligned(ptr, 1024, 64).is_ok());
+        // SAFETY: `ptr` was just allocated from `allocator` with `(1024, 64)`.
+        assert!(unsafe { allocator.deallocate_aligned(ptr, 1024, 64) }.is_ok());
 
         let stats = allocator.stats();
         assert_eq!(stats.hot_allocations, 1);
@@ -882,19 +930,53 @@ mod tests {
         assert!(parse_cache_size("invalid").is_err());
     }
 
+    /// C3.19. `allocate_aligned(0, ..)` rounded `0` to `0` via
+    /// `align_to_cache_line`, built a valid zero-sized `Layout`, and handed it
+    /// to `std::alloc::alloc`, whose safety contract forbids `size == 0`
+    /// (Miri: "Undefined Behavior: creating allocation with size 0").
+    #[test]
+    fn test_allocate_aligned_rejects_zero_size() {
+        let allocator = CacheOptimizedAllocator::optimal();
+        let err = allocator
+            .allocate_aligned(0, 64, true)
+            .expect_err("zero-sized cache-aligned allocation must be rejected");
+        assert!(err.to_string().contains("non-zero"), "got: {err}");
+    }
+
+    /// C3.19. `align_to_cache_line(usize::MAX, 64)` computed
+    /// `(size + cache_line_size - 1) & !(cache_line_size - 1)`, which panics on
+    /// overflow in debug and wraps to `0` in release -- feeding a zero-sized
+    /// `Layout` to `std::alloc::alloc` on the release path.
+    #[test]
+    fn test_allocate_aligned_rejects_overflowing_size() {
+        let allocator = CacheOptimizedAllocator::optimal();
+        assert!(
+            allocator.allocate_aligned(usize::MAX, 64, false).is_err(),
+            "overflowing size must return Err, not panic or wrap to 0"
+        );
+    }
+
     #[test]
     fn test_cache_layout_stats() {
         let allocator = CacheOptimizedAllocator::optimal();
 
         // Allocate some hot and cold data
-        let _hot1 = allocator.allocate_aligned(64, 64, true).unwrap();
-        let _hot2 = allocator.allocate_aligned(128, 64, true).unwrap();
-        let _cold1 = allocator.allocate_aligned(64, 64, false).unwrap();
+        let hot1 = allocator.allocate_aligned(64, 64, true).unwrap();
+        let hot2 = allocator.allocate_aligned(128, 64, true).unwrap();
+        let cold1 = allocator.allocate_aligned(64, 64, false).unwrap();
 
         let stats = allocator.stats();
         assert_eq!(stats.hot_allocations, 2);
         assert_eq!(stats.cold_allocations, 1);
         assert!(stats.cache_line_size >= 32);
+
+        // SAFETY: each pointer is paired with the exact `(size, alignment)` it
+        // was allocated with above.
+        unsafe {
+            allocator.deallocate_aligned(hot1, 64, 64).unwrap();
+            allocator.deallocate_aligned(hot2, 128, 64).unwrap();
+            allocator.deallocate_aligned(cold1, 64, 64).unwrap();
+        }
     }
 
     #[test]

@@ -534,8 +534,34 @@ pub fn numa_alloc_aligned(size: usize, align: usize, node: NumaNode) -> Result<N
     numa_alloc::<u8>(layout, Some(node))
 }
 
-/// Deallocate NUMA memory
-pub fn numa_dealloc(ptr: NonNull<u8>, size: usize, align: usize, node: NumaNode) -> Result<()> {
+/// Deallocate a block previously obtained from [`numa_alloc_aligned`].
+///
+/// # Safety
+///
+/// * `ptr` must have been returned by [`numa_alloc_aligned`] with the same
+///   `(size, align, node)` arguments and must not yet have been deallocated.
+/// * Neither [`numa_alloc_aligned`] nor `NumaMemoryPool` records live
+///   allocations, so a foreign pointer, a mismatched `(size, align)` pair, or
+///   a double free is handed straight to [`std::alloc::dealloc`].
+///
+/// # Errors
+///
+/// Returns [`ZiporaError::InvalidData`] if `(size, align)` cannot form a valid
+/// [`Layout`], in which case `ptr` is not touched.
+///
+/// ```compile_fail
+/// use zipora::memory::{numa_alloc_aligned, numa_dealloc};
+///
+/// let ptr = numa_alloc_aligned(64, 64, 0).unwrap();
+/// // `numa_dealloc` is `unsafe fn`: calling it outside `unsafe` must not compile.
+/// numa_dealloc(ptr, 64, 64, 0).unwrap();
+/// ```
+pub unsafe fn numa_dealloc(
+    ptr: NonNull<u8>,
+    size: usize,
+    align: usize,
+    node: NumaNode,
+) -> Result<()> {
     let layout = Layout::from_size_align(size, align.max(CACHE_LINE_SIZE))
         .map_err(|_| ZiporaError::invalid_data("Invalid layout for NUMA deallocation"))?;
 
@@ -809,7 +835,8 @@ mod tests {
         assert_eq!(ptr.as_ptr() as usize % CACHE_LINE_SIZE, 0);
 
         // Test deallocation
-        assert!(numa_dealloc(ptr, 1024, 64, node).is_ok());
+        // SAFETY: `ptr` came from `numa_alloc_aligned(1024, 64, node)`.
+        assert!(unsafe { numa_dealloc(ptr, 1024, 64, node) }.is_ok());
     }
 
     #[test]
@@ -839,6 +866,12 @@ mod tests {
         // Stats structure should exist
         let stats = get_numa_stats();
         assert!(stats.node_count >= 1);
+
+        // SAFETY: each pointer is freed with its allocating `(size, align, node)`.
+        unsafe {
+            numa_dealloc(ptr1, 1024, 64, 0).unwrap();
+            numa_dealloc(ptr2, 512, 32, 0).unwrap();
+        }
     }
 
     /// C3.3 (CRITICAL, Miri-confirmed). `NumaMemoryPool::deallocate` parked the
@@ -882,7 +915,10 @@ mod tests {
             "numa_alloc must charge the block to its node: {before} -> {during}"
         );
 
-        numa_dealloc(ptr, 64, 64, node).unwrap();
+        // SAFETY: `ptr` came from `numa_alloc_aligned(64, 64, node)`.
+        unsafe {
+            numa_dealloc(ptr, 64, 64, node).unwrap();
+        }
 
         let after = get_numa_stats()
             .pools
