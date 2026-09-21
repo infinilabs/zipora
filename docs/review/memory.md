@@ -13,7 +13,7 @@ failing), one commit per finding with its regression test, `SAFETY:` on every `u
 | `bump.rs` | 610 | yes |
 | `cache.rs` | 823 | yes |
 | `cache_layout.rs` | 920 | yes |
-| `five_level_pool.rs` | 1,550 | yes (full) |
+| `five_level_pool.rs` | 1,550 | yes (full) — see also the note under C3.6 |
 | `fixed_capacity_pool.rs` | 938 | yes (full) |
 | `hugepage.rs` | 582 | yes |
 | `lockfree_pool.rs` | 1,504 | yes (full) |
@@ -102,7 +102,7 @@ the header's own alignment — was accepted outright. `total_blocks == 0` also r
 before any memory is touched; the capacity product is `checked_mul`. All five presets
 are asserted to pass their own validation.
 
-**Commit.** _pending_
+**Commit.** `c51ba7d`
 
 
 ---
@@ -152,7 +152,7 @@ it only speaks under Miri, hence the new `make miri_pool` target.
 **Fix.** `MemoryChunk` stores the `Layout` it allocated with and `Drop` uses it.
 The `SAFETY:` comment now names the real invariant.
 
-**Commit.** _pending_
+**Commit.** `e536e54`
 
 ---
 
@@ -226,7 +226,7 @@ no cache those five numbers are structurally always zero and `hit_rate()` can on
 return `0.0`; five lying fields are worse than none. `allocated_bytes` survives and is
 now real.
 
-**Commit.** _pending_
+**Commit.** `f54da91`
 
 ---
 
@@ -283,5 +283,196 @@ fresh address), `test_alloc_slice_rejects_overflowing_element_count`,
 **Fix.** `checked_add` on both bump steps and `checked_mul` on the slice size;
 `can_allocate` mirrors them and rejects a non-power-of-two alignment. The `# Errors`
 docs now say why the overflow case must not be left to wrapping.
+
+**Commit.** `eb3a9e2`
+
+---
+
+### C3.5 — `FiveLevelPoolConfig` was entirely unvalidated — HIGH
+
+**Finding.** Every field of `FiveLevelPoolConfig` is `pub` and none of them was
+checked. The only validation that existed was incidental: `Layout::from_size_align`
+inside `MemoryChunk::new`, which reports `Invalid data: Invalid memory layout` and
+names nothing. Four defects sat behind that:
+
+1. **`alloc(0)` / `free(p, 0)` underflow.** `alloc_from_fast_bin` and
+   `free_to_fast_bin` compute `bin_index = size / alignment - 1`, and `align_up(0)`
+   is `0`. A debug build panics with `attempt to subtract with overflow`; a release
+   build wraps to `usize::MAX`, skips the bin, and carves a zero-width block off the
+   end of the arena. Both entry points are safe public API on all five levels.
+2. **`initial_capacity: 0`.** `Layout::from_size_align(0, 8)` is *valid*, so the
+   zero-sized layout reaches `std::alloc::alloc`, which the `GlobalAlloc` contract
+   forbids.
+3. **`initial_capacity > u32::MAX`.** Offsets are a `u32` (`MemOffset`), and
+   `MemOffset::new` guarded the narrowing with a `debug_assert!` only. In release two
+   live blocks silently share one offset. Working agreement 4 forbids `debug_assert!`
+   as the only guard on a value reachable from safe public API.
+4. **`alignment: 2` was accepted** although the fast-bin free list writes a 4-byte
+   `u32` link into each freed block.
+
+**RED (watched).** 7/7 fail on the parent commit:
+
+```
+test_zero_sized_allocation_is_rejected_not_wrapped
+    panicked at src/memory/five_level_pool.rs:331:25: attempt to subtract with overflow
+test_zero_capacity_is_rejected_before_allocating
+    NoLockingPool::new accepted a config that has a zero initial capacity
+test_capacity_beyond_the_offset_space_is_rejected
+    NoLockingPool::new accepted a config that exceeds the 32-bit offset space
+test_alignment_below_the_link_width_is_rejected
+    NoLockingPool::new accepted a config that has an alignment smaller than
+    the free-list link
+test_fast_block_size_must_be_a_multiple_of_alignment
+    NoLockingPool::new accepted a config that has a fast block size that is
+    not a multiple of the alignment
+test_zero_alignment_is_rejected
+test_non_power_of_two_alignment_is_rejected
+    error should name the offending field, got: Invalid data: Invalid memory layout
+```
+
+> [!NOTE]
+> The last two are hardening, not defects, and are labelled as such. I expected a
+> divide-by-zero in `num_bins = max_fast_block_size / alignment`, but traced it and
+> the division is unreachable: `MemoryChunk::new` runs first in every constructor and
+> `Layout::from_size_align` rejects a zero or non-power-of-two alignment before it.
+> Those two tests only lock in an explicit, named rejection.
+
+**Tests.** `test_zero_sized_allocation_is_rejected_not_wrapped`,
+`test_zero_alignment_is_rejected`, `test_non_power_of_two_alignment_is_rejected`,
+`test_alignment_below_the_link_width_is_rejected`,
+`test_zero_capacity_is_rejected_before_allocating`,
+`test_capacity_beyond_the_offset_space_is_rejected`,
+`test_fast_block_size_must_be_a_multiple_of_alignment`, plus an
+`expect_config_rejected` helper that drives all four constructors.
+
+**Fix.** `FiveLevelPoolConfig::validate`, called by `NoLockingPool::new`,
+`MutexBasedPool::new`, `LockFreePool::new` and `ThreadLocalPool::new`
+(`FixedCapacityPool` inherits it through `NoLockingPool`), plus a shared
+`reject_zero_size` on all ten public `alloc`/`free` entry points.
+`FiveLevelPoolConfig::MAX_ARENA_SIZE` caps `initial_capacity`, `arena_size` and
+`fixed_capacity` at `u32::MAX`, which is what makes `MemOffset::new`'s narrowing
+correct by construction; its `debug_assert!` is now documented as a backstop with the
+real guard named.
+
+**Commit.** `341b846`
+
+---
+
+### C3.6 (D3) — every free above 32 KiB was dropped on the floor — HIGH
+
+**Finding.** Levels 1-3 each shipped a stub for blocks above `max_fast_block_size`:
+`NoLockingPool::free_to_skip_list`, `MutexBasedPool::free_to_skip_list` and
+`LockFreePool::free_to_huge_mutex` all bound the offset as `_offset` and discarded it
+behind a `// TODO: Implement skip list insertion` marker — while still charging
+`used_memory -= size` and `fragment_size += size`, so `stats()` reported the lost
+bytes as reclaimed. The matching `alloc_from_skip_list` / `alloc_from_huge_mutex`
+always bumped the end of the arena. A 1 MiB pool cycling a single 64 KiB block ran out
+of memory on the sixteenth iteration.
+
+**Decision on the D3 row.** The row offered "a real skip list with tests against a
+BTreeMap model, or drop the tier and rename the pool". **The tier is dropped.**
+`lockfree_pool.rs` already solves the identical problem with a plain best-fit `Vec`
+behind a mutex, and hand-rolling a concurrent skip list would add new `unsafe` surface
+during a pass whose whole purpose is to remove it. The pool keeps its name: "five
+level" counts concurrency levels, not skip-list levels. The *methods* are renamed
+`alloc_huge` / `free_huge`, and the now-unused `pub max_skip_levels` config field is
+removed (breaking, though only `Default` ever named it).
+
+**RED (watched).** 5/5 fail on the parent commit:
+
+```
+test_large_blocks_are_reused_after_free_level1
+    iteration 15: a 64 KiB allocation failed in a 1 MiB arena after 15
+    complete alloc/free cycles: Resource exhausted: Out of memory
+test_large_blocks_are_reused_after_free_level2   iteration 16: ... Out of memory
+test_large_blocks_are_reused_after_free_level3   iteration 16: ... Out of memory
+test_adjacent_large_frees_coalesce
+    three adjacent 64 KiB frees must coalesce into one 192 KiB region
+    left: 196672   right: 0
+test_huge_carve_width_equals_recycle_width
+    cycle 0: best fit should reuse the head of the freed region
+    left: 262208   right: 0
+```
+
+**Tests.** The five above, plus `test_no_two_live_blocks_ever_overlap` — **coverage,
+not RED**: it passes on the parent precisely because nothing was ever reused there. It
+is the model check guarding the new reuse path, interleaving fast-bin and huge traffic
+over 4000 randomized steps and asserting pairwise disjointness of every live block.
+
+**Fix.** `HugeFreeList`: address-ordered, coalescing, best-fit, shared by all three
+levels (bare in Level 1, behind a `Mutex` in Levels 2-3). Two invariants are
+`debug_assert`ed on every insert — regions stay sorted and never adjacent, and a carve
+returns *exactly* the requested width with any remainder handed back to the list. The
+second is what keeps the carve width equal to the recycle width, so a region cannot
+shrink across a reuse cycle. In Levels 2-3 the huge lock is always released before the
+memory lock is taken, so the two are never held together.
+
+> [!NOTE]
+> Traced and found safe: the tail-rollback fast path in `NoLockingPool::free` can only
+> fire for the topmost live block, so it can never roll the high-water mark back below
+> a region that is already in the huge free list. Regions in the list are therefore
+> always strictly below `memory.size` and can never be handed out twice.
+
+**Commit.** `e06558c`
+
+---
+
+### C3.7 — the fixed-capacity pool permanently demotes every block it lends small — HIGH
+
+**Finding.** `initialize_free_lists` files *every* block on the largest size class, and
+nothing ever moves one down. A small request therefore finds `LIST_TAIL` in its own
+class and falls into `allocate_by_splitting`, which does not split —
+
+```rust
+// For simplicity, just return the larger block
+// Real implementation would split the block
+return Ok(ptr);
+```
+
+— and hands over a full `max_block_size` block. `FixedCapacityAllocation` then recorded
+the **requested** class, so `deallocate_to_free_list` filed that block under the small
+class. The block is still physically `max_block_size` wide and still `max_block_size`
+away from its neighbours, so nothing overlaps; but the carve width and the recycle
+width disagree and the pool has permanently reclassified it. A later full-width request
+can never find it, while `available_capacity()` keeps counting it as a whole block.
+
+Nothing can be split here: `initialize_free_lists` lays blocks out at a fixed
+`max_block_size` stride, so the size-class vector describes a partition that does not
+exist in memory.
+
+**RED (watched).** 3/3 fail on the parent commit:
+
+```
+test_small_allocations_do_not_permanently_demote_blocks
+    all four 4096-byte blocks were returned and available_capacity() reports
+    16384 bytes free, but a full-width request failed:
+    Memory allocation failed: requested 0 bytes
+test_allocation_reports_the_width_it_actually_reserved
+    an 8-byte request reserves a whole 4096-byte block   left: 8   right: 4096
+test_alternating_width_cycles_do_not_erode_capacity
+    round 2 (4096 bytes), allocation 0: the pool was fully drained and refilled
+    on every previous round, so all 8 blocks are free:
+    Memory allocation failed: requested 0 bytes
+```
+
+> [!NOTE]
+> The third test only became RED after being sharpened. A *steady* mixed-width demand
+> pattern (`[8, 64, 512, 4096, 8, 64, 512, 4096]` every round) passes on the parent,
+> because the classes the blocks are demoted into happen to match the next round's
+> requests. Erosion needs demand to change, so the test now alternates all-4096 and
+> all-8 rounds and fails on round 2. The first draft of this test was green and would
+> have been worthless.
+
+**Tests.** The three above. `test_basic_allocation`'s
+`assert_eq!(alloc.size(), 64)` is updated to `1024`: `small_objects()` has
+`max_block_size: 1024`, so a 64-byte request always reserved a whole 1024-byte block
+and reporting 64 was the lie that caused the misfiling.
+
+**Fix.** `allocate_from_free_list` and `allocate_from_larger_class` (renamed from
+`allocate_by_splitting`, which never split) now return `(ptr, actual_class_index)`, and
+`allocate` records that class rather than the requested one. `deallocate` therefore
+refiles the block under the class it was carved from and, with `secure_clear`, zeroes
+the width that was actually reserved. `FixedCapacityAllocation::size()` reports the
+reserved width. The out-of-memory error also stops claiming `requested 0 bytes`.
 
 **Commit.** _pending_
