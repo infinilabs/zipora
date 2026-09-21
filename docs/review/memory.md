@@ -585,4 +585,91 @@ allocated, and `NonNull::dangling()` is already a valid address for any number o
 and `Drop` skips the deallocation for the same reason. `reserve` uses `saturating_mul`
 on the growth factor so the `usize::MAX` ZST capacity cannot overflow.
 
+**Commit.** `58669d5`
+
+---
+
+### C3.10 — large blocks are lent whole and filed back narrow, so the arena erodes — HIGH
+
+**Finding.** `allocate_from_skip_list` took the best fit from `large_blocks` —
+`block.size >= aligned_size`, smallest such — and returned it **whole**:
+
+```rust
+if let Some(idx) = best_idx {
+    let block = blocks.remove(idx);
+    ...
+    return self.offset_to_ptr(block.offset);
+}
+```
+
+`deallocate_to_skip_list` then filed it back under the caller's **request** size:
+
+```rust
+blocks.push(FreeBlock { offset, size: aligned_size });
+```
+
+Carve width and recycle width disagree, so every time a large block is lent to a
+smaller request it is permanently reclassified as that smaller block and the
+difference can never be allocated again. Nothing coalesced either, so even the
+bytes that were filed correctly could not be rejoined.
+
+Two smaller defects in the same paths: the fast-bin CAS-exhaustion fallback filed the
+block under the caller's request size rather than the bin's class width, the same
+mismatch one tier down; and a large block could be freed twice, which pushed two
+`FreeBlock`s for one region and let the pool hand those bytes to two live callers.
+
+**RED (watched).** 3/3 fail on the parent commit `58669d5`:
+
+```
+test_large_blocks_keep_their_width_when_lent_to_smaller_requests
+    round 15: the 16384-byte request found nothing to reuse and the arena is
+    exhausted, yet every earlier allocation was freed:
+    Memory allocation failed: requested 16384 bytes
+
+test_a_block_lent_whole_is_filed_back_whole
+    the block was lent to a smaller request and came back narrower, so the
+    original width is no longer allocatable
+      left: 0x7f5d54002d48   right: 0x7f5d54000d30
+
+test_double_free_of_a_large_block_is_refused
+    the second free of 0x7f655c000d30 was accepted
+```
+
+> [!NOTE]
+> The first draft of the erosion test cycled three *descending* widths
+> (16384 / 12288 / 8200) and was a much weaker RED: it converged after three fresh
+> carves (49,176 bytes instead of 16,392) and never exhausted the arena. The loss
+> from this defect is bounded by the number of *distinct* widths ever requested —
+> once one block exists per width, best fit starts hitting exact matches. To drain
+> the arena the small request has to grow each round, so that the only block that
+> fits is always the big one; the test now does that and fails with a genuine
+> out-of-memory at round 15 of 32 in a 256 KiB arena with nothing held.
+
+**Tests.** The three above, plus the existing `test_large_allocations_reuse`,
+`test_large_block_best_fit_selection` and `test_large_block_fallback_to_new_allocation`,
+which continue to pass.
+
+**Fix.** `large_blocks: Mutex<Vec<FreeBlock>>` becomes
+`large_free_list: Mutex<LargeFreeList>`, an address-ordered, coalescing free list whose
+documented invariant is that the width a block is carved at is the width it is filed
+back under:
+
+* `LargeFreeList::alloc` splits the best fit exactly, leaving the remainder in the
+  same slot so the list stays sorted. It only declines to split when the remainder
+  could not carry its own `BLOCK_HEADER` and still be `ALIGN_SIZE` wide, and then it
+  reports the width the caller actually received.
+* `LargeFreeList::free` rejects a region that overlaps one already free — a double
+  free, or a foreign pointer — and coalesces with the neighbour below and above,
+  where adjacency is `a.offset + a.size + BLOCK_HEADER == b.offset` because every
+  block's user memory is preceded by its own header.
+* The actual carved width is recorded in the block's own header by
+  `store_block_width` when it is handed out and read back by `load_block_width` on
+  the way in, so the caller's narrower `deallocate` size can no longer shrink it.
+  `load_block_width` validates the header against the deallocated size and the arena
+  bound and returns `Err` rather than filing a bogus region. The header is free for
+  this use: a block is routed to the fast bins or to the large free list by size, the
+  two ranges do not overlap, and only the bins use the header as a free-list link.
+* The fast-bin fallback now passes `FAST_BIN_SIZES[bin_index]`, the width the block
+  was carved at.
+
 **Commit.** _pending_
