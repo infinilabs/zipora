@@ -1347,7 +1347,7 @@ Vec<usize>` (parallel to `hot_data`) and `cold_counts: Vec<usize>` (parallel to 
 moving each item's count alongside the item in `reorganize()`. Also removes one
 `simplified` honesty marker (`honesty_audit.py`: 120 → 119).
 
-**Commit.** _pending_
+**Commit.** `0d6ee3f`
 ---
 
 # Open findings — read, judged, not fixed
