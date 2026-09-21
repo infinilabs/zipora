@@ -1014,4 +1014,78 @@ itself, and the handle's own unmap must not also run. Documented on both: droppi
 correct but always unmaps and never updates the statistics; `deallocate` is the fast
 route and the only one that does.
 
+**Commit.** `c28ce55`
+---
+
+## C3.15 — safe code could forge a `TieredAllocation`, and free one into the wrong allocator
+
+**Scope.** `src/memory/tiered.rs`, `src/memory/mod.rs`.
+
+**Finding.** C3.12 made `MemoryPool::deallocate` an `unsafe fn` because the pool cannot
+recognise a pointer it never handed out. One level up, that contract was unenforceable:
+
+```rust
+pub enum TieredAllocation {
+    /// Small allocation from memory pool (pointer, size)
+    Small(NonNull<u8>, usize),
+    /// Medium allocation from size-classed pools (pointer, size)
+    Medium(NonNull<u8>, usize),
+```
+
+A public enum with public tuple variants. Any safe code could name a pointer and a
+length, build a `TieredAllocation::Small`, and hand it to `TieredMemoryAllocator::
+deallocate` — a *safe* method — which passed it straight into `unsafe { self.small_pool.
+deallocate(ptr) }`. The same forged value passed to `as_mut_slice()` is an arbitrary
+write. No `unsafe` block anywhere in the caller.
+
+A second route needs no forging at all. Each `TieredMemoryAllocator` owns its own
+`MemoryPool`, so an allocation from allocator *a* handed to allocator *b* is a foreign
+pointer as far as *b*'s pool is concerned, and `deallocate` took it. Both are reachable
+from entirely safe code, and the global `tiered_deallocate` makes the second one easy to
+hit by accident.
+
+**RED (watched), both parts.**
+
+```
+thread 'memory::tiered::tests::test_deallocate_rejects_an_allocation_from_another_allocator'
+panicked at src/memory/tiered.rs:701:9:
+a chunk from allocator a was parked in allocator b's pool
+```
+
+```
+test src/memory/tiered.rs - memory::tiered::TieredAllocation (line 34) - compile fail ... FAILED
+Test compiled successfully, but it's marked `compile_fail`.
+```
+
+The second is the C3.8 pattern: the property is "this must not compile", so the test is
+a `compile_fail` doctest and the RED is rustdoc reporting that it compiled.
+
+**Tests.**
+
+* the `compile_fail` doctest above — forging from a bare pointer and length;
+* a second `compile_fail` doctest on `SmallBlock` — forging via the struct literal now
+  that the type exists. **Coverage, not RED**: before the fix there was no `SmallBlock`,
+  so it could only have failed to compile for the wrong reason.
+* `test_deallocate_rejects_an_allocation_from_another_allocator`.
+
+**Fix.** `Small` and `Medium` now hold `SmallBlock` / `MediumBlock`, whose fields are
+private and which have no constructor, so outside this module the only source of an
+allocation is `TieredMemoryAllocator::allocate`. `SmallBlock` also carries an
+`allocator_id` taken from a process-wide `NEXT_ALLOCATOR_ID` counter, and `deallocate`
+returns `invalid_data` when it does not match. The chunk is then leaked rather than
+filed into the wrong pool — this allocator has no way to reach the one that owns it —
+and that is documented on the method.
+
+`MediumBlock` deliberately has **no** id: the medium pools are thread-local and shared
+by every allocator on the thread, and `TieredAllocation` holds a `NonNull` and is
+therefore `!Send`, so a medium block cannot reach a thread whose pools it did not come
+from. That reasoning is written on the type so a future `unsafe impl Send` has to
+confront it.
+
+> [!NOTE]
+> The `Small` and `Medium` arms of `as_slice`/`as_mut_slice` still materialise a `&[u8]`
+> over **uninitialized** pool memory; only `Large`/`Huge` are kernel-zeroed. Tracked
+> separately as C3.16 — this entry is about who can construct and destroy an allocation,
+> not what reading one yields.
+
 **Commit.** _pending_

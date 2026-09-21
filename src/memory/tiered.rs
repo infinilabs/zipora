@@ -26,17 +26,69 @@ pub const MEDIUM_THRESHOLD: usize = 16 * 1024; // 16KB
 pub const LARGE_THRESHOLD: usize = 2 * 1024 * 1024; // 2MB
 
 /// A memory allocation that can come from different allocators
+///
+/// Safe code cannot name a pointer and a length and get one of these: the
+/// pointer-carrying variants wrap types whose fields are private, so the only
+/// way to obtain an allocation is [`TieredMemoryAllocator::allocate`].
+///
+/// ```compile_fail
+/// use std::ptr::NonNull;
+/// use zipora::memory::TieredAllocation;
+///
+/// // Were this to compile, `TieredMemoryAllocator::deallocate` - a safe
+/// // method - would free a pointer it never handed out.
+/// let forged = TieredAllocation::Small(NonNull::dangling(), 64);
+/// ```
 #[derive(Debug)]
 pub enum TieredAllocation {
-    /// Small allocation from memory pool (pointer, size)
-    Small(NonNull<u8>, usize),
-    /// Medium allocation from size-classed pools (pointer, size)
-    Medium(NonNull<u8>, usize),
+    /// Small allocation from this allocator's small-object pool
+    Small(SmallBlock),
+    /// Medium allocation from the thread-local size-classed pools
+    Medium(MediumBlock),
     /// Large allocation using memory mapping
     Large(MmapAllocation),
     /// Huge allocation using Linux hugepages
     #[cfg(target_os = "linux")]
     Huge(HugePage),
+}
+
+/// A chunk lent by one [`TieredMemoryAllocator`]'s small-object pool.
+///
+/// The fields are private and there is no constructor, so safe code outside
+/// this module cannot forge one:
+///
+/// ```compile_fail
+/// use std::ptr::NonNull;
+/// use zipora::memory::tiered::{SmallBlock, TieredAllocation};
+///
+/// let forged = TieredAllocation::Small(SmallBlock {
+///     ptr: NonNull::dangling(),
+///     size: 64,
+///     allocator_id: 0,
+/// });
+/// ```
+///
+/// `allocator_id` records which allocator's pool the chunk came from. Each
+/// allocator owns a separate `MemoryPool`, and `MemoryPool::deallocate` is
+/// `unsafe` precisely because it cannot recognise a foreign pointer, so the
+/// id is what lets [`TieredMemoryAllocator::deallocate`] be safe.
+#[derive(Debug)]
+pub struct SmallBlock {
+    ptr: NonNull<u8>,
+    size: usize,
+    allocator_id: u64,
+}
+
+/// A chunk lent by the thread-local medium-size pools.
+///
+/// No allocator id: those pools are per-thread and shared by every allocator
+/// on the thread, and `TieredAllocation` holds a `NonNull` and is therefore
+/// `!Send`, so a medium block cannot reach a thread whose pools it did not
+/// come from.
+#[derive(Debug)]
+pub struct MediumBlock {
+    ptr: NonNull<u8>,
+    size: usize,
 }
 
 /// Configuration for the tiered memory allocator
@@ -103,9 +155,16 @@ thread_local! {
     };
 }
 
+/// Source of [`TieredMemoryAllocator`] identities. Only ever incremented, so
+/// two live allocators never share an id.
+static NEXT_ALLOCATOR_ID: AtomicU64 = AtomicU64::new(0);
+
 /// High-performance tiered memory allocator
 pub struct TieredMemoryAllocator {
     config: TieredConfig,
+
+    // Identity, stamped into every SmallBlock this allocator lends out
+    id: u64,
 
     // Small object pool (< 1KB)
     small_pool: Arc<MemoryPool>,
@@ -228,6 +287,7 @@ impl TieredMemoryAllocator {
 
         Ok(Self {
             config,
+            id: NEXT_ALLOCATOR_ID.fetch_add(1, Ordering::Relaxed),
             small_pool,
             mmap_allocator,
             #[cfg(target_os = "linux")]
@@ -273,19 +333,35 @@ impl TieredMemoryAllocator {
     }
 
     /// Deallocate memory
+    ///
+    /// # Errors
+    ///
+    /// Returns `invalid_data` if the allocation came from a *different*
+    /// `TieredMemoryAllocator`'s small-object pool. The chunk is leaked rather
+    /// than filed into the wrong pool: this allocator has no way to reach the
+    /// one that owns it.
     pub fn deallocate(&self, allocation: TieredAllocation) -> Result<()> {
         match allocation {
-            TieredAllocation::Small(ptr, size) => {
-                // SAFETY: the `Small` variant is only constructed by
-                // `allocate_small`, from `self.small_pool.allocate()`, and
-                // `TieredAllocation` is consumed by value here so it cannot be
+            TieredAllocation::Small(block) => {
+                if block.allocator_id != self.id {
+                    return Err(ZiporaError::invalid_data(
+                        "allocation came from a different TieredMemoryAllocator: \
+                         each allocator owns its own small-object pool",
+                    ));
+                }
+                // SAFETY: `SmallBlock` has private fields and is constructed
+                // only by `allocate_small`, from `self.small_pool.allocate()`;
+                // the id check above proves `self` is that allocator. The
+                // block is consumed by value here, so it cannot be
                 // deallocated twice.
-                unsafe { self.small_pool.deallocate(ptr) }?;
-                self.total_bytes.fetch_sub(size as u64, Ordering::Relaxed);
+                unsafe { self.small_pool.deallocate(block.ptr) }?;
+                self.total_bytes
+                    .fetch_sub(block.size as u64, Ordering::Relaxed);
             }
-            TieredAllocation::Medium(ptr, size) => {
-                self.deallocate_medium(ptr, size)?;
-                self.total_bytes.fetch_sub(size as u64, Ordering::Relaxed);
+            TieredAllocation::Medium(block) => {
+                self.deallocate_medium(block.ptr, block.size)?;
+                self.total_bytes
+                    .fetch_sub(block.size as u64, Ordering::Relaxed);
             }
             TieredAllocation::Large(allocation) => {
                 let size = allocation.size();
@@ -346,7 +422,11 @@ impl TieredMemoryAllocator {
     fn allocate_small(&self, size: usize) -> Result<TieredAllocation> {
         self.small_allocs.fetch_add(1, Ordering::Relaxed);
         let chunk = self.small_pool.allocate()?;
-        Ok(TieredAllocation::Small(chunk, size))
+        Ok(TieredAllocation::Small(SmallBlock {
+            ptr: chunk,
+            size,
+            allocator_id: self.id,
+        }))
     }
 
     fn allocate_medium(&self, size: usize) -> Result<TieredAllocation> {
@@ -358,7 +438,10 @@ impl TieredMemoryAllocator {
             for pool in pools.iter() {
                 if pool.config().chunk_size >= size {
                     let chunk = pool.allocate()?;
-                    return Ok(TieredAllocation::Medium(chunk, size));
+                    return Ok(TieredAllocation::Medium(MediumBlock {
+                        ptr: chunk,
+                        size,
+                    }));
                 }
             }
 
@@ -429,12 +512,12 @@ impl TieredAllocation {
     pub fn as_slice(&self) -> &[u8] {
         match self {
             // SAFETY: ptr is NonNull from valid pool allocation, size matches allocated chunk
-            TieredAllocation::Small(ptr, size) => unsafe {
-                std::slice::from_raw_parts(ptr.as_ptr(), *size)
+            TieredAllocation::Small(block) => unsafe {
+                std::slice::from_raw_parts(block.ptr.as_ptr(), block.size)
             },
             // SAFETY: ptr is NonNull from valid pool allocation, size matches allocated chunk
-            TieredAllocation::Medium(ptr, size) => unsafe {
-                std::slice::from_raw_parts(ptr.as_ptr(), *size)
+            TieredAllocation::Medium(block) => unsafe {
+                std::slice::from_raw_parts(block.ptr.as_ptr(), block.size)
             },
             TieredAllocation::Large(allocation) => allocation.as_slice(),
             #[cfg(target_os = "linux")]
@@ -446,12 +529,12 @@ impl TieredAllocation {
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         match self {
             // SAFETY: ptr is NonNull from valid pool allocation, size matches allocated chunk, &mut guarantees exclusive access
-            TieredAllocation::Small(ptr, size) => unsafe {
-                std::slice::from_raw_parts_mut(ptr.as_ptr(), *size)
+            TieredAllocation::Small(block) => unsafe {
+                std::slice::from_raw_parts_mut(block.ptr.as_ptr(), block.size)
             },
             // SAFETY: ptr is NonNull from valid pool allocation, size matches allocated chunk, &mut guarantees exclusive access
-            TieredAllocation::Medium(ptr, size) => unsafe {
-                std::slice::from_raw_parts_mut(ptr.as_ptr(), *size)
+            TieredAllocation::Medium(block) => unsafe {
+                std::slice::from_raw_parts_mut(block.ptr.as_ptr(), block.size)
             },
             TieredAllocation::Large(allocation) => allocation.as_mut_slice(),
             #[cfg(target_os = "linux")]
@@ -463,8 +546,8 @@ impl TieredAllocation {
     #[inline]
     pub fn size(&self) -> usize {
         match self {
-            TieredAllocation::Small(_, size) => *size,
-            TieredAllocation::Medium(_, size) => *size,
+            TieredAllocation::Small(block) => block.size,
+            TieredAllocation::Medium(block) => block.size,
             TieredAllocation::Large(allocation) => allocation.size(),
             #[cfg(target_os = "linux")]
             TieredAllocation::Huge(hugepage) => hugepage.size(),
@@ -474,8 +557,8 @@ impl TieredAllocation {
     /// Get the memory as a typed pointer
     pub fn as_ptr<T>(&self) -> *mut T {
         match self {
-            TieredAllocation::Small(ptr, _) => ptr.as_ptr() as *mut T,
-            TieredAllocation::Medium(ptr, _) => ptr.as_ptr() as *mut T,
+            TieredAllocation::Small(block) => block.ptr.as_ptr() as *mut T,
+            TieredAllocation::Medium(block) => block.ptr.as_ptr() as *mut T,
             TieredAllocation::Large(allocation) => allocation.as_ptr(),
             #[cfg(target_os = "linux")]
             TieredAllocation::Huge(hugepage) => hugepage.as_slice().as_ptr() as *mut T,
@@ -671,6 +754,24 @@ mod tests {
 
         let stats = get_tiered_stats();
         assert!(stats.small_allocations > 0 || stats.medium_allocations > 0);
+    }
+
+    #[test]
+    fn test_deallocate_rejects_an_allocation_from_another_allocator() {
+        // Each allocator owns its own small pool, and `MemoryPool::deallocate`
+        // is `unsafe` precisely because it cannot recognise a foreign pointer.
+        // `TieredMemoryAllocator::deallocate` is safe, so it must not be able
+        // to hand one pool a chunk that came from another.
+        let a = TieredMemoryAllocator::default().unwrap();
+        let b = TieredMemoryAllocator::default().unwrap();
+
+        let from_a = a.allocate(512).unwrap();
+        let result = b.deallocate(from_a);
+
+        assert!(
+            result.is_err(),
+            "a chunk from allocator a was parked in allocator b's pool"
+        );
     }
 
     #[test]

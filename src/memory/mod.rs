@@ -60,8 +60,8 @@ pub use threadlocal_pool::{
     ThreadLocalAllocation, ThreadLocalMemoryPool, ThreadLocalPoolConfig, ThreadLocalPoolStats,
 };
 pub use tiered::{
-    TieredAllocation, TieredConfig, TieredMemoryAllocator, get_tiered_stats, tiered_allocate,
-    tiered_deallocate,
+    MediumBlock, SmallBlock, TieredAllocation, TieredConfig, TieredMemoryAllocator,
+    get_tiered_stats, tiered_allocate, tiered_deallocate,
 };
 
 #[cfg(target_os = "linux")]
