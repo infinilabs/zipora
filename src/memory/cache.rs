@@ -77,6 +77,27 @@ impl<T> CacheAlignedVec<T> {
         self.numa_node
     }
 
+    /// The `Layout` backing `capacity` elements of `T`.
+    ///
+    /// The alignment is `max(CACHE_LINE_SIZE, align_of::<T>())`. Every layout
+    /// in this type used to be built with `CACHE_LINE_SIZE` alone, which
+    /// silently under-aligns any `T` aligned more strictly than a cache line
+    /// (`#[repr(align(128))]`, an AVX-512 register wrapper); the `ptr::write`
+    /// in `push` and the `slice::from_raw_parts` in `as_slice` are then
+    /// undefined behaviour, reachable from safe public API.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `capacity * size_of::<T>()` overflows, or exceeds
+    /// what `Layout` permits.
+    fn layout_for(capacity: usize) -> Result<Layout> {
+        let bytes = capacity
+            .checked_mul(mem::size_of::<T>())
+            .ok_or_else(|| ZiporaError::invalid_data("Capacity overflow"))?;
+        Layout::from_size_align(bytes, CACHE_LINE_SIZE.max(mem::align_of::<T>()))
+            .map_err(|_| ZiporaError::invalid_data("Invalid layout for cache-aligned allocation"))
+    }
+
     /// Reserve capacity for at least `additional` more elements
     pub fn reserve(&mut self, additional: usize) -> Result<()> {
         let required_cap = self
@@ -88,8 +109,11 @@ impl<T> CacheAlignedVec<T> {
             return Ok(());
         }
 
-        // Grow by at least 2x to amortize allocations
-        let new_cap = required_cap.max(self.capacity * 2).max(4);
+        // Grow by at least 2x to amortize allocations. `saturating_mul`
+        // rather than `*`: `self.capacity` is `usize::MAX` for a zero-sized
+        // element type, which never reaches here but must not overflow if it
+        // ever did.
+        let new_cap = required_cap.max(self.capacity.saturating_mul(2)).max(4);
         self.reallocate(new_cap)
     }
 
@@ -188,24 +212,30 @@ impl<T> CacheAlignedVec<T> {
             return Ok(());
         }
 
-        // Ensure capacity is aligned to cache line boundaries for optimal access
-        let aligned_capacity =
-            align_to_cache_line(new_capacity * mem::size_of::<T>()) / mem::size_of::<T>();
+        if mem::size_of::<T>() == 0 {
+            // A zero-sized element needs no storage, and `NonNull::dangling()`
+            // is already a valid, correctly aligned address for any number of
+            // them. Falling through would divide by `size_of::<T>()` below.
+            self.capacity = usize::MAX;
+            return Ok(());
+        }
 
-        let layout =
-            Layout::from_size_align(aligned_capacity * mem::size_of::<T>(), CACHE_LINE_SIZE)
-                .map_err(|_| {
-                    ZiporaError::invalid_data("Invalid layout for cache-aligned allocation")
-                })?;
+        // Round the byte count up to a whole number of cache lines, then back
+        // to whatever element count that buys.
+        let aligned_capacity = align_to_cache_line(
+            new_capacity
+                .checked_mul(mem::size_of::<T>())
+                .ok_or_else(|| ZiporaError::invalid_data("Capacity overflow"))?,
+        ) / mem::size_of::<T>();
+
+        let layout = Self::layout_for(aligned_capacity)?;
 
         let new_ptr = if self.capacity == 0 {
             // First allocation - use NUMA-aware allocation if possible
             numa_alloc(layout, self.numa_node)?
         } else {
             // Reallocation - try to preserve NUMA locality
-            let old_layout =
-                Layout::from_size_align(self.capacity * mem::size_of::<T>(), CACHE_LINE_SIZE)
-                    .map_err(|_| ZiporaError::out_of_memory(self.capacity * mem::size_of::<T>()))?;
+            let old_layout = Self::layout_for(self.capacity)?;
 
             let new_ptr = numa_alloc(layout, self.numa_node)?;
 
@@ -233,13 +263,16 @@ impl<T> Drop for CacheAlignedVec<T> {
         // Drop all elements first
         self.clear();
 
-        // Deallocate memory
-        if self.capacity > 0 {
-            let layout =
-                Layout::from_size_align(self.capacity * mem::size_of::<T>(), CACHE_LINE_SIZE)
-                    .expect("layout creation: non-zero size, power-of-two alignment");
+        // Deallocate memory. A zero-sized element type never allocated
+        // (`reallocate` short-circuits and parks `capacity` at `usize::MAX`),
+        // so there is nothing to give back.
+        if self.capacity > 0 && mem::size_of::<T>() != 0 {
+            let layout = Self::layout_for(self.capacity)
+                .expect("layout was valid when this capacity was allocated");
 
-            // SAFETY: ptr from matching alloc, layout matches allocation
+            // SAFETY: `ptr` came from `numa_alloc` with exactly this layout --
+            // `Self::layout_for(self.capacity)`, the same call `reallocate`
+            // made -- and is deallocated here once.
             unsafe {
                 dealloc(self.ptr.as_ptr() as *mut u8, layout);
             }
@@ -556,6 +589,91 @@ pub fn clear_numa_pools() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An element whose alignment exceeds a cache line. `__m512i` wrappers and
+    /// anything carrying `#[repr(align(128))]` land here.
+    #[repr(align(128))]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct OverAligned(u64);
+
+    /// C3.9. Every `Layout` in `CacheAlignedVec` was built with
+    /// `CACHE_LINE_SIZE` as the alignment and never consulted
+    /// `align_of::<T>()`, in `reallocate` (twice, for the new and the old
+    /// layout) and again in `Drop`. For any `T` aligned more strictly than a
+    /// cache line the backing store is under-aligned, and the `ptr::write` in
+    /// `push` is then undefined behaviour -- from a safe public API, for a
+    /// perfectly ordinary type.
+    ///
+    /// This is deterministic in a debug build without any sanitizer: the
+    /// standard library's own `slice::from_raw_parts` precondition check fires
+    /// inside `as_slice` and aborts the process. In release that check is
+    /// compiled out and the misalignment is silent, so `make miri_pool` is the
+    /// release-mode oracle.
+    #[test]
+    fn test_cache_aligned_vec_honours_the_element_alignment() {
+        const VECTORS: usize = 32;
+
+        let mut vectors = Vec::with_capacity(VECTORS);
+        for index in 0..VECTORS {
+            let mut vector = CacheAlignedVec::<OverAligned>::new();
+            vector.push(OverAligned(index as u64)).unwrap();
+            vectors.push(vector);
+        }
+
+        for (index, vector) in vectors.iter().enumerate() {
+            let address = vector.as_slice().as_ptr() as usize;
+            assert_eq!(
+                address % mem::align_of::<OverAligned>(),
+                0,
+                "vector {index}: base {address:#x} is not aligned to \
+                 align_of::<OverAligned>() = {}",
+                mem::align_of::<OverAligned>()
+            );
+        }
+    }
+
+    /// C3.9. `reallocate` computes
+    /// `align_to_cache_line(new_capacity * size_of::<T>()) / size_of::<T>()`.
+    /// For a zero-sized element that divides by zero, so pushing onto a
+    /// `CacheAlignedVec<()>` panics from safe code.
+    #[test]
+    fn test_cache_aligned_vec_supports_zero_sized_elements() {
+        let mut vector = CacheAlignedVec::<()>::new();
+        for _ in 0..4 {
+            vector.push(()).unwrap();
+        }
+        assert_eq!(vector.len(), 4);
+        assert_eq!(vector.as_slice().len(), 4);
+        assert_eq!(vector.pop(), Some(()));
+        assert_eq!(vector.len(), 3);
+        vector.clear();
+        assert!(vector.is_empty());
+    }
+
+    /// C3.9. A zero-sized element type that also carries a `Drop` must have
+    /// that `Drop` run exactly once per element, not once per allocated byte.
+    #[test]
+    fn test_zero_sized_elements_are_dropped_exactly_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static DROPS: AtomicUsize = AtomicUsize::new(0);
+
+        struct CountsItsDrop;
+        impl Drop for CountsItsDrop {
+            fn drop(&mut self) {
+                DROPS.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        DROPS.store(0, Ordering::Relaxed);
+        {
+            let mut vector = CacheAlignedVec::<CountsItsDrop>::new();
+            for _ in 0..5 {
+                vector.push(CountsItsDrop).unwrap();
+            }
+            assert_eq!(DROPS.load(Ordering::Relaxed), 0);
+        }
+        assert_eq!(DROPS.load(Ordering::Relaxed), 5);
+    }
 
     #[test]
     fn test_cache_aligned_vec_basic() {
