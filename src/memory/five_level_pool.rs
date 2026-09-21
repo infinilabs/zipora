@@ -31,7 +31,6 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 // Additional utilities (currently unused)
 // use std::collections::HashMap;
 // use std::marker::PhantomData;
-use std::mem::align_of;
 use std::ptr::NonNull;
 // use std::mem::MaybeUninit;
 use std::alloc::{Layout, alloc, dealloc};
@@ -196,6 +195,12 @@ struct MemoryChunk {
     data: NonNull<u8>,
     size: usize,
     capacity: usize,
+    /// The exact `Layout` `data` was allocated with. `GlobalAlloc::dealloc`
+    /// requires the same layout that was passed to `alloc`, and the chunk's
+    /// alignment comes from `FiveLevelPoolConfig::alignment` (8 by default,
+    /// 16 for `performance_optimized`), not from `align_of::<u8>()`. Keeping
+    /// the layout is the only way to honour that contract.
+    layout: Layout,
 }
 
 // SAFETY: MemoryChunk is Send because:
@@ -203,11 +208,12 @@ struct MemoryChunk {
 //    Memory is allocated in `new()` and deallocated in `Drop`. No thread-local state.
 // 2. `size: usize` - Mutable state but only accessed through &mut self.
 // 3. `capacity: usize` - Immutable after construction, trivially Send.
+// 4. `layout: Layout` - Plain data, immutable after construction.
 unsafe impl Send for MemoryChunk {}
 
 // SAFETY: MemoryChunk is Sync because:
 // 1. `data: NonNull<u8>` - Read-only access through &self via `offset_ptr()`.
-// 2. `size`/`capacity` - Read-only through &self.
+// 2. `size`/`capacity`/`layout` - Read-only through &self.
 // 3. Mutable operations require &mut self (exclusive access).
 // 4. The chunk provides raw memory that callers must synchronize.
 //
@@ -233,6 +239,7 @@ impl MemoryChunk {
             data: non_null_data,
             size: 0,
             capacity,
+            layout,
         })
     }
 
@@ -249,10 +256,10 @@ impl MemoryChunk {
 
 impl Drop for MemoryChunk {
     fn drop(&mut self) {
-        // SAFETY: data allocated with same layout (capacity, align_of::<u8>())
+        // SAFETY: `self.layout` is the exact layout `self.data` was allocated
+        // with in `MemoryChunk::new`, and `data` is only deallocated here, once.
         unsafe {
-            let layout = Layout::from_size_align_unchecked(self.capacity, align_of::<u8>());
-            dealloc(self.data.as_ptr(), layout);
+            dealloc(self.data.as_ptr(), self.layout);
         }
     }
 }
@@ -1209,6 +1216,34 @@ impl FiveLevelPoolHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// C3.2. `MemoryChunk::new` allocates with `config.alignment` (8 by
+    /// default, 16 for `performance_optimized`), but `Drop` deallocated with
+    /// `align_of::<u8>()` = 1. `GlobalAlloc::dealloc` requires the *same*
+    /// layout that was used to allocate, so every pool construction/drop was
+    /// undefined behaviour. Oracle: `make miri_pool`.
+    #[test]
+    fn test_pool_drop_uses_the_allocation_layout() {
+        for config in [
+            FiveLevelPoolConfig::default(),
+            FiveLevelPoolConfig::performance_optimized(),
+            FiveLevelPoolConfig::memory_optimized(),
+            FiveLevelPoolConfig {
+                alignment: 64,
+                initial_capacity: 64 * 1024,
+                ..FiveLevelPoolConfig::default()
+            },
+        ] {
+            let alignment = config.alignment;
+            let pool = NoLockingPool::new(config).unwrap();
+            assert_eq!(
+                pool.memory.data.as_ptr() as usize % alignment,
+                0,
+                "chunk base must honour the configured alignment {alignment}"
+            );
+            drop(pool);
+        }
+    }
 
     #[test]
     fn test_no_locking_pool_basic() -> Result<()> {

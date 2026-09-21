@@ -11,7 +11,7 @@
 .PHONY: all build build_debug build_release
 .PHONY: test test_debug test_release test_simd_base64
 .PHONY: bench bench_all bench_avx512 bench_fsa bench_io bench_serialization
-.PHONY: safety_tests miri_tests miri_full
+.PHONY: safety_tests miri_tests miri_full miri_pool
 .PHONY: format clippy doc
 .PHONY: dev validate ci pre_commit release_prep sanity
 .PHONY: unsafe_audit api_honesty index_audit unwrap_audit
@@ -144,6 +144,19 @@ miri_core:
 	$(CARGO_MIRI) test --lib hash_map::zipora_hash_map
 	$(CARGO_MIRI) test --lib containers::specialized::circular_queue
 	$(CARGO_MIRI) test --lib containers::fast_vec
+
+# Memory-pool allocators under Miri (plan.md C3 / D8). These modules are the
+# crate's largest unsafe surface and their defects are layout and provenance
+# bugs that no assertion in the default suite can see: C3.1 (a block header
+# written past the end of the arena) and C3.2 (dealloc with an alignment the
+# allocation never had) were both found this way. The two UB-by-design tests
+# that used to sit #[ignore]d in the default suite live here as negative tests.
+miri_pool:
+	$(CARGO_MIRI) test --lib memory::fixed_capacity_pool
+	$(CARGO_MIRI) test --lib memory::five_level_pool
+	$(CARGO_MIRI) test --lib memory::lockfree_pool -- --test-threads=1
+	$(CARGO_MIRI) test --lib memory::bump
+	$(CARGO_MIRI) test --lib memory::cache
 
 # SIMD-adjacent modules under Miri: all dispatch (macros, cached has_* bools,
 # ifunc resolvers) routes to scalar under cfg(miri), so the surrounding index
@@ -294,6 +307,7 @@ help:
 	@echo "  safety_tests     Container safety tests"
 	@echo "  miri_tests       Miri memory safety (needs nightly)"
 	@echo "  miri_cspp        Miri on ConcurrentCsppTrie (races/UB, small scale)"
+	@echo "  miri_pool        Miri on the memory pools (layout/provenance UB)"
 	@echo "  tsan_cspp        TSAN stress on ConcurrentCsppTrie (needs nightly + rust-src)"
 	@echo ""
 	@echo "  format           rustfmt"
