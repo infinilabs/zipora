@@ -713,4 +713,52 @@ attempt to shift left with overflow
 **Fix.** `1u64.checked_shl(retry_count).unwrap_or(u64::MAX).min(max_delay_us)`, so the
 delay saturates at `max_delay_us` instead of overflowing.
 
+**Commit.** `07746f9`
+
+---
+
+### D8 (1 of 2) — the two `#[ignore]`d `lockfree_pool` concurrency tests
+
+**Finding.** `test_concurrent_allocation` was disabled "for release mode compatibility"
+and `test_pool_exhaustion` "to prevent timeouts in release mode". Neither reason was
+about the pool.
+
+* `test_concurrent_allocation`'s only assertion was
+  `stats.contention_ratio() < 0.5` — a performance heuristic about how often a CAS
+  happened to fail, which depends entirely on how the scheduler interleaves two
+  threads and says nothing about whether the pool is correct. It also never wrote to
+  the memory it was handed, so it could not have seen the A1.6 free-list-in-user-memory
+  defect that a later test did find.
+* `test_pool_exhaustion` was wrapped in a five-second wall clock and a
+  "Too many allocations — possible infinite loop" escape hatch. That loop was real:
+  before the `checked_add` in `allocate_new_block`, the bump cursor wrapped and the
+  pool never reported exhaustion. It is fixed, and `test_exhaustion_overflow_safety`
+  covers it.
+
+A disabled concurrency test on a lock-free allocator is exactly the kind of gap that
+hid the Treiber defect, so neither is left off.
+
+**Tests.** Both rewritten around properties that do not depend on timing, and
+un-ignored:
+
+* `test_concurrent_allocation` — 4 threads × 64 mixed-size blocks, twice over. Each
+  thread writes its own id into every byte of every block it holds and reads them all
+  back, so a block handed to two threads at once is both an assertion failure and a
+  data race ThreadSanitizer can see. After the join, no two live blocks may overlap.
+  The second round can only pass if the first gave everything back. The arena is sized
+  for the worst case in which nothing is ever recycled, so an allocation failure is a
+  defect rather than a capacity coincidence, and `BackoffStrategy::None` keeps the run
+  free of sleeps. The contention ratio is now printed, not asserted.
+* `test_pool_exhaustion` — no clock and no escape hatch. A 1 KiB arena holds exactly
+  `(1024 - ALIGN_SIZE) / (64 + BLOCK_HEADER)` 64-byte blocks; the test allocates
+  exactly that many, requires the next one to be refused, frees them all and requires
+  the whole arena to be allocatable again.
+
+**Verification.** `memory::lockfree_pool` is 32 passed / **0 ignored** in debug and in
+release, and `test_concurrent_allocation` was run ten more times in release: 10/10.
+Under `make tsan_pool`: clean.
+
+**Not a RED.** Both are coverage: they assert properties the pool already satisfies at
+this commit. The defect being fixed is the absence of the tests, not the pool.
+
 **Commit.** _pending_

@@ -1278,49 +1278,109 @@ mod tests {
         }
     }
 
+    /// D8. Was `#[ignore]`d "for release mode compatibility". What made it
+    /// flaky was its assertion: `contention_ratio() < 0.5` is a performance
+    /// heuristic about how often a CAS happened to fail, which depends on how
+    /// the scheduler interleaves two threads and says nothing about whether
+    /// the pool is correct. A disabled concurrency test on a lock-free
+    /// allocator is exactly the gap that hid the free-list-in-user-memory
+    /// defect, so the assertion is now the correctness property instead: the
+    /// pool must never hand the same bytes to two threads at once, and must
+    /// give every byte back.
+    ///
+    /// Deterministic by construction: the arena is sized so that every
+    /// allocation of both rounds fits even if nothing were ever recycled, so
+    /// an allocation failure is a real defect rather than a capacity
+    /// coincidence, and `BackoffStrategy::None` keeps the run free of sleeps.
     #[test]
-    #[ignore] // Disable concurrent test for release mode compatibility
     fn test_concurrent_allocation() {
-        let config = LockFreePoolConfig::high_performance();
-        let pool = Arc::new(LockFreeMemoryPool::new(config).unwrap());
+        const THREADS: usize = 4;
+        const PER_THREAD: usize = 64;
+        const MAX_SIZE: usize = 256;
+        // Worst case: nothing is ever reused, across both rounds.
+        const ARENA: usize =
+            2 * THREADS * PER_THREAD * (MAX_SIZE + BLOCK_HEADER) + ALIGN_SIZE;
 
-        let mut handles = Vec::new();
+        let pool = Arc::new(
+            LockFreeMemoryPool::new(LockFreePoolConfig {
+                memory_size: ARENA,
+                max_cas_retries: 64,
+                backoff_strategy: BackoffStrategy::None,
+                enable_stats: true,
+                ..LockFreePoolConfig::default()
+            })
+            .unwrap(),
+        );
 
-        // Spawn multiple threads doing allocations
-        for thread_id in 0..2 {
-            // Reduce thread count for release mode
-            let pool_clone = Arc::clone(&pool);
-            let handle = thread::spawn(move || {
-                let mut allocations = Vec::new();
-
-                // Each thread allocates different sizes
-                for i in 0..10 {
-                    // Reduce iterations for release mode
-                    let size = (thread_id + 1) * 32 + i;
-                    if let Ok(ptr) = pool_clone.allocate(size) {
-                        allocations.push((ptr, size));
+        // Two rounds: the second one can only pass if the first gave
+        // everything back.
+        for round in 0..2 {
+            let mut handles = Vec::new();
+            for thread_id in 0..THREADS {
+                let pool = Arc::clone(&pool);
+                handles.push(thread::spawn(move || {
+                    let mut blocks = Vec::with_capacity(PER_THREAD);
+                    for i in 0..PER_THREAD {
+                        let size = 8 + (thread_id * 37 + i * 11) % (MAX_SIZE - 8);
+                        let ptr = pool.allocate(size).unwrap_or_else(|e| {
+                            panic!(
+                                "round {round}, thread {thread_id}, \
+                                 allocation {i} of {size} bytes: {e}"
+                            )
+                        });
+                        // Own every byte of it, so that a block handed to two
+                        // threads at once is a data race ThreadSanitizer can
+                        // see (`make tsan_pool`).
+                        // SAFETY: the pool just handed this block over and
+                        // nothing else holds it; `size` bytes are ours.
+                        unsafe {
+                            std::ptr::write_bytes(ptr.as_ptr(), thread_id as u8, size)
+                        };
+                        blocks.push((ptr.as_ptr() as usize, size));
                     }
-                }
+                    for &(addr, size) in &blocks {
+                        // SAFETY: as above -- still ours, still `size` wide.
+                        let ours = unsafe {
+                            std::slice::from_raw_parts(addr as *const u8, size)
+                        };
+                        assert!(
+                            ours.iter().all(|&byte| byte == thread_id as u8),
+                            "round {round}, thread {thread_id}: block at \
+                             {addr:#x} was written by someone else"
+                        );
+                    }
+                    blocks
+                }));
+            }
 
-                // Deallocate everything
-                for (ptr, size) in allocations {
-                    let _ = pool_clone.deallocate(ptr, size);
-                }
-            });
-            handles.push(handle);
+            let mut everything: Vec<(usize, usize)> = Vec::new();
+            for handle in handles {
+                everything.extend(handle.join().unwrap());
+            }
+
+            // No two live blocks may overlap.
+            everything.sort_unstable();
+            for pair in everything.windows(2) {
+                let (addr, size) = pair[0];
+                let (next, _) = pair[1];
+                assert!(
+                    addr + size <= next,
+                    "round {round}: the block at {addr:#x} ({size} bytes) \
+                     overlaps the live block at {next:#x}"
+                );
+            }
+
+            for (addr, size) in everything {
+                let ptr = NonNull::new(addr as *mut u8).unwrap();
+                pool.deallocate(ptr, size).unwrap();
+            }
         }
 
-        // Wait for all threads
-        for handle in handles {
-            handle.join().unwrap();
-        }
-
-        // Check statistics
-        if let Some(stats) = pool.stats() {
-            let contention = stats.contention_ratio();
-            println!("CAS contention ratio: {:.2}%", contention * 100.0);
-            assert!(contention < 0.5); // Should have reasonable contention
-        }
+        let stats = pool.stats().expect("stats enabled");
+        println!(
+            "CAS contention ratio: {:.2}%",
+            stats.contention_ratio() * 100.0
+        );
     }
 
     #[test]
@@ -1371,69 +1431,61 @@ mod tests {
             .expect("CAS exhaustion must fall back to the skip list, not leak the block");
     }
 
+    /// D8. Was `#[ignore]`d "to prevent timeouts in release mode", and guarded
+    /// by a five-second wall clock plus a "possible infinite loop" escape
+    /// hatch. The loop it was afraid of was real: before the `checked_add` in
+    /// `allocate_new_block`, the bump cursor wrapped and the pool never
+    /// reported exhaustion. That is fixed and covered by
+    /// `test_exhaustion_overflow_safety`, so this test can now state the exact
+    /// number of blocks a 1 KiB arena holds -- no clock, no escape hatch.
     #[test]
-    #[ignore] // Disable this test to prevent timeouts in release mode
     fn test_pool_exhaustion() {
-        use std::time::{Duration, Instant};
+        const ARENA: usize = 1024;
+        const REQUEST: usize = 64;
+        // The bump cursor starts at ALIGN_SIZE, and every block costs its
+        // class width plus a header.
+        const PER_BLOCK: usize = REQUEST + BLOCK_HEADER;
+        const CAPACITY: usize = (ARENA - ALIGN_SIZE) / PER_BLOCK;
 
-        let config = LockFreePoolConfig {
-            memory_size: 1024,                       // Very small pool
-            max_cas_retries: 3,                      // Very low retries to speed up test
-            backoff_strategy: BackoffStrategy::None, // No backoff for faster failure
-            enable_cache_alignment: false,           // Disable to force backing memory usage
-            cache_config: None,                      // Disable cache allocator
-            enable_numa_awareness: false,            // Disable for simpler test
-            enable_huge_pages: false,                // Disable for simpler test
-            enable_stats: false,                     // Disable stats for performance
+        let pool = LockFreeMemoryPool::new(LockFreePoolConfig {
+            memory_size: ARENA,
+            max_cas_retries: 3,
+            backoff_strategy: BackoffStrategy::None,
+            enable_cache_alignment: false,
+            cache_config: None,
+            enable_numa_awareness: false,
+            enable_huge_pages: false,
+            enable_stats: false,
             enable_simd_optimization: false,
             zero_on_free: false,
             ..LockFreePoolConfig::default()
-        };
-        let pool = LockFreeMemoryPool::new(config).unwrap();
+        })
+        .unwrap();
 
-        // Allocate until exhaustion with timeout
-        let mut allocations = Vec::new();
-        let start = Instant::now();
-        let timeout = Duration::from_secs(5); // Reduce timeout to 5 seconds
-
-        loop {
-            if start.elapsed() > timeout {
-                panic!(
-                    "Test timed out after 5 seconds with {} allocations",
-                    allocations.len()
-                );
-            }
-
-            match pool.allocate(64) {
-                Ok(ptr) => {
-                    allocations.push(ptr);
-                    // Extra safety check - with 1024 byte pool and 64 byte allocations,
-                    // we should never get more than ~16 allocations
-                    if allocations.len() > 20 {
-                        panic!(
-                            "Too many allocations: {} - possible infinite loop",
-                            allocations.len()
-                        );
-                    }
-                }
-                Err(_) => break, // Pool exhausted
-            }
+        let mut blocks = Vec::new();
+        for i in 0..CAPACITY {
+            blocks.push(
+                pool.allocate(REQUEST)
+                    .unwrap_or_else(|e| panic!("block {i} of {CAPACITY}: {e}")),
+            );
         }
+        assert!(
+            pool.allocate(REQUEST).is_err(),
+            "the arena holds {CAPACITY} {REQUEST}-byte blocks; the next one \
+             must be refused"
+        );
 
-        assert!(
-            !allocations.is_empty(),
-            "Should have allocated at least one block"
-        );
-        assert!(
-            allocations.len() < 20,
-            "Should be limited by small pool size, got {}",
-            allocations.len()
-        );
-        println!(
-            "Pool exhaustion test completed in {:?} with {} allocations",
-            start.elapsed(),
-            allocations.len()
-        );
+        // Everything comes back, and the whole arena is allocatable again.
+        for ptr in blocks.drain(..) {
+            pool.deallocate(ptr, REQUEST).unwrap();
+        }
+        for i in 0..CAPACITY {
+            blocks.push(
+                pool.allocate(REQUEST)
+                    .unwrap_or_else(|e| panic!("second round, block {i}: {e}")),
+            );
+        }
+        assert!(pool.allocate(REQUEST).is_err());
     }
 
     //==============================================================================
