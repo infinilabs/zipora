@@ -151,12 +151,14 @@ miri_core:
 # written past the end of the arena) and C3.2 (dealloc with an alignment the
 # allocation never had) were both found this way. The two UB-by-design tests
 # that used to sit #[ignore]d in the default suite live here as negative tests.
+# `memory::cache` needs -Zmiri-disable-isolation: detect_numa_nodes() reads
+# /sys/devices/system/node, and Miri's isolation blocks `open`.
 miri_pool:
 	$(CARGO_MIRI) test --lib memory::fixed_capacity_pool
 	$(CARGO_MIRI) test --lib memory::five_level_pool
 	$(CARGO_MIRI) test --lib memory::lockfree_pool -- --test-threads=1
 	$(CARGO_MIRI) test --lib memory::bump
-	$(CARGO_MIRI) test --lib memory::cache
+	MIRIFLAGS="-Zmiri-disable-isolation" $(CARGO_MIRI) test --lib memory::cache -- --test-threads=1
 
 # SIMD-adjacent modules under Miri: all dispatch (macros, cached has_* bools,
 # ifunc resolvers) routes to scalar under cfg(miri), so the surrounding index

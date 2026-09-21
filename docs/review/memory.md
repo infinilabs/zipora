@@ -153,3 +153,135 @@ it only speaks under Miri, hence the new `make miri_pool` target.
 The `SAFETY:` comment now names the real invariant.
 
 **Commit.** _pending_
+
+---
+
+### C3.3 — the NUMA pool frees every cached block with a layout it never had — CRITICAL
+
+**Finding.** `NumaMemoryPool::deallocate` (`cache.rs:319-340`) filed a freed block into
+one of three size-category `Vec<usize>` caches, keyed on `layout.size()` alone, and
+stored **only the address** — discarding the block's real size and its alignment.
+`Drop` (`cache.rs:354-388`) then freed every cached pointer with a hardcoded `Layout`:
+`(1024, 8)` for "small", `(65536, 16)` for "medium", `(1048576, 32)` for "large".
+`GlobalAlloc::dealloc` requires the allocating layout; both the size and the alignment
+were wrong. With the system allocator an over-aligned block takes a different path
+from an 8-aligned one, so this is heap corruption, not a nit.
+
+Two defects rode along. Nothing ever *read* those caches back — `numa_alloc` goes
+straight to `alloc` — so the first 100 frees per class per node were retained forever:
+a bounded leak whose only effect was to arm the mis-free. And `allocated_bytes` was
+never incremented anywhere in the file, so the `fetch_sub` on the overflow path wrapped
+a `usize` from 0; `hit_count`/`miss_count` were likewise never incremented, making
+`NumaPoolStats::hit_rate()` permanently `0.0`.
+
+Separately, `numa_alloc_aligned(0, ..)` built a valid zero-sized `Layout` and handed it
+to `std::alloc::alloc`, whose contract forbids that. The `// SAFETY: layout valid
+(size > 0, ...)` comment asserted an invariant nothing enforced.
+
+**Expected failure.** Mismatched-layout deallocation on `clear_numa_pools()`.
+
+**RED (watched).** Reachable from 100 % safe code:
+
+```rust
+init_numa_pools().unwrap();
+let p = numa_alloc_aligned(64, 64, 0).unwrap();   // Layout(64, 64)
+numa_dealloc(p, 64, 64, 0).unwrap();              // cached, not freed
+clear_numa_pools().unwrap();                      // Drop -> dealloc(p, Layout(1024, 8))
+```
+
+`MIRIFLAGS=-Zmiri-disable-isolation cargo +nightly miri test` at the parent commit:
+
+```
+error: Undefined Behavior: ... occurred here
+   --> src/memory/cache.rs:360:17
+360 |  dealloc(ptr_addr as *mut u8, Layout::from_size_align(1024, 8) ...)
+    0: <NumaMemoryPool as Drop>::drop                     at :360
+   10: memory::cache::clear_numa_pools                    at :583
+   11: tests::scratch_c33_red_probe
+```
+
+> [!NOTE]
+> An earlier draft of this entry claimed the existing suite already walked this path
+> via `test_numa_alloc_dealloc` + `test_numa_pool_stats`. **That is wrong** and I am
+> recording the correction: under `--test-threads=1` the alphabetical ordering runs
+> `test_numa_alloc_dealloc` *before* `test_numa_pool_initialization`, so the node pool
+> does not exist yet and `numa_dealloc` takes the correct direct-free fallback; and
+> `test_numa_pool_stats` never frees. A clean Miri run of `memory::cache::tests` at the
+> parent commit passes. The probe above is what actually reproduces it.
+
+**Tests.** `test_numa_dealloc_releases_the_block_with_its_own_layout` (asserts the
+now-real `allocated_bytes` accounting, and is the `make miri_pool` oracle for the
+release path), `test_numa_alloc_rejects_zero_size`.
+
+**Fix.** The pool holds no block cache: the three `Vec<usize>` fields and the `Drop`
+are gone, and `deallocate` releases the block immediately with the caller's layout
+(now an `unsafe fn` carrying that contract). `numa_alloc` rejects a zero size and
+charges `allocated_bytes`; `numa_dealloc` credits it back with a saturating update.
+The module doc now describes what the code does instead of claiming a fix that only
+covered the allocation half.
+
+**Public API break.** `NumaPoolStats` loses `hit_count`, `miss_count`, `cached_small`,
+`cached_medium`, `cached_large` and the `hit_rate()` / `total_cached()` accessors. With
+no cache those five numbers are structurally always zero and `hit_rate()` can only
+return `0.0`; five lying fields are worse than none. `allocated_bytes` survives and is
+now real.
+
+**Commit.** _pending_
+
+---
+
+### C3.4 — `BumpAllocator` overflow rewinds the cursor and hands out aliasing blocks — CRITICAL
+
+**Finding.** `alloc_bytes` computed `aligned_offset + size` with wrapping arithmetic
+(`bump.rs:102-103`). `size` is caller-controlled through `alloc_bytes`, `alloc_slice`
+and `BumpVec::new_in`, all safe. In release, a request whose end offset overflows
+wraps to a *small* `new_offset`, which passes `new_offset > self.capacity`, so the CAS
+**stores a cursor below the current one**. The allocator is rewound and re-issues
+addresses that are still live: two `&mut [u8]` over the same bytes, obtained with no
+`unsafe` in the caller. In debug the same call panics instead of returning `Err`, which
+is itself a defect for a `Result`-returning safe API.
+
+`alloc_slice` had the same shape one level up: `size_of::<T>() * count` wrapped, so a
+`count` just past `usize::MAX / size_of::<T>()` produced a tiny carve with a huge
+element count. `BumpVec::new_in` adopts that count as its `capacity`, and `push` — with
+its `len < capacity` guard satisfied — then writes past the arena.
+
+`can_allocate` shared the arithmetic and panicked instead of answering `false`.
+
+The `// SAFETY: aligned_offset is within bounds (checked above)` comment at
+`bump.rs:120-122` was false in exactly the state the overflow produces.
+
+**RED (watched), debug.** 3/3 fail on the parent commit:
+
+```
+test_alloc_bytes_rejects_overflowing_request_without_rewinding
+    panicked at src/memory/bump.rs:103:30: attempt to add with overflow
+test_alloc_slice_rejects_overflowing_element_count
+    panicked at src/memory/bump.rs:71:20: attempt to multiply with overflow
+test_can_allocate_answers_false_on_overflow
+    panicked: alignment must be a power of two      (can_allocate(3, 3) -> true)
+```
+
+**RED (watched), release — this is the CRITICAL half.** Same 3 tests, `--release`:
+
+```
+test_alloc_bytes_rejects_overflowing_request_without_rewinding
+    panicked: an allocation whose end offset overflows usize must be rejected
+test_alloc_slice_rejects_overflowing_element_count
+    panicked: count x size_of::<T>() overflow must be rejected
+```
+
+i.e. with overflow checks off the allocator **accepted** a `usize::MAX - 99` byte
+request out of a 4 KiB arena, storing `new_offset = 0` as the new cursor. The debug
+panic is the benign face of this; release is the aliasing one.
+
+**Tests.** `test_alloc_bytes_rejects_overflowing_request_without_rewinding` (asserts
+both the `Err` *and* that the cursor did not move, *and* that the next allocation is a
+fresh address), `test_alloc_slice_rejects_overflowing_element_count`,
+`test_can_allocate_answers_false_on_overflow`.
+
+**Fix.** `checked_add` on both bump steps and `checked_mul` on the slice size;
+`can_allocate` mirrors them and rejects a non-power-of-two alignment. The `# Errors`
+docs now say why the overflow case must not be left to wrapping.
+
+**Commit.** _pending_

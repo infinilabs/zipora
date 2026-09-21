@@ -263,15 +263,27 @@ fn align_to_cache_line(size: usize) -> usize {
     (size + CACHE_LINE_SIZE - 1) & !(CACHE_LINE_SIZE - 1)
 }
 
-/// NUMA-aware memory allocation
+/// NUMA-aware memory allocation.
 ///
-/// Note: The NumaMemoryPool pooling logic has been disabled due to a critical bug
-/// where chunks of different sizes were mixed in size-category pools, causing
-/// memory corruption when a smaller cached chunk was returned for a larger request.
-/// The pool's Drop also used hardcoded layouts that didn't match actual allocations.
-/// See: https://github.com/infinilabs/zipora/issues/heap-corruption-fix
+/// `NumaMemoryPool` does not cache blocks. An earlier version filed freed
+/// blocks into three size-category caches keyed only by `layout.size()`,
+/// discarding each block's real size and alignment, and its `Drop` then freed
+/// every cached pointer with a hardcoded `Layout` — 1 KiB/8, 64 KiB/16,
+/// 1 MiB/32 — that the allocation never had. Deallocating with a layout other
+/// than the allocating one is undefined behaviour (C3.3). Nothing ever read
+/// those caches back, so they were pure leak plus time bomb; the pool is now
+/// an accounting hook only, and every block is released with its own layout.
 fn numa_alloc<T>(layout: Layout, preferred_node: Option<NumaNode>) -> Result<NonNull<T>> {
-    // SAFETY: layout valid (size > 0, align power of 2)
+    if layout.size() == 0 {
+        // `std::alloc::alloc` requires a non-zero size; `numa_alloc_aligned(0, ..)`
+        // is reachable from safe code and used to hand it a zero-sized layout.
+        return Err(ZiporaError::invalid_data(
+            "NUMA allocation size must be non-zero",
+        ));
+    }
+
+    // SAFETY: `layout.size() > 0` is checked immediately above and
+    // `Layout::from_size_align` already guaranteed a power-of-two alignment.
     let ptr = unsafe { alloc(layout) };
 
     if ptr.is_null() {
@@ -281,6 +293,11 @@ fn numa_alloc<T>(layout: Layout, preferred_node: Option<NumaNode>) -> Result<Non
     // Try to bind to NUMA node if specified
     if let Some(node) = preferred_node {
         bind_to_numa_node(ptr, layout.size(), node);
+        if let Ok(pools) = NUMA_MANAGER.node_pools.lock()
+            && let Some(pool) = pools.get(&node)
+        {
+            pool.record_alloc(layout.size());
+        }
     }
 
     // SAFETY: null check performed above
@@ -294,95 +311,52 @@ struct NumaNodeManager {
     node_pools: Mutex<HashMap<NumaNode, NumaMemoryPool>>,
 }
 
-/// NUMA-aware memory pool for each node
+/// Per-node accounting for NUMA allocations.
+///
+/// This deliberately holds no block cache. See `numa_alloc` for why: a cache
+/// that stores bare addresses cannot free them with the layout they were
+/// allocated with, and every reuse path that could have made the cache
+/// worthwhile was already removed.
 struct NumaMemoryPool {
-    small_chunks: Vec<usize>, // < 1KB allocations (stored as usize for Send/Sync)
-    medium_chunks: Vec<usize>, // 1KB - 64KB allocations
-    large_chunks: Vec<usize>, // > 64KB allocations
     allocated_bytes: AtomicUsize,
-    hit_count: AtomicUsize,
-    miss_count: AtomicUsize,
 }
 
 impl NumaMemoryPool {
     fn new() -> Self {
         Self {
-            small_chunks: Vec::new(),
-            medium_chunks: Vec::new(),
-            large_chunks: Vec::new(),
             allocated_bytes: AtomicUsize::new(0),
-            hit_count: AtomicUsize::new(0),
-            miss_count: AtomicUsize::new(0),
         }
     }
 
-    fn deallocate(&mut self, ptr: NonNull<u8>, layout: Layout) {
-        let pool = if layout.size() < 1024 {
-            &mut self.small_chunks
-        } else if layout.size() < 64 * 1024 {
-            &mut self.medium_chunks
-        } else {
-            &mut self.large_chunks
-        };
+    fn record_alloc(&self, size: usize) {
+        self.allocated_bytes.fetch_add(size, Ordering::Relaxed);
+    }
 
-        // Return to pool for reuse (with size limits to prevent unbounded growth)
-        if pool.len() < 100 {
-            // Limit pool size
-            pool.push(ptr.as_ptr() as usize);
-        } else {
-            // SAFETY: ptr from matching alloc, layout matches allocation
-            unsafe {
-                dealloc(ptr.as_ptr(), layout);
-            }
-            self.allocated_bytes
-                .fetch_sub(layout.size(), Ordering::Relaxed);
+    /// Release `ptr` with the layout it was allocated with.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must have been allocated by `numa_alloc` with exactly `layout`.
+    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+        // SAFETY: the caller guarantees `ptr` came from `alloc(layout)` and has
+        // not been freed; `numa_dealloc` reconstructs `layout` with the same
+        // `size`/`align.max(CACHE_LINE_SIZE)` expression `numa_alloc_aligned`
+        // used, so the two layouts are identical by construction.
+        unsafe {
+            dealloc(ptr.as_ptr(), layout);
         }
+        // Saturating: a block freed on a node that never recorded it (the pool
+        // was created after the allocation) must not wrap the counter.
+        self.allocated_bytes
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |b| {
+                Some(b.saturating_sub(layout.size()))
+            })
+            .ok();
     }
 
     fn stats(&self) -> NumaPoolStats {
         NumaPoolStats {
             allocated_bytes: self.allocated_bytes.load(Ordering::Relaxed),
-            hit_count: self.hit_count.load(Ordering::Relaxed),
-            miss_count: self.miss_count.load(Ordering::Relaxed),
-            cached_small: self.small_chunks.len(),
-            cached_medium: self.medium_chunks.len(),
-            cached_large: self.large_chunks.len(),
-        }
-    }
-}
-
-impl Drop for NumaMemoryPool {
-    fn drop(&mut self) {
-        // Clean up all cached allocations
-        for &ptr_addr in &self.small_chunks {
-            // SAFETY: ptr from matching alloc, hardcoded layout matches small_chunks category
-            unsafe {
-                dealloc(
-                    ptr_addr as *mut u8,
-                    Layout::from_size_align(1024, 8)
-                        .expect("layout creation: non-zero size, power-of-two alignment"),
-                );
-            }
-        }
-        for &ptr_addr in &self.medium_chunks {
-            // SAFETY: ptr from matching alloc, hardcoded layout matches medium_chunks category
-            unsafe {
-                dealloc(
-                    ptr_addr as *mut u8,
-                    Layout::from_size_align(64 * 1024, 16)
-                        .expect("layout creation: non-zero size, power-of-two alignment"),
-                );
-            }
-        }
-        for &ptr_addr in &self.large_chunks {
-            // SAFETY: ptr from matching alloc, hardcoded layout matches large_chunks category
-            unsafe {
-                dealloc(
-                    ptr_addr as *mut u8,
-                    Layout::from_size_align(1024 * 1024, 32)
-                        .expect("layout creation: non-zero size, power-of-two alignment"),
-                );
-            }
         }
     }
 }
@@ -461,30 +435,17 @@ pub struct NumaStats {
     pub pools: HashMap<NumaNode, NumaPoolStats>,
 }
 
-/// Statistics for a NUMA memory pool
+/// Statistics for a NUMA memory pool.
+///
+/// The `hit_count` / `miss_count` / `cached_*` fields and the `hit_rate()` and
+/// `total_cached()` accessors were removed in C3.3: the pool has no block
+/// cache, so those five numbers were structurally always zero — `hit_rate()`
+/// could only ever return `0.0`. `allocated_bytes` is now real: it is charged
+/// in `numa_alloc` when a node is named and credited back in `numa_dealloc`.
 #[derive(Debug, Clone)]
 pub struct NumaPoolStats {
+    /// Live bytes allocated through `numa_alloc_aligned` on this node.
     pub allocated_bytes: usize,
-    pub hit_count: usize,
-    pub miss_count: usize,
-    pub cached_small: usize,
-    pub cached_medium: usize,
-    pub cached_large: usize,
-}
-
-impl NumaPoolStats {
-    pub fn hit_rate(&self) -> f64 {
-        let total = self.hit_count + self.miss_count;
-        if total == 0 {
-            0.0
-        } else {
-            self.hit_count as f64 / total as f64
-        }
-    }
-
-    pub fn total_cached(&self) -> usize {
-        self.cached_small + self.cached_medium + self.cached_large
-    }
 }
 
 /// Get current NUMA statistics
@@ -545,14 +506,21 @@ pub fn numa_dealloc(ptr: NonNull<u8>, size: usize, align: usize, node: NumaNode)
     let layout = Layout::from_size_align(size, align.max(CACHE_LINE_SIZE))
         .map_err(|_| ZiporaError::invalid_data("Invalid layout for NUMA deallocation"))?;
 
-    if let Ok(mut pools) = NUMA_MANAGER.node_pools.lock()
-        && let Some(pool) = pools.get_mut(&node)
+    if let Ok(pools) = NUMA_MANAGER.node_pools.lock()
+        && let Some(pool) = pools.get(&node)
     {
-        pool.deallocate(ptr, layout);
+        // SAFETY: the caller contract of `numa_dealloc` is that `ptr` came from
+        // `numa_alloc_aligned(size, align, node)`, and `layout` above is built
+        // with the identical `Layout::from_size_align(size, align.max(
+        // CACHE_LINE_SIZE))` expression, so it is the allocating layout.
+        unsafe {
+            pool.deallocate(ptr, layout);
+        }
         return Ok(());
     }
 
-    // SAFETY: ptr from matching alloc, layout matches allocation
+    // SAFETY: as above — `layout` is reconstructed from the same `size`/`align`
+    // the caller passed to `numa_alloc_aligned`.
     unsafe {
         dealloc(ptr.as_ptr(), layout);
     }
@@ -755,19 +723,68 @@ mod tests {
         assert!(stats.node_count >= 1);
     }
 
+    /// C3.3 (CRITICAL, Miri-confirmed). `NumaMemoryPool::deallocate` parked the
+    /// pointer in a size-category cache keyed on `layout.size()` alone and
+    /// discarded its real size and alignment; nothing ever read the cache back,
+    /// and `Drop` then freed every cached pointer with a hardcoded `Layout`
+    /// (1 KiB/8, 64 KiB/16, 1 MiB/32) the allocation never had. Deallocating
+    /// with a layout other than the allocating one is UB.
+    ///
+    /// The existing suite already walked this: `test_numa_alloc_dealloc` frees
+    /// a `Layout(1024, 64)` block, which landed in `medium_chunks`, which
+    /// `test_numa_pool_stats`'s `clear_numa_pools()` then freed as
+    /// `Layout(65536, 16)`.
+    ///
+    /// Oracle: `make miri_pool`. Under Miri at the parent commit this reports
+    /// "incorrect layout on deallocation". The assertions below are the
+    /// default-suite half: `allocated_bytes` must actually track the block.
     #[test]
-    fn test_numa_stats_hit_rate() {
-        let stats = NumaPoolStats {
-            allocated_bytes: 1024,
-            hit_count: 80,
-            miss_count: 20,
-            cached_small: 5,
-            cached_medium: 3,
-            cached_large: 1,
-        };
+    fn test_numa_dealloc_releases_the_block_with_its_own_layout() {
+        let node = 0;
+        init_numa_pools().unwrap();
 
-        assert_eq!(stats.hit_rate(), 0.8);
-        assert_eq!(stats.total_cached(), 9);
+        let before = get_numa_stats()
+            .pools
+            .get(&node)
+            .map(|p| p.allocated_bytes)
+            .unwrap_or(0);
+
+        // An over-aligned block: its layout is Layout(64, 64), which the old
+        // cache would have filed as "small" and freed as Layout(1024, 8).
+        let ptr = numa_alloc_aligned(64, 64, node).unwrap();
+        assert_eq!(ptr.as_ptr() as usize % CACHE_LINE_SIZE, 0);
+
+        let during = get_numa_stats()
+            .pools
+            .get(&node)
+            .map(|p| p.allocated_bytes)
+            .unwrap_or(0);
+        assert!(
+            during >= before + 64,
+            "numa_alloc must charge the block to its node: {before} -> {during}"
+        );
+
+        numa_dealloc(ptr, 64, 64, node).unwrap();
+
+        let after = get_numa_stats()
+            .pools
+            .get(&node)
+            .map(|p| p.allocated_bytes)
+            .unwrap_or(0);
+        assert!(
+            after <= during - 64,
+            "numa_dealloc must credit the block back: {during} -> {after}"
+        );
+    }
+
+    /// C3.3. `numa_alloc_aligned(0, ..)` built a valid zero-sized `Layout` and
+    /// handed it to `std::alloc::alloc`, whose contract forbids that.
+    #[test]
+    fn test_numa_alloc_rejects_zero_size() {
+        let err = numa_alloc_aligned(0, 64, 0)
+            .err()
+            .expect("zero-sized NUMA allocation must be rejected");
+        assert!(err.to_string().contains("non-zero"), "got: {err}");
     }
 
     #[test]
