@@ -948,4 +948,70 @@ Each test also asserts the second round hands out distinct addresses.
 `zero_on_alloc` honoured on cache, stack, and list paths" item of the C3 scope by
 covering the one path that was not covered.
 
+**Commit.** `e770b3d`
+---
+
+## C3.14 — `MmapAllocation` had no `Drop`, so letting one go out of scope leaked the mapping
+
+**Scope.** `src/memory/mmap.rs`.
+
+**Finding.** `MemoryMappedAllocator::allocate` is a safe public method returning a
+public owning handle:
+
+```rust
+#[derive(Debug)]
+pub struct MmapAllocation {
+    ptr: NonNull<u8>,
+    size: usize,
+    actual_size: usize, // Rounded up to page size
+}
+```
+
+There was no `Drop`. The region was released only by handing the value back to
+`MemoryMappedAllocator::deallocate`; on every other route — an early `return` or `?`
+between the allocation and the matching `deallocate`, a panic unwinding past it, or
+simply not calling it — the mapping stayed in the address space for the life of the
+process. The type is named, `Debug`-printed and accessed like an RAII handle, and the
+allocator's own `Drop` unmaps only what is in its *cache*, so a caller reading that
+code would reasonably assume the handle cleans up after itself.
+
+This reaches further than `mmap.rs`: `TieredAllocation::Large(MmapAllocation)` is a
+public variant, so dropping a `TieredAllocation` leaked too.
+
+**RED (watched).** First attempt used the process-wide total from `/proc/self/statm`:
+
+```
+dropping 32 allocations of 4194304 bytes grew the address space by 1950597120 bytes:
+the mappings were never unmapped
+```
+
+1.95 GB against an expected 134 MB — `cargo test` runs the suite in parallel threads,
+so a process-wide number also counts every other test's mappings. The RED was real but
+the GREEN would have flaked, so the oracle was replaced with a per-address probe of
+`/proc/self/maps`:
+
+```
+thread 'memory::mmap::tests::test_dropping_an_allocation_releases_the_mapping'
+panicked at src/memory/mmap.rs:339:9:
+0x7feb07200000 is still mapped after the allocation was dropped: the mapping leaked
+```
+
+**Tests.**
+
+* `test_dropping_an_allocation_releases_the_mapping` — asserts the address *is* mapped
+  first, so the test cannot pass vacuously, then drops and asserts it is gone.
+* `test_deallocate_does_not_unmap_a_cached_region` — the mirror, and the regression
+  test for the fix itself: handing the allocation back must leave the region mapped
+  (`munmap_calls == 0`) and the next allocation of that size must get the same address
+  back (`cache_hits == 1`). Without the `ManuallyDrop` below, the fix would unmap a
+  region it had just cached and the allocator would hand out dead pointers.
+
+**Fix.** `impl Drop for MmapAllocation` unmaps `actual_size` bytes at `ptr` and logs a
+warning if `munmap` fails. `MemoryMappedAllocator::deallocate` takes the region over
+from the handle, so it now wraps its argument in `std::mem::ManuallyDrop` before
+reading the fields — the allocator either caches the region (still mapped) or unmaps it
+itself, and the handle's own unmap must not also run. Documented on both: dropping is
+correct but always unmaps and never updates the statistics; `deallocate` is the fast
+route and the only one that does.
+
 **Commit.** _pending_

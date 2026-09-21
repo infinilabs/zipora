@@ -30,12 +30,46 @@ impl Default for MemoryMappedAllocator {
     }
 }
 
-/// Information about a memory-mapped allocation
+/// An owned `mmap` region.
+///
+/// Dropping one unmaps the region, so it is safe to let an allocation simply
+/// go out of scope. Handing it back to
+/// [`MemoryMappedAllocator::deallocate`] instead is the faster route: the
+/// allocator keeps the region mapped and reuses it, which is the whole point
+/// of the allocator, and it is the only route that updates the statistics.
+///
+/// The region is *not* tied to the allocator's lifetime: an allocation
+/// outlives the allocator that produced it, and unmaps itself when dropped.
 #[derive(Debug)]
 pub struct MmapAllocation {
     ptr: NonNull<u8>,
     size: usize,
     actual_size: usize, // Rounded up to page size
+}
+
+impl Drop for MmapAllocation {
+    fn drop(&mut self) {
+        // SAFETY: `ptr` and `actual_size` are the address and length of a
+        // successful `libc::mmap` in `MemoryMappedAllocator::allocate` (or of
+        // a region that call cached, which was mapped the same way). The only
+        // other disposal route, `MemoryMappedAllocator::deallocate`, takes the
+        // region over inside a `ManuallyDrop`, so this cannot run for a region
+        // the allocator has already cached or unmapped.
+        let rc = unsafe {
+            libc::munmap(
+                self.ptr.as_ptr() as *mut libc::c_void,
+                self.actual_size,
+            )
+        };
+        if rc != 0 {
+            log::warn!(
+                "failed to unmap {} bytes at {:p}: {}",
+                self.actual_size,
+                self.ptr.as_ptr(),
+                std::io::Error::last_os_error()
+            );
+        }
+    }
 }
 
 /// Statistics for memory-mapped allocations
@@ -150,7 +184,16 @@ impl MemoryMappedAllocator {
     }
 
     /// Deallocate memory, potentially caching for reuse
+    ///
+    /// The allocator takes the region over: it is cached for the next
+    /// allocation of the same size, or unmapped if the cache for that size is
+    /// full. Dropping an [`MmapAllocation`] instead always unmaps it.
     pub fn deallocate(&self, allocation: MmapAllocation) -> Result<()> {
+        // The allocation unmaps itself on drop. From here the region belongs
+        // to the allocator, which either caches it (still mapped) or unmaps it
+        // below, so that drop must not run.
+        let allocation = std::mem::ManuallyDrop::new(allocation);
+
         self.total_freed
             .fetch_add(allocation.size as u64, Ordering::Relaxed);
 
@@ -294,6 +337,79 @@ impl MmapAllocation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Is `addr` inside any mapping of this process, per /proc/self/maps?
+    ///
+    /// Per-address rather than a process-wide number from /proc/self/statm:
+    /// `cargo test` runs the suite in parallel threads, and a process-wide
+    /// total moves under any other test that maps memory at the same moment.
+    #[cfg(target_os = "linux")]
+    fn address_is_mapped(addr: usize) -> bool {
+        std::fs::read_to_string("/proc/self/maps")
+            .unwrap()
+            .lines()
+            .filter_map(|line| line.split_whitespace().next())
+            .filter_map(|range| range.split_once('-'))
+            .filter_map(|(start, end)| {
+                Some((
+                    usize::from_str_radix(start, 16).ok()?,
+                    usize::from_str_radix(end, 16).ok()?,
+                ))
+            })
+            .any(|(start, end)| (start..end).contains(&addr))
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_dropping_an_allocation_releases_the_mapping() {
+        // `MmapAllocation` owns an mmap region and is handed out by a safe
+        // public method, but used to have no Drop: every disposal other than
+        // handing it back to `MemoryMappedAllocator::deallocate` leaked the
+        // whole mapping.
+        let allocator = MemoryMappedAllocator::new(16 * 1024);
+        const SIZE: usize = 4 * 1024 * 1024;
+
+        let mut allocation = allocator.allocate(SIZE).unwrap();
+        allocation.as_mut_slice()[0] = 1;
+        let addr = allocation.as_ptr::<u8>() as usize;
+        assert!(
+            address_is_mapped(addr),
+            "vacuous unless the allocation is mapped to begin with"
+        );
+
+        drop(allocation);
+
+        assert!(
+            !address_is_mapped(addr),
+            "{addr:#x} is still mapped after the allocation was dropped: \
+             the mapping leaked"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_deallocate_does_not_unmap_a_cached_region() {
+        // The mirror of the test above: `deallocate` parks the region in the
+        // allocator's cache, so it must *not* be unmapped, and the next
+        // allocation of that size must get it back.
+        let allocator = MemoryMappedAllocator::new(16 * 1024);
+        const SIZE: usize = 4 * 1024 * 1024;
+
+        let allocation = allocator.allocate(SIZE).unwrap();
+        let addr = allocation.as_ptr::<u8>() as usize;
+        allocator.deallocate(allocation).unwrap();
+
+        assert!(
+            address_is_mapped(addr),
+            "a cached region was unmapped: the cache now hands out dead pointers"
+        );
+        assert_eq!(allocator.stats().munmap_calls, 0);
+
+        let again = allocator.allocate(SIZE).unwrap();
+        assert_eq!(again.as_ptr::<u8>() as usize, addr, "cache hit expected");
+        assert_eq!(allocator.stats().cache_hits, 1);
+        allocator.deallocate(again).unwrap();
+    }
 
     #[test]
     fn test_mmap_allocator_creation() {
