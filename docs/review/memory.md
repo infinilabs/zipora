@@ -1142,4 +1142,27 @@ that the first `size` bytes are zero whichever tier serves the request — the k
 it for the mapped tiers, the pooled tiers pay a `memset` of `size` bytes — and states
 plainly that this is what makes `as_slice` sound.
 
+**Commit.** `d24d8f1`, hardened in `7cf55d2`
+---
+
+## C3.17 — the last undocumented `unsafe fn` in `src/memory/`
+
+**Scope.** `src/memory/simd_ops.rs`.
+
+**Finding.** `unsafe_audit.py` listed exactly one undocumented `unsafe` site in this
+subsystem: `simd_memcpy_unaligned` at `simd_ops.rs:399`, an `unsafe fn` taking two raw
+pointers and a length with no `# Safety` section. Its *body* is fully commented — four
+`// SAFETY: caller ensures pointers valid and len within bounds` lines — which is the
+inverse of what is wanted: the obligation is stated where it is relied upon and nowhere
+where it is imposed.
+
+**Fix.** A `# Safety` section naming both obligations — validity for `len` bytes at each
+pointer, and non-overlap, because the SIMD tiers copy in blocks in an order the caller
+cannot rely on, so these are `copy_nonoverlapping` semantics and not `memmove` — plus a
+line recording that the single caller, `SimdMemOps::copy_nonoverlapping`, rejects a
+length mismatch and an overlap with `invalid_data` before reaching it. No behaviour
+change.
+
+`unsafe_audit.py`: 34 → 33 undocumented sites, **0 in `src/memory/`**.
+
 **Commit.** _pending_
