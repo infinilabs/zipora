@@ -67,8 +67,23 @@ impl BumpAllocator {
     }
 
     /// Allocate a slice of objects of type T
+    ///
+    /// # Errors
+    ///
+    /// Returns `invalid_data` if `size_of::<T>() * count` overflows `usize`.
+    /// Without that check the product wraps to a small value, `alloc_bytes`
+    /// happily carves it, and the returned `NonNull<[T]>` claims `count`
+    /// elements over a few bytes of arena — `BumpVec::new_in` then trusts that
+    /// count as its capacity and `push` writes past the buffer with its
+    /// `len < capacity` guard satisfied.
     pub fn alloc_slice<T>(&self, count: usize) -> Result<NonNull<[T]>> {
-        let size = std::mem::size_of::<T>() * count;
+        let size = std::mem::size_of::<T>().checked_mul(count).ok_or_else(|| {
+            ZiporaError::invalid_data(format!(
+                "slice allocation overflows usize: {} x {} bytes",
+                count,
+                std::mem::size_of::<T>()
+            ))
+        })?;
         let align = std::mem::align_of::<T>();
         let ptr = self.alloc_bytes(size, align)?;
 
@@ -83,6 +98,15 @@ impl BumpAllocator {
     /// This method is thread-safe and uses compare-and-swap to atomically
     /// reserve space in the buffer. Under high contention, the CAS loop
     /// will retry until successful or until the buffer is exhausted.
+    ///
+    /// # Errors
+    ///
+    /// Returns `out_of_memory` if the request does not fit, *including* when
+    /// the bump arithmetic would overflow. The overflow case must not be left
+    /// to wrapping: `aligned_offset + size` wrapping past `usize::MAX` produces
+    /// a small `new_offset` that passes the capacity check, so the CAS stores a
+    /// cursor *below* the current one — rewinding the allocator and handing the
+    /// same addresses out twice while the first holder is still live.
     pub fn alloc_bytes(&self, size: usize, align: usize) -> Result<NonNull<u8>> {
         if size == 0 {
             return Err(ZiporaError::invalid_data("allocation size cannot be zero"));
@@ -98,9 +122,17 @@ impl BumpAllocator {
         loop {
             let current = self.current.load(Ordering::Acquire);
 
-            // Calculate aligned offset
-            let aligned_offset = (current + align - 1) & !(align - 1);
-            let new_offset = aligned_offset + size;
+            // Calculate aligned offset. `checked_*` throughout: see the
+            // `# Errors` note above — a wrap here rewinds the cursor.
+            let Some(aligned_offset) = current
+                .checked_add(align - 1)
+                .map(|bumped| bumped & !(align - 1))
+            else {
+                return Err(ZiporaError::out_of_memory(size));
+            };
+            let Some(new_offset) = aligned_offset.checked_add(size) else {
+                return Err(ZiporaError::out_of_memory(size));
+            };
 
             if new_offset > self.capacity {
                 return Err(ZiporaError::out_of_memory(size));
@@ -164,9 +196,17 @@ impl BumpAllocator {
     /// Note: This is a best-effort check in a concurrent context. Another thread
     /// may allocate between this check and the actual allocation.
     pub fn can_allocate(&self, size: usize, align: usize) -> bool {
+        if !align.is_power_of_two() {
+            return false;
+        }
         let current = self.current.load(Ordering::Relaxed);
-        let aligned_offset = (current + align - 1) & !(align - 1);
-        aligned_offset + size <= self.capacity
+        // Same checked arithmetic as `alloc_bytes`: a request that overflows
+        // cannot be satisfied, and this predicate must not panic on it.
+        current
+            .checked_add(align - 1)
+            .map(|bumped| bumped & !(align - 1))
+            .and_then(|aligned_offset| aligned_offset.checked_add(size))
+            .is_some_and(|new_offset| new_offset <= self.capacity)
     }
 }
 
@@ -435,6 +475,69 @@ impl<'a, T> Drop for BumpVec<'a, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// C3.4 (CRITICAL). `alloc_bytes` computed `aligned_offset + size` with
+    /// wrapping arithmetic. In release a request that overflows produces a
+    /// *small* `new_offset`, which passes the capacity check, so the CAS
+    /// rewinds the bump cursor below its current value and the allocator hands
+    /// the same addresses out again while the first holder is still live —
+    /// two aliasing allocations obtained from entirely safe code. In debug the
+    /// same call panics instead of returning `Err`.
+    #[test]
+    fn test_alloc_bytes_rejects_overflowing_request_without_rewinding() {
+        let allocator = BumpAllocator::new(4096).unwrap();
+        let first = allocator.alloc_bytes(100, 1).unwrap();
+        let cursor_before = allocator.current.load(Ordering::Relaxed);
+
+        assert!(
+            allocator.alloc_bytes(usize::MAX - 99, 1).is_err(),
+            "an allocation whose end offset overflows usize must be rejected"
+        );
+        assert_eq!(
+            allocator.current.load(Ordering::Relaxed),
+            cursor_before,
+            "a rejected allocation must not move the bump cursor"
+        );
+
+        let second = allocator.alloc_bytes(100, 1).unwrap();
+        assert_ne!(
+            first.as_ptr(),
+            second.as_ptr(),
+            "the allocator must never hand out the same address twice"
+        );
+    }
+
+    /// C3.4. `size_of::<T>() * count` wrapped, so a `count` just past
+    /// `usize::MAX / size_of::<T>()` produced a tiny carve with a huge element
+    /// count. `BumpVec::new_in` adopts that count as its capacity, and `push`
+    /// — with its `len < capacity` guard satisfied — then writes past the
+    /// arena. No `unsafe` in the caller.
+    #[test]
+    fn test_alloc_slice_rejects_overflowing_element_count() {
+        let allocator = BumpAllocator::new(4096).unwrap();
+        // 8 * (usize::MAX / 8 + 2) wraps to 8: an 8-byte carve claiming
+        // 2_305_843_009_213_693_954 u64 elements.
+        let count = usize::MAX / std::mem::size_of::<u64>() + 2;
+        assert!(
+            allocator.alloc_slice::<u64>(count).is_err(),
+            "count x size_of::<T>() overflow must be rejected"
+        );
+        assert!(
+            BumpVec::<u64>::new_in(&allocator, count).is_err(),
+            "BumpVec must not adopt an overflowing capacity"
+        );
+    }
+
+    /// C3.4. `can_allocate` shared the same unchecked arithmetic and panicked
+    /// in debug instead of answering `false`.
+    #[test]
+    fn test_can_allocate_answers_false_on_overflow() {
+        let allocator = BumpAllocator::new(4096).unwrap();
+        assert!(!allocator.can_allocate(usize::MAX, 8));
+        assert!(!allocator.can_allocate(usize::MAX, 1));
+        assert!(!allocator.can_allocate(3, 3), "alignment must be a power of two");
+        assert!(allocator.can_allocate(64, 8));
+    }
 
     #[test]
     fn test_bump_allocator_creation() {
