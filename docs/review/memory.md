@@ -513,4 +513,76 @@ nothing more.
 **Fix.** `scope(&mut self)`. Breaking only for external callers, of which there are
 none in-tree.
 
+**Commit.** `7b019fe`
+
+---
+
+### C3.9 — `CacheAlignedVec<T>` ignores `align_of::<T>()` and divides by zero on a ZST — HIGH
+
+**Finding.** Two defects in the same type, both reachable from safe public API with
+no `unsafe` on the caller's side.
+
+1. *Under-alignment.* Every `Layout` in the type was built with `CACHE_LINE_SIZE` as
+   the alignment and never consulted `align_of::<T>()` — in `reallocate` for the new
+   layout and again for the old one, and a third time in `Drop`:
+
+   ```rust
+   let layout =
+       Layout::from_size_align(aligned_capacity * mem::size_of::<T>(), CACHE_LINE_SIZE)
+   ```
+
+   `CACHE_LINE_SIZE` is 64. For any `T` aligned more strictly than that — a
+   `#[repr(align(128))]` element, an AVX-512 vector wrapper — the allocator is free to
+   hand back an address that is 64-byte but not 128-byte aligned, and `push`'s
+   `ptr::write` is then undefined behaviour. The `Drop` layout also disagreed with the
+   allocation layout whenever `align_of::<T>() > 64`, which is UB in its own right.
+
+2. *ZST divide-by-zero.* `reallocate` computed
+   `align_to_cache_line(new_capacity * size_of::<T>()) / size_of::<T>()`. For a
+   zero-sized element that is a division by zero, so `CacheAlignedVec::<()>::push`
+   panics.
+
+**RED (watched).** 3/3 fail on the parent commit `7b019fe`, with only the tests applied
+to `7b019fe`'s production code. The alignment test aborts the process, so the two ZST
+tests had to be run in separate invocations:
+
+```
+thread 'memory::cache::tests::test_cache_aligned_vec_honours_the_element_alignment'
+  panicked at src/memory/cache.rs:147:18:
+unsafe precondition(s) violated: slice::from_raw_parts requires the pointer to be
+aligned and non-null, and the total size of the slice not to exceed `isize::MAX`
+thread caused non-unwinding panic. aborting.
+  (signal: 6, SIGABRT: process abort signal)
+
+thread 'memory::cache::tests::test_cache_aligned_vec_supports_zero_sized_elements'
+  panicked at src/memory/cache.rs:193:13:
+attempt to divide by zero
+
+thread 'memory::cache::tests::test_zero_sized_elements_are_dropped_exactly_once'
+  panicked at src/memory/cache.rs:193:13:
+attempt to divide by zero
+```
+
+> [!NOTE]
+> The alignment defect is deterministic in a debug build with no sanitizer at all: the
+> standard library's own `slice::from_raw_parts` precondition check fires inside
+> `as_slice`. In release that check is compiled out and the misalignment is silent, so
+> `make miri_pool` is the release-mode oracle. The test allocates 32 vectors rather than
+> one because a single 128-byte-aligned request can get a conforming address by luck.
+
+**Tests.** `test_cache_aligned_vec_honours_the_element_alignment` (32 independent
+`CacheAlignedVec<OverAligned>`s, each checked against `align_of::<OverAligned>()`),
+`test_cache_aligned_vec_supports_zero_sized_elements` (push/pop/clear on
+`CacheAlignedVec<()>`), `test_zero_sized_elements_are_dropped_exactly_once` (a ZST with
+a `Drop` counter — the drop count must follow `len`, not a byte count).
+
+**Fix.** A single `CacheAlignedVec::<T>::layout_for(capacity)` associated function is
+now the only place a `Layout` is built, using `CACHE_LINE_SIZE.max(align_of::<T>())`
+and `checked_mul` for the byte count; `reallocate` uses it for both the new and the old
+layout and `Drop` uses it too, so the three can no longer drift apart. `reallocate`
+short-circuits for zero-sized elements — capacity becomes `usize::MAX`, nothing is
+allocated, and `NonNull::dangling()` is already a valid address for any number of them —
+and `Drop` skips the deallocation for the same reason. `reserve` uses `saturating_mul`
+on the growth factor so the `usize::MAX` ZST capacity cannot overflow.
+
 **Commit.** _pending_
