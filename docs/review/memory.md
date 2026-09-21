@@ -670,7 +670,8 @@ back under:
   this use: a block is routed to the fast bins or to the large free list by size, the
   two ranges do not overlap, and only the bins use the header as a free-list link.
 * The fast-bin fallback now passes `FAST_BIN_SIZES[bin_index]`, the width the block
-  was carved at.
+  was carved at. (**Superseded by C3.18**: that fallback filed a fast-bin block where
+  no fast-bin request could reach it, and no longer exists — the push is unbudgeted.)
 
 **Commit.** `aceae24`
 
@@ -1166,6 +1167,84 @@ change.
 `unsafe_audit.py`: 34 → 33 undocumented sites, **0 in `src/memory/`**.
 
 **Commit.** `f953869`
+---
+
+## C3.18 — a spent CAS retry budget reported OOM with free blocks in the bin
+
+**Scope.** `src/memory/lockfree_pool.rs`.
+
+**Found by.** Miri. `make miri_pool` failed `memory::lockfree_pool::tests::test_pool_exhaustion`
+with `second round, block 1: Memory allocation failed: requested 64 bytes` — the test
+allocates the whole arena, frees every block, and re-allocates. Miri deliberately fails
+`compare_exchange_weak` spuriously, which no x86 run does, so the native suite was green.
+
+**Finding.** `allocate_from_fast_bin` and `deallocate_to_fast_bin` were both
+`for retry in 0..self.config.max_cas_retries` loops around `compare_exchange_weak`.
+`compare_exchange_weak` is *allowed to fail spuriously* — LL/SC hardware (AArch64) produces
+those failures, and Miri models them — and the loops re-read `head` on every iteration, so
+the weak form bought nothing in exchange for making a budgeted loop's budget burnable with
+no contention at all.
+
+Both fallbacks then gave a wrong answer:
+
+- pop: fell through to `allocate_new_block`, so a pool whose arena was fully carved reported
+  `out_of_memory` while recycled blocks of exactly the right class sat in the bin;
+- push: fell through to `deallocate_to_skip_list(ptr, FAST_BIN_SIZES[bin])`, filing a
+  ≤ 8 KiB block on the *large* free list, which only serves requests above
+  `FAST_BIN_THRESHOLD`. The block is unreachable until a neighbour coalesces with it.
+
+Together they are worse than either: the frees strand the arena in the large list and the
+next round of allocations then reports exhaustion. That is the Miri failure, and on AArch64
+it is reachable from a single thread doing nothing unusual.
+
+`max_cas_retries` is a throughput knob — how long to contend for a recycled block before
+carving fresh memory. It was silently also a correctness parameter.
+
+**RED.** `test_cas_budget_exhaustion_does_not_report_oom`, a native and deterministic
+reproduction: `max_cas_retries = 0` makes the loop body unreachable, which is what a run of
+spurious failures amounts to. Allocate the arena dry, free everything, re-allocate. Before
+the fix: `block 0 of 14: Memory allocation failed: requested 64 bytes`. The Miri failure
+above is the same defect reached the hard way.
+
+**Fix.**
+
+1. Both CAS sites use the *strong* `compare_exchange`. A budgeted loop must never use the
+   weak form.
+2. The pop is factored into `pop_fast_bin(bin, budget) -> Result<Option<u32>>`, and
+   `allocate_from_fast_bin` now states the invariant it wants: prefer the bin, then carve,
+   and **if carving fails, retry the bin unbudgeted** rather than report OOM. That
+   terminates: with a strong CAS, every failure means another thread completed a push or a
+   pop.
+3. The push is unbudgeted outright. A Treiber push always has somewhere to go, so a budget
+   could only ever produce a worse answer than waiting; the large-free-list fallback — and
+   with it C3.10's documented wart — is gone. `MAX_BACKOFF_RETRY = 16` caps the schedule the
+   unbounded loop feeds to `backoff`, so a `Linear` strategy cannot sleep for longer and
+   longer forever.
+
+`test_deallocate_cas_exhaustion_falls_back_to_skip_list` (C3.10) asserted the old wart. It is
+now `test_deallocate_cas_exhaustion_recycles_into_the_bin` and makes the stronger assertion:
+after the free, the bin's `count` is 1.
+
+**Refuted.** The third `compare_exchange_weak`, on `next_offset` in `allocate_new_block`
+(`lockfree_pool.rs:763`), is correct as written: its loop is unbounded and re-reads the
+observed value from the `Err` arm, which is exactly the idiom the weak form exists for.
+
+**Sweep.** Every `compare_exchange_weak` in `src/` was then checked for the same shape — a
+weak CAS whose failure is not simply retried. In `src/memory/` the two fixed here were the
+only ones: `bump.rs:229` is a comment, and `fixed_capacity_pool.rs:645`, `:367`, `:720` and
+`five_level_pool.rs:961`, `:1015` all sit in unbounded `loop {}`s that re-read the head.
+
+Two sites **outside this subsystem** have the defect and are recorded here so they are not
+lost; they belong to whichever phase covers `src/thread/`:
+
+* `src/thread/atomic_ext.rs:107` — `AtomicExt::update_if` is a bare weak CAS with no loop,
+  so this public method returns `false` ("the condition did not hold, or someone raced me")
+  spuriously, on an uncontended atomic, with the condition true.
+* `src/thread/linux_futex.rs:164` — `FutexMutex::try_lock` is a bare weak CAS, so it can
+  return `Ok(None)` for an unlocked mutex. (`lock`'s fast path at `:149` is fine: a spurious
+  failure only sends it down `lock_slow`, which is correct either way.)
+
+**Commit.** _pending_
 ---
 
 # Open findings — read, judged, not fixed

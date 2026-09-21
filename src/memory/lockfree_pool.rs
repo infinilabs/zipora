@@ -57,6 +57,12 @@ const LIST_TAIL: u32 = 0;
 /// atomic-vs-atomic and well defined. Costs 8 bytes per block.
 const BLOCK_HEADER: usize = ALIGN_SIZE;
 
+/// Backoff schedule cap for the unbudgeted fast-bin push loop. The loop is
+/// unbounded (see `deallocate_to_fast_bin`), so the retry counter it feeds to
+/// `backoff` has to stop growing somewhere: a linear schedule would otherwise
+/// sleep for longer and longer with every failure.
+const MAX_BACKOFF_RETRY: u32 = 16;
+
 /// Size classes for fast bins (similar to jemalloc)
 const FAST_BIN_SIZES: &[usize] = &[
     8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 144, 160, 176, 192, 208,
@@ -573,23 +579,26 @@ impl LockFreeMemoryPool {
         self.stats.clone()
     }
 
-    /// Allocate from fast bin using lock-free stack
-    fn allocate_from_fast_bin(&self, size: usize) -> Result<NonNull<u8>> {
-        let bin_index = self.size_to_bin_index(size)?;
-        let bin = &self.fast_bins[bin_index];
-
-        // Try to pop from lock-free stack with CAS retry loop
-        for retry in 0..self.config.max_cas_retries {
+    /// Pop one block off a fast bin's Treiber stack.
+    ///
+    /// `Ok(None)` means no block was obtained -- either the bin is empty, or
+    /// `budget` CAS attempts were spent without winning one. The caller is
+    /// responsible for turning that into the right answer; see
+    /// `allocate_from_fast_bin`.
+    ///
+    /// C3.18: the CAS here is *strong*. A budgeted loop must never use
+    /// `compare_exchange_weak`, whose failures are allowed to be spurious:
+    /// LL/SC hardware produces them, Miri models them, and each one burns a
+    /// retry with no contention at all. The loop re-reads `head` every
+    /// iteration, so the weak form bought nothing in exchange.
+    fn pop_fast_bin(&self, bin: &LockFreeHead, budget: u32) -> Result<Option<u32>> {
+        for retry in 0..budget {
             // ABA-SAFE: Load packed value (offset + generation)
             let packed = bin.head.load(Ordering::Acquire);
             let (current_offset, current_gen) = Self::unpack_head(packed);
 
             if current_offset == LIST_TAIL {
-                // Empty bin: carve a fresh block at the class width, not the
-                // request size. Blocks are recycled by bin, so a block carved
-                // any smaller would later be handed to a larger request in the
-                // same class and overrun its neighbour.
-                return self.allocate_new_block(FAST_BIN_SIZES[bin_index]);
+                return Ok(None);
             }
 
             // Between loading `head` and this load another thread may pop
@@ -603,15 +612,13 @@ impl LockFreeMemoryPool {
             // This prevents ABA: even if offset A→B→A, generation won't match
             let next_packed = Self::pack_head(next_offset, current_gen.wrapping_add(1));
 
-            // Try to update head atomically
-            match bin.head.compare_exchange_weak(
+            match bin.head.compare_exchange(
                 packed,      // Compare full packed value (offset + generation)
                 next_packed, // New packed value with incremented generation
                 Ordering::AcqRel,
                 Ordering::Acquire,
             ) {
                 Ok(_) => {
-                    // Success! Update count and return pointer
                     // SAFETY FIX (v2.1.1): Use Release ordering to synchronize with head update
                     // This ensures the count decrement is visible to other threads that observe
                     // the new head value, preventing race conditions in high-contention scenarios
@@ -622,21 +629,53 @@ impl LockFreeMemoryPool {
                         stats.cas_successes.fetch_add(1, Ordering::Relaxed);
                     }
 
-                    return self.offset_to_ptr(current_offset);
+                    return Ok(Some(current_offset));
                 }
                 Err(_) => {
-                    // CAS failed, retry with backoff
                     if let Some(stats) = &self.stats {
                         stats.cas_failures.fetch_add(1, Ordering::Relaxed);
                     }
 
-                    self.backoff(retry);
+                    self.backoff(retry.min(MAX_BACKOFF_RETRY));
                 }
             }
         }
 
-        // Max retries exceeded, fall back to new allocation (class width, see above)
-        self.allocate_new_block(FAST_BIN_SIZES[bin_index])
+        Ok(None)
+    }
+
+    /// Allocate from fast bin using lock-free stack
+    fn allocate_from_fast_bin(&self, size: usize) -> Result<NonNull<u8>> {
+        let bin_index = self.size_to_bin_index(size)?;
+        let bin = &self.fast_bins[bin_index];
+
+        // Prefer a recycled block. `max_cas_retries` bounds how long we are
+        // willing to contend for one before carving fresh memory instead; it is
+        // a throughput knob, not a correctness parameter.
+        if let Some(offset) = self.pop_fast_bin(bin, self.config.max_cas_retries)? {
+            return self.offset_to_ptr(offset);
+        }
+
+        // Empty bin, or the budget ran out: carve a fresh block at the class
+        // width, not the request size. Blocks are recycled by bin, so a block
+        // carved any smaller would later be handed to a larger request in the
+        // same class and overrun its neighbour.
+        match self.allocate_new_block(FAST_BIN_SIZES[bin_index]) {
+            Ok(ptr) => Ok(ptr),
+            Err(exhausted) => {
+                // C3.18. The arena is spent, so the bin is the only source
+                // left, and a spent retry budget must not be allowed to turn a
+                // non-empty bin into an out-of-memory error -- which is exactly
+                // what a single-threaded pool used to report under Miri, whose
+                // `compare_exchange_weak` fails spuriously. Retry unbudgeted:
+                // with a strong CAS every failure means another thread
+                // completed a push or a pop, so this terminates.
+                match self.pop_fast_bin(bin, u32::MAX)? {
+                    Some(offset) => self.offset_to_ptr(offset),
+                    None => Err(exhausted),
+                }
+            }
+        }
     }
 
     /// Deallocate to fast bin using lock-free stack
@@ -645,8 +684,16 @@ impl LockFreeMemoryPool {
         let bin = &self.fast_bins[bin_index];
         let offset = self.ptr_to_offset(ptr)?;
 
-        // Try to push to lock-free stack with CAS retry loop
-        for retry in 0..self.config.max_cas_retries {
+        // C3.18. Unbudgeted by design, unlike the pop side: a push onto a
+        // Treiber stack always has somewhere to go, so a retry budget here can
+        // only ever produce a worse answer than waiting. It used to file the
+        // block on the large free list once the budget ran out, where no
+        // <=8 KiB request can ever pick it up again; with `compare_exchange_weak`
+        // that path was reachable with no contention at all. With a strong CAS
+        // every failure means another thread completed a push or a pop, so this
+        // loop terminates.
+        let mut retry = 0u32;
+        loop {
             // ABA-SAFE: Load packed value (offset + generation)
             let packed = bin.head.load(Ordering::Acquire);
             let (current_offset, current_gen) = Self::unpack_head(packed);
@@ -658,15 +705,13 @@ impl LockFreeMemoryPool {
             // ABA-SAFE: Pack new offset with INCREMENTED generation counter
             let new_packed = Self::pack_head(offset, current_gen.wrapping_add(1));
 
-            // Try to update head atomically
-            match bin.head.compare_exchange_weak(
+            match bin.head.compare_exchange(
                 packed,     // Compare full packed value (offset + generation)
                 new_packed, // New packed value with incremented generation
                 Ordering::Release,
                 Ordering::Relaxed,
             ) {
                 Ok(_) => {
-                    // Success! Update count
                     bin.count.fetch_add(1, Ordering::Relaxed);
 
                     if let Some(stats) = &self.stats {
@@ -677,23 +722,15 @@ impl LockFreeMemoryPool {
                     return Ok(());
                 }
                 Err(_) => {
-                    // CAS failed, retry with backoff
                     if let Some(stats) = &self.stats {
                         stats.cas_failures.fetch_add(1, Ordering::Relaxed);
                     }
 
-                    self.backoff(retry);
+                    self.backoff(retry.min(MAX_BACKOFF_RETRY));
+                    retry = retry.saturating_add(1);
                 }
             }
         }
-
-        // CAS retries exhausted under contention. Fall back to the
-        // mutex-protected large free list instead of returning Err, which would
-        // permanently leak the block from the pool (it was recorded nowhere;
-        // the allocate side symmetrically falls back to allocate_new_block).
-        // The block was carved at the bin's class width, so that -- not the
-        // caller's narrower request -- is the width it must be filed under.
-        self.deallocate_to_skip_list(ptr, FAST_BIN_SIZES[bin_index])
     }
 
     /// Allocate from the large free list, or carve a fresh block.
@@ -1415,11 +1452,14 @@ mod tests {
 
     /// Regression: when CAS retries were exhausted, deallocate_to_fast_bin
     /// returned Err without recording the block anywhere, permanently
-    /// leaking it from the pool. max_cas_retries=0 makes the CAS loop body
-    /// unreachable, deterministically forcing the exhaustion path — which
-    /// must now fall back to the skip list and succeed.
+    /// leaking it from the pool. max_cas_retries=0 makes the *pop* budget
+    /// zero, which is the harshest configuration there is.
+    ///
+    /// C3.18 strengthened the guarantee: the push is no longer budgeted at
+    /// all, so the block goes back on its own bin rather than onto the large
+    /// free list, where no fast-bin request could have reached it.
     #[test]
-    fn test_deallocate_cas_exhaustion_falls_back_to_skip_list() {
+    fn test_deallocate_cas_exhaustion_recycles_into_the_bin() {
         let config = LockFreePoolConfig {
             max_cas_retries: 0,
             ..LockFreePoolConfig::default()
@@ -1427,8 +1467,15 @@ mod tests {
         let pool = LockFreeMemoryPool::new(config).unwrap();
 
         let ptr = pool.allocate(64).unwrap();
+        let bin_index = pool.size_to_bin_index(64).unwrap();
         pool.deallocate(ptr, 64)
-            .expect("CAS exhaustion must fall back to the skip list, not leak the block");
+            .expect("CAS exhaustion must recycle the block, not leak it");
+
+        assert_eq!(
+            pool.fast_bins[bin_index].count.load(Ordering::Relaxed),
+            1,
+            "the freed block must sit on its own bin, not on the large free list"
+        );
     }
 
     /// D8. Was `#[ignore]`d "to prevent timeouts in release mode", and guarded
@@ -1486,6 +1533,58 @@ mod tests {
             );
         }
         assert!(pool.allocate(REQUEST).is_err());
+    }
+
+    /// C3.18. `max_cas_retries` is a contention budget, not a correctness
+    /// parameter: exhausting it must never make an allocation report OOM while
+    /// recycled blocks sit in the bin, and must never file a fast-bin block
+    /// somewhere a fast-bin request cannot reach.
+    ///
+    /// `max_cas_retries = 0` makes the CAS loop body unreachable and so
+    /// reproduces deterministically what Miri produces on the *default* config
+    /// by failing `compare_exchange_weak` spuriously: the frees fall through to
+    /// the large free list, where no <=8 KiB request can ever pick them up, and
+    /// the second round of allocations then reports an exhausted arena.
+    #[test]
+    fn test_cas_budget_exhaustion_does_not_report_oom() {
+        const ARENA: usize = 1024;
+        const REQUEST: usize = 64;
+        const PER_BLOCK: usize = REQUEST + BLOCK_HEADER;
+        const CAPACITY: usize = (ARENA - ALIGN_SIZE) / PER_BLOCK;
+
+        let pool = LockFreeMemoryPool::new(LockFreePoolConfig {
+            memory_size: ARENA,
+            max_cas_retries: 0,
+            backoff_strategy: BackoffStrategy::None,
+            enable_cache_alignment: false,
+            cache_config: None,
+            enable_numa_awareness: false,
+            enable_huge_pages: false,
+            enable_stats: false,
+            enable_simd_optimization: false,
+            zero_on_free: false,
+            ..LockFreePoolConfig::default()
+        })
+        .unwrap();
+
+        let mut blocks = Vec::new();
+        for i in 0..CAPACITY {
+            blocks.push(
+                pool.allocate(REQUEST)
+                    .unwrap_or_else(|e| panic!("block {i} of {CAPACITY}: {e}")),
+            );
+        }
+        for ptr in blocks.drain(..) {
+            pool.deallocate(ptr, REQUEST).unwrap();
+        }
+        for i in 0..CAPACITY {
+            blocks.push(pool.allocate(REQUEST).unwrap_or_else(|e| {
+                panic!(
+                    "every block was freed, so the arena must be fully \
+                     allocatable again; block {i} of {CAPACITY}: {e}"
+                )
+            }));
+        }
     }
 
     //==============================================================================
