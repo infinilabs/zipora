@@ -261,7 +261,27 @@ impl BumpArena {
     }
 
     /// Create a nested arena that resets to the current position when dropped
-    pub fn scope(&self) -> BumpScope<'_> {
+    ///
+    /// Takes `&mut self` so that the arena cannot be used while the scope is
+    /// alive. [`BumpScope`]'s `Drop` unconditionally stores the offset it
+    /// captured, so an allocation made through the *arena* during the scope's
+    /// lifetime would be rewound over and its address handed straight back out
+    /// to the next caller, while the first pointer is still live.
+    /// [`BumpAllocator::reset`] is `&mut self` for exactly the same reason.
+    ///
+    /// ```compile_fail
+    /// use zipora::BumpArena;
+    ///
+    /// let mut arena = BumpArena::new(4096).unwrap();
+    /// let escaped = {
+    ///     let _scope = arena.scope();
+    ///     // `arena` is mutably borrowed by `_scope`, so this must not compile.
+    ///     arena.alloc_bytes(64, 8).unwrap()
+    /// };
+    /// let next = arena.alloc_bytes(64, 8).unwrap();
+    /// assert_ne!(escaped, next);
+    /// ```
+    pub fn scope(&mut self) -> BumpScope<'_> {
         BumpScope {
             allocator: &self.allocator,
             initial_offset: self.allocator.current.load(Ordering::Relaxed),
@@ -475,6 +495,38 @@ impl<'a, T> Drop for BumpVec<'a, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// C3.8 (coverage). `BumpArena::scope()` had no caller anywhere in the
+    /// crate: `test_bump_scope` builds a `BumpScope` by struct literal and
+    /// never goes through the public entry point, which is how the `&self`
+    /// receiver survived. This exercises it and pins the rewind semantics --
+    /// a scope gives back exactly what it took, and nothing more. The aliasing
+    /// case itself is now a borrow-check error and is pinned by the
+    /// `compile_fail` doctest on `scope`.
+    #[test]
+    fn test_arena_scope_rewinds_only_its_own_allocations() {
+        let mut arena = BumpArena::new(4096).unwrap();
+
+        let outer = arena.alloc_bytes(64, 8).unwrap();
+        let after_outer = arena.stats().allocated_bytes;
+
+        let inner = {
+            let scope = arena.scope();
+            let inner = scope.alloc_bytes(128, 8).unwrap();
+            assert_ne!(inner, outer, "the scope must not reissue a live address");
+            inner
+        };
+
+        assert_eq!(
+            arena.stats().allocated_bytes,
+            after_outer,
+            "the scope must give back exactly what it took"
+        );
+
+        let reused = arena.alloc_bytes(128, 8).unwrap();
+        assert_eq!(reused, inner, "the scope's bytes are available again");
+        assert_ne!(reused, outer, "the pre-scope allocation is still live");
+    }
 
     /// C3.4 (CRITICAL). `alloc_bytes` computed `aligned_offset + size` with
     /// wrapping arithmetic. In release a request that overflows produces a

@@ -475,4 +475,42 @@ refiles the block under the class it was carved from and, with `secure_clear`, z
 the width that was actually reserved. `FixedCapacityAllocation::size()` reports the
 reserved width. The out-of-memory error also stops claiming `requested 0 bytes`.
 
+**Commit.** `4a3d8a6`
+
+---
+
+### C3.8 — `BumpArena::scope` could rewind over live allocations — HIGH
+
+**Finding.** `BumpArena::scope` took `&self`, so the arena stayed usable while a scope
+was alive, and `BumpScope::drop` unconditionally stores the offset it captured at
+creation. Any allocation made through the *arena* during the scope's lifetime was
+rewound over, and the next allocation handed the same address straight back out while
+the first pointer was still live — two aliasing allocations obtained from entirely safe
+code. `BumpAllocator::reset` is `&mut self` for exactly this reason; `scope` was not.
+
+`scope()` had no caller anywhere in the crate: `test_bump_scope` builds a `BumpScope`
+by struct literal and never goes through the public entry point, which is how the
+receiver survived review.
+
+**RED (watched).** The regression test is a `compile_fail` doctest on `scope`, because
+after the fix the defect is a borrow-check error and there is no runtime state left to
+assert on. On the parent commit:
+
+```
+test src/memory/bump.rs - memory::bump::BumpArena::scope (line 272)
+     - compile fail ... FAILED
+---- src/memory/bump.rs - memory::bump::BumpArena::scope (line 272) stdout ----
+Test compiled successfully, but it's marked `compile_fail`.
+```
+
+i.e. the aliasing program built cleanly.
+
+**Tests.** The `compile_fail` doctest, plus
+`test_arena_scope_rewinds_only_its_own_allocations` as coverage — the first caller of
+`scope()` in the crate — pinning that a scope gives back exactly what it took and
+nothing more.
+
+**Fix.** `scope(&mut self)`. Breaking only for external callers, of which there are
+none in-tree.
+
 **Commit.** _pending_
