@@ -345,12 +345,13 @@ impl FixedCapacityMemoryPool {
         // Ensure memory is allocated
         self.ensure_memory_allocated()?;
 
-        // Find appropriate size class
+        // Find the smallest class that could serve the request, then take
+        // whatever class actually had a block. `actual_class_index` is the
+        // class the block must be filed back under; using the *requested*
+        // class instead is what permanently demoted blocks (C3.7).
         let size_class_index = self.find_size_class(size)?;
-        let actual_size = self.size_classes[size_class_index];
-
-        // Try to allocate from free list
-        let ptr = self.allocate_from_free_list(size_class_index)?;
+        let (ptr, actual_class_index) = self.allocate_from_free_list(size_class_index)?;
+        let actual_size = self.size_classes[actual_class_index];
 
         // Update statistics
         if let Some(stats) = &self.stats {
@@ -383,7 +384,7 @@ impl FixedCapacityMemoryPool {
         Ok(FixedCapacityAllocation::new(
             ptr,
             actual_size,
-            size_class_index,
+            actual_class_index,
             self,
         ))
     }
@@ -601,8 +602,14 @@ impl FixedCapacityMemoryPool {
         Ok(())
     }
 
-    /// Allocate from free list
-    fn allocate_from_free_list(&self, size_class_index: usize) -> Result<NonNull<u8>> {
+    /// Pop a block from `size_class_index`, or from the smallest larger class
+    /// that has one.
+    ///
+    /// Returns the block together with the class it actually came from. The
+    /// caller must file it back under *that* class: the blocks of this pool sit
+    /// at a fixed `max_block_size` stride and are never physically split, so a
+    /// block taken from a larger class is still a larger-class block.
+    fn allocate_from_free_list(&self, size_class_index: usize) -> Result<(NonNull<u8>, usize)> {
         // SAFETY: UnsafeCell immutable after initialization, only atomic fields accessed
         let free_lists = unsafe { &*self.free_lists.get() };
         let free_list = &free_lists[size_class_index];
@@ -612,8 +619,7 @@ impl FixedCapacityMemoryPool {
             let current_head = free_list.head.load(Ordering::Acquire);
 
             if current_head == LIST_TAIL {
-                // Try to split from larger size class
-                return self.allocate_by_splitting(size_class_index);
+                return self.allocate_from_larger_class(size_class_index);
             }
 
             // SAFETY: memory initialized by ensure_memory_allocated before allocate_from_free_list
@@ -645,30 +651,40 @@ impl FixedCapacityMemoryPool {
                 .is_ok()
             {
                 free_list.count.fetch_sub(1, Ordering::Relaxed);
-                return NonNull::new(block_ptr)
-                    .ok_or_else(|| ZiporaError::invalid_data("Null block pointer"));
+                let ptr = NonNull::new(block_ptr)
+                    .ok_or_else(|| ZiporaError::invalid_data("Null block pointer"))?;
+                return Ok((ptr, size_class_index));
             }
 
             // CAS failed, retry
         }
     }
 
-    /// Allocate by splitting larger blocks
-    fn allocate_by_splitting(&self, size_class_index: usize) -> Result<NonNull<u8>> {
-        // Look for larger size classes with available blocks
+    /// Serve a request from the smallest larger class that has a free block.
+    ///
+    /// Despite the name it replaced (`allocate_by_splitting`) nothing is split
+    /// here, and nothing can be: `initialize_free_lists` lays every block out
+    /// at a `max_block_size` stride, so the size-class vector describes a
+    /// partition that does not exist in memory. The block is handed over whole
+    /// and the class it came from travels with it, so `deallocate` returns it
+    /// to the same class at the same width.
+    fn allocate_from_larger_class(
+        &self,
+        size_class_index: usize,
+    ) -> Result<(NonNull<u8>, usize)> {
         for larger_class in (size_class_index + 1)..self.size_classes.len() {
             // SAFETY: UnsafeCell immutable after initialization, only atomic fields accessed
             let free_lists = unsafe { &*self.free_lists.get() };
             let free_list = &free_lists[larger_class];
             let head = free_list.head.load(Ordering::Acquire);
 
-            if head != LIST_TAIL {
-                // Try to allocate from larger class and split
-                if let Ok(ptr) = self.allocate_from_free_list(larger_class) {
-                    // For simplicity, just return the larger block
-                    // Real implementation would split the block
-                    return Ok(ptr);
-                }
+            // The `head` check is not redundant: an empty class would send
+            // `allocate_from_free_list` straight back into this function for
+            // the classes above `larger_class`, which this loop already walks.
+            if head != LIST_TAIL
+                && let Ok(found) = self.allocate_from_free_list(larger_class)
+            {
+                return Ok(found);
             }
         }
 
@@ -677,7 +693,9 @@ impl FixedCapacityMemoryPool {
             stats.allocation_failures.fetch_add(1, Ordering::Relaxed);
         }
 
-        Err(ZiporaError::out_of_memory(0))
+        Err(ZiporaError::out_of_memory(
+            self.size_classes[size_class_index],
+        ))
     }
 
     /// Deallocate to free list
@@ -968,6 +986,105 @@ mod tests {
         }
     }
 
+    /// C3.7. `initialize_free_lists` files every block on the *largest* size
+    /// class and nothing ever moves one down. A small request therefore finds
+    /// `LIST_TAIL` in its own class, falls into `allocate_by_splitting`, which
+    /// does not split -- "For simplicity, just return the larger block" -- and
+    /// hands over a full `max_block_size` block. The allocation then records
+    /// the *requested* class, so `deallocate_to_free_list` files that block
+    /// under the small class. The block is still physically `max_block_size`
+    /// wide and still `max_block_size` away from its neighbours, but the pool
+    /// has permanently reclassified it. The carve width and the recycle width
+    /// disagree, so a later full-width request can never find it again.
+    #[test]
+    fn test_small_allocations_do_not_permanently_demote_blocks() {
+        let pool = FixedCapacityMemoryPool::new(FixedCapacityPoolConfig {
+            max_block_size: 4096,
+            total_blocks: 4,
+            ..FixedCapacityPoolConfig::default()
+        })
+        .unwrap();
+
+        // Hold all four at once so each one is carved out of the largest class.
+        let small: Vec<_> = (0..4)
+            .map(|i| {
+                pool.allocate(8)
+                    .unwrap_or_else(|e| panic!("small allocation {i} failed: {e}"))
+            })
+            .collect();
+        drop(small);
+
+        assert_eq!(
+            pool.available_capacity(),
+            4 * 4096,
+            "every block was returned"
+        );
+        let big = pool.allocate(4096).unwrap_or_else(|e| {
+            panic!(
+                "all four 4096-byte blocks were returned and available_capacity() \
+                 reports {} bytes free, but a full-width request failed: {e}",
+                pool.available_capacity()
+            )
+        });
+        drop(big);
+    }
+
+    /// C3.7. The width the caller is told about has to be the width that was
+    /// taken out of circulation. Blocks sit at a `max_block_size` stride, so an
+    /// eight-byte request still consumes a whole block; reporting the size
+    /// class of the *request* understates the reservation and is precisely what
+    /// let `deallocate` refile the block under the wrong class.
+    #[test]
+    fn test_allocation_reports_the_width_it_actually_reserved() {
+        let pool = FixedCapacityMemoryPool::new(FixedCapacityPoolConfig {
+            max_block_size: 4096,
+            total_blocks: 2,
+            ..FixedCapacityPoolConfig::default()
+        })
+        .unwrap();
+
+        let alloc = pool.allocate(8).unwrap();
+        assert_eq!(
+            alloc.size(),
+            4096,
+            "an 8-byte request reserves a whole 4096-byte block"
+        );
+    }
+
+    /// C3.7. A pool that is drained and refilled with a *changing* width must
+    /// not erode. Alternating full-width and minimum-width rounds demotes every
+    /// block to the smallest class on the odd round, after which the even round
+    /// cannot find a single full-width block. A steady demand pattern hides
+    /// this, because the demoted classes happen to match the next round's
+    /// requests.
+    #[test]
+    fn test_alternating_width_cycles_do_not_erode_capacity() {
+        const BLOCKS: usize = 8;
+
+        let pool = FixedCapacityMemoryPool::new(FixedCapacityPoolConfig {
+            max_block_size: 4096,
+            total_blocks: BLOCKS,
+            ..FixedCapacityPoolConfig::default()
+        })
+        .unwrap();
+
+        for round in 0..8 {
+            let width = if round % 2 == 0 { 4096 } else { 8 };
+            let held: Vec<_> = (0..BLOCKS)
+                .map(|i| {
+                    pool.allocate(width).unwrap_or_else(|e| {
+                        panic!(
+                            "round {round} ({width} bytes), allocation {i}: the pool \
+                             was fully drained and refilled on every previous round, \
+                             so all {BLOCKS} blocks are free: {e}"
+                        )
+                    })
+                })
+                .collect();
+            drop(held);
+        }
+    }
+
     #[test]
     fn test_pool_creation() {
         let config = FixedCapacityPoolConfig::default();
@@ -983,7 +1100,12 @@ mod tests {
         let pool = FixedCapacityMemoryPool::new(config).unwrap();
 
         let alloc = pool.allocate(64).unwrap();
-        assert_eq!(alloc.size(), 64); // Should match exact size class
+        // C3.7: `small_objects()` has `max_block_size: 1024` and every block
+        // starts on the largest class, so a 64-byte request reserves a whole
+        // 1024-byte block. This used to report 64 -- the size class of the
+        // *request* -- which is what let `deallocate` refile the block under
+        // the 64-byte class and lose it for good.
+        assert_eq!(alloc.size(), 1024);
         assert!(!alloc.as_ptr().is_null());
     }
 
