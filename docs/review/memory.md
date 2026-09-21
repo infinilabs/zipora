@@ -1247,6 +1247,71 @@ lost; they belong to whichever phase covers `src/thread/`:
 **Commit.** `a215001`
 ---
 
+## C3.19 — `CacheOptimizedAllocator::allocate_aligned(0)` was UB, `align_to_cache_line` overflowed to 0, two deallocators were safe `pub fn`s, and five leaked test blocks broke `make miri_pool`
+
+**Scope.** `src/memory/cache_layout.rs`, `src/memory/cache.rs`.
+
+**Found by.** Running `make miri_pool` to completion after C3.18 unblocked line 3
+(`memory::lockfree_pool`). Line 5 (`memory::cache`) had never executed before because
+`make` aborted at line 3; when it finally ran, all 35 tests passed and Miri's leak check
+then aborted with five leaked `align: 64` allocations (`cache.rs:832-833` in
+`test_numa_pool_stats` and `cache_layout.rs:890-892` in `test_cache_layout_stats`).
+Inspecting those two call sites surfaced the remaining defects in the pair.
+
+**Findings.**
+
+1. **`CacheOptimizedAllocator::allocate_aligned(0, ..)` is UB from a safe public API** — the
+   exact twin of C3.3's `numa_alloc_aligned(0, ..)`. `align_to_cache_line(0, 64)` evaluates
+   `(0 + 63) & !63 == 0`; `Layout::from_size_align(0, 64)` succeeds with `size == 0`; and
+   `unsafe { alloc(layout) }` is then called on a zero-sized `Layout`, which the standard
+   library's safety contract explicitly forbids.
+2. **`align_to_cache_line(size, cache_line_size)` overflows `usize` on large `size`.** In a
+   debug build `allocate_aligned(usize::MAX, 64, false)` panics (`attempt to add with
+   overflow` at `cache_layout.rs:487`). In a release build `(usize::MAX + 63) & !63` wraps
+   to `0`, which then takes path (1) and hands a zero-sized `Layout` to `std::alloc::alloc`.
+   A zero or non-power-of-two `cache_line_size` in `CacheLayoutConfig` similarly underflows
+   `cache_line_size - 1` or masks with a non-mask.
+3. **`numa_dealloc` (`cache.rs:538`) and `CacheOptimizedAllocator::deallocate_aligned`
+   (`cache_layout.rs:255`) were safe `pub fn`s whose own `// SAFETY:` comments stated an
+   unchecked caller precondition.** Neither allocator records live allocations; both
+   reconstruct a `Layout` from caller-supplied `(size, align)` arguments and pass `(ptr,
+   layout)` straight to `std::alloc::dealloc`. Calling either from safe code with a dangling
+   pointer, a mismatched `(size, align)`, or twice is immediate UB — the same defect class
+   as `MemoryPool::deallocate` (C3.12).
+4. **Five leaked blocks in two tests (`cache.rs:832-833`, `cache_layout.rs:890-892`)** made
+   `make miri_pool` fail its leak detector on line 5.
+
+**RED (watched).**
+
+```
+thread 'memory::cache_layout::tests::test_allocate_aligned_rejects_overflowing_size'
+  panicked at src/memory/cache_layout.rs:487:6:
+attempt to add with overflow
+
+thread 'memory::cache_layout::tests::test_allocate_aligned_rejects_zero_size'
+  panicked at src/memory/cache_layout.rs:894:14:
+zero-sized cache-aligned allocation must be rejected: 0x5626e0a3b700
+```
+
+Plus the five Miri leak errors from `make miri_pool` (`alloc1898988`, `alloc1843296`,
+`alloc1843153`, `alloc1898962`, `alloc1898936`), and two `compile_fail` doctests proving
+that calling `numa_dealloc` or `CacheOptimizedAllocator::deallocate_aligned` outside `unsafe`
+no longer compiles.
+
+**Fix.**
+
+* `CacheOptimizedAllocator::checked_layout` rejects `size == 0`, rejects `cache_line_size ==
+  0` or non-power-of-two, and rounds `size` with `checked_add(line - 1)` before calling
+  `Layout::from_size_align`. Both `allocate_aligned` and `deallocate_aligned` share it.
+* `numa_dealloc` and `CacheOptimizedAllocator::deallocate_aligned` are now `pub unsafe fn`
+  with `# Safety` and `# Errors` sections and `compile_fail` doctests (**breaking**).
+* `test_numa_pool_stats` and `test_cache_layout_stats` deallocate the five blocks they
+  allocate. `MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri test --lib
+  memory::cache -- --test-threads=1`: **37 passed, 0 failed, 0 leaks**.
+
+**Commit.** _pending_
+---
+
 # Open findings — read, judged, not fixed
 
 Everything below was found by reading the file and is recorded here so the next pass
