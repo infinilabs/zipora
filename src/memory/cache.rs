@@ -781,9 +781,8 @@ mod tests {
     /// handed it to `std::alloc::alloc`, whose contract forbids that.
     #[test]
     fn test_numa_alloc_rejects_zero_size() {
-        let err = numa_alloc_aligned(0, 64, 0)
-            .err()
-            .expect("zero-sized NUMA allocation must be rejected");
+        let err =
+            numa_alloc_aligned(0, 64, 0).expect_err("zero-sized NUMA allocation must be rejected");
         assert!(err.to_string().contains("non-zero"), "got: {err}");
     }
 
