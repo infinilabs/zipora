@@ -66,45 +66,38 @@ pub struct PoolStats {
     pub pool_misses: u64,
 }
 
-/// A memory pool for efficient allocation of fixed-size chunks
+/// A cache of fixed-size chunks, to avoid going to the global allocator for
+/// every allocation of a size the pool is configured for.
 ///
-/// # Thread Safety Invariants
+/// # What it guarantees
 ///
-/// **CRITICAL SECURITY WARNING**: This implementation contains multiple thread safety
-/// vulnerabilities that can lead to data races, use-after-free, and memory corruption.
-/// See comprehensive security analysis in `/usr/local/google/home/binwu/go/src/infini.sh/zipora/codereview.md`
+/// * A chunk is `config.chunk_size` bytes wide, aligned to `config.alignment`,
+///   and its contents are **uninitialized** — the pool recycles chunks without
+///   clearing them, so a chunk may hold a previous owner's bytes. Use
+///   [`SecureMemoryPool`](crate::memory::SecureMemoryPool) where that matters.
+/// * `max_chunks` bounds the *cache*, not how many chunks may be live at once:
+///   `allocate` falls back to the global allocator when the cache is empty, and
+///   `deallocate` returns the surplus to it when the cache is full.
+/// * No two live chunks share an address, and a chunk cannot be parked on the
+///   free list twice — `deallocate` rejects a chunk that is already free.
+/// * `alloc_count`, `dealloc_count` and `pool_hits + pool_misses == alloc_count`
+///   are exact across threads. The per-chunk byte totals in [`PoolStats`] are
+///   best-effort: they are skipped when the stats lock is contended.
 ///
-/// ## Current Thread Safety Issues:
+/// # What it does not
 ///
-/// 1. **UNSAFE Send/Sync Implementation**: Manual implementation bypasses Rust's safety
-///    guarantees for raw pointers (*mut u8). Raw pointers can be aliased across threads
-///    leading to data races and use-after-free conditions.
+/// * It does not track which chunks are out on loan, so it cannot tell a
+///   pointer of its own from a foreign one. That is why
+///   [`deallocate`](Self::deallocate) is `unsafe`, and its `# Safety` section
+///   is the contract.
+/// * Using a chunk after freeing it is a use-after-free, and neither the pool
+///   nor a sanitizer will catch it: the chunk stays live in the free list, so
+///   there is no dead allocation to detect. The obligation is the caller's.
+/// * `allocate` takes the free list with `try_lock`, so under contention it
+///   goes to the global allocator instead of waiting. That costs reuse, not
+///   correctness, and it is why `pool_hits` is not deterministic.
 ///
-/// 2. **Race Conditions**: TOCTOU vulnerabilities in allocate() and deallocate() methods
-///    between pool operations and statistics updates.
-///
-/// 3. **Lost Updates**: try_lock() pattern causes silent failures under contention,
-///    leading to memory leaks and incorrect capacity tracking.
-///
-/// 4. **Memory Ordering**: Relaxed atomics provide no synchronization guarantees,
-///    allowing inconsistent statistics across threads.
-///
-/// 5. **Double-Free Vulnerability**: No validation prevents the same pointer from
-///    being deallocated multiple times.
-///
-/// ## Synchronization Primitives:
-/// - `free_chunks`: Mutex<VecDeque<*mut u8>> - Protects pool of reusable chunks
-/// - `stats`: RwLock<PoolStats> - Protects allocation statistics  
-/// - `alloc_count`, `dealloc_count`, `pool_hits`, `pool_misses`: AtomicU64 counters
-///
-/// ## Thread Safety Guarantees (VIOLATED):
-/// - ❌ Memory safety: Raw pointers can be aliased across threads
-/// - ❌ Data race freedom: Statistics updates have TOCTOU races
-/// - ❌ Memory correctness: Double-free and use-after-free possible
-/// - ❌ Deadlock freedom: Drop implementation can deadlock during unwinding
-///
-/// **RECOMMENDATION**: Use established thread-safe allocators like jemalloc,
-/// mimalloc, or bumpalo instead of this implementation.
+/// The properties above are asserted in `tests/memory_pool_contract.rs`.
 pub struct MemoryPool {
     config: PoolConfig,
     free_chunks: Mutex<VecDeque<*mut u8>>,
@@ -115,17 +108,24 @@ pub struct MemoryPool {
     pool_misses: AtomicU64,
 }
 
-// SECURITY WARNING: This manual Send/Sync implementation is UNSAFE and violates
-// Rust's memory safety guarantees. Raw pointers (*mut u8) are !Send + !Sync by
-// default because they can point to thread-local data or create aliasing issues.
+// SAFETY: `MemoryPool` is `Send` and `Sync` because the only field that is not
+// already both is `free_chunks: Mutex<VecDeque<*mut u8>>`, and:
 //
-// CONFIRMED VULNERABILITIES:
-// - Use-after-free: Freed pointers can be accessed by multiple threads
-// - Data races: Concurrent access to same memory through aliased pointers
-// - Double-free: Same pointer can be deallocated multiple times
+// 1. The raw pointers in it are reached only under that `Mutex`, so no two
+//    threads touch the deque at once.
+// 2. The pool never dereferences them. It moves them between the deque and the
+//    global allocator, and hands them to callers; nothing reads or writes the
+//    bytes they point at.
+// 3. Every chunk comes from `alloc` on the global allocator, which is process
+//    -wide, so a chunk allocated on one thread is valid to free on another.
+// 4. A chunk cannot be in the deque twice: `deallocate` rejects a chunk that is
+//    already parked, so `allocate` cannot hand one address to two threads.
 //
-// See security analysis for proof-of-concept exploits and recommended fixes.
+// What a caller does with a chunk *after* receiving it is outside this
+// argument, which is why `deallocate` is an `unsafe fn` carrying that
+// obligation explicitly.
 unsafe impl Send for MemoryPool {}
+// SAFETY: see the `Send` impl directly above.
 unsafe impl Sync for MemoryPool {}
 
 impl MemoryPool {
@@ -152,17 +152,19 @@ impl MemoryPool {
         })
     }
 
-    /// Allocate a chunk from the pool
+    /// Allocate a chunk of `config.chunk_size` bytes.
     ///
-    /// # Thread Safety Issues
+    /// The contents are **uninitialized** and may be a previous owner's bytes:
+    /// the pool recycles chunks without clearing them.
     ///
-    /// **WARNING**: This method contains TOCTOU race conditions and silent failures:
-    /// 1. Statistics update happens after pool modification but before return
-    /// 2. try_lock() pattern causes silent failures under high contention
-    /// 3. No validation of returned pointers
+    /// The free list is taken with `try_lock`, so a contended call allocates
+    /// from the global allocator rather than waiting. That is why `pool_hits`
+    /// is not deterministic under contention; `alloc_count` still is.
     ///
-    /// **CONFIRMED VULNERABILITY**: Use-after-free possible when freed chunks
-    /// are reallocated to different threads.
+    /// # Errors
+    ///
+    /// Returns `out_of_memory` if the cache is empty and the global allocator
+    /// refuses the request.
     pub fn allocate(&self) -> Result<NonNull<u8>> {
         self.alloc_count.fetch_add(1, Ordering::Relaxed);
 
@@ -241,14 +243,14 @@ impl MemoryPool {
         Ok(())
     }
 
-    /// Get current pool statistics
+    /// Current pool statistics.
     ///
-    /// # Thread Safety Issues
+    /// `alloc_count`, `dealloc_count`, `pool_hits` and `pool_misses` are exact
+    /// counters, but they are read one at a time, so a snapshot taken while
+    /// other threads are allocating is not a consistent instant.
     ///
-    /// **WARNING**: Statistics may be inconsistent due to:
-    /// 1. **Relaxed memory ordering**: No synchronization guarantees between atomic loads
-    /// 2. **try_lock failures**: Chunk count may be stale if lock is contended
-    /// 3. **TOCTOU races**: Statistics collected at different times may be inconsistent
+    /// `chunks` and `available` are read under `try_lock` and are left at their
+    /// previous values if the free list is contended.
     pub fn stats(&self) -> PoolStats {
         // SAFETY: Return default stats if RwLock is poisoned (graceful degradation)
         let mut stats = self.stats.read().map(|s| s.clone()).unwrap_or_default();
@@ -265,14 +267,15 @@ impl MemoryPool {
         stats
     }
 
-    /// Clear all chunks from the pool
+    /// Return every cached chunk to the global allocator.
     ///
-    /// # Thread Safety Issues
+    /// Chunks that are currently out on loan are untouched — the pool does not
+    /// know about them. Only what is on the free list is released.
     ///
-    /// **WARNING**: This method has potential for deadlock and corruption:
-    /// 1. **Deadlock risk**: Uses lock().unwrap() which can deadlock during panic unwinding
-    /// 2. **Unsafe assumptions**: Assumes all pointers in pool are valid without verification
-    /// 3. **Memory corruption**: If pool is corrupted, this will crash or corrupt memory
+    /// # Errors
+    ///
+    /// Returns `resource_busy` if the free-list mutex or the stats lock is
+    /// poisoned.
     pub fn clear(&self) -> Result<()> {
         let mut free_chunks = self.free_chunks.lock().map_err(|e| {
             ZiporaError::resource_busy(format!("Free chunks mutex poisoned: {}", e))

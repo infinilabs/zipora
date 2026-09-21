@@ -149,8 +149,14 @@ miri_core:
 # crate's largest unsafe surface and their defects are layout and provenance
 # bugs that no assertion in the default suite can see: C3.1 (a block header
 # written past the end of the arena) and C3.2 (dealloc with an alignment the
-# allocation never had) were both found this way. The two UB-by-design tests
-# that used to sit #[ignore]d in the default suite live here as negative tests.
+# allocation never had) were both found this way.
+#
+# The two UB-by-design tests that used to sit #[ignore]d in
+# tests/security_memory_pool.rs are NOT here: they demonstrate use after
+# return to the pool, and a pool does not hand recycled memory back to the
+# system, so there is no dead allocation for Miri to flag. They are deleted;
+# see the header of tests/memory_pool_contract.rs.
+#
 # `memory::cache` needs -Zmiri-disable-isolation: detect_numa_nodes() reads
 # /sys/devices/system/node, and Miri's isolation blocks `open`.
 miri_pool:
