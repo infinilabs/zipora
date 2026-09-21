@@ -1766,6 +1766,79 @@ mod tests {
         );
     }
 
+    /// Drive enough chunks through the pool that the thread-local cache
+    /// overflows, so the surplus is recycled through the global stack.
+    ///
+    /// Returns the addresses handed out on the second round, in order, and the
+    /// number of chunks that came off the global stack.
+    fn recycle_through_global_stack(config: SecurePoolConfig) -> (Vec<*mut u8>, u64) {
+        let local_cache_size = config.local_cache_size;
+        let rounds = local_cache_size + 4;
+        let pool = SecureMemoryPool::new(config).unwrap();
+
+        let mut first: Vec<_> = (0..rounds).map(|_| pool.allocate().unwrap()).collect();
+        for ptr in first.iter_mut() {
+            ptr.as_mut_slice().fill(0xE7);
+        }
+        drop(first);
+
+        let steals_before = pool.stats().cross_thread_steals;
+        let second: Vec<_> = (0..rounds).map(|_| pool.allocate().unwrap()).collect();
+        let steals = pool.stats().cross_thread_steals - steals_before;
+
+        for ptr in second.iter() {
+            assert!(
+                ptr.as_slice().iter().all(|&b| b == 0),
+                "a recycled chunk still carries the previous tenant's bytes"
+            );
+        }
+        (second.iter().map(|p| p.as_ptr()).collect(), steals)
+    }
+
+    #[test]
+    fn test_zero_on_free_clears_chunks_routed_through_the_global_stack() {
+        // Coverage, not RED: 2707e30 moved the zeroing ahead of the routing, so
+        // it covers both destinations. The two tests above only ever exercise
+        // the thread-local cache hit; this one forces the local cache to
+        // overflow so the surplus is recycled through the global stack.
+        let mut config = SecurePoolConfig::new(1024, 64, 8);
+        config.local_cache_size = 2;
+        config.zero_on_free = true;
+        config.zero_on_alloc = false;
+
+        let (addrs, steals) = recycle_through_global_stack(config);
+        assert!(
+            steals > 0,
+            "vacuous unless the global stack is on the path: {steals} steals"
+        );
+        assert_eq!(
+            addrs.len(),
+            addrs.iter().collect::<std::collections::HashSet<_>>().len(),
+            "one address was handed to two live callers"
+        );
+    }
+
+    #[test]
+    fn test_zero_on_alloc_clears_chunks_taken_off_the_global_stack() {
+        // The global-stack arm of allocate_with_hint is a second copy of the
+        // zero_on_alloc check (secure_pool.rs:1024); nothing asserted it.
+        let mut config = SecurePoolConfig::new(1024, 64, 8);
+        config.local_cache_size = 2;
+        config.zero_on_free = false;
+        config.zero_on_alloc = true;
+
+        let (addrs, steals) = recycle_through_global_stack(config);
+        assert!(
+            steals > 0,
+            "vacuous unless the global stack is on the path: {steals} steals"
+        );
+        assert_eq!(
+            addrs.len(),
+            addrs.iter().collect::<std::collections::HashSet<_>>().len(),
+            "one address was handed to two live callers"
+        );
+    }
+
     #[test]
     fn test_chunk_validation() {
         let config = SecurePoolConfig::small_secure();
