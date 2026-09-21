@@ -43,6 +43,16 @@ pub struct MemOffset(u32);
 impl MemOffset {
     const NULL: Self = MemOffset(u32::MAX);
 
+    /// Narrow a byte offset into the 32-bit offset space.
+    ///
+    /// The `debug_assert!` is a redundant backstop, not the guard: every arena
+    /// in this module is sized by `FiveLevelPoolConfig`, and
+    /// [`FiveLevelPoolConfig::validate`] rejects any `initial_capacity`,
+    /// `arena_size`, or `fixed_capacity` above
+    /// [`FiveLevelPoolConfig::MAX_ARENA_SIZE`] before a chunk is allocated.
+    /// Offsets are therefore strictly below `u32::MAX` by construction, which
+    /// is what working agreement 4 requires: the narrowing cannot be reached
+    /// from safe public API with an out-of-range value.
     fn new(offset: usize) -> Self {
         debug_assert!(offset < u32::MAX as usize);
         MemOffset(offset as u32)
@@ -137,6 +147,88 @@ impl FiveLevelPoolConfig {
         }
     }
 
+    /// Largest arena this module can address.
+    ///
+    /// Offsets are [`MemOffset`], a `u32`, and `u32::MAX` is reserved as the
+    /// null sentinel, so no arena may reach it.
+    pub const MAX_ARENA_SIZE: usize = u32::MAX as usize;
+
+    /// Validate every field the pools read without checking it again.
+    ///
+    /// All fields of this struct are `pub`, so every value tested here is
+    /// reachable from safe code. Before this existed the only field that was
+    /// validated at all was `alignment`, and only incidentally, by
+    /// `Layout::from_size_align` inside `MemoryChunk::new` — which reports
+    /// "Invalid memory layout" and names nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ZiporaError::invalid_data`] if:
+    /// - `alignment` is zero, is not a power of two (the `(size + a - 1) & !(a - 1)`
+    ///   mask in `align_up` is meaningless otherwise), or is smaller than the
+    ///   4-byte free-list link stored in every fast-bin block;
+    /// - `max_fast_block_size` is zero, or is not a whole multiple of
+    ///   `alignment` — the bin index is `size / alignment - 1`, so a partial
+    ///   unit sizes a bin that no request can ever select;
+    /// - `initial_capacity`, `arena_size`, or `fixed_capacity` is zero. A
+    ///   zero-sized `Layout` is valid to construct but undefined behaviour to
+    ///   pass to [`std::alloc::alloc`];
+    /// - any of those three exceeds [`Self::MAX_ARENA_SIZE`], which would
+    ///   truncate offsets in [`MemOffset`] and hand the same offset out for
+    ///   two different live blocks.
+    pub fn validate(&self) -> Result<()> {
+        /// Width of the `u32` free-list link written into a freed fast-bin block.
+        const LINK_WIDTH: usize = std::mem::size_of::<u32>();
+
+        if self.alignment == 0 || !self.alignment.is_power_of_two() {
+            return Err(ZiporaError::invalid_data(format!(
+                "pool alignment must be a non-zero power of two, got {}",
+                self.alignment
+            )));
+        }
+        if self.alignment < LINK_WIDTH {
+            return Err(ZiporaError::invalid_data(format!(
+                "pool alignment must be at least {LINK_WIDTH} bytes to hold the \
+                 free-list link, got {}",
+                self.alignment
+            )));
+        }
+        if self.max_fast_block_size == 0 {
+            return Err(ZiporaError::invalid_data(
+                "max_fast_block_size must be non-zero",
+            ));
+        }
+        if !self.max_fast_block_size.is_multiple_of(self.alignment) {
+            return Err(ZiporaError::invalid_data(format!(
+                "max_fast_block_size ({}) must be a multiple of alignment ({})",
+                self.max_fast_block_size, self.alignment
+            )));
+        }
+
+        for (name, value) in [
+            ("initial_capacity", Some(self.initial_capacity)),
+            ("arena_size", Some(self.arena_size)),
+            ("fixed_capacity", self.fixed_capacity),
+        ] {
+            let Some(value) = value else { continue };
+            if value == 0 {
+                return Err(ZiporaError::invalid_data(format!(
+                    "{name} must be non-zero: a zero-sized layout is undefined \
+                     behaviour for the global allocator"
+                )));
+            }
+            if value > Self::MAX_ARENA_SIZE {
+                return Err(ZiporaError::invalid_data(format!(
+                    "{name} ({value}) exceeds the 32-bit offset space ({}); \
+                     offsets would truncate and two live blocks would alias",
+                    Self::MAX_ARENA_SIZE
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn realtime() -> Self {
         Self {
             max_fast_block_size: 8 * 1024, // 8KB
@@ -152,6 +244,24 @@ impl FiveLevelPoolConfig {
             ..Default::default()
         }
     }
+}
+
+/// Reject a zero-byte request before it reaches the bin arithmetic.
+///
+/// Both `alloc_from_fast_bin` and `free_to_fast_bin` compute
+/// `bin_index = size / alignment - 1`. `align_up(0)` is 0, so that subtraction
+/// underflows: a debug build panics with "attempt to subtract with overflow"
+/// and a release build wraps to `usize::MAX`, skips the bin entirely, and
+/// carves a zero-width block off the end of the arena. `alloc` and `free` are
+/// safe public API on all five levels, so the request is refused up front.
+fn reject_zero_size(size: usize, operation: &str) -> Result<()> {
+    if size == 0 {
+        return Err(ZiporaError::invalid_data(format!(
+            "zero-sized {operation} is not supported: block sizes must be at \
+             least one alignment unit"
+        )));
+    }
+    Ok(())
 }
 
 /// Free list head for fast bins
@@ -277,7 +387,12 @@ pub struct NoLockingPool {
 }
 
 impl NoLockingPool {
+    /// # Errors
+    ///
+    /// Returns an error if `config` fails [`FiveLevelPoolConfig::validate`], or
+    /// if the backing arena cannot be allocated.
     pub fn new(config: FiveLevelPoolConfig) -> Result<Self> {
+        config.validate()?;
         let memory = MemoryChunk::new(config.initial_capacity, config.alignment)?;
         let num_bins = config.max_fast_block_size / config.alignment;
         let free_lists = vec![FreeListHead::default(); num_bins];
@@ -295,7 +410,13 @@ impl NoLockingPool {
     }
 
     /// Allocate memory block of given size
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a zero-byte request (see [`reject_zero_size`]) or
+    /// when the arena is exhausted.
     pub fn alloc(&mut self, size: usize) -> Result<MemOffset> {
+        reject_zero_size(size, "allocation")?;
         let aligned_size = self.align_up(size);
 
         if aligned_size <= self.config.max_fast_block_size {
@@ -306,7 +427,12 @@ impl NoLockingPool {
     }
 
     /// Free previously allocated memory block
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a zero-byte block (see [`reject_zero_size`]).
     pub fn free(&mut self, offset: MemOffset, size: usize) -> Result<()> {
+        reject_zero_size(size, "free")?;
         let aligned_size = self.align_up(size);
 
         // Check if this is at the end of used memory
@@ -452,7 +578,12 @@ pub struct MutexBasedPool {
 }
 
 impl MutexBasedPool {
+    /// # Errors
+    ///
+    /// Returns an error if `config` fails [`FiveLevelPoolConfig::validate`], or
+    /// if the backing arena cannot be allocated.
     pub fn new(config: FiveLevelPoolConfig) -> Result<Self> {
+        config.validate()?;
         let memory = MemoryChunk::new(config.initial_capacity, config.alignment)?;
         let num_bins = config.max_fast_block_size / config.alignment;
         let free_lists = (0..num_bins)
@@ -469,7 +600,12 @@ impl MutexBasedPool {
         })
     }
 
+    /// # Errors
+    ///
+    /// Returns an error for a zero-byte request (see [`reject_zero_size`]) or
+    /// when the arena is exhausted.
     pub fn alloc(&self, size: usize) -> Result<MemOffset> {
+        reject_zero_size(size, "allocation")?;
         let aligned_size = self.align_up(size);
 
         if aligned_size <= self.config.max_fast_block_size {
@@ -479,7 +615,11 @@ impl MutexBasedPool {
         }
     }
 
+    /// # Errors
+    ///
+    /// Returns an error for a zero-byte block (see [`reject_zero_size`]).
     pub fn free(&self, offset: MemOffset, size: usize) -> Result<()> {
+        reject_zero_size(size, "free")?;
         let aligned_size = self.align_up(size);
 
         if aligned_size <= self.config.max_fast_block_size {
@@ -621,7 +761,12 @@ pub struct LockFreePool {
 }
 
 impl LockFreePool {
+    /// # Errors
+    ///
+    /// Returns an error if `config` fails [`FiveLevelPoolConfig::validate`], or
+    /// if the backing arena cannot be allocated.
     pub fn new(config: FiveLevelPoolConfig) -> Result<Self> {
+        config.validate()?;
         let memory = MemoryChunk::new(config.initial_capacity, config.alignment)?;
         let num_bins = config.max_fast_block_size / config.alignment;
         let free_lists = (0..num_bins)
@@ -637,7 +782,12 @@ impl LockFreePool {
         })
     }
 
+    /// # Errors
+    ///
+    /// Returns an error for a zero-byte request (see [`reject_zero_size`]) or
+    /// when the arena is exhausted.
     pub fn alloc(&self, size: usize) -> Result<MemOffset> {
+        reject_zero_size(size, "allocation")?;
         let aligned_size = self.align_up(size);
 
         if aligned_size <= self.config.max_fast_block_size {
@@ -647,7 +797,11 @@ impl LockFreePool {
         }
     }
 
+    /// # Errors
+    ///
+    /// Returns an error for a zero-byte block (see [`reject_zero_size`]).
     pub fn free(&self, offset: MemOffset, size: usize) -> Result<()> {
+        reject_zero_size(size, "free")?;
         let aligned_size = self.align_up(size);
 
         if aligned_size <= self.config.max_fast_block_size {
@@ -868,7 +1022,12 @@ impl ThreadLocalCache {
 }
 
 impl ThreadLocalPool {
+    /// # Errors
+    ///
+    /// Returns an error if `config` fails [`FiveLevelPoolConfig::validate`], or
+    /// if the shared global pool cannot be created.
     pub fn new(config: FiveLevelPoolConfig) -> Result<Self> {
+        config.validate()?;
         let global_pool = Arc::new(MutexBasedPool::new(config.clone())?);
 
         Ok(Self {
@@ -877,7 +1036,12 @@ impl ThreadLocalPool {
         })
     }
 
+    /// # Errors
+    ///
+    /// Returns an error for a zero-byte request (see [`reject_zero_size`]) or
+    /// when the arena is exhausted.
     pub fn alloc(&self, size: usize) -> Result<MemOffset> {
+        reject_zero_size(size, "allocation")?;
         let aligned_size = self.align_up(size);
 
         if aligned_size <= self.config.max_fast_block_size {
@@ -915,7 +1079,11 @@ impl ThreadLocalPool {
         }
     }
 
+    /// # Errors
+    ///
+    /// Returns an error for a zero-byte block (see [`reject_zero_size`]).
     pub fn free(&self, offset: MemOffset, size: usize) -> Result<()> {
+        reject_zero_size(size, "free")?;
         let aligned_size = self.align_up(size);
 
         if aligned_size <= self.config.max_fast_block_size {
@@ -983,7 +1151,12 @@ impl FixedCapacityPool {
         })
     }
 
+    /// # Errors
+    ///
+    /// Returns an error for a zero-byte request (see [`reject_zero_size`]) or
+    /// when the fixed capacity would be exceeded.
     pub fn alloc(&mut self, size: usize) -> Result<MemOffset> {
+        reject_zero_size(size, "allocation")?;
         let aligned_size = self.align_up(size);
 
         // Check capacity before allocation
@@ -995,6 +1168,9 @@ impl FixedCapacityPool {
         self.inner.alloc(aligned_size)
     }
 
+    /// # Errors
+    ///
+    /// Returns an error for a zero-byte block (see [`reject_zero_size`]).
     pub fn free(&mut self, offset: MemOffset, size: usize) -> Result<()> {
         self.inner.free(offset, size)
     }
@@ -1216,6 +1392,149 @@ impl FiveLevelPoolHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Assert that `config` is rejected by every pool constructor that takes
+    /// one. `FiveLevelPoolConfig` fields are all `pub`, so any of these values
+    /// is reachable from safe code.
+    fn expect_config_rejected(config: FiveLevelPoolConfig, why: &str) {
+        let err = NoLockingPool::new(config.clone())
+            .err()
+            .unwrap_or_else(|| panic!("NoLockingPool::new accepted a config that {why}"));
+        let message = err.to_string();
+        assert!(
+            MutexBasedPool::new(config.clone()).is_err(),
+            "MutexBasedPool::new accepted a config that {why}"
+        );
+        assert!(
+            LockFreePool::new(config.clone()).is_err(),
+            "LockFreePool::new accepted a config that {why}"
+        );
+        assert!(
+            ThreadLocalPool::new(config).is_err(),
+            "ThreadLocalPool::new accepted a config that {why}"
+        );
+        assert!(
+            message.to_lowercase().contains("align")
+                || message.to_lowercase().contains("capacity")
+                || message.to_lowercase().contains("size"),
+            "error should name the offending field, got: {message}"
+        );
+    }
+
+    /// C3.5. `alloc_from_fast_bin` computes `bin_index = size / alignment - 1`.
+    /// For a zero-byte request `align_up(0)` is 0, so the subtraction underflows:
+    /// a debug build panics with "attempt to subtract with overflow" and a
+    /// release build wraps to `usize::MAX`, silently falling through to a
+    /// zero-width carve from the end of the arena. `alloc(0)` is reachable from
+    /// safe public API on every level.
+    #[test]
+    fn test_zero_sized_allocation_is_rejected_not_wrapped() {
+        let mut level1 = NoLockingPool::new(FiveLevelPoolConfig::default()).unwrap();
+        assert!(
+            level1.alloc(0).is_err(),
+            "NoLockingPool::alloc(0) must return an error, not underflow the bin index"
+        );
+
+        let level2 = MutexBasedPool::new(FiveLevelPoolConfig::default()).unwrap();
+        assert!(
+            level2.alloc(0).is_err(),
+            "MutexBasedPool::alloc(0) must return an error"
+        );
+
+        let level3 = LockFreePool::new(FiveLevelPoolConfig::default()).unwrap();
+        assert!(
+            level3.alloc(0).is_err(),
+            "LockFreePool::alloc(0) must return an error"
+        );
+    }
+
+    /// C3.5. `FiveLevelPoolConfig::alignment` is a `pub` field with no
+    /// validation anywhere. `MemoryChunk::new` is the only thing that ever
+    /// looks at it, and it only rejects values `Layout` rejects. Zero reaches
+    /// `num_bins = max_fast_block_size / alignment` first and divides by zero.
+    #[test]
+    fn test_zero_alignment_is_rejected() {
+        expect_config_rejected(
+            FiveLevelPoolConfig {
+                alignment: 0,
+                ..FiveLevelPoolConfig::default()
+            },
+            "has a zero alignment",
+        );
+    }
+
+    /// C3.5. A non-power-of-two alignment makes `align_up`'s
+    /// `(size + a - 1) & !(a - 1)` mask meaningless, so the bin index and the
+    /// carve width stop agreeing.
+    #[test]
+    fn test_non_power_of_two_alignment_is_rejected() {
+        expect_config_rejected(
+            FiveLevelPoolConfig {
+                alignment: 24,
+                ..FiveLevelPoolConfig::default()
+            },
+            "has a non-power-of-two alignment",
+        );
+    }
+
+    /// C3.5. The free-list link is a `u32`, so an alignment below 4 cannot
+    /// hold it.
+    #[test]
+    fn test_alignment_below_the_link_width_is_rejected() {
+        expect_config_rejected(
+            FiveLevelPoolConfig {
+                alignment: 2,
+                ..FiveLevelPoolConfig::default()
+            },
+            "has an alignment smaller than the free-list link",
+        );
+    }
+
+    /// C3.5. `initial_capacity: 0` builds a valid zero-sized `Layout` and
+    /// hands it to `std::alloc::alloc`, which is undefined behaviour: the
+    /// `GlobalAlloc` contract requires `layout.size() != 0`. Oracle:
+    /// `make miri_pool`.
+    #[test]
+    fn test_zero_capacity_is_rejected_before_allocating() {
+        expect_config_rejected(
+            FiveLevelPoolConfig {
+                initial_capacity: 0,
+                ..FiveLevelPoolConfig::default()
+            },
+            "has a zero initial capacity",
+        );
+    }
+
+    /// C3.5. Offsets are `u32`. `MemOffset::new` guards the narrowing with a
+    /// `debug_assert!`, which is compiled out in release, so a pool larger than
+    /// 4 GiB silently truncates offsets and hands the same `MemOffset` out for
+    /// two different live blocks. Working agreement 4 forbids `debug_assert!`
+    /// as the only guard on a value reachable from safe public API, so the
+    /// capacity has to be capped at construction instead.
+    #[test]
+    fn test_capacity_beyond_the_offset_space_is_rejected() {
+        expect_config_rejected(
+            FiveLevelPoolConfig {
+                initial_capacity: (u32::MAX as usize) + 1,
+                ..FiveLevelPoolConfig::default()
+            },
+            "exceeds the 32-bit offset space",
+        );
+    }
+
+    /// C3.5. `max_fast_block_size` drives `num_bins`, and a value that is not a
+    /// whole number of `alignment` units leaves the top bin unreachable while
+    /// still sizing the vector for it.
+    #[test]
+    fn test_fast_block_size_must_be_a_multiple_of_alignment() {
+        expect_config_rejected(
+            FiveLevelPoolConfig {
+                max_fast_block_size: 100,
+                ..FiveLevelPoolConfig::default()
+            },
+            "has a fast block size that is not a multiple of the alignment",
+        );
+    }
 
     /// C3.2. `MemoryChunk::new` allocates with `config.alignment` (8 by
     /// default, 16 for `performance_optimized`), but `Drop` deallocated with
