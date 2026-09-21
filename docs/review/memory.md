@@ -1165,4 +1165,104 @@ change.
 
 `unsafe_audit.py`: 34 → 33 undocumented sites, **0 in `src/memory/`**.
 
-**Commit.** _pending_
+**Commit.** `f953869`
+---
+
+# Open findings — read, judged, not fixed
+
+Everything below was found by reading the file and is recorded here so the next pass
+starts from a list rather than from scratch. Nothing here is a guess: each entry names
+the lines and the concrete bad outcome. None of them has a test yet, which is exactly
+why they are still open — the working agreement is RED first, and a RED for several of
+these needs machinery this stage did not build (a dereferenceable `five_level_pool`, a
+TLS-teardown harness, a 1 GB-hugepage machine).
+
+## `five_level_pool.rs` — the whole file is blocked on one decision
+
+`alloc` returns `MemOffset`, a `#[repr(transparent)] pub struct MemOffset(u32)` whose
+field is private, whose `to_usize` and `is_null` are private, and whose only route to an
+address, `MemoryChunk::offset_ptr`, is a private method on a private struct. **No caller
+outside the module can dereference an allocation.** The only external consumer,
+`benches/five_level_pool_bench.rs`, never touches the memory. So this is an address-space
+bookkeeper, not an allocator, and the defects below are latent rather than exploitable.
+The owner has been asked to choose: make it real (public accessor + the fixes below),
+fix the internals without an accessor, or deprecate the module.
+
+| # | Lines | Finding |
+|---|---|---|
+| F1 | L612, L819, L1010 | The free-list link is written **into user memory**, at the exact address `alloc` returns, on all three levels. `lockfree_pool.rs` fixed the identical defect with an 8-byte `BLOCK_HEADER` (see A1.6); this file never did. Latent only because of the paragraph above. |
+| F2 | L388 | `LockFreeFreeListHead.head` is a bare `AtomicU32` with no generation tag: textbook ABA. `lockfree_pool.rs` packs `gen << 32 \| offset` into an `AtomicU64`. |
+| F3 | L937 | `alloc_from_fast_bin_lockfree` takes `self.memory.lock()` on **every CAS iteration**. The "lock-free" level is neither lock-free nor fast. |
+| F4 | L1108-1240 | `ThreadLocalPool` returns thread-local arena offsets **and** global-pool offsets as the same opaque `MemOffset`, and `free` routes on `offset.to_usize() < cache.arena.len()` (L1230). With the default configuration, local offset 0 and global offset 0 are both live and compare equal. |
+
+Traced and **refuted**, do not re-chase: the tail-rollback fast path in
+`NoLockingPool::free` can only fire for the topmost live block, and
+`alloc_from_fast_bin_lockfree`'s carve width does equal its recycle class width.
+
+## `tiered.rs`
+
+| # | Lines | Severity | Finding |
+|---|---|---|---|
+| T3 | L328 | MEDIUM | `total_bytes.fetch_add(size)` runs *before* the allocation can fail and is never decremented on failure, so a failing allocator reports ever-growing usage. |
+| T4 | L391, L452, L475 | MEDIUM | `MEDIUM_POOLS.with(..)` panics if reached during TLS teardown, and `deallocate` is the kind of method a `Drop` calls. `try_with` and an `Err` would be honest. A RED needs a TLS-destructor harness that forces MEDIUM_POOLS to be destroyed first (registration order is LIFO), which is why it is not in this range. |
+| T5 | L153 | MEDIUM | `expect("memory pool creation")` inside the `thread_local!` initializer. Unreachable as written — the config is a literal — but it is a panic in a TLS initializer. |
+| T6 | L211 | LOW | `63 - size.leading_zeros()` hardcodes 64-bit. On a 32-bit target every bucket lands ≥ 32, the `if bucket < 32` guard rejects all of them, and the histogram stays all-zero, so `get_allocation_pattern` silently always answers `Mixed`. Should be `usize::BITS - 1 - lz`. |
+| T7 | L415-427, L512-529 | LOW | `optimize_for_pattern()` is a `log::debug!` and `Ok(())`. The two `unsafe impl` SAFETY comments justify a field that does not exist (`bump_allocator`). |
+
+**Refuted**, do not re-chase: medium-pool carve width equals recycle width;
+`TieredAllocation` is auto-`!Send`, so the thread-local cross-thread-free hazard is
+unreachable; `Huge`/`Large` byte accounting is symmetric, because `MmapAllocation::size()`
+returns the requested size and not `actual_size`.
+
+## `mmap.rs` (after C3.14)
+
+| # | Lines | Severity | Finding |
+|---|---|---|---|
+| M2 | L126-150 | MEDIUM | The cache-hit path returns **dirty** memory while the fresh path returns kernel-zeroed pages, so what a caller sees depends on cache state. C3.16 hit the same split one layer up and closed it by zeroing; this one is still open. |
+| M3 | L124 | LOW | `(size + page_size - 1) & !(page_size - 1)` overflows for `size` within a page of `usize::MAX`. |
+| M4 | L273 | LOW | `sysconf(_SC_PAGESIZE) as usize` without checking for `-1`; a `-1` becomes `usize::MAX` and every rounding after it is wrong. |
+| M5 | L134, L213, L235, L254 | LOW | Counters are incremented before the syscall; `stats()` reads the cache under `try_lock` and reports `cached_regions: 0` when contended; `clear_cache` silently no-ops on a poisoned mutex. |
+
+**Refuted**: carve width equals recycle width; no dealloc-layout mismatch.
+
+## `hugepage.rs`
+
+| # | Lines | Severity | Finding |
+|---|---|---|---|
+| H1 | L175, L224 | LOW | `(size + page_size - 1)` debug-panics / wraps on overflow. |
+| H2 | L184 | MEDIUM | `MAP_HUGETLB` is passed without `MAP_HUGE_1GB`, so a pool configured for 1 GB hugepages silently gets 2 MB ones and the statistics report 1 GB. |
+| H3 | — | LOW | The `munmap` result is ignored. |
+| H4 | — | LOW | The allocation registry is written and never read. |
+
+**Refuted**: carve width equals recycle width.
+
+## `cache.rs` (after C3.9)
+
+`bind_to_numa_node` (L455-461) is `let _ = (ptr, size, node);`. **Every NUMA guarantee
+in this module is unimplemented**, while `numa_node()` reports the requested node back to
+the caller as though it had been honoured. The thread-to-node "hash" (L440) is
+`format!("{:?}", thread_id).len()`, which is the same value for almost every thread and
+heap-allocates a `String` on the `CacheAlignedVec::new()` path.
+
+## `threadlocal_pool.rs`
+
+`deallocate_to_global` (L329) and `deallocate_bypass_cache` (L443) **knowingly
+leak**, with `log::warn!("Bypassing secure pool deallocation - potential leak")` standing
+in for a fix. `size_to_list_index` puts a recycled pointer back by size alone, with no
+ownership or class tag. L606-611 skips the multithreading test "due to Send trait
+limitations".
+
+## `secure_pool.rs` (after C3.13)
+
+L987 has the hot/cold separation commented out while `enable_hot_cold_separation` stays
+in the public config; L1171 is `let optimal_node = -1; // Simplified: disable NUMA for
+now` under `enable_numa_awareness`; **L1192 increments `huge_page_allocs` and then falls
+through to the regular allocation**, so that counter reports huge pages that were never
+requested from the kernel.
+
+## `pool.rs` (after C3.12 and D8)
+
+`init_global_pools` (L405) validates its argument and then does nothing with it.
+`PooledVec::new()` (L454, L461) divides by `size_of::<T>()`, so a ZST panics, and `ptr: chunk.cast()`
+ignores `align_of::<T>()`, so an over-aligned `T` is misaligned — the same pair of
+defects C3.9 fixed in `CacheAlignedVec`.
