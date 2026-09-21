@@ -224,8 +224,76 @@ unsafe impl Send for FixedCapacityMemoryPool {}
 unsafe impl Sync for FixedCapacityMemoryPool {}
 
 impl FixedCapacityMemoryPool {
+    /// Reject a configuration the block layout cannot represent.
+    ///
+    /// Every block carries a [`BlockHeader`] written *at the block's own
+    /// address* while the block sits on a free list, so a block narrower than
+    /// the header would write past its own extent — and, for the last block,
+    /// past the end of the arena. `initialize_free_lists` does this for every
+    /// block during construction, so the overrun happens inside `new()` before
+    /// the caller ever sees a pointer.
+    ///
+    /// Blocks are carved at `i * max_block_size`, so the arena alignment only
+    /// propagates to every block when `max_block_size` is a multiple of
+    /// `alignment`; otherwise the pool silently breaks the alignment it
+    /// promises.
+    fn validate_config(config: &FixedCapacityPoolConfig) -> Result<()> {
+        if config.total_blocks == 0 {
+            return Err(ZiporaError::invalid_data(
+                "FixedCapacityPoolConfig::total_blocks must be non-zero",
+            ));
+        }
+        if !config.alignment.is_power_of_two() {
+            return Err(ZiporaError::invalid_data(format!(
+                "FixedCapacityPoolConfig::alignment ({}) must be a power of two",
+                config.alignment
+            )));
+        }
+        if config.alignment < align_of::<BlockHeader>() {
+            return Err(ZiporaError::invalid_data(format!(
+                "FixedCapacityPoolConfig::alignment ({}) must be at least {} (block header alignment)",
+                config.alignment,
+                align_of::<BlockHeader>()
+            )));
+        }
+        if config.max_block_size < size_of::<BlockHeader>() {
+            return Err(ZiporaError::invalid_data(format!(
+                "FixedCapacityPoolConfig::max_block_size ({}) must be at least {} (block header size)",
+                config.max_block_size,
+                size_of::<BlockHeader>()
+            )));
+        }
+        if config.max_block_size % config.alignment != 0 {
+            return Err(ZiporaError::invalid_data(format!(
+                "FixedCapacityPoolConfig::max_block_size ({}) must be a multiple of alignment ({}); \
+                 blocks are carved at multiples of max_block_size and would not meet the requested alignment",
+                config.max_block_size, config.alignment
+            )));
+        }
+        config
+            .total_blocks
+            .checked_mul(config.max_block_size)
+            .ok_or_else(|| {
+                ZiporaError::invalid_data(format!(
+                    "FixedCapacityPoolConfig capacity overflows usize: {} blocks x {} bytes",
+                    config.total_blocks, config.max_block_size
+                ))
+            })?;
+        Ok(())
+    }
+
     /// Create a new fixed capacity memory pool
+    ///
+    /// # Errors
+    ///
+    /// Returns `invalid_data` if the configuration cannot be represented by the
+    /// block layout: zero blocks, a non-power-of-two alignment, an alignment
+    /// below the block header's, a `max_block_size` smaller than the block
+    /// header or not a multiple of `alignment`, or a total capacity that
+    /// overflows `usize`. See [`Self::validate_config`].
     pub fn new(config: FixedCapacityPoolConfig) -> Result<Self> {
+        Self::validate_config(&config)?;
+
         // Generate size classes
         let size_classes = Self::generate_size_classes(config.max_block_size, config.alignment);
         let num_classes = size_classes.len();
@@ -779,6 +847,126 @@ impl Drop for FixedCapacityAllocation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `FixedCapacityMemoryPool` is not `Debug`, so `expect_err` is unavailable.
+    fn expect_config_rejected(config: FixedCapacityPoolConfig, why: &str) -> String {
+        match FixedCapacityMemoryPool::new(config) {
+            Ok(_) => panic!("{why}"),
+            Err(e) => e.to_string(),
+        }
+    }
+
+    /// C3.1 (CRITICAL, Miri-confirmed). `initialize_free_lists` writes a
+    /// 16-byte `BlockHeader` at the start of every block. With blocks narrower
+    /// than the header the last write runs past the end of the arena — inside
+    /// `new()`, from entirely safe code. Miri at the parent commit:
+    /// "Undefined Behavior: constructing invalid value of type
+    /// &mut BlockHeader: encountered a dangling reference (going beyond the
+    /// bounds of its allocation)" at `fixed_capacity_pool.rs:475`, reached from
+    /// `FixedCapacityMemoryPool::new`.
+    #[test]
+    fn test_config_rejects_block_narrower_than_block_header() {
+        for max_block_size in [4usize, 8, 12] {
+            let config = FixedCapacityPoolConfig {
+                max_block_size,
+                total_blocks: 2,
+                alignment: 4,
+                enable_stats: false,
+                eager_allocation: true,
+                secure_clear: false,
+            };
+            let err = expect_config_rejected(
+                config,
+                "max_block_size below size_of::<BlockHeader>() must be rejected",
+            );
+            assert!(
+                err.contains("block header size"),
+                "unexpected error for max_block_size {max_block_size}: {err}"
+            );
+        }
+
+        // Exactly the header size is representable and must still be accepted.
+        let config = FixedCapacityPoolConfig {
+            max_block_size: size_of::<BlockHeader>(),
+            total_blocks: 2,
+            alignment: align_of::<BlockHeader>(),
+            enable_stats: false,
+            eager_allocation: true,
+            secure_clear: false,
+        };
+        assert!(FixedCapacityMemoryPool::new(config).is_ok());
+    }
+
+    /// C3.1. `total_blocks == 0` makes the arena zero-sized; `std::alloc::alloc`
+    /// with a zero-sized layout is undefined behaviour, and the statistics path
+    /// divides by `total_blocks`.
+    #[test]
+    fn test_config_rejects_zero_total_blocks() {
+        let config = FixedCapacityPoolConfig {
+            total_blocks: 0,
+            ..FixedCapacityPoolConfig::default()
+        };
+        let err = expect_config_rejected(config, "total_blocks == 0 must be rejected");
+        assert!(err.contains("total_blocks"), "got: {err}");
+    }
+
+    /// C3.1. Blocks are carved at `i * max_block_size`, so the arena's
+    /// alignment only reaches every block when `max_block_size` is a multiple
+    /// of `alignment`. Otherwise the pool hands out pointers that violate the
+    /// alignment it was configured with.
+    #[test]
+    fn test_config_rejects_block_size_not_multiple_of_alignment() {
+        let config = FixedCapacityPoolConfig {
+            max_block_size: 100,
+            total_blocks: 4,
+            alignment: 64,
+            enable_stats: false,
+            eager_allocation: true,
+            secure_clear: false,
+        };
+        let err =
+            expect_config_rejected(config, "max_block_size 100 with alignment 64 must be rejected");
+        assert!(err.contains("multiple of alignment"), "got: {err}");
+    }
+
+    /// C3.1. A non-power-of-two alignment is not a valid `Layout` alignment and
+    /// makes the `& !(alignment - 1)` rounding in `generate_size_classes`
+    /// nonsense; an alignment below the header's would misalign the header.
+    #[test]
+    fn test_config_rejects_bad_alignment() {
+        let err = expect_config_rejected(
+            FixedCapacityPoolConfig {
+                alignment: 24,
+                ..FixedCapacityPoolConfig::default()
+            },
+            "non-power-of-two alignment must be rejected",
+        );
+        assert!(err.contains("power of two"), "got: {err}");
+
+        let err = expect_config_rejected(
+            FixedCapacityPoolConfig {
+                alignment: 2,
+                ..FixedCapacityPoolConfig::default()
+            },
+            "alignment below the block header's must be rejected",
+        );
+        assert!(err.contains("block header alignment"), "got: {err}");
+    }
+
+    /// C3.1. Every preset must survive its own validation.
+    #[test]
+    fn test_all_presets_pass_validation() {
+        for (name, config) in [
+            ("default", FixedCapacityPoolConfig::default()),
+            ("small_objects", FixedCapacityPoolConfig::small_objects()),
+            ("medium_objects", FixedCapacityPoolConfig::medium_objects()),
+            ("realtime", FixedCapacityPoolConfig::realtime()),
+            ("secure", FixedCapacityPoolConfig::secure()),
+        ] {
+            FixedCapacityMemoryPool::validate_config(&config)
+                .unwrap_or_else(|e| panic!("preset {name} failed validation: {e}"));
+        }
+    }
 
     #[test]
     fn test_pool_creation() {
