@@ -1309,6 +1309,44 @@ no longer compiles.
   allocate. `MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri test --lib
   memory::cache -- --test-threads=1`: **37 passed, 0 failed, 0 leaks**.
 
+**Commit.** `e5eb554`
+---
+
+## C3.20 — `HotColdSeparator::reorganize` swapped hot items into `cold_data` and cold items into `hot_data`
+
+**Scope.** `src/memory/cache_layout.rs`.
+
+**Finding.** `HotColdSeparator<T>` stored `hot_data: Vec<T>` and `cold_data: Vec<T>`, and a
+single flat `access_counts: Vec<usize>` appended to in *insertion* order. `reorganize()` then
+iterated `(i, &count)` over `self.access_counts` and treated `i < self.cold_data.len()` as
+the index of an element in `cold_data` and `i >= self.cold_data.len()` as `i -
+self.cold_data.len()` in `hot_data`, and never moved entries in `access_counts` when it moved
+items between the two vectors.
+
+In `test_hot_cold_reorganization` (`cache_layout.rs:901-919`), items `0..3` are inserted with
+`access_count = 2000` (into `hot_data`) and items `3..10` with `access_count = 100` (into
+`cold_data`, length 7). Calling `separator.reorganize()` saw `access_counts[0..3] == 2000` at
+`i < 7`, promoted `cold_data[0..3]` (`"item3"`, `"item4"`, `"item5"`, all cold!) into
+`hot_data`, and then saw `access_counts[7..10] == 100` at `i >= 7` and demoted
+`hot_data[0..3]` (`"item0"`, `"item1"`, `"item2"`, the only hot items!) into `cold_data`.
+The test passed only because it asserted `separator.hot_slice().len() == 3` *before* calling
+`reorganize()` and afterwards checked only `stats.total_accesses > 0`.
+
+**RED (watched).**
+
+```
+thread 'memory::cache_layout::tests::test_hot_cold_reorganization'
+  panicked at src/memory/cache_layout.rs:1005:9:
+assertion `left == right` failed: reorganize must keep the hot items in hot_slice, not swap them with cold_slice
+  left: ["item5", "item4", "item3"]
+ right: ["item0", "item1", "item2"]
+```
+
+**Fix.** Replace the single insertion-order `access_counts` vector with `hot_counts:
+Vec<usize>` (parallel to `hot_data`) and `cold_counts: Vec<usize>` (parallel to `cold_data`),
+moving each item's count alongside the item in `reorganize()`. Also removes one
+`simplified` honesty marker (`honesty_audit.py`: 120 → 119).
+
 **Commit.** _pending_
 ---
 

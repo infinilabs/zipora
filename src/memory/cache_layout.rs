@@ -421,8 +421,9 @@ pub enum PrefetchHint {
 #[derive(Debug)]
 pub struct HotColdSeparator<T> {
     hot_data: Vec<T>,
+    hot_counts: Vec<usize>,
     cold_data: Vec<T>,
-    access_counts: Vec<usize>,
+    cold_counts: Vec<usize>,
     config: CacheLayoutConfig,
 }
 
@@ -431,8 +432,9 @@ impl<T> HotColdSeparator<T> {
     pub fn new(config: CacheLayoutConfig) -> Self {
         Self {
             hot_data: Vec::new(),
+            hot_counts: Vec::new(),
             cold_data: Vec::new(),
-            access_counts: Vec::new(),
+            cold_counts: Vec::new(),
             config,
         }
     }
@@ -441,10 +443,11 @@ impl<T> HotColdSeparator<T> {
     pub fn insert(&mut self, item: T, access_count: usize) {
         if self.config.enable_hot_cold_separation && access_count >= self.config.hot_threshold {
             self.hot_data.push(item);
+            self.hot_counts.push(access_count);
         } else {
             self.cold_data.push(item);
+            self.cold_counts.push(access_count);
         }
-        self.access_counts.push(access_count);
     }
 
     /// Get hot data slice
@@ -457,44 +460,45 @@ impl<T> HotColdSeparator<T> {
         &self.cold_data
     }
 
-    /// Reorganize data based on access patterns
+    /// Reorganize data between the hot and cold partitions according to each
+    /// item's own access count.
+    ///
+    /// C3.20: previously `access_counts` was a single flat `Vec<usize>` in
+    /// insertion order while `reorganize` indexed `0..cold_data.len()` as
+    /// `cold_data` and `cold_data.len()..` as `hot_data`, so calling
+    /// `reorganize` after inserting hot items ahead of cold items evicted the
+    /// hot items into `cold_data` and promoted cold items into `hot_data`.
+    /// Pairing `hot_counts` with `hot_data` and `cold_counts` with `cold_data`
+    /// keeps each item attached to its own count across moves.
     pub fn reorganize(&mut self) {
         if !self.config.enable_hot_cold_separation {
             return;
         }
 
-        // Move frequently accessed cold data to hot
-        let mut cold_to_hot = Vec::new();
-        let mut hot_to_cold = Vec::new();
+        let promote_at = self.config.hot_threshold;
+        let demote_below = self.config.hot_threshold / 2;
 
-        // This is a simplified reorganization - in practice, you'd track
-        // actual access patterns over time
-        for (i, &count) in self.access_counts.iter().enumerate() {
-            if count >= self.config.hot_threshold * 2 {
-                // Very hot data should be in hot section
-                if i < self.cold_data.len() {
-                    cold_to_hot.push(i);
-                }
-            } else if count < self.config.hot_threshold / 2 {
-                // Cold data should be in cold section
-                if i >= self.cold_data.len() {
-                    hot_to_cold.push(i - self.cold_data.len());
-                }
-            }
-        }
-
-        // Perform the reorganization
-        for &i in cold_to_hot.iter().rev() {
-            if i < self.cold_data.len() {
+        let mut i = 0;
+        while i < self.cold_data.len() {
+            if self.cold_counts[i] >= promote_at {
                 let item = self.cold_data.remove(i);
+                let count = self.cold_counts.remove(i);
                 self.hot_data.push(item);
+                self.hot_counts.push(count);
+            } else {
+                i += 1;
             }
         }
 
-        for &i in hot_to_cold.iter().rev() {
-            if i < self.hot_data.len() {
-                let item = self.hot_data.remove(i);
+        let mut j = 0;
+        while j < self.hot_data.len() {
+            if self.hot_counts[j] < demote_below {
+                let item = self.hot_data.remove(j);
+                let count = self.hot_counts.remove(j);
                 self.cold_data.push(item);
+                self.cold_counts.push(count);
+            } else {
+                j += 1;
             }
         }
     }
@@ -504,7 +508,12 @@ impl<T> HotColdSeparator<T> {
         HotColdStats {
             hot_items: self.hot_data.len(),
             cold_items: self.cold_data.len(),
-            total_accesses: self.access_counts.iter().sum(),
+            total_accesses: self
+                .hot_counts
+                .iter()
+                .chain(self.cold_counts.iter())
+                .copied()
+                .sum(),
             separation_enabled: self.config.enable_hot_cold_separation,
         }
     }
@@ -993,10 +1002,25 @@ mod tests {
         assert_eq!(separator.hot_slice().len(), 3);
         assert_eq!(separator.cold_slice().len(), 7);
 
-        // Test reorganization (simplified)
         separator.reorganize();
 
+        // C3.20: items 0..3 had access_count = 2000 (2x hot_threshold) and
+        // items 3..10 had access_count = 100 (1/10th hot_threshold). Before the
+        // fix, `reorganize()` indexed a flat insertion-order `access_counts`
+        // vector as if `0..cold_data.len()` were `cold_data`'s counts and
+        // `cold_data.len()..` were `hot_data`'s counts -- evicting all three
+        // hot items into `cold_data` and promoting `"item3".."item5"` into
+        // `hot_data`.
+        assert_eq!(
+            separator.hot_slice(),
+            &["item0".to_string(), "item1".to_string(), "item2".to_string()],
+            "reorganize must keep the hot items in hot_slice, not swap them with cold_slice"
+        );
+        assert_eq!(separator.cold_slice().len(), 7);
+
         let stats = separator.separation_stats();
-        assert!(stats.total_accesses > 0);
+        assert_eq!(stats.hot_items, 3);
+        assert_eq!(stats.cold_items, 7);
+        assert_eq!(stats.total_accesses, 3 * 2000 + 7 * 100);
     }
 }
