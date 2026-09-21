@@ -40,7 +40,9 @@ fn bench_single_threaded_throughput(c: &mut Criterion) {
             for _ in 0..10000 {
                 let ptr = pool.allocate().unwrap();
                 black_box(ptr);
-                pool.deallocate(ptr).unwrap();
+                // SAFETY: `ptr` came from this pool's `allocate` just above
+                // and is freed exactly once.
+                unsafe { pool.deallocate(ptr) }.unwrap();
             }
         });
     });
@@ -96,7 +98,9 @@ fn bench_multi_threaded_throughput(c: &mut Criterion) {
                                 for _ in 0..1000 {
                                     let ptr = pool.allocate().unwrap();
                                     black_box(ptr);
-                                    pool.deallocate(ptr).unwrap();
+                                    // SAFETY: `ptr` came from this pool's
+                                    // `allocate` just above and is freed once.
+                                    unsafe { pool.deallocate(ptr) }.unwrap();
                                 }
                             })
                         })

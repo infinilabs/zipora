@@ -190,7 +190,9 @@ fn benchmark_pool_performance(c: &mut Criterion) {
                 unsafe {
                     chunk.as_ptr().write(42);
                 }
-                pool.deallocate(chunk).unwrap();
+                // SAFETY: `chunk` came from this pool's `allocate` just
+                // above and is freed exactly once.
+                unsafe { pool.deallocate(chunk) }.unwrap();
                 black_box(());
             });
         });
@@ -205,7 +207,9 @@ fn benchmark_pool_performance(c: &mut Criterion) {
                 }
 
                 for chunk in chunks {
-                    pool.deallocate(chunk).unwrap();
+                    // SAFETY: each `chunk` came from this pool, appears once
+                    // in `chunks`, and is freed exactly once.
+                    unsafe { pool.deallocate(chunk) }.unwrap();
                 }
                 black_box(());
             });
@@ -221,12 +225,16 @@ fn benchmark_pool_performance(c: &mut Criterion) {
                 }
             }
             for chunk in warmup_chunks {
-                let _ = pool.deallocate(chunk);
+                // SAFETY: each `chunk` came from this pool, appears once in
+                // `warmup_chunks`, and is freed exactly once.
+                let _ = unsafe { pool.deallocate(chunk) };
             }
 
             b.iter(|| {
                 let chunk = pool.allocate().unwrap();
-                pool.deallocate(chunk).unwrap();
+                // SAFETY: `chunk` came from this pool's `allocate` just above
+                // and is freed exactly once.
+                unsafe { pool.deallocate(chunk) }.unwrap();
                 black_box(());
             });
         });
