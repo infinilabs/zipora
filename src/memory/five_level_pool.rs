@@ -80,8 +80,6 @@ pub struct FiveLevelPoolConfig {
     pub alignment: usize,
     /// Initial capacity for the memory pool
     pub initial_capacity: usize,
-    /// Maximum number of skip list levels for large blocks
-    pub max_skip_levels: usize,
     /// Thread-local arena size for Level 4
     pub arena_size: usize,
     /// Fixed capacity for Level 5 (0 = use dynamic)
@@ -104,7 +102,6 @@ impl Default for FiveLevelPoolConfig {
             max_fast_block_size: 32 * 1024, // 32KB
             alignment: 8,
             initial_capacity: 1024 * 1024, // 1MB
-            max_skip_levels: 8,
             arena_size: 2 * 1024 * 1024, // 2MB
             fixed_capacity: None,
             enable_cache_alignment: true,
@@ -241,8 +238,113 @@ impl FiveLevelPoolConfig {
             enable_numa_awareness: false,
             enable_huge_pages: false,
             huge_page_threshold: 8 * 1024 * 1024, // 8MB
-            ..Default::default()
         }
+    }
+}
+
+/// Address-ordered, coalescing, best-fit free list for blocks above
+/// `max_fast_block_size`.
+///
+/// D3. Levels 1-3 each shipped a stub here: `NoLockingPool::free_to_skip_list`,
+/// `MutexBasedPool::free_to_skip_list` and `LockFreePool::free_to_huge_mutex`
+/// all bound the offset as `_offset` and dropped it behind a
+/// `// TODO: Implement skip list insertion` marker, while still charging
+/// `used_memory -= size` and `fragment_size += size`, and the matching
+/// `alloc_from_skip_list` always bumped from the end of the arena. Every free
+/// above `max_fast_block_size` lost its block permanently: a 1 MiB arena
+/// cycling one 64 KiB block ran out of memory on the sixteenth iteration.
+///
+/// This is deliberately *not* the skip list the marker promised.
+/// `lockfree_pool.rs` already solves the identical problem with a plain
+/// best-fit `Vec` behind a mutex, and hand-rolling a concurrent skip list would
+/// add new `unsafe` surface during a pass whose purpose is to remove it. The
+/// pool keeps its name: "five level" counts concurrency levels, not skip-list
+/// levels.
+///
+/// Two invariants hold at all times:
+/// - `regions` is sorted by offset and no two entries are adjacent or
+///   overlapping, because [`Self::free`] merges with both neighbours;
+/// - a carve returns exactly the requested width, because [`Self::alloc`]
+///   returns any remainder to the list instead of handing it to the caller.
+///   That is what keeps the carve width equal to the recycle width: a later
+///   `free(offset, size)` files back precisely what was taken, so a region
+///   cannot shrink across a reuse cycle.
+#[derive(Debug, Default)]
+struct HugeFreeList {
+    /// Free regions as `(offset, size)`.
+    regions: Vec<(usize, usize)>,
+    /// Sum of `size` over `regions`, maintained incrementally.
+    total_bytes: usize,
+}
+
+impl HugeFreeList {
+    /// Carve exactly `size` bytes out of the smallest region that fits.
+    ///
+    /// Returns `None` if no region is large enough, in which case the caller
+    /// falls back to bumping the end of the arena.
+    fn alloc(&mut self, size: usize) -> Option<usize> {
+        let index = self
+            .regions
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, region_size))| *region_size >= size)
+            .min_by_key(|(_, (_, region_size))| *region_size)
+            .map(|(index, _)| index)?;
+
+        let (offset, region_size) = self.regions[index];
+        if region_size == size {
+            self.regions.remove(index);
+        } else {
+            // Keep the tail, hand back the head.
+            self.regions[index] = (offset + size, region_size - size);
+        }
+        self.total_bytes -= size;
+        Some(offset)
+    }
+
+    /// Return `[offset, offset + size)` to the list, merging it with either
+    /// neighbour it touches.
+    fn free(&mut self, offset: usize, size: usize) {
+        let index = self.regions.partition_point(|(start, _)| *start < offset);
+        debug_assert!(
+            index == self.regions.len() || offset + size <= self.regions[index].0,
+            "huge free list: [{offset}, {}) overlaps the region above it",
+            offset + size
+        );
+        debug_assert!(
+            index == 0 || self.regions[index - 1].0 + self.regions[index - 1].1 <= offset,
+            "huge free list: [{offset}, {}) overlaps the region below it",
+            offset + size
+        );
+
+        self.regions.insert(index, (offset, size));
+        self.total_bytes += size;
+
+        // Merge upwards first so the index of the inserted entry stays valid.
+        if index + 1 < self.regions.len() {
+            let (next_start, next_size) = self.regions[index + 1];
+            if offset + size == next_start {
+                self.regions[index].1 += next_size;
+                self.regions.remove(index + 1);
+            }
+        }
+        if index > 0 {
+            let (prev_start, prev_size) = self.regions[index - 1];
+            if prev_start + prev_size == offset {
+                self.regions[index - 1].1 += self.regions[index].1;
+                self.regions.remove(index);
+            }
+        }
+    }
+
+    /// Total bytes currently held in the list.
+    fn total_bytes(&self) -> usize {
+        self.total_bytes
+    }
+
+    /// Number of distinct (non-adjacent) free regions.
+    fn node_count(&self) -> usize {
+        self.regions.len()
     }
 }
 
@@ -381,8 +483,8 @@ pub struct NoLockingPool {
     free_lists: Vec<FreeListHead>,
 
     fragment_size: usize,
-    huge_size_sum: usize,
-    huge_node_count: usize,
+    /// Free blocks above `max_fast_block_size`. See [`HugeFreeList`].
+    huge_free_list: HugeFreeList,
     used_memory: usize, // Track actual used memory (high-water mark minus freed blocks)
 }
 
@@ -403,8 +505,7 @@ impl NoLockingPool {
             free_lists,
 
             fragment_size: 0,
-            huge_size_sum: 0,
-            huge_node_count: 0,
+            huge_free_list: HugeFreeList::default(),
             used_memory: 0,
         })
     }
@@ -422,7 +523,7 @@ impl NoLockingPool {
         if aligned_size <= self.config.max_fast_block_size {
             self.alloc_from_fast_bin(aligned_size)
         } else {
-            self.alloc_from_skip_list(aligned_size)
+            self.alloc_huge(aligned_size)
         }
     }
 
@@ -445,7 +546,7 @@ impl NoLockingPool {
         if aligned_size <= self.config.max_fast_block_size {
             self.free_to_fast_bin(offset, aligned_size)
         } else {
-            self.free_to_skip_list(offset, aligned_size)
+            self.free_huge(offset, aligned_size)
         }
     }
 
@@ -488,10 +589,14 @@ impl NoLockingPool {
         Ok(offset)
     }
 
-    fn alloc_from_skip_list(&mut self, size: usize) -> Result<MemOffset> {
-        // Search skip list for suitable block
-        // For now, fall back to end allocation
-        // TODO: Implement full skip list search
+    /// Serve a block above `max_fast_block_size` from the huge free list,
+    /// falling back to the end of the arena.
+    fn alloc_huge(&mut self, size: usize) -> Result<MemOffset> {
+        if let Some(offset) = self.huge_free_list.alloc(size) {
+            self.fragment_size -= size;
+            self.used_memory += size;
+            return Ok(MemOffset::new(offset));
+        }
         self.alloc_from_end(size)
     }
 
@@ -516,12 +621,10 @@ impl NoLockingPool {
         Ok(())
     }
 
-    fn free_to_skip_list(&mut self, _offset: MemOffset, size: usize) -> Result<()> {
-        // TODO: Implement skip list insertion
-        // For now, just track statistics
+    /// Return a block above `max_fast_block_size` to the huge free list.
+    fn free_huge(&mut self, offset: MemOffset, size: usize) -> Result<()> {
+        self.huge_free_list.free(offset.to_usize(), size);
         self.fragment_size += size;
-        self.huge_size_sum += size;
-        self.huge_node_count += 1;
         self.used_memory -= size; // Decrease used memory when freed
         Ok(())
     }
@@ -531,8 +634,8 @@ impl NoLockingPool {
             total_capacity: self.memory.capacity,
             used_memory: self.used_memory,
             fragment_size: self.fragment_size,
-            huge_size_sum: self.huge_size_sum,
-            huge_node_count: self.huge_node_count,
+            huge_size_sum: self.huge_free_list.total_bytes(),
+            huge_node_count: self.huge_free_list.node_count(),
             free_list_count: self.free_lists.len(),
         }
     }
@@ -574,7 +677,8 @@ pub struct MutexBasedPool {
     free_lists: Vec<Mutex<FreeListHead>>,
 
     fragment_size: AtomicUsize,
-    huge_mutex: Mutex<(usize, usize)>, // (huge_size_sum, huge_node_count)
+    /// Free blocks above `max_fast_block_size`. See [`HugeFreeList`].
+    huge_free_list: Mutex<HugeFreeList>,
 }
 
 impl MutexBasedPool {
@@ -596,7 +700,7 @@ impl MutexBasedPool {
             free_lists,
 
             fragment_size: AtomicUsize::new(0),
-            huge_mutex: Mutex::new((0, 0)),
+            huge_free_list: Mutex::new(HugeFreeList::default()),
         })
     }
 
@@ -611,7 +715,7 @@ impl MutexBasedPool {
         if aligned_size <= self.config.max_fast_block_size {
             self.alloc_from_fast_bin(aligned_size)
         } else {
-            self.alloc_from_skip_list(aligned_size)
+            self.alloc_huge(aligned_size)
         }
     }
 
@@ -625,7 +729,7 @@ impl MutexBasedPool {
         if aligned_size <= self.config.max_fast_block_size {
             self.free_to_fast_bin(offset, aligned_size)
         } else {
-            self.free_to_skip_list(offset, aligned_size)
+            self.free_huge(offset, aligned_size)
         }
     }
 
@@ -670,8 +774,22 @@ impl MutexBasedPool {
         Ok(offset)
     }
 
-    fn alloc_from_skip_list(&self, size: usize) -> Result<MemOffset> {
-        // For now, allocate from end
+    /// Serve a block above `max_fast_block_size` from the huge free list,
+    /// falling back to the end of the arena.
+    ///
+    /// The huge-list lock is released before the memory lock is taken, so the
+    /// two are never held at once and cannot deadlock against each other.
+    fn alloc_huge(&self, size: usize) -> Result<MemOffset> {
+        {
+            let mut huge = self.huge_free_list.lock().map_err(|e| {
+                ZiporaError::resource_busy(format!("Huge free list mutex poisoned: {}", e))
+            })?;
+            if let Some(offset) = huge.alloc(size) {
+                self.fragment_size.fetch_sub(size, Ordering::Relaxed);
+                return Ok(MemOffset::new(offset));
+            }
+        }
+
         let mut memory = self
             .memory
             .lock()
@@ -709,27 +827,26 @@ impl MutexBasedPool {
         Ok(())
     }
 
-    fn free_to_skip_list(&self, _offset: MemOffset, size: usize) -> Result<()> {
+    /// Return a block above `max_fast_block_size` to the huge free list.
+    fn free_huge(&self, offset: MemOffset, size: usize) -> Result<()> {
         self.fragment_size.fetch_add(size, Ordering::Relaxed);
-        let mut huge_stats = self
-            .huge_mutex
-            .lock()
-            .map_err(|e| ZiporaError::resource_busy(format!("Huge mutex poisoned: {}", e)))?;
-        huge_stats.0 += size;
-        huge_stats.1 += 1;
+        let mut huge = self.huge_free_list.lock().map_err(|e| {
+            ZiporaError::resource_busy(format!("Huge free list mutex poisoned: {}", e))
+        })?;
+        huge.free(offset.to_usize(), size);
         Ok(())
     }
 
     pub fn stats(&self) -> PoolStats {
         let memory = self.memory.lock().unwrap_or_else(|e| e.into_inner());
-        let huge_stats = self.huge_mutex.lock().unwrap_or_else(|e| e.into_inner());
+        let huge = self.huge_free_list.lock().unwrap_or_else(|e| e.into_inner());
 
         PoolStats {
             total_capacity: memory.capacity,
             used_memory: memory.size,
             fragment_size: self.fragment_size.load(Ordering::Relaxed),
-            huge_size_sum: huge_stats.0,
-            huge_node_count: huge_stats.1,
+            huge_size_sum: huge.total_bytes(),
+            huge_node_count: huge.node_count(),
             free_list_count: self.free_lists.len(),
         }
     }
@@ -740,7 +857,7 @@ impl MutexBasedPool {
 // 2. `memory: Arc<Mutex<MemoryChunk>>` - Arc<Mutex<T>> is Send if T is Send.
 // 3. `free_lists: Vec<Mutex<FreeListHead>>` - Mutex<T> is Send if T is Send.
 // 4. `fragment_size: AtomicUsize` - AtomicUsize is Send.
-// 5. `huge_mutex: Mutex<...>` - Mutex<T> is Send.
+// 5. `huge_free_list: Mutex<HugeFreeList>` - Mutex<T> is Send if T is Send.
 unsafe impl Send for MutexBasedPool {}
 
 // SAFETY: MutexBasedPool is Sync because:
@@ -757,7 +874,9 @@ pub struct LockFreePool {
     memory: Arc<Mutex<MemoryChunk>>, // Still need mutex for memory expansion
     free_lists: Vec<LockFreeFreeListHead>,
     fragment_size: AtomicUsize,
-    huge_mutex: Mutex<(usize, usize)>, // Huge blocks still use mutex
+    /// Free blocks above `max_fast_block_size`. See [`HugeFreeList`]. Huge
+    /// blocks are rare and large, so they stay behind a mutex.
+    huge_free_list: Mutex<HugeFreeList>,
 }
 
 impl LockFreePool {
@@ -778,7 +897,7 @@ impl LockFreePool {
             memory: Arc::new(Mutex::new(memory)),
             free_lists,
             fragment_size: AtomicUsize::new(0),
-            huge_mutex: Mutex::new((0, 0)),
+            huge_free_list: Mutex::new(HugeFreeList::default()),
         })
     }
 
@@ -793,7 +912,7 @@ impl LockFreePool {
         if aligned_size <= self.config.max_fast_block_size {
             self.alloc_from_fast_bin_lockfree(aligned_size)
         } else {
-            self.alloc_from_huge_mutex(aligned_size)
+            self.alloc_huge(aligned_size)
         }
     }
 
@@ -807,7 +926,7 @@ impl LockFreePool {
         if aligned_size <= self.config.max_fast_block_size {
             self.free_to_fast_bin_lockfree(offset, aligned_size)
         } else {
-            self.free_to_huge_mutex(offset, aligned_size)
+            self.free_huge(offset, aligned_size)
         }
     }
 
@@ -915,7 +1034,22 @@ impl LockFreePool {
         Ok(())
     }
 
-    fn alloc_from_huge_mutex(&self, size: usize) -> Result<MemOffset> {
+    /// Serve a block above `max_fast_block_size` from the huge free list,
+    /// falling back to the end of the arena.
+    ///
+    /// The huge-list lock is released before the memory lock is taken, so the
+    /// two are never held at once and cannot deadlock against each other.
+    fn alloc_huge(&self, size: usize) -> Result<MemOffset> {
+        {
+            let mut huge = self.huge_free_list.lock().map_err(|e| {
+                ZiporaError::resource_busy(format!("Huge free list mutex poisoned: {}", e))
+            })?;
+            if let Some(offset) = huge.alloc(size) {
+                self.fragment_size.fetch_sub(size, Ordering::Relaxed);
+                return Ok(MemOffset::new(offset));
+            }
+        }
+
         let mut memory = self
             .memory
             .lock()
@@ -929,27 +1063,26 @@ impl LockFreePool {
         Ok(offset)
     }
 
-    fn free_to_huge_mutex(&self, _offset: MemOffset, size: usize) -> Result<()> {
+    /// Return a block above `max_fast_block_size` to the huge free list.
+    fn free_huge(&self, offset: MemOffset, size: usize) -> Result<()> {
         self.fragment_size.fetch_add(size, Ordering::Relaxed);
-        let mut huge_stats = self
-            .huge_mutex
-            .lock()
-            .map_err(|e| ZiporaError::resource_busy(format!("Huge mutex poisoned: {}", e)))?;
-        huge_stats.0 += size;
-        huge_stats.1 += 1;
+        let mut huge = self.huge_free_list.lock().map_err(|e| {
+            ZiporaError::resource_busy(format!("Huge free list mutex poisoned: {}", e))
+        })?;
+        huge.free(offset.to_usize(), size);
         Ok(())
     }
 
     pub fn stats(&self) -> PoolStats {
         let memory = self.memory.lock().unwrap_or_else(|e| e.into_inner());
-        let huge_stats = self.huge_mutex.lock().unwrap_or_else(|e| e.into_inner());
+        let huge = self.huge_free_list.lock().unwrap_or_else(|e| e.into_inner());
 
         PoolStats {
             total_capacity: memory.capacity,
             used_memory: memory.size,
             fragment_size: self.fragment_size.load(Ordering::Relaxed),
-            huge_size_sum: huge_stats.0,
-            huge_node_count: huge_stats.1,
+            huge_size_sum: huge.total_bytes(),
+            huge_node_count: huge.node_count(),
             free_list_count: self.free_lists.len(),
         }
     }
@@ -960,7 +1093,7 @@ impl LockFreePool {
 // 2. `memory: Arc<Mutex<MemoryChunk>>` - Arc<Mutex<T>> is Send if T is Send.
 // 3. `free_lists: Vec<LockFreeFreeListHead>` - Contains only atomics.
 // 4. `fragment_size: AtomicUsize` - AtomicUsize is Send.
-// 5. `huge_mutex: Mutex<...>` - Mutex is Send.
+// 5. `huge_free_list: Mutex<HugeFreeList>` - Mutex<T> is Send if T is Send.
 unsafe impl Send for LockFreePool {}
 
 // SAFETY: LockFreePool is Sync because:
@@ -1534,6 +1667,206 @@ mod tests {
             },
             "has a fast block size that is not a multiple of the alignment",
         );
+    }
+
+    /// Deterministic xorshift64* so the randomized model test below is
+    /// reproducible without a dependency.
+    fn xorshift(state: &mut u64) -> u64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        *state
+    }
+
+    /// Larger than `FiveLevelPoolConfig::default().max_fast_block_size`
+    /// (32 KiB), so every request of this size takes the huge path.
+    const HUGE: usize = 64 * 1024;
+
+    /// C3.6 (D3). `NoLockingPool::free_to_skip_list`,
+    /// `MutexBasedPool::free_to_skip_list` and `LockFreePool::free_to_huge_mutex`
+    /// all took the offset by `_offset` and dropped it, behind a
+    /// `// TODO: Implement skip list insertion` marker, while still charging
+    /// `used_memory -= size` and `fragment_size += size`. The matching
+    /// `alloc_from_skip_list` always bumped from the end of the arena. Every
+    /// free above `max_fast_block_size` therefore lost its block permanently,
+    /// and a pool that reports plenty of free capacity runs out of memory.
+    ///
+    /// Each iteration parks a small guard block above the huge one so that
+    /// `free` cannot take the tail-rollback fast path and has to go through
+    /// the huge free list.
+    #[test]
+    fn test_large_blocks_are_reused_after_free_level1() {
+        let mut pool = NoLockingPool::new(FiveLevelPoolConfig {
+            initial_capacity: 1024 * 1024,
+            ..FiveLevelPoolConfig::default()
+        })
+        .unwrap();
+
+        let mut guards = Vec::new();
+        for iteration in 0..100 {
+            let huge = pool.alloc(HUGE).unwrap_or_else(|e| {
+                panic!(
+                    "iteration {iteration}: a 64 KiB allocation failed in a 1 MiB \
+                     arena after {iteration} complete alloc/free cycles: {e}"
+                )
+            });
+            guards.push(pool.alloc(64).unwrap());
+            pool.free(huge, HUGE).unwrap();
+        }
+        drop(guards);
+    }
+
+    /// C3.6 (D3). Same leak, Level 2.
+    #[test]
+    fn test_large_blocks_are_reused_after_free_level2() {
+        let pool = MutexBasedPool::new(FiveLevelPoolConfig {
+            initial_capacity: 1024 * 1024,
+            ..FiveLevelPoolConfig::default()
+        })
+        .unwrap();
+
+        for iteration in 0..100 {
+            let huge = pool.alloc(HUGE).unwrap_or_else(|e| {
+                panic!("iteration {iteration}: 64 KiB allocation failed: {e}")
+            });
+            pool.free(huge, HUGE).unwrap();
+        }
+    }
+
+    /// C3.6 (D3). Same leak, Level 3.
+    #[test]
+    fn test_large_blocks_are_reused_after_free_level3() {
+        let pool = LockFreePool::new(FiveLevelPoolConfig {
+            initial_capacity: 1024 * 1024,
+            ..FiveLevelPoolConfig::default()
+        })
+        .unwrap();
+
+        for iteration in 0..100 {
+            let huge = pool.alloc(HUGE).unwrap_or_else(|e| {
+                panic!("iteration {iteration}: 64 KiB allocation failed: {e}")
+            });
+            pool.free(huge, HUGE).unwrap();
+        }
+    }
+
+    /// C3.6 (D3). Adjacent freed regions must coalesce, otherwise an arena that
+    /// has been cycled through small huge-path blocks can never satisfy a
+    /// larger one again even though the bytes are contiguous and free.
+    #[test]
+    fn test_adjacent_large_frees_coalesce() {
+        let mut pool = NoLockingPool::new(FiveLevelPoolConfig {
+            initial_capacity: 1024 * 1024,
+            ..FiveLevelPoolConfig::default()
+        })
+        .unwrap();
+
+        // Three adjacent huge blocks, plus a guard so no free hits the
+        // tail-rollback path.
+        let first = pool.alloc(HUGE).unwrap();
+        let second = pool.alloc(HUGE).unwrap();
+        let third = pool.alloc(HUGE).unwrap();
+        let _guard = pool.alloc(64).unwrap();
+        assert_eq!(second.to_usize(), first.to_usize() + HUGE);
+        assert_eq!(third.to_usize(), second.to_usize() + HUGE);
+
+        pool.free(second, HUGE).unwrap();
+        pool.free(first, HUGE).unwrap();
+        pool.free(third, HUGE).unwrap();
+
+        let merged = pool.alloc(3 * HUGE).unwrap();
+        assert_eq!(
+            merged.to_usize(),
+            first.to_usize(),
+            "three adjacent 64 KiB frees must coalesce into one 192 KiB region"
+        );
+    }
+
+    /// C3.6 (D3). The huge path must carve exactly what was asked for. If a
+    /// best-fit region larger than the request were handed over whole, the
+    /// caller's `free(offset, size)` would file back only `size` and the
+    /// region would shrink on every reuse cycle -- the carve/recycle width
+    /// mismatch that this stage is auditing for.
+    #[test]
+    fn test_huge_carve_width_equals_recycle_width() {
+        let mut pool = NoLockingPool::new(FiveLevelPoolConfig {
+            initial_capacity: 1024 * 1024,
+            ..FiveLevelPoolConfig::default()
+        })
+        .unwrap();
+
+        let big = pool.alloc(256 * 1024).unwrap();
+        let _guard = pool.alloc(64).unwrap();
+        pool.free(big, 256 * 1024).unwrap();
+
+        // Carve a smaller block out of the freed region, hand it straight
+        // back, and require the region to be whole again.
+        for cycle in 0..8 {
+            let small = pool.alloc(HUGE).unwrap();
+            assert_eq!(
+                small.to_usize(),
+                big.to_usize(),
+                "cycle {cycle}: best fit should reuse the head of the freed region"
+            );
+            pool.free(small, HUGE).unwrap();
+            let whole = pool.alloc(256 * 1024).unwrap_or_else(|e| {
+                panic!("cycle {cycle}: the 256 KiB region shrank across reuse: {e}")
+            });
+            assert_eq!(whole.to_usize(), big.to_usize());
+            pool.free(whole, 256 * 1024).unwrap();
+        }
+    }
+
+    /// C3.6 (D3). Randomized model check: no two live blocks may ever overlap,
+    /// whichever path served them. Interleaves fast-bin and huge-path traffic
+    /// so the tail-rollback fast path, the fast bins and the huge free list all
+    /// participate.
+    #[test]
+    fn test_no_two_live_blocks_ever_overlap() {
+        let mut pool = NoLockingPool::new(FiveLevelPoolConfig {
+            initial_capacity: 4 * 1024 * 1024,
+            ..FiveLevelPoolConfig::default()
+        })
+        .unwrap();
+
+        let mut live: Vec<(usize, usize)> = Vec::new();
+        let mut state = 0x2545_F491_4F6C_DD1D_u64;
+
+        for step in 0..4000 {
+            let roll = xorshift(&mut state);
+            let should_free = !live.is_empty() && (roll & 1) == 1;
+
+            if should_free {
+                let index = (xorshift(&mut state) as usize) % live.len();
+                let (offset, size) = live.swap_remove(index);
+                pool.free(MemOffset::new(offset), size).unwrap();
+                continue;
+            }
+
+            // Half fast-bin sizes, half huge sizes, always a multiple of the
+            // 8-byte alignment so the request width is the carve width.
+            let size = if (roll >> 1) & 1 == 0 {
+                8 + 8 * ((xorshift(&mut state) as usize) % 512)
+            } else {
+                40 * 1024 + 8 * ((xorshift(&mut state) as usize) % 4096)
+            };
+
+            let Ok(offset) = pool.alloc(size) else {
+                continue; // genuine exhaustion is not a defect
+            };
+            let offset = offset.to_usize();
+
+            for &(other, other_size) in &live {
+                assert!(
+                    offset + size <= other || other + other_size <= offset,
+                    "step {step}: new block [{offset}, {}) overlaps live block \
+                     [{other}, {})",
+                    offset + size,
+                    other + other_size
+                );
+            }
+            live.push((offset, size));
+        }
     }
 
     /// C3.2. `MemoryChunk::new` allocates with `config.alignment` (8 by
