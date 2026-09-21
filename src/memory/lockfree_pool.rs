@@ -238,6 +238,118 @@ struct FreeBlock {
     size: usize,
 }
 
+/// Address-ordered, coalescing free list for blocks above `FAST_BIN_THRESHOLD`.
+///
+/// Invariants, upheld by `alloc` and `free` and checked by `free` on the way in:
+///
+/// * entries are sorted by `offset` and pairwise disjoint;
+/// * `offset` is a *user* offset, and the `BLOCK_HEADER` bytes in front of it
+///   belong to the same block, so two blocks are adjacent exactly when
+///   `a.offset + a.size + BLOCK_HEADER == b.offset`;
+/// * **the width a block is carved at is the width it is filed back under.**
+///   `alloc` splits a larger block rather than lending it whole, and when the
+///   remainder would be too small to stand on its own it reports the width the
+///   caller actually received so that `free` can give back exactly that.
+#[derive(Debug, Default)]
+struct LargeFreeList {
+    /// Sorted by `offset`, disjoint, never two adjacent entries.
+    blocks: Vec<FreeBlock>,
+}
+
+impl LargeFreeList {
+    /// The narrowest user width a standalone block can have. A remainder below
+    /// this cannot be split off, because it could not carry its own header and
+    /// still hand back an `ALIGN_SIZE`-aligned user pointer.
+    const MIN_SPLIT_REMAINDER: usize = ALIGN_SIZE;
+
+    /// Best fit for `want` bytes of user memory.
+    ///
+    /// Returns `(user offset, the width actually reserved)`. The width is
+    /// `want` whenever the block could be split, and the whole block otherwise;
+    /// either way it is what `free` must be given back.
+    fn alloc(&mut self, want: usize) -> Option<(u32, usize)> {
+        let mut best: Option<(usize, usize)> = None;
+        for (index, block) in self.blocks.iter().enumerate() {
+            if block.size >= want && best.is_none_or(|(_, size)| block.size < size) {
+                best = Some((index, block.size));
+            }
+        }
+
+        let (index, size) = best?;
+        let offset = self.blocks[index].offset;
+
+        if size >= want + BLOCK_HEADER + Self::MIN_SPLIT_REMAINDER {
+            // Split. The tail keeps this slot, so the list stays sorted, and it
+            // cannot be adjacent to either neighbour because the block it came
+            // from was not.
+            self.blocks[index] = FreeBlock {
+                offset: offset + (want + BLOCK_HEADER) as u32,
+                size: size - want - BLOCK_HEADER,
+            };
+            Some((offset, want))
+        } else {
+            self.blocks.remove(index);
+            Some((offset, size))
+        }
+    }
+
+    /// File a block of exactly `size` user bytes starting at `offset`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `invalid_data` if the region overlaps one that is already free.
+    /// That means the same bytes were freed twice, or a pointer that this pool
+    /// never handed out was passed to `deallocate`; filing it would let the
+    /// pool hand one region to two live callers.
+    fn free(&mut self, offset: u32, size: usize) -> Result<()> {
+        let position = self.blocks.partition_point(|block| block.offset < offset);
+
+        if position > 0 {
+            let below = self.blocks[position - 1];
+            if below.offset as usize + below.size > offset as usize {
+                return Err(ZiporaError::invalid_data(
+                    "large block freed twice, or a foreign pointer was freed: \
+                     the region overlaps a free block below it",
+                ));
+            }
+        }
+        if position < self.blocks.len() {
+            let above = self.blocks[position];
+            if offset as usize + size > above.offset as usize {
+                return Err(ZiporaError::invalid_data(
+                    "large block freed twice, or a foreign pointer was freed: \
+                     the region overlaps a free block above it",
+                ));
+            }
+        }
+
+        let mut offset = offset;
+        let mut size = size;
+
+        // Coalesce upward first: removing at `position` leaves `position - 1`
+        // where it is.
+        if position < self.blocks.len() {
+            let above = self.blocks[position];
+            if offset as usize + size + BLOCK_HEADER == above.offset as usize {
+                size += BLOCK_HEADER + above.size;
+                self.blocks.remove(position);
+            }
+        }
+        if position > 0 {
+            let below = self.blocks[position - 1];
+            if below.offset as usize + below.size + BLOCK_HEADER == offset as usize {
+                offset = below.offset;
+                size += BLOCK_HEADER + below.size;
+                self.blocks[position - 1] = FreeBlock { offset, size };
+                return Ok(());
+            }
+        }
+
+        self.blocks.insert(position, FreeBlock { offset, size });
+        Ok(())
+    }
+}
+
 /// Lock-free memory pool implementation
 pub struct LockFreeMemoryPool {
     /// Configuration
@@ -248,8 +360,8 @@ pub struct LockFreeMemoryPool {
     memory_layout: Layout,
     /// Fast bins for small/medium allocations
     fast_bins: Vec<CachePadded<LockFreeHead>>,
-    /// Fallback list for large allocations to prevent memory leaks
-    large_blocks: Mutex<Vec<FreeBlock>>,
+    /// Free list for blocks above `FAST_BIN_THRESHOLD`
+    large_free_list: Mutex<LargeFreeList>,
 
     /// Next available offset in memory region
     next_offset: AtomicU32,
@@ -358,7 +470,7 @@ impl LockFreeMemoryPool {
             memory,
             memory_layout: layout,
             fast_bins,
-            large_blocks: Mutex::new(Vec::new()),
+            large_free_list: Mutex::new(LargeFreeList::default()),
 
             next_offset: AtomicU32::new(ALIGN_SIZE as u32), // Start after header
             stats,
@@ -392,7 +504,12 @@ impl LockFreeMemoryPool {
         if aligned_size <= FAST_BIN_THRESHOLD {
             self.deallocate_to_fast_bin(ptr, aligned_size)
         } else {
-            self.deallocate_to_skip_list(ptr, aligned_size)
+            // `size` is what the caller *asked* for, which can be narrower than
+            // the block it was given. Filing that width would shrink the block
+            // for good, so take the width from the block's own header.
+            let offset = self.ptr_to_offset(ptr)?;
+            let width = self.load_block_width(offset, aligned_size)?;
+            self.deallocate_to_skip_list(ptr, width)
         }
     }
 
@@ -571,60 +688,53 @@ impl LockFreeMemoryPool {
         }
 
         // CAS retries exhausted under contention. Fall back to the
-        // mutex-protected skip list instead of returning Err, which would
+        // mutex-protected large free list instead of returning Err, which would
         // permanently leak the block from the pool (it was recorded nowhere;
         // the allocate side symmetrically falls back to allocate_new_block).
-        self.deallocate_to_skip_list(ptr, size)
+        // The block was carved at the bin's class width, so that -- not the
+        // caller's narrower request -- is the width it must be filed under.
+        self.deallocate_to_skip_list(ptr, FAST_BIN_SIZES[bin_index])
     }
 
-    /// Allocate from skip list (for large blocks)
+    /// Allocate from the large free list, or carve a fresh block.
     fn allocate_from_skip_list(&self, size: usize) -> Result<NonNull<u8>> {
         let aligned_size = self.align_size(size);
 
-        // Try to find and reuse an existing deallocated block (best-fit approach)
-        {
-            let mut blocks = self
-                .large_blocks
+        // Reuse a deallocated block if one fits (best fit, split exactly).
+        let reused = {
+            let mut free_list = self
+                .large_free_list
                 .lock()
                 .map_err(|_| ZiporaError::invalid_data("Mutex poisoned"))?;
-            let mut best_idx: Option<usize> = None;
-            let mut best_size = usize::MAX;
-
-            for (idx, block) in blocks.iter().enumerate() {
-                if block.size >= aligned_size && block.size < best_size {
-                    best_idx = Some(idx);
-                    best_size = block.size;
-                }
-            }
-
-            if let Some(idx) = best_idx {
-                let block = blocks.remove(idx);
-                if let Some(stats) = &self.stats {
-                    stats.skip_allocs.fetch_add(1, Ordering::Relaxed);
-                }
-                return self.offset_to_ptr(block.offset);
-            }
-        }
+            free_list.alloc(aligned_size)
+        };
 
         if let Some(stats) = &self.stats {
             stats.skip_allocs.fetch_add(1, Ordering::Relaxed);
         }
-        self.allocate_new_block(size)
+
+        let (offset, width) = match reused {
+            Some(found) => found,
+            None => {
+                let ptr = self.allocate_new_block(aligned_size)?;
+                (self.ptr_to_offset(ptr)?, aligned_size)
+            }
+        };
+
+        self.store_block_width(offset, width)?;
+        self.offset_to_ptr(offset)
     }
 
-    /// Deallocate to skip list (for large blocks)  
-    fn deallocate_to_skip_list(&self, ptr: NonNull<u8>, size: usize) -> Result<()> {
-        let aligned_size = self.align_size(size);
+    /// File a large block back, at the width it was carved at.
+    fn deallocate_to_skip_list(&self, ptr: NonNull<u8>, width: usize) -> Result<()> {
         let offset = self.ptr_to_offset(ptr)?;
 
-        let mut blocks = self
-            .large_blocks
+        let mut free_list = self
+            .large_free_list
             .lock()
             .map_err(|_| ZiporaError::invalid_data("Mutex poisoned"))?;
-        blocks.push(FreeBlock {
-            offset,
-            size: aligned_size,
-        });
+        free_list.free(offset, width)?;
+        drop(free_list);
 
         if let Some(stats) = &self.stats {
             stats.skip_deallocs.fetch_add(1, Ordering::Relaxed);
@@ -704,6 +814,46 @@ impl LockFreeMemoryPool {
         // ALIGN_SIZE-aligned (>= 4) address inside the arena that lives as long
         // as `self`. The header is only ever accessed through this `AtomicU32`.
         Ok(unsafe { &*(user.as_ptr().sub(BLOCK_HEADER) as *const AtomicU32) })
+    }
+
+    /// Record, in a large block's own header, the user width it was carved at.
+    ///
+    /// `deallocate` is handed the caller's *request* size, which can be
+    /// narrower than the block it received -- best fit lends the smallest block
+    /// that fits, and a remainder too small to stand on its own is not split
+    /// off. Filing the request width instead of the carved width would
+    /// permanently reclassify the block and erode the arena, so the true width
+    /// has to be recorded somewhere the caller cannot reach. The header is that
+    /// place: `BLOCK_HEADER` bytes in front of the user memory, used by the
+    /// fast bins for the free-list link, and otherwise unused by blocks on the
+    /// large path (a block is routed to the bins or to the large free list by
+    /// size, and the two ranges do not overlap).
+    fn store_block_width(&self, offset: u32, width: usize) -> Result<()> {
+        // `memory_size <= u32::MAX` is enforced by `new`, so any width that
+        // fits in the arena fits in a u32.
+        let width = u32::try_from(width)
+            .map_err(|_| ZiporaError::invalid_data("Block width exceeds 32 bits"))?;
+        self.link_slot(offset)?.store(width, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Read back the width stored by `store_block_width`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `invalid_data` if the header does not describe a block that is
+    /// at least `least` bytes wide and inside the arena. That means the pointer
+    /// did not come from this pool's large path, so the pool refuses it rather
+    /// than filing a bogus region on the free list.
+    fn load_block_width(&self, offset: u32, least: usize) -> Result<usize> {
+        let width = self.link_slot(offset)?.load(Ordering::Relaxed) as usize;
+        if width < least || offset as usize + width > self.config.memory_size {
+            return Err(ZiporaError::invalid_data(
+                "Block header does not describe a large block of at least the \
+                 deallocated size; the pointer was not allocated by this pool",
+            ));
+        }
+        Ok(width)
     }
 
     /// Convert size to fast bin index
@@ -826,6 +976,126 @@ impl Drop for LockFreeAllocation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// C3.10. `allocate_from_skip_list` takes a best-fit free block of
+    /// `best_size >= aligned_size` and hands it over *whole*, while
+    /// `deallocate_to_skip_list` files it back under the caller's *request*
+    /// size. Every time a large block is lent to a smaller request it is
+    /// permanently reclassified as that smaller block, and the difference can
+    /// never be allocated again -- the carve width and the recycle width
+    /// disagree.
+    ///
+    /// The demand pattern has to *shrink* within a round for the erosion to
+    /// show: a 16 KiB block lent to 12 KiB and then to 8200 bytes ends the
+    /// round as an 8200-byte block, so the next round's 16 KiB request has to
+    /// carve fresh arena. Roughly 16 KiB of the 256 KiB arena is lost per
+    /// round even though every allocation is freed before the next one is
+    /// made.
+    #[test]
+    fn test_large_blocks_keep_their_width_when_lent_to_smaller_requests() {
+        const ARENA: usize = 256 * 1024;
+        const BIG: usize = 16 * 1024;
+        const ROUNDS: usize = 32;
+
+        let pool = LockFreeMemoryPool::new(LockFreePoolConfig {
+            memory_size: ARENA,
+            enable_stats: true,
+            ..Default::default()
+        })
+        .unwrap();
+
+        for round in 0..ROUNDS {
+            // Nothing is held across an iteration, so one BIG block is enough
+            // to serve the whole loop.
+            let big = pool.allocate(BIG).unwrap_or_else(|e| {
+                panic!(
+                    "round {round}: the {BIG}-byte request found nothing to \
+                     reuse and the arena is exhausted, yet every earlier \
+                     allocation was freed: {e}"
+                )
+            });
+            pool.deallocate(big, BIG).unwrap();
+
+            // Each round asks for a slightly *larger* small block than the
+            // last, so the only free block that fits is the BIG one -- which
+            // is lent whole and then filed back under this smaller width.
+            let smaller = FAST_BIN_THRESHOLD + 8 * (round + 1);
+            let ptr = pool.allocate(smaller).unwrap();
+            pool.deallocate(ptr, smaller).unwrap();
+        }
+
+        let carved = pool
+            .stats()
+            .expect("stats enabled")
+            .memory_usage
+            .load(Ordering::Relaxed);
+        assert!(
+            carved <= (BIG + BLOCK_HEADER) as u64,
+            "one block should have served all {} allocations, but {carved} \
+             bytes were carved from the arena",
+            ROUNDS * 2
+        );
+    }
+
+    /// C3.10. A block lent whole (because the remainder would have been too
+    /// small to stand on its own) must come back whole. The pool records the
+    /// width it actually handed over in the block header, so the caller's
+    /// smaller `deallocate` size cannot shrink it.
+    #[test]
+    fn test_a_block_lent_whole_is_filed_back_whole() {
+        const ARENA: usize = 128 * 1024;
+        // A remainder of 8 bytes cannot carry its own BLOCK_HEADER, so the
+        // whole block is lent out rather than split.
+        let big = FAST_BIN_THRESHOLD + 16;
+        let slightly_smaller = big - 8;
+
+        let pool = LockFreeMemoryPool::new(LockFreePoolConfig {
+            memory_size: ARENA,
+            enable_stats: true,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let a = pool.allocate(big).unwrap();
+        pool.deallocate(a, big).unwrap();
+
+        let b = pool.allocate(slightly_smaller).unwrap();
+        assert_eq!(b, a, "the free block should have been reused");
+        pool.deallocate(b, slightly_smaller).unwrap();
+
+        let c = pool.allocate(big).unwrap();
+        assert_eq!(
+            c, a,
+            "the block was lent to a smaller request and came back narrower, \
+             so the original width is no longer allocatable"
+        );
+        pool.deallocate(c, big).unwrap();
+    }
+
+    /// C3.10. Freeing the same large block twice must be refused rather than
+    /// filed twice: two entries for one region would let the pool hand the
+    /// same bytes to two live callers.
+    #[test]
+    fn test_double_free_of_a_large_block_is_refused() {
+        let pool = LockFreeMemoryPool::new(LockFreePoolConfig {
+            memory_size: 128 * 1024,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let width = FAST_BIN_THRESHOLD + 1024;
+        let ptr = pool.allocate(width).unwrap();
+        pool.deallocate(ptr, width).unwrap();
+        assert!(
+            pool.deallocate(ptr, width).is_err(),
+            "the second free of {ptr:?} was accepted"
+        );
+
+        let a = pool.allocate(width).unwrap();
+        let b = pool.allocate(width).unwrap();
+        assert_ne!(a, b, "the same region was handed out twice");
+    }
+
     use std::sync::Arc;
     use std::thread;
 
