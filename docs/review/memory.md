@@ -672,4 +672,45 @@ back under:
 * The fast-bin fallback now passes `FAST_BIN_SIZES[bin_index]`, the width the block
   was carved at.
 
+**Commit.** `aceae24`
+
+---
+
+### C3.11 — exponential backoff shifts by the retry count and overflows — MEDIUM
+
+**Finding.** `LockFreeMemoryPool::backoff`:
+
+```rust
+BackoffStrategy::Exponential { max_delay_us } => {
+    let delay = std::cmp::min(1u64 << retry_count, max_delay_us);
+```
+
+`max_cas_retries` defaults to 1000 and `Exponential` is the default strategy, so a
+fast bin under sustained contention reaches `retry_count == 64` and the shift
+overflows. In a debug build that is a panic — from inside the allocator, on the path
+that exists precisely to survive contention. In release the shift wraps to
+`1 << (retry_count % 64)`, so the delay collapses back to 1 µs exactly when the bin is
+most contended, which is the opposite of what a backoff is for.
+
+**RED (watched).** Fails on the parent commit `aceae24`:
+
+```
+thread 'memory::lockfree_pool::tests::test_backoff_does_not_overflow_at_high_retry_counts'
+  panicked at src/memory/lockfree_pool.rs:908:43:
+attempt to shift left with overflow
+```
+
+> [!NOTE]
+> This RED is debug-only: release wraps the shift instead of panicking, and the
+> wrapped delay is not observable from a test without timing it. The retry loop is
+> also not reachable deterministically from the public API — 64 consecutive CAS
+> failures on one bin cannot be forced — so the test calls the private `backoff`
+> directly with retry counts the loop is permitted to reach, after asserting that
+> `max_cas_retries` really does exceed 64 under the default config.
+
+**Tests.** `test_backoff_does_not_overflow_at_high_retry_counts`.
+
+**Fix.** `1u64.checked_shl(retry_count).unwrap_or(u64::MAX).min(max_delay_us)`, so the
+delay saturates at `max_delay_us` instead of overflowing.
+
 **Commit.** _pending_
