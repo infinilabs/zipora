@@ -308,6 +308,13 @@ impl TieredMemoryAllocator {
     }
 
     /// Allocate memory using the optimal strategy for the given size
+    ///
+    /// The first `size` bytes are zeroed, whichever tier serves the request.
+    /// The `Large` and `Huge` tiers get that from the kernel (`MAP_ANONYMOUS`
+    /// pages arrive zeroed); the two pool tiers recycle memory, so they are
+    /// zeroed explicitly. That costs a `memset` of `size` bytes per pooled
+    /// allocation and it is what makes [`TieredAllocation::as_slice`] sound:
+    /// without it the slice would be built over uninitialized memory.
     pub fn allocate(&self, size: usize) -> Result<TieredAllocation> {
         if size == 0 {
             return Err(ZiporaError::invalid_data("allocation size cannot be zero"));
@@ -422,6 +429,15 @@ impl TieredMemoryAllocator {
     fn allocate_small(&self, size: usize) -> Result<TieredAllocation> {
         self.small_allocs.fetch_add(1, Ordering::Relaxed);
         let chunk = self.small_pool.allocate()?;
+
+        // SAFETY: `chunk` is a live chunk of `SMALL_THRESHOLD` bytes that the
+        // pool has just handed out, so nothing else references it, and this
+        // arm is only reached for `size <= SMALL_THRESHOLD`, so `size` zero
+        // bytes stay inside it. `MemoryPool` recycles chunks without clearing
+        // them, so this is also what stops the previous tenant's bytes from
+        // reaching the next caller.
+        unsafe { std::ptr::write_bytes(chunk.as_ptr(), 0, size) };
+
         Ok(TieredAllocation::Small(SmallBlock {
             ptr: chunk,
             size,
@@ -438,6 +454,11 @@ impl TieredMemoryAllocator {
             for pool in pools.iter() {
                 if pool.config().chunk_size >= size {
                     let chunk = pool.allocate()?;
+
+                    // SAFETY: as in `allocate_small`; the guard above is
+                    // exactly `size <= pool.config().chunk_size`.
+                    unsafe { std::ptr::write_bytes(chunk.as_ptr(), 0, size) };
+
                     return Ok(TieredAllocation::Medium(MediumBlock {
                         ptr: chunk,
                         size,
@@ -509,6 +530,9 @@ unsafe impl Sync for TieredMemoryAllocator {}
 
 impl TieredAllocation {
     /// Get the allocated memory as a slice
+    ///
+    /// The bytes are zero at the point [`TieredMemoryAllocator::allocate`]
+    /// returns; see its documentation.
     pub fn as_slice(&self) -> &[u8] {
         match self {
             // SAFETY: ptr is NonNull from valid pool allocation, size matches allocated chunk
@@ -772,6 +796,47 @@ mod tests {
             result.is_err(),
             "a chunk from allocator a was parked in allocator b's pool"
         );
+    }
+
+    /// Allocate `size`, dirty it, hand it back, and allocate `size` again.
+    ///
+    /// Returns whether the same chunk came back, and whether every byte of it
+    /// is zero. Both pool tiers recycle, so the second allocation is the one
+    /// that would see the first one's bytes.
+    fn recycled_chunk_is_clean(size: usize) -> (bool, bool) {
+        let allocator = TieredMemoryAllocator::default().unwrap();
+
+        let mut first = allocator.allocate(size).unwrap();
+        let addr = first.as_ptr::<u8>() as usize;
+        first.as_mut_slice().fill(0xAB);
+        allocator.deallocate(first).unwrap();
+
+        let second = allocator.allocate(size).unwrap();
+        let recycled = second.as_ptr::<u8>() as usize == addr;
+        let clean = second.as_slice().iter().all(|&b| b == 0);
+        allocator.deallocate(second).unwrap();
+
+        (recycled, clean)
+    }
+
+    #[test]
+    fn test_a_recycled_small_chunk_is_zeroed() {
+        // `as_slice` builds a `&[u8]` over pool memory the allocator never
+        // initialized. For a fresh chunk that is a read of uninitialized
+        // memory; for a recycled one it is the previous tenant's bytes, handed
+        // to the next caller through an entirely safe API. The Large and Huge
+        // arms do not have this problem only because MAP_ANONYMOUS pages
+        // arrive zeroed from the kernel.
+        let (recycled, clean) = recycled_chunk_is_clean(512);
+        assert!(recycled, "vacuous unless the chunk is recycled");
+        assert!(clean, "a recycled small chunk carried 0xAB into the next caller");
+    }
+
+    #[test]
+    fn test_a_recycled_medium_chunk_is_zeroed() {
+        let (recycled, clean) = recycled_chunk_is_clean(4 * 1024);
+        assert!(recycled, "vacuous unless the chunk is recycled");
+        assert!(clean, "a recycled medium chunk carried 0xAB into the next caller");
     }
 
     #[test]

@@ -1088,4 +1088,58 @@ confront it.
 > separately as C3.16 — this entry is about who can construct and destroy an allocation,
 > not what reading one yields.
 
+**Commit.** `cfe2bfe`
+---
+
+## C3.16 — `TieredAllocation::as_slice` read uninitialized pool memory, and leaked the previous tenant's bytes
+
+**Scope.** `src/memory/tiered.rs`.
+
+**Finding.** The `Small` and `Medium` arms build a `&[u8]` over memory the allocator
+never initialized:
+
+```rust
+TieredAllocation::Small(block) => unsafe {
+    std::slice::from_raw_parts(block.ptr.as_ptr(), block.size)
+},
+```
+
+`MemoryPool` hands out `alloc`'d chunks and recycles them without clearing, so for a
+fresh chunk this is a read of uninitialized memory — undefined behaviour, reached from a
+safe method — and for a recycled one it is the previous tenant's bytes, delivered to the
+next caller through an entirely safe API. The `Large` and `Huge` arms have neither
+problem, and only by accident: `MAP_ANONYMOUS` pages arrive zeroed from the kernel. That
+is also why no existing test caught it — the large-allocation tests would have.
+
+**RED (watched).**
+
+```
+---- memory::tiered::tests::test_a_recycled_small_chunk_is_zeroed stdout ----
+panicked at src/memory/tiered.rs:808:9:
+a recycled small chunk carried 0xAB into the next caller
+
+---- memory::tiered::tests::test_a_recycled_medium_chunk_is_zeroed stdout ----
+panicked at src/memory/tiered.rs:815:9:
+a recycled medium chunk carried 0xAB into the next caller
+
+test result: FAILED. 11 passed; 2 failed
+```
+
+The recycled case is the assertable half of the defect: the uninitialized-read half has
+no deterministic observation from a test, but the same write fixes both. Each test first
+asserts the second allocation really is the same address, so neither can pass vacuously
+if the pool stops recycling.
+
+**Tests.** `test_a_recycled_small_chunk_is_zeroed`,
+`test_a_recycled_medium_chunk_is_zeroed`, over a shared `recycled_chunk_is_clean`
+helper.
+
+**Fix.** `allocate_small` and `allocate_medium` `write_bytes(.., 0, size)` over the
+chunk the pool just handed out, each with a `SAFETY:` comment naming the bound that
+makes `size` fit (`size <= SMALL_THRESHOLD`, and the loop guard
+`size <= pool.config().chunk_size`). `TieredMemoryAllocator::allocate` now documents
+that the first `size` bytes are zero whichever tier serves the request — the kernel does
+it for the mapped tiers, the pooled tiers pay a `memset` of `size` bytes — and states
+plainly that this is what makes `as_slice` sound.
+
 **Commit.** _pending_
