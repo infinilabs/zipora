@@ -831,4 +831,72 @@ that is documented on the method. Call sites updated with `SAFETY:` comments:
 > can still forge one and hand it to `TieredMemoryAllocator::deallocate`, which is
 > safe. That is tracked separately.
 
+**Commit.** `1529ac1`
+---
+
+## D8 (2/2) — twelve `MemoryPool` "security" tests that asserted nothing
+
+**Scope.** `tests/security_memory_pool.rs`, `tests/security_memory_pool_simple.rs`,
+`tests/memory_pool_contract.rs` (new), `src/memory/pool.rs` (docs), `Makefile` (comment).
+
+**Finding.** The two files held twelve near-duplicate tests named after the defects
+they were supposed to catch — `test_double_free_attempt`, `test_use_after_free_*`,
+`test_concurrent_pool_access_race_condition`, and so on. Not one of them asserted the
+property in its name. The pattern throughout was:
+
+```rust
+println!("VULNERABILITY CONFIRMED: Double-free succeeded!");
+Ok(())
+```
+
+They passed on a correct pool and on a broken one, which is how the C3.12 double free
+survived with a test named after it. Two of them (`test_use_after_free_detection`,
+`test_dangling_pointer_access`) were `#[ignore]`d with the note that they are UB by
+design.
+
+**Decision on the two ignored tests.** The D8 row asked for them to be moved to a
+Miri/ASan negative job rather than deleted. They cannot be: both demonstrate *use after
+return to the pool*, and a pool does not hand recycled memory back to the system. The
+chunk is still a live global allocation sitting on the free list, so there is no dead
+allocation for Miri to flag and no `free()` for ASan to poison. Such a job would pass
+unconditionally and would be a third test that asserts nothing. They are deleted, and
+the obligation they were gesturing at is now written into `deallocate`'s `# Safety`
+section and into the type's doc comment, where a caller will actually read it.
+
+**Tests.** `tests/memory_pool_contract.rs`, six tests, each asserting a property that
+can fail:
+
+| Test | Property |
+|---|---|
+| `test_double_free_is_refused` | second free is `Err`; the next two allocations are distinct addresses |
+| `test_counters_are_exact_under_contention` | `pool_hits + pool_misses == alloc_count` exactly, 8 threads |
+| `test_concurrent_allocations_are_distinct` | no address is handed to two threads at once |
+| `test_pool_caches_at_most_max_chunks` | the cache is bounded by `max_chunks`; the surplus goes back to the global allocator |
+| `test_clear_releases_only_pooled_chunks` | `clear` leaves chunks that are out on loan alone |
+| `test_memory_pool_is_send_and_sync` | the `unsafe impl`s stay, statically |
+
+Labelled **coverage, not RED**: `1529ac1` already fixed the one live defect here, so
+these lock in behaviour rather than fail first. `test_double_free_is_refused` is the
+exception — it fails on `687e428` with `free(): double free detected in tcache 2`, and
+that RED is recorded under C3.12. The two double-free assertions C3.12 added to the
+now-deleted files are that test; nothing that asserted anything was lost.
+
+**Fix.** The `MemoryPool` doc comment was six screens of "CONFIRMED VULNERABILITY",
+"Thread Safety Guarantees (VIOLATED)" and a recommendation to use jemalloc instead. It
+described a type that no longer exists after C3.12, and it referred the reader to an
+absolute path on the author's machine. It is replaced by what the type guarantees
+(chunk width and alignment, uninitialized contents, `max_chunks` bounds the cache and
+not the live set, no address is live twice, exact counters) and what it does not (it
+cannot recognise a foreign pointer, a use-after-free is invisible to it *and* to a
+sanitizer, `allocate` uses `try_lock` so `pool_hits` is not deterministic). The same
+treatment for `allocate`, `clear` and `stats`. The two `unsafe impl Send/Sync` get a
+real four-point `SAFETY:` argument in place of a list of the vulnerabilities they
+supposedly caused.
+
+The `miri_pool` comment in the `Makefile` claimed the two ignored tests "live here as
+negative tests". They never did; that is corrected to the reasoning above.
+
+**Audit deltas.** `api_honesty.max_markers` and `unsafe_audit.max_undocumented` both
+drop; re-ratcheted in the `build(gates):` commit that closes this range.
+
 **Commit.** _pending_
