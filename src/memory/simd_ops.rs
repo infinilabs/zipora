@@ -395,6 +395,19 @@ impl SimdMemOps {
 
 impl SimdMemOps {
     /// Internal fast memory copy with automatic alignment detection
+    ///
+    /// # Safety
+    ///
+    /// * `src` must be valid for reads of `len` bytes and `dst` valid for
+    ///   writes of `len` bytes. Alignment is not required — every tier below
+    ///   uses unaligned loads and stores.
+    /// * The two ranges must not overlap. The SIMD tiers copy in blocks and in
+    ///   an order the caller cannot rely on, so this is `copy_nonoverlapping`
+    ///   semantics, not `memmove`.
+    ///
+    /// The only caller is [`SimdMemOps::copy_nonoverlapping`], which returns
+    /// `invalid_data` for a length mismatch and for an overlap before reaching
+    /// here, and takes the pointers and the length from the slices themselves.
     #[inline]
     unsafe fn simd_memcpy_unaligned(&self, dst: *mut u8, src: *const u8, len: usize) {
         match (self.tier, len) {
