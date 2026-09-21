@@ -276,7 +276,11 @@ impl TieredMemoryAllocator {
     pub fn deallocate(&self, allocation: TieredAllocation) -> Result<()> {
         match allocation {
             TieredAllocation::Small(ptr, size) => {
-                self.small_pool.deallocate(ptr)?;
+                // SAFETY: the `Small` variant is only constructed by
+                // `allocate_small`, from `self.small_pool.allocate()`, and
+                // `TieredAllocation` is consumed by value here so it cannot be
+                // deallocated twice.
+                unsafe { self.small_pool.deallocate(ptr) }?;
                 self.total_bytes.fetch_sub(size as u64, Ordering::Relaxed);
             }
             TieredAllocation::Medium(ptr, size) => {
@@ -368,7 +372,11 @@ impl TieredMemoryAllocator {
             // Find the appropriate pool based on size
             for pool in pools.iter() {
                 if pool.config().chunk_size >= size {
-                    return pool.deallocate(ptr);
+                    // SAFETY: `allocate_medium` picks the pool the same way,
+                    // from the same thread-local list, so this is the pool the
+                    // chunk came from; `TieredAllocation` is consumed by value
+                    // by the caller, so it cannot be deallocated twice.
+                    return unsafe { pool.deallocate(ptr) };
                 }
             }
 

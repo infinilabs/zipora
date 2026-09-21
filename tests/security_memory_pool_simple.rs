@@ -30,7 +30,9 @@ fn test_lost_stats_under_contention() {
                         // Small delay to increase contention
                         thread::yield_now();
 
-                        if pool.deallocate(ptr).is_ok() {
+                        // SAFETY: `ptr` came from this pool's `allocate`
+                        // just above and is freed exactly once.
+                        if unsafe { pool.deallocate(ptr) }.is_ok() {
                             local_deallocs += 1;
                         }
                     }
@@ -101,37 +103,33 @@ fn test_double_free_safety() {
         raw_ptr.write_bytes(0xAB, 64);
     }
 
-    // First deallocation - should succeed
-    assert!(pool.deallocate(ptr).is_ok());
+    // First deallocation - should succeed.
+    // SAFETY: `ptr` came from this pool's `allocate` above and is live.
+    assert!(unsafe { pool.deallocate(ptr) }.is_ok());
 
-    // Try to deallocate again (simulating double-free)
-    // We need to recreate NonNull for the test
+    // C3.12. Deallocate again. This used to be accepted, which parked one
+    // address on the free list twice; the block below then got it back twice.
+    // SAFETY (test only): this deliberately breaks the contract, to check that
+    // the pool catches it rather than corrupting its free list.
     let double_free_ptr = unsafe { std::ptr::NonNull::new_unchecked(raw_ptr) };
+    let result = unsafe { pool.deallocate(double_free_ptr) };
+    assert!(
+        result.is_err(),
+        "the pool accepted the same pointer twice"
+    );
 
-    let result = pool.deallocate(double_free_ptr);
+    let p1 = pool.allocate().unwrap();
+    let p2 = pool.allocate().unwrap();
+    assert_ne!(
+        p1.as_ptr(),
+        p2.as_ptr(),
+        "the same memory was handed to two live callers"
+    );
 
-    println!("=== Double Free Test ===");
-    if result.is_ok() {
-        println!("VULNERABILITY CONFIRMED: Double-free succeeded!");
-        println!("The pool accepted the same pointer twice.");
-
-        // Check if we can get the same pointer multiple times
-        let ptr1 = pool.allocate();
-        let ptr2 = pool.allocate();
-
-        if let (Ok(p1), Ok(p2)) = (ptr1, ptr2) {
-            if p1.as_ptr() == raw_ptr {
-                println!("CRITICAL: Freed pointer reallocated (ptr1)!");
-            }
-            if p2.as_ptr() == raw_ptr {
-                println!("CRITICAL: Freed pointer reallocated (ptr2)!");
-            }
-            if p1.as_ptr() == p2.as_ptr() {
-                println!("CRITICAL: Same memory allocated to two different requests!");
-            }
-        }
-    } else {
-        println!("Good: Double-free was rejected");
+    // SAFETY: both came from this pool, are live, and are distinct.
+    unsafe {
+        pool.deallocate(p1).unwrap();
+        pool.deallocate(p2).unwrap();
     }
 }
 
@@ -185,7 +183,9 @@ fn test_clear_safety() {
 
     // Return some to pool
     for ptr in allocations.iter().take(3) {
-        let _ = pool.deallocate(*ptr);
+        // SAFETY: each came from this pool's `allocate`, and `take(3)` visits
+        // each of the first three exactly once.
+        let _ = unsafe { pool.deallocate(*ptr) };
     }
 
     let stats_before = pool.stats();
@@ -225,10 +225,13 @@ fn test_pool_capacity_overflow() {
     let ptr2 = pool.allocate().unwrap();
     let ptr3 = pool.allocate().unwrap();
 
-    // Return all to pool
-    pool.deallocate(ptr1).unwrap();
-    pool.deallocate(ptr2).unwrap();
-    pool.deallocate(ptr3).unwrap(); // This should exceed capacity
+    // Return all to pool.
+    // SAFETY: all three came from this pool, are live, and are distinct.
+    unsafe {
+        pool.deallocate(ptr1).unwrap();
+        pool.deallocate(ptr2).unwrap();
+        pool.deallocate(ptr3).unwrap(); // This should exceed capacity
+    }
 
     let stats = pool.stats();
     println!("After returning 3 chunks: {} in pool", stats.chunks);
@@ -253,7 +256,9 @@ fn test_memory_ordering_consistency() {
                 for _ in 0..100 {
                     if let Ok(ptr) = pool.allocate() {
                         // Immediate deallocation
-                        let _ = pool.deallocate(ptr);
+                        // SAFETY: `ptr` came from this pool's `allocate`
+                        // just above and is freed exactly once.
+                        let _ = unsafe { pool.deallocate(ptr) };
                     }
                 }
             })

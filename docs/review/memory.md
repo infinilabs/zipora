@@ -761,4 +761,74 @@ Under `make tsan_pool`: clean.
 **Not a RED.** Both are coverage: they assert properties the pool already satisfies at
 this commit. The defect being fixed is the absence of the tests, not the pool.
 
+**Commit.** `687e428`
+
+---
+
+### C3.12 — `MemoryPool::deallocate` takes any pointer, and the same one twice — CRITICAL
+
+**Finding.** `MemoryPool::deallocate` was a *safe* `pub fn` taking a bare
+`NonNull<u8>`, and it validated nothing:
+
+```rust
+pub fn deallocate(&self, chunk: NonNull<u8>) -> Result<()> {
+    self.dealloc_count.fetch_add(1, Ordering::Relaxed);
+    if let Ok(mut free_chunks) = self.free_chunks.try_lock()
+        && free_chunks.len() < self.config.max_chunks
+    {
+        free_chunks.push_back(chunk.as_ptr());
+```
+
+Two holes, both reachable without the caller writing a single `unsafe` block:
+
+1. **Any pointer.** A pointer this pool never handed out is either parked on the free
+   list — from where it is given to the next caller — or passed to the global
+   allocator with the pool's own layout.
+2. **The same pointer twice.** A double free parks one address twice, so the next two
+   allocations both return it: two live callers owning the same chunk. When both are
+   freed and the pool is dropped, `clear` passes that address to the global allocator
+   twice.
+
+The method's own doc comment described both as "CRITICAL VULNERABILITY" and
+"CONFIRMED EXPLOIT" and left them in place. The test that was supposed to cover it,
+`test_double_free_attempt`, only `println!`ed *"VULNERABILITY: Double-free succeeded!
+Pool is now corrupted."* and passed either way.
+
+The `try_lock` made it worse: a contended free skipped straight to the global
+allocator, so even a check placed under that lock would have been skippable by timing.
+
+**RED (watched).** With only the rewritten test applied to `687e428`, the process dies
+before any assertion can run:
+
+```
+running 1 test
+free(): double free detected in tcache 2
+  (signal: 6, SIGABRT: process abort signal)
+```
+
+That is glibc catching the pool passing one address to `free` twice when the pool is
+dropped — the corruption the old test printed a message about.
+
+**Tests.** `test_double_free_is_refused` (replacing `test_double_free_attempt`): the
+second free must be an `Err`, and the next two allocations must not be the same
+address. `tests/security_memory_pool_simple.rs` turned out to hold a second copy of
+the same demonstration, `test_double_free_safety`, which likewise only printed
+*"VULNERABILITY CONFIRMED: Double-free succeeded!"*; it now asserts the same two
+properties.
+
+**Fix.** `deallocate` becomes an `unsafe fn` with a `# Safety` section: the caller owes
+that the chunk came from *this* pool and is live, because no `Result` can express a
+foreign pointer. Being freed twice is not the caller's word to take — the pool now
+scans its free list under a blocking (poison-recovering) lock and returns
+`invalid_data`. The scan is O(`max_chunks`) under a mutex the method already took, and
+that is documented on the method. Call sites updated with `SAFETY:` comments:
+`PooledVec::drop`, `PooledBuffer::drop`, the two `tiered.rs` routes, the C API's
+`memory_pool_deallocate`, and the in-tree tests.
+
+> [!NOTE]
+> This closes the hole one level down but not the public chain above it:
+> `TieredAllocation::Small(NonNull<u8>, usize)` is a public enum variant, so safe code
+> can still forge one and hand it to `TieredMemoryAllocator::deallocate`, which is
+> safe. That is tracked separately.
+
 **Commit.** _pending_

@@ -296,7 +296,10 @@ pub unsafe extern "C" fn memory_pool_deallocate(
             }
         };
 
-        match memory_pool.deallocate(non_null_ptr) {
+        // SAFETY: this function's own contract requires `ptr` to have come
+        // from `memory_pool_allocate` on this same pool and not to have been
+        // freed yet, which is exactly what `MemoryPool::deallocate` asks for.
+        match unsafe { memory_pool.deallocate(non_null_ptr) } {
             Ok(_) => CResult::Success,
             Err(e) => {
                 set_last_error(&format!("Failed to deallocate memory: {}", e));

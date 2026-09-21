@@ -183,28 +183,59 @@ impl MemoryPool {
 
     /// Deallocate a chunk back to the pool
     ///
-    /// # Thread Safety Issues
+    /// # Safety
     ///
-    /// **CRITICAL VULNERABILITY**: This method has multiple security issues:
-    /// 1. **Double-free**: No validation prevents same pointer being freed twice
-    /// 2. **Silent failures**: try_lock() failures are ignored, causing memory leaks
-    /// 3. **Race conditions**: Pool capacity check and insertion are not atomic
+    /// `chunk` must have been returned by `allocate` **on this pool** and must
+    /// still be live. The pool cannot check where a pointer came from: one it
+    /// never handed out is either parked on the free list, from where it is
+    /// given to the next caller, or passed to the global allocator with this
+    /// pool's layout. Both are undefined behaviour, and neither is something a
+    /// `Result` can express, so the obligation is the caller's.
     ///
-    /// **CONFIRMED EXPLOIT**: Tests show same pointer can be freed multiple times,
-    /// leading to the same memory being allocated to different threads simultaneously.
-    pub fn deallocate(&self, chunk: NonNull<u8>) -> Result<()> {
+    /// Being freed twice *is* checked, and rejected — see below.
+    ///
+    /// # Errors
+    ///
+    /// Returns `invalid_data` if `chunk` is already on the free list. Parking
+    /// one address twice hands it to two live callers, and, once both of those
+    /// are freed, passes it to the global allocator twice; the previous
+    /// version of this method allowed exactly that, and glibc aborted the
+    /// process with `free(): double free detected in tcache 2` when the pool
+    /// was dropped.
+    ///
+    /// # Performance
+    ///
+    /// The duplicate check scans the free list, so it is O(`max_chunks`) under
+    /// the mutex this method already takes.
+    pub unsafe fn deallocate(&self, chunk: NonNull<u8>) -> Result<()> {
         self.dealloc_count.fetch_add(1, Ordering::Relaxed);
 
-        // Try to return chunk to pool if not full
-        if let Ok(mut free_chunks) = self.free_chunks.try_lock()
-            && free_chunks.len() < self.config.max_chunks
-        {
+        // A blocking lock, not `try_lock`: with `try_lock` a contended free
+        // skipped the duplicate check entirely and handed the chunk to the
+        // global allocator instead, so whether a double free was caught
+        // depended on lock timing. Recover from poisoning — the free list is a
+        // list of addresses and stays well formed across a panic.
+        let mut free_chunks = self
+            .free_chunks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        if free_chunks.iter().any(|&parked| parked == chunk.as_ptr()) {
+            return Err(ZiporaError::invalid_data(
+                "chunk is already free: parking one address twice would hand \
+                 it to two live callers",
+            ));
+        }
+
+        if free_chunks.len() < self.config.max_chunks {
             free_chunks.push_back(chunk.as_ptr());
+            drop(free_chunks);
             self.update_stats_on_dealloc(true);
             return Ok(());
         }
+        drop(free_chunks);
 
-        // Pool is full or locked, deallocate directly
+        // Pool is full: give the chunk back to the global allocator.
         self.deallocate_chunk(chunk);
         self.update_stats_on_dealloc(false);
         Ok(())
@@ -483,8 +514,11 @@ impl<T> Drop for PooledVec<T> {
             }
         }
 
-        // Return memory to pool
-        let _ = self.pool.deallocate(self.ptr.cast());
+        // Return memory to pool.
+        // SAFETY: `self.ptr` is the chunk `PooledVec::new` took from this same
+        // pool, it has not been freed before (this runs once, in `Drop`), and
+        // the elements above have already been dropped in place.
+        let _ = unsafe { self.pool.deallocate(self.ptr.cast()) };
     }
 }
 
@@ -541,7 +575,9 @@ impl PooledBuffer {
 
 impl Drop for PooledBuffer {
     fn drop(&mut self) {
-        let _ = self.pool.deallocate(self.ptr);
+        // SAFETY: `self.ptr` is the chunk this buffer took from this same pool
+        // and has not been freed before -- this runs once, in `Drop`.
+        let _ = unsafe { self.pool.deallocate(self.ptr) };
     }
 }
 
@@ -581,8 +617,11 @@ mod tests {
 
         assert_ne!(chunk1.as_ptr(), chunk2.as_ptr());
 
-        pool.deallocate(chunk1).unwrap();
-        pool.deallocate(chunk2).unwrap();
+        // SAFETY: both chunks came from this pool and are live.
+        unsafe {
+            pool.deallocate(chunk1).unwrap();
+            pool.deallocate(chunk2).unwrap();
+        }
 
         let stats = pool.stats();
         assert_eq!(stats.alloc_count, 2);
@@ -597,7 +636,8 @@ mod tests {
         let chunk1 = pool.allocate().unwrap();
         let addr1 = chunk1.as_ptr();
 
-        pool.deallocate(chunk1).unwrap();
+        // SAFETY: `chunk1` came from this pool and is live.
+        unsafe { pool.deallocate(chunk1) }.unwrap();
 
         let chunk2 = pool.allocate().unwrap();
         let addr2 = chunk2.as_ptr();
@@ -605,7 +645,8 @@ mod tests {
         // Should reuse the same memory
         assert_eq!(addr1, addr2);
 
-        pool.deallocate(chunk2).unwrap();
+        // SAFETY: `chunk2` came from this pool and is live.
+        unsafe { pool.deallocate(chunk2) }.unwrap();
 
         let stats = pool.stats();
         assert!(stats.pool_hits > 0);

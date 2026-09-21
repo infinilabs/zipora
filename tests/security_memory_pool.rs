@@ -29,8 +29,9 @@ fn test_use_after_free_vulnerability() {
             }
         }
 
-        // Deallocate
-        pool1.deallocate(ptr).unwrap();
+        // Deallocate.
+        // SAFETY: `ptr` came from `pool1.allocate()` above and is live.
+        unsafe { pool1.deallocate(ptr) }.unwrap();
 
         // Signal that we've deallocated
         barrier1.wait();
@@ -68,7 +69,8 @@ fn test_use_after_free_vulnerability() {
             }
         }
 
-        pool2.deallocate(ptr).unwrap();
+        // SAFETY: `ptr` came from `pool2.allocate()` above and is live.
+        unsafe { pool2.deallocate(ptr) }.unwrap();
         corrupted
     });
 
@@ -101,10 +103,11 @@ fn test_lost_deallocations_under_contention() {
                     }
                 }
 
-                // Try to deallocate under contention
-                // Some of these might fail silently due to try_lock
+                // Deallocate under contention.
                 for ptr in allocations {
-                    let _ = pool.deallocate(ptr);
+                    // SAFETY: every `ptr` came from `pool.allocate()` in the
+                    // loop above, each appears once, and none has been freed.
+                    let _ = unsafe { pool.deallocate(ptr) };
                 }
             })
         })
@@ -153,8 +156,10 @@ fn test_stats_race_condition() {
                 // Rapid allocate/deallocate to cause stats races
                 for _ in 0..100 {
                     if let Ok(ptr) = pool.allocate() {
-                        // Immediate deallocation
-                        let _ = pool.deallocate(ptr);
+                        // Immediate deallocation.
+                        // SAFETY: `ptr` was just handed over by this pool and
+                        // has not been freed.
+                        let _ = unsafe { pool.deallocate(ptr) };
                     }
                 }
             })
@@ -195,29 +200,42 @@ fn test_stats_race_condition() {
     }
 }
 
+/// C3.12. Freeing the same chunk twice parked one address on the free list
+/// twice, and the next two allocations both got it — two live callers owning
+/// the same 64 bytes, reachable without writing a single `unsafe` block of
+/// one's own. The pool must refuse the second free.
+///
+/// The old version of this test only `println!`ed "VULNERABILITY: Double-free
+/// succeeded! Pool is now corrupted." and passed either way.
 #[test]
-fn test_double_free_attempt() {
+fn test_double_free_is_refused() {
     let pool = Arc::new(MemoryPool::new(PoolConfig::new(64, 10, 8)).unwrap());
 
     let ptr = pool.allocate().unwrap();
 
-    // First deallocation - should succeed
-    assert!(pool.deallocate(ptr).is_ok());
+    // SAFETY: `ptr` came from this pool's `allocate` and is live.
+    unsafe { pool.deallocate(ptr) }.expect("the first free must succeed");
 
-    // Second deallocation of same pointer - VULNERABILITY!
-    // This should fail but currently might succeed and corrupt the pool
-    let result = pool.deallocate(ptr);
+    // SAFETY (test only): this deliberately breaks the contract in order to
+    // check that the pool catches it rather than corrupting its free list.
+    let second = unsafe { pool.deallocate(ptr) };
+    assert!(
+        second.is_err(),
+        "the second free of {ptr:?} was accepted, so the address is parked twice"
+    );
 
-    if result.is_ok() {
-        println!("VULNERABILITY: Double-free succeeded! Pool is now corrupted.");
+    let first = pool.allocate().unwrap();
+    let other = pool.allocate().unwrap();
+    assert_ne!(
+        first.as_ptr(),
+        other.as_ptr(),
+        "the pool handed the same address to two live callers"
+    );
 
-        // Try to allocate - might get the same pointer twice
-        let ptr1 = pool.allocate().unwrap();
-        let ptr2 = pool.allocate().unwrap();
-
-        if ptr1.as_ptr() == ptr.as_ptr() || ptr2.as_ptr() == ptr.as_ptr() {
-            println!("CRITICAL: Same memory allocated multiple times!");
-        }
+    // SAFETY: both came from this pool and are live and distinct.
+    unsafe {
+        pool.deallocate(first).unwrap();
+        pool.deallocate(other).unwrap();
     }
 }
 
