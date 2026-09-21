@@ -263,7 +263,7 @@ impl FixedCapacityMemoryPool {
                 size_of::<BlockHeader>()
             )));
         }
-        if config.max_block_size % config.alignment != 0 {
+        if !config.max_block_size.is_multiple_of(config.alignment) {
             return Err(ZiporaError::invalid_data(format!(
                 "FixedCapacityPoolConfig::max_block_size ({}) must be a multiple of alignment ({}); \
                  blocks are carved at multiples of max_block_size and would not meet the requested alignment",

@@ -104,3 +104,52 @@ are asserted to pass their own validation.
 
 **Commit.** _pending_
 
+
+---
+
+### C3.2 — every `FiveLevelPool` drop is UB (wrong `Layout`) — CRITICAL
+
+**Finding.** `MemoryChunk::new(capacity, alignment)` allocates with
+`Layout::from_size_align(capacity, alignment)`, where `alignment` comes from
+`FiveLevelPoolConfig::alignment` — 8 by default, 16 for `performance_optimized()`.
+`MemoryChunk::drop` deallocated with `Layout::from_size_align_unchecked(capacity,
+align_of::<u8>())`, i.e. **alignment 1**. `GlobalAlloc::dealloc` requires the same
+layout that was passed to `alloc`; a differing alignment is undefined behaviour.
+
+The `SAFETY:` comment claimed "data allocated with same layout (capacity,
+`align_of::<u8>()`)", which was simply false — `new` never used that layout.
+
+This is not an edge case: it fires on every construction and drop of `NoLockingPool`,
+`MutexBasedPool`, `LockFreePool`, `ThreadLocalPool`, `FixedCapacityPool` and
+`AdaptiveFiveLevelPool`, under every preset, from safe code.
+
+**Expected failure.** Mismatched-layout deallocation.
+
+**RED (watched).** `cargo +nightly miri test --lib
+memory::five_level_pool::tests::test_pool_drop_uses_the_allocation_layout` at the
+parent commit, on the plain `FiveLevelPoolConfig::default()` case:
+
+```
+error: Undefined Behavior: incorrect layout on deallocation:
+alloc644677 has size 1048576 and alignment 8, but gave size 1048576 and alignment 1
+   --> src/memory/five_level_pool.rs:255:13
+    |
+255 |             dealloc(self.data.as_ptr(), layout);
+    |
+    0: <MemoryChunk as Drop>::drop                  at :255
+    1: drop_glue::<MemoryChunk>
+    2: drop_glue::<NoLockingPool>
+    3: mem::drop::<NoLockingPool>
+    4: tests::test_pool_drop_uses_the_allocation_layout
+```
+
+**Test.** `test_pool_drop_uses_the_allocation_layout` — constructs and drops a pool
+under four configurations (default, `performance_optimized`, `memory_optimized`, and
+an explicit `alignment: 64`) and asserts the chunk base honours the configured
+alignment. The alignment assertion holds either way; the **drop** is the oracle, and
+it only speaks under Miri, hence the new `make miri_pool` target.
+
+**Fix.** `MemoryChunk` stores the `Layout` it allocated with and `Drop` uses it.
+The `SAFETY:` comment now names the real invariant.
+
+**Commit.** _pending_
