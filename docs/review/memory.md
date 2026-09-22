@@ -1448,6 +1448,54 @@ attempt to add with overflow
 * `get_page_size()` validates `raw > 0 && (raw as usize).is_power_of_two()`, falling back to
   `4096`.
 
+**Commit.** `a40839f`
+---
+
+## C3.23 (S8-R3) — `TieredMemoryAllocator::deallocate` panicked inside `Drop` during TLS teardown via `MEDIUM_POOLS.with(..)`
+
+**Scope.** `src/memory/tiered.rs`.
+
+**Found by.** Stage 4 review (S8-R3, MEDIUM; plus T3, T5, and T6 from the `tiered.rs` ledger
+table).
+
+**Findings.**
+
+1. **T4 (S8-R3):** `stats`, `allocate_medium`, and `deallocate_medium` all called
+   `MEDIUM_POOLS.with(..)`. When a user struct holding a `TieredAllocation::Medium` lives in a
+   `thread_local!` whose first initialization on a thread precedes the thread's first medium
+   allocation, Rust's LIFO TLS destructor order destroys `MEDIUM_POOLS` *before* the user
+   struct's `Drop` runs. Calling `allocator.deallocate(alloc)` inside that `Drop` then panicked
+   at `std/src/thread/local.rs` (`cannot access a Thread Local Storage value during or after
+   destruction: AccessError`), triggering `fatal runtime error: thread local panicked on drop,
+   aborting` (`SIGABRT`).
+2. **T3:** `allocate` incremented `self.total_bytes` *before* calling `allocate_small` /
+   `allocate_medium` / `allocate_large` / `allocate_huge` and never decremented it on error.
+3. **T6:** `AllocationHistory::record_allocation` computed `63 - size.leading_zeros() as usize`
+   instead of `(usize::BITS as usize - 1) - size.leading_zeros() as usize`.
+
+**RED (watched).**
+
+```
+thread '<unnamed>' panicked at library/std/src/thread/local.rs:428:25:
+cannot access a Thread Local Storage value during or after destruction: AccessError
+fatal runtime error: thread local panicked on drop, aborting
+(signal: 6, SIGABRT: process abort signal)
+```
+
+**Fix.**
+
+* Replaced all three `MEDIUM_POOLS.with` calls with `MEDIUM_POOLS.try_with`.
+* In `deallocate_medium`, when `try_with` reports that `MEDIUM_POOLS` has already been
+  destroyed on the exiting thread, the checked-out chunk (which was not in `free_chunks` when
+  `MEDIUM_POOLS` dropped and is therefore still a live heap allocation of
+  `Layout::from_size_align(chunk_size, 16)`) is freed directly via `std::alloc::dealloc` and
+  `deallocate_medium` returns `Err(ZiporaError::ResourceBusy(..))` — neither panicking inside
+  `Drop` nor leaking the chunk.
+* In `allocate_medium`, `try_with` failure falls back to `self.allocate_large(size)`.
+* In `stats`, `try_with` failure returns an empty `medium_pool_stats` vector.
+* Moved `self.total_bytes.fetch_add` after the tier allocation succeeds (T3), and replaced `63`
+  with `usize::BITS as usize - 1` (T6).
+
 **Commit.** _pending_
 ---
 
@@ -1482,15 +1530,15 @@ Traced and **refuted**, do not re-chase: the tail-rollback fast path in
 `NoLockingPool::free` can only fire for the topmost live block, and
 `alloc_from_fast_bin_lockfree`'s carve width does equal its recycle class width.
 
-## `tiered.rs`
+## `tiered.rs` (after C3.15, C3.16, and C3.23)
+
+T3 (`total_bytes` charged before failure), T4 (`MEDIUM_POOLS.with` panic during TLS teardown),
+T5 (`MEDIUM_POOLS` invariant comment), and T6 (`63 - leading_zeros`) are closed in C3.23.
+Remaining LOW item:
 
 | # | Lines | Severity | Finding |
 |---|---|---|---|
-| T3 | L328 | MEDIUM | `total_bytes.fetch_add(size)` runs *before* the allocation can fail and is never decremented on failure, so a failing allocator reports ever-growing usage. |
-| T4 | L391, L452, L475 | MEDIUM | `MEDIUM_POOLS.with(..)` panics if reached during TLS teardown, and `deallocate` is the kind of method a `Drop` calls. `try_with` and an `Err` would be honest. A RED needs a TLS-destructor harness that forces MEDIUM_POOLS to be destroyed first (registration order is LIFO), which is why it is not in this range. |
-| T5 | L153 | MEDIUM | `expect("memory pool creation")` inside the `thread_local!` initializer. Unreachable as written — the config is a literal — but it is a panic in a TLS initializer. |
-| T6 | L211 | LOW | `63 - size.leading_zeros()` hardcodes 64-bit. On a 32-bit target every bucket lands ≥ 32, the `if bucket < 32` guard rejects all of them, and the histogram stays all-zero, so `get_allocation_pattern` silently always answers `Mixed`. Should be `usize::BITS - 1 - lz`. |
-| T7 | L415-427, L512-529 | LOW | `optimize_for_pattern()` is a `log::debug!` and `Ok(())`. The two `unsafe impl` SAFETY comments justify a field that does not exist (`bump_allocator`). |
+| T7 | L420-432 | LOW | `optimize_for_pattern()` is a `log::debug!` and `Ok(())`. |
 
 **Refuted**, do not re-chase: medium-pool carve width equals recycle width;
 `TieredAllocation` is auto-`!Send`, so the thread-local cross-thread-free hazard is
