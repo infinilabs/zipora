@@ -390,14 +390,17 @@ impl GlobalPools {
         }
     }
 
-    fn get_pool_for_size(&self, size: usize) -> &Arc<MemoryPool> {
-        if size <= 1024 {
-            &self.small_pool
-        } else if size <= 64 * 1024 {
-            &self.medium_pool
-        } else {
-            &self.large_pool
+    /// Return the smallest shared pool whose chunk can hold `size` bytes and
+    /// whose chunk alignment satisfies `align`, or `None` if none of the three
+    /// presets can serve the request.
+    fn get_pool_for_layout(&self, size: usize, align: usize) -> Option<&Arc<MemoryPool>> {
+        for pool in [&self.small_pool, &self.medium_pool, &self.large_pool] {
+            let cfg = pool.config();
+            if cfg.chunk_size >= size && cfg.alignment >= align {
+                return Some(pool);
+            }
         }
+        None
     }
 }
 
@@ -445,14 +448,35 @@ pub struct PooledVec<T> {
     ptr: NonNull<T>,
     len: usize,
     capacity: usize,
-    pool: Arc<MemoryPool>,
+    pool: Option<Arc<MemoryPool>>,
 }
 
 impl<T> PooledVec<T> {
     /// Create a new pooled vector
     pub fn new() -> Result<Self> {
         let element_size = std::mem::size_of::<T>();
-        let pool = GLOBAL_POOLS.get_pool_for_size(element_size).clone();
+        let element_align = std::mem::align_of::<T>();
+
+        if element_size == 0 {
+            return Ok(Self {
+                ptr: NonNull::dangling(),
+                len: 0,
+                capacity: usize::MAX,
+                pool: None,
+            });
+        }
+
+        let pool = match GLOBAL_POOLS.get_pool_for_layout(element_size, element_align) {
+            Some(shared) => shared.clone(),
+            None => {
+                let chunk_size = 1024usize.max(element_size);
+                Arc::new(MemoryPool::new(PoolConfig::new(
+                    chunk_size,
+                    16,
+                    element_align,
+                ))?)
+            }
+        };
 
         let chunk = pool.allocate()?;
         let capacity = pool.config().chunk_size / element_size;
@@ -461,7 +485,7 @@ impl<T> PooledVec<T> {
             ptr: chunk.cast(),
             len: 0,
             capacity,
-            pool,
+            pool: Some(pool),
         })
     }
 
@@ -472,9 +496,16 @@ impl<T> PooledVec<T> {
             return Err(ZiporaError::invalid_data("vector capacity exceeded"));
         }
 
-        // SAFETY: self.len < self.capacity checked above, ptr + len is within allocated region
-        unsafe {
-            self.ptr.as_ptr().add(self.len).write(item);
+        if std::mem::size_of::<T>() == 0 {
+            std::mem::forget(item);
+        } else {
+            // SAFETY: `self.len < self.capacity` checked above, `self.ptr` was
+            // allocated with alignment >= `align_of::<T>()` and size >=
+            // `self.capacity * size_of::<T>()`, so `ptr + len` is aligned and
+            // in-bounds.
+            unsafe {
+                self.ptr.as_ptr().add(self.len).write(item);
+            }
         }
         self.len += 1;
         Ok(())
@@ -501,27 +532,34 @@ impl<T> PooledVec<T> {
     /// Get a slice of the vector's contents
     #[inline]
     pub fn as_slice(&self) -> &[T] {
-        // SAFETY: ptr points to allocated region with capacity elements
-        // len ≤ capacity maintained by push(), all elements 0..len are initialized
+        // SAFETY: For ZSTs `self.ptr` is `NonNull::<T>::dangling()`, which is
+        // non-null and aligned to `align_of::<T>()`. For non-ZSTs `self.ptr`
+        // points to a pool chunk of alignment >= `align_of::<T>()` with
+        // `self.len <= self.capacity` initialized elements.
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 }
 
 impl<T> Drop for PooledVec<T> {
     fn drop(&mut self) {
-        // Drop all elements
+        // Drop all initialized elements. For ZSTs `ptr.add(i)` stays at the
+        // aligned dangling pointer, which is valid for `drop_in_place`.
         for i in 0..self.len {
-            // SAFETY: i < self.len, so ptr + i is within initialized region
+            // SAFETY: `0..self.len` was initialized by `push` and is dropped
+            // once here.
             unsafe {
                 self.ptr.as_ptr().add(i).drop_in_place();
             }
         }
 
-        // Return memory to pool.
-        // SAFETY: `self.ptr` is the chunk `PooledVec::new` took from this same
-        // pool, it has not been freed before (this runs once, in `Drop`), and
-        // the elements above have already been dropped in place.
-        let _ = unsafe { self.pool.deallocate(self.ptr.cast()) };
+        if let Some(pool) = &self.pool {
+            // Return memory to pool.
+            // SAFETY: `self.ptr` is the chunk `PooledVec::new` took from this
+            // same pool, it has not been freed before (this runs once, in
+            // `Drop`), and the elements above have already been dropped in
+            // place.
+            let _ = unsafe { pool.deallocate(self.ptr.cast()) };
+        }
     }
 }
 
@@ -537,8 +575,23 @@ pub struct PooledBuffer {
 impl PooledBuffer {
     /// Create a new pooled buffer of the specified size
     pub fn new(size: usize) -> Result<Self> {
-        let pool = GLOBAL_POOLS.get_pool_for_size(size).clone();
+        let pool = GLOBAL_POOLS
+            .get_pool_for_layout(size, 1)
+            .ok_or_else(|| {
+                ZiporaError::invalid_data(
+                    "PooledBuffer size exceeds maximum global pool chunk size",
+                )
+            })?
+            .clone();
         let chunk = pool.allocate()?;
+        if size > 0 {
+            // SAFETY: `chunk` points to `pool.config().chunk_size >= size`
+            // writable bytes; zeroing initializes `0..size` before `as_slice`
+            // can read it and wipes any previous tenant's bytes on reuse.
+            unsafe {
+                std::ptr::write_bytes(chunk.as_ptr(), 0, size);
+            }
+        }
 
         Ok(Self {
             ptr: chunk,
@@ -653,6 +706,70 @@ mod tests {
 
         let stats = pool.stats();
         assert!(stats.pool_hits > 0);
+    }
+
+    /// C3.21 (S8-R1, HIGH). `PooledVec::new` computed
+    /// `pool.config().chunk_size / std::mem::size_of::<T>()` without checking
+    /// for a zero-sized element type, so `PooledVec::<()>::new()` panicked with
+    /// divide-by-zero from a safe public API.
+    #[test]
+    fn test_pooled_vec_supports_zero_sized_elements() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static DROPS: AtomicUsize = AtomicUsize::new(0);
+
+        struct ZstDrop;
+        impl Drop for ZstDrop {
+            fn drop(&mut self) {
+                DROPS.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        DROPS.store(0, Ordering::Relaxed);
+        {
+            let mut vec = PooledVec::<ZstDrop>::new().unwrap();
+            for _ in 0..5 {
+                vec.push(ZstDrop).unwrap();
+            }
+            assert_eq!(vec.len(), 5);
+            assert_eq!(vec.as_slice().len(), 5);
+            assert_eq!(DROPS.load(Ordering::Relaxed), 0);
+        }
+        assert_eq!(DROPS.load(Ordering::Relaxed), 5);
+    }
+
+    /// C3.21 (S8-R1, HIGH). `PooledVec::new` selected a global pool by
+    /// `size_of::<T>()` alone and ignored `align_of::<T>()`. `small_pool` has
+    /// `alignment = 8`, so any `T` aligned to 16 (`u128`) or 64 (`#[repr(align(64))]`)
+    /// received an 8-byte-aligned pointer, tripping `slice::from_raw_parts`'s
+    /// alignment precondition in `as_slice` (abort in debug, silent UB in release).
+    #[test]
+    fn test_pooled_vec_honours_element_alignment() {
+        #[repr(align(64))]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        struct OverAligned(u64);
+
+        let mut vecs = Vec::with_capacity(16);
+        for i in 0..16 {
+            let mut v = PooledVec::<OverAligned>::new().unwrap();
+            v.push(OverAligned(i as u64)).unwrap();
+            vecs.push(v);
+        }
+        for (i, v) in vecs.iter().enumerate() {
+            let addr = v.as_slice().as_ptr() as usize;
+            assert_eq!(addr % 64, 0, "vec {i} at {addr:#x} is not 64-byte aligned");
+            assert_eq!(v.as_slice(), &[OverAligned(i as u64)]);
+        }
+    }
+
+    /// C3.21. `PooledBuffer::new(size)` picked `large_pool` (1 MiB chunks) for
+    /// any `size > 64 KiB` and then set `self.len = size`, so `PooledBuffer::new(2 MiB)`
+    /// handed back a 2 MiB slice over a 1 MiB allocation.
+    #[test]
+    fn test_pooled_buffer_rejects_size_exceeding_chunk() {
+        assert!(
+            PooledBuffer::new(2 * 1024 * 1024).is_err(),
+            "PooledBuffer::new above large_pool chunk_size must return Err, not overrun the chunk"
+        );
     }
 
     #[test]
