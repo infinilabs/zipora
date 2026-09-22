@@ -142,16 +142,23 @@ pub struct TieredStats {
     pub mmap_stats: crate::memory::mmap::MmapStats,
 }
 
+const MEDIUM_SIZE_CLASSES: [usize; 5] = [1024, 2048, 4096, 8192, 16384];
+const MEDIUM_POOL_ALIGN: usize = 16;
+
 // Thread-local storage for medium-sized pools to reduce contention
 thread_local! {
     static MEDIUM_POOLS: Vec<Arc<MemoryPool>> = {
-        // Size classes: 1KB, 2KB, 4KB, 8KB, 16KB
-        let size_classes = vec![1024, 2048, 4096, 8192, 16384];
-
-        size_classes.into_iter().map(|size| {
-            let config = PoolConfig::new(size, 32, 16); // 32 chunks per pool, 16-byte aligned
-            Arc::new(MemoryPool::new(config).expect("memory pool creation"))
-        }).collect()
+        // Invariant: `MEDIUM_SIZE_CLASSES` and `MEDIUM_POOL_ALIGN` are
+        // compile-time valid constants (`chunk_size > 0`, `alignment = 16`
+        // power of two), so `MemoryPool::new` cannot fail (`new()` does not
+        // pre-allocate chunks).
+        MEDIUM_SIZE_CLASSES
+            .into_iter()
+            .map(|size| {
+                let config = PoolConfig::new(size, 32, MEDIUM_POOL_ALIGN);
+                Arc::new(MemoryPool::new(config).expect("medium pool preset config is valid"))
+            })
+            .collect()
     };
 }
 
@@ -208,7 +215,7 @@ impl AllocationHistory {
         let bucket = if size == 0 {
             0
         } else {
-            63 - size.leading_zeros() as usize
+            (usize::BITS as usize - 1) - size.leading_zeros() as usize
         };
         if bucket < 32 {
             self.size_histogram[bucket] += 1;
@@ -325,18 +332,20 @@ impl TieredMemoryAllocator {
             history.record_allocation(size);
         }
 
-        self.total_bytes.fetch_add(size as u64, Ordering::Relaxed);
-
-        // Route to appropriate allocator based on size
-        if size <= SMALL_THRESHOLD && self.config.enable_small_pools {
-            self.allocate_small(size)
+        // Route to appropriate allocator based on size; charge `total_bytes`
+        // only after the tier succeeds (T3).
+        let alloc = if size <= SMALL_THRESHOLD && self.config.enable_small_pools {
+            self.allocate_small(size)?
         } else if size <= MEDIUM_THRESHOLD && self.config.enable_medium_pools {
-            self.allocate_medium(size)
+            self.allocate_medium(size)?
         } else if size < LARGE_THRESHOLD && self.config.enable_mmap_large {
-            self.allocate_large(size)
+            self.allocate_large(size)?
         } else {
-            self.allocate_huge(size)
-        }
+            self.allocate_huge(size)?
+        };
+
+        self.total_bytes.fetch_add(size as u64, Ordering::Relaxed);
+        Ok(alloc)
     }
 
     /// Deallocate memory
@@ -387,8 +396,9 @@ impl TieredMemoryAllocator {
 
     /// Get comprehensive statistics
     pub fn stats(&self) -> TieredStats {
-        let medium_pool_stats =
-            MEDIUM_POOLS.with(|pools| pools.iter().map(|pool| pool.stats()).collect());
+        let medium_pool_stats = MEDIUM_POOLS
+            .try_with(|pools| pools.iter().map(|pool| pool.stats()).collect())
+            .unwrap_or_default();
 
         TieredStats {
             small_allocations: self.small_allocs.load(Ordering::Relaxed),
@@ -446,14 +456,14 @@ impl TieredMemoryAllocator {
     }
 
     fn allocate_medium(&self, size: usize) -> Result<TieredAllocation> {
-        self.medium_allocs.fetch_add(1, Ordering::Relaxed);
-
-        // Use thread-local medium pools for better performance
-        MEDIUM_POOLS.with(|pools| {
-            // Find the smallest pool that can accommodate the allocation
+        // C3.23 (S8-R3): `try_with` instead of `with` so calling `allocate`
+        // during TLS teardown falls back to `allocate_large` rather than
+        // panicking inside `std::thread::LocalKey::with`.
+        match MEDIUM_POOLS.try_with(|pools| {
             for pool in pools.iter() {
                 if pool.config().chunk_size >= size {
                     let chunk = pool.allocate()?;
+                    self.medium_allocs.fetch_add(1, Ordering::Relaxed);
 
                     // SAFETY: as in `allocate_small`; the guard above is
                     // exactly `size <= pool.config().chunk_size`.
@@ -466,14 +476,24 @@ impl TieredMemoryAllocator {
                 }
             }
 
-            // No suitable pool found, fall back to mmap
             self.allocate_large(size)
-        })
+        }) {
+            Ok(res) => res,
+            Err(_) => self.allocate_large(size),
+        }
     }
 
     fn deallocate_medium(&self, ptr: NonNull<u8>, size: usize) -> Result<()> {
-        MEDIUM_POOLS.with(|pools| {
-            // Find the appropriate pool based on size
+        // C3.23 (S8-R3): if a user `Drop` runs on thread exit *after*
+        // `MEDIUM_POOLS` has already been destroyed (LIFO TLS teardown order),
+        // `LocalKey::with` would panic inside `Drop` and abort the process.
+        // `MemoryPool::drop` only frees the chunks parked in `free_chunks` at
+        // destruction time, so a checked-out `MediumBlock` is still a live heap
+        // allocation with `Layout(chunk_size, MEDIUM_POOL_ALIGN)`; when
+        // `try_with` reports that `MEDIUM_POOLS` is gone, release the chunk
+        // directly to the system allocator and return an error rather than
+        // panicking or leaking.
+        match MEDIUM_POOLS.try_with(|pools| {
             for pool in pools.iter() {
                 if pool.config().chunk_size >= size {
                     // SAFETY: `allocate_medium` picks the pool the same way,
@@ -487,7 +507,26 @@ impl TieredMemoryAllocator {
             Err(ZiporaError::invalid_data(
                 "no suitable pool for deallocation",
             ))
-        })
+        }) {
+            Ok(res) => res,
+            Err(_) => {
+                if let Some(chunk_size) = MEDIUM_SIZE_CLASSES.into_iter().find(|&c| c >= size)
+                    && let Ok(layout) =
+                        std::alloc::Layout::from_size_align(chunk_size, MEDIUM_POOL_ALIGN)
+                {
+                    // SAFETY: `ptr` was allocated by the thread's medium
+                    // `MemoryPool` for `chunk_size` with `MEDIUM_POOL_ALIGN`,
+                    // was not in `free_chunks` when `MEDIUM_POOLS` tore down,
+                    // and `MediumBlock` was consumed by value by `deallocate`.
+                    unsafe {
+                        std::alloc::dealloc(ptr.as_ptr(), layout);
+                    }
+                }
+                Err(ZiporaError::resource_busy(
+                    "thread-local medium pools already destroyed during TLS teardown;                      chunk released directly to the system allocator",
+                ))
+            }
+        }
     }
 
     fn allocate_large(&self, size: usize) -> Result<TieredAllocation> {
@@ -619,6 +658,74 @@ mod tests {
     // Global mutex to serialize tests that use global allocator state
     // This prevents race conditions that cause segfaults in release mode
     static GLOBAL_ALLOCATOR_TEST_MUTEX: Mutex<()> = Mutex::new(());
+
+    /// C3.23 (S8-R3, MEDIUM). `MEDIUM_POOLS.with(..)` in `deallocate` panics
+    /// with `cannot access a Thread Local Storage value during or after
+    /// destruction` when reached from a user `Drop` that runs after
+    /// `MEDIUM_POOLS` has been torn down on thread exit.
+    ///
+    /// Rust destroys a thread's TLS keys in LIFO order of their first
+    /// initialization on that thread: touching `LATE_TLS` *before* the thread's
+    /// first medium allocation initializes `MEDIUM_POOLS` guarantees that on
+    /// thread exit `MEDIUM_POOLS` is destroyed first and `LATE_TLS`'s
+    /// destructor runs second, when `MEDIUM_POOLS` is already gone.
+    #[test]
+    fn test_medium_deallocate_during_tls_teardown_does_not_panic() {
+        use std::cell::RefCell;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        struct LateHolder {
+            allocator: Arc<TieredMemoryAllocator>,
+            allocation: Option<TieredAllocation>,
+            finished_drop: Arc<AtomicBool>,
+        }
+
+        impl Drop for LateHolder {
+            fn drop(&mut self) {
+                if let Some(alloc) = self.allocation.take() {
+                    // Must return `Ok` or `Err`, never panic inside `Drop`!
+                    let _ = self.allocator.deallocate(alloc);
+                }
+                self.finished_drop.store(true, Ordering::SeqCst);
+            }
+        }
+
+        thread_local! {
+            static LATE_TLS: RefCell<Option<LateHolder>> = const { RefCell::new(None) };
+        }
+
+        let finished_drop = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&finished_drop);
+
+        let handle = std::thread::spawn(move || {
+            let allocator = Arc::new(TieredMemoryAllocator::default().unwrap());
+            // 1. Register `LATE_TLS`'s destructor FIRST so it runs AFTER
+            //    `MEDIUM_POOLS`'s destructor (LIFO teardown order).
+            LATE_TLS.with(|slot| {
+                *slot.borrow_mut() = Some(LateHolder {
+                    allocator: Arc::clone(&allocator),
+                    allocation: None,
+                    finished_drop: Arc::clone(&flag),
+                });
+            });
+            // 2. Now perform the first medium allocation on this thread, which
+            //    initializes `MEDIUM_POOLS` (so `MEDIUM_POOLS` will be destroyed
+            //    BEFORE `LATE_TLS`).
+            let medium = allocator.allocate(4096).unwrap();
+            LATE_TLS.with(|slot| {
+                slot.borrow_mut().as_mut().unwrap().allocation = Some(medium);
+            });
+        });
+
+        handle
+            .join()
+            .expect("worker thread panicked or aborted during TLS teardown");
+        assert!(
+            finished_drop.load(Ordering::SeqCst),
+            "LateHolder::drop did not run to completion during TLS teardown"
+        );
+    }
 
     #[test]
     fn test_tiered_allocator_creation() {
