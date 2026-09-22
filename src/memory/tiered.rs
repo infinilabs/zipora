@@ -523,7 +523,7 @@ impl TieredMemoryAllocator {
                     }
                 }
                 Err(ZiporaError::resource_busy(
-                    "thread-local medium pools already destroyed during TLS teardown;                      chunk released directly to the system allocator",
+                    "thread-local medium pools already destroyed during TLS teardown; chunk released directly to the system allocator",
                 ))
             }
         }

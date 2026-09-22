@@ -1625,6 +1625,76 @@ test memory::prefetch::tests::test_adaptive_prefetch_detection ...
 **Commit.** `6e9d140`
 ---
 
+## C3.26 (S9-R1..R5) — `ThreadLocalPool` cache eviction (`Drop` + lazy `Weak`), MRU + slab fast path (14.9 ns cycle, 64.5 µs bulk), stack-only `StrideDetector` entropy
+
+**Scope.** `src/memory/five_level_pool.rs`, `src/memory/prefetch.rs`, `src/memory/simd_ops.rs`,
+`src/memory/tiered.rs`.
+
+**Found by.** Stage 4 follow-up review (`S9-R1`..`S9-R5`):
+
+1. **S9-R1 (MEDIUM regression in C3.24):** `THREAD_CACHE` was a `HashMap<u64,
+   ThreadLocalCache>` with no `Drop` on `ThreadLocalPool` and no eviction of dead entries; each
+   entry preallocated `vec![Vec::new(); max_fast_block_size / alignment]` (`4,096` empty `Vec`s,
+   ~96 KiB at default config). Running 200 (or 1,000) create/alloc/free/drop cycles on one
+   thread leaked 200 (or 1,000) entries in `THREAD_CACHE`.
+2. **S9-R2 (MEDIUM regression in C3.24):** Every `alloc`/`free` paid a SipHash `HashMap` lookup
+   (`14.6 ns → 49.6 ns`), every fresh allocation locked `global_pool` instead of bumping from a
+   pre-carved slab, and `ThreadLocalCache::try_push` ran `list.contains(&offset)` on every free
+   (`O(n)` per free, `65 µs → 3.0 ms` for `4,096 × 64 B` alloc-then-free).
+3. **S9-R3 (LOW):** `test_adaptive_prefetch_does_not_overflow_on_large_offset_delta` passed on
+   its own parent because the parent's `adaptive_prefetch` only fed `access_pattern.last()` to
+   `detect`.
+4. **S9-R4 (LOW):** `StrideDetector::detect` heap-allocated a `std::collections::HashSet` and
+   `calculate_entropy` heap-allocated a `std::collections::HashMap` and called `f32::log2()` for
+   an 8-element history (`max_history = 8`) on every address in `adaptive_prefetch` (`569 ns` for
+   8 addresses); `avx512_memchr`/`avx2_memchr`/`sse2_memchr` lacked `#[inline]`.
+5. **S9-R5 (LOW):** `tiered.rs` `deallocate_medium`'s `resource_busy` error message contained a
+   run of 21 embedded spaces from a multi-line string literal.
+
+**RED (watched).**
+
+```
+thread 'memory::five_level_pool::tests::test_thread_local_pool_drop_evicts_thread_cache_entries'
+  panicked at src/memory/five_level_pool.rs:2166:9:
+assertion `left == right` failed: dropping 200 ThreadLocalPools leaked 200 entries in THREAD_CACHE
+  left: 200
+ right: 0
+```
+
+**Fix.**
+
+* **S9-R1:** Implemented `Drop for ThreadLocalPool` to remove `self.id` from the current
+  thread's `THREAD_CACHE`, stored `Weak<MutexBasedPool>` per entry and pruned dead entries
+  (`strong_count() == 0`) on insert so cross-thread drops are lazily evicted, and grew
+  `local_free_lists` lazily to `bin_index + 1` instead of preallocating 4,096 `Vec`s.
+* **S9-R2:** Replaced `HashMap<u64, ThreadLocalCache>` with a compact `Vec<ThreadLocalCache>`
+  whose MRU tail (`caches.last_mut()`, `last.pool_id == self.id`) is checked first; added
+  `MutexBasedPool::carve_slab` so each thread bumps from a 64-block `[hot_pos..hot_end)` slab
+  carved out of `global_pool`'s single address space (preserving F4 while locking `global_pool`
+  only once per 64 blocks); and removed the `O(n)` `list.contains(&offset)` scan from
+  `try_push`.
+* **S9-R3:** Updated `test_adaptive_prefetch_does_not_overflow_on_large_offset_delta` to invoke
+  `adaptive_prefetch` twice (`&[2]` then `&[(isize::MAX as usize) + 1]`) in addition to the
+  single-slice call.
+* **S9-R4:** Split `StrideDetector::record_addr` from `current_pattern` (so `adaptive_prefetch`
+  classifies once per slice rather than per element) and replaced the heap `HashSet`/`HashMap` +
+  `f32::log2` in `StrideDetector` (`max_history = 8`) with an 8-slot stack array `[(isize,
+  u8); 8]` and an exact 9-entry `LOG2` constant table; added `#[inline]` to `avx512_memchr`,
+  `avx2_memchr`, and `sse2_memchr`.
+* **S9-R5:** Collapsed the embedded spaces in `tiered.rs`'s `resource_busy` message.
+
+**Measured release timing (`cargo test --release`, min of 5 repeats):**
+
+| Path | `0c82979` (pre-C3.24) | `9f975ee` (C3.24) | After C3.26 |
+|---|---|---|---|
+| `ThreadLocalPool` 64 B `alloc`/`free` cycle | 14.6 ns | 49.6 ns | **14.9 ns** (target ≤ 20 ns ✓) |
+| `ThreadLocalPool` 4,096 × 64 B `alloc` then `free` | 64.2 µs | 3,000 µs | **64.5 µs** (target ~65 µs ✓) |
+| `PrefetchStrategy::adaptive_prefetch` 8 addresses (seq / mix) | 48.7 ns (1 addr) | 569.3 ns | **78.6 ns / 110.2 ns** (~9.8–13.8 ns/addr) |
+| `SimdMemOps::find_byte` 4 KiB miss | 100.6 ns | 113.9 ns | **93.9 ns** |
+
+**Commit.** `fa2d6be`
+---
+
 # Open findings — read, judged, not fixed
 
 Everything below was found by reading the file and is recorded here so the next pass

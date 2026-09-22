@@ -692,6 +692,7 @@ impl SimdMemOps {
         }
     }
 
+    #[inline]
     #[target_feature(enable = "avx512f,avx512vl,avx512bw")]
     unsafe fn avx512_memchr(
         &self,
@@ -913,6 +914,7 @@ impl SimdMemOps {
         }
     }
 
+    #[inline]
     #[target_feature(enable = "avx2")]
     unsafe fn avx2_memchr(
         &self,
@@ -1123,6 +1125,7 @@ impl SimdMemOps {
         }
     }
 
+    #[inline]
     #[target_feature(enable = "sse2")]
     unsafe fn sse2_memchr(
         &self,
