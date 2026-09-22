@@ -1496,6 +1496,47 @@ fatal runtime error: thread local panicked on drop, aborting
 * Moved `self.total_bytes.fetch_add` after the tier allocation succeeds (T3), and replaced `63`
   with `usize::BITS as usize - 1` (T6).
 
+**Commit.** `32c9635`
+---
+
+## C3.24 (F4) — `ThreadLocalPool` shared one `MemOffset` across two zero-based address spaces and collided on live allocations
+
+**Scope.** `src/memory/five_level_pool.rs`.
+
+**Found by.** Stage 4 review (`five_level_pool` F4 decision: do not add a public dereference
+accessor in C3 because the module has no consumer in the crate; fix F4 now because two address
+spaces behind one `MemOffset` already corrupt bookkeeping without any dereference; decide
+between option (a) and removing the module in C4 alongside the CSPP trie node pool).
+
+**Finding.** `ThreadLocalCache` allocated its own zero-based `Vec<u8>` arena and handed out
+`MemOffset(0..arena_size / 2)` from `hot_pos`, then fell back to `self.global_pool.alloc()`
+(`MutexBasedPool`), whose own arena *also* starts at offset `0`. As soon as the thread-local
+hot area (`arena_size / 2` bytes) filled, the very next small allocation returned
+`MemOffset(0)` from `global_pool` while the first thread-local allocation at `MemOffset(0)`
+was still live (`first == second == MemOffset(0)`). On `free`, `offset.to_usize() <
+cache.arena.len()` routed every `global_pool` offset below `arena_size` into the thread-local
+free list instead of back to `global_pool` (leaking `global_pool` to exhaustion and inserting
+duplicate `0` entries into `local_free_lists`). Moreover, `THREAD_CACHE` was a single
+thread-local shared across all `ThreadLocalPool` instances on a thread, so two pools on the
+same thread cross-contaminated each other's free lists.
+
+**RED (watched).**
+
+```
+thread 'memory::five_level_pool::tests::test_thread_local_pool_never_hands_out_duplicate_live_offsets'
+  panicked at src/memory/five_level_pool.rs:2160:9:
+assertion `left != right` failed: two simultaneously live allocations from ThreadLocalPool collided at MemOffset(0)
+  left: MemOffset(0)
+ right: MemOffset(0)
+```
+
+**Fix.** `ThreadLocalPool` now has a single address space (`self.global_pool`). Each
+`ThreadLocalPool` instance receives a unique `id: u64`, and `THREAD_CACHE` maps `pool_id ->
+ThreadLocalCache` whose per-bin `local_free_lists` cache `MemOffset`s carved from
+`self.global_pool` (bounded by `arena_size` and checked against double free). Uses
+`THREAD_CACHE.try_with` so calls during TLS teardown fall through to `self.global_pool`
+without panicking.
+
 **Commit.** _pending_
 ---
 
@@ -1508,23 +1549,20 @@ why they are still open — the working agreement is RED first, and a RED for se
 these needs machinery this stage did not build (a dereferenceable `five_level_pool`, a
 TLS-teardown harness, a 1 GB-hugepage machine).
 
-## `five_level_pool.rs` — the whole file is blocked on one decision
+## `five_level_pool.rs` — owner decision recorded (F4 fixed in C3.24; F1–F3 deferred to C4)
 
-`alloc` returns `MemOffset`, a `#[repr(transparent)] pub struct MemOffset(u32)` whose
-field is private, whose `to_usize` and `is_null` are private, and whose only route to an
-address, `MemoryChunk::offset_ptr`, is a private method on a private struct. **No caller
-outside the module can dereference an allocation.** The only external consumer,
-`benches/five_level_pool_bench.rs`, never touches the memory. So this is an address-space
-bookkeeper, not an allocator, and the defects below are latent rather than exploitable.
-The owner has been asked to choose: make it real (public accessor + the fixes below),
-fix the internals without an accessor, or deprecate the module.
+**Owner decision (Stage 4 review, 2026-09-21):** Do *not* add a public dereference accessor
+in Stage 4 (the module has no consumer in the crate outside `benches/five_level_pool_bench.rs`;
+decide between option (a) and removing the module in C4 when reviewing the CSPP trie node
+pool). Fix F4 now because two address spaces behind one `MemOffset` already corrupted
+bookkeeping without any dereference (**closed in C3.24**). F1–F3 remain unreachable while
+`MemOffset` is opaque:
 
 | # | Lines | Finding |
 |---|---|---|
-| F1 | L612, L819, L1010 | The free-list link is written **into user memory**, at the exact address `alloc` returns, on all three levels. `lockfree_pool.rs` fixed the identical defect with an 8-byte `BLOCK_HEADER` (see A1.6); this file never did. Latent only because of the paragraph above. |
-| F2 | L388 | `LockFreeFreeListHead.head` is a bare `AtomicU32` with no generation tag: textbook ABA. `lockfree_pool.rs` packs `gen << 32 \| offset` into an `AtomicU64`. |
-| F3 | L937 | `alloc_from_fast_bin_lockfree` takes `self.memory.lock()` on **every CAS iteration**. The "lock-free" level is neither lock-free nor fast. |
-| F4 | L1108-1240 | `ThreadLocalPool` returns thread-local arena offsets **and** global-pool offsets as the same opaque `MemOffset`, and `free` routes on `offset.to_usize() < cache.arena.len()` (L1230). With the default configuration, local offset 0 and global offset 0 are both live and compare equal. |
+| F1 | L612, L819, L1010 | The free-list link is written **into user memory**, at the exact address `alloc` returns, on all three levels. Latent while `MemOffset` is opaque. |
+| F2 | L388 | `LockFreeFreeListHead.head` is a bare `AtomicU32` with no generation tag: textbook ABA. Latent while `MemOffset` is opaque. |
+| F3 | L937 | `alloc_from_fast_bin_lockfree` takes `self.memory.lock()` on **every CAS iteration**. |
 
 Traced and **refuted**, do not re-chase: the tail-rollback fast path in
 `NoLockingPool::free` can only fire for the topmost live block, and
