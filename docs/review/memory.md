@@ -1350,6 +1350,65 @@ moving each item's count alongside the item in `reorganize()`. Also removes one
 **Commit.** `0d6ee3f`
 ---
 
+## C3.21 (S8-R1) — `PooledVec<T>` divided by zero on ZSTs and violated slice alignment on over-aligned `T`; `PooledBuffer::new` overran `large_pool`
+
+**Scope.** `src/memory/pool.rs`.
+
+**Found by.** Stage 4 review (S8-R1, HIGH — blocking). `PooledVec<T>` is publicly re-exported
+(`pub use pool::{MemoryPool, PoolConfig, PooledBuffer, PooledVec}`) and had the same pair of
+safe-API-to-UB defects that C3.9 fixed on `CacheAlignedVec<T>`:
+
+1. **Zero-sized element divide-by-zero:** `PooledVec::new` computed `pool.config().chunk_size /
+   std::mem::size_of::<T>()` at `pool.rs:458`, so `PooledVec::<()>::new()` panicked with
+   `attempt to divide by zero` from a safe constructor.
+2. **Over-aligned `T` misalignment UB:** `PooledVec::new` called
+   `GLOBAL_POOLS.get_pool_for_size(element_size)`, which returns `small_pool` (`alignment = 8`)
+   for any `size_of::<T>() <= 1024`. For any `T` with `align_of::<T>() > 8` (`u128` at align
+   16, SIMD wrappers at align 32/64), `chunk.cast::<T>()` was misaligned; `push` wrote through
+   a misaligned pointer and `as_slice` tripped `slice::from_raw_parts`'s alignment
+   precondition (abort in debug, silent UB in release).
+3. **`PooledBuffer::new(size)` buffer overrun and uninitialized read:** `get_pool_for_size`
+   returned `large_pool` (1 MiB chunks) for any `size > 64 KiB` and `PooledBuffer::new` set
+   `self.len = size` without checking `size <= chunk_size`, so `PooledBuffer::new(2 MiB)`
+   handed `std::slice::from_raw_parts` a 2 MiB slice backed by a 1 MiB allocation; and
+   `PooledBuffer::as_slice` exposed uninitialized / recycled bytes.
+
+**RED (watched).**
+
+```
+thread 'memory::pool::tests::test_pooled_vec_supports_zero_sized_elements'
+  panicked at src/memory/pool.rs:458:24:
+attempt to divide by zero
+
+thread 'memory::pool::tests::test_pooled_vec_honours_element_alignment'
+  panicked at src/memory/pool.rs:506:18:
+unsafe precondition(s) violated: slice::from_raw_parts requires the pointer to be aligned and non-null
+thread caused non-unwinding panic. aborting. (SIGABRT)
+
+thread 'memory::pool::tests::test_pooled_buffer_rejects_size_exceeding_chunk'
+  panicked at src/memory/pool.rs:716:9:
+PooledBuffer::new above large_pool chunk_size must return Err, not overrun the chunk
+```
+
+**Fix.**
+
+* `GlobalPools::get_pool_for_layout(size, align)` returns the smallest shared pool whose
+  `chunk_size >= size` and `alignment >= align`, or `None` when none of the three presets
+  qualifies.
+* `PooledVec<T>::new()` handles `size_of::<T>() == 0` without touching a pool (`ptr:
+  NonNull::dangling()`, `capacity: usize::MAX`, `pool: None`; `push` forgets the ZST and
+  bumps `len`; `Drop` runs `drop_in_place` `self.len` times on the aligned dangling pointer).
+  For non-ZSTs whose alignment or size exceeds the shared presets, `PooledVec::new()` creates
+  a dedicated `MemoryPool` with `alignment = align_of::<T>()` and `chunk_size =
+  1024.max(size_of::<T>())`.
+* `PooledBuffer::new(size)` rejects `size > large_pool.chunk_size` with `InvalidData` and
+  zeroes `0..size` before returning so `as_slice` never reads uninitialized or recycled bytes.
+
+Also removed the corresponding `PooledVec` item from the *Open findings* section below.
+
+**Commit.** _pending_
+---
+
 # Open findings — read, judged, not fixed
 
 Everything below was found by reading the file and is recorded here so the next pass
@@ -1442,9 +1501,6 @@ now` under `enable_numa_awareness`; **L1192 increments `huge_page_allocs` and th
 through to the regular allocation**, so that counter reports huge pages that were never
 requested from the kernel.
 
-## `pool.rs` (after C3.12 and D8)
+## `pool.rs` (after C3.12, D8, and C3.21)
 
 `init_global_pools` (L405) validates its argument and then does nothing with it.
-`PooledVec::new()` (L454, L461) divides by `size_of::<T>()`, so a ZST panics, and `ptr: chunk.cast()`
-ignores `align_of::<T>()`, so an over-aligned `T` is misaligned — the same pair of
-defects C3.9 fixed in `CacheAlignedVec`.
