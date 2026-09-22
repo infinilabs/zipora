@@ -182,9 +182,10 @@ impl StrideDetector {
         }
     }
 
-    fn detect(&mut self, addr: usize) -> Option<AccessPattern> {
+    #[inline]
+    fn record_addr(&mut self, addr: usize) {
         let Some(prev_addr) = self.last_addr.replace(addr) else {
-            return Some(AccessPattern::Unknown);
+            return;
         };
 
         let stride = (addr as isize).wrapping_sub(prev_addr as isize);
@@ -204,26 +205,30 @@ impl StrideDetector {
             self.confidence = 1;
             self.last_stride = Some(stride);
         }
+    }
 
-        // Detect pattern with confidence threshold
+    #[inline]
+    fn current_pattern(&self) -> Option<AccessPattern> {
+        let Some(stride) = self.last_stride else {
+            return Some(AccessPattern::Unknown);
+        };
+
         if self.confidence >= 3 {
             Some(AccessPattern::Sequential {
                 stride,
                 confidence: self.confidence,
             })
         } else if self.history.len() >= 4 {
-            // Check for strided pattern
-            let unique_strides: std::collections::HashSet<_> =
-                self.history.iter().copied().collect();
-
-            if unique_strides.len() <= 2 {
+            // S9-R4: `self.history` has `max_history == 8` entries; tally unique
+            // strides on the stack instead of allocating a `HashSet` + `HashMap`
+            // on the heap.
+            let (unique, entropy) = self.stride_stats();
+            if unique <= 2 {
                 Some(AccessPattern::Strided {
                     stride,
                     distance: stride.unsigned_abs(),
                 })
             } else {
-                // Calculate entropy for random pattern
-                let entropy = self.calculate_entropy();
                 Some(AccessPattern::Random { entropy })
             }
         } else {
@@ -231,24 +236,42 @@ impl StrideDetector {
         }
     }
 
-    fn calculate_entropy(&self) -> f32 {
-        if self.history.is_empty() {
-            return 0.0;
-        }
+    #[cfg(test)]
+    fn detect(&mut self, addr: usize) -> Option<AccessPattern> {
+        self.record_addr(addr);
+        self.current_pattern()
+    }
 
-        let mut frequencies = std::collections::HashMap::new();
-        for &stride in &self.history {
-            *frequencies.entry(stride).or_insert(0) += 1;
+    #[inline]
+    fn stride_stats(&self) -> (usize, f32) {
+        let mut counts = [(0isize, 0u8); 8];
+        let mut unique = 0usize;
+        for &s in &self.history {
+            if let Some(slot) = counts[..unique].iter_mut().find(|(k, _)| *k == s) {
+                slot.1 += 1;
+            } else if unique < counts.len() {
+                counts[unique] = (s, 1);
+                unique += 1;
+            }
         }
-
-        let total = self.history.len() as f32;
-        frequencies
-            .values()
-            .map(|&count| {
-                let p = count as f32 / total;
-                -p * p.log2()
+        if unique <= 2 || self.history.is_empty() {
+            return (unique, 0.0);
+        }
+        const LOG2: [f32; 9] = [
+            0.0, 0.0, 1.0, 1.5849625, 2.0, 2.321928, 2.5849625, 2.807355, 3.0,
+        ];
+        let n = self.history.len().min(8);
+        let inv_total = 1.0 / (n as f32);
+        let log2_n = LOG2[n];
+        let entropy = counts[..unique]
+            .iter()
+            .map(|&(_, c)| {
+                let ci = (c as usize).min(8);
+                let p = (ci as f32) * inv_total;
+                p * (log2_n - LOG2[ci])
             })
-            .sum()
+            .sum();
+        (unique, entropy)
     }
 }
 
@@ -444,10 +467,10 @@ impl PrefetchStrategy {
         // stride detector in order so a slice of recent accesses (such as
         // `&[0, 64, 128, 192, 256]`) is analyzed as a sequence rather than
         // discarding all but `access_pattern.last()`.
-        let mut pattern = Some(AccessPattern::Unknown);
         for &addr in access_pattern {
-            pattern = self.stride_detector.detect(addr);
+            self.stride_detector.record_addr(addr);
         }
+        let pattern = self.stride_detector.current_pattern();
 
         if let Some(pat) = pattern {
             self.metrics.current_pattern = Some(pat);
@@ -892,6 +915,11 @@ mod tests {
     fn test_adaptive_prefetch_does_not_overflow_on_large_offset_delta() {
         let mut strategy = PrefetchStrategy::new(PrefetchConfig::default());
         let data = [0u8; 64];
+        // S9-R3: two separate calls ensure `StrideDetector::detect` subtracts
+        // `2` from `(isize::MAX as usize) + 1` even if `adaptive_prefetch`
+        // only looks at `access_pattern.last()`.
+        strategy.adaptive_prefetch(&data, &[2]);
+        strategy.adaptive_prefetch(&data, &[(isize::MAX as usize) + 1]);
         strategy.adaptive_prefetch(&data, &[2, (isize::MAX as usize) + 1]);
     }
 

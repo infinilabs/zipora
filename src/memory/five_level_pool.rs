@@ -852,6 +852,25 @@ impl MutexBasedPool {
     }
 }
 
+impl MutexBasedPool {
+    /// Carve up to `max_bytes` (and at least `min_bytes`) from the bump cursor
+    /// of `self.memory`, returning `Some((start, end))` in `self.memory`'s
+    /// single address space. Used by `ThreadLocalPool` so thread-local bump
+    /// allocations stay in the global pool's address space without locking the
+    /// global pool on every allocation.
+    fn carve_slab(&self, max_bytes: usize, min_bytes: usize) -> Option<(usize, usize)> {
+        let mut memory = self.memory.lock().ok()?;
+        let remaining = memory.capacity.saturating_sub(memory.size);
+        if remaining < min_bytes {
+            return None;
+        }
+        let take = max_bytes.min(remaining);
+        let start = memory.size;
+        memory.size += take;
+        Some((start, start + take))
+    }
+}
+
 // SAFETY: MutexBasedPool is Send because:
 // 1. `config: FiveLevelPoolConfig` - Config is Clone, no pointers.
 // 2. `memory: Arc<Mutex<MemoryChunk>>` - Arc<Mutex<T>> is Send if T is Send.
@@ -1107,18 +1126,24 @@ unsafe impl Sync for LockFreePool {}
 static NEXT_THREAD_LOCAL_POOL_ID: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(1);
 
-/// Level 4: Thread-local Caching - Per-thread fast-bin cache backed by a
-/// single `MutexBasedPool` address space.
+/// Level 4: Thread-local Caching - Per-thread fast-bin cache + bump slab
+/// backed by a single `MutexBasedPool` address space.
 ///
-/// C3.24 (F4): previously `ThreadLocalCache` owned a separate zero-based
-/// `Vec<u8>` arena and `alloc` returned `MemOffset(0..arena_size/2)` from that
-/// arena *and* `MemOffset(0..initial_capacity)` from `global_pool` once the
-/// local hot area filled, while `free` routed on `offset < cache.arena.len()`.
-/// Every offset below `arena_size` therefore existed in two address spaces at
-/// once and collided as soon as `global_pool` was reached. Caching
-/// `MemOffset`s carved from `global_pool` (keyed by `pool_id`) keeps every
-/// handle in one address space and isolates distinct `ThreadLocalPool`
-/// instances sharing a thread.
+/// C3.24 (F4) + C3.26 (S9-R1, S9-R2):
+/// - Every `MemOffset` handed out by `ThreadLocalPool` comes from
+///   `self.global_pool`'s single address space (either popped from a lazy
+///   per-bin `Vec<MemOffset>`, bumped from a thread-local `[hot_pos..hot_end)`
+///   slab carved out of `self.global_pool`, or allocated directly from
+///   `self.global_pool`), so two live allocations never share a `MemOffset`.
+/// - `THREAD_CACHE` is a compact `Vec<ThreadLocalCache>` whose MRU tail is
+///   checked first (`last.pool_id == self.id`), avoiding a `HashMap` SipHash on
+///   every `alloc`/`free`.
+/// - `local_free_lists` grows lazily to `bin_index + 1` instead of
+///   preallocating `max_fast_block_size / alignment` (4,096) empty `Vec`s, and
+///   `push` is `O(1)` without an `O(n)` linear scan.
+/// - `Drop for ThreadLocalPool` removes `self.id` from the dropping thread's
+///   `THREAD_CACHE` immediately, and `Weak<MutexBasedPool>` lazily evicts dead
+///   entries on any other thread that ever touched the pool.
 pub struct ThreadLocalPool {
     id: u64,
     config: FiveLevelPoolConfig,
@@ -1126,46 +1151,66 @@ pub struct ThreadLocalPool {
 }
 
 thread_local! {
-    static THREAD_CACHE: std::cell::RefCell<std::collections::HashMap<u64, ThreadLocalCache>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
+    static THREAD_CACHE: std::cell::RefCell<Vec<ThreadLocalCache>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 struct ThreadLocalCache {
+    pool_id: u64,
+    pool_weak: std::sync::Weak<MutexBasedPool>,
+    hot_pos: usize,
+    hot_end: usize,
     cached_bytes: usize,
     max_cached_bytes: usize,
     local_free_lists: Vec<Vec<MemOffset>>,
 }
 
 impl ThreadLocalCache {
-    fn new(max_cached_bytes: usize, num_bins: usize) -> Self {
+    fn new(
+        pool_id: u64,
+        pool_weak: std::sync::Weak<MutexBasedPool>,
+        max_cached_bytes: usize,
+    ) -> Self {
         Self {
+            pool_id,
+            pool_weak,
+            hot_pos: 0,
+            hot_end: 0,
             cached_bytes: 0,
             max_cached_bytes,
-            local_free_lists: vec![Vec::new(); num_bins],
+            local_free_lists: Vec::new(),
         }
     }
 
+    #[inline]
     fn pop(&mut self, bin_index: usize, block_size: usize) -> Option<MemOffset> {
         let offset = self.local_free_lists.get_mut(bin_index)?.pop()?;
         self.cached_bytes = self.cached_bytes.saturating_sub(block_size);
         Some(offset)
     }
 
-    fn try_push(&mut self, offset: MemOffset, bin_index: usize, block_size: usize) -> Result<bool> {
-        let Some(list) = self.local_free_lists.get_mut(bin_index) else {
-            return Ok(false);
-        };
-        if list.contains(&offset) {
-            return Err(ZiporaError::invalid_data(
-                "Double free detected in thread-local pool cache",
-            ));
+    #[inline]
+    fn alloc_from_slab(&mut self, block_size: usize) -> Option<MemOffset> {
+        if self.hot_pos + block_size <= self.hot_end {
+            let offset = self.hot_pos;
+            self.hot_pos += block_size;
+            Some(MemOffset::new(offset))
+        } else {
+            None
         }
+    }
+
+    #[inline]
+    fn try_push(&mut self, offset: MemOffset, bin_index: usize, block_size: usize) -> bool {
         if self.cached_bytes + block_size > self.max_cached_bytes {
-            return Ok(false);
+            return false;
         }
-        list.push(offset);
+        if bin_index >= self.local_free_lists.len() {
+            self.local_free_lists.resize_with(bin_index + 1, Vec::new);
+        }
+        self.local_free_lists[bin_index].push(offset);
         self.cached_bytes += block_size;
-        Ok(true)
+        true
     }
 }
 
@@ -1176,13 +1221,47 @@ impl ThreadLocalPool {
     /// if the shared global pool cannot be created.
     pub fn new(config: FiveLevelPoolConfig) -> Result<Self> {
         config.validate()?;
-        let global_pool = Arc::new(MutexBasedPool::new(config.clone())?);
+        let mut global_cfg = config.clone();
+        global_cfg.initial_capacity = global_cfg.initial_capacity.max(config.arena_size);
+        let global_pool = Arc::new(MutexBasedPool::new(global_cfg)?);
 
         Ok(Self {
             id: NEXT_THREAD_LOCAL_POOL_ID.fetch_add(1, Ordering::Relaxed),
             config,
             global_pool,
         })
+    }
+
+    #[inline]
+    fn with_thread_cache<R>(
+        &self,
+        f: impl FnOnce(&mut ThreadLocalCache) -> R,
+    ) -> Option<R> {
+        THREAD_CACHE
+            .try_with(|caches| {
+                let mut caches = caches.borrow_mut();
+                if let Some(last) = caches.last_mut()
+                    && last.pool_id == self.id
+                {
+                    return f(last);
+                }
+                if let Some(idx) = caches.iter().position(|c| c.pool_id == self.id) {
+                    let last = caches.len() - 1;
+                    caches.swap(idx, last);
+                    return f(&mut caches[last]);
+                }
+                // Lazily prune entries whose owning ThreadLocalPool was dropped
+                // on another thread before inserting a new entry.
+                caches.retain(|c| c.pool_weak.strong_count() > 0);
+                caches.push(ThreadLocalCache::new(
+                    self.id,
+                    Arc::downgrade(&self.global_pool),
+                    self.config.arena_size,
+                ));
+                let last = caches.len() - 1;
+                f(&mut caches[last])
+            })
+            .ok()
     }
 
     /// # Errors
@@ -1195,42 +1274,45 @@ impl ThreadLocalPool {
 
         if aligned_size <= self.config.max_fast_block_size {
             let bin_index = (aligned_size / self.config.alignment).saturating_sub(1);
-            let num_bins = self.config.max_fast_block_size / self.config.alignment;
 
-            if let Ok(Some(offset)) = THREAD_CACHE.try_with(|caches| {
-                let mut caches = caches.borrow_mut();
-                let cache = caches
-                    .entry(self.id)
-                    .or_insert_with(|| ThreadLocalCache::new(self.config.arena_size, num_bins));
-                cache.pop(bin_index, aligned_size)
-            }) {
+            if let Some(offset) = self.with_thread_cache(|cache| {
+                if let Some(off) = cache.pop(bin_index, aligned_size) {
+                    return Some(off);
+                }
+                if let Some(off) = cache.alloc_from_slab(aligned_size) {
+                    return Some(off);
+                }
+                let max_slab = (aligned_size * 64)
+                    .min(self.config.arena_size / 2)
+                    .max(aligned_size);
+                if let Some((start, end)) = self.global_pool.carve_slab(max_slab, aligned_size) {
+                    cache.hot_pos = start + aligned_size;
+                    cache.hot_end = end;
+                    return Some(MemOffset::new(start));
+                }
+                None
+            }) && let Some(offset) = offset
+            {
                 return Ok(offset);
             }
         }
 
-        // All fresh allocations come from the single global_pool address space.
         self.global_pool.alloc(aligned_size)
     }
 
     /// # Errors
     ///
-    /// Returns an error for a zero-byte block (see [`reject_zero_size`]) or on
-    /// a double free.
+    /// Returns an error for a zero-byte block (see [`reject_zero_size`]).
     pub fn free(&self, offset: MemOffset, size: usize) -> Result<()> {
         reject_zero_size(size, "free")?;
         let aligned_size = self.align_up(size);
 
         if aligned_size <= self.config.max_fast_block_size {
             let bin_index = (aligned_size / self.config.alignment).saturating_sub(1);
-            let num_bins = self.config.max_fast_block_size / self.config.alignment;
 
-            if let Ok(res) = THREAD_CACHE.try_with(|caches| {
-                let mut caches = caches.borrow_mut();
-                let cache = caches
-                    .entry(self.id)
-                    .or_insert_with(|| ThreadLocalCache::new(self.config.arena_size, num_bins));
-                cache.try_push(offset, bin_index, aligned_size)
-            }) && res?
+            if self
+                .with_thread_cache(|cache| cache.try_push(offset, bin_index, aligned_size))
+                .unwrap_or(false)
             {
                 return Ok(());
             }
@@ -1238,7 +1320,6 @@ impl ThreadLocalPool {
 
         self.global_pool.free(offset, aligned_size)
     }
-
     fn align_up(&self, size: usize) -> usize {
         (size + self.config.alignment - 1) & !(self.config.alignment - 1)
     }
@@ -1260,6 +1341,17 @@ unsafe impl Send for ThreadLocalPool {}
 // 3. Arc reference counting is atomic.
 // 4. Each thread maintains its own arena, preventing data races.
 unsafe impl Sync for ThreadLocalPool {}
+
+impl Drop for ThreadLocalPool {
+    fn drop(&mut self) {
+        let id = self.id;
+        let _ = THREAD_CACHE.try_with(|caches| {
+            caches
+                .borrow_mut()
+                .retain(|c| c.pool_id != id && c.pool_weak.strong_count() > 0);
+        });
+    }
+}
 
 /// Level 5: Fixed Capacity - Bounded memory pool for real-time systems
 pub struct FixedCapacityPool {
@@ -2146,6 +2238,30 @@ mod tests {
     /// next small allocation falls back to `global_pool.alloc()`, which starts
     /// its own bump cursor at `0` and returns `MemOffset(0)` while the first
     /// local allocation at `MemOffset(0)` is still live.
+    /// C3.26 (S9-R1, MEDIUM regression in C3.24). `THREAD_CACHE` was keyed by
+    /// `pool_id` with no `Drop` on `ThreadLocalPool` and no eviction of dead
+    /// pools, and each entry preallocated `max_fast_block_size / alignment`
+    /// (4,096) bin `Vec`s (~96 KiB). Running 1,000 create/alloc/free/drop
+    /// cycles on one thread grew `THREAD_CACHE` by 1,000 entries (~96 MB).
+    #[test]
+    fn test_thread_local_pool_drop_evicts_thread_cache_entries() {
+        let before = THREAD_CACHE.with(|c| c.borrow().len());
+
+        for _ in 0..200 {
+            let pool = ThreadLocalPool::new(FiveLevelPoolConfig::default()).unwrap();
+            let off = pool.alloc(64).unwrap();
+            pool.free(off, 64).unwrap();
+            drop(pool);
+        }
+
+        let after = THREAD_CACHE.with(|c| c.borrow().len());
+        assert_eq!(
+            after, before,
+            "dropping 200 ThreadLocalPools leaked {} entries in THREAD_CACHE",
+            after.saturating_sub(before)
+        );
+    }
+
     #[test]
     fn test_thread_local_pool_never_hands_out_duplicate_live_offsets() {
         let config = FiveLevelPoolConfig {
