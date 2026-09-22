@@ -121,26 +121,39 @@ impl MemoryMappedAllocator {
 
         // Round up to page size for optimal performance
         let page_size = Self::get_page_size();
-        let actual_size = (size + page_size - 1) & !(page_size - 1);
+        let actual_size = size
+            .checked_add(page_size - 1)
+            .map(|n| n & !(page_size - 1))
+            .ok_or_else(|| {
+                ZiporaError::invalid_data("mmap allocation size overflows page rounding")
+            })?;
 
         // Check cache first — blocking lock is vastly cheaper than an mmap syscall.
         // Recover from poisoning: cache contents (pointer HashMap) remain valid.
-        {
+        let cached_ptr = {
             let mut cache = self.region_cache.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(regions) = cache.get_mut(&actual_size)
-                && let Some(ptr) = regions.pop()
-            {
-                self.cache_hits.fetch_add(1, Ordering::Relaxed);
-                self.total_allocated
-                    .fetch_add(size as u64, Ordering::Relaxed);
-
-                // SAFETY: cached ptr was obtained from successful mmap, guaranteed non-null
-                return Ok(MmapAllocation {
-                    ptr: unsafe { NonNull::new_unchecked(ptr) },
-                    size,
-                    actual_size,
-                });
+            cache.get_mut(&actual_size).and_then(Vec::pop)
+        };
+        if let Some(ptr) = cached_ptr {
+            // C3.22 (S8-R2): fresh anonymous mappings are kernel-zeroed, so a
+            // cached region must be wiped over `0..size` before `as_slice` can
+            // expose the previous tenant's bytes. Done after releasing
+            // `region_cache` so the mutex is not held across the memset.
+            // SAFETY: `ptr` came from a live `mmap` of `actual_size >= size`
+            // writable bytes and was just popped exclusively by this thread.
+            unsafe {
+                std::ptr::write_bytes(ptr, 0, size);
             }
+            self.cache_hits.fetch_add(1, Ordering::Relaxed);
+            self.total_allocated
+                .fetch_add(size as u64, Ordering::Relaxed);
+
+            // SAFETY: cached ptr was obtained from successful mmap, guaranteed non-null
+            return Ok(MmapAllocation {
+                ptr: unsafe { NonNull::new_unchecked(ptr) },
+                size,
+                actual_size,
+            });
         }
 
         // Cache miss — no cached region for this size
@@ -267,10 +280,16 @@ impl MemoryMappedAllocator {
         Ok(())
     }
 
-    /// Get system page size
+    /// Get system page size (falls back to 4096 if `sysconf` fails or returns a
+    /// non-power-of-two value).
     fn get_page_size() -> usize {
         // SAFETY: sysconf with _SC_PAGESIZE is always safe to call
-        unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
+        let raw = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        if raw > 0 && (raw as usize).is_power_of_two() {
+            raw as usize
+        } else {
+            4096
+        }
     }
 }
 
@@ -423,6 +442,36 @@ mod tests {
         assert_eq!(again.as_ptr::<u8>() as usize, addr, "cache hit expected");
         assert_eq!(allocator.stats().cache_hits, 1);
         allocator.deallocate(again).unwrap();
+    }
+
+    /// C3.22 (S8-R2, MEDIUM). A fresh `mmap(MAP_ANONYMOUS)` returns
+    /// kernel-zeroed pages, while a cache hit in `MemoryMappedAllocator::allocate`
+    /// handed the recycled mapping straight back through the safe
+    /// `MmapAllocation::as_slice` with the previous tenant's bytes still in it.
+    #[test]
+    fn test_cached_mmap_region_does_not_leak_previous_contents() {
+        let allocator = MemoryMappedAllocator::new(4096);
+        let mut first = allocator.allocate(16 * 1024).unwrap();
+        first.as_mut_slice().fill(0xAB);
+        allocator.deallocate(first).unwrap();
+
+        let second = allocator.allocate(16 * 1024).unwrap();
+        assert_eq!(allocator.stats().cache_hits, 1, "expected a region-cache hit");
+        assert!(
+            second.as_slice().iter().all(|&b| b == 0),
+            "recycled MmapAllocation leaked previous tenant's 0xAB bytes through as_slice()"
+        );
+    }
+
+    /// C3.22 (M3). `(size + page_size - 1) & !(page_size - 1)` overflowed for
+    /// `size` within a page of `usize::MAX` (debug panic; release wrap to 0).
+    #[test]
+    fn test_allocate_rejects_overflowing_size() {
+        let allocator = MemoryMappedAllocator::new(4096);
+        assert!(
+            allocator.allocate(usize::MAX).is_err(),
+            "overflowing size must return Err, not panic or wrap to 0"
+        );
     }
 
     #[test]

@@ -1406,6 +1406,48 @@ PooledBuffer::new above large_pool chunk_size must return Err, not overrun the c
 
 Also removed the corresponding `PooledVec` item from the *Open findings* section below.
 
+**Commit.** `e201037`
+---
+
+## C3.22 (S8-R2) — `MemoryMappedAllocator::allocate` handed back dirty cached pages through safe `MmapAllocation::as_slice` and overflowed on page rounding
+
+**Scope.** `src/memory/mmap.rs`.
+
+**Found by.** Stage 4 review (S8-R2, MEDIUM; plus M3 and M4 from the `mmap.rs` ledger table).
+
+**Findings.**
+
+1. **M2 (S8-R2):** A fresh `mmap(MAP_ANONYMOUS)` returns kernel-zeroed pages, while a cache
+   hit in `MemoryMappedAllocator::allocate` popped the recycled pointer from `region_cache`
+   and handed it straight back inside `MmapAllocation` without wiping `0..size`. Calling the
+   safe `MmapAllocation::as_slice` on a cached region therefore exposed the previous tenant's
+   bytes — the exact defect C3.16 closed one layer up in `TieredMemoryAllocator`.
+2. **M3:** `(size + page_size - 1) & !(page_size - 1)` overflowed `usize` when `size` was
+   within a page of `usize::MAX` (panicking in debug, wrapping to `0` in release).
+3. **M4:** `get_page_size()` cast `libc::sysconf(_SC_PAGESIZE) as usize` without checking for
+   `<= 0` or a non-power-of-two return value.
+
+**RED (watched).**
+
+```
+thread 'memory::mmap::tests::test_cached_mmap_region_does_not_leak_previous_contents'
+  panicked at src/memory/mmap.rs:441:9:
+recycled MmapAllocation leaked previous tenant's 0xAB bytes through as_slice()
+
+thread 'memory::mmap::tests::test_allocate_rejects_overflowing_size'
+  panicked at src/memory/mmap.rs:124:28:
+attempt to add with overflow
+```
+
+**Fix.**
+
+* On a region-cache hit, `MemoryMappedAllocator::allocate` releases the `region_cache` lock
+  and then zeroes `0..size` (`std::ptr::write_bytes(ptr, 0, size)`) before returning
+  `MmapAllocation`.
+* Page rounding uses `size.checked_add(page_size - 1)` and returns `InvalidData` on overflow.
+* `get_page_size()` validates `raw > 0 && (raw as usize).is_power_of_two()`, falling back to
+  `4096`.
+
 **Commit.** _pending_
 ---
 
@@ -1455,14 +1497,14 @@ Traced and **refuted**, do not re-chase: the tail-rollback fast path in
 unreachable; `Huge`/`Large` byte accounting is symmetric, because `MmapAllocation::size()`
 returns the requested size and not `actual_size`.
 
-## `mmap.rs` (after C3.14)
+## `mmap.rs` (after C3.14 and C3.22)
+
+M2 (dirty cache hit), M3 (page-rounding overflow), and M4 (`sysconf(_SC_PAGESIZE)` unchecked
+cast) are closed in C3.22. Remaining LOW item:
 
 | # | Lines | Severity | Finding |
 |---|---|---|---|
-| M2 | L126-150 | MEDIUM | The cache-hit path returns **dirty** memory while the fresh path returns kernel-zeroed pages, so what a caller sees depends on cache state. C3.16 hit the same split one layer up and closed it by zeroing; this one is still open. |
-| M3 | L124 | LOW | `(size + page_size - 1) & !(page_size - 1)` overflows for `size` within a page of `usize::MAX`. |
-| M4 | L273 | LOW | `sysconf(_SC_PAGESIZE) as usize` without checking for `-1`; a `-1` becomes `usize::MAX` and every rounding after it is wrong. |
-| M5 | L134, L213, L235, L254 | LOW | Counters are incremented before the syscall; `stats()` reads the cache under `try_lock` and reports `cached_regions: 0` when contended; `clear_cache` silently no-ops on a poisoned mutex. |
+| M5 | L155, L221, L243, L262 | LOW | `mmap_calls` is incremented before the syscall; `stats()` reads the cache under `try_lock` and reports `cached_regions: 0` when contended; `clear_cache` silently no-ops on a poisoned mutex. |
 
 **Refuted**: carve width equals recycle width; no dealloc-layout mismatch.
 
