@@ -383,6 +383,9 @@ impl CacheOptimizedAllocator {
         let distance = self.config.prefetch_distance;
         let cache_line_size = self.config.cache_line_size;
         let step_size = cache_line_size.min(distance);
+        if step_size == 0 {
+            return;
+        }
 
         // Safe iteration - no pointer arithmetic overflow possible
         for chunk in data.chunks(step_size) {

@@ -1953,11 +1953,20 @@ mod tests {
         let config = FiveLevelPoolConfig::default();
         let pool = Arc::new(LockFreePool::new(config)?);
 
-        let handles: Vec<_> = (0..8)
+        #[cfg(not(miri))]
+        const THREADS: usize = 8;
+        #[cfg(miri)]
+        const THREADS: usize = 4;
+        #[cfg(not(miri))]
+        const ITERS: usize = 1000;
+        #[cfg(miri)]
+        const ITERS: usize = 32;
+
+        let handles: Vec<_> = (0..THREADS)
             .map(|_| {
                 let pool = Arc::clone(&pool);
                 std::thread::spawn(move || -> Result<()> {
-                    for _ in 0..1000 {
+                    for _ in 0..ITERS {
                         let offset = pool.alloc(64)?;
                         pool.free(offset, 64)?;
                     }

@@ -164,8 +164,8 @@ impl PrefetchConfig {
 /// Stride detector for access pattern recognition
 #[derive(Debug, Clone)]
 struct StrideDetector {
-    last_addr: usize,
-    last_stride: isize,
+    last_addr: Option<usize>,
+    last_stride: Option<isize>,
     confidence: u8,
     history: VecDeque<isize>,
     max_history: usize,
@@ -174,8 +174,8 @@ struct StrideDetector {
 impl StrideDetector {
     fn new() -> Self {
         Self {
-            last_addr: 0,
-            last_stride: 0,
+            last_addr: None,
+            last_stride: None,
             confidence: 0,
             history: VecDeque::with_capacity(8),
             max_history: 8,
@@ -183,12 +183,11 @@ impl StrideDetector {
     }
 
     fn detect(&mut self, addr: usize) -> Option<AccessPattern> {
-        if self.last_addr == 0 {
-            self.last_addr = addr;
+        let Some(prev_addr) = self.last_addr.replace(addr) else {
             return Some(AccessPattern::Unknown);
-        }
+        };
 
-        let stride = addr as isize - self.last_addr as isize;
+        let stride = (addr as isize).wrapping_sub(prev_addr as isize);
 
         // Update history
         self.history.push_back(stride);
@@ -196,15 +195,15 @@ impl StrideDetector {
             self.history.pop_front();
         }
 
-        // Check stride consistency
-        if stride == self.last_stride {
+        // Check stride consistency (`Some(stride)` on first observed transition
+        // seeds `confidence = 1` so 4 consecutive equal strides reach
+        // `confidence >= 3`).
+        if self.last_stride == Some(stride) {
             self.confidence = self.confidence.saturating_add(1);
         } else {
-            self.confidence = 0;
-            self.last_stride = stride;
+            self.confidence = 1;
+            self.last_stride = Some(stride);
         }
-
-        self.last_addr = addr;
 
         // Detect pattern with confidence threshold
         if self.confidence >= 3 {
@@ -441,12 +440,14 @@ impl PrefetchStrategy {
             return;
         }
 
-        // Detect pattern from recent accesses
-        let pattern = if let Some(&addr) = access_pattern.last() {
-            self.stride_detector.detect(addr)
-        } else {
-            Some(AccessPattern::Unknown)
-        };
+        // C3.25 (S8-R4): feed every address in `access_pattern` through the
+        // stride detector in order so a slice of recent accesses (such as
+        // `&[0, 64, 128, 192, 256]`) is analyzed as a sequence rather than
+        // discarding all but `access_pattern.last()`.
+        let mut pattern = Some(AccessPattern::Unknown);
+        for &addr in access_pattern {
+            pattern = self.stride_detector.detect(addr);
+        }
 
         if let Some(pat) = pattern {
             self.metrics.current_pattern = Some(pat);
@@ -870,10 +871,28 @@ mod tests {
             unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 8) };
         strategy.adaptive_prefetch(data_bytes, &pattern);
 
-        // Should detect sequential pattern after enough samples
-        if let Some(AccessPattern::Sequential { .. }) = strategy.metrics.current_pattern {
-            // Pattern detected correctly
-        }
+        // C3.25 (S8-R4): previously `adaptive_prefetch` only passed
+        // `access_pattern.last()` to `StrideDetector::detect`, AND `detect(0)`
+        // treated `0` as the uninitialized sentinel, so `current_pattern` stayed
+        // `Some(AccessPattern::Unknown)` and the empty `if let` above hid it.
+        assert!(
+            matches!(
+                strategy.metrics.current_pattern,
+                Some(AccessPattern::Sequential { stride: 64, .. })
+            ),
+            "expected Sequential(stride=64), got {:?}",
+            strategy.metrics.current_pattern
+        );
+    }
+
+    /// C3.25 (S8-R4). `StrideDetector::detect` computed
+    /// `addr as isize - self.last_addr as isize`, which panics on signed
+    /// overflow when two offsets in `access_pattern` span more than `isize::MAX`.
+    #[test]
+    fn test_adaptive_prefetch_does_not_overflow_on_large_offset_delta() {
+        let mut strategy = PrefetchStrategy::new(PrefetchConfig::default());
+        let data = [0u8; 64];
+        strategy.adaptive_prefetch(&data, &[2, (isize::MAX as usize) + 1]);
     }
 
     #[test]

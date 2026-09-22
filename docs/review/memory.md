@@ -21,9 +21,9 @@ failing), one commit per finding with its regression test, `SAFETY:` on every `u
 | `mmap_vec.rs` | 2,318 | partial — C9 owns the zero-copy/mapping invariants |
 | `mod.rs` | 210 | yes |
 | `pool.rs` | 666 | yes |
-| `prefetch.rs` | 925 | partial |
+| `prefetch.rs` | 925 | yes (full — see C3.25) |
 | `secure_pool.rs` | 2,170 | yes (hot paths) |
-| `simd_ops.rs` | 1,668 | partial |
+| `simd_ops.rs` | 1,668 | yes (full — see C3.25) |
 | `threadlocal_pool.rs` | 672 | yes (full) |
 | `tiered.rs` | 697 | yes |
 
@@ -1536,6 +1536,91 @@ ThreadLocalCache` whose per-bin `local_free_lists` cache `MemOffset`s carved fro
 `self.global_pool` (bounded by `arena_size` and checked against double free). Uses
 `THREAD_CACHE.try_with` so calls during TLS teardown fall through to `self.global_pool`
 without panicking.
+
+**Commit.** `8060e97`
+---
+
+## C3.25 (S8-R4) — full pass over `simd_ops.rs` (122 `unsafe` sites) and `prefetch.rs` (15 `unsafe` sites), 3 panics/errors fixed, Miri + per-tier differential coverage
+
+**Scope.** `src/memory/simd_ops.rs`, `src/memory/prefetch.rs`, `src/memory/cache_layout.rs`,
+`Makefile`.
+
+**Found by.** Stage 4 review (S8-R4, MEDIUM — scope): `simd_ops.rs` and `prefetch.rs` were
+marked `partial` in the top table. Reading both files in full (`simd_ops.rs` L1–1682,
+`prefetch.rs` L1–926) surfaced three defects reachable from safe public APIs and a test gap in
+`test_cross_tier_consistency`:
+
+1. **`SimdMemOps::prefetch_range` (`simd_ops.rs:332`) and `CacheOptimizedAllocator::prefetch_range`
+   (`cache_layout.rs:341`) panicked on `prefetch_distance == 0` or `cache_line_size == 0`:**
+   both computed `step_size = cache_line_size.min(distance)` and passed it directly to
+   `data.chunks(step_size)`, which panics with `chunk size must be non-zero` when either
+   `CacheLayoutConfig` field is `0`.
+2. **`SimdMemOps::copy_cache_optimized` (`simd_ops.rs:364-372`) returned a spurious `Err` on
+   32-byte cache-line configs:** it checked alignment against
+   `self.cache_config.cache_line_size` (e.g. `32`) and then dispatched to `self.copy_aligned`,
+   which requires 64-byte (`CACHE_LINE_SIZE`) alignment — so a 32-byte-aligned copy (`addr %
+   64 == 32`) under `cache_line_size = 32` failed with `Err("Source and destination must be
+   64-byte aligned for aligned copy")` instead of copying via `copy_nonoverlapping`.
+3. **`PrefetchStrategy::adaptive_prefetch` (`prefetch.rs:445`) never detected sequential
+   patterns and `StrideDetector::detect` (`prefetch.rs:186-191`) used `0` as an in-band
+   sentinel + overflowed on `isize` subtraction:** `adaptive_prefetch` only passed
+   `access_pattern.last()` to `self.stride_detector.detect`, discarding the rest of the slice,
+   and `detect(0)` treated `self.last_addr == 0` as "uninitialized". In
+   `test_adaptive_prefetch_detection`, `strategy.metrics.current_pattern` stayed
+   `Some(AccessPattern::Unknown)` and the test passed only because it had an empty
+   `if let Some(AccessPattern::Sequential { .. }) = ... {}` with no `assert!`. Moreover,
+   `addr as isize - self.last_addr as isize` overflows in debug when two offsets span more than
+   `isize::MAX`.
+4. **Single-tier `test_cross_tier_consistency` (`simd_ops.rs:1529`):** the test comment claimed
+   *"Test that all SIMD tiers produce the same results"*, but it only constructed
+   `SimdMemOps::new()` (running the host's single default tier) and never pinned `Scalar`,
+   `Sse2`, `Avx2`, or `Avx512`.
+
+**Per-function audit of `simd_ops.rs` (all 122 `unsafe` sites, 100% documented):**
+
+| Function(s) | Lines | `unsafe` sites | Invariant verified |
+|---|---|---|---|
+| `copy_nonoverlapping`, `copy_aligned`, `compare`, `find_byte`, `fill`, `prefetch` | L126–390 | 10 | Slice lengths, overlap (`src_start < dst_end && dst_start < src_end`), and 64-byte alignment (`is_multiple_of(CACHE_LINE_SIZE)`) are checked in safe code before calling the internal `unsafe fn`s. |
+| `simd_memcpy_unaligned`, `simd_memcpy_aligned`, `simd_memcmp`, `simd_memchr`, `simd_memset` | L412–590 | 25 | Dispatch on `(self.tier, len)` with exact vector-width floors (`>= 64` for AVX-512, `>= 32` for AVX2, `>= 16` for SSE2, `_ => scalar_*`). |
+| `avx512_memcpy_aligned`, `avx512_memcpy_unaligned`, `avx512_memcmp`, `avx512_memchr`, `avx512_memset` | L598–756 | 25 | `#[target_feature(enable = "avx512f,avx512vl,avx512bw")]`; loop guard `while len >= 64` bounds every `_mm512_load(u)_si512` / `_mm512_store(u)_si512`; `mask.trailing_zeros() < 64` in `memcmp`/`memchr`; tail `< 64` delegated to `scalar_*`. |
+| `avx2_memcpy_aligned`, `avx2_memcpy_unaligned`, `avx2_memcmp`, `avx2_memchr`, `avx2_memset` | L805–978 | 26 | `#[target_feature(enable = "avx2")]`; `while len >= 32` bounds every 32-byte load/store; `_mm256_movemask_epi8 as u32` (`!mask` / `mask != 0` gives `trailing_zeros() < 32`); prefetch at `+256` gated by `len > 256`; tail `< 32` delegated to `scalar_*`. |
+| `sse2_memcpy_aligned`, `sse2_memcpy_unaligned`, `sse2_memcmp`, `sse2_memchr`, `sse2_memset` | L1026–1188 | 25 | `#[target_feature(enable = "sse2")]`; `while len >= 16` bounds every 16-byte load/store; `_mm_movemask_epi8 as u16` (`!mask` / `mask != 0` gives `trailing_zeros() < 16`); tail `< 16` delegated to `scalar_*`. |
+| `scalar_memcpy`, `scalar_memcmp`, `scalar_memchr`, `scalar_memset` | L1234–1277 | 11 | `ptr::copy_nonoverlapping`, `0..len` pointer walk (`i < len`), `ptr::write_bytes`. |
+
+**Per-function audit of `prefetch.rs` (all 15 `unsafe` sites, 100% documented):**
+
+| Function(s) | Lines | `unsafe` sites | Invariant verified |
+|---|---|---|---|
+| `adaptive_prefetch`, `random_prefetch`, `sequential_prefetch_internal_safe`, `issue_prefetch` | L439–707 | 11 (non-test) + 4 (test) | `addr < data.len()` or `offset = stride.saturating_mul(i) < len` checked before `base.add(offset)`; `issue_prefetch` uses advisory `_mm_prefetch` / `prfm`. |
+
+**RED (watched).**
+
+```
+test memory::simd_ops::tests::test_prefetch_range_does_not_panic_on_zero_distance_or_line_size ...
+  panicked: chunk size must be non-zero
+
+test memory::simd_ops::tests::test_copy_cache_optimized_with_32_byte_cache_line_does_not_fail ...
+  panicked: 32-byte-aligned copy under cache_line_size=32 must succeed:
+  InvalidData { message: "Source and destination must be 64-byte aligned for aligned copy" }
+
+test memory::prefetch::tests::test_adaptive_prefetch_detection ...
+  panicked at src/memory/prefetch.rs:877:9:
+  expected Sequential(stride=64), got Some(Unknown)
+```
+
+**Fix.**
+
+* `SimdMemOps::prefetch_range` and `CacheOptimizedAllocator::prefetch_range` return early when
+  `step_size == 0`.
+* `SimdMemOps::copy_cache_optimized` checks alignment against
+  `CACHE_LINE_SIZE.max(self.cache_config.cache_line_size)` before dispatching to `copy_aligned`.
+* `SimdMemOps::select_optimal_tier` routes to `SimdTier::Scalar` under `#[cfg(miri)]`, and
+  `SimdMemOps::with_tier(tier)` pins a specific tier so `test_cross_tier_consistency` now
+  differentially tests every available tier (`Scalar`, `Sse2`, `Avx2`, `Avx512`) against
+  `Scalar` across boundary lengths (`0..=4097`) and unaligned offsets (`0..16`).
+* `StrideDetector` uses `last_addr: Option<usize>` and `last_stride: Option<isize>` with
+  `wrapping_sub`, and `adaptive_prefetch` feeds the full `access_pattern` slice to `detect`.
+* Added `memory::simd_ops` and `memory::prefetch` to `make miri_pool` (7 suites total).
 
 **Commit.** _pending_
 ---

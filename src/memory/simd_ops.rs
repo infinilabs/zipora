@@ -79,16 +79,57 @@ impl SimdMemOps {
         }
     }
 
+    /// Create a SIMD memory operations instance pinned to a specific [`SimdTier`].
+    ///
+    /// Returns [`ZiporaError::InvalidData`] if `tier` requires CPU features not
+    /// supported on the current host (or under Miri, where only
+    /// [`SimdTier::Scalar`] is permitted).
+    pub fn with_tier(tier: SimdTier) -> Result<Self> {
+        let cpu_features = get_cpu_features();
+        #[cfg(miri)]
+        if tier != SimdTier::Scalar {
+            return Err(ZiporaError::invalid_data(
+                "Only SimdTier::Scalar is supported under Miri",
+            ));
+        }
+        let supported = match tier {
+            SimdTier::Avx512 => {
+                cpu_features.has_avx512f && cpu_features.has_avx512vl && cpu_features.has_avx512bw
+            }
+            SimdTier::Avx2 => cpu_features.has_avx2,
+            SimdTier::Sse2 => cfg!(target_arch = "x86_64") || (cpu_features.has_sse41 && cpu_features.has_sse42),
+            SimdTier::Scalar => true,
+        };
+        if !supported {
+            return Err(ZiporaError::invalid_data(format!(
+                "SIMD tier {tier:?} is not supported by the current CPU"
+            )));
+        }
+        Ok(Self {
+            tier,
+            cpu_features,
+            cache_config: CacheLayoutConfig::new(),
+        })
+    }
+
     /// Select the optimal SIMD implementation tier based on available CPU features
     fn select_optimal_tier(features: &CpuFeatures) -> SimdTier {
-        if features.has_avx512f && features.has_avx512vl && features.has_avx512bw {
-            SimdTier::Avx512
-        } else if features.has_avx2 {
-            SimdTier::Avx2
-        } else if features.has_sse41 && features.has_sse42 {
-            SimdTier::Sse2
-        } else {
-            SimdTier::Scalar
+        #[cfg(miri)]
+        {
+            let _ = features;
+            return SimdTier::Scalar;
+        }
+        #[cfg(not(miri))]
+        {
+            if features.has_avx512f && features.has_avx512vl && features.has_avx512bw {
+                SimdTier::Avx512
+            } else if features.has_avx2 {
+                SimdTier::Avx2
+            } else if cfg!(target_arch = "x86_64") || (features.has_sse41 && features.has_sse42) {
+                SimdTier::Sse2
+            } else {
+                SimdTier::Scalar
+            }
         }
     }
 
@@ -327,6 +368,9 @@ impl SimdMemOps {
         let distance = self.cache_config.prefetch_distance;
         let cache_line_size = self.cache_config.cache_line_size;
         let step_size = cache_line_size.min(distance);
+        if step_size == 0 {
+            return;
+        }
 
         // Safe iteration - no pointer arithmetic overflow possible
         for chunk in data.chunks(step_size) {
@@ -360,12 +404,14 @@ impl SimdMemOps {
             self.prefetch_range(src);
         }
 
-        // Use cache-aligned copy if beneficial
-        let src_aligned = (src.as_ptr() as usize).is_multiple_of(self.cache_config.cache_line_size);
-        let dst_aligned =
-            (dst.as_mut_ptr() as usize).is_multiple_of(self.cache_config.cache_line_size);
+        // `copy_aligned` requires 64-byte (`CACHE_LINE_SIZE`) alignment, so
+        // only dispatch to it when both slices satisfy `CACHE_LINE_SIZE` *and*
+        // the configured cache line size.
+        let required_align = CACHE_LINE_SIZE.max(self.cache_config.cache_line_size);
+        let src_aligned = (src.as_ptr() as usize).is_multiple_of(required_align);
+        let dst_aligned = (dst.as_mut_ptr() as usize).is_multiple_of(required_align);
 
-        if src_aligned && dst_aligned && src.len() >= self.cache_config.cache_line_size {
+        if src_aligned && dst_aligned && src.len() >= required_align {
             self.copy_aligned(src, dst)
         } else {
             self.copy_nonoverlapping(src, dst)
@@ -1310,6 +1356,59 @@ mod tests {
     use super::*;
     
 
+    /// C3.25 (S8-R4). `SimdMemOps::prefetch_range` computed
+    /// `step_size = cache_line_size.min(prefetch_distance)` and passed it
+    /// straight to `data.chunks(step_size)`, panicking with `chunk size must be
+    /// non-zero` when either `CacheLayoutConfig` field was `0`.
+    #[test]
+    fn test_prefetch_range_does_not_panic_on_zero_distance_or_line_size() {
+        let cfg = CacheLayoutConfig {
+            prefetch_distance: 0,
+            ..Default::default()
+        };
+        let ops = SimdMemOps::with_cache_config(cfg);
+        ops.prefetch_range(&[1, 2, 3, 4]);
+
+        let cfg2 = CacheLayoutConfig {
+            cache_line_size: 0,
+            ..Default::default()
+        };
+        let ops2 = SimdMemOps::with_cache_config(cfg2);
+        ops2.prefetch_range(&[1, 2, 3, 4]);
+    }
+
+    /// C3.25 (S8-R4). `copy_cache_optimized` checked alignment against
+    /// `self.cache_config.cache_line_size` and then dispatched to
+    /// `self.copy_aligned`, which requires 64-byte (`CACHE_LINE_SIZE`)
+    /// alignment. With a 32-byte cache line config and 32-byte-aligned buffers
+    /// (`addr % 64 == 32`), `copy_cache_optimized` failed with `Err("Source and
+    /// destination must be 64-byte aligned")` instead of copying.
+    #[test]
+    fn test_copy_cache_optimized_with_32_byte_cache_line_does_not_fail() {
+        let cfg = CacheLayoutConfig {
+            cache_line_size: 32,
+            ..Default::default()
+        };
+        let ops = SimdMemOps::with_cache_config(cfg);
+
+        let layout = std::alloc::Layout::from_size_align(128, 64).unwrap();
+        // SAFETY: valid non-zero layout, freed below.
+        unsafe {
+            let src_base = std::alloc::alloc_zeroed(layout);
+            let dst_base = std::alloc::alloc_zeroed(layout);
+            assert!(!src_base.is_null() && !dst_base.is_null());
+
+            // Offset by 32 bytes so both pointers are 32-byte aligned (`% 32 == 0`)
+            // but NOT 64-byte aligned (`% 64 == 32`).
+            let src = std::slice::from_raw_parts(src_base.add(32), 64);
+            let dst = std::slice::from_raw_parts_mut(dst_base.add(32), 64);
+            let res = ops.copy_cache_optimized(src, dst);
+            std::alloc::dealloc(src_base, layout);
+            std::alloc::dealloc(dst_base, layout);
+            res.expect("32-byte-aligned copy under cache_line_size=32 must succeed");
+        }
+    }
+
     #[test]
     fn test_simd_ops_creation() {
         let ops = SimdMemOps::new();
@@ -1525,23 +1624,77 @@ mod tests {
         assert_eq!(fast_compare(&dst_simd, &dst_std), 0);
     }
 
+    /// C3.25 (S8-R4). Differential test across every SIMD tier supported by the
+    /// current CPU (`Scalar`, `Sse2`, `Avx2`, `Avx512`) against `SimdTier::Scalar`
+    /// across boundary lengths and unaligned byte offsets.
     #[test]
     fn test_cross_tier_consistency() {
-        // Test that all SIMD tiers produce the same results
-        let test_data: Vec<u8> = (0u8..=255u8).collect();
-        let needle = 128u8;
-
-        // All tiers should find the same position
-        let ops = SimdMemOps::new();
-        let result = ops.find_byte(&test_data, needle);
-        assert_eq!(result, Some(128));
-
-        // All tiers should produce the same comparison result
-        let other_data: Vec<u8> = (0u8..=255u8)
-            .map(|i| if i == 128 { 129 } else { i })
+        let scalar = SimdMemOps::with_tier(SimdTier::Scalar).unwrap();
+        let tiers: Vec<SimdMemOps> = [SimdTier::Scalar, SimdTier::Sse2, SimdTier::Avx2, SimdTier::Avx512]
+            .into_iter()
+            .filter_map(|t| SimdMemOps::with_tier(t).ok())
             .collect();
-        let cmp = ops.compare(&test_data, &other_data);
-        assert!(cmp < 0); // test_data[128] = 128 < other_data[128] = 129
+
+        #[cfg(not(miri))]
+        let sizes: &[usize] = &[
+            0, 1, 7, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 4095, 4096, 4097,
+        ];
+        #[cfg(miri)]
+        let sizes: &[usize] = &[0, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 129];
+
+        for &len in sizes {
+            for offset in [0usize, 1, 3, 7, 15] {
+                let total = len + offset + 64;
+                let src_buf: Vec<u8> = (0..total).map(|i| ((i * 131 + 17) & 0xFF) as u8).collect();
+                let src = &src_buf[offset..offset + len];
+
+                let mut expected_copy = vec![0u8; len];
+                scalar.copy_nonoverlapping(src, &mut expected_copy).unwrap();
+
+                let mut expected_fill = vec![0u8; len];
+                scalar.fill(&mut expected_fill, 0x5A);
+
+                for ops in &tiers {
+                    let tier = ops.tier();
+                    // 1. copy_nonoverlapping
+                    let mut got_copy = vec![0u8; len];
+                    ops.copy_nonoverlapping(src, &mut got_copy).unwrap();
+                    assert_eq!(got_copy, expected_copy, "copy mismatch at tier={tier:?} len={len} off={offset}");
+
+                    // 2. fill
+                    let mut got_fill = vec![0u8; len];
+                    ops.fill(&mut got_fill, 0x5A);
+                    assert_eq!(got_fill, expected_fill, "fill mismatch at tier={tier:?} len={len}");
+
+                    // 3. compare (equal, less, greater at first/middle/last byte)
+                    assert_eq!(
+                        ops.compare(src, &expected_copy),
+                        scalar.compare(src, &expected_copy),
+                        "compare(eq) mismatch at tier={tier:?} len={len}"
+                    );
+                    if len > 0 {
+                        for pos in [0, len / 2, len - 1] {
+                            let mut mutated = expected_copy.clone();
+                            mutated[pos] = mutated[pos].wrapping_add(1);
+                            assert_eq!(
+                                ops.compare(src, &mutated).signum(),
+                                scalar.compare(src, &mutated).signum(),
+                                "compare(diff@{pos}) mismatch at tier={tier:?} len={len}"
+                            );
+                        }
+                    }
+
+                    // 4. find_byte (hit at first/middle/last, and miss)
+                    for &needle in &[0u8, 0x5A, 0xFF, src.first().copied().unwrap_or(0), src.last().copied().unwrap_or(0)] {
+                        assert_eq!(
+                            ops.find_byte(src, needle),
+                            scalar.find_byte(src, needle),
+                            "find_byte({needle:#x}) mismatch at tier={tier:?} len={len} off={offset}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
