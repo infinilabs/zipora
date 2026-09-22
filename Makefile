@@ -170,6 +170,8 @@ miri_pool:
 	$(CARGO_MIRI) test --lib memory::lockfree_pool -- --test-threads=1
 	$(CARGO_MIRI) test --lib memory::bump
 	MIRIFLAGS="-Zmiri-disable-isolation" $(CARGO_MIRI) test --lib memory::cache -- --test-threads=1
+	$(CARGO_MIRI) test --lib memory::simd_ops
+	$(CARGO_MIRI) test --lib memory::prefetch
 
 # SIMD-adjacent modules under Miri: all dispatch (macros, cached has_* bools,
 # ifunc resolvers) routes to scalar under cfg(miri), so the surrounding index
