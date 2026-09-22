@@ -1622,7 +1622,7 @@ test memory::prefetch::tests::test_adaptive_prefetch_detection ...
   `wrapping_sub`, and `adaptive_prefetch` feeds the full `access_pattern` slice to `detect`.
 * Added `memory::simd_ops` and `memory::prefetch` to `make miri_pool` (7 suites total).
 
-**Commit.** _pending_
+**Commit.** `6e9d140`
 ---
 
 # Open findings — read, judged, not fixed
