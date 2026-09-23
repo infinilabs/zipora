@@ -59,10 +59,14 @@ pub struct BigCount {
     pub n_children: u16,
 }
 
+// SAFETY: MetaInfo is #[repr(C)] with four u8 fields (4 bytes total, no padding), so all-zero is a valid value.
 unsafe impl Zeroable for MetaInfo {}
+// SAFETY: MetaInfo is #[repr(C)], Copy, and consists solely of u8 fields with no padding or invalid bit patterns.
 unsafe impl Pod for MetaInfo {}
 
+// SAFETY: BigCount is #[repr(C)] with two u16 fields (4 bytes total, no padding), so all-zero is a valid value.
 unsafe impl Zeroable for BigCount {}
+// SAFETY: BigCount is #[repr(C)], Copy, and consists solely of u16 fields with no padding or invalid bit patterns.
 unsafe impl Pod for BigCount {}
 
 impl PatriciaNode {

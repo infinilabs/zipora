@@ -79,7 +79,9 @@ impl DoubleArrayTrie {
     /// Check if a state is terminal.
     #[inline(always)]
     pub fn is_term(&self, state: u32) -> bool {
-        (state as usize) < self.ninfos.len() && self.ninfos[state as usize].is_term()
+        !self.is_free(state)
+            && (state as usize) < self.ninfos.len()
+            && self.ninfos[state as usize].is_term()
     }
 
     /// Check if a state is free.
@@ -110,8 +112,10 @@ impl DoubleArrayTrie {
         let base = unsafe { self.states.get_unchecked(curr as usize) }.child0();
         let next = (base ^ ch as u32) as usize;
 
-        // SAFETY: same invariant as contains()
-        debug_assert!(next < self.states.len());
+        // SAFETY: curr is an allocated state (!is_free above), so child0 is either 0
+        // (with states.len() >= 256 via with_capacity/shrink_to_fit) or set by set_base_padded
+        // which calls ensure_capacity((base | 0xFF) + 1), guaranteeing next <= (base | 0xFF) < states.len().
+        debug_assert!(next < self.states.len()); // PROVEN: allocated state child0 is 0 (states.len() >= 256) or set by set_base_padded ((base | 0xFF) < states.len())
         let next_state = unsafe { self.states.get_unchecked(next) };
 
         if next_state.parent == curr {
@@ -322,7 +326,7 @@ impl DoubleArrayTrie {
             // SAFETY: set_base_padded guarantees (base | 0xFF) < len for valid bases.
             // Leaf states have child0=0, so next=ch ∈ [0,255] < 256 ≤ len.
             // Free states have parent with FREE_BIT set, never matching curr.
-            debug_assert!(
+            debug_assert!( // PROVEN: curr is allocated (0 or matched parent < 0x8000_0000); child0 is 0 (states.len() >= 256) or set by set_base_padded ((base | 0xFF) < states.len())
                 next < states.len(),
                 "OOB: next={next}, len={}",
                 states.len()
@@ -358,7 +362,7 @@ impl DoubleArrayTrie {
             let base = states[curr].child0;
             let next = (base ^ ch as u32) as usize;
             // SAFETY: same invariant as contains()
-            debug_assert!(next < states.len());
+            debug_assert!(next < states.len()); // PROVEN: curr is allocated (0 or matched parent); child0 is 0 (states.len() >= 256) or set by set_base_padded ((base | 0xFF) < states.len())
             let next_state = unsafe { states.get_unchecked(next) };
             if next_state.parent != curr as u32 {
                 return None;
@@ -404,6 +408,12 @@ impl DoubleArrayTrie {
 
         while curr != 0 {
             let parent = self.states[curr as usize].parent();
+            if parent as usize >= self.states.len()
+                || self.states[parent as usize].is_free()
+                || symbols.len() >= self.states.len()
+            {
+                return None;
+            }
             let parent_base = self.states[parent as usize].child0();
             let symbol = (curr ^ parent_base) as u8;
             symbols.push(symbol);
@@ -528,6 +538,9 @@ impl DoubleArrayTrie {
     /// Iterate all children of a state, calling `f(symbol, child_state)`.
     #[inline]
     pub fn for_each_child(&self, state: u32, mut f: impl FnMut(u8, u32)) {
+        if (state as usize) >= self.ninfos.len() || self.is_free(state) {
+            return;
+        }
         let mut c = self.ninfos[state as usize].first_child();
         if c == NINFO_NONE {
             return;

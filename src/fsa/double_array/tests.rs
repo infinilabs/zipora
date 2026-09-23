@@ -6,9 +6,34 @@ use super::trie::*;
 #[allow(clippy::module_inception)]
 mod tests {
 
-    use super::super::state::*;
-
     use super::*;
+
+    #[test]
+    fn test_for_each_child_and_state_queries_on_oob_and_freed_states() {
+        let mut t = DoubleArrayTrie::new();
+        t.insert(b"alpha").unwrap();
+        t.insert(b"alpine").unwrap();
+
+        let alpha_state = t.lookup_state(b"alpha").unwrap();
+        assert!(t.is_term(alpha_state));
+        assert!(!t.is_free(alpha_state));
+
+        // Remove "alpha" so its leaf branch ("ha") is pruned and freed.
+        assert!(t.remove(b"alpha"));
+        assert!(t.is_free(alpha_state));
+        assert!(!t.is_term(alpha_state));
+        assert_eq!(t.state_move(alpha_state, b'a'), NIL_STATE);
+        assert_eq!(t.restore_key(alpha_state), None);
+
+        let mut visited = Vec::new();
+        t.for_each_child(alpha_state, |ch, st| visited.push((ch, st)));
+        assert!(visited.is_empty());
+
+        // Out-of-bounds and NIL_STATE must be no-ops, not panic.
+        t.for_each_child(NIL_STATE, |ch, st| visited.push((ch, st)));
+        t.for_each_child(1_000_000, |ch, st| visited.push((ch, st)));
+        assert!(visited.is_empty());
+    }
 
     #[test]
     fn test_basic_insert_contains() {
