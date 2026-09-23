@@ -2311,28 +2311,37 @@ mod tests {
     /// were not reused until the bump cursor hit capacity.
     #[test]
     fn test_thread_local_pool_reuses_global_fast_bin_before_carving_new_slabs() {
+        #[cfg(miri)]
+        const N: usize = 400;
+        #[cfg(not(miri))]
+        const N: usize = 8000;
+        #[cfg(miri)]
+        const ARENA: usize = 8 * 1024;
+        #[cfg(not(miri))]
+        const ARENA: usize = 64 * 1024;
+
         let config = FiveLevelPoolConfig {
-            arena_size: 64 * 1024,
+            arena_size: ARENA,
             initial_capacity: 1024 * 1024,
             ..FiveLevelPoolConfig::default()
         };
         let pool = ThreadLocalPool::new(config).unwrap();
 
         for round in 0..3 {
-            let mut offsets = Vec::with_capacity(8000);
-            for _ in 0..8000 {
+            let mut offsets = Vec::with_capacity(N);
+            for _ in 0..N {
                 offsets.push(pool.alloc(64).unwrap());
             }
             let stats_live = pool.stats();
             assert_eq!(
                 stats_live.used_memory,
-                8000 * 64,
+                N * 64,
                 "round {round}: used_memory climbed to {} instead of reusing spilled global fast-bin blocks",
                 stats_live.used_memory
             );
             assert_eq!(
                 stats_live.fragment_size, 0,
-                "round {round}: fragment_size remained {} while all 8000 blocks were live",
+                "round {round}: fragment_size remained {} while all {N} blocks were live",
                 stats_live.fragment_size
             );
             for off in offsets {

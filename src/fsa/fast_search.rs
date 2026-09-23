@@ -75,11 +75,16 @@ unsafe fn sse4_2_search_byte(data: *const u8, len: i32, key: u8) -> usize {
 
 /// Fast search for `key` in sorted `data[0..len]` where `len <= 35`.
 /// Uses up to 3 SSE4.2 calls for optimal performance.
+///
+/// # Safety
+/// Caller must ensure the `sse4.2` target feature is available and `data` is
+/// valid for reads of `len` bytes with `len <= 35`.
 #[cfg(target_arch = "x86_64")]
 #[inline]
 #[target_feature(enable = "sse4.2")]
+// SAFETY: Caller guarantees SSE4.2 support and that `data[0..len]` (len <= 35) is readable.
 unsafe fn fast_search_byte_max_35(data: *const u8, len: usize, key: u8) -> usize {
-    debug_assert!(len <= 35);
+    debug_assert!(len <= 35); // PROVEN: sole caller fast_search_byte dispatches here only when len <= 35
     if len <= 16 {
         // SAFETY: SSE4.2 guaranteed by #[target_feature], data valid from caller for len bytes
         return unsafe { sse4_2_search_byte(data, len as i32, key) };
