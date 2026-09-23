@@ -3,11 +3,11 @@
 # Any increase causes the audit to fail. Reductions must update this file.
 
 [unsafe_audit]
-max_undocumented = 33
-max_precondition_violations = 10
+max_undocumented = 28
+max_precondition_violations = 6
 
 [api_honesty]
-max_markers = 119
+max_markers = 102
 
 [index_audit]
 entropy = 0
