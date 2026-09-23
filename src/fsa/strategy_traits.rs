@@ -604,9 +604,11 @@ impl PatriciaAlgorithmStrategy {
         let old_final = nodes[current].is_final;
 
         let old_suffix_id = nodes.len();
-        let mut old_suffix_node = PatriciaNode::default();
-        old_suffix_node.children = old_children;
-        old_suffix_node.is_final = old_final;
+        let old_suffix_node = PatriciaNode {
+            children: old_children,
+            is_final: old_final,
+            ..Default::default()
+        };
         let _ = nodes.push(old_suffix_node);
 
         let old_branch_byte = path[match_len];
@@ -638,8 +640,10 @@ impl PatriciaAlgorithmStrategy {
             nodes[current].is_final = false;
             let new_branch_byte = key[new_pos];
             let new_leaf_id = nodes.len();
-            let mut new_leaf = PatriciaNode::default();
-            new_leaf.is_final = true;
+            let new_leaf = PatriciaNode {
+                is_final: true,
+                ..Default::default()
+            };
             let _ = nodes.push(new_leaf);
 
             nodes[current].children[new_branch_byte as usize] = Some(new_leaf_id as StateId);
