@@ -295,6 +295,9 @@ impl NestedTrieDawg {
 
     /// Insert a single key into the trie structure
     fn insert_key(&mut self, key: &[u8]) -> Result<()> {
+        if self.states.is_empty() {
+            self.root_state = self.add_state(0, false, false)?;
+        }
         let mut current_state = self.root_state;
 
         // Traverse/create path for the key
@@ -310,10 +313,14 @@ impl NestedTrieDawg {
             }
         }
 
-        // Mark final state as terminal
-        if (current_state as usize) < self.states.len() {
+        // Mark final state as terminal (only increment num_keys if newly terminal)
+        if (current_state as usize) < self.states.len()
+            && !self.states[current_state as usize].is_terminal()
+        {
             self.states[current_state as usize].set_terminal(true);
             self.num_keys += 1;
+            self.terminal_bits = None;
+            self.terminal_rank_select = None;
         }
 
         Ok(())
@@ -575,15 +582,23 @@ impl FiniteStateAutomaton for NestedTrieDawg {
     }
 
     fn transition(&self, state: StateId, symbol: u8) -> Option<StateId> {
+        if (state as usize) >= self.states.len() {
+            return None;
+        }
         self.transitions
             .get_transition(state, symbol)
+            .filter(|&s| (s as usize) < self.states.len())
             .map(|s| s as StateId)
     }
 
     fn transitions(&self, state: StateId) -> Vec<(u8, StateId)> {
+        if (state as usize) >= self.states.len() {
+            return Vec::new();
+        }
         self.transitions
             .get_outgoing_transitions(state)
             .into_iter()
+            .filter(|&(_, target)| (target as usize) < self.states.len())
             .map(|(symbol, target)| (symbol, target as StateId))
             .collect()
     }
@@ -857,4 +872,29 @@ mod tests {
         assert!(dawg.is_empty());
         assert_eq!(dawg.len(), 0);
     }
+
+    #[test]
+    fn test_dawg_incremental_insert_and_oob_state_guards() {
+        let mut dawg = NestedTrieDawg::new().unwrap();
+        // Incremental Trie::insert on a fresh NestedTrieDawg (without build_from_keys)
+        dawg.insert(b"").unwrap();
+        dawg.insert(b"cat").unwrap();
+        dawg.insert(b"car").unwrap();
+        // Duplicate insert must not inflate len()
+        dawg.insert(b"cat").unwrap();
+
+        assert_eq!(dawg.len(), 3);
+        assert!(dawg.contains(b""));
+        assert!(dawg.contains(b"cat"));
+        assert!(dawg.contains(b"car"));
+        assert!(!dawg.contains(b"ca"));
+        assert!(!dawg.contains(b"c"));
+
+        // Out-of-bounds state queries must return false / None / empty
+        assert!(!dawg.is_final(u32::MAX));
+        assert_eq!(dawg.transition(u32::MAX, b'a'), None);
+        assert!(dawg.transitions(u32::MAX).is_empty());
+        assert_eq!(dawg.state_to_word_id(u32::MAX), None);
+    }
 }
+
