@@ -928,7 +928,49 @@ impl SimdMemOps {
         let needle_vec = _mm256_set1_epi8(needle as i8);
         let mut offset = 0;
 
-        // Process 32-byte chunks
+        // S10-R3: 4x32B (128-byte) unrolled loop combines four equality vectors
+        // with `_mm256_or_si256` before taking a single `_mm256_movemask_epi8`,
+        // cutting loop branches and `vpmovmskb` instructions on large misses by 4x.
+        while len >= 128 {
+            // SAFETY: avx2 guaranteed by #[target_feature], `len >= 128` checked
+            unsafe {
+                let c0 = _mm256_cmpeq_epi8(_mm256_loadu_si256(haystack as *const __m256i), needle_vec);
+                let c1 = _mm256_cmpeq_epi8(
+                    _mm256_loadu_si256(haystack.add(32) as *const __m256i),
+                    needle_vec,
+                );
+                let c2 = _mm256_cmpeq_epi8(
+                    _mm256_loadu_si256(haystack.add(64) as *const __m256i),
+                    needle_vec,
+                );
+                let c3 = _mm256_cmpeq_epi8(
+                    _mm256_loadu_si256(haystack.add(96) as *const __m256i),
+                    needle_vec,
+                );
+                let any = _mm256_or_si256(_mm256_or_si256(c0, c1), _mm256_or_si256(c2, c3));
+                if _mm256_movemask_epi8(any) != 0 {
+                    let m0 = _mm256_movemask_epi8(c0) as u32;
+                    if m0 != 0 {
+                        return Some(offset + m0.trailing_zeros() as usize);
+                    }
+                    let m1 = _mm256_movemask_epi8(c1) as u32;
+                    if m1 != 0 {
+                        return Some(offset + 32 + m1.trailing_zeros() as usize);
+                    }
+                    let m2 = _mm256_movemask_epi8(c2) as u32;
+                    if m2 != 0 {
+                        return Some(offset + 64 + m2.trailing_zeros() as usize);
+                    }
+                    let m3 = _mm256_movemask_epi8(c3) as u32;
+                    return Some(offset + 96 + m3.trailing_zeros() as usize);
+                }
+                haystack = haystack.add(128);
+            }
+            offset += 128;
+            len -= 128;
+        }
+
+        // Process remaining 32-byte chunks
         while len >= 32 {
             // SAFETY: avx2 guaranteed by #[target_feature], pointer valid from caller, len >= 32 checked, offset within bounds
             unsafe {

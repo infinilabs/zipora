@@ -1692,7 +1692,71 @@ assertion `left == right` failed: dropping 200 ThreadLocalPools leaked 200 entri
 | `PrefetchStrategy::adaptive_prefetch` 8 addresses (seq / mix) | 48.7 ns (1 addr) | 569.3 ns | **78.6 ns / 110.2 ns** (~9.8–13.8 ns/addr) |
 | `SimdMemOps::find_byte` 4 KiB miss | 100.6 ns | 113.9 ns | **93.9 ns** |
 
-**Commit.** `fa2d6be`
+**Commit.** `a709048`
+---
+
+## C3.27 (S10-R1..R5) — cap `ThreadLocalPool` slab at `arena_size / 64`, reuse `global_pool` fast bins before carving, and 4×32B unroll in `avx2_memchr`
+
+**Scope.** `src/memory/five_level_pool.rs`, `src/memory/simd_ops.rs`, `docs/review/memory.md`.
+
+**Found by.** Stage 4 S9 follow-up review (`S10-R1`..`S10-R5`):
+
+1. **S10-R1 (MEDIUM regression in C3.26):** `max_slab = (aligned_size * 64).min(arena_size / 2)`
+   capped a thread's bump slab at half the arena (`1 MiB` under the default `2 MiB` config). Any
+   fast block `>= 16 KiB` therefore carved a `1 MiB` slab per thread, so in a 4-thread shared
+   pool where each thread allocated a single `32 KiB` block (`128 KiB` live total), threads 1
+   and 2 consumed the entire `2 MiB` arena and threads 3 and 4 failed with `Out of memory` at
+   `3%` utilization.
+2. **S10-R2 (LOW regression in C3.26):** `ThreadLocalPool::alloc` carved fresh bump slabs from
+   `global_pool` before checking `global_pool`'s fast-bin free list, so blocks that spilled to
+   `global_pool` on `free` (when `cached_bytes == max_cached_bytes`) sat unused in
+   `global_pool.free_lists` until the bump cursor hit capacity (`used_memory` climbed
+   `512,000 -> 958,464 -> 1,048,576` over 3 identical `8,000 × 64 B` rounds with `arena_size =
+   64 KiB`).
+3. **S10-R3 (LOW):** `SimdMemOps::find_byte` 4 KiB miss (`avx2_memchr`) processed a single 32B
+   vector per `vpmovmskb` + branch iteration (`128` iterations per 4 KiB), making it sensitive
+   to loop alignment (`100.6 -> 115.1 ns`).
+4. **S10-R4 (LOW):** C3.26's ledger entry cited pre-amend commit `fa2d6be` instead of `a709048`.
+5. **S10-R5 (LOW):** `unsafe impl Send/Sync for ThreadLocalPool` `SAFETY:` comments still named
+   `global_pool: Arc<LockFreePool>` instead of `Arc<MutexBasedPool>`.
+
+**RED (watched).**
+
+```
+thread '<unnamed>' panicked at src/memory/five_level_pool.rs:2263:25:
+thread 3: 32 KiB alloc in 2 MiB pool failed: Resource exhausted: Out of memory
+
+thread 'memory::five_level_pool::tests::test_thread_local_pool_reuses_global_fast_bin_before_carving_new_slabs'
+  panicked at src/memory/five_level_pool.rs:2294:13:
+assertion `left == right` failed: round 1: used_memory climbed to 958464 instead of reusing spilled global fast-bin blocks
+  left: 958464
+ right: 512000
+```
+
+**Fix.**
+
+* **S10-R1:** Capped `max_slab` at `(aligned_size * 64).min(self.config.arena_size /
+  64).max(aligned_size)`. Under the default `2 MiB` arena (`arena_size / 64 = 32 KiB`), `64 B`
+  blocks still receive a full 64-block (`4 KiB`) slab while `32 KiB` blocks take a single
+  block (`32 KiB`, zero over-reservation).
+* **S10-R2:** Added `MutexBasedPool::try_pop_fast_bin(size)` (guarded by a relaxed
+  `self.fragment_size.load(Ordering::Relaxed) < size` fast reject so empty global bins cost zero
+  mutex acquisitions) and called it in `ThreadLocalPool::alloc` before `carve_slab`.
+* **S10-R3:** Added a 4×32B (`128-byte`) unrolled loop in `avx2_memchr` that combines four
+  `_mm256_cmpeq_epi8` vectors with `_mm256_or_si256` before taking a single
+  `_mm256_movemask_epi8` (`find_byte` 4 KiB miss: `115.1 ns -> 32.6 ns`, 3.5× faster).
+* **S10-R4 & S10-R5:** Corrected C3.26's commit SHA (`a709048`) and updated the two
+  `ThreadLocalPool` `Send`/`Sync` `SAFETY:` comments to `Arc<MutexBasedPool>`.
+
+**Measured release timing (`cargo test --release`, min of 5 repeats):**
+
+| Path | `0c82979` | `a709048` (C3.26) | After C3.27 |
+|---|---|---|---|
+| `ThreadLocalPool` 64 B `alloc`/`free` cycle | 14.6 ns | 14.9 ns | **14.6 ns** (≤ 20 ns ✓) |
+| `ThreadLocalPool` 4,096 × 64 B `alloc` then `free` | 64.1 µs | 64.9 µs | **79.1 µs** |
+| `SimdMemOps::find_byte` 4 KiB miss | 100.6 ns | 115.1 ns | **32.6 ns** (3.5× faster ✓) |
+
+**Commit.** _pending_
 ---
 
 # Open findings — read, judged, not fixed

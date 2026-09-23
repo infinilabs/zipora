@@ -853,6 +853,32 @@ impl MutexBasedPool {
 }
 
 impl MutexBasedPool {
+    /// Pop one recycled block from `self.free_lists[bin_index]` if the bin is
+    /// non-empty, without advancing the arena bump cursor.
+    #[inline]
+    fn try_pop_fast_bin(&self, size: usize) -> Option<MemOffset> {
+        // Fast check: if fewer than `size` fragmented bytes exist across all
+        // bins, this bin cannot hold a free block of `size` bytes.
+        if self.fragment_size.load(Ordering::Relaxed) < size {
+            return None;
+        }
+        let bin_index = (size / self.config.alignment) - 1;
+        let mut head = self.free_lists.get(bin_index)?.lock().ok()?;
+        if head.head.is_null() {
+            return None;
+        }
+        let offset = head.head;
+        // SAFETY: offset from free list points to valid u32 storing next offset
+        unsafe {
+            let memory = self.memory.lock().ok()?;
+            let ptr = memory.offset_ptr(offset.to_usize()) as *mut u32;
+            head.head = MemOffset(*ptr);
+        }
+        head.count -= 1;
+        self.fragment_size.fetch_sub(size, Ordering::Relaxed);
+        Some(offset)
+    }
+
     /// Carve up to `max_bytes` (and at least `min_bytes`) from the bump cursor
     /// of `self.memory`, returning `Some((start, end))` in `self.memory`'s
     /// single address space. Used by `ThreadLocalPool` so thread-local bump
@@ -1275,15 +1301,24 @@ impl ThreadLocalPool {
         if aligned_size <= self.config.max_fast_block_size {
             let bin_index = (aligned_size / self.config.alignment).saturating_sub(1);
 
-            if let Some(offset) = self.with_thread_cache(|cache| {
+            if let Some(Some(offset)) = self.with_thread_cache(|cache| {
                 if let Some(off) = cache.pop(bin_index, aligned_size) {
                     return Some(off);
                 }
                 if let Some(off) = cache.alloc_from_slab(aligned_size) {
                     return Some(off);
                 }
+                // S10-R2: reuse a block that spilled into `global_pool`'s fast
+                // bin before carving fresh bump memory.
+                if let Some(off) = self.global_pool.try_pop_fast_bin(aligned_size) {
+                    return Some(off);
+                }
+                // S10-R1: cap the per-thread slab at `arena_size / 64` so a
+                // 32 KiB fast block under the default 2 MiB arena takes one
+                // block (32 KiB) instead of reserving 1 MiB, while 64 B blocks
+                // still get a full 64-block (4 KiB) slab.
                 let max_slab = (aligned_size * 64)
-                    .min(self.config.arena_size / 2)
+                    .min(self.config.arena_size / 64)
                     .max(aligned_size);
                 if let Some((start, end)) = self.global_pool.carve_slab(max_slab, aligned_size) {
                     cache.hot_pos = start + aligned_size;
@@ -1291,8 +1326,7 @@ impl ThreadLocalPool {
                     return Some(MemOffset::new(start));
                 }
                 None
-            }) && let Some(offset) = offset
-            {
+            }) {
                 return Ok(offset);
             }
         }
@@ -1330,16 +1364,15 @@ impl ThreadLocalPool {
 }
 
 // SAFETY: ThreadLocalPool is Send because:
-// 1. `config: FiveLevelPoolConfig` - Config is Clone, no pointers.
-// 2. `global_pool: Arc<LockFreePool>` - Arc<T> is Send if T is Send+Sync.
-// Thread-local caches are per-thread and don't cross thread boundaries.
+// 1. `id: u64` and `config: FiveLevelPoolConfig` contain no raw pointers.
+// 2. `global_pool: Arc<MutexBasedPool>` - Arc<T> is Send because MutexBasedPool is Send + Sync.
+// 3. Thread-local caches (THREAD_CACHE) stay on the thread that created them.
 unsafe impl Send for ThreadLocalPool {}
 
 // SAFETY: ThreadLocalPool is Sync because:
-// 1. Thread-local caches (THREAD_CACHE) are per-thread, no cross-thread access.
-// 2. Fallback to global_pool is thread-safe (LockFreePool is Sync).
-// 3. Arc reference counting is atomic.
-// 4. Each thread maintains its own arena, preventing data races.
+// 1. Thread-local caches (THREAD_CACHE) are accessed only by the current thread via `RefCell`.
+// 2. Shared operations on `global_pool: Arc<MutexBasedPool>` are synchronized by internal `Mutex`es.
+// 3. `id` and `config` are immutable after construction.
 unsafe impl Sync for ThreadLocalPool {}
 
 impl Drop for ThreadLocalPool {
@@ -2243,6 +2276,71 @@ mod tests {
     /// pools, and each entry preallocated `max_fast_block_size / alignment`
     /// (4,096) bin `Vec`s (~96 KiB). Running 1,000 create/alloc/free/drop
     /// cycles on one thread grew `THREAD_CACHE` by 1,000 entries (~96 MB).
+    /// C3.27 (S10-R1, MEDIUM regression in C3.26). `max_slab` was capped at
+    /// `arena_size / 2` (1 MiB under the default 2 MiB config), so each thread
+    /// allocating a single 32 KiB fast block carved a 1 MiB slab and two
+    /// threads exhausted the entire 2 MiB shared pool at 64 KiB (3%) live.
+    #[test]
+    fn test_thread_local_pool_large_fast_blocks_do_not_exhaust_shared_arena() {
+        let pool = Arc::new(ThreadLocalPool::new(FiveLevelPoolConfig::default()).unwrap());
+        let barrier = Arc::new(std::sync::Barrier::new(4));
+
+        let handles: Vec<_> = (0..4)
+            .map(|t| {
+                let pool = Arc::clone(&pool);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let res = pool.alloc(32 * 1024);
+                    barrier.wait();
+                    let off = res.unwrap_or_else(|e| {
+                        panic!("thread {t}: 32 KiB alloc in 2 MiB pool failed: {e}")
+                    });
+                    pool.free(off, 32 * 1024).unwrap();
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+    }
+
+    /// C3.27 (S10-R2, LOW regression in C3.26). `ThreadLocalPool::alloc`
+    /// carved fresh slabs from `global_pool` before checking `global_pool`'s
+    /// fast-bin free list, so blocks that spilled to `global_pool` on `free`
+    /// were not reused until the bump cursor hit capacity.
+    #[test]
+    fn test_thread_local_pool_reuses_global_fast_bin_before_carving_new_slabs() {
+        let config = FiveLevelPoolConfig {
+            arena_size: 64 * 1024,
+            initial_capacity: 1024 * 1024,
+            ..FiveLevelPoolConfig::default()
+        };
+        let pool = ThreadLocalPool::new(config).unwrap();
+
+        for round in 0..3 {
+            let mut offsets = Vec::with_capacity(8000);
+            for _ in 0..8000 {
+                offsets.push(pool.alloc(64).unwrap());
+            }
+            let stats_live = pool.stats();
+            assert_eq!(
+                stats_live.used_memory,
+                8000 * 64,
+                "round {round}: used_memory climbed to {} instead of reusing spilled global fast-bin blocks",
+                stats_live.used_memory
+            );
+            assert_eq!(
+                stats_live.fragment_size, 0,
+                "round {round}: fragment_size remained {} while all 8000 blocks were live",
+                stats_live.fragment_size
+            );
+            for off in offsets {
+                pool.free(off, 64).unwrap();
+            }
+        }
+    }
+
     #[test]
     fn test_thread_local_pool_drop_evicts_thread_cache_entries() {
         let before = THREAD_CACHE.with(|c| c.borrow().len());
