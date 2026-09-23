@@ -1,7 +1,6 @@
-//! Simplified FSA infrastructure implementations for initial Phase 8A completion
+//! Baseline FSA infrastructure implementations (cache, walker, token, and builder utilities)
 //!
-//! This module provides basic working implementations of the FSA infrastructure
-//! components to establish the foundation for Phase 8A.
+//! This module provides concrete implementations of the FSA support components.
 
 use crate::error::Result;
 use std::collections::HashMap;

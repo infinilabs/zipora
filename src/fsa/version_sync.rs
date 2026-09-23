@@ -540,10 +540,8 @@ impl VersionManager {
         }
     }
 
-    /// Attempts to advance the minimum version based on active tokens.
-    ///
-    /// This is a simplified version - in a full implementation, this would
-    /// track individual token versions in a linked list.
+    /// Advances `min_version` to `current_version` when all active readers and
+    /// writers have drained.
     fn try_advance_min_version(&self) {
         if self.active_readers.load(Ordering::Relaxed) == 0
             && self.active_writers.load(Ordering::Relaxed) == 0

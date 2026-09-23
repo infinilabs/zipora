@@ -777,7 +777,7 @@ impl CsppTrie {
                     n_zpath_len: MAX_ZPATH as u8,
                     c_label: [remaining[MAX_ZPATH], 0],
                 };
-                (*p.add(1)).child = NIL_STATE; // placeholder, filled by next iteration
+                (*p.add(1)).child = NIL_STATE; // initialized to NIL_STATE, linked by next iteration
                 let zpath_dst = p.add(2) as *mut u8;
                 std::ptr::copy_nonoverlapping(remaining.as_ptr(), zpath_dst, MAX_ZPATH);
                 // Pad 254 → 256 (2 bytes)

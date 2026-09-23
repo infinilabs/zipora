@@ -339,17 +339,20 @@ impl TrieAlgorithmStrategy for PatriciaAlgorithmStrategy {
 
                 // Check if we should compress the remaining path
                 let remaining_key = &key[key_pos + 1..];
-                if remaining_key.len() >= config.compression_threshold {
+                if !remaining_key.is_empty() && remaining_key.len() >= config.compression_threshold
+                {
                     context
                         .compressed_paths
                         .insert(new_node_id as StateId, remaining_key.to_vec());
                     context.path_stats.paths_compressed += 1;
                     context.path_stats.total_path_length += remaining_key.len();
                     context.path_stats.compressed_path_length += 1; // Compressed to single node
+                    nodes[new_node_id].is_final = true;
+                    return Ok(new_node_id as StateId);
                 }
 
-                nodes[new_node_id].is_final = true;
-                return Ok(new_node_id as StateId);
+                current = new_node_id;
+                key_pos += 1;
             }
         }
 
@@ -444,11 +447,58 @@ impl TrieAlgorithmStrategy for PatriciaAlgorithmStrategy {
 
     fn optimize(
         &self,
-        _context: &mut Self::Context,
-        _nodes: &mut FastVec<Self::Node>,
-        _config: &Self::Config,
+        context: &mut Self::Context,
+        nodes: &mut FastVec<Self::Node>,
+        config: &Self::Config,
     ) -> Result<()> {
-        // TODO: Implement optimization (path compression, node merging, etc.)
+        if nodes.is_empty() {
+            return Ok(());
+        }
+        // Collapse single-child non-final chains into compressed_paths when >= compression_threshold.
+        for idx in 1..nodes.len() {
+            if nodes[idx].is_final || context.compressed_paths.contains_key(&(idx as StateId)) {
+                continue;
+            }
+            let mut chain = Vec::new();
+            let mut curr = idx;
+            while !nodes[curr].is_final
+                && !context.compressed_paths.contains_key(&(curr as StateId))
+            {
+                let mut only_child = None;
+                let mut count = 0usize;
+                for (sym, &c) in nodes[curr].children.iter().enumerate() {
+                    if let Some(cid) = c {
+                        only_child = Some((sym as u8, cid as usize));
+                        count += 1;
+                        if count > 1 {
+                            break;
+                        }
+                    }
+                }
+                if count == 1
+                    && let Some((sym, next)) = only_child
+                    && chain.len() < config.max_path_length
+                {
+                    chain.push(sym);
+                    curr = next;
+                } else {
+                    break;
+                }
+            }
+            if chain.len() >= config.compression_threshold {
+                let tail_children = nodes[curr].children;
+                let tail_final = nodes[curr].is_final;
+                if let Some(tail_path) = context.compressed_paths.remove(&(curr as StateId)) {
+                    chain.extend_from_slice(&tail_path);
+                }
+                nodes[idx].children = tail_children;
+                nodes[idx].is_final = tail_final;
+                context.path_stats.paths_compressed += 1;
+                context.path_stats.total_path_length += chain.len();
+                context.path_stats.compressed_path_length += 1;
+                context.compressed_paths.insert(idx as StateId, chain);
+            }
+        }
         Ok(())
     }
 
@@ -463,18 +513,48 @@ impl TrieAlgorithmStrategy for PatriciaAlgorithmStrategy {
         } else {
             1.0
         };
+        fn compute_depth(
+            nodes: &FastVec<PatriciaNode>,
+            context: &PatriciaContext,
+            idx: usize,
+        ) -> usize {
+            if idx >= nodes.len() {
+                return 0;
+            }
+            let path_len = context
+                .compressed_paths
+                .get(&(idx as StateId))
+                .map_or(0, Vec::len);
+            let child_max = nodes[idx]
+                .children
+                .iter()
+                .filter_map(|&c| c.map(|cid| 1 + compute_depth(nodes, context, cid as usize)))
+                .max()
+                .unwrap_or(0);
+            path_len + child_max
+        }
+        let max_depth = if nodes.is_empty() {
+            0
+        } else {
+            compute_depth(nodes, context, 0)
+        };
+        let cache_efficiency = if nodes.capacity() > 0 {
+            nodes.len() as f64 / nodes.capacity() as f64
+        } else {
+            0.0
+        };
 
         AlgorithmStats {
             node_count: nodes.len(),
             edge_count,
-            max_depth: 0, // TODO: Calculate max depth
+            max_depth,
             avg_branching_factor: if nodes.is_empty() {
                 0.0
             } else {
                 edge_count as f64 / nodes.len() as f64
             },
             path_compression_ratio: compression_ratio,
-            cache_efficiency: 0.0, // TODO: Calculate cache efficiency
+            cache_efficiency,
         }
     }
 
@@ -509,17 +589,68 @@ impl PatriciaAlgorithmStrategy {
     #[allow(clippy::too_many_arguments)] // internal helper; arg bundle would add indirection
     fn split_compressed_path(
         &self,
-        _context: &mut PatriciaContext,
-        _nodes: &mut FastVec<PatriciaNode>,
+        context: &mut PatriciaContext,
+        nodes: &mut FastVec<PatriciaNode>,
         current: usize,
-        _key: &[u8],
-        _key_pos: usize,
-        _path: &[u8],
-        _match_len: usize,
+        key: &[u8],
+        key_pos: usize,
+        path: &[u8],
+        match_len: usize,
         _config: &PatriciaConfig,
     ) -> Result<StateId> {
-        // TODO: Implement path splitting for partial matches
-        Ok(current as StateId)
+        // Move `current`'s existing outgoing transitions and finality to `old_suffix_id`,
+        // which represents the remainder `path[match_len + 1..]` after branching on `path[match_len]`.
+        let old_children = nodes[current].children;
+        let old_final = nodes[current].is_final;
+
+        let old_suffix_id = nodes.len();
+        let mut old_suffix_node = PatriciaNode::default();
+        old_suffix_node.children = old_children;
+        old_suffix_node.is_final = old_final;
+        let _ = nodes.push(old_suffix_node);
+
+        let old_branch_byte = path[match_len];
+        let old_rem = &path[match_len + 1..];
+        if !old_rem.is_empty() {
+            context
+                .compressed_paths
+                .insert(old_suffix_id as StateId, old_rem.to_vec());
+        }
+
+        // Shorten or remove the compressed prefix at `current`.
+        if match_len > 0 {
+            context
+                .compressed_paths
+                .insert(current as StateId, path[..match_len].to_vec());
+        } else {
+            context.compressed_paths.remove(&(current as StateId));
+        }
+
+        nodes[current].children = [None; 256];
+        nodes[current].children[old_branch_byte as usize] = Some(old_suffix_id as StateId);
+
+        let new_pos = key_pos + match_len;
+        if new_pos == key.len() {
+            // New key terminates right at the split point.
+            nodes[current].is_final = true;
+            Ok(current as StateId)
+        } else {
+            nodes[current].is_final = false;
+            let new_branch_byte = key[new_pos];
+            let new_leaf_id = nodes.len();
+            let mut new_leaf = PatriciaNode::default();
+            new_leaf.is_final = true;
+            let _ = nodes.push(new_leaf);
+
+            nodes[current].children[new_branch_byte as usize] = Some(new_leaf_id as StateId);
+            let new_rem = &key[new_pos + 1..];
+            if !new_rem.is_empty() {
+                context
+                    .compressed_paths
+                    .insert(new_leaf_id as StateId, new_rem.to_vec());
+            }
+            Ok(new_leaf_id as StateId)
+        }
     }
 }
 
@@ -726,4 +857,53 @@ mod tests {
         assert!(!strategy.allow_concurrent_reads(&context));
         assert!(!strategy.allow_concurrent_writes(&context));
     }
+
+    #[test]
+    fn test_patricia_algorithm_strategy_short_keys_and_path_splitting() {
+        let strategy = PatriciaAlgorithmStrategy;
+        let config = PatriciaConfig {
+            max_path_length: 64,
+            compression_threshold: 3,
+            adaptive_compression: true,
+        };
+        let mut context = PatriciaAlgorithmStrategy::initialize(&config);
+        let mut nodes = FastVec::new();
+
+        // 1. Short keys below compression_threshold must not be truncated to 1 byte
+        strategy
+            .insert(&mut context, &mut nodes, b"cat", &config)
+            .unwrap();
+        strategy
+            .insert(&mut context, &mut nodes, b"car", &config)
+            .unwrap();
+        assert!(strategy.lookup(&context, &nodes, b"cat", &config));
+        assert!(strategy.lookup(&context, &nodes, b"car", &config));
+        assert!(!strategy.lookup(&context, &nodes, b"c", &config));
+        assert!(!strategy.lookup(&context, &nodes, b"ca", &config));
+
+        // 2. Compressed path splitting (partial match branching + prefix termination)
+        strategy
+            .insert(&mut context, &mut nodes, b"application", &config)
+            .unwrap();
+        strategy
+            .insert(&mut context, &mut nodes, b"apple", &config)
+            .unwrap();
+        strategy
+            .insert(&mut context, &mut nodes, b"app", &config)
+            .unwrap();
+        strategy
+            .insert(&mut context, &mut nodes, b"apply", &config)
+            .unwrap();
+
+        for k in [b"application".as_slice(), b"apple", b"app", b"apply"] {
+            assert!(
+                strategy.lookup(&context, &nodes, k, &config),
+                "missing key {:?} after compressed path split",
+                String::from_utf8_lossy(k)
+            );
+        }
+        assert!(!strategy.lookup(&context, &nodes, b"appl", &config));
+        assert!(!strategy.lookup(&context, &nodes, b"applic", &config));
+    }
 }
+
