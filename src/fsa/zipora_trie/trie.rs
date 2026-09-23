@@ -191,6 +191,14 @@ where
 
         // Update number of states based on storage type
         // Special case: empty trie should report 0 states
+        let cspp_counts = if stats.num_keys == 0 {
+            None
+        } else if let TrieStorage::CompressedSparse(cspp) = &self.storage {
+            Some(Self::count_cspp_states_and_transitions(cspp))
+        } else {
+            None
+        };
+
         stats.num_states = if stats.num_keys == 0 {
             0
         } else {
@@ -200,19 +208,19 @@ where
                 // Free cells hold non-zero link words, so counting cells by
                 // value would count the whole array; the allocator's count is exact.
                 TrieStorage::DoubleArray { state_count, .. } => *state_count,
-                TrieStorage::Louds { .. } => 1, // TODO: implement for LOUDS
-                TrieStorage::CompressedSparse(cspp) => cspp.total_states(),
+                TrieStorage::Louds { label_data, .. } => label_data.len(),
+                TrieStorage::CompressedSparse(_) => cspp_counts.map_or(0, |(s, _)| s),
             }
         };
 
         // Update number of transitions
         stats.num_transitions = match &self.storage {
             TrieStorage::Patricia { nodes, .. } => nodes.iter().map(|n| n.children.len()).sum(),
-            TrieStorage::CriticalBit { .. } => 0, // TODO: implement
+            TrieStorage::CriticalBit { nodes, .. } => nodes.len().saturating_sub(1),
             // Every state except the root has exactly one incoming transition.
             TrieStorage::DoubleArray { state_count, .. } => state_count.saturating_sub(1),
-            TrieStorage::Louds { .. } => 0, // TODO: implement
-            TrieStorage::CompressedSparse(_cspp) => 0, /* TODO: implement num_transitions */
+            TrieStorage::Louds { label_data, .. } => label_data.len().saturating_sub(1),
+            TrieStorage::CompressedSparse(_) => cspp_counts.map_or(0, |(_, t)| t),
         };
 
         stats
@@ -334,7 +342,11 @@ where
                     Ok(false)
                 }
             }
-            _ => Ok(false),
+            TrieStorage::CompressedSparse(_)
+            | TrieStorage::CriticalBit { .. }
+            | TrieStorage::Louds { .. } => Err(crate::error::ZiporaError::not_supported(
+                "remove is not supported for this trie strategy",
+            )),
         }
     }
 
@@ -363,11 +375,20 @@ where
             TrieStorage::DoubleArray { base, check, .. } => {
                 Self::keys_double_array_actual(base, check)
             }
-            TrieStorage::CompressedSparse(_cspp) => Vec::new(), // Handled by _cspp.iter
-            _ => {
-                // TODO: Implement for other storage types
-                Vec::new()
+            TrieStorage::CompressedSparse(cspp) => {
+                let mut iter = crate::fsa::cspp_trie::CsppTrieIterator::<()>::new(cspp);
+                let mut out = Vec::with_capacity(self.stats.num_keys);
+                if iter.seek_begin() {
+                    loop {
+                        out.push(iter.word().to_vec());
+                        if !iter.incr() {
+                            break;
+                        }
+                    }
+                }
+                out
             }
+            TrieStorage::CriticalBit { .. } => Vec::new(),
         }
     }
 
@@ -386,11 +407,25 @@ where
             TrieStorage::DoubleArray { base, check, .. } => {
                 Self::keys_with_prefix_double_array_actual(base, check, prefix)
             }
-            TrieStorage::CompressedSparse(_cspp) => Vec::new(), // Handled by _cspp.iter
-            _ => {
-                // TODO: Implement for other storage types
-                Vec::new()
+            TrieStorage::CompressedSparse(cspp) => {
+                let mut iter = crate::fsa::cspp_trie::CsppTrieIterator::<()>::new(cspp);
+                let mut out = Vec::new();
+                if iter.seek_begin() {
+                    loop {
+                        let w = iter.word();
+                        if w.starts_with(prefix) {
+                            out.push(w.to_vec());
+                        } else if !prefix.is_empty() && w > prefix {
+                            break;
+                        }
+                        if !iter.incr() {
+                            break;
+                        }
+                    }
+                }
+                out
             }
+            TrieStorage::CriticalBit { .. } => Vec::new(),
         }
     }
 
@@ -443,62 +478,9 @@ where
 
     /// Insert and get node ID
     pub fn insert_and_get_node_id(&mut self, key: &[u8]) -> Result<StateId> {
-        self.relocations.clear();
-        match &mut self.storage {
-            TrieStorage::Patricia {
-                nodes,
-                edge_data,
-                compressed_paths,
-                free_list,
-            } => {
-                let node_id = Self::insert_patricia_actual(
-                    nodes,
-                    edge_data,
-                    compressed_paths,
-                    free_list,
-                    key,
-                    &mut self.stats.num_keys,
-                )?;
-                Ok(node_id)
-            }
-            TrieStorage::Louds {
-                louds,
-                is_link,
-                next_link,
-                label_data,
-                core_data,
-                next_trie,
-            } => {
-                let node_id = Self::insert_louds(
-                    louds, is_link, next_link, label_data, core_data, next_trie, key,
-                )?;
-                self.stats.num_keys += 1;
-                Ok(node_id)
-            }
-            TrieStorage::DoubleArray {
-                base,
-                check,
-                free_list,
-                state_count,
-            } => {
-                // insert_double_array handles num_keys internally (checks was_new)
-                let node_id = Self::insert_double_array(
-                    base,
-                    check,
-                    free_list,
-                    state_count,
-                    key,
-                    &mut self.stats.num_keys,
-                    &mut self.relocations,
-                )?;
-                self.stats_dirty = true;
-                Ok(node_id)
-            }
-            _ => {
-                self.stats.num_keys += 1;
-                Ok(0)
-            }
-        }
+        let node_id = <Self as Trie>::insert(self, key)?;
+        self.stats_dirty = true;
+        Ok(node_id)
     }
 
     /// Lookup node ID for a key
@@ -514,7 +496,8 @@ where
             TrieStorage::DoubleArray { base, check, .. } => {
                 Self::lookup_node_id_double_array(base, check, key)
             }
-            _ => None,
+            TrieStorage::CompressedSparse(cspp) => Self::lookup_node_id_cspp(cspp, key),
+            TrieStorage::CriticalBit { .. } => None,
         }
     }
 
@@ -584,7 +567,8 @@ where
             TrieStorage::DoubleArray { base, check, .. } => {
                 Self::restore_string_double_array(base, check, state_id)
             }
-            _ => None,
+            TrieStorage::CompressedSparse(cspp) => Self::restore_string_cspp(cspp, state_id),
+            TrieStorage::CriticalBit { .. } => None,
         }
     }
 
@@ -597,7 +581,10 @@ where
         const VALUE_MASK: u32 = 0x7FFF_FFFF;
         const FREE_BIT: u32 = 0x8000_0000;
 
-        if state_id as usize >= check.len() {
+        if state_id as usize >= check.len() || state_id as usize >= base.len() {
+            return None;
+        }
+        if state_id != 0 && (check[state_id as usize] & FREE_BIT) != 0 {
             return None;
         }
 
@@ -611,6 +598,9 @@ where
                 return None; // Free state, invalid
             }
             let parent = check_val; // parent state
+            if parent as usize >= base.len() || symbols.len() >= check.len() {
+                return None;
+            }
             let parent_base = base[parent as usize] & VALUE_MASK;
 
             // The symbol is: current - parent_base
@@ -762,6 +752,164 @@ where
 
         if key.is_empty() { None } else { Some(key) }
     }
+
+    fn is_valid_cspp_node(cspp: &crate::fsa::cspp_trie::CsppTrie, target_slot: u32) -> bool {
+        if target_slot == crate::fsa::cspp_trie::INITIAL_STATE {
+            return cspp.total_states() > 0;
+        }
+        if (target_slot as usize) >= cspp.total_states() || target_slot < 258 {
+            return false;
+        }
+        fn dfs(cspp: &crate::fsa::cspp_trie::CsppTrie, curr: u32, target: u32) -> bool {
+            if curr == target {
+                return true;
+            }
+            if (curr as usize) >= cspp.total_states() {
+                return false;
+            }
+            let view = cspp.node_view(curr);
+            let mut found = false;
+            view.for_each_child(|_, child_slot| {
+                if !found && dfs(cspp, child_slot, target) {
+                    found = true;
+                }
+            });
+            found
+        }
+        dfs(cspp, crate::fsa::cspp_trie::INITIAL_STATE, target_slot)
+    }
+
+    fn count_cspp_states_and_transitions(
+        cspp: &crate::fsa::cspp_trie::CsppTrie,
+    ) -> (usize, usize) {
+        if cspp.total_states() == 0 {
+            return (0, 0);
+        }
+        fn dfs(
+            cspp: &crate::fsa::cspp_trie::CsppTrie,
+            curr: u32,
+            states: &mut usize,
+            transitions: &mut usize,
+        ) {
+            if (curr as usize) >= cspp.total_states() {
+                return;
+            }
+            let view = cspp.node_view(curr);
+            let zlen = view.zpath_len();
+            *states += 1 + zlen;
+            *transitions += zlen + view.n_children();
+            view.for_each_child(|_, child_slot| {
+                dfs(cspp, child_slot, states, transitions);
+            });
+        }
+        let mut states = 0;
+        let mut transitions = 0;
+        dfs(
+            cspp,
+            crate::fsa::cspp_trie::INITIAL_STATE,
+            &mut states,
+            &mut transitions,
+        );
+        (states, transitions)
+    }
+
+    fn lookup_node_id_cspp(
+        cspp: &crate::fsa::cspp_trie::CsppTrie,
+        key: &[u8],
+    ) -> Option<StateId> {
+        let mut curr = crate::fsa::cspp_trie::INITIAL_STATE;
+        let mut pos = 0usize;
+        loop {
+            if (curr as usize) >= cspp.total_states() {
+                return None;
+            }
+            let view = cspp.node_view(curr);
+            let zlen = view.zpath_len();
+            if zlen > 0 {
+                let zpath = view.zpath_slice();
+                let rem = key.len() - pos;
+                if rem < zlen || &key[pos..pos + zlen] != zpath {
+                    return None;
+                }
+                pos += zlen;
+            }
+            if pos == key.len() {
+                return if view.is_final() {
+                    Some((curr << 8) | (zlen as u32))
+                } else {
+                    None
+                };
+            }
+            let next = view.state_move(key[pos]);
+            if next == crate::fsa::cspp_trie::NIL_STATE {
+                return None;
+            }
+            curr = next;
+            pos += 1;
+        }
+    }
+
+    fn restore_string_cspp(
+        cspp: &crate::fsa::cspp_trie::CsppTrie,
+        state_id: StateId,
+    ) -> Option<Vec<u8>> {
+        let target_slot = state_id >> 8;
+        let target_zprog = (state_id & 0xFF) as usize;
+        if (target_slot as usize) >= cspp.total_states() {
+            return None;
+        }
+        fn dfs(
+            cspp: &crate::fsa::cspp_trie::CsppTrie,
+            curr: u32,
+            target_slot: u32,
+            target_zprog: usize,
+            path: &mut Vec<u8>,
+        ) -> bool {
+            if (curr as usize) >= cspp.total_states() {
+                return false;
+            }
+            let view = cspp.node_view(curr);
+            let zlen = view.zpath_len();
+            if curr == target_slot {
+                if target_zprog <= zlen {
+                    path.extend_from_slice(&view.zpath_slice()[..target_zprog]);
+                    return true;
+                }
+                return false;
+            }
+            let base_len = path.len();
+            if zlen > 0 {
+                path.extend_from_slice(view.zpath_slice());
+            }
+            let mut found = false;
+            view.for_each_child(|ch, child_slot| {
+                if !found {
+                    path.push(ch);
+                    if dfs(cspp, child_slot, target_slot, target_zprog, path) {
+                        found = true;
+                    } else {
+                        path.pop();
+                    }
+                }
+            });
+            if !found {
+                path.truncate(base_len);
+            }
+            found
+        }
+        let mut path = Vec::new();
+        if dfs(
+            cspp,
+            crate::fsa::cspp_trie::INITIAL_STATE,
+            target_slot,
+            target_zprog,
+            &mut path,
+        ) {
+            Some(path)
+        } else {
+            None
+        }
+    }
 }
 
 /// Iterator for trie keys
@@ -884,11 +1032,13 @@ where
                 louds, is_link, next_link, label_data, core_data, next_trie, key,
             ),
             TrieStorage::CompressedSparse(cspp) => {
-                let (is_new, _) = cspp.insert(key);
+                let (is_new, valpos) = cspp.insert(key);
                 if is_new {
                     self.stats.num_keys += 1;
+                    let value_id = self.stats.num_keys as u32;
+                    cspp.set_value::<u32>(valpos, value_id);
                 }
-                Ok(0)
+                Ok(Self::lookup_node_id_cspp(cspp, key).unwrap_or(0))
             }
         }?;
 
@@ -953,17 +1103,25 @@ where
                 .map(|n| n.is_final)
                 .unwrap_or(false),
             TrieStorage::DoubleArray { base, .. } => {
+                if self.is_free_double_array(state) {
+                    return false;
+                }
                 // Check the terminal bit in the BASE array (referenced project line 32: is_term)
                 const TERMINAL_BIT: u32 = 0x8000_0000;
                 base.get(state as usize)
                     .map(|b| (b & TERMINAL_BIT) != 0)
                     .unwrap_or(false)
             }
-            TrieStorage::Louds { .. } => {
-                // TODO: Implement LOUDS final state check
-                false
+            TrieStorage::Louds { .. } => false,
+            TrieStorage::CompressedSparse(cspp) => {
+                let node_slot = state >> 8;
+                let zprog = (state & 0xFF) as usize;
+                if !Self::is_valid_cspp_node(cspp, node_slot) {
+                    return false;
+                }
+                let view = cspp.node_view(node_slot);
+                zprog == view.zpath_len() && view.is_final()
             }
-            TrieStorage::CompressedSparse(_cspp) => false, // Stub for legacy method
         }
     }
 
@@ -976,17 +1134,24 @@ where
                     .ok()
                     .map(|idx| node.children[idx].1)
             }
-            TrieStorage::CriticalBit { .. } => {
-                // TODO: Implement critical bit transition
-                None
-            }
+            TrieStorage::CriticalBit { .. } => None,
             TrieStorage::DoubleArray { base, check, .. } => {
+                if self.is_free_double_array(state) {
+                    return None;
+                }
                 // Double array trie transition: next = (base[state] & VALUE_MASK) + symbol
                 // Validate with: check[next] == state (referenced project line 100-110)
                 const VALUE_MASK: u32 = 0x7FFF_FFFF;
+                const DA_NIL_STATE: u32 = 0x7FFF_FFFF;
 
                 let base_value = base.get(state as usize)? & VALUE_MASK;
-                let next_state = base_value.saturating_add(symbol as u32);
+                if base_value == 0 || base_value == DA_NIL_STATE {
+                    return None;
+                }
+                let next_state = base_value.checked_add(symbol as u32)?;
+                if next_state == 0 {
+                    return None;
+                }
                 if let Some(check_value) = check.get(next_state as usize) {
                     if *check_value == state {
                         Some(next_state)
@@ -997,11 +1162,32 @@ where
                     None
                 }
             }
-            TrieStorage::Louds { .. } => {
-                // TODO: Implement LOUDS transition
-                None
+            TrieStorage::Louds { .. } => None,
+            TrieStorage::CompressedSparse(cspp) => {
+                let node_slot = state >> 8;
+                let zprog = (state & 0xFF) as usize;
+                if !Self::is_valid_cspp_node(cspp, node_slot) {
+                    return None;
+                }
+                let view = cspp.node_view(node_slot);
+                let zlen = view.zpath_len();
+                if zprog < zlen {
+                    if view.zpath_slice()[zprog] == symbol {
+                        Some((node_slot << 8) | ((zprog + 1) as u32))
+                    } else {
+                        None
+                    }
+                } else if zprog == zlen {
+                    let next_slot = view.state_move(symbol);
+                    if next_slot == crate::fsa::cspp_trie::NIL_STATE {
+                        None
+                    } else {
+                        Some(next_slot << 8)
+                    }
+                } else {
+                    None
+                }
             }
-            TrieStorage::CompressedSparse(_cspp) => None, // Stub for legacy method
         }
     }
 
@@ -1016,38 +1202,56 @@ where
                 }
             }
             TrieStorage::DoubleArray { base, check, .. } => {
-                let Some(&base_val) = base.get(state as usize) else {
+                if self.is_free_double_array(state) {
+                    return Vec::new();
+                }
+                const VALUE_MASK: u32 = 0x7FFF_FFFF;
+                const DA_NIL_STATE: u32 = 0x7FFF_FFFF;
+
+                let Some(&base_raw) = base.get(state as usize) else {
                     return Vec::new();
                 };
-                if base_val == 0 {
+                let base_val = base_raw & VALUE_MASK;
+                if base_val == 0 || base_val == DA_NIL_STATE {
                     return Vec::new();
                 }
 
-                const STATE_MASK: u32 = 0x3FFF_FFFF;
-                const TERMINAL_FLAG: u32 = 0x4000_0000;
-
                 (0u8..=255u8)
                     .filter_map(|symbol| {
-                        let next_state = base_val.saturating_add(symbol as u32);
-                        if (next_state as usize) >= check.len() {
+                        let next_state = base_val.checked_add(symbol as u32)?;
+                        if next_state == 0 || (next_state as usize) >= check.len() {
                             return None;
                         }
-                        let check_val = check[next_state as usize];
-                        let is_valid_child = if state == 0 {
-                            (check_val & STATE_MASK) == 0
-                                && ((check_val & TERMINAL_FLAG) != 0
-                                    || ((next_state as usize) < base.len()
-                                        && base[next_state as usize] != 0))
-                        } else {
-                            check_val != 0 && (check_val & STATE_MASK) == state
-                        };
-                        if is_valid_child {
+                        if check[next_state as usize] == state {
                             Some((symbol, next_state))
                         } else {
                             None
                         }
                     })
                     .collect()
+            }
+            TrieStorage::CompressedSparse(cspp) => {
+                let node_slot = state >> 8;
+                let zprog = (state & 0xFF) as usize;
+                if !Self::is_valid_cspp_node(cspp, node_slot) {
+                    return Vec::new();
+                }
+                let view = cspp.node_view(node_slot);
+                let zlen = view.zpath_len();
+                if zprog < zlen {
+                    vec![(
+                        view.zpath_slice()[zprog],
+                        (node_slot << 8) | ((zprog + 1) as u32),
+                    )]
+                } else if zprog == zlen {
+                    let mut out = Vec::with_capacity(view.n_children());
+                    view.for_each_child(|ch, child_slot| {
+                        out.push((ch, child_slot << 8));
+                    });
+                    out
+                } else {
+                    Vec::new()
+                }
             }
             _ => Vec::new(),
         }

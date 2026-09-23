@@ -38,8 +38,7 @@ where
         Self::contains_patricia_actual(nodes, edge_data, compressed_paths, key)
     }
 
-    // Critical-bit trie implementation methods
-    //  TODO: port from C++ reference `src/terark/fsa/crit_bit_trie.hpp`
+    // Critical-bit trie strategy is not implemented; insert returns NotSupported.
     pub(super) fn insert_critical_bit(
         _nodes: &mut FastVec<CritBitNode>,
         _keys: &mut FastVec<Vec<u8>>,
@@ -346,8 +345,7 @@ where
             .unwrap_or(false)
     }
 
-    // LOUDS trie implementation methods
-    //  TODO: port from C++ reference `src/terark/fsa/nest_louds_trie.hpp`
+    // LOUDS trie strategy is not implemented; insert returns NotSupported.
     pub(super) fn insert_louds(
         _louds: &mut R,
         _is_link: &mut R,
