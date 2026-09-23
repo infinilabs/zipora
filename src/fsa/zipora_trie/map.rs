@@ -1,8 +1,7 @@
 use super::config::ZiporaTrieConfig;
 use super::trie::ZiporaTrie;
-use crate::StateId;
 use crate::error::Result;
-use crate::fsa::traits::{FiniteStateAutomaton, Trie};
+use crate::fsa::traits::Trie;
 use crate::succinct::RankSelectOps;
 
 /// Map wrapper for ZiporaTrie that associates values with keys
@@ -62,16 +61,30 @@ where
         // ours, or lookups on previously inserted keys would read stale slots.
         for &(old, new) in &self.trie.relocations {
             let (old, new) = (old as usize, new as usize);
-            if let Some(v) = self.values.get_mut(old).and_then(Option::take) {
-                if new >= self.values.len() {
-                    self.values.resize(new + 1, None);
-                }
-                self.values[new] = Some(v);
+            let old_val = self.values.get_mut(old).and_then(Option::take);
+            if new >= self.values.len() {
+                self.values.resize(new + 1, None);
             }
+            self.values[new] = old_val;
         }
 
+        // Determine value slot: CompressedSparse stores a stable 1-based u32
+        // value_id inside the CSPP node's trailing bytes (preserved across
+        // fork/split_zpath/add_state_move/realloc_node), whereas DoubleArray
+        // and Patricia index `values` by `state_id`.
+        let idx = match &self.trie.storage {
+            super::storage::TrieStorage::CompressedSparse(cspp) => {
+                let valpos = cspp.lookup(key).ok_or_else(|| {
+                    crate::error::ZiporaError::invalid_data(
+                        "CSPP lookup failed immediately after insert",
+                    )
+                })?;
+                cspp.get_value::<u32>(valpos) as usize
+            }
+            _ => state_id as usize,
+        };
+
         // Ensure values vec is large enough
-        let idx = state_id as usize;
         if idx >= self.values.len() {
             self.values.resize(idx + 1, None);
         }
@@ -85,27 +98,15 @@ where
 
     /// Get the value associated with a key
     pub fn get(&self, key: &[u8]) -> Option<V> {
-        // First check if the key exists in the trie
-        if !self.trie.contains(key) {
-            return None;
-        }
+        let idx = match &self.trie.storage {
+            super::storage::TrieStorage::CompressedSparse(cspp) => {
+                let valpos = cspp.lookup(key)?;
+                cspp.get_value::<u32>(valpos) as usize
+            }
+            _ => self.trie.lookup_node_id(key)? as usize,
+        };
 
-        // Find the state ID for this key by traversing
-        // For now, we need to traverse to find the state ID
-        // This is a simple O(key_length) traversal
-        let state_id = self.find_state_for_key(key)?;
-
-        // Return the value at that state
-        self.values.get(state_id as usize).and_then(|&v| v)
-    }
-
-    /// Helper to find the state ID for a key
-    fn find_state_for_key(&self, key: &[u8]) -> Option<StateId> {
-        let mut state = self.trie.root();
-        for &symbol in key {
-            state = self.trie.transition(state, symbol)?;
-        }
-        Some(state)
+        self.values.get(idx).and_then(|&v| v)
     }
 
     /// Check if a key exists in the map

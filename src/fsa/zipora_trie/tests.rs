@@ -501,3 +501,143 @@ fn test_double_array_shrink_to_fit_truncates_free_tail_and_stays_insertable() {
         assert!(trie.contains(k));
     }
 }
+
+#[test]
+fn test_double_array_transitions_on_terminal_and_free_states() {
+    use crate::fsa::traits::FiniteStateAutomaton;
+
+    let mut trie: ZiporaTrie = ZiporaTrie::new();
+    trie.insert(b"").unwrap();
+    trie.insert(b"app").unwrap();
+    trie.insert(b"apple").unwrap();
+
+    // Root 0 is terminal (empty key) AND has child 'a'
+    assert!(trie.is_final(0));
+    let root_transitions = trie.transitions(0);
+    assert_eq!(
+        root_transitions,
+        vec![(b'a', trie.transition(0, b'a').unwrap())],
+        "terminal root must still report its outgoing transition on 'a'"
+    );
+
+    // State for "app" is terminal AND has child 'l' ("apple")
+    let s_app = trie.lookup_node_id(b"app").unwrap();
+    assert!(trie.is_final(s_app));
+    let app_transitions = trie.transitions(s_app);
+    assert_eq!(
+        app_transitions,
+        vec![(b'l', trie.transition(s_app, b'l').unwrap())],
+        "terminal prefix state 'app' must report its child transition 'l'"
+    );
+
+    // Free states and out-of-bounds states must report no transitions and non-final
+    for s in 1..256u32 {
+        if trie.is_free_double_array(s) {
+            assert!(!trie.is_final(s));
+            assert_eq!(trie.transition(s, b'a'), None);
+            assert!(trie.transitions(s).is_empty());
+            assert_eq!(trie.restore_string(s), None);
+        }
+    }
+    assert!(!trie.is_final(u32::MAX));
+    assert_eq!(trie.transition(u32::MAX, b'a'), None);
+    assert!(trie.transitions(u32::MAX).is_empty());
+    assert_eq!(trie.restore_string(u32::MAX), None);
+}
+
+#[test]
+fn test_compressed_sparse_strategy_full_fsa_and_map_consistency() {
+    use crate::fsa::traits::FiniteStateAutomaton;
+
+    let mut trie: ZiporaTrie = ZiporaTrie::with_config(ZiporaTrieConfig::sparse_optimized());
+    for word in [b"app".as_slice(), b"apple", b"application", b"banana"] {
+        trie.insert(word).unwrap();
+    }
+    assert_eq!(trie.len(), 4);
+
+    let mut keys = trie.keys();
+    keys.sort();
+    assert_eq!(
+        keys,
+        vec![
+            b"app".to_vec(),
+            b"apple".to_vec(),
+            b"application".to_vec(),
+            b"banana".to_vec()
+        ]
+    );
+
+    let mut app_keys = trie.keys_with_prefix(b"app");
+    app_keys.sort();
+    assert_eq!(
+        app_keys,
+        vec![
+            b"app".to_vec(),
+            b"apple".to_vec(),
+            b"application".to_vec()
+        ]
+    );
+
+    let stats = trie.stats();
+    assert!(stats.num_states > 0);
+    assert!(stats.num_transitions > 0);
+
+    let cloned = trie.clone();
+    assert_eq!(cloned.len(), 4);
+    assert!(cloned.contains(b"application"));
+
+    for word in [b"app".as_slice(), b"apple", b"application", b"banana"] {
+        let mut st = trie.root();
+        for &b in word {
+            let next = trie.transition(st, b).expect("missing FSA transition");
+            assert!(
+                trie.transitions(st).contains(&(b, next)),
+                "transitions(st) must include ({b}, {next})"
+            );
+            st = next;
+        }
+        assert!(trie.is_final(st));
+        assert_eq!(trie.lookup_node_id(word), Some(st));
+        assert_eq!(trie.restore_string(st).as_deref(), Some(word));
+    }
+
+    assert!(!trie.is_final(u32::MAX));
+    assert_eq!(trie.transition(u32::MAX, b'a'), None);
+    assert!(trie.transitions(u32::MAX).is_empty());
+    assert_eq!(trie.restore_string(u32::MAX), None);
+
+    // ZiporaTrieMap with CompressedSparse must survive node splits/relocations
+    let mut map: ZiporaTrieMap<u64, RankSelectInterleaved256> =
+        ZiporaTrieMap::with_config(ZiporaTrieConfig::sparse_optimized());
+    for i in 0..200u64 {
+        let key = format!("sparse_key_{:04}", i);
+        assert_eq!(map.insert(key.as_bytes(), i * 10).unwrap(), None);
+    }
+    assert_eq!(map.len(), 200);
+    for i in 0..200u64 {
+        let key = format!("sparse_key_{:04}", i);
+        assert_eq!(map.get(key.as_bytes()), Some(i * 10));
+    }
+    assert_eq!(map.insert(b"sparse_key_0042", 999_999).unwrap(), Some(420));
+    assert_eq!(map.get(b"sparse_key_0042"), Some(999_999));
+}
+
+#[test]
+fn test_unsupported_strategies_reject_insert_and_get_node_id_and_remove() {
+    for config in [
+        ZiporaTrieConfig::space_optimized(),
+        ZiporaTrieConfig::string_specialized(),
+    ] {
+        let mut trie: ZiporaTrie = ZiporaTrie::with_config(config);
+        assert!(matches!(
+            trie.insert_and_get_node_id(b"hello"),
+            Err(crate::error::ZiporaError::NotSupported { .. })
+        ));
+        assert_eq!(trie.len(), 0);
+        assert!(matches!(
+            trie.remove(b"hello"),
+            Err(crate::error::ZiporaError::NotSupported { .. })
+        ));
+    }
+}
+
