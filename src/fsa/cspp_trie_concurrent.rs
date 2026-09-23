@@ -696,6 +696,12 @@ struct SharedInner {
     /// free per node replacement, and all slots live in the fixed-capacity
     /// pool (deferred closures are the only per-defer heap cost).
     pending_reclaims: AtomicUsize,
+    /// Non-zero once at least one already-final node has been structurally
+    /// replaced (`fork`, `split_zpath`, `add_state_move`), activating
+    /// `valpos_remap` so concurrent `set_value`/`get_value` calls on a
+    /// pre-replacement `valpos` forward to the replacement node's `valpos`.
+    has_final_replacements: AtomicUsize,
+    valpos_remap: std::sync::RwLock<std::collections::HashMap<usize, usize>>,
 }
 
 pub struct ConcurrentCsppTrie {
@@ -751,6 +757,8 @@ impl ConcurrentCsppTrie {
                 pool,
                 freelist: LockFreeFreelist::new(),
                 pending_reclaims: AtomicUsize::new(0),
+                has_final_replacements: AtomicUsize::new(0),
+                valpos_remap: std::sync::RwLock::new(std::collections::HashMap::new()),
             }),
             tls: ThreadLocal::new(),
             n_words: AtomicUsize::new(0),
@@ -795,6 +803,66 @@ impl ConcurrentCsppTrie {
 
     fn node_view(&self, pos: u32) -> ConcurrentNodeView<'_> {
         ConcurrentNodeView::new(&self.inner.pool, pos)
+    }
+
+    /// Returns true iff `state` points to a structurally valid, non-lazy-freed
+    /// node within the allocated shared pool.
+    #[inline]
+    pub fn is_valid_state(&self, state: u32) -> bool {
+        let len = self.inner.pool.len();
+        let curr = state as usize;
+        if curr >= len {
+            return false;
+        }
+        let raw = self.inner.pool.load_acquire(curr);
+        let meta = u32_to_meta(raw);
+        if (meta.flags & FLAG_LAZY_FREE) != 0 || (meta.n_zpath_len as usize) > MAX_ZPATH {
+            return false;
+        }
+        let cnt_type = meta.flags & FLAG_CNT_MASK;
+        let (skip, n_children) = match cnt_type {
+            0..=2 => (1usize, cnt_type as usize),
+            3..=6 => (2usize, cnt_type as usize),
+            7 => {
+                let big: BigCount = bytemuck::cast(raw);
+                let n = big.n_children as usize;
+                if !(7..=16).contains(&n) {
+                    return false;
+                }
+                (5usize, n)
+            }
+            8 => {
+                let big: BigCount = bytemuck::cast(raw);
+                let n = big.n_children as usize;
+                if !(17..=256).contains(&n) {
+                    return false;
+                }
+                (10usize, n)
+            }
+            15 if curr == 0 => (2usize, 256usize),
+            _ => return false,
+        };
+        let zpath_slots = (meta.n_zpath_len as usize).div_ceil(4);
+        curr.checked_add(skip + n_children + zpath_slots)
+            .is_some_and(|end| end <= len)
+    }
+
+    /// Safe single-byte transition from `state` on `ch`. Returns `NIL_STATE`
+    /// if `state` is out-of-bounds, marked `lazy_free`, or has no transition.
+    #[inline]
+    pub fn state_move(&self, state: u32, ch: u8) -> u32 {
+        let _guard = epoch::pin();
+        if !self.is_valid_state(state) {
+            return NIL_STATE;
+        }
+        self.node_view(state).state_move(ch)
+    }
+
+    /// Returns true iff `state` is a valid, non-lazy-freed final state.
+    #[inline]
+    pub fn is_term(&self, state: u32) -> bool {
+        let _guard = epoch::pin();
+        self.is_valid_state(state) && self.node_view(state).is_final()
     }
 
     /// Look up a key. Returns the value byte offset if found.
@@ -892,6 +960,20 @@ impl ConcurrentCsppTrie {
             "valpos out of bounds"
         );
 
+        let mut target = valpos;
+        if self.inner.has_final_replacements.load(Ordering::Acquire) != 0
+            && let Ok(remap) = self.inner.valpos_remap.read()
+        {
+            while let Some(&next) = remap.get(&target) {
+                target = next;
+            }
+        }
+        self.read_value_at(target)
+    }
+
+    #[inline]
+    fn read_value_at<T: Copy>(&self, valpos: usize) -> T {
+        let size = std::mem::size_of::<T>();
         let mut result: std::mem::MaybeUninit<T> = std::mem::MaybeUninit::uninit();
         let dst = result.as_mut_ptr() as *mut u8;
         let word_offset = valpos / 4;
@@ -921,12 +1003,9 @@ impl ConcurrentCsppTrie {
 
     /// Set a value at a byte offset previously returned by `insert`/`lookup`.
     ///
-    /// See [`get_value`](Self::get_value) for the atomicity contract (atomic
-    /// for `size_of::<T>() <= 4`, per-word atomic beyond) and the staleness
-    /// hazard: writing through a `valpos` whose node was concurrently
-    /// replaced updates an orphaned copy and the write is lost. Under
-    /// contention, set the value on the inserting thread immediately after
-    /// `insert` returns and treat lookups as the source of truth.
+    /// If the node containing `valpos` was concurrently replaced by a split,
+    /// fork, or child addition after `insert` returned `valpos`, the write is
+    /// forwarded through `valpos_remap` to the live replacement node.
     ///
     /// For `size_of::<T>() % 4 != 0`, the final partial word is zero-padded;
     /// the padding lands in the node's slot-alignment padding.
@@ -942,7 +1021,25 @@ impl ConcurrentCsppTrie {
             "valpos out of bounds"
         );
 
-        let src = &val as *const T as *const u8;
+        self.write_value_at(valpos, &val);
+        std::sync::atomic::fence(Ordering::SeqCst);
+
+        if self.inner.has_final_replacements.load(Ordering::SeqCst) != 0
+            && let Ok(remap) = self.inner.valpos_remap.read()
+        {
+            self.write_value_at(valpos, &val);
+            let mut target = valpos;
+            while let Some(&next) = remap.get(&target) {
+                target = next;
+                self.write_value_at(target, &val);
+            }
+        }
+    }
+
+    #[inline]
+    fn write_value_at<T: Copy>(&self, valpos: usize, val: &T) {
+        let size = std::mem::size_of::<T>();
+        let src = val as *const T as *const u8;
         let word_offset = valpos / 4;
 
         for i in 0..size / 4 {
@@ -1837,6 +1934,7 @@ impl ConcurrentCsppTrie {
                             curr_slot,
                             curr,
                             new_parent,
+                            Some(fork_suffix_copy),
                             &snap_buf,
                             &mut backoff,
                         ) {
@@ -1872,6 +1970,7 @@ impl ConcurrentCsppTrie {
                             curr_slot,
                             curr,
                             prefix_node,
+                            Some(split_suffix_copy),
                             &snap_buf,
                             &mut backoff,
                         ) {
@@ -1908,6 +2007,7 @@ impl ConcurrentCsppTrie {
                             curr_slot,
                             curr,
                             new_curr,
+                            None,
                             &snap_buf,
                             &mut backoff,
                         ) {
@@ -1968,6 +2068,7 @@ impl ConcurrentCsppTrie {
                             curr_slot,
                             curr,
                             new_curr,
+                            None,
                             &snap_buf,
                             &mut backoff,
                         ) {
@@ -2035,6 +2136,7 @@ impl ConcurrentCsppTrie {
                             curr_slot,
                             curr,
                             new_curr,
+                            Some(new_curr),
                             &snap_buf,
                             &mut backoff,
                         ) {
@@ -2081,6 +2183,7 @@ impl ConcurrentCsppTrie {
         curr_slot: u32,
         curr: u32,
         new_node: u32,
+        value_carrier: Option<u32>,
         children_snapshot: &[u32],
         backoff: &mut Backoff,
     ) -> bool {
@@ -2142,9 +2245,6 @@ impl ConcurrentCsppTrie {
 
         match self.inner.pool.cas_weak(curr_slot as usize, curr, new_node) {
             Ok(_) => {
-                // Success! Unlock parent.
-                self.unlock_node(parent);
-
                 // Defer free of old node
                 let old_slot = curr;
                 let old_meta = u32_to_meta(curr_original);
@@ -2158,6 +2258,28 @@ impl ConcurrentCsppTrie {
                 };
                 let old_zlen = old_meta.n_zpath_len as usize;
                 let old_is_final = old_meta.flags & FLAG_IS_FINAL != 0;
+
+                if old_is_final
+                    && self.valsize > 0
+                    && let Some(carrier_slot) = value_carrier
+                {
+                    let old_valpos = (old_slot as usize + old_skip + old_n) * ALIGN_SIZE
+                        + ((old_zlen + 3) & !3);
+                    let new_valpos = self.node_view(carrier_slot).valpos();
+                    self.inner.has_final_replacements.store(1, Ordering::SeqCst);
+                    if let Ok(mut remap) = self.inner.valpos_remap.write() {
+                        let val_words = self.valsize.div_ceil(4);
+                        for w in 0..val_words {
+                            let v = self.inner.pool.load_acquire(old_valpos / 4 + w);
+                            self.inner.pool.store_release(new_valpos / 4 + w, v);
+                        }
+                        remap.insert(old_valpos, new_valpos);
+                    }
+                }
+
+                // Unlock parent after value forwarding is recorded.
+                self.unlock_node(parent);
+
                 let old_node_slots = (old_skip + old_n)
                     + old_zlen.div_ceil(4)
                     + if old_is_final {
@@ -2724,6 +2846,60 @@ mod tests {
                 let res = trie.lookup(key.as_bytes());
                 assert!(res.is_some(), "Key {} not found after join", key);
                 assert_eq!(trie.get_value::<u64>(res.unwrap()), val);
+            }
+        }
+    }
+
+    #[test]
+    fn test_contended_inserts_with_values_preserved_across_splits() {
+        use std::sync::Arc;
+        use std::thread;
+
+        fn expected_value(key: &[u8]) -> u32 {
+            let mut h = 0x811C_9DC5u32;
+            for &b in key {
+                h ^= b as u32;
+                h = h.wrapping_mul(0x0100_0193);
+            }
+            h | 1 // never 0 or u32::MAX
+        }
+
+        let (max_len, n_threads, rounds) = if cfg!(miri) { (4, 3, 2) } else { (7, 8, 10) };
+        let keys = nested_keys(max_len);
+
+        for round in 0..rounds {
+            let trie = Arc::new(ConcurrentCsppTrie::with_capacity(4, cap(8 * 1024 * 1024)));
+            assert_eq!(trie.state_move(u32::MAX, b'a'), NIL_STATE);
+            assert!(!trie.is_term(u32::MAX));
+            assert_eq!(trie.state_move(2, b'a'), NIL_STATE);
+            assert!(!trie.is_term(2));
+
+            let mut threads = Vec::new();
+            for t in 0..n_threads {
+                let trie = Arc::clone(&trie);
+                let mut my_keys = keys.clone();
+                shuffle_keys(&mut my_keys, (round * 53 + t + 1) as u64);
+                threads.push(thread::spawn(move || {
+                    for key in &my_keys {
+                        let (is_new, valpos) = trie.insert(key);
+                        if is_new {
+                            trie.set_value(valpos, expected_value(key));
+                        }
+                    }
+                }));
+            }
+            for t in threads {
+                t.join().unwrap();
+            }
+
+            for key in &keys {
+                let vp = trie.lookup(key).expect("key must exist");
+                assert_eq!(
+                    trie.get_value::<u32>(vp),
+                    expected_value(key),
+                    "round {round}: concurrent node replacement lost value for key {:?}",
+                    String::from_utf8_lossy(key)
+                );
             }
         }
     }
