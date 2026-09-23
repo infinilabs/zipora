@@ -1,6 +1,6 @@
 # Gate Baseline for Zipora (Rule B8)
 # Tracks test count drift. If any count drops below this baseline, make sanity fails.
-lib_debug=2905
-lib_release=2922
+lib_debug=2907
+lib_release=2924
 doctests=228
-all_targets=3560
+all_targets=3562

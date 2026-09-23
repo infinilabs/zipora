@@ -1756,7 +1756,7 @@ assertion `left == right` failed: round 1: used_memory climbed to 958464 instead
 | `ThreadLocalPool` 4,096 × 64 B `alloc` then `free` | 64.1 µs | 64.9 µs | **79.1 µs** |
 | `SimdMemOps::find_byte` 4 KiB miss | 100.6 ns | 115.1 ns | **32.6 ns** (3.5× faster ✓) |
 
-**Commit.** _pending_
+**Commit.** `9069590`
 ---
 
 # Open findings — read, judged, not fixed
