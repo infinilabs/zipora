@@ -382,21 +382,22 @@ impl Default for FreeListHead {
     }
 }
 
-/// Cache-line aligned free list head for lock-free operations
+/// Cache-line aligned ABA-tagged free list head for lock-free operations
 #[derive(Debug)]
 #[repr(align(64))]
 struct LockFreeFreeListHead {
-    head: AtomicU32,
+    /// Tagged pointer packing `[generation:32 | offset:32]` (`u32::MAX` in low 32 bits = empty).
+    head: std::sync::atomic::AtomicU64,
     count: AtomicU32,
-    _padding: [u8; 64 - 8], // Ensure 64-byte alignment
+    _padding: [u8; 64 - 16], // Ensure 64-byte alignment
 }
 
 impl Default for LockFreeFreeListHead {
     fn default() -> Self {
         Self {
-            head: AtomicU32::new(u32::MAX),
+            head: std::sync::atomic::AtomicU64::new(u32::MAX as u64),
             count: AtomicU32::new(0),
-            _padding: [0; 64 - 8],
+            _padding: [0; 64 - 16],
         }
     }
 }
@@ -443,6 +444,11 @@ impl MemoryChunk {
         if data.is_null() {
             return Err(ZiporaError::resource_exhausted("Failed to allocate memory"));
         }
+        // Zero-initialize the backing arena so reads of freshly allocated slices are well-defined.
+        // SAFETY: `data` is non-null and valid for `capacity` bytes.
+        unsafe {
+            std::ptr::write_bytes(data, 0, capacity);
+        }
 
         // SAFETY: We checked data.is_null() above, so this is guaranteed to succeed
         let non_null_data = unsafe { NonNull::new_unchecked(data) };
@@ -455,10 +461,28 @@ impl MemoryChunk {
         })
     }
 
-    unsafe fn offset_ptr(&self, offset: usize) -> *mut u8 {
-        debug_assert!(offset <= self.capacity);
-        // SAFETY: caller ensures offset <= capacity per function contract
-        unsafe { self.data.as_ptr().add(offset) }
+    fn validate_range(&self, offset: usize, len: usize) -> Result<()> {
+        let end = offset
+            .checked_add(len)
+            .ok_or_else(|| ZiporaError::out_of_bounds(offset, self.size))?;
+        if end > self.size {
+            return Err(ZiporaError::out_of_bounds(offset, self.size));
+        }
+        Ok(())
+    }
+
+    fn as_slice(&self, offset: MemOffset, len: usize) -> Result<&[u8]> {
+        let off = offset.to_usize();
+        self.validate_range(off, len)?;
+        // SAFETY: `off + len <= self.size <= self.capacity`, and `data` was zero-initialized in `new`.
+        Ok(unsafe { std::slice::from_raw_parts(self.data.as_ptr().add(off), len) })
+    }
+
+    fn as_mut_slice(&mut self, offset: MemOffset, len: usize) -> Result<&mut [u8]> {
+        let off = offset.to_usize();
+        self.validate_range(off, len)?;
+        // SAFETY: `off + len <= self.size <= self.capacity` and `&mut self` guarantees exclusive access.
+        Ok(unsafe { std::slice::from_raw_parts_mut(self.data.as_ptr().add(off), len) })
     }
 
     fn can_allocate(&self, size: usize) -> bool {
@@ -481,7 +505,9 @@ pub struct NoLockingPool {
     config: FiveLevelPoolConfig,
     memory: MemoryChunk,
     free_lists: Vec<FreeListHead>,
-
+    /// F1: Out-of-band freelist next-links indexed by `offset / alignment`,
+    /// so freeing a block never scribbles allocator metadata into user memory.
+    next_links: Vec<u32>,
     fragment_size: usize,
     /// Free blocks above `max_fast_block_size`. See [`HugeFreeList`].
     huge_free_list: HugeFreeList,
@@ -503,11 +529,33 @@ impl NoLockingPool {
             config,
             memory,
             free_lists,
-
+            next_links: Vec::new(),
             fragment_size: 0,
             huge_free_list: HugeFreeList::default(),
             used_memory: 0,
         })
+    }
+
+    /// Borrow an immutable byte slice at `offset` of length `len`.
+    pub fn as_slice(&self, offset: MemOffset, len: usize) -> Result<&[u8]> {
+        self.memory.as_slice(offset, len)
+    }
+
+    /// Borrow a mutable byte slice at `offset` of length `len`.
+    pub fn as_mut_slice(&mut self, offset: MemOffset, len: usize) -> Result<&mut [u8]> {
+        self.memory.as_mut_slice(offset, len)
+    }
+
+    /// Copy `dst.len()` bytes starting at `offset` into `dst`.
+    pub fn read_bytes(&self, offset: MemOffset, dst: &mut [u8]) -> Result<()> {
+        dst.copy_from_slice(self.as_slice(offset, dst.len())?);
+        Ok(())
+    }
+
+    /// Copy `src` into the pool starting at `offset`.
+    pub fn write_bytes(&mut self, offset: MemOffset, src: &[u8]) -> Result<()> {
+        self.as_mut_slice(offset, src.len())?.copy_from_slice(src);
+        Ok(())
     }
 
     /// Allocate memory block of given size
@@ -560,13 +608,14 @@ impl NoLockingPool {
         if bin_index < self.free_lists.len() {
             let head = &mut self.free_lists[bin_index];
             if !head.head.is_null() {
-                // Pop from free list
                 let offset = head.head;
-                // SAFETY: offset from free list points to valid u32 storing next offset
-                unsafe {
-                    let ptr = self.memory.offset_ptr(offset.to_usize()) as *mut u32;
-                    head.head = MemOffset(*ptr);
-                }
+                let slot_idx = offset.to_usize() / self.config.alignment;
+                let next_raw = self
+                    .next_links
+                    .get(slot_idx)
+                    .copied()
+                    .unwrap_or(MemOffset::NULL.0);
+                head.head = MemOffset(next_raw);
                 head.count -= 1;
                 self.fragment_size -= size;
                 self.used_memory += size; // Track reused memory as used
@@ -604,14 +653,12 @@ impl NoLockingPool {
         let bin_index = (size / self.config.alignment) - 1;
 
         if bin_index < self.free_lists.len() {
-            let head = &mut self.free_lists[bin_index];
-
-            // Push to free list
-            // SAFETY: offset points to freed block of size >= 4, can store u32
-            unsafe {
-                let ptr = self.memory.offset_ptr(offset.to_usize()) as *mut u32;
-                *ptr = head.head.0;
+            let slot_idx = offset.to_usize() / self.config.alignment;
+            if slot_idx >= self.next_links.len() {
+                self.next_links.resize(slot_idx + 1, MemOffset::NULL.0);
             }
+            let head = &mut self.free_lists[bin_index];
+            self.next_links[slot_idx] = head.head.0;
             head.head = offset;
             head.count += 1;
             self.fragment_size += size;
@@ -675,7 +722,8 @@ pub struct MutexBasedPool {
     config: FiveLevelPoolConfig,
     memory: Arc<Mutex<MemoryChunk>>,
     free_lists: Vec<Mutex<FreeListHead>>,
-
+    /// F1: Out-of-band freelist next-links indexed by `offset / alignment`.
+    next_links: Box<[AtomicU32]>,
     fragment_size: AtomicUsize,
     /// Free blocks above `max_fast_block_size`. See [`HugeFreeList`].
     huge_free_list: Mutex<HugeFreeList>,
@@ -693,15 +741,40 @@ impl MutexBasedPool {
         let free_lists = (0..num_bins)
             .map(|_| Mutex::new(FreeListHead::default()))
             .collect();
+        let max_slots = config.initial_capacity / config.alignment;
+        let next_links = (0..max_slots)
+            .map(|_| AtomicU32::new(MemOffset::NULL.0))
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
 
         Ok(Self {
             config,
             memory: Arc::new(Mutex::new(memory)),
             free_lists,
-
+            next_links,
             fragment_size: AtomicUsize::new(0),
             huge_free_list: Mutex::new(HugeFreeList::default()),
         })
+    }
+
+    /// Copy `dst.len()` bytes starting at `offset` into `dst`.
+    pub fn read_bytes(&self, offset: MemOffset, dst: &mut [u8]) -> Result<()> {
+        let memory = self
+            .memory
+            .lock()
+            .map_err(|e| ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e)))?;
+        dst.copy_from_slice(memory.as_slice(offset, dst.len())?);
+        Ok(())
+    }
+
+    /// Copy `src` into the pool starting at `offset`.
+    pub fn write_bytes(&self, offset: MemOffset, src: &[u8]) -> Result<()> {
+        let mut memory = self
+            .memory
+            .lock()
+            .map_err(|e| ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e)))?;
+        memory.as_mut_slice(offset, src.len())?.copy_from_slice(src);
+        Ok(())
     }
 
     /// # Errors
@@ -746,14 +819,13 @@ impl MutexBasedPool {
             })?;
             if !head.head.is_null() {
                 let offset = head.head;
-                // SAFETY: offset from free list points to valid u32 storing next offset
-                unsafe {
-                    let memory = self.memory.lock().map_err(|e| {
-                        ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e))
-                    })?;
-                    let ptr = memory.offset_ptr(offset.to_usize()) as *mut u32;
-                    head.head = MemOffset(*ptr);
-                }
+                let slot_idx = offset.to_usize() / self.config.alignment;
+                let next_raw = self
+                    .next_links
+                    .get(slot_idx)
+                    .map(|a| a.load(Ordering::Relaxed))
+                    .unwrap_or(MemOffset::NULL.0);
+                head.head = MemOffset(next_raw);
                 head.count -= 1;
                 self.fragment_size.fetch_sub(size, Ordering::Relaxed);
                 return Ok(offset);
@@ -810,14 +882,9 @@ impl MutexBasedPool {
             let mut head = self.free_lists[bin_index].lock().map_err(|e| {
                 ZiporaError::resource_busy(format!("Free list mutex poisoned: {}", e))
             })?;
-
-            // SAFETY: offset points to freed block of size >= 4, can store u32
-            unsafe {
-                let memory = self.memory.lock().map_err(|e| {
-                    ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e))
-                })?;
-                let ptr = memory.offset_ptr(offset.to_usize()) as *mut u32;
-                *ptr = head.head.0;
+            let slot_idx = offset.to_usize() / self.config.alignment;
+            if let Some(slot) = self.next_links.get(slot_idx) {
+                slot.store(head.head.0, Ordering::Relaxed);
             }
             head.head = offset;
             head.count += 1;
@@ -868,12 +935,13 @@ impl MutexBasedPool {
             return None;
         }
         let offset = head.head;
-        // SAFETY: offset from free list points to valid u32 storing next offset
-        unsafe {
-            let memory = self.memory.lock().ok()?;
-            let ptr = memory.offset_ptr(offset.to_usize()) as *mut u32;
-            head.head = MemOffset(*ptr);
-        }
+        let slot_idx = offset.to_usize() / self.config.alignment;
+        let next_raw = self
+            .next_links
+            .get(slot_idx)
+            .map(|a| a.load(Ordering::Relaxed))
+            .unwrap_or(MemOffset::NULL.0);
+        head.head = MemOffset(next_raw);
         head.count -= 1;
         self.fragment_size.fetch_sub(size, Ordering::Relaxed);
         Some(offset)
@@ -916,8 +984,13 @@ unsafe impl Sync for MutexBasedPool {}
 /// Level 3: Lock-free Programming - Compare-and-swap memory pool
 pub struct LockFreePool {
     config: FiveLevelPoolConfig,
-    memory: Arc<Mutex<MemoryChunk>>, // Still need mutex for memory expansion
+    memory: Arc<Mutex<MemoryChunk>>, // Used for huge-block fallback and byte slice access
+    /// Atomic bump cursor so fast-bin misses do not need `memory.lock()`.
+    bump_offset: AtomicUsize,
     free_lists: Vec<LockFreeFreeListHead>,
+    /// F1 & F3: Out-of-band atomic freelist links indexed by `offset / alignment`,
+    /// so fast-bin `alloc` and `free` never touch `self.memory.lock()` or user bytes.
+    next_links: Box<[AtomicU32]>,
     fragment_size: AtomicUsize,
     /// Free blocks above `max_fast_block_size`. See [`HugeFreeList`]. Huge
     /// blocks are rare and large, so they stay behind a mutex.
@@ -936,14 +1009,49 @@ impl LockFreePool {
         let free_lists = (0..num_bins)
             .map(|_| LockFreeFreeListHead::default())
             .collect();
+        let max_slots = config.initial_capacity / config.alignment;
+        let next_links = (0..max_slots)
+            .map(|_| AtomicU32::new(u32::MAX))
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
 
         Ok(Self {
             config,
             memory: Arc::new(Mutex::new(memory)),
+            bump_offset: AtomicUsize::new(0),
             free_lists,
+            next_links,
             fragment_size: AtomicUsize::new(0),
             huge_free_list: Mutex::new(HugeFreeList::default()),
         })
+    }
+
+    /// Copy `dst.len()` bytes starting at `offset` into `dst`.
+    pub fn read_bytes(&self, offset: MemOffset, dst: &mut [u8]) -> Result<()> {
+        let mut memory = self
+            .memory
+            .lock()
+            .map_err(|e| ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e)))?;
+        let bump = self.bump_offset.load(Ordering::Acquire);
+        if bump > memory.size {
+            memory.size = bump;
+        }
+        dst.copy_from_slice(memory.as_slice(offset, dst.len())?);
+        Ok(())
+    }
+
+    /// Copy `src` into the pool starting at `offset`.
+    pub fn write_bytes(&self, offset: MemOffset, src: &[u8]) -> Result<()> {
+        let mut memory = self
+            .memory
+            .lock()
+            .map_err(|e| ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e)))?;
+        let bump = self.bump_offset.load(Ordering::Acquire);
+        if bump > memory.size {
+            memory.size = bump;
+        }
+        memory.as_mut_slice(offset, src.len())?.copy_from_slice(src);
+        Ok(())
     }
 
     /// # Errors
@@ -985,55 +1093,59 @@ impl LockFreePool {
         if bin_index < self.free_lists.len() {
             let head = &self.free_lists[bin_index];
 
-            // Lock-free compare-exchange loop
+            // F2 & F3: ABA-tagged AtomicU64 Treiber pop using out-of-band `self.next_links` (no mutex lock!).
             loop {
-                let current_head = head.head.load(Ordering::Acquire);
-                if current_head == u32::MAX {
+                let current_tagged = head.head.load(Ordering::Acquire);
+                let current_offset = current_tagged as u32;
+                if current_offset == u32::MAX {
                     break; // No free blocks
                 }
 
-                // Get next pointer from the free block
-                // SAFETY: current_head from free list points to valid u32 storing next offset
-                let next_head = unsafe {
-                    let memory = self.memory.lock().map_err(|e| {
-                        ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e))
-                    })?;
-                    let ptr = memory.offset_ptr(current_head as usize) as *const u32;
-                    *ptr
-                };
+                let slot_idx = (current_offset as usize) / self.config.alignment;
+                let next_offset = self
+                    .next_links
+                    .get(slot_idx)
+                    .map(|a| a.load(Ordering::Acquire))
+                    .unwrap_or(u32::MAX);
+                let next_gen = ((current_tagged >> 32) as u32).wrapping_add(1);
+                let next_tagged = ((next_gen as u64) << 32) | (next_offset as u64);
 
-                // Try to update head atomically
                 match head.head.compare_exchange_weak(
-                    current_head,
-                    next_head,
+                    current_tagged,
+                    next_tagged,
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 ) {
                     Ok(_) => {
                         head.count.fetch_sub(1, Ordering::Relaxed);
                         self.fragment_size.fetch_sub(size, Ordering::Relaxed);
-                        return Ok(MemOffset::new(current_head as usize));
+                        return Ok(MemOffset::new(current_offset as usize));
                     }
                     Err(_) => {
-                        // Retry loop
                         std::hint::spin_loop();
                     }
                 }
             }
         }
 
-        // Fall back to mutex allocation
-        let mut memory = self
-            .memory
-            .lock()
-            .map_err(|e| ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e)))?;
-        if !memory.can_allocate(size) {
-            return Err(ZiporaError::resource_exhausted("Out of memory"));
+        // Lock-free atomic bump allocation from the arena
+        loop {
+            let cur = self.bump_offset.load(Ordering::Acquire);
+            let next = cur
+                .checked_add(size)
+                .ok_or_else(|| ZiporaError::resource_exhausted("Out of memory"))?;
+            if next > self.config.initial_capacity {
+                return Err(ZiporaError::resource_exhausted("Out of memory"));
+            }
+            if self
+                .bump_offset
+                .compare_exchange_weak(cur, next, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return Ok(MemOffset::new(cur));
+            }
+            std::hint::spin_loop();
         }
-
-        let offset = MemOffset::new(memory.size);
-        memory.size += size;
-        Ok(offset)
     }
 
     fn free_to_fast_bin_lockfree(&self, offset: MemOffset, size: usize) -> Result<()> {
@@ -1041,27 +1153,25 @@ impl LockFreePool {
 
         if bin_index < self.free_lists.len() {
             let head = &self.free_lists[bin_index];
+            let slot_idx = offset.to_usize() / self.config.alignment;
+            let slot_link = self
+                .next_links
+                .get(slot_idx)
+                .ok_or_else(|| ZiporaError::out_of_bounds(offset.to_usize(), self.config.initial_capacity))?;
 
-            // Lock-free insertion
+            // F2 & F3: ABA-tagged AtomicU64 Treiber push using out-of-band `self.next_links` (no mutex lock!).
             loop {
-                let current_head = head.head.load(Ordering::Acquire);
+                let current_tagged = head.head.load(Ordering::Acquire);
+                let current_offset = current_tagged as u32;
+                slot_link.store(current_offset, Ordering::Release);
+                let next_gen = ((current_tagged >> 32) as u32).wrapping_add(1);
+                let next_tagged = ((next_gen as u64) << 32) | (offset.0 as u64);
 
-                // Write next pointer into freed block
-                // SAFETY: offset points to freed block of size >= 4, can store u32
-                unsafe {
-                    let memory = self.memory.lock().map_err(|e| {
-                        ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e))
-                    })?;
-                    let ptr = memory.offset_ptr(offset.to_usize()) as *mut u32;
-                    *ptr = current_head;
-                }
-
-                // Try to update head atomically
                 match head.head.compare_exchange_weak(
-                    current_head,
-                    offset.0,
-                    Ordering::Release,
-                    Ordering::Relaxed,
+                    current_tagged,
+                    next_tagged,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
                 ) {
                     Ok(_) => {
                         head.count.fetch_add(1, Ordering::Relaxed);
@@ -1069,7 +1179,6 @@ impl LockFreePool {
                         return Ok(());
                     }
                     Err(_) => {
-                        // Retry loop
                         std::hint::spin_loop();
                     }
                 }
@@ -1081,9 +1190,6 @@ impl LockFreePool {
 
     /// Serve a block above `max_fast_block_size` from the huge free list,
     /// falling back to the end of the arena.
-    ///
-    /// The huge-list lock is released before the memory lock is taken, so the
-    /// two are never held at once and cannot deadlock against each other.
     fn alloc_huge(&self, size: usize) -> Result<MemOffset> {
         {
             let mut huge = self.huge_free_list.lock().map_err(|e| {
@@ -1095,17 +1201,23 @@ impl LockFreePool {
             }
         }
 
-        let mut memory = self
-            .memory
-            .lock()
-            .map_err(|e| ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e)))?;
-        if !memory.can_allocate(size) {
-            return Err(ZiporaError::resource_exhausted("Out of memory"));
+        loop {
+            let cur = self.bump_offset.load(Ordering::Acquire);
+            let next = cur
+                .checked_add(size)
+                .ok_or_else(|| ZiporaError::resource_exhausted("Out of memory"))?;
+            if next > self.config.initial_capacity {
+                return Err(ZiporaError::resource_exhausted("Out of memory"));
+            }
+            if self
+                .bump_offset
+                .compare_exchange_weak(cur, next, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return Ok(MemOffset::new(cur));
+            }
+            std::hint::spin_loop();
         }
-
-        let offset = MemOffset::new(memory.size);
-        memory.size += size;
-        Ok(offset)
     }
 
     /// Return a block above `max_fast_block_size` to the huge free list.
@@ -1119,12 +1231,11 @@ impl LockFreePool {
     }
 
     pub fn stats(&self) -> PoolStats {
-        let memory = self.memory.lock().unwrap_or_else(|e| e.into_inner());
         let huge = self.huge_free_list.lock().unwrap_or_else(|e| e.into_inner());
 
         PoolStats {
-            total_capacity: memory.capacity,
-            used_memory: memory.size,
+            total_capacity: self.config.initial_capacity,
+            used_memory: self.bump_offset.load(Ordering::Acquire),
             fragment_size: self.fragment_size.load(Ordering::Relaxed),
             huge_size_sum: huge.total_bytes(),
             huge_node_count: huge.node_count(),
@@ -1136,14 +1247,14 @@ impl LockFreePool {
 // SAFETY: LockFreePool is Send because:
 // 1. `config: FiveLevelPoolConfig` - Config is Clone, no pointers.
 // 2. `memory: Arc<Mutex<MemoryChunk>>` - Arc<Mutex<T>> is Send if T is Send.
-// 3. `free_lists: Vec<LockFreeFreeListHead>` - Contains only atomics.
+// 3. `free_lists: Vec<LockFreeFreeListHead>` and `next_links: Box<[AtomicU32]>` - Contain only atomics.
 // 4. `fragment_size: AtomicUsize` - AtomicUsize is Send.
 // 5. `huge_free_list: Mutex<HugeFreeList>` - Mutex<T> is Send if T is Send.
 unsafe impl Send for LockFreePool {}
 
 // SAFETY: LockFreePool is Sync because:
-// 1. Fast bin operations use lock-free atomic CAS (AtomicU32 head/count).
-// 2. Memory expansion is protected by Arc<Mutex<...>>.
+// 1. Fast bin operations use lock-free atomic CAS (AtomicU64 head + AtomicU32 next_links).
+// 2. Memory byte access is protected by Arc<Mutex<...>>.
 // 3. Huge allocations are protected by Mutex.
 // 4. AtomicUsize fragment tracking is inherently thread-safe.
 // 5. Lock-free operations use proper Acquire/Release ordering.
@@ -1256,6 +1367,16 @@ impl ThreadLocalPool {
             config,
             global_pool,
         })
+    }
+
+    /// Copy `dst.len()` bytes starting at `offset` into `dst`.
+    pub fn read_bytes(&self, offset: MemOffset, dst: &mut [u8]) -> Result<()> {
+        self.global_pool.read_bytes(offset, dst)
+    }
+
+    /// Copy `src` into the pool starting at `offset`.
+    pub fn write_bytes(&self, offset: MemOffset, src: &[u8]) -> Result<()> {
+        self.global_pool.write_bytes(offset, src)
     }
 
     #[inline]
@@ -1405,6 +1526,26 @@ impl FixedCapacityPool {
             inner,
             max_capacity,
         })
+    }
+
+    /// Borrow an immutable byte slice at `offset` of length `len`.
+    pub fn as_slice(&self, offset: MemOffset, len: usize) -> Result<&[u8]> {
+        self.inner.as_slice(offset, len)
+    }
+
+    /// Borrow a mutable byte slice at `offset` of length `len`.
+    pub fn as_mut_slice(&mut self, offset: MemOffset, len: usize) -> Result<&mut [u8]> {
+        self.inner.as_mut_slice(offset, len)
+    }
+
+    /// Copy `dst.len()` bytes starting at `offset` into `dst`.
+    pub fn read_bytes(&self, offset: MemOffset, dst: &mut [u8]) -> Result<()> {
+        self.inner.read_bytes(offset, dst)
+    }
+
+    /// Copy `src` into the pool starting at `offset`.
+    pub fn write_bytes(&mut self, offset: MemOffset, src: &[u8]) -> Result<()> {
+        self.inner.write_bytes(offset, src)
     }
 
     /// # Errors
@@ -1584,6 +1725,28 @@ impl AdaptiveFiveLevelPool {
         }
     }
 
+    /// Copy `dst.len()` bytes starting at `offset` out of the active pool.
+    pub fn read_bytes(&self, offset: MemOffset, dst: &mut [u8]) -> Result<()> {
+        match &self.pool {
+            PoolVariant::Level1(pool) => pool.read_bytes(offset, dst),
+            PoolVariant::Level2(pool) => pool.read_bytes(offset, dst),
+            PoolVariant::Level3(pool) => pool.read_bytes(offset, dst),
+            PoolVariant::Level4(pool) => pool.read_bytes(offset, dst),
+            PoolVariant::Level5(pool) => pool.read_bytes(offset, dst),
+        }
+    }
+
+    /// Copy `src` into the active pool starting at `offset`.
+    pub fn write_bytes(&mut self, offset: MemOffset, src: &[u8]) -> Result<()> {
+        match &mut self.pool {
+            PoolVariant::Level1(pool) => pool.write_bytes(offset, src),
+            PoolVariant::Level2(pool) => pool.write_bytes(offset, src),
+            PoolVariant::Level3(pool) => pool.write_bytes(offset, src),
+            PoolVariant::Level4(pool) => pool.write_bytes(offset, src),
+            PoolVariant::Level5(pool) => pool.write_bytes(offset, src),
+        }
+    }
+
     pub fn current_level(&self) -> ConcurrencyLevel {
         self.level
     }
@@ -1633,6 +1796,24 @@ impl FiveLevelPoolHandle {
             FiveLevelPoolHandle::Level2(pool) => pool.free(offset, size),
             FiveLevelPoolHandle::Level3(pool) => pool.free(offset, size),
             FiveLevelPoolHandle::Level4(pool) => pool.free(offset, size),
+        }
+    }
+
+    /// Copy `dst.len()` bytes starting at `offset` out of the pool backing this handle.
+    pub fn read_bytes(&self, offset: MemOffset, dst: &mut [u8]) -> Result<()> {
+        match self {
+            FiveLevelPoolHandle::Level2(pool) => pool.read_bytes(offset, dst),
+            FiveLevelPoolHandle::Level3(pool) => pool.read_bytes(offset, dst),
+            FiveLevelPoolHandle::Level4(pool) => pool.read_bytes(offset, dst),
+        }
+    }
+
+    /// Copy `src` into the pool backing this handle starting at `offset`.
+    pub fn write_bytes(&self, offset: MemOffset, src: &[u8]) -> Result<()> {
+        match self {
+            FiveLevelPoolHandle::Level2(pool) => pool.write_bytes(offset, src),
+            FiveLevelPoolHandle::Level3(pool) => pool.write_bytes(offset, src),
+            FiveLevelPoolHandle::Level4(pool) => pool.write_bytes(offset, src),
         }
     }
 
@@ -2500,4 +2681,74 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_five_level_pool_mem_offset_deref_and_out_of_band_freelist_f1_f2_f3() {
+        let cfg = FiveLevelPoolConfig {
+            initial_capacity: 64 * 1024,
+            arena_size: 8 * 1024,
+            ..FiveLevelPoolConfig::default()
+        };
+
+        // 1. Dereference MemOffset via as_slice / as_mut_slice and read_bytes / write_bytes
+        let mut p1 = NoLockingPool::new(cfg.clone()).unwrap();
+        let off1 = p1.alloc(64).unwrap();
+        p1.as_mut_slice(off1, 64).unwrap().fill(0xAA);
+        assert_eq!(p1.as_slice(off1, 64).unwrap(), &[0xAA; 64]);
+        assert!(p1.as_slice(MemOffset::new(128 * 1024), 64).is_err());
+
+        // F1: freeing `off1` must NOT overwrite user bytes 0..4 with an in-band u32::MAX freelist link
+        p1.free(off1, 64).unwrap();
+        let off1_reused = p1.alloc(64).unwrap();
+        assert_eq!(off1_reused, off1);
+        assert_eq!(
+            &p1.as_slice(off1_reused, 64).unwrap()[..4],
+            &[0xAA, 0xAA, 0xAA, 0xAA],
+            "F1: free must not scribble freelist next-link into user memory"
+        );
+
+        // 2. Level 2 (MutexBasedPool), Level 4 (ThreadLocalPool), Level 5 (FixedCapacityPool), Adaptive
+        let p2 = MutexBasedPool::new(cfg.clone()).unwrap();
+        let off2 = p2.alloc(64).unwrap();
+        p2.write_bytes(off2, &[0x55; 64]).unwrap();
+        let mut buf = [0u8; 64];
+        p2.read_bytes(off2, &mut buf).unwrap();
+        assert_eq!(buf, [0x55; 64]);
+        p2.free(off2, 64).unwrap();
+
+        let p4 = ThreadLocalPool::new(cfg.clone()).unwrap();
+        let off4 = p4.alloc(64).unwrap();
+        p4.write_bytes(off4, &[0x77; 64]).unwrap();
+        p4.read_bytes(off4, &mut buf).unwrap();
+        assert_eq!(buf, [0x77; 64]);
+        p4.free(off4, 64).unwrap();
+
+        // 3. F2 & F3: LockFreePool uses ABA-tagged AtomicU64 head and does NOT lock `self.memory` on fast-bin free/alloc
+        let p3 = Arc::new(LockFreePool::new(cfg).unwrap());
+        let off3 = p3.alloc(64).unwrap();
+        p3.write_bytes(off3, &[0x33; 64]).unwrap();
+
+        // Hold `p3.memory.lock()` on this thread while another thread frees and re-allocates `off3` from the fast bin.
+        let mem_guard = p3.memory.lock().unwrap();
+        let p3_worker = Arc::clone(&p3);
+        let worker = std::thread::spawn(move || {
+            p3_worker.free(off3, 64).unwrap();
+            let reused = p3_worker.alloc(64).unwrap();
+            assert_eq!(reused, off3);
+        });
+        worker
+            .join()
+            .expect("F3: LockFreePool fast-bin free/alloc must not lock self.memory");
+        drop(mem_guard);
+
+        // F2: generation tag in LockFreeFreeListHead::head must have advanced (>= 2 after push + pop)
+        let bin_idx = 64 / p3.config.alignment - 1;
+        let head_tagged = p3.free_lists[bin_idx].head.load(Ordering::Acquire);
+        assert!(
+            (head_tagged >> 32) >= 2,
+            "F2: LockFreeFreeListHead must increment 32-bit ABA generation tag on push/pop, got {:#x}",
+            head_tagged
+        );
+    }
 }
+
