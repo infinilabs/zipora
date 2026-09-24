@@ -16,13 +16,79 @@ use super::state::*;
 /// assert!(!trie.contains(b"hel"));
 /// assert_eq!(trie.len(), 3);
 /// ```
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+struct RawDoubleArrayTrie {
+    states: Vec<DaState>,
+    ninfos: Vec<NInfo>,
+    num_keys: usize,
+    search_head: usize,
+}
+
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(try_from = "RawDoubleArrayTrie")
+)]
 pub struct DoubleArrayTrie {
     pub(crate) states: Vec<DaState>,
     pub(crate) ninfos: Vec<NInfo>,
     num_keys: usize,
     /// Heuristic search position
     search_head: usize,
+}
+
+#[cfg(feature = "serde")]
+impl std::convert::TryFrom<RawDoubleArrayTrie> for DoubleArrayTrie {
+    type Error = String;
+
+    fn try_from(raw: RawDoubleArrayTrie) -> std::result::Result<Self, Self::Error> {
+        let len = raw.states.len();
+        if len < 256 {
+            return Err(format!(
+                "DoubleArrayTrie states length ({len}) must be >= 256"
+            ));
+        }
+        if len != raw.ninfos.len() || len > u32::MAX as usize {
+            return Err(format!(
+                "DoubleArrayTrie states ({len}) and ninfos ({}) length mismatch",
+                raw.ninfos.len()
+            ));
+        }
+        if raw.states[0].is_free() {
+            return Err("DoubleArrayTrie root state 0 must not be free".to_string());
+        }
+        if raw.search_head >= len {
+            return Err(format!(
+                "DoubleArrayTrie search_head ({}) out of bounds ({len})",
+                raw.search_head
+            ));
+        }
+        for (idx, s) in raw.states.iter().enumerate() {
+            if !s.is_free() {
+                let base = s.child0() as usize;
+                if (base | 0xFF) >= len {
+                    return Err(format!(
+                        "DoubleArrayTrie state {idx} child0 ({base:#x}) | 0xFF exceeds states.len() ({len})"
+                    ));
+                }
+                if idx > 0 {
+                    let parent = s.parent() as usize;
+                    if parent >= len || raw.states[parent].is_free() {
+                        return Err(format!(
+                            "DoubleArrayTrie state {idx} has invalid or free parent {parent}"
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(Self {
+            states: raw.states,
+            ninfos: raw.ninfos,
+            num_keys: raw.num_keys,
+            search_head: raw.search_head,
+        })
+    }
 }
 
 impl DoubleArrayTrie {

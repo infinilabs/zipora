@@ -609,7 +609,7 @@ impl PatriciaAlgorithmStrategy {
             is_final: old_final,
             ..Default::default()
         };
-        let _ = nodes.push(old_suffix_node);
+        nodes.push(old_suffix_node)?;
 
         let old_branch_byte = path[match_len];
         let old_rem = &path[match_len + 1..];
@@ -644,7 +644,7 @@ impl PatriciaAlgorithmStrategy {
                 is_final: true,
                 ..Default::default()
             };
-            let _ = nodes.push(new_leaf);
+            nodes.push(new_leaf)?;
 
             nodes[current].children[new_branch_byte as usize] = Some(new_leaf_id as StateId);
             let new_rem = &key[new_pos + 1..];

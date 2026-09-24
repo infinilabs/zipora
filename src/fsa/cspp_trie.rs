@@ -96,88 +96,111 @@ struct LazyFreeItem {
     slots: u32,
 }
 
+#[derive(Clone, Copy)]
 pub struct NodeView<'a> {
     nodes: &'a [PatriciaNode],
     curr: u32,
+    meta: MetaInfo,
+    well_formed: bool,
 }
 
 impl<'a> NodeView<'a> {
     #[inline(always)]
     pub fn new(nodes: &'a [PatriciaNode], curr: u32) -> Self {
-        Self { nodes, curr }
-    }
-
-    /// Returns true iff `curr` points to a structurally valid, non-freed node
-    /// whose header, child table, and zpath all fit within `self.nodes`.
-    #[inline(always)]
-    pub fn is_well_formed(&self) -> bool {
-        let curr = self.curr as usize;
-        if curr >= self.nodes.len() {
-            return false;
+        let idx = curr as usize;
+        let invalid = Self {
+            nodes,
+            curr: 0,
+            meta: MetaInfo {
+                flags: 0x29,
+                n_zpath_len: 0xFF,
+                c_label: [0, 0],
+            },
+            well_formed: false,
+        };
+        if idx >= nodes.len() {
+            return invalid;
         }
-        // SAFETY: curr < self.nodes.len() checked above; MetaInfo is Pod.
-        let meta = unsafe { self.nodes.get_unchecked(curr).meta };
-        // Bit 5 (0x20) is b_lazy_free / freed marker; zpath_len cannot exceed MAX_ZPATH (254).
+        // SAFETY: idx < nodes.len() checked above; MetaInfo is Pod.
+        let meta = unsafe { nodes.get_unchecked(idx).meta };
         if (meta.flags & 0x20) != 0 || (meta.n_zpath_len as usize) > MAX_ZPATH {
-            return false;
+            return invalid;
         }
         let cnt_type = meta.flags & 0x0F;
         let (skip, n_children) = match cnt_type {
             0..=2 => (1usize, cnt_type as usize),
             3..=6 => (2usize, cnt_type as usize),
             7 => {
-                // SAFETY: curr < self.nodes.len(); BigCount is Pod.
-                let n = unsafe { self.nodes.get_unchecked(curr).big }.n_children as usize;
+                // SAFETY: idx < nodes.len(); BigCount is Pod.
+                let n = unsafe { nodes.get_unchecked(idx).big }.n_children as usize;
                 if !(7..=16).contains(&n) {
-                    return false;
+                    return invalid;
                 }
                 (5usize, n)
             }
             8 => {
-                // SAFETY: curr < self.nodes.len(); BigCount is Pod.
-                let n = unsafe { self.nodes.get_unchecked(curr).big }.n_children as usize;
+                // SAFETY: idx < nodes.len(); BigCount is Pod.
+                let n = unsafe { nodes.get_unchecked(idx).big }.n_children as usize;
                 if !(17..=256).contains(&n) {
-                    return false;
+                    return invalid;
                 }
                 (10usize, n)
             }
-            15 if curr == 0 => {
-                // SAFETY: curr == 0 < self.nodes.len(); BigCount is Pod.
-                let n = unsafe { self.nodes.get_unchecked(0).big }.n_children as usize;
+            15 if idx == 0 => {
+                // SAFETY: idx == 0 < nodes.len(); BigCount is Pod.
+                let n = unsafe { nodes.get_unchecked(0).big }.n_children as usize;
                 if n != 256 {
-                    return false;
+                    return invalid;
                 }
                 (2usize, 256usize)
             }
-            _ => return false,
+            _ => return invalid,
         };
-        let zpath_slots = (meta.n_zpath_len as usize).div_ceil(4);
-        curr.checked_add(skip + n_children + zpath_slots)
-            .is_some_and(|end| end <= self.nodes.len())
+        let zpath_slots = ((meta.n_zpath_len as usize) + 3) >> 2;
+        if idx + skip + n_children + zpath_slots > nodes.len() {
+            return invalid;
+        }
+        Self {
+            nodes,
+            curr,
+            meta,
+            well_formed: true,
+        }
+    }
+
+    #[inline(always)]
+    fn new_trusted(nodes: &'a [PatriciaNode], curr: u32) -> Self {
+        // SAFETY: internal traversal starts at INITIAL_STATE (0) and follows only live child pointers < nodes.len().
+        let meta = unsafe { nodes.get_unchecked(curr as usize).meta };
+        Self {
+            nodes,
+            curr,
+            meta,
+            well_formed: true,
+        }
+    }
+
+    /// Returns true iff `curr` points to a structurally valid, non-freed node
+    /// whose header, child table, and zpath all fit within `self.nodes`.
+    #[inline(always)]
+    pub fn is_well_formed(&self) -> bool {
+        self.well_formed
     }
 
     #[inline(always)]
     pub fn meta(&self) -> MetaInfo {
-        if (self.curr as usize) >= self.nodes.len() {
-            return MetaInfo {
-                flags: 0x29,
-                n_zpath_len: 0xFF,
-                c_label: [0, 0],
-            };
-        }
-        // SAFETY: curr bounds-checked above; MetaInfo is Pod.
-        unsafe { self.nodes.get_unchecked(self.curr as usize).meta }
+        self.meta
     }
 
     #[inline(always)]
     pub fn big(&self) -> BigCount {
-        if (self.curr as usize) >= self.nodes.len() {
+        if !self.well_formed {
             return BigCount {
                 _unused: 0,
                 n_children: 0,
             };
         }
-        // SAFETY: curr bounds-checked above; BigCount is Pod.
+        // SAFETY: self.well_formed guarantees self.curr < self.nodes.len(); BigCount is Pod.
         unsafe { self.nodes.get_unchecked(self.curr as usize).big }
     }
 
@@ -204,18 +227,18 @@ impl<'a> NodeView<'a> {
 
     #[inline(always)]
     pub fn cnt_type(&self) -> u8 {
-        self.meta().flags & 0x0F
+        self.meta.flags & 0x0F
     }
 
     #[inline(always)]
     pub fn is_final(&self) -> bool {
-        self.is_well_formed() && (self.meta().flags & 0x10) != 0
+        (self.meta.flags & 0x10) != 0
     }
 
     #[inline(always)]
     pub fn zpath_len(&self) -> usize {
-        if self.is_well_formed() {
-            self.meta().n_zpath_len as usize
+        if self.well_formed {
+            self.meta.n_zpath_len as usize
         } else {
             0
         }
@@ -223,7 +246,7 @@ impl<'a> NodeView<'a> {
 
     #[inline(always)]
     pub fn n_children(&self) -> usize {
-        if !self.is_well_formed() {
+        if !self.well_formed {
             return 0;
         }
         let t = self.cnt_type();
@@ -239,7 +262,7 @@ impl<'a> NodeView<'a> {
 
     #[inline(always)]
     pub fn skip_slots(&self) -> usize {
-        if !self.is_well_formed() {
+        if !self.well_formed {
             return 0;
         }
         SKIP_SLOTS[self.cnt_type() as usize] as usize
@@ -248,7 +271,7 @@ impl<'a> NodeView<'a> {
     #[inline(always)]
     fn get_label(&self, idx: usize) -> u8 {
         if idx < 2 {
-            self.meta().c_label[idx]
+            self.meta.c_label[idx]
         } else {
             self.bytes(1)[idx - 2]
         }
@@ -256,9 +279,6 @@ impl<'a> NodeView<'a> {
 
     #[inline(always)]
     pub fn state_move(&self, ch: u8) -> u32 {
-        if !self.is_well_formed() {
-            return NIL_STATE;
-        }
         let cnt_type = self.cnt_type();
         match cnt_type {
             0 => NIL_STATE,
@@ -517,9 +537,9 @@ pub struct CsppTrie {
     pub n_nodes: usize,
     pub valsize: usize,
     pub max_word_len: usize,
-    // Phase C: size-bucketed free list (out-of-band next links so freed slots keep their lazy_free marker in mempool)
+    // Phase C: size-bucketed free list (word 0 holds FREED marker 0x29; word 1 holds next link for slots >= 2)
     fast_bins: Vec<u32>, // fast_bins[slots-1] = head of free list for that slot count
-    free_next: Vec<u32>, // free_next[slot] = next slot in the fast_bin chain
+    free_bin1: std::collections::HashMap<u32, u32>, // next link only for rare 1-slot leftover blocks
     large_list: Vec<(u32, u32)>, // (slot, n_slots) for blocks > FREE_LIST_MAX_SLOTS
     frag_size: usize,    // total bytes in all free lists
     // Phase C.2: lazy free list for reader safety
@@ -535,7 +555,7 @@ impl CsppTrie {
             valsize,
             max_word_len: 0,
             fast_bins: vec![FREE_LIST_NIL; FREE_LIST_MAX_SLOTS],
-            free_next: Vec::new(),
+            free_bin1: std::collections::HashMap::new(),
             large_list: Vec::new(),
             frag_size: 0,
             lazy_free_list: Vec::new(),
@@ -574,6 +594,11 @@ impl CsppTrie {
     #[inline]
     pub fn node_view(&self, pos: u32) -> NodeView<'_> {
         NodeView::new(&self.mempool, pos)
+    }
+
+    #[inline(always)]
+    fn node_view_trusted(&self, pos: u32) -> NodeView<'_> {
+        NodeView::new_trusted(&self.mempool, pos)
     }
 
     /// Safe single-byte transition from `state` on `ch`. Returns `NIL_STATE`
@@ -644,7 +669,7 @@ impl CsppTrie {
         let mut pos = 0;
 
         loop {
-            let view = self.node_view(curr);
+            let view = self.node_view_trusted(curr);
             let zlen = view.zpath_len();
 
             if zlen > 0 {
@@ -698,11 +723,12 @@ impl CsppTrie {
             let bin_idx = slots - 1;
             let head = self.fast_bins[bin_idx];
             if head != FREE_LIST_NIL {
-                let next = self
-                    .free_next
-                    .get(head as usize)
-                    .copied()
-                    .unwrap_or(FREE_LIST_NIL);
+                let next = if slots >= 2 {
+                    // SAFETY: PatriciaNode union fields are all 4-byte Copy POD views of the same word.
+                    unsafe { self.mempool[head as usize + 1].child }
+                } else {
+                    self.free_bin1.remove(&head).unwrap_or(FREE_LIST_NIL)
+                };
                 self.fast_bins[bin_idx] = next;
                 self.frag_size -= slots * ALIGN_SIZE;
                 return head;
@@ -739,9 +765,6 @@ impl CsppTrie {
             return;
         }
 
-        // Shrink-from-end optimization: still keep at least `slot + 1` marked free if inside the old pool?
-        // No, if truncated from the end of mempool, `slot >= self.mempool.len()`, so `NodeView::is_well_formed`
-        // rejects `slot` via `curr >= self.nodes.len()`!
         if slot as usize + slots == self.mempool.len() {
             self.mempool.truncate(slot as usize);
             return;
@@ -759,11 +782,12 @@ impl CsppTrie {
 
         if slots <= FREE_LIST_MAX_SLOTS {
             let bin_idx = slots - 1;
-            let idx = slot as usize;
-            if idx >= self.free_next.len() {
-                self.free_next.resize(self.mempool.len(), FREE_LIST_NIL);
+            let prev_head = self.fast_bins[bin_idx];
+            if slots >= 2 {
+                self.mempool[slot as usize + 1].child = prev_head;
+            } else {
+                self.free_bin1.insert(slot, prev_head);
             }
-            self.free_next[idx] = self.fast_bins[bin_idx];
             self.fast_bins[bin_idx] = slot;
         } else {
             // Large block list
@@ -831,11 +855,12 @@ impl CsppTrie {
             let mut head = self.fast_bins[bin_idx];
             while head != FREE_LIST_NIL {
                 count += 1;
-                head = self
-                    .free_next
-                    .get(head as usize)
-                    .copied()
-                    .unwrap_or(FREE_LIST_NIL);
+                head = if bin_idx + 1 >= 2 {
+                    // SAFETY: PatriciaNode union fields are all 4-byte Copy POD views of the same word.
+                    unsafe { self.mempool[head as usize + 1].child }
+                } else {
+                    self.free_bin1.get(&head).copied().unwrap_or(FREE_LIST_NIL)
+                };
             }
             fastbin.push(count);
         }
@@ -1413,7 +1438,7 @@ impl CsppTrie {
     /// Find the mempool slot containing the child pointer for label `ch`.
     /// Returns NIL_STATE if `ch` is not a child of this node.
     fn find_child_slot(&self, curr: u32, ch: u8) -> u32 {
-        let view = self.node_view(curr);
+        let view = self.node_view_trusted(curr);
         let cnt_type = view.cnt_type();
         match cnt_type {
             0 => NIL_STATE,
@@ -1496,7 +1521,7 @@ impl CsppTrie {
         loop {
             // Extract node properties (drop borrow before any mutation)
             let (cnt_type, zpath_len, is_final, skip, n_children) = {
-                let view = self.node_view(curr);
+                let view = self.node_view_trusted(curr);
                 (
                     view.cnt_type(),
                     view.zpath_len(),
@@ -1666,7 +1691,7 @@ impl CsppTrie {
 
             // Transition on key[pos]
             let ch = key[pos];
-            let next = self.node_view(curr).state_move(ch);
+            let next = self.node_view_trusted(curr).state_move(ch);
 
             if next == NIL_STATE {
                 // MatchFail: no child for this byte

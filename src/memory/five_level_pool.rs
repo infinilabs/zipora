@@ -33,7 +33,7 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 // use std::marker::PhantomData;
 use std::ptr::NonNull;
 // use std::mem::MaybeUninit;
-use std::alloc::{Layout, alloc, dealloc};
+use std::alloc::{Layout, dealloc};
 
 /// Memory offset type for 32-bit addressing
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,8 +41,6 @@ use std::alloc::{Layout, alloc, dealloc};
 pub struct MemOffset(u32);
 
 impl MemOffset {
-    const NULL: Self = MemOffset(u32::MAX);
-
     /// Narrow a byte offset into the 32-bit offset space.
     ///
     /// The `debug_assert!` is a redundant backstop, not the guard: every arena
@@ -64,10 +62,6 @@ impl MemOffset {
         } else {
             self.0 as usize
         }
-    }
-
-    fn is_null(self) -> bool {
-        self.0 == u32::MAX
     }
 }
 
@@ -366,20 +360,35 @@ fn reject_zero_size(size: usize, operation: &str) -> Result<()> {
     Ok(())
 }
 
-/// Free list head for fast bins
-#[derive(Debug, Clone)]
+/// Free list head for fast bins (used by `NoLockingPool` and `MutexBasedPool`).
+/// Stores freed offsets out-of-band in a lazily grown `Vec<MemOffset>` so user
+/// arena bytes are never overwritten on `free` and pool construction pays
+/// zero upfront link-table allocation cost.
+#[derive(Debug, Clone, Default)]
 struct FreeListHead {
-    head: MemOffset,
-    count: u32,
+    blocks: Vec<MemOffset>,
 }
 
-impl Default for FreeListHead {
-    fn default() -> Self {
-        Self {
-            head: MemOffset::NULL,
-            count: 0,
-        }
+/// Allocate a zero-initialized `Box<[AtomicU32]>` via `alloc_zeroed` so the OS
+/// can back untouched pages with lazy zero pages instead of faulting every page
+/// in a userspace initialization loop.
+fn alloc_zeroed_atomic_u32_slice(len: usize) -> Result<Box<[AtomicU32]>> {
+    if len == 0 {
+        return Ok(Box::new([]));
     }
+    let layout = Layout::array::<AtomicU32>(len)
+        .map_err(|_| ZiporaError::invalid_data("Invalid next_links layout"))?;
+    // SAFETY: `layout` is non-zero (`len > 0`) and valid; `AtomicU32` has the
+    // exact same representation as `u32`, so zeroed bytes represent `AtomicU32::new(0)`.
+    let ptr = unsafe { std::alloc::alloc_zeroed(layout) as *mut AtomicU32 };
+    if ptr.is_null() {
+        return Err(ZiporaError::resource_exhausted(
+            "Failed to allocate next_links",
+        ));
+    }
+    // SAFETY: `ptr` was allocated with `Layout::array::<AtomicU32>(len)` from the
+    // global allocator and every element is validly zero-initialized.
+    Ok(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len)) })
 }
 
 /// Cache-line aligned ABA-tagged free list head for lock-free operations
@@ -439,15 +448,11 @@ impl MemoryChunk {
         let layout = Layout::from_size_align(capacity, alignment)
             .map_err(|_| ZiporaError::invalid_data("Invalid memory layout"))?;
 
-        // SAFETY: layout is valid from Layout::from_size_align
-        let data = unsafe { alloc(layout) };
+        // SAFETY: layout is valid and non-zero (`validate` rejects `capacity == 0`);
+        // `alloc_zeroed` uses OS lazy zero pages instead of an eager userspace memset.
+        let data = unsafe { std::alloc::alloc_zeroed(layout) };
         if data.is_null() {
             return Err(ZiporaError::resource_exhausted("Failed to allocate memory"));
-        }
-        // Zero-initialize the backing arena so reads of freshly allocated slices are well-defined.
-        // SAFETY: `data` is non-null and valid for `capacity` bytes.
-        unsafe {
-            std::ptr::write_bytes(data, 0, capacity);
         }
 
         // SAFETY: We checked data.is_null() above, so this is guaranteed to succeed
@@ -505,9 +510,6 @@ pub struct NoLockingPool {
     config: FiveLevelPoolConfig,
     memory: MemoryChunk,
     free_lists: Vec<FreeListHead>,
-    /// F1: Out-of-band freelist next-links indexed by `offset / alignment`,
-    /// so freeing a block never scribbles allocator metadata into user memory.
-    next_links: Vec<u32>,
     fragment_size: usize,
     /// Free blocks above `max_fast_block_size`. See [`HugeFreeList`].
     huge_free_list: HugeFreeList,
@@ -529,7 +531,6 @@ impl NoLockingPool {
             config,
             memory,
             free_lists,
-            next_links: Vec::new(),
             fragment_size: 0,
             huge_free_list: HugeFreeList::default(),
             used_memory: 0,
@@ -605,22 +606,12 @@ impl NoLockingPool {
     fn alloc_from_fast_bin(&mut self, size: usize) -> Result<MemOffset> {
         let bin_index = (size / self.config.alignment) - 1;
 
-        if bin_index < self.free_lists.len() {
-            let head = &mut self.free_lists[bin_index];
-            if !head.head.is_null() {
-                let offset = head.head;
-                let slot_idx = offset.to_usize() / self.config.alignment;
-                let next_raw = self
-                    .next_links
-                    .get(slot_idx)
-                    .copied()
-                    .unwrap_or(MemOffset::NULL.0);
-                head.head = MemOffset(next_raw);
-                head.count -= 1;
-                self.fragment_size -= size;
-                self.used_memory += size; // Track reused memory as used
-                return Ok(offset);
-            }
+        if bin_index < self.free_lists.len()
+            && let Some(offset) = self.free_lists[bin_index].blocks.pop()
+        {
+            self.fragment_size -= size;
+            self.used_memory += size; // Track reused memory as used
+            return Ok(offset);
         }
 
         // Allocate from end of memory
@@ -653,14 +644,7 @@ impl NoLockingPool {
         let bin_index = (size / self.config.alignment) - 1;
 
         if bin_index < self.free_lists.len() {
-            let slot_idx = offset.to_usize() / self.config.alignment;
-            if slot_idx >= self.next_links.len() {
-                self.next_links.resize(slot_idx + 1, MemOffset::NULL.0);
-            }
-            let head = &mut self.free_lists[bin_index];
-            self.next_links[slot_idx] = head.head.0;
-            head.head = offset;
-            head.count += 1;
+            self.free_lists[bin_index].blocks.push(offset);
             self.fragment_size += size;
             self.used_memory -= size; // Decrease used memory when freed
         }
@@ -722,8 +706,6 @@ pub struct MutexBasedPool {
     config: FiveLevelPoolConfig,
     memory: Arc<Mutex<MemoryChunk>>,
     free_lists: Vec<Mutex<FreeListHead>>,
-    /// F1: Out-of-band freelist next-links indexed by `offset / alignment`.
-    next_links: Box<[AtomicU32]>,
     fragment_size: AtomicUsize,
     /// Free blocks above `max_fast_block_size`. See [`HugeFreeList`].
     huge_free_list: Mutex<HugeFreeList>,
@@ -741,17 +723,11 @@ impl MutexBasedPool {
         let free_lists = (0..num_bins)
             .map(|_| Mutex::new(FreeListHead::default()))
             .collect();
-        let max_slots = config.initial_capacity / config.alignment;
-        let next_links = (0..max_slots)
-            .map(|_| AtomicU32::new(MemOffset::NULL.0))
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
 
         Ok(Self {
             config,
             memory: Arc::new(Mutex::new(memory)),
             free_lists,
-            next_links,
             fragment_size: AtomicUsize::new(0),
             huge_free_list: Mutex::new(HugeFreeList::default()),
         })
@@ -817,16 +793,7 @@ impl MutexBasedPool {
             let mut head = self.free_lists[bin_index].lock().map_err(|e| {
                 ZiporaError::resource_busy(format!("Free list mutex poisoned: {}", e))
             })?;
-            if !head.head.is_null() {
-                let offset = head.head;
-                let slot_idx = offset.to_usize() / self.config.alignment;
-                let next_raw = self
-                    .next_links
-                    .get(slot_idx)
-                    .map(|a| a.load(Ordering::Relaxed))
-                    .unwrap_or(MemOffset::NULL.0);
-                head.head = MemOffset(next_raw);
-                head.count -= 1;
+            if let Some(offset) = head.blocks.pop() {
                 self.fragment_size.fetch_sub(size, Ordering::Relaxed);
                 return Ok(offset);
             }
@@ -882,12 +849,7 @@ impl MutexBasedPool {
             let mut head = self.free_lists[bin_index].lock().map_err(|e| {
                 ZiporaError::resource_busy(format!("Free list mutex poisoned: {}", e))
             })?;
-            let slot_idx = offset.to_usize() / self.config.alignment;
-            if let Some(slot) = self.next_links.get(slot_idx) {
-                slot.store(head.head.0, Ordering::Relaxed);
-            }
-            head.head = offset;
-            head.count += 1;
+            head.blocks.push(offset);
             self.fragment_size.fetch_add(size, Ordering::Relaxed);
         }
 
@@ -931,18 +893,7 @@ impl MutexBasedPool {
         }
         let bin_index = (size / self.config.alignment) - 1;
         let mut head = self.free_lists.get(bin_index)?.lock().ok()?;
-        if head.head.is_null() {
-            return None;
-        }
-        let offset = head.head;
-        let slot_idx = offset.to_usize() / self.config.alignment;
-        let next_raw = self
-            .next_links
-            .get(slot_idx)
-            .map(|a| a.load(Ordering::Relaxed))
-            .unwrap_or(MemOffset::NULL.0);
-        head.head = MemOffset(next_raw);
-        head.count -= 1;
+        let offset = head.blocks.pop()?;
         self.fragment_size.fetch_sub(size, Ordering::Relaxed);
         Some(offset)
     }
@@ -988,8 +939,9 @@ pub struct LockFreePool {
     /// Atomic bump cursor so fast-bin misses do not need `memory.lock()`.
     bump_offset: AtomicUsize,
     free_lists: Vec<LockFreeFreeListHead>,
-    /// F1 & F3: Out-of-band atomic freelist links indexed by `offset / alignment`,
-    /// so fast-bin `alloc` and `free` never touch `self.memory.lock()` or user bytes.
+    /// Out-of-band atomic freelist links indexed by `offset / alignment`,
+    /// encoded as `0 = NULL` and `(slot_idx + 1)` for a valid next offset so the
+    /// table can be allocated lazily-zeroed via `alloc_zeroed`.
     next_links: Box<[AtomicU32]>,
     fragment_size: AtomicUsize,
     /// Free blocks above `max_fast_block_size`. See [`HugeFreeList`]. Huge
@@ -1010,10 +962,7 @@ impl LockFreePool {
             .map(|_| LockFreeFreeListHead::default())
             .collect();
         let max_slots = config.initial_capacity / config.alignment;
-        let next_links = (0..max_slots)
-            .map(|_| AtomicU32::new(u32::MAX))
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
+        let next_links = alloc_zeroed_atomic_u32_slice(max_slots)?;
 
         Ok(Self {
             config,
@@ -1102,15 +1051,20 @@ impl LockFreePool {
                 }
 
                 let slot_idx = (current_offset as usize) / self.config.alignment;
-                let next_offset = self
+                let encoded_next = self
                     .next_links
                     .get(slot_idx)
                     .map(|a| a.load(Ordering::Acquire))
-                    .unwrap_or(u32::MAX);
+                    .unwrap_or(0);
+                let next_offset = if encoded_next == 0 {
+                    u32::MAX
+                } else {
+                    (encoded_next - 1) * (self.config.alignment as u32)
+                };
                 let next_gen = ((current_tagged >> 32) as u32).wrapping_add(1);
                 let next_tagged = ((next_gen as u64) << 32) | (next_offset as u64);
 
-                match head.head.compare_exchange_weak(
+                match head.head.compare_exchange(
                     current_tagged,
                     next_tagged,
                     Ordering::AcqRel,
@@ -1122,6 +1076,9 @@ impl LockFreePool {
                         return Ok(MemOffset::new(current_offset as usize));
                     }
                     Err(_) => {
+                        #[cfg(miri)]
+                        std::thread::yield_now();
+                        #[cfg(not(miri))]
                         std::hint::spin_loop();
                     }
                 }
@@ -1139,11 +1096,14 @@ impl LockFreePool {
             }
             if self
                 .bump_offset
-                .compare_exchange_weak(cur, next, Ordering::AcqRel, Ordering::Acquire)
+                .compare_exchange(cur, next, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
                 return Ok(MemOffset::new(cur));
             }
+            #[cfg(miri)]
+            std::thread::yield_now();
+            #[cfg(not(miri))]
             std::hint::spin_loop();
         }
     }
@@ -1163,11 +1123,16 @@ impl LockFreePool {
             loop {
                 let current_tagged = head.head.load(Ordering::Acquire);
                 let current_offset = current_tagged as u32;
-                slot_link.store(current_offset, Ordering::Release);
+                let encoded_prev = if current_offset == u32::MAX {
+                    0
+                } else {
+                    (current_offset / (self.config.alignment as u32)) + 1
+                };
+                slot_link.store(encoded_prev, Ordering::Release);
                 let next_gen = ((current_tagged >> 32) as u32).wrapping_add(1);
                 let next_tagged = ((next_gen as u64) << 32) | (offset.0 as u64);
 
-                match head.head.compare_exchange_weak(
+                match head.head.compare_exchange(
                     current_tagged,
                     next_tagged,
                     Ordering::AcqRel,
@@ -1179,6 +1144,9 @@ impl LockFreePool {
                         return Ok(());
                     }
                     Err(_) => {
+                        #[cfg(miri)]
+                        std::thread::yield_now();
+                        #[cfg(not(miri))]
                         std::hint::spin_loop();
                     }
                 }
@@ -2256,6 +2224,12 @@ mod tests {
 
     #[test]
     fn test_lock_free_pool_concurrent() -> Result<()> {
+        #[cfg(miri)]
+        let config = FiveLevelPoolConfig {
+            initial_capacity: 64 * 1024,
+            ..FiveLevelPoolConfig::default()
+        };
+        #[cfg(not(miri))]
         let config = FiveLevelPoolConfig::default();
         let pool = Arc::new(LockFreePool::new(config)?);
 
@@ -2533,9 +2507,14 @@ mod tests {
 
     #[test]
     fn test_thread_local_pool_drop_evicts_thread_cache_entries() {
+        #[cfg(miri)]
+        const N_POOLS: usize = 16;
+        #[cfg(not(miri))]
+        const N_POOLS: usize = 200;
+
         let before = THREAD_CACHE.with(|c| c.borrow().len());
 
-        for _ in 0..200 {
+        for _ in 0..N_POOLS {
             let pool = ThreadLocalPool::new(FiveLevelPoolConfig::default()).unwrap();
             let off = pool.alloc(64).unwrap();
             pool.free(off, 64).unwrap();
@@ -2545,7 +2524,7 @@ mod tests {
         let after = THREAD_CACHE.with(|c| c.borrow().len());
         assert_eq!(
             after, before,
-            "dropping 200 ThreadLocalPools leaked {} entries in THREAD_CACHE",
+            "dropping {N_POOLS} ThreadLocalPools leaked {} entries in THREAD_CACHE",
             after.saturating_sub(before)
         );
     }

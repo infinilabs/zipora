@@ -753,30 +753,29 @@ where
         if key.is_empty() { None } else { Some(key) }
     }
 
+    const CSPP_MAX_SLOT: u32 = (1 << 24) - 1;
+
+    #[inline(always)]
+    fn encode_cspp_state(slot: u32, zprog: usize) -> Option<StateId> {
+        if slot <= Self::CSPP_MAX_SLOT && zprog <= 255 {
+            Some((slot << 8) | (zprog as u32))
+        } else {
+            None
+        }
+    }
+
+    #[inline(always)]
     fn is_valid_cspp_node(cspp: &crate::fsa::cspp_trie::CsppTrie, target_slot: u32) -> bool {
+        if target_slot > Self::CSPP_MAX_SLOT {
+            return false;
+        }
         if target_slot == crate::fsa::cspp_trie::INITIAL_STATE {
             return cspp.total_states() > 0;
         }
-        if (target_slot as usize) >= cspp.total_states() || target_slot < 258 {
+        if target_slot < 258 {
             return false;
         }
-        fn dfs(cspp: &crate::fsa::cspp_trie::CsppTrie, curr: u32, target: u32) -> bool {
-            if curr == target {
-                return true;
-            }
-            if (curr as usize) >= cspp.total_states() {
-                return false;
-            }
-            let view = cspp.node_view(curr);
-            let mut found = false;
-            view.for_each_child(|_, child_slot| {
-                if !found && dfs(cspp, child_slot, target) {
-                    found = true;
-                }
-            });
-            found
-        }
-        dfs(cspp, crate::fsa::cspp_trie::INITIAL_STATE, target_slot)
+        cspp.node_view(target_slot).is_well_formed()
     }
 
     fn count_cspp_states_and_transitions(
@@ -785,31 +784,24 @@ where
         if cspp.total_states() == 0 {
             return (0, 0);
         }
-        fn dfs(
-            cspp: &crate::fsa::cspp_trie::CsppTrie,
-            curr: u32,
-            states: &mut usize,
-            transitions: &mut usize,
-        ) {
+        let mut states = 0usize;
+        let mut transitions = 0usize;
+        let mut stack = vec![crate::fsa::cspp_trie::INITIAL_STATE];
+        while let Some(curr) = stack.pop() {
             if (curr as usize) >= cspp.total_states() {
-                return;
+                continue;
             }
             let view = cspp.node_view(curr);
+            if !view.is_well_formed() {
+                continue;
+            }
             let zlen = view.zpath_len();
-            *states += 1 + zlen;
-            *transitions += zlen + view.n_children();
+            states += 1 + zlen;
+            transitions += zlen + view.n_children();
             view.for_each_child(|_, child_slot| {
-                dfs(cspp, child_slot, states, transitions);
+                stack.push(child_slot);
             });
         }
-        let mut states = 0;
-        let mut transitions = 0;
-        dfs(
-            cspp,
-            crate::fsa::cspp_trie::INITIAL_STATE,
-            &mut states,
-            &mut transitions,
-        );
         (states, transitions)
     }
 
@@ -835,7 +827,7 @@ where
             }
             if pos == key.len() {
                 return if view.is_final() {
-                    Some((curr << 8) | (zlen as u32))
+                    Self::encode_cspp_state(curr, zlen)
                 } else {
                     None
                 };
@@ -855,60 +847,46 @@ where
     ) -> Option<Vec<u8>> {
         let target_slot = state_id >> 8;
         let target_zprog = (state_id & 0xFF) as usize;
-        if (target_slot as usize) >= cspp.total_states() {
+        if !Self::is_valid_cspp_node(cspp, target_slot) {
             return None;
         }
-        fn dfs(
-            cspp: &crate::fsa::cspp_trie::CsppTrie,
-            curr: u32,
-            target_slot: u32,
-            target_zprog: usize,
-            path: &mut Vec<u8>,
-        ) -> bool {
+        let target_view = cspp.node_view(target_slot);
+        if target_zprog > target_view.zpath_len() {
+            return None;
+        }
+        if target_slot == crate::fsa::cspp_trie::INITIAL_STATE {
+            return Some(target_view.zpath_slice()[..target_zprog].to_vec());
+        }
+
+        // Iterative DFS with explicit path-truncation frames: `(curr, base_len, edge_byte)`.
+        let mut path = Vec::new();
+        let mut stack: Vec<(u32, usize, Option<u8>)> =
+            vec![(crate::fsa::cspp_trie::INITIAL_STATE, 0, None)];
+        while let Some((curr, base_len, edge_byte)) = stack.pop() {
+            path.truncate(base_len);
+            if let Some(ch) = edge_byte {
+                path.push(ch);
+            }
             if (curr as usize) >= cspp.total_states() {
-                return false;
+                continue;
             }
             let view = cspp.node_view(curr);
-            let zlen = view.zpath_len();
-            if curr == target_slot {
-                if target_zprog <= zlen {
-                    path.extend_from_slice(&view.zpath_slice()[..target_zprog]);
-                    return true;
-                }
-                return false;
+            if !view.is_well_formed() {
+                continue;
             }
-            let base_len = path.len();
-            if zlen > 0 {
+            if curr == target_slot {
+                path.extend_from_slice(&view.zpath_slice()[..target_zprog]);
+                return Some(path);
+            }
+            if view.zpath_len() > 0 {
                 path.extend_from_slice(view.zpath_slice());
             }
-            let mut found = false;
+            let next_base = path.len();
             view.for_each_child(|ch, child_slot| {
-                if !found {
-                    path.push(ch);
-                    if dfs(cspp, child_slot, target_slot, target_zprog, path) {
-                        found = true;
-                    } else {
-                        path.pop();
-                    }
-                }
+                stack.push((child_slot, next_base, Some(ch)));
             });
-            if !found {
-                path.truncate(base_len);
-            }
-            found
         }
-        let mut path = Vec::new();
-        if dfs(
-            cspp,
-            crate::fsa::cspp_trie::INITIAL_STATE,
-            target_slot,
-            target_zprog,
-            &mut path,
-        ) {
-            Some(path)
-        } else {
-            None
-        }
+        None
     }
 }
 
@@ -1032,13 +1010,27 @@ where
                 louds, is_link, next_link, label_data, core_data, next_trie, key,
             ),
             TrieStorage::CompressedSparse(cspp) => {
+                if cspp.total_states() > Self::CSPP_MAX_SLOT as usize {
+                    return Err(crate::error::ZiporaError::resource_exhausted(
+                        "CompressedSparse ZiporaTrie state space (2^24 slots / 64 MiB) exceeded",
+                    ));
+                }
                 let (is_new, valpos) = cspp.insert(key);
+                if cspp.total_states() > (Self::CSPP_MAX_SLOT as usize) + 1 {
+                    return Err(crate::error::ZiporaError::resource_exhausted(
+                        "CompressedSparse ZiporaTrie state space (2^24 slots / 64 MiB) exceeded",
+                    ));
+                }
                 if is_new {
                     self.stats.num_keys += 1;
                     let value_id = self.stats.num_keys as u32;
                     cspp.set_value::<u32>(valpos, value_id);
                 }
-                Ok(Self::lookup_node_id_cspp(cspp, key).unwrap_or(0))
+                Self::lookup_node_id_cspp(cspp, key).ok_or_else(|| {
+                    crate::error::ZiporaError::resource_exhausted(
+                        "CompressedSparse ZiporaTrie state ID exceeds 24-bit slot encoding",
+                    )
+                })
             }
         }?;
 
@@ -1102,15 +1094,14 @@ where
                 .get(state as usize)
                 .map(|n| n.is_final)
                 .unwrap_or(false),
-            TrieStorage::DoubleArray { base, .. } => {
-                if self.is_free_double_array(state) {
+            TrieStorage::DoubleArray { base, check, .. } => {
+                const FREE_BIT: u32 = 0x8000_0000;
+                const TERMINAL_BIT: u32 = 0x8000_0000;
+                let idx = state as usize;
+                if idx >= base.len() || (state != 0 && (check[idx] & FREE_BIT) != 0) {
                     return false;
                 }
-                // Check the terminal bit in the BASE array (referenced project line 32: is_term)
-                const TERMINAL_BIT: u32 = 0x8000_0000;
-                base.get(state as usize)
-                    .map(|b| (b & TERMINAL_BIT) != 0)
-                    .unwrap_or(false)
+                (base[idx] & TERMINAL_BIT) != 0
             }
             TrieStorage::Louds { .. } => false,
             TrieStorage::CompressedSparse(cspp) => {
@@ -1125,6 +1116,7 @@ where
         }
     }
 
+    #[inline(always)]
     fn transition(&self, state: StateId, symbol: u8) -> Option<StateId> {
         match &self.storage {
             TrieStorage::Patricia { nodes, .. } => {
@@ -1136,12 +1128,12 @@ where
             }
             TrieStorage::CriticalBit { .. } => None,
             TrieStorage::DoubleArray { base, check, .. } => {
-                if self.is_free_double_array(state) {
-                    return None;
-                }
                 // Double array trie transition: next = (base[state] & VALUE_MASK) + symbol
-                // Validate with: check[next] == state (referenced project line 100-110)
+                // Validate with: check[next] == state (referenced project line 100-110).
+                // Folding the free-state check into the `check[next] == state` hit path avoids
+                // an extra `check[state]` cache miss on every step while still rejecting free states.
                 const VALUE_MASK: u32 = 0x7FFF_FFFF;
+                const FREE_BIT: u32 = 0x8000_0000;
                 const DA_NIL_STATE: u32 = 0x7FFF_FFFF;
 
                 let base_value = base.get(state as usize)? & VALUE_MASK;
@@ -1152,15 +1144,13 @@ where
                 if next_state == 0 {
                     return None;
                 }
-                if let Some(check_value) = check.get(next_state as usize) {
-                    if *check_value == state {
-                        Some(next_state)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
+                if let Some(&check_value) = check.get(next_state as usize)
+                    && check_value == state
+                    && (state == 0 || (check[state as usize] & FREE_BIT) == 0)
+                {
+                    return Some(next_state);
                 }
+                None
             }
             TrieStorage::Louds { .. } => None,
             TrieStorage::CompressedSparse(cspp) => {
@@ -1173,7 +1163,7 @@ where
                 let zlen = view.zpath_len();
                 if zprog < zlen {
                     if view.zpath_slice()[zprog] == symbol {
-                        Some((node_slot << 8) | ((zprog + 1) as u32))
+                        Self::encode_cspp_state(node_slot, zprog + 1)
                     } else {
                         None
                     }
@@ -1182,7 +1172,7 @@ where
                     if next_slot == crate::fsa::cspp_trie::NIL_STATE {
                         None
                     } else {
-                        Some(next_slot << 8)
+                        Self::encode_cspp_state(next_slot, 0)
                     }
                 } else {
                     None
@@ -1239,14 +1229,17 @@ where
                 let view = cspp.node_view(node_slot);
                 let zlen = view.zpath_len();
                 if zprog < zlen {
-                    vec![(
-                        view.zpath_slice()[zprog],
-                        (node_slot << 8) | ((zprog + 1) as u32),
-                    )]
+                    if let Some(next_id) = Self::encode_cspp_state(node_slot, zprog + 1) {
+                        vec![(view.zpath_slice()[zprog], next_id)]
+                    } else {
+                        Vec::new()
+                    }
                 } else if zprog == zlen {
                     let mut out = Vec::with_capacity(view.n_children());
                     view.for_each_child(|ch, child_slot| {
-                        out.push((ch, child_slot << 8));
+                        if let Some(next_id) = Self::encode_cspp_state(child_slot, 0) {
+                            out.push((ch, next_id));
+                        }
                     });
                     out
                 } else {
