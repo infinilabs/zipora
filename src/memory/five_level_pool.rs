@@ -416,6 +416,7 @@ impl Default for LockFreeFreeListHead {
 struct MemoryChunk {
     data: NonNull<u8>,
     size: usize,
+    zeroed_len: usize,
     capacity: usize,
     /// The exact `Layout` `data` was allocated with. `GlobalAlloc::dealloc`
     /// requires the same layout that was passed to `alloc`, and the chunk's
@@ -428,14 +429,14 @@ struct MemoryChunk {
 // SAFETY: MemoryChunk is Send because:
 // 1. `data: NonNull<u8>` - Raw pointer to heap-allocated memory owned by this struct.
 //    Memory is allocated in `new()` and deallocated in `Drop`. No thread-local state.
-// 2. `size: usize` - Mutable state but only accessed through &mut self.
+// 2. `size: usize` / `zeroed_len: usize` - Mutable state only accessed through &mut self.
 // 3. `capacity: usize` - Immutable after construction, trivially Send.
 // 4. `layout: Layout` - Plain data, immutable after construction.
 unsafe impl Send for MemoryChunk {}
 
 // SAFETY: MemoryChunk is Sync because:
-// 1. `data: NonNull<u8>` - Read-only access through &self via `offset_ptr()`.
-// 2. `size`/`capacity`/`layout` - Read-only through &self.
+// 1. `data: NonNull<u8>` - Read-only access through &self via `as_slice()`.
+// 2. `size`/`zeroed_len`/`capacity`/`layout` - Read-only through &self.
 // 3. Mutable operations require &mut self (exclusive access).
 // 4. The chunk provides raw memory that callers must synchronize.
 //
@@ -448,9 +449,10 @@ impl MemoryChunk {
         let layout = Layout::from_size_align(capacity, alignment)
             .map_err(|_| ZiporaError::invalid_data("Invalid memory layout"))?;
 
-        // SAFETY: layout is valid and non-zero (`validate` rejects `capacity == 0`);
-        // `alloc_zeroed` uses OS lazy zero pages instead of an eager userspace memset.
-        let data = unsafe { std::alloc::alloc_zeroed(layout) };
+        // SAFETY: layout is valid and non-zero (`validate` rejects `capacity == 0`).
+        // Bytes are zeroed lazily as regions are carved via `advance_to`, avoiding
+        // an upfront userspace memset on pool construction.
+        let data = unsafe { std::alloc::alloc(layout) };
         if data.is_null() {
             return Err(ZiporaError::resource_exhausted("Failed to allocate memory"));
         }
@@ -461,16 +463,35 @@ impl MemoryChunk {
         Ok(Self {
             data: non_null_data,
             size: 0,
+            zeroed_len: 0,
             capacity,
             layout,
         })
+    }
+
+    #[inline]
+    fn advance_to(&mut self, new_size: usize) {
+        let clamped = new_size.min(self.capacity);
+        if clamped > self.zeroed_len {
+            // SAFETY: `self.zeroed_len < clamped <= self.capacity`, and `&mut self`
+            // guarantees exclusive access to `self.data`.
+            unsafe {
+                std::ptr::write_bytes(
+                    self.data.as_ptr().add(self.zeroed_len),
+                    0,
+                    clamped - self.zeroed_len,
+                );
+            }
+            self.zeroed_len = clamped;
+        }
+        self.size = clamped;
     }
 
     fn validate_range(&self, offset: usize, len: usize) -> Result<()> {
         let end = offset
             .checked_add(len)
             .ok_or_else(|| ZiporaError::out_of_bounds(offset, self.size))?;
-        if end > self.size {
+        if end > self.size || end > self.zeroed_len {
             return Err(ZiporaError::out_of_bounds(offset, self.size));
         }
         Ok(())
@@ -479,14 +500,16 @@ impl MemoryChunk {
     fn as_slice(&self, offset: MemOffset, len: usize) -> Result<&[u8]> {
         let off = offset.to_usize();
         self.validate_range(off, len)?;
-        // SAFETY: `off + len <= self.size <= self.capacity`, and `data` was zero-initialized in `new`.
+        // SAFETY: `off + len <= self.size <= self.zeroed_len <= self.capacity`,
+        // and `0..self.zeroed_len` was zero-initialized by `advance_to`.
         Ok(unsafe { std::slice::from_raw_parts(self.data.as_ptr().add(off), len) })
     }
 
     fn as_mut_slice(&mut self, offset: MemOffset, len: usize) -> Result<&mut [u8]> {
         let off = offset.to_usize();
         self.validate_range(off, len)?;
-        // SAFETY: `off + len <= self.size <= self.capacity` and `&mut self` guarantees exclusive access.
+        // SAFETY: `off + len <= self.size <= self.zeroed_len <= self.capacity`
+        // and `&mut self` guarantees exclusive access.
         Ok(unsafe { std::slice::from_raw_parts_mut(self.data.as_ptr().add(off), len) })
     }
 
@@ -624,7 +647,7 @@ impl NoLockingPool {
         }
 
         let offset = MemOffset::new(self.memory.size);
-        self.memory.size += size;
+        self.memory.advance_to(self.memory.size + size);
         self.used_memory += size;
         Ok(offset)
     }
@@ -809,7 +832,8 @@ impl MutexBasedPool {
         }
 
         let offset = MemOffset::new(memory.size);
-        memory.size += size;
+        let new_size = memory.size + size;
+        memory.advance_to(new_size);
         Ok(offset)
     }
 
@@ -838,7 +862,8 @@ impl MutexBasedPool {
         }
 
         let offset = MemOffset::new(memory.size);
-        memory.size += size;
+        let new_size = memory.size + size;
+        memory.advance_to(new_size);
         Ok(offset)
     }
 
@@ -911,7 +936,7 @@ impl MutexBasedPool {
         }
         let take = max_bytes.min(remaining);
         let start = memory.size;
-        memory.size += take;
+        memory.advance_to(start + take);
         Some((start, start + take))
     }
 }
@@ -983,7 +1008,7 @@ impl LockFreePool {
             .map_err(|e| ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e)))?;
         let bump = self.bump_offset.load(Ordering::Acquire);
         if bump > memory.size {
-            memory.size = bump;
+            memory.advance_to(bump);
         }
         dst.copy_from_slice(memory.as_slice(offset, dst.len())?);
         Ok(())
@@ -997,7 +1022,7 @@ impl LockFreePool {
             .map_err(|e| ZiporaError::resource_busy(format!("Memory mutex poisoned: {}", e)))?;
         let bump = self.bump_offset.load(Ordering::Acquire);
         if bump > memory.size {
-            memory.size = bump;
+            memory.advance_to(bump);
         }
         memory.as_mut_slice(offset, src.len())?.copy_from_slice(src);
         Ok(())

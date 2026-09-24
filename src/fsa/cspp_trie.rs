@@ -170,14 +170,7 @@ impl<'a> NodeView<'a> {
 
     #[inline(always)]
     fn new_trusted(nodes: &'a [PatriciaNode], curr: u32) -> Self {
-        // SAFETY: internal traversal starts at INITIAL_STATE (0) and follows only live child pointers < nodes.len().
-        let meta = unsafe { nodes.get_unchecked(curr as usize).meta };
-        Self {
-            nodes,
-            curr,
-            meta,
-            well_formed: true,
-        }
+        Self::new(nodes, curr)
     }
 
     /// Returns true iff `curr` points to a structurally valid, non-freed node
@@ -670,6 +663,9 @@ impl CsppTrie {
 
         loop {
             let view = self.node_view_trusted(curr);
+            if !view.is_well_formed() {
+                return None;
+            }
             let zlen = view.zpath_len();
 
             if zlen > 0 {
@@ -1514,6 +1510,16 @@ impl CsppTrie {
     /// Insert a key into the trie.
     /// Returns (is_new_insertion, valpos_byte_offset).
     pub fn insert(&mut self, key: &[u8]) -> (bool, usize) {
+        if self.mempool.len() < 258 || !self.node_view(INITIAL_STATE).is_well_formed() {
+            self.mempool.clear();
+            self.n_words = 0;
+            self.n_nodes = 1;
+            self.fast_bins.fill(FREE_LIST_NIL);
+            self.free_bin1.clear();
+            self.large_list.clear();
+            self.frag_size = 0;
+            self.init_root();
+        }
         let mut curr_slot: u32 = NIL_STATE; // slot containing parent's child pointer to curr
         let mut curr: u32 = INITIAL_STATE;
         let mut pos: usize = 0;
@@ -1522,6 +1528,9 @@ impl CsppTrie {
             // Extract node properties (drop borrow before any mutation)
             let (cnt_type, zpath_len, is_final, skip, n_children) = {
                 let view = self.node_view_trusted(curr);
+                if !view.is_well_formed() {
+                    return (false, 0);
+                }
                 (
                     view.cnt_type(),
                     view.zpath_len(),
@@ -2396,6 +2405,29 @@ mod tests {
         assert!(!freed_view.is_final());
         assert!(freed_view.zpath_slice().is_empty());
         assert_eq!(freed_view.state_move(b'b'), NIL_STATE);
+    }
+
+    #[test]
+    fn test_cspp_trie_cleared_or_truncated_mempool_lookup_is_safe() {
+        let mut trie = CsppTrie::new(4);
+        trie.insert(b"alpha");
+        trie.insert(b"beta");
+        assert!(trie.lookup(b"alpha").is_some());
+
+        // Truncating mempool to 1 word leaves root slot 0 in-bounds for header read
+        // but out-of-bounds for its 256-entry fast child table; lookup must return None
+        // without panicking or reading out of bounds.
+        trie.mempool.truncate(1);
+        assert_eq!(trie.lookup(b"alpha"), None);
+        assert_eq!(trie.lookup(b""), None);
+        assert_eq!(trie.state_move(INITIAL_STATE, b'a'), NIL_STATE);
+
+        // Clearing mempool completely leaves len == 0; lookup must return None
+        // without invoking out-of-bounds `get_unchecked(0)`.
+        trie.mempool.clear();
+        assert_eq!(trie.lookup(b"alpha"), None);
+        assert_eq!(trie.lookup(b""), None);
+        assert_eq!(trie.state_move(INITIAL_STATE, b'a'), NIL_STATE);
     }
 }
 

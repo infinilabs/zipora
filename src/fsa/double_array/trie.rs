@@ -64,6 +64,10 @@ impl std::convert::TryFrom<RawDoubleArrayTrie> for DoubleArrayTrie {
                 raw.search_head
             ));
         }
+        if raw.states[0].parent != NIL_STATE {
+            return Err("DoubleArrayTrie root state 0 must have parent == NIL_STATE".to_string());
+        }
+        let mut allocated_non_root = 0usize;
         for (idx, s) in raw.states.iter().enumerate() {
             if !s.is_free() {
                 let base = s.child0() as usize;
@@ -73,15 +77,111 @@ impl std::convert::TryFrom<RawDoubleArrayTrie> for DoubleArrayTrie {
                     ));
                 }
                 if idx > 0 {
+                    allocated_non_root += 1;
                     let parent = s.parent() as usize;
                     if parent >= len || raw.states[parent].is_free() {
                         return Err(format!(
                             "DoubleArrayTrie state {idx} has invalid or free parent {parent}"
                         ));
                     }
+                    let parent_base = raw.states[parent].child0() as usize;
+                    if (idx ^ parent_base) > 0xFF {
+                        return Err(format!(
+                            "DoubleArrayTrie state {idx} is not reachable by a 1-byte XOR transition from parent {parent}"
+                        ));
+                    }
                 }
             }
         }
+
+        // Verify that every allocated state reaches root 0 via parent links without cycles.
+        // 0 = unvisited, 1 = visiting (on current chain), 2 = verified reaches root 0.
+        let mut parent_status = vec![0u8; len];
+        parent_status[0] = 2;
+        for idx in 1..len {
+            if raw.states[idx].is_free() || parent_status[idx] == 2 {
+                continue;
+            }
+            let mut curr = idx;
+            while parent_status[curr] == 0 {
+                parent_status[curr] = 1;
+                curr = raw.states[curr].parent() as usize;
+            }
+            if parent_status[curr] == 1 {
+                return Err(format!(
+                    "DoubleArrayTrie parent chain cycle detected involving state {curr}"
+                ));
+            }
+            let mut mark = idx;
+            while parent_status[mark] == 1 {
+                parent_status[mark] = 2;
+                mark = raw.states[mark].parent() as usize;
+            }
+        }
+
+        // Verify ninfos child/sibling chains, 1-to-1 correspondence with allocated states, and num_keys.
+        let mut visited_child = vec![false; len];
+        let mut child_links_count = 0usize;
+        let mut term_count = 0usize;
+        for idx in 0..len {
+            let ninfo = raw.ninfos[idx];
+            if raw.states[idx].is_free() {
+                if ninfo.first_child() != NINFO_NONE
+                    || ninfo.sibling != NINFO_NONE
+                    || ninfo.is_term()
+                {
+                    return Err(format!(
+                        "DoubleArrayTrie free state {idx} has non-empty NInfo metadata"
+                    ));
+                }
+                continue;
+            }
+            if ninfo.is_term() {
+                term_count += 1;
+            }
+            let base = raw.states[idx].child0() as usize;
+            let mut c = ninfo.first_child();
+            let mut prev_c = 0u16;
+            while c != NINFO_NONE {
+                if c <= prev_c || c > 256 {
+                    return Err(format!(
+                        "DoubleArrayTrie state {idx} has non-monotonic or out-of-range child symbol {c} after {prev_c}"
+                    ));
+                }
+                let label = (c - 1) as usize;
+                let child_pos = base ^ label;
+                if child_pos == 0
+                    || child_pos >= len
+                    || raw.states[child_pos].is_free()
+                    || raw.states[child_pos].parent() != idx as u32
+                {
+                    return Err(format!(
+                        "DoubleArrayTrie state {idx} child link for label {label} points to invalid state {child_pos}"
+                    ));
+                }
+                if visited_child[child_pos] {
+                    return Err(format!(
+                        "DoubleArrayTrie child state {child_pos} is referenced multiple times in ninfos"
+                    ));
+                }
+                visited_child[child_pos] = true;
+                child_links_count += 1;
+                prev_c = c;
+                c = raw.ninfos[child_pos].sibling;
+            }
+        }
+        if child_links_count != allocated_non_root {
+            return Err(format!(
+                "DoubleArrayTrie allocated non-root states ({allocated_non_root}) != ninfos child links ({child_links_count})"
+            ));
+        }
+        if raw.num_keys != term_count {
+            return Err(format!(
+                "DoubleArrayTrie num_keys ({}) != terminal states count ({term_count})",
+                raw.num_keys
+            ));
+        }
+
         Ok(Self {
             states: raw.states,
             ninfos: raw.ninfos,
@@ -612,12 +712,19 @@ impl DoubleArrayTrie {
             return;
         }
         let base = self.states[state as usize].child0();
-        while c != NINFO_NONE {
+        let mut prev_c = 0u16;
+        while c != NINFO_NONE && c > prev_c && c <= 256 {
             let label = (c - 1) as u8;
             let child_pos = (base ^ label as u32) as usize;
-            if child_pos < self.states.len() && !self.states[child_pos].is_free() {
-                f(label, child_pos as u32);
+            if child_pos == 0
+                || child_pos >= self.states.len()
+                || self.states[child_pos].is_free()
+                || self.states[child_pos].parent() != state
+            {
+                break;
             }
+            f(label, child_pos as u32);
+            prev_c = c;
             c = if child_pos < self.ninfos.len() {
                 self.ninfos[child_pos].sibling
             } else {
@@ -745,36 +852,54 @@ impl DoubleArrayTrie {
         self.walk_keys(curr, &mut path, &mut f);
     }
 
-    /// Internal DFS for callback-based key iteration.
-    fn walk_keys(&self, state: u32, path: &mut Vec<u8>, f: &mut impl FnMut(&[u8])) {
-        if state as usize >= self.states.len() {
+    /// Internal iterative DFS for callback-based key iteration.
+    fn walk_keys(&self, start_state: u32, path: &mut Vec<u8>, f: &mut impl FnMut(&[u8])) {
+        if start_state as usize >= self.states.len() || self.is_free(start_state) {
             return;
         }
-
-        if self.ninfos[state as usize].is_term() {
+        let base_path_len = path.len();
+        if self.ninfos[start_state as usize].is_term() {
             f(path);
         }
-
-        let mut c = self.ninfos[state as usize].first_child();
-        if c == NINFO_NONE {
+        let first = self.ninfos[start_state as usize].first_child();
+        if first == NINFO_NONE {
             return;
         }
-        let base = self.states[state as usize].child0();
-
-        while c != NINFO_NONE {
+        // Stack holds (parent_state, next_c_to_visit, prev_c, parent_path_len)
+        let mut stack = vec![(start_state, first, 0u16, base_path_len)];
+        while let Some((state, c, prev_c, depth)) = stack.pop() {
+            path.truncate(depth);
+            if c == NINFO_NONE || c <= prev_c || c > 256 || depth.saturating_sub(base_path_len) >= self.states.len() {
+                continue;
+            }
+            let base = self.states[state as usize].child0();
             let label = (c - 1) as u8;
             let child_pos = (base ^ label as u32) as usize;
-            if child_pos < self.states.len() && !self.states[child_pos].is_free() {
-                path.push(label);
-                self.walk_keys(child_pos as u32, path, f);
-                path.pop();
+            if child_pos == 0
+                || child_pos >= self.states.len()
+                || self.states[child_pos].is_free()
+                || self.states[child_pos].parent() != state
+            {
+                continue;
             }
-            c = if child_pos < self.ninfos.len() {
+            let next_sib = if child_pos < self.ninfos.len() {
                 self.ninfos[child_pos].sibling
             } else {
                 NINFO_NONE
             };
+            if next_sib != NINFO_NONE {
+                stack.push((state, next_sib, c, depth));
+            }
+            path.push(label);
+            if self.ninfos[child_pos].is_term() {
+                f(path);
+            }
+            let child_first = self.ninfos[child_pos].first_child();
+            if child_first != NINFO_NONE {
+                stack.push((child_pos as u32, child_first, 0u16, path.len()));
+            }
         }
+        path.truncate(base_path_len);
     }
 
     /// Build from sorted keys (more efficient than incremental insert).
@@ -1193,36 +1318,9 @@ impl DoubleArrayTrie {
         false
     }
 
-    /// Recursively collect keys via DFS.
+    /// Collect keys via iterative DFS.
     fn collect_keys(&self, state: u32, path: &mut Vec<u8>, keys: &mut Vec<Vec<u8>>) {
-        if state as usize >= self.states.len() {
-            return;
-        }
-
-        if self.ninfos[state as usize].is_term() {
-            keys.push(path.clone());
-        }
-
-        let mut c = self.ninfos[state as usize].first_child();
-        if c == NINFO_NONE {
-            return;
-        }
-        let base = self.states[state as usize].child0();
-
-        while c != NINFO_NONE {
-            let label = (c - 1) as u8;
-            let child_pos = (base ^ label as u32) as usize;
-            if child_pos < self.states.len() && !self.states[child_pos].is_free() {
-                path.push(label);
-                self.collect_keys(child_pos as u32, path, keys);
-                path.pop();
-            }
-            c = if child_pos < self.ninfos.len() {
-                self.ninfos[child_pos].sibling
-            } else {
-                NINFO_NONE
-            };
-        }
+        self.walk_keys(state, path, &mut |k| keys.push(k.to_vec()));
     }
 }
 

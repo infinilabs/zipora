@@ -753,14 +753,24 @@ where
         if key.is_empty() { None } else { Some(key) }
     }
 
-    const CSPP_MAX_SLOT: u32 = (1 << 24) - 1;
+    pub(crate) const CSPP_MAX_SLOT: u32 = (1 << 24) - 1;
 
     #[inline(always)]
-    fn encode_cspp_state(slot: u32, zprog: usize) -> Option<StateId> {
+    pub(crate) fn encode_cspp_state(slot: u32, zprog: usize) -> Option<StateId> {
         if slot <= Self::CSPP_MAX_SLOT && zprog <= 255 {
             Some((slot << 8) | (zprog as u32))
         } else {
             None
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_cspp_total_states_for_test(&mut self, slots: usize) {
+        if let TrieStorage::CompressedSparse(cspp) = &mut self.storage {
+            cspp.mempool.resize(
+                slots,
+                crate::fsa::cspp_trie::PatriciaNode { child: u32::MAX },
+            );
         }
     }
 
@@ -1010,17 +1020,20 @@ where
                 louds, is_link, next_link, label_data, core_data, next_trie, key,
             ),
             TrieStorage::CompressedSparse(cspp) => {
-                if cspp.total_states() > Self::CSPP_MAX_SLOT as usize {
+                if let Some(existing_id) = Self::lookup_node_id_cspp(cspp, key) {
+                    return Ok(existing_id);
+                }
+                let max_new_slots = 512usize
+                    .saturating_add(key.len() / 4)
+                    .saturating_add(16);
+                if cspp.total_states().saturating_add(max_new_slots)
+                    > (Self::CSPP_MAX_SLOT as usize) + 1
+                {
                     return Err(crate::error::ZiporaError::resource_exhausted(
                         "CompressedSparse ZiporaTrie state space (2^24 slots / 64 MiB) exceeded",
                     ));
                 }
                 let (is_new, valpos) = cspp.insert(key);
-                if cspp.total_states() > (Self::CSPP_MAX_SLOT as usize) + 1 {
-                    return Err(crate::error::ZiporaError::resource_exhausted(
-                        "CompressedSparse ZiporaTrie state space (2^24 slots / 64 MiB) exceeded",
-                    ));
-                }
                 if is_new {
                     self.stats.num_keys += 1;
                     let value_id = self.stats.num_keys as u32;
