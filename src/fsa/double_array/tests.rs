@@ -2097,4 +2097,36 @@ mod map_prefix_regression_tests {
             }
         }
     }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_deserialize_rejects_malformed_json_that_violates_proven_bounds() {
+        // Regression test: malformed JSON with root child0 = 0x7FFF0000
+        // and 1 state must be rejected during deserialization so safe
+        // `contains(b"a")` / `state_move(0, b'a')` never index out of bounds.
+        let bad_short_json = r#"{"states":[{"child0":2147418112,"parent":0}],"ninfos":[{"child":0,"sibling":0}],"num_keys":1,"search_head":0}"#;
+        let res = serde_json::from_str::<DoubleArrayTrie>(bad_short_json);
+        assert!(
+            res.is_err(),
+            "Deserialize must reject DoubleArrayTrie with states.len() < 256 and OOB child0"
+        );
+
+        // Also test >= 256 states where an allocated state has (child0 | 0xFF) >= states.len().
+        let mut valid_trie = DoubleArrayTrie::new();
+        valid_trie.insert(b"hello").unwrap();
+        let valid_json = serde_json::to_string(&valid_trie).unwrap();
+        let roundtrip: DoubleArrayTrie = serde_json::from_str(&valid_json).unwrap();
+        assert!(roundtrip.contains(b"hello"));
+
+        let bad_padded_json = valid_json.replacen(r#""child0":"#, r#""child0":2147418112,"ignored":"#, 1);
+        // Construct via serde_json::Value so field replacement is exact:
+        let mut val: serde_json::Value = serde_json::from_str(&valid_json).unwrap();
+        val["states"][0]["child0"] = serde_json::json!(0x7FFF_0000u32);
+        let _ = bad_padded_json;
+        let res_oob = serde_json::from_value::<DoubleArrayTrie>(val);
+        assert!(
+            res_oob.is_err(),
+            "Deserialize must reject DoubleArrayTrie whose child0 | 0xFF >= states.len()"
+        );
+    }
 }

@@ -641,3 +641,44 @@ fn test_unsupported_strategies_reject_insert_and_get_node_id_and_remove() {
     }
 }
 
+#[test]
+fn test_compressed_sparse_transition_is_constant_time_and_rejects_overflow_slots() {
+    use crate::fsa::traits::FiniteStateAutomaton;
+    // Regression test:
+    // 1. Walking 200 keys × 12 steps across a 20,000-key CompressedSparse trie
+    //    must complete in milliseconds (O(1) per step via `NodeView::is_well_formed`),
+    //    not seconds (O(n) whole-trie DFS per step).
+    // 2. State IDs with `slot > CSPP_MAX_SLOT` must be rejected cleanly without wrapping.
+    const N_KEYS: usize = if cfg!(miri) { 100 } else { 20_000 };
+    let mut trie: ZiporaTrie = ZiporaTrie::with_config(ZiporaTrieConfig::sparse_optimized());
+    for i in 0..N_KEYS {
+        let k = format!("key_{:08}", i);
+        trie.insert(k.as_bytes()).unwrap();
+    }
+
+    let sample = N_KEYS.min(200);
+    let start = std::time::Instant::now();
+    for i in 0..sample {
+        let k = format!("key_{:08}", i);
+        let mut s = trie.root();
+        for &b in k.as_bytes() {
+            s = trie.transition(s, b).expect("valid transition");
+        }
+        assert!(trie.is_final(s));
+        assert_eq!(trie.lookup_node_id(k.as_bytes()), Some(s));
+    }
+    if !cfg!(miri) {
+        assert!(
+            start.elapsed() < std::time::Duration::from_millis(50),
+            "200 × 12 CompressedSparse transitions took {:?} (expected < 50ms O(1) steps)",
+            start.elapsed()
+        );
+    }
+
+    // Out-of-range state IDs must return false/None
+    assert!(!trie.is_final(u32::MAX));
+    assert_eq!(trie.transition(u32::MAX, b'k'), None);
+    assert!(trie.transitions(u32::MAX).is_empty());
+}
+
+

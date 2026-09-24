@@ -101,9 +101,29 @@ struct SharedPool {
 
 impl SharedPool {
     fn new(capacity: usize) -> Self {
-        let data: Vec<AtomicU32> = (0..capacity).map(|_| AtomicU32::new(NIL_STATE)).collect();
+        const _: () = assert!(NIL_STATE == 0xFFFF_FFFF);
+        let data = if capacity == 0 {
+            Box::new([])
+        } else {
+            let Ok(layout) = std::alloc::Layout::array::<AtomicU32>(capacity) else {
+                panic!("invalid SharedPool layout");
+            };
+            // SAFETY: `layout` is non-zero (`capacity > 0`) and valid; `AtomicU32` has the
+            // exact same size, alignment, and bit-validity as `u32`. Writing `0xFF` to every
+            // byte initializes every element to `0xFFFF_FFFF == NIL_STATE`.
+            let ptr = unsafe {
+                let raw = std::alloc::alloc(layout) as *mut AtomicU32;
+                if raw.is_null() {
+                    std::alloc::handle_alloc_error(layout);
+                }
+                std::ptr::write_bytes(raw, 0xFF, capacity);
+                raw
+            };
+            // SAFETY: `ptr` was allocated with `layout` from the global allocator and fully initialized.
+            unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, capacity)) }
+        };
         Self {
-            data: data.into_boxed_slice(),
+            data,
             len: AtomicUsize::new(0),
         }
     }
@@ -140,7 +160,7 @@ impl SharedPool {
 
     #[inline]
     fn cas_weak(&self, pos: usize, old: u32, new: u32) -> Result<u32, u32> {
-        self.data[pos].compare_exchange_weak(old, new, Ordering::AcqRel, Ordering::Acquire)
+        self.data[pos].compare_exchange(old, new, Ordering::AcqRel, Ordering::Acquire)
     }
 
     /// Atomically clear bits (AND with mask). Used to release single flag
@@ -168,9 +188,7 @@ impl SharedPool {
                 .compare_exchange_weak(old_len, new_len, Ordering::AcqRel, Ordering::Relaxed)
                 .is_ok()
             {
-                for i in 0..slots {
-                    self.data[old_len + i].store(NIL_STATE, Ordering::Relaxed);
-                }
+                // `SharedPool::new` already initialized every slot to `NIL_STATE`.
                 return old_len as u32;
             }
         }
@@ -333,15 +351,23 @@ impl Backoff {
 
     #[inline]
     fn spin(&mut self) {
-        self.count += 1;
-        if self.count < 8 {
-            for _ in 0..(1 << self.count) {
-                std::hint::spin_loop();
-            }
-        } else if self.count < 64 {
+        #[cfg(miri)]
+        {
+            self.count += 1;
             std::thread::yield_now();
-        } else {
-            std::thread::sleep(std::time::Duration::from_micros((self.count / 16) as u64));
+        }
+        #[cfg(not(miri))]
+        {
+            self.count += 1;
+            if self.count < 8 {
+                for _ in 0..(1 << self.count) {
+                    std::hint::spin_loop();
+                }
+            } else if self.count < 64 {
+                std::thread::yield_now();
+            } else {
+                std::thread::sleep(std::time::Duration::from_micros((self.count / 16) as u64));
+            }
         }
     }
 
@@ -387,12 +413,17 @@ impl ThreadLocalAlloc {
 struct ConcurrentNodeView<'a> {
     pool: &'a SharedPool,
     curr: u32,
+    has_values: bool,
 }
 
 impl<'a> ConcurrentNodeView<'a> {
     #[inline(always)]
-    fn new(pool: &'a SharedPool, curr: u32) -> Self {
-        Self { pool, curr }
+    fn new(pool: &'a SharedPool, curr: u32, has_values: bool) -> Self {
+        Self {
+            pool,
+            curr,
+            has_values,
+        }
     }
 
     #[inline(always)]
@@ -590,7 +621,12 @@ impl<'a> ConcurrentNodeView<'a> {
         let zlen = self.zpath_len();
         let offset = skip + n_children;
         let zpath_padded = (zlen + 3) & !3;
-        (self.curr as usize + offset) * 4 + zpath_padded
+        let inline_slot = self.curr as usize + offset + zpath_padded / 4;
+        if self.has_values {
+            self.pool.load_acquire(inline_slot) as usize
+        } else {
+            inline_slot * 4
+        }
     }
 
     fn find_child_slot(&self, ch: u8) -> u32 {
@@ -696,12 +732,6 @@ struct SharedInner {
     /// free per node replacement, and all slots live in the fixed-capacity
     /// pool (deferred closures are the only per-defer heap cost).
     pending_reclaims: AtomicUsize,
-    /// Non-zero once at least one already-final node has been structurally
-    /// replaced (`fork`, `split_zpath`, `add_state_move`), activating
-    /// `valpos_remap` so concurrent `set_value`/`get_value` calls on a
-    /// pre-replacement `valpos` forward to the replacement node's `valpos`.
-    has_final_replacements: AtomicUsize,
-    valpos_remap: std::sync::RwLock<std::collections::HashMap<usize, usize>>,
 }
 
 pub struct ConcurrentCsppTrie {
@@ -719,16 +749,42 @@ unsafe impl Send for ConcurrentCsppTrie {}
 unsafe impl Sync for ConcurrentCsppTrie {}
 
 impl ConcurrentCsppTrie {
+    #[inline(always)]
+    fn node_val_bytes(&self) -> usize {
+        if self.valsize > 0 { ALIGN_SIZE } else { 0 }
+    }
+
+    #[inline(always)]
+    fn node_val_slots(&self) -> usize {
+        usize::from(self.valsize > 0)
+    }
+
     /// Create a new concurrent CSPP trie with pre-allocated capacity.
     ///
     /// `capacity` is the maximum number of PatriciaNode slots (4 bytes each).
     /// For `n` keys of average length `L`, a good estimate is `n * (L + 20)`.
     pub fn with_capacity(valsize: usize, capacity: usize) -> Self {
-        let val_slots = valsize.div_ceil(4);
-        let root_slots = 2 + 256 + val_slots;
-        assert!(capacity >= root_slots, "capacity too small for root node");
+        let val_words = valsize.div_ceil(4);
+        let root_slots = 2 + 256 + usize::from(valsize > 0);
+        assert!(
+            capacity >= 2 + 256 + val_words,
+            "capacity too small for root node"
+        );
 
-        let pool = SharedPool::new(capacity);
+        // When `valsize > 0`, each final key stores a 1-slot immutable pointer
+        // in its node to a permanent `val_words` slot in `pool` that is never
+        // relocated or freed on node splits. Reserve extra capacity so callers
+        // sizing `capacity` for inline values never run short.
+        let pool_cap = if valsize > 0 {
+            if cfg!(miri) {
+                capacity.saturating_add(512 + val_words)
+            } else {
+                capacity.saturating_add(capacity / 2 + 1024 + val_words)
+            }
+        } else {
+            capacity
+        };
+        let pool = SharedPool::new(pool_cap);
 
         // Initialize root (fast node, cnt_type=15) at slot 0
         let root_meta = MetaInfo {
@@ -747,18 +803,24 @@ impl ConcurrentCsppTrie {
         // Slot 1: real_cnt = 0 (BigCount with n_children=0)
         pool.store_relaxed(1, 0);
 
-        // Slots 2..258: children = NIL_STATE (already initialized by SharedPool::new)
+        // Slots 2..258 (+ root value slots): initialize to NIL_STATE
+        for i in 2..(root_slots + val_words) {
+            pool.store_relaxed(i, NIL_STATE);
+        }
+        if valsize > 0 {
+            let root_vp = (root_slots * ALIGN_SIZE) as u32;
+            pool.store_relaxed(2 + 256, root_vp);
+        }
 
         // Mark pool length
-        pool.len.store(root_slots, Ordering::Release);
+        pool.len
+            .store(root_slots + val_words, Ordering::Release);
 
         Self {
             inner: std::sync::Arc::new(SharedInner {
                 pool,
                 freelist: LockFreeFreelist::new(),
                 pending_reclaims: AtomicUsize::new(0),
-                has_final_replacements: AtomicUsize::new(0),
-                valpos_remap: std::sync::RwLock::new(std::collections::HashMap::new()),
             }),
             tls: ThreadLocal::new(),
             n_words: AtomicUsize::new(0),
@@ -802,7 +864,21 @@ impl ConcurrentCsppTrie {
     // ========================================================================
 
     fn node_view(&self, pos: u32) -> ConcurrentNodeView<'_> {
-        ConcurrentNodeView::new(&self.inner.pool, pos)
+        ConcurrentNodeView::new(&self.inner.pool, pos, self.valsize > 0)
+    }
+
+    #[inline]
+    fn alloc_val_pos(&self) -> usize {
+        let slot = self.alloc_node(self.valsize);
+        (slot as usize) * ALIGN_SIZE
+    }
+
+    #[inline]
+    fn free_val_pos(&self, valpos: usize) {
+        if self.valsize > 0 {
+            let slots = self.valsize.div_ceil(4);
+            self.free_to_tla((valpos / ALIGN_SIZE) as u32, slots);
+        }
     }
 
     /// Returns true iff `state` points to a structurally valid, non-lazy-freed
@@ -942,12 +1018,8 @@ impl ConcurrentCsppTrie {
     ///   values require external synchronization or a single-writer-per-key
     ///   discipline.
     ///
-    /// # Staleness hazard
-    ///
-    /// A `valpos` is invalidated by concurrent *structural* modification:
-    /// another thread's insert may replace the node holding this value
-    /// (copying the value bytes as of that instant). Reading through a stale
-    /// `valpos` returns the orphaned copy. Re-`lookup` under contention.
+    /// When `valsize > 0`, `valpos` points to a permanent value slot for the
+    /// key that is preserved across all subsequent node splits and relocations.
     ///
     /// # Panics
     ///
@@ -959,16 +1031,7 @@ impl ConcurrentCsppTrie {
             valpos + size <= self.inner.pool.len() * 4,
             "valpos out of bounds"
         );
-
-        let mut target = valpos;
-        if self.inner.has_final_replacements.load(Ordering::Acquire) != 0
-            && let Ok(remap) = self.inner.valpos_remap.read()
-        {
-            while let Some(&next) = remap.get(&target) {
-                target = next;
-            }
-        }
-        self.read_value_at(target)
+        self.read_value_at(valpos)
     }
 
     #[inline]
@@ -1003,12 +1066,11 @@ impl ConcurrentCsppTrie {
 
     /// Set a value at a byte offset previously returned by `insert`/`lookup`.
     ///
-    /// If the node containing `valpos` was concurrently replaced by a split,
-    /// fork, or child addition after `insert` returned `valpos`, the write is
-    /// forwarded through `valpos_remap` to the live replacement node.
+    /// When `valsize > 0`, `valpos` points to a permanent value slot for the
+    /// key that is preserved across all node splits and relocations.
     ///
     /// For `size_of::<T>() % 4 != 0`, the final partial word is zero-padded;
-    /// the padding lands in the node's slot-alignment padding.
+    /// the padding lands in the slot's alignment padding.
     ///
     /// # Panics
     ///
@@ -1020,20 +1082,7 @@ impl ConcurrentCsppTrie {
             valpos + size <= self.inner.pool.len() * 4,
             "valpos out of bounds"
         );
-
         self.write_value_at(valpos, &val);
-        std::sync::atomic::fence(Ordering::SeqCst);
-
-        if self.inner.has_final_replacements.load(Ordering::SeqCst) != 0
-            && let Ok(remap) = self.inner.valpos_remap.read()
-        {
-            self.write_value_at(valpos, &val);
-            let mut target = valpos;
-            while let Some(&next) = remap.get(&target) {
-                target = next;
-                self.write_value_at(target, &val);
-            }
-        }
     }
 
     #[inline]
@@ -1081,6 +1130,9 @@ impl ConcurrentCsppTrie {
             let head = tla.fast_bins[slots - 1];
             if head != FREE_LIST_NIL {
                 tla.fast_bins[slots - 1] = self.inner.pool.load_relaxed(head as usize);
+                for i in 0..slots {
+                    self.inner.pool.store_relaxed(head as usize + i, NIL_STATE);
+                }
                 return head;
             }
         }
@@ -1278,7 +1330,7 @@ impl ConcurrentCsppTrie {
         }
 
         let zpath_padded = (remaining.len() + 3) & !3;
-        let leaf_size = ALIGN_SIZE + zpath_padded + self.valsize;
+        let leaf_size = ALIGN_SIZE + zpath_padded + self.node_val_bytes();
         let node = self.alloc_node(leaf_size);
         let meta = MetaInfo {
             flags: FLAG_IS_FINAL,
@@ -1296,7 +1348,15 @@ impl ConcurrentCsppTrie {
                 *zpath_dst.add(i) = 0;
             }
         }
-        let valpos = (node as usize + 1) * ALIGN_SIZE + zpath_padded;
+        let valpos = if self.valsize > 0 {
+            let vp = self.alloc_val_pos();
+            self.inner
+                .pool
+                .store_relaxed(node as usize + 1 + zpath_padded / 4, vp as u32);
+            vp
+        } else {
+            (node as usize + 1) * ALIGN_SIZE + zpath_padded
+        };
 
         if head == NIL_STATE {
             head = node;
@@ -1394,7 +1454,7 @@ impl ConcurrentCsppTrie {
             old_children[i] = self.inner.pool.load_acquire(curr as usize + 10 + i);
         }
         let zpath_padded = (zpath_len + 3) & !3;
-        let trailing_len = zpath_padded + if is_final { self.valsize } else { 0 };
+        let trailing_len = zpath_padded + if is_final { self.node_val_bytes() } else { 0 };
         let mut trailing = [0u8; 512];
         debug_assert!(trailing_len.div_ceil(4) * 4 <= trailing.len());
         // Word-atomic copy: the value part of the trailing data is mutable
@@ -1520,7 +1580,7 @@ impl ConcurrentCsppTrie {
         }
 
         let zpath_padded = (zpath_len + 3) & !3;
-        let trailing_len = zpath_padded + if is_final { self.valsize } else { 0 };
+        let trailing_len = zpath_padded + if is_final { self.node_val_bytes() } else { 0 };
         let mut trailing = [0u8; 512];
         debug_assert!(trailing_len.div_ceil(4) * 4 <= trailing.len());
         // Word-atomic copy: the value part of the trailing data is mutable
@@ -1790,7 +1850,7 @@ impl ConcurrentCsppTrie {
         }
 
         let prefix_zpath_padded = (split_pos + 3) & !3;
-        let prefix_size = 2 * ALIGN_SIZE + prefix_zpath_padded + self.valsize;
+        let prefix_size = 2 * ALIGN_SIZE + prefix_zpath_padded + self.node_val_bytes();
         let prefix_node = self.alloc_node(prefix_size);
         let prefix_meta = MetaInfo {
             flags: 1 | FLAG_IS_FINAL,
@@ -1815,7 +1875,16 @@ impl ConcurrentCsppTrie {
                 *zpath_dst.add(i) = 0;
             }
         }
-        let valpos = (prefix_node as usize + 2) * ALIGN_SIZE + prefix_zpath_padded;
+        let valpos = if self.valsize > 0 {
+            let vp = self.alloc_val_pos();
+            self.inner.pool.store_relaxed(
+                prefix_node as usize + 2 + prefix_zpath_padded / 4,
+                vp as u32,
+            );
+            vp
+        } else {
+            (prefix_node as usize + 2) * ALIGN_SIZE + prefix_zpath_padded
+        };
         (prefix_node, valpos, suffix_node)
     }
 
@@ -1891,7 +1960,7 @@ impl ConcurrentCsppTrie {
 
                 let node_size = (skip + n_children) * ALIGN_SIZE
                     + ((zpath_len + 3) & !3)
-                    + if is_final { self.valsize } else { 0 };
+                    + if is_final { self.node_val_bytes() } else { 0 };
 
                 if zpath_len > 0 {
                     let mut zpath_buf = [0u8; 256];
@@ -1934,7 +2003,6 @@ impl ConcurrentCsppTrie {
                             curr_slot,
                             curr,
                             new_parent,
-                            Some(fork_suffix_copy),
                             &snap_buf,
                             &mut backoff,
                         ) {
@@ -1970,10 +2038,10 @@ impl ConcurrentCsppTrie {
                             curr_slot,
                             curr,
                             prefix_node,
-                            Some(split_suffix_copy),
                             &snap_buf,
                             &mut backoff,
                         ) {
+                            self.free_val_pos(valpos);
                             self.free_single_node(split_suffix_copy);
                             self.free_single_node(prefix_node);
                             continue 'retry;
@@ -1985,14 +2053,12 @@ impl ConcurrentCsppTrie {
 
                     if pos == key.len() {
                         if is_final {
-                            let vp = (curr as usize + skip + n_children) * ALIGN_SIZE
-                                + ((zpath_len + 3) & !3);
-                            return (false, vp);
+                            return (false, view.valpos());
                         }
                         // MarkFinalState — always via replacement + publish
                         // protocol; never mutate is_final in place on a live
                         // node (see realloc_node_concurrent).
-                        let new_size = node_size + self.valsize;
+                        let new_size = node_size + self.node_val_bytes();
                         self.snapshot_children(curr, skip, n_children, &mut snap_buf);
                         let new_curr = self.realloc_node_concurrent(curr, node_size, new_size);
                         let mut m = u32_to_meta(self.inner.pool.load_relaxed(new_curr as usize));
@@ -2000,6 +2066,16 @@ impl ConcurrentCsppTrie {
                         self.inner
                             .pool
                             .store_relaxed(new_curr as usize, meta_to_u32(m));
+                        let vp = if self.valsize > 0 {
+                            let vp = self.alloc_val_pos();
+                            let vp_slot =
+                                new_curr as usize + skip + n_children + ((zpath_len + 3) & !3) / 4;
+                            self.inner.pool.store_relaxed(vp_slot, vp as u32);
+                            vp
+                        } else {
+                            (new_curr as usize + skip + n_children) * ALIGN_SIZE
+                                + ((zpath_len + 3) & !3)
+                        };
 
                         if !self.update_curr_ptr(
                             guard,
@@ -2007,15 +2083,13 @@ impl ConcurrentCsppTrie {
                             curr_slot,
                             curr,
                             new_curr,
-                            None,
                             &snap_buf,
                             &mut backoff,
                         ) {
+                            self.free_val_pos(vp);
                             self.free_single_node(new_curr);
                             continue 'retry;
                         }
-                        let vp = (new_curr as usize + skip + n_children) * ALIGN_SIZE
-                            + ((zpath_len + 3) & !3);
                         self.n_words.fetch_add(1, Ordering::Relaxed);
                         self.update_max_word_len(key.len());
                         return (true, vp);
@@ -2023,8 +2097,7 @@ impl ConcurrentCsppTrie {
                 } else {
                     if pos == key.len() {
                         if is_final {
-                            let vp = (curr as usize + skip + n_children) * ALIGN_SIZE;
-                            return (false, vp);
+                            return (false, view.valpos());
                         }
 
                         if cnt_type == 15 {
@@ -2033,8 +2106,7 @@ impl ConcurrentCsppTrie {
                                 let old = self.inner.pool.load_acquire(curr as usize);
                                 let f = (old & 0xFF) as u8;
                                 if f & FLAG_IS_FINAL != 0 {
-                                    let vp = (curr as usize + 2 + 256) * ALIGN_SIZE;
-                                    return (false, vp);
+                                    return (false, view.valpos());
                                 }
                                 if f & FLAG_SET_FINAL != 0 {
                                     std::hint::spin_loop();
@@ -2042,7 +2114,7 @@ impl ConcurrentCsppTrie {
                                 }
                                 let new = old | U32_FLAG_IS_FINAL | U32_FLAG_SET_FINAL;
                                 if self.inner.pool.cas_weak(curr as usize, old, new).is_ok() {
-                                    let vp = (curr as usize + 2 + 256) * ALIGN_SIZE;
+                                    let vp = view.valpos();
                                     self.n_words.fetch_add(1, Ordering::Relaxed);
                                     self.update_max_word_len(key.len());
                                     return (true, vp);
@@ -2053,7 +2125,7 @@ impl ConcurrentCsppTrie {
                         // MarkFinalState for non-fast node — always via
                         // replacement + publish protocol; never mutate
                         // is_final in place on a live node.
-                        let new_size = node_size + self.valsize;
+                        let new_size = node_size + self.node_val_bytes();
                         self.snapshot_children(curr, skip, n_children, &mut snap_buf);
                         let new_curr = self.realloc_node_concurrent(curr, node_size, new_size);
                         let mut m = u32_to_meta(self.inner.pool.load_relaxed(new_curr as usize));
@@ -2061,6 +2133,14 @@ impl ConcurrentCsppTrie {
                         self.inner
                             .pool
                             .store_relaxed(new_curr as usize, meta_to_u32(m));
+                        let vp = if self.valsize > 0 {
+                            let vp = self.alloc_val_pos();
+                            let vp_slot = new_curr as usize + skip + n_children;
+                            self.inner.pool.store_relaxed(vp_slot, vp as u32);
+                            vp
+                        } else {
+                            (new_curr as usize + skip + n_children) * ALIGN_SIZE
+                        };
 
                         if !self.update_curr_ptr(
                             guard,
@@ -2068,14 +2148,13 @@ impl ConcurrentCsppTrie {
                             curr_slot,
                             curr,
                             new_curr,
-                            None,
                             &snap_buf,
                             &mut backoff,
                         ) {
+                            self.free_val_pos(vp);
                             self.free_single_node(new_curr);
                             continue 'retry;
                         }
-                        let vp = (new_curr as usize + skip + n_children) * ALIGN_SIZE;
                         self.n_words.fetch_add(1, Ordering::Relaxed);
                         self.update_max_word_len(key.len());
                         return (true, vp);
@@ -2136,7 +2215,6 @@ impl ConcurrentCsppTrie {
                             curr_slot,
                             curr,
                             new_curr,
-                            Some(new_curr),
                             &snap_buf,
                             &mut backoff,
                         ) {
@@ -2183,7 +2261,6 @@ impl ConcurrentCsppTrie {
         curr_slot: u32,
         curr: u32,
         new_node: u32,
-        value_carrier: Option<u32>,
         children_snapshot: &[u32],
         backoff: &mut Backoff,
     ) -> bool {
@@ -2245,6 +2322,9 @@ impl ConcurrentCsppTrie {
 
         match self.inner.pool.cas_weak(curr_slot as usize, curr, new_node) {
             Ok(_) => {
+                // Unlock parent
+                self.unlock_node(parent);
+
                 // Defer free of old node
                 let old_slot = curr;
                 let old_meta = u32_to_meta(curr_original);
@@ -2258,32 +2338,10 @@ impl ConcurrentCsppTrie {
                 };
                 let old_zlen = old_meta.n_zpath_len as usize;
                 let old_is_final = old_meta.flags & FLAG_IS_FINAL != 0;
-
-                if old_is_final
-                    && self.valsize > 0
-                    && let Some(carrier_slot) = value_carrier
-                {
-                    let old_valpos = (old_slot as usize + old_skip + old_n) * ALIGN_SIZE
-                        + ((old_zlen + 3) & !3);
-                    let new_valpos = self.node_view(carrier_slot).valpos();
-                    self.inner.has_final_replacements.store(1, Ordering::SeqCst);
-                    if let Ok(mut remap) = self.inner.valpos_remap.write() {
-                        let val_words = self.valsize.div_ceil(4);
-                        for w in 0..val_words {
-                            let v = self.inner.pool.load_acquire(old_valpos / 4 + w);
-                            self.inner.pool.store_release(new_valpos / 4 + w, v);
-                        }
-                        remap.insert(old_valpos, new_valpos);
-                    }
-                }
-
-                // Unlock parent after value forwarding is recorded.
-                self.unlock_node(parent);
-
                 let old_node_slots = (old_skip + old_n)
                     + old_zlen.div_ceil(4)
                     + if old_is_final {
-                        self.valsize.div_ceil(4)
+                        self.node_val_slots()
                     } else {
                         0
                     };
@@ -2313,7 +2371,7 @@ impl ConcurrentCsppTrie {
         (skip + n_children)
             + zlen.div_ceil(4)
             + if is_final {
-                self.valsize.div_ceil(4)
+                self.node_val_slots()
             } else {
                 0
             }
@@ -2354,6 +2412,12 @@ impl ConcurrentCsppTrie {
             } else {
                 NIL_STATE
             };
+            if next == NIL_STATE && (meta.flags & FLAG_IS_FINAL) != 0 && self.valsize > 0 {
+                let zlen = meta.n_zpath_len as usize;
+                let vp_slot = curr as usize + 1 + zlen.div_ceil(4);
+                let vp = self.inner.pool.load_relaxed(vp_slot) as usize;
+                self.free_val_pos(vp);
+            }
             self.free_to_tla(curr, slots);
             curr = next;
         }
@@ -2901,6 +2965,41 @@ mod tests {
                     String::from_utf8_lossy(key)
                 );
             }
+        }
+    }
+
+    #[test]
+    fn test_single_thread_200k_random_inserts_with_set_value_no_slot_collision() {
+        // Regression test: 200,000 random keys inserted with `set_value`
+        // (scaled under Miri) verify that permanent value slots do not collide
+        // with recycled node slots across node splits and replacements.
+        const N: usize = if cfg!(miri) { 300 } else { 200_000 };
+        let trie = ConcurrentCsppTrie::with_capacity(4, cap(N * 24));
+        let mut keys = Vec::with_capacity(N);
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        for i in 0..N {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let len = 8 + ((state >> 56) as usize % 9);
+            let mut key = vec![0u8; len];
+            let mut s = state ^ (i as u64);
+            for b in &mut key {
+                s = s.wrapping_mul(2862933555777941757).wrapping_add(3037000493);
+                *b = b'a' + ((s >> 58) as u8 % 16);
+            }
+            let (is_new, vp) = trie.insert(&key);
+            if is_new {
+                let val = (i as u32).wrapping_add(1);
+                trie.set_value(vp, val);
+                keys.push((key, val, vp));
+            }
+        }
+
+        for &(ref key, expected_val, orig_vp) in &keys {
+            let vp = trie.lookup(key).expect("inserted key must be found");
+            assert_eq!(vp, orig_vp, "valpos must remain stable across node splits");
+            assert_eq!(trie.get_value::<u32>(vp), expected_val);
         }
     }
 }
