@@ -2128,5 +2128,33 @@ mod map_prefix_regression_tests {
             res_oob.is_err(),
             "Deserialize must reject DoubleArrayTrie whose child0 | 0xFF >= states.len()"
         );
+
+        // Crafted 256-state JSON #1: root 'a' transitions back to state 0 (self-loop child:
+        // child0 = b'a' = 97, so 97 ^ 97 == 0, and ninfos[0].child = 98 ('a' + 1)).
+        // Previously accepted by validator and caused `trie.keys()` to stack-overflow.
+        let mut self_child_val: serde_json::Value = serde_json::from_str(&valid_json).unwrap();
+        self_child_val["states"][0]["child0"] = serde_json::json!(u32::from(b'a'));
+        self_child_val["ninfos"][0]["child"] = serde_json::json!(u16::from(b'a') + 1);
+        let res_self_child = serde_json::from_value::<DoubleArrayTrie>(self_child_val);
+        assert!(
+            res_self_child.is_err(),
+            "Deserialize must reject DoubleArrayTrie where root's first child points back to root"
+        );
+
+        // Crafted 256-state JSON #2: child 'a' of root has sibling pointing to 'a' itself
+        // (self-sibling cycle: ninfos[child_pos].sibling == 98 ('a' + 1)).
+        // Previously accepted by validator and caused `for_each_child(0, ...)` to loop forever.
+        let mut trie_a = DoubleArrayTrie::new();
+        trie_a.insert(b"a").unwrap();
+        let a_json = serde_json::to_string(&trie_a).unwrap();
+        let mut self_sib_val: serde_json::Value = serde_json::from_str(&a_json).unwrap();
+        let root_base = self_sib_val["states"][0]["child0"].as_u64().unwrap() as usize;
+        let a_pos = root_base ^ (b'a' as usize);
+        self_sib_val["ninfos"][a_pos]["sibling"] = serde_json::json!(u16::from(b'a') + 1);
+        let res_self_sib = serde_json::from_value::<DoubleArrayTrie>(self_sib_val);
+        assert!(
+            res_self_sib.is_err(),
+            "Deserialize must reject DoubleArrayTrie where a state's sibling points to itself"
+        );
     }
 }

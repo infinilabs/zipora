@@ -644,41 +644,99 @@ fn test_unsupported_strategies_reject_insert_and_get_node_id_and_remove() {
 #[test]
 fn test_compressed_sparse_transition_is_constant_time_and_rejects_overflow_slots() {
     use crate::fsa::traits::FiniteStateAutomaton;
-    // Regression test:
-    // 1. Walking 200 keys × 12 steps across a 20,000-key CompressedSparse trie
-    //    must complete in milliseconds (O(1) per step via `NodeView::is_well_formed`),
-    //    not seconds (O(n) whole-trie DFS per step).
-    // 2. State IDs with `slot > CSPP_MAX_SLOT` must be rejected cleanly without wrapping.
-    const N_KEYS: usize = if cfg!(miri) { 100 } else { 20_000 };
-    let mut trie: ZiporaTrie = ZiporaTrie::with_config(ZiporaTrieConfig::sparse_optimized());
-    for i in 0..N_KEYS {
-        let k = format!("key_{:08}", i);
-        trie.insert(k.as_bytes()).unwrap();
+    // 1. Unit-test 24-bit state ID encoding boundary (`CSPP_MAX_SLOT` vs `CSPP_MAX_SLOT + 1`).
+    assert_eq!(
+        ZiporaTrie::<RankSelectInterleaved256>::encode_cspp_state(
+            ZiporaTrie::<RankSelectInterleaved256>::CSPP_MAX_SLOT,
+            0x7F
+        ),
+        Some((ZiporaTrie::<RankSelectInterleaved256>::CSPP_MAX_SLOT << 8) | 0x7F)
+    );
+    assert_eq!(
+        ZiporaTrie::<RankSelectInterleaved256>::encode_cspp_state(
+            ZiporaTrie::<RankSelectInterleaved256>::CSPP_MAX_SLOT + 1,
+            0
+        ),
+        None
+    );
+    assert_eq!(
+        ZiporaTrie::<RankSelectInterleaved256>::encode_cspp_state(100, 256),
+        None
+    );
+
+    // 2. Verify that when the 2^24 slot cap rejects a new key, the key is not inserted
+    //    into the underlying trie (`contains` remains false and `keys().len() == len()`).
+    if !cfg!(miri) {
+        let mut capped: ZiporaTrie = ZiporaTrie::with_config(ZiporaTrieConfig::sparse_optimized());
+        capped.insert(b"existing_key").unwrap();
+        assert_eq!(capped.len(), 1);
+        capped.set_cspp_total_states_for_test(
+            ZiporaTrie::<RankSelectInterleaved256>::CSPP_MAX_SLOT as usize,
+        );
+        // Existing key still succeeds without allocating new slots
+        assert!(capped.insert(b"existing_key").is_ok());
+        // New key that would exceed CSPP_MAX_SLOT is rejected before mutating cspp
+        assert!(capped.insert(b"rejected_new_key").is_err());
+        assert!(
+            !capped.contains(b"rejected_new_key"),
+            "rejected key must not be present in contains()"
+        );
+        assert_eq!(
+            capped.keys().len(),
+            capped.len(),
+            "keys().len() must stay equal to len() after cap rejection"
+        );
     }
 
-    let sample = N_KEYS.min(200);
-    let start = std::time::Instant::now();
-    for i in 0..sample {
-        let k = format!("key_{:08}", i);
-        let mut s = trie.root();
-        for &b in k.as_bytes() {
-            s = trie.transition(s, b).expect("valid transition");
-        }
-        assert!(trie.is_final(s));
-        assert_eq!(trie.lookup_node_id(k.as_bytes()), Some(s));
+    // 3. Verify O(1) transition scaling across trie sizes by walking the last 200
+    //    pseudo-random keys on a 2,000-key trie vs a 20,000-key trie (10x larger).
+    const N_SMALL: usize = if cfg!(miri) { 40 } else { 2_000 };
+    const N_LARGE: usize = if cfg!(miri) { 80 } else { 20_000 };
+    let all_keys = pseudo_random_keys(N_LARGE);
+
+    let mut trie_small: ZiporaTrie = ZiporaTrie::with_config(ZiporaTrieConfig::sparse_optimized());
+    for k in &all_keys[..N_SMALL] {
+        trie_small.insert(k).unwrap();
     }
+    let mut trie_large: ZiporaTrie = ZiporaTrie::with_config(ZiporaTrieConfig::sparse_optimized());
+    for k in &all_keys[..N_LARGE] {
+        trie_large.insert(k).unwrap();
+    }
+
+    let sample = N_SMALL.min(200);
+    let walk_last_sample = |trie: &ZiporaTrie, keys: &[Vec<u8>]| -> std::time::Duration {
+        let mut best = std::time::Duration::MAX;
+        let passes = if cfg!(miri) { 1 } else { 3 };
+        for _ in 0..passes {
+            let t0 = std::time::Instant::now();
+            for k in &keys[keys.len() - sample..] {
+                let mut s = trie.root();
+                for &b in k.as_slice() {
+                    s = trie.transition(s, b).expect("valid transition");
+                }
+                assert!(trie.is_final(s));
+                assert_eq!(trie.lookup_node_id(k), Some(s));
+            }
+            best = best.min(t0.elapsed());
+        }
+        best
+    };
+
+    let t_small = walk_last_sample(&trie_small, &all_keys[..N_SMALL]);
+    let t_large = walk_last_sample(&trie_large, &all_keys[..N_LARGE]);
     if !cfg!(miri) {
+        // Under O(n) whole-trie DFS per step, 20,000 keys takes > 10x longer than 2,000 keys
+        // (~80 ms vs ~8 ms); under O(1) NodeView validation both complete in < 2 ms.
         assert!(
-            start.elapsed() < std::time::Duration::from_millis(50),
-            "200 × 12 CompressedSparse transitions took {:?} (expected < 50ms O(1) steps)",
-            start.elapsed()
+            t_large < t_small * 6 + std::time::Duration::from_millis(5),
+            "CompressedSparse transition scaled super-constant with trie size: 2k={t_small:?}, 20k={t_large:?}"
         );
     }
 
     // Out-of-range state IDs must return false/None
-    assert!(!trie.is_final(u32::MAX));
-    assert_eq!(trie.transition(u32::MAX, b'k'), None);
-    assert!(trie.transitions(u32::MAX).is_empty());
+    assert!(!trie_large.is_final(u32::MAX));
+    assert_eq!(trie_large.transition(u32::MAX, b'k'), None);
+    assert!(trie_large.transitions(u32::MAX).is_empty());
 }
 
 
