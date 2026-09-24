@@ -258,18 +258,43 @@ assertion `left == right` failed: lost set_value write for key "00012-1" across 
 
 ---
 
+### C4.7 / S13-R1..R5 — `CsppTrie` `NodeView` bounds validation on mutated `mempool`, `DoubleArrayTrie` cyclic graph rejection on deserialize, pre-insert `CompressedSparse` slot cap check, and lazy `MemoryChunk` bump zeroing — HIGH
+
+**Finding.**
+1. **`S13-R1` (HIGH, `src/fsa/cspp_trie.rs`)**: `NodeView::new_trusted` in `d5da487` indexed `nodes.get_unchecked(curr as usize)` without checking `curr < nodes.len()` or the node's slot span, while `CsppTrie::mempool` is a `pub` field. Calling `trie.mempool.clear(); trie.lookup(..)` reached `get_unchecked(0)` on an empty slice (UB under Miri), and `trie.mempool.truncate(1); trie.lookup(..)` panicked at `cspp_trie.rs:213`.
+2. **`S13-R2` (MEDIUM, `src/fsa/double_array/trie.rs`)**: `TryFrom<RawDoubleArrayTrie>` validated per-state `child0 | 0xFF < len` and `parent < len`, but did not validate parent-chain acyclicity or `ninfos` child/sibling chains. Crafted 256-state JSONs where `'a'` was root `0`'s own first child (`child0 = 97`, `ninfos[0].child = 98`) caused `trie.keys()` to abort with stack overflow, and where `'a'` was its own sibling (`ninfos[a_pos].sibling = 98`) caused `for_each_child(0, ...)` to loop forever.
+3. **`S13-R3` (LOW, `src/fsa/zipora_trie/trie.rs`)**: `CompressedSparse` `insert` checked `CSPP_MAX_SLOT` after calling `cspp.insert(key)`, leaving the rejected key inside `cspp` (`contains == true`, `keys().len() == len() + 1`).
+4. **`S13-R4` (LOW, `src/memory/five_level_pool.rs`)**: `MemoryChunk::new` used `alloc_zeroed(layout)`, which for a default 2 MiB arena triggered a userspace `memset` in glibc `calloc` (`32–42 µs` vs `2.3 µs` at `362d061`).
+5. **`S13-R5` (LOW, `src/fsa/zipora_trie/tests.rs`)**: `test_compressed_sparse_transition_is_constant_time_and_rejects_overflow_slots` walked the first 200 sequential keys (which the old DFS visited early) and did not directly unit-test `encode_cspp_state` or pre-insert cap rejection.
+
+**Tests.**
+- `cspp_trie::tests::test_cspp_trie_cleared_or_truncated_mempool_lookup_is_safe` in `src/fsa/cspp_trie.rs`
+- `double_array::tests::test_deserialize_rejects_malformed_json_that_violates_proven_bounds` (extended with the two cyclic child/sibling JSON probes) in `src/fsa/double_array/tests.rs`
+- `zipora_trie::tests::test_compressed_sparse_transition_is_constant_time_and_rejects_overflow_slots` (extended with `encode_cspp_state`, pre-insert cap consistency, and 20k vs 2k last-200 random-key scaling ratio) in `src/fsa/zipora_trie/tests.rs`
+
+**Fix.**
+- **`S13-R1`**: Made `NodeView::new_trusted` delegate to `NodeView::new(nodes, curr)` (validating both `curr < nodes.len()` and `curr + skip + n_children + zpath_slots <= nodes.len()` once per node construction), checked `view.is_well_formed()` in `CsppTrie::lookup` and `CsppTrie::insert`, and re-initialized the root in `CsppTrie::insert` if `mempool` was cleared or truncated below 258 slots. Verified under Miri (`0 UB`).
+- **`S13-R2`**: Enhanced `TryFrom<RawDoubleArrayTrie>` to verify `states[0].parent == NIL_STATE`, parent-chain acyclicity to root `0` in O(`len`), strictly increasing `ninfos` sibling chains (`c > prev_c`), `child_pos > 0 && states[child_pos].parent() == idx as u32`, 1-to-1 correspondence between `ninfos` child links and allocated non-root states, free-state `NInfo` emptiness, and `num_keys == term_count`. Also converted `DoubleArrayTrie::walk_keys` / `collect_keys` to iterative stack walks and added `parent == state` + monotonic `c` guards in `for_each_child` and `walk_keys`.
+- **`S13-R3`**: Checked existing-key lookup and conservative slot growth (`cspp.total_states() + 512 + key.len() / 4 + 16 > CSPP_MAX_SLOT + 1`) *before* calling `cspp.insert(key)`, so rejected keys never enter `cspp`.
+- **`S13-R4`**: Changed `MemoryChunk::new` back to `std::alloc::alloc(layout)` (`zeroed_len: 0`) and zeroed only newly carved bump deltas in `MemoryChunk::advance_to(&mut self, new_size)`, guarded by `end <= self.zeroed_len` in `validate_range`.
+- **`S13-R5`**: Updated `test_compressed_sparse_transition_is_constant_time_and_rejects_overflow_slots` to test `encode_cspp_state(CSPP_MAX_SLOT / CSPP_MAX_SLOT + 1)`, pre-insert cap rejection (`!contains` and `keys().len() == len()`), and `t_large (20k) vs t_small (2k)` over the last 200 pseudo-random keys.
+
+**Commit.** `1775fbf`
+
+---
+
 ## Verification Summary
 
 - **Gate (`touch src/lib.rs && make sanity`)**:
   - `cargo clippy --all-targets --all-features -- -D warnings`: **0 warnings**
   - `cargo clippy --no-default-features -- -D unused_variables -D unused_imports`: **0 warnings**
-  - `scripts/unsafe_audit.py`: **28 undocumented** (ceiling `28`, down from `33`; `src/fsa/` = **135/135 = 100.0%**, `src/memory/` = **340/340 = 100.0%**), **6 precondition violations** (ceiling `6`, down from `10`; `src/fsa/` = **0**)
+  - `scripts/unsafe_audit.py`: **28 undocumented** (ceiling `28`, down from `33`; `src/fsa/` = **134/134 = 100.0%**, `src/memory/` = **341/341 = 100.0%**), **6 precondition violations** (ceiling `6`, down from `10`; `src/fsa/` = **0**)
   - `scripts/api_honesty.py`: **102 markers** (ceiling `102`, down from `119`; `src/fsa/` = **0**)
   - `scripts/index_audit.py`: **6 / 6** (`max_in_bounds = 132`)
   - `scripts/unwrap_audit.py`: **0 `.unwrap()` / 141 `.expect()`**
-  - Tests: **2,919 debug lib / 2,936 release lib / 228 doctests / 3,574 all-targets** (+12 new RED-verified regression tests across C4.1–C4.6, 0 removed)
+  - Tests: **2,920 debug lib / 2,937 release lib / 228 doctests / 3,575 all-targets** (+13 new RED-verified regression tests across C4.1–C4.7, 0 removed)
 - **Sanitizers & Flake-Loop Verification**:
-  - `cargo test --release --lib fsa::cspp_trie_concurrent` × **200 runs**: **0 failures / 200 runs**
+  - `cargo +nightly miri test --lib fsa::cspp_trie::tests::test_cspp_trie_cleared_or_truncated_mempool_lookup_is_safe`: **1 / 1 passed** (0 UB)
+  - `make miri_cspp`: **15 / 15 passed** in `45.25s` (`-Zmiri-tree-borrows`, 0 UB, 0 leaks)
   - `make tsan_cspp`: **15 / 15 passed** in `7.33s`
-  - `make miri_cspp`: **15 / 15 passed** in `44.58s` (`-Zmiri-tree-borrows`, 0 UB, 0 leaks)
-  - `cargo +nightly miri test --lib memory::five_level_pool`: **33 / 33 passed** in `220.49s` (all 33 tests in `five_level_pool`, 0 UB, 0 leaks)
+  - `cargo +nightly miri test --lib memory::five_level_pool`: **33 / 33 passed** (0 UB, 0 leaks)
