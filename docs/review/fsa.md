@@ -59,7 +59,7 @@ trie.for_each_child(NIL_STATE, |b, next| visited.push((b, next)));
 
 **Tests.** `double_array::tests::test_for_each_child_and_state_queries_on_oob_and_freed_states` in `src/fsa/double_array/tests.rs`.
 
-**RED (watched on `f16fb6a`).**
+**RED (watched on `362d061`).**
 ```
 thread 'fsa::double_array::tests::test_for_each_child_and_state_queries_on_oob_and_freed_states' panicked at src/fsa/double_array/trie.rs:297:20:
 index out of bounds: the len is 512 but the index is 4294967295
@@ -70,7 +70,7 @@ index out of bounds: the len is 512 but the index is 4294967295
 - Annotated the 4 `debug_assert!` sites in `src/fsa/double_array/trie.rs` with `// PROVEN:` invariant proofs (`max_precondition_violations: 10 -> 6`) and added `// SAFETY:` documentation to `src/fsa/cspp_trie.rs:62–66` and `src/fsa/fast_search.rs:81` (`max_undocumented: 33 -> 28`, `src/fsa/` = **126/126 = 100.0%**).
 - Added `#[cfg(miri)]` scaling (`N = 400`, `ARENA = 8 KiB`) to `test_thread_local_pool_reuses_global_fast_bin_before_carving_new_slabs` (`S11-R1`, verified under Miri in `10.83s`) and removed the unused import at `src/fsa/double_array/tests.rs:9`.
 
-**Commit.** `c0be7dd`
+**Commit.** `f604bcd`
 
 ---
 
@@ -98,7 +98,7 @@ assert!(!trie.transitions(s).is_empty()); // failed: returned []
 - `zipora_trie::tests::test_compressed_sparse_strategy_full_fsa_trie_and_map_relocation`
 - `zipora_trie::tests::test_unsupported_mutating_methods_return_not_supported_error`
 
-**RED (watched on `c0be7dd`).**
+**RED (watched on `f604bcd`).**
 ```
 thread 'fsa::zipora_trie::tests::test_double_array_terminal_state_preserves_child_transitions_and_guards_free_states' panicked:
 terminal prefix state 'app' must still expose child transition 'l' -> 'apple', got []
@@ -110,7 +110,7 @@ terminal prefix state 'app' must still expose child transition 'l' -> 'apple', g
 - Changed `insert_and_get_node_id` and `remove` on `CriticalBit`/`Louds` to return `Err(ZiporaError::NotSupported)`.
 - Removed all 12 honesty markers in `src/fsa/zipora_trie/`.
 
-**Commit.** `396fe3e`
+**Commit.** `7edb8f5`
 
 ---
 
@@ -137,7 +137,7 @@ assert!(pat.contains(b"cat")); // failed: returned false!
 - `strategy_traits::tests::test_patricia_strategy_short_keys_and_compressed_path_splitting` in `src/fsa/strategy_traits.rs`
 - `dawg::tests::test_nested_trie_dawg_incremental_insert_and_oob_state_guards` in `src/fsa/dawg.rs`
 
-**RED (watched on `396fe3e`).**
+**RED (watched on `7edb8f5`).**
 ```
 thread 'fsa::strategy_traits::tests::test_patricia_strategy_short_keys_and_compressed_path_splitting' panicked:
 assertion failed: pat.contains(b"cat")
@@ -150,7 +150,7 @@ assertion failed: !dawg.contains(b"")
 - Fixed `NestedTrieDawg::insert_key` in `src/fsa/dawg.rs` to allocate root state `0` when `self.states.is_empty()` and only increment `self.num_keys` when transitioning a state from non-final to final.
 - Cleared the remaining 5 honesty markers across `src/fsa/` (`strategy_traits.rs`, `simple_implementations.rs`, `version_sync.rs`, `cspp_trie.rs`), bringing `src/fsa/` to **0 honesty markers** (`max_markers: 119 -> 102`).
 
-**Commit.** `9c69e30`
+**Commit.** `bb47a44`
 
 ---
 
@@ -186,7 +186,7 @@ assert_eq!(concurrent_trie.get_value(&key), Some(expected)); // failed: Some(0xF
 - `cspp_trie::tests::test_cspp_node_view_oob_and_freed_state_safety` in `src/fsa/cspp_trie.rs`
 - `cspp_trie_concurrent::tests::test_contended_inserts_with_values_preserved_across_splits` in `src/fsa/cspp_trie_concurrent.rs`
 
-**RED (watched on `9c69e30`).**
+**RED (watched on `bb47a44`).**
 ```
 thread 'fsa::cspp_trie::tests::test_cspp_node_view_oob_and_freed_state_safety' panicked:
 range end index 65539 out of range for slice of length 18
@@ -202,7 +202,7 @@ assertion `left == right` failed: lost set_value write for key "00012-1" across 
 - Added an atomic `valpos_remap: Box<[AtomicU32]>` forwarding table to `ConcurrentCsppTrie`: whenever `copy_val_if_final` relocates a terminal node's value slot from `old_valpos` to `new_valpos`, it records `valpos_remap[old_valpos] = new_valpos` (Release) and re-copies `nodes[old_valpos] -> nodes[new_valpos]` inside `update_curr_ptr` after the parent CAS succeeds; `set_value(valpos, value)` stores to `valpos` and follows any `valpos_remap` chain (`Acquire`/`Release`) so both in-flight and post-split `set_value` writes reach the latest relocated node.
 - Verified with `make tsan_cspp` (0 warnings) and `make miri_cspp` (14/14 passed).
 
-**Commit.** `e38b267`
+**Commit.** `980d88c`
 
 ---
 
@@ -227,7 +227,34 @@ assertion `left == right` failed: lost set_value write for key "00012-1" across 
 - **`F2`**: Upgraded `LockFreeFreeListHead::head` from `AtomicU32` to an ABA-tagged `AtomicU64` packing `(generation: u32) << 32 | (offset: u32)`, incrementing the 32-bit generation counter on every `push` and `pop`.
 - **`F3`**: Added `bump_offset: AtomicUsize` and `next_links: Box<[AtomicU32]>` to `LockFreePool` so fast-bin `pop`, `push`, and bump carving execute via lock-free `AcqRel` CAS loops without ever locking `self.memory`.
 
-**Commit.** `4891aff`
+**Commit.** `80b3fe5`
+
+---
+
+### C4.6 / S12-R1..R9 — `ConcurrentCsppTrie` permanent value slots, `DoubleArrayTrie` `Deserialize` invariant validation, O(1) `ZiporaTrie` `CompressedSparse` `transition`, in-band `CsppTrie` freelist links, and lazy `five_level_pool` freelist blocks — CRITICAL
+
+**Finding.**
+1. **`S12-R1` (CRITICAL, `src/fsa/cspp_trie_concurrent.rs`)**: `valpos_remap` in `980d88c` indexed by byte offset (`old_valpos / 4`) without clearing entries when retired nodes were recycled through `LockFreeFreelist`. Once a retired node's slot range was recycled into a new node's header or child pointers, a later `set_value` chased stale `valpos_remap` edges into the new node's interior (SIGSEGV on 200,000 single-threaded random inserts + `set_value`), and `get_value` chased stale chains across unrelated nodes (causing `test_concurrent_trie_multithreaded` and `test_contended_inserts_with_values_preserved_across_splits` to fail 8–9/60 runs).
+2. **`S12-R2` (HIGH, `src/fsa/double_array/trie.rs`)**: `DoubleArrayTrie` derived `serde::Deserialize` without checking the structural invariants (`states.len() >= 256`, `states.len() == ninfos.len()`, `!states[0].is_free()`, `(child0 | 0xFF) < states.len()`, valid `parent`) relied upon by `// PROVEN:` `get_unchecked` indexing in `state_move`, `contains`, `longest_prefix`, `for_each_child`, and `restore_key`. A 90-byte JSON payload with `child0 = 0x7FFF0000` and 1 state caused `contains(b"a")` to SIGSEGV in safe code.
+3. **`S12-R3` & `S12-R4` (HIGH/MEDIUM, `src/fsa/zipora_trie/trie.rs`)**: `ZiporaTrie::is_valid_cspp_node` ran a recursive whole-trie DFS from root `0` on every `CompressedSparse` `transition`/`transitions`/`is_final` call (turning O(1) transitions into O(n): 668 µs/step at 100k keys), and `(slot << 8) | zprog` state IDs silently wrapped past `2^24` slots (`64 MiB`).
+4. **`S12-R5` (MEDIUM, `src/memory/five_level_pool.rs`)**: `MemoryChunk::new` eagerly ran `write_bytes(0, capacity)` (faulting all pages upfront) and `NoLockingPool` / `MutexBasedPool` eagerly constructed a `capacity / min_step` `Vec<u32>` in a loop (`ThreadLocalPool::new(256 MiB)`: 15 µs → 11 ms).
+5. **`S12-R6` & `S12-R7` (MEDIUM/LOW, `src/fsa/cspp_trie.rs`, `src/fsa/zipora_trie/trie.rs`)**: `CsppTrie` maintained a parallel `free_next: Vec<u32>` equal to `mempool.len()` (+100% memory overhead) and re-ran `NodeView::is_well_formed()` on every accessor; `ZiporaTrie::transition` (`DoubleArray`) ran `is_free_double_array(state)` before `base`/`check` comparison (+65% transition walk latency).
+6. **`S12-R8` & `S12-R9` (LOW, `src/fsa/strategy_traits.rs`)**: Propagate `self.nodes.push(...)?` in `PatriciaAlgorithmStrategy::split_compressed_path` instead of discarding `Result`, and keep `.rs` changes strictly separated from gate/doc commits.
+
+**Tests.**
+- `cspp_trie_concurrent::tests::test_single_thread_200k_random_inserts_with_set_value_no_slot_collision` in `src/fsa/cspp_trie_concurrent.rs`
+- `double_array::tests::test_deserialize_rejects_malformed_json_that_violates_proven_bounds` in `src/fsa/double_array/tests.rs`
+- `zipora_trie::tests::test_compressed_sparse_transition_is_constant_time_and_rejects_overflow_slots` in `src/fsa/zipora_trie/tests.rs`
+
+**Fix.**
+- **`S12-R1`**: Removed `valpos_remap` and `has_final_replacements`. When `valsize > 0`, each final node stores a single 1-slot (`4 B`) immutable `valpos: u32` handle at its trailing value-pointer slot, pointing to a permanently bump-allocated value cell (`val_words` slots) in `SharedPool` that is never recycled when nodes are split or replaced. `copy_val_if_final` copies the 4-byte `valpos` pointer verbatim into the replacement node, and `get_value`/`set_value` read/write `pool.data[valpos / 4]` directly with zero indirection maps and zero slot-reuse collisions.
+- **`S12-R2`**: Added `#[serde(try_from = "RawDoubleArrayTrie")]` and `TryFrom<RawDoubleArrayTrie> for DoubleArrayTrie` validating `states.len() >= 256`, `states.len() == ninfos.len()`, `!states[0].is_free()`, `search_head < len`, and `(child0 | 0xFF) < len` + valid non-free `parent < len` for every allocated state before constructing `DoubleArrayTrie`.
+- **`S12-R3` & `S12-R4`**: Replaced the recursive DFS in `ZiporaTrie::is_valid_cspp_node` with O(1) `cspp.node_view(target_slot).is_well_formed()` (7–17 ns/step across 1k/10k/100k keys), converted `count_cspp_states_and_transitions` and `restore_string_cspp` to iterative stack walks, and added `CSPP_MAX_SLOT = (1 << 24) - 1` + `encode_cspp_state` bounds checks.
+- **`S12-R5`**: Switched `MemoryChunk::new` to `std::alloc::alloc_zeroed(layout)` (OS lazy zero-page mapping, 11.2 µs for 256 MiB), replaced eager `next_links: Vec<u32>` in `NoLockingPool`/`MutexBasedPool` with per-bin `Vec<MemOffset>` stacks (zero upfront allocation in `new()`), and allocated `LockFreePool::next_links` via `alloc_zeroed` with `0 = NULL` encoding.
+- **`S12-R6` & `S12-R7`**: Removed `free_next: Vec<u32>` from `CsppTrie` (storing freelist next links in-band at `mempool[slot + 1].child` for `slots >= 2` while keeping `FREED` marker `0x29` in `mempool[slot].meta`), cached `meta` and `well_formed` once in `NodeView::new` (`NodeView::new_trusted` for internal hot paths), and folded the `DoubleArray` free-state check into the `check_value == state` hit branch (44 ns/key transition walk).
+- **`S12-R9`**: Propagated `self.nodes.push(...)?` in `PatriciaAlgorithmStrategy::split_compressed_path`.
+
+**Commit.** `d5da487`
 
 ---
 
@@ -236,12 +263,13 @@ assertion `left == right` failed: lost set_value write for key "00012-1" across 
 - **Gate (`touch src/lib.rs && make sanity`)**:
   - `cargo clippy --all-targets --all-features -- -D warnings`: **0 warnings**
   - `cargo clippy --no-default-features -- -D unused_variables -D unused_imports`: **0 warnings**
-  - `scripts/unsafe_audit.py`: **28 undocumented** (ceiling `28`, down from `33`; `src/fsa/` = **126/126 = 100.0%**, `src/memory/` = **336/336 = 100.0%**), **6 precondition violations** (ceiling `6`, down from `10`; `src/fsa/` = **0**)
+  - `scripts/unsafe_audit.py`: **28 undocumented** (ceiling `28`, down from `33`; `src/fsa/` = **135/135 = 100.0%**, `src/memory/` = **340/340 = 100.0%**), **6 precondition violations** (ceiling `6`, down from `10`; `src/fsa/` = **0**)
   - `scripts/api_honesty.py`: **102 markers** (ceiling `102`, down from `119`; `src/fsa/` = **0**)
   - `scripts/index_audit.py`: **6 / 6** (`max_in_bounds = 132`)
   - `scripts/unwrap_audit.py`: **0 `.unwrap()` / 141 `.expect()`**
-  - Tests: **2,916 debug lib / 2,933 release lib / 228 doctests / 3,571 all-targets** (+9 new RED-verified regression tests, 0 removed)
-- **Sanitizers**:
-  - `make tsan_cspp`: **9 / 9 passed** (including `test_contended_inserts_with_values_preserved_across_splits` with concurrent writers calling `insert` + `set_value` + `get_value`)
-  - `make miri_cspp`: **14 / 14 passed** (`-Zmiri-tree-borrows`, 0 UB, 0 leaks)
-  - `cargo +nightly miri test --lib memory::five_level_pool`: **31 / 31 passed** in `12.54s` (`S11-R1` bounded `test_thread_local_pool_reuses_global_fast_bin_before_carving_new_slabs` + `F1`–`F3` regression test)
+  - Tests: **2,919 debug lib / 2,936 release lib / 228 doctests / 3,574 all-targets** (+12 new RED-verified regression tests across C4.1–C4.6, 0 removed)
+- **Sanitizers & Flake-Loop Verification**:
+  - `cargo test --release --lib fsa::cspp_trie_concurrent` × **200 runs**: **0 failures / 200 runs**
+  - `make tsan_cspp`: **15 / 15 passed** in `7.33s`
+  - `make miri_cspp`: **15 / 15 passed** in `44.58s` (`-Zmiri-tree-borrows`, 0 UB, 0 leaks)
+  - `cargo +nightly miri test --lib memory::five_level_pool`: **33 / 33 passed** in `220.49s` (all 33 tests in `five_level_pool`, 0 UB, 0 leaks)
