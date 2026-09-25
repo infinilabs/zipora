@@ -170,7 +170,17 @@ impl<'a> NodeView<'a> {
 
     #[inline(always)]
     fn new_trusted(nodes: &'a [PatriciaNode], curr: u32) -> Self {
-        Self::new(nodes, curr)
+        // SAFETY: `CsppTrie::mempool` is `pub(crate)` and always initialized with a
+        // 258+ slot root at slot 0; internal callers (`lookup`, `insert`, `find_child_slot`)
+        // only pass `curr` starting from `INITIAL_STATE` (0) and following live child
+        // transitions constructed by `CsppTrie`.
+        let meta = unsafe { nodes.get_unchecked(curr as usize).meta };
+        Self {
+            nodes,
+            curr,
+            meta,
+            well_formed: true,
+        }
     }
 
     /// Returns true iff `curr` points to a structurally valid, non-freed node
@@ -525,11 +535,11 @@ impl std::fmt::Debug for CsppTrie {
 }
 
 pub struct CsppTrie {
-    pub mempool: Vec<PatriciaNode>,
-    pub n_words: usize,
-    pub n_nodes: usize,
-    pub valsize: usize,
-    pub max_word_len: usize,
+    pub(crate) mempool: Vec<PatriciaNode>,
+    pub(crate) n_words: usize,
+    pub(crate) n_nodes: usize,
+    pub(crate) valsize: usize,
+    pub(crate) max_word_len: usize,
     // Phase C: size-bucketed free list (word 0 holds FREED marker 0x29; word 1 holds next link for slots >= 2)
     fast_bins: Vec<u32>, // fast_bins[slots-1] = head of free list for that slot count
     free_bin1: std::collections::HashMap<u32, u32>, // next link only for rare 1-slot leftover blocks
@@ -663,9 +673,6 @@ impl CsppTrie {
 
         loop {
             let view = self.node_view_trusted(curr);
-            if !view.is_well_formed() {
-                return None;
-            }
             let zlen = view.zpath_len();
 
             if zlen > 0 {
@@ -794,10 +801,12 @@ impl CsppTrie {
 
     /// Defer freeing a node until all readers have finished (EBR).
     /// For `SingleThreadStrict` mode, call `free_node` directly instead.
-    pub fn free_node_deferred_pub(&mut self, slot: u32, byte_size: usize) {
+    #[cfg(test)]
+    pub(crate) fn free_node_deferred_pub(&mut self, slot: u32, byte_size: usize) {
         self.free_node_deferred(slot, byte_size);
     }
 
+    #[cfg(test)]
     fn free_node_deferred(&mut self, slot: u32, byte_size: usize) {
         let slots = byte_size.div_ceil(4) as u32;
         if (slot as usize) < self.mempool.len() {
@@ -1510,16 +1519,6 @@ impl CsppTrie {
     /// Insert a key into the trie.
     /// Returns (is_new_insertion, valpos_byte_offset).
     pub fn insert(&mut self, key: &[u8]) -> (bool, usize) {
-        if self.mempool.len() < 258 || !self.node_view(INITIAL_STATE).is_well_formed() {
-            self.mempool.clear();
-            self.n_words = 0;
-            self.n_nodes = 1;
-            self.fast_bins.fill(FREE_LIST_NIL);
-            self.free_bin1.clear();
-            self.large_list.clear();
-            self.frag_size = 0;
-            self.init_root();
-        }
         let mut curr_slot: u32 = NIL_STATE; // slot containing parent's child pointer to curr
         let mut curr: u32 = INITIAL_STATE;
         let mut pos: usize = 0;
@@ -1528,9 +1527,6 @@ impl CsppTrie {
             // Extract node properties (drop borrow before any mutation)
             let (cnt_type, zpath_len, is_final, skip, n_children) = {
                 let view = self.node_view_trusted(curr);
-                if !view.is_well_formed() {
-                    return (false, 0);
-                }
                 (
                     view.cnt_type(),
                     view.zpath_len(),
@@ -2251,12 +2247,14 @@ mod tests {
         let mut trie = CsppTrie::new(4);
         trie.insert(b"test");
 
-        // Defer freeing a small node (1 slot = 4 bytes)
+        // Defer freeing a 1-slot (4 bytes) and a 2-slot (8 bytes) mid-pool block
         trie.free_node_deferred_pub(10, 4);
+        trie.free_node_deferred_pub(20, 8);
 
         let stat_before = trie.mem_get_stat();
-        assert_eq!(stat_before.lazy_free_cnt, 1);
-        assert_eq!(stat_before.lazy_free_sum, 4);
+        assert_eq!(stat_before.lazy_free_cnt, 2);
+        assert_eq!(stat_before.lazy_free_sum, 12);
+        assert_eq!(stat_before.frag_size, 0);
 
         // Reclaim lazy frees
         trie.reclaim_lazy_frees();
@@ -2264,6 +2262,9 @@ mod tests {
         let stat_after = trie.mem_get_stat();
         assert_eq!(stat_after.lazy_free_cnt, 0);
         assert_eq!(stat_after.lazy_free_sum, 0);
+        assert_eq!(stat_after.frag_size, 12);
+        assert_eq!(stat_after.fastbin[0], 1);
+        assert_eq!(stat_after.fastbin[1], 1);
     }
 
     // ========== Iterator Tests ==========
@@ -2414,20 +2415,96 @@ mod tests {
         trie.insert(b"beta");
         assert!(trie.lookup(b"alpha").is_some());
 
-        // Truncating mempool to 1 word leaves root slot 0 in-bounds for header read
-        // but out-of-bounds for its 256-entry fast child table; lookup must return None
-        // without panicking or reading out of bounds.
-        trie.mempool.truncate(1);
-        assert_eq!(trie.lookup(b"alpha"), None);
-        assert_eq!(trie.lookup(b""), None);
-        assert_eq!(trie.state_move(INITIAL_STATE, b'a'), NIL_STATE);
+        // Public `NodeView::new` on a 1-word truncated slice leaves root slot 0 in-bounds
+        // for the header read but out-of-bounds for its 256-entry fast child table;
+        // accessors must degrade to empty / NIL_STATE without reading out of bounds.
+        let truncated_view = NodeView::new(&trie.mempool[..1], INITIAL_STATE);
+        assert!(!truncated_view.is_well_formed());
+        assert!(truncated_view.zpath_slice().is_empty());
+        assert_eq!(truncated_view.n_children(), 0);
+        assert_eq!(truncated_view.state_move(b'a'), NIL_STATE);
 
-        // Clearing mempool completely leaves len == 0; lookup must return None
+        // Public `NodeView::new` on an empty slice must also return an invalid view
         // without invoking out-of-bounds `get_unchecked(0)`.
-        trie.mempool.clear();
-        assert_eq!(trie.lookup(b"alpha"), None);
-        assert_eq!(trie.lookup(b""), None);
-        assert_eq!(trie.state_move(INITIAL_STATE, b'a'), NIL_STATE);
+        let empty_view = NodeView::new(&[], INITIAL_STATE);
+        assert!(!empty_view.is_well_formed());
+        assert!(empty_view.zpath_slice().is_empty());
+        assert_eq!(empty_view.n_children(), 0);
+        assert_eq!(empty_view.state_move(b'a'), NIL_STATE);
+    }
+
+    #[test]
+    fn test_manual_trie_construction_and_lookup() {
+        let mut trie = CsppTrie::new(4);
+
+        // Node 1: leaf for "a"
+        let node_a_state = trie.mempool.len() as u32;
+        trie.mempool.push(PatriciaNode {
+            meta: MetaInfo {
+                flags: 0x10,
+                n_zpath_len: 0,
+                c_label: [0, 0],
+            },
+        });
+        trie.mempool.push(PatriciaNode {
+            bytes: [10, 0, 0, 0],
+        });
+
+        // Node 2: leaf for "b"
+        let node_b_state = trie.mempool.len() as u32;
+        trie.mempool.push(PatriciaNode {
+            meta: MetaInfo {
+                flags: 0x10,
+                n_zpath_len: 0,
+                c_label: [0, 0],
+            },
+        });
+        trie.mempool.push(PatriciaNode {
+            bytes: [20, 0, 0, 0],
+        });
+
+        // Node 3: leaf for "ccc" (zpath="cc")
+        let node_c_state = trie.mempool.len() as u32;
+        trie.mempool.push(PatriciaNode {
+            meta: MetaInfo {
+                flags: 0x10,
+                n_zpath_len: 2,
+                c_label: [0, 0],
+            },
+        });
+        trie.mempool.push(PatriciaNode {
+            bytes: [b'c', b'c', 0, 0],
+        });
+        trie.mempool.push(PatriciaNode {
+            bytes: [30, 0, 0, 0],
+        });
+
+        trie.mempool[2 + b'a' as usize].child = node_a_state;
+        trie.mempool[2 + b'b' as usize].child = node_b_state;
+        trie.mempool[2 + b'c' as usize].child = node_c_state;
+
+        let pos_a = trie.lookup(b"a").unwrap();
+        assert_eq!(trie.get_value::<u32>(pos_a), 10);
+        let pos_b = trie.lookup(b"b").unwrap();
+        assert_eq!(trie.get_value::<u32>(pos_b), 20);
+        let pos_c = trie.lookup(b"ccc").unwrap();
+        assert_eq!(trie.get_value::<u32>(pos_c), 30);
+        assert!(trie.lookup(b"c").is_none());
+        assert!(trie.lookup(b"cc").is_none());
+        assert!(trie.lookup(b"cccc").is_none());
+        assert!(trie.lookup(b"d").is_none());
+
+        let mut iter = CsppTrieIterator::<u32>::new(&trie);
+        assert!(iter.seek_begin());
+        assert_eq!(iter.word(), b"a");
+        assert_eq!(iter.value(), Some(10));
+        assert!(iter.incr());
+        assert_eq!(iter.word(), b"b");
+        assert_eq!(iter.value(), Some(20));
+        assert!(iter.incr());
+        assert_eq!(iter.word(), b"ccc");
+        assert_eq!(iter.value(), Some(30));
+        assert!(!iter.incr());
     }
 }
 

@@ -29,57 +29,17 @@ fn test_root_node_creation() {
 fn test_manual_trie_construction_and_lookup() {
     let mut trie = CsppTrie::new(4);
 
-    // We will manually construct a trie for keys "a", "b", "ccc"
-    // Root is at slot 0.
+    let (is_new_a, vp_a) = trie.insert(b"a");
+    assert!(is_new_a);
+    trie.set_value::<u32>(vp_a, 10);
 
-    // Node 1: leaf for "a" (valpos = slot 300)
-    // Needs 1 slot [meta] + 1 value slot
-    let node_a_state = trie.mempool.len() as u32;
-    trie.mempool.push(PatriciaNode {
-        meta: MetaInfo {
-            flags: 0x10,
-            n_zpath_len: 0,
-            c_label: [0, 0],
-        },
-    });
-    trie.mempool.push(PatriciaNode {
-        bytes: [10, 0, 0, 0],
-    }); // value = 10
+    let (is_new_b, vp_b) = trie.insert(b"b");
+    assert!(is_new_b);
+    trie.set_value::<u32>(vp_b, 20);
 
-    // Node 2: leaf for "b" (valpos = slot 302)
-    let node_b_state = trie.mempool.len() as u32;
-    trie.mempool.push(PatriciaNode {
-        meta: MetaInfo {
-            flags: 0x10,
-            n_zpath_len: 0,
-            c_label: [0, 0],
-        },
-    });
-    trie.mempool.push(PatriciaNode {
-        bytes: [20, 0, 0, 0],
-    }); // value = 20
-
-    // Node 3: leaf for "ccc" (zpath="cc", valpos = slot 304)
-    // Needs 1 slot [meta] + zpath bytes + value slot
-    let node_c_state = trie.mempool.len() as u32;
-    trie.mempool.push(PatriciaNode {
-        meta: MetaInfo {
-            flags: 0x10,
-            n_zpath_len: 2,
-            c_label: [0, 0],
-        },
-    });
-    trie.mempool.push(PatriciaNode {
-        bytes: [b'c', b'c', 0, 0],
-    }); // zpath padded to 4 bytes
-    trie.mempool.push(PatriciaNode {
-        bytes: [30, 0, 0, 0],
-    }); // value = 30
-
-    // Link from root
-    trie.mempool[2 + b'a' as usize].child = node_a_state;
-    trie.mempool[2 + b'b' as usize].child = node_b_state;
-    trie.mempool[2 + b'c' as usize].child = node_c_state;
+    let (is_new_c, vp_c) = trie.insert(b"ccc");
+    assert!(is_new_c);
+    trie.set_value::<u32>(vp_c, 30);
 
     // Test lookups
     let pos_a = trie.lookup(b"a").unwrap();
@@ -308,11 +268,7 @@ fn test_insert_and_iterate_sorted() {
     for key in &keys {
         let (is_new, valpos) = trie.insert(key);
         assert!(is_new);
-        // Write a value at valpos
-        unsafe {
-            let ptr = trie.mempool.as_mut_ptr() as *mut u8;
-            std::ptr::write_unaligned(ptr.add(valpos) as *mut u32, key.len() as u32);
-        }
+        trie.set_value::<u32>(valpos, key.len() as u32);
     }
     assert_eq!(trie.num_words(), 8);
 
@@ -423,28 +379,20 @@ fn test_free_list_reuse() {
 #[test]
 fn test_lazy_free_and_reclaim() {
     let mut trie = CsppTrie::new(0);
-    // Insert multiple keys so the mempool grows well past the root
+    // Insert multiple keys with shared prefixes so interior nodes are freed and reclaimed
     trie.insert(b"hello");
     trie.insert(b"world");
-    trie.insert(b"test123");
+    trie.insert(b"hello_world");
+    trie.insert(b"world_hello");
     let stat_before = trie.mem_get_stat();
     assert_eq!(stat_before.lazy_free_cnt, 0);
 
-    // Defer-free a slot in the middle of the mempool (not at end, so it won't shrink)
-    let mid_slot = 260u32; // well inside the root area, not at the end
-    trie.free_node_deferred_pub(mid_slot, 8); // 2 slots
-    let stat_deferred = trie.mem_get_stat();
-    assert_eq!(stat_deferred.lazy_free_cnt, 1);
-    assert_eq!(stat_deferred.lazy_free_sum, 8);
-
-    // Reclaim: lazy items move to free list
     trie.reclaim_lazy_frees();
     let stat_reclaimed = trie.mem_get_stat();
     assert_eq!(stat_reclaimed.lazy_free_cnt, 0);
-    // The reclaimed node goes to free list (not at end of mempool)
     assert!(
         stat_reclaimed.frag_size >= 8,
-        "Expected frag_size >= 8 after reclaim, got {}",
+        "Expected frag_size >= 8 after interior splits, got {}",
         stat_reclaimed.frag_size
     );
 }
@@ -473,10 +421,7 @@ fn test_10k_insert_memory_efficiency() {
         let key = format!("key{:05}", i);
         let (is_new, valpos) = trie.insert(key.as_bytes());
         if is_new {
-            unsafe {
-                let ptr = trie.mempool.as_mut_ptr() as *mut u8;
-                std::ptr::write_unaligned(ptr.add(valpos) as *mut u32, i);
-            }
+            trie.set_value::<u32>(valpos, i);
         }
     }
     let stat = trie.mem_get_stat();

@@ -686,6 +686,24 @@ fn test_compressed_sparse_transition_is_constant_time_and_rejects_overflow_slots
             capped.len(),
             "keys().len() must stay equal to len() after cap rejection"
         );
+
+        // Also verify a 100 KB multi-segment key near the cap is rejected before
+        // entering `cspp` (each 254-byte zpath link segment costs 66 slots, > 255/4).
+        let long_key = vec![b'z'; 100_000];
+        let old_underestimate = 512 + long_key.len() / 4 + 16;
+        capped.set_cspp_total_states_for_test(
+            (ZiporaTrie::<RankSelectInterleaved256>::CSPP_MAX_SLOT as usize + 1)
+                - old_underestimate
+                - 1,
+        );
+        assert!(capped.insert(b"existing_key").is_ok());
+        assert!(capped.insert(&long_key).is_err());
+        assert!(
+            !capped.contains(&long_key),
+            "rejected 100 KB key must not be present in contains()"
+        );
+        assert_eq!(capped.len(), 1);
+        assert_eq!(capped.keys().len(), 1);
     }
 
     // 3. Verify O(1) transition scaling across trie sizes by walking the last 200

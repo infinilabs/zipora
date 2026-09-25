@@ -1020,15 +1020,22 @@ where
                 louds, is_link, next_link, label_data, core_data, next_trie, key,
             ),
             TrieStorage::CompressedSparse(cspp) => {
-                if let Some(existing_id) = Self::lookup_node_id_cspp(cspp, key) {
-                    return Ok(existing_id);
-                }
-                let max_new_slots = 512usize
-                    .saturating_add(key.len() / 4)
-                    .saturating_add(16);
+                // Each `MAX_ZPATH` (254-byte) link segment in `new_suffix_chain` consumes
+                // `MAX_ZPATH + 1` bytes and allocates 2 header/child slots + 64 zpath slots
+                // = 66 slots; the final leaf takes at most 1 + 64 + 1 = 66 slots, and any
+                // interior fork/split/bitmap growth allocates at most 398 < 528 slots.
+                const SLOTS_PER_SEGMENT: usize =
+                    2 + crate::fsa::cspp_trie::MAX_ZPATH.div_ceil(4);
+                let segments =
+                    (key.len() / (crate::fsa::cspp_trie::MAX_ZPATH + 1)).saturating_add(1);
+                let max_new_slots =
+                    528usize.saturating_add(segments.saturating_mul(SLOTS_PER_SEGMENT));
                 if cspp.total_states().saturating_add(max_new_slots)
                     > (Self::CSPP_MAX_SLOT as usize) + 1
                 {
+                    if let Some(existing_id) = Self::lookup_node_id_cspp(cspp, key) {
+                        return Ok(existing_id);
+                    }
                     return Err(crate::error::ZiporaError::resource_exhausted(
                         "CompressedSparse ZiporaTrie state space (2^24 slots / 64 MiB) exceeded",
                     ));
