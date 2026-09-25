@@ -15,6 +15,8 @@ pub const INITIAL_STATE: u32 = 0;
 const FREE_LIST_MAX_SLOTS: usize = 128;
 // Sentinel for empty free list bucket
 const FREE_LIST_NIL: u32 = u32::MAX;
+// Flag bit in MetaInfo::flags indicating this final node has a 1-slot value offset into `CsppTrie::values`.
+const HAS_VAL_SLOT: u8 = 0x40;
 
 pub const SKIP_SLOTS: [u32; 16] = [
     1,
@@ -47,7 +49,7 @@ pub union PatriciaNode {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct MetaInfo {
-    pub flags: u8, // n_cnt_type:4 | b_is_final:1 | b_lazy_free:1 | b_set_final:1 | b_lock:1
+    pub flags: u8, // n_cnt_type:4 | b_is_final:1 | b_lazy_free:1 | b_has_val_slot:1 | b_lock:1
     pub n_zpath_len: u8,
     pub c_label: [u8; 2],
 }
@@ -157,7 +159,8 @@ impl<'a> NodeView<'a> {
             _ => return invalid,
         };
         let zpath_slots = ((meta.n_zpath_len as usize) + 3) >> 2;
-        if idx + skip + n_children + zpath_slots > nodes.len() {
+        let val_slots = usize::from((meta.flags & HAS_VAL_SLOT) != 0);
+        if idx + skip + n_children + zpath_slots + val_slots > nodes.len() {
             return invalid;
         }
         Self {
@@ -435,8 +438,14 @@ impl<'a> NodeView<'a> {
         let n_children = self.n_children();
         let zlen = self.zpath_len();
         let offset = skip + n_children;
-        let zpath_padded = (zlen + 3) & !3; // align_up to 4
-        (self.curr as usize + offset) * 4 + zpath_padded
+        let zpath_slots = (zlen + 3) >> 2;
+        let val_slot = self.curr as usize + offset + zpath_slots;
+        if (self.meta.flags & HAS_VAL_SLOT) != 0 && val_slot < self.nodes.len() {
+            // SAFETY: val_slot < self.nodes.len() checked above; PatriciaNode union fields are all 4-byte Copy POD views of the same word.
+            unsafe { self.nodes.get_unchecked(val_slot).child as usize }
+        } else {
+            val_slot * 4
+        }
     }
 
     #[inline(always)]
@@ -536,6 +545,7 @@ impl std::fmt::Debug for CsppTrie {
 
 pub struct CsppTrie {
     pub(crate) mempool: Vec<PatriciaNode>,
+    pub(crate) values: Vec<u8>,
     pub(crate) n_words: usize,
     pub(crate) n_nodes: usize,
     pub(crate) valsize: usize,
@@ -553,6 +563,7 @@ impl CsppTrie {
     pub fn new(valsize: usize) -> Self {
         let mut trie = Self {
             mempool: Vec::new(),
+            values: vec![0u8; valsize],
             n_words: 0,
             n_nodes: 1, // root
             valsize,
@@ -567,10 +578,34 @@ impl CsppTrie {
         trie
     }
 
+    #[inline(always)]
+    fn val_slot_bytes(&self) -> usize {
+        if self.valsize > 0 { ALIGN_SIZE } else { 0 }
+    }
+
+    #[inline(always)]
+    fn final_flags(&self) -> u8 {
+        if self.valsize > 0 {
+            0x10 | HAS_VAL_SLOT
+        } else {
+            0x10
+        }
+    }
+
+    #[inline]
+    fn alloc_valpos(&mut self) -> usize {
+        if self.valsize == 0 {
+            return 0;
+        }
+        let vp = self.values.len();
+        self.values.resize(vp + self.valsize, 0);
+        vp
+    }
+
     fn init_root(&mut self) {
         // Fast node (15) takes 258 slots (meta + real_cnt + 256 children)
-        // plus value size
-        let val_slots = self.valsize.div_ceil(4);
+        // plus 1 value-offset slot when valsize > 0.
+        let val_slots = usize::from(self.valsize > 0);
         let root_slots = 2 + 256 + val_slots;
         self.mempool.resize(root_slots, PatriciaNode::empty());
 
@@ -627,43 +662,75 @@ impl CsppTrie {
         self.n_words
     }
 
-    /// Read a value at `valpos` (byte offset into the node mempool).
+    /// Read a value at `valpos` (byte offset into the value arena returned by
+    /// [`insert`](Self::insert) or [`lookup`](Self::lookup)).
+    ///
+    /// Because values live in a dedicated arena separate from the node
+    /// `mempool`, `valpos` remains valid and stable across all subsequent
+    /// insertions and node splits.
     ///
     /// # Panics
     ///
-    /// Panics if `valpos + size_of::<T>()` exceeds the mempool size (§8.5:
+    /// Panics if `valpos + size_of::<T>()` exceeds the value arena size (§8.5:
     /// `valpos` is caller-provided on this safe public API, so the bound is
     /// enforced at runtime, not just in debug builds).
     #[inline]
     pub fn get_value<T: Copy>(&self, valpos: usize) -> T {
         assert!(
-            valpos.checked_add(std::mem::size_of::<T>()).is_some_and(|end| end <= self.mempool.len() * 4),
+            valpos
+                .checked_add(std::mem::size_of::<T>())
+                .is_some_and(|end| end <= self.values.len()),
             "get_value: valpos out of bounds"
         );
-        // SAFETY: valpos + size_of::<T>() <= mempool byte size validated above,
-        // T is Copy, pointer derived from valid mempool
+        // SAFETY: valpos + size_of::<T>() <= self.values.len() validated above,
+        // T is Copy, pointer derived from valid self.values slice.
         unsafe {
-            let ptr = self.mempool.as_ptr() as *const u8;
-            std::ptr::read_unaligned(ptr.add(valpos) as *const T)
+            let ptr = self.values.as_ptr().add(valpos);
+            std::ptr::read_unaligned(ptr as *const T)
         }
     }
 
-    /// Write a value at `valpos` (byte offset into the node mempool).
+    /// Write a value at `valpos` (byte offset into the value arena returned by
+    /// [`insert`](Self::insert) or [`lookup`](Self::lookup)).
+    ///
+    /// Because values live in a dedicated arena separate from the node
+    /// `mempool`, `set_value` can never overwrite trie node headers or child
+    /// pointers, and `valpos` remains valid across all subsequent insertions.
     ///
     /// # Panics
     ///
-    /// Panics if `valpos + size_of::<T>()` exceeds the mempool size (§8.5).
+    /// Panics if `valpos + size_of::<T>()` exceeds the value arena size (§8.5).
     #[inline]
     pub fn set_value<T: Copy>(&mut self, valpos: usize, val: T) {
         assert!(
-            valpos.checked_add(std::mem::size_of::<T>()).is_some_and(|end| end <= self.mempool.len() * 4),
+            valpos
+                .checked_add(std::mem::size_of::<T>())
+                .is_some_and(|end| end <= self.values.len()),
             "set_value: valpos out of bounds"
         );
-        // SAFETY: valpos + size_of::<T>() <= mempool byte size validated above,
-        // T is Copy, pointer derived from valid mempool
+        // SAFETY: valpos + size_of::<T>() <= self.values.len() validated above,
+        // T is Copy, pointer derived from valid self.values slice.
         unsafe {
-            let ptr = self.mempool.as_mut_ptr() as *mut u8;
-            std::ptr::write_unaligned(ptr.add(valpos) as *mut T, val);
+            let ptr = self.values.as_mut_ptr().add(valpos);
+            std::ptr::write_unaligned(ptr as *mut T, val);
+        }
+    }
+
+    /// Read the value associated with `key`, if present.
+    #[inline]
+    pub fn get_value_by_key<T: Copy>(&self, key: &[u8]) -> Option<T> {
+        let valpos = self.lookup(key)?;
+        Some(self.get_value(valpos))
+    }
+
+    /// Write `val` for an existing `key`. Returns `true` if `key` was found.
+    #[inline]
+    pub fn set_value_by_key<T: Copy>(&mut self, key: &[u8], val: T) -> bool {
+        if let Some(valpos) = self.lookup(key) {
+            self.set_value(valpos, val);
+            true
+        } else {
+            false
         }
     }
 
@@ -939,14 +1006,15 @@ impl CsppTrie {
 
         // Final leaf node: cnt_type=0, is_final=true
         let zpath_padded = (remaining.len() + 3) & !3;
-        let leaf_size = ALIGN_SIZE + zpath_padded + self.valsize;
+        let leaf_size = ALIGN_SIZE + zpath_padded + self.val_slot_bytes();
         let node = self.alloc_node(leaf_size);
-        let valpos;
+        let valpos = self.alloc_valpos();
+        let final_flags = self.final_flags();
         // SAFETY: node from alloc_node is uninitialized, writing valid cnt_type=0 is_final layout
         unsafe {
             let p = self.mempool.as_mut_ptr().add(node as usize);
             (*p).meta = MetaInfo {
-                flags: 0x10, // cnt_type=0, is_final=true
+                flags: final_flags, // cnt_type=0, is_final=true (+ HAS_VAL_SLOT if valsize > 0)
                 n_zpath_len: remaining.len() as u8,
                 c_label: [0, 0],
             };
@@ -955,7 +1023,10 @@ impl CsppTrie {
             for i in remaining.len()..zpath_padded {
                 *zpath_dst.add(i) = 0;
             }
-            valpos = (node as usize + 1) * ALIGN_SIZE + zpath_padded;
+            if self.valsize > 0 {
+                let val_slot = node as usize + 1 + (zpath_padded >> 2);
+                (*self.mempool.as_mut_ptr().add(val_slot)).child = valpos as u32;
+            }
         }
         if head == NIL_STATE {
             head = node;
@@ -1048,7 +1119,7 @@ impl CsppTrie {
             old_children[i] = unsafe { self.mempool[curr as usize + 10 + i].child };
         }
         let zpath_padded = (zpath_len + 3) & !3;
-        let trailing_len = zpath_padded + if is_final { self.valsize } else { 0 };
+        let trailing_len = zpath_padded + if is_final { self.val_slot_bytes() } else { 0 };
         let mut trailing = [0u8; 512];
         if trailing_len > 0 {
             let off = (10 + old_n) * ALIGN_SIZE;
@@ -1168,9 +1239,9 @@ impl CsppTrie {
             children[i] = unsafe { self.mempool[curr as usize + old_skip + i].child };
         }
 
-        // Extract trailing data (zpath + optional value)
+        // Extract trailing data (zpath + optional value-offset slot)
         let zpath_padded = (zpath_len + 3) & !3;
-        let trailing_len = zpath_padded + if is_final { self.valsize } else { 0 };
+        let trailing_len = zpath_padded + if is_final { self.val_slot_bytes() } else { 0 };
         let mut trailing = [0u8; 512];
         if trailing_len > 0 {
             let trailing_start = (old_skip + old_n) * ALIGN_SIZE;
@@ -1415,15 +1486,16 @@ impl CsppTrie {
 
         // Allocate prefix node (cnt_type=1, is_final=true)
         let prefix_zpath_padded = (split_pos + 3) & !3;
-        let prefix_size = 2 * ALIGN_SIZE + prefix_zpath_padded + self.valsize;
+        let prefix_size = 2 * ALIGN_SIZE + prefix_zpath_padded + self.val_slot_bytes();
         let prefix_node = self.alloc_node(prefix_size);
-        let valpos;
+        let valpos = self.alloc_valpos();
+        let final_flags = 1 | self.final_flags();
         // SAFETY: prefix_node from alloc_node is uninitialized, writing valid cnt_type=1 is_final layout
         unsafe {
             let base = self.mempool.as_mut_ptr();
             let p = base.add(prefix_node as usize);
             (*p).meta = MetaInfo {
-                flags: 1 | 0x10, // cnt_type=1, is_final=true
+                flags: final_flags, // cnt_type=1, is_final=true (+ HAS_VAL_SLOT if valsize > 0)
                 n_zpath_len: split_pos as u8,
                 c_label: [split_char, 0],
             };
@@ -1435,7 +1507,10 @@ impl CsppTrie {
             for i in split_pos..prefix_zpath_padded {
                 *zpath_dst.add(i) = 0;
             }
-            valpos = (prefix_node as usize + 2) * ALIGN_SIZE + prefix_zpath_padded;
+            if self.valsize > 0 {
+                let val_slot = prefix_node as usize + 2 + (prefix_zpath_padded >> 2);
+                (*base.add(val_slot)).child = valpos as u32;
+            }
         }
         (prefix_node, valpos)
     }
@@ -1538,7 +1613,7 @@ impl CsppTrie {
 
             let node_size = (skip + n_children) * ALIGN_SIZE
                 + ((zpath_len + 3) & !3)
-                + if is_final { self.valsize } else { 0 };
+                + if is_final { self.val_slot_bytes() } else { 0 };
 
             if zpath_len > 0 {
                 // Copy zpath to stack buffer before any mutation
@@ -1621,19 +1696,23 @@ impl CsppTrie {
                 if pos == key.len() {
                     // Key exhausted at zpath end
                     if is_final {
-                        let vp = (curr as usize + skip + n_children) * ALIGN_SIZE
-                            + ((zpath_len + 3) & !3);
-                        return (false, vp);
+                        return (false, self.node_view_trusted(curr).valpos());
                     }
                     // MarkFinalState
                     let old_size = node_size;
-                    let new_size = old_size + self.valsize;
+                    let new_size = old_size + self.val_slot_bytes();
                     let new_curr = self.realloc_node(curr, old_size, new_size);
-                    // SAFETY: new_curr from realloc_node, setting is_final flag bit
+                    let vp = self.alloc_valpos();
+                    let final_flags = self.final_flags();
+                    // SAFETY: new_curr from realloc_node, setting is_final flag bit and value offset slot
                     unsafe {
-                        (*self.mempool.as_mut_ptr().add(new_curr as usize))
-                            .meta
-                            .flags |= 0x10;
+                        let base = self.mempool.as_mut_ptr();
+                        (*base.add(new_curr as usize)).meta.flags |= final_flags;
+                        if self.valsize > 0 {
+                            let val_slot =
+                                new_curr as usize + skip + n_children + ((zpath_len + 3) >> 2);
+                            (*base.add(val_slot)).child = vp as u32;
+                        }
                     }
                     if curr_slot != NIL_STATE && new_curr != curr {
                         // SAFETY: curr_slot validated as parent's child pointer slot by find_child_slot
@@ -1641,8 +1720,6 @@ impl CsppTrie {
                             (*self.mempool.as_mut_ptr().add(curr_slot as usize)).child = new_curr;
                         }
                     }
-                    let vp = (new_curr as usize + skip + n_children) * ALIGN_SIZE
-                        + ((zpath_len + 3) & !3);
                     self.n_words += 1;
                     if key.len() > self.max_word_len {
                         self.max_word_len = key.len();
@@ -1653,16 +1730,20 @@ impl CsppTrie {
                 // No zpath
                 if pos == key.len() {
                     if is_final {
-                        let vp = (curr as usize + skip + n_children) * ALIGN_SIZE;
-                        return (false, vp);
+                        return (false, self.node_view_trusted(curr).valpos());
                     }
                     if cnt_type == 15 {
-                        // MarkFinalStateOnFastNode: value space already allocated
-                        // SAFETY: curr validated as fast node (cnt_type=15), setting is_final flag bit
+                        // MarkFinalStateOnFastNode: value-offset slot already allocated in init_root
+                        let vp = self.alloc_valpos();
+                        let final_flags = self.final_flags();
+                        // SAFETY: curr validated as fast node (cnt_type=15), setting is_final flag bit and value offset slot
                         unsafe {
-                            (*self.mempool.as_mut_ptr().add(curr as usize)).meta.flags |= 0x10;
+                            let base = self.mempool.as_mut_ptr();
+                            (*base.add(curr as usize)).meta.flags |= final_flags;
+                            if self.valsize > 0 {
+                                (*base.add(curr as usize + 2 + 256)).child = vp as u32;
+                            }
                         }
-                        let vp = (curr as usize + 2 + 256) * ALIGN_SIZE;
                         self.n_words += 1;
                         if key.len() > self.max_word_len {
                             self.max_word_len = key.len();
@@ -1671,13 +1752,18 @@ impl CsppTrie {
                     }
                     // MarkFinalState for non-fast node
                     let old_size = node_size;
-                    let new_size = old_size + self.valsize;
+                    let new_size = old_size + self.val_slot_bytes();
                     let new_curr = self.realloc_node(curr, old_size, new_size);
-                    // SAFETY: new_curr from realloc_node, setting is_final flag bit
+                    let vp = self.alloc_valpos();
+                    let final_flags = self.final_flags();
+                    // SAFETY: new_curr from realloc_node, setting is_final flag bit and value offset slot
                     unsafe {
-                        (*self.mempool.as_mut_ptr().add(new_curr as usize))
-                            .meta
-                            .flags |= 0x10;
+                        let base = self.mempool.as_mut_ptr();
+                        (*base.add(new_curr as usize)).meta.flags |= final_flags;
+                        if self.valsize > 0 {
+                            let val_slot = new_curr as usize + skip + n_children;
+                            (*base.add(val_slot)).child = vp as u32;
+                        }
                     }
                     if curr_slot != NIL_STATE && new_curr != curr {
                         // SAFETY: curr_slot validated as parent's child pointer slot by find_child_slot
@@ -1685,7 +1771,6 @@ impl CsppTrie {
                             (*self.mempool.as_mut_ptr().add(curr_slot as usize)).child = new_curr;
                         }
                     }
-                    let vp = (new_curr as usize + skip + n_children) * ALIGN_SIZE;
                     self.n_words += 1;
                     if key.len() > self.max_word_len {
                         self.max_word_len = key.len();
@@ -2057,6 +2142,10 @@ mod tests {
         trie.set_value(valpos, value);
         let retrieved: u32 = trie.get_value(valpos);
         assert_eq!(retrieved, value);
+        assert_eq!(trie.get_value_by_key::<u32>(key), Some(value));
+        assert!(trie.set_value_by_key::<u32>(key, 0x87654321));
+        assert_eq!(trie.get_value::<u32>(valpos), 0x87654321);
+        assert!(!trie.set_value_by_key::<u32>(b"missing", 1));
     }
 
     #[test]
@@ -2436,38 +2525,37 @@ mod tests {
     #[test]
     fn test_manual_trie_construction_and_lookup() {
         let mut trie = CsppTrie::new(4);
+        trie.values.clear();
 
-        // Node 1: leaf for "a"
+        // Node 1: leaf for "a" (valpos = 0 in trie.values)
         let node_a_state = trie.mempool.len() as u32;
         trie.mempool.push(PatriciaNode {
             meta: MetaInfo {
-                flags: 0x10,
+                flags: 0x10 | HAS_VAL_SLOT,
                 n_zpath_len: 0,
                 c_label: [0, 0],
             },
         });
-        trie.mempool.push(PatriciaNode {
-            bytes: [10, 0, 0, 0],
-        });
+        trie.mempool.push(PatriciaNode { child: 0 });
+        trie.values.extend_from_slice(&10u32.to_le_bytes());
 
-        // Node 2: leaf for "b"
+        // Node 2: leaf for "b" (valpos = 4 in trie.values)
         let node_b_state = trie.mempool.len() as u32;
         trie.mempool.push(PatriciaNode {
             meta: MetaInfo {
-                flags: 0x10,
+                flags: 0x10 | HAS_VAL_SLOT,
                 n_zpath_len: 0,
                 c_label: [0, 0],
             },
         });
-        trie.mempool.push(PatriciaNode {
-            bytes: [20, 0, 0, 0],
-        });
+        trie.mempool.push(PatriciaNode { child: 4 });
+        trie.values.extend_from_slice(&20u32.to_le_bytes());
 
-        // Node 3: leaf for "ccc" (zpath="cc")
+        // Node 3: leaf for "ccc" (zpath="cc", valpos = 8 in trie.values)
         let node_c_state = trie.mempool.len() as u32;
         trie.mempool.push(PatriciaNode {
             meta: MetaInfo {
-                flags: 0x10,
+                flags: 0x10 | HAS_VAL_SLOT,
                 n_zpath_len: 2,
                 c_label: [0, 0],
             },
@@ -2475,9 +2563,8 @@ mod tests {
         trie.mempool.push(PatriciaNode {
             bytes: [b'c', b'c', 0, 0],
         });
-        trie.mempool.push(PatriciaNode {
-            bytes: [30, 0, 0, 0],
-        });
+        trie.mempool.push(PatriciaNode { child: 8 });
+        trie.values.extend_from_slice(&30u32.to_le_bytes());
 
         trie.mempool[2 + b'a' as usize].child = node_a_state;
         trie.mempool[2 + b'b' as usize].child = node_b_state;
@@ -2506,5 +2593,107 @@ mod tests {
         assert_eq!(iter.value(), Some(30));
         assert!(!iter.incr());
     }
+
+    #[test]
+    fn test_set_value_cannot_corrupt_mempool_and_valpos_is_stable_across_splits() {
+        // Probe 1a: Overwrite root's child pointer for 'a' (slot 2 + b'a' = 99,
+        // byte offset 396) via the byte-offset API, then lookup("alpha").
+        // On the parent commit, `set_value` succeeded without panicking and
+        // `lookup(b"alpha")` dereferenced `mempool[0x7FFF_FFF0]` via `get_unchecked`.
+        {
+            let mut t = CsppTrie::new(4);
+            for k in [&b"alpha"[..], b"alpine", b"beta"] {
+                t.insert(k);
+            }
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                t.set_value::<u32>((2 + b'a' as usize) * 4, 0x7FFF_FFF0);
+            }));
+            assert!(t.lookup(b"alpha").is_some());
+        }
+
+        // Probe 1b: Even when byte offset (2 + b'a') * 4 = 396 is in-bounds of
+        // the value arena (after >= 100 inserts), `set_value` writes only to the
+        // separate value arena and never alters root's child pointer in `mempool`.
+        {
+            let mut t = CsppTrie::new(4);
+            for k in [&b"alpha"[..], b"alpine", b"beta"] {
+                t.insert(k);
+            }
+            for i in 0..120u32 {
+                let k = format!("k{i:04}");
+                t.insert(k.as_bytes());
+            }
+            t.set_value::<u32>((2 + b'a' as usize) * 4, 0x7FFF_FFF0);
+            assert!(t.lookup(b"alpha").is_some());
+        }
+
+        // Probe 2a: Attempt to read the 'a' subtree node slot from `(2 + b'a') * 4`
+        // and set its `n_zpath_len` byte to 254 via `set_value`, then look up a
+        // 250-byte key starting with "alpha".
+        // On the parent commit, `get_value`/`set_value` mutated the node header in
+        // `mempool` without panicking, and `lookup` read past the end of `mempool`.
+        {
+            let mut t = CsppTrie::new(4);
+            for k in [&b"alpha"[..], b"beta"] {
+                t.insert(k);
+            }
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let child = t.get_value::<u32>((2 + b'a' as usize) * 4) as usize;
+                let mut w = t.get_value::<u32>(child * 4);
+                w = (w & !0x0000_FF00) | (254 << 8);
+                t.set_value::<u32>(child * 4, w);
+            }));
+            let long_key = b"alphaxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+            assert_eq!(t.lookup(long_key), None);
+            assert!(t.lookup(b"alpha").is_some());
+        }
+
+        // Probe 2b: Even when byte offset 259 * 4 = 1036 is in-bounds of the value arena
+        // (after >= 260 inserts), `set_value(259 * 4, 0x0000_FE10)` only modifies the
+        // value slot at offset 1036 and cannot corrupt any node header in `mempool`.
+        {
+            let mut t = CsppTrie::new(4);
+            t.insert(b"a");
+            for i in 0..270u32 {
+                let k = format!("key_{i:04}");
+                t.insert(k.as_bytes());
+            }
+            t.set_value::<u32>(259 * 4, 0x0000_FE10);
+            assert_eq!(t.lookup(&vec![b'a'; 300]), None);
+            assert!(t.lookup(b"a").is_some());
+        }
+
+        // Probe 3: `valpos` returned by `insert` remains permanently valid across
+        // arbitrary subsequent inserts that split, fork, and relocate trie nodes.
+        let mut trie = CsppTrie::new(4);
+        let count = if cfg!(miri) { 250usize } else { 5_000usize };
+        let mut recorded = Vec::with_capacity(count);
+        let mut rng = 0x9E37_79B9_7F4A_7C15u64;
+        for i in 0..count {
+            let mut key = [0u8; 10];
+            for b in &mut key {
+                rng ^= rng << 13;
+                rng ^= rng >> 7;
+                rng ^= rng << 17;
+                *b = b'a' + (rng as u8 % 8);
+            }
+            let val = (i as u32).wrapping_mul(2654435761);
+            let (_, vp) = trie.insert(&key);
+            trie.set_value(vp, val);
+            recorded.push((key, vp, val));
+        }
+
+        for (key, orig_vp, expected_val) in &recorded {
+            let cur_vp = trie.lookup(key).expect("inserted key must be found");
+            assert_eq!(
+                *orig_vp, cur_vp,
+                "valpos returned by insert must remain stable after subsequent node splits"
+            );
+            assert_eq!(trie.get_value::<u32>(*orig_vp), *expected_val);
+        }
+    }
 }
+
+
+
 
