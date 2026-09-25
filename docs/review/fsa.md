@@ -299,6 +299,22 @@ assertion `left == right` failed: lost set_value write for key "00012-1" across 
 - **`S14-R2` & `S14-R4`**: Narrowed `CsppTrie::mempool`, `n_words`, `n_nodes`, `valsize`, and `max_word_len` from `pub` to `pub(crate)`, restored `NodeView::new_trusted` to read `nodes.get_unchecked(curr as usize).meta` directly on internal walks while keeping `NodeView::new` on public state-ID entry points, removed the redundant `is_well_formed()` checks and root-rebuild guard in `CsppTrie::lookup`/`insert`, and updated `tests/compressed_sparse_trie_tests.rs` to use the public `CsppTrie` API.
 - **`S14-R3`**: Moved the `if let Some(existing_id) = Self::lookup_node_id_cspp(cspp, key)` duplicate check inside the cold `if cspp.total_states().saturating_add(max_new_slots) > (Self::CSPP_MAX_SLOT as usize) + 1` branch.
 
+**Commit.** `2c21480`
+
+---
+
+### S15-R1..R2 — Separate `CsppTrie::values` arena isolating `mempool` from `set_value` and keeping `valpos` stable across node splits — HIGH
+
+**Finding.**
+1. **`S15-R1` (HIGH, `src/fsa/cspp_trie.rs`)**: Making `CsppTrie::mempool` `pub(crate)` in `2c21480` was not sufficient to guarantee `mempool` well-formedness for unchecked `NodeView::new_trusted`, because `CsppTrie::set_value::<T>(valpos, val)` remained a safe public method writing arbitrary bytes at any in-bounds byte offset of `self.mempool`. Overwriting root's child pointer `(2 + b'a') * 4` with `0x7FFF_FFF0` then calling `lookup(b"alpha")` triggered out-of-bounds `get_unchecked` UB in `NodeView::new_trusted`, and overwriting a leaf node's `n_zpath_len` byte to `254` then calling `lookup` on a long key triggered out-of-bounds slice UB in `zpath_slice`.
+2. **`S15-R2` (LOW, `src/fsa/cspp_trie.rs`)**: Because values were stored inline at the end of each final node in `self.mempool`, `valpos` returned by `CsppTrie::insert` became stale whenever a later `insert` split, grew, or relocated that node (`3,732 / 20,000` stale `valpos` handles).
+
+**Tests.**
+- `cspp_trie::tests::test_set_value_cannot_corrupt_mempool_and_valpos_is_stable_across_splits` in `src/fsa/cspp_trie.rs`
+
+**Fix.**
+- **`S15-R1` & `S15-R2`**: Separated user value storage into a dedicated `pub(crate) values: Vec<u8>` arena on `CsppTrie` (matching `ConcurrentCsppTrie`'s permanent value cell design). When `valsize > 0`, each final node in `mempool` sets `HAS_VAL_SLOT` (`0x40`) in `MetaInfo::flags` and stores a 1-slot (`u32`) permanent byte offset into `self.values` at its trailing slot. All node growth, split, and fork paths (`add_state_move`, `add_state_move_bitmap`, `fork`, `split_zpath`, `realloc_node`) copy the 4-byte value offset slot and `HAS_VAL_SLOT` flag to the replacement node, so `valpos` returned by `insert`/`lookup` is permanently valid across subsequent insertions. `CsppTrie::get_value` and `CsppTrie::set_value` read and write `self.values` exclusively (with runtime bounds checks against `self.values.len()`), so `set_value` can never modify a single bit of `self.mempool`, preserving `NodeView::new_trusted` safety and ~81.5 ns lookup performance. Also added key-based helpers `get_value_by_key` and `set_value_by_key`.
+
 ---
 
 ## Verification Summary
@@ -306,13 +322,14 @@ assertion `left == right` failed: lost set_value write for key "00012-1" across 
 - **Gate (`touch src/lib.rs && make sanity`)**:
   - `cargo clippy --all-targets --all-features -- -D warnings`: **0 warnings**
   - `cargo clippy --no-default-features -- -D unused_variables -D unused_imports`: **0 warnings**
-  - `scripts/unsafe_audit.py`: **28 undocumented** (ceiling `28`, down from `33`; `src/fsa/` = **135/135 = 100.0%**, `src/memory/` = **341/341 = 100.0%**), **6 precondition violations** (ceiling `6`, down from `10`; `src/fsa/` = **0**)
+  - `scripts/unsafe_audit.py`: **28 undocumented** (ceiling `28`, down from `33`; `src/fsa/` = **139/139 = 100.0%**, `src/memory/` = **341/341 = 100.0%**), **6 precondition violations** (ceiling `6`, down from `10`; `src/fsa/` = **0**)
   - `scripts/api_honesty.py`: **102 markers** (ceiling `102`, down from `119`; `src/fsa/` = **0**)
   - `scripts/index_audit.py`: **6 / 6** (`max_in_bounds = 132`)
   - `scripts/unwrap_audit.py`: **0 `.unwrap()` / 141 `.expect()`**
-  - Tests: **2,921 debug lib / 2,938 release lib / 228 doctests / 3,576 all-targets** (+14 RED-verified regression/white-box tests across C4.1–C4.7 & S14, 0 removed)
+  - Tests: **2,922 debug lib / 2,939 release lib / 228 doctests / 3,577 all-targets** (+15 RED-verified regression/white-box tests across C4.1–C4.7, S14 & S15, 0 removed)
 - **Sanitizers & Flake-Loop Verification**:
-  - `cargo +nightly miri test --lib fsa::cspp_trie::tests`: **33 / 33 passed** (0 UB)
+  - `cargo +nightly miri test --lib fsa::cspp_trie::tests`: **34 / 34 passed** (0 UB)
   - `make miri_cspp`: **15 / 15 passed** (`-Zmiri-tree-borrows`, 0 UB, 0 leaks)
   - `make tsan_cspp`: **15 / 15 passed**
   - `cargo +nightly miri test --lib memory::five_level_pool`: **33 / 33 passed** (0 UB, 0 leaks)
+
