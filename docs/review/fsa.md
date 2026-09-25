@@ -283,18 +283,36 @@ assertion `left == right` failed: lost set_value write for key "00012-1" across 
 
 ---
 
+### S14-R1..R4 — Multi-segment `MAX_ZPATH` slot upper bound on `CompressedSparse` `insert`, `pub(crate)` `CsppTrie::mempool` with unchecked `NodeView::new_trusted`, and cold-branch duplicate pre-check — MEDIUM
+
+**Finding.**
+1. **`S14-R1` (MEDIUM, `src/fsa/zipora_trie/trie.rs`)**: `CompressedSparse` `insert` estimated `max_new_slots = 512 + (key.len() + 3) / 4 + 16`, which missed the 2-slot header + 2-byte zpath padding per `MAX_ZPATH` (`254`-byte) segment in `CsppTrie::new_suffix_chain`. A key of length `≳ 90 KB` near the `2^24`-slot cap passed the pre-check and allocated more slots than predicted, entering `cspp` before `lookup_node_id_cspp` returned `Err`.
+2. **`S14-R2` & `S14-R4` (MEDIUM/LOW, `src/fsa/cspp_trie.rs`, `tests/compressed_sparse_trie_tests.rs`)**: Routing `NodeView::new_trusted` through `NodeView::new` to defend against external `CsppTrie::mempool` mutation added 16 ns per `CsppTrie::lookup` (`81 ns → 97 ns`). Because `CsppTrie::mempool` is internal representation, making `mempool` (and `n_words`, `n_nodes`, `valsize`, `max_word_len`) `pub(crate)` restores the invariant that internal root-to-leaf walks (`lookup`, `insert`, `find_child_slot`) only visit well-formed in-bounds nodes via `NodeView::new_trusted`, while public state-ID entry points (`node_view`, `state_move`, `is_term`) remain checked via `NodeView::new`. This also makes the corrupted-`mempool` wipe-and-rebuild block and `if !view.is_well_formed()` checks in `CsppTrie::lookup`/`insert` unnecessary.
+3. **`S14-R3` (LOW, `src/fsa/zipora_trie/trie.rs`)**: `CompressedSparse` `insert` ran `lookup_node_id_cspp(cspp, key)` unconditionally before every `cspp.insert(key)`, adding an extra full lookup pass on every normal insertion (`176 ns → 235 ns`).
+
+**Tests.**
+- `zipora_trie::tests::test_compressed_sparse_transition_is_constant_time_and_rejects_overflow_slots` (extended with 100 KB multi-segment key rejection near the `2^24`-slot cap) in `src/fsa/zipora_trie/tests.rs`
+- `cspp_trie::tests::test_cspp_trie_cleared_or_truncated_mempool_lookup_is_safe` and `cspp_trie::tests::test_manual_trie_construction_and_lookup` in `src/fsa/cspp_trie.rs`
+
+**Fix.**
+- **`S14-R1`**: Computed `segments = (key.len() / (MAX_ZPATH + 1)).saturating_add(1)` and `max_new_slots = 528usize.saturating_add(segments.saturating_mul(2 + MAX_ZPATH.div_ceil(4)))` (`66` slots per segment), which is a true upper bound on `CsppTrie::insert` slot growth for any key length.
+- **`S14-R2` & `S14-R4`**: Narrowed `CsppTrie::mempool`, `n_words`, `n_nodes`, `valsize`, and `max_word_len` from `pub` to `pub(crate)`, restored `NodeView::new_trusted` to read `nodes.get_unchecked(curr as usize).meta` directly on internal walks while keeping `NodeView::new` on public state-ID entry points, removed the redundant `is_well_formed()` checks and root-rebuild guard in `CsppTrie::lookup`/`insert`, and updated `tests/compressed_sparse_trie_tests.rs` to use the public `CsppTrie` API.
+- **`S14-R3`**: Moved the `if let Some(existing_id) = Self::lookup_node_id_cspp(cspp, key)` duplicate check inside the cold `if cspp.total_states().saturating_add(max_new_slots) > (Self::CSPP_MAX_SLOT as usize) + 1` branch.
+
+---
+
 ## Verification Summary
 
 - **Gate (`touch src/lib.rs && make sanity`)**:
   - `cargo clippy --all-targets --all-features -- -D warnings`: **0 warnings**
   - `cargo clippy --no-default-features -- -D unused_variables -D unused_imports`: **0 warnings**
-  - `scripts/unsafe_audit.py`: **28 undocumented** (ceiling `28`, down from `33`; `src/fsa/` = **134/134 = 100.0%**, `src/memory/` = **341/341 = 100.0%**), **6 precondition violations** (ceiling `6`, down from `10`; `src/fsa/` = **0**)
+  - `scripts/unsafe_audit.py`: **28 undocumented** (ceiling `28`, down from `33`; `src/fsa/` = **135/135 = 100.0%**, `src/memory/` = **341/341 = 100.0%**), **6 precondition violations** (ceiling `6`, down from `10`; `src/fsa/` = **0**)
   - `scripts/api_honesty.py`: **102 markers** (ceiling `102`, down from `119`; `src/fsa/` = **0**)
   - `scripts/index_audit.py`: **6 / 6** (`max_in_bounds = 132`)
   - `scripts/unwrap_audit.py`: **0 `.unwrap()` / 141 `.expect()`**
-  - Tests: **2,920 debug lib / 2,937 release lib / 228 doctests / 3,575 all-targets** (+13 new RED-verified regression tests across C4.1–C4.7, 0 removed)
+  - Tests: **2,921 debug lib / 2,938 release lib / 228 doctests / 3,576 all-targets** (+14 RED-verified regression/white-box tests across C4.1–C4.7 & S14, 0 removed)
 - **Sanitizers & Flake-Loop Verification**:
-  - `cargo +nightly miri test --lib fsa::cspp_trie::tests::test_cspp_trie_cleared_or_truncated_mempool_lookup_is_safe`: **1 / 1 passed** (0 UB)
-  - `make miri_cspp`: **15 / 15 passed** in `45.25s` (`-Zmiri-tree-borrows`, 0 UB, 0 leaks)
-  - `make tsan_cspp`: **15 / 15 passed** in `7.33s`
+  - `cargo +nightly miri test --lib fsa::cspp_trie::tests`: **33 / 33 passed** (0 UB)
+  - `make miri_cspp`: **15 / 15 passed** (`-Zmiri-tree-borrows`, 0 UB, 0 leaks)
+  - `make tsan_cspp`: **15 / 15 passed**
   - `cargo +nightly miri test --lib memory::five_level_pool`: **33 / 33 passed** (0 UB, 0 leaks)
