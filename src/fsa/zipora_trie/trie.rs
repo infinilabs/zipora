@@ -287,7 +287,7 @@ where
             } => {
                 label_data.capacity() + core_data.capacity() + 1024 // Rank/select overhead
             }
-            TrieStorage::CompressedSparse(cspp) => cspp.total_states() * 4,
+            TrieStorage::CompressedSparse(cspp) => cspp.total_states() * 4 + cspp.values.len(),
         }
     }
 
