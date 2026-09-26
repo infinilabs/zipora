@@ -1841,7 +1841,10 @@ mod tests {
         assert_eq!(opef_const.next_geq(42), Some((0, 42)));
         assert_eq!(cef_const.next_geq(42), Some((0, 42)));
         assert_eq!(hybrid_const.next_geq(42), Some((0, 42)));
-        assert_eq!(HybridPostingList::from_sorted(&vec![42u32; 20]).next_geq(42), Some((0, 42)));
+        assert_eq!(
+            HybridPostingList::from_sorted(&[42u32; 20]).next_geq(42),
+            Some((0, 42))
+        );
 
         // 2. 128-element chunk where local_universe == count (min=0, max=127, count=128)
         //    but has a duplicate (0, 0) and a gap (missing 126): must NOT use ChunkKind::Run.

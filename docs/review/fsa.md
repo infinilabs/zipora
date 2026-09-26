@@ -315,6 +315,26 @@ assertion `left == right` failed: lost set_value write for key "00012-1" across 
 **Fix.**
 - **`S15-R1` & `S15-R2`**: Separated user value storage into a dedicated `pub(crate) values: Vec<u8>` arena on `CsppTrie` (matching `ConcurrentCsppTrie`'s permanent value cell design). When `valsize > 0`, each final node in `mempool` sets `HAS_VAL_SLOT` (`0x40`) in `MetaInfo::flags` and stores a 1-slot (`u32`) permanent byte offset into `self.values` at its trailing slot. All node growth, split, and fork paths (`add_state_move`, `add_state_move_bitmap`, `fork`, `split_zpath`, `realloc_node`) copy the 4-byte value offset slot and `HAS_VAL_SLOT` flag to the replacement node, so `valpos` returned by `insert`/`lookup` is permanently valid across subsequent insertions. `CsppTrie::get_value` and `CsppTrie::set_value` read and write `self.values` exclusively (with runtime bounds checks against `self.values.len()`), so `set_value` can never modify a single bit of `self.mempool`, preserving `NodeView::new_trusted` safety and ~81.5 ns lookup performance. Also added key-based helpers `get_value_by_key` and `set_value_by_key`.
 
+**Commit.** `fa07694`
+
+---
+
+### S16-R1..R3 — `CsppTrie` `valsize` guard on `get_value`/`set_value` and `CompressedSparse` `prefix_search`/`predictive_search` delegation to `CsppTrie` — LOW
+
+**Finding.**
+1. **`S16-R1` (LOW, `src/fsa/cspp_trie.rs`)**: `CsppTrie::get_value` and `set_value` checked `end <= self.values.len()` without verifying `size_of::<T>() <= self.valsize as usize`. When `size_of::<T>() > valsize` (e.g., calling `set_value::<u64>(pos0, ...)` on a trie configured with `valsize = 4`), `set_value` overwrote the adjacent key's value slot in `self.values`.
+2. **`S16-R2` & `S16-R3` (LOW, `src/fsa/zipora_trie/trie.rs`)**: `ZiporaTrie::prefix_search` and `predictive_search` dispatched `CompressedSparse` to the generic trait-method `prefix_search_impl` / `predictive_search_impl`, which iterated all `0..=255` transition bytes per node (`256 * state_move` calls per node) instead of delegating to `CsppTrie::prefix_search` / `CsppTrie::predictive_search` (which iterate only populated child labels and skip compressed `zpath` segments in a single comparison).
+
+**Tests.**
+- `cspp_trie::tests::test_set_value_cannot_corrupt_mempool_and_valpos_is_stable_across_splits` (extended with `set_value::<u64>` / `get_value::<u64>` on a `valsize = 4` trie) in `src/fsa/cspp_trie.rs`
+- `zipora_trie::tests::test_compressed_sparse_prefix_and_predictive_search_delegate_to_cspp` in `src/fsa/zipora_trie/tests.rs`
+
+**Fix.**
+- **`S16-R1`**: Added `if size == 0 || size > self.valsize as usize { return None / false; }` at the top of `CsppTrie::get_value` and `CsppTrie::set_value`.
+- **`S16-R2` & `S16-R3`**: Added `TrieImpl::CompressedSparse(cspp)` arms to `ZiporaTrie::prefix_search` (`Ok(cspp.prefix_search(key))`) and `ZiporaTrie::predictive_search` (`Ok(cspp.predictive_search(prefix))`).
+
+**Commit.** `8f94910`
+
 ---
 
 ## Verification Summary
@@ -322,14 +342,13 @@ assertion `left == right` failed: lost set_value write for key "00012-1" across 
 - **Gate (`touch src/lib.rs && make sanity`)**:
   - `cargo clippy --all-targets --all-features -- -D warnings`: **0 warnings**
   - `cargo clippy --no-default-features -- -D unused_variables -D unused_imports`: **0 warnings**
-  - `scripts/unsafe_audit.py`: **28 undocumented** (ceiling `28`, down from `33`; `src/fsa/` = **139/139 = 100.0%**, `src/memory/` = **341/341 = 100.0%**), **6 precondition violations** (ceiling `6`, down from `10`; `src/fsa/` = **0**)
+  - `scripts/unsafe_audit.py`: **28 undocumented** (ceiling `28`, down from `33`; `src/fsa/` = **131/131 = 100.0%**, `src/memory/` = **338/338 = 100.0%**), **6 precondition violations** (ceiling `6`, down from `10`; `src/fsa/` = **0**)
   - `scripts/api_honesty.py`: **102 markers** (ceiling `102`, down from `119`; `src/fsa/` = **0**)
   - `scripts/index_audit.py`: **6 / 6** (`max_in_bounds = 132`)
   - `scripts/unwrap_audit.py`: **0 `.unwrap()` / 141 `.expect()`**
-  - Tests: **2,922 debug lib / 2,939 release lib / 228 doctests / 3,577 all-targets** (+15 RED-verified regression/white-box tests across C4.1–C4.7, S14 & S15, 0 removed)
+  - Tests: **2,922 debug lib / 2,939 release lib / 228 doctests / 3,577 all-targets** (+16 RED-verified regression/white-box tests across C4.1–C4.7, S14, S15 & S16, 0 removed)
 - **Sanitizers & Flake-Loop Verification**:
   - `cargo +nightly miri test --lib fsa::cspp_trie::tests`: **34 / 34 passed** (0 UB)
   - `make miri_cspp`: **15 / 15 passed** (`-Zmiri-tree-borrows`, 0 UB, 0 leaks)
   - `make tsan_cspp`: **15 / 15 passed**
   - `cargo +nightly miri test --lib memory::five_level_pool`: **33 / 33 passed** (0 UB, 0 leaks)
-
