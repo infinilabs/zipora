@@ -74,6 +74,10 @@ pub struct ClusteredEliasFano {
 impl ClusteredEliasFano {
     /// Build from a sorted slice of u32 values.
     pub fn from_sorted(values: &[u32]) -> Self {
+        assert!(
+            values.windows(2).all(|w| w[0] <= w[1]),
+            "ClusteredEliasFano::from_sorted requires non-decreasing input"
+        );
         if values.is_empty() {
             return Self::empty();
         }
@@ -83,6 +87,10 @@ impl ClusteredEliasFano {
 
     /// Build from sorted u64 values.
     pub fn from_sorted_u64(values: &[u64]) -> Self {
+        assert!(
+            values.windows(2).all(|w| w[0] <= w[1]),
+            "ClusteredEliasFano::from_sorted_u64 requires non-decreasing input"
+        );
         if values.is_empty() {
             return Self::empty();
         }
@@ -124,9 +132,13 @@ impl ClusteredEliasFano {
             let local_universe = (max_val - min_val).saturating_add(1);
             chunk_upper_bounds.push(max_val);
 
+            // Run and Bitmap containers are set-based and cannot preserve
+            // duplicate values; only strictly increasing chunks can use them.
+            let strictly_increasing = (start + 1..end).all(|i| get_val(i) > get_val(i - 1));
+
             // --- Container selection ---------------------------------------
-            // Run: fully contiguous (cheapest, O(1) queries).
-            if local_universe == count as u64 {
+            // Run: fully contiguous and strictly increasing (cheapest, O(1) queries).
+            if strictly_increasing && local_universe == count as u64 {
                 meta.push(CefChunkMeta {
                     kind: ChunkKind::Run,
                     min_value: min_val,
@@ -161,7 +173,10 @@ impl ClusteredEliasFano {
             // bitmap_words is stored as u16 in CefChunkMeta; guard the cast
             // (unreachable via the cost model — bitmap only wins for small,
             // dense universes — but a silent truncation would corrupt reads).
-            if bitmap_total_bits < ef_total_bits && bitmap_words <= u16::MAX as usize {
+            if strictly_increasing
+                && bitmap_total_bits < ef_total_bits
+                && bitmap_words <= u16::MAX as usize
+            {
                 // --- Bitmap container ---
                 let bitmap_offset = all_dense_bits.len();
                 all_dense_bits.resize(bitmap_offset + bitmap_words, 0);
@@ -284,15 +299,22 @@ impl ClusteredEliasFano {
     /// Build an EF `ChunkView` for an EliasFano-kind chunk.
     #[inline]
     fn ef_view(&self, m: &CefChunkMeta) -> ChunkView<'_> {
-        let low_start = m.low_offset as usize;
+        let low_start = (m.low_offset as usize).min(self.all_low_bits.len());
         let low_words = (m.count as u64 * m.low_bit_width as u64).div_ceil(64) as usize;
-        let high_start = m.high_offset as usize;
+        let low_end = low_start
+            .saturating_add(low_words)
+            .saturating_add(1)
+            .min(self.all_low_bits.len());
+        let high_start = (m.high_offset as usize).min(self.all_high_bits.len());
         let high_words = (m.high_len_bits as usize).div_ceil(64);
+        let high_end = high_start
+            .saturating_add(high_words)
+            .min(self.all_high_bits.len());
         ChunkView {
             // +1 padding word is always available (pushed at end of build).
-            low_bits: &self.all_low_bits[low_start..low_start + low_words + 1],
-            high_bits: &self.all_high_bits[high_start..high_start + high_words],
-            low_bit_width: m.low_bit_width as u32,
+            low_bits: &self.all_low_bits[low_start..low_end],
+            high_bits: &self.all_high_bits[high_start..high_end],
+            low_bit_width: (m.low_bit_width as u32).min(64),
             count: m.count as usize,
             min_value: m.min_value,
             high_len_bits: m.high_len_bits as usize,
@@ -302,8 +324,11 @@ impl ClusteredEliasFano {
     /// Bitmap words for a Bitmap-kind chunk.
     #[inline]
     fn bitmap_slice(&self, m: &CefChunkMeta) -> &[u64] {
-        let s = m.bitmap_offset as usize;
-        &self.all_dense_bits[s..s + m.bitmap_words as usize]
+        let s = (m.bitmap_offset as usize).min(self.all_dense_bits.len());
+        let e = s
+            .saturating_add(m.bitmap_words as usize)
+            .min(self.all_dense_bits.len());
+        &self.all_dense_bits[s..e]
     }
 
     /// Get the i-th element (global index).
@@ -313,16 +338,16 @@ impl ClusteredEliasFano {
         }
         let chunk_idx = index / CEF_CHUNK_SIZE;
         let local_idx = index % CEF_CHUNK_SIZE;
-        let m = &self.meta[chunk_idx];
+        let m = self.meta.get(chunk_idx)?;
         match m.kind {
-            ChunkKind::Run => Some(m.min_value + local_idx as u64),
+            ChunkKind::Run => Some(m.min_value.saturating_add(local_idx as u64)),
             ChunkKind::Bitmap => {
                 let pos = bitmap_select1(self.bitmap_slice(m), local_idx);
-                Some(m.min_value + pos as u64)
+                Some(m.min_value.saturating_add(pos as u64))
             }
             ChunkKind::EliasFano => {
                 let view = self.ef_view(m);
-                Some(m.min_value + chunk_get_delta(&view, local_idx))
+                Some(m.min_value.saturating_add(chunk_get_delta(&view, local_idx)))
             }
         }
     }
@@ -333,15 +358,10 @@ impl ClusteredEliasFano {
         if self.len == 0 || target as u128 >= self.universe {
             return None;
         }
-        let chunk_idx = match self.chunk_upper_bounds.binary_search(&target) {
-            Ok(i) => i,
-            Err(i) => {
-                if i >= self.meta.len() {
-                    return None;
-                }
-                i
-            }
-        };
+        let chunk_idx = self.chunk_upper_bounds.partition_point(|&ub| ub < target);
+        if chunk_idx >= self.meta.len() {
+            return None;
+        }
         let global_offset = chunk_idx * CEF_CHUNK_SIZE;
         let m = &self.meta[chunk_idx];
 

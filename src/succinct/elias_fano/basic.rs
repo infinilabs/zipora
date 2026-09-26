@@ -44,6 +44,10 @@ impl EliasFano {
     /// Build from a sorted slice of u32 values. Zero-allocation — processes
     /// u32 values directly without converting to an intermediate `Vec<u64>`.
     pub fn from_sorted(values: &[u32]) -> Self {
+        assert!(
+            values.windows(2).all(|w| w[0] <= w[1]),
+            "EliasFano::from_sorted requires non-decreasing input"
+        );
         if values.is_empty() {
             return Self::from_sorted_u64(&[]);
         }
@@ -54,6 +58,10 @@ impl EliasFano {
 
     /// Build from sorted u64 values.
     pub fn from_sorted_u64(values: &[u64]) -> Self {
+        assert!(
+            values.windows(2).all(|w| w[0] <= w[1]),
+            "EliasFano::from_sorted_u64 requires non-decreasing input"
+        );
         if values.is_empty() {
             return Self {
                 low_bits: Vec::new(),
@@ -311,9 +319,9 @@ impl EliasFano {
             word >>= tz;
 
             // This is a 1-bit — element `idx` at high_pos = bit_pos
-            let high_val = (bit_pos - idx) as u64;
+            let high_val = bit_pos.saturating_sub(idx) as u64;
             let low = self.get_low(idx);
-            let val = (high_val << self.low_bit_width) | low;
+            let val = high_val.wrapping_shl(self.low_bit_width.min(63)) | low;
 
             if val >= target {
                 return Some((idx, val));
@@ -343,17 +351,23 @@ impl EliasFano {
     /// Branchless: always loads 2 words via u128, padding word ensures safety.
     #[inline]
     fn get_low(&self, index: usize) -> u64 {
-        if self.low_bit_width == 0 {
+        if self.low_bit_width == 0 || self.low_bit_width >= 64 {
             return 0;
         }
 
         let bit_pos = index as u64 * self.low_bit_width as u64;
         let word_idx = (bit_pos / 64) as usize;
         let bit_idx = (bit_pos % 64) as u32;
+        let mask = (1u64 << self.low_bit_width) - 1;
+
+        if word_idx + 1 >= self.low_bits.len() {
+            let w0 = self.low_bits.get(word_idx).copied().unwrap_or(0) as u128;
+            return (w0 >> bit_idx) as u64 & mask;
+        }
 
         // Branchless u128 extraction: always reads 2 words (padding word at end
         // ensures word_idx+1 is valid). Compiles to shrd on x86-64.
-        // SAFETY: The `low_bits` array is padded during construction, ensuring `word_idx + 1` is safe.
+        // SAFETY: word_idx + 1 < self.low_bits.len() verified above.
         let (w0, w1) = unsafe {
             (
                 *self.low_bits.get_unchecked(word_idx),
@@ -361,7 +375,7 @@ impl EliasFano {
             )
         };
         let combined = w0 as u128 | ((w1 as u128) << 64);
-        (combined >> bit_idx) as u64 & ((1u64 << self.low_bit_width) - 1)
+        (combined >> bit_idx) as u64 & mask
     }
 
     /// Select1(rank): find position of the rank-th set bit (0-indexed).
@@ -374,19 +388,23 @@ impl EliasFano {
 
         // Jump to sample: select1_samples[k] = word-start of k*S-th 1-bit
         let sample_idx = rank / SELECT1_SAMPLE_RATE;
-        let start_word = if sample_idx < self.select1_samples.len() {
+        let mut start_word = if sample_idx < self.select1_samples.len() {
             self.select1_samples[sample_idx] as usize / 64
         } else {
             0
         };
+        let rank_block = start_word / RANK_SAMPLE_RATE;
+        if start_word > self.high_bits.len() || rank_block >= self.rank_samples.len() {
+            start_word = 0;
+        }
 
         // Use rank_samples to compute exact cumulative ones at start_word
         let rank_block = start_word / RANK_SAMPLE_RATE;
-        let mut cumul = self.rank_samples[rank_block] as usize;
+        let mut cumul = self.rank_samples.get(rank_block).copied().unwrap_or(0) as usize;
         for w in (rank_block * RANK_SAMPLE_RATE)..start_word {
             cumul += self.high_bits[w].count_ones() as usize;
         }
-        let mut remaining = rank - cumul;
+        let mut remaining = rank.saturating_sub(cumul);
 
         // Scan forward from start_word
         for word_idx in start_word..self.high_bits.len() {
@@ -405,16 +423,20 @@ impl EliasFano {
     #[inline]
     fn select0(&self, rank: usize) -> Option<usize> {
         let sample_idx = rank / SELECT0_SAMPLE_RATE;
-        let start_word = if sample_idx < self.select0_samples.len() {
+        let mut start_word = if sample_idx < self.select0_samples.len() {
             self.select0_samples[sample_idx] as usize / 64
         } else {
             0
         };
+        let rank_block = start_word / RANK_SAMPLE_RATE;
+        if start_word > self.high_bits.len() || rank_block >= self.rank_samples.len() {
+            start_word = 0;
+        }
 
         // Compute exact cumulative zeros at start_word using rank_samples
         let rank_block = start_word / RANK_SAMPLE_RATE;
         let cumul_ones = {
-            let mut c = self.rank_samples[rank_block] as usize;
+            let mut c = self.rank_samples.get(rank_block).copied().unwrap_or(0) as usize;
             for w in (rank_block * RANK_SAMPLE_RATE)..start_word {
                 c += self.high_bits[w].count_ones() as usize;
             }
@@ -422,17 +444,17 @@ impl EliasFano {
         };
         // Total bits up to start_word
         let total_bits_before = start_word * 64;
-        let cumul_zeros = total_bits_before - cumul_ones;
-        let mut remaining = rank - cumul_zeros;
+        let cumul_zeros = total_bits_before.saturating_sub(cumul_ones);
+        let mut remaining = rank.saturating_sub(cumul_zeros);
 
         for word_idx in start_word..self.high_bits.len() {
             let word = self.high_bits[word_idx];
             let valid_bits = if (word_idx + 1) * 64 <= self.high_len_bits {
                 64
             } else {
-                self.high_len_bits - word_idx * 64
+                self.high_len_bits.saturating_sub(word_idx * 64).min(64)
             };
-            let actual_zeros = valid_bits - word.count_ones() as usize;
+            let actual_zeros = valid_bits.saturating_sub(word.count_ones() as usize);
 
             if remaining < actual_zeros {
                 let inverted = !word;
@@ -447,15 +469,25 @@ impl EliasFano {
     /// O(1) via cumulative popcount sampling.
     #[inline]
     fn rank1(&self, pos: usize) -> usize {
-        let full_words = pos / 64;
-        let remaining_bits = pos % 64;
+        let full_words = (pos / 64).min(self.high_bits.len());
+        let remaining_bits = if pos / 64 < self.high_bits.len() {
+            pos % 64
+        } else {
+            0
+        };
 
         // Jump to nearest sample
         let sample_idx = full_words / RANK_SAMPLE_RATE;
-        let mut count = self.rank_samples[sample_idx] as usize;
+        let (mut count, scan_start) = if sample_idx < self.rank_samples.len() {
+            (
+                self.rank_samples[sample_idx] as usize,
+                sample_idx * RANK_SAMPLE_RATE,
+            )
+        } else {
+            (0, 0)
+        };
 
         // Scan at most RANK_SAMPLE_RATE words from the sample
-        let scan_start = sample_idx * RANK_SAMPLE_RATE;
         for i in scan_start..full_words {
             count += self.high_bits[i].count_ones() as usize;
         }
@@ -532,16 +564,16 @@ impl<'a> Iterator for EliasFanoIter<'a> {
             }
         }
 
-        let high_val = (self.high_pos - self.pos) as u64;
+        let high_val = self.high_pos.saturating_sub(self.pos) as u64;
         let low = self.ef.get_low(self.pos);
-        let val = (high_val << self.ef.low_bit_width) | low;
+        let val = high_val.wrapping_shl(self.ef.low_bit_width.min(63)) | low;
         self.pos += 1;
         self.high_pos += 1;
         Some(val)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.ef.len - self.pos;
+        let remaining = self.ef.len.saturating_sub(self.pos);
         (remaining, Some(remaining))
     }
 }
@@ -609,9 +641,9 @@ impl<'a> EliasFanoCursor<'a> {
         if self.index >= self.ef.len {
             return None;
         }
-        let high_val = (self.high_pos - self.index) as u64;
+        let high_val = self.high_pos.saturating_sub(self.index) as u64;
         let low = self.ef.get_low(self.index);
-        Some((high_val << self.ef.low_bit_width) | low)
+        Some(high_val.wrapping_shl(self.ef.low_bit_width.min(63)) | low)
     }
 
     /// Current element index.
@@ -686,7 +718,7 @@ impl<'a> EliasFanoCursor<'a> {
             return false;
         }
 
-        let target_high = target >> self.ef.low_bit_width;
+        let target_high = target >> self.ef.low_bit_width.min(63);
 
         // Jump to target bucket via select0
         let bucket_start_pos = if target_high == 0 {
@@ -731,9 +763,9 @@ impl<'a> EliasFanoCursor<'a> {
             word >>= tz;
 
             // This is element `idx` at high_pos = bit_pos
-            let high_val = (bit_pos - idx) as u64;
+            let high_val = bit_pos.saturating_sub(idx) as u64;
             let low = self.ef.get_low(idx);
-            let val = (high_val << self.ef.low_bit_width) | low;
+            let val = high_val.wrapping_shl(self.ef.low_bit_width.min(63)) | low;
 
             if val >= target {
                 // Found it — update cursor state directly
@@ -824,7 +856,7 @@ impl<'a> EliasFanoBatchCursor<'a> {
     #[inline]
     pub fn current(&self) -> Option<u64> {
         if self.buf_pos < self.buf_len {
-            Some(self.buffer[self.buf_pos])
+            self.buffer.get(self.buf_pos).copied()
         } else {
             None
         }
@@ -866,14 +898,14 @@ impl<'a> EliasFanoBatchCursor<'a> {
     /// the low-bit position and pre-loaded words across the batch, advancing
     /// by low_bit_width per element.
     fn refill(&mut self) {
-        let count = (self.ef.len - self.next_elem).min(BATCH_SIZE);
+        let count = self.ef.len.saturating_sub(self.next_elem).min(BATCH_SIZE);
         if count == 0 {
             self.buf_len = 0;
             return;
         }
 
         let start_elem = self.next_elem;
-        let lbw = self.ef.low_bit_width;
+        let lbw = self.ef.low_bit_width.min(63);
 
         // --- High-bit scanning state ---
         let mut bit_pos = self.high_pos;
@@ -923,7 +955,7 @@ impl<'a> EliasFanoBatchCursor<'a> {
             bit_pos += tz;
             word >>= tz;
 
-            let high_val = (bit_pos - idx) as u64;
+            let high_val = bit_pos.saturating_sub(idx) as u64;
 
             // Inline low-bit extraction with incremental tracking
             let low = if lbw == 0 {
@@ -936,7 +968,9 @@ impl<'a> EliasFanoBatchCursor<'a> {
                 val & low_mask
             };
 
-            self.buffer[k] = (high_val << lbw) | low;
+            if let Some(slot) = self.buffer.get_mut(k) {
+                *slot = (high_val << lbw) | low;
+            }
 
             bit_pos += 1;
             word >>= 1;

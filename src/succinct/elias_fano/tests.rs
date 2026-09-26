@@ -1815,4 +1815,91 @@ mod tests {
             PostingEncoding::Clustered
         );
     }
+
+    #[test]
+    fn test_monotone_duplicates_and_next_geq_first_index_all_variants() {
+        // 1. Constant sequence (all duplicates): ClusteredEliasFano and HybridPostingList
+        //    must not collapse duplicates into a 1-bit Bitmap.
+        let const_vals = vec![42u32; 200];
+        let cef_const = ClusteredEliasFano::from_sorted(&const_vals);
+        let pef_const = PartitionedEliasFano::from_sorted(&const_vals);
+        let opef_const = OptimalPartitionedEliasFano::from_sorted(&const_vals);
+        let ef_const = EliasFano::from_sorted(&const_vals);
+        let hybrid_const = HybridPostingList::from_sorted(&const_vals);
+
+        for i in 0..const_vals.len() {
+            assert_eq!(ef_const.get(i), Some(42), "EF const idx {i}");
+            assert_eq!(pef_const.get(i), Some(42), "PEF const idx {i}");
+            assert_eq!(opef_const.get(i), Some(42), "OPEF const idx {i}");
+            assert_eq!(cef_const.get(i), Some(42), "CEF const idx {i}");
+            assert_eq!(hybrid_const.get(i), Some(42), "Hybrid const idx {i}");
+        }
+        // next_geq(42) must return index 0 (the FIRST element >= 42), even when
+        // multiple chunks share upper_bound == 42.
+        assert_eq!(ef_const.next_geq(42), Some((0, 42)));
+        assert_eq!(pef_const.next_geq(42), Some((0, 42)));
+        assert_eq!(opef_const.next_geq(42), Some((0, 42)));
+        assert_eq!(cef_const.next_geq(42), Some((0, 42)));
+        assert_eq!(hybrid_const.next_geq(42), Some((0, 42)));
+        assert_eq!(HybridPostingList::from_sorted(&vec![42u32; 20]).next_geq(42), Some((0, 42)));
+
+        // 2. 128-element chunk where local_universe == count (min=0, max=127, count=128)
+        //    but has a duplicate (0, 0) and a gap (missing 126): must NOT use ChunkKind::Run.
+        let mut fake_run: Vec<u32> = (0..126).collect();
+        fake_run.insert(0, 0); // duplicate 0 -> 127 elements
+        fake_run.push(127); // max=127, count=128, missing 126!
+        assert_eq!(fake_run.len(), 128);
+        let cef_fake = ClusteredEliasFano::from_sorted(&fake_run);
+        let hybrid_fake = HybridPostingList::from_sorted(&fake_run);
+        for (i, &expected) in fake_run.iter().enumerate() {
+            assert_eq!(cef_fake.get(i), Some(expected as u64), "CEF fake_run idx {i}");
+            assert_eq!(hybrid_fake.get(i), Some(expected as u64), "Hybrid fake_run idx {i}");
+        }
+        assert_eq!(cef_fake.next_geq(126), Some((127, 127)));
+        assert_eq!(hybrid_fake.next_geq(126), Some((127, 127)));
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_corrupt_serde_get_and_pef_batch_cursor_no_ub_or_panic() {
+        let vals: Vec<u32> = (0..20).map(|i| i * 5).collect();
+
+        // Corrupt EliasFano: len=100 -> get(50) must not read out-of-bounds low_bits
+        let ef = EliasFano::from_sorted(&vals);
+        let mut v_ef: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&ef).unwrap()).unwrap();
+        v_ef["len"] = serde_json::json!(100);
+        let corrupt_ef: EliasFano = serde_json::from_value(v_ef).unwrap();
+        assert_eq!(corrupt_ef.get(50), None);
+
+        // Corrupt PartitionedEliasFano: len=100, meta[0].count=100
+        let pef = PartitionedEliasFano::from_sorted(&vals);
+        let mut v_pef: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&pef).unwrap()).unwrap();
+        v_pef["len"] = serde_json::json!(100);
+        v_pef["meta"][0]["count"] = serde_json::json!(100);
+        let corrupt_pef: PartitionedEliasFano = serde_json::from_value(v_pef).unwrap();
+        let _ = corrupt_pef.get(50);
+        let mut bc = corrupt_pef.batch_cursor();
+        for i in 1..20 {
+            assert!(bc.advance(), "PEF batch_cursor advance at {i}");
+        }
+        assert!(!bc.advance(), "PEF batch_cursor must stop on corrupt high_bits");
+        assert!(bc.is_exhausted());
+
+        // Corrupt OptimalPartitionedEliasFano: get(50) must not underflow or read OOB
+        let opef = OptimalPartitionedEliasFano::from_sorted(&vals);
+        let mut v_opef: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&opef).unwrap()).unwrap();
+        v_opef["len"] = serde_json::json!(100);
+        v_opef["meta"][0]["count"] = serde_json::json!(100);
+        let corrupt_opef: OptimalPartitionedEliasFano = serde_json::from_value(v_opef).unwrap();
+        let _ = corrupt_opef.get(50);
+    }
+
+    #[test]
+    #[should_panic(expected = "non-decreasing")]
+    fn test_unsorted_input_panics_cleanly() {
+        let _ = EliasFano::from_sorted(&[10, 5, 20]);
+    }
 }

@@ -47,9 +47,10 @@ pub(crate) struct ChunkView<'a> {
 #[inline]
 pub(crate) fn chunk_get_delta(chunk: &ChunkView<'_>, local_idx: usize) -> u64 {
     let high_pos = chunk_select1(chunk, local_idx);
-    let high_val = (high_pos - local_idx) as u64;
+    let high_val = high_pos.saturating_sub(local_idx) as u64;
     let low = chunk_get_low(chunk, local_idx);
-    (high_val << chunk.low_bit_width) | low
+    let shift = chunk.low_bit_width.min(63);
+    high_val.wrapping_shl(shift) | low
 }
 
 /// Select1 on a chunk's high_bits — find position of the k-th set bit.
@@ -71,14 +72,20 @@ pub(crate) fn chunk_select1(chunk: &ChunkView<'_>, rank: usize) -> usize {
 /// Branchless: always loads 2 words via u128, ChunkView slice includes +1 padding.
 #[inline]
 pub(crate) fn chunk_get_low(chunk: &ChunkView<'_>, index: usize) -> u64 {
-    if chunk.low_bit_width == 0 {
+    if chunk.low_bit_width == 0 || chunk.low_bit_width >= 64 {
         return 0;
     }
     let bit_pos = index as u64 * chunk.low_bit_width as u64;
     let word_idx = (bit_pos / 64) as usize;
     let bit_idx = (bit_pos % 64) as u32;
+    let mask = (1u64 << chunk.low_bit_width) - 1;
 
-    // SAFETY: The `low_bits` array is padded during construction, ensuring `word_idx + 1` is safe.
+    if word_idx + 1 >= chunk.low_bits.len() {
+        let w0 = chunk.low_bits.get(word_idx).copied().unwrap_or(0) as u128;
+        return (w0 >> bit_idx) as u64 & mask;
+    }
+
+    // SAFETY: word_idx + 1 < chunk.low_bits.len() verified above.
     let (w0, w1) = unsafe {
         (
             *chunk.low_bits.get_unchecked(word_idx),
@@ -86,7 +93,7 @@ pub(crate) fn chunk_get_low(chunk: &ChunkView<'_>, index: usize) -> u64 {
         )
     };
     let combined = w0 as u128 | ((w1 as u128) << 64);
-    (combined >> bit_idx) as u64 & ((1u64 << chunk.low_bit_width) - 1)
+    (combined >> bit_idx) as u64 & mask
 }
 
 /// Skip forward in a chunk's high_bits to where high_val >= target_high.
@@ -213,9 +220,9 @@ pub(crate) fn chunk_scan_geq(
         bit_pos += tz;
         word >>= tz;
 
-        let high_val = (bit_pos - idx) as u64;
+        let high_val = bit_pos.saturating_sub(idx) as u64;
         let low = chunk_get_low(chunk, idx);
-        let delta = (high_val << chunk.low_bit_width) | low;
+        let delta = high_val.wrapping_shl(chunk.low_bit_width.min(63)) | low;
 
         if delta >= target_delta {
             return Some((idx, delta, bit_pos));

@@ -50,6 +50,10 @@ pub enum HybridPostingList {
 impl HybridPostingList {
     /// Build from a sorted slice, automatically selecting the best encoding.
     pub fn from_sorted(values: &[u32]) -> Self {
+        assert!(
+            values.windows(2).all(|w| w[0] <= w[1]),
+            "HybridPostingList::from_sorted requires non-decreasing input"
+        );
         let n = values.len();
         if n <= DENSE_THRESHOLD {
             Self::Dense(values.to_vec())
@@ -66,6 +70,10 @@ impl HybridPostingList {
 
     /// Build from sorted u64 values.
     pub fn from_sorted_u64(values: &[u64]) -> Self {
+        assert!(
+            values.windows(2).all(|w| w[0] <= w[1]),
+            "HybridPostingList::from_sorted_u64 requires non-decreasing input"
+        );
         let n = values.len();
         if n == 0 {
             return Self::Dense(Vec::new());
@@ -87,6 +95,10 @@ impl HybridPostingList {
 
     /// Force a specific encoding regardless of list size.
     pub fn with_encoding(values: &[u32], encoding: PostingEncoding) -> Self {
+        assert!(
+            values.windows(2).all(|w| w[0] <= w[1]),
+            "HybridPostingList::with_encoding requires non-decreasing input"
+        );
         match encoding {
             PostingEncoding::Dense => Self::Dense(values.to_vec()),
             PostingEncoding::EliasFano => Self::EliasFano(EliasFano::from_sorted(values)),
@@ -158,16 +170,11 @@ impl HybridPostingList {
                 if target > u32::MAX as u64 {
                     return None;
                 }
-                // Binary search on sorted array
-                match v.binary_search(&(target as u32)) {
-                    Ok(i) => Some((i, v[i] as u64)),
-                    Err(i) => {
-                        if i < v.len() {
-                            Some((i, v[i] as u64))
-                        } else {
-                            None
-                        }
-                    }
+                let i = v.partition_point(|&x| (x as u64) < target);
+                if i < v.len() {
+                    Some((i, v[i] as u64))
+                } else {
+                    None
                 }
             }
 
