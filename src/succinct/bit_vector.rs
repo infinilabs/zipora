@@ -174,7 +174,7 @@ impl BitVector {
     pub fn from_blocks(mut blocks: Vec<u64>, total_bits: usize) -> Self {
         let num_blocks = blocks.len();
         let required_blocks = total_bits.div_ceil(BITS_PER_BLOCK);
-        debug_assert!(
+        assert!(
             num_blocks >= required_blocks,
             "blocks.len()={num_blocks} insufficient for {total_bits} bits"
         );
@@ -182,6 +182,16 @@ impl BitVector {
         // blocks() exposes exactly ceil(total_bits/64) words. The pre-zeroed
         // contract still covers bit content; this covers slice length.
         blocks.truncate(required_blocks);
+        if total_bits > 0 {
+            let bits_in_last_block = total_bits % BITS_PER_BLOCK;
+            if bits_in_last_block > 0 {
+                let mask = (1u64 << bits_in_last_block) - 1;
+                let last_idx = required_blocks - 1;
+                if (blocks[last_idx] & !mask) != 0 {
+                    blocks[last_idx] &= mask;
+                }
+            }
+        }
         Self {
             blocks: FastVec::from_vec(blocks),
             len: total_bits,
@@ -760,7 +770,8 @@ impl BitVector {
         let mut cumul = 0usize;
         let mut current_word = 0usize;
 
-        for &pos in positions {
+        for &raw_pos in positions {
+            let pos = raw_pos.min(self.len);
             let target_word = pos / 64;
             let remaining_bits = pos % 64;
 
@@ -863,9 +874,15 @@ impl BitVector {
                 "Invalid range for bulk operation".to_string(),
             ));
         }
+        if start == end {
+            return Ok(());
+        }
 
         if is_x86_feature_detected!("avx2") {
-            self.bulk_bitwise_op_simd_avx2(other, op, start, end)?;
+            // SAFETY: AVX2 availability verified above via is_x86_feature_detected!("avx2").
+            unsafe {
+                self.bulk_bitwise_op_simd_avx2(other, op, start, end)?;
+            }
         } else {
             // Fallback to scalar operations
             for i in start..end {
@@ -884,15 +901,21 @@ impl BitVector {
     }
 
     #[cfg(all(target_arch = "x86_64", feature = "simd"))]
-    fn bulk_bitwise_op_simd_avx2(
+    #[target_feature(enable = "avx2")]
+    unsafe fn bulk_bitwise_op_simd_avx2(
         &mut self,
         other: &BitVector,
         op: BitwiseOp,
         start: usize,
         end: usize,
     ) -> Result<()> {
+        if start == end {
+            return Ok(());
+        }
         let start_block = start / BITS_PER_BLOCK;
         let end_block = (end - 1) / BITS_PER_BLOCK;
+        let orig_start = self.blocks[start_block];
+        let orig_end = self.blocks[end_block];
 
         // Process blocks using AVX2 (4 u64s at a time)
         let avx2_blocks = 4;
@@ -934,6 +957,31 @@ impl BitVector {
                 BitwiseOp::Xor => self.blocks[block_idx] ^= other.blocks[block_idx],
             }
             block_idx += 1;
+        }
+
+        // Restore bits outside [start, end) in the boundary blocks (also preserves
+        // the trailing-zero invariant past self.len when end == self.len).
+        let start_bit = start % BITS_PER_BLOCK;
+        let end_bit = end - end_block * BITS_PER_BLOCK;
+        if start_block == end_block {
+            let range_mask = if end_bit >= BITS_PER_BLOCK {
+                !((1u64 << start_bit) - 1)
+            } else {
+                ((1u64 << end_bit) - 1) & !((1u64 << start_bit) - 1)
+            };
+            self.blocks[start_block] =
+                (self.blocks[start_block] & range_mask) | (orig_start & !range_mask);
+        } else {
+            if start_bit > 0 {
+                let low_mask = (1u64 << start_bit) - 1;
+                self.blocks[start_block] =
+                    (self.blocks[start_block] & !low_mask) | (orig_start & low_mask);
+            }
+            if end_bit < BITS_PER_BLOCK {
+                let high_mask = !((1u64 << end_bit) - 1);
+                self.blocks[end_block] =
+                    (self.blocks[end_block] & !high_mask) | (orig_end & high_mask);
+            }
         }
 
         Ok(())
@@ -1887,5 +1935,80 @@ mod tests {
                 ratio
             );
         }
+    }
+
+    #[test]
+    fn test_bulk_bitwise_op_simd_and_from_blocks_invariants() {
+        // 1. Empty range [0, 0) must not underflow (end - 1) in AVX2 path.
+        let mut bv_empty_op = BitVector::with_size(128, true).unwrap();
+        let other_zero = BitVector::with_size(128, false).unwrap();
+        bv_empty_op
+            .bulk_bitwise_op_simd(&other_zero, BitwiseOp::And, 0, 0)
+            .unwrap();
+        assert_eq!(bv_empty_op.count_ones(), 128);
+        bv_empty_op
+            .bulk_bitwise_op_simd(&other_zero, BitwiseOp::And, 77, 77)
+            .unwrap();
+        assert_eq!(bv_empty_op.count_ones(), 128);
+
+        // 2. Unaligned range [10, 300) across 5 blocks (AVX2 4-block loop + scalar tail)
+        //    must preserve bits outside [10, 300).
+        let mut bv = BitVector::with_size(350, true).unwrap();
+        let zeros = BitVector::with_size(350, false).unwrap();
+        bv.bulk_bitwise_op_simd(&zeros, BitwiseOp::And, 10, 300)
+            .unwrap();
+        for i in 0..10 {
+            assert_eq!(bv.get(i), Some(true), "bit {i} before start was corrupted");
+        }
+        for i in 10..300 {
+            assert_eq!(bv.get(i), Some(false), "bit {i} inside range was not cleared");
+        }
+        for i in 300..350 {
+            assert_eq!(bv.get(i), Some(true), "bit {i} after end was corrupted");
+        }
+        assert_eq!(bv.count_ones(), 10 + 50);
+
+        // 3. Single-block partial range [15, 45) with Xor and Or.
+        let mut bv_single = BitVector::with_size(100, false).unwrap();
+        let ones_larger = BitVector::with_size(128, true).unwrap();
+        bv_single
+            .bulk_bitwise_op_simd(&ones_larger, BitwiseOp::Or, 15, 45)
+            .unwrap();
+        assert_eq!(bv_single.count_ones(), 30);
+        for i in 0..100 {
+            assert_eq!(bv_single.get(i), Some((15..45).contains(&i)));
+        }
+        // Full range [0, 100) Or against a 128-bit all-ones vector must not pollute
+        // trailing bits 100..128 in the last block.
+        bv_single
+            .bulk_bitwise_op_simd(&ones_larger, BitwiseOp::Xor, 0, 100)
+            .unwrap();
+        assert_eq!(
+            bv_single.count_ones(),
+            70,
+            "trailing bits past self.len must remain zero"
+        );
+        assert_eq!(bv_single.blocks()[1] >> (100 - 64), 0);
+
+        // 4. from_blocks must mask trailing bits in the last block so count_ones /
+        //    rank1 / select1 cannot observe bits >= total_bits.
+        let bv_dirty = BitVector::from_blocks(vec![u64::MAX, u64::MAX], 70);
+        assert_eq!(bv_dirty.len(), 70);
+        assert_eq!(bv_dirty.count_ones(), 70);
+        assert_eq!(bv_dirty.rank1(70), 70);
+        assert_eq!(bv_dirty.rank1(999), 70);
+        assert_eq!(bv_dirty.count_zeros(), 0);
+        assert_eq!(bv_dirty.rank0(70), 0);
+        assert_eq!(bv_dirty.rank0(999), 0);
+        assert_eq!(
+            bv_dirty.rank1_bulk(&[0, 10, 64, 70, 100, 999]),
+            vec![0, 10, 64, 70, 70, 70]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "insufficient")]
+    fn test_from_blocks_insufficient_panics_in_all_profiles() {
+        let _ = BitVector::from_blocks(vec![0u64; 1], 128);
     }
 }
