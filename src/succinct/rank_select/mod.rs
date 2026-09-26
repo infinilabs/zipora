@@ -436,12 +436,16 @@ pub mod utils {
         select_sample_rate: usize,
         enable_select_cache: bool,
     ) -> f64 {
+        if total_bits == 0 || block_size == 0 {
+            return 0.0;
+        }
         let num_blocks = total_bits.div_ceil(block_size);
         let rank_overhead = num_blocks * 4; // 4 bytes per block
 
         let select_overhead = if enable_select_cache {
+            let sample_rate = select_sample_rate.max(1);
             let estimated_ones = total_bits / 2; // Assume 50% density
-            let num_samples = estimated_ones.div_ceil(select_sample_rate);
+            let num_samples = estimated_ones.div_ceil(sample_rate);
             num_samples * 4 // 4 bytes per sample
         } else {
             0
@@ -451,17 +455,48 @@ pub mod utils {
         (total_overhead_bits as f64 / total_bits as f64) * 100.0
     }
 
-    /// Benchmark different rank/select implementations
+    /// Benchmark different rank/select implementations on `bit_vector`.
+    ///
+    /// Returns `(variant_name, space_overhead_percent, avg_ns_per_op)` for each variant.
     pub fn benchmark_variants(
-        _bit_vector: &BitVector,
-        _iterations: usize,
+        bit_vector: &BitVector,
+        iterations: usize,
     ) -> Vec<(String, f64, f64)> {
-        // This would contain actual benchmarking code
-        // For now, return placeholder data
-        vec![
-            ("RankSelectInterleaved256".to_string(), 8.0, 80.0),
-            ("AdaptiveRankSelect".to_string(), 10.0, 90.0),
-        ]
+        let iters = iterations.max(1);
+        let len = bit_vector.len().max(1);
+        let mut results = Vec::with_capacity(2);
+
+        if let Ok(il) = RankSelectInterleaved256::new(bit_vector.clone()) {
+            let start = std::time::Instant::now();
+            let mut acc = 0usize;
+            for i in 0..iters {
+                acc = acc.wrapping_add(il.rank1(i % len));
+            }
+            std::hint::black_box(acc);
+            let ns_per_op = start.elapsed().as_nanos() as f64 / iters as f64;
+            results.push((
+                "RankSelectInterleaved256".to_string(),
+                il.space_overhead_percent(),
+                ns_per_op,
+            ));
+        }
+
+        if let Ok(adaptive) = AdaptiveRankSelect::new(bit_vector.clone()) {
+            let start = std::time::Instant::now();
+            let mut acc = 0usize;
+            for i in 0..iters {
+                acc = acc.wrapping_add(adaptive.rank1(i % len));
+            }
+            std::hint::black_box(acc);
+            let ns_per_op = start.elapsed().as_nanos() as f64 / iters as f64;
+            results.push((
+                "AdaptiveRankSelect".to_string(),
+                adaptive.space_overhead_percent(),
+                ns_per_op,
+            ));
+        }
+
+        results
     }
 }
 
@@ -965,5 +1000,224 @@ mod tests {
         assert_eq!(ones_rs.count_ones(), 1000);
         assert_eq!(ones_rs.rank1(500), 500);
         assert_eq!(ones_rs.select1(499).unwrap(), 499);
+    }
+
+    #[test]
+    fn test_bulk_select1_simd_and_bulk_rank1_simd_correctness() {
+        let bit_data: Vec<u64> = vec![
+            0xAAAAAAAAAAAAAAAAu64, // 32 ones at odd bit positions 1, 3, 5, ..., 63
+            0x5555555555555555u64, // 32 ones at even bit positions 64, 66, ..., 126
+            0xFFFFFFFFFFFFFFFFu64, // 64 ones at 128..192
+            0x0000000000000000u64, // 0 ones at 192..256
+        ];
+
+        let positions = vec![0, 64, 128, 192, 256, 300];
+        let ranks = bulk_rank1_simd(&bit_data, &positions);
+        assert_eq!(ranks, vec![0, 32, 64, 128, 128, 128]);
+
+        // Test select1 across multiple words AND at the 64th set bit of an all-ones word
+        // (index 127 = 64th set bit in word 2, where remaining_rank == 64 used to overflow 1u64 << 64).
+        let indices = vec![0, 1, 10, 20, 30, 31, 32, 64, 127];
+        let selects = bulk_select1_simd(&bit_data, &indices).unwrap();
+        assert_eq!(selects, vec![1, 3, 21, 41, 61, 63, 64, 128, 191]);
+    }
+
+    #[test]
+    fn test_bmi2_one_seq_revlen_and_block_select_bulk_and_extract_bits() {
+        use super::bmi2_acceleration::{
+            Bmi2BlockOps, Bmi2Dispatcher, Bmi2SelectOps, Bmi2SequenceOps,
+        };
+
+        // 1. Bmi2SequenceOps::one_seq_revlen at word boundary (end_pos = 64) and crossing
+        // a full 64-bit word of ones (end_pos = 70).
+        let words = [u64::MAX, u64::MAX];
+        assert_eq!(Bmi2SequenceOps::one_seq_revlen(&words, 64), 64);
+        assert_eq!(Bmi2SequenceOps::one_seq_revlen(&words, 70), 70);
+
+        // 2. Bmi2BlockOps::select_bulk with a zero-popcount 512-bit block followed by a set bit,
+        // and with usize::MAX query.
+        let mut block_data = vec![0u64; 16];
+        block_data[8] = 1; // bit 512 is the 0-th one
+        assert_eq!(Bmi2BlockOps::select_bulk(&block_data, &[0]).unwrap(), vec![512]);
+        assert!(Bmi2BlockOps::select_bulk(&block_data, &[usize::MAX]).is_err());
+
+        // 3. Bmi2Dispatcher::dispatch_extract_bits with start >= 64.
+        let dispatcher = Bmi2Dispatcher::new();
+        assert_eq!(dispatcher.dispatch_extract_bits(u64::MAX, 64, 1), 0);
+
+        // 4. Bmi2SelectOps::select1_hybrid_cache with cache_density == 0.
+        assert!(Bmi2SelectOps::select1_hybrid_cache(&[], &[], &words, 0, 0).is_err());
+    }
+
+    #[test]
+    fn test_mixed_il_256_and_xl_256_and_se_512_boundary_and_select0() {
+        let mut bv0 = BitVector::new();
+        let mut bv1 = BitVector::new();
+        for i in 0..256 {
+            bv0.push(i % 2 == 0).unwrap();
+            bv1.push(i % 3 == 0).unwrap();
+        }
+
+        let il = RankSelectMixedIL256::new(bv0.clone(), bv1.clone()).unwrap();
+        assert_eq!(il.rank1_dim(0, 256), 128);
+        assert_eq!(il.rank0_dim(0, 256), 128);
+        assert_eq!(il.rank1_dim(0, 300), 128);
+        assert_eq!(il.dim0().select0(0).unwrap(), 1);
+        assert!(il.dim0().space_overhead_percent() > 0.0);
+
+        let xl = RankSelectMixedXL256::new2(bv0.clone(), bv1.clone()).unwrap();
+        assert_eq!(xl.rank1_dim(0, 256), 128);
+        assert_eq!(xl.rank0_dim(0, 256), 128);
+        assert_eq!(xl.rank1_dim(0, 300), 128);
+        assert_eq!(xl.dim(0).select0(0).unwrap(), 1);
+        assert!(xl.dim(0).space_overhead_percent() > 0.0);
+
+        let se = RankSelectMixedSE512::new(bv0, bv1).unwrap();
+        assert_eq!(se.rank1_dim(0, 256), 128);
+        assert_eq!(se.rank0_dim(0, 256), 128);
+        assert_eq!(se.dim0().select0(0).unwrap(), 1);
+        assert!(se.dim0().space_overhead_percent() > 0.0);
+    }
+
+    #[test]
+    fn test_interleaved256_zero_sample_rate_and_hint_and_prefetch() {
+        let bv = create_alternating_bitvector(1024);
+        let bad_opts = BuilderOptions {
+            select_sample_rate: 0,
+            ..BuilderOptions::default()
+        };
+        assert!(RankSelectInterleaved256::with_optimizations(bv.clone(), bad_opts).is_err());
+
+        let rs = RankSelectInterleaved256::new(bv).unwrap();
+        let mut strategy =
+            crate::memory::PrefetchStrategy::new(crate::memory::PrefetchConfig::default());
+        // SAFETY: prefetch_ahead only issues read hints within self.lines bounds.
+        unsafe {
+            rs.prefetch_ahead(0, usize::MAX, &mut strategy);
+            rs.prefetch_ahead(usize::MAX, 10, &mut strategy);
+        }
+
+        for k in 0..rs.count_ones() {
+            let expected = rs.select1(k).unwrap();
+            assert_eq!(rs.select1_hardware_accelerated(k).unwrap(), expected);
+            assert_eq!(rs.select1_from_hint(k, 0).unwrap(), expected);
+            assert_eq!(rs.select1_from_hint(k, 512).unwrap(), expected);
+            assert_eq!(rs.select1_from_hint(k, 2048).unwrap(), expected);
+        }
+
+        // Builder analysis, factory, config, and multidim rank clamping
+        let empty_bv = BitVector::new();
+        let empty_cfg = SeparatedStorageConfig::analyze_and_optimize(&empty_bv).build();
+        assert!(empty_cfg.validate().is_ok());
+        assert!(empty_cfg.estimated_memory_overhead() > 0.0);
+        assert!(
+            SeparatedStorageConfigBuilder::new()
+                .select_sample_rate(0)
+                .build()
+                .validate()
+                .is_err()
+        );
+
+        let analyzed = builder::analyze_bit_vector(&create_sparse_bitvector(2000));
+        assert!(analyzed.prefer_space);
+        let optimal =
+            builder::RankSelectFactory::create_optimal(create_sparse_bitvector(2000), analyzed)
+                .unwrap();
+        assert_eq!(optimal.count_ones(), 20);
+
+        let bench = utils::benchmark_variants(&create_alternating_bitvector(512), 16);
+        assert_eq!(bench.len(), 2);
+        assert_eq!(utils::estimate_memory_overhead(0, 0, 0, true), 0.0);
+
+        let md: MultiDimRankSelect<2> = MultiDimRankSelect::new(vec![
+            create_alternating_bitvector(128),
+            create_alternating_bitvector(128),
+        ])
+        .unwrap();
+        assert_eq!(md.bulk_rank_multidim(&[128, 200]), [64, 64]);
+    }
+
+    #[test]
+    fn test_differential_all_rank_select_variants_and_dirty_trailing_words() {
+        for &len in &[0usize, 1, 63, 64, 65, 255, 256, 257, 511, 512, 513] {
+            let bv = create_test_bitvector(len, |i| (i * 7 + 3) % 5 < 2);
+            let mut one_positions = Vec::new();
+            let mut zero_positions = Vec::new();
+            for i in 0..len {
+                if bv.get(i).unwrap() {
+                    one_positions.push(i);
+                } else {
+                    zero_positions.push(i);
+                }
+            }
+
+            let r9 = Rank9::new(bv.clone()).unwrap();
+            let il = RankSelectInterleaved256::new(bv.clone()).unwrap();
+            let se256 = RankSelectSE256::new(bv.clone()).unwrap();
+            let se512 = RankSelectSE512::new(bv.clone()).unwrap();
+            let simple = RankSelectSimple::new(bv.clone()).unwrap();
+            let few1 = RankSelectFewOne::from_bitvector(&bv).unwrap();
+            let few0 = RankSelectFewZero::from_bitvector(&bv).unwrap();
+            let adaptive = AdaptiveRankSelect::new(bv.clone()).unwrap();
+
+            let variants: Vec<(&str, &dyn RankSelectOps)> = vec![
+                ("Rank9", &r9),
+                ("Interleaved256", &il),
+                ("SE256", &se256),
+                ("SE512", &se512),
+                ("Simple", &simple),
+                ("FewOne", &few1),
+                ("FewZero", &few0),
+                ("Adaptive", &adaptive),
+            ];
+
+            for (name, rs) in &variants {
+                assert_eq!(rs.len(), len, "{name} len mismatch at len={len}");
+                assert_eq!(
+                    rs.count_ones(),
+                    one_positions.len(),
+                    "{name} count_ones mismatch at len={len}"
+                );
+                assert_eq!(
+                    rs.count_zeros(),
+                    zero_positions.len(),
+                    "{name} count_zeros mismatch at len={len}"
+                );
+
+                for pos in [0, 1, len / 2, len.saturating_sub(1), len, len + 1, len + 100] {
+                    let clamped = pos.min(len);
+                    let exp_r1 = one_positions.partition_point(|&p| p < clamped);
+                    let exp_r0 = clamped - exp_r1;
+                    assert_eq!(
+                        rs.rank1(pos),
+                        exp_r1,
+                        "{name} rank1({pos}) mismatch at len={len}"
+                    );
+                    assert_eq!(
+                        rs.rank0(pos),
+                        exp_r0,
+                        "{name} rank0({pos}) mismatch at len={len}"
+                    );
+                }
+
+                for (k, &exp_pos) in one_positions.iter().enumerate() {
+                    assert_eq!(
+                        rs.select1(k).unwrap(),
+                        exp_pos,
+                        "{name} select1({k}) mismatch at len={len}"
+                    );
+                }
+                assert!(rs.select1(one_positions.len()).is_err());
+
+                for (k, &exp_pos) in zero_positions.iter().enumerate() {
+                    assert_eq!(
+                        rs.select0(k).unwrap(),
+                        exp_pos,
+                        "{name} select0({k}) mismatch at len={len}"
+                    );
+                }
+                assert!(rs.select0(zero_positions.len()).is_err());
+            }
+        }
     }
 }

@@ -49,14 +49,12 @@ impl RankSelectAllZero {
 
 impl RankSelectOps for RankSelectAllZero {
     #[inline(always)]
-    fn rank1(&self, pos: usize) -> usize {
-        assert!(pos <= self.size);
+    fn rank1(&self, _pos: usize) -> usize {
         0
     }
     #[inline(always)]
     fn rank0(&self, pos: usize) -> usize {
-        assert!(pos <= self.size);
-        pos
+        pos.min(self.size)
     }
     fn select1(&self, _k: usize) -> Result<usize> {
         Err(ZiporaError::invalid_data("select1 on all-zero bitvector"))
@@ -128,12 +126,10 @@ impl RankSelectAllOne {
 impl RankSelectOps for RankSelectAllOne {
     #[inline(always)]
     fn rank1(&self, pos: usize) -> usize {
-        assert!(pos <= self.size);
-        pos
+        pos.min(self.size)
     }
     #[inline(always)]
-    fn rank0(&self, pos: usize) -> usize {
-        assert!(pos <= self.size);
+    fn rank0(&self, _pos: usize) -> usize {
         0
     }
     #[inline(always)]

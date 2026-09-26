@@ -317,6 +317,13 @@ impl SeparatedStorageConfig {
             )));
         }
 
+        // Validate select sample rate
+        if self.select_sample_rate == 0 {
+            return Err(ZiporaError::invalid_data(
+                "Invalid select_sample_rate 0. Must be greater than 0",
+            ));
+        }
+
         // Validate relative rank bits
         if self.enable_bit_packed_ranks
             && (self.relative_rank_bits < 7 || self.relative_rank_bits > 12)
@@ -370,7 +377,7 @@ impl SeparatedStorageConfig {
         };
 
         // Select cache overhead
-        if self.enable_select_acceleration {
+        if self.enable_select_acceleration && self.select_sample_rate > 0 {
             overhead += 100.0 / self.select_sample_rate as f64;
         }
 
@@ -610,7 +617,11 @@ impl SeparatedStorageConfig {
     ) -> SeparatedStorageConfigBuilder {
         let len = bit_vector.len();
         let ones = bit_vector.count_ones();
-        let density = ones as f64 / len as f64;
+        let density = if len == 0 {
+            0.0
+        } else {
+            ones as f64 / len as f64
+        };
 
         let mut builder = SeparatedStorageConfigBuilder::new();
 

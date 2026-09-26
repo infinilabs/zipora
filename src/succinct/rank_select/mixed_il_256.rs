@@ -156,9 +156,11 @@ impl RankSelectMixedIL256 {
     #[inline]
     pub fn rank1_dim(&self, dim: usize, pos: usize) -> usize {
         assert!(dim < 2);
-        assert!(pos <= self.size[dim]);
         if pos == 0 {
             return 0;
+        }
+        if pos >= self.size[dim] {
+            return self.max_rank1[dim];
         }
         let line_idx = pos / LINE_BITS;
         let bit_in_line = pos % LINE_BITS;
@@ -169,6 +171,8 @@ impl RankSelectMixedIL256 {
     /// rank0 for a specific dimension.
     #[inline]
     pub fn rank0_dim(&self, dim: usize, pos: usize) -> usize {
+        assert!(dim < 2);
+        let pos = pos.min(self.size[dim]);
         pos - self.rank1_dim(dim, pos)
     }
 
@@ -205,6 +209,46 @@ impl RankSelectMixedIL256 {
             }
         }
         Err(ZiporaError::invalid_data("select1 internal error"))
+    }
+
+    /// select0 for a specific dimension.
+    #[inline]
+    pub fn select0_dim(&self, dim: usize, k: usize) -> Result<usize> {
+        assert!(dim < 2);
+        let max_rank0 = self.size[dim] - self.max_rank1[dim];
+        if k >= max_rank0 {
+            return Err(ZiporaError::invalid_data("select0 out of range"));
+        }
+        let nlines = self.lines.len();
+        let mut lo = 0usize;
+        let mut hi = nlines;
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            let zeros_before = mid * LINE_BITS - self.lines[mid].dim[dim].rlev1 as usize;
+            if zeros_before <= k {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        let block = lo - 1;
+        let dl = &self.lines[block].dim[dim];
+        let base_bitpos = block * LINE_BITS;
+        let base_zeros = base_bitpos - dl.rlev1 as usize;
+        let remaining = k - base_zeros;
+
+        for j in (0..WORDS_PER_LINE).rev() {
+            let zeros_before_word = j * 64 - dl.rlev2[j] as usize;
+            if remaining >= zeros_before_word {
+                let in_word = remaining - zeros_before_word;
+                let word = dl.bit64[j];
+                let pos = base_bitpos + j * 64 + select_in_word(!word, in_word);
+                if pos < self.size[dim] {
+                    return Ok(pos);
+                }
+            }
+        }
+        Err(ZiporaError::invalid_data("select0 internal error"))
     }
 
     /// Get bit value for a specific dimension.
@@ -247,10 +291,8 @@ impl RankSelectOps for MixedDimView<'_> {
         self.parent.select1_dim(self.dim, k)
     }
     #[inline]
-    fn select0(&self, _k: usize) -> Result<usize> {
-        Err(ZiporaError::invalid_data(
-            "select0 not yet implemented for mixed",
-        ))
+    fn select0(&self, k: usize) -> Result<usize> {
+        self.parent.select0_dim(self.dim, k)
     }
     fn len(&self) -> usize {
         self.parent.size[self.dim]

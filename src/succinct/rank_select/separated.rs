@@ -237,7 +237,7 @@ impl RankSelectOps for RankSelectSE256 {
     /// O(1) rank1: two memory accesses (rank cache + bit word).
     #[inline(always)]
     fn rank1(&self, bitpos: usize) -> usize {
-        assert!(bitpos <= self.size);
+        let bitpos = bitpos.min(self.size);
         if bitpos == 0 {
             return 0;
         }
@@ -261,6 +261,7 @@ impl RankSelectOps for RankSelectSE256 {
 
     #[inline(always)]
     fn rank0(&self, pos: usize) -> usize {
+        let pos = pos.min(self.size);
         pos - self.rank1(pos)
     }
 

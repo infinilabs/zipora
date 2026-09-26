@@ -230,7 +230,7 @@ impl RankSelectOps for RankSelectSE512 {
     /// O(1) rank1 using packed 9-bit sub-block ranks.
     #[inline(always)]
     fn rank1(&self, bitpos: usize) -> usize {
-        assert!(bitpos <= self.size);
+        let bitpos = bitpos.min(self.size);
         if bitpos == 0 {
             return 0;
         }
@@ -254,6 +254,7 @@ impl RankSelectOps for RankSelectSE512 {
 
     #[inline(always)]
     fn rank0(&self, pos: usize) -> usize {
+        let pos = pos.min(self.size);
         pos - self.rank1(pos)
     }
 

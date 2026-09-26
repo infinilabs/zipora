@@ -78,12 +78,13 @@ impl RankSelectOps for RankSelectFewOne {
     /// O(log n) rank1 via binary search on pivot positions.
     #[inline]
     fn rank1(&self, pos: usize) -> usize {
-        assert!(pos <= self.size);
+        let pos = pos.min(self.size);
         self.lower_bound(pos)
     }
 
     #[inline]
     fn rank0(&self, pos: usize) -> usize {
+        let pos = pos.min(self.size);
         pos - self.rank1(pos)
     }
 
@@ -135,7 +136,11 @@ impl RankSelectOps for RankSelectFewOne {
         if index >= self.size {
             return None;
         }
-        Some(self.positions.binary_search(&(index as u32)).is_ok())
+        Some(
+            self.positions
+                .binary_search_by_key(&index, |&p| p as usize)
+                .is_ok(),
+        )
     }
 
     fn space_overhead_percent(&self) -> f64 {
@@ -210,13 +215,14 @@ impl RankSelectFewZero {
 impl RankSelectOps for RankSelectFewZero {
     #[inline]
     fn rank1(&self, pos: usize) -> usize {
+        let pos = pos.min(self.size);
         pos - self.rank0(pos)
     }
 
     /// O(log n) rank0 via binary search.
     #[inline]
     fn rank0(&self, pos: usize) -> usize {
-        assert!(pos <= self.size);
+        let pos = pos.min(self.size);
         self.lower_bound(pos)
     }
 
@@ -266,7 +272,11 @@ impl RankSelectOps for RankSelectFewZero {
             return None;
         }
         // If position is in zeros list, it's a 0; otherwise 1
-        Some(self.positions.binary_search(&(index as u32)).is_err())
+        Some(
+            self.positions
+                .binary_search_by_key(&index, |&p| p as usize)
+                .is_err(),
+        )
     }
 
     fn space_overhead_percent(&self) -> f64 {

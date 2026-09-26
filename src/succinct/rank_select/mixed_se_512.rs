@@ -131,9 +131,12 @@ impl RankSelectMixedSE512 {
 
     #[inline]
     pub fn rank1_dim(&self, dim: usize, pos: usize) -> usize {
-        assert!(pos <= self.size[dim]);
+        assert!(dim < 2);
         if pos == 0 {
             return 0;
+        }
+        if pos >= self.size[dim] {
+            return self.max_rank1[dim];
         }
         let block = pos / LINE_BITS;
         let rc = &self.rank_cache[block];
@@ -155,10 +158,13 @@ impl RankSelectMixedSE512 {
 
     #[inline]
     pub fn rank0_dim(&self, dim: usize, pos: usize) -> usize {
+        assert!(dim < 2);
+        let pos = pos.min(self.size[dim]);
         pos - self.rank1_dim(dim, pos)
     }
 
     pub fn select1_dim(&self, dim: usize, k: usize) -> Result<usize> {
+        assert!(dim < 2);
         if k >= self.max_rank1[dim] {
             return Err(ZiporaError::invalid_data("select1 out of range"));
         }
@@ -194,6 +200,48 @@ impl RankSelectMixedSE512 {
         Err(ZiporaError::invalid_data("select1 internal error"))
     }
 
+    pub fn select0_dim(&self, dim: usize, k: usize) -> Result<usize> {
+        assert!(dim < 2);
+        let max_rank0 = self.size[dim] - self.max_rank1[dim];
+        if k >= max_rank0 {
+            return Err(ZiporaError::invalid_data("select0 out of range"));
+        }
+        let nlines = self.rank_cache.len() - 1;
+        let mut lo = 0usize;
+        let mut hi = nlines;
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            let zeros_before = mid * LINE_BITS - self.rank_cache[mid].base[dim] as usize;
+            if zeros_before <= k {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        let block = lo - 1;
+        let rc = &self.rank_cache[block];
+        let base_bitpos = block * LINE_BITS;
+        let base_zeros = base_bitpos - rc.base[dim] as usize;
+        let target = k - base_zeros;
+
+        for j in (0..WORDS_PER_LINE).rev() {
+            let zeros_before_j = j * 64 - get_rela(rc.rela[dim], j);
+            if target >= zeros_before_j {
+                let remaining = target - zeros_before_j;
+                let word_idx = (block * WORDS_PER_LINE + j) * 2 + dim;
+                if word_idx < self.words.len() {
+                    let pos = base_bitpos
+                        + j * 64
+                        + select_in_word(!self.words[word_idx], remaining);
+                    if pos < self.size[dim] {
+                        return Ok(pos);
+                    }
+                }
+            }
+        }
+        Err(ZiporaError::invalid_data("select0 internal error"))
+    }
+
     #[inline]
     pub fn get_dim(&self, dim: usize, index: usize) -> Option<bool> {
         if index >= self.size[dim] {
@@ -226,10 +274,8 @@ impl RankSelectOps for MixedSE512DimView<'_> {
     fn select1(&self, k: usize) -> Result<usize> {
         self.parent.select1_dim(self.dim, k)
     }
-    fn select0(&self, _k: usize) -> Result<usize> {
-        Err(ZiporaError::invalid_data(
-            "select0 not implemented for mixed_se_512",
-        ))
+    fn select0(&self, k: usize) -> Result<usize> {
+        self.parent.select0_dim(self.dim, k)
     }
     fn len(&self) -> usize {
         self.parent.size[self.dim]
@@ -241,7 +287,13 @@ impl RankSelectOps for MixedSE512DimView<'_> {
         self.parent.get_dim(self.dim, index)
     }
     fn space_overhead_percent(&self) -> f64 {
-        0.0
+        if self.parent.size[self.dim] == 0 {
+            return 0.0;
+        }
+        let bit_bytes = self.parent.size[self.dim].div_ceil(8);
+        let cache_bytes =
+            self.parent.rank_cache.len() * (std::mem::size_of::<RankCacheMixed>() / 2);
+        (cache_bytes as f64 / bit_bytes as f64) * 100.0
     }
 }
 

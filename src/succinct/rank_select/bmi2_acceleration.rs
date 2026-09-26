@@ -248,8 +248,7 @@ impl Bmi2RankOps {
             // SAFETY: AVX2 and popcnt guaranteed, chunks * 4 ≤ words.len()
             let vec = unsafe { _mm256_loadu_si256(chunk.as_ptr() as *const __m256i) };
 
-            // Use parallel popcount (if available in future CPUs)
-            // For now, extract and use scalar popcount
+            // Extract 4 x 64-bit lanes and compute hardware POPCNT per lane
             let mut chunk_results = [0u32; 4];
             for i in 0..4 {
                 // Extract with constant index
@@ -464,12 +463,14 @@ impl Bmi2SelectOps {
         target_rank: u32,
         cache_density: usize,
     ) -> Result<u32> {
-        if select_cache.is_empty() {
-            return Err(ZiporaError::invalid_data("Empty select cache"));
+        if select_cache.is_empty() || cache_density == 0 {
+            return Err(ZiporaError::invalid_data(
+                "Empty select cache or zero cache density",
+            ));
         }
 
         // Calculate cache index
-        let cache_idx = (target_rank / cache_density as u32) as usize;
+        let cache_idx = (target_rank as usize) / cache_density;
         if cache_idx >= select_cache.len() {
             return Err(ZiporaError::invalid_data("Cache index out of bounds"));
         }
@@ -487,7 +488,7 @@ impl Bmi2SelectOps {
         };
 
         // Advanced optimization: use linear search for small ranges
-        let search_range = end_block - start_block;
+        let search_range = end_block.saturating_sub(start_block);
 
         if search_range <= 32 {
             // Linear search for small ranges - better branch prediction
@@ -507,7 +508,7 @@ impl Bmi2SelectOps {
             let mut high = end_block.min(rank_cache.len() as u32);
 
             while low < high {
-                let mid = (low + high) / 2;
+                let mid = low + (high - low) / 2;
                 if rank_cache[mid as usize] <= target_rank {
                     low = mid + 1;
                 } else {
@@ -551,6 +552,11 @@ impl Bmi2SelectOps {
         } else {
             rank_cache[block_idx - 1]
         };
+        if target_rank < rank_before_block {
+            return Err(ZiporaError::invalid_data(
+                "Invalid rank cache monotonicity in block search",
+            ));
+        }
         let target_in_block = target_rank - rank_before_block;
 
         // Search within the 4 words of this block
@@ -753,8 +759,8 @@ impl Bmi2BextrOps {
         #[cfg(target_arch = "x86_64")]
         {
             let caps = Bmi2Capabilities::get();
-            if caps.has_bmi2 {
-                //// SAFETY: has_bmi2 guarantees bextr availability
+            if caps.simd_caps.cpu_features.has_bmi1 {
+                // SAFETY: has_bmi1 guarantees bextr availability
                 return unsafe { Self::extract_bits_bextr_hardware(src, start, effective_length) };
             }
         }
@@ -781,19 +787,26 @@ impl Bmi2BextrOps {
     /// Extracts bits from multiple source words using the same field specification.
     /// Highly optimized for bulk field extraction operations.
     pub fn extract_bits_multi(sources: &[u64], start: u32, length: u32) -> Vec<u64> {
+        if length == 0 || start >= 64 {
+            return vec![0; sources.len()];
+        }
+        let effective_length = length.min(64 - start);
+
         #[cfg(target_arch = "x86_64")]
         {
             let caps = Bmi2Capabilities::get();
-            if caps.has_bmi2 && sources.len() >= 4 {
-                //// SAFETY: has_bmi2 guarantees bmi2 availability for vectorized ops
-                return unsafe { Self::extract_bits_multi_vectorized(sources, start, length) };
+            if caps.simd_caps.cpu_features.has_bmi1 && sources.len() >= 4 {
+                // SAFETY: has_bmi1 guarantees bextr availability for vectorized ops
+                return unsafe {
+                    Self::extract_bits_multi_vectorized(sources, start, effective_length)
+                };
             }
         }
 
         // Fallback: sequential extraction
         sources
             .iter()
-            .map(|&src| Self::extract_bits_bextr(src, start, length))
+            .map(|&src| Self::extract_bits_bextr(src, start, effective_length))
             .collect()
     }
 
@@ -848,8 +861,8 @@ impl Bmi2BzhiOps {
         #[cfg(target_arch = "x86_64")]
         {
             let caps = Bmi2Capabilities::get();
-            if caps.has_bmi2 {
-                //// SAFETY: has_bmi2 guarantees bzhi/popcnt availability
+            if caps.has_bmi2 && caps.simd_caps.cpu_features.has_popcnt {
+                // SAFETY: has_bmi2 + has_popcnt guarantees bzhi/popcnt availability
                 return unsafe { Self::popcount_bzhi_hardware(word, bit_count) };
             }
         }
@@ -865,8 +878,15 @@ impl Bmi2BzhiOps {
     #[inline]
     unsafe fn popcount_bzhi_hardware(word: u64, bit_count: u32) -> u32 {
         let masked = std::arch::x86_64::_bzhi_u64(word, bit_count);
-        //// SAFETY: BMI2 and popcnt guaranteed by #[target_feature(enable = "bmi2,popcnt")]
+        // SAFETY: BMI2 and popcnt guaranteed by #[target_feature(enable = "bmi2,popcnt")]
         unsafe { Bmi2RankOps::popcount_hardware(masked) }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "bmi2")]
+    #[inline]
+    unsafe fn bzhi_single_hardware(word: u64, boundary: u32) -> u64 {
+        std::arch::x86_64::_bzhi_u64(word, boundary)
     }
 
     /// BZHI mask operations for advanced bit manipulation
@@ -876,43 +896,40 @@ impl Bmi2BzhiOps {
         boundaries
             .iter()
             .map(|&boundary| {
+                if boundary >= 64 {
+                    return word;
+                }
                 #[cfg(target_arch = "x86_64")]
                 {
                     let caps = Bmi2Capabilities::get();
                     if caps.has_bmi2 {
-                        //// SAFETY: has_bmi2 guarantees bzhi availability
-                        return unsafe { std::arch::x86_64::_bzhi_u64(word, boundary) };
+                        // SAFETY: has_bmi2 guarantees bzhi availability; boundary < 64 checked above
+                        return unsafe { Self::bzhi_single_hardware(word, boundary) };
                     }
                 }
 
-                // Fallback
-                if boundary >= 64 {
-                    word
-                } else {
-                    word & ((1u64 << boundary) - 1)
-                }
+                word & ((1u64 << boundary) - 1)
             })
             .collect()
     }
 
     /// Vectorized BZHI operations for bulk processing
     pub fn bzhi_bulk_process(words: &[u64], bit_count: u32) -> Vec<u64> {
+        if bit_count >= 64 {
+            return words.to_vec();
+        }
+
         #[cfg(target_arch = "x86_64")]
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi2 && words.len() >= 4 {
-                //// SAFETY: has_bmi2 guarantees bzhi availability for vectorized ops
+                // SAFETY: has_bmi2 guarantees bzhi availability; bit_count < 64 checked above
                 return unsafe { Self::bzhi_bulk_vectorized(words, bit_count) };
             }
         }
 
         // Fallback: sequential processing
-        let mask = if bit_count >= 64 {
-            u64::MAX
-        } else {
-            (1u64 << bit_count) - 1
-        };
-
+        let mask = (1u64 << bit_count) - 1;
         words.iter().map(|&word| word & mask).collect()
     }
 
@@ -944,8 +961,8 @@ impl Bmi2AdvancedPatterns {
         #[cfg(target_arch = "x86_64")]
         {
             let caps = Bmi2Capabilities::get();
-            if caps.has_bmi2 {
-                // SAFETY: has_bmi2 guarantees pdep/ctz ops
+            if caps.has_bmi2 && caps.simd_caps.cpu_features.has_bmi1 {
+                // SAFETY: has_bmi2 + has_bmi1 guarantees pdep/tzcnt ops
                 return Some(unsafe { Self::pdep_ctz_select_hardware(word, k) });
             }
         }
@@ -972,7 +989,7 @@ impl Bmi2AdvancedPatterns {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi2 {
-                //// SAFETY: has_bmi2 guarantees pext availability for parallel ops
+                // SAFETY: has_bmi2 guarantees pext availability for parallel ops
                 return unsafe { Self::pext_parallel_hardware(sources, mask) };
             }
         }
@@ -1003,7 +1020,7 @@ impl Bmi2AdvancedPatterns {
         {
             let caps = Bmi2Capabilities::get();
             if caps.has_bmi2 {
-                //// SAFETY: has_bmi2 guarantees pdep/bzhi availability
+                // SAFETY: has_bmi2 guarantees pdep/bzhi availability
                 return unsafe { Self::pdep_bzhi_composite_hardware(src, mask, bit_limit) };
             }
         }
@@ -1023,7 +1040,11 @@ impl Bmi2AdvancedPatterns {
     #[inline]
     unsafe fn pdep_bzhi_composite_hardware(src: u64, mask: u64, bit_limit: u32) -> u64 {
         let deposited = std::arch::x86_64::_pdep_u64(src, mask);
-        std::arch::x86_64::_bzhi_u64(deposited, bit_limit)
+        if bit_limit >= 64 {
+            deposited
+        } else {
+            std::arch::x86_64::_bzhi_u64(deposited, bit_limit)
+        }
     }
 
     /// Bulk PDEP + CTZ select operations
@@ -1078,8 +1099,8 @@ impl Bmi2RangeOps {
         #[cfg(target_arch = "x86_64")]
         {
             let caps = Bmi2Capabilities::get();
-            if caps.has_bmi2 {
-                //// SAFETY: has_bmi2 guarantees bmi2 ops availability
+            if caps.has_bmi2 && caps.simd_caps.cpu_features.has_popcnt {
+                // SAFETY: has_bmi2 + has_popcnt guarantees bmi2/popcnt ops availability
                 return unsafe { Self::count_ones_range_bmi2(word, start, effective_len) };
             }
         }
@@ -1106,8 +1127,7 @@ impl Bmi2RangeOps {
         // Zero high bits beyond length using BZHI
         let masked = _bzhi_u64(shifted, len);
 
-        //// SAFETY: BMI2 and popcnt guaranteed by #[target_feature(enable = "bmi2,popcnt")]
-        // Count with hardware POPCNT
+        // SAFETY: BMI2 and popcnt guaranteed by #[target_feature(enable = "bmi2,popcnt")]
         unsafe { Bmi2RankOps::popcount_hardware(masked) }
     }
 
@@ -1259,18 +1279,23 @@ impl Bmi2SequenceOps {
             return 0;
         }
 
-        // Count leading ones in the masked word
-        let mask = (1u64 << (bit_offset + 1)) - 1;
+        // Count leading ones in the masked word (bit_offset + 1 can be 64 when bit_offset == 63)
+        let valid_bits = bit_offset + 1;
+        let mask = if valid_bits >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << valid_bits) - 1
+        };
         let masked_word = word & mask;
-        let leading_ones = Self::count_leading_ones_in_mask(masked_word, bit_offset + 1);
+        let leading_ones = Self::count_leading_ones_in_mask(masked_word, valid_bits);
 
-        if leading_ones < bit_offset + 1 {
+        if leading_ones < valid_bits {
             // Sequence starts within this word
             return leading_ones;
         }
 
         // Sequence continues to previous words
-        let mut total_ones = bit_offset + 1;
+        let mut total_ones = valid_bits;
 
         if word_idx > 0 {
             for prev_word_idx in (0..word_idx).rev() {
@@ -1311,8 +1336,14 @@ impl Bmi2SequenceOps {
         if bit_count == 0 {
             return 0;
         }
+        let bit_count = bit_count.min(64);
+        let full_mask = if bit_count == 64 {
+            u64::MAX
+        } else {
+            (1u64 << bit_count) - 1
+        };
 
-        if word == (1u64 << bit_count) - 1 {
+        if (word & full_mask) == full_mask {
             return bit_count;
         }
 
@@ -1365,50 +1396,24 @@ impl Bmi2BlockOps {
         // Pre-compute cumulative popcount for blocks
         let mut cumulative_counts = Vec::with_capacity(blocks.len() + 1);
         cumulative_counts.push(0);
+        let mut total_ones = 0usize;
 
         for &block in blocks {
-            // SAFETY: cumulative_counts has at least one element (pushed 0 at line 1367)
-            let last_count = *cumulative_counts
-                .last()
-                .expect("cumulative_counts non-empty");
-            cumulative_counts.push(last_count + Bmi2RankOps::popcount_u64(block) as usize);
+            total_ones += Bmi2RankOps::popcount_u64(block) as usize;
+            cumulative_counts.push(total_ones);
         }
 
         for &k in indices {
-            // Find the first block where cumulative count > k
-            // This gives us the block containing the k-th one (0-indexed)
-            let block_idx = match cumulative_counts.binary_search(&(k + 1)) {
-                Ok(idx) => {
-                    // Exact match means k+1 ones are before this block
-                    // So the k-th one is in the previous block
-                    if idx == 0 {
-                        return Err(ZiporaError::invalid_data(format!(
-                            "Select index {} out of bounds - no ones before first block",
-                            k
-                        )));
-                    }
-                    idx - 1
-                }
-                Err(idx) => {
-                    // idx is where k+1 would be inserted
-                    // So block idx-1 is where the k-th one is located
-                    if idx == 0 {
-                        return Err(ZiporaError::invalid_data(format!(
-                            "Select index {} out of bounds - before first block",
-                            k
-                        )));
-                    }
-                    idx - 1
-                }
-            };
-
-            if block_idx >= blocks.len() {
+            if k >= total_ones {
                 return Err(ZiporaError::invalid_data(format!(
-                    "Select index {} out of bounds",
-                    k
+                    "Select index {} out of bounds (total ones: {})",
+                    k, total_ones
                 )));
             }
 
+            // Find the last block where cumulative_counts[block_idx] <= k.
+            // This guarantees blocks[block_idx] is non-empty and contains the k-th set bit.
+            let block_idx = cumulative_counts.partition_point(|&c| c <= k) - 1;
             let ones_before_block = cumulative_counts[block_idx];
             let k_in_block = k - ones_before_block;
 
@@ -1436,7 +1441,7 @@ impl Bmi2BlockOps {
             && caps.simd_caps.cpu_features.has_lzcnt
             && blocks.len() >= 4
         {
-            //// SAFETY: AVX2/POPCNT/LZCNT availability verified by the checks above
+            // SAFETY: AVX2/POPCNT/LZCNT availability verified by the checks above
             unsafe { Self::process_blocks_avx2_bmi2(blocks) }
         } else {
             // Fallback to scalar processing
@@ -1527,37 +1532,23 @@ impl Bmi2Dispatcher {
 
     /// Dispatch bit extraction to optimal implementation
     pub fn dispatch_extract_bits(&self, src: u64, start: u32, length: u32) -> u64 {
-        if self.capabilities.has_bmi2 {
-            Bmi2BextrOps::extract_bits_bextr(src, start, length)
-        } else {
-            let shifted = src >> start;
-            if length >= 64 {
-                shifted
-            } else {
-                shifted & ((1u64 << length) - 1)
-            }
-        }
+        Bmi2BextrOps::extract_bits_bextr(src, start, length)
     }
 
     /// Dispatch mask operation to optimal implementation
     pub fn dispatch_mask_operation(&self, word: u64, bit_count: u32) -> u64 {
+        if bit_count >= 64 {
+            return word;
+        }
         if self.capabilities.has_bmi2 {
             #[cfg(target_arch = "x86_64")]
             {
-                if bit_count >= 64 {
-                    return word;
-                }
-                //// SAFETY: has_bmi2 guarantees bzhi availability
-                return unsafe { std::arch::x86_64::_bzhi_u64(word, bit_count) };
+                // SAFETY: has_bmi2 guarantees bzhi availability; bit_count < 64 checked above
+                return unsafe { Bmi2BzhiOps::bzhi_single_hardware(word, bit_count) };
             }
         }
 
-        // Fallback
-        if bit_count >= 64 {
-            word
-        } else {
-            word & ((1u64 << bit_count) - 1)
-        }
+        word & ((1u64 << bit_count) - 1)
     }
 
     /// Get optimization report for current hardware

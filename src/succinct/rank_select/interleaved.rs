@@ -194,6 +194,12 @@ impl RankSelectInterleaved256 {
         enable_select_cache: bool,
         select_sample_rate: usize,
     ) -> Result<Self> {
+        if enable_select_cache && select_sample_rate == 0 {
+            return Err(ZiporaError::invalid_data(
+                "select_sample_rate must be greater than 0",
+            ));
+        }
+
         let mut rs = Self {
             lines: FastVec::new(),
             select_cache: if enable_select_cache {
@@ -203,7 +209,7 @@ impl RankSelectInterleaved256 {
             },
             total_ones: 0,
             total_bits: bit_vector.len(),
-            select_sample_rate,
+            select_sample_rate: select_sample_rate.max(1),
         };
 
         rs.build_interleaved_cache(bit_vector)?;
@@ -455,13 +461,23 @@ impl RankSelectInterleaved256 {
 
         let target_rank = k + 1;
 
-        // Use select cache if available
-        if let Some(ref select_cache) = self.select_cache {
-            let hint_idx = k / self.select_sample_rate;
-            if hint_idx < select_cache.len() {
-                let hint_pos = select_cache[hint_idx] as usize;
-                return self.select1_from_hint(k, hint_pos);
-            }
+        // Use select cache to bracket the line binary search range when available
+        if let Some(ref select_cache) = self.select_cache
+            && let Some(sample_idx) = k.checked_div(self.select_sample_rate)
+            && sample_idx < select_cache.len()
+        {
+            let hi_pos = select_cache[sample_idx] as usize;
+            let lo_line = if sample_idx == 0 {
+                0
+            } else {
+                (select_cache[sample_idx - 1] as usize) / LINE_BITS
+            };
+            let hi_line = (hi_pos / LINE_BITS + 1).min(self.lines.len());
+            let line_idx = self.binary_search_lines_range(target_rank, lo_line, hi_line);
+            let line = &self.lines[line_idx];
+            let rank_before_line = line.rlev1 as usize;
+            let remaining_ones = target_rank - rank_before_line;
+            return self.select1_within_line(line_idx, remaining_ones);
         }
 
         // Binary search on cache lines
@@ -474,41 +490,36 @@ impl RankSelectInterleaved256 {
         self.select1_within_line(line_idx, remaining_ones)
     }
 
-    /// Select with hint optimization
-    fn select1_from_hint(&self, k: usize, hint_pos: usize) -> Result<usize> {
+    /// Select with hint optimization using line-level binary search + PDEP word select
+    pub fn select1_from_hint(&self, k: usize, hint_pos: usize) -> Result<usize> {
+        if k >= self.total_ones {
+            return Err(ZiporaError::out_of_bounds(k, self.total_ones));
+        }
         let target_rank = k + 1;
-        let hint_rank = self.rank1_cache_optimized(hint_pos + 1);
-
-        if hint_rank >= target_rank {
-            self.select1_linear_search(0, hint_pos + 1, target_rank)
+        let hint_line = (hint_pos / LINE_BITS).min(self.lines.len().saturating_sub(1));
+        let (lo, hi) = if (self.lines[hint_line].rlev1 as usize) < target_rank {
+            (hint_line, self.lines.len())
         } else {
-            self.select1_linear_search(hint_pos, self.total_bits, target_rank)
-        }
-    }
-
-    /// Linear search for select within a range
-    fn select1_linear_search(&self, start: usize, end: usize, target_rank: usize) -> Result<usize> {
-        let mut current_rank = self.rank1_cache_optimized(start);
-
-        for pos in start..end {
-            if self.get_bit_internal(pos) {
-                current_rank += 1;
-                if current_rank == target_rank {
-                    return Ok(pos);
-                }
-            }
-        }
-
-        Err(ZiporaError::invalid_data(
-            "Select position not found".to_string(),
-        ))
+            (0, hint_line + 1)
+        };
+        let line_idx = self.binary_search_lines_range(target_rank, lo, hi);
+        let line = &self.lines[line_idx];
+        let rank_before_line = line.rlev1 as usize;
+        let remaining_ones = target_rank - rank_before_line;
+        self.select1_within_line(line_idx, remaining_ones)
     }
 
     /// Binary search to find which line contains the target rank
     #[inline]
     fn binary_search_lines(&self, target_rank: usize) -> usize {
-        let mut left = 0;
-        let mut right = self.lines.len();
+        self.binary_search_lines_range(target_rank, 0, self.lines.len())
+    }
+
+    /// Binary search within `[lo, hi)` to find which line contains `target_rank` (1-indexed)
+    #[inline]
+    fn binary_search_lines_range(&self, target_rank: usize, lo: usize, hi: usize) -> usize {
+        let mut left = lo.min(self.lines.len());
+        let mut right = hi.min(self.lines.len()).max(left);
 
         while left < right {
             let mid = left + (right - left) / 2;
@@ -652,6 +663,9 @@ impl RankSelectInterleaved256 {
     /// This reduces latency for select operations with cached sampling.
     #[inline]
     pub fn prefetch_select1(&self, id: usize) {
+        if self.select_sample_rate == 0 {
+            return;
+        }
         if let Some(ref cache) = self.select_cache {
             #[cfg(target_arch = "x86_64")]
             {
@@ -808,9 +822,11 @@ impl RankSelectInterleaved256 {
         }
 
         let start_line = base_pos / LINE_BITS;
-        let end_line = ((base_pos + count * LINE_BITS) / LINE_BITS).min(self.lines.len());
-
         if start_line >= self.lines.len() {
+            return;
+        }
+        let end_line = start_line.saturating_add(count).min(self.lines.len());
+        if end_line <= start_line {
             return;
         }
 
@@ -1044,17 +1060,15 @@ impl RankSelectPerformanceOps for RankSelectInterleaved256 {
 
     #[inline]
     fn rank1_adaptive(&self, pos: usize) -> usize {
-        // Simplified adaptive rank - just use the best implementation directly
-        // No per-operation monitoring overhead (29,000% overhead eliminated)
-        // The "adaptive" part is compile-time SIMD feature detection
+        // Dispatches directly to the cache-line-interleaved POPCNT implementation
+        // without per-operation runtime profiling overhead.
         self.rank1_cache_optimized(pos)
     }
 
     #[inline]
     fn select1_adaptive(&self, k: usize) -> Result<usize> {
-        // Simplified adaptive select - just use the best implementation directly
-        // No per-operation monitoring overhead (29,000% overhead eliminated)
-        // The "adaptive" part is compile-time SIMD feature detection
+        // Dispatches directly to the sample-bracketed cache-line select implementation
+        // without per-operation runtime profiling overhead.
         self.select1_cache_optimized(k)
     }
 

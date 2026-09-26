@@ -226,14 +226,6 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
     pub fn bulk_rank_multidim(&self, positions: &[usize; DIMS]) -> [usize; DIMS] {
         let mut ranks = [0usize; DIMS];
 
-        // Validate positions first
-        for (i, &pos) in positions.iter().enumerate() {
-            if pos > self.total_bits {
-                ranks[i] = 0; // Out of bounds
-                continue;
-            }
-        }
-
         // Choose optimal implementation based on DIMS and CPU features
         #[cfg(target_arch = "x86_64")]
         {
@@ -253,9 +245,7 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
     #[inline]
     fn bulk_rank_scalar(&self, positions: &[usize; DIMS], ranks: &mut [usize; DIMS]) {
         for dim in 0..DIMS {
-            if positions[dim] <= self.total_bits {
-                ranks[dim] = self.dimensions[dim].rank1(positions[dim]);
-            }
+            ranks[dim] = self.dimensions[dim].rank1(positions[dim]);
         }
     }
 
@@ -267,19 +257,17 @@ impl<const DIMS: usize, const BLOCK_SIZE: usize> MultiDimRankSelect<DIMS, BLOCK_
 
         // Process each dimension with prefetching
         for dim in 0..DIMS {
-            if positions[dim] <= self.total_bits {
-                ranks[dim] = self.dimensions[dim].rank1(positions[dim]);
+            ranks[dim] = self.dimensions[dim].rank1(positions[dim]);
 
-                // Prefetch next dimension's data
-                if dim + 1 < DIMS {
-                    let next_pos = positions[dim + 1];
-                    if next_pos <= self.total_bits {
-                        // SAFETY: Prefetch intrinsic is safe even with any pointer value (CPU handles gracefully)
-                        {
-                            _mm_prefetch::<_MM_HINT_T0>(
-                                &self.dimensions[dim + 1] as *const _ as *const i8,
-                            );
-                        }
+            // Prefetch next dimension's data
+            if dim + 1 < DIMS {
+                let next_pos = positions[dim + 1];
+                if next_pos <= self.total_bits {
+                    // SAFETY: Prefetch intrinsic is safe even with any pointer value (CPU handles gracefully)
+                    {
+                        _mm_prefetch::<_MM_HINT_T0>(
+                            &self.dimensions[dim + 1] as *const _ as *const i8,
+                        );
                     }
                 }
             }

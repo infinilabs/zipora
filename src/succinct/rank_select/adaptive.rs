@@ -507,7 +507,7 @@ impl AdaptiveRankSelect {
         }
     }
 
-    /// Select optimal implementation based on data profile (simplified to use best performer)
+    /// Select and configure optimal `RankSelectInterleaved256` parameters based on data profile
     fn select_implementation(
         bit_vector: BitVector,
         profile: &DataProfile,
@@ -517,8 +517,13 @@ impl AdaptiveRankSelect {
             "RankSelectInterleaved256 ({})",
             Self::get_description(profile, criteria)
         );
+        let enable_select_cache = !criteria.prefer_space;
+        let sample_rate = super::utils::optimal_select_sample_rate(profile.ones_count);
 
-        Ok((RankSelectInterleaved256::new(bit_vector)?, description))
+        Ok((
+            RankSelectInterleaved256::with_options(bit_vector, enable_select_cache, sample_rate)?,
+            description,
+        ))
     }
 
     /// Get descriptive text for the selected configuration

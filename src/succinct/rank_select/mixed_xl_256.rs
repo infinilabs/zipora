@@ -142,9 +142,12 @@ impl RankSelectMixedXL256 {
 
     #[inline]
     pub fn rank1_dim(&self, dim: usize, pos: usize) -> usize {
-        assert!(dim < self.arity && pos <= self.size[dim]);
+        assert!(dim < self.arity);
         if pos == 0 {
             return 0;
+        }
+        if pos >= self.size[dim] {
+            return self.max_rank1[dim];
         }
         let line_idx = pos / LINE_BITS;
         let bit_in_line = pos % LINE_BITS;
@@ -164,6 +167,8 @@ impl RankSelectMixedXL256 {
 
     #[inline]
     pub fn rank0_dim(&self, dim: usize, pos: usize) -> usize {
+        assert!(dim < self.arity);
+        let pos = pos.min(self.size[dim]);
         pos - self.rank1_dim(dim, pos)
     }
 
@@ -199,6 +204,45 @@ impl RankSelectMixedXL256 {
         Err(ZiporaError::invalid_data("select1 internal error"))
     }
 
+    pub fn select0_dim(&self, dim: usize, k: usize) -> Result<usize> {
+        assert!(dim < self.arity);
+        let max_rank0 = self.size[dim] - self.max_rank1[dim];
+        if k >= max_rank0 {
+            return Err(ZiporaError::invalid_data("select0 out of range"));
+        }
+        let nlines = self.lines.len();
+        let mut lo = 0usize;
+        let mut hi = nlines;
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            let zeros_before = mid * LINE_BITS - self.lines[mid].mixed[dim].base as usize;
+            if zeros_before <= k {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        let block = lo - 1;
+        let line = &self.lines[block];
+        let dr = &line.mixed[dim];
+        let base_bitpos = block * LINE_BITS;
+        let base_zeros = base_bitpos - dr.base as usize;
+        let remaining = k - base_zeros;
+
+        for j in (0..WORDS_PER_LINE).rev() {
+            let zeros_before_word = j * 64 - dr.rlev[j] as usize;
+            if remaining >= zeros_before_word {
+                let in_word = remaining - zeros_before_word;
+                let word = line.bit64[j * self.arity + dim];
+                let pos = base_bitpos + j * 64 + select_in_word(!word, in_word);
+                if pos < self.size[dim] {
+                    return Ok(pos);
+                }
+            }
+        }
+        Err(ZiporaError::invalid_data("select0 internal error"))
+    }
+
     #[inline]
     pub fn get_dim(&self, dim: usize, index: usize) -> Option<bool> {
         if index >= self.size[dim] {
@@ -232,10 +276,8 @@ impl RankSelectOps for MixedXL256DimView<'_> {
     fn select1(&self, k: usize) -> Result<usize> {
         self.parent.select1_dim(self.dim, k)
     }
-    fn select0(&self, _k: usize) -> Result<usize> {
-        Err(ZiporaError::invalid_data(
-            "select0 not implemented for mixed_xl_256",
-        ))
+    fn select0(&self, k: usize) -> Result<usize> {
+        self.parent.select0_dim(self.dim, k)
     }
     fn len(&self) -> usize {
         self.parent.size[self.dim]
@@ -247,7 +289,12 @@ impl RankSelectOps for MixedXL256DimView<'_> {
         self.parent.get_dim(self.dim, index)
     }
     fn space_overhead_percent(&self) -> f64 {
-        0.0
+        if self.parent.size[self.dim] == 0 {
+            return 0.0;
+        }
+        let bit_bytes = self.parent.size[self.dim].div_ceil(8);
+        let cache_bytes = self.parent.lines.len() * 8;
+        (cache_bytes as f64 / bit_bytes as f64) * 100.0
     }
 }
 

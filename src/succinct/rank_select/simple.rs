@@ -98,7 +98,7 @@ impl RankSelectSimple {
 impl RankSelectOps for RankSelectSimple {
     #[inline]
     fn rank1(&self, pos: usize) -> usize {
-        assert!(pos <= self.size);
+        let pos = pos.min(self.size);
         if pos == 0 {
             return 0;
         }
@@ -124,6 +124,7 @@ impl RankSelectOps for RankSelectSimple {
 
     #[inline]
     fn rank0(&self, pos: usize) -> usize {
+        let pos = pos.min(self.size);
         pos - self.rank1(pos)
     }
 
