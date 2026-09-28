@@ -171,13 +171,13 @@ impl std::convert::TryFrom<RawPartitionedEliasFano> for PartitionedEliasFano {
                     m.min_value
                 ));
             }
-            if let Some(prev) = prev_bound {
-                if m.min_value < prev {
-                    return Err(format!(
-                        "PartitionedEliasFano: chunk {chunk_idx} min_value {} < prev upper_bound {prev}",
-                        m.min_value
-                    ));
-                }
+            if let Some(prev) = prev_bound
+                && m.min_value < prev
+            {
+                return Err(format!(
+                    "PartitionedEliasFano: chunk {chunk_idx} min_value {} < prev upper_bound {prev}",
+                    m.min_value
+                ));
             }
             prev_bound = Some(ub);
         }
