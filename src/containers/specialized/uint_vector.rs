@@ -538,6 +538,9 @@ impl UintVector {
 
     /// Fast bit reading with unaligned access  
     fn read_bits_fast(&self, bit_offset: usize, bits: u8) -> Result<u32> {
+        if bits == 0 {
+            return Ok(0);
+        }
         let byte_offset = bit_offset / 8;
         let bit_in_byte = bit_offset % 8;
 
@@ -563,6 +566,9 @@ impl UintVector {
 
     /// Slower but more general bit reading
     fn read_bits_slow(&self, bit_offset: usize, bits: u8) -> Result<u32> {
+        if bits == 0 {
+            return Ok(0);
+        }
         let byte_offset = bit_offset / 8;
         let bit_in_byte = bit_offset % 8;
 
@@ -586,6 +592,10 @@ impl UintVector {
             result |= extracted_bits << bits_read;
             bits_read += bits_to_read as u8;
             current_byte_offset += 1;
+        }
+
+        if bits_read < bits {
+            return Err(ZiporaError::invalid_data("Bit read out of bounds"));
         }
 
         Ok(result)

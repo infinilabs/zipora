@@ -143,9 +143,14 @@ impl ZipIntVec {
             val,
             self.min_val
         );
-        let max_val = self.min_val + self.inner.uintmask();
-        assert!(val <= max_val, "Value {} exceeds maximum {}", val, max_val);
-        self.inner.set(idx, val - self.min_val);
+        let offset = val - self.min_val;
+        assert!(
+            offset <= self.inner.uintmask(),
+            "Value {} exceeds maximum {}",
+            val,
+            self.max_val()
+        );
+        self.inner.set(idx, offset);
     }
 
     /// Build from usize slice (auto-detect min/max)
@@ -287,7 +292,7 @@ impl ZipIntVec {
     /// Get maximum value that can be stored
     #[inline]
     pub fn max_val(&self) -> usize {
-        self.min_val + self.inner.uintmask()
+        self.min_val.saturating_add(self.inner.uintmask())
     }
 
     /// Get underlying byte data
@@ -711,6 +716,26 @@ mod tests {
         assert_eq!(vec.min_val(), 5);
         for i in 0..3 {
             assert_eq!(vec.get(i), 5);
+        }
+    }
+
+    #[test]
+    fn test_c6_8_near_usize_max_and_full_64bit_range() {
+        // Range [usize::MAX - 2, usize::MAX] has wire_max = 2 -> uintbits = 2, uintmask = 3.
+        // Previously `self.min_val + self.inner.uintmask()` overflowed `(usize::MAX - 2) + 3`.
+        let src = [usize::MAX - 2, usize::MAX - 1, usize::MAX];
+        let vec = ZipIntVec::build_from_usize(&src);
+        assert_eq!(vec.max_val(), usize::MAX);
+        for (i, &expected) in src.iter().enumerate() {
+            assert_eq!(vec.get(i), expected);
+        }
+
+        // Full 64-bit range [0, usize::MAX]
+        let wide = [0usize, 1, usize::MAX / 2, usize::MAX];
+        let vec_wide = ZipIntVec::build_from_usize(&wide);
+        assert_eq!(vec_wide.uintbits(), 64);
+        for (i, &expected) in wide.iter().enumerate() {
+            assert_eq!(vec_wide.get(i), expected);
         }
     }
 }

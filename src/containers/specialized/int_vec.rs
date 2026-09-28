@@ -660,13 +660,15 @@ impl<T: PackedInt> IntVec<T> {
             return CompressionStrategy::MinMax { min_val, bit_width };
         }
 
-        // For slightly larger small datasets, use optimized block compression
-        // Use 64 blockUnits (not 128) for better small dataset performance
-        CompressionStrategy::BlockBased {
-            block_size: BlockSize::Block64, // 🚀 64 units for small data
-            offset_width: bit_width.min(8), // Limit offset width for efficiency
-            sample_width: 4,                // Fixed small sample width
-            is_sorted,                      // Use actual sorted detection
+        // For slightly larger small datasets, evaluate block compression with actual block widths
+        let block_strategy = Self::analyze_block_based(values, is_sorted);
+        let min_max_strategy = CompressionStrategy::MinMax { min_val, bit_width };
+        if Self::estimate_compression_ratio(block_strategy, len)
+            < Self::estimate_compression_ratio(min_max_strategy, len)
+        {
+            block_strategy
+        } else {
+            min_max_strategy
         }
     }
 
@@ -701,60 +703,14 @@ impl<T: PackedInt> IntVec<T> {
         Some(first_delta)
     }
 
-    /// Fast delta analysis for bulk operations
+    /// Delta analysis for bulk operations (verifies all adjacent pairs)
     fn analyze_delta_bulk(values: &[u64]) -> CompressionStrategy {
-        if values.len() < 2 {
-            return CompressionStrategy::Raw;
-        }
-
-        let base_val = values[0];
-        let mut max_delta = 0u64;
-        let mut valid_delta = true;
-
-        // Sample every 16th delta for fast analysis
-        let sample_step = (values.len() / 16).max(1);
-
-        for i in (sample_step..values.len()).step_by(sample_step) {
-            if let Some(delta) = values[i].checked_sub(values[i - sample_step]) {
-                max_delta = max_delta.max(delta);
-            } else {
-                valid_delta = false;
-                break;
-            }
-        }
-
-        if !valid_delta || max_delta > (1u64 << 32) {
-            return CompressionStrategy::Raw;
-        }
-
-        let delta_width = BitOps::compute_bit_width(max_delta);
-
-        CompressionStrategy::Delta {
-            base_val,
-            delta_width,
-            is_uniform: false,
-            uniform_delta: None,
-        }
+        Self::analyze_delta(values)
     }
 
-    /// Fast sorted sequence detection using sampling
+    /// Sorted sequence detection (verifies all adjacent pairs so unsorted inputs never enter delta compression)
     fn fast_sorted_check(values: &[u64]) -> bool {
-        if values.len() < 2 {
-            return true;
-        }
-
-        // Sample every 16th element for fast sorted detection
-        let sample_step = (values.len() / 16).max(1);
-        let mut prev = values[0];
-
-        for i in (sample_step..values.len()).step_by(sample_step) {
-            if values[i] < prev {
-                return false;
-            }
-            prev = values[i];
-        }
-
-        true
+        values.windows(2).all(|w| w[0] <= w[1])
     }
 
     /// Analyze data to select optimal compression strategy using hardware acceleration
@@ -917,7 +873,7 @@ impl<T: PackedInt> IntVec<T> {
             } => {
                 let block_units = block_size.units();
                 let num_blocks = len.div_ceil(block_units);
-                let index_size = num_blocks * sample_width as usize / 8;
+                let index_size = 8 + (num_blocks * sample_width as usize).div_ceil(8);
                 let data_size = (len * offset_width as usize).div_ceil(8);
                 index_size + data_size
             }
@@ -970,7 +926,7 @@ impl<T: PackedInt> IntVec<T> {
 
         let total_bits = values.len() * bit_width as usize;
         let byte_size = total_bits.div_ceil(8);
-        let aligned_size = (byte_size + 15) & !15; // 16-byte alignment
+        let aligned_size = (byte_size + 8 + 15) & !15; // 16-byte alignment with 8-byte tail margin
 
         let mut data = vec![0u8; aligned_size];
         let mut bit_offset = 0;
@@ -1018,7 +974,7 @@ impl<T: PackedInt> IntVec<T> {
 
         let total_bits = (values.len() - 1) * delta_width as usize;
         let delta_bytes = total_bits.div_ceil(8);
-        let aligned_size = (delta_bytes + 15) & !15;
+        let aligned_size = (delta_bytes + 8 + 15) & !15;
 
         data.resize(8 + aligned_size, 0);
 
@@ -1054,26 +1010,27 @@ impl<T: PackedInt> IntVec<T> {
             samples.push(block_min);
         }
 
-        // Compress samples
+        // Compress samples: store 8-byte LE sample_min prefix followed by packed sample offsets
         // SAFETY: samples has num_blocks elements (pushed in the loop above), num_blocks >= 1
         let sample_min = *samples.iter().min().expect("non-empty samples");
         let index_bits = num_blocks * sample_width as usize;
         let index_bytes = index_bits.div_ceil(8);
-        let index_aligned = (index_bytes + 15) & !15;
+        let index_aligned = (8 + index_bytes + 8 + 15) & !15;
 
         let mut index_data = vec![0u8; index_aligned];
+        index_data[..8].copy_from_slice(&sample_min.to_le_bytes());
         let mut bit_offset = 0;
 
         for &sample in &samples {
             let offset_sample = sample - sample_min;
-            self.write_bits(&mut index_data, offset_sample, bit_offset, sample_width)?;
+            self.write_bits(&mut index_data[8..], offset_sample, bit_offset, sample_width)?;
             bit_offset += sample_width as usize;
         }
 
         // Compress data (offsets within blocks)
         let data_bits = values.len() * offset_width as usize;
         let data_bytes = data_bits.div_ceil(8);
-        let data_aligned = (data_bytes + 15) & !15;
+        let data_aligned = (data_bytes + 8 + 15) & !15;
 
         let mut data = vec![0u8; data_aligned];
         bit_offset = 0;
@@ -1097,6 +1054,9 @@ impl<T: PackedInt> IntVec<T> {
 
     /// Hardware-accelerated bit writing
     fn write_bits(&self, data: &mut [u8], value: u64, bit_offset: usize, bits: u8) -> Result<()> {
+        if bits == 0 {
+            return Ok(());
+        }
         let byte_offset = bit_offset / 8;
         let bit_in_byte = bit_offset % 8;
 
@@ -1151,6 +1111,9 @@ impl<T: PackedInt> IntVec<T> {
 
     /// Hardware-accelerated bit reading using BMI2 when available
     fn read_bits(&self, data: &[u8], bit_offset: usize, bits: u8) -> Result<u64> {
+        if bits == 0 {
+            return Ok(0);
+        }
         let byte_offset = bit_offset / 8;
         let bit_in_byte = bit_offset % 8;
 
@@ -1158,15 +1121,30 @@ impl<T: PackedInt> IntVec<T> {
             return Err(ZiporaError::invalid_data("Bit read out of bounds"));
         }
 
-        // Fast unaligned read with hardware acceleration
-        let mut buffer = [0u8; 8];
-        let available = (data.len() - byte_offset).min(8);
-        buffer[..available].copy_from_slice(&data[byte_offset..byte_offset + available]);
+        if bit_in_byte + bits as usize <= 64 {
+            // Fast unaligned read with hardware acceleration
+            let mut buffer = [0u8; 8];
+            let available = (data.len() - byte_offset).min(8);
+            buffer[..available].copy_from_slice(&data[byte_offset..byte_offset + available]);
 
-        let value = u64::from_le_bytes(buffer);
+            let value = u64::from_le_bytes(buffer);
 
-        // Use BMI2 BEXTR for optimal bit extraction when available
-        Ok(BitOps::extract_bits(value, bit_in_byte as u8, bits))
+            // Use BMI2 BEXTR for optimal bit extraction when available
+            Ok(BitOps::extract_bits(value, bit_in_byte as u8, bits))
+        } else {
+            // Value straddles 9 bytes (when bit_in_byte > 0 and bit_in_byte + bits > 64)
+            let mut buffer = [0u8; 16];
+            let available = (data.len() - byte_offset).min(16);
+            buffer[..available].copy_from_slice(&data[byte_offset..byte_offset + available]);
+
+            let value = u128::from_le_bytes(buffer) >> bit_in_byte;
+            let mask = if bits == 64 {
+                u64::MAX
+            } else {
+                (1u64 << bits) - 1
+            };
+            Ok((value as u64) & mask)
+        }
     }
 
     // Decompression methods
@@ -1190,7 +1168,7 @@ impl<T: PackedInt> IntVec<T> {
     fn get_min_max(&self, index: usize, min_val: u64, bit_width: u8) -> Option<u64> {
         let bit_offset = index * bit_width as usize;
         match self.read_bits(&self.data, bit_offset, bit_width) {
-            Ok(offset_value) => Some(min_val + offset_value),
+            Ok(offset_value) => Some(min_val.wrapping_add(offset_value)),
             Err(_) => None,
         }
     }
@@ -1245,9 +1223,16 @@ impl<T: PackedInt> IntVec<T> {
         let block_idx = index / block_units;
         // Get sample (block base value)
         let index_data = self.index.as_ref()?;
+        if index_data.len() < 8 {
+            return None;
+        }
+        let mut min_bytes = [0u8; 8];
+        min_bytes.copy_from_slice(&index_data[..8]);
+        let sample_min = u64::from_le_bytes(min_bytes);
+
         let sample_bit_offset = block_idx * sample_width as usize;
         let sample_offset = self
-            .read_bits(index_data, sample_bit_offset, sample_width)
+            .read_bits(&index_data[8..], sample_bit_offset, sample_width)
             .ok()?;
 
         // Get offset within block
@@ -1256,7 +1241,7 @@ impl<T: PackedInt> IntVec<T> {
             .read_bits(&self.data, data_bit_offset, offset_width)
             .ok()?;
 
-        Some(sample_offset + block_offset)
+        Some(sample_min + sample_offset + block_offset)
     }
 }
 
@@ -1495,5 +1480,66 @@ mod tests {
         );
 
         println!("Edge cases tested successfully");
+    }
+
+    #[test]
+    fn test_c6_9_unsorted_between_sample_points_does_not_underflow() {
+        // Previously fast_sorted_check sampled every (len / 16).max(1) = 2nd element,
+        // so an inversion at an odd index (values[1] = 100, values[2] = 50) was missed,
+        // causing compress_delta to panic with `values[i] - values[i - 1]` underflow.
+        let mut values: Vec<u64> = (0..32).map(|i| i * 10).collect();
+        values[1] = 100; // inversion: values[1] = 100 > values[2] = 20, while even indices 0,2,4.. stay sorted
+        let vec = IntVec::from_slice(&values).expect("from_slice must succeed on unsorted input");
+        for (i, &expected) in values.iter().enumerate() {
+            assert_eq!(vec.get(i), Some(expected), "mismatch at index {i}");
+        }
+    }
+
+    #[test]
+    fn test_c6_9_block_based_preserves_sample_min_and_wide_offsets() {
+        // Trigger the `len > 1000 && bit_width > 16` unsorted path that previously
+        // hardcoded `offset_width: 8, sample_width: 4` and dropped `sample_min`.
+        let mut values = Vec::with_capacity(1200);
+        for i in 0..1200u64 {
+            let base = 500_000 + (i / 64) * 10_000;
+            let within = if i % 2 == 0 {
+                (i % 64) * 300
+            } else {
+                (63 - (i % 64)) * 300
+            };
+            values.push(base + within);
+        }
+        let vec = IntVec::from_slice(&values).expect("from_slice must succeed");
+        for (i, &expected) in values.iter().enumerate() {
+            assert_eq!(vec.get(i), Some(expected), "mismatch at index {i}");
+        }
+    }
+
+    #[test]
+    fn test_c6_9_nine_byte_straddle_read_bits_roundtrip() {
+        // 60-bit values where index 1 starts at bit_offset = 60 (bit_in_byte = 4, 4 + 60 = 64)
+        // and index 2 starts at bit_offset = 120, or 59-bit values where index 1 starts at
+        // bit_offset = 59 (bit_in_byte = 3, 3 + 59 = 62) and index 3 starts at bit_offset = 177
+        // (bit_in_byte = 1, 1 + 59 = 60) or 61-bit values where index 1 starts at bit_offset = 61
+        // (bit_in_byte = 5, 5 + 61 = 66 > 64 -> spans 9 bytes!).
+        let max_61 = (1u64 << 61) - 1;
+        let values = vec![
+            max_61,
+            0,
+            max_61 - 12345,
+            max_61 / 3,
+            (1u64 << 60) | 0x1234_5678_9ABC_DEF0,
+            42,
+            max_61 - 1,
+            999_999,
+        ];
+        let vec = IntVec::from_slice(&values).expect("61-bit MinMax must succeed");
+        for (i, &expected) in values.iter().enumerate() {
+            assert_eq!(
+                vec.get(i),
+                Some(expected),
+                "61-bit straddle mismatch at {i}"
+            );
+        }
     }
 }

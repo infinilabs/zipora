@@ -160,20 +160,27 @@ impl UintVecMin0 {
     #[inline]
     pub fn get(&self, idx: usize) -> usize {
         assert!(idx < self.size, "Index {} out of bounds {}", idx, self.size);
-        assert!(self.bits <= 58, "Use BigUintVecMin0 for >58 bits");
-        self.fast_get_internal(idx)
+        if self.bits <= 58 {
+            self.fast_get_internal(idx)
+        } else {
+            self.get_uint_bits(idx * self.bits, self.bits)
+        }
     }
 
     /// Get value without bounds checking.
     ///
     /// # Safety
     ///
-    /// Caller must ensure `idx < self.size` and `self.bits <= 58`.
+    /// Caller must ensure `idx < self.size` and `self.bits <= 64`.
     #[inline]
     pub unsafe fn get_unchecked(&self, idx: usize) -> usize {
-        debug_assert!(idx < self.size, "Index {} out of bounds {}", idx, self.size);
-        debug_assert!(self.bits <= 58);
-        self.fast_get_internal(idx)
+        debug_assert!(idx < self.size, "Index {} out of bounds {}", idx, self.size); // PROVEN: caller guarantees idx < self.size per # Safety contract
+        debug_assert!(self.bits <= 64); // PROVEN: type invariant guarantees self.bits <= 64
+        if self.bits <= 58 {
+            self.fast_get_internal(idx)
+        } else {
+            self.get_uint_bits(idx * self.bits, self.bits)
+        }
     }
 
     /// Get two consecutive values (optimized bulk access)
@@ -183,21 +190,38 @@ impl UintVecMin0 {
     /// More efficient than calling `get()` twice due to reduced bounds checking
     #[inline]
     pub fn get2(&self, idx: usize) -> [usize; 2] {
-        assert!(idx + 1 < self.size, "Index {} out of bounds for get2", idx);
-        assert!(self.bits <= 58, "Use BigUintVecMin0 for >58 bits");
-        [self.fast_get_internal(idx), self.fast_get_internal(idx + 1)]
+        assert!(
+            idx < self.size.saturating_sub(1),
+            "Index {} out of bounds for get2",
+            idx
+        );
+        if self.bits <= 58 {
+            [self.fast_get_internal(idx), self.fast_get_internal(idx + 1)]
+        } else {
+            [
+                self.get_uint_bits(idx * self.bits, self.bits),
+                self.get_uint_bits((idx + 1) * self.bits, self.bits),
+            ]
+        }
     }
 
     /// Get two consecutive values without bounds checking.
     ///
     /// # Safety
     ///
-    /// Caller must ensure `idx + 1 < self.size` and `self.bits <= 58`.
+    /// Caller must ensure `idx + 1 < self.size` and `self.bits <= 64`.
     #[inline]
     pub unsafe fn get2_unchecked(&self, idx: usize) -> [usize; 2] {
-        debug_assert!(idx + 1 < self.size);
-        debug_assert!(self.bits <= 58);
-        [self.fast_get_internal(idx), self.fast_get_internal(idx + 1)]
+        debug_assert!(idx < self.size.saturating_sub(1)); // PROVEN: caller guarantees idx + 1 < self.size per # Safety contract
+        debug_assert!(self.bits <= 64); // PROVEN: type invariant guarantees self.bits <= 64
+        if self.bits <= 58 {
+            [self.fast_get_internal(idx), self.fast_get_internal(idx + 1)]
+        } else {
+            [
+                self.get_uint_bits(idx * self.bits, self.bits),
+                self.get_uint_bits((idx + 1) * self.bits, self.bits),
+            ]
+        }
     }
 
     /// Fast get using static method (for use in hot loops)
@@ -206,7 +230,7 @@ impl UintVecMin0 {
     ///
     /// # Parameters
     /// - `data` - Byte array containing packed values
-    /// - `bits` - Bits per value (must be <= 58)
+    /// - `bits` - Bits per value (must be <= 64)
     /// - `mask` - Bit mask for extraction
     /// - `idx` - Index to retrieve
     ///
@@ -214,20 +238,57 @@ impl UintVecMin0 {
     /// Result containing the value, or error if bounds check fails
     #[inline]
     pub fn fast_get(data: &[u8], bits: usize, mask: usize, idx: usize) -> Result<usize> {
-        assert!(bits <= 58, "fast_get requires bits <= 58");
-        let bit_idx = bits * idx;
-        let byte_idx = bit_idx / 8;
-
-        // SAFETY FIX: Validate we can read 8 bytes (size of usize)
-        let required_size = byte_idx + std::mem::size_of::<usize>();
-        if required_size > data.len() {
-            return Err(ZiporaError::out_of_bounds(idx, data.len()));
+        assert!(bits <= 64, "fast_get requires bits <= 64");
+        if bits == 0 {
+            return Ok(0);
         }
+        let bit_idx = bits
+            .checked_mul(idx)
+            .ok_or_else(|| ZiporaError::out_of_bounds(idx, data.len()))?;
+        let byte_idx = bit_idx / 8;
+        let bit_offset = bit_idx % 8;
 
-        // SAFETY: Bounds check above ensures data[byte_idx..byte_idx+8] is valid
-        // Unaligned load is safe as values may span cache lines
-        let val = unsafe { std::ptr::read_unaligned(data.as_ptr().add(byte_idx) as *const usize) };
-        Ok((val >> (bit_idx % 8)) & mask)
+        if bit_offset + bits <= 64 {
+            // SAFETY FIX: Validate we can read 8 bytes (size of usize)
+            let required_size = byte_idx
+                .checked_add(std::mem::size_of::<usize>())
+                .ok_or_else(|| ZiporaError::out_of_bounds(idx, data.len()))?;
+            if required_size > data.len() {
+                return Err(ZiporaError::out_of_bounds(idx, data.len()));
+            }
+
+            // SAFETY: Bounds check above ensures data[byte_idx..byte_idx+8] is valid
+            // Unaligned load is safe as values may span cache lines
+            let val =
+                unsafe { std::ptr::read_unaligned(data.as_ptr().add(byte_idx) as *const usize) };
+            Ok((val >> bit_offset) & mask)
+        } else {
+            let bytes_needed = (bit_offset + bits).div_ceil(8);
+            let required_size = byte_idx
+                .checked_add(bytes_needed)
+                .ok_or_else(|| ZiporaError::out_of_bounds(idx, data.len()))?;
+            if required_size > data.len() {
+                return Err(ZiporaError::out_of_bounds(idx, data.len()));
+            }
+            let mut result = 0usize;
+            let mut bits_read = 0usize;
+            let mut curr_byte = byte_idx;
+            let mut curr_bit_offset = bit_offset;
+            while bits_read < bits {
+                let bits_in_byte = (8 - curr_bit_offset).min(bits - bits_read);
+                let mask_unshifted = if bits_in_byte == 8 {
+                    0xFFu8
+                } else {
+                    (1u8 << bits_in_byte) - 1
+                };
+                let extracted = (data[curr_byte] >> curr_bit_offset) & mask_unshifted;
+                result |= (extracted as usize) << bits_read;
+                bits_read += bits_in_byte;
+                curr_byte += 1;
+                curr_bit_offset = 0;
+            }
+            Ok(result & mask)
+        }
     }
 
     /// Internal fast get (bounds already checked)
@@ -248,12 +309,7 @@ impl UintVecMin0 {
         let bit_idx = self.bits * idx;
         let byte_idx = bit_idx / 8;
 
-        debug_assert!(
-            byte_idx + std::mem::size_of::<usize>() <= self.data.len(),
-            "fast_get_internal tail-read invariant violated: byte_idx={} + 8 > data.len()={}",
-            byte_idx,
-            self.data.len()
-        );
+        debug_assert!(byte_idx + std::mem::size_of::<usize>() <= self.data.len()); // PROVEN: idx < self.size and self.bits <= 58 satisfy H4 tail-read invariant
 
         // SAFETY: Caller validated idx < size and bits <= 58; the tail-read
         // invariant above guarantees data[byte_idx..byte_idx+8] is in-bounds
@@ -262,6 +318,49 @@ impl UintVecMin0 {
         let val =
             unsafe { std::ptr::read_unaligned(self.data.as_ptr().add(byte_idx) as *const usize) };
         (val >> (bit_idx % 8)) & self.mask
+    }
+
+    /// Read `bits` bits starting at `bit_pos` (handles widths up to 64 bits, including 9-byte straddles).
+    #[inline]
+    fn get_uint_bits(&self, bit_pos: usize, bits: usize) -> usize {
+        if bits == 0 {
+            return 0;
+        }
+
+        let byte_idx = bit_pos / 8;
+        let bit_offset = bit_pos % 8;
+        let end_bit = bit_offset + bits;
+
+        if end_bit <= 64 {
+            debug_assert!(byte_idx + std::mem::size_of::<usize>() <= self.data.len()); // PROVEN: compute_mem_size allocates ceil(bits*size/8)+7 aligned to 16
+            // SAFETY: compute_mem_size guarantees data[byte_idx..byte_idx+8] is in-bounds and initialized.
+            let val = unsafe {
+                std::ptr::read_unaligned(self.data.as_ptr().add(byte_idx) as *const usize)
+            };
+            (val >> bit_offset) & self.mask
+        } else {
+            let mut result = 0usize;
+            let mut bits_read = 0usize;
+            let mut curr_byte = byte_idx;
+            let mut curr_bit_offset = bit_offset;
+
+            while bits_read < bits {
+                let bits_in_byte = (8 - curr_bit_offset).min(bits - bits_read);
+                let mask_unshifted = if bits_in_byte == 8 {
+                    0xFFu8
+                } else {
+                    (1u8 << bits_in_byte) - 1
+                };
+                let extracted = (self.data[curr_byte] >> curr_bit_offset) & mask_unshifted;
+                result |= (extracted as usize) << bits_read;
+
+                bits_read += bits_in_byte;
+                curr_byte += 1;
+                curr_bit_offset = 0;
+            }
+
+            result & self.mask
+        }
     }
 
     /// Set value at index
@@ -325,9 +424,13 @@ impl UintVecMin0 {
 
             while remaining_bits > 0 {
                 let bits_in_byte = (8 - curr_bit_offset).min(remaining_bits);
-                let byte_mask = ((1u8 << bits_in_byte) - 1) << curr_bit_offset;
-                let byte_val =
-                    ((remaining_val & ((1 << bits_in_byte) - 1)) as u8) << curr_bit_offset;
+                let mask_unshifted = if bits_in_byte == 8 {
+                    0xFFu8
+                } else {
+                    (1u8 << bits_in_byte) - 1
+                };
+                let byte_mask = mask_unshifted << curr_bit_offset;
+                let byte_val = ((remaining_val as u8) & mask_unshifted) << curr_bit_offset;
 
                 self.data[curr_byte] = (self.data[curr_byte] & !byte_mask) | byte_val;
 
@@ -471,6 +574,24 @@ impl UintVecMin0 {
 
     /// Resize to new size (preserves existing values)
     pub fn resize(&mut self, new_size: usize) {
+        if new_size < self.size && self.bits > 0 {
+            let start_bit = new_size * self.bits;
+            let end_bit = self.size * self.bits;
+            let start_byte = start_bit / 8;
+            let start_bit_offset = start_bit % 8;
+            let end_byte = end_bit.div_ceil(8).min(self.data.len());
+            if start_byte < end_byte {
+                if start_bit_offset > 0 {
+                    self.data[start_byte] &= (1u8 << start_bit_offset) - 1;
+                    if start_byte + 1 < end_byte {
+                        self.data[start_byte + 1..end_byte].fill(0);
+                    }
+                } else {
+                    self.data[start_byte..end_byte].fill(0);
+                }
+            }
+        }
+
         let new_mem_size = Self::compute_mem_size(self.bits, new_size);
 
         if new_mem_size > self.data.len() {
@@ -956,6 +1077,68 @@ mod tests {
         assert_eq!(v.uintbits(), 13);
         for i in 0..64 {
             assert_eq!(v.get(i), 0, "slot {i} kept stale bits after width change");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "out of bounds for get2")]
+    fn test_c6_6_get2_usize_max_panics() {
+        let mut v = UintVecMin0::new(2, 15);
+        v.set(0, 3);
+        v.set(1, 7);
+        let _ = v.get2(usize::MAX);
+    }
+
+    #[test]
+    fn test_c6_6_fast_get_overflow_returns_err() {
+        let v = UintVecMin0::new(4, 255);
+        assert!(UintVecMin0::fast_get(v.data(), v.uintbits(), v.uintmask(), usize::MAX).is_err());
+    }
+
+    #[test]
+    fn test_c6_7_wide_bits_59_to_64_roundtrip() {
+        for bits in 59..=64 {
+            let max_val = if bits == 64 {
+                usize::MAX
+            } else {
+                (1usize << bits) - 1
+            };
+            let mut v = UintVecMin0::new(16, max_val);
+            assert_eq!(v.uintbits(), bits);
+            for i in 0..16 {
+                let val = max_val.wrapping_sub(i * 0x0102_0304_0506_0708) & max_val;
+                v.set(i, val);
+            }
+            for i in 0..16 {
+                let expected = max_val.wrapping_sub(i * 0x0102_0304_0506_0708) & max_val;
+                assert_eq!(v.get(i), expected, "mismatch at bits={bits}, idx={i}");
+                assert_eq!(
+                    UintVecMin0::fast_get(v.data(), v.uintbits(), v.uintmask(), i).unwrap(),
+                    expected
+                );
+            }
+            for i in 0..15 {
+                let expected0 = max_val.wrapping_sub(i * 0x0102_0304_0506_0708) & max_val;
+                let expected1 = max_val.wrapping_sub((i + 1) * 0x0102_0304_0506_0708) & max_val;
+                assert_eq!(v.get2(i), [expected0, expected1]);
+            }
+        }
+    }
+
+    #[test]
+    fn test_c6_7_resize_shrink_and_regrow_zeros_truncated_bits() {
+        let mut v = UintVecMin0::new(16, 0x1FF); // 9-bit elements
+        for i in 0..16 {
+            v.set(i, 0x1FF);
+        }
+        v.resize(5);
+        assert_eq!(v.size(), 5);
+        v.resize(16);
+        for i in 0..5 {
+            assert_eq!(v.get(i), 0x1FF);
+        }
+        for i in 5..16 {
+            assert_eq!(v.get(i), 0, "regrown slot {i} retained stale bits");
         }
     }
 }
