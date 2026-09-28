@@ -838,9 +838,10 @@ impl OptimizedSearch for u8 {
             }
             let keys_vec = _mm_loadl_epi64(key_bytes.as_ptr() as *const __m128i);
 
-            // Compare all keys at once
+            // Compare all keys at once and mask to active lanes 0..len.min(8)
             let cmp = _mm_cmpeq_epi8(search_vec, keys_vec);
-            let mask = _mm_movemask_epi8(cmp) as u32;
+            let valid_mask = (1u32 << len.min(8)) - 1;
+            let mask = (_mm_movemask_epi8(cmp) as u32) & valid_mask;
 
             if mask != 0 {
                 // Found a match, find the first set bit
@@ -870,31 +871,33 @@ impl OptimizedSearch for u32 {
             let search_vec = _mm_set1_epi32(*self as i32);
 
             // Process first 4 elements
-            if len >= 4 {
-                let mut key_array = [0u32; 4];
-                for i in 0..4.min(len) {
-                    key_array[i] = *keys[i].assume_init_ref();
-                }
+            let first_len = len.min(4);
+            let mut key_array = [0u32; 4];
+            for i in 0..first_len {
+                key_array[i] = *keys[i].assume_init_ref();
+            }
 
-                let keys_vec = _mm_loadu_si128(key_array.as_ptr() as *const __m128i);
-                let cmp = _mm_cmpeq_epi32(search_vec, keys_vec);
-                let mask = _mm_movemask_ps(_mm_castsi128_ps(cmp)) as u32;
+            let keys_vec = _mm_loadu_si128(key_array.as_ptr() as *const __m128i);
+            let cmp = _mm_cmpeq_epi32(search_vec, keys_vec);
+            let valid_mask = (1u32 << first_len) - 1;
+            let mask = (_mm_movemask_ps(_mm_castsi128_ps(cmp)) as u32) & valid_mask;
 
-                if mask != 0 {
-                    return Some(mask.trailing_zeros() as usize);
-                }
+            if mask != 0 {
+                return Some(mask.trailing_zeros() as usize);
             }
 
             // Process remaining elements (5-8)
             if len > 4 {
+                let rem_len = len.min(8) - 4;
                 let mut key_array = [0u32; 4];
-                for i in 4..len.min(8) {
-                    key_array[i - 4] = *keys[i].assume_init_ref();
+                for i in 0..rem_len {
+                    key_array[i] = *keys[4 + i].assume_init_ref();
                 }
 
                 let keys_vec = _mm_loadu_si128(key_array.as_ptr() as *const __m128i);
                 let cmp = _mm_cmpeq_epi32(search_vec, keys_vec);
-                let mask = _mm_movemask_ps(_mm_castsi128_ps(cmp)) as u32;
+                let valid_mask = (1u32 << rem_len) - 1;
+                let mask = (_mm_movemask_ps(_mm_castsi128_ps(cmp)) as u32) & valid_mask;
 
                 if mask != 0 {
                     return Some(4 + mask.trailing_zeros() as usize);
@@ -1500,6 +1503,43 @@ mod tests {
             assert_eq!(map.get(&i), Some(&format!("value_{}", i)));
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_c6_10_simd_zero_key_no_false_positive() -> Result<()> {
+        // When len is 5..7 and key 0 is NOT in the map, zero-padded inactive SIMD lanes
+        // previously matched key == 0 and read uninitialized MaybeUninit<V> (or panicked OOB at len == 8).
+        let mut map_u8 = SmallMap::<u8, String>::new();
+        for k in 1u8..=5 {
+            map_u8.insert(k, format!("v{k}"))?;
+        }
+        assert_eq!(map_u8.get(&0), None);
+        #[cfg(all(target_arch = "x86_64", feature = "simd"))]
+        {
+            assert_eq!(map_u8.get_fast(&0), None);
+            for k in 6u8..=8 {
+                map_u8.insert(k, format!("v{k}"))?;
+                assert_eq!(map_u8.get(&0), None);
+                assert_eq!(map_u8.get_fast(&0), None);
+            }
+
+            let mut keys_u32 = [const { MaybeUninit::uninit() }; SMALL_MAP_THRESHOLD];
+            for (i, k) in (1u32..=5).enumerate() {
+                keys_u32[i] = MaybeUninit::new(k);
+            }
+            assert_eq!(0u32.find_optimized(&keys_u32, 3), None);
+            assert_eq!(0u32.find_optimized(&keys_u32, 5), None);
+            assert_eq!(5u32.find_optimized(&keys_u32, 5), Some(4));
+
+            let mut keys_i32 = [const { MaybeUninit::uninit() }; SMALL_MAP_THRESHOLD];
+            for (i, k) in (1i32..=5).enumerate() {
+                keys_i32[i] = MaybeUninit::new(k);
+            }
+            assert_eq!(0i32.find_optimized(&keys_i32, 3), None);
+            assert_eq!(0i32.find_optimized(&keys_i32, 5), None);
+            assert_eq!(5i32.find_optimized(&keys_i32, 5), Some(4));
+        }
         Ok(())
     }
 }

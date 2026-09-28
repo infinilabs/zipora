@@ -285,7 +285,13 @@ impl<K, V> LruNode<K, V> {
     }
 
     /// Reset node to initial state
-    fn reset(&mut self) {
+    fn reset(&mut self)
+    where
+        K: Default,
+        V: Default,
+    {
+        self.key = K::default();
+        self.value = V::default();
         self.prev.store(INVALID_NODE, Ordering::Relaxed);
         self.next.store(INVALID_NODE, Ordering::Relaxed);
         self.access_count.store(0, Ordering::Relaxed);
@@ -649,6 +655,26 @@ where
                 .nodes
                 .write()
                 .map_err(|_| ZiporaError::out_of_memory(0))?;
+
+            // Re-check under the write lock in case a concurrent `put` inserted the same key
+            // while we were allocating `node_idx`.
+            if let Some(&existing_idx) = hash_map.get(&key)
+                && (existing_idx as usize) < nodes.len()
+                && nodes[existing_idx as usize].is_valid
+            {
+                let old_value = std::mem::replace(&mut nodes[existing_idx as usize].value, value);
+                self.lru_list.move_to_head(&mut nodes, existing_idx);
+                drop(nodes);
+                drop(hash_map);
+                if let Ok(mut free_nodes) = self.free_nodes.lock() {
+                    free_nodes.push(node_idx);
+                }
+                if self.config.enable_statistics {
+                    self.stats.record_put();
+                }
+                return Ok(Some(old_value));
+            }
+
             nodes[node_idx as usize] = LruNode::new(key.clone(), value, hash);
             self.lru_list.insert_head(&mut nodes, node_idx);
             drop(nodes);
@@ -706,6 +732,15 @@ where
         }
     }
 
+    /// Return a snapshot of all keys currently in the cache.
+    pub fn keys(&self) -> Vec<K> {
+        if let Ok(hash_map) = self.hash_map.read() {
+            hash_map.keys().cloned().collect()
+        } else {
+            Vec::new()
+        }
+    }
+
     /// Get the current number of entries
     #[inline]
     pub fn len(&self) -> usize {
@@ -741,13 +776,15 @@ where
 
         hash_map.clear();
 
-        // Reset all nodes and add to free list
-        free_nodes.clear();
-        for (i, node) in nodes.iter_mut().enumerate() {
+        // Reset all nodes and repopulate free_nodes with the full 0..capacity range
+        for node in nodes.iter_mut() {
             if node.is_valid {
                 node.reset();
-                free_nodes.push(i as u32);
             }
+        }
+        free_nodes.clear();
+        for i in (0..nodes.len()).rev() {
+            free_nodes.push(i as u32);
         }
 
         // Reset LRU list
@@ -872,7 +909,8 @@ where
     }
 }
 
-// Thread-safe implementation
+// SAFETY: LruMap synchronizes all mutable state through RwLock<HashMap>, RwLock<Vec<LruNode>>,
+// Mutex<Vec<u32>>, and atomic counters, so sending it across threads is sound when K, V, E are Send.
 unsafe impl<K, V, E> Send for LruMap<K, V, E>
 where
     K: Hash + Eq + Clone + Send + Default,
@@ -881,6 +919,8 @@ where
 {
 }
 
+// SAFETY: All shared references (&LruMap) access internal state exclusively through RwLock, Mutex,
+// and atomic operations, so concurrent access across threads is sound when K, V, E are Send + Sync.
 unsafe impl<K, V, E> Sync for LruMap<K, V, E>
 where
     K: Hash + Eq + Clone + Send + Sync + Default,
@@ -1118,5 +1158,23 @@ mod tests {
             "puts failed even though every entry was evictable"
         );
         assert!(cache.len() <= 8, "capacity exceeded: {}", cache.len());
+    }
+
+    #[test]
+    fn test_c6_12_clear_preserves_full_capacity_and_keys() {
+        // Previously clear() wiped free_nodes and only returned currently valid nodes,
+        // so calling clear() on an empty or partially-filled map permanently lost free nodes!
+        let cache = LruMap::new(4).unwrap();
+        cache.clear().unwrap();
+        for i in 0..4 {
+            cache.put(i, format!("v{i}")).unwrap();
+        }
+        assert_eq!(cache.len(), 4);
+        assert_eq!(cache.keys().len(), 4);
+        cache.clear().unwrap();
+        for i in 10..14 {
+            cache.put(i, format!("v{i}")).unwrap();
+        }
+        assert_eq!(cache.len(), 4);
     }
 }

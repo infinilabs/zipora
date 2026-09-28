@@ -335,6 +335,19 @@ where
         Ok(index)
     }
 
+    /// Drop the initialized `V` inside a pooled block before returning the block to the pool.
+    #[inline]
+    fn drop_pooled_value(ptr: SecurePooledPtr) {
+        if mem::needs_drop::<V>() {
+            // SAFETY: Every SecurePooledPtr stored in `self.values` was initialized with a valid `V`
+            // in `allocate_pooled_value` and is taken out of `self.values` before dropping here.
+            unsafe {
+                std::ptr::drop_in_place(ptr.as_ptr() as *mut V);
+            }
+        }
+        drop(ptr);
+    }
+
     /// Store a value at a specific index
     fn store_value(&mut self, index: usize, value: V) -> Result<()> {
         if index >= self.values.len() {
@@ -342,7 +355,9 @@ where
         }
 
         let value_ptr = self.allocate_pooled_value(value)?;
-        self.values[index] = Some(value_ptr);
+        if let Some(old_ptr) = self.values[index].replace(value_ptr) {
+            Self::drop_pooled_value(old_ptr);
+        }
         Ok(())
     }
 
@@ -369,7 +384,9 @@ where
     /// Free a value slot
     fn free_value(&mut self, index: usize) {
         if index < self.values.len() {
-            self.values[index] = None;
+            if let Some(old_ptr) = self.values[index].take() {
+                Self::drop_pooled_value(old_ptr);
+            }
             self.free_values.push(index);
             self.value_memory = self.value_memory.saturating_sub(mem::size_of::<V>());
         }
@@ -377,26 +394,28 @@ where
 
     /// Allocate a pooled value
     fn allocate_pooled_value(&mut self, value: V) -> Result<SecurePooledPtr> {
-        match &self.pool {
-            Some(pool) => {
-                let ptr = pool.allocate()?;
-                // SAFETY: ptr is freshly allocated, properly aligned for V, not yet initialized
-                unsafe {
-                    std::ptr::write(ptr.as_ptr() as *mut V, value);
-                }
-                Ok(ptr)
-            }
+        let val_size = mem::size_of::<V>();
+        let val_align = mem::align_of::<V>();
+        let ptr = match &self.pool {
+            Some(pool) => pool.allocate()?,
             None => {
-                // Use global pool
-                let pool = get_global_pool_for_size(mem::size_of::<V>());
-                let ptr = pool.allocate()?;
-                // SAFETY: ptr is freshly allocated, properly aligned for V, not yet initialized
-                unsafe {
-                    std::ptr::write(ptr.as_ptr() as *mut V, value);
-                }
-                Ok(ptr)
+                let pool = get_global_pool_for_size(val_size);
+                pool.allocate()?
             }
+        };
+        if ptr.size() < val_size || !(ptr.as_ptr() as usize).is_multiple_of(val_align) {
+            return Err(ZiporaError::invalid_data(format!(
+                "GoldHashIdx: pooled chunk size ({}) / alignment insufficient for value size ({}) / align ({})",
+                ptr.size(),
+                val_size,
+                val_align
+            )));
         }
+        // SAFETY: ptr.size() >= size_of::<V>() and pointer alignment >= align_of::<V>() verified above
+        unsafe {
+            std::ptr::write(ptr.as_ptr() as *mut V, value);
+        }
+        Ok(ptr)
     }
 
     /// Resize the hash table
@@ -407,15 +426,15 @@ where
     /// Resize to a specific capacity
     fn resize_to(&mut self, new_capacity: usize) -> Result<()> {
         let old_table = mem::replace(&mut self.table, vec![None; new_capacity]);
-        let _old_capacity = self.capacity;
         self.capacity = new_capacity;
-        self.len = 0;
-        self.key_memory = 0;
 
-        // Rehash all elements
+        // Rehash all existing buckets in place, keeping their existing value_index slots
         for bucket in old_table.into_iter().flatten() {
-            let value = self.get_value(bucket.value_index)?.clone();
-            self.insert(bucket.key, value)?;
+            let mut index = (bucket.hash % self.capacity as u64) as usize;
+            while self.table[index].is_some() {
+                index = (index + 1) % self.capacity;
+            }
+            self.table[index] = Some(bucket);
         }
 
         Ok(())
@@ -437,6 +456,20 @@ where
 
             self.table[new_index] = Some(bucket);
             index = (index + 1) % self.capacity;
+        }
+    }
+}
+
+impl<K, V> Drop for GoldHashIdx<K, V>
+where
+    K: Hash + Eq + Clone,
+    V: Clone,
+{
+    fn drop(&mut self) {
+        for slot in &mut self.values {
+            if let Some(ptr) = slot.take() {
+                Self::drop_pooled_value(ptr);
+            }
         }
     }
 }
@@ -576,6 +609,61 @@ mod tests {
         idx.insert("test".to_string(), val.clone())?;
 
         assert_eq!(idx.get(&"test".to_string()), Some(&val));
+        Ok(())
+    }
+
+    #[test]
+    fn test_c6_12_undersized_pool_rejected_and_values_dropped() -> Result<()> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // 1. Undersized custom pool (64-byte chunks for 260-byte LargeValue) must be rejected
+        // rather than overflowing the 64-byte pooled chunk.
+        let small_pool = SecureMemoryPool::new(SecurePoolConfig::new(64, 16, 8))?;
+        let mut bad_idx = GoldHashIdx::with_pool(16, small_pool);
+        assert!(bad_idx.insert("k".to_string(), LargeValue::new(1)).is_err());
+
+        // 2. Pooled values with Drop glue must be dropped on overwrite, remove, and GoldHashIdx::drop,
+        // and resize must not leak value slots.
+        #[derive(Clone, Debug)]
+        struct DropVal {
+            _id: usize,
+            drops: Arc<AtomicUsize>,
+        }
+        impl Drop for DropVal {
+            fn drop(&mut self) {
+                self.drops.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let drops = Arc::new(AtomicUsize::new(0));
+        {
+            let mut idx = GoldHashIdx::with_capacity(16);
+            for i in 0..20 {
+                idx.insert(
+                    i,
+                    DropVal {
+                        _id: i,
+                        drops: Arc::clone(&drops),
+                    },
+                )?;
+            }
+            // Overwrite key 0
+            let old = idx.insert(
+                0,
+                DropVal {
+                    _id: 100,
+                    drops: Arc::clone(&drops),
+                },
+            )?;
+            drop(old);
+            // Remove key 1
+            let removed = idx.remove(&1);
+            drop(removed);
+            // Resize must not allocate duplicate value slots
+            assert_eq!(idx.values.iter().filter(|s| s.is_some()).count(), 19);
+        }
+        // All 19 remaining in-pool values must have been dropped when `idx` dropped
+        assert!(drops.load(Ordering::SeqCst) >= 21);
         Ok(())
     }
 

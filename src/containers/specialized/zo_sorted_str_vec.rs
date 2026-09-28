@@ -84,6 +84,12 @@ impl ZoSortedStrVec {
             return Ok(Self::empty());
         }
 
+        if strings.iter().any(|s| s.as_bytes().contains(&0)) {
+            return Err(ZiporaError::invalid_data(
+                "ZoSortedStrVec strings cannot contain interior NUL bytes",
+            ));
+        }
+
         // Verify strings are sorted
         for i in 1..strings.len() {
             if strings[i - 1] > strings[i] {
@@ -318,6 +324,20 @@ impl ZoSortedStrVec {
         self.binary_search(needle).is_ok()
     }
 
+    fn lower_bound(&self, needle: &str) -> usize {
+        let mut left = 0;
+        let mut right = self.len;
+        while left < right {
+            let mid = left + (right - left) / 2;
+            match self.get(mid) {
+                Some(mid_str) if mid_str < needle => left = mid + 1,
+                Some(_) => right = mid,
+                None => return mid,
+            }
+        }
+        left
+    }
+
     /// Get an iterator over strings in a range
     ///
     /// # Arguments
@@ -327,15 +347,8 @@ impl ZoSortedStrVec {
     /// # Returns
     /// An iterator over string slices in the specified range
     pub fn range(&self, start: &str, end: &str) -> ZoSortedStrVecRange<'_> {
-        let start_idx = match self.binary_search(start) {
-            Ok(idx) => idx,
-            Err(idx) => idx,
-        };
-
-        let end_idx = match self.binary_search(end) {
-            Ok(idx) => idx,
-            Err(idx) => idx,
-        };
+        let start_idx = self.lower_bound(start);
+        let end_idx = self.lower_bound(end).max(start_idx);
 
         ZoSortedStrVecRange {
             vec: self,
@@ -737,6 +750,24 @@ mod tests {
         assert_eq!(vec.get(0), Some(""));
         assert_eq!(vec.get(1), Some("a"));
         assert_eq!(vec.get(2), Some("b"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_c6_13_zo_sorted_str_vec_rejects_interior_nul_and_range_duplicates() -> Result<()> {
+        let nul_strings = vec!["a\0b".to_string(), "c".to_string()];
+        assert!(ZoSortedStrVec::from_sorted_strings(nul_strings).is_err());
+
+        let dup_strings = vec![
+            "a".to_string(),
+            "b".to_string(),
+            "b".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+        ];
+        let vec = ZoSortedStrVec::from_sorted_strings(dup_strings)?;
+        let ranged: Vec<&str> = vec.range("b", "c").collect();
+        assert_eq!(ranged, vec!["b", "b", "b"]);
         Ok(())
     }
 }

@@ -223,9 +223,17 @@ where
 {
     /// Create a new concurrent LRU map
     pub fn new(total_capacity: usize, shard_count: usize) -> Result<Self> {
+        if shard_count == 0 {
+            return Err(ZiporaError::invalid_parameter("Shard count must be > 0"));
+        }
+        let shard_capacity = if total_capacity == 0 {
+            0
+        } else {
+            total_capacity.div_ceil(shard_count)
+        };
         let config = ConcurrentLruMapConfig {
             base_config: LruMapConfig {
-                capacity: total_capacity / shard_count,
+                capacity: shard_capacity,
                 ..Default::default()
             },
             shard_count,
@@ -269,9 +277,17 @@ where
         shard_count: usize,
         callback: E,
     ) -> Result<Self> {
+        if shard_count == 0 {
+            return Err(ZiporaError::invalid_parameter("Shard count must be > 0"));
+        }
+        let shard_capacity = if total_capacity == 0 {
+            0
+        } else {
+            total_capacity.div_ceil(shard_count)
+        };
         let config = ConcurrentLruMapConfig {
             base_config: LruMapConfig {
-                capacity: total_capacity / shard_count,
+                capacity: shard_capacity,
                 ..Default::default()
             },
             shard_count,
@@ -424,24 +440,15 @@ where
         Ok(())
     }
 
-    /// Get keys from all shards (expensive operation)
+    /// Get keys from all shards
     pub fn keys(&self) -> Vec<K>
     where
         K: Clone,
     {
-        // This is an expensive operation that requires coordination
-        // In practice, you might want to implement this differently
-        // or provide warnings about its cost
-
-        let all_keys = Vec::new();
-
-        // Note: This is not atomic across shards, so the snapshot
-        // might not be perfectly consistent
-        for _shard in &self.shards {
-            // We'd need to add a keys() method to LruMap for this to work
-            // For now, this is a placeholder showing the interface
+        let mut all_keys = Vec::with_capacity(self.len());
+        for shard in &self.shards {
+            all_keys.extend(shard.keys());
         }
-
         all_keys
     }
 
@@ -450,18 +457,26 @@ where
         self.shards.iter().map(|shard| shard.len()).collect()
     }
 
-    /// Rebalance load across shards (advanced operation)
+    /// Verify shard placement across all shards.
+    ///
+    /// Because shard routing is a pure deterministic function of the key (`LoadBalancingStrategy::Hash`),
+    /// each key already resides in its canonical shard `self.select_shard(&key)`.
     pub fn rebalance(&self) -> Result<()> {
-        // This would be a complex operation that moves entries between
-        // shards to achieve better load balance. Implementation would
-        // depend on specific requirements and constraints.
-
-        // For now, this is a placeholder
+        for (shard_idx, shard) in self.shards.iter().enumerate() {
+            for key in shard.keys() {
+                if self.select_shard(&key) != shard_idx
+                    && let Some(val) = shard.remove(&key)
+                {
+                    self.put(key, val)?;
+                }
+            }
+        }
         Ok(())
     }
 }
 
-// Thread-safe implementation
+// SAFETY: ConcurrentLruMap holds Arc<LruMap<K, V, E>> shards and atomic statistics;
+// LruMap<K, V, E> is Send + Sync when K, V, E are Send + Sync.
 unsafe impl<K, V, E> Send for ConcurrentLruMap<K, V, E>
 where
     K: Hash + Eq + Clone + Send + Sync + Default,
@@ -470,6 +485,8 @@ where
 {
 }
 
+// SAFETY: All operations on &ConcurrentLruMap route to thread-safe LruMap shards and
+// atomic statistics, so sharing across threads is sound when K, V, E are Send + Sync.
 unsafe impl<K, V, E> Sync for ConcurrentLruMap<K, V, E>
 where
     K: Hash + Eq + Clone + Send + Sync + Default,
@@ -649,5 +666,20 @@ mod routing_regression_tests {
             .join()
             .unwrap();
         }
+    }
+
+    #[test]
+    fn test_c6_12_zero_shards_small_capacity_and_keys() {
+        // 1. shard_count == 0 must return Err, not panic with division by zero
+        assert!(ConcurrentLruMap::<i32, i32>::new(64, 0).is_err());
+
+        // 2. total_capacity < shard_count (with total_capacity > 0) must round up per-shard capacity to >= 1
+        let cache = ConcurrentLruMap::new(2, 4).unwrap();
+        cache.put(1, "a".to_string()).unwrap();
+        cache.put(2, "b".to_string()).unwrap();
+        let mut keys = cache.keys();
+        keys.sort_unstable();
+        assert_eq!(keys, vec![1, 2]);
+        cache.rebalance().unwrap();
     }
 }

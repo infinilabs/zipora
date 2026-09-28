@@ -1,16 +1,16 @@
-//! Simplified String-Optimized Hash Map
+//! String-Optimized Hash Map
 //!
-//! A string-optimized hash map that provides basic string interning functionality
+//! A string-optimized hash map that provides string interning statistics
 //! while maintaining compatibility with the zipora ecosystem.
 
 use crate::error::Result;
 use crate::string::FastStr;
 use std::collections::HashMap;
 
-/// Simplified string-optimized hash map
+/// String-optimized hash map
 ///
-/// This is a simplified version that provides basic string interning
-/// without the complex arena allocation to ensure compilation works.
+/// Provides string-keyed storage with deduplication tracking and
+/// `FastStr` compatibility.
 #[derive(Debug)]
 pub struct HashStrMap<V> {
     /// Main hash map using owned strings as keys  
@@ -79,7 +79,11 @@ impl<V> HashStrMap<V> {
 
     /// Remove a key-value pair
     pub fn remove(&mut self, key: &str) -> Option<V> {
-        self.map.remove(key)
+        let removed = self.map.remove(key);
+        if removed.is_some() {
+            self.unique_keys = self.unique_keys.saturating_sub(1);
+        }
+        removed
     }
 
     /// Check if the map contains a key
@@ -307,6 +311,19 @@ mod tests {
         assert_eq!(stats.unique_strings, 10); // 10 unique keys
         assert!(stats.interning_ratio > 0.8); // High deduplication ratio
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_c6_13_hash_str_map_remove_updates_unique_keys() -> Result<()> {
+        let mut map = HashStrMap::new();
+        map.insert("a", 1)?;
+        map.insert("b", 2)?;
+        assert_eq!(map.statistics().unique_strings, 2);
+        assert_eq!(map.remove("a"), Some(1));
+        assert_eq!(map.statistics().unique_strings, 1);
+        assert_eq!(map.remove("a"), None);
+        assert_eq!(map.statistics().unique_strings, 1);
         Ok(())
     }
 }

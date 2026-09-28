@@ -22,7 +22,7 @@
 //! - **`ZoSortedStrVec`** - Zero-overhead sorted string collections with 60% memory reduction
 //! - **`GoldHashIdx<K,V>`** - Hash index for large value indirection with 30% memory savings
 //! - **`HashStrMap<V>`** - String-optimized hash map with interning (40% memory reduction)
-//! - **`EasyHashMap<K,V>`** - Simplified hash map interface with builder pattern
+//! - **`EasyHashMap<K,V>`** - Ergonomic hash map interface with builder pattern
 //!
 //! ## Phase 4 LRU Cache Container Types
 //!

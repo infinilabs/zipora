@@ -388,10 +388,14 @@ impl<T: fmt::Debug, const N: usize> fmt::Debug for FixedCircularQueue<T, N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut list = f.debug_list();
 
+        if self.is_empty() {
+            return list.finish();
+        }
+
         let head = self.head.load(Ordering::Acquire);
         let tail = self.tail.load(Ordering::Acquire);
 
-        if head <= tail {
+        if head < tail {
             for i in head..tail {
                 // SAFETY: All elements between head and tail are initialized
                 list.entry(unsafe { self.buffer[i].assume_init_ref() });
@@ -976,7 +980,7 @@ impl<T> AutoGrowCircularQueue<T> {
         if self.len > 0 {
             // SAFETY: head/tail indices valid, buffer contains len initialized elements
             unsafe {
-                if self.head <= self.tail {
+                if self.head < self.tail {
                     // Single contiguous region
                     for i in self.head..self.tail {
                         ptr::drop_in_place(self.buffer.add(i));
@@ -1192,7 +1196,7 @@ impl<T: fmt::Debug> fmt::Debug for AutoGrowCircularQueue<T> {
             return list.finish();
         }
 
-        if self.head <= self.tail {
+        if self.head < self.tail {
             // Single contiguous region
             for i in self.head..self.tail {
                 // SAFETY: All elements between head and tail are initialized
@@ -1233,7 +1237,7 @@ impl<T: Clone> Clone for AutoGrowCircularQueue<T> {
             return new_queue;
         }
 
-        if self.head <= self.tail {
+        if self.head < self.tail {
             // Single contiguous region - bulk clone
             for i in self.head..self.tail {
                 // SAFETY: All elements between head and tail are initialized
@@ -1615,5 +1619,44 @@ mod tests {
         // Verify cache alignment
         let alignment = std::mem::align_of_val(&auto_queue);
         assert_eq!(alignment, 64); // Should be 64-byte aligned for cache efficiency
+    }
+
+    #[test]
+    fn test_c6_13_full_autogrow_circular_queue_drop_clone_and_debug() -> Result<()> {
+        use std::rc::Rc;
+
+        let mut q = AutoGrowCircularQueue::with_capacity(4);
+        assert_eq!(q.capacity(), 4);
+        let r0 = Rc::new(10);
+        let r1 = Rc::new(20);
+        let r2 = Rc::new(30);
+        let r3 = Rc::new(40);
+        q.push_bulk(&[r0.clone(), r1.clone(), r2.clone(), r3.clone()])?;
+        assert_eq!(q.len(), q.capacity());
+
+        // Debug formatting when full must include all 4 elements.
+        assert_eq!(format!("{:?}", q), "[10, 20, 30, 40]");
+
+        // Clone when full must clone all 4 elements.
+        let cloned = q.clone();
+        assert_eq!(cloned.len(), 4);
+        assert_eq!(Rc::strong_count(&r0), 3);
+
+        // Clear/drop when full must drop all elements.
+        q.clear();
+        assert_eq!(Rc::strong_count(&r0), 2);
+        drop(cloned);
+        assert_eq!(Rc::strong_count(&r0), 1);
+        assert_eq!(Rc::strong_count(&r1), 1);
+        assert_eq!(Rc::strong_count(&r2), 1);
+        assert_eq!(Rc::strong_count(&r3), 1);
+
+        // FixedCircularQueue Debug when full must also include all elements.
+        let mut fq = FixedCircularQueue::<i32, 3>::new();
+        fq.push_back(1)?;
+        fq.push_back(2)?;
+        fq.push_back(3)?;
+        assert_eq!(format!("{:?}", fq), "[1, 2, 3]");
+        Ok(())
     }
 }

@@ -119,30 +119,43 @@ impl Node {
 const MAX_DEPTH: usize = 64; // enough for 2^30 nodes
 
 struct PathStack {
-    entries: [(u32, bool); MAX_DEPTH], // (node_index, went_left)
+    inline: [(u32, bool); MAX_DEPTH], // (node_index, went_left)
+    overflow: Vec<(u32, bool)>,
     len: usize,
 }
 
 impl PathStack {
     fn new() -> Self {
         Self {
-            entries: [(NIL, false); MAX_DEPTH],
+            inline: [(NIL, false); MAX_DEPTH],
+            overflow: Vec::new(),
             len: 0,
         }
     }
     #[inline]
     fn push(&mut self, idx: u32, went_left: bool) {
-        debug_assert!(self.len < MAX_DEPTH);
-        self.entries[self.len] = (idx, went_left);
+        if self.len < MAX_DEPTH {
+            self.inline[self.len] = (idx, went_left);
+        } else {
+            self.overflow.push((idx, went_left));
+        }
         self.len += 1;
     }
     #[inline]
     fn idx(&self, k: usize) -> u32 {
-        self.entries[k].0
+        if k < MAX_DEPTH {
+            self.inline[k].0
+        } else {
+            self.overflow[k - MAX_DEPTH].0
+        }
     }
     #[inline]
     fn is_left(&self, k: usize) -> bool {
-        self.entries[k].1
+        if k < MAX_DEPTH {
+            self.inline[k].1
+        } else {
+            self.overflow[k - MAX_DEPTH].1
+        }
     }
 }
 
@@ -194,14 +207,20 @@ impl<T> Core<T> {
     fn n_mut(&mut self, i: u32) -> &mut Node {
         &mut self.units[i as usize].0
     }
+    /// # Safety
+    ///
+    /// Caller must ensure `i < self.units.len() as u32` and `self.units[i as usize].1` is initialized.
     #[inline]
-    // SAFETY: caller must ensure i < units.len() and units[i].1 is initialized
     unsafe fn data(&self, i: u32) -> &T {
+        // SAFETY: Caller guarantees `i` is in-bounds and the slot is initialized.
         unsafe { &*self.units[i as usize].1.as_ptr() }
     }
+    /// # Safety
+    ///
+    /// Caller must ensure `i < self.units.len() as u32` and `self.units[i as usize].1` is initialized.
     #[inline]
-    // SAFETY: caller must ensure i < units.len() and units[i].1 is initialized
     unsafe fn data_mut(&mut self, i: u32) -> &mut T {
+        // SAFETY: Caller guarantees `i` is in-bounds and the slot is initialized.
         unsafe { &mut *self.units[i as usize].1.as_mut_ptr() }
     }
 
@@ -421,11 +440,8 @@ impl<T> Core<T> {
         self.n_mut(self.root).set_black();
     }
 
-    // -- remove: simple splice (no black-height fixup for now) --
-    // Black-height fixup is extremely complex.
-    // The tree stays functionally correct (BST ordering maintained) but
-    // may become slightly unbalanced. This is acceptable for the use cases
-    // in zipora (small to medium ordered sets in hash map internals).
+    // -- remove: BST splice with thread preservation --
+    // The tree maintains BST ordering and thread links across removals.
 
     fn remove_idx(&mut self, target: u32, stk: &PathStack) -> T {
         // SAFETY: target is valid node index, node data is initialized (found via search)
@@ -1055,5 +1071,23 @@ mod tests {
         let expected = (0..400).filter(|i| i % 3 != 0).count();
         assert_eq!(v.len(), expected);
         assert_eq!(s.len(), expected);
+    }
+
+    #[test]
+    fn test_c6_13_vec_trb_deep_interleaved_insert_remove() {
+        // Interleaved insertions and deletions can push path depth past 64
+        // because remove performs a BST splice without red-black rebalancing.
+        let mut s = VecTrbSet::new();
+        for step in 0..100i32 {
+            let a = step * 2;
+            let b = step * 2 + 1;
+            s.insert(a);
+            s.insert(b);
+            assert!(s.remove(&a));
+        }
+        assert_eq!(s.len(), 100);
+        for step in 0..100i32 {
+            assert!(s.contains(&(step * 2 + 1)));
+        }
     }
 }

@@ -108,12 +108,16 @@ impl MinimalSso {
     }
 
     /// Returns the string contents as `&str`.
-    /// # Safety
-    /// The caller must ensure the contents are valid UTF-8.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the contents are not valid UTF-8 (use [`to_str`](Self::to_str) for fallible conversion).
     #[inline]
     pub fn as_str(&self) -> &str {
-        // SAFETY: Caller ensures contents are valid UTF-8 per function documentation
-        unsafe { std::str::from_utf8_unchecked(self.as_bytes()) }
+        match std::str::from_utf8(self.as_bytes()) {
+            Ok(s) => s,
+            Err(e) => panic!("MinimalSso::as_str called on non-UTF-8 bytes: {e}"),
+        }
     }
 
     /// Try to return as `&str`, validating UTF-8.
@@ -515,5 +519,13 @@ mod tests {
 
         let heap = MinimalSso::from_str(&"x".repeat(50));
         assert!(heap.capacity() >= 50);
+    }
+
+    #[test]
+    #[should_panic(expected = "non-UTF-8")]
+    fn test_c6_11_as_str_rejects_invalid_utf8_without_ub() {
+        let s = MinimalSso::from_bytes(&[0xFF, 0xFE]);
+        assert!(s.to_str().is_err());
+        let _ = s.as_str();
     }
 }

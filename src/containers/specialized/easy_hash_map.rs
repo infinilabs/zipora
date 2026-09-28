@@ -1,24 +1,24 @@
-//! Simplified Hash Map Interface
+//! Ergonomic Hash Map Interface
 //!
-//! A simplified interface wrapper around ZiporaHashMap that provides
-//! convenient APIs for common use cases while maintaining the same
+//! A convenience interface wrapper around ZiporaHashMap that provides
+//! ergonomic APIs for common use cases while maintaining the same
 //! performance characteristics. This container focuses on ease of use
 //! over explicit error handling.
 
 use crate::error::Result;
-use crate::hash_map::ZiporaHashMap;
+use crate::hash_map::{ZiporaHashMap, ZiporaHashMapIterator};
 use std::hash::Hash;
 use std::marker::PhantomData;
 
-/// Simplified hash map with convenient APIs
+/// Ergonomic hash map with convenient APIs
 ///
 /// EasyHashMap provides a user-friendly wrapper around ZiporaHashMap that
-/// simplifies common operations by removing explicit error handling where
+/// streamlines common operations by removing explicit error handling where
 /// safe and providing convenient builder patterns and default value semantics.
 ///
 /// # Design Principles
 ///
-/// - **Convenience**: Simplified APIs for common use cases
+/// - **Convenience**: Ergonomic APIs for common use cases
 /// - **Performance**: Same underlying performance as ZiporaHashMap
 /// - **Safety**: Panic-free operations with sensible fallbacks
 /// - **Flexibility**: Builder pattern for advanced configuration
@@ -87,7 +87,7 @@ where
         }
     }
 
-    /// Insert a key-value pair (simplified interface)
+    /// Insert a key-value pair (ergonomic interface)
     ///
     /// This method automatically handles capacity growth and never panics.
     /// If an internal error occurs, it will be silently handled.
@@ -124,7 +124,6 @@ where
 
     /// Get a reference to the value or the default value if key doesn't exist
     pub fn get_or_default(&self, key: &K) -> &V {
-        // SAFETY: Caller must call set_default() before using get_or_default()
         self.inner.get(key).unwrap_or_else(|| {
             self.default_value
                 .as_ref()
@@ -139,7 +138,6 @@ where
             self.put(key.clone(), value);
         }
 
-        // SAFETY: put() at line 135 ensures key exists in map
         Ok(self
             .inner
             .get_mut(&key)
@@ -157,7 +155,6 @@ where
             self.put(key.clone(), value);
         }
 
-        // SAFETY: put() at line 154 ensures key exists in map
         Ok(self
             .inner
             .get_mut(&key)
@@ -209,52 +206,39 @@ where
     where
         F: FnMut(&K, &mut V) -> bool,
     {
-        let keys_to_remove: Vec<K> = self
-            .inner
-            .iter()
-            .filter_map(|(k, v)| {
-                // Simple test - just check if we should keep the item
-                let mut value_copy = v.clone();
-                if f(k, &mut value_copy) {
-                    None
-                } else {
-                    Some(k.clone())
-                }
-            })
-            .collect();
+        let mut updates = Vec::new();
+        let mut keys_to_remove = Vec::new();
+        for (k, v) in self.inner.iter() {
+            let mut value_copy = v.clone();
+            if f(k, &mut value_copy) {
+                updates.push((k.clone(), value_copy));
+            } else {
+                keys_to_remove.push(k.clone());
+            }
+        }
 
         for key in keys_to_remove {
             self.inner.remove(&key);
         }
+        for (key, value) in updates {
+            let _ = self.inner.insert(key, value);
+        }
     }
 
-    // /// Get an iterator over key-value pairs
-    // /// TODO: Implement when ZiporaHashMap has iter() support
-    // pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
-    //     self.inner.iter()
-    // }
+    /// Get an iterator over key-value pairs
+    pub fn iter(&self) -> ZiporaHashMapIterator<'_, K, V> {
+        self.inner.iter()
+    }
 
-    // /// Get an iterator over keys
-    // /// TODO: Implement when ZiporaHashMap has keys() support
-    // pub fn keys(&self) -> impl Iterator<Item = &K> {
-    //     self.inner.keys()
-    // }
+    /// Get an iterator over keys
+    pub fn keys(&self) -> impl Iterator<Item = &K> {
+        self.inner.iter().map(|(k, _)| k)
+    }
 
-    // /// Get an iterator over values
-    // /// TODO: Implement when ZiporaHashMap has values() support
-    // pub fn values(&self) -> impl Iterator<Item = &V> {
-    //     self.inner.values()
-    // }
-
-    // /// Get an iterator over mutable values
-    // /// TODO: Implement when ZiporaHashMap has iterator support
-    // pub fn values_mut(&mut self) -> ValuesIterMut<K, V> {
-    //     ValuesIterMut {
-    //         keys: self.inner.keys().cloned().collect(),
-    //         map: self,
-    //         current: 0,
-    //     }
-    // }
+    /// Get an iterator over values
+    pub fn values(&self) -> impl Iterator<Item = &V> {
+        self.inner.iter().map(|(_, v)| v)
+    }
 
     /// Enable or disable automatic growth
     pub fn set_auto_grow(&mut self, enabled: bool) {
@@ -427,36 +411,31 @@ where
     }
 }
 
-// /// Iterator over cloned values in EasyHashMap
-// pub struct ValuesIterMut<'a, K, V>
-// where
-//     K: Hash + Eq + Clone,
-//     V: Clone,
-// {
-//     keys: Vec<K>,
-//     map: &'a EasyHashMap<K, V>,
-//     current: usize,
-// }
-//
-// impl<'a, K, V> Iterator for ValuesIterMut<'a, K, V>
-// where
-//     K: Hash + Eq + Clone,
-//     V: Clone,
-// {
-//     type Item = V;
-//
-//     fn next(&mut self) -> Option<Self::Item> {
-//         while self.current < self.keys.len() {
-//             let key = &self.keys[self.current];
-//             self.current += 1;
-//
-//             if let Some(value) = self.map.inner.get(key) {
-//                 return Some(value.clone());
-//             }
-//         }
-//         None
-//     }
-// }
+impl<'a, K, V> IntoIterator for &'a EasyHashMap<K, V>
+where
+    K: Hash + Eq + Clone,
+    V: Clone,
+{
+    type Item = (&'a K, &'a V);
+    type IntoIter = ZiporaHashMapIterator<'a, K, V>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.inner.iter()
+    }
+}
+
+impl<K, V> IntoIterator for EasyHashMap<K, V>
+where
+    K: Hash + Eq + Clone,
+    V: Clone,
+{
+    type Item = (K, V);
+    type IntoIter = std::vec::IntoIter<(K, V)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.get_all_entries().into_iter()
+    }
+}
 
 /// Statistics about EasyHashMap configuration and usage
 #[derive(Debug, Clone)]
@@ -670,29 +649,29 @@ mod tests {
         map.put("b", 2);
         map.put("c", 3);
 
-        // TODO: Uncomment when iterator support is added to ZiporaHashMap
         // Test keys iterator
-        // let mut keys: Vec<&str> = map.keys().copied().collect();
-        // keys.sort();
-        // assert_eq!(keys, vec!["a", "b", "c"]);
+        let mut keys: Vec<&str> = map.keys().copied().collect();
+        keys.sort();
+        assert_eq!(keys, vec!["a", "b", "c"]);
 
         // Test values iterator
-        // let mut values: Vec<&i32> = map.values().collect();
-        // values.sort();
-        // assert_eq!(values, vec![&1, &2, &3]);
+        let mut values: Vec<&i32> = map.values().collect();
+        values.sort();
+        assert_eq!(values, vec![&1, &2, &3]);
 
-        // Test iter
-        // assert_eq!(map.iter().count(), 3);
+        // Test iter and IntoIterator
+        assert_eq!(map.iter().count(), 3);
+        assert_eq!((&map).into_iter().count(), 3);
 
-        // Test mutable values
-        // for value in map.values_mut() {
-        //     *value *= 2;
-        // }
-
-        // TODO: These values should be doubled after values_mut is implemented
-        assert_eq!(map.get(&"a"), Some(&1));
-        assert_eq!(map.get(&"b"), Some(&2));
-        assert_eq!(map.get(&"c"), Some(&3));
+        // Test retain in-place value mutation (C6.13)
+        map.retain(|_k, v| {
+            *v *= 2;
+            true
+        });
+        assert_eq!(map.get(&"a"), Some(&2));
+        assert_eq!(map.get(&"b"), Some(&4));
+        assert_eq!(map.get(&"c"), Some(&6));
+        assert_eq!(map.into_iter().count(), 3);
     }
 
     #[test]

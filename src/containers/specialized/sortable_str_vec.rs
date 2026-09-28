@@ -40,6 +40,7 @@ impl CompactEntry {
 
     // Maximum values for validation
     const MAX_OFFSET: usize = (1usize << Self::OFFSET_BITS) - 1; // ~1TB
+    const MAX_LENGTH: usize = (1usize << Self::LENGTH_BITS) - 1; // 1MB - 1
 
     /// Extract offset with force inline for maximum performance
     #[inline(always)]
@@ -254,17 +255,25 @@ impl SortableStrVec {
         let offset = self.arena.len();
         let length = s.len();
 
-        // Fast path: Skip capacity check for typical cases
-        // Only check when we're getting close to limits
-        if offset > (CompactEntry::MAX_OFFSET >> 1) && offset + length > CompactEntry::MAX_OFFSET {
-            return Err(ZiporaError::out_of_memory(offset + length));
+        if length > CompactEntry::MAX_LENGTH {
+            return Err(ZiporaError::invalid_data(format!(
+                "SortableStrVec::push_str: string length {} exceeds maximum {}",
+                length,
+                CompactEntry::MAX_LENGTH
+            )));
         }
 
-        // Simplified sequence ID (faster than atomic ops for each string)
+        if offset
+            .checked_add(length)
+            .is_none_or(|end| end > CompactEntry::MAX_OFFSET)
+        {
+            return Err(ZiporaError::out_of_memory(offset.saturating_add(length)));
+        }
+
+        // 4-bit sequence ID for stable sort tie-breaking
         let seq_id = (self.entries.len() & 0xF) as u8;
 
-        // Create compact entry with unchecked construction (we validated above)
-        // Skip all the validation and bit manipulation in CompactEntry::new
+        // Create compact entry with validated 40-bit offset and 20-bit length
         let packed = (offset as u64) | ((length as u64) << 40) | ((seq_id as u64) << 60);
         let entry = CompactEntry(packed);
 
@@ -280,7 +289,8 @@ impl SortableStrVec {
         let id = self.entries.len();
         self.entries.push(entry);
 
-        // Skip stats update in hot path (only update when needed)
+        self.stats.total_strings += 1;
+        self.stats.total_bytes_stored += length;
 
         // Minimal unsorted tracking
         if self.is_sorted {
@@ -675,7 +685,7 @@ impl SortableStrVec {
     /// sorted_indices contains values 0..self.len(), so self.get(idx) always succeeds.
     fn block_binary_search(&self, needle: &str) -> std::result::Result<usize, usize> {
         let n = self.sorted_indices.len();
-        let block_size = self.config.cache_block_size;
+        let block_size = self.config.cache_block_size.max(1);
 
         // First, binary search on block boundaries
         let num_blocks = n.div_ceil(block_size);
@@ -1035,5 +1045,19 @@ mod tests {
             let curr = vec.get_sorted(i).unwrap();
             assert!(prev <= curr, "Sorting invariant violated");
         }
+    }
+
+    #[test]
+    fn test_c6_11_oversized_string_rejected_and_stats_updated() {
+        let mut vec = SortableStrVec::new();
+        vec.push_str("alpha").unwrap();
+        // A string of length 1_048_576 (1 << 20) previously wrapped the 20-bit length field
+        // into seq_id (setting length to 0 or mid-UTF-8 codepoint) before calling from_utf8_unchecked.
+        let oversized = "x".repeat(CompactEntry::MAX_LENGTH + 1);
+        assert!(vec.push_str(&oversized).is_err());
+        assert_eq!(vec.len(), 1);
+        assert_eq!(vec.get(0), Some("alpha"));
+        let (total_strings, _, _, _) = vec.stats();
+        assert_eq!(total_strings, 1);
     }
 }

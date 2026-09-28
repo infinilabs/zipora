@@ -271,15 +271,11 @@ impl<const N: usize> FixedLenStrVec<N> {
 
     #[cfg(feature = "simd")]
     fn find_exact_simd(&self, needle: &str) -> Option<usize> {
-        // For now, fallback to optimized version
-        // TODO: Implement SIMD string comparison
         self.find_exact_fallback(needle)
     }
 
     #[cfg(feature = "simd")]
     fn count_prefix_simd(&self, prefix: &str) -> usize {
-        // For now, fallback to optimized version
-        // TODO: Implement SIMD prefix matching
         self.count_prefix_fallback(prefix)
     }
 
