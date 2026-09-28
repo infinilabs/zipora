@@ -139,22 +139,36 @@ impl<T> std::iter::FusedIterator for FastVecIntoIter<T> {}
 impl<T> Drop for FastVecIntoIter<T> {
     fn drop(&mut self) {
         if let Some(ptr) = self.ptr {
-            // Drop remaining elements
-            for i in self.index..self.len {
-                // SAFETY: i in [index, len), ptr valid from FastVec allocation, add(i) within allocated range
-                unsafe {
-                    ptr::drop_in_place(ptr.as_ptr().add(i));
+            struct DeallocGuard<T> {
+                ptr: NonNull<T>,
+                cap: usize,
+            }
+            impl<T> Drop for DeallocGuard<T> {
+                fn drop(&mut self) {
+                    // Deallocate memory (ZST: nothing was allocated, dealloc with a
+                    // zero-size Layout would be UB)
+                    if self.cap > 0 && std::mem::size_of::<T>() > 0 {
+                        let layout = Layout::array::<T>(self.cap).expect(
+                            "Layout::array succeeded during allocation, must succeed during deallocation",
+                        );
+                        // SAFETY: ptr allocated with same layout during FastVec creation
+                        unsafe {
+                            alloc::dealloc(self.ptr.as_ptr() as *mut u8, layout);
+                        }
+                    }
                 }
             }
-            // Deallocate memory (ZST: nothing was allocated, dealloc with a
-            // zero-size Layout would be UB)
-            if self.cap > 0 && std::mem::size_of::<T>() > 0 {
-                let layout = Layout::array::<T>(self.cap).expect(
-                    "Layout::array succeeded during allocation, must succeed during deallocation",
-                );
-                // SAFETY: ptr allocated with same layout during FastVec creation
+            let _guard = DeallocGuard { ptr, cap: self.cap };
+            let remaining = self.len.saturating_sub(self.index);
+            self.index = self.len;
+            if remaining > 0 {
+                // SAFETY: [index, len) is within the initialized range of ptr; slice drop_in_place
+                // drops all remaining elements even if one panics, and _guard deallocates the buffer.
                 unsafe {
-                    alloc::dealloc(ptr.as_ptr() as *mut u8, layout);
+                    ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
+                        ptr.as_ptr().add(self.len - remaining),
+                        remaining,
+                    ));
                 }
             }
         }
@@ -218,8 +232,8 @@ impl<T: Clone> Clone for FastVec<T> {
     }
 }
 
-// Safety: FastVec<T> is Send if T is Send
+// SAFETY: FastVec<T> owns its elements exclusively and is Send if T is Send.
 unsafe impl<T: Send> Send for FastVec<T> {}
 
-// Safety: FastVec<T> is Sync if T is Sync
+// SAFETY: Shared references to FastVec<T> only expose shared references to T, so it is Sync if T is Sync.
 unsafe impl<T: Sync> Sync for FastVec<T> {}

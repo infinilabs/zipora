@@ -52,7 +52,7 @@ fn larger_capacity(old_cap: u32) -> u32 {
     // referenced project pattern: oldcap * 103 / 64 ≈ 1.609375 (close to golden ratio 1.618)
     // This is mathematically optimal for amortized performance
 
-    (old_cap as u64 * 103 / 64) as u32
+    ((old_cap as u64 * 103 / 64).min(MAX_CAPACITY as u64)) as u32
 }
 
 /// High-performance vector with 32-bit indices for memory efficiency
@@ -148,13 +148,21 @@ impl<T> ValVec32<T> {
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
     pub fn with_capacity(capacity: u32) -> Result<Self> {
-        if capacity == 0 || mem::size_of::<T>() == 0 {
+        if mem::size_of::<T>() == 0 {
+            return Ok(Self {
+                ptr: NonNull::dangling(),
+                len: 0,
+                capacity: MAX_CAPACITY,
+            });
+        }
+        if capacity == 0 {
             return Ok(Self::new());
         }
 
         let capacity_usize = capacity as usize;
-        let layout = Layout::array::<T>(capacity_usize)
-            .map_err(|_| ZiporaError::out_of_memory(capacity_usize * mem::size_of::<T>()))?;
+        let layout = Layout::array::<T>(capacity_usize).map_err(|_| {
+            ZiporaError::out_of_memory(capacity_usize.saturating_mul(mem::size_of::<T>()))
+        })?;
 
         // SAFETY: layout is valid, alloc returns valid pointer or null
         let ptr = unsafe {
@@ -183,8 +191,7 @@ impl<T> ValVec32<T> {
     ///
     /// Returns `ZiporaError::MemoryError` if allocation fails
     pub fn with_secure_pool(capacity: u32, _pool: Arc<SecureMemoryPool>) -> Result<Self> {
-        // For now, ignore the pool parameter and use standard allocation
-        // This maintains API compatibility while maximizing performance
+        // Retains the pool-accepting constructor signature for API compatibility while using the global allocator.
         Self::with_capacity(capacity)
     }
 
@@ -281,8 +288,7 @@ impl<T> ValVec32<T> {
         larger_capacity(self.capacity).max(min_capacity)
     }
 
-    /// Grows the vector to the specified capacity - simplified following referenced project pattern
-    /// Simple realloc-based approach for maximum performance
+    /// Grows the vector to the specified capacity using realloc.
     #[cold]
     #[inline(never)]
     fn grow_to(&mut self, new_capacity: u32) -> Result<()> {
@@ -297,8 +303,9 @@ impl<T> ValVec32<T> {
         }
 
         let new_capacity_usize = new_capacity as usize;
-        let new_layout = Layout::array::<T>(new_capacity_usize)
-            .map_err(|_| ZiporaError::out_of_memory(new_capacity_usize * mem::size_of::<T>()))?;
+        let new_layout = Layout::array::<T>(new_capacity_usize).map_err(|_| {
+            ZiporaError::out_of_memory(new_capacity_usize.saturating_mul(mem::size_of::<T>()))
+        })?;
 
         let new_ptr = if self.capacity == 0 {
             // SAFETY: new_layout is valid, alloc returns valid pointer or null
@@ -310,8 +317,11 @@ impl<T> ValVec32<T> {
                 NonNull::new_unchecked(cast_aligned_ptr::<T>(raw_ptr))
             }
         } else {
-            let old_layout = Layout::array::<T>(self.capacity as usize)
-                .map_err(|_| ZiporaError::out_of_memory(self.capacity as usize * mem::size_of::<T>()))?;
+            let old_layout = Layout::array::<T>(self.capacity as usize).map_err(|_| {
+                ZiporaError::out_of_memory(
+                    (self.capacity as usize).saturating_mul(mem::size_of::<T>()),
+                )
+            })?;
             // SAFETY: ptr is valid from previous allocation, old_layout matches it, new_layout.size() >= old_layout.size()
             unsafe {
                 let raw_ptr = std::alloc::realloc(
@@ -671,14 +681,15 @@ impl<T> ValVec32<T> {
     /// # Ok::<(), zipora::ZiporaError>(())
     /// ```
     pub fn clear(&mut self) {
-        // Drop all elements
-        for i in 0..(self.len as usize) {
-            // SAFETY: i < len guarantees offset is within valid initialized range
+        let len = self.len as usize;
+        self.len = 0;
+        if len > 0 {
+            // SAFETY: ptr is valid for `len` initialized elements; setting self.len = 0 first
+            // prevents double-drop if an element's Drop implementation panics.
             unsafe {
-                ptr::drop_in_place(self.ptr.as_ptr().add(i));
+                ptr::drop_in_place(ptr::slice_from_raw_parts_mut(self.ptr.as_ptr(), len));
             }
         }
-        self.len = 0;
     }
 
     /// Returns a slice containing all elements
@@ -699,20 +710,20 @@ impl<T> ValVec32<T> {
     /// ```
     #[inline]
     pub fn as_slice(&self) -> &[T] {
-        if self.len == 0 || mem::size_of::<T>() == 0 {
+        if self.len == 0 {
             return &[];
         }
-        // SAFETY: We have len valid elements starting from ptr
+        // SAFETY: We have len valid elements starting from ptr (or NonNull::dangling() for ZSTs)
         unsafe { slice::from_raw_parts(self.ptr.as_ptr(), self.len as usize) }
     }
 
     /// Returns a mutable slice containing all elements
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [T] {
-        if self.len == 0 || mem::size_of::<T>() == 0 {
+        if self.len == 0 {
             return &mut [];
         }
-        // SAFETY: We have len valid elements starting from ptr
+        // SAFETY: We have len valid elements starting from ptr (or NonNull::dangling() for ZSTs)
         unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len as usize) }
     }
 
@@ -761,7 +772,8 @@ impl<T> ValVec32<T> {
             return Ok(());
         }
 
-        let additional = slice.len() as u32;
+        let additional = u32::try_from(slice.len())
+            .map_err(|_| ZiporaError::invalid_data("Length overflow"))?;
         let new_len = self
             .len
             .checked_add(additional)
@@ -815,7 +827,8 @@ impl<T> ValVec32<T> {
             return Ok(());
         }
 
-        let additional = slice.len() as u32;
+        let additional = u32::try_from(slice.len())
+            .map_err(|_| ZiporaError::invalid_data("Length overflow"))?;
         let new_len = self
             .len
             .checked_add(additional)
@@ -1529,5 +1542,77 @@ mod tests {
         assert!(result.is_err());
         // The 2 successful clones in new_vec should have been dropped when catch_unwind unwound new_vec
         assert_eq!(drop_counter.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn test_c6_3_valvec32_clear_panicking_drop_no_double_drop() {
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static DROPS: AtomicUsize = AtomicUsize::new(0);
+        struct Bomb(bool);
+        impl Drop for Bomb {
+            fn drop(&mut self) {
+                DROPS.fetch_add(1, Ordering::SeqCst);
+                if self.0 {
+                    panic!("drop bomb");
+                }
+            }
+        }
+
+        DROPS.store(0, Ordering::SeqCst);
+        let res = catch_unwind(AssertUnwindSafe(|| {
+            let mut v = ValVec32::new();
+            v.push(Bomb(false)).unwrap();
+            v.push(Bomb(true)).unwrap();
+            v.push(Bomb(false)).unwrap();
+            v.clear();
+        }));
+        assert!(res.is_err());
+        assert_eq!(
+            DROPS.load(Ordering::SeqCst),
+            3,
+            "each element must be dropped exactly once on ValVec32::clear()"
+        );
+    }
+
+    #[test]
+    fn test_c6_4_valvec32_zst_slice_eq_and_u32_overflow() {
+        let empty = ValVec32::<()>::new();
+        let mut non_empty = ValVec32::<()>::with_capacity(4).unwrap();
+        // SAFETY: with_capacity(4) for ZST sets capacity to MAX_CAPACITY >= 4.
+        unsafe {
+            non_empty.unchecked_push(());
+            non_empty.unchecked_push(());
+        }
+        assert_eq!(non_empty.as_slice().len(), 2);
+        assert_eq!(non_empty.iter().count(), 2);
+        assert_ne!(empty, non_empty);
+
+        // Slice longer than u32::MAX must return Err instead of truncating modulo 2^32.
+        let huge_zst: &[()] = &[(); (u32::MAX as usize) + 1];
+        let mut z = ValVec32::<()>::new();
+        assert!(z.extend_from_slice(huge_zst).is_err());
+        assert!(z.extend_from_slice_copy(huge_zst).is_err());
+
+        // larger_capacity must clamp to MAX_CAPACITY instead of wrapping modulo 2^32.
+        assert_eq!(larger_capacity(3_000_000_000), MAX_CAPACITY);
+    }
+
+    #[test]
+    fn test_c6_align_4096_valvec32() {
+        #[repr(align(4096))]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        struct PageAligned([u64; 4]);
+
+        let mut v = ValVec32::<PageAligned>::new();
+        for i in 0..10u64 {
+            v.push(PageAligned([i, i + 1, i + 2, i + 3])).unwrap();
+            assert_eq!((v.as_ptr() as usize) % 4096, 0);
+        }
+        assert_eq!(v.len(), 10);
+        for i in 0..10u64 {
+            assert_eq!(v[i as usize], PageAligned([i, i + 1, i + 2, i + 3]));
+        }
     }
 }

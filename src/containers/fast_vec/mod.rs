@@ -5,7 +5,6 @@
 //! which can often avoid copying when the allocator can expand in place.
 
 use crate::error::{Result, ZiporaError};
-use crate::memory::simd_ops::{fast_copy, fast_fill};
 use crate::simd::{AdaptiveSimdSelector, Operation};
 use std::alloc::{self, Layout};
 use std::mem;
@@ -16,7 +15,9 @@ use std::time::Instant;
 /// Check that a pointer is properly aligned for type T
 #[inline]
 fn check_alignment<T>(ptr: *mut u8) {
+    // PROVEN: caller checks !raw_ptr.is_null() before calling cast_aligned_ptr, and GlobalAlloc guarantees alignment for Layout::array::<T>.
     debug_assert!(!ptr.is_null());
+    // PROVEN: GlobalAlloc returns a pointer aligned to at least Layout::align() == align_of::<T>().
     debug_assert!((ptr as usize).is_multiple_of(mem::align_of::<T>()));
 }
 
@@ -30,7 +31,7 @@ fn cast_aligned_ptr<T>(ptr: *mut u8) -> *mut T {
 /// Check if a type is suitable for SIMD operations (Copy + no custom drop)
 #[inline]
 const fn is_simd_safe<T>() -> bool {
-    // Use const traits when available, for now rely on Copy bound in caller
+    // Rely on the Copy bound at the call site and the absence of drop glue.
     !mem::needs_drop::<T>()
 }
 
@@ -39,7 +40,7 @@ const fn is_simd_safe<T>() -> bool {
 const fn is_simd_beneficial<T>(element_count: usize) -> bool {
     // SIMD beneficial threshold: 64 bytes minimum
     const SIMD_THRESHOLD: usize = 64;
-    element_count * mem::size_of::<T>() >= SIMD_THRESHOLD
+    element_count.saturating_mul(mem::size_of::<T>()) >= SIMD_THRESHOLD
 }
 
 /// Prefetch distance for lookahead operations (based on successful patterns)
@@ -86,48 +87,16 @@ impl PrefetchOps {
 
         // Prefetch using cache line strides
         const CACHE_LINE_SIZE: usize = 64;
-        let element_size = mem::size_of::<T>();
+        let element_size = mem::size_of::<T>().max(1);
         let elements_per_line = (CACHE_LINE_SIZE / element_size).max(1);
 
         for i in (0..count).step_by(elements_per_line) {
             if i + distance < count {
-                // SAFETY: i + distance < count guaranteed by check at line 100
+                // SAFETY: i + distance < count guaranteed by the branch check above.
                 unsafe {
                     Self::prefetch_read(start.add(i + distance));
                 }
             }
-        }
-    }
-}
-
-/// Convert a slice of T to a slice of u8 for SIMD operations
-///
-/// # Safety
-///
-/// T must be Copy and have no custom Drop implementation
-#[inline]
-unsafe fn slice_as_bytes<T>(slice: &[T]) -> &[u8] {
-    if slice.is_empty() {
-        &[]
-    } else {
-        // SAFETY: slice pointer valid by reference, length computed from valid slice length * size_of::<T>()
-        unsafe { slice::from_raw_parts(slice.as_ptr() as *const u8, std::mem::size_of_val(slice)) }
-    }
-}
-
-/// Convert a mutable slice of T to a mutable slice of u8 for SIMD operations
-///
-/// # Safety
-///
-/// T must be Copy and have no custom Drop implementation
-#[inline]
-unsafe fn slice_as_bytes_mut<T>(slice: &mut [T]) -> &mut [u8] {
-    if slice.is_empty() {
-        &mut []
-    } else {
-        // SAFETY: slice pointer valid by mutable reference, length computed from valid slice length * size_of::<T>()
-        unsafe {
-            slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut u8, std::mem::size_of_val(slice))
         }
     }
 }
@@ -189,11 +158,13 @@ impl<T> FastVec<T> {
         }
 
         if cap > (isize::MAX as usize) / mem::size_of::<T>().max(1) {
-            return Err(ZiporaError::out_of_memory(cap * mem::size_of::<T>()));
+            return Err(ZiporaError::out_of_memory(
+                cap.saturating_mul(mem::size_of::<T>()),
+            ));
         }
 
         let layout = Layout::array::<T>(cap)
-            .map_err(|_| ZiporaError::out_of_memory(cap * mem::size_of::<T>()))?;
+            .map_err(|_| ZiporaError::out_of_memory(cap.saturating_mul(mem::size_of::<T>())))?;
 
         // SAFETY: alloc::alloc returns valid pointer for non-zero layout
         let ptr = unsafe {
@@ -205,7 +176,7 @@ impl<T> FastVec<T> {
         };
 
         Ok(Self {
-            // SAFETY: ptr is non-null after successful allocation verified at line 207
+            // SAFETY: ptr is non-null after successful allocation verified above
             ptr: Some(unsafe { NonNull::new_unchecked(ptr) }),
             len: 0,
             cap,
@@ -242,11 +213,13 @@ impl<T> FastVec<T> {
         }
 
         if cap > (isize::MAX as usize) / mem::size_of::<T>().max(1) {
-            return Err(ZiporaError::out_of_memory(cap * mem::size_of::<T>()));
+            return Err(ZiporaError::out_of_memory(
+                cap.saturating_mul(mem::size_of::<T>()),
+            ));
         }
 
         let layout = Layout::array::<T>(cap)
-            .map_err(|_| ZiporaError::out_of_memory(cap * mem::size_of::<T>()))?;
+            .map_err(|_| ZiporaError::out_of_memory(cap.saturating_mul(mem::size_of::<T>())))?;
 
         // SAFETY: alloc_zeroed returns zeroed memory; calloc kernel optimization
         // avoids physical zeroing for large allocations via zero-page mapping.
@@ -273,7 +246,11 @@ impl<T> FastVec<T> {
         let mut vec = std::mem::ManuallyDrop::new(vec);
         let ptr = vec.as_mut_ptr();
         let len = vec.len();
-        let cap = vec.capacity();
+        let cap = if mem::size_of::<T>() == 0 {
+            usize::MAX
+        } else {
+            vec.capacity()
+        };
 
         Self {
             ptr: NonNull::new(ptr),
@@ -336,6 +313,7 @@ impl<T> FastVec<T> {
     /// - The elements at `old_len..new_len` must be initialized.
     #[inline]
     pub unsafe fn set_len(&mut self, new_len: usize) {
+        // PROVEN: caller upholds the unsafe fn precondition `new_len <= self.capacity()`.
         debug_assert!(new_len <= self.cap);
         self.len = new_len;
     }
@@ -362,7 +340,9 @@ impl<T> FastVec<T> {
     /// Reserve space for at least `additional` more elements
     pub fn reserve(&mut self, additional: usize) -> Result<()> {
         if additional > (isize::MAX as usize) / mem::size_of::<T>().max(1) {
-            return Err(ZiporaError::out_of_memory(additional * mem::size_of::<T>()));
+            return Err(ZiporaError::out_of_memory(
+                additional.saturating_mul(mem::size_of::<T>()),
+            ));
         }
 
         let required = self
@@ -380,9 +360,10 @@ impl<T> FastVec<T> {
     /// Ensure the vector has at least the specified capacity
     pub fn ensure_capacity(&mut self, min_cap: usize) -> Result<()> {
         if min_cap > (isize::MAX as usize) / mem::size_of::<T>().max(1) {
-            return Err(ZiporaError::out_of_memory(min_cap * mem::size_of::<T>()));
+            return Err(ZiporaError::out_of_memory(
+                min_cap.saturating_mul(mem::size_of::<T>()),
+            ));
         }
-        debug_assert!(min_cap >= self.len);
 
         if min_cap <= self.cap {
             return Ok(());
@@ -393,6 +374,7 @@ impl<T> FastVec<T> {
 
     /// Reallocate to the new capacity using realloc for optimal performance
     fn realloc(&mut self, new_cap: usize) -> Result<()> {
+        // PROVEN: callers (`reserve` and `ensure_capacity`) only invoke `realloc` when `new_cap > self.cap >= self.len`.
         debug_assert!(new_cap >= self.len);
 
         // ZST: capacity is virtual — never call alloc/realloc with a
@@ -404,14 +386,17 @@ impl<T> FastVec<T> {
         }
 
         if new_cap > (isize::MAX as usize) / mem::size_of::<T>().max(1) {
-            return Err(ZiporaError::out_of_memory(new_cap * mem::size_of::<T>()));
+            return Err(ZiporaError::out_of_memory(
+                new_cap.saturating_mul(mem::size_of::<T>()),
+            ));
         }
 
         // Use exponential growth with a minimum increase
         let target_cap = new_cap.max(self.cap.saturating_mul(2));
 
-        let new_layout = Layout::array::<T>(target_cap)
-            .map_err(|_| ZiporaError::out_of_memory(target_cap * mem::size_of::<T>()))?;
+        let new_layout = Layout::array::<T>(target_cap).map_err(|_| {
+            ZiporaError::out_of_memory(target_cap.saturating_mul(mem::size_of::<T>()))
+        })?;
 
         let new_ptr = match self.ptr {
             Some(ptr) => {
@@ -427,8 +412,9 @@ impl<T> FastVec<T> {
                         }
                     }
                 } else {
-                    let old_layout = Layout::array::<T>(self.cap)
-                        .map_err(|_| ZiporaError::out_of_memory(self.cap * mem::size_of::<T>()))?;
+                    let old_layout = Layout::array::<T>(self.cap).map_err(|_| {
+                        ZiporaError::out_of_memory(self.cap.saturating_mul(mem::size_of::<T>()))
+                    })?;
                     // SAFETY: ptr from self.ptr valid allocation, old_layout matches original allocation, new_layout.size() >= old_layout.size()
                     unsafe {
                         let raw_ptr =
@@ -456,7 +442,7 @@ impl<T> FastVec<T> {
             return Err(ZiporaError::out_of_memory(new_layout.size()));
         }
 
-        // SAFETY: new_ptr is non-null after check at line 373
+        // SAFETY: new_ptr is non-null after the null check above.
         self.ptr = Some(unsafe { NonNull::new_unchecked(new_ptr) });
         self.cap = target_cap;
         Ok(())
@@ -464,6 +450,7 @@ impl<T> FastVec<T> {
 
     /// Push an element to the end of the vector
     pub fn push(&mut self, value: T) -> Result<()> {
+        // PROVEN: type invariant guarantees self.len <= self.cap.
         debug_assert!(self.len <= self.cap);
         if self.len >= (isize::MAX as usize) {
             return Err(ZiporaError::invalid_state(
@@ -475,10 +462,10 @@ impl<T> FastVec<T> {
             self.ensure_capacity(self.len + 1)?;
         }
 
-        debug_assert!(self.len < self.cap);
-        debug_assert!(self.ptr.is_some() || self.len == 0);
+        debug_assert!(self.len < self.cap); // PROVEN: ensure_capacity(self.len + 1) succeeded above.
+        debug_assert!(self.ptr.is_some()); // PROVEN: ensure_capacity(self.len + 1) sets self.ptr = Some(...).
 
-        // SAFETY: self.len < self.cap after ensure_capacity, ptr valid from allocation
+        // SAFETY: self.len < self.cap and self.ptr is Some after ensure_capacity(self.len + 1).
         unsafe {
             ptr::write(self.as_mut_ptr().add(self.len), value);
         }
@@ -488,15 +475,15 @@ impl<T> FastVec<T> {
 
     /// Pop an element from the end of the vector
     pub fn pop(&mut self) -> Option<T> {
-        debug_assert!(self.len <= self.cap);
+        debug_assert!(self.len <= self.cap); // PROVEN: type invariant guarantees self.len <= self.cap.
 
         if self.len == 0 {
             None
         } else {
-            debug_assert!(self.ptr.is_some());
+            debug_assert!(self.ptr.is_some()); // PROVEN: self.len > 0 implies self.ptr.is_some() by the FastVec allocation invariant.
 
             self.len -= 1;
-            // SAFETY: self.len < original len guaranteed by check at line 414, ptr valid from verification
+            // SAFETY: self.len was decremented from a positive value, so self.len is an initialized slot and self.ptr is Some.
             Some(unsafe { ptr::read(self.as_ptr().add(self.len)) })
         }
     }
@@ -507,7 +494,7 @@ impl<T> FastVec<T> {
             return Err(ZiporaError::out_of_bounds(index, self.len));
         }
 
-        debug_assert!(index <= self.len);
+        debug_assert!(index <= self.len); // PROVEN: index <= self.len checked by the early return above.
 
         if self.len >= self.cap {
             self.ensure_capacity(self.len + 1)?;
@@ -562,60 +549,44 @@ impl<T> FastVec<T> {
         T: Clone,
     {
         if new_len > (isize::MAX as usize) / mem::size_of::<T>().max(1) {
-            return Err(ZiporaError::out_of_memory(new_len * mem::size_of::<T>()));
+            return Err(ZiporaError::out_of_memory(
+                new_len.saturating_mul(mem::size_of::<T>()),
+            ));
         }
-        debug_assert!(self.len <= self.cap);
+        debug_assert!(self.len <= self.cap); // PROVEN: type invariant guarantees self.len <= self.cap.
 
         if new_len > self.len {
             self.ensure_capacity(new_len)?;
 
-            debug_assert!(self.cap >= new_len);
-            debug_assert!(self.ptr.is_some());
+            debug_assert!(self.cap >= new_len); // PROVEN: ensure_capacity(new_len) guarantees self.cap >= new_len.
+            debug_assert!(self.ptr.is_some()); // PROVEN: ensure_capacity(new_len) with new_len > 0 sets self.ptr = Some(...).
 
-            let fill_count = new_len - self.len;
-
-            // Use SIMD optimization for large fill operations on Copy types
-            if is_simd_safe::<T>()
-                && is_simd_beneficial::<T>(fill_count)
-                && mem::size_of::<T>() == 1
-            {
-                // For u8-sized Copy types, use direct SIMD fill
-                // SAFETY: self.len + fill_count == new_len <= cap after ensure_capacity, ptr valid from verification
+            // Bump len after each write so that if value.clone() panics,
+            // the elements already written are owned by the vector and
+            // dropped during unwinding instead of leaking.
+            for i in self.len..new_len {
+                // SAFETY: i < new_len <= self.cap and self.ptr is Some after ensure_capacity(new_len).
                 unsafe {
-                    let fill_slice = slice::from_raw_parts_mut(
-                        self.as_mut_ptr().add(self.len) as *mut u8,
-                        fill_count,
-                    );
-                    fast_fill(fill_slice, *((&value) as *const T as *const u8));
+                    ptr::write(self.as_mut_ptr().add(i), value.clone());
                 }
-            } else {
-                // Standard fill for non-Copy types or small operations.
-                // Bump len after each write so that if value.clone() panics,
-                // the elements already written are owned by the vector and
-                // dropped during unwinding instead of leaking.
-                for i in self.len..new_len {
-                    // SAFETY: i < new_len <= cap after ensure_capacity, ptr valid from verification
-                    unsafe {
-                        ptr::write(self.as_mut_ptr().add(i), value.clone());
-                    }
-                    self.len = i + 1;
-                }
+                self.len = i + 1;
             }
         } else if new_len < self.len {
-            // Verify we have valid memory to drop elements from
-            debug_assert!(self.ptr.is_some() || self.len == 0);
+            debug_assert!(self.ptr.is_some()); // PROVEN: new_len < self.len implies self.len > 0, so self.ptr.is_some() by allocation invariant.
 
-            // Drop excess elements
-            for i in new_len..self.len {
-                // SAFETY: new_len <= i < self.len, ptr valid from debug_assert above
-                unsafe {
-                    ptr::drop_in_place(self.as_mut_ptr().add(i));
-                }
+            let drop_count = self.len - new_len;
+            self.len = new_len;
+            // SAFETY: new_len + drop_count == old_len <= self.cap, and self.ptr is valid for old_len initialized elements;
+            // updating self.len before drop_in_place prevents double-drop if an element's Drop panics.
+            unsafe {
+                ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
+                    self.as_mut_ptr().add(new_len),
+                    drop_count,
+                ));
             }
         }
-        self.len = new_len;
 
-        debug_assert!(self.len <= self.cap);
+        debug_assert!(self.len <= self.cap); // PROVEN: type invariant self.len <= self.cap is preserved on both branches.
         Ok(())
     }
 
@@ -625,55 +596,64 @@ impl<T> FastVec<T> {
         F: FnMut() -> T,
     {
         if new_len > (isize::MAX as usize) / mem::size_of::<T>().max(1) {
-            return Err(ZiporaError::out_of_memory(new_len * mem::size_of::<T>()));
+            return Err(ZiporaError::out_of_memory(
+                new_len.saturating_mul(mem::size_of::<T>()),
+            ));
         }
-        debug_assert!(self.len <= self.cap);
+        debug_assert!(self.len <= self.cap); // PROVEN: type invariant guarantees self.len <= self.cap.
 
         if new_len > self.len {
             self.ensure_capacity(new_len)?;
 
-            debug_assert!(self.cap >= new_len);
-            debug_assert!(self.ptr.is_some());
+            debug_assert!(self.cap >= new_len); // PROVEN: ensure_capacity(new_len) guarantees self.cap >= new_len.
+            debug_assert!(self.ptr.is_some()); // PROVEN: ensure_capacity(new_len) with new_len > 0 sets self.ptr = Some(...).
 
             let mut closure = f;
             // Bump len after each write so that if closure() panics, the
             // elements already written are dropped during unwinding instead
             // of leaking.
             for i in self.len..new_len {
-                // SAFETY: i < new_len <= cap after ensure_capacity, ptr valid from debug_assert above
+                // SAFETY: i < new_len <= self.cap and self.ptr is Some after ensure_capacity(new_len).
                 unsafe {
                     ptr::write(self.as_mut_ptr().add(i), closure());
                 }
                 self.len = i + 1;
             }
         } else if new_len < self.len {
-            // Drop excess elements
-            for i in new_len..self.len {
-                // SAFETY: new_len <= i < self.len, ptr valid since len > 0
-                unsafe {
-                    ptr::drop_in_place(self.as_mut_ptr().add(i));
-                }
+            debug_assert!(self.ptr.is_some()); // PROVEN: new_len < self.len implies self.len > 0, so self.ptr.is_some() by allocation invariant.
+
+            let drop_count = self.len - new_len;
+            self.len = new_len;
+            // SAFETY: new_len + drop_count == old_len <= self.cap, and self.ptr is valid for old_len initialized elements;
+            // updating self.len before drop_in_place prevents double-drop if an element's Drop panics.
+            unsafe {
+                ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
+                    self.as_mut_ptr().add(new_len),
+                    drop_count,
+                ));
             }
         }
-        self.len = new_len;
 
-        debug_assert!(self.len <= self.cap);
+        debug_assert!(self.len <= self.cap); // PROVEN: type invariant self.len <= self.cap is preserved on both branches.
         Ok(())
     }
 
     /// Clear all elements from the vector
     pub fn clear(&mut self) {
-        debug_assert!(self.len <= self.cap);
-        debug_assert!(self.ptr.is_some() || self.len == 0);
+        debug_assert!(self.len <= self.cap); // PROVEN: type invariant guarantees self.len <= self.cap.
+        debug_assert!(self.ptr.is_some() || self.len == 0); // PROVEN: type invariant guarantees self.ptr.is_some() whenever self.len > 0.
 
-        for i in 0..self.len {
-            // SAFETY: i < self.len, ptr valid from debug_assert above
+        let len = self.len;
+        self.len = 0;
+        if len > 0 {
+            // SAFETY: len > 0 implies self.ptr is Some and valid for `len` initialized elements;
+            // setting self.len = 0 before drop_in_place prevents double-drop if an element's Drop panics.
             unsafe {
-                ptr::drop_in_place(self.as_mut_ptr().add(i));
+                ptr::drop_in_place(ptr::slice_from_raw_parts_mut(self.as_mut_ptr(), len));
             }
         }
-        self.len = 0;
 
+        // PROVEN: self.len == 0 <= self.cap.
         debug_assert!(self.len <= self.cap);
     }
 
@@ -692,8 +672,9 @@ impl<T> FastVec<T> {
             if let Some(ptr) = self.ptr {
                 // SAFETY: ptr from valid allocation, layout matches original allocation parameters
                 unsafe {
-                    let layout = Layout::array::<T>(self.cap)
-                        .map_err(|_| ZiporaError::out_of_memory(self.cap * mem::size_of::<T>()))?;
+                    let layout = Layout::array::<T>(self.cap).map_err(|_| {
+                        ZiporaError::out_of_memory(self.cap.saturating_mul(mem::size_of::<T>()))
+                    })?;
                     alloc::dealloc(ptr.as_ptr() as *mut u8, layout);
                 }
             }
@@ -702,12 +683,14 @@ impl<T> FastVec<T> {
             return Ok(());
         }
 
-        let new_layout = Layout::array::<T>(self.len)
-            .map_err(|_| ZiporaError::out_of_memory(self.len * mem::size_of::<T>()))?;
+        let new_layout = Layout::array::<T>(self.len).map_err(|_| {
+            ZiporaError::out_of_memory(self.len.saturating_mul(mem::size_of::<T>()))
+        })?;
 
         let new_ptr = if let Some(ptr) = self.ptr {
-            let old_layout = Layout::array::<T>(self.cap)
-                .map_err(|_| ZiporaError::out_of_memory(self.cap * mem::size_of::<T>()))?;
+            let old_layout = Layout::array::<T>(self.cap).map_err(|_| {
+                ZiporaError::out_of_memory(self.cap.saturating_mul(mem::size_of::<T>()))
+            })?;
             // SAFETY: ptr from valid allocation, old_layout matches original, new_layout.size() <= old_layout.size() (shrinking)
             unsafe {
                 let raw_ptr =
@@ -726,7 +709,7 @@ impl<T> FastVec<T> {
             return Err(ZiporaError::out_of_memory(new_layout.size()));
         }
 
-        // SAFETY: new_ptr is non-null after check at line 670
+        // SAFETY: new_ptr is non-null after the null check above.
         self.ptr = Some(unsafe { NonNull::new_unchecked(new_ptr) });
         self.cap = self.len;
         Ok(())
@@ -739,8 +722,9 @@ impl<T> FastVec<T> {
     /// The caller must ensure that `index < self.len()`
     #[inline(always)]
     pub unsafe fn get_unchecked(&self, index: usize) -> &T {
+        // PROVEN: caller upholds the unsafe fn precondition `index < self.len()`.
         debug_assert!(index < self.len);
-        // SAFETY: if len > 0, ptr is always Some. unwrap_unchecked eliminates the Option branch.
+        // SAFETY: caller guarantees index < self.len, which implies self.len > 0 and self.ptr is Some.
         unsafe { &*self.ptr.unwrap_unchecked().as_ptr().add(index) }
     }
 
@@ -751,9 +735,9 @@ impl<T> FastVec<T> {
     /// The caller must ensure that `index < self.len()`
     #[inline(always)]
     pub unsafe fn get_unchecked_mut(&mut self, index: usize) -> &mut T {
+        // PROVEN: caller upholds the unsafe fn precondition `index < self.len()`.
         debug_assert!(index < self.len);
-        // SAFETY: if len > 0, ptr is always Some (set by with_capacity/push/resize).
-        // unwrap_unchecked eliminates the Option branch that the compiler can't prove away.
+        // SAFETY: caller guarantees index < self.len, which implies self.len > 0 and self.ptr is Some.
         unsafe { &mut *self.ptr.unwrap_unchecked().as_ptr().add(index) }
     }
 
@@ -770,8 +754,16 @@ impl<T> FastVec<T> {
 
         // Bump len after each write so that if iter.next() panics, the items
         // already written are dropped during unwinding instead of leaking.
+        // Do not trust ExactSizeIterator::len() for memory safety (it is a safe trait).
         for item in iter {
-            // SAFETY: self.len < original len + additional <= cap after reserve
+            if self.len >= self.cap {
+                let next_cap = self
+                    .len
+                    .checked_add(1)
+                    .ok_or_else(|| ZiporaError::out_of_memory(usize::MAX))?;
+                self.ensure_capacity(next_cap)?;
+            }
+            // SAFETY: self.len < self.cap and self.ptr is Some after the capacity check above.
             unsafe {
                 ptr::write(self.as_mut_ptr().add(self.len), item);
             }
@@ -803,9 +795,13 @@ impl<T> FastVec<T> {
             return Err(ZiporaError::out_of_bounds(end, self.len));
         }
 
+        // PROVEN: start <= end <= self.len checked by the early return above, and self.len <= self.cap by type invariant.
         debug_assert!(start <= end);
+        // PROVEN: end <= self.len checked by the early return above.
         debug_assert!(end <= self.len);
+        // PROVEN: type invariant guarantees self.len <= self.cap.
         debug_assert!(self.len <= self.cap);
+        // PROVEN: type invariant guarantees self.ptr.is_some() whenever self.len > 0.
         debug_assert!(self.ptr.is_some() || self.len == 0);
 
         if start == end {
@@ -819,58 +815,18 @@ impl<T> FastVec<T> {
             let selector = AdaptiveSimdSelector::global();
             let _ = selector.select_optimal_impl(
                 Operation::MemZero,
-                range_len * mem::size_of::<T>(),
+                range_len.saturating_mul(mem::size_of::<T>()),
                 None, // No density for fill operations
             );
 
             // Monitor performance for adaptive optimization
             let start_time = Instant::now();
 
-            // For u8-sized types, use direct SIMD fill
-            if mem::size_of::<T>() == 1 {
-                // SAFETY: start + range_len == end <= self.len verified at line 762, ptr valid from verification at line 770
-                unsafe {
-                    let range_slice = slice::from_raw_parts_mut(
-                        self.as_mut_ptr().add(start) as *mut u8,
-                        range_len,
-                    );
-
-                    // Advanced prefetching for large fills
-                    if range_len >= PREFETCH_DISTANCE * 8 {
-                        PrefetchOps::prefetch_range(
-                            range_slice.as_ptr(),
-                            range_len,
-                            PREFETCH_DISTANCE,
-                        );
-                    }
-
-                    fast_fill(range_slice, *((&value) as *const T as *const u8));
-                }
-            } else {
-                // For other Copy types, use bulk fill with prefetching
-                // SAFETY: start + range_len == end <= self.len verified at line 762, ptr valid from verification at line 770
-                let range_slice =
-                    unsafe { slice::from_raw_parts_mut(self.as_mut_ptr().add(start), range_len) };
-
-                // Prefetch-optimized fill for large ranges
-                if range_len >= PREFETCH_DISTANCE * 2 {
-                    for i in 0..range_len {
-                        // Lookahead prefetching (PREFETCH_DISTANCE=8)
-                        if i + PREFETCH_DISTANCE < range_len {
-                            PrefetchOps::prefetch_read(
-                                &range_slice[i + PREFETCH_DISTANCE] as *const T as *const u8
-                                    as *const i8,
-                            );
-                        }
-                        range_slice[i] = value;
-                    }
-                } else {
-                    // Standard fill for smaller ranges
-                    for item in range_slice.iter_mut() {
-                        *item = value;
-                    }
-                }
+            let range_slice = &mut self.as_mut_slice()[start..end];
+            if range_len >= PREFETCH_DISTANCE * 8 {
+                PrefetchOps::prefetch_range(range_slice.as_ptr(), range_len, PREFETCH_DISTANCE);
             }
+            range_slice.fill(value);
 
             // Record performance for monitoring
             selector.monitor_performance(
@@ -881,9 +837,7 @@ impl<T> FastVec<T> {
         } else {
             // Standard fill for small ranges or non-Copy types
             let range_slice = &mut self.as_mut_slice()[start..end];
-            for item in range_slice.iter_mut() {
-                *item = value;
-            }
+            range_slice.fill(value);
         }
 
         Ok(())
@@ -906,15 +860,19 @@ impl<T> FastVec<T> {
         if src.len() > (isize::MAX as usize) / mem::size_of::<T>().max(1) {
             return Err(ZiporaError::out_of_memory(std::mem::size_of_val(src)));
         }
+        // PROVEN: type invariant guarantees self.len <= self.cap.
         debug_assert!(self.len <= self.cap);
 
         if src.is_empty() {
+            self.len = 0;
             return Ok(());
         }
 
         self.ensure_capacity(src.len())?;
 
+        // PROVEN: ensure_capacity(src.len()) with !src.is_empty() guarantees self.cap >= src.len() and self.ptr.is_some().
         debug_assert!(self.cap >= src.len());
+        // PROVEN: ensure_capacity(src.len()) with !src.is_empty() sets self.ptr = Some(...).
         debug_assert!(self.ptr.is_some());
 
         // Adaptive SIMD selection for optimal copy implementation
@@ -929,24 +887,20 @@ impl<T> FastVec<T> {
             // Monitor performance for adaptive optimization
             let start_time = Instant::now();
 
-            // SAFETY: src.len() <= cap after ensure_capacity, ptr valid from verification at line 885
-            unsafe {
-                // Advanced prefetching for large copies
-                if src.len() >= PREFETCH_DISTANCE * 8 {
-                    PrefetchOps::prefetch_range(src.as_ptr(), src.len(), PREFETCH_DISTANCE);
-                }
+            if src.len() >= PREFETCH_DISTANCE * 8 {
+                PrefetchOps::prefetch_range(src.as_ptr(), src.len(), PREFETCH_DISTANCE);
+            }
 
-                let src_bytes = slice_as_bytes(src);
-                let dst_bytes =
-                    slice_as_bytes_mut(slice::from_raw_parts_mut(self.as_mut_ptr(), src.len()));
-                fast_copy(src_bytes, dst_bytes)?;
+            // SAFETY: src.len() <= self.cap after ensure_capacity, self.ptr is Some, and src is disjoint from self.
+            unsafe {
+                ptr::copy_nonoverlapping(src.as_ptr(), self.as_mut_ptr(), src.len());
             }
 
             // Record performance for monitoring
             selector.monitor_performance(Operation::Copy, start_time.elapsed(), src.len() as u64);
         } else {
             // Standard copy for small slices or non-Copy types
-            // SAFETY: src.len() <= cap after ensure_capacity, no overlap (src is external)
+            // SAFETY: src.len() <= self.cap after ensure_capacity, self.ptr is Some, and src is disjoint from self.
             unsafe {
                 ptr::copy_nonoverlapping(src.as_ptr(), self.as_mut_ptr(), src.len());
             }
@@ -988,26 +942,20 @@ impl<T> FastVec<T> {
             // Monitor performance for adaptive optimization
             let start_time = Instant::now();
 
-            // SAFETY: old_len + src.len() <= cap after reserve, ptr valid from allocation
-            unsafe {
-                // Advanced prefetching for large extends
-                if src.len() >= PREFETCH_DISTANCE * 8 {
-                    PrefetchOps::prefetch_range(src.as_ptr(), src.len(), PREFETCH_DISTANCE);
-                }
+            if src.len() >= PREFETCH_DISTANCE * 8 {
+                PrefetchOps::prefetch_range(src.as_ptr(), src.len(), PREFETCH_DISTANCE);
+            }
 
-                let src_bytes = slice_as_bytes(src);
-                let dst_bytes = slice_as_bytes_mut(slice::from_raw_parts_mut(
-                    self.as_mut_ptr().add(old_len),
-                    src.len(),
-                ));
-                fast_copy(src_bytes, dst_bytes)?;
+            // SAFETY: old_len + src.len() <= self.cap after reserve, self.ptr is Some, and src is disjoint from self.
+            unsafe {
+                ptr::copy_nonoverlapping(src.as_ptr(), self.as_mut_ptr().add(old_len), src.len());
             }
 
             // Record performance for monitoring
             selector.monitor_performance(Operation::Copy, start_time.elapsed(), src.len() as u64);
         } else {
             // Standard copy for small slices or non-Copy types
-            // SAFETY: old_len + src.len() <= cap after reserve, no overlap (src is external)
+            // SAFETY: old_len + src.len() <= self.cap after reserve, self.ptr is Some, and src is disjoint from self.
             unsafe {
                 ptr::copy_nonoverlapping(src.as_ptr(), self.as_mut_ptr().add(old_len), src.len());
             }

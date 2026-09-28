@@ -1721,3 +1721,147 @@ fn test_into_iter_is_exact_size_and_extendable() {
     a.extend(b).unwrap();
     assert_eq!(a.as_slice(), &[1, 2, 3]);
 }
+
+#[test]
+fn test_c6_1_padded_copy_and_extend_fast_no_uninit_ub() {
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct Padded(u8, u32);
+
+    let src = vec![Padded(7, 0x1234_5678); 64];
+    let mut v = FastVec::new();
+    v.copy_from_slice_fast(&src).unwrap();
+    assert_eq!(v.as_slice(), src.as_slice());
+
+    v.extend_from_slice_fast(&src).unwrap();
+    assert_eq!(v.len(), 128);
+    assert!(v.iter().all(|&x| x == Padded(7, 0x1234_5678)));
+}
+
+#[test]
+fn test_c6_2_extend_dishonest_exact_size_iterator_no_oob_write() {
+    struct DishonestIter(usize);
+    impl Iterator for DishonestIter {
+        type Item = u64;
+        fn next(&mut self) -> Option<u64> {
+            if self.0 < 16 {
+                self.0 += 1;
+                Some(self.0 as u64)
+            } else {
+                None
+            }
+        }
+        fn size_hint(&self) -> (usize, Option<usize>) {
+            (0, Some(0))
+        }
+    }
+    impl ExactSizeIterator for DishonestIter {}
+
+    let mut v = FastVec::new();
+    v.extend(DishonestIter(0)).unwrap();
+    assert_eq!(v.len(), 16);
+    for i in 0..16 {
+        assert_eq!(v[i], (i + 1) as u64);
+    }
+}
+
+#[test]
+fn test_c6_3_clear_and_resize_panicking_drop_no_double_drop() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
+    struct Bomb(bool);
+    impl Drop for Bomb {
+        fn drop(&mut self) {
+            DROPS.fetch_add(1, Ordering::SeqCst);
+            if self.0 {
+                panic!("drop bomb");
+            }
+        }
+    }
+
+    DROPS.store(0, Ordering::SeqCst);
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let mut v = FastVec::new();
+        v.push(Bomb(false)).unwrap();
+        v.push(Bomb(true)).unwrap();
+        v.push(Bomb(false)).unwrap();
+        v.clear();
+    }));
+    assert!(res.is_err());
+    assert_eq!(
+        DROPS.load(Ordering::SeqCst),
+        3,
+        "each element must be dropped exactly once on clear()"
+    );
+
+    DROPS.store(0, Ordering::SeqCst);
+    let res2 = catch_unwind(AssertUnwindSafe(|| {
+        let mut v = FastVec::new();
+        v.push(Bomb(false)).unwrap();
+        v.push(Bomb(false)).unwrap();
+        v.push(Bomb(true)).unwrap();
+        v.push(Bomb(false)).unwrap();
+        v.resize_with(1, || Bomb(false)).unwrap();
+    }));
+    assert!(res2.is_err());
+    assert_eq!(
+        DROPS.load(Ordering::SeqCst),
+        4,
+        "each element must be dropped exactly once on shrinking resize_with()"
+    );
+}
+
+#[test]
+fn test_c6_5_resize_1byte_non_copy_calls_clone_and_copy_from_slice_shrink() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CLONES: AtomicUsize = AtomicUsize::new(0);
+    #[derive(Debug, PartialEq, Eq)]
+    struct OneByteClone(u8);
+    impl Clone for OneByteClone {
+        fn clone(&self) -> Self {
+            CLONES.fetch_add(1, Ordering::SeqCst);
+            OneByteClone(self.0)
+        }
+    }
+
+    CLONES.store(0, Ordering::SeqCst);
+    let mut v = FastVec::new();
+    v.resize(128, OneByteClone(42)).unwrap();
+    assert_eq!(v.len(), 128);
+    assert_eq!(CLONES.load(Ordering::SeqCst), 128);
+
+    // copy_from_slice_fast shrinking and empty
+    let mut nums = FastVec::new();
+    nums.copy_from_slice_fast(&[1u32, 2, 3, 4, 5]).unwrap();
+    assert_eq!(nums.as_slice(), &[1, 2, 3, 4, 5]);
+    nums.copy_from_slice_fast(&[9u32, 8]).unwrap();
+    assert_eq!(nums.as_slice(), &[9, 8]);
+    nums.copy_from_slice_fast(&[]).unwrap();
+    assert!(nums.is_empty());
+
+    // OOM error construction must not overflow on usize::MAX
+    assert!(FastVec::<u64>::with_capacity(usize::MAX).is_err());
+}
+
+#[test]
+fn test_c6_align_4096_fast_vec() {
+    #[repr(align(4096))]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct PageAligned([u64; 4]);
+
+    let mut v = FastVec::<PageAligned>::new();
+    for i in 0..8u64 {
+        v.push(PageAligned([i, i + 1, i + 2, i + 3])).unwrap();
+        assert_eq!((v.as_ptr() as usize) % 4096, 0);
+    }
+    v.shrink_to_fit().unwrap();
+    assert_eq!((v.as_ptr() as usize) % 4096, 0);
+    assert_eq!(v.len(), 8);
+    for i in 0..8u64 {
+        assert_eq!(v[i as usize], PageAligned([i, i + 1, i + 2, i + 3]));
+    }
+}
+
