@@ -1865,6 +1865,18 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     fn test_corrupt_serde_get_and_pef_batch_cursor_no_ub_or_panic() {
+        // S17-R1: Exact corrupt deserialized input from /tmp/s17_hang_mutant.json
+        // where chunk_upper_bounds is non-monotone ([312658, 8992919731896089034, 945839, 1133629]).
+        // On 1ebdb1d this deserialized as Ok(h) and hung forever in h.intersect_count(&h).
+        const S17_HANG_MUTANT_JSON: &str = r#"{"Partitioned":{"all_high_bits":[6725181367942554973,13027900335803917482,7580238445390931346,5558931001735469238,5974605,5921470780086571305,3723512153954886802,10562221667770510157,7607552466545449364,304764198,12218920774162098595,5281254741531765427,7604725093897947794,13207273554404231588,469349,8296648021782408531,6001373803218024937,40221682080330],"all_low_bits":[12851844896141176832,1747619668229033507,3051461650804711616,8733184653346221470,6330244851109875561,16533579935420713827,8085855438957212373,12640437754101315176,9026650630548971559,9769956701692931094,13865749852306623835,11322230192252730439,14923981729729068413,15815287167444744868,15955321782605204040,2012681119491669362,2226082541167939114,7794642711579268982,13098460096358694397,6179250497981018554,12749992742622085523,15346411821965875922,2738486428396136448,11875809012465281303,7354962045982413476,14096981271316938724,5753935690476285897,2665190416921433079,3197037135779573076,12181302780187847644,12283425208823800018,18272739115147417741,17933082139700408081,17499675853826281980,1931397724306628666,5168798816267415105,14820382321381105827,13955550951456101639,1182560758183374432,11068748747576536429,2494028952667343416,11429483860507832673,2171935809508206484,1928810607386358295,1116111505330450432,3977276696118718726,4384276098328312913,2316195880163270958,14246993388819357537,9610585945641472143,5914939160258710180,4263375972322160625,17626283628502267607,11459747412332906484,7040670553475505827,12936584850481146202,715188996089964060,13450465804200164482,15949284612660665513,12513735145025821782,9199658272035294831,15268081292960773409,457019345648958343,7204600462001397391,11712063501967314904,13805380378376055111,1460434542348648448,5687307254615725982,1970061880274699905,8304794971901529479,3149089098433080533,748863998593645088,3916932566079088895,11868786322954594371,17103721347371264594,11784190889517095067,13032062508719966152,10520906129741768736,12020459586070546565,15005179582605110268,94868439,0],"chunk_upper_bounds":[312658,8992919731896089034,945839,1133629],"len":468,"meta":[{"count":128,"high_len_bits":280,"high_offset":0,"high_words":5,"low_bit_width":11,"low_offset":0,"low_words":22,"min_value":1707},{"count":128,"high_len_bits":286,"high_offset":5,"high_words":5,"low_bit_width":11,"low_offset":22,"low_words":22,"min_value":316831},{"count":128,"high_len_bits":276,"high_offset":10,"high_words":5,"low_bit_width":11,"low_offset":44,"low_words":22,"min_value":643251},{"count":84,"high_len_bits":175,"high_offset":15,"high_words":3,"low_bit_width":11,"low_offset":66,"low_words":63,"min_value":948586}],"universe":1133630}}"#;
+        if let Ok(h) = serde_json::from_str::<HybridPostingList>(S17_HANG_MUTANT_JSON) {
+            assert!(h.intersect_count(&h) <= h.len());
+        }
+        assert!(
+            serde_json::from_str::<HybridPostingList>(S17_HANG_MUTANT_JSON).is_err(),
+            "S17-R2: corrupt non-monotone HybridPostingList::Partitioned must be rejected at deserialize time"
+        );
+
         let vals: Vec<u32> = (0..20).map(|i| i * 5).collect();
 
         // Corrupt EliasFano: len=100 -> get(50) must not read out-of-bounds low_bits
@@ -1875,29 +1887,42 @@ mod tests {
         let corrupt_ef: EliasFano = serde_json::from_value(v_ef).unwrap();
         assert_eq!(corrupt_ef.get(50), None);
 
-        // Corrupt PartitionedEliasFano: len=100, meta[0].count=100
+        // S17-R2: Structural corruption on PartitionedEliasFano (len=100, meta[0].count=100)
+        // must be rejected on deserialize; content-only corruption (zeroed high_bits) must not panic.
         let pef = PartitionedEliasFano::from_sorted(&vals);
         let mut v_pef: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&pef).unwrap()).unwrap();
         v_pef["len"] = serde_json::json!(100);
         v_pef["meta"][0]["count"] = serde_json::json!(100);
-        let corrupt_pef: PartitionedEliasFano = serde_json::from_value(v_pef).unwrap();
-        let _ = corrupt_pef.get(50);
+        assert!(serde_json::from_value::<PartitionedEliasFano>(v_pef).is_err());
+
+        let mut v_pef_zero_high: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&pef).unwrap()).unwrap();
+        v_pef_zero_high["all_high_bits"] = serde_json::json!([0u64]);
+        let corrupt_pef: PartitionedEliasFano = serde_json::from_value(v_pef_zero_high).unwrap();
+        let _ = corrupt_pef.get(0);
         let mut bc = corrupt_pef.batch_cursor();
-        for i in 1..20 {
-            assert!(bc.advance(), "PEF batch_cursor advance at {i}");
-        }
-        assert!(!bc.advance(), "PEF batch_cursor must stop on corrupt high_bits");
+        assert!(!bc.advance(), "PEF batch_cursor must stop on zeroed high_bits");
         assert!(bc.is_exhausted());
 
-        // Corrupt OptimalPartitionedEliasFano: get(50) must not underflow or read OOB
+        // S17-R2: Structural corruption on OptimalPartitionedEliasFano, ClusteredEliasFano,
+        // and HybridPostingList::Dense must be rejected on deserialize (not panic on query).
         let opef = OptimalPartitionedEliasFano::from_sorted(&vals);
         let mut v_opef: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&opef).unwrap()).unwrap();
-        v_opef["len"] = serde_json::json!(100);
-        v_opef["meta"][0]["count"] = serde_json::json!(100);
-        let corrupt_opef: OptimalPartitionedEliasFano = serde_json::from_value(v_opef).unwrap();
-        let _ = corrupt_opef.get(50);
+        v_opef["meta"][0]["low_offset"] = serde_json::json!(999_999);
+        assert!(serde_json::from_value::<OptimalPartitionedEliasFano>(v_opef).is_err());
+
+        let cef = ClusteredEliasFano::from_sorted(&vals);
+        let mut v_cef: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&cef).unwrap()).unwrap();
+        v_cef["meta"][0]["low_offset"] = serde_json::json!(999_999);
+        assert!(serde_json::from_value::<ClusteredEliasFano>(v_cef).is_err());
+
+        assert!(
+            serde_json::from_str::<HybridPostingList>(r#"{"Dense":[10,5,20]}"#).is_err(),
+            "Unsorted HybridPostingList::Dense must be rejected on deserialize"
+        );
     }
 
     #[test]

@@ -2744,8 +2744,12 @@ mod tests {
             stat.capacity >= t_mem.mempool.capacity() * ALIGN_SIZE + t_mem.values.capacity(),
             "mem_get_stat().capacity must include values.capacity()"
         );
+    }
 
-        // 3. Value arena offsets past 4 GiB must not wrap mod 2^32 when stored in
+    #[test]
+    #[ignore = "allocates >4 GiB value arena (~42 s); run explicitly with --ignored"]
+    fn test_value_arena_4gib_scaling_beyond_u32_max() {
+        // Value arena offsets past 4 GiB must not wrap mod 2^32 when stored in
         // the node's 32-bit value slot (scaled by valsize).
         #[cfg(not(miri))]
         {

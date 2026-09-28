@@ -44,10 +44,6 @@ impl EliasFano {
     /// Build from a sorted slice of u32 values. Zero-allocation — processes
     /// u32 values directly without converting to an intermediate `Vec<u64>`.
     pub fn from_sorted(values: &[u32]) -> Self {
-        assert!(
-            values.windows(2).all(|w| w[0] <= w[1]),
-            "EliasFano::from_sorted requires non-decreasing input"
-        );
         if values.is_empty() {
             return Self::from_sorted_u64(&[]);
         }
@@ -58,10 +54,6 @@ impl EliasFano {
 
     /// Build from sorted u64 values.
     pub fn from_sorted_u64(values: &[u64]) -> Self {
-        assert!(
-            values.windows(2).all(|w| w[0] <= w[1]),
-            "EliasFano::from_sorted_u64 requires non-decreasing input"
-        );
         if values.is_empty() {
             return Self {
                 low_bits: Vec::new(),
@@ -137,9 +129,16 @@ impl EliasFano {
 
         let mut pos = 0usize;
         let mut prev_high = 0u64;
+        let mut prev_val = 0u64;
 
         for i in 0..n {
-            let high = get_val(i) >> low_bit_width;
+            let v = get_val(i);
+            assert!(
+                v >= prev_val && v <= last_val,
+                "EliasFano::from_sorted requires non-decreasing input"
+            );
+            prev_val = v;
+            let high = v >> low_bit_width;
             pos += (high - prev_high) as usize;
             let word_idx = pos / 64;
             let bit_idx = pos % 64;

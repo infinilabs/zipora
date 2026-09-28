@@ -57,7 +57,11 @@ struct CefChunkMeta {
 
 /// Clustered Elias-Fano posting list.
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(try_from = "RawClusteredEliasFano")
+)]
 pub struct ClusteredEliasFano {
     all_low_bits: Vec<u64>,
     all_high_bits: Vec<u64>,
@@ -71,13 +75,127 @@ pub struct ClusteredEliasFano {
     universe: u128,
 }
 
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+struct RawClusteredEliasFano {
+    all_low_bits: Vec<u64>,
+    all_high_bits: Vec<u64>,
+    all_dense_bits: Vec<u64>,
+    meta: Vec<CefChunkMeta>,
+    chunk_upper_bounds: Vec<u64>,
+    len: usize,
+    universe: u128,
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<RawClusteredEliasFano> for ClusteredEliasFano {
+    type Error = &'static str;
+
+    fn try_from(raw: RawClusteredEliasFano) -> Result<Self, Self::Error> {
+        if raw.len == 0 {
+            if !raw.meta.is_empty() || !raw.chunk_upper_bounds.is_empty() {
+                return Err("ClusteredEliasFano: non-empty metadata for len == 0");
+            }
+            return Ok(Self {
+                all_low_bits: raw.all_low_bits,
+                all_high_bits: raw.all_high_bits,
+                all_dense_bits: raw.all_dense_bits,
+                meta: raw.meta,
+                chunk_upper_bounds: raw.chunk_upper_bounds,
+                len: 0,
+                universe: raw.universe,
+            });
+        }
+
+        let expected_chunks = raw.len.div_ceil(CEF_CHUNK_SIZE);
+        if raw.meta.len() != expected_chunks || raw.chunk_upper_bounds.len() != expected_chunks {
+            return Err("ClusteredEliasFano: metadata length mismatch");
+        }
+
+        let mut prev_ub = 0u64;
+        for (i, m) in raw.meta.iter().enumerate() {
+            let expected_count = if i + 1 < expected_chunks {
+                CEF_CHUNK_SIZE
+            } else {
+                raw.len - i * CEF_CHUNK_SIZE
+            };
+            if m.count as usize != expected_count {
+                return Err("ClusteredEliasFano: chunk count mismatch");
+            }
+            let ub = raw.chunk_upper_bounds[i];
+            if m.min_value < prev_ub || ub < m.min_value {
+                return Err("ClusteredEliasFano: non-monotone chunk bounds");
+            }
+            match m.kind {
+                ChunkKind::Run => {
+                    if (ub - m.min_value).saturating_add(1) != expected_count as u64 {
+                        return Err("ClusteredEliasFano: Run span mismatch");
+                    }
+                }
+                ChunkKind::Bitmap => {
+                    let s = m.bitmap_offset as usize;
+                    let e = s
+                        .checked_add(m.bitmap_words as usize)
+                        .ok_or("ClusteredEliasFano: bitmap_offset overflow")?;
+                    if e > raw.all_dense_bits.len() {
+                        return Err("ClusteredEliasFano: bitmap out of bounds");
+                    }
+                    let set_bits: usize = raw.all_dense_bits[s..e]
+                        .iter()
+                        .map(|w| w.count_ones() as usize)
+                        .sum();
+                    if set_bits != expected_count {
+                        return Err("ClusteredEliasFano: bitmap popcount != count");
+                    }
+                }
+                ChunkKind::EliasFano => {
+                    if m.low_bit_width > 63 {
+                        return Err("ClusteredEliasFano: low_bit_width > 63");
+                    }
+                    let low_words =
+                        (expected_count as u64 * m.low_bit_width as u64).div_ceil(64) as usize;
+                    let low_end = (m.low_offset as usize)
+                        .checked_add(low_words)
+                        .and_then(|x| x.checked_add(1))
+                        .ok_or("ClusteredEliasFano: low_offset overflow")?;
+                    if low_end > raw.all_low_bits.len() {
+                        return Err("ClusteredEliasFano: low_bits out of bounds");
+                    }
+                    if (m.high_len_bits as usize) < expected_count {
+                        return Err("ClusteredEliasFano: high_len_bits < count");
+                    }
+                    let high_words = (m.high_len_bits as usize).div_ceil(64);
+                    let high_end = (m.high_offset as usize)
+                        .checked_add(high_words)
+                        .ok_or("ClusteredEliasFano: high_offset overflow")?;
+                    if high_end > raw.all_high_bits.len() {
+                        return Err("ClusteredEliasFano: high_bits out of bounds");
+                    }
+                }
+            }
+            prev_ub = ub;
+        }
+
+        let expected_universe = prev_ub as u128 + 1;
+        if raw.universe != expected_universe {
+            return Err("ClusteredEliasFano: universe mismatch");
+        }
+
+        Ok(Self {
+            all_low_bits: raw.all_low_bits,
+            all_high_bits: raw.all_high_bits,
+            all_dense_bits: raw.all_dense_bits,
+            meta: raw.meta,
+            chunk_upper_bounds: raw.chunk_upper_bounds,
+            len: raw.len,
+            universe: raw.universe,
+        })
+    }
+}
+
 impl ClusteredEliasFano {
     /// Build from a sorted slice of u32 values.
     pub fn from_sorted(values: &[u32]) -> Self {
-        assert!(
-            values.windows(2).all(|w| w[0] <= w[1]),
-            "ClusteredEliasFano::from_sorted requires non-decreasing input"
-        );
         if values.is_empty() {
             return Self::empty();
         }
@@ -87,10 +205,6 @@ impl ClusteredEliasFano {
 
     /// Build from sorted u64 values.
     pub fn from_sorted_u64(values: &[u64]) -> Self {
-        assert!(
-            values.windows(2).all(|w| w[0] <= w[1]),
-            "ClusteredEliasFano::from_sorted_u64 requires non-decreasing input"
-        );
         if values.is_empty() {
             return Self::empty();
         }
@@ -119,22 +233,39 @@ impl ClusteredEliasFano {
         let mut all_dense_bits = Vec::new();
         let mut meta = Vec::with_capacity(num_chunks);
         let mut chunk_upper_bounds = Vec::with_capacity(num_chunks);
+        let mut prev_chunk_max = 0u64;
 
         for chunk_idx in 0..num_chunks {
             let start = chunk_idx * CEF_CHUNK_SIZE;
             let end = (start + CEF_CHUNK_SIZE).min(n);
             let count = end - start;
             let min_val = get_val(start);
-            let max_val = get_val(end - 1);
+            assert!(
+                min_val >= prev_chunk_max,
+                "ClusteredEliasFano::from_sorted requires non-decreasing input"
+            );
+            // Run and Bitmap containers are set-based and cannot preserve
+            // duplicate values; only strictly increasing chunks can use them.
+            let mut strictly_increasing = true;
+            let mut prev = min_val;
+            for i in (start + 1)..end {
+                let curr = get_val(i);
+                assert!(
+                    curr >= prev,
+                    "ClusteredEliasFano::from_sorted requires non-decreasing input"
+                );
+                if curr == prev {
+                    strictly_increasing = false;
+                }
+                prev = curr;
+            }
+            let max_val = prev;
+            prev_chunk_max = max_val;
             // saturating: guards the pathological case where the chunk spans up to
             // u64::MAX (e.g. from_sorted_u64([0, u64::MAX])). Without it this wraps
             // to 0 and later selects a 0-word Bitmap that indexes out of bounds.
             let local_universe = (max_val - min_val).saturating_add(1);
             chunk_upper_bounds.push(max_val);
-
-            // Run and Bitmap containers are set-based and cannot preserve
-            // duplicate values; only strictly increasing chunks can use them.
-            let strictly_increasing = (start + 1..end).all(|i| get_val(i) > get_val(i - 1));
 
             // --- Container selection ---------------------------------------
             // Run: fully contiguous and strictly increasing (cheapest, O(1) queries).
@@ -314,7 +445,7 @@ impl ClusteredEliasFano {
             // +1 padding word is always available (pushed at end of build).
             low_bits: &self.all_low_bits[low_start..low_end],
             high_bits: &self.all_high_bits[high_start..high_end],
-            low_bit_width: (m.low_bit_width as u32).min(64),
+            low_bit_width: (m.low_bit_width as u32).min(63),
             count: m.count as usize,
             min_value: m.min_value,
             high_len_bits: m.high_len_bits as usize,
@@ -383,7 +514,7 @@ impl ClusteredEliasFano {
                 let bits = self.bitmap_slice(m);
                 let target_delta = target - m.min_value;
                 bitmap_next_geq(bits, target_delta)
-                    .map(|(local, delta)| (global_offset + local, m.min_value + delta))
+                    .map(|(local, delta)| (global_offset + local, m.min_value.wrapping_add(delta)))
             }
             ChunkKind::EliasFano => {
                 let view = self.ef_view(m);
@@ -391,7 +522,7 @@ impl ClusteredEliasFano {
                 let target_high = (target_delta >> view.low_bit_width) as usize;
                 let (start_idx, start_pos) = chunk_skip_to_high(&view, target_high);
                 chunk_scan_geq(&view, target_delta, start_idx, start_pos)
-                    .map(|(local, delta, _)| (global_offset + local, m.min_value + delta))
+                    .map(|(local, delta, _)| (global_offset + local, m.min_value.wrapping_add(delta)))
             }
         }
         // Found-in-chunk above always succeeds because the binary search
@@ -407,11 +538,13 @@ impl ClusteredEliasFano {
     #[inline]
     fn collect_chunk(&self, idx: usize, buf: &mut Vec<u64>) {
         buf.clear();
-        let m = &self.meta[idx];
+        let Some(m) = self.meta.get(idx) else {
+            return;
+        };
         match m.kind {
             ChunkKind::Run => {
                 for i in 0..m.count as u64 {
-                    buf.push(m.min_value + i);
+                    buf.push(m.min_value.wrapping_add(i));
                 }
             }
             ChunkKind::Bitmap => {
@@ -420,7 +553,7 @@ impl ClusteredEliasFano {
                     let mut x = w;
                     while x != 0 {
                         let b = x.trailing_zeros() as usize;
-                        buf.push(m.min_value + (wi * 64 + b) as u64);
+                        buf.push(m.min_value.wrapping_add((wi * 64 + b) as u64));
                         x &= x - 1;
                     }
                 }
@@ -428,7 +561,7 @@ impl ClusteredEliasFano {
             ChunkKind::EliasFano => {
                 let view = self.ef_view(m);
                 for i in 0..m.count as usize {
-                    buf.push(m.min_value + chunk_get_delta(&view, i));
+                    buf.push(m.min_value.wrapping_add(chunk_get_delta(&view, i)));
                 }
             }
         }
@@ -450,8 +583,10 @@ impl ClusteredEliasFano {
         let mut ib = 0usize;
         let mut buf_a: Vec<u64> = Vec::with_capacity(CEF_CHUNK_SIZE);
         let mut buf_b: Vec<u64> = Vec::with_capacity(CEF_CHUNK_SIZE);
+        let len_a = self.meta.len().min(self.chunk_upper_bounds.len());
+        let len_b = other.meta.len().min(other.chunk_upper_bounds.len());
 
-        while ia < self.meta.len() && ib < other.meta.len() {
+        while ia < len_a && ib < len_b {
             let ma = self.meta[ia].min_value;
             let mb = other.meta[ib].min_value;
             let ua = self.chunk_upper_bounds[ia];
@@ -473,11 +608,11 @@ impl ClusteredEliasFano {
                 // O(1): overlap of [ma, ua] and [mb, ub].
                 let lo = ma.max(mb);
                 let hi = ua.min(ub);
-                count += (hi - lo + 1) as usize; // hi >= lo guaranteed by overlap
+                count = count.saturating_add((hi - lo).saturating_add(1) as usize); // hi >= lo guaranteed by overlap
             } else {
                 self.collect_chunk(ia, &mut buf_a);
                 other.collect_chunk(ib, &mut buf_b);
-                count += merge_count(&buf_a, &buf_b);
+                count = count.saturating_add(merge_count(&buf_a, &buf_b));
             }
 
             // Advance the chunk whose range ends first.

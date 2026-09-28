@@ -17,7 +17,7 @@ Stage 6 audited all 27 source files in `src/succinct/` (18,939 LOC across `bit_v
 **Finding (`src/succinct/bit_vector.rs:948-1002`).**
 - `BitVector::bulk_bitwise_op_simd_avx2` computed `let end_word = (end - 1) / BITS_PER_BLOCK`, which panicked with integer underflow in debug builds (or wrapped to `usize::MAX / 64` in release builds) when `start == 0 && end == 0`.
 - When `end_word >= start_word + 3`, the AVX2 4-word loop loaded and stored entire 256-bit chunks (`4 * u64`) starting at `start_word` without applying `start_bit` or `end_bit` masks, corrupting existing bits before `start` in `start_word` and after `end` in `end_word`.
-- Furthermore, when `end == self.num_bits` was not a multiple of 64 and `other.num_bits > self.num_bits` had set bits in `(self.num_bits % 64)..64`, `Or` / `Xor` / `AndNot` left dirty trailing bits in the final `u64` block, violating the `clear_unused_bits()` invariant and corrupting `count_ones()`, `rank1()`, and `rank0()`.
+- Furthermore, when `end == self.num_bits` was not a multiple of 64 and `other.num_bits > self.num_bits` had set bits in `(self.num_bits % 64)..64`, `Or` / `Xor` left dirty trailing bits in the final `u64` block, violating the `clear_unused_bits()` invariant and corrupting `count_ones()`, `rank1()`, and `rank0()`.
 
 **Test.**
 - `succinct::bit_vector::tests::test_bulk_bitwise_op_simd_and_from_blocks_invariants` in `src/succinct/bit_vector.rs`
@@ -212,17 +212,37 @@ Stage 6 audited all 27 source files in `src/succinct/` (18,939 LOC across `bit_v
 
 ---
 
+### S17-R1..R4 — `HybridPostingList::intersect_count` progress guard on corrupt input, chunked Elias-Fano `Deserialize` structural validation, `#[ignore]` on >4 GiB CSPP test, and folded sortedness check — MEDIUM / LOW
+
+**Finding.**
+1. **`S17-R1` (MEDIUM, `src/succinct/elias_fano/hybrid.rs:199-214`)**: `HybridPostingList::intersect_count` looped forever on a corrupted deserialized input (`/tmp/s17_hang_mutant.json`) whose `chunk_upper_bounds` were non-monotone (`[312658, 8992919731896089034, 945839, 1133629]`), causing `next_geq(probe)` to return `va < probe`.
+2. **`S17-R2` (LOW–MEDIUM, `src/succinct/elias_fano/{partitioned,optimal,clustered,hybrid}.rs`)**: Mutated serialized inputs for `PartitionedEliasFano`, `OptimalPartitionedEliasFano`, `ClusteredEliasFano`, and `HybridPostingList` were accepted without structural validation and could panic on out-of-bounds slice/chunk indexing during queries.
+3. **`S17-R3` (LOW, `src/fsa/cspp_trie.rs:2748-2779`)**: Part 3 of `test_value_arena_4gib_scaling_and_valsize_zero_and_mem_stat` allocated >4 GiB (~42 s) in both default gate lanes (`make sanity`).
+4. **`S17-R4` (LOW, `src/succinct/elias_fano/{basic,partitioned,optimal,clustered,hybrid}.rs`)**: Running a separate `values.windows(2).all(|w| w[0] <= w[1])` pass before building `EliasFano` added ~16% overhead to `EliasFano::from_sorted`.
+
+**Test.**
+- `succinct::elias_fano::tests::test_corrupt_serde_get_and_pef_batch_cursor_no_ub_or_panic` in `src/succinct/elias_fano/tests.rs`
+
+**Fix.**
+- **`S17-R1`**: Added monotonic progress checks (`if va < probe { break; }` and `Some((_, vb)) if vb > va => probe = vb`) in `HybridPostingList::intersect_count`.
+- **`S17-R2`**: Added `#[serde(try_from = "Raw...")]` structural validation on `Deserialize` for `PartitionedEliasFano`, `OptimalPartitionedEliasFano`, `ClusteredEliasFano`, and `HybridPostingList` (`Dense`), rejecting mismatched chunk counts, out-of-bounds offsets/words, `low_bit_width > 63`, and non-monotone chunk bounds at deserialize time.
+- **`S17-R3`**: Split the >4 GiB CSPP value-arena scaling test into `#[test] #[ignore] fn test_value_arena_4gib_scaling_beyond_u32_max()`.
+- **`S17-R4`**: Folded the non-decreasing sortedness `assert!` into `from_sorted_impl` across `EliasFano`, `PartitionedEliasFano`, `OptimalPartitionedEliasFano`, and `ClusteredEliasFano`, and removed the redundant outer scan in `HybridPostingList`.
+
+---
+
 ## Verification Summary
 
 - **Gate (`touch src/lib.rs && make sanity`)**:
   - `cargo clippy --all-targets --all-features -- -D warnings`: **0 warnings**
   - `cargo clippy --no-default-features -- -D unused_variables -D unused_imports`: **0 warnings**
-  - `scripts/unsafe_audit.py`: **28 undocumented** (`src/succinct/` = **119/119 = 100.0%**, `src/fsa/` = **131/131 = 100.0%**, `src/memory/` = **338/338 = 100.0%**), **6 precondition violations** (`src/succinct/` = **0**)
+  - `scripts/unsafe_audit.py`: **28 undocumented** (unchanged ceiling `28`; `src/succinct/` was already 100% documented at `102/102` and is now **`119/119 = 100.0%`**, `src/fsa/` = **131/131 = 100.0%**, `src/memory/` = **338/338 = 100.0%**), **6 precondition violations** (unchanged ceiling `6`; `src/succinct/` = **0**)
   - `scripts/api_honesty.py`: **95 markers** (ceiling `95`, down from `102`; `src/succinct/` = **0**)
   - `scripts/index_audit.py`: **0 / 0** (ceiling `0`, down from `6`; `succinct_load: 6 -> 0`, `max_total: 6 -> 0`, `max_in_bounds = 132`)
   - `scripts/unwrap_audit.py`: **0 `.unwrap()` / 140 `.expect()`** (ceiling `140`, down from `141`)
-  - Tests: **2,933 debug lib / 2,950 release lib / 228 doctests / 3,588 all-targets** (+11 net new RED-verified regression tests across `bit_vector`, `elias_fano`, `rank_select`, and `fsa`, 0 removed)
+  - Tests: **2,933 debug lib / 2,950 release lib / 228 doctests / 3,588 all-targets** (+11 net new RED-verified regression tests across `bit_vector`, `elias_fano`, `rank_select`, and `fsa`, plus 1 `#[ignore]`d >4 GiB test; 0 removed)
 - **Miri Verification**:
-  - `cargo +nightly miri test --lib succinct::bit_vector::tests`: **0 UB**
-  - `cargo +nightly miri test --lib succinct::elias_fano::tests`: **0 UB**
-  - `cargo +nightly miri test --lib succinct::rank_select::tests`: **0 UB**
+  - `cargo +nightly miri test --lib succinct::bit_vector::tests`: **41/41 pass, 0 UB**
+  - `cargo +nightly miri test --lib fsa::cspp_trie::tests`: **35/35 pass, 0 UB**
+  - New `succinct::elias_fano` and `succinct::rank_select` regression tests (9/9): **0 UB**
+

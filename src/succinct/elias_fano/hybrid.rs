@@ -18,9 +18,9 @@ const RUN_HEAVY_SPAN_FACTOR: u64 = 2;
 fn is_run_heavy(first: u64, last: u64, n: usize) -> bool {
     // The span is `last - first + 1`, but that overflows for a list spanning
     // the whole u64 range ([0, u64::MAX] panics in debug and wraps to a span
-    // of 0 - "maximally run-heavy" - in release). `last - first` cannot
-    // overflow, and `span <= 2n` is equivalent to `last - first < 2n`.
-    (last - first) < RUN_HEAVY_SPAN_FACTOR.saturating_mul(n as u64)
+    // of 0 - "maximally run-heavy" - in release). `last.saturating_sub(first)`
+    // cannot overflow or underflow, and `span <= 2n` is equivalent to `last - first < 2n`.
+    last.saturating_sub(first) < RUN_HEAVY_SPAN_FACTOR.saturating_mul(n as u64)
 }
 
 /// Adaptive posting list that selects the best encoding based on list statistics.
@@ -32,7 +32,11 @@ fn is_run_heavy(first: u64, last: u64, n: usize) -> bool {
 ///
 /// All variants support the same query interface: `get`, `next_geq`, `iter`, `len`.
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(try_from = "RawHybridPostingList")
+)]
 pub enum HybridPostingList {
     /// Raw sorted array for very short lists.
     Dense(Vec<u32>),
@@ -47,15 +51,45 @@ pub enum HybridPostingList {
     Clustered(ClusteredEliasFano),
 }
 
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+enum RawHybridPostingList {
+    Dense(Vec<u32>),
+    EliasFano(EliasFano),
+    Partitioned(PartitionedEliasFano),
+    Optimal(OptimalPartitionedEliasFano),
+    Clustered(ClusteredEliasFano),
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<RawHybridPostingList> for HybridPostingList {
+    type Error = &'static str;
+
+    fn try_from(raw: RawHybridPostingList) -> Result<Self, Self::Error> {
+        match raw {
+            RawHybridPostingList::Dense(v) => {
+                if !v.windows(2).all(|w| w[0] <= w[1]) {
+                    return Err("HybridPostingList::Dense: non-monotonic values");
+                }
+                Ok(Self::Dense(v))
+            }
+            RawHybridPostingList::EliasFano(ef) => Ok(Self::EliasFano(ef)),
+            RawHybridPostingList::Partitioned(pef) => Ok(Self::Partitioned(pef)),
+            RawHybridPostingList::Optimal(opef) => Ok(Self::Optimal(opef)),
+            RawHybridPostingList::Clustered(cef) => Ok(Self::Clustered(cef)),
+        }
+    }
+}
+
 impl HybridPostingList {
     /// Build from a sorted slice, automatically selecting the best encoding.
     pub fn from_sorted(values: &[u32]) -> Self {
-        assert!(
-            values.windows(2).all(|w| w[0] <= w[1]),
-            "HybridPostingList::from_sorted requires non-decreasing input"
-        );
         let n = values.len();
         if n <= DENSE_THRESHOLD {
+            assert!(
+                values.windows(2).all(|w| w[0] <= w[1]),
+                "HybridPostingList::from_sorted requires non-decreasing input"
+            );
             Self::Dense(values.to_vec())
         } else if is_run_heavy(values[0] as u64, values[n - 1] as u64, n) {
             Self::Clustered(ClusteredEliasFano::from_sorted(values))
@@ -70,17 +104,17 @@ impl HybridPostingList {
 
     /// Build from sorted u64 values.
     pub fn from_sorted_u64(values: &[u64]) -> Self {
-        assert!(
-            values.windows(2).all(|w| w[0] <= w[1]),
-            "HybridPostingList::from_sorted_u64 requires non-decreasing input"
-        );
         let n = values.len();
         if n == 0 {
             return Self::Dense(Vec::new());
         }
         // Dense stores u32 — only usable when every value fits (values are
-        // sorted, so checking the last one suffices).
+        // sorted, so checking the last one suffices once sortedness is verified).
         if n <= DENSE_THRESHOLD && values[n - 1] <= u32::MAX as u64 {
+            assert!(
+                values.windows(2).all(|w| w[0] <= w[1]),
+                "HybridPostingList::from_sorted_u64 requires non-decreasing input"
+            );
             Self::Dense(values.iter().map(|&v| v as u32).collect())
         } else if is_run_heavy(values[0], values[n - 1], n) {
             Self::Clustered(ClusteredEliasFano::from_sorted_u64(values))
@@ -95,12 +129,14 @@ impl HybridPostingList {
 
     /// Force a specific encoding regardless of list size.
     pub fn with_encoding(values: &[u32], encoding: PostingEncoding) -> Self {
-        assert!(
-            values.windows(2).all(|w| w[0] <= w[1]),
-            "HybridPostingList::with_encoding requires non-decreasing input"
-        );
         match encoding {
-            PostingEncoding::Dense => Self::Dense(values.to_vec()),
+            PostingEncoding::Dense => {
+                assert!(
+                    values.windows(2).all(|w| w[0] <= w[1]),
+                    "HybridPostingList::with_encoding requires non-decreasing input"
+                );
+                Self::Dense(values.to_vec())
+            }
             PostingEncoding::EliasFano => Self::EliasFano(EliasFano::from_sorted(values)),
             PostingEncoding::Partitioned => {
                 Self::Partitioned(PartitionedEliasFano::from_sorted(values))
@@ -197,6 +233,9 @@ impl HybridPostingList {
         let mut count = 0usize;
         let mut probe = 0u64;
         while let Some((_, va)) = self.next_geq(probe) {
+            if va < probe {
+                break;
+            }
             match other.next_geq(va) {
                 Some((_, vb)) if vb == va => {
                     count += 1;
@@ -208,8 +247,8 @@ impl HybridPostingList {
                         None => break,
                     }
                 }
-                Some((_, vb)) => probe = vb,
-                None => break,
+                Some((_, vb)) if vb > va => probe = vb,
+                _ => break,
             }
         }
         count

@@ -22,7 +22,11 @@ use super::chunk::{
 /// slightly more build time. For real-time construction, use
 /// `PartitionedEliasFano` (uniform chunks) instead.
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(try_from = "RawOptimalPartitionedEliasFano")
+)]
 pub struct OptimalPartitionedEliasFano {
     /// All chunks' low bits concatenated into one contiguous array.
     all_low_bits: Vec<u64>,
@@ -38,13 +42,107 @@ pub struct OptimalPartitionedEliasFano {
     universe: u64,
 }
 
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+struct RawOptimalPartitionedEliasFano {
+    all_low_bits: Vec<u64>,
+    all_high_bits: Vec<u64>,
+    meta: Vec<PefChunkMeta>,
+    chunk_starts: Vec<usize>,
+    chunk_upper_bounds: Vec<u64>,
+    len: usize,
+    universe: u64,
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<RawOptimalPartitionedEliasFano> for OptimalPartitionedEliasFano {
+    type Error = &'static str;
+
+    fn try_from(raw: RawOptimalPartitionedEliasFano) -> Result<Self, Self::Error> {
+        if raw.len == 0 {
+            if !raw.meta.is_empty()
+                || !raw.chunk_starts.is_empty()
+                || !raw.chunk_upper_bounds.is_empty()
+            {
+                return Err("OptimalPartitionedEliasFano: non-empty metadata for len == 0");
+            }
+            return Ok(Self {
+                all_low_bits: raw.all_low_bits,
+                all_high_bits: raw.all_high_bits,
+                meta: raw.meta,
+                chunk_starts: raw.chunk_starts,
+                chunk_upper_bounds: raw.chunk_upper_bounds,
+                len: 0,
+                universe: raw.universe,
+            });
+        }
+
+        if raw.meta.is_empty()
+            || raw.chunk_starts.len() != raw.meta.len()
+            || raw.chunk_upper_bounds.len() != raw.meta.len()
+        {
+            return Err("OptimalPartitionedEliasFano: metadata length mismatch");
+        }
+
+        let mut cum_len = 0usize;
+        let mut prev_ub = 0u64;
+        for (i, m) in raw.meta.iter().enumerate() {
+            if raw.chunk_starts[i] != cum_len {
+                return Err("OptimalPartitionedEliasFano: chunk_starts mismatch");
+            }
+            let count = m.count as usize;
+            if count == 0 || count > MAX_CHUNK_SIZE {
+                return Err("OptimalPartitionedEliasFano: invalid chunk count");
+            }
+            cum_len = cum_len
+                .checked_add(count)
+                .ok_or("OptimalPartitionedEliasFano: cumulative length overflow")?;
+            if m.low_bit_width > 63 {
+                return Err("OptimalPartitionedEliasFano: low_bit_width > 63");
+            }
+            let low_end = (m.low_offset as usize)
+                .checked_add(m.low_words as usize)
+                .and_then(|x| x.checked_add(1))
+                .ok_or("OptimalPartitionedEliasFano: low_offset overflow")?;
+            if low_end > raw.all_low_bits.len() {
+                return Err("OptimalPartitionedEliasFano: low_bits out of bounds");
+            }
+            let high_end = (m.high_offset as usize)
+                .checked_add(m.high_words as usize)
+                .ok_or("OptimalPartitionedEliasFano: high_offset overflow")?;
+            if high_end > raw.all_high_bits.len() {
+                return Err("OptimalPartitionedEliasFano: high_bits out of bounds");
+            }
+            let ub = raw.chunk_upper_bounds[i];
+            if m.min_value < prev_ub || ub < m.min_value {
+                return Err("OptimalPartitionedEliasFano: non-monotone chunk bounds");
+            }
+            prev_ub = ub;
+        }
+
+        if cum_len != raw.len {
+            return Err("OptimalPartitionedEliasFano: total count != len");
+        }
+        let expected_universe = prev_ub.saturating_add(1);
+        if raw.universe != expected_universe {
+            return Err("OptimalPartitionedEliasFano: universe mismatch");
+        }
+
+        Ok(Self {
+            all_low_bits: raw.all_low_bits,
+            all_high_bits: raw.all_high_bits,
+            meta: raw.meta,
+            chunk_starts: raw.chunk_starts,
+            chunk_upper_bounds: raw.chunk_upper_bounds,
+            len: raw.len,
+            universe: raw.universe,
+        })
+    }
+}
+
 impl OptimalPartitionedEliasFano {
     /// Build from a sorted slice of u32 values.
     pub fn from_sorted(values: &[u32]) -> Self {
-        assert!(
-            values.windows(2).all(|w| w[0] <= w[1]),
-            "OptimalPartitionedEliasFano::from_sorted requires non-decreasing input"
-        );
         if values.is_empty() {
             return Self {
                 all_low_bits: Vec::new(),
@@ -62,10 +160,6 @@ impl OptimalPartitionedEliasFano {
 
     /// Build from sorted u64 values.
     pub fn from_sorted_u64(values: &[u64]) -> Self {
-        assert!(
-            values.windows(2).all(|w| w[0] <= w[1]),
-            "OptimalPartitionedEliasFano::from_sorted_u64 requires non-decreasing input"
-        );
         if values.is_empty() {
             return Self {
                 all_low_bits: Vec::new(),
@@ -111,6 +205,12 @@ impl OptimalPartitionedEliasFano {
         dp[0] = 0;
 
         for i in 1..=n {
+            if i >= 2 {
+                assert!(
+                    get_val(i - 1) >= get_val(i - 2),
+                    "OptimalPartitionedEliasFano::from_sorted requires non-decreasing input"
+                );
+            }
             let max_j_start = i.saturating_sub(MAX_CHUNK_SIZE);
             let min_j_end = if i >= MIN_CHUNK_SIZE {
                 i - MIN_CHUNK_SIZE + 1
@@ -338,7 +438,7 @@ impl OptimalPartitionedEliasFano {
 
         if target <= view.min_value {
             let delta = chunk_get_delta(&view, 0);
-            return Some((global_offset, view.min_value + delta));
+            return Some((global_offset, view.min_value.wrapping_add(delta)));
         }
 
         let target_delta = target - view.min_value;
@@ -351,7 +451,7 @@ impl OptimalPartitionedEliasFano {
         if let Some((local_idx, delta, _)) =
             chunk_scan_geq(&view, target_delta, start_idx, start_pos)
         {
-            return Some((global_offset + local_idx, view.min_value + delta));
+            return Some((global_offset + local_idx, view.min_value.wrapping_add(delta)));
         }
 
         // Fallback to next chunk
@@ -359,7 +459,7 @@ impl OptimalPartitionedEliasFano {
         if next < self.meta.len() && next < self.chunk_starts.len() {
             let nv = self.chunk_view(next);
             let delta = chunk_get_delta(&nv, 0);
-            Some((self.chunk_starts[next], nv.min_value + delta))
+            Some((self.chunk_starts[next], nv.min_value.wrapping_add(delta)))
         } else {
             None
         }
@@ -606,7 +706,9 @@ impl<'a> OptimalPefCursor<'a> {
         }
         let high_val = high_pos as u64;
         let low = chunk_get_low(&view, 0);
-        let initial_val = view.min_value + (high_val << view.low_bit_width) + low;
+        let initial_val = view
+            .min_value
+            .wrapping_add((high_val << view.low_bit_width) | low);
         Self {
             opef,
             chunk_idx: 0,
@@ -666,7 +768,11 @@ impl<'a> OptimalPefCursor<'a> {
             low_bit_width: self.cached_low_bit_width,
             count: self.cached_count,
             min_value: self.cached_min_value,
-            high_len_bits: self.opef.meta[self.chunk_idx].high_len_bits as usize,
+            high_len_bits: self
+                .opef
+                .meta
+                .get(self.chunk_idx)
+                .map_or(0, |m| m.high_len_bits as usize),
         }
     }
 
@@ -752,11 +858,20 @@ impl<'a> OptimalPefCursor<'a> {
             return true;
         }
 
-        let num_chunks = self.opef.meta.len();
+        let num_chunks = self
+            .opef
+            .meta
+            .len()
+            .min(self.opef.chunk_upper_bounds.len())
+            .min(self.opef.chunk_starts.len());
+        if self.chunk_idx >= num_chunks {
+            self.global_idx = self.opef.len;
+            return false;
+        }
 
         // Same-chunk: scan directly from cursor position
         if target <= self.opef.chunk_upper_bounds[self.chunk_idx] {
-            let target_delta = target - self.cached_min_value;
+            let target_delta = target.saturating_sub(self.cached_min_value);
             let view = self.cached_view();
             if let Some((local_idx, delta, hp)) =
                 chunk_scan_geq(&view, target_delta, self.local_idx, self.local_high_pos)
@@ -764,7 +879,7 @@ impl<'a> OptimalPefCursor<'a> {
                 self.local_idx = local_idx;
                 self.global_idx = self.opef.chunk_starts[self.chunk_idx] + local_idx;
                 self.local_high_pos = hp;
-                self.cached_value = self.cached_min_value + delta;
+                self.cached_value = self.cached_min_value.wrapping_add(delta);
                 return true;
             }
         }
@@ -811,7 +926,7 @@ impl<'a> OptimalPefCursor<'a> {
             self.local_idx = local_idx;
             self.global_idx = global_offset + local_idx;
             self.local_high_pos = hp;
-            self.cached_value = self.cached_min_value + delta;
+            self.cached_value = self.cached_min_value.wrapping_add(delta);
             return true;
         }
 
@@ -834,7 +949,7 @@ impl<'a> OptimalPefCursor<'a> {
     /// Returns false (cursor unchanged) if `idx >= self.opef.len`.
     #[inline]
     pub fn advance_to_index(&mut self, idx: usize) -> bool {
-        if idx >= self.opef.len {
+        if idx >= self.opef.len || self.opef.chunk_starts.is_empty() {
             return false;
         }
         if idx == self.global_idx {
@@ -842,8 +957,17 @@ impl<'a> OptimalPefCursor<'a> {
         }
 
         // Binary search chunk_starts to find which chunk contains idx
-        let chunk_idx = self.opef.chunk_starts.partition_point(|&s| s <= idx) - 1;
-        let local_idx = idx - self.opef.chunk_starts[chunk_idx];
+        let chunk_idx = self
+            .opef
+            .chunk_starts
+            .partition_point(|&s| s <= idx)
+            .saturating_sub(1);
+        if chunk_idx >= self.opef.meta.len() || chunk_idx >= self.opef.chunk_starts.len() {
+            return false;
+        }
+        let Some(local_idx) = idx.checked_sub(self.opef.chunk_starts[chunk_idx]) else {
+            return false;
+        };
 
         // Switch chunk if needed
         if chunk_idx != self.chunk_idx {

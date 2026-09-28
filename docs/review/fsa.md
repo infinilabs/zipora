@@ -319,19 +319,20 @@ assertion `left == right` failed: lost set_value write for key "00012-1" across 
 
 ---
 
-### S16-R1..R3 — `CsppTrie` `valsize` guard on `get_value`/`set_value` and `CompressedSparse` `prefix_search`/`predictive_search` delegation to `CsppTrie` — LOW
+### S16-R1..R3 — `CsppTrie` 4 GiB value-arena slot scaling, `valsize == 0` handle consistency, and `mem_get_stat` value-arena accounting — MEDIUM / LOW
 
 **Finding.**
-1. **`S16-R1` (LOW, `src/fsa/cspp_trie.rs`)**: `CsppTrie::get_value` and `set_value` checked `end <= self.values.len()` without verifying `size_of::<T>() <= self.valsize as usize`. When `size_of::<T>() > valsize` (e.g., calling `set_value::<u64>(pos0, ...)` on a trie configured with `valsize = 4`), `set_value` overwrote the adjacent key's value slot in `self.values`.
-2. **`S16-R2` & `S16-R3` (LOW, `src/fsa/zipora_trie/trie.rs`)**: `ZiporaTrie::prefix_search` and `predictive_search` dispatched `CompressedSparse` to the generic trait-method `prefix_search_impl` / `predictive_search_impl`, which iterated all `0..=255` transition bytes per node (`256 * state_move` calls per node) instead of delegating to `CsppTrie::prefix_search` / `CsppTrie::predictive_search` (which iterate only populated child labels and skip compressed `zpath` segments in a single comparison).
+1. **`S16-R1` (MEDIUM, `src/fsa/cspp_trie.rs:583, 1898`)**: Final nodes stored the raw byte offset into `self.values` as a 32-bit `u32` in the node's trailing value slot (`valpos as u32`), which silently wrapped modulo $2^{32}$ once `self.values.len()` exceeded 4 GiB (`u32::MAX`), aliasing keys past 4 GiB onto earlier value slots.
+2. **`S16-R2` (LOW, `src/fsa/cspp_trie.rs:577, 1894`)**: When `valsize == 0`, `CsppTrie::insert` returned `0` (`self.values.len()`), whereas `CsppTrie::lookup` (`valpos()`) returned `usize::MAX` because `HAS_VAL_SLOT` was not set when `valsize == 0`.
+3. **`S16-R3` (LOW, `src/fsa/cspp_trie.rs:640-653`, `src/fsa/zipora_trie/trie.rs:482`)**: `CsppTrie::mem_get_stat()` and `ZiporaTrie::memory_usage()` reported only `self.mempool` bytes and omitted `self.values.len()` / `self.values.capacity()`.
 
-**Tests.**
-- `cspp_trie::tests::test_set_value_cannot_corrupt_mempool_and_valpos_is_stable_across_splits` (extended with `set_value::<u64>` / `get_value::<u64>` on a `valsize = 4` trie) in `src/fsa/cspp_trie.rs`
-- `zipora_trie::tests::test_compressed_sparse_prefix_and_predictive_search_delegate_to_cspp` in `src/fsa/zipora_trie/tests.rs`
+**Test.**
+- `cspp_trie::tests::test_value_arena_4gib_scaling_and_valsize_zero_and_mem_stat` (`valsize == 0` consistency and `mem_get_stat()` accounting) and `cspp_trie::tests::test_value_arena_4gib_scaling_beyond_u32_max` (`#[ignore]`d >4 GiB scaling test, split out in `S17-R3` so default gate lanes do not allocate 4.3 GB) in `src/fsa/cspp_trie.rs`
 
 **Fix.**
-- **`S16-R1`**: Added `if size == 0 || size > self.valsize as usize { return None / false; }` at the top of `CsppTrie::get_value` and `CsppTrie::set_value`.
-- **`S16-R2` & `S16-R3`**: Added `TrieImpl::CompressedSparse(cspp)` arms to `ZiporaTrie::prefix_search` (`Ok(cspp.prefix_search(key))`) and `ZiporaTrie::predictive_search` (`Ok(cspp.predictive_search(prefix))`).
+- **`S16-R1`**: `CsppTrie` now stores the 32-bit slot index `val_idx = valpos / valsize` (guarded by `assert!(val_idx <= u32::MAX as usize, "CsppTrie value slot count exceeded u32::MAX")`) in the node's trailing `u32` slot, and `valpos()` multiplies the stored slot index by `self.valsize as usize`, extending the addressable `values` arena to `4 GiB × valsize` (e.g. 16 GiB for 4-byte values, 32 GiB for 8-byte values).
+- **`S16-R2`**: When `self.valsize == 0`, `valpos()` returns `0` so `insert` and `lookup` return the same handle (`0`).
+- **`S16-R3`**: `CsppTrie::mem_get_stat()` adds `self.values.len()` to `used_size` and `self.values.capacity()` to `capacity`; `ZiporaTrie::memory_usage()` uses `cspp.mem_get_stat().used_size`.
 
 **Commit.** `8f94910`
 
