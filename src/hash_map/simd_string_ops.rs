@@ -97,15 +97,18 @@ impl SimdStringOps {
             match self.impl_tier {
                 #[cfg(feature = "avx512")]
                 SimdTier::Avx512 if bytes1.len() >= 64 => {
-                    // SAFETY: AVX-512 support verified by tier selection, length >= 64 checked
+                    // SAFETY: AVX-512 support verified by tier selection, length >= 64 checked,
+                    // equal lengths checked at the top of this function
                     unsafe { self.avx512_string_compare(bytes1, bytes2, cached_prefix) }
                 }
                 SimdTier::Avx2 if bytes1.len() >= 32 => {
-                    // SAFETY: AVX2 support verified by tier selection, length >= 32 checked
+                    // SAFETY: AVX2 support verified by tier selection, length >= 32 checked,
+                    // equal lengths checked at the top of this function
                     unsafe { self.avx2_string_compare(bytes1, bytes2, cached_prefix) }
                 }
                 SimdTier::Sse42 if bytes1.len() >= 16 => {
-                    // SAFETY: SSE4.2 support verified by tier selection, length >= 16 checked
+                    // SAFETY: SSE4.2 support verified by tier selection, length >= 16 checked,
+                    // equal lengths checked at the top of this function
                     unsafe { self.sse42_string_compare(bytes1, bytes2, cached_prefix) }
                 }
                 _ => {
@@ -184,6 +187,12 @@ impl SimdStringOps {
     // AVX2 IMPLEMENTATIONS
     // =============================================================================
 
+    /// Compares two byte slices of equal length 32 bytes at a time with
+    /// AVX2 (`_mm256_cmpeq_epi8`), then compares the tail with `==`.
+    ///
+    /// # Safety
+    /// The CPU must support `avx2`, and `bytes1.len() == bytes2.len()`: the
+    /// chunk count comes from `bytes1` and both slices are loaded with it.
     #[target_feature(enable = "avx2")]
     unsafe fn avx2_string_compare(
         &self,
@@ -217,6 +226,12 @@ impl SimdStringOps {
         bytes1[remaining_start..] == bytes2[remaining_start..]
     }
 
+    /// Hashes a byte slice in 32-byte chunks (one unaligned 256-bit load
+    /// each, mixed as four `u64` words with the scalar rotate/add step),
+    /// then hashes the tail with `scalar_string_hash`.
+    ///
+    /// # Safety
+    /// The CPU must support `avx2`.
     #[target_feature(enable = "avx2")]
     unsafe fn avx2_string_hash(&self, bytes: &[u8], mut hash: u64) -> u64 {
         let len = bytes.len();
@@ -238,19 +253,24 @@ impl SimdStringOps {
             }
         }
 
-        // Handle remaining bytes
+        // Handle remaining bytes, through scalar_string_hash so that a tail
+        // of 8 bytes or more is mixed in 8-byte words as the scalar tier
+        // mixes it (it was mixed byte by byte, giving a different hash)
         let remaining_start = chunks * 32;
-        for &byte in &bytes[remaining_start..] {
-            hash = hash.rotate_left(5).wrapping_add(byte as u64);
-        }
-
-        hash
+        self.scalar_string_hash(&bytes[remaining_start..], hash)
     }
 
     // =============================================================================
     // SSE4.2 IMPLEMENTATIONS
     // =============================================================================
 
+    /// Compares two byte slices of equal length 16 bytes at a time
+    /// (`_mm_cmpeq_epi8`, an SSE2 instruction; the tier is named after its
+    /// `sse4.2` gate), then compares the tail with `==`.
+    ///
+    /// # Safety
+    /// The CPU must support `sse4.2`, and `bytes1.len() == bytes2.len()`: the
+    /// chunk count comes from `bytes1` and both slices are loaded with it.
     #[target_feature(enable = "sse4.2")]
     unsafe fn sse42_string_compare(
         &self,
@@ -284,6 +304,12 @@ impl SimdStringOps {
         bytes1[remaining_start..] == bytes2[remaining_start..]
     }
 
+    /// Hashes a byte slice in 16-byte chunks (one unaligned 128-bit SSE2
+    /// load each, mixed as two `u64` words with the scalar rotate/add step),
+    /// then hashes the tail with `scalar_string_hash`.
+    ///
+    /// # Safety
+    /// The CPU must support `sse4.2`.
     #[target_feature(enable = "sse4.2")]
     unsafe fn sse42_string_hash(&self, bytes: &[u8], mut hash: u64) -> u64 {
         let len = bytes.len();
@@ -305,19 +331,24 @@ impl SimdStringOps {
             }
         }
 
-        // Handle remaining bytes
+        // Handle remaining bytes, through scalar_string_hash so that a tail
+        // of 8 bytes or more is mixed in 8-byte words as the scalar tier
+        // mixes it (it was mixed byte by byte, giving a different hash)
         let remaining_start = chunks * 16;
-        for &byte in &bytes[remaining_start..] {
-            hash = hash.rotate_left(5).wrapping_add(byte as u64);
-        }
-
-        hash
+        self.scalar_string_hash(&bytes[remaining_start..], hash)
     }
 
     // =============================================================================
     // AVX-512 IMPLEMENTATIONS (NIGHTLY ONLY)
     // =============================================================================
 
+    /// Compares two byte slices of equal length 64 bytes at a time with
+    /// AVX-512BW (`_mm512_cmpeq_epi8_mask`), then compares the tail with `==`.
+    ///
+    /// # Safety
+    /// The CPU must support `avx512f` and `avx512bw`, and
+    /// `bytes1.len() == bytes2.len()`: the chunk count comes from `bytes1`
+    /// and both slices are loaded with it.
     #[cfg(feature = "avx512")]
     #[target_feature(enable = "avx512f,avx512bw")]
     unsafe fn avx512_string_compare(
@@ -351,6 +382,12 @@ impl SimdStringOps {
         bytes1[remaining_start..] == bytes2[remaining_start..]
     }
 
+    /// Hashes a byte slice in 64-byte chunks (one unaligned 512-bit
+    /// AVX-512F load each, mixed as eight `u64` words with the scalar
+    /// rotate/add step), then hashes the tail with `scalar_string_hash`.
+    ///
+    /// # Safety
+    /// The CPU must support `avx512f`.
     #[cfg(feature = "avx512")]
     #[target_feature(enable = "avx512f")]
     unsafe fn avx512_string_hash(&self, bytes: &[u8], mut hash: u64) -> u64 {
@@ -373,13 +410,11 @@ impl SimdStringOps {
             }
         }
 
-        // Handle remaining bytes
+        // Handle remaining bytes, through scalar_string_hash so that a tail
+        // of 8 bytes or more is mixed in 8-byte words as the scalar tier
+        // mixes it (it was mixed byte by byte, giving a different hash)
         let remaining_start = chunks * 64;
-        for &byte in &bytes[remaining_start..] {
-            hash = hash.rotate_left(5).wrapping_add(byte as u64);
-        }
-
-        hash
+        self.scalar_string_hash(&bytes[remaining_start..], hash)
     }
 
     // =============================================================================
@@ -405,12 +440,16 @@ impl SimdStringOps {
     }
 
     fn scalar_string_hash(&self, bytes: &[u8], mut hash: u64) -> u64 {
-        // Process 8-byte chunks for better performance
+        // Process 8-byte chunks for better performance. Each chunk is copied
+        // out of an exactly-8-byte subslice, which cannot fail. The indexed
+        // loop stays: iterating `as_chunks::<8>()` instead made LLVM unroll
+        // it 8x, and 22-byte keys hashed 13% slower.
         let chunks = bytes.len() / 8;
         for i in 0..chunks {
             let offset = i * 8;
-            let chunk_bytes = &bytes[offset..offset + 8];
-            let val = u64::from_le_bytes(chunk_bytes.try_into().expect("chunk is 8 bytes"));
+            let mut word = [0u8; 8];
+            word.copy_from_slice(&bytes[offset..offset + 8]);
+            let val = u64::from_le_bytes(word);
             hash = hash.rotate_left(5).wrapping_add(val);
         }
 
@@ -642,5 +681,29 @@ mod tests {
         let hash_large1 = ops.fast_string_hash(&large_str, 0);
         let hash_large2 = ops.fast_string_hash(&large_str, 0);
         assert_eq!(hash_large1, hash_large2);
+    }
+
+    #[test]
+    fn test_c7_6_simd_string_hash_matches_scalar_tier_at_every_length() {
+        let scalar_ops = SimdStringOps {
+            _cpu_features: crate::system::get_cpu_features(),
+            impl_tier: SimdTier::Scalar,
+        };
+        let active_ops = SimdStringOps::new();
+
+        // Every string length (especially lengths with >=8-byte tails past 16/32/64-byte SIMD chunks,
+        // such as 24, 27, 40, 45, 72, 95 bytes) must produce the exact same hash across tiers.
+        for len in [0usize, 1, 7, 8, 9, 15, 16, 23, 24, 27, 31, 32, 40, 45, 63, 64, 72, 95, 130] {
+            let s: String = (0..len)
+                .map(|i| (b'a' + (i % 26) as u8) as char)
+                .collect();
+            let expected = scalar_ops.fast_string_hash(&s, 0x1234_5678);
+            let actual = active_ops.fast_string_hash(&s, 0x1234_5678);
+            assert_eq!(
+                actual, expected,
+                "SIMD string hash mismatch vs scalar tier at length {}",
+                len
+            );
+        }
     }
 }

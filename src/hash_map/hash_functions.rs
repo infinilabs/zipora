@@ -97,7 +97,9 @@ pub fn bmi2_hash_combine_u32(hash: u32, value: u32) -> u32 {
     // Fallback to enhanced scalar mixing
     let rotated = hash.rotate_left(5);
     let mixed = rotated.wrapping_add(value);
-    mixed ^ (value.rotate_right(13))
+    let result = mixed ^ (value.rotate_right(13));
+    // Never zero, as the BMI2 tier guarantees; (0, 0) used to return 0 here.
+    if result == 0 { 0x9e3779b9u32 } else { result }
 }
 
 /// BMI2-accelerated hash combine for u64 values
@@ -118,10 +120,20 @@ pub fn bmi2_hash_combine_u64(hash: u64, value: u64) -> u64 {
     // Fallback to enhanced scalar mixing
     let rotated = hash.rotate_left(5);
     let mixed = rotated.wrapping_add(value);
-    mixed ^ (value.rotate_right(17))
+    let result = mixed ^ (value.rotate_right(17));
+    // Never zero, as the BMI2 tier guarantees; (0, 0) used to return 0 here.
+    if result == 0 {
+        0x9e3779b97f4a7c15u64
+    } else {
+        result
+    }
 }
 
 /// Hardware BMI2 implementation for u32 hash combine
+///
+/// # Safety
+/// The CPU must support BMI2. The only caller, [`bmi2_hash_combine_u32`], checks
+/// `Bmi2Capabilities::has_bmi2` first.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "bmi2")]
 #[inline]
@@ -155,6 +167,10 @@ unsafe fn bmi2_hash_combine_u32_hardware(hash: u32, value: u32) -> u32 {
 }
 
 /// Hardware BMI2 implementation for u64 hash combine
+///
+/// # Safety
+/// The CPU must support BMI2. The only caller, [`bmi2_hash_combine_u64`], checks
+/// `Bmi2Capabilities::has_bmi2` first.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "bmi2")]
 #[inline]
@@ -236,12 +252,29 @@ pub fn bmi2_golden_ratio_next_size(current_size: usize) -> usize {
     }
 
     // Enhanced scalar fallback with better precision
-    let size_64 = current_size as u64;
-    let result = (size_64 * GOLDEN_RATIO_FRAC_NUM) / GOLDEN_RATIO_FRAC_DEN + 1;
-    result as usize
+    scalar_golden_ratio_next_size(current_size)
+}
+
+/// Scalar reference for [`bmi2_golden_ratio_next_size`]:
+/// `current_size * 103 / 64 + 1`, computed in `u128` and clamped to
+/// `usize::MAX`.
+///
+/// The `u64` product used to overflow once `current_size` passed
+/// `u64::MAX / 103` (a panic with overflow checks, a wrapped and far smaller
+/// size without), and the final `as usize` truncated on 32-bit targets.
+#[inline]
+fn scalar_golden_ratio_next_size(current_size: usize) -> usize {
+    let next = current_size as u128 * GOLDEN_RATIO_FRAC_NUM as u128
+        / GOLDEN_RATIO_FRAC_DEN as u128
+        + 1;
+    usize::try_from(next).unwrap_or(usize::MAX)
 }
 
 /// Hardware BMI2 implementation for golden ratio calculation
+///
+/// # Safety
+/// The CPU must support BMI2 (`_bzhi_u64`). The only caller,
+/// [`bmi2_golden_ratio_next_size`], checks `Bmi2Capabilities::has_bmi2` first.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "bmi2")]
 #[inline]
@@ -250,9 +283,20 @@ unsafe fn bmi2_golden_ratio_hardware(current_size: usize) -> usize {
 
     let size_64 = current_size as u64;
 
+    // BZHI at index 63 keeps the whole product only while it is below 2^63.
+    // It used to be applied to a product that could already have overflowed
+    // `u64`, and it silently dropped bit 63 of one that had not; both cases
+    // now take the scalar path, so the two tiers agree on every input.
+    // `MAX_EXACT` is the largest size whose product is below 2^63.
+    const MAX_EXACT: u64 = (u64::MAX >> 1) / GOLDEN_RATIO_FRAC_NUM;
+    if size_64 > MAX_EXACT {
+        return scalar_golden_ratio_next_size(current_size);
+    }
+    let product = size_64 * GOLDEN_RATIO_FRAC_NUM;
+
     // Use BZHI for efficient bit operations in multiplication
     // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 with index 63
-    let numerator_bits = _bzhi_u64(size_64 * GOLDEN_RATIO_FRAC_NUM, 63); // Prevent overflow
+    let numerator_bits = _bzhi_u64(product, 63); // Prevent overflow
     let result = numerator_bits / GOLDEN_RATIO_FRAC_DEN + 1;
 
     result as usize
@@ -283,6 +327,10 @@ pub fn optimal_bucket_count(desired_capacity: usize) -> usize {
 /// BMI2-optimized bucket count calculation
 ///
 /// Uses BEXTR for efficient power-of-2 operations and BZHI for masking.
+///
+/// A capacity whose bucket count has no power of two in `usize` (above
+/// roughly `usize::MAX * 158 / 512`) gets the largest one,
+/// `1 << (usize::BITS - 1)`.
 #[inline]
 pub fn bmi2_optimal_bucket_count(desired_capacity: usize) -> usize {
     if desired_capacity == 0 {
@@ -299,11 +347,35 @@ pub fn bmi2_optimal_bucket_count(desired_capacity: usize) -> usize {
     }
 
     // Enhanced scalar fallback
-    let required_buckets = (desired_capacity as u64 * 256) / (GOLDEN_LOAD_FACTOR as u64);
-    (required_buckets as usize).next_power_of_two().max(16)
+    scalar_optimal_bucket_count(desired_capacity)
+}
+
+/// Scalar reference for [`bmi2_optimal_bucket_count`]: the next power of two
+/// at or above `desired_capacity * 256 / 158`, at least 16.
+///
+/// Computed in `u128`: the `u64` product overflowed above 2^56 elements and
+/// `next_power_of_two` overflowed above 2^63 buckets (panics with overflow
+/// checks; without them the result wrapped to 0 and came back as 16).
+#[inline]
+fn scalar_optimal_bucket_count(desired_capacity: usize) -> usize {
+    // With `c = 158 * q + r`, `c * 256 / 158 == 256 * q + r * 256 / 158`
+    // exactly. Only `u64` divisions by a constant, which compile to
+    // multiplications: a `u128` division is a library call.
+    let load = u64::from(GOLDEN_LOAD_FACTOR);
+    let c = desired_capacity as u64;
+    let required_buckets = u128::from(c / load) * 256 + u128::from(c % load * 256 / load);
+    required_buckets
+        .checked_next_power_of_two()
+        .and_then(|buckets| usize::try_from(buckets).ok())
+        .unwrap_or(1usize << (usize::BITS - 1))
+        .max(16)
 }
 
 /// Hardware BMI2 implementation for bucket count calculation
+///
+/// # Safety
+/// The CPU must support BMI2 (`_bzhi_u64`). The only caller,
+/// [`bmi2_optimal_bucket_count`], checks `Bmi2Capabilities::has_bmi2` first.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "bmi2")]
 #[inline]
@@ -312,9 +384,18 @@ unsafe fn bmi2_bucket_count_hardware(desired_capacity: usize) -> usize {
 
     let capacity_64 = desired_capacity as u64;
 
+    // As in `bmi2_golden_ratio_hardware`: BZHI at index 63 is exact only
+    // below 2^63, so larger (or overflowing) scaled capacities take the
+    // scalar path and both tiers agree on every input.
+    const MAX_EXACT: u64 = (u64::MAX >> 1) / 256;
+    if capacity_64 > MAX_EXACT {
+        return scalar_optimal_bucket_count(desired_capacity);
+    }
+    let scaled = capacity_64 * 256;
+
     // Use BZHI for efficient load factor calculation
     // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 with index 63
-    let scaled_capacity = _bzhi_u64(capacity_64 * 256, 63); // Prevent overflow
+    let scaled_capacity = _bzhi_u64(scaled, 63); // Prevent overflow
     let required_buckets = scaled_capacity / (GOLDEN_LOAD_FACTOR as u64);
 
     // Use BEXTR pattern for next power of 2 calculation
@@ -322,8 +403,10 @@ unsafe fn bmi2_bucket_count_hardware(desired_capacity: usize) -> usize {
         return 16;
     }
 
-    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 value
-    let log2_bits = 64 - unsafe { _lzcnt_u64(required_buckets - 1) };
+    // `required_buckets < 2^63 / 158 < 2^56`, so the shift stays below 57.
+    // `leading_zeros` replaces `_lzcnt_u64`, which needs the `lzcnt` target
+    // feature: the `has_bmi2` gate on this function never checked for it.
+    let log2_bits = 64 - (required_buckets - 1).leading_zeros();
     let bucket_count = 1usize << log2_bits;
     bucket_count.max(16)
 }
@@ -565,6 +648,10 @@ pub fn advanced_hash_combine_bmi2(hashes: &[u64]) -> u64 {
 }
 
 /// Advanced BMI2 mixing using PEXT/PDEP patterns
+///
+/// # Safety
+/// The CPU must support BMI2. The only caller, [`advanced_hash_combine_bmi2`], checks
+/// `Bmi2Capabilities::has_bmi2` first.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "bmi2")]
 #[inline]
@@ -587,6 +674,10 @@ unsafe fn advanced_bmi2_mixing(result: u64, hash: u64) -> u64 {
 }
 
 /// BMI2-optimized avalanche step for final hash mixing
+///
+/// # Safety
+/// The CPU must support BMI2. The only caller, [`advanced_hash_combine_bmi2`], checks
+/// `Bmi2Capabilities::has_bmi2` first.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "bmi2")]
 #[inline]
@@ -621,13 +712,19 @@ fn scalar_avalanche_step(mut result: u64) -> u64 {
 /// Processes string bytes using BMI2 BEXTR for efficient character extraction
 /// and PDEP/PEXT for optimal bit mixing. Integrates with SIMD string operations.
 pub fn fast_string_hash_bmi2(s: &str, base_hash: u64) -> u64 {
-    let bytes = s.as_bytes();
+    fast_bytes_hash_bmi2(s.as_bytes(), base_hash)
+}
 
+/// Fast byte-slice hashing with BMI2-accelerated byte extraction
+// `#[inline]` so that `fast_string_hash_bmi2` gets this body, as it had
+// before the byte-slice entry point existed, instead of a jump to it.
+#[inline]
+pub fn fast_bytes_hash_bmi2(bytes: &[u8], base_hash: u64) -> u64 {
     if bytes.is_empty() {
         return base_hash;
     }
 
-    // For very short strings, use optimized scalar path
+    // For very short slices, use optimized scalar path
     if bytes.len() <= 8 {
         return scalar_string_hash_bmi2(bytes, base_hash);
     }
@@ -646,17 +743,25 @@ pub fn fast_string_hash_bmi2(s: &str, base_hash: u64) -> u64 {
 }
 
 /// Hardware BMI2 implementation for string hashing
+///
+/// # Safety
+/// The CPU must support BMI2. The only caller, [`fast_bytes_hash_bmi2`], checks
+/// `Bmi2Capabilities::has_bmi2` first.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "bmi2")]
 unsafe fn bmi2_string_hash_hardware(bytes: &[u8], mut hash: u64) -> u64 {
     use std::arch::x86_64::*;
 
-    // Process 8-byte chunks with BMI2 acceleration
+    // Process 8-byte chunks with BMI2 acceleration (indexed loop and
+    // `copy_from_slice` as in `SimdStringOps::scalar_string_hash`: the chunk
+    // copy cannot fail, and `as_chunks` made LLVM unroll this loop 8x, which
+    // slowed short keys down)
     let chunks = bytes.len() / 8;
     for i in 0..chunks {
         let offset = i * 8;
-        let chunk_bytes = &bytes[offset..offset + 8];
-        let val = u64::from_le_bytes(chunk_bytes.try_into().expect("chunk is 8 bytes"));
+        let mut word = [0u8; 8];
+        word.copy_from_slice(&bytes[offset..offset + 8]);
+        let val = u64::from_le_bytes(word);
 
         // Use BMI2 for enhanced mixing
         let mask = 0xF0F0F0F0F0F0F0F0u64; // Extract high nibbles
@@ -680,12 +785,14 @@ unsafe fn bmi2_string_hash_hardware(bytes: &[u8], mut hash: u64) -> u64 {
 
 /// Scalar string hashing with BMI2 patterns (fallback)
 fn scalar_string_hash_bmi2(bytes: &[u8], mut hash: u64) -> u64 {
-    // Process 8-byte chunks for better performance
+    // Process 8-byte chunks for better performance (indexed loop and
+    // `copy_from_slice`, as in `bmi2_string_hash_hardware`)
     let chunks = bytes.len() / 8;
     for i in 0..chunks {
         let offset = i * 8;
-        let chunk_bytes = &bytes[offset..offset + 8];
-        let val = u64::from_le_bytes(chunk_bytes.try_into().expect("chunk is 8 bytes"));
+        let mut word = [0u8; 8];
+        word.copy_from_slice(&bytes[offset..offset + 8]);
+        let val = u64::from_le_bytes(word);
 
         // Enhanced scalar mixing inspired by BMI2 patterns
         hash = hash.rotate_left(5).wrapping_add(val);
@@ -737,8 +844,9 @@ fn bmi2_linear_probe(hash: u64, occupied_mask: u64) -> Option<u32> {
     #[cfg(target_arch = "x86_64")]
     {
         let caps = Bmi2Capabilities::get();
-        if caps.has_bmi2 {
-            // SAFETY: BMI2 support verified by caps.has_bmi2 runtime check
+        // TZCNT is a BMI1 instruction, which `has_bmi2` alone does not imply.
+        if caps.has_bmi1 && caps.has_bmi2 {
+            // SAFETY: BMI1 and BMI2 support verified by the runtime checks above
             return unsafe { bmi2_linear_probe_hardware(hash, occupied_mask) };
         }
     }
@@ -753,8 +861,13 @@ fn bmi2_linear_probe(hash: u64, occupied_mask: u64) -> Option<u32> {
 }
 
 /// Hardware BMI2 linear probing
+///
+/// # Safety
+/// The CPU must support BMI1 (`_tzcnt_u64`) and BMI2. The only caller,
+/// [`bmi2_linear_probe`], checks both first. The gate used to check BMI2
+/// alone, with a SAFETY comment that credited BMI2 for TZCNT.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "bmi2")]
+#[target_feature(enable = "bmi1,bmi2")]
 unsafe fn bmi2_linear_probe_hardware(_hash: u64, occupied_mask: u64) -> Option<u32> {
     use std::arch::x86_64::*;
 
@@ -762,11 +875,10 @@ unsafe fn bmi2_linear_probe_hardware(_hash: u64, occupied_mask: u64) -> Option<u
         return None;
     }
 
-    // Use BMI2 to find first free slot efficiently
+    // Use TZCNT (BMI1) to find first free slot efficiently
     let free_mask = !occupied_mask;
     if free_mask != 0 {
-        // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 value
-        Some(unsafe { _tzcnt_u64(free_mask) } as u32)
+        Some(_tzcnt_u64(free_mask) as u32)
     } else {
         None
     }
@@ -781,8 +893,9 @@ fn bmi2_quadratic_probe(hash: u64, occupied_mask: u64) -> Option<u32> {
     #[cfg(target_arch = "x86_64")]
     {
         let caps = Bmi2Capabilities::get();
-        if caps.has_bmi2 {
-            // SAFETY: BMI2 support verified by caps.has_bmi2 runtime check
+        // BEXTR is a BMI1 instruction, which `has_bmi2` alone does not imply.
+        if caps.has_bmi1 && caps.has_bmi2 {
+            // SAFETY: BMI1 and BMI2 support verified by the runtime checks above
             return unsafe { bmi2_quadratic_probe_hardware(hash, occupied_mask) };
         }
     }
@@ -799,8 +912,12 @@ fn bmi2_quadratic_probe(hash: u64, occupied_mask: u64) -> Option<u32> {
 }
 
 /// Hardware BMI2 quadratic probing  
+///
+/// # Safety
+/// The CPU must support BMI1 (`_bextr_u64`) and BMI2. The only caller,
+/// [`bmi2_quadratic_probe`], checks both first (it used to check BMI2 alone).
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "bmi2")]
+#[target_feature(enable = "bmi1,bmi2")]
 unsafe fn bmi2_quadratic_probe_hardware(hash: u64, occupied_mask: u64) -> Option<u32> {
     use std::arch::x86_64::*;
 
@@ -809,8 +926,7 @@ unsafe fn bmi2_quadratic_probe_hardware(hash: u64, occupied_mask: u64) -> Option
     }
 
     // Use BEXTR for efficient position calculation
-    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 with valid start/len
-    let start_pos = unsafe { _bextr_u64(hash, 0, 6) } as u32; // Extract 6 bits (0-63)
+    let start_pos = _bextr_u64(hash, 0, 6) as u32; // Extract 6 bits (0-63)
 
     for i in 0..64 {
         let offset = i * i;
@@ -834,8 +950,9 @@ fn bmi2_double_hash_probe(hash: u64, occupied_mask: u64) -> Option<u32> {
     #[cfg(target_arch = "x86_64")]
     {
         let caps = Bmi2Capabilities::get();
-        if caps.has_bmi2 {
-            // SAFETY: BMI2 support verified by caps.has_bmi2 runtime check
+        // BEXTR is a BMI1 instruction, which `has_bmi2` alone does not imply.
+        if caps.has_bmi1 && caps.has_bmi2 {
+            // SAFETY: BMI1 and BMI2 support verified by the runtime checks above
             return unsafe { bmi2_double_hash_probe_hardware(hash, occupied_mask) };
         }
     }
@@ -855,8 +972,13 @@ fn bmi2_double_hash_probe(hash: u64, occupied_mask: u64) -> Option<u32> {
 }
 
 /// Hardware BMI2 double hashing
+///
+/// # Safety
+/// The CPU must support BMI1 (`_bextr_u64`) and BMI2. The only caller,
+/// [`bmi2_double_hash_probe`], checks both first (it used to check BMI2
+/// alone).
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "bmi2")]
+#[target_feature(enable = "bmi1,bmi2")]
 unsafe fn bmi2_double_hash_probe_hardware(hash: u64, occupied_mask: u64) -> Option<u32> {
     use std::arch::x86_64::*;
 
@@ -865,10 +987,8 @@ unsafe fn bmi2_double_hash_probe_hardware(hash: u64, occupied_mask: u64) -> Opti
     }
 
     // Use BEXTR for efficient hash extraction
-    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 with valid start/len
-    let hash1 = unsafe { _bextr_u64(hash, 0, 6) } as u32; // Lower 6 bits
-    // SAFETY: bmi2 guaranteed by #[target_feature(enable = "bmi2")], operates on u64 with valid start/len
-    let hash2 = unsafe { _bextr_u64(hash, 32, 6) } as u32; // Upper 6 bits
+    let hash1 = _bextr_u64(hash, 0, 6) as u32; // Lower 6 bits
+    let hash2 = _bextr_u64(hash, 32, 6) as u32; // Upper 6 bits
     let step = if hash2 == 0 { 1 } else { hash2 };
 
     for i in 0..64 {
@@ -1059,7 +1179,7 @@ impl Bmi2HashDispatcher {
         match self.optimization_tier {
             HashOptimizationTier::Bmi2Avx2 | HashOptimizationTier::Bmi2 => {
                 if bytes.len() >= 8 {
-                    fast_string_hash_bmi2(std::str::from_utf8(bytes).unwrap_or(""), 0)
+                    fast_bytes_hash_bmi2(bytes, 0)
                 } else {
                     scalar_string_hash_bmi2(bytes, 0)
                 }
@@ -1133,12 +1253,14 @@ impl Bmi2HashDispatcher {
     fn hash_with_bmi1_acceleration(&self, bytes: &[u8]) -> u64 {
         let mut hash = 0u64;
 
-        // Process 8-byte chunks
+        // Process 8-byte chunks (indexed loop and `copy_from_slice`, as in
+        // `bmi2_string_hash_hardware`)
         let chunks = bytes.len() / 8;
         for i in 0..chunks {
             let offset = i * 8;
-            let chunk_bytes = &bytes[offset..offset + 8];
-            let val = u64::from_le_bytes(chunk_bytes.try_into().expect("chunk is 8 bytes"));
+            let mut word = [0u8; 8];
+            word.copy_from_slice(&bytes[offset..offset + 8]);
+            let val = u64::from_le_bytes(word);
             hash = hash.rotate_left(5).wrapping_add(val);
             hash ^= val.rotate_right(13); // Enhanced mixing
         }
@@ -1889,5 +2011,60 @@ mod tests {
         let info = bmi2_load_factor_calculations(1, 0, 0.75);
         assert_eq!(info.current_load_factor, 0.0);
         assert!(!info.should_resize);
+    }
+
+    #[test]
+    fn test_c7_6_bmi2_dispatcher_non_utf8_bytes_do_not_collide_to_zero() {
+        let dispatcher = Bmi2HashDispatcher::new();
+
+        // Non-UTF-8 byte slices of length >= 8 previously collapsed to "" and hashed to 0
+        let invalid_utf8_a: [u8; 12] = [0xFF, 0xFE, 0x80, 0x81, 1, 2, 3, 4, 5, 6, 7, 8];
+        let invalid_utf8_b: [u8; 12] = [0xFF, 0xFE, 0x80, 0x81, 9, 10, 11, 12, 13, 14, 15, 16];
+
+        let hash_a = dispatcher.hash_with_acceleration(invalid_utf8_a);
+        let hash_b = dispatcher.hash_with_acceleration(invalid_utf8_b);
+
+        assert_ne!(hash_a, 0, "non-UTF-8 slice must not hash to 0");
+        assert_ne!(hash_b, 0, "non-UTF-8 slice must not hash to 0");
+        assert_ne!(
+            hash_a, hash_b,
+            "distinct non-UTF-8 slices must not collide to the same empty-string hash"
+        );
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn test_c7_6_growth_helpers_are_exact_on_every_tier() {
+        // Scaled values in [2^63, 2^64): the BMI2 tier's BZHI dropped bit 63,
+        // so 2^55 elements got 16 buckets and 2^57 "grew" to about 2^56.3.
+        assert_eq!(optimal_bucket_count(1 << 55), 1 << 56);
+        assert_eq!(golden_ratio_next_size(1 << 57), (103usize << 51) + 1);
+
+        // Products that overflow u64: a panic with overflow checks, a wrapped
+        // (far smaller) result without.
+        assert_eq!(golden_ratio_next_size(usize::MAX / 2), 14_843_864_371_813_154_815);
+        assert_eq!(optimal_bucket_count(usize::MAX / 2), 1 << (usize::BITS - 1));
+        // Past usize, growth clamps to usize::MAX and the bucket count
+        // saturates at the largest power of two.
+        assert_eq!(golden_ratio_next_size(usize::MAX), usize::MAX);
+        assert_eq!(optimal_bucket_count(usize::MAX), 1 << (usize::BITS - 1));
+
+        // Sizes whose arithmetic fits are unchanged.
+        for n in [1usize, 15, 16, 17, 100, 1000, 1 << 20, (1 << 40) + 7] {
+            assert_eq!(golden_ratio_next_size(n), n * 103 / 64 + 1, "growth of {n}");
+            assert_eq!(
+                optimal_bucket_count(n),
+                (n * 256 / 158).next_power_of_two().max(16),
+                "buckets for {n}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_c7_6_hash_combine_of_zero_and_zero_is_nonzero_on_every_tier() {
+        // The BMI2 tier maps a zero result to a constant; the scalar tier
+        // returned 0 for (0, 0).
+        assert_ne!(bmi2_hash_combine_u32(0, 0), 0);
+        assert_ne!(bmi2_hash_combine_u64(0, 0), 0);
     }
 }
