@@ -142,6 +142,23 @@ impl PathStack {
         self.len += 1;
     }
     #[inline]
+    fn pop(&mut self) {
+        if self.len > 0 {
+            self.len -= 1;
+            if self.len >= MAX_DEPTH {
+                self.overflow.pop();
+            }
+        }
+    }
+    #[inline]
+    fn set(&mut self, k: usize, idx: u32, went_left: bool) {
+        if k < MAX_DEPTH {
+            self.inline[k] = (idx, went_left);
+        } else {
+            self.overflow[k - MAX_DEPTH] = (idx, went_left);
+        }
+    }
+    #[inline]
     fn idx(&self, k: usize) -> u32 {
         if k < MAX_DEPTH {
             self.inline[k].0
@@ -206,6 +223,68 @@ impl<T> Core<T> {
     #[inline]
     fn n_mut(&mut self, i: u32) -> &mut Node {
         &mut self.units[i as usize].0
+    }
+    #[inline]
+    fn is_red_node(&self, i: u32) -> bool {
+        i != NIL && self.n(i).is_red()
+    }
+    #[inline]
+    fn is_black_node(&self, i: u32) -> bool {
+        i == NIL || self.n(i).is_black()
+    }
+    #[inline]
+    fn child_or_nil(&self, i: u32, side: usize) -> u32 {
+        if self.n(i).is_child(side) {
+            self.n(i).link(side)
+        } else {
+            NIL
+        }
+    }
+    #[inline]
+    fn set_color(&mut self, i: u32, red: bool) {
+        if red {
+            self.n_mut(i).set_red();
+        } else {
+            self.n_mut(i).set_black();
+        }
+    }
+    /// Left-rotate subtree rooted at `x` (requires `x` to have a right child `y`), returning `y`.
+    #[inline]
+    fn rotate_left(&mut self, x: u32) -> u32 {
+        let y = self.n(x).right_link();
+        if self.n(y).is_thread(0) {
+            self.n_mut(x).set_thread(1, y);
+            self.n_mut(y).set_child(0, x);
+        } else {
+            let yl = self.n(y).left_link();
+            self.n_mut(x).set_child(1, yl);
+            self.n_mut(y).set_child(0, x);
+        }
+        y
+    }
+    /// Right-rotate subtree rooted at `x` (requires `x` to have a left child `y`), returning `y`.
+    #[inline]
+    fn rotate_right(&mut self, x: u32) -> u32 {
+        let y = self.n(x).left_link();
+        if self.n(y).is_thread(1) {
+            self.n_mut(x).set_thread(0, y);
+            self.n_mut(y).set_child(1, x);
+        } else {
+            let yr = self.n(y).right_link();
+            self.n_mut(x).set_child(0, yr);
+            self.n_mut(y).set_child(1, x);
+        }
+        y
+    }
+    #[inline]
+    fn replace_at_depth(&mut self, stk: &PathStack, depth: usize, new_subroot: u32) {
+        if depth == 0 {
+            self.root = new_subroot;
+        } else {
+            let gp = stk.idx(depth - 1);
+            let gp_side = if stk.is_left(depth - 1) { 0 } else { 1 };
+            self.n_mut(gp).set_child(gp_side, new_subroot);
+        }
     }
     /// # Safety
     ///
@@ -360,78 +439,26 @@ impl<T> Core<T> {
             let child_is_left = stk.is_left(k);
 
             if parent_is_left {
-                let mut y = p1;
                 if !child_is_left {
                     // LR: left-rotate p1, then right-rotate p2
-                    y = self.n(p1).right_link();
-                    // Left-rotate p1: p1.right = y.left, y.left = p1
-                    let yl_thread = self.n(y).is_thread(0);
-                    if yl_thread {
-                        self.n_mut(p1).set_thread(1, y);
-                        self.n_mut(y).set_child(0, p1);
-                    } else {
-                        let yl = self.n(y).left_link();
-                        self.n_mut(p1).set_child(1, yl);
-                        self.n_mut(y).set_child(0, p1);
-                    }
+                    let y = self.rotate_left(p1);
                     self.n_mut(p2).set_child(0, y);
                 }
-                // Right-rotate p2: p2.left = y.right, y.right = p2
+                let y = self.rotate_right(p2);
                 self.n_mut(y).set_black();
                 self.n_mut(p2).set_red();
-                let yr_thread = self.n(y).is_thread(1);
-                if yr_thread {
-                    self.n_mut(y).set_child(1, p2);
-                    self.n_mut(p2).set_thread(0, y);
-                } else {
-                    let yr = self.n(y).right_link();
-                    self.n_mut(p2).set_child(0, yr);
-                    self.n_mut(y).set_child(1, p2);
-                }
-                // Update great-grandparent
-                if k >= 2 {
-                    let gg = stk.idx(k - 2);
-                    let gg_side = if stk.is_left(k - 2) { 0 } else { 1 };
-                    self.n_mut(gg).set_child(gg_side, y);
-                } else {
-                    self.root = y;
-                }
+                self.replace_at_depth(stk, k - 1, y);
             } else {
                 // Mirror: parent is right child of grandparent
-                let mut y = p1;
                 if child_is_left {
                     // RL: right-rotate p1, then left-rotate p2
-                    y = self.n(p1).left_link();
-                    let yr_thread = self.n(y).is_thread(1);
-                    if yr_thread {
-                        self.n_mut(p1).set_thread(0, y);
-                        self.n_mut(y).set_child(1, p1);
-                    } else {
-                        let yr = self.n(y).right_link();
-                        self.n_mut(p1).set_child(0, yr);
-                        self.n_mut(y).set_child(1, p1);
-                    }
+                    let y = self.rotate_right(p1);
                     self.n_mut(p2).set_child(1, y);
                 }
-                // Left-rotate p2: p2.right = y.left, y.left = p2
+                let y = self.rotate_left(p2);
                 self.n_mut(y).set_black();
                 self.n_mut(p2).set_red();
-                let yl_thread = self.n(y).is_thread(0);
-                if yl_thread {
-                    self.n_mut(y).set_child(0, p2);
-                    self.n_mut(p2).set_thread(1, y);
-                } else {
-                    let yl = self.n(y).left_link();
-                    self.n_mut(p2).set_child(1, yl);
-                    self.n_mut(y).set_child(0, p2);
-                }
-                if k >= 2 {
-                    let gg = stk.idx(k - 2);
-                    let gg_side = if stk.is_left(k - 2) { 0 } else { 1 };
-                    self.n_mut(gg).set_child(gg_side, y);
-                } else {
-                    self.root = y;
-                }
+                self.replace_at_depth(stk, k - 1, y);
             }
             break;
         }
@@ -440,10 +467,9 @@ impl<T> Core<T> {
         self.n_mut(self.root).set_black();
     }
 
-    // -- remove: BST splice with thread preservation --
-    // The tree maintains BST ordering and thread links across removals.
+    // -- remove: BST splice with thread preservation + Red-Black delete rebalancing --
 
-    fn remove_idx(&mut self, target: u32, stk: &PathStack) -> T {
+    fn remove_idx(&mut self, target: u32, mut stk: PathStack) -> T {
         // SAFETY: target is valid node index, node data is initialized (found via search)
         let value = unsafe { self.units[target as usize].1.assume_init_read() };
         self.count -= 1;
@@ -451,16 +477,18 @@ impl<T> Core<T> {
         let has_left = self.n(target).is_child(0);
         let has_right = self.n(target).is_child(1);
 
-        if !has_left && !has_right {
+        let (y_was_black, x) = if !has_left && !has_right {
             // Leaf: just unlink
+            let y_was_black = self.n(target).is_black();
             let left_thread = self.n(target).left_link();
             let right_thread = self.n(target).right_link();
+            stk.pop(); // pop target
 
-            if stk.len <= 1 {
+            if stk.len == 0 {
                 self.root = NIL;
             } else {
-                let parent = stk.idx(stk.len - 2);
-                let is_left = stk.is_left(stk.len - 2);
+                let parent = stk.idx(stk.len - 1);
+                let is_left = stk.is_left(stk.len - 1);
                 if is_left {
                     self.n_mut(parent).set_thread(0, left_thread);
                 } else {
@@ -468,9 +496,12 @@ impl<T> Core<T> {
                 }
             }
             self.dealloc(target);
+            (y_was_black, NIL)
         } else if has_left && !has_right {
             // Has only left child
+            let y_was_black = self.n(target).is_black();
             let child = self.n(target).left_link();
+            stk.pop(); // pop target
             // rightmost of left subtree's right-thread should be updated
             let mut rm = child;
             while self.n(rm).is_child(1) {
@@ -479,18 +510,21 @@ impl<T> Core<T> {
             let right_thread = self.n(target).right_link();
             self.n_mut(rm).set_thread(1, right_thread);
 
-            if stk.len <= 1 {
+            if stk.len == 0 {
                 self.root = child;
             } else {
-                let parent = stk.idx(stk.len - 2);
-                let is_left = stk.is_left(stk.len - 2);
+                let parent = stk.idx(stk.len - 1);
+                let is_left = stk.is_left(stk.len - 1);
                 self.n_mut(parent)
                     .set_child(if is_left { 0 } else { 1 }, child);
             }
             self.dealloc(target);
+            (y_was_black, child)
         } else if !has_left && has_right {
             // Has only right child
+            let y_was_black = self.n(target).is_black();
             let child = self.n(target).right_link();
+            stk.pop(); // pop target
             let mut lm = child;
             while self.n(lm).is_child(0) {
                 lm = self.n(lm).left_link();
@@ -498,26 +532,29 @@ impl<T> Core<T> {
             let left_thread = self.n(target).left_link();
             self.n_mut(lm).set_thread(0, left_thread);
 
-            if stk.len <= 1 {
+            if stk.len == 0 {
                 self.root = child;
             } else {
-                let parent = stk.idx(stk.len - 2);
-                let is_left = stk.is_left(stk.len - 2);
+                let parent = stk.idx(stk.len - 1);
+                let is_left = stk.is_left(stk.len - 1);
                 self.n_mut(parent)
                     .set_child(if is_left { 0 } else { 1 }, child);
             }
             self.dealloc(target);
+            (y_was_black, child)
         } else {
-            // Both children: find in-order successor (leftmost of right subtree)
+            // Both children: find in-order successor (leftmost of right subtree).
+            // Note: stk[stk.len - 1] is already (target, false), recording the step to right child.
             let right = self.n(target).right_link();
             let mut succ = right;
-            let mut succ_parent = target;
             while self.n(succ).is_child(0) {
-                succ_parent = succ;
+                stk.push(succ, true);
                 succ = self.n(succ).left_link();
             }
+            let succ_parent = stk.idx(stk.len - 1);
+            let y_was_black = self.n(succ).is_black();
 
-            // Copy successor's data into target slot
+            // Copy successor's data into target slot (target keeps its color; succ's color is removed)
             // SAFETY: both succ and target are valid indices, data initialized, buffers non-overlapping
             unsafe {
                 let src = self.units[succ as usize].1.as_ptr();
@@ -527,7 +564,7 @@ impl<T> Core<T> {
 
             // Unlink successor (succ has no left child, may have right child)
             let succ_has_right = self.n(succ).is_child(1);
-            if succ_has_right {
+            let x = if succ_has_right {
                 let sr = self.n(succ).right_link();
                 // leftmost of sr's left-thread should point to target (succ's predecessor)
                 let mut lm = sr;
@@ -541,6 +578,7 @@ impl<T> Core<T> {
                 } else {
                     self.n_mut(succ_parent).set_child(0, sr);
                 }
+                sr
             } else {
                 if succ_parent == target {
                     let succ_right = self.n(succ).right_link();
@@ -548,10 +586,141 @@ impl<T> Core<T> {
                 } else {
                     self.n_mut(succ_parent).set_thread(0, target);
                 }
-            }
+                NIL
+            };
             self.dealloc(succ);
+            (y_was_black, x)
+        };
+
+        if y_was_black && self.root != NIL {
+            self.delete_fixup(x, &mut stk);
         }
         value
+    }
+
+    /// Standard CLRS Red-Black deletion fixup adapted for threaded children.
+    /// `x` is the replacement node (or `NIL` if a black leaf was unlinked into a thread),
+    /// and `stk` holds the ancestor path from `self.root` down to `x`'s parent.
+    fn delete_fixup(&mut self, mut x: u32, stk: &mut PathStack) {
+        while x != self.root && self.is_black_node(x) {
+            if stk.len == 0 {
+                break;
+            }
+            let mut k = stk.len - 1;
+            let p = stk.idx(k);
+            let x_is_left = stk.is_left(k);
+
+            if x_is_left {
+                let mut w = self.child_or_nil(p, 1);
+                if w == NIL {
+                    break;
+                }
+                if self.is_red_node(w) {
+                    // Case 1: sibling w is red -> left-rotate p so w becomes parent of p
+                    self.n_mut(w).set_black();
+                    self.n_mut(p).set_red();
+                    let sub = self.rotate_left(p);
+                    self.replace_at_depth(stk, k, sub);
+                    stk.set(k, w, true);
+                    stk.push(p, true);
+                    k += 1;
+                    w = self.child_or_nil(p, 1);
+                    if w == NIL {
+                        break;
+                    }
+                }
+
+                let wl = self.child_or_nil(w, 0);
+                let mut wr = self.child_or_nil(w, 1);
+                if self.is_black_node(wl) && self.is_black_node(wr) {
+                    // Case 2: both of w's children are black
+                    self.n_mut(w).set_red();
+                    x = p;
+                    stk.pop();
+                } else {
+                    if self.is_black_node(wr) {
+                        // Case 3: w's right child is black, left child is red
+                        if wl != NIL {
+                            self.n_mut(wl).set_black();
+                        }
+                        self.n_mut(w).set_red();
+                        let new_w = self.rotate_right(w);
+                        self.n_mut(p).set_child(1, new_w);
+                        w = new_w;
+                        wr = self.child_or_nil(w, 1);
+                    }
+                    // Case 4: w's right child is red
+                    let p_red = self.n(p).is_red();
+                    self.set_color(w, p_red);
+                    self.n_mut(p).set_black();
+                    if wr != NIL {
+                        self.n_mut(wr).set_black();
+                    }
+                    let sub = self.rotate_left(p);
+                    self.replace_at_depth(stk, k, sub);
+                    x = self.root;
+                    break;
+                }
+            } else {
+                // Mirror: x is right child of p, sibling w is left child of p
+                let mut w = self.child_or_nil(p, 0);
+                if w == NIL {
+                    break;
+                }
+                if self.is_red_node(w) {
+                    // Case 1: sibling w is red -> right-rotate p so w becomes parent of p
+                    self.n_mut(w).set_black();
+                    self.n_mut(p).set_red();
+                    let sub = self.rotate_right(p);
+                    self.replace_at_depth(stk, k, sub);
+                    stk.set(k, w, false);
+                    stk.push(p, false);
+                    k += 1;
+                    w = self.child_or_nil(p, 0);
+                    if w == NIL {
+                        break;
+                    }
+                }
+
+                let mut wl = self.child_or_nil(w, 0);
+                let wr = self.child_or_nil(w, 1);
+                if self.is_black_node(wl) && self.is_black_node(wr) {
+                    // Case 2: both of w's children are black
+                    self.n_mut(w).set_red();
+                    x = p;
+                    stk.pop();
+                } else {
+                    if self.is_black_node(wl) {
+                        // Case 3: w's left child is black, right child is red
+                        if wr != NIL {
+                            self.n_mut(wr).set_black();
+                        }
+                        self.n_mut(w).set_red();
+                        let new_w = self.rotate_left(w);
+                        self.n_mut(p).set_child(0, new_w);
+                        w = new_w;
+                        wl = self.child_or_nil(w, 0);
+                    }
+                    // Case 4: w's left child is red
+                    let p_red = self.n(p).is_red();
+                    self.set_color(w, p_red);
+                    self.n_mut(p).set_black();
+                    if wl != NIL {
+                        self.n_mut(wl).set_black();
+                    }
+                    let sub = self.rotate_right(p);
+                    self.replace_at_depth(stk, k, sub);
+                    x = self.root;
+                    break;
+                }
+            }
+        }
+        if x != NIL {
+            self.n_mut(x).set_black();
+        }
+        if self.root != NIL {
+            self.n_mut(self.root).set_black();
+        }
     }
 
     // -- lower_bound / upper_bound --
@@ -670,7 +839,7 @@ impl<K: Ord> VecTrbSet<K> {
             return false;
         }
         let target = stk.idx(stk.len - 1);
-        self.core.remove_idx(target, &stk);
+        self.core.remove_idx(target, stk);
         true
     }
 
@@ -806,7 +975,7 @@ impl<K: Ord, V> VecTrbMap<K, V> {
             return None;
         }
         let target = stk.idx(stk.len - 1);
-        Some(self.core.remove_idx(target, &stk).1)
+        Some(self.core.remove_idx(target, stk).1)
     }
 
     pub fn contains_key(&self, key: &K) -> bool {
@@ -862,6 +1031,56 @@ impl<'a, K, V> Iterator for MapIter<'a, K, V> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Recursively verifies Red-Black tree invariants on `Core<T>`:
+    /// 1. Root is BLACK.
+    /// 2. No RED node has a RED child.
+    /// 3. All root-to-leaf paths have identical black-height.
+    ///
+    /// Returns `(max_height, black_height, node_count)`.
+    fn verify_rb_tree<T>(core: &Core<T>) -> (usize, usize, usize) {
+        fn walk<T>(core: &Core<T>, idx: u32) -> (usize, usize, usize) {
+            if idx == NIL {
+                return (0, 1, 0);
+            }
+            let nd = core.n(idx);
+            assert!(nd.is_used(), "active tree node {idx} must be marked used");
+            let is_red = nd.is_red();
+            let left = core.child_or_nil(idx, 0);
+            let right = core.child_or_nil(idx, 1);
+            if is_red {
+                assert!(
+                    core.is_black_node(left),
+                    "red node {idx} has red left child {left}"
+                );
+                assert!(
+                    core.is_black_node(right),
+                    "red node {idx} has red right child {right}"
+                );
+            }
+            let (lh, lbh, lc) = walk(core, left);
+            let (rh, rbh, rc) = walk(core, right);
+            assert_eq!(
+                lbh, rbh,
+                "black-height mismatch at node {idx}: left={lbh}, right={rbh}"
+            );
+            let bh = lbh + usize::from(!is_red);
+            (1 + lh.max(rh), bh, 1 + lc + rc)
+        }
+
+        if core.root == NIL {
+            assert_eq!(core.count, 0);
+            return (0, 1, 0);
+        }
+        assert!(
+            core.n(core.root).is_black(),
+            "root {} must be black",
+            core.root
+        );
+        let (h, bh, count) = walk(core, core.root);
+        assert_eq!(count, core.count, "reachable node count must match core.count");
+        (h, bh, count)
+    }
 
     #[test]
     fn test_set_basic_insert_contains() {
@@ -1075,8 +1294,6 @@ mod tests {
 
     #[test]
     fn test_c6_13_vec_trb_deep_interleaved_insert_remove() {
-        // Interleaved insertions and deletions can push path depth past 64
-        // because remove performs a BST splice without red-black rebalancing.
         let mut s = VecTrbSet::new();
         for step in 0..100i32 {
             let a = step * 2;
@@ -1084,10 +1301,67 @@ mod tests {
             s.insert(a);
             s.insert(b);
             assert!(s.remove(&a));
+            verify_rb_tree(&s.core);
         }
         assert_eq!(s.len(), 100);
         for step in 0..100i32 {
             assert!(s.contains(&(step * 2 + 1)));
         }
+    }
+
+    #[test]
+    fn test_s18_r3_vec_trb_remove_rebalances_and_maintains_log_height() {
+        // 1. Interleaved insert (2k, 2k+1) and remove (2k) up to n = 16,384 keys.
+        // Without Red-Black deletion rebalancing, this degenerates into a linear chain
+        // of height 16,384 (25.8 us per lookup). With RB deletion rebalancing, height <= 28.
+        let n = 16_384i32;
+        let mut s = VecTrbSet::new();
+        for step in 0..n {
+            let a = step * 2;
+            let b = step * 2 + 1;
+            assert!(s.insert(a));
+            assert!(s.insert(b));
+            assert!(s.remove(&a));
+        }
+        assert_eq!(s.len(), n as usize);
+        let (height, _bh, count) = verify_rb_tree(&s.core);
+        assert_eq!(count, n as usize);
+        // Theoretical Red-Black height bound: h <= 2 * log2(n + 1) = 2 * 14 = 28
+        assert!(
+            height <= 28,
+            "tree height {height} exceeded Red-Black bound 28 for n={n}"
+        );
+
+        let t0 = std::time::Instant::now();
+        for step in 0..n {
+            assert!(s.contains(&(step * 2 + 1)));
+        }
+        let ns_per_lookup = t0.elapsed().as_nanos() as f64 / n as f64;
+        eprintln!(
+            "[S18-R3] VecTrb 16k keys after interleaved remove: height={height}, lookup={ns_per_lookup:.1} ns/op"
+        );
+
+        // Verify in-order thread links match expected odd integers
+        let collected: Vec<i32> = s.iter().copied().collect();
+        assert_eq!(collected.len(), n as usize);
+        for (i, &val) in collected.iter().enumerate() {
+            assert_eq!(val, (i as i32) * 2 + 1);
+        }
+
+        // 2. Delete all remaining elements in pseudo-random order, verifying RB invariants at checkpoints
+        let mut remaining = collected;
+        let mut stride = 0usize;
+        while !remaining.is_empty() {
+            stride = (stride + 997) % remaining.len();
+            let k = remaining.swap_remove(stride);
+            assert!(s.remove(&k));
+            if remaining.len().is_multiple_of(512) || remaining.len() <= 32 {
+                let (h, _, c) = verify_rb_tree(&s.core);
+                assert_eq!(c, remaining.len());
+                let max_h = 2 * ((c + 1).ilog2() as usize + 1);
+                assert!(h <= max_h, "height {h} > {max_h} at size {c}");
+            }
+        }
+        assert!(s.is_empty());
     }
 }
