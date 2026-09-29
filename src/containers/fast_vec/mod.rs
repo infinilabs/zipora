@@ -748,28 +748,60 @@ impl<T> FastVec<T> {
         I: IntoIterator<Item = T>,
         I::IntoIter: ExactSizeIterator,
     {
-        let iter = iter.into_iter();
+        let mut iter = iter.into_iter();
         let additional = iter.len();
         self.reserve(additional)?;
 
-        // Bump len after each write so that if iter.next() panics, the items
-        // already written are dropped during unwinding instead of leaking.
-        // Do not trust ExactSizeIterator::len() for memory safety (it is a safe trait).
-        for item in iter {
-            if self.len >= self.cap {
-                let next_cap = self
-                    .len
-                    .checked_add(1)
-                    .ok_or_else(|| ZiporaError::out_of_memory(usize::MAX))?;
-                self.ensure_capacity(next_cap)?;
+        struct SetLenOnDrop<'a> {
+            len: &'a mut usize,
+            local_len: usize,
+        }
+        impl Drop for SetLenOnDrop<'_> {
+            #[inline(always)]
+            fn drop(&mut self) {
+                *self.len = self.local_len;
             }
-            // SAFETY: self.len < self.cap and self.ptr is Some after the capacity check above.
-            unsafe {
-                ptr::write(self.as_mut_ptr().add(self.len), item);
-            }
-            self.len += 1;
         }
 
+        // Fast path: write up to `spare = self.cap - self.len` elements without
+        // per-item capacity branches or per-item `self.len` stores so LLVM can
+        // vectorize the loop. `SetLenOnDrop` commits `local_len` on completion
+        // or unwind (if `iter.next()` panics), and `.take(spare)` bounds the
+        // loop to the allocated capacity even if `ExactSizeIterator::len()` lied.
+        if self.len < self.cap {
+            let base_ptr = self.as_mut_ptr();
+            let spare = self.cap - self.len;
+            let mut guard = SetLenOnDrop {
+                local_len: self.len,
+                len: &mut self.len,
+            };
+            for item in (&mut iter).take(spare) {
+                // SAFETY: `guard.local_len` starts at `self.len` and increments at most
+                // `spare = self.cap - self.len` times, so `guard.local_len < self.cap`
+                // and `base_ptr` is non-null throughout.
+                unsafe {
+                    ptr::write(base_ptr.add(guard.local_len), item);
+                }
+                guard.local_len += 1;
+            }
+        }
+
+        // Cold path: only reached if a dishonest `ExactSizeIterator` yielded more
+        // elements than its reported `len()` (exceeding `self.cap`).
+        if let Some(first) = iter.next() {
+            self.extend_overflow_slow(first, iter)?;
+        }
+
+        Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn extend_overflow_slow<I: Iterator<Item = T>>(&mut self, first: T, iter: I) -> Result<()> {
+        self.push(first)?;
+        for item in iter {
+            self.push(item)?;
+        }
         Ok(())
     }
 

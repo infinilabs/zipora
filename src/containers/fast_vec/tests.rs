@@ -1865,3 +1865,66 @@ fn test_c6_align_4096_fast_vec() {
     }
 }
 
+#[test]
+fn test_s18_r4_container_drop_panicking_element_deallocates_buffer() {
+    use crate::containers::specialized::{AutoGrowCircularQueue, ValVec32};
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
+    struct Bomb(bool);
+    impl Drop for Bomb {
+        fn drop(&mut self) {
+            DROPS.fetch_add(1, Ordering::SeqCst);
+            if self.0 {
+                panic!("drop bomb inside container Drop");
+            }
+        }
+    }
+
+    // 1. FastVec::drop with panicking element must drop all elements and free backing buffer
+    DROPS.store(0, Ordering::SeqCst);
+    let r1 = catch_unwind(AssertUnwindSafe(|| {
+        let mut v = FastVec::new();
+        v.push(Bomb(false)).unwrap();
+        v.push(Bomb(true)).unwrap();
+        v.push(Bomb(false)).unwrap();
+        drop(v);
+    }));
+    assert!(r1.is_err());
+    assert_eq!(DROPS.load(Ordering::SeqCst), 3);
+
+    // 2. ValVec32::drop with panicking element must drop all elements and free backing buffer
+    DROPS.store(0, Ordering::SeqCst);
+    let r2 = catch_unwind(AssertUnwindSafe(|| {
+        let mut v = ValVec32::new();
+        v.push(Bomb(false)).unwrap();
+        v.push(Bomb(true)).unwrap();
+        v.push(Bomb(false)).unwrap();
+        drop(v);
+    }));
+    assert!(r2.is_err());
+    assert_eq!(DROPS.load(Ordering::SeqCst), 3);
+
+    // 3. AutoGrowCircularQueue::drop (wrapped head >= tail) with panicking element
+    // must drop both segments and free backing buffer
+    DROPS.store(0, Ordering::SeqCst);
+    let r3 = catch_unwind(AssertUnwindSafe(|| {
+        let mut q = AutoGrowCircularQueue::with_capacity(4);
+        q.push_back(Bomb(false)).unwrap();
+        q.push_back(Bomb(false)).unwrap();
+        let _ = q.pop_front();
+        let _ = q.pop_front();
+        // Now head == 2, tail == 2; push 4 elements so queue wraps around (head=2, tail=2, len=4)
+        q.push_back(Bomb(false)).unwrap();
+        q.push_back(Bomb(true)).unwrap();
+        q.push_back(Bomb(false)).unwrap();
+        q.push_back(Bomb(false)).unwrap();
+        drop(q);
+    }));
+    assert!(r3.is_err());
+    // 2 popped + 4 dropped on unwind = 6 total drops
+    assert_eq!(DROPS.load(Ordering::SeqCst), 6);
+}
+
+

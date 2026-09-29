@@ -271,12 +271,150 @@ impl<const N: usize> FixedLenStrVec<N> {
 
     #[cfg(feature = "simd")]
     fn find_exact_simd(&self, needle: &str) -> Option<usize> {
-        self.find_exact_fallback(needle)
+        #[cfg(target_arch = "x86_64")]
+        {
+            use std::arch::x86_64::*;
+
+            let needle_bytes = needle.as_bytes();
+            let needle_len = needle_bytes.len();
+            if needle_len < 16 {
+                return self.find_exact_fallback(needle);
+            }
+            let count = self.len.min(self.indices.len());
+            let arena_len = self.string_arena.len();
+            let arena_ptr = self.string_arena.as_ptr();
+            let indices_ptr = self.indices.as_ptr();
+
+            // SAFETY: needle_len >= 16 checked above, and SSE2 is baseline on x86_64.
+            let needle_head = unsafe { _mm_loadu_si128(needle_bytes.as_ptr() as *const __m128i) };
+            // SAFETY: SSE2 is baseline on x86_64.
+            let target_len_v = unsafe { _mm_set1_epi32(needle_len as i32) };
+
+            let mut i = 0;
+            while i + 4 <= count {
+                // SAFETY: i + 4 <= count <= self.indices.len(), so reading 4 u32s (16 bytes) is in-bounds.
+                let mut mask = unsafe {
+                    let idx_v = _mm_loadu_si128(indices_ptr.add(i) as *const __m128i);
+                    let lengths = _mm_srli_epi32(idx_v, 24);
+                    let eq = _mm_cmpeq_epi32(lengths, target_len_v);
+                    _mm_movemask_ps(_mm_castsi128_ps(eq)) as u32
+                };
+
+                while mask != 0 {
+                    let lane = mask.trailing_zeros() as usize;
+                    mask &= mask - 1;
+                    let idx = i + lane;
+                    let packed = self.indices[idx];
+                    let offset = (packed & 0x00FFFFFF) as usize;
+                    if let Some(end) = offset.checked_add(needle_len)
+                        && end <= arena_len
+                    {
+                        // SAFETY: offset + needle_len <= arena_len and needle_len >= 16, so reading 16 bytes at offset is in-bounds.
+                        let head_eq = unsafe {
+                            let cand_head = _mm_loadu_si128(arena_ptr.add(offset) as *const __m128i);
+                            _mm_movemask_epi8(_mm_cmpeq_epi8(cand_head, needle_head)) == 0xFFFF
+                        };
+                        if head_eq && self.string_arena[offset + 16..end] == needle_bytes[16..] {
+                            return Some(idx);
+                        }
+                    }
+                }
+                i += 4;
+            }
+
+            while i < count {
+                let packed = self.indices[i];
+                let length = (packed >> 24) as usize;
+                if length == needle_len
+                    && let Some(s) = self.get(i)
+                    && s == needle
+                {
+                    return Some(i);
+                }
+                i += 1;
+            }
+            None
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            self.find_exact_fallback(needle)
+        }
     }
 
     #[cfg(feature = "simd")]
     fn count_prefix_simd(&self, prefix: &str) -> usize {
-        self.count_prefix_fallback(prefix)
+        #[cfg(target_arch = "x86_64")]
+        {
+            use std::arch::x86_64::*;
+
+            let prefix_bytes = prefix.as_bytes();
+            let prefix_len = prefix_bytes.len();
+            if prefix_len < 8 {
+                return self.count_prefix_fallback(prefix);
+            }
+            let total = self.len.min(self.indices.len());
+            let arena_len = self.string_arena.len();
+            let arena_ptr = self.string_arena.as_ptr();
+            let indices_ptr = self.indices.as_ptr();
+
+            // SAFETY: prefix_len >= 8 checked above.
+            let prefix_head8 =
+                unsafe { std::ptr::read_unaligned(prefix_bytes.as_ptr() as *const u64) };
+            // SAFETY: SSE2 is baseline on x86_64.
+            let min_len_minus_1 = unsafe { _mm_set1_epi32((prefix_len - 1) as i32) };
+
+            let mut matches = 0usize;
+            let mut i = 0;
+            while i + 4 <= total {
+                // SAFETY: i + 4 <= total <= self.indices.len(), so reading 4 u32s (16 bytes) is in-bounds.
+                let mut mask = unsafe {
+                    let idx_v = _mm_loadu_si128(indices_ptr.add(i) as *const __m128i);
+                    let lengths = _mm_srli_epi32(idx_v, 24);
+                    let ge = _mm_cmpgt_epi32(lengths, min_len_minus_1);
+                    _mm_movemask_ps(_mm_castsi128_ps(ge)) as u32
+                };
+
+                while mask != 0 {
+                    let lane = mask.trailing_zeros() as usize;
+                    mask &= mask - 1;
+                    let idx = i + lane;
+                    let packed = self.indices[idx];
+                    let offset = (packed & 0x00FFFFFF) as usize;
+                    let length = (packed >> 24) as usize;
+                    if let Some(end) = offset.checked_add(length)
+                        && end <= arena_len
+                    {
+                        // SAFETY: length >= prefix_len >= 8 and offset + length <= arena_len, so reading 8 bytes at offset is in-bounds.
+                        let cand_head8 =
+                            unsafe { std::ptr::read_unaligned(arena_ptr.add(offset) as *const u64) };
+                        if cand_head8 == prefix_head8
+                            && self.string_arena[offset + 8..offset + prefix_len]
+                                == prefix_bytes[8..]
+                        {
+                            matches += 1;
+                        }
+                    }
+                }
+                i += 4;
+            }
+
+            while i < total {
+                let packed = self.indices[i];
+                let length = (packed >> 24) as usize;
+                if length >= prefix_len
+                    && let Some(s) = self.get(i)
+                    && s.starts_with(prefix)
+                {
+                    matches += 1;
+                }
+                i += 1;
+            }
+            matches
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            self.count_prefix_fallback(prefix)
+        }
     }
 
     /// Get accurate memory usage information for benchmarking
@@ -450,4 +588,33 @@ mod tests {
         assert_eq!(vec.count_prefix("ban"), 1);
         assert_eq!(vec.count_prefix("z"), 0);
     }
+
+    #[test]
+    fn test_s18_r6_find_exact_simd_and_count_prefix_simd() {
+        let mut vec: FixedStr32Vec = FixedLenStrVec::new();
+        for i in 0..19usize {
+            let s = if i % 3 == 0 {
+                format!("alpha_prefix_{i:010}") // 23 bytes (>= 16)
+            } else if i % 3 == 1 {
+                format!("alpha_prefix_short_{i:02}") // 21 bytes (>= 16)
+            } else {
+                format!("beta_other_{i:012}") // 23 bytes (>= 16)
+            };
+            vec.push(&s).unwrap();
+        }
+
+        // Exact matches across 4-wide SIMD batches and scalar tail (16..19)
+        assert_eq!(vec.find_exact("alpha_prefix_0000000000"), Some(0));
+        assert_eq!(vec.find_exact("alpha_prefix_0000000009"), Some(9));
+        assert_eq!(vec.find_exact("alpha_prefix_0000000018"), Some(18));
+        // Same 16-byte head ("alpha_prefix_000"), different tail -> must not match
+        assert_eq!(vec.find_exact("alpha_prefix_0000000099"), None);
+
+        // Prefix counts with prefix_len >= 8 ("alpha_prefix_" is 13 bytes)
+        assert_eq!(vec.count_prefix("alpha_prefix_"), 13);
+        assert_eq!(vec.count_prefix("alpha_prefix_short_"), 6);
+        assert_eq!(vec.count_prefix("beta_other_"), 6);
+        assert_eq!(vec.count_prefix("nonexistent_prefix"), 0);
+    }
 }
+

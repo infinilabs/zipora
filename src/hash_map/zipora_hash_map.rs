@@ -466,6 +466,25 @@ where
         }
     }
 
+    /// Iterate over key-value pairs with mutable value references
+    pub fn iter_mut(&mut self) -> ZiporaHashMapIterMut<'_, K, V> {
+        ZiporaHashMapIterMut::new(&mut self.storage)
+    }
+
+    /// Iterate over keys
+    pub fn keys(&self) -> impl Iterator<Item = &K> {
+        self.iter().map(|(k, _)| k)
+    }
+
+    /// Iterate over values
+    pub fn values(&self) -> impl Iterator<Item = &V> {
+        self.iter().map(|(_, v)| v)
+    }
+
+    /// Iterate over mutable values
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
+        self.iter_mut().map(|(_, v)| v)
+    }
 }
 
 impl<K, V, S> Default for ZiporaHashMap<K, V, S>
@@ -583,14 +602,11 @@ where
                 while self.index < entries.len() {
                     let entry = &entries[self.index];
                     self.index += 1;
-                    if entry.hash != 0 && entry.hash != u64::MAX {
-                        return Some((
-                            entry.key.as_ref().expect("occupied entry must have key"),
-                            entry
-                                .value
-                                .as_ref()
-                                .expect("occupied entry must have value"),
-                        ));
+                    if entry.hash != 0
+                        && entry.hash != u64::MAX
+                        && let (Some(k), Some(v)) = (&entry.key, &entry.value)
+                    {
+                        return Some((k, v));
                     }
                 }
                 None
@@ -619,14 +635,11 @@ where
                         }
                         let entry = &entries[fb_idx];
                         self.index += 1;
-                        if entry.hash != 0 && entry.hash != u64::MAX {
-                            return Some((
-                                entry.key.as_ref().expect("occupied entry must have key"),
-                                entry
-                                    .value
-                                    .as_ref()
-                                    .expect("occupied entry must have value"),
-                            ));
+                        if entry.hash != 0
+                            && entry.hash != u64::MAX
+                            && let (Some(k), Some(v)) = (&entry.key, &entry.value)
+                        {
+                            return Some((k, v));
                         }
                     }
                 }
@@ -636,6 +649,146 @@ where
                 unreachable!("unimplemented strategies are rejected at construction")
             }
         }
+    }
+}
+
+/// Mutable iterator for [`ZiporaHashMap`] key-value pairs (`(&'a K, &'a mut V)`).
+pub struct ZiporaHashMapIterMut<'a, K, V>
+where
+    K: Clone,
+    V: Clone,
+{
+    inner: IterMutInner<'a, K, V>,
+}
+
+enum IterMutInner<'a, K, V>
+where
+    K: Clone,
+    V: Clone,
+{
+    Standard(std::slice::IterMut<'a, crate::hash_map::storage::HashEntry<K, V>>),
+    SmallInline {
+        inline_occupied: u16,
+        inline_slice: &'a mut [std::mem::MaybeUninit<(K, V)>],
+        inline_slot: usize,
+        fallback: Option<std::slice::IterMut<'a, crate::hash_map::storage::HashEntry<K, V>>>,
+    },
+}
+
+impl<'a, K, V> ZiporaHashMapIterMut<'a, K, V>
+where
+    K: Clone,
+    V: Clone,
+{
+    fn new(storage: &'a mut HashMapStorage<K, V>) -> Self {
+        let inner = match storage {
+            HashMapStorage::Standard { entries, .. } => {
+                IterMutInner::Standard(entries.as_mut_slice().iter_mut())
+            }
+            HashMapStorage::SmallInline {
+                inline_data,
+                fallback,
+                ..
+            } => {
+                let fb_iter = fallback.as_deref_mut().and_then(|fb| match fb {
+                    HashMapStorage::Standard { entries, .. } => {
+                        Some(entries.as_mut_slice().iter_mut())
+                    }
+                    _ => None,
+                });
+                IterMutInner::SmallInline {
+                    inline_occupied: inline_data.occupied,
+                    inline_slice: &mut inline_data._data[..],
+                    inline_slot: 0,
+                    fallback: fb_iter,
+                }
+            }
+            HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
+                unreachable!("unimplemented strategies are rejected at construction")
+            }
+        };
+        Self { inner }
+    }
+}
+
+impl<'a, K, V> Iterator for ZiporaHashMapIterMut<'a, K, V>
+where
+    K: Clone,
+    V: Clone,
+{
+    type Item = (&'a K, &'a mut V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match &mut self.inner {
+            IterMutInner::Standard(iter) => {
+                for entry in iter.by_ref() {
+                    if entry.hash != 0
+                        && entry.hash != u64::MAX
+                        && let (Some(k), Some(v)) = (&entry.key, &mut entry.value)
+                    {
+                        return Some((k, v));
+                    }
+                }
+                None
+            }
+            IterMutInner::SmallInline {
+                inline_occupied,
+                inline_slice,
+                inline_slot,
+                fallback,
+            } => {
+                while let Some((first, rest)) = std::mem::take(inline_slice).split_first_mut() {
+                    let slot = *inline_slot;
+                    *inline_slot += 1;
+                    *inline_slice = rest;
+                    if (*inline_occupied >> slot) & 1 == 1 {
+                        // SAFETY: Bit `slot` is set in `inline_occupied`, so `first` is initialized,
+                        // and `split_first_mut` yields each slot's `'a` mutable borrow at most once.
+                        let (k, v) = unsafe { first.assume_init_mut() };
+                        return Some((&*k, v));
+                    }
+                }
+                if let Some(fb_iter) = fallback {
+                    for entry in fb_iter.by_ref() {
+                        if entry.hash != 0
+                            && entry.hash != u64::MAX
+                            && let (Some(k), Some(v)) = (&entry.key, &mut entry.value)
+                        {
+                            return Some((k, v));
+                        }
+                    }
+                }
+                None
+            }
+        }
+    }
+}
+
+impl<'a, K, V, S> IntoIterator for &'a ZiporaHashMap<K, V, S>
+where
+    K: Hash + Eq + Clone,
+    V: Clone,
+    S: BuildHasher,
+{
+    type Item = (&'a K, &'a V);
+    type IntoIter = ZiporaHashMapIterator<'a, K, V>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<'a, K, V, S> IntoIterator for &'a mut ZiporaHashMap<K, V, S>
+where
+    K: Hash + Eq + Clone,
+    V: Clone,
+    S: BuildHasher,
+{
+    type Item = (&'a K, &'a mut V);
+    type IntoIter = ZiporaHashMapIterMut<'a, K, V>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
     }
 }
 

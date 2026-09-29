@@ -200,7 +200,11 @@ impl ClusteredEliasFano {
             return Self::empty();
         }
         let universe = values[values.len() - 1] as u128 + 1;
-        Self::from_sorted_impl(values.len(), universe, |i| values[i] as u64)
+        Self::from_sorted_impl(values.len(), universe, #[inline(always)] |i| {
+            debug_assert!(i < values.len()); // PROVEN: from_sorted_impl only queries indices in 0..n where n == values.len()
+            // SAFETY: `from_sorted_impl` is called with `n = values.len()` and only indexes `0..n`.
+            unsafe { *values.get_unchecked(i) as u64 }
+        })
     }
 
     /// Build from sorted u64 values.
@@ -211,7 +215,11 @@ impl ClusteredEliasFano {
         // u128 exclusive upper bound so a value of u64::MAX is representable
         // (u64::MAX + 1) and next_geq(u64::MAX) still finds it.
         let universe = values[values.len() - 1] as u128 + 1;
-        Self::from_sorted_impl(values.len(), universe, |i| values[i])
+        Self::from_sorted_impl(values.len(), universe, #[inline(always)] |i| {
+            debug_assert!(i < values.len()); // PROVEN: from_sorted_impl only queries indices in 0..n where n == values.len()
+            // SAFETY: `from_sorted_impl` is called with `n = values.len()` and only indexes `0..n`.
+            unsafe { *values.get_unchecked(i) }
+        })
     }
 
     fn empty() -> Self {
@@ -240,26 +248,23 @@ impl ClusteredEliasFano {
             let end = (start + CEF_CHUNK_SIZE).min(n);
             let count = end - start;
             let min_val = get_val(start);
-            assert!(
-                min_val >= prev_chunk_max,
-                "ClusteredEliasFano::from_sorted requires non-decreasing input"
-            );
+            let max_val = get_val(end - 1);
             // Run and Bitmap containers are set-based and cannot preserve
             // duplicate values; only strictly increasing chunks can use them.
+            // Compute both non_decreasing and strictly_increasing in a single
+            // branchless, vectorizable pass without per-element panic branches.
+            let mut non_decreasing = min_val >= prev_chunk_max;
             let mut strictly_increasing = true;
-            let mut prev = min_val;
             for i in (start + 1)..end {
+                let prev = get_val(i - 1);
                 let curr = get_val(i);
-                assert!(
-                    curr >= prev,
-                    "ClusteredEliasFano::from_sorted requires non-decreasing input"
-                );
-                if curr == prev {
-                    strictly_increasing = false;
-                }
-                prev = curr;
+                non_decreasing &= curr >= prev;
+                strictly_increasing &= curr > prev;
             }
-            let max_val = prev;
+            assert!(
+                non_decreasing,
+                "ClusteredEliasFano::from_sorted requires non-decreasing input"
+            );
             prev_chunk_max = max_val;
             // saturating: guards the pathological case where the chunk spans up to
             // u64::MAX (e.g. from_sorted_u64([0, u64::MAX])). Without it this wraps

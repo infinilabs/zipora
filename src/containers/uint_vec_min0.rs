@@ -148,11 +148,11 @@ impl UintVecMin0 {
         Self::compute_mem_size(bits, num)
     }
 
-    /// Get value at index (FAST PATH - max 58 bits)
+    /// Get value at index (fast single-word path for <= 58 bits, wide path for 59..=64 bits)
     ///
     /// # Panics
     ///
-    /// Panics if index >= size or bits > 58
+    /// Panics if index >= size or bits > 64
     ///
     /// # Performance
     ///
@@ -263,31 +263,22 @@ impl UintVecMin0 {
                 unsafe { std::ptr::read_unaligned(data.as_ptr().add(byte_idx) as *const usize) };
             Ok((val >> bit_offset) & mask)
         } else {
-            let bytes_needed = (bit_offset + bits).div_ceil(8);
+            // bit_offset <= 7 and bits <= 64 => bit_offset + bits <= 71, so at most 9 bytes.
             let required_size = byte_idx
-                .checked_add(bytes_needed)
+                .checked_add(9)
                 .ok_or_else(|| ZiporaError::out_of_bounds(idx, data.len()))?;
             if required_size > data.len() {
                 return Err(ZiporaError::out_of_bounds(idx, data.len()));
             }
-            let mut result = 0usize;
-            let mut bits_read = 0usize;
-            let mut curr_byte = byte_idx;
-            let mut curr_bit_offset = bit_offset;
-            while bits_read < bits {
-                let bits_in_byte = (8 - curr_bit_offset).min(bits - bits_read);
-                let mask_unshifted = if bits_in_byte == 8 {
-                    0xFFu8
-                } else {
-                    (1u8 << bits_in_byte) - 1
-                };
-                let extracted = (data[curr_byte] >> curr_bit_offset) & mask_unshifted;
-                result |= (extracted as usize) << bits_read;
-                bits_read += bits_in_byte;
-                curr_byte += 1;
-                curr_bit_offset = 0;
-            }
-            Ok(result & mask)
+            // SAFETY: Bounds check above ensures data[byte_idx..byte_idx+9] is valid.
+            let lo = unsafe {
+                u64::from_le(std::ptr::read_unaligned(
+                    data.as_ptr().add(byte_idx) as *const u64
+                ))
+            };
+            let hi = data[byte_idx + 8] as u128;
+            let combined = (lo as u128) | (hi << 64);
+            Ok(((combined >> bit_offset) as usize) & mask)
         }
     }
 
@@ -320,8 +311,10 @@ impl UintVecMin0 {
         (val >> (bit_idx % 8)) & self.mask
     }
 
-    /// Read `bits` bits starting at `bit_pos` (handles widths up to 64 bits, including 9-byte straddles).
-    #[inline]
+    /// Read `bits` bits starting at `bit_pos` (handles widths 59..=64 bits, including 9-byte straddles).
+    /// Marked `#[cold] #[inline(never)]` so the 59..=64-bit path never bloats the `<= 58`-bit hot path.
+    #[cold]
+    #[inline(never)]
     fn get_uint_bits(&self, bit_pos: usize, bits: usize) -> usize {
         if bits == 0 {
             return 0;
@@ -339,27 +332,16 @@ impl UintVecMin0 {
             };
             (val >> bit_offset) & self.mask
         } else {
-            let mut result = 0usize;
-            let mut bits_read = 0usize;
-            let mut curr_byte = byte_idx;
-            let mut curr_bit_offset = bit_offset;
-
-            while bits_read < bits {
-                let bits_in_byte = (8 - curr_bit_offset).min(bits - bits_read);
-                let mask_unshifted = if bits_in_byte == 8 {
-                    0xFFu8
-                } else {
-                    (1u8 << bits_in_byte) - 1
-                };
-                let extracted = (self.data[curr_byte] >> curr_bit_offset) & mask_unshifted;
-                result |= (extracted as usize) << bits_read;
-
-                bits_read += bits_in_byte;
-                curr_byte += 1;
-                curr_bit_offset = 0;
-            }
-
-            result & self.mask
+            debug_assert!(byte_idx + 9 <= self.data.len()); // PROVEN: bit_offset <= 7 and bits <= 64 imply byte_idx + 9 <= ceil(bits*size/8)+7
+            // SAFETY: compute_mem_size guarantees data[byte_idx..byte_idx+9] is in-bounds and initialized.
+            let lo = unsafe {
+                u64::from_le(std::ptr::read_unaligned(
+                    self.data.as_ptr().add(byte_idx) as *const u64
+                ))
+            };
+            let hi = self.data[byte_idx + 8] as u128;
+            let combined = (lo as u128) | (hi << 64);
+            ((combined >> bit_offset) as usize) & self.mask
         }
     }
 
@@ -377,6 +359,7 @@ impl UintVecMin0 {
     }
 
     /// Set value using bit manipulation (internal, wire format)
+    #[inline]
     fn set_wire(&mut self, idx: usize, val: usize) {
         let bits = self.bits;
         let bit_idx = bits * idx;
@@ -388,6 +371,7 @@ impl UintVecMin0 {
     /// # Algorithm
     ///
     /// Sets `bits` bits starting at `bit_pos` to `val` using unaligned writes
+    #[inline]
     fn set_uint_bits(&mut self, bit_pos: usize, bits: usize, val: usize) {
         if bits == 0 {
             return;
@@ -416,29 +400,29 @@ impl UintVecMin0 {
                 std::ptr::write_unaligned(ptr, new_val);
             }
         } else {
-            // Slow path: spans multiple u64s - use byte-by-byte
-            let mut remaining_bits = bits;
-            let mut remaining_val = val;
-            let mut curr_byte = byte_idx;
-            let mut curr_bit_offset = bit_offset;
+            self.set_uint_bits_wide(byte_idx, bit_offset, bits, val);
+        }
+    }
 
-            while remaining_bits > 0 {
-                let bits_in_byte = (8 - curr_bit_offset).min(remaining_bits);
-                let mask_unshifted = if bits_in_byte == 8 {
-                    0xFFu8
-                } else {
-                    (1u8 << bits_in_byte) - 1
-                };
-                let byte_mask = mask_unshifted << curr_bit_offset;
-                let byte_val = ((remaining_val as u8) & mask_unshifted) << curr_bit_offset;
-
-                self.data[curr_byte] = (self.data[curr_byte] & !byte_mask) | byte_val;
-
-                remaining_val >>= bits_in_byte;
-                remaining_bits -= bits_in_byte;
-                curr_byte += 1;
-                curr_bit_offset = 0;
-            }
+    #[cold]
+    #[inline(never)]
+    fn set_uint_bits_wide(&mut self, byte_idx: usize, bit_offset: usize, bits: usize, val: usize) {
+        debug_assert!(byte_idx + 9 <= self.data.len()); // PROVEN: bit_offset <= 7 and bits <= 64 imply byte_idx + 9 <= ceil(bits*size/8)+7
+        let mask128 = if bits == 64 {
+            u64::MAX as u128
+        } else {
+            (1u128 << bits) - 1
+        };
+        let shifted_mask = mask128 << bit_offset;
+        let shifted_val = ((val as u64 as u128) & mask128) << bit_offset;
+        // SAFETY: compute_mem_size guarantees data[byte_idx..byte_idx+9] is in-bounds and initialized.
+        unsafe {
+            let ptr = self.data.as_mut_ptr().add(byte_idx) as *mut u64;
+            let lo = u64::from_le(std::ptr::read_unaligned(ptr)) as u128;
+            let hi = (*self.data.as_ptr().add(byte_idx + 8) as u128) << 64;
+            let updated = ((lo | hi) & !shifted_mask) | shifted_val;
+            std::ptr::write_unaligned(ptr, (updated as u64).to_le());
+            *self.data.as_mut_ptr().add(byte_idx + 8) = (updated >> 64) as u8;
         }
     }
 

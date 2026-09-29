@@ -978,27 +978,52 @@ impl<T> AutoGrowCircularQueue<T> {
     pub fn clear(&mut self) {
         // Fast bulk destruction instead of individual pops
         if self.len > 0 {
-            // SAFETY: head/tail indices valid, buffer contains len initialized elements
-            unsafe {
-                if self.head < self.tail {
-                    // Single contiguous region
-                    for i in self.head..self.tail {
-                        ptr::drop_in_place(self.buffer.add(i));
-                    }
-                } else {
-                    // Two regions
-                    for i in self.head..self.capacity {
-                        ptr::drop_in_place(self.buffer.add(i));
-                    }
-                    for i in 0..self.tail {
-                        ptr::drop_in_place(self.buffer.add(i));
-                    }
-                }
-            }
-
+            let head = self.head;
+            let tail = self.tail;
+            let cap = self.capacity;
             self.head = 0;
             self.tail = 0;
             self.len = 0;
+
+            // SAFETY: head/tail indices valid, buffer contains old len initialized elements.
+            // Resetting head/tail/len before drop_in_place prevents double-drop if an element's Drop panics.
+            unsafe {
+                if head < tail {
+                    // Single contiguous region
+                    ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
+                        self.buffer.add(head),
+                        tail - head,
+                    ));
+                } else {
+                    // Two regions: [head..cap) and [0..tail).
+                    // Ensure [0..tail) is dropped even if an element in [head..cap) panics.
+                    struct TailDropGuard<T> {
+                        buffer: *mut T,
+                        tail: usize,
+                    }
+                    impl<T> Drop for TailDropGuard<T> {
+                        fn drop(&mut self) {
+                            if self.tail > 0 {
+                                // SAFETY: [0..tail) contains initialized elements in the wrapped second segment
+                                unsafe {
+                                    ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
+                                        self.buffer,
+                                        self.tail,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    let _tail_guard = TailDropGuard {
+                        buffer: self.buffer,
+                        tail,
+                    };
+                    ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
+                        self.buffer.add(head),
+                        cap - head,
+                    ));
+                }
+            }
         }
     }
 
@@ -1177,14 +1202,24 @@ impl<T> Default for AutoGrowCircularQueue<T> {
 
 impl<T> Drop for AutoGrowCircularQueue<T> {
     fn drop(&mut self) {
-        // Clear all elements first (calls destructors)
-        self.clear();
-
-        // Deallocate raw memory buffer (elements already dropped via clear())
-        // SAFETY: buffer allocated with current_layout(); zero-size skipped inside
-        unsafe {
-            Self::deallocate_buffer(self.buffer, self.current_layout());
+        struct DeallocGuard<T> {
+            buffer: *mut T,
+            layout: Layout,
         }
+        impl<T> Drop for DeallocGuard<T> {
+            fn drop(&mut self) {
+                // SAFETY: buffer allocated with layout; zero-size skipped inside
+                unsafe {
+                    AutoGrowCircularQueue::<T>::deallocate_buffer(self.buffer, self.layout);
+                }
+            }
+        }
+        let _guard = DeallocGuard {
+            buffer: self.buffer,
+            layout: self.current_layout(),
+        };
+        // Clear all elements first (calls destructors); _guard frees buffer even on unwind
+        self.clear();
     }
 }
 

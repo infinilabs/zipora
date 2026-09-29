@@ -206,13 +206,9 @@ where
     where
         F: FnMut(&K, &mut V) -> bool,
     {
-        let mut updates = Vec::new();
         let mut keys_to_remove = Vec::new();
-        for (k, v) in self.inner.iter() {
-            let mut value_copy = v.clone();
-            if f(k, &mut value_copy) {
-                updates.push((k.clone(), value_copy));
-            } else {
+        for (k, v) in self.inner.iter_mut() {
+            if !f(k, v) {
                 keys_to_remove.push(k.clone());
             }
         }
@@ -220,14 +216,16 @@ where
         for key in keys_to_remove {
             self.inner.remove(&key);
         }
-        for (key, value) in updates {
-            let _ = self.inner.insert(key, value);
-        }
     }
 
     /// Get an iterator over key-value pairs
     pub fn iter(&self) -> ZiporaHashMapIterator<'_, K, V> {
         self.inner.iter()
+    }
+
+    /// Get a mutable iterator over key-value pairs
+    pub fn iter_mut(&mut self) -> crate::hash_map::ZiporaHashMapIterMut<'_, K, V> {
+        self.inner.iter_mut()
     }
 
     /// Get an iterator over keys
@@ -238,6 +236,11 @@ where
     /// Get an iterator over values
     pub fn values(&self) -> impl Iterator<Item = &V> {
         self.inner.iter().map(|(_, v)| v)
+    }
+
+    /// Get a mutable iterator over values
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
+        self.inner.iter_mut().map(|(_, v)| v)
     }
 
     /// Enable or disable automatic growth
@@ -421,6 +424,19 @@ where
 
     fn into_iter(self) -> Self::IntoIter {
         self.inner.iter()
+    }
+}
+
+impl<'a, K, V> IntoIterator for &'a mut EasyHashMap<K, V>
+where
+    K: Hash + Eq + Clone,
+    V: Clone,
+{
+    type Item = (&'a K, &'a mut V);
+    type IntoIter = crate::hash_map::ZiporaHashMapIterMut<'a, K, V>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.inner.iter_mut()
     }
 }
 
@@ -662,6 +678,21 @@ mod tests {
         // Test iter and IntoIterator
         assert_eq!(map.iter().count(), 3);
         assert_eq!((&map).into_iter().count(), 3);
+
+        // Test values_mut and iter_mut / (&mut map).into_iter() (D4 / S18-R6)
+        for v in map.values_mut() {
+            *v += 10;
+        }
+        assert_eq!(map.get(&"a"), Some(&11));
+        assert_eq!(map.get(&"b"), Some(&12));
+        assert_eq!(map.get(&"c"), Some(&13));
+
+        for (_k, v) in &mut map {
+            *v -= 10;
+        }
+        assert_eq!(map.get(&"a"), Some(&1));
+        assert_eq!(map.get(&"b"), Some(&2));
+        assert_eq!(map.get(&"c"), Some(&3));
 
         // Test retain in-place value mutation (C6.13)
         map.retain(|_k, v| {

@@ -978,16 +978,27 @@ impl<'a, T> IntoIterator for &'a mut ValVec32<T> {
 
 impl<T> Drop for ValVec32<T> {
     fn drop(&mut self) {
-        self.clear();
-
-        if self.capacity > 0 && mem::size_of::<T>() > 0 {
-            let layout = Layout::array::<T>(self.capacity as usize)
-                .expect("valid layout during drop");
-            // SAFETY: self.ptr is valid from alloc/realloc, layout matches allocation
-            unsafe {
-                std::alloc::dealloc(self.ptr.as_ptr() as *mut u8, layout);
+        struct DeallocGuard<T> {
+            ptr: NonNull<T>,
+            capacity: u32,
+        }
+        impl<T> Drop for DeallocGuard<T> {
+            fn drop(&mut self) {
+                if self.capacity > 0 && mem::size_of::<T>() > 0 {
+                    let layout = Layout::array::<T>(self.capacity as usize)
+                        .expect("valid layout during drop");
+                    // SAFETY: self.ptr is valid from alloc/realloc, layout matches allocation
+                    unsafe {
+                        std::alloc::dealloc(self.ptr.as_ptr() as *mut u8, layout);
+                    }
+                }
             }
         }
+        let _guard = DeallocGuard {
+            ptr: self.ptr,
+            capacity: self.capacity,
+        };
+        self.clear();
     }
 }
 

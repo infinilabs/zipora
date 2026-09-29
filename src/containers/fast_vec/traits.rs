@@ -18,21 +18,33 @@ impl<T> Default for FastVec<T> {
 
 impl<T> Drop for FastVec<T> {
     fn drop(&mut self) {
-        self.clear();
-        // ZST: ptr is dangling and nothing was allocated — dealloc with a
-        // zero-size Layout would be UB per the GlobalAlloc contract.
-        if let Some(ptr) = self.ptr
-            && self.cap > 0
-            && std::mem::size_of::<T>() > 0
-        {
-            // SAFETY: ptr and cap are valid from allocation, layout matches allocation layout
-            unsafe {
-                let layout = Layout::array::<T>(self.cap).expect(
-                    "Layout::array succeeded during allocation, must succeed during deallocation",
-                );
-                alloc::dealloc(ptr.as_ptr() as *mut u8, layout);
+        struct DeallocGuard<T> {
+            ptr: Option<NonNull<T>>,
+            cap: usize,
+        }
+        impl<T> Drop for DeallocGuard<T> {
+            fn drop(&mut self) {
+                // ZST: ptr is dangling and nothing was allocated — dealloc with a
+                // zero-size Layout would be UB per the GlobalAlloc contract.
+                if let Some(ptr) = self.ptr
+                    && self.cap > 0
+                    && std::mem::size_of::<T>() > 0
+                {
+                    // SAFETY: ptr and cap are valid from allocation, layout matches allocation layout
+                    unsafe {
+                        let layout = Layout::array::<T>(self.cap).expect(
+                            "Layout::array succeeded during allocation, must succeed during deallocation",
+                        );
+                        alloc::dealloc(ptr.as_ptr() as *mut u8, layout);
+                    }
+                }
             }
         }
+        let _guard = DeallocGuard {
+            ptr: self.ptr,
+            cap: self.cap,
+        };
+        self.clear();
     }
 }
 
@@ -62,20 +74,46 @@ impl<T> FromIterator<T> for FastVec<T> {
         let (lower, _) = iter.size_hint();
         let mut fv =
             Self::with_capacity(lower).expect("FastVec: allocation failed in FromIterator");
-        for item in iter {
-            fv.push(item).expect("FastVec: push failed in FromIterator");
-        }
+        <Self as Extend<T>>::extend(&mut fv, iter);
         fv
     }
 }
 
 impl<T> Extend<T> for FastVec<T> {
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
-        let iter = iter.into_iter();
+        let mut iter = iter.into_iter();
         let (lower, _) = iter.size_hint();
         if lower > 0 {
             let _ = self.reserve(lower);
         }
+
+        struct SetLenOnDrop<'a> {
+            len: &'a mut usize,
+            local_len: usize,
+        }
+        impl Drop for SetLenOnDrop<'_> {
+            #[inline(always)]
+            fn drop(&mut self) {
+                *self.len = self.local_len;
+            }
+        }
+
+        if self.len < self.cap {
+            let base_ptr = self.as_mut_ptr();
+            let spare = self.cap - self.len;
+            let mut guard = SetLenOnDrop {
+                local_len: self.len,
+                len: &mut self.len,
+            };
+            for item in (&mut iter).take(spare) {
+                // SAFETY: guard.local_len < self.cap holds for all `spare` iterations.
+                unsafe {
+                    ptr::write(base_ptr.add(guard.local_len), item);
+                }
+                guard.local_len += 1;
+            }
+        }
+
         for item in iter {
             let _ = self.push(item);
         }
