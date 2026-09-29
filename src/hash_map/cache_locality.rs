@@ -191,6 +191,10 @@ impl Prefetcher {
 }
 
 /// NUMA-aware memory allocator for hash tables
+///
+/// Allocations are not bound to a NUMA node: `alloc_on_node` uses the global
+/// allocator (`alloc_zeroed`) whatever `node` is, and `node` only selects the
+/// per-node statistics counter. Node detection reports a single node.
 pub struct NumaAllocator {
     /// Preferred NUMA node
     preferred_node: usize,
@@ -231,17 +235,22 @@ impl NumaAllocator {
 
     /// Allocate memory on preferred NUMA node
     ///
+    /// A zero-size `layout` allocates nothing and returns a dangling pointer
+    /// aligned to `layout.align()`.
+    ///
     /// # Safety
-    /// `layout` must have non-zero size and valid alignment; the returned
+    /// `layout` must have valid alignment; if `layout.size() > 0`, the returned
     /// pointer must later be freed with the same layout.
     pub unsafe fn alloc_on_node(&self, layout: Layout, node: usize) -> *mut u8 {
-        // SAFETY: layout must be valid (non-zero size, valid alignment)
-        // Caller must deallocate with the same layout
+        if layout.size() == 0 {
+            return std::ptr::without_provenance_mut(layout.align());
+        }
+        // SAFETY: `layout.size() > 0` is verified above and `Layout` guarantees valid alignment.
         unsafe {
             // In a real implementation, this would use numa_alloc_onnode
             // For now, use standard aligned allocation
             let ptr = alloc_zeroed(layout);
-            if !ptr.is_null() {
+            if !ptr.is_null() && !self.node_stats.is_empty() {
                 self.node_stats[node.min(self.node_stats.len() - 1)]
                     .fetch_add(layout.size() as u64, Ordering::Relaxed);
             }
@@ -251,26 +260,30 @@ impl NumaAllocator {
 
     /// Allocate cache-line aligned memory
     ///
+    /// Returns a null pointer if the allocation fails or if
+    /// `size_of::<T>() * count` overflows or is too large for a [`Layout`].
+    /// Both used to be caller preconditions: the multiplication panicked with
+    /// overflow checks and wrapped to a short allocation without them, and an
+    /// oversized `Layout` hit an `expect`. A zero-byte request (`count == 0`
+    /// or a zero-sized `T`) allocates nothing and returns a dangling pointer
+    /// aligned to `max(64, align_of::<T>())`.
+    ///
     /// # Safety
-    /// The caller must ensure `size_of::<T>() * count` does not overflow `isize`,
-    /// and must free the result via [`Self::dealloc`] with the same `count`.
+    /// The caller must free a non-null result via [`Self::dealloc`] with the
+    /// same `count`.
     pub unsafe fn alloc_cache_aligned<T>(&self, count: usize) -> *mut T {
-        // SAFETY: Layout cannot fail because CACHE_LINE_SIZE is power-of-2, caller responsible for count overflow check
-        unsafe {
-            // SAFETY: Layout cannot fail because:
-            // 1. size_of::<T>() * count may overflow but we're in unsafe context
-            // SAFETY: Layout::from_size_align() cannot fail because:
-            // 2. CACHE_LINE_SIZE (64) is always a valid power-of-2 alignment
-            // 3. align_of::<T>() is always a valid alignment
-            // Caller is responsible for ensuring count doesn't cause overflow
-            let layout = Layout::from_size_align(
-                size_of::<T>() * count,
-                CACHE_LINE_SIZE.max(align_of::<T>()),
-            )
-            .expect("Layout invariant violated: alignment is always valid power of 2");
-
-            self.alloc_on_node(layout, self.preferred_node) as *mut T
+        let align = CACHE_LINE_SIZE.max(align_of::<T>());
+        let Some(total_bytes) = size_of::<T>().checked_mul(count) else {
+            return std::ptr::null_mut();
+        };
+        if total_bytes == 0 {
+            return std::ptr::without_provenance_mut(align);
         }
+        let Ok(layout) = Layout::from_size_align(total_bytes, align) else {
+            return std::ptr::null_mut();
+        };
+        // SAFETY: `layout` has `total_bytes > 0` and valid power-of-two alignment.
+        unsafe { self.alloc_on_node(layout, self.preferred_node) as *mut T }
     }
 
     /// Free previously allocated memory
@@ -279,18 +292,22 @@ impl NumaAllocator {
     /// `ptr` must originate from [`Self::alloc_cache_aligned`] with the same
     /// `count`, and must not be used after this call.
     pub unsafe fn dealloc<T>(&self, ptr: *mut T, count: usize) {
-        // SAFETY: Caller must pass same count and layout used during allocation
+        if ptr.is_null() {
+            return;
+        }
+        let Some(total_bytes) = size_of::<T>().checked_mul(count) else {
+            return;
+        };
+        if total_bytes == 0 {
+            return;
+        }
+        let align = CACHE_LINE_SIZE.max(align_of::<T>());
+        let Ok(layout) = Layout::from_size_align(total_bytes, align) else {
+            return;
+        };
+        // SAFETY: Caller guarantees `ptr` was allocated with `alloc_cache_aligned::<T>(count)`
+        // and `total_bytes > 0` matches the allocation layout.
         unsafe {
-            // SAFETY: Layout::from_size_align() cannot fail because:
-            // 1. The same layout was used during allocation
-            // 2. CACHE_LINE_SIZE and align_of::<T>() are always valid alignments
-            // 3. Caller must pass the same count used during allocation
-            let layout = Layout::from_size_align(
-                size_of::<T>() * count,
-                CACHE_LINE_SIZE.max(align_of::<T>()),
-            )
-            .expect("Layout invariant violated: must match layout used during allocation");
-
             dealloc(ptr as *mut u8, layout);
         }
     }
@@ -360,7 +377,9 @@ impl<K, V> CacheLayoutOptimizer<K, V> {
     /// Calculate optimal bucket size for cache efficiency
     pub fn optimal_bucket_size(&self) -> usize {
         let entry_size = size_of::<(K, V)>() + size_of::<u32>(); // Entry + hash
-        let cache_line_capacity = CACHE_LINE_SIZE / entry_size;
+        // An entry larger than a cache line used to give a capacity of 0, so
+        // every level returned a bucket size of 0.
+        let cache_line_capacity = (CACHE_LINE_SIZE / entry_size).max(1);
 
         match self.target_cache_level {
             CacheLevel::L1 => {
@@ -396,6 +415,11 @@ impl<K, V> CacheLayoutOptimizer<K, V> {
 }
 
 /// Hot/Cold data separator for improved cache utilization
+///
+/// Elements are addressed by a global index: hot elements first, then cold
+/// ones. No public method inserts elements, so a separator built with
+/// [`HotColdSeparator::new`] stays empty: `access` returns `None` and
+/// `rebalance` has nothing to move.
 pub struct HotColdSeparator<T> {
     /// Hot data (frequently accessed)
     hot: Vec<CacheAligned<T>>,
@@ -404,38 +428,78 @@ pub struct HotColdSeparator<T> {
     /// Access counter for migration decisions
     access_counts: Vec<AtomicU64>,
     /// Migration threshold
-    _migration_threshold: u64,
+    migration_threshold: u64,
 }
 
 impl<T: Clone> HotColdSeparator<T> {
     /// Create a new hot/cold separator
+    ///
+    /// `hot_ratio` is clamped to `[0.0, 1.0]` (NaN gives no hot capacity). A
+    /// ratio above 1.0 used to underflow `capacity - hot_capacity`.
     pub fn new(capacity: usize, hot_ratio: f64) -> Self {
-        let hot_capacity = ((capacity as f64) * hot_ratio) as usize;
-        let cold_capacity = capacity - hot_capacity;
+        let hot_capacity = ((capacity as f64) * hot_ratio.clamp(0.0, 1.0)) as usize;
+        // `capacity as f64` can round up, so the product can exceed `capacity`
+        let cold_capacity = capacity.saturating_sub(hot_capacity);
 
         Self {
             hot: Vec::with_capacity(hot_capacity),
             cold: Vec::with_capacity(cold_capacity),
             access_counts: Vec::with_capacity(capacity),
-            _migration_threshold: 10, // Migrate after 10 accesses
+            migration_threshold: 10, // Migrate after 10 accesses
         }
     }
 
     /// Access an element and track access pattern
+    ///
+    /// Returns `None` if `index` is out of range.
     pub fn access(&self, index: usize) -> Option<&T> {
-        self.access_counts[index].fetch_add(1, Ordering::Relaxed);
-
-        if index < self.hot.len() {
+        let elem = if index < self.hot.len() {
             Some(self.hot[index].get())
         } else {
             let cold_index = index - self.hot.len();
             self.cold.get(cold_index)
+        }?;
+
+        if let Some(counter) = self.access_counts.get(index) {
+            counter.fetch_add(1, Ordering::Relaxed);
         }
+
+        Some(elem)
     }
 
     /// Migrate data between hot and cold based on access patterns
+    ///
+    /// Each cold element accessed at least `migration_threshold` (10) times
+    /// since the last rebalance swaps places with the least-accessed hot
+    /// element, if that element has strictly fewer accesses. Swapped elements
+    /// change their global index. All access counts are then reset.
     pub fn rebalance(&mut self) {
-        // Reset access counts
+        let hot_len = self.hot.len();
+        let cold_len = self.cold.len();
+        if hot_len > 0 && cold_len > 0 && self.access_counts.len() >= hot_len + cold_len {
+            for cold_idx in 0..cold_len {
+                let global_cold_idx = hot_len + cold_idx;
+                let cold_accesses = self.access_counts[global_cold_idx].load(Ordering::Relaxed);
+                if cold_accesses >= self.migration_threshold {
+                    // Find coldest slot in hot tier with strictly fewer accesses
+                    if let Some((coldest_hot_idx, min_hot_accesses)) = (0..hot_len)
+                        .map(|i| (i, self.access_counts[i].load(Ordering::Relaxed)))
+                        .min_by_key(|&(_, count)| count)
+                        && min_hot_accesses < cold_accesses
+                    {
+                        std::mem::swap(
+                            self.hot[coldest_hot_idx].get_mut(),
+                            &mut self.cold[cold_idx],
+                        );
+                        self.access_counts[coldest_hot_idx].store(cold_accesses, Ordering::Relaxed);
+                        self.access_counts[global_cold_idx]
+                            .store(min_hot_accesses, Ordering::Relaxed);
+                    }
+                }
+            }
+        }
+
+        // Reset access counts for the next epoch
         for count in &self.access_counts {
             count.store(0, Ordering::Relaxed);
         }
@@ -457,8 +521,8 @@ pub struct CacheConsciousResizer {
 impl CacheConsciousResizer {
     /// Create a new resizer
     pub fn new(current_size: usize, target_size: usize) -> Self {
-        // Calculate chunk size based on L3 cache size
-        let chunk_size = (L3_CACHE_SIZE / CACHE_LINE_SIZE).min(target_size / 16);
+        // Calculate chunk size based on L3 cache size (at least 1 to guarantee forward progress)
+        let chunk_size = (L3_CACHE_SIZE / CACHE_LINE_SIZE).min((target_size / 16).max(1));
 
         Self {
             current_size,
@@ -469,6 +533,12 @@ impl CacheConsciousResizer {
     }
 
     /// Perform incremental resize step
+    ///
+    /// Reserves room in `data` for the next chunk (at most `chunk_size` more
+    /// elements beyond `data.len()`) and advances the internal size toward
+    /// `target_size`. `_rehash_fn` is not called: moving entries is left to
+    /// the caller. Returns `true` when called after the resize has completed,
+    /// and `false` after a step that advanced it.
     pub fn resize_step<T, F>(&mut self, data: &mut Vec<T>, _rehash_fn: F) -> bool
     where
         T: Clone,
@@ -478,7 +548,10 @@ impl CacheConsciousResizer {
             return true; // Resize complete
         }
 
-        let step_end = (self.current_size + self.chunk_size).min(self.target_size);
+        let step_end = self
+            .current_size
+            .saturating_add(self.chunk_size)
+            .min(self.target_size);
 
         // Resize incrementally to avoid cache thrashing
         data.reserve(step_end - self.current_size);
@@ -504,9 +577,13 @@ pub struct AccessPatternAnalyzer {
 
 impl AccessPatternAnalyzer {
     /// Create a new analyzer
+    ///
+    /// A `history_size` of 0 is treated as 1 (an empty history made
+    /// `record_access` index an empty buffer).
     pub fn new(history_size: usize) -> Self {
+        let effective_size = history_size.max(1);
         Self {
-            access_history: vec![0; history_size],
+            access_history: vec![0; effective_size],
             history_pos: 0,
             detected_pattern: AccessPattern::Random,
             confidence: 0.0,
@@ -689,5 +766,117 @@ mod tests {
         let mut data = vec![0u64; 1000];
         let complete = resizer.resize_step(&mut data, |&x, _| x as usize);
         assert!(!complete); // Should not be complete in one step
+    }
+
+    /// A separator holding hot element 10 (index 0) and cold element 20 (index 1).
+    fn separator_with_one_hot_and_one_cold() -> HotColdSeparator<u32> {
+        let mut separator: HotColdSeparator<u32> = HotColdSeparator::new(4, 0.5);
+        separator.hot.push(CacheAligned::new(10));
+        separator.access_counts.push(AtomicU64::new(0));
+        separator.cold.push(20);
+        separator.access_counts.push(AtomicU64::new(0));
+        separator
+    }
+
+    #[test]
+    fn test_c7_5_hot_cold_access_out_of_range_is_none() {
+        // `access` indexed `access_counts` before any bounds check.
+        let empty: HotColdSeparator<u32> = HotColdSeparator::new(4, 0.5);
+        assert_eq!(empty.access(0), None);
+        assert_eq!(empty.access(999), None);
+
+        let separator = separator_with_one_hot_and_one_cold();
+        assert_eq!(separator.access(2), None);
+        assert_eq!(separator.access(usize::MAX), None);
+    }
+
+    #[test]
+    fn test_c7_5_hot_cold_rebalance_promotes_a_frequently_accessed_cold_element() {
+        // `rebalance` only reset the access counts; nothing ever migrated.
+        let mut separator = separator_with_one_hot_and_one_cold();
+        for _ in 0..15 {
+            assert_eq!(separator.access(1), Some(&20));
+        }
+        separator.rebalance();
+        assert_eq!(
+            separator.access(0),
+            Some(&20),
+            "rebalance must promote frequently accessed cold item into hot tier"
+        );
+        assert_eq!(separator.access(1), Some(&10));
+
+        // Below the threshold (10 accesses) nothing moves.
+        let mut separator = separator_with_one_hot_and_one_cold();
+        for _ in 0..9 {
+            separator.access(1);
+        }
+        separator.rebalance();
+        assert_eq!(separator.access(0), Some(&10));
+    }
+
+    #[test]
+    fn test_c7_5_hot_cold_ratio_outside_unit_interval_is_clamped() {
+        // hot_ratio > 1.0 underflowed `capacity - hot_capacity`.
+        for ratio in [1.5, f64::INFINITY, -0.5, f64::NEG_INFINITY, f64::NAN] {
+            let separator: HotColdSeparator<u32> = HotColdSeparator::new(4, ratio);
+            assert_eq!(separator.access(0), None, "ratio {ratio}");
+        }
+    }
+
+    #[test]
+    fn test_c7_5_optimal_bucket_size_is_at_least_one_for_entries_over_a_cache_line() {
+        let big_opt: CacheLayoutOptimizer<[u8; 128], [u8; 128]> = CacheLayoutOptimizer::new(1024);
+        assert_eq!(big_opt.optimal_bucket_size(), 1);
+    }
+
+    #[test]
+    fn test_c7_5_resizer_with_target_below_16_makes_progress() {
+        // `target_size / 16 == 0` made the chunk size 0, so no step advanced.
+        let mut small_resizer = CacheConsciousResizer::new(4, 8);
+        let mut small_data = vec![0u32; 4];
+        let mut steps = 0;
+        while !small_resizer.resize_step(&mut small_data, |&x, _| x as usize) {
+            steps += 1;
+            assert!(steps <= 8, "CacheConsciousResizer failed to make progress");
+        }
+    }
+
+    #[test]
+    fn test_c7_5_access_pattern_analyzer_with_zero_history_records_accesses() {
+        // A zero-length history made record_access index an empty buffer.
+        let mut zero_analyzer = AccessPatternAnalyzer::new(0);
+        zero_analyzer.record_access(0x1000);
+        zero_analyzer.record_access(0x1001);
+    }
+
+    #[test]
+    fn test_c7_5_numa_allocator_zero_byte_requests_skip_the_global_allocator() {
+        // A zero-size Layout reached `alloc_zeroed`, which is UB (Miri reports
+        // it; natively the system allocator happens to return a pointer).
+        let allocator = NumaAllocator::new();
+        // SAFETY: every pointer is freed with the count it was allocated with.
+        unsafe {
+            let zero_ptr = allocator.alloc_cache_aligned::<u64>(0);
+            assert!(!zero_ptr.is_null());
+            assert_eq!(zero_ptr as usize % CACHE_LINE_SIZE, 0);
+            allocator.dealloc(zero_ptr, 0);
+
+            let zst_ptr = allocator.alloc_cache_aligned::<()>(32);
+            assert!(!zst_ptr.is_null());
+            assert_eq!(zst_ptr as usize % CACHE_LINE_SIZE, 0);
+            allocator.dealloc(zst_ptr, 32);
+        }
+    }
+
+    #[test]
+    fn test_c7_5_numa_allocator_overflowing_request_returns_null() {
+        // `size_of::<T>() * count` panicked with overflow checks (and wrapped
+        // without them); an oversized Layout hit an `expect`.
+        let allocator = NumaAllocator::new();
+        // SAFETY: both requests fail and return null; there is nothing to free.
+        unsafe {
+            assert!(allocator.alloc_cache_aligned::<u64>(usize::MAX).is_null());
+            assert!(allocator.alloc_cache_aligned::<u8>(usize::MAX).is_null());
+        }
     }
 }
