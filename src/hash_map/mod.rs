@@ -98,11 +98,9 @@ pub use gold_hash_map::{
 
 // Strategy traits for advanced configuration
 pub use strategy_traits::{
-    CacheOptimizedStorageConfig, CacheOptimizedStorageStrategy, CollisionResolutionStrategy,
-    HashBucket, HashOptimizationStrategy, OptimizationHint, OptimizationMetrics, ProbeStats,
-    RobinHoodConfig, RobinHoodContext, RobinHoodStrategy, SimdOptimizationConfig,
-    SimdOptimizationContext, SimdOptimizationStrategy, StandardStorageConfig,
-    StandardStorageStrategy, StorageLayoutStrategy,
+    CollisionResolutionStrategy, HashBucket, HashOptimizationStrategy, OptimizationHint,
+    OptimizationMetrics, ProbeStats, RobinHoodConfig, RobinHoodContext, RobinHoodStrategy,
+    StandardStorageConfig, StandardStorageStrategy, StorageLayoutStrategy,
 };
 
 // Export hash function utilities
