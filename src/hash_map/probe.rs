@@ -41,111 +41,146 @@ where
         }
     }
 
+    /// Helper to resize/rehash a `Standard` entry vector in place.
+    pub(super) fn resize_standard_entries(
+        entries: &mut FastVec<HashEntry<K, V>>,
+        mask: &mut usize,
+        live: usize,
+        load_factor: f64,
+        occupied: &mut usize,
+        rehashes: &mut u64,
+    ) -> Result<()> {
+        let old_capacity = entries.len();
+        // A resize is also how tombstones get purged, and the caller
+        // now triggers one on occupancy rather than on a failed
+        // insert. Growing unconditionally would make an
+        // insert/remove churn workload with a bounded live set grow
+        // the table forever, so only grow when the live entries
+        // themselves are approaching the load limit; otherwise
+        // rehash in place.
+        let load_limit = (old_capacity as f64 * load_factor) as usize;
+        let new_capacity = if old_capacity >= 32 && live < load_limit / 2 {
+            old_capacity
+        } else {
+            (old_capacity * 2).max(32) // At least double the size
+        };
+        // Mask-based probing requires a power-of-two capacity
+        // (storage is created power-of-two and doubling preserves it).
+        assert!(
+            new_capacity.is_power_of_two(),
+            "hash map capacity must be a power of two for mask-based probing (got {})",
+            new_capacity
+        );
+
+        // Create new larger storage
+        let mut new_entries: FastVec<HashEntry<K, V>> = FastVec::with_capacity(new_capacity)?;
+
+        // Initialize new empty entries
+        // SAFETY: `new_capacity` is within bounds as it was just successfully allocated.
+        // All elements 0..new_capacity are immediately initialized via `ptr::write`.
+        unsafe {
+            new_entries.set_len(new_capacity);
+        }
+        for i in 0..new_capacity {
+            // SAFETY: `new_entries` has capacity `new_capacity`. `i` < `new_capacity`.
+            // It is safe to write to this uninitialized memory.
+            unsafe {
+                std::ptr::write(
+                    new_entries.as_mut_ptr().add(i),
+                    HashEntry {
+                        key: None,
+                        value: None,
+                        hash: 0,
+                        _next: None,
+                    },
+                );
+            }
+        }
+
+        let new_mask = new_capacity - 1;
+
+        // Move existing entries
+        let mut old_entries = std::mem::replace(entries, new_entries);
+
+        for entry in old_entries.iter_mut() {
+            // Skip empty slots AND tombstones (u64::MAX)
+            if entry.hash != 0 && entry.hash != u64::MAX {
+                let index = (entry.hash as usize) & new_mask;
+
+                // Find empty slot with linear probing
+                let mut inserted = false;
+                for i in 0..new_capacity {
+                    let probe_index = (index + i) & new_mask;
+                    let new_entry = &mut entries[probe_index];
+
+                    if new_entry.hash == 0 {
+                        // Empty slot, insert here
+                        new_entry.key = entry.key.take();
+                        new_entry.value = entry.value.take();
+                        new_entry.hash = entry.hash;
+                        inserted = true;
+                        break;
+                    }
+                }
+
+                if !inserted {
+                    return Err(crate::error::ZiporaError::invalid_state(
+                        "Failed to reinsert during resize",
+                    ));
+                }
+            }
+        }
+
+        // old_entries is dropped here, which will drop the None keys/values harmlessly.
+
+        *mask = new_mask;
+        // The rehash dropped every tombstone, so the claimed slots
+        // are exactly the live entries again.
+        *occupied = live;
+        *rehashes += 1;
+
+        Ok(())
+    }
+
     /// Resize the storage to accommodate more elements
     pub(super) fn resize_storage(&mut self) -> Result<()> {
         let live = self.len;
         let load_factor = self.config.load_factor;
         match &mut self.storage {
-            HashMapStorage::Standard {
+            HashMapStorage::Standard { entries, mask } => Self::resize_standard_entries(
                 entries,
                 mask,
-            } => {
-                let old_capacity = entries.len();
-                // A resize is also how tombstones get purged, and the caller
-                // now triggers one on occupancy rather than on a failed
-                // insert. Growing unconditionally would make an
-                // insert/remove churn workload with a bounded live set grow
-                // the table forever, so only grow when the live entries
-                // themselves are approaching the load limit; otherwise
-                // rehash in place.
-                let load_limit = (old_capacity as f64 * load_factor) as usize;
-                let new_capacity = if old_capacity >= 32 && live < load_limit / 2 {
-                    old_capacity
-                } else {
-                    (old_capacity * 2).max(32) // At least double the size
-                };
-                // Mask-based probing requires a power-of-two capacity
-                // (storage is created power-of-two and doubling preserves it).
-                assert!(
-                    new_capacity.is_power_of_two(),
-                    "hash map capacity must be a power of two for mask-based probing (got {})",
-                    new_capacity
-                );
-
-                // Create new larger storage
-                let mut new_entries: FastVec<HashEntry<K, V>> =
-                    FastVec::with_capacity(new_capacity)?;
-
-                // Initialize new empty entries
-                // SAFETY: `new_capacity` is within bounds as it was just successfully allocated.
-                // All elements 0..new_capacity are immediately initialized via `ptr::write`.
-                unsafe {
-                    new_entries.set_len(new_capacity);
-                }
-                for i in 0..new_capacity {
-                    // SAFETY: `new_entries` has capacity `new_capacity`. `i` < `new_capacity`.
-                    // It is safe to write to this uninitialized memory.
-                    unsafe {
-                        std::ptr::write(
-                            new_entries.as_mut_ptr().add(i),
-                            HashEntry {
-                                key: None,
-                                value: None,
-                                hash: 0,
-                                _next: None,
-                            },
-                        );
-                    }
-                }
-
-                let new_mask = new_capacity - 1;
-
-                // Move existing entries
-                let mut old_entries = std::mem::replace(entries, new_entries);
-
-                for entry in old_entries.iter_mut() {
-                    // Skip empty slots AND tombstones (u64::MAX)
-                    if entry.hash != 0 && entry.hash != u64::MAX {
-                        let index = (entry.hash as usize) & new_mask;
-
-                        // Find empty slot with linear probing
-                        let mut inserted = false;
-                        for i in 0..new_capacity {
-                            let probe_index = (index + i) & new_mask;
-                            let new_entry = &mut entries[probe_index];
-
-                            if new_entry.hash == 0 {
-                                // Empty slot, insert here
-                                new_entry.key = entry.key.take();
-                                new_entry.value = entry.value.take();
-                                new_entry.hash = entry.hash;
-                                inserted = true;
-                                break;
-                            }
-                        }
-
-                        if !inserted {
-                            return Err(crate::error::ZiporaError::invalid_state(
-                                "Failed to reinsert during resize",
-                            ));
-                        }
-                    }
-                }
-
-                // old_entries is dropped here, which will drop the None keys/values harmlessly.
-
-                *mask = new_mask;
-                // The rehash dropped every tombstone, so the claimed slots
-                // are exactly the live entries again.
-                self.occupied = self.len;
-                self.stats.rehashes += 1;
-
-                Ok(())
-            }
-            _ => {
-                // Other storage types don't support resizing yet
+                live,
+                load_factor,
+                &mut self.occupied,
+                &mut self.stats.rehashes,
+            ),
+            HashMapStorage::SmallInline {
+                fallback: Some(fb), ..
+            } => match fb.as_mut() {
+                HashMapStorage::Standard { entries, mask } => Self::resize_standard_entries(
+                    entries,
+                    mask,
+                    live,
+                    load_factor,
+                    &mut self.occupied,
+                    &mut self.stats.rehashes,
+                ),
+                HashMapStorage::SmallInline { .. } => Err(crate::error::ZiporaError::invalid_state(
+                    "Nested SmallInline fallback storage is invalid",
+                )),
+            },
+            HashMapStorage::SmallInline { fallback: None, .. } => {
+                // Before migration a SmallInline map has only its 16 fixed
+                // inline slots, so there is nothing to resize. This arm used
+                // to be a catch-all reading "Other storage types don't
+                // support resizing yet", which also covered a migrated map.
+                // `insert` calls this for Standard storage only: a migrated
+                // map's fallback table grows inside `insert_small_inline`
+                // (which calls `resize_standard_entries` directly), and the
+                // SmallInline arms keep this helper correct in every state.
                 Err(crate::error::ZiporaError::invalid_state(
-                    "Resize not supported for this storage type",
+                    "Resize not supported before SmallInline fallback migration",
                 ))
             }
         }
@@ -213,7 +248,7 @@ where
                     first_tombstone_idx = Some(probe_index);
                 }
             } else if entry.hash == hash
-                && entry.key.as_ref().expect("occupied entry must have key") == &key
+                && entry.key.as_ref().is_some_and(|existing| existing == &key)
             {
                 found_existing_idx = Some(probe_index);
                 break;
@@ -223,11 +258,8 @@ where
         if let Some(idx) = found_existing_idx {
             // Key exists, update value
             let entry = &mut entries[idx];
-            let old_value = entry
-                .value
-                .replace(value)
-                .expect("occupied entry must have previous value");
-            Ok(Some(old_value))
+            let old_value = entry.value.replace(value);
+            Ok(old_value)
         } else if let Some(insert_idx) = first_tombstone_idx.or(empty_slot_idx) {
             // Insert at first tombstone or empty slot
             let entry = &mut entries[insert_idx];
@@ -241,39 +273,64 @@ where
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn insert_small_inline(
         inline_data: &mut InlineStorage<K, V>,
-        _fallback: &mut Option<Box<HashMapStorage<K, V>>>,
+        fallback: &mut Option<Box<HashMapStorage<K, V>>>,
         len: &mut usize,
         key: K,
         value: V,
         hash: u64,
         hash_builder: &S,
+        load_factor: f64,
+        occupied: &mut usize,
+        rehashes: &mut u64,
     ) -> Result<Option<V>> {
-        // If already migrated to fallback, delegate to Standard storage
-        if let Some(fb) = _fallback.as_mut()
-            && let HashMapStorage::Standard {
-                entries,
-                mask,
-                ..
-            } = fb.as_mut()
+        // If already migrated to fallback, delegate to Standard storage (resizing if full)
+        if let Some(fb) = fallback.as_mut()
+            && let HashMapStorage::Standard { entries, mask } = fb.as_mut()
         {
-                let result =
-                    Self::insert_standard(hash_builder, entries, mask, key, value, hash)
-                        .map_err(|_| {
-                        crate::error::ZiporaError::invalid_state(
-                            "Hash table full in SmallInline fallback storage",
-                        )
-                    })?;
-                if result.is_none() {
-                    *len += 1;
-                }
-                return Ok(result);
+            // The load check `insert` runs for a Standard map, applied to the
+            // fallback table: grow (or purge tombstones) before it gets dense.
+            let capacity = if entries.is_empty() {
+                entries.capacity()
+            } else {
+                entries.len()
+            };
+            let limit = (capacity as f64 * load_factor) as usize;
+            if capacity > 0 && *occupied >= limit {
+                Self::resize_standard_entries(entries, mask, *len, load_factor, occupied, rehashes)?;
             }
+            let result = match Self::insert_standard(hash_builder, entries, mask, key, value, hash)
+            {
+                Ok(res) => res,
+                Err((retry_key, retry_val)) => {
+                    Self::resize_standard_entries(
+                        entries,
+                        mask,
+                        *len,
+                        load_factor,
+                        occupied,
+                        rehashes,
+                    )?;
+                    Self::insert_standard(hash_builder, entries, mask, retry_key, retry_val, hash)
+                        .map_err(|_| {
+                            crate::error::ZiporaError::invalid_state(
+                                "Hash table full in SmallInline fallback storage after resize",
+                            )
+                        })?
+                }
+            };
+            if result.is_none() {
+                *len += 1;
+            }
+            return Ok(result);
+        }
 
         // Check if key already exists in inline storage
         for i in 0..16 {
             if (inline_data.occupied >> i) & 1 == 1 {
+                // SAFETY: Bit `i` is set in `inline_data.occupied`, so `_data[i]` is initialized.
                 let matches = unsafe {
                     let (k, _) = inline_data._data[i].assume_init_ref();
                     k == &key
@@ -282,6 +339,7 @@ where
                     // SAFETY: Slot i is initialized and no active references exist.
                     let (old_k, old_v) = unsafe { std::ptr::read(inline_data._data[i].as_ptr()) };
                     drop(old_k);
+                    // SAFETY: Slot i is valid in `_data[0..16]` and was just read out above.
                     unsafe {
                         std::ptr::write(inline_data._data[i].as_mut_ptr(), (key, value));
                     }
@@ -357,10 +415,16 @@ where
         })?;
 
         // Store the migrated storage as fallback
-        *_fallback = Some(Box::new(HashMapStorage::Standard {
+        *fallback = Some(Box::new(HashMapStorage::Standard {
             entries,
             mask,
         }));
+        // From here on the fallback's load check reads `occupied`, which the
+        // inline slots did not keep in step (they leave no tombstones, and
+        // inline removals do not subtract). Like a rehash, the migration
+        // resets it to the live count: the 16 entries it moved (`insert`
+        // then counts the new key).
+        *occupied = *len;
         *len += 1;
 
         Ok(result)
@@ -399,17 +463,10 @@ where
                 && entry
                     .key
                     .as_ref()
-                    .expect("occupied entry must have key")
-                    .borrow()
-                    == key
+                    .is_some_and(|existing| existing.borrow() == key)
             {
                 // Found the key
-                return Some(
-                    entry
-                        .value
-                        .as_ref()
-                        .expect("occupied entry must have value"),
-                );
+                return entry.value.as_ref();
             }
         }
 
@@ -493,9 +550,7 @@ where
                 && entry
                     .key
                     .as_ref()
-                    .expect("occupied entry must have key")
-                    .borrow()
-                    == key
+                    .is_some_and(|existing| existing.borrow() == key)
             {
                 // Found the key
                 found_index = Some(probe_index);
@@ -505,12 +560,7 @@ where
 
         // Return mutable reference if found
         if let Some(idx) = found_index {
-            Some(
-                entries[idx]
-                    .value
-                    .as_mut()
-                    .expect("occupied entry must have value"),
-            )
+            entries[idx].value.as_mut()
         } else {
             None
         }
@@ -538,6 +588,7 @@ where
 
         for i in 0..16 {
             if (inline_data.occupied >> i) & 1 == 1 {
+                // SAFETY: Bit `i` is set in `inline_data.occupied`, so `_data[i]` is initialized.
                 let matches = unsafe {
                     let (k, _) = inline_data._data[i].assume_init_ref();
                     k.borrow() == key
@@ -591,18 +642,16 @@ where
                 && entry
                     .key
                     .as_ref()
-                    .expect("occupied entry must have key")
-                    .borrow()
-                    == key
+                    .is_some_and(|existing| existing.borrow() == key)
             {
                 // Found the key, remove it
-                let old_value = entry.value.take().expect("occupied entry must have value");
+                let old_value = entry.value.take();
                 entry.key.take(); // free the key
 
                 // Use tombstone approach: mark as deleted but don't create holes
                 entry.hash = u64::MAX; // Special tombstone marker
 
-                return Some(old_value);
+                return old_value;
             }
         }
 
@@ -695,6 +744,7 @@ where
 
         for i in 0..16 {
             if (inline_data.occupied >> i) & 1 == 1 {
+                // SAFETY: Bit `i` is set in `inline_data.occupied`, so `_data[i]` is initialized.
                 let matches = unsafe {
                     let (k, _) = inline_data._data[i].assume_init_ref();
                     k.borrow() == key

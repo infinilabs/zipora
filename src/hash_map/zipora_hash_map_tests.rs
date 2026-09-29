@@ -981,3 +981,259 @@ fn test_insert_remove_churn_does_not_grow_the_table_forever() {
         map.capacity()
     );
 }
+
+#[test]
+fn test_c7_1_small_inline_fallback_grows_past_32_and_compacts_tombstones() {
+    let config = ZiporaHashMapConfig::small_inline(4);
+    let mut map: ZiporaHashMap<u32, u32> = ZiporaHashMap::with_config(config).unwrap();
+    assert_eq!(map.capacity(), 16);
+
+    // Insert 200 elements (previously failed at i = 32 with "Hash table full in SmallInline fallback storage")
+    for i in 0..200u32 {
+        map.insert(i, i * 10).unwrap();
+    }
+    assert_eq!(map.len(), 200);
+    assert!(
+        map.capacity().is_power_of_two(),
+        "capacity after SmallInline migration must be the active fallback table size, got {}",
+        map.capacity()
+    );
+
+    for i in 0..200u32 {
+        assert_eq!(map.get(&i), Some(&(i * 10)));
+    }
+
+    // Remove all but 4 elements and verify insert/remove churn on migrated SmallInline compacts tombstones
+    for i in 4..200u32 {
+        assert_eq!(map.remove(&i), Some(i * 10));
+    }
+    let cap_before_churn = map.capacity();
+    let rehashes_before_churn = map.stats().rehashes;
+    let iters = if cfg!(miri) { 200 } else { 5_000 };
+    for i in 1000..(1000 + iters) {
+        map.insert(i, i).unwrap();
+        assert_eq!(map.remove(&i), Some(i));
+    }
+    assert_eq!(map.len(), 4);
+    assert!(
+        map.capacity() <= cap_before_churn,
+        "churn on migrated SmallInline grew table from {} to {}",
+        cap_before_churn,
+        map.capacity()
+    );
+    // Tombstones count toward the fallback's load check, so the churn has to
+    // purge them with at least one in-place rehash.
+    assert!(
+        map.stats().rehashes > rehashes_before_churn,
+        "churn never purged the fallback table's tombstones"
+    );
+    for i in 0..4u32 {
+        assert_eq!(map.get(&i), Some(&(i * 10)));
+    }
+
+    // Above 1.0 the load check lets the fallback table fill up completely,
+    // so a full table has to be grown on demand before the insert is retried.
+    let config = ZiporaHashMapConfig {
+        load_factor: 1.5,
+        ..ZiporaHashMapConfig::small_inline(4)
+    };
+    let mut map: ZiporaHashMap<u32, u32> = ZiporaHashMap::with_config(config).unwrap();
+    for i in 0..100u32 {
+        map.insert(i, i).unwrap();
+    }
+    assert_eq!(map.len(), 100);
+    for i in 0..100u32 {
+        assert_eq!(map.get(&i), Some(&i));
+    }
+}
+
+#[test]
+fn test_c7_1_inline_churn_does_not_force_a_resize_after_migration() {
+    // Guards the `occupied` count that the migrated fallback's load check now
+    // reads: inline removals free their slot outright and do not subtract, so
+    // the migration must reset the count to the entries it moves, or 100
+    // inline insert/remove pairs would double the fallback table right after
+    // migration.
+    let config = ZiporaHashMapConfig::small_inline(4);
+    let mut map: ZiporaHashMap<u32, u32> = ZiporaHashMap::with_config(config).unwrap();
+    for i in 0..100u32 {
+        map.insert(i, i).unwrap();
+        assert_eq!(map.remove(&i), Some(i));
+    }
+    for i in 0..18u32 {
+        map.insert(i, i).unwrap();
+    }
+    // The 17th entry migrates into a 32-slot table; 18 entries fit in it.
+    assert_eq!(map.capacity(), 32);
+    assert_eq!(map.stats().rehashes, 0);
+    for i in 0..18u32 {
+        assert_eq!(map.get(&i), Some(&i));
+    }
+}
+
+#[test]
+fn test_c7_1_migrated_fallback_load_check_counts_the_moved_entries() {
+    // The other side of the migration's reset: the count must include the 16
+    // entries moved into the fallback table. With load factor 0.5 the 32-slot
+    // table holds 17 entries right after migration, past its limit of 16, so
+    // the next insert has to grow it; a count restarted from 0 would let the
+    // table run 16 inserts past its load factor. (The `small_inline` preset
+    // uses 1.0, where that growth coincides with the full-table retry.)
+    let config = ZiporaHashMapConfig {
+        load_factor: 0.5,
+        ..ZiporaHashMapConfig::small_inline(4)
+    };
+    let mut map: ZiporaHashMap<u32, u32> = ZiporaHashMap::with_config(config).unwrap();
+    for i in 0..17u32 {
+        map.insert(i, i).unwrap();
+    }
+    assert_eq!(map.capacity(), 32);
+    assert_eq!(map.stats().rehashes, 0);
+    map.insert(17, 17).unwrap();
+    assert_eq!(map.capacity(), 64);
+    assert_eq!(map.stats().rehashes, 1);
+    for i in 0..18u32 {
+        assert_eq!(map.get(&i), Some(&i));
+    }
+}
+
+#[test]
+fn test_c7_2_load_factor_that_is_not_positive_and_finite_is_replaced() {
+    // `(capacity as f64 * load_factor) as usize` is 0 for 0.0, a negative value
+    // or NaN, so the load check fired on every insert and each resize doubled
+    // the table until an allocation failed.
+    for bad_lf in [0.0, -0.5, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let config = ZiporaHashMapConfig {
+            load_factor: bad_lf,
+            ..ZiporaHashMapConfig::default()
+        };
+        let mut map: ZiporaHashMap<u32, u32> = ZiporaHashMap::with_config(config).unwrap();
+        for i in 0..32u32 {
+            map.insert(i, i + 100).unwrap();
+        }
+        assert_eq!(map.len(), 32);
+        // Replaced by 0.75: 32 entries need a 64-slot table.
+        assert!(
+            map.capacity() <= 64,
+            "load_factor {} grew the table to {}",
+            bad_lf,
+            map.capacity()
+        );
+        for i in 0..32u32 {
+            assert_eq!(map.get(&i), Some(&(i + 100)));
+        }
+    }
+
+    // Values >= 1.0 are kept: the table grows only once every slot is claimed.
+    for lf in [1.0, 1.5] {
+        let config = ZiporaHashMapConfig {
+            load_factor: lf,
+            ..ZiporaHashMapConfig::default()
+        };
+        let mut map: ZiporaHashMap<u32, u32> = ZiporaHashMap::with_config(config).unwrap();
+        for i in 0..100u32 {
+            map.insert(i, i).unwrap();
+        }
+        assert_eq!(map.len(), 100);
+        for i in 0..100u32 {
+            assert_eq!(map.get(&i), Some(&i));
+        }
+    }
+}
+
+#[test]
+fn test_c7_2_initial_capacity_with_no_power_of_two_is_an_error() {
+    // `next_power_of_two()` overflows above `1 << (usize::BITS - 1)`: it
+    // panicked under overflow checks (the test profile) and returned 0
+    // without them, silently building an empty table.
+    for cap in [usize::MAX, (1usize << (usize::BITS - 1)) + 1] {
+        let config = ZiporaHashMapConfig {
+            storage_strategy: HashStorageStrategy::Standard {
+                initial_capacity: cap,
+                growth_factor: 2.0,
+            },
+            ..ZiporaHashMapConfig::default()
+        };
+        assert!(
+            ZiporaHashMap::<u32, u32>::with_config(config).is_err(),
+            "initial_capacity {} must be rejected",
+            cap
+        );
+    }
+    // `with_capacity` goes through the same path.
+    assert!(ZiporaHashMap::<u32, u32>::with_capacity(usize::MAX).is_err());
+}
+
+/// Checks that `iter`, `keys`, `values`, `iter_mut` and `values_mut` visit
+/// exactly the live entries of `map`, each once, and that the mutable
+/// iterators write through.
+fn check_iterators_see_exactly(map: &mut ZiporaHashMap<u32, u32>, expected: &[(u32, u32)]) {
+    let mut seen: Vec<(u32, u32)> = map.iter().map(|(&k, &v)| (k, v)).collect();
+    seen.sort_unstable();
+    assert_eq!(seen, expected, "iter");
+    assert_eq!(map.keys().count(), expected.len(), "keys");
+    assert_eq!(map.values().count(), expected.len(), "values");
+
+    let mut mut_keys: Vec<u32> = Vec::new();
+    for (&k, v) in map.iter_mut() {
+        mut_keys.push(k);
+        *v += 1_000;
+    }
+    mut_keys.sort_unstable();
+    let expected_keys: Vec<u32> = expected.iter().map(|&(k, _)| k).collect();
+    assert_eq!(mut_keys, expected_keys, "iter_mut");
+
+    let mut visited = 0;
+    for v in map.values_mut() {
+        *v -= 1_000;
+        visited += 1;
+    }
+    assert_eq!(visited, expected.len(), "values_mut");
+    for &(k, v) in expected {
+        assert_eq!(map.get(&k), Some(&v), "key {k} after iter_mut/values_mut");
+    }
+    assert_eq!(map.len(), expected.len());
+}
+
+#[test]
+fn test_c7_iteration_skips_tombstones_in_every_storage_state() {
+    // Coverage for the D4 iterators under tombstones. (Changing the map while
+    // one of these iterators is alive does not compile: each one borrows the
+    // map, shared or exclusive.)
+    let live = |keys: std::ops::Range<u32>, removed: fn(u32) -> bool| -> Vec<(u32, u32)> {
+        keys.filter(|&k| !removed(k)).map(|k| (k, k * 3)).collect()
+    };
+
+    // Standard table with tombstones.
+    let mut map: ZiporaHashMap<u32, u32> = ZiporaHashMap::new().unwrap();
+    for k in 0..100u32 {
+        map.insert(k, k * 3).unwrap();
+    }
+    for k in (0..100u32).filter(|k| k % 3 == 0) {
+        assert_eq!(map.remove(&k), Some(k * 3));
+    }
+    check_iterators_see_exactly(&mut map, &live(0..100, |k| k % 3 == 0));
+
+    // SmallInline before migration, with freed inline slots.
+    let mut map: ZiporaHashMap<u32, u32> =
+        ZiporaHashMap::with_config(ZiporaHashMapConfig::small_inline(4)).unwrap();
+    for k in 0..10u32 {
+        map.insert(k, k * 3).unwrap();
+    }
+    assert_eq!(map.remove(&3), Some(9));
+    assert_eq!(map.remove(&7), Some(21));
+    check_iterators_see_exactly(&mut map, &live(0..10, |k| k == 3 || k == 7));
+
+    // The same map after migration, with tombstones in the fallback table.
+    for k in 10..60u32 {
+        map.insert(k, k * 3).unwrap();
+    }
+    assert!(map.capacity() > 16, "the map should have migrated");
+    for k in (10..60u32).filter(|k| k % 4 == 0) {
+        assert_eq!(map.remove(&k), Some(k * 3));
+    }
+    check_iterators_see_exactly(
+        &mut map,
+        &live(0..60, |k| k == 3 || k == 7 || (k >= 10 && k % 4 == 0)),
+    );
+}

@@ -40,6 +40,17 @@ use crate::hash_map::storage::*;
 /// highly configurable implementation. Different behaviors are achieved
 /// through strategy configuration rather than separate implementations.
 ///
+/// # Hash flooding
+///
+/// The default hasher `S = ahash::RandomState` is keyed from the OS random
+/// number generator once per process (ahash's default `runtime-rng`
+/// feature) and varied per instance, so colliding keys cannot be computed in
+/// advance. Probing is linear with no cap on the probe length: keys that do
+/// collide (for example under a fixed-seed `S`) turn inserts and lookups into
+/// a scan of one long cluster. For keys an attacker controls, keep a randomly
+/// keyed `S`. [`GoldHashMap`](crate::hash_map::GoldHashMap) hashes with keys
+/// fixed for the whole process and is not intended for such keys.
+///
 /// # Examples
 ///
 /// ```rust
@@ -79,11 +90,18 @@ where
     pub(super) len: usize,
     /// Slots claimed in the Standard table, counting tombstones.
     ///
-    /// Only ever incremented on a fresh-key insert and reset to `len` by a
-    /// rehash, so it is an upper bound on the true occupancy: reusing a
-    /// tombstone over-counts, which grows the table slightly early rather
-    /// than too late. `remove` deliberately does not decrement it, because
-    /// the slot it leaves behind still lengthens every probe through it.
+    /// In the Standard table it is only ever incremented on a fresh-key
+    /// insert and reset to `len` by a rehash, so it is an upper bound on the
+    /// true occupancy: reusing a tombstone over-counts, which grows the table
+    /// slightly early rather than too late. A `remove` from the table
+    /// deliberately does not decrement it, because the slot it leaves behind
+    /// still lengthens every probe through it.
+    ///
+    /// A SmallInline map reads it only once it has migrated to its fallback
+    /// Standard table. Before that nothing reads it and it is not kept in
+    /// step (fresh-key inserts still add to it, inline removals, which free
+    /// their slot outright, do not subtract); the migration, like a rehash,
+    /// resets it to the number of entries it moves into the fallback table.
     pub(super) occupied: usize,
 }
 
@@ -115,6 +133,12 @@ where
     }
 
     /// Create a new hash map with specified initial capacity
+    ///
+    /// `capacity` counts table slots, not entries: the table gets
+    /// `capacity.max(16).next_power_of_two()` slots, and the load-factor
+    /// check (default `0.75`) grows it once that fraction of them is claimed.
+    /// Returns an error if the table cannot be allocated, including when no
+    /// power of two `>= capacity` fits in `usize`.
     pub fn with_capacity(capacity: usize) -> Result<Self>
     where
         S: Default,
@@ -141,7 +165,24 @@ where
     }
 
     /// Create a new hash map with custom configuration and hasher
-    pub fn with_config_and_hasher(config: ZiporaHashMapConfig, hash_builder: S) -> Result<Self> {
+    ///
+    /// A `config.load_factor` that is not a positive finite number (`0.0`, a
+    /// negative value, NaN or ±infinity) is replaced by the default `0.75`,
+    /// as [`GoldHashMap`](crate::hash_map::GoldHashMap) does with `0.7`.
+    /// Values `>= 1.0` are kept: the table then grows only once every slot
+    /// is claimed (the [`small_inline`](ZiporaHashMapConfig::small_inline)
+    /// preset uses `1.0`).
+    pub fn with_config_and_hasher(mut config: ZiporaHashMapConfig, hash_builder: S) -> Result<Self> {
+        // `(capacity as f64 * load_factor) as usize` is 0 for 0.0, a negative
+        // value or NaN, so the load-factor check fired on every insert and
+        // every resize doubled the table until an allocation failed (the
+        // 32nd insert would ask for 2^36 slots). +infinity made the limit
+        // `usize::MAX`, i.e. grow only when full; it is replaced as well so
+        // that the accepted range is simply "positive and finite".
+        if !(config.load_factor.is_finite() && config.load_factor > 0.0) {
+            config.load_factor = 0.75;
+        }
+
         let simd_ops = get_global_simd_ops();
         let cache_allocator = match &config.optimization_strategy {
             OptimizationStrategy::CacheAware { .. }
@@ -176,10 +217,20 @@ where
                 // Mask-based probing (`index & mask`) requires a power-of-two
                 // capacity; a user-supplied capacity like 100 would produce
                 // mask 99 and a probe sequence that misses slots.
+                //
+                // Above `1 << (usize::BITS - 1)` there is no power of two in
+                // `usize`: `next_power_of_two` panics there under overflow
+                // checks and returns 0 without them, so report it as an
+                // allocation failure instead.
                 let cap = if *initial_capacity == 0 {
                     0
                 } else {
-                    initial_capacity.next_power_of_two()
+                    initial_capacity.checked_next_power_of_two().ok_or_else(|| {
+                        crate::error::ZiporaError::out_of_memory(
+                            initial_capacity
+                                .saturating_mul(std::mem::size_of::<HashEntry<K, V>>()),
+                        )
+                    })?
                 };
                 Ok(HashMapStorage::Standard {
                     entries: FastVec::with_capacity(cap)?,
@@ -232,6 +283,9 @@ where
         // degraded to O(capacity) long before that — get_standard stops only
         // on an empty slot, so once the table is full every miss scans all of
         // it. config.load_factor was previously never read on this path.
+        // The Standard table a SmallInline map migrates to once its 16 inline
+        // slots are full gets the same check inside insert_small_inline, so
+        // that an unmigrated SmallInline insert does not pay for it.
         if let HashMapStorage::Standard { entries, .. } = &self.storage {
             let capacity = if entries.is_empty() {
                 entries.capacity()
@@ -301,10 +355,10 @@ where
                 value,
                 hash,
                 &self.hash_builder,
+                self.config.load_factor,
+                &mut self.occupied,
+                &mut self.stats.rehashes,
             ),
-            HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
-                unreachable!("unimplemented strategies are rejected at construction")
-            }
         }?;
 
         if res.is_none() {
@@ -332,9 +386,6 @@ where
                 fallback,
                 len,
             } => self.get_small_inline(inline_data, fallback, len, key),
-            HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
-                unreachable!("unimplemented strategies are rejected at construction")
-            }
         }
     }
 
@@ -376,9 +427,6 @@ where
                 fallback,
                 len,
             } => Self::get_mut_small_inline(&self.hash_builder, inline_data, fallback, len, key),
-            HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
-                unreachable!("unimplemented strategies are rejected at construction")
-            }
         }
     }
 
@@ -398,9 +446,6 @@ where
                 fallback,
                 len,
             } => Self::remove_small_inline(&self.hash_builder, inline_data, fallback, len, key),
-            HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
-                unreachable!("unimplemented strategies are rejected at construction")
-            }
         };
 
         if res.is_some() {
@@ -421,9 +466,6 @@ where
                 fallback,
                 len,
             } => Self::clear_small_inline(inline_data, fallback, len),
-            HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
-                unreachable!("unimplemented strategies are rejected at construction")
-            }
         }
         self.len = 0;
         self.occupied = 0;
@@ -447,13 +489,17 @@ where
                 fallback,
                 ..
             } => {
-                16 + fallback.as_ref().map_or(0, |f| match f.as_ref() {
-                    HashMapStorage::Standard { entries, .. } => entries.capacity(),
-                    _ => 0,
-                })
-            }
-            HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
-                unreachable!("unimplemented strategies are rejected at construction")
+                // Migration moves all 16 inline entries into the fallback
+                // table and inserts go there afterwards, so the inline slots
+                // no longer add capacity (this used to report 16 + fallback).
+                if let Some(fb) = fallback {
+                    match fb.as_ref() {
+                        HashMapStorage::Standard { entries, .. } => entries.capacity(),
+                        HashMapStorage::SmallInline { .. } => 16,
+                    }
+                } else {
+                    16
+                }
             }
         }
     }
@@ -572,7 +618,6 @@ where
                     }
                 }
             }
-            _ => unreachable!("unimplemented strategies are rejected at construction"),
         }
 
         new_map
@@ -645,9 +690,6 @@ where
                 }
                 None
             }
-            HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
-                unreachable!("unimplemented strategies are rejected at construction")
-            }
         }
     }
 }
@@ -702,9 +744,6 @@ where
                     inline_slot: 0,
                     fallback: fb_iter,
                 }
-            }
-            HashMapStorage::CacheOptimized { .. } | HashMapStorage::StringOptimized { .. } => {
-                unreachable!("unimplemented strategies are rejected at construction")
             }
         };
         Self { inner }

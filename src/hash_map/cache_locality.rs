@@ -7,8 +7,7 @@
 use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::arch::x86_64::{_MM_HINT_NTA, _MM_HINT_T0, _MM_HINT_T1, _MM_HINT_T2, _mm_prefetch};
 use std::marker::PhantomData;
-use std::mem::{MaybeUninit, align_of, size_of};
-use std::ptr::NonNull;
+use std::mem::{align_of, size_of};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// Cache line size in bytes (typical for modern x86_64 processors)
@@ -189,81 +188,6 @@ impl Prefetcher {
             }
         }
     }
-}
-
-/// Cache-conscious bucket layout for hash tables
-#[repr(C, align(64))]
-pub struct CacheOptimizedBucket<K, V, const ENTRIES_PER_BUCKET: usize = 7> {
-    /// Metadata packed into first cache line
-    pub metadata: BucketMetadata,
-    /// Hash values for fast comparison (7 entries + 1 overflow pointer fits in cache line)
-    pub hashes: [u32; ENTRIES_PER_BUCKET],
-    /// Key-value pairs (may span multiple cache lines)
-    pub entries: [MaybeUninit<(K, V)>; ENTRIES_PER_BUCKET],
-    /// Overflow bucket pointer for chaining
-    pub overflow: Option<NonNull<Self>>,
-    /// Padding to ensure cache line alignment
-    pub _padding: [u8; 0], // Compiler will add necessary padding
-}
-
-/// Compact metadata for bucket (fits in 8 bytes)
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct BucketMetadata {
-    /// Occupancy bitmap (which slots are filled)
-    pub occupancy: u8,
-    /// Lock or version counter for concurrent access
-    pub lock_or_version: u8,
-    /// Distance from ideal position (for Robin Hood)
-    pub max_probe_distance: u16,
-    /// Reserved for future use
-    pub reserved: u32,
-}
-
-impl<K, V, const N: usize> CacheOptimizedBucket<K, V, N> {
-    /// Create a new empty bucket
-    #[cfg(test)]
-    pub fn new() -> Self {
-        Self {
-            metadata: BucketMetadata {
-                occupancy: 0,
-                lock_or_version: 0,
-                max_probe_distance: 0,
-                reserved: 0,
-            },
-            hashes: [0; N],
-            // SAFETY: This creates an array of MaybeUninit<(K, V)> values.
-            // MaybeUninit<T> does not require initialization, so an array of
-            // uninitialized MaybeUninit values is valid. Individual elements
-            // are only accessed after being explicitly initialized via write().
-            entries: [const { MaybeUninit::uninit() }; N],
-            overflow: None,
-            _padding: [],
-        }
-    }
-
-    /// Check if bucket is empty
-    #[inline(always)]
-    #[cfg(test)]
-    pub fn is_empty(&self) -> bool {
-        self.metadata.occupancy == 0
-    }
-
-    /// Count occupied slots
-    #[inline(always)]
-    #[cfg(test)]
-    pub fn count(&self) -> usize {
-        self.metadata.occupancy.count_ones() as usize
-    }
-
-    /// Find entry with matching hash (SIMD-optimizable)
-    #[inline(always)]
-    #[cfg(test)]
-    pub fn find_hash(&self, hash: u32) -> Option<usize> {
-        // This can be SIMD-optimized with AVX2/AVX512
-        (0..N).find(|&i| (self.metadata.occupancy & (1 << i)) != 0 && self.hashes[i] == hash)
-    }
-
 }
 
 /// NUMA-aware memory allocator for hash tables
@@ -637,16 +561,6 @@ impl AccessPatternAnalyzer {
     }
 }
 
-// SAFETY: CacheOptimizedBucket is Send when K and V are Send.
-// The NonNull pointer for overflow is only accessed through proper synchronization
-// at the hash map level, ensuring thread safety.
-unsafe impl<K: Send, V: Send, const N: usize> Send for CacheOptimizedBucket<K, V, N> {}
-
-// SAFETY: CacheOptimizedBucket is Sync when K and V are Sync.
-// The NonNull pointer for overflow is only accessed through proper synchronization
-// at the hash map level, ensuring thread safety.
-unsafe impl<K: Sync, V: Sync, const N: usize> Sync for CacheOptimizedBucket<K, V, N> {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -659,34 +573,6 @@ mod tests {
         // Check alignment
         let ptr = aligned.get() as *const _ as usize;
         assert_eq!(ptr % CACHE_LINE_SIZE, 0);
-    }
-
-    #[test]
-    fn test_cache_optimized_bucket() {
-        let mut bucket: CacheOptimizedBucket<u32, u64, 7> = CacheOptimizedBucket::new();
-        assert!(bucket.is_empty());
-        assert_eq!(bucket.count(), 0);
-
-        // Test find_hash
-        bucket.metadata.occupancy = 0b0000011; // First two slots occupied
-        bucket.hashes[0] = 12345;
-        bucket.hashes[1] = 67890;
-
-        // Initialize entries
-        bucket.entries[0] = MaybeUninit::new((12345, 100));
-        bucket.entries[1] = MaybeUninit::new((67890, 200));
-
-        assert_eq!(bucket.find_hash(12345), Some(0));
-        assert_eq!(bucket.find_hash(67890), Some(1));
-        assert_eq!(bucket.find_hash(99999), None);
-
-        // Verify entries
-        unsafe {
-            assert_eq!(bucket.entries[0].assume_init().0, 12345);
-            assert_eq!(bucket.entries[0].assume_init().1, 100);
-            assert_eq!(bucket.entries[1].assume_init().0, 67890);
-            assert_eq!(bucket.entries[1].assume_init().1, 200);
-        }
     }
 
     #[test]
