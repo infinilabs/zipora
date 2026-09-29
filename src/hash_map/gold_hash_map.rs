@@ -341,11 +341,21 @@ where
     }
 
     /// Iterate with specific strategy
+    ///
+    /// [`IterationStrategy::Fast`] is downgraded to
+    /// [`IterationStrategy::Safe`] while the map holds removed entries
+    /// ([`deleted_count`](Self::deleted_count) `> 0`), so neither strategy
+    /// yields a removed key/value pair.
     pub fn iter_with_strategy(&self, strategy: IterationStrategy) -> GoldHashMapIter<'_, K, V, L> {
+        let effective_strategy = if self.freelist_size > 0 {
+            IterationStrategy::Safe
+        } else {
+            strategy
+        };
         GoldHashMapIter {
             map: self,
             index: 0,
-            strategy,
+            strategy: effective_strategy,
         }
     }
 
@@ -354,8 +364,13 @@ where
         self.iter_with_strategy(self.config.default_iteration_strategy)
     }
 
-    /// Fast iteration (no deleted entry checks)
-    /// WARNING: May include deleted entries, use only if you know the map has no deletions
+    /// Fast iteration (no deleted entry checks while nothing is deleted)
+    ///
+    /// While [`deleted_count`](Self::deleted_count) is 0 this walks the
+    /// entry vector without testing each entry's deleted marker. Once an
+    /// entry has been removed (and until its slot is reused or
+    /// [`revoke_deleted`](Self::revoke_deleted) compacts it away) it skips
+    /// removed entries exactly like the safe strategy; it used to yield them.
     pub fn iter_fast(&self) -> GoldHashMapIter<'_, K, V, L> {
         self.iter_with_strategy(IterationStrategy::Fast)
     }
@@ -395,9 +410,23 @@ where
 
     /// Reserve capacity for at least `additional` more elements
     pub fn reserve(&mut self, additional: usize) -> Result<()> {
-        let new_capacity = self.len + additional;
+        let new_capacity = self
+            .len
+            .checked_add(additional)
+            .ok_or_else(|| ZiporaError::invalid_data("GoldHashMap reserve capacity overflow"))?;
+        if new_capacity > L::MAX.as_usize().saturating_add(1) {
+            return Err(ZiporaError::resource_exhausted(
+                "GoldHashMap reserve exceeds link type capacity",
+            ));
+        }
         if new_capacity > self.max_load {
-            let new_buckets = next_prime((new_capacity as f32 / self.config.load_factor) as usize);
+            let scaled = (new_capacity as f64 / self.config.load_factor as f64).ceil();
+            if !scaled.is_finite() || scaled >= (isize::MAX as f64) {
+                return Err(ZiporaError::resource_exhausted(
+                    "GoldHashMap reserve bucket count overflow",
+                ));
+            }
+            let new_buckets = next_prime(scaled as usize);
             self.rehash(new_buckets)?;
         }
         Ok(())
@@ -405,19 +434,26 @@ where
 
     // Internal: Allocate a slot (reuse from freelist or create new)
     // PERFORMANCE FIX (v2.1.1): Changed from O(n) linear scan to O(1) stack pop
-    fn allocate_slot(&mut self) -> usize {
+    fn allocate_slot(&mut self) -> Result<usize> {
         // O(1) freelist pop - no more linear scanning!
         if self.config.enable_freelist_reuse
             && let Some(idx) = self.freelist.pop()
         {
             self.freelist_size -= 1;
-            return idx;
+            return Ok(idx);
         }
 
         // Append new entry - we'll overwrite it immediately in insert()
         let idx = self.entries.len();
+        if idx > L::MAX.as_usize() {
+            return Err(ZiporaError::resource_exhausted(format!(
+                "HashMap entry index {} exceeds link type capacity (max {}). Consider using GoldHashMap<K, V, u64> for larger maps.",
+                idx,
+                L::MAX.as_usize()
+            )));
+        }
 
-        // Ensure capacity
+        // Ensure capacity before mutating hash_cache/entries
         if idx >= self.entries.capacity() {
             let new_cap = (idx + 1).next_power_of_two();
             self.entries.reserve(new_cap - self.entries.len());
@@ -430,7 +466,7 @@ where
             cache.push(0);
         }
 
-        idx
+        Ok(idx)
     }
 
     // Internal: Free a slot (add to freelist)
@@ -481,17 +517,14 @@ where
                 self.entries[i].link = self.buckets[bucket_idx];
 
                 // SAFETY FIX: Check capacity before converting to link type
-                if i > L::MAX.as_usize() {
+                let Some(new_head) = L::from_usize(i).filter(|_| i <= L::MAX.as_usize()) else {
                     return Err(ZiporaError::resource_exhausted(format!(
                         "HashMap entry index {} exceeds link type capacity (max {}). Consider using GoldHashMap<K, V, u64> for larger maps.",
                         i,
                         L::MAX.as_usize()
                     )));
-                }
-
-                // SAFETY: Capacity check above guarantees i fits in link type L
-                self.buckets[bucket_idx] =
-                    L::from_usize(i).expect("Capacity check above ensures this succeeds");
+                };
+                self.buckets[bucket_idx] = new_head;
             }
         }
 
@@ -542,17 +575,13 @@ where
             link = self.entries[idx].link;
         }
 
-        // Insert new entry
-        let entry_idx = self.allocate_slot();
-
-        // SAFETY FIX: Check capacity before converting to link type
-        if entry_idx > L::MAX.as_usize() {
-            return Err(ZiporaError::resource_exhausted(format!(
-                "HashMap entry index {} exceeds link type capacity (max {}). Consider using GoldHashMap<K, V, u64> for larger maps.",
-                entry_idx,
-                L::MAX.as_usize()
-            )));
-        }
+        // Insert new entry (validates link capacity before mutating hash_cache/entries)
+        let entry_idx = self.allocate_slot()?;
+        let Some(new_head) = L::from_usize(entry_idx) else {
+            return Err(ZiporaError::resource_exhausted(
+                "GoldHashMap entry index exceeds link type capacity",
+            ));
+        };
 
         // Update entry data - either overwrite existing or push new
         if entry_idx < self.entries.len() {
@@ -570,9 +599,7 @@ where
         }
 
         // Link into bucket chain (insert at head)
-        // SAFETY: Capacity check above guarantees entry_idx fits in link type L
-        self.buckets[bucket_idx] =
-            L::from_usize(entry_idx).expect("Capacity check above ensures this succeeds");
+        self.buckets[bucket_idx] = new_head;
 
         // Update hash cache if enabled
         if let Some(ref mut cache) = self.hash_cache
@@ -702,7 +729,8 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         match self.strategy {
             IterationStrategy::Fast => {
-                // Fast mode - no validity checks
+                // Fast mode - no validity checks (iter_with_strategy only
+                // selects it while map.freelist_size == 0)
                 if self.index < self.map.entries.len() {
                     let entry = &self.map.entries[self.index];
                     self.index += 1;
@@ -861,17 +889,19 @@ mod tests {
         // remove, rehash) must use the same function; a mismatch makes keys
         // inserted before a rehash vanish or removals miss their chain.
         let mut map = GoldHashMap::<u64, u64>::new();
-        for i in 0..20_000u64 {
+        // Miri interprets every step; 1,000 keys still cross several rehashes.
+        let n: u64 = if cfg!(miri) { 1_000 } else { 20_000 };
+        for i in 0..n {
             map.insert(i, i * 3).unwrap();
         }
-        for i in (0..20_000u64).step_by(2) {
+        for i in (0..n).step_by(2) {
             assert_eq!(map.remove(&i).unwrap(), Some(i * 3), "remove {i}");
         }
-        for i in 0..20_000u64 {
+        for i in 0..n {
             let expected = if i % 2 == 0 { None } else { Some(&(i * 3)) };
             assert_eq!(map.get(&i), expected, "get {i}");
         }
-        for i in (1..20_000u64).step_by(2) {
+        for i in (1..n).step_by(2) {
             *map.get_mut(&i).unwrap() += 1;
             assert_eq!(map.get(&i), Some(&(i * 3 + 1)));
         }
@@ -915,11 +945,12 @@ mod tests {
     #[test]
     fn test_large_dataset() {
         let mut map = GoldHashMap::<i32, i32>::new();
-        for i in 0..10_000 {
+        let n: i32 = if cfg!(miri) { 1_000 } else { 10_000 };
+        for i in 0..n {
             map.insert(i, i).unwrap();
         }
-        assert_eq!(map.len(), 10_000);
-        for i in 0..10_000 {
+        assert_eq!(map.len(), n as usize);
+        for i in 0..n {
             assert_eq!(map.get(&i), Some(&i));
         }
     }
@@ -1121,5 +1152,91 @@ mod tests {
         // Clear should work
         map.clear();
         assert!(map.is_empty());
+    }
+
+    #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+    struct TinyLink(u8);
+
+    impl LinkType for TinyLink {
+        const MAX: Self = TinyLink(3);
+        const DELMARK: Self = TinyLink(4);
+        const TAIL: Self = TinyLink(5);
+
+        fn as_usize(self) -> usize {
+            self.0 as usize
+        }
+
+        fn from_usize(val: usize) -> Option<Self> {
+            if val <= Self::MAX.as_usize() {
+                Some(TinyLink(val as u8))
+            } else {
+                None
+            }
+        }
+    }
+
+    #[test]
+    fn test_c7_3_fast_iteration_skips_removed_entries() {
+        // iter_fast() (and iter() with a Fast default) walked the entry
+        // vector without the deleted-marker check and yielded removed pairs.
+        let mut map = GoldHashMap::<i32, i32>::with_config(GoldHashMapConfig {
+            default_iteration_strategy: IterationStrategy::Fast,
+            ..GoldHashMapConfig::default()
+        });
+        map.insert(1, 10).unwrap();
+        map.insert(2, 20).unwrap();
+        map.insert(3, 30).unwrap();
+        assert_eq!(map.remove(&2).unwrap(), Some(20));
+
+        for items in [
+            map.iter_fast().map(|(&k, &v)| (k, v)).collect::<Vec<_>>(),
+            map.iter().map(|(&k, &v)| (k, v)).collect::<Vec<_>>(),
+        ] {
+            assert_eq!(items.len(), 2);
+            assert!(!items.contains(&(2, 20)));
+            assert!(items.contains(&(1, 10)));
+            assert!(items.contains(&(3, 30)));
+        }
+    }
+
+    #[test]
+    fn test_c7_3_reserve_overflow_is_an_error() {
+        // `self.len + additional` panicked with overflow checks and wrapped
+        // to a no-op `Ok(())` without them.
+        let mut map = GoldHashMap::<i32, i32>::new();
+        map.insert(1, 10).unwrap();
+        map.insert(2, 20).unwrap();
+        assert!(map.reserve(usize::MAX).is_err());
+        assert!(map.reserve(usize::MAX - 1).is_err());
+        assert_eq!(map.get(&1), Some(&10));
+
+        // More entries than the link type can index are refused up front.
+        let mut tiny_map = GoldHashMap::<i32, i32, TinyLink>::new();
+        assert!(tiny_map.reserve(4).is_ok());
+        assert!(tiny_map.reserve(5).is_err());
+    }
+
+    #[test]
+    fn test_c7_3_link_capacity_failure_keeps_hash_cache_in_step() {
+        // allocate_slot pushed to hash_cache before the L::MAX check, so each
+        // failed insert left one more stale hash_cache element behind.
+        let mut tiny_map = GoldHashMap::<i32, i32, TinyLink>::with_config(GoldHashMapConfig {
+            enable_hash_cache: true,
+            ..GoldHashMapConfig::default()
+        });
+        for i in 0..4 {
+            tiny_map.insert(i, i * 10).unwrap();
+        }
+        // 5th distinct key exceeds TinyLink::MAX (3)
+        assert!(tiny_map.insert(99, 990).is_err());
+        assert!(tiny_map.insert(98, 980).is_err());
+        assert_eq!(
+            tiny_map.hash_cache.as_ref().unwrap().len(),
+            tiny_map.entries.len()
+        );
+        // Removing one entry and inserting a new key via freelist reuse still works cleanly
+        assert_eq!(tiny_map.remove(&1).unwrap(), Some(10));
+        tiny_map.insert(99, 990).unwrap();
+        assert_eq!(tiny_map.get(&99), Some(&990));
     }
 }
