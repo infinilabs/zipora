@@ -50,6 +50,7 @@ pub fn sorted_intersect_adaptive(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> us
         {
             #[cfg(feature = "avx512")]
             if crate::algorithms::simd_search::has_avx512f() {
+                // SAFETY: AVX-512F support verified by has_avx512f() runtime check
                 return unsafe { intersect_simd_avx512(small, large, out) };
             }
             if std::arch::is_x86_feature_detected!("sse4.1") {
@@ -74,11 +75,12 @@ pub fn sorted_intersect_count(a: &[u32], b: &[u32]) -> usize {
 
     if large.len() / small.len().max(1) > GALLOP_RATIO {
         intersect_galloping_count(small, large)
-    } else {
+    } else if small.len() >= SIMD_MIN_SIZE {
         #[cfg(target_arch = "x86_64")]
         {
             #[cfg(feature = "avx512")]
             if crate::algorithms::simd_search::has_avx512f() {
+                // SAFETY: AVX-512F support verified by has_avx512f() runtime check
                 return unsafe { intersect_simd_count_avx512(small, large) };
             }
             if std::arch::is_x86_feature_detected!("sse4.1") {
@@ -86,6 +88,8 @@ pub fn sorted_intersect_count(a: &[u32], b: &[u32]) -> usize {
                 return unsafe { intersect_simd_count_sse41(small, large) };
             }
         }
+        intersect_scalar_merge_count(small, large)
+    } else {
         intersect_scalar_merge_count(small, large)
     }
 }
@@ -104,6 +108,7 @@ pub fn sorted_intersect_simd(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize 
     {
         #[cfg(feature = "avx512")]
         if crate::algorithms::simd_search::has_avx512f() {
+            // SAFETY: AVX-512F support verified by has_avx512f() runtime check
             return unsafe { intersect_simd_avx512(small, large, out) };
         }
         if std::arch::is_x86_feature_detected!("sse4.1") {
@@ -243,6 +248,10 @@ fn intersect_galloping_count(small: &[u32], large: &[u32]) -> usize {
 // AVX-512 SIMD implementation — 16x16 block comparison using broadcast
 // ============================================================================
 
+/// AVX-512 16×16 block intersection.
+///
+/// # Safety
+/// Caller must ensure the `avx512f` target feature is supported by the CPU.
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 #[target_feature(enable = "avx512f")]
 unsafe fn intersect_simd_avx512(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize {
@@ -262,7 +271,6 @@ unsafe fn intersect_simd_avx512(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usi
         // While condition ensures i + 16 <= a_len and j + 16 <= b_len,
         // so all get_unchecked(i + k) for k in 0..16 are in bounds.
         // cmpeq_epi32_mask compares bit patterns — signed/unsigned irrelevant for equality.
-        // SAFETY: AVX-512F guaranteed by #[target_feature(enable = "avx512f")], j + 16 <= b_len by while condition
         unsafe {
             let vb = _mm512_loadu_si512(b.as_ptr().add(j) as *const __m512i);
 
@@ -313,6 +321,10 @@ unsafe fn intersect_simd_avx512(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usi
     count
 }
 
+/// AVX-512 count-only 16×16 block intersection.
+///
+/// # Safety
+/// Caller must ensure the `avx512f` target feature is supported by the CPU.
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 #[target_feature(enable = "avx512f")]
 unsafe fn intersect_simd_count_avx512(a: &[u32], b: &[u32]) -> usize {
@@ -330,13 +342,15 @@ unsafe fn intersect_simd_count_avx512(a: &[u32], b: &[u32]) -> usize {
         unsafe {
             let vb = _mm512_loadu_si512(b.as_ptr().add(j) as *const __m512i);
 
-            let mut block_mask_count = 0;
+            let mut block_mask_count = 0u32;
             for k in 0..16 {
                 // SAFETY: i + k < i + 16 <= a_len
                 let va = *a.get_unchecked(i + k);
                 let va_vec = _mm512_set1_epi32(va as i32);
                 let mask = _mm512_cmpeq_epi32_mask(va_vec, vb);
-                block_mask_count += mask.count_ones();
+                if mask != 0 {
+                    block_mask_count += 1;
+                }
             }
             count += block_mask_count as usize;
 
@@ -378,6 +392,10 @@ unsafe fn intersect_simd_count_avx512(a: &[u32], b: &[u32]) -> usize {
 // SSE4.1 SIMD implementation — 4×4 block comparison (Schlegel et al.)
 // ============================================================================
 
+/// SSE4.1 4×4 block intersection.
+///
+/// # Safety
+/// Caller must ensure the `sse4.1` target feature is supported by the CPU.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse4.1")]
 unsafe fn intersect_simd_sse41(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize {
@@ -456,6 +474,9 @@ unsafe fn intersect_simd_sse41(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usiz
 }
 
 /// SIMD count-only intersection (no output materialization).
+///
+/// # Safety
+/// Caller must ensure the `sse4.1` target feature is supported by the CPU.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse4.1")]
 unsafe fn intersect_simd_count_sse41(a: &[u32], b: &[u32]) -> usize {
@@ -712,4 +733,52 @@ mod tests {
             assert!(per_call.as_micros() < 50, "Too slow: {:?}", per_call);
         }
     }
+
+    #[test]
+    fn test_c8_12_sorted_intersect_count_duplicates_and_tier_parity() {
+        // 1. sorted_intersect_count must dispatch identically to sorted_intersect_adaptive
+        // for small slices (< SIMD_MIN_SIZE).
+        let a = vec![2u32, 2, 2, 2, 5];
+        let b = vec![1u32, 2, 3, 4, 5];
+        let mut out = Vec::new();
+        let adaptive_count = sorted_intersect_adaptive(&a, &b, &mut out);
+        let count_only = sorted_intersect_count(&a, &b);
+        assert_eq!(adaptive_count, out.len());
+        assert_eq!(count_only, adaptive_count);
+
+        // 2. AVX-512 count-only kernel must agree with materialized AVX-512 kernel
+        // when b contains duplicates within a 16-lane window.
+        #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+        if crate::algorithms::simd_search::has_avx512f() {
+            let a16: Vec<u32> = (0..16).collect();
+            let b16: Vec<u32> = vec![7u32; 16];
+            let mut out16 = Vec::new();
+            // SAFETY: has_avx512f() verified above
+            let mat = unsafe { intersect_simd_avx512(&a16, &b16, &mut out16) };
+            // SAFETY: has_avx512f() verified above
+            let cnt = unsafe { intersect_simd_count_avx512(&a16, &b16) };
+            assert_eq!(mat, 1);
+            assert_eq!(cnt, mat);
+        }
+
+        // 3. multiset_fast_intersection / multiset_fast_intersection2 with threshold = usize::MAX
+        // must not overflow first1.len() * threshold.
+        let s1 = vec![1, 3, 5];
+        let s2 = vec![1, 2, 3, 4, 5];
+        let r1 = crate::algorithms::set_ops::multiset_fast_intersection(
+            &s1,
+            &s2,
+            |x, y| x.cmp(y),
+            usize::MAX,
+        );
+        assert_eq!(r1, vec![1, 3, 5]);
+        let r2 = crate::algorithms::set_ops::multiset_fast_intersection2(
+            &s1,
+            &s2,
+            |x, y| x.cmp(y),
+            usize::MAX,
+        );
+        assert_eq!(r2, vec![1, 3, 5]);
+    }
 }
+

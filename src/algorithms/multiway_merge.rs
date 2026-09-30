@@ -212,12 +212,11 @@ impl MultiWayMerge {
 
         if sources.len() == 1 {
             // Single source - just collect all items
-            // SAFETY: sources.len() == 1 check at line 174 guarantees exactly one element,
-            // so into_iter().next() always returns Some and unwrap() is safe.
-            let mut source = sources.into_iter().next().expect("non-empty sources");
             let mut result = Vec::new();
-            while let Some(item) = source.next() {
-                result.push(item);
+            if let Some(mut source) = sources.into_iter().next() {
+                while let Some(item) = source.next() {
+                    result.push(item);
+                }
             }
             return Ok(result);
         }
@@ -291,14 +290,33 @@ impl MultiWayMerge {
     }
 
     /// Hierarchical merge for very large number of sources
-    fn merge_hierarchical<T, S>(&self, sources: Vec<S>) -> Result<Vec<T>>
+    fn merge_hierarchical<T, S>(&self, mut sources: Vec<S>) -> Result<Vec<T>>
     where
         T: Ord + Clone,
         S: MergeSource<T>,
     {
-        // For simplicity, fall back to direct heap merge for now
-        // A full hierarchical implementation would need dynamic typing
-        self.merge_heap(sources)
+        let max_ways = self.config.max_merge_ways.max(2);
+        let mut intermediate: Vec<VectorSource<T>> = Vec::new();
+
+        while !sources.is_empty() {
+            let take = sources.len().min(max_ways);
+            let batch: Vec<S> = sources.drain(..take).collect();
+            let merged = self.merge_heap(batch)?;
+            intermediate.push(VectorSource::new(merged));
+        }
+
+        while intermediate.len() > max_ways {
+            let mut next_level = Vec::new();
+            while !intermediate.is_empty() {
+                let take = intermediate.len().min(max_ways);
+                let batch: Vec<VectorSource<T>> = intermediate.drain(..take).collect();
+                let merged = self.merge_heap(batch)?;
+                next_level.push(VectorSource::new(merged));
+            }
+            intermediate = next_level;
+        }
+
+        self.merge_heap(intermediate)
     }
 
     /// Get performance statistics
@@ -315,7 +333,7 @@ impl Default for MultiWayMerge {
 
 impl Algorithm for MultiWayMerge {
     type Config = MultiWayMergeConfig;
-    type Input = Vec<Vec<i32>>; // Simplified input type for the trait
+    type Input = Vec<Vec<i32>>; // Concrete batch input type for the Algorithm trait
     type Output = Vec<i32>;
 
     fn execute(&self, config: &Self::Config, input: Self::Input) -> Result<Self::Output> {
@@ -357,43 +375,25 @@ impl MergeOperations {
         let mut right_current = right_iter.next();
 
         loop {
-            match (&left_current, &right_current) {
+            match (left_current.take(), right_current.take()) {
                 (Some(l), Some(r)) => {
                     if l <= r {
-                        // SAFETY: Match arm (Some(l), Some(r)) guarantees left_current is Some,
-                        // so take() returns Some and unwrap() is safe.
-                        result.push(left_current.take().expect("left_current set by comparison"));
+                        result.push(l);
+                        right_current = Some(r);
                         left_current = left_iter.next();
                     } else {
-                        // SAFETY: Match arm (Some(l), Some(r)) guarantees right_current is Some,
-                        // so take() returns Some and unwrap() is safe.
-                        result.push(
-                            right_current
-                                .take()
-                                .expect("right_current set by comparison"),
-                        );
+                        result.push(r);
+                        left_current = Some(l);
                         right_current = right_iter.next();
                     }
                 }
-                (Some(_), None) => {
-                    // SAFETY: Match arm (Some(_), None) guarantees left_current is Some,
-                    // so take() returns Some and unwrap() is safe.
-                    result.push(
-                        left_current
-                            .take()
-                            .expect("left_current has remaining value"),
-                    );
+                (Some(l), None) => {
+                    result.push(l);
                     result.extend(left_iter);
                     break;
                 }
-                (None, Some(_)) => {
-                    // SAFETY: Match arm (None, Some(_)) guarantees right_current is Some,
-                    // so take() returns Some and unwrap() is safe.
-                    result.push(
-                        right_current
-                            .take()
-                            .expect("right_current has remaining value"),
-                    );
+                (None, Some(r)) => {
+                    result.push(r);
                     result.extend(right_iter);
                     break;
                 }

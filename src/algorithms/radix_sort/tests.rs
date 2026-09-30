@@ -607,3 +607,101 @@ fn test_advanced_radix_sort_u64_random_simd() {
     assert_eq!(data, expected);
 }
 
+#[test]
+fn test_c8_10_radix_sort_invalid_radix_bits_and_differential_vs_std() {
+    // 1. Out-of-range radix_bits (0 and 64) must return Err instead of panicking.
+    for bad_bits in [0usize, 17, 64] {
+        let mut lsd = RadixSort::with_config(RadixSortConfig {
+            radix_bits: bad_bits,
+            use_counting_sort_threshold: 0,
+            ..Default::default()
+        });
+        let mut d32 = vec![3u32, 1, 2];
+        assert!(lsd.sort_u32(&mut d32).is_err());
+        let mut d64 = vec![3u64, 1, 2];
+        assert!(lsd.sort_u64(&mut d64).is_err());
+
+        assert!(AdvancedU32RadixSort::with_config(AdvancedRadixSortConfig {
+            radix_bits: bad_bits,
+            use_secure_memory: false,
+            ..Default::default()
+        })
+        .is_err());
+    }
+
+    // 2. Strings longer than 8 bytes sharing an 8-byte prefix + embedded NULs
+    // must sort according to full Ord across all strategies.
+    let raw_strings: &[&[u8]] = &[
+        b"shared88_zzz",
+        b"shared88_aaa",
+        b"shared88_mmm",
+        b"shared88",
+        b"shared88\0b",
+        b"shared88\0a",
+        b"a\0z",
+        b"a\0a",
+        b"a",
+        b"",
+    ];
+    for strategy in [
+        SortingStrategy::Insertion,
+        SortingStrategy::TimSort,
+        SortingStrategy::LsdRadix,
+        SortingStrategy::MsdRadix,
+    ] {
+        let mut sorter = AdvancedStringRadixSort::with_config(AdvancedRadixSortConfig {
+            force_strategy: Some(strategy),
+            use_parallel: false,
+            use_secure_memory: false,
+            ..Default::default()
+        })
+        .unwrap();
+        let mut items: Vec<RadixString> =
+            raw_strings.iter().map(|s| RadixString::new(s)).collect();
+        let mut expected = items.clone();
+        expected.sort_unstable();
+
+        sorter.sort(&mut items).unwrap();
+        assert_eq!(items, expected, "strategy {:?} failed full Ord sort", strategy);
+    }
+
+    // 3. Differential test across u32, u64, Vec<u8>, and KV pairs vs std sort.
+    let n = if cfg!(miri) { 64 } else { 512 };
+    let mut u32_data: Vec<u32> = (0..n)
+        .map(|i| (i as u32).wrapping_mul(0x9E37_79B9) ^ ((i as u32) << 13))
+        .collect();
+    u32_data.push(0);
+    u32_data.push(u32::MAX);
+    u32_data.push(0x8000_0000);
+    let mut u32_expected = u32_data.clone();
+    u32_expected.sort_unstable();
+
+    let mut lsd = RadixSort::new();
+    let mut u32_lsd = u32_data.clone();
+    lsd.sort_u32(&mut u32_lsd).unwrap();
+    assert_eq!(u32_lsd, u32_expected);
+
+    let mut u64_data: Vec<u64> = (0..n)
+        .map(|i| (i as u64).wrapping_mul(0x517cc1b727220a95) ^ (1u64 << (i % 64)))
+        .collect();
+    u64_data.push(0);
+    u64_data.push(u64::MAX);
+    let mut u64_expected = u64_data.clone();
+    u64_expected.sort_unstable();
+    let mut u64_lsd = u64_data.clone();
+    lsd.sort_u64(&mut u64_lsd).unwrap();
+    assert_eq!(u64_lsd, u64_expected);
+
+    let kv_sorter = KeyValueRadixSort::<u32, usize>::new();
+    let mut kv_data: Vec<(u32, usize)> = u32_data
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(idx, k)| (k, idx))
+        .collect();
+    let mut kv_expected = kv_data.clone();
+    kv_expected.sort_by_key(|&(k, _)| k);
+    kv_sorter.sort_by_key(&mut kv_data).unwrap();
+    assert_eq!(kv_data, kv_expected);
+}
+

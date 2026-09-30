@@ -126,6 +126,10 @@ unsafe fn popcount_avx512(words: &[u64]) -> usize {
 // Tier 2: Hardware POPCNT instruction (x86_64)
 // ============================================================================
 
+/// Hardware POPCNT implementation on x86_64.
+///
+/// # Safety
+/// Caller must ensure the `popcnt` target feature is supported by the CPU.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "popcnt")]
 unsafe fn popcount_hw(words: &[u64]) -> usize {
@@ -156,6 +160,10 @@ unsafe fn popcount_hw(words: &[u64]) -> usize {
 // Tier 3: NEON (aarch64)
 // ============================================================================
 
+/// ARM NEON popcount implementation on aarch64.
+///
+/// # Safety
+/// Caller must ensure the `neon` target feature is supported by the CPU.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 unsafe fn popcount_neon(words: &[u64]) -> usize {

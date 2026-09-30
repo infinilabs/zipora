@@ -49,6 +49,12 @@ impl RadixSort {
 
     /// Sort a slice of unsigned 32-bit integers
     pub fn sort_u32(&mut self, data: &mut [u32]) -> Result<()> {
+        if self.config.radix_bits == 0 || self.config.radix_bits > 16 {
+            return Err(crate::error::ZiporaError::invalid_parameter(
+                "radix_bits must be between 1 and 16",
+            ));
+        }
+
         let start_time = std::time::Instant::now();
 
         if data.is_empty() {
@@ -78,6 +84,12 @@ impl RadixSort {
 
     /// Sort a slice of unsigned 64-bit integers
     pub fn sort_u64(&mut self, data: &mut [u64]) -> Result<()> {
+        if self.config.radix_bits == 0 || self.config.radix_bits > 16 {
+            return Err(crate::error::ZiporaError::invalid_parameter(
+                "radix_bits must be between 1 and 16",
+            ));
+        }
+
         let start_time = std::time::Instant::now();
 
         if data.is_empty() {
@@ -169,7 +181,7 @@ impl RadixSort {
 
             #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
             {
-                if self.config.use_simd && src.len() >= 16 && shift < 24 {
+                if self.config.use_simd && !cfg!(miri) && src.len() >= 16 && shift < 24 {
                     // Use AVX-512 for faster counting when available
                     if std::arch::is_x86_feature_detected!("avx512f")
                         && std::arch::is_x86_feature_detected!("avx512bw")
@@ -181,14 +193,14 @@ impl RadixSort {
                     } else {
                         // Fallback to sequential counting
                         for &value in src.iter() {
-                            let digit = ((value >> shift) & mask) as usize;
+                            let digit = (((value as u64) >> shift) & (mask as u64)) as usize;
                             counts[digit] += 1;
                         }
                     }
                 } else {
                     // Sequential counting for small data or high shifts
                     for &value in src.iter() {
-                        let digit = ((value >> shift) & mask) as usize;
+                        let digit = (((value as u64) >> shift) & (mask as u64)) as usize;
                         counts[digit] += 1;
                     }
                 }
@@ -198,7 +210,7 @@ impl RadixSort {
             {
                 // Standard sequential counting
                 for &value in src.iter() {
-                    let digit = ((value >> shift) & mask) as usize;
+                    let digit = (((value as u64) >> shift) & (mask as u64)) as usize;
                     counts[digit] += 1;
                 }
             }
@@ -213,7 +225,7 @@ impl RadixSort {
 
             // Distribute elements
             for &value in src.iter() {
-                let digit = ((value >> shift) & mask) as usize;
+                let digit = (((value as u64) >> shift) & (mask as u64)) as usize;
                 dst[counts[digit]] = value;
                 counts[digit] += 1;
             }
@@ -230,24 +242,23 @@ impl RadixSort {
     }
 
     fn sort_u32_parallel(&self, data: &mut [u32]) -> Result<()> {
-        // For very large datasets, use parallel radix sort
-        // This is a simplified version - full parallel radix sort is quite complex
-
+        // Partition into thread-local chunks, radix-sort each chunk in parallel, then k-way merge
         if data.len() < 2 * self.config.parallel_threshold {
             return self.sort_u32_sequential(data);
         }
 
         // Split into chunks and sort in parallel
-        let num_threads = rayon::current_num_threads();
+        let num_threads = rayon::current_num_threads().max(1);
         let chunk_size = data.len().div_ceil(num_threads); // Round up
 
-        data.par_chunks_mut(chunk_size).for_each(|chunk| {
-            let temp_sorter = RadixSort::with_config(RadixSortConfig {
-                use_parallel: false,
-                ..self.config.clone()
-            });
-            let _ = temp_sorter.sort_u32_sequential(chunk);
-        });
+        data.par_chunks_mut(chunk_size)
+            .try_for_each(|chunk| -> Result<()> {
+                let temp_sorter = RadixSort::with_config(RadixSortConfig {
+                    use_parallel: false,
+                    ..self.config.clone()
+                });
+                temp_sorter.sort_u32_sequential(chunk)
+            })?;
 
         // Use proper multi-way merge instead of sort_unstable()
         self.multiway_merge_u32_chunks(data, chunk_size)?;
@@ -313,16 +324,17 @@ impl RadixSort {
             return self.sort_u64_sequential(data);
         }
 
-        let num_threads = rayon::current_num_threads();
+        let num_threads = rayon::current_num_threads().max(1);
         let chunk_size = data.len().div_ceil(num_threads); // Round up
 
-        data.par_chunks_mut(chunk_size).for_each(|chunk| {
-            let temp_sorter = RadixSort::with_config(RadixSortConfig {
-                use_parallel: false,
-                ..self.config.clone()
-            });
-            let _ = temp_sorter.sort_u64_sequential(chunk);
-        });
+        data.par_chunks_mut(chunk_size)
+            .try_for_each(|chunk| -> Result<()> {
+                let temp_sorter = RadixSort::with_config(RadixSortConfig {
+                    use_parallel: false,
+                    ..self.config.clone()
+                });
+                temp_sorter.sort_u64_sequential(chunk)
+            })?;
 
         // Use proper multi-way merge instead of sort_unstable()
         self.multiway_merge_u64_chunks(data, chunk_size)?;
@@ -331,13 +343,12 @@ impl RadixSort {
     }
 
     fn counting_sort_u32(&self, data: &mut [u32]) {
-        if data.is_empty() {
+        let Some(&max_ref) = data.iter().max() else {
             return;
-        }
+        };
 
         // Find maximum value to determine count buffer size
-        // SAFETY: is_empty() check above guarantees iterator has at least one element
-        let max_val = *data.iter().max().expect("non-empty input") as usize;
+        let max_val = max_ref as usize;
         let mut counts = vec![0usize; max_val + 1];
 
         // Count occurrences
@@ -412,13 +423,17 @@ impl RadixSort {
     }
 
     fn estimate_memory_u32(&self, len: usize) -> usize {
-        let radix = 1usize << self.config.radix_bits;
+        let radix = 1usize
+            .checked_shl(self.config.radix_bits.min(16) as u32)
+            .unwrap_or(256);
         len * std::mem::size_of::<u32>() + // buffer
         radix * std::mem::size_of::<usize>() // counts
     }
 
     fn estimate_memory_u64(&self, len: usize) -> usize {
-        let radix = 1usize << self.config.radix_bits;
+        let radix = 1usize
+            .checked_shl(self.config.radix_bits.min(16) as u32)
+            .unwrap_or(256);
         len * std::mem::size_of::<u64>() + // buffer
         radix * std::mem::size_of::<usize>() // counts
     }
@@ -466,10 +481,13 @@ impl RadixSort {
         Ok(())
     }
 
-    /// AVX-512 accelerated digit counting for radix sort
+    /// AVX-512 accelerated digit counting for radix sort.
     ///
     /// Processes multiple integers simultaneously to count digit occurrences,
     /// providing significant speedup for the counting phase of radix sort.
+    ///
+    /// # Safety
+    /// Caller must ensure the CPU supports `avx512f` and that `counts.len() > mask as usize`.
     #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
     #[target_feature(enable = "avx512f")]
     unsafe fn count_digits_avx512(
@@ -499,9 +517,7 @@ impl RadixSort {
             let mask_vec = _mm512_set1_epi32(mask as i32);
             let digits = _mm512_and_si512(shifted, mask_vec);
 
-            // Extract digits and count them
-            // Note: This could be further optimized with gather operations
-            // For now, extract to array and count sequentially
+            // Store extracted digits to stack buffer and increment histogram buckets
             let mut digit_array = [0u32; 16];
             // SAFETY: digit_array is 16 u32s = 64 bytes, matches __m512i size
             unsafe { _mm512_storeu_si512(digit_array.as_mut_ptr() as *mut __m512i, digits) };
@@ -614,12 +630,12 @@ where
             .collect();
 
         let mut config = super::config::AdvancedRadixSortConfig::default();
+        config.use_secure_memory = false;
         config.use_parallel = self.config.use_parallel;
         config.parallel_threshold = self.config.parallel_threshold;
         config.radix_bits = self.config.radix_bits;
 
-        let mut sorter = super::advanced::AdvancedRadixSort::<KVPair>::with_config(config)
-            .or_else(|_| super::advanced::AdvancedRadixSort::new())?;
+        let mut sorter = super::advanced::AdvancedRadixSort::<KVPair>::with_config(config)?;
 
         sorter.sort(&mut indices)?;
 

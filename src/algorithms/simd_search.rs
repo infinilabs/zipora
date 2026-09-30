@@ -151,7 +151,7 @@ pub fn simd_gallop_to(arr: &[u32], cursor: &mut usize, target: u32) -> bool {
     #[cfg(target_arch = "x86_64")]
     {
         #[cfg(feature = "avx512")]
-        if has_avx512f() && (hi - lo) >= 64 {
+        if has_avx512f() && (hi - lo) >= 16 {
             // SAFETY: AVX512F support verified by runtime check
             return unsafe { gallop_scan_avx512(arr, lo, hi, target, cursor) };
         }
@@ -248,6 +248,10 @@ fn block_filter_avx2_entry(
 // AVX-512 implementation (x86_64)
 // ============================================================================
 
+/// AVX-512 linear scan within `[lo, hi)` for the first element `>= target`.
+///
+/// # Safety
+/// Caller must ensure `avx512f` is supported by the CPU and `lo <= hi <= arr.len()`.
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 #[target_feature(enable = "avx512f")]
 unsafe fn gallop_scan_avx512(
@@ -284,6 +288,10 @@ unsafe fn gallop_scan_avx512(
     gallop_scan_scalar(arr, pos, hi, target, cursor)
 }
 
+/// AVX-512 block filter for up to 64 `f32` scores against `theta`.
+///
+/// # Safety
+/// Caller must ensure `avx512f` is supported by the CPU and `scores.len() <= 64`.
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 #[target_feature(enable = "avx512f")]
 unsafe fn block_filter_avx512(scores: &[f32], theta: f32) -> (u64, usize) {
@@ -326,6 +334,10 @@ unsafe fn block_filter_avx512(scores: &[f32], theta: f32) -> (u64, usize) {
 // AVX2 implementation (x86_64)
 // ============================================================================
 
+/// AVX2 linear scan within `[lo, hi)` for the first element `>= target`.
+///
+/// # Safety
+/// Caller must ensure `avx2` is supported by the CPU and `lo <= hi <= arr.len()`.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn gallop_scan_avx2(
@@ -371,6 +383,10 @@ unsafe fn gallop_scan_avx2(
     gallop_scan_scalar(arr, pos, hi, target, cursor)
 }
 
+/// SSE2 linear scan within `[lo, hi)` for the first element `>= target`.
+///
+/// # Safety
+/// Caller must ensure `sse2` is supported by the CPU and `lo <= hi <= arr.len()`.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse2")]
 unsafe fn gallop_scan_sse2(
@@ -415,6 +431,10 @@ unsafe fn gallop_scan_sse2(
     gallop_scan_scalar(arr, pos, hi, target, cursor)
 }
 
+/// AVX2 block filter for up to 64 `f32` scores against `theta`.
+///
+/// # Safety
+/// Caller must ensure `avx2` is supported by the CPU and `scores.len() <= 64`.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn block_filter_avx2(scores: &[f32], theta: f32) -> (u64, usize) {

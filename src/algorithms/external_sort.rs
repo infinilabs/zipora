@@ -8,7 +8,6 @@
 use crate::algorithms::tournament_tree::{EnhancedLoserTree, LoserTreeConfig};
 use crate::error::{Result, ZiporaError};
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
 use std::fs::{File, remove_file};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::marker::PhantomData;
@@ -102,7 +101,7 @@ impl<T> RunElement<T> {
 
 impl<T: PartialEq> PartialEq for RunElement<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.value.eq(&other.value)
+        self.run_id == other.run_id && self.value.eq(&other.value)
     }
 }
 
@@ -110,15 +109,19 @@ impl<T: Eq> Eq for RunElement<T> {}
 
 impl<T: PartialOrd> PartialOrd for RunElement<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        // Reverse order for max-heap behavior in BinaryHeap
-        other.value.partial_cmp(&self.value)
+        match other.run_id.partial_cmp(&self.run_id) {
+            Some(Ordering::Equal) => other.value.partial_cmp(&self.value),
+            ord => ord,
+        }
     }
 }
 
 impl<T: Ord> Ord for RunElement<T> {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Reverse order for max-heap behavior in BinaryHeap
-        other.value.cmp(&self.value)
+        other
+            .run_id
+            .cmp(&self.run_id)
+            .then_with(|| other.value.cmp(&self.value))
     }
 }
 
@@ -357,13 +360,73 @@ where
         Ok(result)
     }
 
+    /// Push an element onto the replacement-selection min-heap ordered by `(run_id, comparator)`.
+    fn heap_push(heap: &mut Vec<RunElement<T>>, elem: RunElement<T>, comparator: &F) {
+        heap.push(elem);
+        let mut idx = heap.len() - 1;
+        while idx > 0 {
+            let parent = (idx - 1) / 2;
+            let ord = heap[idx]
+                .run_id
+                .cmp(&heap[parent].run_id)
+                .then_with(|| comparator(&heap[idx].value, &heap[parent].value));
+            if ord == Ordering::Less {
+                heap.swap(idx, parent);
+                idx = parent;
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Pop the minimum element from the replacement-selection min-heap ordered by `(run_id, comparator)`.
+    fn heap_pop(heap: &mut Vec<RunElement<T>>, comparator: &F) -> Option<RunElement<T>> {
+        if heap.is_empty() {
+            return None;
+        }
+        let min = heap.swap_remove(0);
+        let len = heap.len();
+        let mut idx = 0;
+        loop {
+            let left = 2 * idx + 1;
+            let right = 2 * idx + 2;
+            let mut smallest = idx;
+
+            if left < len {
+                let ord = heap[left]
+                    .run_id
+                    .cmp(&heap[smallest].run_id)
+                    .then_with(|| comparator(&heap[left].value, &heap[smallest].value));
+                if ord == Ordering::Less {
+                    smallest = left;
+                }
+            }
+            if right < len {
+                let ord = heap[right]
+                    .run_id
+                    .cmp(&heap[smallest].run_id)
+                    .then_with(|| comparator(&heap[right].value, &heap[smallest].value));
+                if ord == Ordering::Less {
+                    smallest = right;
+                }
+            }
+            if smallest != idx {
+                heap.swap(idx, smallest);
+                idx = smallest;
+            } else {
+                break;
+            }
+        }
+        Some(min)
+    }
+
     /// Generate sorted runs using replacement selection
     fn generate_runs<I>(&mut self, input: I) -> Result<()>
     where
         I: IntoIterator<Item = T>,
     {
-        let memory_items = self.config.memory_buffer_size / std::mem::size_of::<T>().max(1);
-        let mut heap = BinaryHeap::with_capacity(memory_items);
+        let memory_items = (self.config.memory_buffer_size / std::mem::size_of::<T>().max(1)).max(1);
+        let mut heap = Vec::with_capacity(memory_items);
         let mut input_iter = input.into_iter();
         let mut current_run = 0;
         let mut run_items = 0;
@@ -373,14 +436,33 @@ where
         // Fill initial heap
         for _ in 0..memory_items {
             if let Some(item) = input_iter.next() {
-                heap.push(RunElement::new(item, current_run));
+                Self::heap_push(
+                    &mut heap,
+                    RunElement::new(item, current_run),
+                    &self.comparator,
+                );
                 self.stats.items_sorted += 1;
             } else {
                 break;
             }
         }
 
-        while let Some(min_element) = heap.pop() {
+        while let Some(min_element) = Self::heap_pop(&mut heap, &self.comparator) {
+            if min_element.run_id > current_run {
+                if temp_writer.is_some() {
+                    self.finish_run(
+                        &mut temp_writer,
+                        current_temp_path.take().ok_or_else(|| {
+                            ZiporaError::invalid_state(
+                                "external sort: temp path missing at run boundary",
+                            )
+                        })?,
+                        run_items,
+                    )?;
+                }
+                current_run = min_element.run_id;
+            }
+
             // Start new run file if needed
             if temp_writer.is_none() {
                 let temp_path = self
@@ -407,43 +489,28 @@ where
             // Try to read next element
             if let Some(next_item) = input_iter.next() {
                 self.stats.items_sorted += 1;
-                // Check if next item can be added to current run
-                if (self.comparator)(&next_item, &min_element.value) != Ordering::Less {
-                    // Can extend current run
-                    heap.push(RunElement::new(next_item, current_run));
-                } else {
-                    // Must start new run
-                    heap.push(RunElement::new(next_item, current_run + 1));
-
-                    // Close current run if heap is empty or next min is from new run
-                    if heap.is_empty() || heap.peek().map(|e| e.run_id).unwrap_or(0) > current_run {
-                        self.finish_run(
-                            &mut temp_writer,
-                            current_temp_path.take().ok_or_else(|| {
-                                ZiporaError::invalid_state(
-                                    "external sort: temp path missing at run boundary",
-                                )
-                            })?,
-                            run_items,
-                        )?;
-                        current_run += 1;
-                    }
-                }
-            } else {
-                // No more input, finish current run when heap empties
-                if heap.is_empty() || heap.peek().map(|e| e.run_id).unwrap_or(0) > current_run {
-                    self.finish_run(
-                        &mut temp_writer,
-                        current_temp_path.take().ok_or_else(|| {
-                            ZiporaError::invalid_state(
-                                "external sort: temp path missing at run boundary",
-                            )
-                        })?,
-                        run_items,
-                    )?;
-                    current_run += 1;
-                }
+                let target_run =
+                    if (self.comparator)(&next_item, &min_element.value) != Ordering::Less {
+                        current_run
+                    } else {
+                        current_run + 1
+                    };
+                Self::heap_push(
+                    &mut heap,
+                    RunElement::new(next_item, target_run),
+                    &self.comparator,
+                );
             }
+        }
+
+        if temp_writer.is_some() {
+            self.finish_run(
+                &mut temp_writer,
+                current_temp_path.take().ok_or_else(|| {
+                    ZiporaError::invalid_state("external sort: temp path missing at final run")
+                })?,
+                run_items,
+            )?;
         }
 
         Ok(())
@@ -524,13 +591,26 @@ where
         let mut tournament_tree =
             EnhancedLoserTree::with_comparator(tree_config, self.comparator.clone());
 
-        // Add all runs to the tournament tree
+        let read_error: std::rc::Rc<std::cell::RefCell<Option<ZiporaError>>> =
+            std::rc::Rc::new(std::cell::RefCell::new(None));
+
+        // Add all runs to the tournament tree while capturing any I/O or deserialization error
         for run in &self.temp_files {
-            let iter = run.iter::<T>()?.filter_map(|result| result.ok()); // Skip errors instead of panicking
+            let err_slot = std::rc::Rc::clone(&read_error);
+            let iter = run.iter::<T>()?.scan(err_slot, |slot, item_res| match item_res {
+                Ok(val) => Some(val),
+                Err(e) => {
+                    *slot.borrow_mut() = Some(e);
+                    None
+                }
+            });
             tournament_tree.add_way(iter)?;
         }
 
         let result = tournament_tree.merge_to_vec()?;
+        if let Some(err) = read_error.borrow_mut().take() {
+            return Err(err);
+        }
         self.stats.merge_passes = 1;
 
         Ok(result)
@@ -548,11 +628,6 @@ where
         for item_result in run.iter::<T>()? {
             result.push(item_result?);
         }
-
-        // Apply custom comparator to ensure correct ordering
-        // The run was generated with replacement selection which maintains order,
-        // but we need to ensure the final result respects the custom comparator
-        result.sort_by(&self.comparator);
 
         Ok(result)
     }
@@ -820,6 +895,39 @@ mod tests {
 
         // Should have generated multiple runs due to small buffer
         assert!(sorter.stats().runs_generated > 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_c8_9_external_sort_custom_comparator_multi_run_and_tiny_buffer() -> Result<()> {
+        // 1. memory_buffer_size < size_of::<i32>() previously computed memory_items == 0
+        // and silently discarded the entire input (`vec![]`).
+        let tiny_config = ReplaceSelectSortConfig {
+            memory_buffer_size: 1,
+            temp_dir: test_temp_dir(),
+            ..Default::default()
+        };
+        let mut tiny_sorter = ReplaceSelectSort::new(tiny_config);
+        let input = vec![9, 1, 8, 2, 7, 3, 6, 4, 5];
+        assert_eq!(tiny_sorter.sort(input)?, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+        // 2. Multi-run sort with custom descending comparator previously ignored both
+        // `run_id` and `self.comparator` inside `generate_runs`, producing unsorted output.
+        let desc_config = ReplaceSelectSortConfig {
+            memory_buffer_size: 16, // 4 i32s in memory -> forces multiple runs
+            temp_dir: test_temp_dir(),
+            ..Default::default()
+        };
+        let mut desc_sorter =
+            ReplaceSelectSort::with_comparator(desc_config, |a: &i32, b: &i32| b.cmp(a));
+        let data: Vec<i32> = (0..40).map(|i| (i * 17 + 3) % 29).collect();
+        let mut expected = data.clone();
+        expected.sort_by(|a, b| b.cmp(a));
+
+        let sorted = desc_sorter.sort(data)?;
+        assert!(desc_sorter.stats().runs_generated > 1);
+        assert_eq!(sorted, expected);
 
         Ok(())
     }

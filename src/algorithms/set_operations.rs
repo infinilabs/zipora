@@ -97,7 +97,7 @@ impl SetOperations {
         let start = std::time::Instant::now();
 
         let result = if self.config.use_bit_mask_optimization
-            && num_ways <= self.config.bit_mask_threshold
+            && num_ways <= self.config.bit_mask_threshold.min(32)
         {
             self.stats.used_bit_mask = true;
             self.intersection_bit_mask(iterators)?
@@ -174,12 +174,18 @@ impl SetOperations {
                 result.push(min_val.clone());
             }
 
-            // Advance iterators that had the minimum value
+            // Advance iterators that had the minimum value, skipping intra-way duplicates
             for &idx in &min_indices {
-                current_values[idx] = iterators[idx].next();
+                loop {
+                    let next_val = iterators[idx].next();
+                    let is_dup = next_val.as_ref() == Some(&min_val);
+                    current_values[idx] = next_val;
+                    self.stats.elements_examined += 1;
+                    if !is_dup {
+                        break;
+                    }
+                }
             }
-
-            self.stats.elements_examined += min_indices.len();
         }
 
         Ok(result)
@@ -203,21 +209,26 @@ impl SetOperations {
 
         tree.initialize()?;
 
-        // Process elements using the tournament tree
+        // Process elements using the tournament tree, counting distinct ways per key
         let mut current_key: Option<T> = None;
+        let mut last_way: Option<usize> = None;
         let mut count = 0;
 
         while !tree.is_empty() {
-            if let Some(value) = tree.pop()? {
+            if let Some((way, value)) = tree.pop_with_way()? {
                 match &current_key {
                     None => {
                         current_key = Some(value.clone());
+                        last_way = Some(way);
                         count = 1;
                     }
                     Some(key) => {
                         match value.cmp(key) {
                             Ordering::Equal => {
-                                count += 1;
+                                if last_way != Some(way) {
+                                    count += 1;
+                                    last_way = Some(way);
+                                }
                             }
                             Ordering::Greater => {
                                 // Check if previous key appeared in all ways
@@ -225,6 +236,7 @@ impl SetOperations {
                                     result.push(key.clone());
                                 }
                                 current_key = Some(value.clone());
+                                last_way = Some(way);
                                 count = 1;
                             }
                             Ordering::Less => {
@@ -527,4 +539,37 @@ mod tests {
         assert_eq!(stats.output_elements, result.len());
         assert_eq!(stats.ways_processed, 2);
     }
+
+    #[test]
+    fn test_c8_11_multiway_intersection_duplicates_and_large_threshold() {
+        // 1. Intra-way duplicates must not cause false positives or false negatives
+        // in either intersection_general or intersection_bit_mask.
+        for use_bit_mask in [false, true] {
+            let mut ops = SetOperations::with_config(SetOperationsConfig {
+                use_bit_mask_optimization: use_bit_mask,
+                bit_mask_threshold: if use_bit_mask { 32 } else { 0 },
+                ..Default::default()
+            });
+
+            // Way 0 has 1 twice, Way 1 does not have 1 at all; both have 5 (Way 0 has 5 twice).
+            let seqs = vec![
+                vec![1, 1, 5, 5, 9].into_iter(),
+                vec![2, 5, 9, 9].into_iter(),
+            ];
+            let res = ops.intersection(seqs).unwrap();
+            assert_eq!(res, vec![5, 9], "failed for use_bit_mask={}", use_bit_mask);
+        }
+
+        // 2. bit_mask_threshold > 32 with > 32 ways must not shift-overflow 1u32 << idx.
+        let mut ops = SetOperations::with_config(SetOperationsConfig {
+            use_bit_mask_optimization: true,
+            bit_mask_threshold: 64,
+            ..Default::default()
+        });
+        let ways: Vec<_> = (0..35).map(|i| vec![1, i + 2, 42].into_iter()).collect();
+        let res = ops.intersection(ways).unwrap();
+        assert_eq!(res, vec![1, 42]);
+        assert!(!ops.stats().used_bit_mask);
+    }
 }
+

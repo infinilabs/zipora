@@ -69,8 +69,12 @@ impl SimdComparator {
         }
 
         #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
-        if self.config.use_avx512 && left.len() >= 16 {
-            // SAFETY: AVX-512F availability verified by self.config.use_avx512 (set from runtime detection)
+        if self.config.use_avx512
+            && !cfg!(miri)
+            && is_x86_feature_detected!("avx512f")
+            && left.len() >= 16
+        {
+            // SAFETY: AVX-512F availability is verified at runtime via `is_x86_feature_detected!("avx512f")`.
             return unsafe { self.compare_i32_simd_avx512(left, right) };
         }
 
@@ -100,17 +104,15 @@ impl SimdComparator {
                 let left_ptr = left.as_ptr().add(i);
                 let right_ptr = right.as_ptr().add(i);
 
-                if self.config.prefetch_distance > 0
-                    && i + chunk_size * self.config.prefetch_distance < left.len()
+                #[cfg(not(miri))]
+                if let Some(prefetch_offset) = chunk_size
+                    .checked_mul(self.config.prefetch_distance)
+                    .filter(|&d| d > 0)
+                    && i.checked_add(prefetch_offset)
+                        .is_some_and(|idx| idx < left.len())
                 {
-                    _mm_prefetch(
-                        left_ptr.add(chunk_size * self.config.prefetch_distance) as *const i8,
-                        _MM_HINT_T0,
-                    );
-                    _mm_prefetch(
-                        right_ptr.add(chunk_size * self.config.prefetch_distance) as *const i8,
-                        _MM_HINT_T0,
-                    );
+                    _mm_prefetch(left_ptr.add(prefetch_offset) as *const i8, _MM_HINT_T0);
+                    _mm_prefetch(right_ptr.add(prefetch_offset) as *const i8, _MM_HINT_T0);
                 }
 
                 let left_vec = _mm512_loadu_si512(left_ptr as *const __m512i);
@@ -153,10 +155,22 @@ impl SimdComparator {
                 .collect());
         }
 
+        // SAFETY: `is_x86_feature_detected!("avx2")` was verified above.
+        unsafe { self.compare_i32_simd_avx2(left, right) }
+    }
+
+    /// AVX2 inner implementation for i32 slice comparison.
+    ///
+    /// # Safety
+    /// Caller must ensure the CPU supports `avx2`.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2")]
+    unsafe fn compare_i32_simd_avx2(&self, left: &[i32], right: &[i32]) -> Result<Vec<Ordering>> {
         let mut results = Vec::with_capacity(left.len());
         let chunk_size = 8; // AVX2 can process 8 i32s at once
 
-        // SAFETY: AVX2 feature detected at runtime, all pointer arithmetic bounds-checked below
+        // SAFETY: AVX2 feature is guaranteed by caller and `#[target_feature(enable = "avx2")]`,
+        // and all pointer arithmetic is bounds-checked below.
         unsafe {
             let mut i = 0;
 
@@ -166,11 +180,15 @@ impl SimdComparator {
                 let right_ptr = right.as_ptr().add(i);
 
                 // Prefetch next chunk if configured
-                if self.config.prefetch_distance > 0
-                    && i + chunk_size * self.config.prefetch_distance < left.len()
+                #[cfg(not(miri))]
+                if let Some(prefetch_offset) = chunk_size
+                    .checked_mul(self.config.prefetch_distance)
+                    .filter(|&d| d > 0)
+                    && i.checked_add(prefetch_offset)
+                        .is_some_and(|idx| idx < left.len())
                 {
-                    let prefetch_left = left_ptr.add(chunk_size * self.config.prefetch_distance);
-                    let prefetch_right = right_ptr.add(chunk_size * self.config.prefetch_distance);
+                    let prefetch_left = left_ptr.add(prefetch_offset);
+                    let prefetch_right = right_ptr.add(prefetch_offset);
                     _mm_prefetch(prefetch_left as *const i8, _MM_HINT_T0);
                     _mm_prefetch(prefetch_right as *const i8, _MM_HINT_T0);
                 }
@@ -234,8 +252,12 @@ impl SimdComparator {
         }
 
         #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
-        if self.config.use_avx512 && values.len() >= 16 {
-            // SAFETY: AVX-512F availability verified by self.config.use_avx512
+        if self.config.use_avx512
+            && !cfg!(miri)
+            && is_x86_feature_detected!("avx512f")
+            && values.len() >= 16
+        {
+            // SAFETY: AVX-512F availability is verified at runtime via `is_x86_feature_detected!("avx512f")`.
             return unsafe { self.find_min_i32_simd_avx512(values) };
         }
 
@@ -312,7 +334,19 @@ impl SimdComparator {
                 .map(|(idx, val)| (idx, *val));
         }
 
-        // SAFETY: AVX2 feature detected at runtime, pointer arithmetic bounds-checked before AVX2 intrinsics
+        // SAFETY: `is_x86_feature_detected!("avx2")` was verified above.
+        unsafe { self.find_min_i32_simd_avx2(values) }
+    }
+
+    /// AVX2 inner implementation for minimum finding.
+    ///
+    /// # Safety
+    /// Caller must ensure the CPU supports `avx2` and `values` is non-empty.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2")]
+    unsafe fn find_min_i32_simd_avx2(&self, values: &[i32]) -> Option<(usize, i32)> {
+        // SAFETY: AVX2 feature is guaranteed by caller and `#[target_feature(enable = "avx2")]`,
+        // and pointer arithmetic is bounds-checked before AVX2 intrinsics.
         unsafe {
             let chunk_size = 8;
             let mut global_min = i32::MAX;
@@ -366,20 +400,25 @@ impl SimdComparator {
     /// Merge two sorted i32 arrays using SIMD optimizations
     pub fn merge_sorted_i32(&self, left: &[i32], right: &[i32]) -> Vec<i32> {
         #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
-        if self.config.use_avx512 && (left.len() + right.len()) >= 32 {
-            // SAFETY: AVX-512F availability verified by self.config.use_avx512
+        if self.config.use_avx512
+            && !cfg!(miri)
+            && is_x86_feature_detected!("avx512f")
+            && (left.len() + right.len()) >= 32
+        {
+            // SAFETY: AVX-512F availability is verified at runtime via `is_x86_feature_detected!("avx512f")`.
             return unsafe { self.merge_sorted_i32_simd_avx512(left, right) };
         }
 
-        if self.config.use_avx2 && (left.len() + right.len()) >= self.config.min_vector_size * 2 {
+        if self.config.use_avx2
+            && (left.len() + right.len()) >= self.config.min_vector_size.saturating_mul(2)
+        {
             self.merge_sorted_i32_simd(left, right)
         } else {
             self.merge_sorted_i32_scalar(left, right)
         }
     }
 
-    /// AVX-512 merge for sorted i32 arrays.
-    /// Core merge is scalar (full SIMD merge network is complex); tail copy uses AVX-512.
+    /// AVX-512 merge for sorted i32 arrays with vector block copy on non-overlapping runs.
     #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
     #[target_feature(enable = "avx512f")]
     unsafe fn merge_sorted_i32_simd_avx512(&self, left: &[i32], right: &[i32]) -> Vec<i32> {
@@ -388,7 +427,19 @@ impl SimdComparator {
         let mut right_idx = 0;
 
         while left_idx < left.len() && right_idx < right.len() {
-            if left[left_idx] <= right[right_idx] {
+            if left_idx + 16 <= left.len() && left[left_idx + 15] <= right[right_idx] {
+                // SAFETY: AVX-512F is enabled and `left_idx + 16 <= left.len()`.
+                unsafe {
+                    self.simd_copy_i32_avx512(&left[left_idx..left_idx + 16], &mut result);
+                }
+                left_idx += 16;
+            } else if right_idx + 16 <= right.len() && right[right_idx + 15] < left[left_idx] {
+                // SAFETY: AVX-512F is enabled and `right_idx + 16 <= right.len()`.
+                unsafe {
+                    self.simd_copy_i32_avx512(&right[right_idx..right_idx + 16], &mut result);
+                }
+                right_idx += 16;
+            } else if left[left_idx] <= right[right_idx] {
                 result.push(left[left_idx]);
                 left_idx += 1;
             } else {
@@ -421,10 +472,21 @@ impl SimdComparator {
         let mut left_idx = 0;
         let mut right_idx = 0;
 
-        // Use SIMD for bulk copying when one array is exhausted
+        // Use AVX2 8-element block copy when an entire 8-element run precedes the other stream's head
         while left_idx < left.len() && right_idx < right.len() {
-            // For now, use scalar comparison - full SIMD merge is complex
-            if left[left_idx] <= right[right_idx] {
+            if left_idx + 8 <= left.len() && left[left_idx + 7] <= right[right_idx] {
+                // SAFETY: AVX2 is verified above and slice is in bounds.
+                unsafe {
+                    self.simd_copy_i32(&left[left_idx..left_idx + 8], &mut result);
+                }
+                left_idx += 8;
+            } else if right_idx + 8 <= right.len() && right[right_idx + 7] < left[left_idx] {
+                // SAFETY: AVX2 is verified above and slice is in bounds.
+                unsafe {
+                    self.simd_copy_i32(&right[right_idx..right_idx + 8], &mut result);
+                }
+                right_idx += 8;
+            } else if left[left_idx] <= right[right_idx] {
                 result.push(left[left_idx]);
                 left_idx += 1;
             } else {
@@ -434,7 +496,7 @@ impl SimdComparator {
         }
 
         // Use SIMD for copying remaining elements
-        // SAFETY: simd_copy_i32 performs bounds-checked operations on slices
+        // SAFETY: AVX2 is verified above and `simd_copy_i32` performs bounds-checked operations on slices.
         unsafe {
             if left_idx < left.len() {
                 let remaining = &left[left_idx..];
@@ -484,8 +546,12 @@ impl SimdComparator {
         }
     }
 
-    /// SIMD-optimized array copying
+    /// SIMD-optimized array copying.
+    ///
+    /// # Safety
+    /// Caller must ensure the CPU supports `avx2`.
     #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2")]
     unsafe fn simd_copy_i32(&self, src: &[i32], dest: &mut Vec<i32>) {
         let chunk_size = 8;
         let mut i = 0;
@@ -614,13 +680,8 @@ impl SimdOperations {
 
     /// Merge multiple sorted arrays using SIMD optimizations
     pub fn merge_multiple_sorted(arrays: Vec<Vec<i32>>) -> Vec<i32> {
-        if arrays.is_empty() {
-            return Vec::new();
-        }
-
-        if arrays.len() == 1 {
-            // SAFETY: len() == 1 check above guarantees exactly one element
-            return arrays.into_iter().next().expect("non-empty arrays");
+        if arrays.len() <= 1 {
+            return arrays.into_iter().next().unwrap_or_default();
         }
 
         let comparator = SimdComparator::new();
@@ -629,35 +690,21 @@ impl SimdOperations {
         let mut current_arrays = arrays;
 
         while current_arrays.len() > 1 {
-            let mut next_arrays = Vec::new();
+            let mut next_arrays = Vec::with_capacity(current_arrays.len().div_ceil(2));
+            let mut iter = current_arrays.into_iter();
 
-            let mut i = 0;
-            while i + 1 < current_arrays.len() {
-                let merged =
-                    comparator.merge_sorted_i32(&current_arrays[i], &current_arrays[i + 1]);
-                next_arrays.push(merged);
-                i += 2;
-            }
-
-            // Handle odd number of arrays
-            if i < current_arrays.len() {
-                // SAFETY: i < current_arrays.len() check above guarantees nth(i) succeeds
-                next_arrays.push(
-                    current_arrays
-                        .into_iter()
-                        .nth(i)
-                        .expect("valid merge index"),
-                );
+            while let Some(first) = iter.next() {
+                if let Some(second) = iter.next() {
+                    next_arrays.push(comparator.merge_sorted_i32(&first, &second));
+                } else {
+                    next_arrays.push(first);
+                }
             }
 
             current_arrays = next_arrays;
         }
 
-        // SAFETY: After while loop, len() <= 1. Empty case returned early at line 382-384, so len() == 1
-        current_arrays
-            .into_iter()
-            .next()
-            .expect("single remaining array")
+        current_arrays.into_iter().next().unwrap_or_default()
     }
 }
 
@@ -802,5 +849,38 @@ mod tests {
         // All should be Less since left[i] < right[i] for all i
         assert!(result.iter().all(|&ord| ord == Ordering::Less));
         assert_eq!(result.len(), 16);
+    }
+
+    #[test]
+    fn test_c8_7_simd_comparator_forced_config_and_overflow_prefetch() {
+        let forced = SimdComparator::with_config(SimdConfig {
+            use_avx512: true,
+            use_avx2: true,
+            use_bmi2: true,
+            min_vector_size: 1,
+            prefetch_distance: usize::MAX / 4,
+        });
+        let scalar = SimdComparator::with_config(SimdConfig {
+            use_avx512: false,
+            use_avx2: false,
+            use_bmi2: false,
+            min_vector_size: usize::MAX,
+            prefetch_distance: 0,
+        });
+
+        let left: Vec<i32> = (0..40).map(|i| i * 3 - 20).collect();
+        let right: Vec<i32> = (0..40).map(|i| i * 2 + 5).collect();
+
+        // Previously overflowed `chunk_size * prefetch_distance` and dispatched to
+        // `#[target_feature(enable = "avx512f")]` without checking runtime feature / Miri.
+        assert_eq!(
+            forced.compare_i32_slices(&left, &right).unwrap(),
+            scalar.compare_i32_slices(&left, &right).unwrap()
+        );
+        assert_eq!(forced.find_min_i32(&left), scalar.find_min_i32(&left));
+        assert_eq!(
+            forced.merge_sorted_i32(&left, &right),
+            scalar.merge_sorted_i32(&left, &right)
+        );
     }
 }

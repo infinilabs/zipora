@@ -188,6 +188,8 @@ pub struct EnhancedLoserTree<T, F = fn(&T, &T) -> Ordering> {
     winner: usize,
     /// Number of ways (input streams)
     num_ways: usize,
+    /// Whether the tournament tree has been initialized for the current ways
+    initialized: bool,
     /// Comparison function
     comparator: F,
     /// Configuration
@@ -218,6 +220,7 @@ where
             ways: Vec::new(),
             winner: 0,
             num_ways: 0,
+            initialized: false,
             comparator,
             config,
             _phantom: PhantomData,
@@ -234,6 +237,7 @@ where
         let way_iter = WayIterator::new(boxed_iter, way_index);
         self.ways.push(way_iter);
         self.num_ways += 1;
+        self.initialized = false;
         Ok(())
     }
 
@@ -254,6 +258,7 @@ where
 
         // Build the initial tournament tree bottom-up
         self.build_enhanced_tree()?;
+        self.initialized = true;
 
         Ok(())
     }
@@ -285,16 +290,10 @@ where
         Ok(winner)
     }
 
-    /// SIMD-optimized comparison function for supported types
+    /// Element comparison function
     #[inline]
     fn compare_optimized(&self, a: &T, b: &T) -> Ordering {
-        if self.config.use_simd {
-            // For now, delegate to the regular comparator
-            // TODO: Add SIMD implementations for specific types like i32, i64
-            (self.comparator)(a, b)
-        } else {
-            (self.comparator)(a, b)
-        }
+        (self.comparator)(a, b)
     }
 
     /// Compare two competitors and return (winner, loser)
@@ -317,9 +316,9 @@ where
                     Ordering::Less => Ok((way1, way2)),
                     Ordering::Greater => Ok((way2, way1)),
                     Ordering::Equal => {
-                        // For stable sorting, prefer earlier sequence
+                        // For stable sorting, prefer earlier input stream (smaller way index)
                         if self.config.stable_sort {
-                            if self.ways[way1].position <= self.ways[way2].position {
+                            if way1 <= way2 {
                                 Ok((way1, way2))
                             } else {
                                 Ok((way2, way1))
@@ -365,23 +364,36 @@ where
         self.ways[self.winner].peek()
     }
 
-    /// Remove and return the current minimum element
-    pub fn pop(&mut self) -> Result<Option<T>> {
-        if self.ways.is_empty() || self.winner >= self.ways.len() {
+    /// Remove and return the current minimum element along with its source way index
+    pub(crate) fn pop_with_way(&mut self) -> Result<Option<(usize, T)>> {
+        if self.ways.is_empty() {
+            return Ok(None);
+        }
+        if !self.initialized {
+            self.initialize()?;
+        }
+        if self.winner >= self.ways.len() {
             return Ok(None);
         }
 
-        let result = self.ways[self.winner].current.clone();
+        let winner_way = self.winner;
+        let result = self.ways[winner_way].current.clone();
 
-        if result.is_some() {
+        if let Some(val) = result {
             // Advance the winner stream
-            self.ways[self.winner].advance()?;
+            self.ways[winner_way].advance()?;
 
             // Replay tournament to find new winner
             self.update_winner()?;
+            Ok(Some((winner_way, val)))
+        } else {
+            Ok(None)
         }
+    }
 
-        Ok(result)
+    /// Remove and return the current minimum element
+    pub fn pop(&mut self) -> Result<Option<T>> {
+        Ok(self.pop_with_way()?.map(|(_, val)| val))
     }
 
     /// Check if the tournament tree is empty (all ways exhausted)
@@ -652,4 +664,33 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_c8_11_loser_tree_pop_without_initialize_and_stable_tie_break() -> Result<()> {
+        // 1. Calling pop() or Iterator::collect() without explicit initialize() must not panic.
+        let mut tree = EnhancedLoserTree::<i32>::new(LoserTreeConfig::default());
+        tree.add_way(vec![4, 8].into_iter())?;
+        tree.add_way(vec![1, 5].into_iter())?;
+        tree.add_way(vec![2, 6].into_iter())?;
+        let collected: Vec<i32> = tree.collect();
+        assert_eq!(collected, vec![1, 2, 4, 5, 6, 8]);
+
+        // 2. Stable tie-breaking must prefer earlier stream (way 0 before way 1),
+        // even when way 0's matching element is at a larger intra-stream position.
+        let mut stable_tree = EnhancedLoserTree::with_comparator(
+            LoserTreeConfig {
+                stable_sort: true,
+                ..Default::default()
+            },
+            |a: &(i32, usize), b: &(i32, usize)| a.0.cmp(&b.0),
+        );
+        // Way 0 has key 10 at position 2; Way 1 has key 10 at position 0.
+        stable_tree.add_way(vec![(1, 0), (2, 0), (10, 0)].into_iter())?;
+        stable_tree.add_way(vec![(10, 1)].into_iter())?;
+        let merged = stable_tree.merge_to_vec()?;
+        assert_eq!(merged, vec![(1, 0), (2, 0), (10, 0), (10, 1)]);
+
+        Ok(())
+    }
 }
+

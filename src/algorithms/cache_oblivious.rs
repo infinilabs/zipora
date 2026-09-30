@@ -146,19 +146,19 @@ impl CacheObliviousSort {
     fn funnel_sort_recursive<T: Clone + Ord>(&mut self, data: &mut [T], k: usize) -> Result<()> {
         let n = data.len();
 
-        if n <= self.config.small_threshold {
+        if n <= 1 || n <= self.config.small_threshold {
             self.insertion_sort(data);
             return Ok(());
         }
 
-        // Calculate optimal subdivision parameters
-        let sqrt_k = (k as f64).sqrt() as usize;
-        let chunk_size = n / k;
+        // Clamp k to [2, n] and sqrt_k to >= 2 so recursive subproblems strictly shrink
+        let k = k.max(2).min(n);
+        let sqrt_k = ((k as f64).sqrt() as usize).max(2);
 
-        // Recursively sort k sublists
+        // Recursively sort k sublists using balanced (i * n) / k .. ((i + 1) * n) / k boundaries
         for i in 0..k {
-            let start = i * chunk_size;
-            let end = if i == k - 1 { n } else { (i + 1) * chunk_size };
+            let start = (i * n) / k;
+            let end = ((i + 1) * n) / k;
 
             if start < end {
                 self.funnel_sort_recursive(&mut data[start..end], sqrt_k)?;
@@ -166,32 +166,28 @@ impl CacheObliviousSort {
         }
 
         // Cache-oblivious k-way merge using funnel
-        self.cache_oblivious_merge(data, k, chunk_size)?;
+        self.cache_oblivious_merge(data, k)?;
 
         Ok(())
     }
 
     /// Cache-oblivious k-way merge with SIMD optimization and cache awareness
-    fn cache_oblivious_merge<T: Clone + Ord>(
-        &mut self,
-        data: &mut [T],
-        k: usize,
-        chunk_size: usize,
-    ) -> Result<()> {
-        if k <= 1 {
+    fn cache_oblivious_merge<T: Clone + Ord>(&mut self, data: &mut [T], k: usize) -> Result<()> {
+        let n = data.len();
+        if k <= 1 || n <= 1 {
             return Ok(());
         }
 
-        let mut segments = Vec::new();
+        let mut segments = Vec::with_capacity(k);
 
         // Prefetch initial data for all segments
-        if self.config.cpu_features.has_avx2 && data.len() > 64 {
-            #[cfg(target_arch = "x86_64")]
+        if self.config.cpu_features.has_avx2 && n > 64 {
+            #[cfg(all(target_arch = "x86_64", not(miri)))]
             {
                 for i in 0..k {
-                    let start = i * chunk_size;
-                    if start < data.len() {
-                        // SAFETY: start < data.len() ensures valid pointer within slice bounds
+                    let start = (i * n) / k;
+                    if start < n {
+                        // SAFETY: start < n ensures valid pointer within slice bounds
                         unsafe {
                             let ptr = data.as_ptr().add(start) as *const i8;
                             std::arch::x86_64::_mm_prefetch(ptr, std::arch::x86_64::_MM_HINT_T0);
@@ -201,14 +197,10 @@ impl CacheObliviousSort {
             }
         }
 
-        // Set up merge segments: (current_pos, end)
+        // Set up merge segments: (current_pos, end) matching funnel_sort_recursive boundaries
         for i in 0..k {
-            let start = i * chunk_size;
-            let end = if i == k - 1 {
-                data.len()
-            } else {
-                (i + 1) * chunk_size
-            };
+            let start = (i * n) / k;
+            let end = ((i + 1) * n) / k;
 
             if start < end {
                 segments.push((start, end));
@@ -220,7 +212,7 @@ impl CacheObliviousSort {
         // the segment vector on exhaustion) for every emitted element.
         // Ties break on the lower segment index, preserving input order for
         // equal elements.
-        let mut temp = Vec::with_capacity(data.len());
+        let mut temp = Vec::with_capacity(n);
         let mut heap: BinaryHeap<Reverse<(T, usize)>> = BinaryHeap::with_capacity(segments.len());
         for (i, &(pos, _end)) in segments.iter().enumerate() {
             heap.push(Reverse((data[pos].clone(), i)));
@@ -250,7 +242,7 @@ impl CacheObliviousSort {
 
         // For large arrays, use cache-aware copying with prefetch
         if src.len() > 256 && self.config.cpu_features.has_avx2 {
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(all(target_arch = "x86_64", not(miri)))]
             {
                 let chunk_size = 64; // Process in cache-line sized chunks
                 for i in (0..src.len()).step_by(chunk_size) {
@@ -276,6 +268,10 @@ impl CacheObliviousSort {
                     // Copy current chunk
                     dst[i..end].clone_from_slice(&src[i..end]);
                 }
+            }
+            #[cfg(not(all(target_arch = "x86_64", not(miri))))]
+            {
+                dst.clone_from_slice(src);
             }
         } else {
             // Regular copy for small arrays or when SIMD unavailable
@@ -314,10 +310,10 @@ impl CacheObliviousSort {
         // Optimal funnel width for cache-oblivious sorting
         // k = Θ(√(M/B)) where M is cache size and B is block size
         let cache_size = self.config.cache_hierarchy.l2_size;
-        let block_size = self.config.cache_hierarchy.l2_line_size;
+        let block_size = self.config.cache_hierarchy.l2_line_size.max(1);
 
         let k = ((cache_size / block_size) as f64).sqrt() as usize;
-        cmp::max(k, 2).min(cmp::min(n, 64)) // Bounded between 2 and 64
+        cmp::max(k, 2).min(cmp::min(n.max(2), 64)) // Bounded between 2 and 64
     }
 
     /// Optimized insertion sort for small arrays
@@ -377,7 +373,7 @@ impl CacheObliviousSort {
         // Prefetch data for cache optimization
         if data.len() > 64 {
             // Prefetch cache lines ahead for better memory access patterns
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(all(target_arch = "x86_64", not(miri)))]
             {
                 if self.config.cpu_features.has_avx2 {
                     // SAFETY: i < data.len() by step_by(8) ensures valid pointers within slice bounds
@@ -403,7 +399,7 @@ impl CacheObliviousSort {
 
             // Prefetch next cache line for better memory access
             if i + 8 < data.len() && self.config.cpu_features.has_avx2 {
-                #[cfg(target_arch = "x86_64")]
+                #[cfg(all(target_arch = "x86_64", not(miri)))]
                 // SAFETY: i + 8 < data.len() ensures valid pointer within slice bounds
                 unsafe {
                     let ptr = data.as_ptr().add(i + 8) as *const i8;
@@ -615,11 +611,13 @@ impl<T: Clone> VanEmdeBoas<T> {
             let physical_index = self.cache_optimal_index(index);
 
             // Prefetch nearby cache lines for better performance
-            if self.cpu_features.has_avx2 && self.data.len() > 64 {
-                #[cfg(target_arch = "x86_64")]
+            if self.cpu_features.has_avx2 && self.data.len() > 64 && std::mem::size_of::<T>() > 0 {
+                let cache_line_elements =
+                    self.cache_line_size / std::mem::size_of::<T>().max(1);
+                let _ = cache_line_elements;
+                #[cfg(all(target_arch = "x86_64", not(miri)))]
                 {
                     // Prefetch next cache line
-                    let cache_line_elements = self.cache_line_size / std::mem::size_of::<T>();
                     if physical_index + cache_line_elements < self.data.len() {
                         // SAFETY: physical_index + cache_line_elements < data.len() ensures valid pointer within slice bounds
                         unsafe {
@@ -639,46 +637,10 @@ impl<T: Clone> VanEmdeBoas<T> {
 
     /// Convert logical index to cache-optimal physical index
     fn cache_optimal_index(&self, logical_index: usize) -> usize {
-        // For simplicity in this implementation, just return the logical index
-        // A full Van Emde Boas layout would require more complex tree restructuring
         if logical_index < self.data.len() {
             logical_index
         } else {
             self.data.len() - 1
-        }
-    }
-
-    /// Recursive Van Emde Boas layout calculation (simplified implementation)
-    fn _veb_layout_recursive(
-        &self,
-        index: usize,
-        offset: usize,
-        size: usize,
-        height: usize,
-    ) -> usize {
-        if height <= 1 || size <= 1 || index >= size {
-            return (offset + index).min(self.data.len() - 1);
-        }
-
-        let half_height = height / 2;
-        let cluster_size = 1 << half_height;
-        let cluster = index / cluster_size;
-        let position = index % cluster_size;
-
-        // Ensure we don't exceed array bounds
-        if offset + cluster * cluster_size >= self.data.len() {
-            return (offset + index).min(self.data.len() - 1);
-        }
-
-        // Recursive layout with cache-optimal clustering
-        let top_offset = offset;
-        let bottom_offset = (offset + (size / cluster_size)).min(self.data.len());
-
-        if cluster == 0 {
-            self._veb_layout_recursive(position, top_offset, cluster_size, half_height)
-        } else {
-            let new_offset = (bottom_offset + cluster * cluster_size).min(self.data.len() - 1);
-            self._veb_layout_recursive(position, new_offset, cluster_size, half_height)
         }
     }
 }
@@ -868,5 +830,28 @@ mod tests {
         for strategy in &strategies {
             assert_ne!(format!("{:?}", strategy), "");
         }
+    }
+
+    #[test]
+    fn test_c8_8_funnel_sort_deep_recursion_and_veb_zst() {
+        // 1. VanEmdeBoas::get on >64 ZST elements previously panicked with division by zero.
+        let veb_zst = VanEmdeBoas::new(vec![(); 100], CacheHierarchy::default());
+        assert_eq!(veb_zst.get(0), Some(&()));
+        assert_eq!(veb_zst.get(99), Some(&()));
+
+        // 2. Deep funnel_sort_recursive with small_threshold = 2 and l2_line_size = 0 previously
+        // panicked on division by zero or recursed infinitely when sqrt_k reached 1 or n < k.
+        let mut config = CacheObliviousConfig {
+            small_threshold: 2,
+            ..Default::default()
+        };
+        config.cache_hierarchy.l2_line_size = 0;
+        let mut sorter = CacheObliviousSort::with_config(config);
+        let mut data: Vec<i32> = (0..120).map(|i| (i * 37 + 13) % 53).collect();
+        let mut expected = data.clone();
+        expected.sort_unstable();
+
+        sorter.cache_oblivious_sort(&mut data).unwrap();
+        assert_eq!(data, expected);
     }
 }

@@ -449,20 +449,10 @@ impl SuffixArrayBuilder {
             });
         }
 
-        // For now, use a simple sorting approach since the full DC3 is complex
-        // This ensures correctness while providing the DC3 interface
-        let mut sa: Vec<usize> = (0..text.len()).collect();
-        sa.sort_by(|&a, &b| {
-            let suffix_a = &text[a..];
-            let suffix_b = &text[b..];
-            suffix_a.cmp(suffix_b)
-        });
-
-        Ok(sa)
+        self.sais_construct(text)
     }
 
     /// DivSufSort-style algorithm implementation
-    /// Based on divide-and-conquer with multikey quicksort principles
     fn divsufsort_construct(&self, text: &[u8]) -> Result<Vec<usize>> {
         let n = text.len();
         if n == 0 {
@@ -472,21 +462,10 @@ impl SuffixArrayBuilder {
             return Ok(vec![0]);
         }
 
-        // Initialize suffix array with indices
-        let mut sa: Vec<usize> = (0..n).collect();
-
-        // Sort suffixes using standard comparison
-        sa.sort_by(|&a, &b| {
-            let suffix_a = &text[a..];
-            let suffix_b = &text[b..];
-            suffix_a.cmp(suffix_b)
-        });
-
-        Ok(sa)
+        self.sais_construct(text)
     }
 
     /// Larsson-Sadakane algorithm implementation
-    /// Uses prefix doubling technique, optimized for repetitive data
     fn larsson_sadakane_construct(&self, text: &[u8]) -> Result<Vec<usize>> {
         let n = text.len();
         if n == 0 {
@@ -496,20 +475,10 @@ impl SuffixArrayBuilder {
             return Ok(vec![0]);
         }
 
-        // For now, use standard suffix comparison to ensure correctness
-        // The full prefix doubling implementation is complex and error-prone
-        let mut sa: Vec<usize> = (0..n).collect();
-        sa.sort_by(|&a, &b| {
-            let suffix_a = &text[a..];
-            let suffix_b = &text[b..];
-            suffix_a.cmp(suffix_b)
-        });
-
-        Ok(sa)
+        self.sais_construct(text)
     }
 
     fn build_parallel(&self, text: &[u8]) -> Result<Vec<usize>> {
-        // For now, fall back to sequential - full parallel SA-IS is very complex
         self.build_sequential(text)
     }
 }
@@ -798,6 +767,11 @@ impl LcpArray {
 
     // Kasai's algorithm for computing LCP array in linear time
     fn compute_lcp_kasai(text: &[u8], sa: &[usize]) -> Result<Vec<usize>> {
+        if text.len() != sa.len() {
+            return Err(crate::error::ZiporaError::invalid_data(
+                "Text length must match suffix array length",
+            ));
+        }
         let n = text.len();
         if n == 0 {
             return Ok(Vec::new());
@@ -1605,4 +1579,78 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_c8_13_suffix_array_kasai_validation_and_differential_vs_naive() {
+        // 1. LcpArray::new must reject mismatched text and suffix array lengths instead of panicking.
+        let sa_short = SuffixArray::new(b"abc").unwrap();
+        assert!(LcpArray::new(b"abcdef", &sa_short).is_err());
+        assert!(LcpArray::new(b"a", &sa_short).is_err());
+
+        // 2. Differential test across SAIS, DC3, DivSufSort, LarssonSadakane, Adaptive,
+        // LCP, BWT, and search vs naive suffix sort on small alphabets, all-equal bytes,
+        // and embedded NUL bytes up to n = 2000 (32 under Miri).
+        let max_n = if cfg!(miri) { 32 } else { 2000 };
+        let corpora: Vec<Vec<u8>> = vec![
+            vec![],
+            vec![0],
+            vec![b'a'; max_n / 4],
+            (0..max_n)
+                .map(|i| ((i * 7 + (i >> 3)) % 2) as u8)
+                .collect(), // {0, 1} with embedded 0x00
+            (0..max_n)
+                .map(|i| 1 + ((i * 13 + (i >> 2)) % 3) as u8)
+                .collect(), // {1, 2, 3}
+            b"\0a\0\0b\0a\0\0a\0b\0".to_vec(),
+        ];
+
+        for text in &corpora {
+            let mut naive_sa: Vec<usize> = (0..text.len()).collect();
+            naive_sa.sort_by(|&a, &b| text[a..].cmp(&text[b..]));
+
+            let mut naive_lcp = vec![0usize; text.len()];
+            for i in 1..text.len() {
+                let s1 = &text[naive_sa[i - 1]..];
+                let s2 = &text[naive_sa[i]..];
+                naive_lcp[i] = s1.iter().zip(s2.iter()).take_while(|(a, b)| a == b).count();
+            }
+
+            for alg in [
+                SuffixArrayAlgorithm::SAIS,
+                SuffixArrayAlgorithm::DC3,
+                SuffixArrayAlgorithm::DivSufSort,
+                SuffixArrayAlgorithm::LarssonSadakane,
+                SuffixArrayAlgorithm::Adaptive,
+            ] {
+                let cfg = SuffixArrayConfig {
+                    algorithm: alg,
+                    compute_lcp: true,
+                    use_parallel: false,
+                    ..Default::default()
+                };
+                let sa = SuffixArray::with_config(text, &cfg).unwrap();
+                assert_eq!(sa.as_slice(), naive_sa.as_slice(), "SA mismatch for {:?}", alg);
+
+                let lcp = LcpArray::new(text, &sa).unwrap();
+                assert_eq!(lcp.as_slice(), naive_lcp.as_slice(), "LCP mismatch for {:?}", alg);
+            }
+
+            if !text.is_empty() {
+                let pat_len = (text.len() / 3).clamp(1, 8);
+                let pattern = &text[..pat_len];
+                let sa = SuffixArray::new(text).unwrap();
+                let (lo, hi) = sa.search_range(text, pattern);
+                let (search_lo, count) = sa.search(text, pattern);
+                assert_eq!(search_lo, lo);
+                assert_eq!(count, hi - lo);
+                let mut matches: Vec<usize> = sa.as_slice()[lo..hi].to_vec();
+                matches.sort_unstable();
+                let expected_matches: Vec<usize> = (0..=text.len() - pat_len)
+                    .filter(|&i| &text[i..i + pat_len] == pattern)
+                    .collect();
+                assert_eq!(matches, expected_matches);
+            }
+        }
+    }
 }
+

@@ -109,7 +109,7 @@ pub fn sorted_union_count(a: &[u32], b: &[u32]) -> usize {
     }
 
     // |A ∪ B| = |A| + |B| - |A ∩ B|
-    a.len() + b.len() - super::sorted_intersect_count(a, b)
+    (a.len() + b.len()).saturating_sub(super::sorted_intersect_count(a, b))
 }
 
 // ============================================================================
@@ -157,6 +157,9 @@ fn union_scalar_merge(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize {
 /// Optimized sorted merge union using unchecked indexing.
 /// Union is inherently sequential (output depends on both streams),
 /// so the win is from eliminating bounds checks, not SIMD parallelism.
+///
+/// # Safety
+/// Caller must ensure the `sse4.1` target feature is supported by the CPU.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse4.1")]
 unsafe fn union_simd_sse41(a: &[u32], b: &[u32], out: &mut Vec<u32>) -> usize {

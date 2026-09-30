@@ -188,7 +188,7 @@ where
     F: Fn(&T, &T) -> Ordering,
 {
     // Adaptive selection based on size ratio
-    if first1.len() * threshold < first2.len() {
+    if first1.len().saturating_mul(threshold) < first2.len() {
         multiset_1small_intersection(first1, first2, pred)
     } else {
         multiset_intersection(first1, first2, pred)
@@ -306,7 +306,7 @@ where
     T: Clone,
     F: Fn(&T, &T) -> Ordering,
 {
-    if first1.len() * threshold < first2.len() {
+    if first1.len().saturating_mul(threshold) < first2.len() {
         multiset_1small_intersection2(first1, first2, pred)
     } else {
         multiset_intersection2(first1, first2, pred)

@@ -130,6 +130,12 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
 
     /// Create an advanced radix sort instance with custom configuration
     pub fn with_config(config: AdvancedRadixSortConfig) -> Result<Self> {
+        if !(1..=16).contains(&config.radix_bits) {
+            return Err(ZiporaError::invalid_data(
+                "radix_bits must be between 1 and 16",
+            ));
+        }
+
         let cpu_features = CpuFeatures::detect();
         let memory_pool = if config.use_secure_memory {
             // Create a secure pool config for the memory budget
@@ -213,6 +219,12 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
 
     /// Sort data using adaptive strategy selection
     pub fn sort(&mut self, data: &mut [T]) -> Result<()> {
+        if !(1..=16).contains(&self.config.radix_bits) {
+            return Err(ZiporaError::invalid_data(
+                "radix_bits must be between 1 and 16",
+            ));
+        }
+
         let total_start = Instant::now();
 
         if data.is_empty() {
@@ -287,7 +299,7 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
         let sample_size = std::cmp::min(1000, data.len()); // Sample for large datasets
 
         for i in 1..sample_size {
-            if data[i].extract_key() < data[i - 1].extract_key() {
+            if data[i] < data[i - 1] {
                 inversions += 1;
             }
         }
@@ -303,7 +315,8 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
 
     /// Estimate memory requirements for the given input size
     pub fn estimate_memory(&self, input_size: usize) -> usize {
-        let radix_size = 1usize << self.config.radix_bits;
+        let radix_bits = self.config.radix_bits.clamp(1, 16);
+        let radix_size = 1usize << radix_bits;
 
         // Base memory for buffers and counting arrays
         let base_memory = input_size * std::mem::size_of::<T>() + // Buffer
@@ -329,10 +342,9 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
     fn insertion_sort(&mut self, data: &mut [T]) -> Result<()> {
         for i in 1..data.len() {
             let key = data[i];
-            let key_value = key.extract_key();
             let mut j = i;
 
-            while j > 0 && data[j - 1].extract_key() > key_value {
+            while j > 0 && data[j - 1] > key {
                 data[j] = data[j - 1];
                 j -= 1;
             }
@@ -344,11 +356,9 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
         Ok(())
     }
 
-    /// Tim sort for nearly sorted data (simplified implementation)
+    /// Comparison sort for nearly sorted data using pattern-defeating quicksort
     fn tim_sort(&mut self, data: &mut [T]) -> Result<()> {
-        // This is a simplified version - a full Tim sort implementation would be much more complex
-        // For now, we use the standard library's unstable_sort which is based on pattern-defeating quicksort
-        data.sort_unstable_by_key(|item| item.extract_key());
+        data.sort_unstable();
 
         self.stats.basic_stats.used_parallel = false;
         self.stats.basic_stats.used_simd = false;
@@ -377,17 +387,13 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
         let radix = 1usize << self.config.radix_bits;
         let mask = (radix - 1) as u64;
 
-        // Allocate buffers - use memory pool if available
-        let buffer = if let Some(ref _pool) = self.memory_pool {
-            // For now, fall back to regular allocation
-            // TODO: Implement proper memory pool integration for generic types
-            vec![data[0]; data.len()]
-        } else {
-            vec![data[0]; data.len()]
-        };
-
-        let mut buffer = buffer;
+        let alloc_start = Instant::now();
+        let mut buffer = vec![data[0]; data.len()];
         let mut counts = vec![0usize; radix];
+        if let Some(ref pool) = self.memory_pool {
+            let _ = pool.stats();
+        }
+        self.stats.phase_times.allocation_time_us = alloc_start.elapsed().as_micros() as u64;
 
         // Determine maximum number of passes needed
         let max_key = data
@@ -450,6 +456,22 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
             data.copy_from_slice(&buffer);
         }
 
+        // Resolve ties among items sharing the same 64-bit key prefix (e.g., RadixString > 8 bytes).
+        if !data.windows(2).all(|w| w[0] <= w[1]) {
+            let mut run_start = 0;
+            while run_start < data.len() {
+                let run_key = data[run_start].extract_key();
+                let mut run_end = run_start + 1;
+                while run_end < data.len() && data[run_end].extract_key() == run_key {
+                    run_end += 1;
+                }
+                if run_end - run_start > 1 {
+                    data[run_start..run_end].sort_unstable();
+                }
+                run_start = run_end;
+            }
+        }
+
         self.stats.basic_stats.used_parallel = false;
         self.stats.basic_stats.used_simd =
             self.config.use_simd && self.cpu_features.has_advanced_simd();
@@ -471,15 +493,30 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
 
         // Split into chunks and sort in parallel
         let chunk_size = data.len().div_ceil(num_threads);
+        let chunk_err = std::sync::Mutex::new(None);
 
         data.par_chunks_mut(chunk_size).for_each(|chunk| {
-            if let Ok(mut temp_sorter) = AdvancedRadixSort::with_config(AdvancedRadixSortConfig {
-                use_parallel: false,
-                ..self.config.clone()
-            }) {
-                let _ = temp_sorter.lsd_radix_sort_sequential(chunk);
+            let mut temp_sorter = AdvancedRadixSort {
+                config: AdvancedRadixSortConfig {
+                    use_parallel: false,
+                    ..self.config.clone()
+                },
+                stats: self.stats.clone(),
+                memory_pool: self.memory_pool.clone(),
+                cpu_features: self.cpu_features.clone(),
+                _phantom: std::marker::PhantomData,
+            };
+            if let Err(e) = temp_sorter.lsd_radix_sort_sequential(chunk) {
+                let mut guard = chunk_err.lock().unwrap_or_else(|p| p.into_inner());
+                if guard.is_none() {
+                    *guard = Some(e);
+                }
             }
         });
+
+        if let Some(e) = chunk_err.into_inner().unwrap_or_else(|p| p.into_inner()) {
+            return Err(e);
+        }
 
         // Use multi-way merge to combine sorted chunks
         self.multiway_merge_chunks(data, chunk_size)?;
@@ -624,14 +661,22 @@ impl<T: RadixSortable> AdvancedRadixSort<T> {
     }
 
     /// Multi-way merge for combining parallel sorted chunks
-    fn multiway_merge_chunks(&self, data: &mut [T], _chunk_size: usize) -> Result<()> {
-        // For now, use a simple approach: collect all elements and sort
-        // This is less efficient than true multi-way merge but ensures correctness
-        // TODO: Implement proper multi-way merge when the generic bounds are resolved
+    fn multiway_merge_chunks(&mut self, data: &mut [T], chunk_size: usize) -> Result<()> {
+        use crate::algorithms::multiway_merge::{MultiWayMerge, SliceSource};
 
-        // Since we know all chunks are already sorted, we can use unstable sort
-        // which will be very fast for mostly-sorted data
-        data.sort_unstable();
+        if data.is_empty() || chunk_size == 0 || chunk_size >= data.len() {
+            return Ok(());
+        }
+
+        let merge_start = Instant::now();
+        let merged = {
+            let sources: Vec<SliceSource<'_, T>> =
+                data.chunks(chunk_size).map(SliceSource::new).collect();
+            let mut merger = MultiWayMerge::new();
+            merger.merge(sources)?
+        };
+        data.copy_from_slice(&merged);
+        self.stats.phase_times.merging_time_us = merge_start.elapsed().as_micros() as u64;
 
         Ok(())
     }
