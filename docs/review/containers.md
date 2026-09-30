@@ -184,7 +184,7 @@ Stage 7 audited all 22 source files in `src/containers/` (19,311 LOC across `fas
 **Tests.**
 - `containers::specialized::minimal_sso::tests::test_c6_11_as_str_rejects_invalid_utf8_without_ub` in `src/containers/specialized/minimal_sso.rs`
 - `containers::specialized::sortable_str_vec::tests::test_c6_11_oversized_string_rejected_and_stats_updated` in `src/containers/specialized/sortable_str_vec.rs`
-- `containers::specialized::fixed_len_str_vec::tests::test_s18_r6_find_exact_simd_and_count_prefix_simd` in `src/containers/specialized/fixed_len_str_vec.rs`
+- `containers::specialized::fixed_len_str_vec::tests::test_s18_r6_find_exact_simd_and_count_prefix_simd` in `src/containers/specialized/fixed_len_str_vec.rs` *(equivalence test verifying SIMD matches scalar fallback; passes on parent `d8ad641` where `find_exact_simd`/`count_prefix_simd` delegated to the fallback)*
 
 **Fix (`2ba0448`, `S18-R6`).**
 - Replaced `unsafe { std::str::from_utf8_unchecked(...) }` in `MinimalSso::as_str` with `std::str::from_utf8(self.as_bytes())` (panicking cleanly if non-UTF-8 bytes were loaded via `from_bytes`, with zero UB).
@@ -226,9 +226,9 @@ Stage 7 audited all 22 source files in `src/containers/` (19,311 LOC across `fas
 **Tests.**
 - `containers::specialized::circular_queue::tests::test_c6_13_full_autogrow_circular_queue_drop_clone_and_debug` in `src/containers/specialized/circular_queue.rs`
 - `containers::specialized::vec_trb::tests::test_c6_13_vec_trb_deep_interleaved_insert_remove` in `src/containers/specialized/vec_trb.rs`
-- `containers::specialized::vec_trb::tests::test_s18_r3_vec_trb_remove_rebalances_and_maintains_log_height` in `src/containers/specialized/vec_trb.rs`
+- `containers::specialized::vec_trb::tests::test_s18_r3_vec_trb_remove_rebalances_and_maintains_log_height` in `src/containers/specialized/vec_trb.rs` *(compile-RED on parent `2055395` because `verify_rb_tree` calls the new `child_or_nil` / `is_black_node` helpers; behavioural RED on parent is the un-rebalanced height `16,384` > `28` and `22.8 µs` vs `90 ns` lookup)*
 - `containers::specialized::zo_sorted_str_vec::tests::test_c6_13_zo_sorted_str_vec_rejects_interior_nul_and_range_duplicates` in `src/containers/specialized/zo_sorted_str_vec.rs`
-- `containers::specialized::easy_hash_map::tests::test_iterators` in `src/containers/specialized/easy_hash_map.rs`
+- `containers::specialized::easy_hash_map::tests::test_iterators` in `src/containers/specialized/easy_hash_map.rs` *(compile-RED on parent `370c49c`, where `iter()`, `iter_mut()`, `keys()`, `values()`, `values_mut()` were commented out)*
 - `containers::specialized::hash_str_map::tests::test_c6_13_hash_str_map_remove_updates_unique_keys` in `src/containers/specialized/hash_str_map.rs`
 
 **Fix (`2ba0448`, `S18-R3`, `S18-R6`).**

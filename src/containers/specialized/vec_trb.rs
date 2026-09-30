@@ -1311,10 +1311,10 @@ mod tests {
 
     #[test]
     fn test_s18_r3_vec_trb_remove_rebalances_and_maintains_log_height() {
-        // 1. Interleaved insert (2k, 2k+1) and remove (2k) up to n = 16,384 keys.
+        // 1. Interleaved insert (2k, 2k+1) and remove (2k) up to n = 16,384 keys (512 under Miri).
         // Without Red-Black deletion rebalancing, this degenerates into a linear chain
-        // of height 16,384 (25.8 us per lookup). With RB deletion rebalancing, height <= 28.
-        let n = 16_384i32;
+        // of height n (25.8 us per lookup at 16k). With RB deletion rebalancing, height <= 2 * log2(n + 1).
+        let n: i32 = if cfg!(miri) { 512 } else { 16_384 };
         let mut s = VecTrbSet::new();
         for step in 0..n {
             let a = step * 2;
@@ -1326,10 +1326,11 @@ mod tests {
         assert_eq!(s.len(), n as usize);
         let (height, _bh, count) = verify_rb_tree(&s.core);
         assert_eq!(count, n as usize);
-        // Theoretical Red-Black height bound: h <= 2 * log2(n + 1) = 2 * 14 = 28
+        // Theoretical Red-Black height bound: h <= 2 * log2(n + 1)
+        let max_height = 2 * ((n as usize + 1).ilog2() as usize);
         assert!(
-            height <= 28,
-            "tree height {height} exceeded Red-Black bound 28 for n={n}"
+            height <= max_height,
+            "tree height {height} exceeded Red-Black bound {max_height} for n={n}"
         );
 
         let t0 = std::time::Instant::now();

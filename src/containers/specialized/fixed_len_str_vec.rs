@@ -184,6 +184,7 @@ impl<const N: usize> FixedLenStrVec<N> {
 
     /// Find the first exact match using optimized search
     #[cfg(feature = "simd")]
+    #[inline]
     pub fn find_exact(&self, needle: &str) -> Option<usize> {
         if needle.len() > N || needle.len() > 255 {
             return None;
@@ -198,12 +199,14 @@ impl<const N: usize> FixedLenStrVec<N> {
     }
 
     #[cfg(not(feature = "simd"))]
+    #[inline]
     pub fn find_exact(&self, needle: &str) -> Option<usize> {
         self.find_exact_fallback(needle)
     }
 
     /// Count strings with a given prefix using optimized search
     #[cfg(feature = "simd")]
+    #[inline]
     pub fn count_prefix(&self, prefix: &str) -> usize {
         if prefix.len() > N || prefix.len() > 255 {
             return 0;
@@ -218,6 +221,7 @@ impl<const N: usize> FixedLenStrVec<N> {
     }
 
     #[cfg(not(feature = "simd"))]
+    #[inline]
     pub fn count_prefix(&self, prefix: &str) -> usize {
         self.count_prefix_fallback(prefix)
     }
@@ -230,46 +234,56 @@ impl<const N: usize> FixedLenStrVec<N> {
         self.stats.memory_saved_vs_vec_string = vec_string_size.saturating_sub(our_size);
     }
 
+    #[inline]
     fn find_exact_fallback(&self, needle: &str) -> Option<usize> {
         let needle_bytes = needle.as_bytes();
         let needle_len = needle_bytes.len();
+        let count = self.len.min(self.indices.len());
+        let arena_len = self.string_arena.len();
 
-        for i in 0..self.len {
+        for i in 0..count {
             let packed = self.indices[i];
             let length = (packed >> 24) as usize;
 
-            // Quick length check before string comparison
-            if length == needle_len
-                && let Some(s) = self.get(i)
-                && s == needle
-            {
-                return Some(i);
+            // Quick length check before byte slice comparison
+            if length == needle_len {
+                let offset = (packed & 0x00FFFFFF) as usize;
+                let end = offset + needle_len;
+                if end <= arena_len && &self.string_arena[offset..end] == needle_bytes {
+                    return Some(i);
+                }
             }
         }
         None
     }
 
+    #[inline]
     fn count_prefix_fallback(&self, prefix: &str) -> usize {
         let prefix_bytes = prefix.as_bytes();
         let prefix_len = prefix_bytes.len();
+        let total = self.len.min(self.indices.len());
+        let arena_len = self.string_arena.len();
         let mut count = 0;
 
-        for i in 0..self.len {
+        for i in 0..total {
             let packed = self.indices[i];
             let length = (packed >> 24) as usize;
 
             // Quick length check - string must be at least as long as prefix
-            if length >= prefix_len
-                && let Some(s) = self.get(i)
-                && s.starts_with(prefix)
-            {
-                count += 1;
+            if length >= prefix_len {
+                let offset = (packed & 0x00FFFFFF) as usize;
+                if offset + length <= arena_len
+                    && &self.string_arena[offset..offset + prefix_len] == prefix_bytes
+                {
+                    count += 1;
+                }
             }
         }
         count
     }
 
     #[cfg(feature = "simd")]
+    #[inline(never)]
     fn find_exact_simd(&self, needle: &str) -> Option<usize> {
         #[cfg(target_arch = "x86_64")]
         {
@@ -325,11 +339,12 @@ impl<const N: usize> FixedLenStrVec<N> {
             while i < count {
                 let packed = self.indices[i];
                 let length = (packed >> 24) as usize;
-                if length == needle_len
-                    && let Some(s) = self.get(i)
-                    && s == needle
-                {
-                    return Some(i);
+                if length == needle_len {
+                    let offset = (packed & 0x00FFFFFF) as usize;
+                    let end = offset + needle_len;
+                    if end <= arena_len && &self.string_arena[offset..end] == needle_bytes {
+                        return Some(i);
+                    }
                 }
                 i += 1;
             }
@@ -342,6 +357,7 @@ impl<const N: usize> FixedLenStrVec<N> {
     }
 
     #[cfg(feature = "simd")]
+    #[inline(never)]
     fn count_prefix_simd(&self, prefix: &str) -> usize {
         #[cfg(target_arch = "x86_64")]
         {
@@ -401,11 +417,13 @@ impl<const N: usize> FixedLenStrVec<N> {
             while i < total {
                 let packed = self.indices[i];
                 let length = (packed >> 24) as usize;
-                if length >= prefix_len
-                    && let Some(s) = self.get(i)
-                    && s.starts_with(prefix)
-                {
-                    matches += 1;
+                if length >= prefix_len {
+                    let offset = (packed & 0x00FFFFFF) as usize;
+                    if offset + length <= arena_len
+                        && &self.string_arena[offset..offset + prefix_len] == prefix_bytes
+                    {
+                        matches += 1;
+                    }
                 }
                 i += 1;
             }
